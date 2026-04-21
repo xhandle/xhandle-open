@@ -1,0 +1,247 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Base ─────────────────────────────────────────────────────────────── */
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+html, body, #root { width: 100vw; height: 100vh; overflow: auto; background: var(--bg); color: var(--text); }
+
+/* Selection & scrollbars */
+*::selection { background: rgba(76,154,255,0.28); }
+* { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+.dark * { scrollbar-color: var(--border) transparent; }
+
+/* Global dark shim (utility flips when .dark on html) */
+@layer base { html.dark body { @apply bg-zinc-950 text-zinc-100; } }
+
+/* ── Theme tokens (Jira-ish) ──────────────────────────────────────────── */
+:root {
+  color-scheme: light;
+  --bg:#ffffff; --text:#0b1220;
+  --panel:#f7f8fa; --card:#ffffff;
+  --border:#e5e7eb; --border-strong:#cbd5e1;
+  --muted:#667085; --muted-2:#6b7280;
+  --accent:#4c9aff; --accent-strong:#2f7ee6;
+  --note-bg:#fef3c7; --note-border:#fcd34d;
+  --toolbar-bg:#0b1220; --toolbar-fg:#ffffff;
+  --chip-border-contrast:#ffffff; --label-color:#111827;
+}
+.dark {
+  color-scheme: dark;
+  --bg:#0f1114; --text:#e6e8eb;
+  --panel:#14171a; --card:#1a1d21;
+  --border:#2a2f36; --border-strong:#39414a;
+  --muted:#a1a6ae; --muted-2:#8b9097;
+  --accent:#4c9aff; --accent-strong:#6aa8ff;
+  --note-bg:#1f232a; --note-border:#334155;
+  --toolbar-bg:#161a1f; --toolbar-fg:#f1f5f9;
+  --chip-border-contrast:#0f1114; --label-color:#e5e7eb;
+}
+
+/* ── SysML / React Flow UI ───────────────────────────────────────────── */
+.sysml-diagram-container { height: 100%; display: flex; }
+.sysml-sidebar {
+  width: 300px; background: var(--panel);
+  border-right: 1px solid var(--border); padding: 16px;
+}
+.sysml-sidebar input { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 4px; }
+
+.react-flow__node {
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 6px; padding: 10px; font-size: 14px; font-weight: bold;
+}
+.react-flow__node-circle {
+  border-radius: 50%; height: 100px; width: 100px;
+  background-color: var(--accent); color: var(--toolbar-fg);
+  display: flex; align-items: center; justify-content: center;
+  font-family: monospace; box-shadow: 2px 2px 6px rgba(0,0,0,0.2);
+}
+.react-flow__node-textinput {
+  width: 150px; background: var(--card); font-family: monospace;
+  text-align: left; padding: 6px; border-radius: 4px;
+}
+.text-input-node__input { width: 100%; box-sizing: border-box; border: 1px solid var(--border); padding: 4px; font-size: 12px; }
+.react-flow__node-annotation {
+  width: 180px; font-size: 14px; color: #683bfa;
+  position: absolute; background-color: var(--note-bg);
+  border: 1px solid var(--note-border); padding: 8px; border-radius: 4px;
+}
+.react-flow__node-toolbar {
+  background-color: var(--toolbar-bg); color: var(--toolbar-fg);
+  border-radius: 16px; overflow: hidden; padding: 6px;
+}
+.react-flow__node-toolbar button {
+  cursor: pointer; background: inherit; border: none;
+  padding: 5px 7px; margin: 3px; border-radius: 50%;
+  box-shadow: 1px 1px 5px rgba(0,0,0,0.1);
+}
+.react-flow__node-toolbar button:hover { background: var(--border-strong); }
+
+.resizer-node { border: 2px solid var(--border-strong); background: var(--card); position: relative; padding: 10px; }
+.resizer-node__handles { position: absolute; bottom: 0; width: 100%; display: flex; justify-content: space-evenly; }
+.resizer-node__handle { background: var(--muted-2); width: 8px; height: 8px; position: absolute; transform: translate(-50%,-50%); }
+
+.button-edge__label { position: absolute; pointer-events: all; transform-origin: center; }
+.button-edge__button {
+  width: 30px; height: 30px; border: 2px solid var(--chip-border-contrast);
+  background-color: var(--accent); color: var(--toolbar-fg); cursor: pointer;
+  border-radius: 50%; font-size: 14px; display: flex; align-items: center; justify-content: center;
+}
+.button-edge__button:hover { background-color: var(--accent-strong); }
+
+.react-flow__handle.custom-handle {
+  background-color: var(--accent); border-radius: 50%;
+  width: 10px; height: 10px; border: 2px solid var(--chip-border-contrast);
+}
+.react-flow__handle.custom-handle:hover { background-color: var(--accent-strong); }
+
+/* Minimap */
+.react-flow__minimap .group { fill-opacity: 0.4; }
+.react-flow__minimap .circle,
+.react-flow__minimap .resizer,
+.react-flow__minimap .tools,
+.react-flow__minimap .textinput { fill: #d0c0f7; }
+.react-flow__minimap .circle { rx: 100%; ry: 100%; }
+.react-flow__minimap .annotation { display: none; }
+
+/* React Flow (dark polish, brighter contrast) */
+.dark .react-flow__background path { stroke:#3b4355 !important; opacity:.8 !important; }
+.dark .react-flow__node { background:#1f232a !important; border:1px solid #3a4150 !important; color:#f8fafc !important; }
+.dark .react-flow__edge-path { stroke:#6aa8ff !important; stroke-width:3 !important; }
+.dark .react-flow__edge-text { fill:#f1f5f9 !important; font-size:13px !important; font-weight:600; }
+html.dark .react-flow__controls button { background-color:#23262b !important; border-color:var(--border) !important; color:var(--text) !important; }
+html.dark .react-flow__controls button:hover { background-color:#2a2f36 !important; }
+
+/* ── Utility flips in dark ───────────────────────────────────────────── */
+html.dark .bg-white        { background-color: var(--panel) !important; }
+html.dark .bg-white\/95    { background-color: color-mix(in oklab, var(--panel) 95%, transparent) !important; }
+html.dark .bg-white\/80    { background-color: color-mix(in oklab, var(--panel) 80%, transparent) !important; }
+html.dark .bg-gray-50,
+html.dark .bg-gray-100     { background-color: #1f2227 !important; }
+html.dark .bg-yellow-50    { background-color: #2a2416 !important; }
+html.dark .bg-white\/10    { background-color: rgba(57,65,74,0.30) !important; }
+
+html.dark .border,
+html.dark .border-b,
+html.dark .border-gray-200 { border-color: var(--border) !important; }
+html.dark .border-gray-300 { border-color: var(--border-strong) !important; }
+
+html.dark .text-gray-700 { color: #edeef0 !important; }
+html.dark .text-gray-600 { color: var(--muted) !important; }
+html.dark .text-gray-500 { color: #a1a6ae !important; }
+html.dark .text-\[\#0F0F12\] { color: #f4f4f5 !important; }
+
+html.dark thead.sticky,
+html.dark .sticky.bg-white,
+html.dark .border-b.bg-white,
+html.dark .border-b.bg-white\/95,
+html.dark .border-b.bg-gray-50 {
+  background-color: var(--card) !important; border-color: var(--border) !important;
+  box-shadow: 0 1px 0 0 rgba(0,0,0,0.35) inset !important;
+}
+
+html.dark .hover\:bg-gray-50:hover,
+html.dark .hover\:bg-gray-100:hover { background-color: #1f2227 !important; }
+html.dark .bg-gray-200 { background-color: #23262b !important; }
+html.dark .bg-\[\#ECEEFF\] { background-color: rgba(49,46,129,.30) !important; }
+
+/* Inputs */
+html.dark textarea,
+html.dark input[type="text"],
+html.dark input[type="search"],
+html.dark input[type="number"],
+html.dark select {
+  background-color: #15181c !important; border: 1px solid var(--border) !important; color: var(--text) !important;
+}
+html.dark input:focus,
+html.dark textarea:focus,
+html.dark select:focus {
+  outline: none !important; border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px rgba(76,154,255,0.25) !important;
+}
+
+/* Charts */
+html.dark .recharts-legend-item-text,
+html.dark .recharts-cartesian-axis-tick-value { fill: var(--label-color) !important; }
+html.dark .recharts-tooltip-wrapper .recharts-default-tooltip {
+  background: var(--card) !important; border-color: var(--border) !important; color: var(--text) !important;
+}
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line { stroke: var(--border) !important; }
+
+/* Cards / panels */
+html.dark .rounded-xl.border,
+html.dark .rounded-2xl.border,
+html.dark .panel,
+html.dark .card {
+  background-color: var(--card) !important; border-color: var(--border) !important;
+  box-shadow: 0 1px 0 0 rgba(0,0,0,0.35), 0 8px 24px rgba(0,0,0,0.28) !important;
+}
+
+/* ── Top bar ─────────────────────────────────────────────────────────── */
+html.dark .sticky.top-0.border-b,
+html.dark .fixed.top-0.border-b,
+html.dark header.sticky.top-0.border-b {
+  background-color: #0b0d10 !important; border-color: #1f242b !important; color: #e6e8eb !important;
+}
+html.dark .sticky.top-0.border-b *,
+html.dark .fixed.top-0.border-b *,
+html.dark header.sticky.top-0.border-b * { color: #e6e8eb !important; }
+html.dark .sticky.top-0.border-b .hover\:bg-gray-50:hover,
+html.dark .sticky.top-0.border-b .hover\:bg-gray-100:hover,
+html.dark .fixed.top-0.border-b .hover\:bg-gray-50:hover,
+html.dark .fixed.top-0.border-b .hover\:bg-gray-100:hover { background-color: #171b20 !important; }
+html.dark .sticky.top-0.border-b .border,
+html.dark .fixed.top-0.border-b .border { border-color: #2a2f36 !important; }
+
+/* ── Copilot (black surfaces + legible controls) ───────────────────────── */
+html.dark .copilot-header {
+  background-color: #0b0d10 !important; border-color: #1f242b !important; color: #e6e8eb !important;
+}
+html.dark .copilot-header .text-neutral-700,
+html.dark .copilot-header .text-neutral-600,
+html.dark .copilot-header .text-neutral-500 { color: #e6e8eb !important; }
+html.dark .copilot-header button:not(.bg-indigo-600) {
+  color: #e6e8eb !important; border-color: #2a2f36 !important; background-color: transparent !important;
+}
+html.dark .copilot-header button:not(.bg-indigo-600):hover { background-color: #1f2227 !important; }
+html.dark .copilot-header .border.bg-white {
+  background-color: var(--card) !important; border-color: var(--border) !important; color: var(--text) !important;
+}
+html.dark .copilot-header .bg-neutral-200 { background-color: #23262b !important; }
+html.dark .copilot-header .text-neutral-700 { color: #e6e8eb !important; }
+
+html.dark .rounded-xl.border.bg-white,
+html.dark .rounded-lg.border.bg-white,
+html.dark .bg-white.shadow-sm,
+html.dark .p-4.border-t.bg-white,
+html.dark .px-4.py-3.border-b.bg-neutral-50,
+html.dark .px-3.py-2.border-b.bg-neutral-50 {
+  background-color: #0b0d10 !important; border-color: #1f242b !important; color: #e6e8eb !important;
+}
+
+html.dark .hover\:bg-neutral-50:hover { background-color: #101317 !important; }
+html.dark .bg-indigo-50 {
+  background-color: rgba(49,46,129,0.30) !important; color: #f4f4f5 !important;
+  box-shadow: inset 2px 0 0 0 rgba(76,154,255,0.9);
+}
+html.dark .text-\[\#0F0F12\] { color: #f4f4f5 !important; }
+html.dark .bg-\[\#ECEEFF\] { background-color: rgba(49,46,129,.30) !important; }
+
+html.dark .copilot-header input,
+html.dark .p-4.border-t.bg-white textarea,
+html.dark .p-4.border-t.bg-white input {
+  background-color: #101317 !important; border: 1px solid #2a2f36 !important; color: #e6e8eb !important;
+}
+
+/* Headings */
+html:not(.dark) h1, html:not(.dark) h2, html:not(.dark) h3, html:not(.dark) h4,
+html:not(.dark) .prose h1, html:not(.dark) .prose h2, html:not(.dark) .prose h3, html:not(.dark) .prose h4 { color: #0f0f12 !important; }
+html.dark h1, html.dark h2, html.dark h3, html.dark h4,
+html.dark .prose h1, html.dark .prose h2, html.dark .prose h3, html.dark .prose h4 { color: var(--text) !important; }

@@ -1,0 +1,61 @@
+# -------------------------
+# Dependencies
+# -------------------------
+node_modules
+/.pnp
+.pnp.js
+
+# -------------------------
+# Build / Production
+# -------------------------
+/build
+/dist
+
+# -------------------------
+# Environment / Secrets
+# -------------------------
+.env
+.env.*
+.aws.env
+!.env.example
+
+# -------------------------
+# Logs
+# -------------------------
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# -------------------------
+# OS / Misc
+# -------------------------
+.DS_Store
+
+# -------------------------
+# Python / local tools (if used)
+# -------------------------
+venv/
+__pycache__/
+
+# -------------------------
+# Local AI / vector DB stuff
+# -------------------------
+.chromadb
+chroma
+chroma.sqlite3
+index_metadata.pickle
+
+# -------------------------
+# Archives / artifacts
+# -------------------------
+*.zip
+deployment.zip
+git-files.zip
+
+# -------------------------
+# Optional (recommended)
+# -------------------------
+coverage
+.npmbaselines.db
+baselines.db

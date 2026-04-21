@@ -1,0 +1,19 @@
+# Prevent local dependencies and debug logs
+node_modules
+npm-debug.log
+
+# Docker build config files
+Dockerfile
+.dockerignore
+
+# Environment files (never include these in the image)
+.env
+.env.*
+.aws.env
+
+# Local caches and build artifacts
+.npm
+.git
+dist
+build
+.DS_Store
