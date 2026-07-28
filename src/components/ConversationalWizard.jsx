@@ -1,10 +1,3 @@
-/**
- * xHandle: conversational wizard shared application component.
- * This file implements a reusable application-level component or helper that participates in xHandle's end-to-end engineering workflows.
- * Shared components connect the main workspace, diagrams, copilot features, reporting, and local persistence so individual features can cooperate as one system.
- * Related files: src/App.js, src/lib/storage/indexedDB.js, src/features/hazard-analysis/aiAnalysisLite.js.
- */
-
 // =============================================
 // ConversationalWizard.jsx — Turn-Taking + Voice (TTS + ASR)
 // =============================================
@@ -93,7 +86,7 @@ function useSpeech({ onInterim, onFinal, onListeningChange, onBargeIn }) {
       try { rec.stop(); } catch {}
       recognitionRef.current = null;
     };
-  }, [SR, onBargeIn, onFinal, onInterim, onListeningChange]);
+  }, []);
 
   const speak = (text) => {
     if (!synth) return;
@@ -150,11 +143,6 @@ const REQUIRED_SLOTS = [
 
 const OPTIONAL_ENRICHERS = [];
 
-/**
- * pickNextQuestion renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param facts Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function pickNextQuestion(facts) {
   const missing = REQUIRED_SLOTS.find((s) => !(s.id in facts));
   if (missing) {
@@ -165,11 +153,6 @@ function pickNextQuestion(facts) {
 }
 
 
-/**
- * buildCombinedPrompt renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param facts Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function buildCombinedPrompt(facts) {
   const method = (facts.method || 'STPA').toUpperCase(); // fallback stays for the rest of your pipeline
   const payload = {
@@ -188,11 +171,6 @@ function buildCombinedPrompt(facts) {
 }
 
 
-/**
- * renderPreview renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param facts Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function renderPreview(facts) {
   const lines = [];
   for (const slot of REQUIRED_SLOTS) {

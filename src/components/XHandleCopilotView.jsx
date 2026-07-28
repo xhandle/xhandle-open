@@ -1,11 +1,3 @@
-/* eslint-disable react-hooks/exhaustive-deps */
-/**
- * xHandle: xhandle copilot view shared application component.
- * This file implements a reusable application-level component or helper that participates in xHandle's end-to-end engineering workflows.
- * Shared components connect the main workspace, diagrams, copilot features, reporting, and local persistence so individual features can cooperate as one system.
- * Related files: src/App.js, src/lib/storage/indexedDB.js, src/features/hazard-analysis/aiAnalysisLite.js.
- */
-
 // src/components/XHandleCopilotView.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import React from "react";
@@ -24,8 +16,7 @@ import {
   Pin,
   PinOff,
   Pencil,
-  Bot,
-  Square,
+  Copy,
   Bold,
   Italic,
   Underline,
@@ -36,7 +27,6 @@ import {
   CheckSquare,
   Code2,
   Table as TableIcon,
-  AlertTriangle,
   PanelLeftOpen,
   PanelLeftClose,
   Crosshair,
@@ -46,21 +36,16 @@ import {
   togglePin, appendMessage, setMessages
 } from "./copilotThreads";
 import { generateThreadTitle } from "./generateThreadTitle";
-import { dispatchAgentApply } from "./agentActions";
-import { backendURL, buildAIAuthOpts } from "./backendConfig";
+import { buildAIAuthOpts } from "./backendConfig";
 import {
-  Rocket, Box, Link2, GitCommit, Network, FilePlus2, ShieldCheck, FolderGit2
+  Rocket, Link2, GitCommit, Network, FilePlus2, ShieldCheck, FolderGit2
 } from "lucide-react";
 
 /* === NEW: region selection imports === */
-import { openRegionSelector } from "./diagrams/RegionLassoOverlay";
+import { openRegionSelector } from "./RegionLassoOverlay";
 import { pushRegionContext, popAllRegionContext } from "./utils/copilotContextBus";
+import { buildWorkspaceLLMContext } from "../features/workspace-graph";
 
-/**
- * QuickSuggestions renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param onPick Callback used to notify the surrounding workflow about progress or user actions.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function QuickSuggestions({ onPick }) {
   const items = [
     {
@@ -98,12 +83,6 @@ function QuickSuggestions({ onPick }) {
       prompt: "Draft a system requirement template tailored to this project with fields for ID, Module, Rationale, Verification Method, and Acceptance Criteria.",
       icon: FilePlus2,
       tone: "neutral",
-    },
-    {
-      label: "Generate Agentic Safety Report",
-      prompt: "Create an agentic safety report with company snapshot, risk landscape, mitigation roadmap, and business upside. Embed the latest diagram if available.",
-      icon: Box,
-      tone: "primary",
     },
     {
       label: "Sync Repository & Parse Code",
@@ -169,18 +148,120 @@ function countUserMsgs(msgs) {
   return (msgs || []).reduce((n, m) => n + (m.role === "user" ? 1 : 0), 0);
 }
 
-/**
- * renderCopilotContext renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param ctx Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
-function renderCopilotContext(ctx) {
-  if (!ctx?.project) return "You are xHandle Copilot. No active project selected.";
+function truncateText(value, max = 600) {
+  const text = String(value || "");
+  return text.length > max ? `${text.slice(0, max)}...` : text;
+}
+
+function boundedJson(value, max = 14000) {
+  const text = JSON.stringify(value);
+  return text.length > max ? `${text.slice(0, max)}... [truncated]` : text;
+}
+
+function compactPromptArtifact(artifact) {
+  return {
+    id: artifact.id,
+    type: artifact.type,
+    projectId: artifact.projectId,
+    parentId: artifact.parentId,
+    title: artifact.title,
+    summary: truncateText(artifact.summary, 500),
+    status: artifact.status,
+    sourceStore: artifact.sourceStore,
+    sourceKey: artifact.sourceKey,
+    sourceId: artifact.sourceId,
+    tags: artifact.tags,
+    contentSnippet: truncateText(artifact.content, 500),
+    structuredDataSnippet: artifact.structuredData == null
+      ? undefined
+      : truncateText(typeof artifact.structuredData === "string" ? artifact.structuredData : JSON.stringify(artifact.structuredData), 600),
+  };
+}
+
+function compactPromptHistory(messages = [], { maxMessages = 10, maxCharsPerMessage = 3000 } = {}) {
+  return messages.slice(-maxMessages).map((message) => ({
+    ...message,
+    content: truncateText(message.content, maxCharsPerMessage),
+  }));
+}
+
+export function renderCopilotContext(ctx) {
+  if (!ctx) return "You are xHandle Collaborator. Reason across the complete local xHandle workspace by default.";
+  if (Array.isArray(ctx.relevantArtifacts) || Array.isArray(ctx.relationships)) {
+    const artifacts = ctx.relevantArtifacts || [];
+    const relationships = ctx.relationships || [];
+    const summary = ctx.workspaceSummary || {};
+    const projects = ctx.projects || [];
+    const sourceFiles = ctx.sourceFiles || [];
+    const sample = {
+      projects: projects.slice(0, 8).map(project => ({
+        id: project.id,
+        name: project.name,
+        folderId: project.folderId,
+      })),
+      relevantArtifacts: artifacts.slice(0, 18).map(compactPromptArtifact),
+      relationships: relationships.slice(0, 35).map(rel => ({
+        id: rel.id,
+        type: rel.type,
+        fromArtifactId: rel.fromArtifactId,
+        toArtifactId: rel.toArtifactId,
+        confidence: rel.confidence,
+        sourceFeature: rel.sourceFeature,
+      })),
+      runs: (ctx.runs || []).slice(0, 6).map(run => ({
+        id: run.id,
+        type: run.type,
+        title: run.title,
+        status: run.status,
+        artifactIds: (run.artifactIds || []).slice(0, 10),
+      })),
+      reviews: (ctx.reviews || []).slice(0, 8).map(review => ({
+        id: review.id,
+        artifactId: review.artifactId,
+        title: review.title,
+        status: review.status,
+      })),
+      evidence: (ctx.evidence || []).slice(0, 8).map(item => ({
+        id: item.id,
+        artifactId: item.artifactId,
+        title: item.title,
+        type: item.type,
+        contentSnippet: truncateText(item.content, 400),
+      })),
+      sourceFiles: sourceFiles.slice(0, 10).map(file => ({
+        id: file.id,
+        path: file.path,
+        repoId: file.repoId,
+        language: file.language,
+        symbols: file.symbols,
+        sourceStore: file.sourceStore,
+      })),
+      citations: (ctx.citations || []).slice(0, 30),
+      diagnostics: ctx.diagnostics || {},
+    };
+
+    return [
+      `You are xHandle Collaborator. Reason from the canonical xHandle workspace graph, not raw localStorage keys.`,
+      `Use typed artifacts, relationships, runs, reviews, evidence, source files, and citations as the source of truth for local workspace context.`,
+      ctx.scope?.projectId ? `Active project id: ${ctx.scope.projectId}` : `No active project boundary is required; reason workspace-wide unless the user names a project or artifact.`,
+      `Active view: ${JSON.stringify(ctx.scope?.activeView || {})}`,
+      `Workspace graph counts => Projects: ${summary.projectCount || projects.length || 0}, Artifacts: ${summary.artifactCount || artifacts.length || 0}, Relationships: ${summary.relationshipCount || relationships.length || 0}, Relevant artifacts: ${summary.relevantArtifactCount || artifacts.length || 0}`,
+      `Cite artifact ids and source pointers when making claims about stored workspace data.`,
+      `For destructive writes or ambiguous artifact generation, infer the best target from the prompt when clear; otherwise create/add to an appropriate workspace artifact or ask a short clarification.`,
+      `Canonical graph sample (truncated):`,
+      boundedJson(sample),
+    ].filter(Boolean).join("\n");
+  }
   const reqCount   = (ctx.requirements || []).length;
   const linkCount  = (ctx.functionalDecomposition || []).length;
   const riskCount  = (ctx.riskRegister || []).length;
   const sumRows    = (ctx.riskSummarySheet || []).length > 1 ? (ctx.riskSummarySheet.length - 1) : 0;
   const cbaCount   = (ctx.codeArchitecture || []).length;
+  const workspace = ctx.workspace || {};
+  const workspaceProjectCount = workspace.projectCount || workspace.projects?.length || 0;
+  const workspaceSysMLCount = workspace.sysmlModels?.length || 0;
+  const screen = ctx.focus?.screen || {};
+  const designState = screen.designManagement || {};
 
   const sample = {
     requirements: (ctx.requirements || []).slice(0, 5).map(r => ({
@@ -192,23 +273,56 @@ function renderCopilotContext(ctx) {
     })),
     summaryHeaders: (ctx.riskSummarySheet?.[0] || []).slice(0, 12),
     codeArchSample: (ctx.codeArchitecture || []).slice(0, 5),
+    workspaceProjects: (workspace.projects || []).slice(0, 8).map(project => ({
+      id: project.id,
+      name: project.name,
+      counts: project.counts,
+      sampleRequirementTitles: (project.samples?.requirements || []).slice(0, 3).map(row => row.title || row.name || row.id),
+      sampleRiskTitles: (project.samples?.riskRegister || []).slice(0, 3).map(row => row.title || row.name || row.id),
+    })),
+    sysmlModels: (workspace.sysmlModels || []).slice(0, 5).map(model => ({
+      id: model.id,
+      name: model.name,
+      projectId: model.projectId,
+      elementCount: model.elementCount,
+      relationshipCount: model.relationshipCount,
+      elementNames: (model.elements || []).slice(0, 8).map(element => `${element.type}:${element.name}`),
+    })),
+    currentScreen: {
+      feature: screen.feature || ctx.focus?.section || null,
+      view: screen.view || ctx.focus?.activeTab || null,
+      designManagement: designState ? {
+        activeFolderId: designState.activeFolderId,
+        activeFolderName: designState.activeFolderName,
+        selectedModule: designState.selectedModule,
+        selectedModuleId: designState.selectedModuleId,
+        visibleModuleRowCount: designState.visibleModuleRowCount,
+        visibleModuleRows: (designState.visibleModuleRows || []).slice(0, 12).map(row => ({
+          id: row.id,
+          title: row.title,
+          heading: row.heading,
+          parentId: row.parentId,
+          order: row.order,
+          attributes: row.attributes,
+        })),
+      } : null,
+    },
   };
 
   return [
-    `You are xHandle Copilot. Use the project context below when answering.`,
-    `Project: ${ctx.project.name} (id: ${ctx.project.id})`,
-    `Counts ⇒ Requirements: ${reqCount}, Decomposition links: ${linkCount}, Risks: ${riskCount}, RiskSummary rows: ${sumRows}, CodeArch rows: ${cbaCount}`,
+    `You are xHandle Collaborator. Reason across the complete local xHandle workspace by default.`,
+    `Do not use an active-project boundary unless the user explicitly names a project or artifact scope.`,
+    ctx.project ? `Recently opened project context: ${ctx.project.name} (id: ${ctx.project.id})` : `No project context is required; use workspace-wide context.`,
+    `Current screen: ${screen.feature || ctx.focus?.section || "unknown"}${designState?.selectedModule ? `; Design Management module: ${designState.selectedModule}` : ""}`,
+    `Workspace counts ⇒ Projects: ${workspaceProjectCount}, SysML models: ${workspaceSysMLCount}, Workspace CodeArch rows: ${(workspace.codeArchitecture || []).length || cbaCount}`,
+    `Artifact counts ⇒ Requirements: ${reqCount}, Decomposition links: ${linkCount}, Risks: ${riskCount}, RiskSummary rows: ${sumRows}, CodeArch rows: ${cbaCount}`,
+    `For destructive writes or ambiguous artifact generation, infer the best target from the prompt when clear; otherwise create/add to an appropriate workspace artifact or ask a short clarification.`,
     ctx.projectHint?.owner && ctx.projectHint?.repo ? `Repo: ${ctx.projectHint.owner}/${ctx.projectHint.repo}` : null,
     `Samples (truncated):`,
-    JSON.stringify(sample)
+    boundedJson(sample)
   ].filter(Boolean).join("\n");
 }
 
-/**
- * sanitizeCapturedText renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param s Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function sanitizeCapturedText(s) {
   if (!s) return "";
   return String(s)
@@ -226,11 +340,6 @@ function sanitizeCapturedText(s) {
     .trim();
 }
 
-/**
- * captureSelectionAsImage renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param viewRect Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 async function captureSelectionAsImage(viewRect /* {x,y,width,height} */) {
   const x = Math.round(viewRect.x + window.scrollX);
   const y = Math.round(viewRect.y + window.scrollY);
@@ -249,16 +358,10 @@ async function captureSelectionAsImage(viewRect /* {x,y,width,height} */) {
 }
 
 
-/**
- * callChat renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param messages Input consumed by this step of the xHandle workflow.
- * @param signal Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 async function callChat(messages, signal) {
-  const resp = await fetch(`${backendURL}/api/chat`, {
+  const resp = await fetch("/api/chat", {
     method: "POST",
-      ...buildAIAuthOpts({ "Content-Type": "application/json" }),
+    ...buildAIAuthOpts({ "Content-Type": "application/json" }),
     signal,
     body: JSON.stringify({
       model: "gpt-4o-mini",
@@ -268,44 +371,109 @@ async function callChat(messages, signal) {
       stream: false,
     }),
   });
-  if (!resp.ok) throw new Error(`assistant_failed_${resp.status}`);
-  const data = await resp.json();
-  return data?.choices?.[0]?.message?.content || "No response.";
-}
-
-
-/**
- * extractJsonFromMarkdown renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param text Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
-function extractJsonFromMarkdown(text) {
-  if (!text) return null;
-  const fence = text.match(/```json\s*([\s\S]*?)```/i);
-  const raw = fence ? fence[1] : text;
-  try { return JSON.parse(raw); } catch { return null; }
-}
-
-/**
- * parsePlan renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param text Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
-function parsePlan(text) {
-  const lines = (text || "")
-    .split(/\r?\n/)
-    .map(l => l.trim())
-    .filter(Boolean);
-  const steps = [];
-  for (const l of lines) {
-    const m = l.match(/^(\d+)[). \s-]+(.*)$/);
-    if (m && m[2]) { steps.push(m[2].trim()); continue; }
-    const d = l.match(/^[-•]\s*(.*)$/);
-    if (d && d[1]) { steps.push(d[1].trim()); continue; }
+  if (!resp.ok) {
+    let detail = "";
+    try {
+      const payload = await resp.clone().json();
+      detail = payload?.error ? `: ${payload.error}` : "";
+    } catch {}
+    throw new Error(`assistant_failed_${resp.status}${detail}`);
   }
-  const unique = (steps.length ? steps : [text]).map(s => s.trim()).filter(Boolean);
-  return unique.slice(0, 5);
+  const data = await resp.json();
+  return extractChatText(data) || "No response.";
 }
+
+function extractChatText(payload) {
+  if (typeof payload === "string") return payload;
+  return String(
+    payload?.result ||
+    payload?.answer ||
+    payload?.content ||
+    payload?.message ||
+    payload?.choices?.[0]?.message?.content ||
+    payload?.choices?.[0]?.text ||
+    ""
+  );
+}
+
+function extractStreamToken(parsed) {
+  if (typeof parsed === "string") return parsed;
+  return String(
+    parsed?.choices?.[0]?.delta?.content ||
+    parsed?.delta?.content ||
+    parsed?.content ||
+    parsed?.token ||
+    ""
+  );
+}
+
+async function streamChat(messages, { signal, onToken } = {}) {
+  const resp = await fetch("/api/chat", {
+    method: "POST",
+    ...buildAIAuthOpts({ "Content-Type": "application/json" }),
+    signal,
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      top_p: 0.1,
+      max_tokens: 1800,
+      messages,
+      stream: true,
+    }),
+  });
+
+  if (!resp.ok) {
+    if (resp.status === 400) return callChat(messages, signal);
+    let detail = "";
+    try {
+      const payload = await resp.clone().json();
+      detail = payload?.error ? `: ${payload.error}` : "";
+    } catch {}
+    throw new Error(`assistant_failed_${resp.status}${detail}`);
+  }
+  if (!resp.body) return callChat(messages, signal);
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let fullText = "";
+
+  const processEvent = (eventText) => {
+    const dataLines = eventText
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trim());
+
+    for (const data of dataLines) {
+      if (!data || data === "[DONE]") continue;
+      try {
+        const parsed = JSON.parse(data);
+        const token = extractStreamToken(parsed);
+        if (token) {
+          fullText += token;
+          onToken?.(token, fullText);
+        }
+      } catch {
+        // Ignore malformed partial SSE frames; the next chunk usually completes them.
+      }
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split(/\n\n/);
+    buffer = events.pop() || "";
+    for (const eventText of events) processEvent(eventText);
+  }
+
+  buffer += decoder.decode();
+  if (buffer.trim()) processEvent(buffer);
+  return fullText.trim();
+}
+
 
 /* --------------------------- Markdown Rendering ---------------------------- */
 
@@ -352,16 +520,16 @@ const mdComponents = {
   thead: ({ children }) => <thead className="bg-neutral-100">{children}</thead>,
   th: ({ children }) => <th className="text-left px-2 py-1 border-b border-neutral-200">{children}</th>,
   td: ({ children }) => <td className="px-2 py-1 border-b border-neutral-200 align-top">{children}</td>,
-  code({ inline, className, children }) {
-    const isInline = inline ?? !/\blanguage-/.test(className || "");
-    if (isInline) {
+  pre: ({ children }) => (
+    <pre className="text-[0.825rem] bg-neutral-900 text-neutral-100 p-3 rounded-lg overflow-auto my-3">
+      {children}
+    </pre>
+  ),
+  code({ inline, children }) {
+    if (inline) {
       return <code className="px-1 py-0.5 text-[0.825rem] bg-neutral-200 rounded">{children}</code>;
     }
-    return (
-      <pre className="text-[0.825rem] bg-neutral-900 text-neutral-100 p-3 rounded-lg overflow-auto my-3">
-        <code>{children}</code>
-      </pre>
-    );
+    return <code>{children}</code>;
   }
 };
 
@@ -389,17 +557,13 @@ const mdComponentsUser = {
   ),
 };
 
-// === Decisive answer style (no hedging) ===
-const STYLE_DECISIVE = `
-Write in a decisive, factual tone.
-Avoid hedging words: appears, seems, likely, might, could, may, generally, typically, potentially.
-Never start with phrases like "The provided text appears..." or "It looks like...".
-Rules:
-- Lead with the answer in 1–2 sentences.
-- State facts and concrete actions; avoid meta commentary about what the content "is".
-- If information is missing, write exactly: "Insufficient data — <reason>."
-- Then list "Next actions:" as a short numbered list (max 3).
-- Keep scope tight. No fluff.
+const STYLE_GENERAL_ASSISTANT = `
+You are xHandle Copilot, a helpful general-purpose AI assistant inside xHandle.
+Answer normal questions directly and naturally, including everyday questions that do not require project context.
+Use the available xHandle workspace context when the user asks about their project, requirements, architecture, safety analysis, files, or traceability.
+If current workspace data is missing for a project-specific request, briefly say what is missing and offer a practical next step.
+If a question asks for current date or time, use the runtime context provided in this system message.
+If you are uncertain, say so plainly without forcing a fixed refusal format.
 `;
 
 /* ------------------------------ Toolbar stuff ----------------------------- */
@@ -417,12 +581,6 @@ function applyWrap(textarea, before, after = before) {
   return next;
 }
 
-/**
- * insertAtLineStart renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param textarea Input consumed by this step of the xHandle workflow.
- * @param prefix Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function insertAtLineStart(textarea, prefix) {
   const el = textarea;
   const start = el.selectionStart ?? 0;
@@ -444,12 +602,6 @@ function insertAtLineStart(textarea, prefix) {
   return next;
 }
 
-/**
- * MarkdownToolbar renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param onChange Callback used to notify the surrounding workflow about progress or user actions.
- * @param textareaRef Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function MarkdownToolbar({ onChange, textareaRef }) {
   const click = (fn) => (e) => {
     e.preventDefault();
@@ -488,17 +640,106 @@ function MarkdownToolbar({ onChange, textareaRef }) {
 function groupTurns(msgs = []) {
   const groups = [];
   let current = null;
-  for (const m of msgs) {
+  msgs.forEach((m, messageIndex) => {
     if (m.role === "user") {
       if (current) groups.push(current);
-      current = { user: m, assistant: [] };
+      current = { user: { ...m, messageIndex }, assistant: [] };
     } else {
       if (!current) current = { user: null, assistant: [] };
-      current.assistant.push(m);
+      current.assistant.push({ ...m, messageIndex });
     }
-  }
+  });
   if (current) groups.push(current);
   return groups;
+}
+
+function MessageInlineEditor({
+  value,
+  onChange,
+  onSave,
+  onCancel,
+  variant = "assistant",
+  actionLabel,
+  helperText,
+  disabled = false,
+}) {
+  const isUser = variant === "user";
+  const submitLabel = actionLabel || (isUser ? "Send" : "Save");
+  const submitHelp = helperText || (isUser ? "Cmd/Ctrl+Enter to send, Esc to cancel" : "Cmd/Ctrl+Enter to save, Esc to cancel");
+  return (
+    <div className="space-y-2">
+      <textarea
+        className={[
+          "w-full rounded-lg border px-3 py-2 text-sm leading-relaxed resize-y focus:outline-none focus:ring-2 min-h-[120px]",
+          isUser
+            ? "border-indigo-200 bg-white text-neutral-900 focus:ring-white/70"
+            : "border-neutral-300 bg-white text-neutral-900 focus:ring-indigo-200",
+        ].join(" ")}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+            event.preventDefault();
+            if (!disabled) onSave();
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            onCancel();
+          }
+        }}
+      />
+      <div className="flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className={[
+            "rounded-md border px-2.5 py-1 text-xs font-medium transition",
+            isUser
+              ? "border-white/60 bg-transparent text-white hover:bg-white/10"
+              : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50",
+          ].join(" ")}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={disabled || !String(value || "").trim()}
+          className={[
+            "rounded-md px-2.5 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-50",
+            isUser
+              ? "bg-white text-indigo-700 hover:bg-indigo-50"
+              : "bg-indigo-600 text-white hover:bg-indigo-700",
+          ].join(" ")}
+        >
+          {submitLabel}
+        </button>
+      </div>
+      <div className={isUser ? "text-[11px] text-indigo-100" : "text-[11px] text-neutral-500"}>
+        {submitHelp}
+      </div>
+    </div>
+  );
+}
+
+function HoverActionButton({ title, onClick, children, className = "" }) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick?.();
+      }}
+      className={[
+        "inline-flex items-center justify-center rounded-md border border-neutral-300 bg-white text-neutral-900 shadow-sm",
+        "hover:bg-neutral-100 h-7 w-7 transition",
+        className,
+      ].join(" ")}
+      title={title}
+      aria-label={title}
+    >
+      {children}
+    </button>
+  );
 }
 
 // ---------- Prompt → Scope parsing ----------
@@ -507,18 +748,13 @@ function readProjectsFromLS() {
   catch { return []; }
 }
 
-/**
- * parseScopeFromPrompt renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param text Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function parseScopeFromPrompt(text = "") {
   const t = String(text);
   const areas = new Set();
 
   if (/\bconsole\b/i.test(t)) areas.add("console");
   if (/\bproject manager\b|\bprogram manager\b|\bpm\b/i.test(t)) areas.add("pm");
-  if (/\brisk register\b|\brisks?\b|\bfmea\b|\brisk\s*summary\b/i.test(t)) areas.add("risk");
+  if (/\brisk register\b|\brisks?\b|\bfmea\b|\bstpa\b|\bhazard\b|\bsafety risk\b|\brisk\s*summary\b/i.test(t)) areas.add("risk");
   if (/\brequirements?\b|\breqs?\b/i.test(t)) areas.add("requirements");
   if (/\bcode[-\s]?based architecture\b|\bcode\s*architecture\b|\bcba\b/i.test(t)) areas.add("cba");
   if (/\bfunctional\s+decomposition\b|\bfunctions?\b/i.test(t)) areas.add("functional");
@@ -554,20 +790,10 @@ function lsKeys() {
   } catch { return []; }
 }
 
-/**
- * safeParse renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param json Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function safeParse(json) {
   try { return JSON.parse(json); } catch { return null; }
 }
 
-/**
- * readCBAFromLocalStorage renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param repoLike Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function readCBAFromLocalStorage(repoLike) {
   const rows = [];
   for (const k of lsKeys()) {
@@ -579,12 +805,6 @@ function readCBAFromLocalStorage(repoLike) {
   return rows;
 }
 
-/**
- * mergeAutoContext renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param baseCtx Input consumed by this step of the xHandle workflow.
- * @param scope Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function mergeAutoContext(baseCtx, scope) {
   const ctx = { ...baseCtx };
   const repoLike = ctx?.projectHint?.owner && ctx?.projectHint?.repo
@@ -601,12 +821,6 @@ function mergeAutoContext(baseCtx, scope) {
   return ctx;
 }
 
-/**
- * formatCBAEdges renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param rows Worksheet or table rows that this step transforms.
- * @param max Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function formatCBAEdges(rows, max = 25) {
   const out = [];
   for (const r of rows.slice(0, max)) {
@@ -620,47 +834,27 @@ function formatCBAEdges(rows, max = 25) {
   return out;
 }
 
-/**
- * cbaGuardNote renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param ctx Input consumed by this step of the xHandle workflow.
- * @param scope Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function cbaGuardNote(ctx, scope) {
   const askedForCBA = (scope?.areas || []).includes("cba");
-  if (askedForCBA && (!ctx.codeArchitecture || ctx.codeArchitecture.length === 0)) {
+  const canonicalCbaCount = (ctx.relevantArtifacts || []).filter(
+    artifact => ["code_architecture_edge", "repository", "source_file"].includes(artifact?.type)
+  ).length;
+  if (askedForCBA && canonicalCbaCount === 0 && (!ctx.codeArchitecture || ctx.codeArchitecture.length === 0)) {
     return "\nImportant: User asked about Code-Based Architecture, but no CBA rows were found in scope. If you cannot locate CBA data, say so explicitly instead of speculating.";
   }
   return "";
 }
 
-/**
- * repoLikeFromHint renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param hint Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function repoLikeFromHint(hint) {
   return hint?.owner && hint?.repo ? `${hint.owner}/${hint.repo}` : undefined;
 }
 
-/**
- * readIndexedFileFromLocalStorage renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param repoLike Input consumed by this step of the xHandle workflow.
- * @param path Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function readIndexedFileFromLocalStorage(repoLike, path) {
   if (!path) return null;
   const key = repoLike ? `code:file:${repoLike}:${path}` : `code:file:${path}`;
   try { return JSON.parse(localStorage.getItem(key) || "null"); } catch { return null; }
 }
 
-/**
- * makeFileGrounding renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param fileRec Input consumed by this step of the xHandle workflow.
- * @param maxBytes Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function makeFileGrounding(fileRec, maxBytes = 3500) {
   const lang = fileRec?.lang || "";
   const functions = Array.isArray(fileRec?.functions) ? fileRec.functions.join(", ") : "unknown";
@@ -678,16 +872,55 @@ function makeFileGrounding(fileRec, maxBytes = 3500) {
   ].join("\n");
 }
 
-/**
- * buildScopedContext renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param base Input consumed by this step of the xHandle workflow.
- * @param scope Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
+const SCOPE_ARTIFACT_TYPES = {
+  requirements: new Set(["requirement", "sysml_requirement"]),
+  risk: new Set(["risk", "hazard_analysis_row", "safety_finding", "safety_case", "safety_case_node"]),
+  cba: new Set(["code_architecture_edge", "repository", "source_file"]),
+  functional: new Set(["functional_decomposition_row", "sysml_element"]),
+  review: new Set(["review_item", "patch_proposal"]),
+};
+
 function buildScopedContext(base, scope) {
   if (!base) return base;
   const scoped = { ...base };
   const wants = new Set(scope?.areas || []);
+
+  if (Array.isArray(scoped.relevantArtifacts)) {
+    if (scope?.project) {
+      const pid = String(scope.project.id);
+      scoped.relevantArtifacts = scoped.relevantArtifacts.filter(
+        artifact => !artifact?.projectId || String(artifact.projectId) === pid
+      );
+      scoped.projects = (scoped.projects || []).filter(
+        project => !project?.id || String(project.id) === pid
+      );
+    }
+
+    if (wants.size) {
+      const allowedTypes = new Set();
+      wants.forEach((area) => {
+        SCOPE_ARTIFACT_TYPES[area]?.forEach((type) => allowedTypes.add(type));
+      });
+      if (allowedTypes.size) {
+        scoped.relevantArtifacts = scoped.relevantArtifacts.filter(
+          artifact => allowedTypes.has(artifact?.type)
+        );
+      }
+    }
+
+    const artifactIds = new Set((scoped.relevantArtifacts || []).map(artifact => artifact.id));
+    scoped.relationships = (scoped.relationships || []).filter(
+      rel => artifactIds.has(rel.fromArtifactId) || artifactIds.has(rel.toArtifactId)
+    );
+    scoped.citations = (scoped.citations || []).filter(
+      citation => !citation.artifactId || artifactIds.has(citation.artifactId)
+    );
+    scoped.__scopeNote = {
+      areas: scope?.areas || [],
+      project: scope?.project ? { id: scope.project.id, name: scope.project.name } : null
+    };
+    return scoped;
+  }
 
   if (scope?.project) {
     const pid = String(scope.project.id);
@@ -721,16 +954,16 @@ function buildScopedContext(base, scope) {
 export default function XHandleCopilotView({
   projectHint,
   copilotContext,
-  onAgentApply,
+  appFocus,
   docked = false,
   onRequestDock,
   onRequestUndock,
   defaultSidebarOpen = true,
-  isDark = false, 
+  isDark = false,
 }) {
   const enrichedContext = useMemo(
-    () => ({ ...copilotContext, projectHint: projectHint || copilotContext?.projectHint }),
-    [copilotContext, projectHint]
+    () => ({ ...copilotContext, projectHint: projectHint || copilotContext?.projectHint, focus: appFocus || copilotContext?.focus }),
+    [copilotContext, projectHint, appFocus]
   );
 
   // add state
@@ -766,16 +999,13 @@ function cancelCtxEditor() {
   });
   const [activeId, setActiveId] = useState(() => (loadThreads()[0] || {}).id);
   const active = useMemo(() => threads.find(t => t.id === activeId), [threads, activeId]);
-  const [regionContexts, setRegionContexts] = useState([]); 
+  const [regionContexts, setRegionContexts] = useState([]);
   // items like { id, text?, tableMarkdown?, imageDataUrl? }
-  
+
   const [input, setInput] = useState("");
+  const [editingMessage, setEditingMessage] = useState(null);
   const [busy, setBusy] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(defaultSidebarOpen && !docked);
-
-  const [agentMode, setAgentMode] = useState(false);
-  const [progress, setProgress]   = useState({ step: 0, total: 0, label: "" });
-  const agentAbortRef = useRef(null);
 
   const scrollRef = useRef(null);
   const endRef = useRef(null);
@@ -786,9 +1016,6 @@ function cancelCtxEditor() {
     const nearBottom = el.scrollHeight - (el.scrollTop + el.clientHeight) < 160;
     setAutoStick(nearBottom);
   };
-
-  const [pendingActions, setPendingActions] = useState(null);
-  const [showConfirm, setShowConfirm] = useState(false);
 
   const titlingRef = useRef(false);
   const textareaRef = useRef(null);
@@ -813,7 +1040,7 @@ function cancelCtxEditor() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-  
+
   // Hotkey: Cmd/Ctrl + \ toggles left threads (only when not docked)
   useEffect(() => {
     const onKey = (e) => {
@@ -830,6 +1057,10 @@ function cancelCtxEditor() {
   }, [docked]);
 
   useEffect(() => { saveThreads(threads); }, [threads]);
+
+  useEffect(() => {
+    setEditingMessage(null);
+  }, [activeId, docked]);
 
 /* === NEW: capture region contexts only when docked === */
 /* === capture region contexts only when docked === */
@@ -860,7 +1091,7 @@ useEffect(() => {
   }
 
   return () => window.removeEventListener("xhandle:copilot-add-context", onRegion);
-}, [docked]);  
+}, [docked]);
 
   function makeThread(title) {
     newThread(title || "New topic");
@@ -881,9 +1112,73 @@ useEffect(() => {
   }
   function doPin(id) { togglePin(id); setThreads(loadThreads()); }
 
+  async function copyText(text) {
+    const value = String(text || "");
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = value;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+  }
+
+  function startInlineEdit(messageIndex, content) {
+    setEditingMessage({
+      messageIndex,
+      draft: String(content || ""),
+    });
+  }
+
+  function cancelInlineEdit() {
+    setEditingMessage(null);
+  }
+
+  function updateEditingDraft(draft) {
+    setEditingMessage((prev) => (prev ? { ...prev, draft } : prev));
+  }
+
+  function saveInlineEdit() {
+    const editSession = editingMessage;
+    if (!active?.id || editSession?.messageIndex == null) return;
+    const updatedMessages = (active.messages || []).map((message, index) => (
+      index === editSession.messageIndex
+        ? { ...message, content: editSession.draft ?? "" }
+        : message
+    ));
+    setMessages(active.id, updatedMessages);
+    setThreads(loadThreads());
+    setEditingMessage(null);
+  }
+
+  async function sendInlinePromptEdit() {
+    const editSession = editingMessage;
+    if (!active?.id || editSession?.messageIndex == null || busy) return;
+    const revisedContent = String(editSession.draft ?? "");
+    if (!revisedContent.trim()) return;
+
+    const revisedMessages = (active.messages || [])
+      .slice(0, editSession.messageIndex + 1)
+      .map((message, index) => (
+        index === editSession.messageIndex
+          ? { ...message, content: revisedContent }
+          : message
+      ));
+
+    setMessages(active.id, revisedMessages);
+    setThreads(loadThreads());
+    setEditingMessage(null);
+
+    await runCopilot(revisedContent);
+  }
+
   async function handleSend() {
     if ((!input.trim() && regionContexts.length === 0) || !active) return;
-  
+
     // Build a single markdown block from selected contexts
     const contextBlob = regionContexts.map((c, idx) => {
       if (c.tableMarkdown) return `**Selection (table ${idx+1}):**\n\n${c.tableMarkdown}`;
@@ -891,36 +1186,52 @@ useEffect(() => {
       if (c.imageDataUrl)  return `**Selection (image ${idx+1}):**\n\n![selection](${c.imageDataUrl})`;
       return "";
     }).filter(Boolean).join("\n\n");
-  
+
     const content = [contextBlob, input.trim()].filter(Boolean).join("\n\n");
-  
+
     const userMsg = { role: "user", content };
     setInput("");
     setRegionContexts([]);        // clear chips after send
-  
+
     appendMessage(active.id, userMsg);
     setThreads(loadThreads());
-  
-    if (agentMode) {
-      await runAgent(userMsg.content);
-    } else {
-      await runCopilot(userMsg.content);
-    }
+
+    await runCopilot(userMsg.content);
   }
 
-  function handleComposerKeyDown(e) {
-    if (e.key !== "Enter" || e.shiftKey) return;
-    e.preventDefault();
-    handleSend();
-  }
-  
 
   async function runCopilot(userText) {
     setBusy(true);
     try {
       const scope = parseScopeFromPrompt(userText);
-      let scoped = buildScopedContext(enrichedContext, scope);
+      const activeProjectId =
+        scope?.project?.id ||
+        appFocus?.activeProjectId ||
+        enrichedContext?.project?.id ||
+        enrichedContext?.workspace?.activeProjectId ||
+        null;
+      let graphContext = enrichedContext;
+      try {
+        graphContext = await buildWorkspaceLLMContext({
+          projectId: activeProjectId,
+          activeView: appFocus || enrichedContext?.focus || {},
+          query: userText,
+          tokenBudget: 5000,
+        });
+        graphContext.projectHint = projectHint || enrichedContext?.projectHint;
+      } catch (error) {
+        graphContext = {
+          ...enrichedContext,
+          diagnostics: {
+            ...(enrichedContext?.diagnostics || {}),
+            workspaceGraphContextError: error?.message || String(error),
+          },
+        };
+      }
+
+      let scoped = buildScopedContext(graphContext, scope);
       scoped = mergeAutoContext(scoped, scope);
+      scoped.lastUserPrompt = userText;
       const note = scoped?.__scopeNote
         ? `\nScope: areas=${(scoped.__scopeNote.areas || []).join(", ") || "all"}, project=${scoped.__scopeNote.project?.name || "active"}`
         : "";
@@ -929,26 +1240,65 @@ useEffect(() => {
         : "";
       const guard = cbaGuardNote(scoped, scope);
       const repoLike = repoLikeFromHint(scoped?.projectHint);
-      const fileRec = scope?.filePath ? readIndexedFileFromLocalStorage(repoLike, scope.filePath) : null;
+      const canonicalFile = scope?.filePath
+        ? (scoped.sourceFiles || []).find(file => file?.path === scope.filePath || file?.path?.endsWith(`/${scope.filePath}`))
+        : null;
+      const fileRec = canonicalFile || (scope?.filePath ? readIndexedFileFromLocalStorage(repoLike, scope.filePath) : null);
       const fileGrounding = fileRec ? `\n\n${makeFileGrounding(fileRec)}` : "";
       const fileGuard = scope?.filePath && !fileRec
         ? `\nImportant: User asked about ${scope.filePath}, but no indexed file was found. Do not speculate; ask the user to sync/index the repository so this file can be read.`
         : "";
+      const runtimeNow = new Date();
+      const runtimeContext = `
+
+Runtime context:
+- Current local date and time: ${runtimeNow.toLocaleString(undefined, {
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        timeZoneName: "short",
+      })}
+- Current ISO timestamp: ${runtimeNow.toISOString()}
+- Current timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown"}
+`;
 
         const systemMsg = {
           role: "system",
-          content: `${renderCopilotContext(scoped)}${note}${cbaLines}${guard}${fileGrounding}${fileGuard}
-        
+          content: `${runtimeContext}${renderCopilotContext(scoped)}${note}${cbaLines}${guard}${fileGrounding}${fileGuard}
+
         Style:
-        ${STYLE_DECISIVE}`
-        };             
+        ${STYLE_GENERAL_ASSISTANT}`
+        };
 
       const t = loadThreads().find(t => t.id === activeId);
-      const messages = [systemMsg, ...(t?.messages || [])];
+      const messages = [systemMsg, ...compactPromptHistory(t?.messages || [])];
 
-      const answer = await callChat(messages, undefined);
-      appendMessage(activeId, { role: "assistant", content: answer });
+      appendMessage(activeId, { role: "assistant", content: "" });
       setThreads(loadThreads());
+
+      let lastCommitAt = 0;
+      const updateAssistant = (content, force = false) => {
+        const now = Date.now();
+        if (!force && now - lastCommitAt < 80) return;
+        lastCommitAt = now;
+        const current = loadThreads();
+        const thread = current.find((entry) => entry.id === activeId);
+        if (!thread) return;
+        const messages = [...(thread.messages || [])];
+        const lastIndex = messages.length - 1;
+        if (lastIndex < 0 || messages[lastIndex]?.role !== "assistant") return;
+        messages[lastIndex] = { ...messages[lastIndex], content };
+        setMessages(activeId, messages);
+        setThreads(loadThreads());
+      };
+
+      const answer = await streamChat(messages, {
+        onToken: (_token, fullText) => updateAssistant(fullText),
+      });
+      updateAssistant(answer || "No response.", true);
     } catch {
       appendMessage(activeId, { role: "assistant", content: "Sorry — I hit an issue generating a reply. Check server logs and try again." });
       setThreads(loadThreads());
@@ -956,195 +1306,11 @@ useEffect(() => {
       setBusy(false);
     }
   }
-  
 
-  async function runAgent(userText) {
-    if (!active) return;
-    setBusy(true);
-    setProgress({ step: 0, total: 0, label: "Planning…" });
-    agentAbortRef.current?.abort?.();
-    agentAbortRef.current = new AbortController();
-    const signal = agentAbortRef.current.signal;
-  
-    try {
-      const _scope = parseScopeFromPrompt(userText);
-      let _scoped = buildScopedContext(enrichedContext, _scope);
-      _scoped = mergeAutoContext(_scoped, _scope);
 
-      const _scopeNote = _scoped?.__scopeNote
-        ? `\nScope: areas=${(_scoped.__scopeNote.areas || []).join(", ") || "all"}, project=${_scoped.__scopeNote.project?.name || "active"}`
-        : "";
-  
-      const _cbaLines = Array.isArray(_scoped.codeArchitecture) && _scoped.codeArchitecture.length
-        ? `\n\nGrounding — Code Architecture edges (first 25):\n${formatCBAEdges(_scoped.codeArchitecture, 25).join("\n")}`
-        : "";
-  
-      const _cbaGuard = cbaGuardNote(_scoped, _scope);
-
-      // PLAN
-      const planPrompt = [
-        {
-          role: "system",
-          content:
-        `${renderCopilotContext(_scoped)}${_scopeNote}${_cbaLines}${_cbaGuard}
-        
-        Style:
-        ${STYLE_DECISIVE}
-        
-        From the prior analysis, output a JSON object
-        \`\`\`json
-        { "actions": [ { "type": "<ACTION_TYPE>", "payload": { /* fields */ } } ] }
-        \`\`\`
-        Rules:
-        - Only propose actions grounded in the context above. Do NOT invent data.
-        - CREATE_DIAGRAM_EDGE is allowed only if the exact from/to pair exists in the Code Architecture grounding list above.
-        - UPDATE_REQUIREMENT is allowed only if the id exists in the provided requirements sample; otherwise use CREATE_REQUIREMENT.
-        - If a suitable action is uncertain, omit it.
-        - Keep to 1–6 total actions.
-        - No hedging or soft language.
-        Return ONLY a fenced JSON block.`
-        }
-        ,
-        { role: "user", content: `User request: ${userText}\nReturn only the steps as a numbered list.` }
-      ];      
-  
-      const planText = await callChat(planPrompt, signal);
-      const steps = parsePlan(planText);
-      setProgress({ step: 1, total: steps.length + 3, label: "Plan created" });
-  
-      appendMessage(activeId, {
-        role: "assistant",
-        content: `# 📋 Plan\n${steps.map((s, i) => `${i + 1}. **${s}**`).join("\n")}`
-      });
-      setThreads(loadThreads());
-  
-      // EXECUTE (advisory)
-      for (let i = 0; i < steps.length; i++) {
-        if (signal.aborted) throw new Error("aborted");
-        setProgress({ step: i + 2, total: steps.length + 3, label: `Executing step ${i + 1}/${steps.length}` });
-  
-        const execPrompt = [
-          {
-            role: "system",
-            content: `${renderCopilotContext(_scoped)}${_scopeNote}${_cbaLines}${_cbaGuard}
-        
-        Style:
-        ${STYLE_DECISIVE}
-        
-        You are assisting in 'Agent Mode'. Return Markdown with:
-        ## Step Title
-        - **What you looked at**
-        - **What you found** (definitive statements; if unknown, say "Insufficient data — <reason>")
-        - **Next actions** (numbered list, max 3)
-        Keep it concise.`
-          },
-          { role: "user", content: `Step: ${steps[i]}\nDo NOT modify data; provide guidance only.` }
-        ];        
-  
-        const result = await callChat(execPrompt, signal);
-        appendMessage(activeId, { role: "assistant", content: `## ✅ Step ${i + 1}: **${steps[i]}**\n${result}` });
-        setThreads(loadThreads());
-      }
-  
-      // PROPOSE ACTIONS
-      if (signal.aborted) throw new Error("aborted");
-      setProgress({ step: steps.length + 2, total: steps.length + 3, label: "Proposing edits…" });
-  
-      const proposePrompt = [
-        {
-          role: "system",
-          content:
-        `${renderCopilotContext(_scoped)}${_scopeNote}${_cbaLines}${_cbaGuard}
-        From the prior analysis, output a JSON object
-        \`\`\`json
-        { "actions": [ { "type": "<ACTION_TYPE>", "payload": { /* fields */ } } ] }
-        \`\`\`
-        Rules:
-        - Only propose actions grounded in the context above. Do NOT invent data.
-        - CREATE_DIAGRAM_EDGE is allowed only if the exact from/to pair exists in the Code Architecture grounding list above.
-        - UPDATE_REQUIREMENT is allowed only if the id exists in the provided requirements sample; otherwise use CREATE_REQUIREMENT.
-        - If a suitable action is uncertain, omit it.
-        - Keep to 1–6 total actions.
-        
-        Allowed types and payloads:
-        - CREATE_REQUIREMENT: { "title": string, "module": string, "attributes": { [k:string]: any } }
-        - UPDATE_REQUIREMENT: { "id": string, "patch": { [k:string]: any } }
-        - CREATE_MODULE: { "name": string, "type": string, "attrTemplate": Array, "viewTemplates": Array }
-        - CREATE_DIAGRAM_NODE: { "label": string, "description": string, "group": string }
-        - CREATE_DIAGRAM_EDGE: { "fromLabel": string, "toLabel": string, "controlAction": string }
-        - UPDATE_RISK: { "id": string, "patch": { [k:string]: any } }
-        
-        Return ONLY a fenced JSON block.`
-        },
-        {
-          role: "user",
-          content:
-  `Infer 1-6 sensible actions max from our conversation.
-  Respect the current scope: areas=${(_scoped.__scopeNote?.areas || []).join(",") || "all"}, project=${_scoped.__scopeNote?.project?.name || "active"}.
-  Do not duplicate existing items if not needed.`
-        }
-      ];
-  
-      const actionsMd = await callChat(proposePrompt, signal);
-      const json = extractJsonFromMarkdown(actionsMd);
-  
-      if (json?.actions?.length) {
-        setPendingActions(json);
-        setShowConfirm(true);
-        appendMessage(activeId, {
-          role: "assistant",
-          content: `### ✍️ Proposed Changes (Review Required)\nI have a small set of changes ready. Please review and confirm to apply.`
-        });
-        setThreads(loadThreads());
-      } else {
-        appendMessage(activeId, { role: "assistant", content: `No concrete changes are recommended at this time.` });
-        setThreads(loadThreads());
-      }
-  
-      // SUMMARY
-      if (signal.aborted) throw new Error("aborted");
-      setProgress({ step: steps.length + 3, total: steps.length + 3, label: "Done" });
-    } catch (e) {
-      if (String(e?.message || "").includes("aborted")) {
-        appendMessage(activeId, { role: "assistant", content: "⏹️ Agent run stopped." });
-      } else {
-        appendMessage(activeId, { role: "assistant", content: "Sorry — the agent hit an issue mid-run. Check server logs and try again." });
-      }
-      setThreads(loadThreads());
-    } finally {
-      setBusy(false);
-      agentAbortRef.current = null;
-      setTimeout(() => setProgress({ step: 0, total: 0, label: "" }), 600);
-    }
-  }  
   function pushPendingContext(ctx) {
     const id = crypto?.randomUUID?.() || String(Date.now() + Math.random());
     setRegionContexts(prev => [...prev, { id, ...ctx }]);
-  }
-  
-  async function applyPendingActions() {
-    if (!pendingActions?.actions?.length) { setShowConfirm(false); return; }
-    try {
-      if (typeof onAgentApply === "function") {
-        await onAgentApply(pendingActions.actions);
-      } else {
-        dispatchAgentApply({ actions: pendingActions.actions, threadId: activeId });
-      }
-      appendMessage(activeId, {
-        role: "assistant",
-        content: `✅ **Changes applied.** If anything looks off, you can undo in your project views.`
-      });
-      setThreads(loadThreads());
-    } catch (e) {
-      appendMessage(activeId, {
-        role: "assistant",
-        content: `⚠️ Failed to apply changes: ${e?.message || "unknown error"}`
-      });
-      setThreads(loadThreads());
-    } finally {
-      setPendingActions(null);
-      setShowConfirm(false);
-    }
   }
 
   function clearThread() {
@@ -1152,8 +1318,6 @@ useEffect(() => {
     setMessages(active.id, [{ role: "assistant", content: "Thread cleared. Ask away!" }]);
     setThreads(loadThreads());
   }
-
-  function stopAgent() { agentAbortRef.current?.abort?.(); }
 
   // Auto-title after ≥2 user turns, once per thread
   useEffect(() => {
@@ -1170,7 +1334,7 @@ useEffect(() => {
         const all = loadThreads();
         const idx = all.findIndex((x) => x.id === t.id);
         if (idx >= 0) {
-          all[idx].title = title && title.length >= 6 ? title : (all[idx].title || "General Copilot Chat");
+          all[idx].title = title && title.length >= 6 ? title : (all[idx].title || "General Collaborator Chat");
           all[idx].autoTitleDone = true;
           all[idx].updatedAt = Date.now();
           saveThreads(all);
@@ -1194,10 +1358,8 @@ useEffect(() => {
     return () => cancelAnimationFrame(t);
   }, [
     active?.messages?.length,
-    autoStick,
     busy,
-    progress.step,
-    progress.label,
+    autoStick,
   ]);
 
   useEffect(() => {
@@ -1206,7 +1368,7 @@ useEffect(() => {
     const t = requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
     return () => cancelAnimationFrame(t);
   }, [activeId]);
-  
+
   /* ---------------------------------- UI ---------------------------------- */
 
   const userBubbleMax = docked ? "max-w-[48ch]" : "max-w-[55ch]";
@@ -1227,7 +1389,7 @@ useEffect(() => {
               <div className="px-4 py-3 border-b flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <MessageSquareText className="w-5 h-5 text-indigo-600" />
-                  <div className="font-semibold">Copilot Threads</div>
+                  <div className="font-semibold">Collaborator Threads</div>
                 </div>
               </div>
 
@@ -1288,16 +1450,6 @@ useEffect(() => {
                   {sidebarOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
                   {sidebarOpen ? "Hide Threads" : "Show Threads"}
                 </button>
-                {agentMode ? (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-indigo-600 text-white px-2 py-1 text-xs">
-                    <Bot className="w-3 h-3" /> Agent Mode
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-neutral-200 text-neutral-700 px-2 py-1 text-xs">
-                    💬 Copilot Mode
-                  </span>
-                )}
-                <span className="text-neutral-400">·</span>
                 <span className="text-neutral-600">{active ? active.title : "No thread selected"}</span>
               </div>
               <div className="flex items-center gap-2">
@@ -1307,36 +1459,12 @@ useEffect(() => {
                     else try { window.dispatchEvent(new CustomEvent("xhandle:copilot-dock-open")); } catch {}
                   }}
                   className="inline-flex items-center gap-2 text-xs px-3 py-2 rounded border hover:bg-neutral-50"
-                  title="Dock Copilot to right sidebar (⌘/Ctrl+Shift+C)"
+                  title="Dock Collaborator to right sidebar (⌘/Ctrl+Shift+C)"
                 >
                   <PanelLeftOpen className="w-4 h-4" />
                   Dock
                 </button>
 
-                {busy && progress.total > 0 && (
-                  <div className="text-xs text-neutral-700 px-2 py-1 rounded border bg-white">
-                    {progress.label || "Working…"} {progress.step}/{progress.total}
-                  </div>
-                )}
-                {agentMode && busy ? (
-                  <button
-                    onClick={stopAgent}
-                    className="inline-flex items-center gap-2 px-3 py-2 text-xs border rounded hover:bg-neutral-50"
-                    title="Stop Agent"
-                  >
-                    <Square className="w-4 h-4" />
-                    Stop
-                  </button>
-                ) : null}
-                
-                <button
-                  onClick={() => setAgentMode(v => !v)}
-                  className={`inline-flex items-center gap-2 text-xs px-3 py-2 rounded border ${agentMode ? "bg-indigo-600 text-white hover:bg-indigo-700" : "hover:bg-neutral-50"}`}
-                  title="Toggle Agent Mode"
-                >
-                  <Bot className="w-4 h-4" />
-                  {agentMode ? "Agent On" : "Agent Off"}
-                </button>
                 <button
                   onClick={clearThread}
                   disabled={!active}
@@ -1361,19 +1489,48 @@ useEffect(() => {
                   {turn.user ? (
                     <div className="px-4 py-3 border-b bg-neutral-50">
                       <div className="w-full flex justify-end">
-                        <div className={`${userBubbleMax} w-full bg-indigo-600 text-white px-4 py-3 rounded-2xl rounded-tr-sm shadow`}>
-                          <ReactMarkdown
-                            remarkPlugins={[remarkGfm]}
-                            rehypePlugins={[[rehypeSanitize, sanitizedSchema]]}
-                            components={{
-                              ...mdComponentsUser,
-                              h1: ({ children }) => <h1 className={`${userH1} font-bold mt-1 mb-2`}>{children}</h1>,
-                              h2: ({ children }) => <h2 className={`${userH2} font-semibold mt-1 mb-2`}>{children}</h2>,
-                              p:  ({ children }) => <p className={`${userP} leading-relaxed mb-2`}>{children}</p>,
-                            }}
-                          >
-                            {String(turn.user.content || "")}
-                          </ReactMarkdown>
+                        <div className={`${userBubbleMax} group relative w-full bg-indigo-600 text-white px-4 py-3 rounded-2xl rounded-tr-sm shadow`}>
+                          <div className="absolute right-2 top-2 opacity-0 transition group-hover:opacity-100 flex items-center gap-1">
+                            <HoverActionButton
+                              title="Edit prompt"
+                              onClick={() => startInlineEdit(turn.user.messageIndex, turn.user.content)}
+                              className="border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </HoverActionButton>
+                            <HoverActionButton
+                              title="Copy prompt"
+                              onClick={() => copyText(turn.user.content)}
+                              className="border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                            </HoverActionButton>
+                          </div>
+                          {editingMessage?.messageIndex === turn.user.messageIndex ? (
+                            <MessageInlineEditor
+                              value={editingMessage?.draft ?? ""}
+                              onChange={updateEditingDraft}
+                              onSave={sendInlinePromptEdit}
+                              onCancel={cancelInlineEdit}
+                              variant="user"
+                              actionLabel="Send"
+                              helperText="Cmd/Ctrl+Enter to send, Esc to cancel"
+                              disabled={busy}
+                            />
+                          ) : (
+                            <ReactMarkdown
+                              remarkPlugins={[remarkGfm]}
+                              rehypePlugins={[[rehypeSanitize, sanitizedSchema]]}
+                              components={{
+                                ...mdComponentsUser,
+                                h1: ({ children }) => <h1 className={`${userH1} font-bold mt-1 mb-2`}>{children}</h1>,
+                                h2: ({ children }) => <h2 className={`${userH2} font-semibold mt-1 mb-2`}>{children}</h2>,
+                                p:  ({ children }) => <p className={`${userP} leading-relaxed mb-2`}>{children}</p>,
+                              }}
+                            >
+                              {String(turn.user.content || "")}
+                            </ReactMarkdown>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -1381,35 +1538,43 @@ useEffect(() => {
 
                   <div className="px-4 py-3 space-y-2">
                     {(turn.assistant.length ? turn.assistant : [{ role: "assistant", content: "" }]).map((am, i) => (
-                      <div key={i} className="max-w-none">
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm]}
-                          rehypePlugins={[[rehypeSanitize, sanitizedSchema]]}
-                          components={{
-                            ...mdComponents,
-                            h1: ({ children }) => <h1 className={`${asstH1} font-bold mt-1 mb-2`}>{children}</h1>,
-                            h2: ({ children }) => <h2 className={`${asstH2} font-semibold mt-1 mb-2`}>{children}</h2>,
-                            p:  ({ children }) => <p className="text-sm leading-relaxed mb-2">{children}</p>,
-                            ul: ({ children }) => <ul className="list-disc pl-5 my-1 space-y-0.5">{children}</ul>,
-                            ol: ({ children }) => <ol className="list-decimal pl-5 my-1 space-y-0.5">{children}</ol>,
-                            blockquote: ({ children }) => (
-                              <blockquote className="border-l-4 border-neutral-300 pl-3 italic text-neutral-700 my-2">
-                                {children}
-                              </blockquote>
-                            ),
-                            code({ inline, className, children }) {
-                              const isInline = inline ?? !/\blanguage-/.test(className || "");
-                              if (isInline) return <code className="px-1 py-0.5 text-[0.825rem] bg-neutral-200 rounded">{children}</code>;
-                              return (
-                                <pre className="text-[0.825rem] bg-neutral-900 text-neutral-100 p-2.5 rounded-lg overflow-auto my-2">
-                                  <code>{children}</code>
-                                </pre>
-                              );
-                            }
-                          }}
-                        >
-                          {String(am.content || "")}
-                        </ReactMarkdown>
+                      <div key={i} className="group relative max-w-none">
+                        <div className="absolute right-0 top-0 opacity-0 transition group-hover:opacity-100 flex items-center gap-1">
+                          <HoverActionButton
+                            title="Copy response"
+                            onClick={() => copyText(am.content)}
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </HoverActionButton>
+                        </div>
+                        {editingMessage && editingMessage.messageIndex === am.messageIndex ? (
+                          <MessageInlineEditor
+                            value={editingMessage?.draft ?? ""}
+                            onChange={updateEditingDraft}
+                            onSave={saveInlineEdit}
+                            onCancel={cancelInlineEdit}
+                          />
+                        ) : (
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            rehypePlugins={[[rehypeSanitize, sanitizedSchema]]}
+                            components={{
+                              ...mdComponents,
+                              h1: ({ children }) => <h1 className={`${asstH1} font-bold mt-1 mb-2`}>{children}</h1>,
+                              h2: ({ children }) => <h2 className={`${asstH2} font-semibold mt-1 mb-2`}>{children}</h2>,
+                              p:  ({ children }) => <p className="text-sm leading-relaxed mb-2">{children}</p>,
+                              ul: ({ children }) => <ul className="list-disc pl-5 my-1 space-y-0.5">{children}</ul>,
+                              ol: ({ children }) => <ol className="list-decimal pl-5 my-1 space-y-0.5">{children}</ol>,
+                              blockquote: ({ children }) => (
+                                <blockquote className="border-l-4 border-neutral-300 pl-3 italic text-neutral-700 my-2">
+                                  {children}
+                                </blockquote>
+                              )
+                            }}
+                          >
+                            {String(am.content || "")}
+                          </ReactMarkdown>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -1439,31 +1604,28 @@ useEffect(() => {
                 <MarkdownToolbar onChange={setInput} textareaRef={textareaRef} />
               </div>
               <div className="flex items-end gap-2">
-                <textarea
-                  ref={textareaRef}
-                  className="flex-1 border rounded-lg px-3 py-2 text-sm h-24 resize-y focus:outline-none focus:ring focus:ring-indigo-200"
-                  placeholder={agentMode ? "Describe a goal. Agent will plan, propose edits, and ask you to confirm before applying…" : "Ask anything about your project…"}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={handleComposerKeyDown}
-                />
-                {agentMode && busy ? (
-                  <button
-                    onClick={stopAgent}
-                    className="inline-flex items-center gap-2 px-3 py-2 text-sm border rounded-lg hover:bg-neutral-50"
-                    title="Stop Agent"
-                  >
-                    <Square className="w-4 h-4" />
-                    Stop
-                  </button>
-                ) : null}
+                <div className="flex-1">
+                  <textarea
+                    ref={textareaRef}
+                    className="w-full border rounded-lg px-3 py-2 text-sm h-24 resize-y focus:outline-none focus:ring focus:ring-indigo-200"
+                    placeholder="Ask anything about your project..."
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSend();
+                      }
+                    }}
+                  />
+                </div>
                 <button
                   onClick={handleSend}
                   disabled={busy || !input.trim() || !active}
                   className="inline-flex items-center gap-2 px-3 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
                 >
                   <SendHorizonal className="w-4 h-4" />
-                  {agentMode ? "Run Agent" : "Send"}
+                  Send
                 </button>
               </div>
               <QuickSuggestions
@@ -1484,7 +1646,6 @@ useEffect(() => {
       {/* Compact view (when rendered inside the dock by App.js) */}
       {docked && (
         <div className="h-full min-w-0 flex flex-col">
-
           <div
             ref={scrollRef}
             onScroll={handleScroll}
@@ -1495,19 +1656,48 @@ useEffect(() => {
                 {turn.user ? (
                   <div className="px-3 py-2 border-b bg-neutral-50">
                     <div className="w-full flex justify-end">
-                      <div className={`${userBubbleMax} w-full bg-indigo-600 text-white px-3 py-2 rounded-2xl rounded-tr-sm shadow`}>
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm]}
-                          rehypePlugins={[[rehypeSanitize, sanitizedSchema]]}
-                          components={{
-                            ...mdComponentsUser,
-                            h1: ({ children }) => <h1 className={`${userH1} font-bold mt-1 mb-1.5`}>{children}</h1>,
-                            h2: ({ children }) => <h2 className={`${userH2} font-semibold mt-1 mb-1.5`}>{children}</h2>,
-                            p:  ({ children }) => <p className="text-[13px] leading-relaxed mb-1.5">{children}</p>,
-                          }}                          
-                        >
-                          {String(turn.user.content || "")}
-                        </ReactMarkdown>
+                      <div className={`${userBubbleMax} group relative w-full bg-indigo-600 text-white px-3 py-2 rounded-2xl rounded-tr-sm shadow`}>
+                        <div className="absolute right-2 top-2 opacity-0 transition group-hover:opacity-100 flex items-center gap-1">
+                          <HoverActionButton
+                            title="Edit prompt"
+                            onClick={() => startInlineEdit(turn.user.messageIndex, turn.user.content)}
+                            className="border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </HoverActionButton>
+                          <HoverActionButton
+                            title="Copy prompt"
+                            onClick={() => copyText(turn.user.content)}
+                            className="border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </HoverActionButton>
+                        </div>
+                        {editingMessage?.messageIndex === turn.user.messageIndex ? (
+                          <MessageInlineEditor
+                            value={editingMessage?.draft ?? ""}
+                            onChange={updateEditingDraft}
+                            onSave={sendInlinePromptEdit}
+                            onCancel={cancelInlineEdit}
+                            variant="user"
+                            actionLabel="Send"
+                            helperText="Cmd/Ctrl+Enter to send, Esc to cancel"
+                            disabled={busy}
+                          />
+                        ) : (
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            rehypePlugins={[[rehypeSanitize, sanitizedSchema]]}
+                            components={{
+                              ...mdComponentsUser,
+                              h1: ({ children }) => <h1 className={`${userH1} font-bold mt-1 mb-1.5`}>{children}</h1>,
+                              h2: ({ children }) => <h2 className={`${userH2} font-semibold mt-1 mb-1.5`}>{children}</h2>,
+                              p:  ({ children }) => <p className="text-[13px] leading-relaxed mb-1.5">{children}</p>,
+                            }}
+                          >
+                            {String(turn.user.content || "")}
+                          </ReactMarkdown>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1515,19 +1705,36 @@ useEffect(() => {
 
                 <div className="px-3 py-2 space-y-1">
                   {(turn.assistant.length ? turn.assistant : [{ role: "assistant", content: "" }]).map((am, i) => (
-                    <div key={i} className="max-w-none">
-                      <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        rehypePlugins={[[rehypeSanitize, sanitizedSchema]]}
-                        components={{
-                          ...mdComponentsUser,
-                          h1: ({ children }) => <h1 className="text-lg font-bold mt-1 mb-1.5">{children}</h1>,
-                          h2: ({ children }) => <h2 className="text-base font-semibold mt-1 mb-1.5">{children}</h2>,
-                          p:  ({ children }) => <p className="text-[13px] leading-relaxed mb-1.5">{children}</p>,
-                        }}
-                      >
-                        {String(am.content || "")}
-                      </ReactMarkdown>
+                    <div key={i} className="group relative max-w-none">
+                      <div className="absolute right-0 top-0 opacity-0 transition group-hover:opacity-100 flex items-center gap-1">
+                        <HoverActionButton
+                          title="Copy response"
+                          onClick={() => copyText(am.content)}
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                        </HoverActionButton>
+                      </div>
+                      {editingMessage && editingMessage.messageIndex === am.messageIndex ? (
+                        <MessageInlineEditor
+                          value={editingMessage?.draft ?? ""}
+                          onChange={updateEditingDraft}
+                          onSave={saveInlineEdit}
+                          onCancel={cancelInlineEdit}
+                        />
+                      ) : (
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          rehypePlugins={[[rehypeSanitize, sanitizedSchema]]}
+                          components={{
+                            ...mdComponentsUser,
+                            h1: ({ children }) => <h1 className="text-lg font-bold mt-1 mb-1.5">{children}</h1>,
+                            h2: ({ children }) => <h2 className="text-base font-semibold mt-1 mb-1.5">{children}</h2>,
+                            p:  ({ children }) => <p className="text-[13px] leading-relaxed mb-1.5">{children}</p>,
+                          }}
+                        >
+                          {String(am.content || "")}
+                        </ReactMarkdown>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1544,7 +1751,7 @@ useEffect(() => {
           </div>
 
           <div className="border-t bg-white p-2">
-  <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2">
     {/* Pending context chips */}
 {regionContexts.length > 0 && (
   <div className="mb-2">
@@ -1593,13 +1800,21 @@ useEffect(() => {
 )}
 
     {/* Row 1: textarea gets the full width */}
-    <textarea
-      className="w-full border rounded-lg px-3 py-2 text-sm min-h-[84px] max-h-48 resize-y focus:outline-none focus:ring focus:ring-indigo-200"
-      placeholder={agentMode ? "Goal for agent…" : "Ask Copilot…"}
-      value={input}
-      onChange={(e) => setInput(e.target.value)}
-      onKeyDown={handleComposerKeyDown}
-    />
+    <div>
+      <textarea
+        ref={textareaRef}
+        className="w-full border rounded-lg px-3 py-2 text-sm min-h-[84px] max-h-48 resize-y focus:outline-none focus:ring focus:ring-indigo-200"
+        placeholder="Ask Collaborator..."
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            handleSend();
+          }
+        }}
+      />
+    </div>
 
     {/* Row 2: controls split left/right */}
     <div className="flex items-center justify-between gap-2">
@@ -1621,23 +1836,12 @@ useEffect(() => {
             });
           }}
           className="inline-flex items-center gap-2 px-2.5 py-1.5 text-sm border rounded-lg hover:bg-neutral-50"
-          title="Select on-screen region to use as Copilot context"
+          title="Select on-screen region to use as Collaborator context"
         >
           <Crosshair className="w-4 h-4" />
           Select
         </button>
 
-        {/* Stop Agent (only when running) */}
-        {agentMode && busy ? (
-          <button
-            onClick={stopAgent}
-            className="inline-flex items-center gap-2 px-2.5 py-1.5 text-sm border rounded-lg hover:bg-neutral-50"
-            title="Stop Agent"
-          >
-            <Square className="w-4 h-4" />
-            Stop
-          </button>
-        ) : null}
       </div>
 
       {/* Right: primary action */}
@@ -1647,7 +1851,7 @@ useEffect(() => {
         className="inline-flex items-center gap-2 px-3 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
       >
         <SendHorizonal className="w-4 h-4" />
-        {agentMode ? "Run Agent" : "Send"}
+        Send
       </button>
     </div>
 
@@ -1657,70 +1861,6 @@ useEffect(() => {
 </div>
 
 
-        </div>
-      )}
-
-      {/* Human-in-the-Loop Confirmation Modal (works in both modes) */}
-      {showConfirm && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[1100]">
-          <div className="bg-white rounded-xl shadow-xl w=[680px] max-w-[95vw]">
-            <div className="px-5 py-4 border-b flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-amber-600" />
-              <div className="font-semibold">Review proposed changes</div>
-            </div>
-            <div className="px-5 py-4 space-y-3 max-h-[60vh] overflow-auto">
-              <div className="text-sm text-neutral-700">
-                <p className="mb-3">
-                  <strong>Heads up:</strong> Agent Mode can make mistakes. <u>You are the human in the loop.</u> Please review the proposed edits below before they are applied to your project.
-                </p>
-                <p className="mb-3">
-                  If something looks wrong, click <strong>Cancel</strong> and edit your request or ask the agent to revise the plan.
-                </p>
-              </div>
-              <div className="border rounded-md overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead className="bg-neutral-50">
-                    <tr>
-                      <th className="text-left px-3 py-2 border-b">Type</th>
-                      <th className="text-left px-3 py-2 border-b">Summary</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(pendingActions?.actions || []).map((a, i) => (
-                      <tr key={i} className="odd:bg-white even:bg-neutral-50">
-                        <td className="px-3 py-2 align-top border-b font-mono text-xs">{a.type}</td>
-                        <td className="px-3 py-2 align-top border-b">
-                          <div className="text-[13px]">
-                            {summarizeAction(a)}
-                          </div>
-                          <pre className="text-[11px] bg-neutral-100 text-neutral-800 rounded p-2 mt-2 overflow-auto">
-                            {JSON.stringify(a.payload, null, 2)}
-                          </pre>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="text-[12px] text-neutral-500">
-                Note: The app that owns requirements/diagrams/risk will listen for <code>xhandle:agent-apply</code> and perform the actual edits (or you can pass <code>onAgentApply</code> to handle it directly).
-              </div>
-            </div>
-            <div className="px-5 py-3 border-t flex items-center justify-end gap-2">
-              <button
-                className="px-3 py-2 text-sm rounded border hover:bg-neutral-50"
-                onClick={() => { setShowConfirm(false); setPendingActions(null); }}
-              >
-                Cancel
-              </button>
-              <button
-                className="px-3 py-2 text-sm rounded bg-indigo-600 text-white hover:bg-indigo-700"
-                onClick={applyPendingActions}
-              >
-                I understand — Apply changes
-              </button>
-            </div>
-          </div>
         </div>
       )}
       {ctxEditorOpen && ctxDraft && (
@@ -1829,26 +1969,4 @@ useEffect(() => {
 
     </div>
   );
-
-  /* ---- helpers ---- */
-  function summarizeAction(a) {
-    try {
-      switch (a.type) {
-        case "CREATE_REQUIREMENT":
-          return `Create requirement “${a.payload?.title || "Untitled"}” in module “${a.payload?.module || "-"}”.`;
-        case "UPDATE_REQUIREMENT":
-          return `Update requirement ${a.payload?.id} with fields ${Object.keys(a.payload?.patch || {}).join(", ") || "-"}.`;
-        case "CREATE_DIAGRAM_NODE":
-          return `Add diagram node “${a.payload?.label || "-"}” (${a.payload?.group || "group: -"}).`;
-        case "CREATE_DIAGRAM_EDGE":
-          return `Add edge ${a.payload?.fromLabel} → ${a.payload?.toLabel} (${a.payload?.controlAction || "-" }).`;
-        case "CREATE_MODULE":
-          return `Create module “${a.payload?.name || "-"}” (type: ${a.payload?.type || "Requirement"}).`;
-        case "UPDATE_RISK":
-          return `Update risk ${a.payload?.id} with fields ${Object.keys(a.payload?.patch || {}).join(", ") || "-"}.`;
-        default:
-          return `Action of type ${a.type}`;
-      }
-    } catch { return `Action of type ${a?.type || "UNKNOWN"}`; }
-  }
 }

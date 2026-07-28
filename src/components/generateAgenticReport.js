@@ -1,30 +1,12 @@
-/**
- * xHandle: generate agentic report shared application component.
- * This file implements a reusable application-level component or helper that participates in xHandle's end-to-end engineering workflows.
- * Shared components connect the main workspace, diagrams, copilot features, reporting, and local persistence so individual features can cooperate as one system.
- * Related files: src/App.js, src/lib/storage/indexedDB.js, src/features/hazard-analysis/aiAnalysisLite.js.
- */
-
 // generateAgenticReport.js
-import { backendURL, buildAIAuthOpts } from "./backendConfig";
-import { logger } from "./utils/logger";
+import { buildAIAuthOpts } from "./backendConfig";
 
-/**
- * getCellText reads normalized data for this module from the source of truth it depends on. These accessor-style helpers keep the rest of the feature focused on workflow behavior rather than storage or transport details.
- * @param cell Input consumed by this step of the xHandle workflow.
- * @returns the normalized data requested by this module.
- */
 function getCellText(cell) {
   if (cell == null) return "";
   if (typeof cell === "object" && "value" in cell) return String(cell.value);
   return String(cell);
 }
 
-/**
- * extractJsonFromMarkdown prepares raw input so downstream xHandle logic can rely on a predictable shape. Data-cleanup helpers like this are important because AI prompts, diagrams, and worksheet pipelines all depend on stable, human-readable text and identifiers.
- * @param text Input consumed by this step of the xHandle workflow.
- * @returns the value that the next step in this workflow consumes.
- */
 function extractJsonFromMarkdown(text) {
   const match =
     text.match(/```json\s*([\s\S]*?)```/i) ||
@@ -69,23 +51,12 @@ function enforceListSpacing(markdown) {
   return out.join("\n");
 }
 
-/**
- * stripOuterMarkdownFence encapsulates a focused piece of workspace orchestration flow logic for xHandle. Giving this behavior a named function makes the surrounding module easier to scan and helps new contributors see where one responsibility ends and the next begins.
- * @param text Input consumed by this step of the xHandle workflow.
- * @returns the value that the next step in this workflow consumes.
- */
 function stripOuterMarkdownFence(text) {
   const t = String(text || "").trim();
   const m = t.match(/^```(?:\w+)?\s*([\s\S]*?)\s*```$/);
   return m ? m[1].trim() : t;
 }
 
-/**
- * chunkRows encapsulates a focused piece of workspace orchestration flow logic for xHandle. Giving this behavior a named function makes the surrounding module easier to scan and helps new contributors see where one responsibility ends and the next begins.
- * @param rows Worksheet or table rows that this step transforms.
- * @param chunkSize Maximum number of rows to process per batch.
- * @returns the value that the next step in this workflow consumes.
- */
 function chunkRows(rows, chunkSize = 25) {
   const chunks = [];
   for (let i = 0; i < rows.length; i += chunkSize) {
@@ -94,16 +65,6 @@ function chunkRows(rows, chunkSize = 25) {
   return chunks;
 }
 
-/**
- * fetchLLMResponse sends an xHandle prompt to the backend chat proxy and returns the model text needed by this module. In AI-heavy flows this is the boundary that packages local worksheet context, optional diagram context, and any user-authored prompt text into the request format expected by the server.
- * @param prompt Prompt text or prompt payload supplied to the AI step.
- * @param temperature Input consumed by this step of the xHandle workflow.
- * @param max_tokens Input consumed by this step of the xHandle workflow.
- * @param model Input consumed by this step of the xHandle workflow.
- * @param retries Input consumed by this step of the xHandle workflow.
- * @param system System instruction text that shapes the model response style or scope.
- * @returns Promise resolving to the model response text expected by the downstream pipeline step.
- */
 async function fetchLLMResponse({
   prompt,
   temperature = 0.4,
@@ -124,7 +85,7 @@ async function fetchLLMResponse({
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const res = await fetch(`${backendURL}/api/chat`, {
+      const res = await fetch("/api/chat", {
         method: "POST",
         ...buildAIAuthOpts({ "Content-Type": "application/json" }),
         body: JSON.stringify(body),
@@ -139,7 +100,7 @@ async function fetchLLMResponse({
       const content = json.choices?.[0]?.message?.content || "";
       return content.trim();
     } catch (error) {
-      logger.warn(`🔁 LLM retry ${attempt + 1} failed`, error);
+      console.warn(`🔁 LLM retry ${attempt + 1} failed`, error);
       if (attempt === retries) throw error;
       await new Promise(r => setTimeout(r, 250 * (attempt + 1))); // tiny backoff
     }
@@ -166,15 +127,9 @@ function formatFDRow(row) {
 → To Function: "${c}"`;
 }
 
-/**
- * describeFunctionalArchitecture executes one step of the workspace orchestration flow. This keeps the broader xHandle flow readable by isolating a named stage in the processing pipeline instead of mixing every transformation into one large procedure.
- * @param rows Worksheet or table rows that this step transforms.
- * @returns Promise resolving to the value that the next step in this workflow consumes.
- */
 async function describeFunctionalArchitecture(rows) {
   if (!rows?.length) return "[No functional decomposition data provided]";
 
-  // This prompt packages the local xHandle context for the current AI step and documents the response shape the caller expects back.
   const prompt = `
 You are describing the system architecture based on the following functional decomposition table.
 Each row represents a control interaction.
@@ -203,7 +158,6 @@ async function buildFunctionInterfaceCatalog(rows) {
 
   const normalized = rows.map(formatFDRow).join("\n");
 
-  // This prompt packages the local xHandle context for the current AI step and documents the response shape the caller expects back.
   const prompt = `
 You are producing a concise but complete Markdown catalog of functions and interfaces
 from a functional decomposition. Use ONLY the information implicit in the rows.
@@ -241,14 +195,6 @@ Do not wrap the entire output in code fences.
   return enforceListSpacing(stripOuterMarkdownFence(md));
 }
 
-/**
- * summarizeChunkInteractive executes one step of the workspace orchestration flow. This keeps the broader xHandle flow readable by isolating a named stage in the processing pipeline instead of mixing every transformation into one large procedure.
- * @param chunk Subset of rows processed as one AI or rendering batch.
- * @param headers Column headers used to label row values or generated output.
- * @param method Input consumed by this step of the xHandle workflow.
- * @param onClarifyChunk Callback used to notify the surrounding workflow about progress or user actions.
- * @returns Promise resolving to the value that the next step in this workflow consumes.
- */
 async function summarizeChunkInteractive(
   chunk,
   headers,
@@ -259,7 +205,6 @@ async function summarizeChunkInteractive(
     .map((row) => headers.map((h, i) => `${h}: ${getCellText(row[i])}`).join("\n"))
     .join("\n\n");
 
-  // This prompt packages the local xHandle context for the current AI step and documents the response shape the caller expects back.
   const basePrompt = `
 You are a safety analysis expert.
 
@@ -279,9 +224,7 @@ ${chunkInput}
     const response = await fetchLLMResponse({ prompt: basePrompt });
     const cleanResponse = extractJsonFromMarkdown(response);
     const parsed = JSON.parse(cleanResponse);
-    agentState.chunksCompleted.push(parsed.summary);
-    agentState.confidenceScores.push(parsed.confidence);
-    return { success: true, summary: parsed.summary };
+    return { success: true, summary: parsed.summary, confidence: parsed.confidence };
   } catch (error) {
     if (typeof onClarifyChunk === "function") {
       const userAction = await onClarifyChunk({ chunkInput, headers, error });
@@ -296,26 +239,35 @@ ${chunkInput}
         const editedResponse = await fetchLLMResponse({
           prompt: userAction.editedPrompt,
         });
-        agentState.chunksCompleted.push(editedResponse);
-        agentState.confidenceScores.push(null);
-        return { success: true, summary: editedResponse };
+        return { success: true, summary: editedResponse, confidence: null };
       }
     }
     return { success: false, error: error.message };
   }
 }
 
-/**
- * runGoalAssessment executes one step of the workspace orchestration flow. This keeps the broader xHandle flow readable by isolating a named stage in the processing pipeline instead of mixing every transformation into one large procedure.
- * @param summarySheet Input consumed by this step of the xHandle workflow.
- * @param method Input consumed by this step of the xHandle workflow.
- * @returns Promise resolving to the value that the next step in this workflow consumes.
- */
+async function runWithConcurrency(items, limit, worker) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(limit, items.length);
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await worker(items[index], index);
+      }
+    })
+  );
+
+  return results;
+}
+
 async function runGoalAssessment(summarySheet, method) {
   const headers = summarySheet[0];
   const rows = summarySheet.slice(1);
 
-  // This prompt packages the local xHandle context for the current AI step and documents the response shape the caller expects back.
   const prompt = `
 You are an autonomous report-writing agent.
 
@@ -353,38 +305,32 @@ ${rows
   }
 }
 
-/**
- * runAgenticChunkLoop executes one step of the workspace orchestration flow. This keeps the broader xHandle flow readable by isolating a named stage in the processing pipeline instead of mixing every transformation into one large procedure.
- * @param summarySheet Input consumed by this step of the xHandle workflow.
- * @param method Input consumed by this step of the xHandle workflow.
- * @returns Promise resolving to the value that the next step in this workflow consumes.
- */
 async function runAgenticChunkLoop(summarySheet, method) {
   const headers = summarySheet[0];
   const rows = summarySheet.slice(1);
   const chunks = chunkRows(rows, agentState.chunkSize);
 
-  for (const chunk of chunks) {
-    const result = await summarizeChunkInteractive(
+  const results = await runWithConcurrency(chunks, 3, (chunk) =>
+    summarizeChunkInteractive(
       chunk,
       headers,
       method,
       agentState.mode === "interactive" ? agentState.onClarifyChunk : null
-    );
+    )
+  );
 
+  results.forEach((result, index) => {
     if (!result.success) {
-      agentState.failedChunks.push({ chunk, error: result.error });
+      agentState.failedChunks.push({ chunk: chunks[index], error: result.error });
       agentState.confidenceScores.push(null);
+      return;
     }
-  }
+    agentState.chunksCompleted.push(result.summary);
+    agentState.confidenceScores.push(result.confidence ?? null);
+  });
 }
 
-/**
- * auditChunkSummaries encapsulates a focused piece of workspace orchestration flow logic for xHandle. Giving this behavior a named function makes the surrounding module easier to scan and helps new contributors see where one responsibility ends and the next begins.
- * @returns Promise resolving to the value that the next step in this workflow consumes.
- */
 async function auditChunkSummaries() {
-  // This prompt packages the local xHandle context for the current AI step and documents the response shape the caller expects back.
   const auditPrompt = `
 You are auditing safety report summaries.
 
@@ -409,13 +355,6 @@ Return JSON:
   return parsed;
 }
 
-/**
- * reviseChunksFromAudit encapsulates a focused piece of workspace orchestration flow logic for xHandle. Giving this behavior a named function makes the surrounding module easier to scan and helps new contributors see where one responsibility ends and the next begins.
- * @param audit Input consumed by this step of the xHandle workflow.
- * @param summarySheet Input consumed by this step of the xHandle workflow.
- * @param method Input consumed by this step of the xHandle workflow.
- * @returns Promise resolving to the value that the next step in this workflow consumes.
- */
 async function reviseChunksFromAudit(audit, summarySheet, method) {
   const headers = summarySheet[0];
   const rows = summarySheet.slice(1);
@@ -425,7 +364,6 @@ async function reviseChunksFromAudit(audit, summarySheet, method) {
     const start = index * agentState.chunkSize;
     const chunk = rows.slice(start, start + agentState.chunkSize);
 
-    // This prompt packages the local xHandle context for the current AI step and documents the response shape the caller expects back.
     const retryPrompt = `
 Revise the following summary based on this advice: "${advice}"
 
@@ -898,15 +836,6 @@ ${notes}
 `.trim(),
 };
 
-/**
- * buildSynthesisPrompt constructs the derived result needed by the feature for this part of xHandle. It exists so the rest of the system can ask for a derived artifact, UI structure, or persisted record without duplicating the transformation logic.
- * @param reportType Input consumed by this step of the xHandle workflow.
- * @param method Input consumed by this step of the xHandle workflow.
- * @param findings Input consumed by this step of the xHandle workflow.
- * @param notes Input consumed by this step of the xHandle workflow.
- * @param architectureDescription Input consumed by this step of the xHandle workflow.
- * @returns the value that the next step in this workflow consumes.
- */
 function buildSynthesisPrompt(reportType, { method, findings, notes, architectureDescription }) {
   const template = REPORT_TEMPLATES[reportType] || REPORT_TEMPLATES.Safety;
   return template({ method, findings, notes, architectureDescription });
@@ -928,15 +857,6 @@ function sampleSummaryRows(summarySheet, maxRows = 25) {
   }
 }
 
-/**
- * synthesizeCustomReport encapsulates a focused piece of workspace orchestration flow logic for xHandle. Giving this behavior a named function makes the surrounding module easier to scan and helps new contributors see where one responsibility ends and the next begins.
- * @param customPrompt Prompt text or prompt-related value used by this workflow.
- * @param method Input consumed by this step of the xHandle workflow.
- * @param architectureDescription Input consumed by this step of the xHandle workflow.
- * @param findings Input consumed by this step of the xHandle workflow.
- * @param summarySheet Input consumed by this step of the xHandle workflow.
- * @returns Promise resolving to the value that the next step in this workflow consumes.
- */
 async function synthesizeCustomReport({
   customPrompt,
   method,
@@ -949,7 +869,6 @@ async function synthesizeCustomReport({
   }
 
   const sampleRows = sampleSummaryRows(summarySheet, 25);
-  // This prompt packages the local xHandle context for the current AI step and documents the response shape the caller expects back.
   const prompt = `
 You are generating a custom Markdown report. Follow the user's instructions precisely.
 Return clean, valid Markdown suitable for rendering.
@@ -983,17 +902,6 @@ Formatting rules:
   return enforceListSpacing(stripOuterMarkdownFence(out));
 }
 
-/**
- * synthesizeFinalReport encapsulates a focused piece of workspace orchestration flow logic for xHandle. Giving this behavior a named function makes the surrounding module easier to scan and helps new contributors see where one responsibility ends and the next begins.
- * @param auditNotes Input consumed by this step of the xHandle workflow.
- * @param method Input consumed by this step of the xHandle workflow.
- * @param reportType Input consumed by this step of the xHandle workflow.
- * @param functionalDiagramImage Input consumed by this step of the xHandle workflow.
- * @param architectureDescription Input consumed by this step of the xHandle workflow.
- * @param customPrompt Prompt text or prompt-related value used by this workflow.
- * @param summarySheet Input consumed by this step of the xHandle workflow.
- * @returns Promise resolving to the value that the next step in this workflow consumes.
- */
 async function synthesizeFinalReport(
   auditNotes,
   method,
@@ -1037,19 +945,6 @@ async function synthesizeFinalReport(
   return enforceListSpacing(stripOuterMarkdownFence(finalReport));
 }
 
-/**
- * generateAgenticRiskReport constructs the report content for the current workflow for this part of xHandle. It exists so the rest of the system can ask for a derived artifact, UI structure, or persisted record without duplicating the transformation logic.
- * @param summarySheet Input consumed by this step of the xHandle workflow.
- * @param method Input consumed by this step of the xHandle workflow.
- * @param mode Input consumed by this step of the xHandle workflow.
- * @param onClarifyChunk Callback used to notify the surrounding workflow about progress or user actions.
- * @param setProgress React state setter supplied by the parent workflow.
- * @param functionalDiagramImage Input consumed by this step of the xHandle workflow.
- * @param functionalDecomposition Input consumed by this step of the xHandle workflow.
- * @param reportType Input consumed by this step of the xHandle workflow.
- * @param customPrompt Prompt text or prompt-related value used by this workflow.
- * @returns Promise resolving to the value that the next step in this workflow consumes.
- */
 export async function generateAgenticRiskReport({
   summarySheet,
   method,

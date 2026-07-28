@@ -1,36 +1,35 @@
-/**
- * xHandle: application shell and workspace orchestrator.
- * This file assembles the main xHandle experience, routing data between functional architecture modeling, hazard analysis, requirements, traceability, reporting, licensing, and agent surfaces.
- * It is the primary composition layer for the local-first frontend and coordinates how feature-specific state, diagrams, modal flows, and persisted project data appear together in one workspace.
- * Related files: src/index.js, src/components/XHandleCopilotView.jsx, src/components/RequirementsManager.jsx, src/features/traceability/VnVCenterPro.jsx.
- */
-
-import { useRef, useState, useEffect, useMemo } from 'react';
+import { useCallback, useRef, useState, useEffect, useMemo } from 'react';
 import { FlaskConical } from 'lucide-react';
-import VnVCenterPro from './features/traceability/VnVCenterPro';
-import ReadmeModal from './components/modals/ReadmeModal';
-import React from "react";  
-import { logger } from "./lib/utils/logger";
+import VnVCenterPro from './components/VnVCenterPro';
+import ReadmeModal from './components/ReadmeModal';
+import React from "react";
 import { ActivityProvider, ActivitiesButton, useActivityCenter } from "./components/activity/ActivityCenter";
 import {
   Plus,
   X,
-  LayoutDashboard,     // <-- Console
   FolderGit2,
-  ShieldAlert,
+  Folder,
+  FolderPlus,
   FileText,
+  Settings as SettingsIcon,
   ChevronRight,
+  ArrowUp,
+  ArrowDown,
+  Trash2,             // for delete buttons
   MoreVertical,
-  Bot,
   PanelLeftClose,
+  Maximize2,
+  Minimize2,
+  ShieldCheck,
+  ClipboardCheck,
 } from 'lucide-react';
 import XHandleCopilotView from "./components/XHandleCopilotView";
-import { handleLitePromptSubmit } from './features/functional-architecture/LitePromptHandler';
-import { runLiteAIAnalysis } from './features/hazard-analysis/aiAnalysisLite';
-import LiteSummaryDiagram from './components/diagrams/LiteSummaryDiagram';
-import PromptWizard from './features/functional-architecture/PromptWizard';
+import { handleLitePromptSubmit } from './components/LitePromptHandler';
+import { runLiteAIAnalysis } from './components/aiAnalysisLite';
+import LiteSummaryDiagram from './components/LiteSummaryDiagram';
+import PromptWizard from './components/PromptWizard';
 import ConversationalWizard from './components/ConversationalWizard';
-import LiteSummaryDiagramReactFlow from './components/diagrams/LiteSummaryDiagramReactFlow';
+import LiteSummaryDiagramReactFlow from './components/LiteSummaryDiagramReactFlow';
 import { generateAgenticRiskReport } from './components/generateAgenticReport';
 import SafetyReportViewer from './components/SafetyReportViewer';
 import { exportReport } from "./components/utils/exportUtils";
@@ -39,207 +38,394 @@ import {
   BarChart, Bar, XAxis, YAxis, ResponsiveContainer
 } from 'recharts';
 import { createPortal } from 'react-dom';
-import { CalendarClock, GitCommit } from 'lucide-react';
-import RequirementsManager from './components/RequirementsManager';
-import TraceabilityAuditorPanel from './features/traceability/TraceabilityAuditorPanel';
-import { useLicense, Gate } from './license/LicenseContext';
-import ActivateLicenseModal from './license/ActivateLicenseModal';
-import TopNavBar from './components/layout/TopNavBar';
-import SettingsModal from './features/settings/SettingsModal';
-import { generateFunctionalDecompositionFromGitHub, FunctionalDecompositionTable } from './features/functional-architecture/generateFunctionalDecompositionFromGitHub';
+import { GitCommit } from 'lucide-react';
+import DesignManagementView from './features/design-management/DesignManagementView';
+import SafetyCaseView from './features/safety-case/SafetyCaseView';
+import TraceabilityAuditorPanel from './components/TraceabilityAuditorPanel';
+import { Gate } from './license/LicenseContext';
+import TopNavBar from './components/TopNavBar';
+import SettingsModal from './components/SettingsModal';
+import {
+  FileTypeSelectorModal,
+  filterSelectableRepoFiles,
+  generateFunctionalDecompositionFromGitHub,
+  FunctionalDecompositionTable,
+  getDefaultBranch,
+  listRepoFilesViaGitHub,
+} from './components/generateFunctionalDecompositionFromGitHub';
+import { backendURL, buildAIAuthOpts } from './components/backendConfig';
 import { Sun, Moon } from 'lucide-react';
 import { useDarkMode } from './hooks/useDarkMode';
-import AgentHubButton from "./features/agents/ui/AgentHubButton";
-import AgentsConsole from "./features/agents/ui/AgentsConsole";
-import { initAgentMonitor } from "./agents/AgentMonitor";
+import { ensureTraceabilitySchema } from "./components/utils/traceabilityDb";
+import {
+  AI_PROVIDER_OPTIONS,
+  fetchUserAIProviderSettings,
+  getAIProviderLabel,
+  getProviderKeyHelpText,
+  getProviderKeyPlaceholder,
+  normalizeAIProvider,
+  saveUserAIProviderSettings,
+  validateProviderApiKey,
+} from "./lib/aiProviderConfig";
+import { initializeLocalBackupRuntime } from "./lib/localBackupService";
+import {
+  appendRequirementRows,
+  createRequirementModule,
+  loadRequirements,
+  populateRequirementModule,
+} from "./features/requirements/actions";
+import { getActionProvider } from "./features/app/actionRegistry";
+import {
+  ResultsReviewProvider,
+  ReviewCenter,
+  ReviewStatusBadge,
+  REVIEW_STATUSES,
+  createReviewItemsFromGeneratedTable,
+  useResultsReview,
+} from "./features/results-review";
+import {
+  SafetyRemediationPanel,
+  architectureElementFromRow,
+  getRepoMeta,
+  safetyRemediationStore,
+} from "./features/safety-remediation";
+import {
+  CODE_ARCHITECTURE_HAZARD_ARTIFACT_TYPE,
+  CodeArchitectureHazardPanel,
+  deleteCodeArchitectureHazardRuns,
+  ensureCodeArchitectureTraceIds,
+  getLatestCodeArchitectureHazardRun,
+  isCodeArchitectureHazardAnalysisStale,
+  runCodeArchitectureHazardAnalysis,
+  saveCodeArchitectureHazardRun,
+} from "./features/code-architecture-hazard-analysis";
+import {
+  ARTIFACT_KINDS,
+  EngineeringArtifactPanel,
+  TraceabilityMatrixPanel,
+  architectureLabelFromRef,
+  architectureRefToFocusTarget,
+  artifactKindForLinkType,
+  functionalRowIndexForTraceValue,
+  loadArtifactRows,
+  loadArtifactRowsAsync,
+} from "./features/code-architecture-assurance";
+import {
+  XHANDLE_IDB_CBA_STORE,
+  XHANDLE_IDB_NAME,
+  codeArchitectureMetaKey,
+  codeArchitectureRowsKey,
+  readCbaRowsFromIndexedDB,
+  readFirstCbaRowsFromIndexedDB,
+  writeCbaRowsToIndexedDB,
+} from "./features/code-architecture-assurance/codeArchitectureStorage";
+import {
+  formatDuration,
+  formatUsd,
+} from "./features/code-architecture-assurance/codeArchitectureMetrics";
+import {
+  CrossRepoArchitecturePanel,
+  CROSS_REPO_ARCHITECTURE_KIND,
+  getCbaProjectsInFolderTree,
+  getCrossRepoGeneratedMeta,
+} from "./features/code-architecture-cross-repo";
+import {
+  chooseCodeArchitectureReviewDestination,
+  collectCodeArchitectureReviewPackage,
+  downloadCodeArchitectureReviewApp,
+  isHostedCodeArchitectureReviewPackagerConfigured,
+  REVIEW_ANALYSIS_SECTIONS,
+} from "./features/code-architecture-review/codeArchitectureReviewExport";
 
-// Convert the 2D "Summary" sheet into an array of objects for the auditor
-const summary2Objects = (summary2D) => {
-  if (!summary2D || !Array.isArray(summary2D) || summary2D.length < 2) return [];
-  const headers = summary2D[0].map(String);
-  return summary2D.slice(1).map((row) => {
-    const o = {};
-    headers.forEach((h, i) => { o[h] = row[i]; });
-    return o;
-  });
-};
+const CODE_ARCHITECTURE_REVIEW_ANALYSIS_OPTIONS = [
+  { key: REVIEW_ANALYSIS_SECTIONS.HAZARD, label: "Hazard & Remediation" },
+  { key: REVIEW_ANALYSIS_SECTIONS.SOFTWARE, label: "Software Requirements", artifactKind: ARTIFACT_KINDS.SOFTWARE },
+  { key: REVIEW_ANALYSIS_SECTIONS.SYSTEM, label: "System Requirements", artifactKind: ARTIFACT_KINDS.SYSTEM },
+  { key: REVIEW_ANALYSIS_SECTIONS.SUBSYSTEM, label: "Subsystem Requirements", artifactKind: ARTIFACT_KINDS.SUBSYSTEM },
+  { key: REVIEW_ANALYSIS_SECTIONS.DESIGN, label: "System / Subsystem Design", artifactKind: ARTIFACT_KINDS.DESIGN },
+  { key: REVIEW_ANALYSIS_SECTIONS.TRACEABILITY, label: "Traceability Matrix" },
+];
 
-// Ensure a requirement-like node exists by id (used when linking to HZ:/MT: placeholders)
-const ensureReqById = (list, id, { title = '', module = 'Requirement', attributes = {} } = {}) => {
-  let found = list.find(r => r.id === id);
-  if (!found) {
-    found = { id, title: title || id, module, attributes, links: [] };
-    list.push(found);
-  }
-  return found;
-};
-// ── helpers used by hooks during render: define at module scope
-const makeId = () =>
-  (typeof crypto !== 'undefined' && crypto.randomUUID)
-    ? crypto.randomUUID()
-    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,9)}`;
-const PROJECTS_KEY = 'xhandle.projects';
-const ACTIVE_PROJECT_ID_KEY = 'xhandle.activeProjectId';
-const PROJECT_DATA_KEY = 'xhandle.projectData';
-const PROJECTS_OPEN_KEY = 'xhandle.sidebarProjectsOpen';
-const DEFAULT_RISK_METHOD = 'STPA-Textbook';
-
-function normalizeRiskMethod(method) {
-  switch (method) {
-    case 'STPA':
-    case 'STPA-SEC':
-    case 'STPA-Textbook':
-      return 'STPA-Textbook';
-    case 'FMEA':
-    case 'FMEA-Textbook':
-      return 'FMEA-Textbook';
-    case 'WhatIf':
-    case 'HRWhatIf':
-    case 'WhatIf-Textbook':
-      return 'WhatIf-Textbook';
-    default:
-      return DEFAULT_RISK_METHOD;
-  }
-}
-
-// Keep projects hidden on Console
-const SHOW_CONSOLE_PROJECTS = false;
-
-// ---- Broadcast localStorage changes and trigger a re-collect of context ----
-function installLocalStorageBroadcast() {
-  if (window.__xhandle_ls_broadcast_installed) return;
-  window.__xhandle_ls_broadcast_installed = true;
-
-  // Only broadcast for keys that matter to global context
-  const KEY_WHITELIST = new Set([
-    'xhandle.projects',
-    'xhandle.activeProjectId',
-    'xhandle.projectData',
-    'xhandle.sidebarOpen',
-    'xhandle.sidebarProjectsOpen',
-    // add any others that should trigger global recompute
-  ]);
-  // Ignore hot/volatile keys
-  const KEY_BLOCKLIST_PREFIXES = [
-    'diagram:positions:',      // React Flow viewport/positions
-    'LiteSummaryDiagram::',    // any per-diagram cache you keep
-    'cba:',                    // big code-arch blobs if they churn
-  ];
-
-  let pending = false;
-  const fire = () => {
-    if (pending) return;
-    pending = true;
-    // batch multiple writes into a single event per frame
-    requestAnimationFrame(() => {
-      pending = false;
-      try { window.dispatchEvent(new CustomEvent("xhandle:data-changed")); } catch {}
-    });
-  };
-
-  const shouldFireForKey = (k) => {
-    if (!k) return false;
-    for (const p of KEY_BLOCKLIST_PREFIXES) if (k.startsWith(p)) return false;
-    if (KEY_WHITELIST.size) return KEY_WHITELIST.has(k);
-    return true; // fallback (if you remove the whitelist)
-  };
-
-  const _set = localStorage.setItem.bind(localStorage);
-  const _rem = localStorage.removeItem.bind(localStorage);
-  const _clr = localStorage.clear.bind(localStorage);
-
-  localStorage.setItem = function (k, v) { _set(k, v); if (shouldFireForKey(k)) fire(); };
-  localStorage.removeItem = function (k)  { _rem(k);   if (shouldFireForKey(k)) fire(); };
-  localStorage.clear = function ()        { _clr();    fire(); };
-
-  window.addEventListener("storage", (e) => {
-    if (e.storageArea !== localStorage) return;
-    if (shouldFireForKey(e.key)) fire();
-  });
-}
-
-
-/**
- * readProjectMap reads normalized data for this module from the source of truth it depends on. These accessor-style helpers keep the rest of the feature focused on workflow behavior rather than storage or transport details.
- * @returns the normalized data requested by this module.
- */
-function readProjectMap() {
-  try { return JSON.parse(localStorage.getItem(PROJECT_DATA_KEY) || '{}'); }
-  catch { return {}; }
-}
-/**
- * writeProjectMap writes module state into the storage or backend boundary used by xHandle. Keeping persistence logic in a dedicated function makes it easier to reason about when engineering artifacts become durable.
- * @param map Input consumed by this step of the xHandle workflow.
- * @returns completion of the persistence operation.
- */
-function writeProjectMap(map) {
-  try { localStorage.setItem(PROJECT_DATA_KEY, JSON.stringify(map)); }
-  catch {}
-}
-/**
- * saveProjectPatch writes module state into the storage or backend boundary used by xHandle. Keeping persistence logic in a dedicated function makes it easier to reason about when engineering artifacts become durable.
- * @param projectId Project identifier used to scope data access within local storage.
- * @param patch Input consumed by this step of the xHandle workflow.
- * @returns completion of the persistence operation.
- */
-function saveProjectPatch(projectId, patch) {
-  if (!projectId) return;
-  const map = readProjectMap();
-  const prev = map[projectId] || {};
-  map[projectId] = { ...prev, ...patch, _updatedAt: new Date().toISOString() };
-  writeProjectMap(map);
-}
-/**
- * loadProjectData reads normalized data for this module from the source of truth it depends on. These accessor-style helpers keep the rest of the feature focused on workflow behavior rather than storage or transport details.
- * @param projectId Project identifier used to scope data access within local storage.
- * @returns the normalized data requested by this module.
- */
-function loadProjectData(projectId) {
-  const map = readProjectMap();
-  return map[projectId] || null;
-}
-/**
- * removeProjectData encapsulates a focused piece of workspace orchestration flow logic for xHandle. Giving this behavior a named function makes the surrounding module easier to scan and helps new contributors see where one responsibility ends and the next begins.
- * @param projectId Project identifier used to scope data access within local storage.
- * @returns the value that the next step in this workflow consumes.
- */
-function removeProjectData(projectId) {
-  const map = readProjectMap();
-  if (map && Object.prototype.hasOwnProperty.call(map, projectId)) {
-    delete map[projectId];
-    writeProjectMap(map);
-  }
-}
-// Ensure IndexedDB exists for project storage used by Copilot create flow
-function ensureTraceabilityDB() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open("TraceabilityDB");
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains("Projects")) {
-        db.createObjectStore("Projects", { keyPath: "id" });
-      }
-      if (!db.objectStoreNames.contains("Notes")) {
-        db.createObjectStore("Notes", { keyPath: "id" });
-      }
+function analysisOptionsForReviewTargets(targetOptions = [], selectedTargetIds = []) {
+  const selectedSet = new Set(selectedTargetIds);
+  const selectedTargets = targetOptions.filter((target) => target.available !== false && selectedSet.has(target.id));
+  return CODE_ARCHITECTURE_REVIEW_ANALYSIS_OPTIONS.map((option) => {
+    const count = selectedTargets.reduce((sum, target) => (
+      sum + Number(target.analysisCounts?.[option.key] || 0)
+    ), 0);
+    return {
+      ...option,
+      count,
+      available: count > 0,
     };
-    req.onsuccess = () => {
-      try { req.result.close?.(); } catch {}
-      resolve();
-    };
-    req.onerror = () => reject(req.error);
   });
 }
 
-/**
- * ProjectMenuPortal renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param anchorEl Input consumed by this step of the xHandle workflow.
- * @param setPortalRef React state setter supplied by the parent workflow.
- * @param onRename Callback used to notify the surrounding workflow about progress or user actions.
- * @param onDelete Callback used to notify the surrounding workflow about progress or user actions.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
-function ProjectMenuPortal({ anchorEl, setPortalRef, onRename, onDelete }) {
+function CodeArchitectureReviewAnalysisModal({
+  appName = "",
+  reviewAppTarget = "mac",
+  destinationDirectory = "",
+  isHostedPackager = false,
+  targetOptions = [],
+  selectedTargetIds = [],
+  options = [],
+  selectedKeys = [],
+  onAppNameChange,
+  onReviewAppTargetChange,
+  onChooseDestination,
+  onDestinationDirectoryChange,
+  onToggleTarget,
+  onSelectAllTargets,
+  onDeselectAllTargets,
+  onToggle,
+  onSelectAll,
+  onDeselectAll,
+  onCancel,
+  onConfirm,
+}) {
+  const [isChoosingDestination, setIsChoosingDestination] = useState(false);
+  const [destinationError, setDestinationError] = useState("");
+  const selectedSet = new Set(selectedKeys);
+  const selectedTargetSet = new Set(selectedTargetIds);
+  const targetAvailableCount = targetOptions.filter((option) => option.available !== false).length;
+  const selectedTargetCount = targetOptions.filter((option) => option.available !== false && selectedTargetSet.has(option.id)).length;
+  const availableCount = options.filter((option) => option.available).length;
+  const selectedCount = options.filter((option) => option.available && selectedSet.has(option.key)).length;
+  return createPortal(
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/40 p-4">
+      <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl ring-1 ring-slate-200">
+        <div className="shrink-0 border-b border-slate-200 px-5 py-4">
+          <h2 className="text-base font-semibold text-slate-950">Generate Review App</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Choose the projects and completed analysis results to include. Architecture Diagram is always included for each selected target.
+          </p>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          <label className="mb-4 block">
+            <span className="mb-1 block text-sm font-semibold text-slate-800">Review app name</span>
+            <input
+              type="text"
+              value={appName}
+              onChange={(event) => onAppNameChange?.(event.target.value)}
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              placeholder="e.g., LinoRobot2 Architecture Review"
+              autoFocus
+            />
+          </label>
+          <div className="mb-5">
+            <span className="mb-2 block text-sm font-semibold text-slate-800">Review app platform</span>
+            <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+              {[
+                { key: "mac", label: "Mac" },
+                { key: "win", label: "Windows" },
+              ].map((target) => (
+                <button
+                  key={target.key}
+                  type="button"
+                  onClick={() => onReviewAppTargetChange?.(target.key)}
+                  className={`rounded-md px-3 py-1.5 text-sm font-semibold transition ${
+                    reviewAppTarget === target.key
+                      ? "bg-white text-blue-700 shadow-sm ring-1 ring-slate-200"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  {target.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {!isHostedPackager && (
+            <div className="mb-5">
+              <label className="block">
+                <span className="mb-1 block text-sm font-semibold text-slate-800">Destination folder</span>
+                <div className="flex min-w-0 gap-2">
+                  <input
+                    type="text"
+                    value={destinationDirectory}
+                    onChange={(event) => onDestinationDirectoryChange?.(event.target.value)}
+                    className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    placeholder="Leave blank for dist-review"
+                  />
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!onChooseDestination || isChoosingDestination) return;
+                      setDestinationError("");
+                      setIsChoosingDestination(true);
+                      try {
+                        await onChooseDestination();
+                      } catch (error) {
+                        setDestinationError(error?.message || "Could not choose a destination folder.");
+                      } finally {
+                        setIsChoosingDestination(false);
+                      }
+                    }}
+                    className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60"
+                    disabled={isChoosingDestination}
+                  >
+                    {isChoosingDestination ? "Opening..." : "Choose..."}
+                  </button>
+                </div>
+              </label>
+              <p className="mt-2 text-xs text-slate-500">
+                The local packager will write the review app zip to the selected destination.
+              </p>
+              {destinationError && (
+                <p className="mt-2 text-xs font-medium text-red-600">{destinationError}</p>
+              )}
+            </div>
+          )}
+          <div className="mb-5">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900">Review scope</h3>
+                <p className="text-xs text-slate-500">
+                  {selectedTargetCount} of {targetAvailableCount} available selected
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={onSelectAllTargets}
+                  disabled={!targetAvailableCount}
+                  className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Select all
+                </button>
+                <button
+                  type="button"
+                  onClick={onDeselectAllTargets}
+                  disabled={!targetAvailableCount}
+                  className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Deselect all
+                </button>
+              </div>
+            </div>
+            <div className="space-y-2">
+              {targetOptions.map((target) => {
+                const available = target.available !== false;
+                return (
+                  <label
+                    key={target.id}
+                    className={`flex items-start gap-3 rounded-lg border px-3 py-3 ${
+                      available
+                        ? "cursor-pointer border-slate-200 bg-white hover:bg-slate-50"
+                        : "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-400"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600"
+                      checked={available && selectedTargetSet.has(target.id)}
+                      disabled={!available}
+                      onChange={() => onToggleTarget?.(target.id)}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-semibold text-slate-800">{target.label}</span>
+                      <span className="block text-xs text-slate-500">{target.description}</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900">Analysis results</h3>
+              <p className="text-xs font-medium text-slate-500">
+                {selectedCount} of {availableCount} available selected
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onSelectAll}
+                disabled={!availableCount}
+                className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                onClick={onDeselectAll}
+                disabled={!availableCount}
+                className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Deselect all
+              </button>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {options.map((option) => (
+              <label
+                key={option.key}
+                className={`flex items-start gap-3 rounded-lg border px-3 py-3 ${
+                  option.available
+                    ? "cursor-pointer border-slate-200 bg-white hover:bg-slate-50"
+                    : "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-400"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600"
+                  checked={option.available && selectedSet.has(option.key)}
+                  disabled={!option.available}
+                  onChange={() => onToggle(option.key)}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold text-slate-800">{option.label}</span>
+                  <span className="block text-xs text-slate-500">
+                    {option.available
+                      ? `${option.count} row${option.count === 1 ? "" : "s"} available`
+                      : "Analysis has not been run"}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+        <div className="flex shrink-0 justify-end gap-2 border-t border-slate-200 px-5 py-4">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={!String(appName || "").trim() || selectedTargetCount === 0}
+            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Generate Review App
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+const CollaboratorNavIcon = React.memo(function CollaboratorNavIcon({ active = false }) {
+  return (
+    <div className="flex h-[30px] w-[30px] items-center justify-center">
+      <img
+        src="/x_Logo.PNG"
+        alt=""
+        draggable={false}
+        decoding="async"
+        className={`h-full w-full object-contain ${active ? "drop-shadow-[0_0_6px_#2D7DFE]" : ""}`}
+      />
+    </div>
+  );
+});
+
+const CODE_ARCHITECTURE_FUNCTIONAL_ARTIFACT_TYPE = "code_architecture_functional_decomposition_table";
+const DEFAULT_START_SECTION = "code-architecture";
+
+function ProjectMenuPortal({ anchorEl, setPortalRef, onRename, onInvite, onDelete }) {
   const menuRef = useRef(null);
   const [pos, setPos] = useState({ top: 0, left: 0 });
 
@@ -248,8 +434,8 @@ function ProjectMenuPortal({ anchorEl, setPortalRef, onRename, onDelete }) {
       if (!anchorEl) return;
       const r = anchorEl.getBoundingClientRect();
 
-      const MENU_W = 160;
-      const MENU_H = 88;
+      const MENU_W = 160; // w-40
+      const MENU_H = 120; // ~3 items + padding
       const GAP = 8;
 
       const openUp = r.bottom + MENU_H + GAP > window.innerHeight;
@@ -294,6 +480,16 @@ function ProjectMenuPortal({ anchorEl, setPortalRef, onRename, onDelete }) {
         Rename
       </button>
 
+      {onInvite && (
+        <button
+          className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50"
+          onClick={onInvite}
+          role="menuitem"
+        >
+          Invite collaborator(s)
+        </button>
+      )}
+
       <button
         className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-gray-50"
         onClick={onDelete}
@@ -306,14 +502,869 @@ function ProjectMenuPortal({ anchorEl, setPortalRef, onRename, onDelete }) {
   );
 }
 
-/**
- * LiteXHandle renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
+function FolderMenuPortal({ anchorEl, setPortalRef, onNewProject, onNewFolder, onRename, onDelete }) {
+  const menuRef = useRef(null);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const MENU_W = 168;
+  const MENU_H = 160;
+
+  useEffect(() => {
+    function computePosition() {
+      if (!anchorEl) return;
+      const r = anchorEl.getBoundingClientRect();
+
+      const GAP = 8;
+      const openUp = r.bottom + MENU_H + GAP > window.innerHeight;
+      const top = openUp
+        ? Math.max(8, r.top - MENU_H - GAP)
+        : Math.min(window.innerHeight - MENU_H - 8, r.bottom + GAP);
+      const left = Math.min(window.innerWidth - MENU_W - 8, Math.max(8, r.right - MENU_W));
+
+      setPos({ top, left });
+    }
+
+    computePosition();
+    window.addEventListener("resize", computePosition);
+    window.addEventListener("scroll", computePosition, true);
+    return () => {
+      window.removeEventListener("resize", computePosition);
+      window.removeEventListener("scroll", computePosition, true);
+    };
+  }, [anchorEl]);
+
+  useEffect(() => {
+    if (menuRef.current && setPortalRef) setPortalRef(menuRef.current);
+  }, [setPortalRef]);
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      className="fixed z-[1000] bg-white border rounded-lg shadow-md overflow-hidden"
+      style={{ top: pos.top, left: pos.left, width: MENU_W }}
+      role="menu"
+      aria-label="Folder options"
+    >
+      <button className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50" onClick={onNewProject} role="menuitem">
+        New project
+      </button>
+      <button className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50" onClick={onNewFolder} role="menuitem">
+        New subfolder
+      </button>
+      <button className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50" onClick={onRename} role="menuitem">
+        Rename
+      </button>
+      <button className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-gray-50" onClick={onDelete} role="menuitem">
+        Delete
+      </button>
+    </div>,
+    document.body
+  );
+}
+
+function InviteCollaboratorsModal({ projectName, onClose, onSubmit }) {
+  const [emails, setEmails] = useState("");
+  const [role, setRole] = useState("write");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleInvite = async () => {
+    setError("");
+    const list = emails
+      .split(/[, \n]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!list.length) {
+      setError("Enter at least one email.");
+      return;
+    }
+    setSending(true);
+    try {
+      await onSubmit({ emails: list, role });
+      onClose();
+    } catch (e) {
+      setError(String(e?.message || e) || "Failed to create invite.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative z-[201] w-full max-w-lg rounded-2xl border-2 border-indigo-500 bg-white shadow-xl">
+        <div className="px-5 py-4 border-b">
+          <h2 className="text-base font-semibold">Invite collaborators</h2>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Project: <span className="font-medium">{projectName}</span>
+          </p>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div>
+            <label className="text-xs text-gray-600">Email addresses</label>
+            <textarea
+              rows={3}
+              className="w-full mt-1 border rounded px-3 py-2 text-sm"
+              placeholder="alice@company.com, bob@company.com"
+              value={emails}
+              onChange={(e) => setEmails(e.target.value)}
+            />
+            <p className="text-[11px] text-gray-500 mt-1">
+              Comma, space, or newline separated. Local invites are stored on this machine.
+            </p>
+          </div>
+
+          <div>
+            <label className="text-xs text-gray-600">Permission</label>
+            <select
+              className="w-48 mt-1 border rounded px-2 py-1 text-sm"
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+            >
+              <option value="read">Read-only</option>
+              <option value="write">Read &amp; write</option>
+            </select>
+          </div>
+
+          {error && <div className="text-xs text-red-600">{error}</div>}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 px-5 py-4 border-t">
+          <button className="px-3 py-2 rounded border" onClick={onClose} disabled={sending}>
+            Cancel
+          </button>
+          <button
+            className="px-3 py-2 text-white rounded bg-[#2D7DFE] hover:bg-[#1E61D6] disabled:opacity-60"
+            onClick={handleInvite}
+            disabled={sending}
+          >
+            {sending ? "Creating..." : "Create invite(s)"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Convert the 2D "Summary" sheet into an array of objects for the auditor
+const summary2Objects = (summary2D) => {
+  if (!summary2D || !Array.isArray(summary2D) || summary2D.length < 2) return [];
+  const headers = summary2D[0].map(String);
+  return summary2D.slice(1).map((row) => {
+    const o = {};
+    headers.forEach((h, i) => { o[h] = row[i]; });
+    return o;
+  });
+};
+
+// Ensure a requirement-like node exists by id (used when linking to HZ:/MT: placeholders)
+const ensureReqById = (list, id, { title = '', module = 'Requirement', attributes = {} } = {}) => {
+  let found = list.find(r => r.id === id);
+  if (!found) {
+    found = { id, title: title || id, module, attributes, links: [] };
+    list.push(found);
+  }
+  return found;
+};
+const makeId = () =>
+  (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,9)}`;
+const PROJECTS_KEY = 'xhandle.projects';
+const ACTIVE_PROJECT_ID_KEY = 'xhandle.activeProjectId';
+const PROJECT_DATA_KEY = 'xhandle.projectData';
+const PROJECTS_OPEN_KEY = 'xhandle.sidebarProjectsOpen';
+const PROJECT_FOLDERS_KEY = 'xhandle.projectFolders';
+const PROJECT_FOLDERS_OPEN_KEY = 'xhandle.sidebarProjectFoldersOpen';
+const PROJECT_FOLDER_DASHBOARDS_KEY = 'xhandle.projectFolderDashboards';
+const CBA_PROJECTS_KEY = 'xhandle.codeArchitectureProjects';
+const ACTIVE_CBA_PROJECT_ID_KEY = 'xhandle.activeCodeArchitectureProjectId';
+const CBA_PROJECTS_OPEN_KEY = 'xhandle.sidebarCodeArchitectureProjectsOpen';
+const CBA_FOLDERS_KEY = 'xhandle.codeArchitectureFolders';
+const CBA_FOLDERS_OPEN_KEY = 'xhandle.sidebarCodeArchitectureFoldersOpen';
+
+// Keep projects hidden on Console
+const SHOW_CONSOLE_PROJECTS = false;
+const normalizeRepoIdentity = ({ owner = "", repo = "", repoId = "" } = {}) =>
+  repoId || [owner, repo].filter(Boolean).join("/");
+
+const normalizeRepoIdentityText = (value = "") => String(value || "").trim().toLowerCase();
+
+function codeArchitectureReposMatch(a = {}, b = {}) {
+  if (!a || !b) return false;
+  if (a.id && b.id && a.id === b.id) return true;
+  const aRepoId = normalizeRepoIdentityText(a.repoId || normalizeRepoIdentity(a));
+  const bRepoId = normalizeRepoIdentityText(b.repoId || normalizeRepoIdentity(b));
+  if (aRepoId && bRepoId && aRepoId === bRepoId) return true;
+  const aOwner = normalizeRepoIdentityText(a.owner);
+  const bOwner = normalizeRepoIdentityText(b.owner);
+  const aRepo = normalizeRepoIdentityText(a.repo || a.repoName);
+  const bRepo = normalizeRepoIdentityText(b.repo || b.repoName);
+  return Boolean(aOwner && bOwner && aRepo && bRepo && aOwner === bOwner && aRepo === bRepo);
+}
+
+function codeArchitectureMetricsSummary(metrics = null) {
+  if (!metrics) return "";
+  const parts = [];
+  if (metrics.durationMs) parts.push(formatDuration(metrics.durationMs));
+  if (metrics.aiCallCount) parts.push(`${metrics.aiCallCount} AI call${metrics.aiCallCount === 1 ? "" : "s"}`);
+  if (metrics.totalTokens) parts.push(`${metrics.totalTokens.toLocaleString()} tokens`);
+  if (metrics.estimatedCostAvailable) parts.push(`est. ${formatUsd(Number(metrics.estimatedCostUsd || 0))}`);
+  return parts.join(" · ");
+}
+
+function parseGitHubRepoUrl(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const withoutGitSuffix = raw.replace(/\.git(?:[#?].*)?$/i, "");
+  const sshMatch = withoutGitSuffix.match(/^git@github\.com:([^/\s]+)\/([^/\s#?]+)(?:[/?#].*)?$/i);
+  if (sshMatch) {
+    return {
+      owner: decodeURIComponent(sshMatch[1]),
+      repo: decodeURIComponent(sshMatch[2]),
+      repoUrl: `https://github.com/${sshMatch[1]}/${sshMatch[2]}`,
+    };
+  }
+  const normalized = /^https?:\/\//i.test(withoutGitSuffix)
+    ? withoutGitSuffix
+    : `https://${withoutGitSuffix.replace(/^github\.com\//i, "github.com/")}`;
+  try {
+    const url = new URL(normalized);
+    if (!/^(www\.)?github\.com$/i.test(url.hostname)) return null;
+    const [owner, repo] = url.pathname.split("/").filter(Boolean);
+    if (!owner || !repo) return null;
+    return {
+      owner: decodeURIComponent(owner),
+      repo: decodeURIComponent(repo),
+      repoUrl: `https://github.com/${owner}/${repo}`,
+    };
+  } catch {
+    const pathMatch = withoutGitSuffix.match(/(?:github\.com\/)?([^/\s]+)\/([^/\s#?]+)/i);
+    if (!pathMatch) return null;
+    return {
+      owner: decodeURIComponent(pathMatch[1]),
+      repo: decodeURIComponent(pathMatch[2]),
+      repoUrl: `https://github.com/${pathMatch[1]}/${pathMatch[2]}`,
+    };
+  }
+}
+
+function makeRepoConfig({
+  owner = "",
+  repo = "",
+  repoUrl = "",
+  token = "",
+  selectedExtensions = [],
+  analysisContext = null,
+  branch = "",
+  commitSha = "",
+  filesFound = 0,
+} = {}) {
+  const trimmedOwner = String(owner || "").trim();
+  const trimmedRepo = String(repo || "").trim();
+  const repoId = normalizeRepoIdentity({ owner: trimmedOwner, repo: trimmedRepo });
+  const now = new Date().toISOString();
+  return {
+    id: makeId(),
+    owner: trimmedOwner,
+    repo: trimmedRepo,
+    repoId,
+    repoName: repoId,
+    repoUrl: String(repoUrl || "").trim() || (trimmedOwner && trimmedRepo ? `https://github.com/${trimmedOwner}/${trimmedRepo}` : ""),
+    token: String(token || "").trim(),
+    selectedExtensions: Array.isArray(selectedExtensions) ? selectedExtensions : [],
+    analysisContext: analysisContext || { text: "", files: [] },
+    branch,
+    commitSha,
+    filesFound,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function normalizeCodeArchitectureProjects(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((project) => project && project.id)
+    .map((project) => {
+      const repos = Array.isArray(project.repos) ? project.repos : [];
+      const normalizedRepos = repos
+        .filter((repo) => repo && (repo.owner || repo.repo || repo.repoId))
+        .map((repo) => {
+          const owner = String(repo.owner || "").trim();
+          const name = String(repo.repo || repo.repoName || "").replace(/^.*\//, "").trim();
+          const repoId = repo.repoId || normalizeRepoIdentity({ owner, repo: name });
+          return {
+            id: repo.id || makeId(),
+            owner,
+            repo: name,
+            repoId,
+            repoName: repo.repoName || repoId,
+            repoUrl: repo.repoUrl || (owner && name ? `https://github.com/${owner}/${name}` : ""),
+            token: repo.token || "",
+            selectedExtensions: Array.isArray(repo.selectedExtensions) ? repo.selectedExtensions : [],
+            analysisContext: repo.analysisContext || { text: "", files: [] },
+            branch: repo.branch || "",
+            commitSha: repo.commitSha || "",
+            filesFound: Number(repo.filesFound || 0),
+            createdAt: repo.createdAt || project.createdAt || new Date().toISOString(),
+            updatedAt: repo.updatedAt || project.updatedAt || project.createdAt || new Date().toISOString(),
+            lastAnalyzedAt: repo.lastAnalyzedAt || null,
+          };
+        });
+      return {
+        id: project.id,
+        name: project.name || "Code architecture project",
+        folderId: project.folderId || null,
+        repos: normalizedRepos,
+        activeRepoId: project.activeRepoId || normalizedRepos[0]?.id || null,
+        createdAt: project.createdAt || new Date().toISOString(),
+        updatedAt: project.updatedAt || project.createdAt || new Date().toISOString(),
+      };
+    });
+}
+
+function migrateLegacyCodeArchitectureProjects() {
+  try {
+    const existing = normalizeCodeArchitectureProjects(JSON.parse(localStorage.getItem(CBA_PROJECTS_KEY) || "[]"));
+    if (existing.length) return existing;
+    const owner = localStorage.getItem("repoOwner") || "";
+    const repo = localStorage.getItem("repoName") || "";
+    if (!owner || !repo) return [];
+    const token = localStorage.getItem("githubToken") || "";
+    const repoConfig = makeRepoConfig({ owner, repo, token });
+    const project = {
+      id: makeId(),
+      name: `${owner}/${repo}`,
+      folderId: null,
+      repos: [repoConfig],
+      activeRepoId: repoConfig.id,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    localStorage.setItem(CBA_PROJECTS_KEY, JSON.stringify([project]));
+    return [project];
+  } catch {
+    return [];
+  }
+}
+
+// ---- Broadcast localStorage changes and trigger a re-collect of context ----
+function installLocalStorageBroadcast() {
+  if (window.__xhandle_ls_broadcast_installed) return;
+  window.__xhandle_ls_broadcast_installed = true;
+
+  // Only broadcast for keys that matter to global context
+  const KEY_WHITELIST = new Set([
+    'xhandle.projects',
+    'xhandle.activeProjectId',
+    'xhandle.projectData',
+    'xhandle.sidebarOpen',
+    'xhandle.sidebarProjectsOpen',
+    'xhandle.projectFolders',
+    'xhandle.sidebarProjectFoldersOpen',
+    'xhandle.projectFolderDashboards',
+    // add any others that should trigger global recompute
+  ]);
+  // Ignore hot/volatile keys
+  const KEY_BLOCKLIST_PREFIXES = [
+    'diagram:positions:',      // React Flow viewport/positions
+    'LiteSummaryDiagram::',    // any per-diagram cache you keep
+    'cba:',                    // big code-arch blobs if they churn
+  ];
+
+  let pending = false;
+  const fire = () => {
+    if (pending) return;
+    pending = true;
+    // batch multiple writes into a single event per frame
+    requestAnimationFrame(() => {
+      pending = false;
+      try { window.dispatchEvent(new CustomEvent("xhandle:data-changed")); } catch {}
+    });
+  };
+
+  const shouldFireForKey = (k) => {
+    if (!k) return false;
+    for (const p of KEY_BLOCKLIST_PREFIXES) if (k.startsWith(p)) return false;
+    if (KEY_WHITELIST.size) return KEY_WHITELIST.has(k);
+    return true; // fallback (if you remove the whitelist)
+  };
+
+  const _set = localStorage.setItem.bind(localStorage);
+  const _rem = localStorage.removeItem.bind(localStorage);
+  const _clr = localStorage.clear.bind(localStorage);
+
+  localStorage.setItem = function (k, v) { _set(k, v); if (shouldFireForKey(k)) fire(); };
+  localStorage.removeItem = function (k)  { _rem(k);   if (shouldFireForKey(k)) fire(); };
+  localStorage.clear = function ()        { _clr();    fire(); };
+
+  window.addEventListener("storage", (e) => {
+    if (e.storageArea !== localStorage) return;
+    if (shouldFireForKey(e.key)) fire();
+  });
+}
+
+
+function readProjectMap() {
+  try { return JSON.parse(localStorage.getItem(PROJECT_DATA_KEY) || '{}'); }
+  catch { return {}; }
+}
+function writeProjectMap(map) {
+  try { localStorage.setItem(PROJECT_DATA_KEY, JSON.stringify(map)); }
+  catch {}
+}
+function saveProjectPatch(projectId, patch) {
+  if (!projectId) return;
+  const map = readProjectMap();
+  const prev = map[projectId] || {};
+  map[projectId] = { ...prev, ...patch, _updatedAt: new Date().toISOString() };
+  writeProjectMap(map);
+}
+function loadProjectData(projectId) {
+  const map = readProjectMap();
+  return map[projectId] || null;
+}
+function hasAnalysisSummary(value) {
+  return Array.isArray(value?.Summary) && value.Summary.length > 0;
+}
+
+function functionalRowSignature(rows) {
+  return JSON.stringify((rows || []).map((row) => ({
+    fromFunction: String(row?.fromFunction || "").trim(),
+    fromDetails: String(row?.fromDetails || "").trim(),
+    controlAction: String(row?.controlAction || "").trim(),
+    controlDetails: String(row?.controlDetails || "").trim(),
+    toFunction: String(row?.toFunction || "").trim(),
+    toDetails: String(row?.toDetails || "").trim(),
+  })));
+}
+
+function parseJsonObjectFromText(text) {
+  const raw = String(text || "").trim();
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+  const candidate = fenced || raw;
+  try { return JSON.parse(candidate); } catch {}
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    try { return JSON.parse(candidate.slice(start, end + 1)); } catch {}
+  }
+  return null;
+}
+
+function generateDiagramCategoryDescription(name, functions = [], rows = []) {
+  const uniqueFunctions = Array.from(new Set(
+    (functions || []).map((fn) => String(fn || "").trim()).filter(Boolean)
+  ));
+  const functionSet = new Set(uniqueFunctions.map((fn) => fn.toLowerCase()));
+  const relatedRows = (rows || []).filter((row) =>
+    functionSet.has(String(row?.fromFunction || "").trim().toLowerCase()) ||
+    functionSet.has(String(row?.toFunction || "").trim().toLowerCase())
+  );
+  const details = Array.from(new Set(
+    relatedRows
+      .flatMap((row) => [row?.fromDetails, row?.controlDetails, row?.toDetails])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+  ));
+  const actions = Array.from(new Set(
+    relatedRows.map((row) => String(row?.controlAction || "").trim()).filter(Boolean)
+  ));
+  const title = cleanDiagramCategoryName(name || "Category");
+  const detailPreview = details.slice(0, 4).join(" ");
+  const actionPreview = actions.slice(0, 5).join(", ");
+  const functionPreview = uniqueFunctions.slice(0, 5).join(", ");
+  const functionRemainder = uniqueFunctions.length > 5 ? `, and ${uniqueFunctions.length - 5} more` : "";
+
+  if (detailPreview) {
+    return `${title} groups ${uniqueFunctions.length || relatedRows.length} related function${(uniqueFunctions.length || relatedRows.length) === 1 ? "" : "s"} including ${functionPreview}${functionRemainder}. It is responsible for the behaviors described by its functions and interfaces: ${detailPreview}`;
+  }
+  if (actionPreview) {
+    return `${title} groups ${uniqueFunctions.length || relatedRows.length} related function${(uniqueFunctions.length || relatedRows.length) === 1 ? "" : "s"} that coordinate ${actions.length} interface/control action${actions.length === 1 ? "" : "s"}: ${actionPreview}. This category owns the related control flow, data exchange, and coordination responsibilities in the generated architecture.`;
+  }
+  return `${title} groups related functions in the generated functional architecture and should be reviewed as a subsystem boundary for shared responsibilities, interfaces, data/state ownership, and safety-relevant behavior.`;
+}
+
+function normalizeWizardDiagramCategories(plan, rows) {
+  const allFunctions = Array.from(new Set(
+    (rows || []).flatMap((row) => [row?.fromFunction, row?.toFunction])
+      .map((fn) => String(fn || "").trim())
+      .filter(Boolean)
+  ));
+  const exactByLower = new Map(allFunctions.map((fn) => [fn.toLowerCase(), fn]));
+
+  const categories = (Array.isArray(plan?.categories) ? plan.categories : [])
+    .map((category, index) => {
+      const fnSet = new Set();
+      (Array.isArray(category?.rowIndexes) ? category.rowIndexes : []).forEach((rowIndex) => {
+        const row = rows[Number(rowIndex)];
+        if (!row) return;
+        if (row.fromFunction) fnSet.add(String(row.fromFunction).trim());
+        if (row.toFunction) fnSet.add(String(row.toFunction).trim());
+      });
+      (category?.functions || category?.functionNames || []).forEach((fn) => {
+        const exact = exactByLower.get(String(fn || "").trim().toLowerCase());
+        if (exact) fnSet.add(exact);
+      });
+      const functions = Array.from(fnSet).filter(Boolean);
+      return {
+        name: cleanDiagramCategoryName(category?.name || `Category ${index + 1}`),
+        functions,
+        description: String(category?.description || "").trim(),
+      };
+    })
+    .filter((category) => category.name && category.functions.length)
+    .filter((category) => !/\b(unallocated|unassigned|uncategorized|other functions?)\b/i.test(category.name))
+    .filter((category) => !isGenericDiagramCategoryName(category.name))
+    .slice(0, 10);
+
+  if (!categories.length && allFunctions.length) {
+    categories.push({ name: "System Architecture", functions: [] });
+  }
+
+  const functionToCategory = new Map();
+  categories.forEach((category) => {
+    category.functions = Array.from(new Set(category.functions));
+    category.functions.forEach((fn) => functionToCategory.set(fn, category));
+  });
+  const assigned = new Set(functionToCategory.keys());
+  const unassigned = allFunctions.filter((fn) => !assigned.has(fn));
+  unassigned.forEach((fn) => {
+    const relatedRows = (rows || []).filter((row) =>
+      String(row?.fromFunction || "").trim() === fn || String(row?.toFunction || "").trim() === fn
+    );
+    const relatedCategory = relatedRows
+      .flatMap((row) => [String(row?.fromFunction || "").trim(), String(row?.toFunction || "").trim()])
+      .map((relatedFn) => functionToCategory.get(relatedFn))
+      .find(Boolean);
+    const targetCategory = relatedCategory || categories[0];
+    targetCategory.functions.push(fn);
+    functionToCategory.set(fn, targetCategory);
+  });
+
+  categories.forEach((category) => {
+    category.functions = Array.from(new Set(category.functions)).filter(Boolean);
+    category.description = category.description || generateDiagramCategoryDescription(category.name, category.functions, rows);
+  });
+  return categories;
+}
+
+function cleanDiagramCategoryName(value) {
+  const cleaned = String(value || "Category")
+    .replace(/\bcomputer software configuration item\b/gi, "")
+    .replace(/\bcsci\b/gi, "")
+    .replace(/\s*[-:|/]\s*$/g, "")
+    .replace(/^\s*[-:|/]\s*/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return (cleaned || "Category").slice(0, 60);
+}
+
+function isGenericDiagramCategoryName(value) {
+  return /^(manages?|conducts?|controls?|verifies?|monitors?|provides?|handles?|supports?|processes?|system)$/i.test(
+    cleanDiagramCategoryName(value)
+  );
+}
+
+function parseWizardPromptContext(wizardPrompt) {
+  try {
+    const parsed = JSON.parse(String(wizardPrompt || ""));
+    if (parsed && typeof parsed === "object") return parsed;
+  } catch {}
+  return { raw: String(wizardPrompt || "") };
+}
+
+function extractWizardComponentNames(context) {
+  const text = String(context?.functionalComponents || context?.components || "");
+  return text
+    .split(/\n+/)
+    .map((line) => line.replace(/^\s*[-*•\d.)]+\s*/, "").split(/\s*[:;-]\s*/)[0])
+    .map((name) => cleanDiagramCategoryName(name))
+    .filter((name) => name.length >= 4 && !/^(component|module|system)$/i.test(name))
+    .slice(0, 30);
+}
+
+const FALLBACK_CATEGORY_RULES = [
+  {
+    name: "Command and Operator Interface",
+    terms: ["operator", "user interface", "console", "command", "control processor", "launch control", "external command", "manual", "crew", "display"],
+  },
+  {
+    name: "Security and Authentication",
+    terms: ["auth", "authenticate", "credential", "secure", "cyber", "authorization", "access", "identity", "encryption"],
+  },
+  {
+    name: "Sensing and Safety Monitoring",
+    terms: ["sensor", "sensing", "monitor", "environment", "telemetry", "alert", "redundancy", "safety verification", "diagnostic", "health", "status"],
+  },
+  {
+    name: "Actuation and Mechanical Control",
+    terms: ["actuat", "mechanical", "alignment", "align", "fire control", "launch tube", "servo", "motor", "movement", "position"],
+  },
+  {
+    name: "Power and Support Systems",
+    terms: ["power", "battery", "energy", "supply", "thermal", "support", "cooling"],
+  },
+  {
+    name: "Data Logging and Audit",
+    terms: ["log", "logging", "audit", "record", "history", "trace", "review", "evidence"],
+  },
+  {
+    name: "Communications and External Interfaces",
+    terms: ["communication", "communicate", "interface", "network", "external", "uplink", "downlink", "message", "protocol"],
+  },
+];
+
+function scoreTextForTerms(text, terms) {
+  const lower = String(text || "").toLowerCase();
+  return terms.reduce((score, term) => {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const matches = lower.match(new RegExp(escaped, "g"));
+    return score + (matches ? matches.length : 0);
+  }, 0);
+}
+
+function fallbackWizardDiagramCategories(rows, wizardPrompt = "") {
+  const context = parseWizardPromptContext(wizardPrompt);
+  const wizardComponents = extractWizardComponentNames(context);
+  const componentRules = wizardComponents.map((component) => ({
+    name: component,
+    terms: component.toLowerCase().split(/[^a-z0-9]+/).filter((part) => part.length > 2),
+  })).filter((rule) => rule.terms.length);
+  const rules = [...componentRules, ...FALLBACK_CATEGORY_RULES];
+  const buckets = new Map();
+
+  (rows || []).forEach((row, index) => {
+    const rowText = [
+      row?.fromFunction,
+      row?.fromDetails,
+      row?.controlAction,
+      row?.controlDetails,
+      row?.toFunction,
+      row?.toDetails,
+    ].filter(Boolean).join("\n");
+    const ranked = rules
+      .map((rule) => ({ ...rule, score: scoreTextForTerms(rowText, rule.terms) }))
+      .filter((rule) => rule.score > 0)
+      .sort((a, b) => b.score - a.score);
+    const name = cleanDiagramCategoryName(ranked[0]?.name || row?.fromFunction || row?.toFunction || "System Architecture");
+    if (!buckets.has(name)) buckets.set(name, { name, rowIndexes: [], functions: [] });
+    const bucket = buckets.get(name);
+    bucket.rowIndexes.push(index);
+    if (row?.fromFunction) bucket.functions.push(String(row.fromFunction).trim());
+    if (row?.toFunction) bucket.functions.push(String(row.toFunction).trim());
+  });
+
+  const categories = Array.from(buckets.values())
+    .filter((category) => category.functions.length)
+    .sort((a, b) => b.rowIndexes.length - a.rowIndexes.length)
+    .slice(0, 8);
+  return { categories };
+}
+
+async function classifyPromptWizardDiagramCategories(rows, wizardPrompt) {
+  const signature = functionalRowSignature(rows);
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+
+  const compactRows = rows.slice(0, 160).map((row, index) => ({
+    index,
+    fromFunction: row.fromFunction || "",
+    fromDetails: row.fromDetails || "",
+    controlAction: row.controlAction || "",
+    controlDetails: row.controlDetails || "",
+    toFunction: row.toFunction || "",
+    toDetails: row.toDetails || "",
+  }));
+
+  const prompt = `
+You are a senior systems architect. xHandle has already generated a functional decomposition from the prompt wizard. Perform the second pass once: classify the functions into CSCI-level categories for the functional diagram.
+
+CSCI = Computer Software Configuration Item. In this diagram, a CSCI is a major subsystem, responsibility area, or configuration-controlled item that can contain multiple functions.
+
+Rules:
+- Use only the supplied wizard prompt and functional decomposition rows.
+- Read the System Overview first and use it as the mission/context for interpreting every row.
+- Review every row by row index before assigning categories.
+- Assign each row to a category based on the source function, destination function, interface/control action, and the detailed descriptions for that row.
+- Create concise subsystem/responsibility category names from the system context, such as "Launch Control", "Authentication and Cybersecurity", "Sensing and Safety Monitoring", or "Operator Interface".
+- Create one category description after reviewing the generated function and interface descriptions.
+- Prefer 3-8 CSCI categories.
+- Do not create CSC or CSU levels.
+- Do not rename functions.
+- Allocate every row to exactly one CSCI category.
+- Do not use generic verb-only category names such as "Manages", "Controls", "Conducts", "Verifies", "Monitors", "Provides", or "Processes".
+- Make each category description detailed enough for architecture review: describe the subsystem mission, main responsibilities, key functions included, important interfaces/control flows, data or state it owns/transforms, and safety/quality concerns visible in the rows.
+- Base descriptions on fromDetails, controlDetails, and toDetails, not just a list of function names.
+- Use 35-70 words per category description when evidence supports it.
+- Avoid generic descriptions such as "groups related functions" unless you also state the concrete responsibilities and interfaces.
+- Return strict JSON only.
+
+Return this schema:
+{
+  "categories": [
+    {
+      "name": "Brake Control CSCI",
+      "description": "Coordinates brake command interpretation, control-law execution, actuator command output, and feedback monitoring.",
+      "rowIndexes": [0, 1],
+      "functions": ["exact function name"]
+    }
+  ]
+}
+
+Original wizard prompt:
+${String(wizardPrompt || "").slice(0, 6000)}
+
+Functional decomposition rows:
+${JSON.stringify(compactRows, null, 2)}
+  `.trim();
+
+  try {
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      ...buildAIAuthOpts({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        model: "gpt-4o",
+        messages: [
+          { role: "system", content: "Return only strict JSON. No prose or markdown." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.2,
+        max_tokens: 2500,
+      }),
+    });
+    if (!response.ok) throw new Error(`Category AI HTTP ${response.status}`);
+    const data = await response.json();
+    const plan = parseJsonObjectFromText(data?.choices?.[0]?.message?.content || "");
+    const categories = normalizeWizardDiagramCategories(plan, rows);
+    if (!categories.length) throw new Error("Category AI returned no usable categories.");
+    return { signature, categories, source: "wizard-ai", generatedAt: new Date().toISOString() };
+  } catch (error) {
+    console.warn("Prompt wizard category classification failed; using fallback CSCI categories.", error);
+    return {
+      signature,
+      categories: normalizeWizardDiagramCategories(fallbackWizardDiagramCategories(rows, wizardPrompt), rows),
+      source: "wizard-fallback",
+      generatedAt: new Date().toISOString(),
+    };
+  }
+}
+function removeProjectData(projectId) {
+  const map = readProjectMap();
+  if (map && Object.prototype.hasOwnProperty.call(map, projectId)) {
+    delete map[projectId];
+    writeProjectMap(map);
+  }
+}
+
+function repairDuplicateProjectIds(rawProjects) {
+  const list = Array.isArray(rawProjects) ? rawProjects : [];
+  const seen = new Set();
+  let changed = false;
+  const map = readProjectMap();
+
+  const repaired = list.map((project) => {
+    if (!project?.id || seen.has(project.id)) {
+      const oldId = project?.id;
+      const newId = makeId();
+      seen.add(newId);
+      changed = true;
+      if (oldId && map[oldId] && !map[newId]) {
+        map[newId] = { ...map[oldId], _updatedAt: new Date().toISOString() };
+      }
+      return { ...project, id: newId };
+    }
+    seen.add(project.id);
+    return project;
+  });
+
+  if (changed) {
+    writeProjectMap(map);
+    try { localStorage.setItem(PROJECTS_KEY, JSON.stringify(repaired)); } catch {}
+  }
+
+  return repaired;
+}
+
+function normalizeProjectFolders(rawFolders) {
+  const list = Array.isArray(rawFolders) ? rawFolders : [];
+  const seen = new Set();
+
+  return list
+    .filter((folder) => folder && typeof folder === "object")
+    .map((folder) => {
+      const id = folder.id && !seen.has(folder.id) ? folder.id : makeId();
+      seen.add(id);
+      return {
+        id,
+        name: String(folder.name || "Untitled folder"),
+        parentId: folder.parentId || null,
+        createdAt: folder.createdAt || new Date().toISOString(),
+        updatedAt: folder.updatedAt || folder.createdAt || new Date().toISOString(),
+      };
+    })
+    .filter((folder, _index, folders) => !folder.parentId || folders.some((entry) => entry.id === folder.parentId));
+}
+
+const FOLDER_DASHBOARD_PANEL_TYPES = [
+  { type: "overview", label: "Overview" },
+  { type: "projectList", label: "Projects" },
+  { type: "riskStatus", label: "Risk status" },
+  { type: "recentActivity", label: "Recent activity" },
+];
+
+function makeFolderDashboardPanel(type, title) {
+  const option = FOLDER_DASHBOARD_PANEL_TYPES.find((entry) => entry.type === type) || FOLDER_DASHBOARD_PANEL_TYPES[0];
+  return {
+    id: makeId(),
+    type: option.type,
+    title: title || option.label,
+    size: option.type === "projectList" ? "wide" : "normal",
+  };
+}
+
+function getDefaultFolderDashboardPanels() {
+  return [
+    { id: "overview", type: "overview", title: "Folder overview", size: "normal" },
+    { id: "project-list", type: "projectList", title: "Projects", size: "wide" },
+    { id: "risk-status", type: "riskStatus", title: "Risk status", size: "normal" },
+    { id: "recent-activity", type: "recentActivity", title: "Recent activity", size: "normal" },
+  ];
+}
+
+function normalizeFolderDashboardMap(rawMap) {
+  const map = rawMap && typeof rawMap === "object" && !Array.isArray(rawMap) ? rawMap : {};
+  return Object.fromEntries(
+    Object.entries(map).map(([folderId, panels]) => [
+      folderId,
+      Array.isArray(panels) && panels.length
+        ? panels.map((panel) => ({
+            id: panel?.id || makeId(),
+            type: FOLDER_DASHBOARD_PANEL_TYPES.some((entry) => entry.type === panel?.type) ? panel.type : "overview",
+            title: String(panel?.title || FOLDER_DASHBOARD_PANEL_TYPES.find((entry) => entry.type === panel?.type)?.label || "Panel"),
+            size: panel?.size === "wide" ? "wide" : "normal",
+          }))
+        : getDefaultFolderDashboardPanels(),
+    ])
+  );
+}
+// Ensure IndexedDB exists for project storage used by Copilot create flow
+function ensureTraceabilityDB() {
+  return ensureTraceabilitySchema();
+}
+
 function LiteXHandle() {
+    const resultsReview = useResultsReview();
+    // Local-only open-source builds skip hosted auth and start unlocked.
+    const [gate, setGate] = useState({ phase: 'ok', user: { id: 'local-user' }, provider: 'local', last4: null, error: null });
+    const [savingKey, setSavingKey] = useState(false);
+    const [aiProviderInput, setAiProviderInput] = useState('openai');
+    const [providerKeyInput, setProviderKeyInput] = useState('');
     const [showSettingsModal, setShowSettingsModal] = useState(false);
-    const [agentsOpen, setAgentsOpen] = useState(false);
 const [repoConnected, setRepoConnected] = useState(false);
+const [isGeneratingCodeArchitectureReviewApp, setIsGeneratingCodeArchitectureReviewApp] = useState(false);
+const [codeArchitectureReviewAnalysisModal, setCodeArchitectureReviewAnalysisModal] = useState(null);
+const codeArchitectureReviewAnalysisSelectionRef = useRef(null);
 const { isDark, toggle } = useDarkMode();
 const [showReadmeModal, setShowReadmeModal] = useState(false);
 // Forces re-render when LS changes so getActiveProjectContext() picks up new data
@@ -333,131 +1384,709 @@ useEffect(() => {
   return () => { window.removeEventListener("xhandle:data-changed", onChange); clearTimeout(t); };
 }, []);
 
-
-// --- App section state ---
-const [section, setSection] = useState('console'); // 'console' | 'projects' | 'risk' | 'reports' | 'settings'
-
-const performTask = async (task) => {
-  const a = task?.action || {};
-  switch (a.type) {
-    case "run-analysis": {
-      // You already have handleRunAnalysis; ensure project & tab are set
-      setActiveProjectId(a.projectId);
-      setSection("projects");
-      setActiveTab("Functional Diagramming");
-      await handleRunAnalysis(a.method || "FMEA");
-      return;
-    }
-    case "refresh-diagram": {
-      setActiveProjectId(a.projectId);
-      setSection("projects");
-      setActiveTab(a.view === "Risk" ? "Risk Diagram" : "Functional Diagram");
-      window.dispatchEvent(new CustomEvent("xhandle:diagram:refresh", { detail: { projectId: a.projectId, view: a.view || "Risk" } }));
-      return;
-    }
-    case "normalize-risk": {
-      window.dispatchEvent(new CustomEvent("xhandle:risk:normalize", { detail: { projectId: a.projectId, riskId: a.riskId, op: a.op || "assignOwner" } }));
-      return;
-    }
-    case "generate-mitigations": {
-      window.dispatchEvent(new CustomEvent("xhandle:risk:generateMitigations", { detail: { projectId: a.projectId, riskId: a.riskId } }));
-      return;
-    }
-    default:
-      // Fallback to your existing event router
-      window.dispatchEvent(new CustomEvent("xhandle:xagent:action", { detail: a }));
-  }
-};
+const [section, setSection] = useState(DEFAULT_START_SECTION); // 'projects' | 'console' | 'risk' | 'reports' | 'settings'
 
   // Docked Copilot (persistent)
   const [dockOpen, setDockOpen] = useState(() => localStorage.getItem('xhandle.copilotDockOpen') === 'true');
   const [dockCollapsed, setDockCollapsed] = useState(false);
-  const [agentMode, setAgentMode] = useState(false);
+  const [dockExpanded, setDockExpanded] = useState(false);
   // Reserve space for the right dock so it doesn't overlay content
-  const dockPaddingClass = dockOpen && !dockCollapsed ? 'pr-[380px] md:pr-[420px]' : '';
-const [cbaTableData, setCbaTableData] = useState(() => {
+  const dockPaddingClass = dockOpen && !dockCollapsed
+    ? dockExpanded
+      ? 'pr-[min(760px,100vw)]'
+      : 'pr-[380px] md:pr-[420px]'
+    : '';
+const [codeArchitectureProjects, setCodeArchitectureProjects] = useState(() => migrateLegacyCodeArchitectureProjects());
+const [codeArchitectureFolders, setCodeArchitectureFolders] = useState(() => {
+  try { return normalizeProjectFolders(JSON.parse(localStorage.getItem(CBA_FOLDERS_KEY) || "[]")); }
+  catch { return []; }
+});
+const [activeCodeArchitectureProjectId, setActiveCodeArchitectureProjectId] = useState(() => {
+  return null;
+});
+const [activeCodeArchitectureFolderId, setActiveCodeArchitectureFolderId] = useState(null);
+const [isCodeArchitectureProjectsOpen, setIsCodeArchitectureProjectsOpen] = useState(() => {
+  const saved = localStorage.getItem(CBA_PROJECTS_OPEN_KEY);
+  return saved ? saved === "true" : true;
+});
+const [openCodeArchitectureFolderIds, setOpenCodeArchitectureFolderIds] = useState(() => {
+  try { return JSON.parse(localStorage.getItem(CBA_FOLDERS_OPEN_KEY) || "{}"); }
+  catch { return {}; }
+});
+const [showNewCodeArchitectureProject, setShowNewCodeArchitectureProject] = useState(false);
+const [showNewCodeArchitectureFolder, setShowNewCodeArchitectureFolder] = useState(false);
+const [newCodeArchitectureProjectName, setNewCodeArchitectureProjectName] = useState("");
+const [newCodeArchitectureFolderName, setNewCodeArchitectureFolderName] = useState("");
+const [newCodeArchitectureTargetFolderId, setNewCodeArchitectureTargetFolderId] = useState(null);
+const [newCodeArchitectureFolderParentId, setNewCodeArchitectureFolderParentId] = useState(null);
+const [newCodeArchitectureError, setNewCodeArchitectureError] = useState("");
+const [newCodeArchitectureFolderError, setNewCodeArchitectureFolderError] = useState("");
+const [editingCodeArchitectureProjectId, setEditingCodeArchitectureProjectId] = useState(null);
+const [editingCodeArchitectureProjectName, setEditingCodeArchitectureProjectName] = useState("");
+const [editingCodeArchitectureFolderId, setEditingCodeArchitectureFolderId] = useState(null);
+const [editingCodeArchitectureFolderName, setEditingCodeArchitectureFolderName] = useState("");
+const [codeArchitectureRenameError, setCodeArchitectureRenameError] = useState("");
+const [openCodeArchitectureProjectMenuId, setOpenCodeArchitectureProjectMenuId] = useState(null);
+const [openCodeArchitectureFolderMenuId, setOpenCodeArchitectureFolderMenuId] = useState(null);
+const [draggingCodeArchitectureProjectId, setDraggingCodeArchitectureProjectId] = useState(null);
+const [dragOverCodeArchitectureFolderId, setDragOverCodeArchitectureFolderId] = useState(null);
+const codeArchitectureProjectMenuAnchorEls = useRef({});
+const codeArchitectureProjectMenuPortalRefs = useRef({});
+const codeArchitectureFolderMenuAnchorEls = useRef({});
+const codeArchitectureFolderMenuPortalRefs = useRef({});
+const [showCodeArchitectureRepoConfig, setShowCodeArchitectureRepoConfig] = useState(false);
+const [codeArchitectureRepoConfigProjectId, setCodeArchitectureRepoConfigProjectId] = useState(null);
+const [codeArchitectureRepoConfigRepoId, setCodeArchitectureRepoConfigRepoId] = useState(null);
+const [codeArchitectureRepoDraft, setCodeArchitectureRepoDraft] = useState({
+  repoUrl: "",
+  owner: "",
+  repo: "",
+  token: "",
+  analysisContextText: "",
+  analysisContextFiles: [],
+});
+const [codeArchitectureRepoConfigMessage, setCodeArchitectureRepoConfigMessage] = useState("");
+const [isCodeArchitectureRepoVerifying, setIsCodeArchitectureRepoVerifying] = useState(false);
+const [isCodeArchitectureRepoAnalyzing, setIsCodeArchitectureRepoAnalyzing] = useState(false);
+const [codeArchitectureRepoFilesForModal, setCodeArchitectureRepoFilesForModal] = useState([]);
+const [codeArchitectureFileSelectorOpen, setCodeArchitectureFileSelectorOpen] = useState(false);
+const codeArchitectureFileSelectorResolver = useRef(null);
+const [cbaTableData, setCbaTableData] = useState([]);
+const [selectedCbaElement, setSelectedCbaElement] = useState(null);
+const [codeArchitectureWorkspaceTab, setCodeArchitectureWorkspaceTab] = useState("architecture");
+const [codeArchitectureFolderView, setCodeArchitectureFolderView] = useState("projects");
+const [codeArchitectureArtifactFocus, setCodeArchitectureArtifactFocus] = useState(null);
+const [hazardRemediationTab, setHazardRemediationTab] = useState("hazard-analysis");
+const [codeArchitectureFunctionalReviewRunId, setCodeArchitectureFunctionalReviewRunId] = useState("");
+const [codeArchitectureFunctionalTableOpenKey, setCodeArchitectureFunctionalTableOpenKey] = useState(null);
+const [highlightedCodeArchitectureFunctionalRowIndex, setHighlightedCodeArchitectureFunctionalRowIndex] = useState(null);
+const [codeArchitectureHazardSummaryOpenKey, setCodeArchitectureHazardSummaryOpenKey] = useState(null);
+const [highlightedCodeArchitectureHazardRowIndex, setHighlightedCodeArchitectureHazardRowIndex] = useState(null);
+const [pendingCodeArchitectureDiagramTarget, setPendingCodeArchitectureDiagramTarget] = useState(null);
+const [codeArchitectureHazardMethod, setCodeArchitectureHazardMethod] = useState("STPA-Textbook");
+const [codeArchitectureHazardGenerationMode, setCodeArchitectureHazardGenerationMode] = useState("standard");
+const [codeArchitectureHazardRun, setCodeArchitectureHazardRun] = useState(null);
+const [isRunningCodeArchitectureHazard, setIsRunningCodeArchitectureHazard] = useState(false);
+const [codeArchitectureHazardProgress, setCodeArchitectureHazardProgress] = useState({
+  step: 0,
+  total: 9,
+  message: "",
+});
+
+function getSavedGitHubSelectedExtensions() {
   try {
-    const owner = localStorage.getItem("repoOwner");
-    const repo  = localStorage.getItem("repoName");
-    const key = owner && repo ? `cba:${owner}/${repo}` : null;
-    return key ? JSON.parse(localStorage.getItem(key) || "[]") : [];
+    const raw = localStorage.getItem("githubSelectedExtensions");
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
   } catch {
     return [];
   }
-});
+}
+
+const activeCodeArchitectureProject = useMemo(
+  () => codeArchitectureProjects.find((project) => project.id === activeCodeArchitectureProjectId) || null,
+  [codeArchitectureProjects, activeCodeArchitectureProjectId]
+);
+const activeCodeArchitectureFolder = useMemo(
+  () => codeArchitectureFolders.find((folder) => folder.id === activeCodeArchitectureFolderId) || null,
+  [codeArchitectureFolders, activeCodeArchitectureFolderId]
+);
+const activeCodeArchitectureRepo = useMemo(() => {
+  const repos = activeCodeArchitectureProject?.repos || [];
+  return repos.find((repo) => repo.id === activeCodeArchitectureProject?.activeRepoId) || repos[0] || null;
+}, [activeCodeArchitectureProject]);
+const activeCodeArchitectureRowsKey = activeCodeArchitectureProject && activeCodeArchitectureRepo
+  ? codeArchitectureRowsKey(activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id)
+  : null;
+const activeCodeArchitectureRepoMeta = useMemo(() => {
+  if (!activeCodeArchitectureRepo) return getRepoMeta();
+  return {
+    owner: activeCodeArchitectureRepo.owner || "",
+    repo: activeCodeArchitectureRepo.repo || "",
+    repoId: activeCodeArchitectureRepo.repoId || normalizeRepoIdentity(activeCodeArchitectureRepo),
+    repoName: activeCodeArchitectureRepo.repoName || activeCodeArchitectureRepo.repoId || normalizeRepoIdentity(activeCodeArchitectureRepo),
+    repoUrl: activeCodeArchitectureRepo.repoUrl || "",
+    branch: activeCodeArchitectureRepo.branch || "main",
+    commitSha: activeCodeArchitectureRepo.commitSha || "",
+  };
+}, [activeCodeArchitectureRepo]);
+
+const activeCodeArchitectureStoredMeta = useMemo(() => {
+  if (!activeCodeArchitectureProject || !activeCodeArchitectureRepo) return null;
+  try {
+    return JSON.parse(localStorage.getItem(codeArchitectureMetaKey(activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id)) || "null");
+  } catch {
+    return null;
+  }
+}, [activeCodeArchitectureProject, activeCodeArchitectureRepo]);
+const activeCodeArchitectureUnavailableRowCount = Number(activeCodeArchitectureStoredMeta?.rowCount || 0);
+const activeCodeArchitectureMetricsSummary = codeArchitectureMetricsSummary(activeCodeArchitectureStoredMeta?.metrics);
+
+async function readCodeArchitectureRowsForRepo(project, repo, primaryKey) {
+  if (!project || !repo || !primaryKey) return { rows: [], sourceKey: primaryKey || "" };
+  const candidateKeys = [primaryKey];
+  try {
+    const meta = JSON.parse(localStorage.getItem(codeArchitectureMetaKey(project.id, repo.id)) || "null");
+    if (meta?.indexedDB?.key) candidateKeys.push(meta.indexedDB.key);
+    if (meta?.storageKey) candidateKeys.push(meta.storageKey);
+  } catch {}
+  if (repo.owner && repo.repo) candidateKeys.push(`cba:${repo.owner}/${repo.repo}`);
+  if (repo.repoId) candidateKeys.push(codeArchitectureRowsKey(project.id, repo.repoId));
+  if (repo.repoName) candidateKeys.push(codeArchitectureRowsKey(project.id, repo.repoName));
+  (project.repos || [])
+    .filter((entry) => entry.id !== repo.id && codeArchitectureReposMatch(entry, repo))
+    .forEach((entry) => {
+      if (entry.id) candidateKeys.push(codeArchitectureRowsKey(project.id, entry.id));
+      if (entry.repoId) candidateKeys.push(codeArchitectureRowsKey(project.id, entry.repoId));
+      if (entry.repoName) candidateKeys.push(codeArchitectureRowsKey(project.id, entry.repoName));
+    });
+
+  const uniqueKeys = Array.from(new Set(candidateKeys.filter(Boolean)));
+  const result = await readFirstCbaRowsFromIndexedDB(uniqueKeys);
+  return { rows: result.rows, sourceKey: result.key || primaryKey };
+}
+
+function codeArchitectureReviewRowsForRepo(project, repo, reviewItems = []) {
+  if (!project || !repo || !Array.isArray(reviewItems) || reviewItems.length === 0) return [];
+  const repoIds = [
+    repo.id,
+    repo.repoId,
+    repo.repoName,
+    repo.owner && repo.repo ? `${repo.owner}/${repo.repo}` : "",
+    "repo",
+  ];
+  (project.repos || [])
+    .filter((entry) => codeArchitectureReposMatch(entry, repo))
+    .forEach((entry) => {
+      repoIds.push(entry.id, entry.repoId, entry.repoName);
+      if (entry.owner && entry.repo) repoIds.push(`${entry.owner}/${entry.repo}`);
+    });
+  const artifactPrefixes = Array.from(new Set(repoIds.filter(Boolean).map(
+    (repoId) => `code-architecture-functional-decomposition:${project.id}:${repoId}:row:`
+  )));
+  const byRowIndex = new Map();
+  reviewItems.forEach((item) => {
+    if (item.artifactType !== CODE_ARCHITECTURE_FUNCTIONAL_ARTIFACT_TYPE) return;
+    if (item.projectId && item.projectId !== project.id) return;
+    if (!artifactPrefixes.some((prefix) => String(item.artifactId || "").startsWith(prefix))) return;
+    const rowIndex = Number(
+      item.currentContent?.rowIndex ??
+      item.originalContent?.rowIndex ??
+      item.traceLinks?.find?.((link) => link.type === "table_row")?.rowIndex
+    );
+    if (!Number.isFinite(rowIndex)) return;
+    const existing = byRowIndex.get(rowIndex);
+    const existingTime = Date.parse(existing?.updatedAt || existing?.createdAt || 0) || 0;
+    const itemTime = Date.parse(item.updatedAt || item.createdAt || 0) || 0;
+    if (!existing || itemTime >= existingTime) byRowIndex.set(rowIndex, item);
+  });
+
+  return Array.from(byRowIndex.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([rowIndex, item]) => {
+      const row = item.currentContent?.row || item.originalContent?.row || {};
+      return {
+        from: row.from || row.fromFunction || "",
+        fromFile: row.fromFile || "",
+        fromDetails: row.fromDetails || "",
+        action: row.action || row.controlAction || "",
+        controlActionDetails: row.controlActionDetails || row.controlDetails || "",
+        to: row.to || row.toFunction || "",
+        toFile: row.toFile || "",
+        toDetails: row.toDetails || "",
+        architecture: row.architecture || {
+          subsystem: row.subsystem || "",
+          csci: row.csci || "",
+          csc: row.csc || "",
+          csu: row.csu || "",
+          rationale: row.architectureRationale || "",
+        },
+        recoveredFromReviewItemId: item.id,
+        recoveredRowIndex: rowIndex,
+      };
+    })
+    .filter((row) => row.from || row.action || row.to);
+}
+
+useEffect(() => {
+  localStorage.setItem(CBA_PROJECTS_KEY, JSON.stringify(codeArchitectureProjects));
+}, [codeArchitectureProjects]);
+useEffect(() => {
+  localStorage.setItem(CBA_FOLDERS_KEY, JSON.stringify(codeArchitectureFolders));
+}, [codeArchitectureFolders]);
+useEffect(() => {
+  localStorage.setItem(CBA_PROJECTS_OPEN_KEY, String(isCodeArchitectureProjectsOpen));
+}, [isCodeArchitectureProjectsOpen]);
+useEffect(() => {
+  localStorage.setItem(CBA_FOLDERS_OPEN_KEY, JSON.stringify(openCodeArchitectureFolderIds));
+}, [openCodeArchitectureFolderIds]);
+useEffect(() => {
+  if (activeCodeArchitectureProjectId) localStorage.setItem(ACTIVE_CBA_PROJECT_ID_KEY, activeCodeArchitectureProjectId);
+  else localStorage.removeItem(ACTIVE_CBA_PROJECT_ID_KEY);
+}, [activeCodeArchitectureProjectId]);
+
+useEffect(() => {
+  if (!activeCodeArchitectureRowsKey) {
+    setCbaLoading(false);
+    setCbaTableData([]);
+    setSelectedCbaElement(null);
+    setCodeArchitectureHazardRun(null);
+    return;
+  }
+  let cancelled = false;
+  setCbaLoadingLabel("Loading saved analysis...");
+  setCbaLoading(true);
+  readCodeArchitectureRowsForRepo(activeCodeArchitectureProject, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey)
+    .then(({ rows, sourceKey }) => {
+      if (cancelled) return;
+      let recoverySource = sourceKey;
+      let recoveredRows = Array.isArray(rows) ? rows : [];
+      if (recoveredRows.length === 0) {
+        const reviewRows = codeArchitectureReviewRowsForRepo(
+          activeCodeArchitectureProject,
+          activeCodeArchitectureRepo,
+          resultsReview.reviewItems
+        );
+        if (reviewRows.length) {
+          recoveredRows = reviewRows;
+          recoverySource = "results-review";
+        }
+      }
+      const rowsWithTraceIds = ensureCodeArchitectureTraceIds(recoveredRows);
+      setCbaTableData(rowsWithTraceIds);
+      if (rowsWithTraceIds.length && activeCodeArchitectureRowsKey) {
+        writeCbaRowsToIndexedDB(activeCodeArchitectureRowsKey, rowsWithTraceIds).catch(() => {});
+        if (recoverySource && recoverySource !== activeCodeArchitectureRowsKey) {
+          try {
+            localStorage.setItem(codeArchitectureMetaKey(activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id), JSON.stringify({
+              ...(activeCodeArchitectureStoredMeta || {}),
+              repoId: activeCodeArchitectureRepo.repoId || normalizeRepoIdentity(activeCodeArchitectureRepo),
+              repoName: activeCodeArchitectureRepo.repoName || normalizeRepoIdentity(activeCodeArchitectureRepo),
+              rowCount: rowsWithTraceIds.length,
+              storage: "indexedDB",
+              indexedDB: { database: XHANDLE_IDB_NAME, store: XHANDLE_IDB_CBA_STORE, key: activeCodeArchitectureRowsKey },
+              recoveredFromKey: recoverySource,
+              updatedAt: new Date().toISOString(),
+            }));
+          } catch {}
+        }
+      }
+      setSelectedCbaElement(null);
+      setCodeArchitectureHazardRun(null);
+    })
+    .finally(() => {
+      if (!cancelled) setCbaLoading(false);
+    });
+  return () => {
+    cancelled = true;
+  };
+}, [activeCodeArchitectureProject, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey, activeCodeArchitectureStoredMeta, resultsReview.reviewItems]);
+
+function updateCodeArchitectureProject(projectId, updater) {
+  setCodeArchitectureProjects((prev) =>
+    prev.map((project) => {
+      if (project.id !== projectId) return project;
+      const patch = typeof updater === "function" ? updater(project) : updater;
+      return { ...project, ...patch, updatedAt: new Date().toISOString() };
+    })
+  );
+}
+
+function upsertCodeArchitectureRepo(projectId, repoConfig, { setActive = true } = {}) {
+  updateCodeArchitectureProject(projectId, (project) => {
+    const repos = Array.isArray(project.repos) ? project.repos : [];
+    const existingIndex = repos.findIndex((entry) => codeArchitectureReposMatch(entry, repoConfig));
+    const existingRepo = existingIndex >= 0 ? repos[existingIndex] : null;
+    const nextRepo = { ...(existingRepo || {}), ...repoConfig, id: existingRepo?.id || repoConfig.id || makeId(), updatedAt: new Date().toISOString() };
+    const nextRepos = existingIndex >= 0
+      ? repos.map((entry, index) => (index === existingIndex ? nextRepo : entry))
+      : [nextRepo, ...repos];
+    return {
+      repos: nextRepos,
+      activeRepoId: setActive ? nextRepo.id : project.activeRepoId || nextRepos[0]?.id || null,
+    };
+  });
+}
+
+function openCodeArchitectureRepoConfig(projectId = activeCodeArchitectureProjectId, repoId = null) {
+  const project = codeArchitectureProjects.find((entry) => entry.id === projectId) || null;
+  const repoConfig = repoId
+    ? (project?.repos || []).find((entry) => entry.id === repoId)
+    : null;
+  setCodeArchitectureRepoConfigProjectId(projectId);
+  setCodeArchitectureRepoConfigRepoId(repoConfig?.id || null);
+  setCodeArchitectureRepoDraft({
+    repoUrl: repoConfig?.repoUrl || (repoConfig?.owner && repoConfig?.repo ? `https://github.com/${repoConfig.owner}/${repoConfig.repo}` : ""),
+    owner: repoConfig?.owner || "",
+    repo: repoConfig?.repo || "",
+    token: repoConfig?.token || "",
+    analysisContextText: repoConfig?.analysisContext?.text || "",
+    analysisContextFiles: repoConfig?.analysisContext?.files || [],
+  });
+  setCodeArchitectureRepoConfigMessage("");
+  setShowCodeArchitectureRepoConfig(true);
+}
+
+async function verifyCodeArchitectureRepo({ silent = false } = {}) {
+  const parsedRepoUrl = parseGitHubRepoUrl(codeArchitectureRepoDraft.repoUrl);
+  const owner = (codeArchitectureRepoDraft.owner.trim() || parsedRepoUrl?.owner || "").trim();
+  const repo = (codeArchitectureRepoDraft.repo.trim() || parsedRepoUrl?.repo || "").trim();
+  const token = codeArchitectureRepoDraft.token.trim();
+  if (!owner || !repo) {
+    setCodeArchitectureRepoConfigMessage("Paste a GitHub repo URL or enter owner and repo.");
+    return null;
+  }
+  setIsCodeArchitectureRepoVerifying(true);
+  if (!silent) setCodeArchitectureRepoConfigMessage("Verifying repository...");
+  try {
+    const headers = { "Content-Type": "application/json" };
+    const response = await fetch(`${backendURL}/api/github/repo-files`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(token ? { owner, repo, token } : { owner, repo }),
+    });
+    const defaultBranch = await getDefaultBranch(owner, repo, token || undefined);
+    const repoFiles = filterSelectableRepoFiles(await listRepoFilesViaGitHub(owner, repo, token || undefined, defaultBranch));
+    const json = await response.json().catch(() => ({}));
+    if (!response.ok && !repoFiles.length) throw new Error(json?.error || `Verification failed (HTTP ${response.status})`);
+    const count = repoFiles.length || (Array.isArray(json) ? json.length : Number(json?.files?.length || json?.count || 0));
+    const repoConfig = makeRepoConfig({
+      owner,
+      repo,
+      repoUrl: parsedRepoUrl?.repoUrl,
+      token,
+      analysisContext: {
+        text: codeArchitectureRepoDraft.analysisContextText,
+        files: codeArchitectureRepoDraft.analysisContextFiles,
+      },
+      branch: defaultBranch,
+      filesFound: count || repoFiles.length,
+    });
+    if (codeArchitectureRepoConfigRepoId) repoConfig.id = codeArchitectureRepoConfigRepoId;
+    if (!silent) setCodeArchitectureRepoConfigMessage(`Connected. Found ${count || repoFiles.length} repo files.`);
+    setCodeArchitectureRepoFilesForModal(repoFiles);
+    return { repoConfig, repoFiles };
+  } catch (error) {
+    setCodeArchitectureRepoConfigMessage(error?.message || String(error));
+    return null;
+  } finally {
+    setIsCodeArchitectureRepoVerifying(false);
+  }
+}
+
+function awaitCodeArchitectureFileTypes(files) {
+  setCodeArchitectureRepoFilesForModal(files || []);
+  setCodeArchitectureFileSelectorOpen(true);
+  return new Promise((resolve) => {
+    codeArchitectureFileSelectorResolver.current = resolve;
+  });
+}
+
+async function saveCodeArchitectureRepoConfig({ analyze = false } = {}) {
+  const projectId = codeArchitectureRepoConfigProjectId || activeCodeArchitectureProjectId;
+  if (!projectId) {
+    setCodeArchitectureRepoConfigMessage("Create or select a Code-Based Architecture project first.");
+    return;
+  }
+  setIsCodeArchitectureRepoAnalyzing(Boolean(analyze));
+  try {
+    const verified = await verifyCodeArchitectureRepo({ silent: analyze });
+    if (!verified?.repoConfig) return;
+    let selectedExtensions = verified.repoConfig.selectedExtensions || [];
+    if (analyze) {
+      selectedExtensions = await awaitCodeArchitectureFileTypes(verified.repoFiles);
+      if (!selectedExtensions.length) {
+        setCodeArchitectureRepoConfigMessage("Analysis cancelled. No file types selected.");
+        return;
+      }
+    }
+    const repoConfig = {
+      ...verified.repoConfig,
+      selectedExtensions,
+      analysisContext: {
+        text: codeArchitectureRepoDraft.analysisContextText,
+        files: codeArchitectureRepoDraft.analysisContextFiles,
+      },
+    };
+    upsertCodeArchitectureRepo(projectId, repoConfig);
+    setActiveCodeArchitectureProjectId(projectId);
+    setActiveCodeArchitectureFolderId(null);
+    if (analyze) {
+      setShowCodeArchitectureRepoConfig(false);
+      await handleBaselineRepo({
+        projectId,
+        repoConfig,
+        selectedExtensions,
+        analysisContext: repoConfig.analysisContext,
+      });
+    } else {
+      setCodeArchitectureRepoConfigMessage("Repository saved.");
+    }
+  } finally {
+    setIsCodeArchitectureRepoAnalyzing(false);
+  }
+}
 
 async function handleBaselineRepo({
   owner,
   repo,
   token,
   selectedExtensions,
+  analysisContext,
+  projectId,
+  repoConfig,
 } = {}) {
   setSection("code-architecture");
+  setCodeArchitectureWorkspaceTab("architecture");
+  setCodeArchitectureFunctionalTableOpenKey(null);
+  setHighlightedCodeArchitectureFunctionalRowIndex(null);
+  setPendingCodeArchitectureDiagramTarget(null);
 
-  const finalOwner = (owner || localStorage.getItem("repoOwner") || "").trim();
-  const finalRepo = (repo || localStorage.getItem("repoName") || "").trim();
-  const finalToken = (token || localStorage.getItem("githubToken") || "").trim();
+  const targetProjectId = projectId || activeCodeArchitectureProjectId;
+  const targetProject = codeArchitectureProjects.find((entry) => entry.id === targetProjectId) || activeCodeArchitectureProject;
+  const sourceRepoConfig = repoConfig || activeCodeArchitectureRepo;
+  const finalOwner = (owner || sourceRepoConfig?.owner || localStorage.getItem("repoOwner") || "").trim();
+  const finalRepo = (repo || sourceRepoConfig?.repo || localStorage.getItem("repoName") || "").trim();
+  const finalToken = (token || sourceRepoConfig?.token || localStorage.getItem("githubToken") || "").trim();
 
   if (!finalOwner || !finalRepo) {
-    throw new Error("Missing owner/repo. Save them in Settings → GitHub first.");
+    throw new Error("Missing owner/repo. Connect a GitHub repository in Code-Based Architecture first.");
   }
 
-  // 🔑 WRITE TO LOCAL STORAGE (CRITICAL)
-  localStorage.setItem("repoOwner", finalOwner);
-  localStorage.setItem("repoName", finalRepo);
-
-  if (finalToken) {
-    localStorage.setItem("githubToken", finalToken);
-  } else {
-    localStorage.removeItem("githubToken");
-  }
-
-  if (selectedExtensions?.length) {
-    localStorage.setItem("githubSelectedExtensions", JSON.stringify(selectedExtensions));
-  }
-
-  const id = `cba-${finalOwner}/${finalRepo}`;
+  const effectiveSelectedExtensions = selectedExtensions?.length
+    ? selectedExtensions
+    : sourceRepoConfig?.selectedExtensions?.length
+      ? sourceRepoConfig.selectedExtensions
+      : getSavedGitHubSelectedExtensions();
+  const effectiveRepoConfig = sourceRepoConfig || makeRepoConfig({
+    owner: finalOwner,
+    repo: finalRepo,
+    token: finalToken,
+    selectedExtensions: effectiveSelectedExtensions,
+    analysisContext,
+  });
+  const storageKey = targetProject?.id && effectiveRepoConfig?.id
+    ? codeArchitectureRowsKey(targetProject.id, effectiveRepoConfig.id)
+    : `cba:${finalOwner}/${finalRepo}`;
+  const id = `cba-${targetProject?.id || finalOwner}/${effectiveRepoConfig?.id || finalRepo}`;
+  const sourceRunId = `code-architecture-functional-${targetProject?.id || "default"}-${effectiveRepoConfig?.id || finalRepo}-${Date.now()}`;
+  setCodeArchitectureFunctionalReviewRunId(sourceRunId);
+  setCbaLoadingLabel("Analyzing repository...");
 
   startActivity(id, {
     title: "Generating code-based architecture",
-    message: "Analyzing repository…"
+    message: "Preparing repository analysis...",
+    step: 0,
+    total: 0,
   });
 
   try {
-    // ✅ KEEP OLD SIGNATURE
-    await generateFunctionalDecompositionFromGitHub(
+    const result = await generateFunctionalDecompositionFromGitHub(
       setCbaTableData,
-      setCbaLoading
+      setCbaLoading,
+      null,
+      {
+        repoConfig: { ...effectiveRepoConfig, owner: finalOwner, repo: finalRepo, token: finalToken },
+        projectId: targetProject?.id || "",
+        storageKey,
+        selectedExtensions: effectiveSelectedExtensions,
+        analysisContext: analysisContext || effectiveRepoConfig.analysisContext,
+        onProgress: ({ completedFiles = 0, totalFiles = 0, currentFile = "", message = "" } = {}) => {
+          updateActivity(id, {
+            step: completedFiles,
+            total: totalFiles,
+            message: message || (currentFile
+              ? `Analyzing file ${Math.min(completedFiles + 1, totalFiles)} of ${totalFiles}: ${currentFile}`
+              : `Analyzed ${completedFiles} of ${totalFiles} files`),
+          });
+        },
+      }
     );
+    const resultRows = Array.isArray(result) ? result : result?.rows;
+    const resultMetadata = Array.isArray(result) ? {} : (result?.metadata || {});
+    const generatedRowCount = Array.isArray(resultRows) ? resultRows.length : 0;
+    const openTableFirstForLargeResult = generatedRowCount > 300;
+    let generatedRowsPersisted = generatedRowCount === 0;
+    if (targetProject?.id && effectiveRepoConfig?.id) {
+      const rows = resultRows;
+      const metadata = resultMetadata;
+      let rowsPersisted = Boolean(metadata.storageSaved);
+      if (Array.isArray(rows) && rows.length > 0 && !rowsPersisted) {
+        rowsPersisted = await writeCbaRowsToIndexedDB(storageKey, rows);
+      }
+      generatedRowsPersisted = rowsPersisted || generatedRowCount === 0;
+      const updatedRepo = {
+        ...effectiveRepoConfig,
+        owner: finalOwner,
+        repo: finalRepo,
+        token: finalToken,
+        repoId: effectiveRepoConfig.repoId || `${finalOwner}/${finalRepo}`,
+        repoName: effectiveRepoConfig.repoName || `${finalOwner}/${finalRepo}`,
+        repoUrl: effectiveRepoConfig.repoUrl || `https://github.com/${finalOwner}/${finalRepo}`,
+        selectedExtensions: effectiveSelectedExtensions,
+        analysisContext: analysisContext || effectiveRepoConfig.analysisContext || { text: "", files: [] },
+        branch: metadata.branch || metadata.ref || effectiveRepoConfig.branch || "",
+        commitSha: metadata.commitSha || effectiveRepoConfig.commitSha || "",
+        filesFound: metadata.filesFound || effectiveRepoConfig.filesFound || 0,
+        lastAnalyzedAt: new Date().toISOString(),
+      };
+      upsertCodeArchitectureRepo(targetProject.id, updatedRepo);
+      try {
+        localStorage.setItem(codeArchitectureMetaKey(targetProject.id, effectiveRepoConfig.id), JSON.stringify({
+          repoId: updatedRepo.repoId,
+          repoName: updatedRepo.repoName,
+          rowCount: rowsPersisted && Array.isArray(rows) ? rows.length : 0,
+          storage: rowsPersisted ? "indexedDB" : "unavailable",
+          storageError: rowsPersisted ? "" : (metadata.storageError || "Generated rows could not be saved to browser storage."),
+          metrics: metadata.metrics || null,
+          indexedDB: { database: XHANDLE_IDB_NAME, store: XHANDLE_IDB_CBA_STORE, key: storageKey },
+          updatedAt: new Date().toISOString(),
+        }));
+      } catch {}
+      if (Array.isArray(rows) && rows.length > 0) {
+        try {
+          const reviewRows = rows.map((row) => ({
+            from: row.from || "",
+            fromFile: row.fromFile || "",
+            fromDetails: row.fromDetails || "",
+            action: row.action || "",
+            controlActionDetails: row.controlActionDetails || "",
+            to: row.to || "",
+            toFile: row.toFile || "",
+            toDetails: row.toDetails || "",
+            subsystem: row.architecture?.subsystem || "Application Subsystem",
+            csci: row.architecture?.csci || "",
+            csc: row.architecture?.csc || "",
+            csu: row.architecture?.csu || "",
+            architectureRationale: row.architecture?.rationale || "",
+          }));
+          await resultsReview.createReviewItems(createReviewItemsFromGeneratedTable({
+            sourceFeature: "Code-Based Architecture Functional Decomposition",
+            sourceMethod: "GitHub repository analysis",
+            sourceRunId,
+            artifactType: CODE_ARCHITECTURE_FUNCTIONAL_ARTIFACT_TYPE,
+            artifactId: `code-architecture-functional-decomposition:${targetProject.id}:${effectiveRepoConfig.id}`,
+            projectId: targetProject.id,
+            rows: reviewRows,
+            columns: [
+              "from",
+              "fromFile",
+              "fromDetails",
+              "action",
+              "controlActionDetails",
+              "to",
+              "toFile",
+              "toDetails",
+              "subsystem",
+              "csci",
+              "csc",
+              "csu",
+              "architectureRationale",
+            ],
+          }));
+        } catch (error) {
+          console.warn("[results-review] Failed to register code architecture functional decomposition review items", error);
+        }
+      }
+    }
 
-    finishActivity(id, "success", "Architecture ready");
+    const failedFileCount = Number(resultMetadata.failedFileCount || 0);
+    const skippedForScaleCount = Number(resultMetadata.skippedForScale || 0);
+    const rowCount = generatedRowCount;
+    const metricsSummary = codeArchitectureMetricsSummary(resultMetadata.metrics);
+    const metricsSuffix = metricsSummary ? ` (${metricsSummary})` : "";
+    if (failedFileCount > 0 && rowCount === 0) {
+      finishActivity(id, "error", `AI service was unavailable for ${failedFileCount} file${failedFileCount === 1 ? "" : "s"}; run analysis again to retry.`);
+    } else if (failedFileCount > 0) {
+      finishActivity(id, "success", `Architecture ready with ${failedFileCount} file${failedFileCount === 1 ? "" : "s"} skipped; rerun to retry.${metricsSuffix}`);
+    } else if (!generatedRowsPersisted && rowCount > 0) {
+      finishActivity(id, "success", `Architecture ready for this session, but browser storage did not save ${rowCount} rows. Export or rerun after freeing storage.${metricsSuffix}`);
+    } else if (skippedForScaleCount > 0 && openTableFirstForLargeResult) {
+      finishActivity(id, "success", `Architecture ready from ${resultMetadata.selectedFiles || 0} files; ${skippedForScaleCount} skipped by size limits. Opened table view for ${rowCount} rows.${metricsSuffix}`);
+    } else if (skippedForScaleCount > 0) {
+      finishActivity(id, "success", `Architecture ready from ${resultMetadata.selectedFiles || 0} files; ${skippedForScaleCount} skipped by size limits.${metricsSuffix}`);
+    } else if (openTableFirstForLargeResult) {
+      finishActivity(id, "success", `Architecture ready; opened table view for ${rowCount} rows.${metricsSuffix}`);
+    } else {
+      finishActivity(id, "success", `Architecture ready${metricsSuffix}`);
+    }
+    setSection("code-architecture");
+    setCodeArchitectureWorkspaceTab("architecture");
+    setCodeArchitectureFunctionalTableOpenKey(openTableFirstForLargeResult ? `generated-${Date.now()}` : null);
+    setHighlightedCodeArchitectureFunctionalRowIndex(null);
+    setPendingCodeArchitectureDiagramTarget(null);
   } catch (e) {
     finishActivity(id, "error", String(e?.message || e));
     throw e;
+  } finally {
+    setCbaLoading(false);
   }
 }
 
 
 const [cbaLoading, setCbaLoading] = useState(false);
+const [cbaLoadingLabel, setCbaLoadingLabel] = useState("Loading saved analysis...");
 
 useEffect(() => {
-  const owner = localStorage.getItem("repoOwner");
-  const repo  = localStorage.getItem("repoName");
-  if (!owner || !repo) return;
-  localStorage.setItem(`cba:${owner}/${repo}`, JSON.stringify(cbaTableData || []));
+  if (!activeCodeArchitectureProject || !activeCodeArchitectureRepo || !activeCodeArchitectureRowsKey) {
+    setCbaLoading(false);
+    return;
+  }
+  if (!Array.isArray(cbaTableData) || cbaTableData.length === 0) return;
+
+  const metaKey = codeArchitectureMetaKey(activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id);
+  let cancelled = false;
+  writeCbaRowsToIndexedDB(activeCodeArchitectureRowsKey, cbaTableData)
+    .then((rowsPersisted) => {
+      if (cancelled) return;
+      try {
+        localStorage.setItem(metaKey, JSON.stringify({
+          repoId: activeCodeArchitectureRepo.repoId || normalizeRepoIdentity(activeCodeArchitectureRepo),
+          repoName: activeCodeArchitectureRepo.repoName || normalizeRepoIdentity(activeCodeArchitectureRepo),
+          rowCount: rowsPersisted ? cbaTableData.length : 0,
+          storage: rowsPersisted ? "indexedDB" : "unavailable",
+          storageError: rowsPersisted ? "" : "Code architecture rows could not be saved to browser storage.",
+          metrics: activeCodeArchitectureStoredMeta?.metrics || null,
+          indexedDB: {
+            database: XHANDLE_IDB_NAME,
+            store: XHANDLE_IDB_CBA_STORE,
+            key: activeCodeArchitectureRowsKey,
+          },
+          updatedAt: new Date().toISOString(),
+        }));
+      } catch (error) {
+        console.warn("[cba] Unable to save code architecture metadata to localStorage; full rows remain in IndexedDB.", error);
+      }
+    });
+  return () => {
+    cancelled = true;
+  };
+}, [activeCodeArchitectureProject, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey, activeCodeArchitectureStoredMeta?.metrics, cbaTableData]);
+
+useEffect(() => {
+  if (!cbaTableData?.length) {
+    setSelectedCbaElement(null);
+    return;
+  }
+  setSelectedCbaElement((current) => current || architectureElementFromRow(cbaTableData[0], 0));
 }, [cbaTableData]);
 
-useEffect(() => {
-  const fetchStatus = async () => {
-    // If you have a real endpoint, call it here and return its JSON.
-    return { kind: "composite", status: "ok", heartbeat: Date.now() };
-  };
-  initAgentMonitor({ fetchStatus });
-}, []);
-
 const [lastNonCopilotSection, setLastNonCopilotSection] = useState(
-  () => localStorage.getItem('xhandle.lastNonCopilotSection') || 'console'
+  () => localStorage.getItem('xhandle.lastNonCopilotSection') || DEFAULT_START_SECTION
 );
+
+    const refreshGate = async () => {
+      const data = await fetchUserAIProviderSettings().catch(() => ({ provider: 'local', last4: null }));
+      setGate({
+        phase: 'ok',
+        user: { id: 'local-user' },
+        provider: data?.provider || 'local',
+        last4: data?.last4 || null,
+        error: null,
+      });
+    };
+
+    useEffect(() => { refreshGate(); }, []);
 
     // Ctrl/Cmd + Shift + C toggles the dock
     useEffect(() => {
@@ -500,21 +2129,41 @@ useEffect(() => {
 
 useEffect(() => {
   if (dockOpen && section === 'copilot') {
-    setSection(lastNonCopilotSection || 'console');
+    setSection(lastNonCopilotSection || DEFAULT_START_SECTION);
   }
 }, [dockOpen, section, lastNonCopilotSection]);
 
-    // Initialize IDB stores early so “object store not found” can’t occur later
+// Initialize IDB stores early so “object store not found” can’t occur later
 useEffect(() => {
   ensureTraceabilityDB().catch(() => {});
 }, []);
 
-const resetLocalSession = async () => {
-  try {
-    localStorage.removeItem(ACTIVE_PROJECT_ID_KEY);
-  } catch {}
-};
-  
+useEffect(() => {
+  initializeLocalBackupRuntime().catch(() => {});
+}, []);
+
+
+    const signOut = async () => {
+      await refreshGate();
+    };
+
+    const saveUserAIProvider = async () => {
+      const provider = normalizeAIProvider(aiProviderInput);
+      const validationError = validateProviderApiKey(provider, providerKeyInput);
+      if (validationError) return alert(validationError);
+
+      setSavingKey(true);
+      try {
+        await saveUserAIProviderSettings(provider, providerKeyInput);
+        setProviderKeyInput('');
+        await refreshGate();
+      } catch (e) {
+        alert(e.message || String(e));
+      } finally {
+        setSavingKey(false);
+      }
+    };
+
   // ────────────────────────────────────────────────────────────────────────────────
   // Sidebar + nav
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -525,7 +2174,7 @@ const resetLocalSession = async () => {
       try { localStorage.setItem('xhandle.lastNonCopilotSection', section); } catch {}
     }
   }, [section]);
-  
+
   const [reportType, setReportType] = useState("Safety");
 
   const REPORT_TYPE_OPTIONS = [
@@ -539,7 +2188,7 @@ const resetLocalSession = async () => {
     "Risk Register",
     "Functional Architecture Definition", // <-- add this
     "Custom Report",
-  ];  
+  ];
 
 // --- Custom Report Wizard state ---
 const [showCustomPromptModal, setShowCustomPromptModal] = useState(false);
@@ -576,7 +2225,6 @@ function composeCustomPromptFromWizard(w) {
 
   const sections = (w.sections || []).filter(Boolean);
   const tables = (w.tables || []).filter(Boolean);
-
   const risksDirective = w.includeAllRisks
     ? "- A full list or table of **all identified risks** derived from findings. If very long, group by category/subsystem; keep each entry concise."
     : (Number.isFinite(w.topRisksCount)
@@ -613,13 +2261,30 @@ Output: clean Markdown only (no surrounding backticks).
 
   // Projects list + active project selection (persisted)
   const [projects, setProjects] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(PROJECTS_KEY) || '[]'); }
+    try { return repairDuplicateProjectIds(JSON.parse(localStorage.getItem(PROJECTS_KEY) || '[]')); }
     catch { return []; }
   });
-  const [activeProjectId, setActiveProjectId] = useState(() => localStorage.getItem(ACTIVE_PROJECT_ID_KEY) || null);
+  const [projectFolders, setProjectFolders] = useState(() => {
+    try { return normalizeProjectFolders(JSON.parse(localStorage.getItem(PROJECT_FOLDERS_KEY) || '[]')); }
+    catch { return []; }
+  });
+  const [folderDashboards, setFolderDashboards] = useState(() => {
+    try { return normalizeFolderDashboardMap(JSON.parse(localStorage.getItem(PROJECT_FOLDER_DASHBOARDS_KEY) || '{}')); }
+    catch { return {}; }
+  });
+  const [activeProjectId, setActiveProjectId] = useState(null);
+  const [activeProjectFolderId, setActiveProjectFolderId] = useState(null);
   const [showNewProject, setShowNewProject] = useState(false);
+  const [showNewProjectFolder, setShowNewProjectFolder] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
+  const [newProjectFolderName, setNewProjectFolderName] = useState('');
+  const [newProjectFolderParentId, setNewProjectFolderParentId] = useState(null);
+  const [newProjectTargetFolderId, setNewProjectTargetFolderId] = useState(null);
+  const [newFolderDashboardPanelType, setNewFolderDashboardPanelType] = useState("overview");
   const [newProjectError, setNewProjectError] = useState('');
+  const [newProjectFolderError, setNewProjectFolderError] = useState('');
+  const [draggingProjectId, setDraggingProjectId] = useState(null);
+  const [dragOverProjectFolderId, setDragOverProjectFolderId] = useState(null);
 
      // NEW: Project Manager (AI-PM) filters
 const [aiPmFilters, setAiPmFilters] = React.useState(() => {
@@ -643,38 +2308,28 @@ React.useEffect(() => {
       projectIds: activeProjectId ? [activeProjectId] : projects.map(p => p.id),
     }));
   }
-}, [projects, activeProjectId, aiPmFilters.projectIds?.length]);
+}, [projects, activeProjectId]);
 
-  const [projectLoaded, setProjectLoaded] = useState(false);  
+  const [projectLoaded, setProjectLoaded] = useState(false);
 
   // Rename state
 const [editingProjectId, setEditingProjectId] = useState(null);
 const [editingProjectName, setEditingProjectName] = useState('');
+const [editingProjectFolderId, setEditingProjectFolderId] = useState(null);
+const [editingProjectFolderName, setEditingProjectFolderName] = useState('');
 const [renameError, setRenameError] = useState('');
 // Three-dots menu state
 const [openProjectMenuId, setOpenProjectMenuId] = useState(null);
+const [openProjectFolderMenuId, setOpenProjectFolderMenuId] = useState(null);
 const projectMenuPortalRefs = useRef({}); // portal root (for outside-click)
 const projectMenuAnchorEls = useRef({});  // the trigger button element
+const projectFolderMenuPortalRefs = useRef({});
+const projectFolderMenuAnchorEls = useRef({});
 const riskDiagramContainerRef = useRef(null);
-
-// License status (from provider) + modal
-const lic = useLicense();
-const [licenseModalOpen, setLicenseModalOpen] = useState(false);
+const [inviteForProjectId, setInviteForProjectId] = useState(null);
 
 // --- Project cap from entitlements (fallbacks for safety) ---
-const projectLimit = useMemo(
-  () => Number(lic?.entitlements?.max_projects ?? (lic?.ok ? 50 : 3)),
-  [lic?.entitlements?.max_projects, lic?.ok]
-);
-const atProjectLimit = projects.length >= projectLimit;
-
 function guardNewProjectIntent() {
-  if (atProjectLimit) {
-    // nudge to upgrade
-    setSection('projects');
-    setLicenseModalOpen(true);
-    return false;
-  }
   return true;
 }
 
@@ -706,7 +2361,7 @@ const consoleRiskRegister = React.useMemo(() => {
     regs.forEach((r) => list.push(r));
   });
   return list;
-}, [projects]);
+}, [projects, activeProjectId, riskRegister]);
 
 // Risks by status (uses aggregate list)
 const consoleRiskStatusData = React.useMemo(() => {
@@ -758,7 +2413,7 @@ const consoleRecentActivity = React.useMemo(() => {
     .sort((a,b) => new Date(b.when||0) - new Date(a.when||0))
     .slice(0, 12)
     .map(x => ({ ...x, when: x.when ? new Date(x.when).toLocaleString() : 'recently' }));
-}, [projects]);
+}, [projects, activeProjectId, riskRegister]);
 
 // Static subtitle for all-project aggregate
 const consoleSubtitle = 'All projects';
@@ -774,14 +2429,13 @@ const [riskHubFilters, setRiskHubFilters] = useState({
   maxRPN: ''
 });
 
-// Stacked bar: counts by status per project
 const buildRequirementsFromSummary = (summary) => {
   if (!summary || !Array.isArray(summary) || summary.length < 2) return [];
   const headers = summary[0].map(h => String(h || ''));
   const rows = summary.slice(1);
 
   const reqCols = headers
-    .map((h, i) => (/requirement|system requirement|derived requirement|safety requirement|constraint|mitigation/i.test(h) ? i : -1))
+    .map((h, i) => (/requirement|system requirement|derived requirement|safety requirement|safety requirements\/constraints|constraint|mitigation/i.test(h) ? i : -1))
     .filter(i => i >= 0);
 
   const sevIdx = headers.findIndex(h => /severity/i.test(h));
@@ -841,8 +2495,8 @@ const buildRiskRegisterFromSummary = (summary) => {
   const hazardIdx = headers.findIndex(h => /(^|\s)hazards?\b/i.test(h));
   // Reasonable title fallbacks across STPA/FMEA/What-If variants
   const titleIdx =
-    headers.findIndex(h => /\brisk\b|\bfailure modes?\b|\buca\b|\bunsafe\s*control\s*actions?\b|\bwhat[-\s]?if\b|\bwhat[-\s]?if\s*scenarios?\b|\bscenarios?\b/i.test(h)) !== -1
-      ? headers.findIndex(h => /\brisk\b|\bfailure modes?\b|\buca\b|\bunsafe\s*control\s*actions?\b|\bwhat[-\s]?if\b|\bwhat[-\s]?if\s*scenarios?\b|\bscenarios?\b/i.test(h))
+    headers.findIndex(h => /\brisk\b|\bfailure mode\b|\buca\b|\bunsafe control action(s)?\b|\bwhat[-\s]?if\b|\bscenario\b/i.test(h)) !== -1
+      ? headers.findIndex(h => /\brisk\b|\bfailure mode\b|\buca\b|\bunsafe control action(s)?\b|\bwhat[-\s]?if\b|\bscenario\b/i.test(h))
       : 0;
 
   return rows.map((row, idx) => ({
@@ -869,36 +2523,80 @@ const buildRiskRegisterFromSummary = (summary) => {
     const saved = localStorage.getItem(PROJECTS_OPEN_KEY);
     return saved ? saved === 'true' : true;
   });
+  const [openProjectFolderIds, setOpenProjectFolderIds] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(PROJECT_FOLDERS_OPEN_KEY) || '{}'); }
+    catch { return {}; }
+  });
 
   useEffect(() => {
     function handleOutside(e) {
-      if (!openProjectMenuId) return;
-  
+      if (!openProjectMenuId && !openProjectFolderMenuId) return;
+
       // Ignore clicks on the trigger button
       if (e.target.closest('[data-project-menu-trigger="true"]')) return;
-  
-      const menuEl = projectMenuPortalRefs.current[openProjectMenuId];
-      if (menuEl && !menuEl.contains(e.target)) {
+      if (e.target.closest('[data-project-folder-menu-trigger="true"]')) return;
+
+      const menuEl = openProjectMenuId ? projectMenuPortalRefs.current[openProjectMenuId] : null;
+      if (openProjectMenuId && menuEl && !menuEl.contains(e.target)) {
         setOpenProjectMenuId(null);
+      }
+      const folderMenuEl = openProjectFolderMenuId ? projectFolderMenuPortalRefs.current[openProjectFolderMenuId] : null;
+      if (openProjectFolderMenuId && folderMenuEl && !folderMenuEl.contains(e.target)) {
+        setOpenProjectFolderMenuId(null);
       }
     }
     function handleEsc(e) {
-      if (e.key === 'Escape') setOpenProjectMenuId(null);
+      if (e.key === 'Escape') {
+        setOpenProjectMenuId(null);
+        setOpenProjectFolderMenuId(null);
+      }
     }
-  
+
     document.addEventListener('click', handleOutside);
     document.addEventListener('keydown', handleEsc);
     return () => {
       document.removeEventListener('click', handleOutside);
       document.removeEventListener('keydown', handleEsc);
     };
-  }, [openProjectMenuId]);
+  }, [openProjectMenuId, openProjectFolderMenuId]);
+
+  useEffect(() => {
+    function handleOutside(e) {
+      if (!openCodeArchitectureProjectMenuId && !openCodeArchitectureFolderMenuId) return;
+      if (e.target.closest('[data-cba-project-menu-trigger="true"]')) return;
+      if (e.target.closest('[data-cba-folder-menu-trigger="true"]')) return;
+      const projectMenuEl = openCodeArchitectureProjectMenuId ? codeArchitectureProjectMenuPortalRefs.current[openCodeArchitectureProjectMenuId] : null;
+      if (openCodeArchitectureProjectMenuId && projectMenuEl && !projectMenuEl.contains(e.target)) {
+        setOpenCodeArchitectureProjectMenuId(null);
+      }
+      const folderMenuEl = openCodeArchitectureFolderMenuId ? codeArchitectureFolderMenuPortalRefs.current[openCodeArchitectureFolderMenuId] : null;
+      if (openCodeArchitectureFolderMenuId && folderMenuEl && !folderMenuEl.contains(e.target)) {
+        setOpenCodeArchitectureFolderMenuId(null);
+      }
+    }
+    function handleEsc(e) {
+      if (e.key === "Escape") {
+        setOpenCodeArchitectureProjectMenuId(null);
+        setOpenCodeArchitectureFolderMenuId(null);
+      }
+    }
+    document.addEventListener("click", handleOutside);
+    document.addEventListener("keydown", handleEsc);
+    return () => {
+      document.removeEventListener("click", handleOutside);
+      document.removeEventListener("keydown", handleEsc);
+    };
+  }, [openCodeArchitectureProjectMenuId, openCodeArchitectureFolderMenuId]);
 
   useEffect(() => {
     const onProjectsUpdated = () => {
       try {
         const list = JSON.parse(localStorage.getItem("xhandle.projects") || "[]");
         setProjects(list);
+        const folders = JSON.parse(localStorage.getItem(PROJECT_FOLDERS_KEY) || "[]");
+        setProjectFolders(normalizeProjectFolders(folders));
+        const dashboards = JSON.parse(localStorage.getItem(PROJECT_FOLDER_DASHBOARDS_KEY) || "{}");
+        setFolderDashboards(normalizeFolderDashboardMap(dashboards));
         // Make it visible when something new arrives (e.g., from Copilot)
         setSection('projects');
         setIsSidebarOpen(true);
@@ -907,37 +2605,34 @@ const buildRiskRegisterFromSummary = (summary) => {
     };
     window.addEventListener("xhandle:projects-updated", onProjectsUpdated);
     return () => window.removeEventListener("xhandle:projects-updated", onProjectsUpdated);
-  }, []);  
-  
+  }, []);
+
   useEffect(() => { localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects)); }, [projects]);
+  useEffect(() => { localStorage.setItem(PROJECT_FOLDERS_KEY, JSON.stringify(projectFolders)); }, [projectFolders]);
+  useEffect(() => { localStorage.setItem(PROJECT_FOLDER_DASHBOARDS_KEY, JSON.stringify(folderDashboards)); }, [folderDashboards]);
   useEffect(() => {
     if (activeProjectId) localStorage.setItem(ACTIVE_PROJECT_ID_KEY, activeProjectId);
     else localStorage.removeItem(ACTIVE_PROJECT_ID_KEY);
   }, [activeProjectId]);
   useEffect(() => { localStorage.setItem(PROJECTS_OPEN_KEY, String(isProjectsOpen)); }, [isProjectsOpen]);
+  useEffect(() => { localStorage.setItem(PROJECT_FOLDERS_OPEN_KEY, JSON.stringify(openProjectFolderIds)); }, [openProjectFolderIds]);
 
   const createProject = () => {
-      // HARD GUARD: prevent creation beyond cap
-  if (atProjectLimit) {
-    setNewProjectError(`You’ve reached your plan limit of ${projectLimit} projects. Upgrade to create more.`);
-    setLicenseModalOpen(true);
-    return;
-  }
-
     const name = newProjectName.trim();
     if (!name) { setNewProjectError('Please enter a project name.'); return; }
     if (projects.some(p => p.name.toLowerCase() === name.toLowerCase())) {
       setNewProjectError('A project with this name already exists.');
       return;
     }
-    const id = `${Date.now()}`;
-    const proj = { id, name, createdAt: new Date().toISOString() };
+    const id = makeId();
+    const proj = { id, name, folderId: newProjectTargetFolderId || null, createdAt: new Date().toISOString() };
     setProjects(prev => [proj, ...prev]);
     // NEW: initialize agentReportResult
     saveProjectPatch(id, {
       responseRows: [],
+      diagramCategories: null,
       analysisResult: null,
-      riskMethod: DEFAULT_RISK_METHOD,
+      riskMethod: 'STPA',
       agentReportResult: null,
       riskRegister: [],
       requirements: [],      // ← add this
@@ -948,14 +2643,48 @@ const buildRiskRegisterFromSummary = (summary) => {
         procedures: [],
         hazardsCoverage: [],
         datasets: [],
-      },      
+      },
     });
         setActiveProjectId(id);
+    setActiveProjectFolderId(null);
     setNewProjectName('');
+    setNewProjectTargetFolderId(null);
     setNewProjectError('');
     setShowNewProject(false);
     setSection('projects');
-    
+
+  };
+
+  const createProjectFolder = () => {
+    const name = newProjectFolderName.trim();
+    if (!name) { setNewProjectFolderError('Please enter a folder name.'); return; }
+    if (projectFolders.some((folder) => folder.parentId === (newProjectFolderParentId || null) && folder.name.toLowerCase() === name.toLowerCase())) {
+      setNewProjectFolderError('A folder with this name already exists here.');
+      return;
+    }
+
+    const id = makeId();
+    const folder = {
+      id,
+      name,
+      parentId: newProjectFolderParentId || null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    setProjectFolders((prev) => [folder, ...prev]);
+    setFolderDashboards((prev) => ({ ...prev, [id]: getDefaultFolderDashboardPanels() }));
+    if (newProjectFolderParentId) {
+      setOpenProjectFolderIds((prev) => ({ ...prev, [newProjectFolderParentId]: true, [id]: true }));
+    } else {
+      setOpenProjectFolderIds((prev) => ({ ...prev, [id]: true }));
+    }
+    setNewProjectFolderName('');
+    setNewProjectFolderParentId(null);
+    setNewProjectFolderError('');
+    setShowNewProjectFolder(false);
+    setActiveProjectId(null);
+    setActiveProjectFolderId(id);
+    setSection('projects');
   };
 
   // Delete a project (with confirmation and cleanup)
@@ -970,36 +2699,48 @@ const buildRiskRegisterFromSummary = (summary) => {
     if (activeProjectId === projectId) {
       const nextId = remaining[0]?.id || null;
       setActiveProjectId(nextId);
+      setActiveProjectFolderId(null);
       if (!nextId) {
         setResponseRows([]);
         setAnalysisResult(null);
-        setRiskMethod(DEFAULT_RISK_METHOD);
+        setRiskMethod('STPA');
         setAgentReportResult(null); // NEW: clear report in UI state
-        setRequirements([]); 
+        setRequirements([]);
         setShowPromptWizard(true);
       }
     }
     removeProjectData(projectId);
+    resultsReview.deleteReviewItemsForProject(projectId).catch((error) => {
+      console.warn("[results-review] Failed to remove review items for deleted project", error);
+    });
   };
 
+  // Legacy Collaborator fallback only. Native LLM grounding is built from
+  // src/features/workspace-graph inside XHandleCopilotView before each request.
   function getActiveProjectContext() {
     const map = readProjectMap();
     const proj = projects.find(p => p.id === activeProjectId) || null;
     const persisted = activeProjectId ? (map?.[activeProjectId] || {}) : {};
-  
+
     // ---- Pull from localStorage (safe, synchronous) ----
     const ls = localStorage;
     const lsKeys = Object.keys(ls);
-  
+
     // 1) Per-app/project blob you already use
     let projectDataLS = {};
     try { projectDataLS = JSON.parse(ls.getItem("xhandle.projectData") || "{}"); } catch {}
     const storedProj = activeProjectId ? (projectDataLS?.[activeProjectId] || {}) : {};
-  
+
     // 2) Extra requirements cache (if present)
     let reqsLS = [];
     try { reqsLS = JSON.parse(ls.getItem("xhandle:requirements") || "[]"); } catch {}
-  
+
+    let sysmlModelsLS = [];
+    try {
+      const parsed = JSON.parse(ls.getItem("xhandle.designManagement.sysmlV2.models") || "[]");
+      sysmlModelsLS = Array.isArray(parsed) ? parsed : [];
+    } catch {}
+
     // 3) LiteSummaryDiagram blocks (capture all variants to give the model more context)
     const liteSummaryKeys = lsKeys.filter(k => k.startsWith("LiteSummaryDiagram::"));
     const liteSummaries = [];
@@ -1009,7 +2750,7 @@ const buildRiskRegisterFromSummary = (summary) => {
         if (v) liteSummaries.push({ key: k, headers: v.headers, nodes: v.nodes?.slice?.(0, 50) || v.nodes });
       } catch {}
     }
-  
+
     // 4) Diagram snapshots (positions) – keep a manageable tail
     const diagramKeys = lsKeys.filter(k => k.startsWith("diagram:positions:")).sort();
     const lastDiagKeys = diagramKeys.slice(-12); // tail to keep context compact
@@ -1026,8 +2767,8 @@ const buildRiskRegisterFromSummary = (summary) => {
         }
       } catch {}
     }
-  
-    // 5) Code-based architecture (CBA): collect ALL cba:* tables, not only the active repo
+
+    // 5) Code-based architecture (CBA): scoped project/repo summaries plus legacy fallback
     const cbaKeys = lsKeys.filter(k => k.startsWith("cba:"));
     const codeArchitecture = [];
     for (const k of cbaKeys) {
@@ -1038,50 +2779,161 @@ const buildRiskRegisterFromSummary = (summary) => {
         }
       } catch {}
     }
-  
+    const codeArchitectureProjectSummaries = (codeArchitectureProjects || []).map((project) => {
+      const folder = project.folderId ? codeArchitectureFolders.find((entry) => entry.id === project.folderId) : null;
+      const repos = Array.isArray(project.repos) ? project.repos : [];
+      return {
+        id: project.id,
+        name: project.name,
+        folder: folder ? { id: folder.id, name: folder.name } : null,
+        activeRepoId: project.activeRepoId || null,
+        repos: repos.map((repoConfig) => {
+          let meta = null;
+          try { meta = JSON.parse(ls.getItem(codeArchitectureMetaKey(project.id, repoConfig.id)) || "null"); } catch {}
+          const isActive = project.id === activeCodeArchitectureProjectId && repoConfig.id === activeCodeArchitectureRepo?.id;
+          return {
+            id: repoConfig.id,
+            repoId: repoConfig.repoId,
+            repoName: repoConfig.repoName,
+            repoUrl: repoConfig.repoUrl,
+            branch: repoConfig.branch || "",
+            commitSha: repoConfig.commitSha || "",
+            active: Boolean(isActive),
+            rowCount: meta?.rowCount || (isActive && Array.isArray(cbaTableData) ? cbaTableData.length : 0),
+            rowSample: isActive && Array.isArray(cbaTableData) ? cbaTableData.slice(0, 8) : [],
+            updatedAt: meta?.updatedAt || repoConfig.updatedAt || null,
+          };
+        }),
+      };
+    });
+
     // 6) A few convenience hints (what you already had, preserved)
     const owner = ls.getItem("repoOwner") || undefined;
     const repo  = ls.getItem("repoName") || undefined;
-  
+
+    const compactRows = (rows, limit = 40) => (Array.isArray(rows) ? rows.slice(0, limit) : []);
+    const summarizeProject = (project) => {
+      const data = projectDataLS?.[project.id] || map?.[project.id] || {};
+      return {
+        id: project.id,
+        name: project.name,
+        createdAt: project.createdAt || null,
+        counts: {
+          requirements: Array.isArray(data.requirements) ? data.requirements.length : 0,
+          functionalDecomposition: Array.isArray(data.responseRows) ? data.responseRows.length : 0,
+          riskRegister: Array.isArray(data.riskRegister) ? data.riskRegister.length : 0,
+          riskSummaryRows: Array.isArray(data.analysisResult?.Summary) ? Math.max(data.analysisResult.Summary.length - 1, 0) : 0,
+          tests: Array.isArray(data.vnvArtifacts?.tests || data.vnvArtifacts?.testCases)
+            ? (data.vnvArtifacts?.tests || data.vnvArtifacts?.testCases).length
+            : 0,
+        },
+        samples: {
+          requirements: compactRows(data.requirements, 8),
+          functionalDecomposition: compactRows(data.responseRows, 8),
+          riskRegister: compactRows(data.riskRegister, 8),
+          riskSummarySheet: compactRows(data.analysisResult?.Summary, 8),
+          tests: compactRows(data.vnvArtifacts?.tests || data.vnvArtifacts?.testCases, 8),
+        },
+      };
+    };
+
+    const workspaceProjects = projects.map(summarizeProject);
+    const workspaceSysMLModels = sysmlModelsLS.map((model) => ({
+      id: model.id,
+      projectId: model.projectId || null,
+      name: model.name,
+      description: model.description || "",
+      activeView: model.activeView || null,
+      elementCount: Array.isArray(model.elements) ? model.elements.length : 0,
+      relationshipCount: Array.isArray(model.relationships) ? model.relationships.length : 0,
+      elements: compactRows(model.elements, 25).map((element) => ({
+        id: element.id,
+        type: element.type,
+        name: element.name,
+        description: element.description,
+        ownerId: element.ownerId,
+        traceLinks: compactRows(element.traceLinks, 5),
+      })),
+      relationships: compactRows(model.relationships, 25).map((relationship) => ({
+        id: relationship.id,
+        type: relationship.type,
+        sourceId: relationship.sourceId,
+        targetId: relationship.targetId,
+        label: relationship.label,
+      })),
+    }));
+    const designProvider = getActionProvider("requirements");
+    const designManagementState = designProvider?.getState?.() || null;
+
     // ---- Compose a single context (prefer live state → persisted → LS blobs) ----
     const ctx = {
-      // meta / hinting
+      // meta / hinting. xCopilot reasons across local workspace data by default.
+      scope: "workspace",
       project: proj ? { id: proj.id, name: proj.name, createdAt: proj.createdAt } : null,
+      focus: {
+        project: proj ? { id: proj.id, name: proj.name, createdAt: proj.createdAt } : null,
+        section,
+        activeTab,
+        screen: {
+          feature: section,
+          view: activeTab || null,
+          designManagement: designManagementState,
+        },
+      },
       projectHint, // you already memoize owner/repo/baselineKey elsewhere
-  
+
+      workspace: {
+        projects: workspaceProjects,
+        projectCount: projects.length,
+        codeArchitecture: {
+          projects: codeArchitectureProjectSummaries,
+          projectCount: codeArchitectureProjects.length,
+          folderCount: codeArchitectureFolders.length,
+          activeProjectId: activeCodeArchitectureProjectId || null,
+          activeRepoId: activeCodeArchitectureRepo?.id || null,
+          legacyRows: codeArchitecture.slice(0, 40),
+        },
+        activeProjectId: activeProjectId || null,
+        requirements: compactRows(reqsLS, 80),
+        sysmlModels: workspaceSysMLModels,
+        legacyCodeArchitectureRows: compactRows(codeArchitecture, 120),
+        liteSummaries,
+        diagramSnapshots,
+      },
+
       // core working data
       requirements:
         (requirements?.length ? requirements : null) ??
         (persisted.requirements?.length ? persisted.requirements : null) ??
         (storedProj.requirements?.length ? storedProj.requirements : null) ??
         reqsLS,
-  
+
       functionalDecomposition:
         (responseRows?.length ? responseRows : null) ??
         (persisted.responseRows?.length ? persisted.responseRows : null) ??
         (storedProj.responseRows?.length ? storedProj.responseRows : null) ??
         [],
-  
+
       riskRegister:
         (riskRegister?.length ? riskRegister : null) ??
         (persisted.riskRegister?.length ? persisted.riskRegister : null) ??
         (storedProj.riskRegister?.length ? storedProj.riskRegister : null) ??
         [],
-  
+
       // generated analysis (Summary sheet)
       riskSummarySheet:
         (analysisResult?.Summary?.length ? analysisResult.Summary : null) ??
         (persisted.analysisResult?.Summary?.length ? persisted.analysisResult.Summary : null) ??
         (storedProj.analysisResult?.Summary?.length ? storedProj.analysisResult.Summary : null) ??
         null,
-  
+
       // ALL CBA tables found in LS (tagged with their source key)
       codeArchitecture,
-  
+
       // extra sources the Copilot can leverage for reasoning
       liteSummaries,
       diagramSnapshots,
-  
+
       // lightweight metadata
       sourcesMeta: {
         lsKeyCount: lsKeys.length,
@@ -1090,23 +2942,339 @@ const buildRiskRegisterFromSummary = (summary) => {
         diagramSnapshotCount: diagramSnapshots.length,
         repoOwner: owner,
         repoName: repo,
+        workspaceProjectCount: projects.length,
+        sysmlModelCount: workspaceSysMLModels.length,
       },
     };
-  
+
     return ctx;
   }
-  
-  
+
+  function getCollaboratorAppFocus() {
+    return {
+      section,
+      activeTab,
+      activeProjectId: activeProjectId || null,
+      activeCodeArchitectureProjectId: activeCodeArchitectureProjectId || null,
+      activeCodeArchitectureRepoId: activeCodeArchitectureRepo?.id || null,
+      activeCodeArchitectureRepoKey: activeCodeArchitectureRowsKey || null,
+      activeCodeArchitectureRepo: activeCodeArchitectureRepo ? {
+        id: activeCodeArchitectureRepo.id,
+        owner: activeCodeArchitectureRepo.owner || "",
+        repo: activeCodeArchitectureRepo.repo || "",
+        repoId: activeCodeArchitectureRepo.repoId || "",
+        branch: activeCodeArchitectureRepo.branch || "main",
+      } : null,
+    };
+  }
+
+  const normalizeWorkflowRequirementRows = (rows = []) => (
+    (Array.isArray(rows) ? rows : [])
+      .map((row, index) => ({
+        id: row?.id || row?.requirementId || `AGENT-REQ-${Date.now()}-${index + 1}`,
+        title: row?.title || row?.name || row?.requirement || row?.text || `Agent requirement ${index + 1}`,
+        module: row?.module || "Requirements Specification",
+        source: row?.source || "xHandle Collaborator Agentic Workflow",
+        attributes: {
+          ...(row?.attributes || {}),
+          Description: row?.description || row?.attributes?.Description || row?.title || row?.name || "",
+        },
+        links: Array.isArray(row?.links) ? row.links : [],
+        ...row,
+      }))
+      .filter((row) => String(row.title || "").trim())
+  );
+
+  const buildRequirementsSpecificationRows = (requirementRows = [], { source = "xHandle Collaborator Agentic Workflow" } = {}) => {
+    const requirementsOnly = (requirementRows || []).filter((row) => !row.heading);
+    const hasSpecHeadings = (requirementRows || []).some((row) =>
+      row.heading && /purpose|scope|overall description|specific requirements|verification|traceability/i.test(String(row.title || ""))
+    );
+    if (hasSpecHeadings) return requirementRows;
+
+    const section = (title, description) => ({
+      title,
+      heading: true,
+      attributes: { Description: description, Source: source },
+      source,
+    });
+
+    const bodyRows = requirementsOnly.map((row, index) => ({
+      ...row,
+      id: row.id || `REQ-${String(index + 1).padStart(3, "0")}`,
+      title: row.title || `Requirement ${index + 1}`,
+      status: row.status || "Proposed",
+      attributes: {
+        Priority: row.attributes?.Priority || "TBD",
+        Verification: row.attributes?.Verification || "Analysis/Test",
+        Rationale: row.attributes?.Rationale || "Derived from hazard mitigation workflow.",
+        Source: row.attributes?.Source || source,
+        ...(row.attributes || {}),
+      },
+    }));
+
+    return [
+      section("1. Introduction", "Defines the purpose, scope, references, and intended audience for this requirements specification."),
+      section("1.1 Purpose", "Capture safety and system requirements generated by xHandle Collaborator from the current project artifacts."),
+      section("1.2 Scope", "Applies to the active xHandle project and the artifacts used by the selected agentic workflow."),
+      section("1.3 References", "Source artifacts may include hazard analysis rows, mitigations, architecture data, functional decomposition, and Collaborator workflow outputs."),
+      section("2. Overall Description", "Summarizes system context, assumptions, constraints, user needs, and safety-relevant operating conditions."),
+      section("2.1 Product Perspective", "Describe external interfaces, operational environment, dependencies, and relevant system boundaries."),
+      section("2.2 Assumptions and Constraints", "List assumptions, regulatory constraints, design constraints, safety constraints, and unresolved TBDs."),
+      section("3. Specific Requirements", "Normative shall statements generated or curated for implementation and verification."),
+      ...bodyRows,
+      section("4. Verification and Validation", "Defines expected verification approach and test traceability for each requirement."),
+      section("4.1 Verification Methods", "Use inspection, analysis, demonstration, and test methods as appropriate for each requirement."),
+      section("5. Traceability", "Maintains links from hazards and mitigations to requirements, verification cases, and review evidence."),
+      section("5.1 Open Issues and TBDs", "Track incomplete rationale, missing source evidence, ambiguous requirement wording, and unassigned verification coverage."),
+    ];
+  };
+
+  const populateRequirementsModuleFromWorkflow = async (rows, { mode = "append", source = "xHandle Collaborator Agentic Workflow", moduleName: requestedModuleName = "" } = {}) => {
+    const normalized = normalizeWorkflowRequirementRows(rows);
+    if (!normalized.length) return { rows: [], module: null, moduleName: null };
+
+    const moduleName =
+      String(requestedModuleName || "").trim() ||
+      normalized.find((row) => String(row.module || "").trim())?.module ||
+      "Requirements Specification";
+    const moduleRows = buildRequirementsSpecificationRows(normalized, { source }).map((row) => ({
+      ...row,
+      module: moduleName,
+      attributes: {
+        ...(row.attributes || {}),
+        Source: row.attributes?.Source || source,
+      },
+    }));
+
+    const provider = getActionProvider("requirements");
+    let result = null;
+
+    if (provider?.createModule && (provider?.appendModuleRows || provider?.replaceModuleRows)) {
+      const module = await provider.createModule({
+        name: moduleName,
+        description: "Requirements generated by xHandle Collaborator Agentic Workflow.",
+      });
+      result = mode === "replace" && provider.replaceModuleRows
+        ? await provider.replaceModuleRows({ moduleRef: module.id || moduleName, rows: moduleRows, mode: "replace" })
+        : await provider.appendModuleRows({ moduleRef: module.id || moduleName, rows: moduleRows });
+      provider.openModule?.({ moduleRef: module.id || moduleName });
+    } else {
+      const module = await createRequirementModule({
+        name: moduleName,
+        description: "Requirements generated by xHandle Collaborator Agentic Workflow.",
+      });
+      result = mode === "replace"
+        ? await populateRequirementModule({ moduleId: module.id, rows: moduleRows })
+        : await appendRequirementRows({ moduleId: module.id, rows: moduleRows });
+    }
+
+    const nextRows = loadRequirements();
+    setRequirements(nextRows);
+    setSection("requirements");
+    return {
+      module: result?.module || null,
+      moduleName: result?.module?.name || moduleName,
+      rows: result?.rows || moduleRows,
+      allRequirements: nextRows,
+    };
+  };
+
+  const normalizeWorkflowTestRows = (rows = []) => (
+    (Array.isArray(rows) ? rows : [])
+      .map((row, index) => ({
+        id: row?.id || row?.testId || `AGENT-T-${Date.now()}-${index + 1}`,
+        title: row?.title || row?.name || `Agent verification test ${index + 1}`,
+        name: row?.name || row?.title || `Agent verification test ${index + 1}`,
+        type: row?.type || row?.kind || "Verification",
+        status: row?.status || "Draft",
+        links: row?.links || (row?.requirementId ? { requirementId: row.requirementId } : {}),
+      source: row?.source || "xHandle Collaborator Agentic Workflow",
+        ...row,
+      }))
+      .filter((row) => String(row.title || row.name || "").trim())
+  );
+
+  const mergeRowsById = (existing = [], incoming = [], mode = "append") => {
+    const base = mode === "replace" ? [] : (Array.isArray(existing) ? existing : []);
+    const byId = new Map(base.map((row) => [row.id || row.title || row.name, row]));
+    incoming.forEach((row) => byId.set(row.id || row.title || row.name || makeId(), row));
+    return Array.from(byId.values());
+  };
+
+  const rebuildWorkflowTrace = (tests = []) => (
+    (Array.isArray(tests) ? tests : []).map((test) => ({
+      TestId: test.id,
+      Requirement: test.links?.requirementId || test.requirementId || "unlinked",
+      Hazards: (test.links?.hazardIds || test.hazardIds || []).join(", "),
+    }))
+  );
+
+  const applyWorkflowArtifacts = async ({
+    artifacts = {},
+    mode = "append",
+    targetProjectId,
+    source = "xHandle Collaborator Agentic Workflow",
+    requirementsModuleName = "",
+  } = {}) => {
+    const ensureWorkspaceGeneratedProject = () => {
+      const existing = projects.find((project) => project.id === "workspace-generated-artifacts")
+        || projects.find((project) => /workspace generated artifacts/i.test(project.name || ""));
+      if (existing) return existing.id;
+      const created = {
+        id: "workspace-generated-artifacts",
+        name: "Workspace Generated Artifacts",
+        createdAt: new Date().toISOString(),
+      };
+      setProjects((prev) => (prev.some((project) => project.id === created.id) ? prev : [...prev, created]));
+      saveProjectPatch(created.id, {
+        _createdBy: "xHandle Collaborator",
+        _description: "Workspace-level generated artifacts used when no explicit project or artifact target is selected.",
+      });
+      return created.id;
+    };
+    const projectId = targetProjectId || activeProjectId || ensureWorkspaceGeneratedProject();
+
+    const applied = [];
+    const patch = {};
+
+    if (Array.isArray(artifacts.functionalDecompositionRows)) {
+      const rows = artifacts.functionalDecompositionRows;
+      patch.responseRows = rows;
+      if (projectId === activeProjectId) setResponseRows(rows);
+      applied.push({ artifact: "functionalDecompositionRows", count: rows.length, mode: "replace" });
+    }
+
+    if (Array.isArray(artifacts.riskSummaryRows)) {
+      const summaryRows = artifacts.riskSummaryRows;
+      const nextAnalysis = { ...(loadProjectData(projectId)?.analysisResult || {}), Summary: summaryRows };
+      patch.analysisResult = nextAnalysis;
+      patch.riskRegister = buildRiskRegisterFromSummary(summaryRows);
+      if (projectId === activeProjectId) {
+        setAnalysisResult((prev) => ({ ...(prev || {}), Summary: summaryRows }));
+        setRiskRegister(patch.riskRegister);
+      }
+      applied.push({ artifact: "riskSummaryRows", count: Math.max(summaryRows.length - 1, 0), mode: "replace" });
+    }
+
+    if (Array.isArray(artifacts.mitigationRows)) {
+      const existingMitigations = loadProjectData(projectId)?.mitigationRows || [];
+      patch.mitigationRows = mergeRowsById(existingMitigations, artifacts.mitigationRows.map((text, index) => ({
+        id: `AGENT-MIT-${index + 1}`,
+        title: String(text || "").trim(),
+        source,
+      })).filter((row) => row.title), mode);
+      applied.push({ artifact: "mitigationRows", count: artifacts.mitigationRows.length, mode });
+    }
+
+    if (Array.isArray(artifacts.requirementsRows)) {
+      const incoming = normalizeWorkflowRequirementRows(artifacts.requirementsRows);
+      let nextRequirements = incoming;
+      let moduleName = String(requirementsModuleName || "").trim() || incoming[0]?.module || "Requirements Specification";
+      if (projectId === activeProjectId) {
+        const moduleResult = await populateRequirementsModuleFromWorkflow(incoming, { mode, source, moduleName });
+        nextRequirements = moduleResult.allRequirements || incoming;
+        moduleName = moduleResult.moduleName || moduleName;
+      } else {
+        nextRequirements = mergeRowsById(loadProjectData(projectId)?.requirements || [], incoming, mode);
+      }
+      patch.requirements = nextRequirements;
+      patch.lastAgenticRequirementsModule = moduleName;
+      applied.push({ artifact: "requirementsRows", count: incoming.length, mode, moduleName });
+    }
+
+    if (Array.isArray(artifacts.testRows)) {
+      const incoming = normalizeWorkflowTestRows(artifacts.testRows);
+      let nextVnv = null;
+      const makeNext = (prev = {}) => {
+        const tests = mergeRowsById(prev.tests || prev.testCases || [], incoming, mode);
+        return {
+          ...prev,
+          tests,
+          testCases: tests,
+          trace: rebuildWorkflowTrace(tests),
+          summary: {
+            ...(prev.summary || {}),
+            generatedAt: new Date().toISOString(),
+            totals: {
+              ...(prev.summary?.totals || {}),
+              testCases: tests.length,
+              requirements: Array.isArray(requirements) ? requirements.length : 0,
+              hazards: Array.isArray(riskRegister) ? riskRegister.length : 0,
+            },
+          },
+        };
+      };
+      if (projectId === activeProjectId) {
+        setVnvArtifacts((prev) => {
+          nextVnv = makeNext(prev || {});
+          saveProjectPatch(projectId, { vnvArtifacts: nextVnv });
+          return nextVnv;
+        });
+      } else {
+        nextVnv = makeNext(loadProjectData(projectId)?.vnvArtifacts || {});
+      }
+      patch.vnvArtifacts = nextVnv;
+      applied.push({ artifact: "testRows", count: incoming.length, mode });
+    }
+
+    if (artifacts.coverageSummary) {
+      const existingVnv = patch.vnvArtifacts || loadProjectData(projectId)?.vnvArtifacts || {};
+      patch.vnvArtifacts = { ...existingVnv, coverage: artifacts.coverageSummary };
+      if (projectId === activeProjectId) setVnvArtifacts((prev) => ({ ...(prev || {}), coverage: artifacts.coverageSummary }));
+      applied.push({ artifact: "coverageSummary", count: 1, mode: "replace" });
+    }
+
+    if (artifacts.traceabilityState) {
+      patch.traceabilityState = artifacts.traceabilityState;
+      applied.push({ artifact: "traceabilityState", count: 1, mode: "replace" });
+    }
+
+    if (artifacts.complianceMappings) {
+      patch.complianceMappings = artifacts.complianceMappings;
+      applied.push({ artifact: "complianceMappings", count: Array.isArray(artifacts.complianceMappings) ? artifacts.complianceMappings.length : 1, mode });
+    }
+
+    if (artifacts.reportMarkdown) {
+      const report = {
+        markdown: artifacts.reportMarkdown,
+        report: artifacts.reportMarkdown,
+        source,
+        generatedAt: new Date().toISOString(),
+      };
+      patch.agentReportResult = report;
+      patch.systemDesignSafetyReport = report;
+      if (projectId === activeProjectId) setAgentReportResult(report);
+      applied.push({ artifact: "reportMarkdown", count: 1, mode: "replace" });
+    }
+
+    if (Object.keys(patch).length) saveProjectPatch(projectId, patch);
+    return {
+      ok: true,
+      projectId,
+      workspaceScoped: !targetProjectId && !activeProjectId,
+      applied,
+    };
+  };
+
   const shortId = (id, fallback = "") =>
     (id || "")
       .toString()
       .replace(/[^a-zA-Z0-9]/g, "")   // strip hyphens, etc.
       .slice(0, 6) || fallback;
-  
+
   // ── Rename helpers ─────────────────────────────────────────────────────
 const beginRename = (project) => {
   setEditingProjectId(project.id);
   setEditingProjectName(project.name);
+  setEditingProjectFolderId(null);
+  setRenameError('');
+};
+
+const beginRenameFolder = (folder) => {
+  setEditingProjectFolderId(folder.id);
+  setEditingProjectFolderName(folder.name);
+  setEditingProjectId(null);
   setRenameError('');
 };
 
@@ -1125,14 +3293,226 @@ const commitRename = () => {
   setRenameError('');
 };
 
-const cancelRename = () => {
-  setEditingProjectId(null);
-  setEditingProjectName('');
+const commitFolderRename = () => {
+  const name = (editingProjectFolderName || '').trim();
+  const folder = projectFolders.find((entry) => entry.id === editingProjectFolderId);
+  if (!name) { setRenameError('Please enter a folder name.'); return; }
+  if (folder && projectFolders.some((entry) => entry.id !== editingProjectFolderId && entry.parentId === folder.parentId && entry.name.toLowerCase() === name.toLowerCase())) {
+    setRenameError('A folder with this name already exists here.');
+    return;
+  }
+  setProjectFolders((prev) =>
+    prev.map((entry) => entry.id === editingProjectFolderId ? { ...entry, name, updatedAt: new Date().toISOString() } : entry)
+  );
+  setEditingProjectFolderId(null);
+  setEditingProjectFolderName('');
   setRenameError('');
 };
 
+const cancelRename = () => {
+  setEditingProjectId(null);
+  setEditingProjectName('');
+  setEditingProjectFolderId(null);
+  setEditingProjectFolderName('');
+  setRenameError('');
+};
 
-const NavItem = ({ icon: Icon, label, active, onClick, disabled }) => (
+const deleteProjectFolder = (folderId) => {
+  const folder = projectFolders.find((entry) => entry.id === folderId);
+  if (!folder) return;
+  if (!window.confirm(`Delete folder "${folder.name}"? Projects and subfolders inside it will move up one level.`)) return;
+
+  setProjectFolders((prev) =>
+    prev
+      .filter((entry) => entry.id !== folderId)
+      .map((entry) => entry.parentId === folderId ? { ...entry, parentId: folder.parentId || null, updatedAt: new Date().toISOString() } : entry)
+  );
+  setProjects((prev) => prev.map((project) => project.folderId === folderId ? { ...project, folderId: folder.parentId || null } : project));
+  setOpenProjectFolderIds((prev) => {
+    const next = { ...prev };
+    delete next[folderId];
+    return next;
+  });
+  setFolderDashboards((prev) => {
+    const next = { ...prev };
+    delete next[folderId];
+    return next;
+  });
+  if (activeProjectFolderId === folderId) {
+    setActiveProjectFolderId(folder.parentId || null);
+    setActiveProjectId(null);
+  }
+};
+
+const moveProjectToFolder = (projectId, folderId) => {
+  if (!projectId) return;
+  const nextFolderId = folderId || null;
+  setProjects((prev) =>
+    prev.map((project) =>
+      project.id === projectId
+        ? { ...project, folderId: nextFolderId, updatedAt: new Date().toISOString() }
+        : project
+    )
+  );
+  if (nextFolderId) {
+    setOpenProjectFolderIds((prev) => ({ ...prev, [nextFolderId]: true }));
+    setActiveProjectId(null);
+    setActiveProjectFolderId(nextFolderId);
+  }
+  setDraggingProjectId(null);
+  setDragOverProjectFolderId(null);
+};
+
+const createCodeArchitectureProject = () => {
+  const name = newCodeArchitectureProjectName.trim();
+  if (!name) { setNewCodeArchitectureError("Please enter a project name."); return; }
+  if (codeArchitectureProjects.some((project) => project.name.toLowerCase() === name.toLowerCase())) {
+    setNewCodeArchitectureError("A Code-Based Architecture project with this name already exists.");
+    return;
+  }
+  const now = new Date().toISOString();
+  const project = {
+    id: makeId(),
+    name,
+    folderId: newCodeArchitectureTargetFolderId || null,
+    repos: [],
+    activeRepoId: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  setCodeArchitectureProjects((prev) => [project, ...prev]);
+  setActiveCodeArchitectureProjectId(project.id);
+  setActiveCodeArchitectureFolderId(null);
+  setNewCodeArchitectureProjectName("");
+  setNewCodeArchitectureTargetFolderId(null);
+  setNewCodeArchitectureError("");
+  setShowNewCodeArchitectureProject(false);
+  setSection("code-architecture");
+  setIsSidebarOpen(true);
+  setIsCodeArchitectureProjectsOpen(true);
+  setTimeout(() => openCodeArchitectureRepoConfig(project.id), 0);
+};
+
+const createCodeArchitectureFolder = () => {
+  const name = newCodeArchitectureFolderName.trim();
+  const parentId = newCodeArchitectureFolderParentId || null;
+  if (!name) { setNewCodeArchitectureFolderError("Please enter a folder name."); return; }
+  if (codeArchitectureFolders.some((folder) => folder.parentId === parentId && folder.name.toLowerCase() === name.toLowerCase())) {
+    setNewCodeArchitectureFolderError("A folder with this name already exists here.");
+    return;
+  }
+  const now = new Date().toISOString();
+  const folder = { id: makeId(), name, parentId, createdAt: now, updatedAt: now };
+  setCodeArchitectureFolders((prev) => [folder, ...prev]);
+  setOpenCodeArchitectureFolderIds((prev) => ({ ...prev, [folder.id]: true, ...(parentId ? { [parentId]: true } : {}) }));
+  setActiveCodeArchitectureProjectId(null);
+  setActiveCodeArchitectureFolderId(folder.id);
+  setCodeArchitectureFolderView("projects");
+  setNewCodeArchitectureFolderName("");
+  setNewCodeArchitectureFolderParentId(null);
+  setNewCodeArchitectureFolderError("");
+  setShowNewCodeArchitectureFolder(false);
+  setSection("code-architecture");
+};
+
+const beginRenameCodeArchitectureProject = (project) => {
+  setEditingCodeArchitectureProjectId(project.id);
+  setEditingCodeArchitectureProjectName(project.name);
+  setEditingCodeArchitectureFolderId(null);
+  setCodeArchitectureRenameError("");
+};
+
+const beginRenameCodeArchitectureFolder = (folder) => {
+  setEditingCodeArchitectureFolderId(folder.id);
+  setEditingCodeArchitectureFolderName(folder.name);
+  setEditingCodeArchitectureProjectId(null);
+  setCodeArchitectureRenameError("");
+};
+
+const commitCodeArchitectureRename = () => {
+  const name = editingCodeArchitectureProjectName.trim();
+  if (!name) { setCodeArchitectureRenameError("Please enter a project name."); return; }
+  if (codeArchitectureProjects.some((project) => project.id !== editingCodeArchitectureProjectId && project.name.toLowerCase() === name.toLowerCase())) {
+    setCodeArchitectureRenameError("A Code-Based Architecture project with this name already exists.");
+    return;
+  }
+  setCodeArchitectureProjects((prev) => prev.map((project) => project.id === editingCodeArchitectureProjectId ? { ...project, name, updatedAt: new Date().toISOString() } : project));
+  setEditingCodeArchitectureProjectId(null);
+  setEditingCodeArchitectureProjectName("");
+  setCodeArchitectureRenameError("");
+};
+
+const commitCodeArchitectureFolderRename = () => {
+  const name = editingCodeArchitectureFolderName.trim();
+  const folder = codeArchitectureFolders.find((entry) => entry.id === editingCodeArchitectureFolderId);
+  if (!name) { setCodeArchitectureRenameError("Please enter a folder name."); return; }
+  if (folder && codeArchitectureFolders.some((entry) => entry.id !== editingCodeArchitectureFolderId && entry.parentId === folder.parentId && entry.name.toLowerCase() === name.toLowerCase())) {
+    setCodeArchitectureRenameError("A folder with this name already exists here.");
+    return;
+  }
+  setCodeArchitectureFolders((prev) => prev.map((entry) => entry.id === editingCodeArchitectureFolderId ? { ...entry, name, updatedAt: new Date().toISOString() } : entry));
+  setEditingCodeArchitectureFolderId(null);
+  setEditingCodeArchitectureFolderName("");
+  setCodeArchitectureRenameError("");
+};
+
+const cancelCodeArchitectureRename = () => {
+  setEditingCodeArchitectureProjectId(null);
+  setEditingCodeArchitectureProjectName("");
+  setEditingCodeArchitectureFolderId(null);
+  setEditingCodeArchitectureFolderName("");
+  setCodeArchitectureRenameError("");
+};
+
+const deleteCodeArchitectureProject = (projectId) => {
+  const project = codeArchitectureProjects.find((entry) => entry.id === projectId);
+  if (!project) return;
+  if (!window.confirm(`Delete Code-Based Architecture project "${project.name}"? This will remove the local project entry.`)) return;
+  const remaining = codeArchitectureProjects.filter((entry) => entry.id !== projectId);
+  setCodeArchitectureProjects(remaining);
+  if (activeCodeArchitectureProjectId === projectId) {
+    setActiveCodeArchitectureProjectId(null);
+    setCbaTableData([]);
+    setSelectedCbaElement(null);
+  }
+};
+
+const deleteCodeArchitectureFolder = (folderId) => {
+  const folder = codeArchitectureFolders.find((entry) => entry.id === folderId);
+  if (!folder) return;
+  if (!window.confirm(`Delete folder "${folder.name}"? Projects and subfolders inside it will move up one level.`)) return;
+  setCodeArchitectureFolders((prev) =>
+    prev
+      .filter((entry) => entry.id !== folderId)
+      .map((entry) => entry.parentId === folderId ? { ...entry, parentId: folder.parentId || null, updatedAt: new Date().toISOString() } : entry)
+  );
+  setCodeArchitectureProjects((prev) => prev.map((project) => project.folderId === folderId ? { ...project, folderId: folder.parentId || null, updatedAt: new Date().toISOString() } : project));
+  setOpenCodeArchitectureFolderIds((prev) => {
+    const next = { ...prev };
+    delete next[folderId];
+    return next;
+  });
+  if (activeCodeArchitectureFolderId === folderId) {
+    setActiveCodeArchitectureFolderId(folder.parentId || null);
+    setActiveCodeArchitectureProjectId(null);
+  }
+};
+
+const moveCodeArchitectureProjectToFolder = (projectId, folderId) => {
+  if (!projectId) return;
+  const nextFolderId = folderId || null;
+  setCodeArchitectureProjects((prev) => prev.map((project) => project.id === projectId ? { ...project, folderId: nextFolderId, updatedAt: new Date().toISOString() } : project));
+  if (nextFolderId) {
+    setOpenCodeArchitectureFolderIds((prev) => ({ ...prev, [nextFolderId]: true }));
+    setActiveCodeArchitectureProjectId(null);
+    setActiveCodeArchitectureFolderId(nextFolderId);
+  }
+  setDraggingCodeArchitectureProjectId(null);
+  setDragOverCodeArchitectureFolderId(null);
+};
+
+
+const NavItem = ({ icon: Icon, iconProps, label, active, onClick, disabled }) => (
   <button
     type="button"
     onClick={disabled ? undefined : onClick}
@@ -1146,11 +3526,11 @@ const NavItem = ({ icon: Icon, label, active, onClick, disabled }) => (
     title={
       !isSidebarOpen
         ? (typeof label === 'string' ? label : 'Item')
-        : (disabled ? 'Copilot is docked' : undefined)
+        : (disabled ? 'Collaborator is docked' : undefined)
     }
   >
-    <span className="shrink-0"><Icon size={18} /></span>
-    {isSidebarOpen && <span className="text-sm font-medium">{label}</span>}
+    <span className="shrink-0"><Icon size={18} {...iconProps} /></span>
+    {isSidebarOpen && <span className="min-w-0 flex-1 text-sm font-medium">{label}</span>}
   </button>
 );
 
@@ -1161,10 +3541,9 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   if (!guardNewProjectIntent()) return;
 
   const desired = String(name || '').trim() || 'New Project';
-  const existingNames = new Set(projects.map((p) => p.name.toLowerCase()));
   let finalName = desired;
   let suffix = 2;
-  while (existingNames.has(finalName.toLowerCase())) {
+  while (projects.some(p => p.name.toLowerCase() === finalName.toLowerCase())) {
     finalName = `${desired} (${suffix++})`;
   }
 
@@ -1175,8 +3554,9 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
 
   saveProjectPatch(id, {
     responseRows: Array.isArray(filteredRows) ? filteredRows : [],
+    diagramCategories: null,
     analysisResult: null,
-    riskMethod: DEFAULT_RISK_METHOD,
+    riskMethod: 'STPA',
     agentReportResult: null,
     riskRegister: [],
     requirements: [],
@@ -1194,7 +3574,7 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   // ────────────────────────────────────────────────────────────────────────────────
 
   const diagramRef = useRef();
-  const stepDescriptionsMap = useMemo(() => ({
+  const stepDescriptionsMap = {
     HRWhatIf: {
       total: 9,
       steps: {
@@ -1210,35 +3590,13 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
       }
     },
     STPA: { total: 9, steps: { 1:"Identifying unsafe control actions...",2:"Populating hazard timing columns...",3:"Identifying causal factors...",4:"Generating mitigation strategies...",5:"Deriving system requirements...",6:"Consolidating requirements...",7:"Mapping hazards to behaviors...",8:"Linking losses to hazards...",9:"Compiling safety summary..." } },
-    "STPA-Textbook": {
-      total: 4,
-      steps: {
-        1: "Identifying unsafe control actions...",
-        2: "Populating unsafe control action scenarios...",
-        3: "Deriving textbook causal factors...",
-        4: "Compiling the textbook traceability matrix..."
-      }
-    },
-    "FMEA-Textbook": {
-      total: 4,
-      steps: {
-        1: "Identifying failure modes...",
-        2: "Populating failure mode scenarios...",
-        3: "Deriving textbook causal factors and requirements...",
-        4: "Compiling the textbook traceability matrix..."
-      }
-    },
-    "WhatIf-Textbook": {
-      total: 4,
-      steps: {
-        1: "Seeding what-if guidewords...",
-        2: "Populating what-if scenarios...",
-        3: "Deriving textbook causal factors and requirements...",
-        4: "Compiling the textbook traceability matrix..."
-      }
-    },
+    "STPA-Textbook": { total: 9, steps: { 1:"Identifying unsafe control actions...",2:"Populating STPA control contexts...",3:"Identifying textbook causal factors...",4:"Generating safety constraints...",5:"Deriving safety requirements...",6:"Consolidating safety requirements...",7:"Mapping hazards to unsafe control actions...",8:"Linking losses to hazards...",9:"Compiling STPA traceability matrix..." } },
     FMEA: { total: 9, steps: { 1:"Seeding failure mode candidates...",2:"Analyzing effects and causes...",3:"Extracting causal factors...",4:"Generating mitigation strategies...",5:"Deriving system requirements...",6:"Consolidating requirements...",7:"Mapping hazards to failure effects...",8:"Linking losses to hazards...",9:"Compiling safety summary..." } },
+    "FMEA-Textbook": { total: 9, steps: { 1:"Seeding textbook failure modes...",2:"Analyzing textbook effects and causes...",3:"Extracting textbook causal factors...",4:"Generating recommended controls...",5:"Deriving design requirements...",6:"Consolidating requirements...",7:"Mapping failure modes to hazards...",8:"Linking losses to hazards...",9:"Compiling textbook FMEA summary..." } },
+    HARA: { total: 9, steps: { 1:"Preparing HARA item/function context...",2:"Identifying hazardous events and S/E/C ratings...",3:"Reviewing controllability rationale...",4:"Assigning ASIL classifications...",5:"Deriving safety goals...",6:"Consolidating HARA rows...",7:"Mapping hazards to potential harm...",8:"Checking HARA traceability...",9:"Compiling HARA summary..." } },
+    FHA: { total: 9, steps: { 1:"Preparing FHA function context...",2:"Identifying functional degradation and loss scenarios...",3:"Classifying mishap severity...",4:"Classifying software control category...",5:"Deriving MIL-STD-882E software criticality index...",6:"Identifying causal factors...",7:"Deriving controls and software safety requirements...",8:"Preparing verification and LOR links...",9:"Compiling FHA summary..." } },
     WhatIf:{ total: 9, steps: { 1:"Seeding what-if scenario table...",2:"Populating consequences and causes...",3:"Extracting causal factors...",4:"Generating mitigation strategies...",5:"Deriving system requirements...",6:"Consolidating requirements...",7:"Mapping hazards to what-if paths...",8:"Linking losses to hazards...",9:"Compiling safety summary..." } },
+    "WhatIf-Textbook": { total: 9, steps: { 1:"Seeding textbook what-if scenarios...",2:"Populating scenario consequences and causes...",3:"Extracting textbook causal factors...",4:"Generating safeguards and recommendations...",5:"Deriving design requirements...",6:"Consolidating requirements...",7:"Mapping scenarios to hazards...",8:"Linking losses to hazards...",9:"Compiling textbook What-If summary..." } },
     "STPA-SEC": {
       total: 9,
       steps: {
@@ -1253,35 +3611,48 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
         9: "Compiling security summary…"
       }
     }
-  }), []);
+  };
 
-  const agentStepDescriptions = useMemo(() => ({
+  const agentStepDescriptions = {
     1: "Assessing summary quality...",
     2: "Chunking and summarizing data...",
     3: "Auditing summary chunks...",
     4: "Revising low-confidence summaries...",
     5: "Synthesizing final safety report..."
-  }), []);
-  
+  };
+
   const [responseRows, setResponseRows] = useState([]);
+  const [diagramCategories, setDiagramCategories] = useState(null);
   const [analysisResult, setAnalysisResult] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [showDiagram] = useState(true);
+  const [showDiagram, setShowDiagram] = useState(false);
   const [selectedLabel, setSelectedLabel] = useState(null);
   const [columnFilters, setColumnFilters] = useState({});
   const dropdownRefs = useRef({});
+  const hazardRowRefs = useRef({});
+  const [highlightedHazardRowIndex, setHighlightedHazardRowIndex] = useState(null);
+  const [hazardReviewRunId, setHazardReviewRunId] = useState(null);
+  const [pendingReviewSourceJump, setPendingReviewSourceJump] = useState(null);
   const [filterColumnIndex, setFilterColumnIndex] = useState(null);
   const [columnSearches, setColumnSearches] = useState({});
+  const functionalDropdownRefs = useRef({});
+  const functionalRowRefs = useRef({});
+  const [highlightedFunctionalRowIndex, setHighlightedFunctionalRowIndex] = useState(null);
+  const [functionalReviewRunId, setFunctionalReviewRunId] = useState(null);
+  const [functionalFilterColumn, setFunctionalFilterColumn] = useState(null);
+  const [functionalColumnFilters, setFunctionalColumnFilters] = useState({});
+  const [functionalColumnSearches, setFunctionalColumnSearches] = useState({});
   const [isGeneratingDecomposition, setIsGeneratingDecomposition] = useState(false);
   const [showFunctionalDiagram, setShowFunctionalDiagram] = useState(true);
-  const [riskMethod, setRiskMethod] = useState(DEFAULT_RISK_METHOD);
-  const [progress, setProgress] = useState({ step: 0, total: stepDescriptionsMap[DEFAULT_RISK_METHOD].total });
+  const [riskMethod, setRiskMethod] = useState("STPA");
+  const [progress, setProgress] = useState({ step: 0, total: stepDescriptionsMap["STPA"].total });
   const [agentReportResult, setAgentReportResult] = useState(null); // NEW: persisted report state
   const [isGeneratingAgentReport, setIsGeneratingAgentReport] = useState(false);
   const [functionalDiagramImage, setFunctionalDiagramImage] = useState(null);
   const [showPromptWizard, setShowPromptWizard] = useState(true);
   const [cleanOnceKey, setCleanOnceKey] = useState(null);
   const [promptMode, setPromptMode] = useState('structured');
+  const [loadedProjectId, setLoadedProjectId] = useState(null);
   // Bulk selection + bulk edit for Risk Inbox
 const [inboxSelection, setInboxSelection] = useState(new Set());
 const [inboxBulk, setInboxBulk] = useState({
@@ -1379,8 +3750,6 @@ const applyBulk = () => {
   );
 };
 
-// Delete selected
-
   const { startActivity, updateActivity, finishActivity } = useActivityCenter();
 const [analysisActivityId, setAnalysisActivityId] = useState(null);
 useEffect(() => {
@@ -1390,49 +3759,7 @@ useEffect(() => {
     total: progress.total || 0,
     message: stepDescriptionsMap[riskMethod]?.steps[progress.step] || "Working…"
   });
-}, [analysisActivityId, isAnalyzing, progress.step, progress.total, riskMethod, stepDescriptionsMap, updateActivity]);
-
-useEffect(() => {
-  const onRunAnalysis = (e) => {
-    const { projectId, method } = e.detail || {};
-    // your existing analysis kickoff (FMEA/STPA/WhatIf). Example:
-    // runLiteAIAnalysis({ projectId, method }) or
-    window.dispatchEvent(new CustomEvent("xhandle:runLiteAIAnalysis", { detail: { projectId, method } }));
-  };
-
-  const onRefreshDiagram = (e) => {
-    const { projectId, view } = e.detail || {};
-    // flip UI to the relevant tab/view, then ask diagram to recompute layout if needed
-    setActiveProjectId(projectId);
-    setSection(view === "Risk" ? "projects" : "projects");
-    setActiveTab(view === "Risk" ? "Risk Diagram" : "Functional Diagram");
-    // optional: send an internal nudge to your diagram component
-    window.dispatchEvent(new CustomEvent("xhandle:diagram:refresh", { detail: { projectId, view } }));
-  };
-
-  const onNormalizeRisk = (e) => {
-    const { projectId, riskId, op } = e.detail || {};
-    // trigger your risk normalization UI/actions
-    window.dispatchEvent(new CustomEvent("xhandle:risk:normalize", { detail: { projectId, riskId, op } }));
-  };
-
-  const onGenerateMitigations = (e) => {
-    const { projectId, riskId } = e.detail || {};
-    // kick off your mitigation generator (LLM pipeline) for a specific risk
-    window.dispatchEvent(new CustomEvent("xhandle:risk:generateMitigations", { detail: { projectId, riskId } }));
-  };
-
-  window.addEventListener("xhandle:xagent:run-analysis", onRunAnalysis);
-  window.addEventListener("xhandle:xagent:refresh-diagram", onRefreshDiagram);
-  window.addEventListener("xhandle:xagent:normalize-risk", onNormalizeRisk);
-  window.addEventListener("xhandle:xagent:generate-mitigations", onGenerateMitigations);
-  return () => {
-    window.removeEventListener("xhandle:xagent:run-analysis", onRunAnalysis);
-    window.removeEventListener("xhandle:xagent:refresh-diagram", onRefreshDiagram);
-    window.removeEventListener("xhandle:xagent:normalize-risk", onNormalizeRisk);
-    window.removeEventListener("xhandle:xagent:generate-mitigations", onGenerateMitigations);
-  };
-}, [setSection, setActiveProjectId, setActiveTab]);
+}, [analysisActivityId, isAnalyzing, progress.step, progress.total, riskMethod, updateActivity]);
 
   useEffect(() => {
     if (!projectLoaded) return;
@@ -1442,19 +3769,65 @@ useEffect(() => {
     }
   }, [projectLoaded, requirements.length, analysisResult])
 
+
   // Keep total steps aligned with method
   useEffect(() => {
     setProgress(prev => ({ ...prev, total: stepDescriptionsMap[riskMethod]?.total || 9 }));
-  }, [riskMethod, stepDescriptionsMap]);
+  }, [riskMethod]);
 
-  
+  useEffect(() => {
+    let cancelled = false;
+    async function loadCodeArchitectureHazardRun() {
+      const repoMeta = activeCodeArchitectureRepoMeta;
+      const repoId = repoMeta.repoId || repoMeta.repoName || "";
+      if (!repoId) {
+        if (!cancelled) setCodeArchitectureHazardRun(null);
+        return;
+      }
+      try {
+        const filters = { repoId };
+        if (activeCodeArchitectureProjectId) filters.projectId = activeCodeArchitectureProjectId;
+        let latest = await getLatestCodeArchitectureHazardRun(filters);
+        if (!latest && activeCodeArchitectureProjectId) {
+          latest = await getLatestCodeArchitectureHazardRun({ repoId });
+        }
+        if (!cancelled) setCodeArchitectureHazardRun(latest || null);
+      } catch (error) {
+        console.warn("[code-architecture-hazard-analysis] Failed to load latest run", error);
+        if (!cancelled) setCodeArchitectureHazardRun(null);
+      }
+    }
+    loadCodeArchitectureHazardRun();
+    const onChanged = () => loadCodeArchitectureHazardRun();
+    window.addEventListener("xhandle:code-architecture-hazard-analysis:changed", onChanged);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("xhandle:code-architecture-hazard-analysis:changed", onChanged);
+    };
+  }, [activeCodeArchitectureProjectId, activeCodeArchitectureRepoMeta, cbaTableData]);
+
+  useEffect(() => {
+    if (!activeCodeArchitectureProject || !activeCodeArchitectureRepo) return;
+    const projectId = activeCodeArchitectureProject.id || "no-project";
+    const repoId = activeCodeArchitectureRepo.id || activeCodeArchitectureRepo.repoId || activeCodeArchitectureRepo.repoName || "no-repo";
+    Promise.all([
+      loadArtifactRowsAsync(ARTIFACT_KINDS.SOFTWARE, projectId, repoId),
+      loadArtifactRowsAsync(ARTIFACT_KINDS.SYSTEM, projectId, repoId),
+      loadArtifactRowsAsync(ARTIFACT_KINDS.SUBSYSTEM, projectId, repoId),
+      loadArtifactRowsAsync(ARTIFACT_KINDS.DESIGN, projectId, repoId),
+    ]).catch((error) => {
+      console.warn("[code-architecture-assurance] Failed to prefetch artifact rows", error);
+    });
+  }, [activeCodeArchitectureProject, activeCodeArchitectureRepo]);
+
+
   // Risk Register sidebar selection + filters
 const [riskListSelection, setRiskListSelection] = useState(new Set());
 
 // Map labels dynamically to match the analysis / functional decomposition
 const CANDIDATE_LABELS = {
   hazard: ['Hazard','Hazards','Failure Mode','Risk','Risk Title','What-If','Scenario','Event'],
-  uca: ['Unsafe Control Actions','Unsafe Control Action','UCA','Failure Mode','Failure Modes','What-If Scenario','What-If Scenarios','Effect','Cause','Causal Factor','What-If Detail','Consequence','Description'],
+  uca: ['Unsafe Control Actions','Unsafe Control Action','UCA','Effect','Cause','Causal Factor','Causal Factors','What-If Detail','Consequence','Description'],
 };
 
 const availableSummaryHeaders = useMemo(() => {
@@ -1469,9 +3842,15 @@ function pickLabel(candidates, fallback) {
   return fallback;
 }
 
-const hazardLabel = pickLabel(CANDIDATE_LABELS.hazard, 'Hazard');
+const hazardLabel = useMemo(
+  () => pickLabel(CANDIDATE_LABELS.hazard, 'Hazard'),
+  [availableSummaryHeaders]
+);
 
-const ucaLabel = pickLabel(CANDIDATE_LABELS.uca, 'Unsafe Control Actions');
+const ucaLabel = useMemo(
+  () => pickLabel(CANDIDATE_LABELS.uca, 'Unsafe Control Actions'),
+  [availableSummaryHeaders]
+);
 
 // ⬇️ INSERT RIGHT AFTER hazardLabel and ucaLabel useMemos
 
@@ -1549,7 +3928,6 @@ useEffect(() => {
 }, []);
 
 
-// Sidebar “filter-by” column options (key maps to riskRegister fields)
 const [riskTableFilters] = useState({
   title: "",
   status: [],
@@ -1568,7 +3946,7 @@ useEffect(() => {
     for (const id of riskListSelection) if (allIds.has(id)) next.add(id);
     if (next.size !== riskListSelection.size) setRiskListSelection(next);
   }
-}, [riskListSelection, riskRegister]);
+}, [riskRegister]);
 
 const displayedRiskIds = riskListSelection;
 const filteredRiskRows = useMemo(() => {
@@ -1640,30 +4018,64 @@ const filteredRiskRows = useMemo(() => {
     return () => { document.removeEventListener('mousedown', handleClickOutside); };
   }, [filterColumnIndex]);
 
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      const activeRef = functionalDropdownRefs.current[functionalFilterColumn];
+      if (activeRef && !activeRef.contains(event.target)) {
+        setFunctionalColumnSearches({});
+        setFunctionalFilterColumn(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => { document.removeEventListener('mousedown', handleClickOutside); };
+  }, [functionalFilterColumn]);
+
   // Load per-project state whenever activeProjectId changes
   useEffect(() => {
-    if (!activeProjectId) { 
+    setProjectLoaded(false);
+    setLoadedProjectId(null);
+    if (!activeProjectId) {
       setResponseRows([]);
+      setDiagramCategories(null);
       setAnalysisResult(null);
-      setRiskMethod(DEFAULT_RISK_METHOD);
+      setRiskMethod('STPA');
       setAgentReportResult(null); // NEW: reset when no project
       setRiskRegister([]);
-      setRequirements([]);      
+      setRequirements([]);
       setShowPromptWizard(true);
       setProjectLoaded(false);
+      setLoadedProjectId(null);
       return;
     }
     const data = loadProjectData(activeProjectId);
     setResponseRows(data?.responseRows || []);
+    setDiagramCategories(data?.diagramCategories || null);
     setAnalysisResult(data?.analysisResult || null);
-    setRiskMethod(normalizeRiskMethod(data?.riskMethod));
+    setRiskMethod(data?.riskMethod || 'STPA');
     setAgentReportResult(data?.agentReportResult || null); // NEW: restore report
     setRiskRegister(data?.riskRegister || []);
     setShowPromptWizard(!(data?.responseRows && data.responseRows.length > 0));
     setProjectLoaded(true);
+    setLoadedProjectId(activeProjectId);
     setRequirements(data?.requirements || []);   // ← add this
 
   }, [activeProjectId]);
+
+  useEffect(() => {
+    if (!projectLoaded || !responseRows.length || !diagramCategories?.categories?.length) return;
+    const hasGenericNames = diagramCategories.categories.some((category) => isGenericDiagramCategoryName(category?.name));
+    const needsFallbackRepair = diagramCategories.source === "wizard-fallback" || hasGenericNames;
+    if (!needsFallbackRepair) return;
+
+    const repaired = {
+      signature: `${functionalRowSignature(responseRows)}::fallback-v2`,
+      categories: normalizeWizardDiagramCategories(fallbackWizardDiagramCategories(responseRows), responseRows),
+      source: "wizard-fallback-v2",
+      generatedAt: new Date().toISOString(),
+    };
+    if (repaired.categories.length) setDiagramCategories(repaired);
+  }, [projectLoaded, responseRows, diagramCategories]);
+
   useEffect(() => {
     if (!projectLoaded) return;
     setRiskRegister(prev => {
@@ -1675,7 +4087,7 @@ const filteredRiskRows = useMemo(() => {
       return changed ? next : prev;
     });
   }, [projectLoaded]);
-  
+
   useEffect(() => {
     if (!activeProjectId) return;
     const pd = loadProjectData(activeProjectId) || {};
@@ -1691,21 +4103,30 @@ const filteredRiskRows = useMemo(() => {
     });
   }, [activeProjectId]);
 
-  // Persist per-project state whenever it changes (including the report)
+// Persist per-project state whenever it changes (including the report)
 useEffect(() => {
-  if (!activeProjectId || !projectLoaded) return;
-  saveProjectPatch(activeProjectId, {
+  if (!activeProjectId || !projectLoaded || loadedProjectId !== activeProjectId) return;
+  const existingProjectData = loadProjectData(activeProjectId) || {};
+  const patch = {
     responseRows,
-    analysisResult,
+    diagramCategories,
     riskMethod,
     agentReportResult,
     riskRegister,
     requirements,        // ← add this
-  });  
+  };
+  if (analysisResult !== null && analysisResult !== undefined) {
+    patch.analysisResult = analysisResult;
+  } else if (!hasAnalysisSummary(existingProjectData.analysisResult)) {
+    patch.analysisResult = analysisResult;
+  }
+  saveProjectPatch(activeProjectId, patch);
 }, [
   activeProjectId,
   projectLoaded,
+  loadedProjectId,
   responseRows,
+  diagramCategories,
   analysisResult,
   riskMethod,
   agentReportResult,
@@ -1773,7 +4194,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setAgentReportResult(result);
     finishActivity(activityId, "success", "Report ready");
   } catch (err) {
-    logger.error("Agentic report failed:", err);
+    console.error("Agentic report failed:", err);
     finishActivity(activityId, "error", err?.message || "Report failed");
     alert(err?.message || "Sorry — report generation failed.");
   } finally {
@@ -1794,12 +4215,13 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   // Capture diagram image after analysis completes
   useEffect(() => {
     if (!analysisResult) return;
+    if (!showFunctionalDiagram) return;
+    if (!responseRows?.length) return;
     const waitForDiagram = async (maxRetries = 10, delay = 200) => {
       for (let i = 0; i < maxRetries; i++) {
         if (diagramRef.current?.isReady?.()) return true;
         await new Promise((r) => setTimeout(r, delay));
       }
-      logger.warn("⚠️ Diagram ref not ready after waiting.");
       return false;
     };
     const exportDiagram = async () => {
@@ -1809,24 +4231,682 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       setFunctionalDiagramImage(image);
     };
     exportDiagram();
-  }, [analysisResult]);
+  }, [analysisResult, showFunctionalDiagram, responseRows?.length]);
 
   const getUniqueColumnValues = (colIdx, searchText = '') => {
     const rows = analysisResult?.Summary?.slice(1) ?? [];
     const unique = new Set();
-    rows.forEach(row => { if (row[colIdx]) unique.add(row[colIdx]); });
-    return Array.from(unique).filter(val => String(val).toLowerCase().includes(searchText.toLowerCase()));
+    rows.forEach(row => {
+      const value = row[colIdx];
+      if (value !== undefined && value !== null && String(value).trim() !== '') unique.add(String(value));
+    });
+    return Array.from(unique)
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }))
+      .filter(val => String(val).toLowerCase().includes(searchText.toLowerCase()));
   };
   const toggleFilterValue = (colIdx, value) => {
     const current = columnFilters[colIdx] || [];
     const updated = current.includes(value) ? current.filter(v => v !== value) : [...current, value];
     setColumnFilters({ ...columnFilters, [colIdx]: updated });
   };
+  const setColumnFilterValues = (colIdx, values) => {
+    setColumnFilters((prev) => ({ ...prev, [colIdx]: values }));
+  };
+  const clearAllHazardFilters = () => {
+    setColumnFilters({});
+    setColumnSearches({});
+    setFilterColumnIndex(null);
+  };
   const applyFilters = (rows) => rows.filter((row) =>
     Object.entries(columnFilters).every(([colIdx, allowed]) =>
-      allowed.length === 0 || allowed.includes(row[colIdx])
+      allowed.length === 0 || allowed.includes(String(row[colIdx] ?? ''))
     )
   );
+  const activeHazardFilterCount = Object.values(columnFilters)
+    .reduce((count, values) => count + (Array.isArray(values) ? values.length : 0), 0);
+  const filteredHazardSummaryRows = (analysisResult?.Summary?.slice(1) || [])
+    .map((row, originalIndex) => ({ row, originalIndex }))
+    .filter(({ row }) =>
+      Object.entries(columnFilters).every(([colIdx, allowed]) =>
+        allowed.length === 0 || allowed.includes(String(row[colIdx] ?? ''))
+      )
+    );
+
+  useEffect(() => {
+    if (!activeProjectId || activeTab !== 'Hazard Analysis' || hasAnalysisSummary(analysisResult)) return;
+    const savedAnalysis = loadProjectData(activeProjectId)?.analysisResult;
+    if (hasAnalysisSummary(savedAnalysis)) {
+      setAnalysisResult(savedAnalysis);
+    }
+  }, [activeProjectId, activeTab, analysisResult]);
+
+  const hazardSummaryReviewItems = useMemo(() => {
+    const projectArtifactPrefix = `hazard-summary:${activeProjectId || "default"}:row:`;
+    const filters = {
+      sourceFeature: "AI Hazard Analysis",
+      artifactType: "hazard_summary_table",
+    };
+    if (hazardReviewRunId) filters.sourceRunId = hazardReviewRunId;
+    const filtered = resultsReview.getReviewItems(filters);
+    if (filtered.length || hazardReviewRunId) return filtered;
+    return (resultsReview.reviewItems || []).filter((item) =>
+      item.artifactType === "hazard_summary_table" &&
+      String(item.artifactId || "").startsWith(projectArtifactPrefix)
+    );
+  }, [activeProjectId, hazardReviewRunId, resultsReview]);
+
+  const hazardSummaryReviewByRow = useMemo(() => {
+    const map = new Map();
+    hazardSummaryReviewItems.forEach((item) => {
+      const rowIndex = item.currentContent?.rowIndex ?? item.originalContent?.rowIndex ?? item.traceLinks?.find?.((link) => link.type === "table_row")?.rowIndex;
+      if (!Number.isFinite(Number(rowIndex))) return;
+      const existing = map.get(Number(rowIndex));
+      const existingTime = Date.parse(existing?.updatedAt || existing?.createdAt || 0) || 0;
+      const itemTime = Date.parse(item.updatedAt || item.createdAt || 0) || 0;
+      if (!existing || itemTime >= existingTime) map.set(Number(rowIndex), item);
+    });
+    return map;
+  }, [hazardSummaryReviewItems]);
+
+  const hazardReviewDrawerOptions = useMemo(() => ({
+    sourceFeature: "AI Hazard Analysis",
+    sourceMethod: riskMethod,
+    sourceRunId: hazardReviewRunId,
+    artifactType: "hazard_summary_table",
+    startAtFirstPending: true,
+  }), [hazardReviewRunId, riskMethod]);
+
+  const functionalReviewItems = useMemo(() => {
+    const projectArtifactPrefix = `functional-decomposition:${activeProjectId || "default"}:row:`;
+    const filters = {
+      sourceFeature: "Prompt Wizard",
+      artifactType: "functional_decomposition_table",
+    };
+    if (functionalReviewRunId) filters.sourceRunId = functionalReviewRunId;
+    const filtered = resultsReview.getReviewItems(filters);
+    if (filtered.length || functionalReviewRunId) return filtered;
+    return (resultsReview.reviewItems || []).filter((item) =>
+      item.artifactType === "functional_decomposition_table" &&
+      String(item.artifactId || "").startsWith(projectArtifactPrefix)
+    );
+  }, [activeProjectId, functionalReviewRunId, resultsReview]);
+
+  const functionalReviewByRow = useMemo(() => {
+    const map = new Map();
+    functionalReviewItems.forEach((item) => {
+      const rowIndex = item.currentContent?.rowIndex ?? item.originalContent?.rowIndex ?? item.traceLinks?.find?.((link) => link.type === "table_row")?.rowIndex;
+      if (!Number.isFinite(Number(rowIndex))) return;
+      const existing = map.get(Number(rowIndex));
+      const existingTime = Date.parse(existing?.updatedAt || existing?.createdAt || 0) || 0;
+      const itemTime = Date.parse(item.updatedAt || item.createdAt || 0) || 0;
+      if (!existing || itemTime >= existingTime) map.set(Number(rowIndex), item);
+    });
+    return map;
+  }, [functionalReviewItems]);
+
+  const functionalReviewDrawerOptions = useMemo(() => ({
+    sourceFeature: "Prompt Wizard",
+    sourceMethod: promptMode,
+    sourceRunId: functionalReviewRunId,
+    artifactType: "functional_decomposition_table",
+    startAtFirstPending: true,
+  }), [functionalReviewRunId, promptMode]);
+
+  const activeCodeArchitectureRepoIdForReview = activeCodeArchitectureRepo?.id || activeCodeArchitectureRepoMeta?.repoId || activeCodeArchitectureRepoMeta?.repoName || "repo";
+  const activeCodeArchitectureRepoReviewIds = useMemo(() => {
+    const ids = [
+      activeCodeArchitectureRepo?.id,
+      activeCodeArchitectureRepoMeta?.repoId,
+      activeCodeArchitectureRepoMeta?.repoName,
+      activeCodeArchitectureRepoMeta?.owner && activeCodeArchitectureRepoMeta?.repo
+        ? `${activeCodeArchitectureRepoMeta.owner}/${activeCodeArchitectureRepoMeta.repo}`
+        : "",
+      "repo",
+    ].filter(Boolean);
+    return Array.from(new Set(ids.map(String)));
+  }, [
+    activeCodeArchitectureRepo?.id,
+    activeCodeArchitectureRepoMeta?.owner,
+    activeCodeArchitectureRepoMeta?.repo,
+    activeCodeArchitectureRepoMeta?.repoId,
+    activeCodeArchitectureRepoMeta?.repoName,
+  ]);
+  const codeArchitectureFunctionalArtifactRoot = `code-architecture-functional-decomposition:${activeCodeArchitectureProjectId || "default"}:${activeCodeArchitectureRepoIdForReview}`;
+
+  const codeArchitectureFunctionalReviewItems = useMemo(() => {
+    const projectArtifactPrefix = `${codeArchitectureFunctionalArtifactRoot}:row:`;
+    return (resultsReview.reviewItems || []).filter((item) =>
+      item.artifactType === CODE_ARCHITECTURE_FUNCTIONAL_ARTIFACT_TYPE &&
+      String(item.artifactId || "").startsWith(projectArtifactPrefix) &&
+      (!codeArchitectureFunctionalReviewRunId || item.sourceRunId === codeArchitectureFunctionalReviewRunId)
+    );
+  }, [codeArchitectureFunctionalArtifactRoot, codeArchitectureFunctionalReviewRunId, resultsReview.reviewItems]);
+
+  const codeArchitectureFunctionalReviewByRow = useMemo(() => {
+    const map = new Map();
+    codeArchitectureFunctionalReviewItems.forEach((item) => {
+      const rowIndex = item.currentContent?.rowIndex ?? item.originalContent?.rowIndex ?? item.traceLinks?.find?.((link) => link.type === "table_row")?.rowIndex;
+      if (!Number.isFinite(Number(rowIndex))) return;
+      const existing = map.get(Number(rowIndex));
+      const existingTime = Date.parse(existing?.updatedAt || existing?.createdAt || 0) || 0;
+      const itemTime = Date.parse(item.updatedAt || item.createdAt || 0) || 0;
+      if (!existing || itemTime >= existingTime) map.set(Number(rowIndex), item);
+    });
+    return map;
+  }, [codeArchitectureFunctionalReviewItems]);
+
+  const codeArchitectureFunctionalReviewDrawerOptions = useMemo(() => ({
+    sourceFeature: "Code-Based Architecture Functional Decomposition",
+    sourceMethod: "GitHub repository analysis",
+    sourceRunId: codeArchitectureFunctionalReviewRunId,
+    artifactType: CODE_ARCHITECTURE_FUNCTIONAL_ARTIFACT_TYPE,
+    startAtFirstPending: true,
+  }), [codeArchitectureFunctionalReviewRunId]);
+
+  const codeArchitectureHazardReviewItems = useMemo(() => {
+    const projectId = activeCodeArchitectureProjectId || codeArchitectureHazardRun?.projectId || "default";
+    const projectArtifactPrefixes = activeCodeArchitectureRepoReviewIds.map(
+      (repoId) => `code-architecture-hazard-summary:${projectId}:${repoId}:row:`
+    );
+    return (resultsReview.reviewItems || []).filter((item) =>
+      item.artifactType === CODE_ARCHITECTURE_HAZARD_ARTIFACT_TYPE &&
+      projectArtifactPrefixes.some((prefix) => String(item.artifactId || "").startsWith(prefix)) &&
+      (!codeArchitectureHazardRun?.id || item.sourceRunId === codeArchitectureHazardRun.id)
+    );
+  }, [activeCodeArchitectureProjectId, activeCodeArchitectureRepoReviewIds, codeArchitectureHazardRun?.id, codeArchitectureHazardRun?.projectId, resultsReview.reviewItems]);
+
+  const codeArchitectureHazardReviewByRow = useMemo(() => {
+    const map = new Map();
+    const summaryRows = Array.isArray(codeArchitectureHazardRun?.generatedSheets?.Summary)
+      ? codeArchitectureHazardRun.generatedSheets.Summary.slice(1)
+      : [];
+    const summaryRowKeys = summaryRows.map((row) => JSON.stringify(row || []));
+    codeArchitectureHazardReviewItems.forEach((item) => {
+      const reviewRow = Array.isArray(item.currentContent?.row)
+        ? item.currentContent.row
+        : (Array.isArray(item.originalContent?.row) ? item.originalContent.row : null);
+      if (reviewRow) {
+        const matchedIndex = summaryRowKeys.indexOf(JSON.stringify(reviewRow));
+        if (matchedIndex >= 0) {
+          const existing = map.get(matchedIndex);
+          const existingTime = Date.parse(existing?.updatedAt || existing?.createdAt || 0) || 0;
+          const itemTime = Date.parse(item.updatedAt || item.createdAt || 0) || 0;
+          if (!existing || itemTime >= existingTime) map.set(matchedIndex, item);
+          return;
+        }
+      }
+      const rowIndex = item.currentContent?.rowIndex ?? item.originalContent?.rowIndex ?? item.traceLinks?.find?.((link) => link.type === "table_row")?.rowIndex;
+      if (!Number.isFinite(Number(rowIndex))) return;
+      if (reviewRow && summaryRows.length) return;
+      const existing = map.get(Number(rowIndex));
+      const existingTime = Date.parse(existing?.updatedAt || existing?.createdAt || 0) || 0;
+      const itemTime = Date.parse(item.updatedAt || item.createdAt || 0) || 0;
+      if (!existing || itemTime >= existingTime) map.set(Number(rowIndex), item);
+    });
+    return map;
+  }, [codeArchitectureHazardReviewItems, codeArchitectureHazardRun?.generatedSheets?.Summary]);
+
+  const codeArchitectureHazardReviewDrawerOptions = useMemo(() => ({
+    sourceFeature: "Code-Based Architecture Hazard Analysis",
+    sourceMethod: codeArchitectureHazardMethod,
+    sourceRunId: codeArchitectureHazardRun?.id || "",
+    artifactType: CODE_ARCHITECTURE_HAZARD_ARTIFACT_TYPE,
+    startAtFirstPending: true,
+  }), [codeArchitectureHazardMethod, codeArchitectureHazardRun?.id]);
+
+  const handleOpenHazardSummaryRow = useCallback((sourceIndex) => {
+    const targetIndex = Number(sourceIndex);
+    if (!Number.isFinite(targetIndex)) return;
+
+    setActiveTab('Hazard Analysis');
+    setShowDiagram(false);
+    setColumnFilters({});
+    setFilterColumnIndex(null);
+    setHighlightedHazardRowIndex(targetIndex);
+
+    setTimeout(() => {
+      const rowEl = hazardRowRefs.current[targetIndex];
+      rowEl?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    }, 80);
+
+    setTimeout(() => {
+      setHighlightedHazardRowIndex((current) => (current === targetIndex ? null : current));
+    }, 2600);
+  }, []);
+
+  const handleOpenFunctionalRow = useCallback((sourceIndex) => {
+    const targetIndex = Number(sourceIndex);
+    if (!Number.isFinite(targetIndex)) return;
+
+    setActiveTab('Functional Diagramming');
+    setShowFunctionalDiagram(false);
+    setFunctionalColumnFilters({});
+    setFunctionalFilterColumn(null);
+    setHighlightedFunctionalRowIndex(targetIndex);
+
+    setTimeout(() => {
+      const rowEl = functionalRowRefs.current[targetIndex];
+      rowEl?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    }, 80);
+
+    setTimeout(() => {
+      setHighlightedFunctionalRowIndex((current) => (current === targetIndex ? null : current));
+    }, 2600);
+  }, []);
+
+  const handleOpenCodeArchitectureHazardSummaryRow = useCallback((sourceIndex) => {
+    const targetIndex = Number(sourceIndex);
+    if (!Number.isFinite(targetIndex)) return;
+
+    setSection("code-architecture");
+    setCodeArchitectureWorkspaceTab("safety");
+    setCodeArchitectureHazardSummaryOpenKey(`open-${Date.now()}`);
+    setHighlightedCodeArchitectureHazardRowIndex(targetIndex);
+
+    setTimeout(() => {
+      setHighlightedCodeArchitectureHazardRowIndex((current) => (current === targetIndex ? null : current));
+    }, 2600);
+  }, []);
+
+  const handleOpenCodeArchitectureFunctionalRow = useCallback((target) => {
+    const targetIndex = Number(
+      typeof target === "object" && target !== null
+        ? target.rowIndex ?? target.sourceIndex
+        : target
+    );
+    if (!Number.isFinite(targetIndex)) return;
+
+    setSection("code-architecture");
+    setCodeArchitectureWorkspaceTab("architecture");
+    setCodeArchitectureFunctionalTableOpenKey(`open-${Date.now()}`);
+    setHighlightedCodeArchitectureFunctionalRowIndex(targetIndex);
+
+    setTimeout(() => {
+      setHighlightedCodeArchitectureFunctionalRowIndex((current) => (current === targetIndex ? null : current));
+    }, 2600);
+  }, []);
+
+  const readCodeArchitectureRepoRows = useCallback((projectId, repoId) => (
+    readCbaRowsFromIndexedDB(codeArchitectureRowsKey(projectId, repoId))
+  ), []);
+
+  const handleOpenCrossRepoFunctionalRow = useCallback(({ projectId, repoId, rowIndex, rowRef, traceId } = {}) => {
+    if (!projectId) return;
+    const targetProject = codeArchitectureProjects.find((project) => project.id === projectId);
+    const targetRepo = (targetProject?.repos || []).find((repo) =>
+      repo.id === repoId ||
+      repo.repoId === repoId ||
+      repo.repoName === repoId
+    );
+    const targetRepoId = targetRepo?.id || repoId || targetProject?.activeRepoId || targetProject?.repos?.[0]?.id || "";
+    setSection("code-architecture");
+    setActiveCodeArchitectureFolderId(null);
+    setActiveCodeArchitectureProjectId(projectId);
+    if (targetRepoId) updateCodeArchitectureProject(projectId, { activeRepoId: targetRepoId });
+    setCodeArchitectureWorkspaceTab("architecture");
+    setCodeArchitectureFunctionalTableOpenKey(`open-${Date.now()}`);
+
+    const numericIndex = Number(rowIndex);
+    if (Number.isFinite(numericIndex) && numericIndex >= 0) {
+      setHighlightedCodeArchitectureFunctionalRowIndex(numericIndex);
+      setTimeout(() => {
+        setHighlightedCodeArchitectureFunctionalRowIndex((current) => (current === numericIndex ? null : current));
+      }, 2600);
+      return;
+    }
+
+    if (targetRepoId && (rowRef || traceId)) {
+      readCbaRowsFromIndexedDB(codeArchitectureRowsKey(projectId, targetRepoId)).then((rows) => {
+        const target = String(traceId || rowRef || "").trim();
+        const foundIndex = (Array.isArray(rows) ? rows : []).findIndex((row, index) =>
+          String(row.traceId || "") === target ||
+          String(row.rowRef || "") === target ||
+          String(index + 1) === target
+        );
+        if (foundIndex >= 0) {
+          setHighlightedCodeArchitectureFunctionalRowIndex(foundIndex);
+          setTimeout(() => {
+            setHighlightedCodeArchitectureFunctionalRowIndex((current) => (current === foundIndex ? null : current));
+          }, 2600);
+        }
+      });
+    }
+  }, [codeArchitectureProjects]);
+
+  const handleOpenCodeArchitectureArtifactRows = useCallback((tab, rowIds) => {
+    const ids = Array.isArray(rowIds) ? rowIds : [rowIds];
+    const cleanIds = ids.map((id) => String(id || "").trim()).filter(Boolean);
+    if (!tab || !cleanIds.length) return;
+
+    setSection("code-architecture");
+    setCodeArchitectureWorkspaceTab(tab);
+    const focusKey = Date.now();
+    setCodeArchitectureArtifactFocus({ tab, rowIds: cleanIds, key: focusKey });
+  }, []);
+
+  const handleCodeArchitectureArtifactFocusResolved = useCallback(() => {
+    setTimeout(() => {
+      setCodeArchitectureArtifactFocus(null);
+    }, 2600);
+  }, []);
+
+  const handleOpenCodeArchitectureAssuranceTrace = useCallback(({ linkType, value, row }) => {
+    if (linkType === "architecture-source") {
+      const refs = Array.isArray(row?.sourceArchitectureRefs) ? row.sourceArchitectureRefs : [];
+      const ref = refs.find((entry) => architectureLabelFromRef(entry) === value) || refs[0] || null;
+      if (ref) {
+        setPendingCodeArchitectureDiagramTarget(architectureRefToFocusTarget(ref));
+        setSection("code-architecture");
+        setCodeArchitectureWorkspaceTab("architecture");
+      }
+      return;
+    }
+    if (linkType === "functional-row") {
+      const targetIndex = functionalRowIndexForTraceValue(cbaTableData, value);
+      if (targetIndex >= 0) handleOpenCodeArchitectureFunctionalRow(targetIndex);
+      return;
+    }
+    if (linkType === "hazard-row") {
+      const rawTarget = String(value || "").trim();
+      const numeric = Number(rawTarget.replace(/^HZ-?/i, ""));
+      if (Number.isFinite(numeric) && numeric > 0) {
+        handleOpenCodeArchitectureHazardSummaryRow(numeric - 1);
+      }
+      return;
+    }
+    const kind = artifactKindForLinkType(linkType);
+    if (kind) handleOpenCodeArchitectureArtifactRows(kind, value);
+  }, [cbaTableData, handleOpenCodeArchitectureArtifactRows, handleOpenCodeArchitectureFunctionalRow, handleOpenCodeArchitectureHazardSummaryRow]);
+
+  const getReviewItemProjectId = useCallback((item) => {
+    if (!item) return null;
+    if (item.projectId) return item.projectId;
+    const artifactId = String(item.artifactId || "");
+    const artifactParts = artifactId.split(":");
+    if (["hazard-summary", "functional-decomposition", "code-architecture-hazard-summary", "code-architecture-functional-decomposition"].includes(artifactParts[0]) && artifactParts[1]) {
+      return artifactParts[1];
+    }
+    const searchable = [item.id, item.artifactId, item.sourceRunId].filter(Boolean).join(" ");
+    return projects.find((project) => project?.id && searchable.includes(project.id))?.id || null;
+  }, [projects]);
+
+  const jumpToReviewSource = useCallback((item) => {
+    if (!item) return;
+    const projectId = getReviewItemProjectId(item);
+    if (item.artifactType === CODE_ARCHITECTURE_HAZARD_ARTIFACT_TYPE || item.artifactType === CODE_ARCHITECTURE_FUNCTIONAL_ARTIFACT_TYPE) {
+      if (projectId) {
+        setActiveCodeArchitectureProjectId(projectId);
+        setActiveCodeArchitectureFolderId(null);
+        const artifactParts = String(item.artifactId || "").split(":");
+        if (artifactParts[2]) {
+          setCodeArchitectureProjects((prev) => prev.map((project) =>
+            project.id === projectId
+              ? { ...project, activeRepoId: artifactParts[2], updatedAt: new Date().toISOString() }
+              : project
+          ));
+        }
+      }
+      setSection("code-architecture");
+      setPendingReviewSourceJump(item);
+      return;
+    }
+    if (projectId && projectId !== activeProjectId) {
+      setActiveProjectId(projectId);
+    }
+    setSection("projects");
+    setPendingReviewSourceJump(item);
+  }, [activeProjectId, getReviewItemProjectId]);
+
+  useEffect(() => {
+    if (!pendingReviewSourceJump) return;
+    const isCodeArchitectureReviewItem =
+      pendingReviewSourceJump.artifactType === CODE_ARCHITECTURE_HAZARD_ARTIFACT_TYPE ||
+      pendingReviewSourceJump.artifactType === CODE_ARCHITECTURE_FUNCTIONAL_ARTIFACT_TYPE;
+    const projectId = getReviewItemProjectId(pendingReviewSourceJump);
+    if (!isCodeArchitectureReviewItem) {
+      if (projectId && activeProjectId !== projectId) return;
+      if (projectId && (!projectLoaded || loadedProjectId !== projectId)) return;
+    }
+
+    const item = pendingReviewSourceJump;
+    setPendingReviewSourceJump(null);
+
+    if (item.artifactType === "functional_decomposition_table") {
+      const rowIndex = item.currentContent?.rowIndex ?? item.originalContent?.rowIndex;
+      handleOpenFunctionalRow(rowIndex);
+      return;
+    }
+    if (item.artifactType === "hazard_summary_table") {
+      const rowIndex = item.currentContent?.rowIndex ?? item.originalContent?.rowIndex;
+      handleOpenHazardSummaryRow(rowIndex);
+      return;
+    }
+    if (item.artifactType === CODE_ARCHITECTURE_HAZARD_ARTIFACT_TYPE) {
+      const rowIndex = item.currentContent?.rowIndex ?? item.originalContent?.rowIndex;
+      handleOpenCodeArchitectureHazardSummaryRow(rowIndex);
+      return;
+    }
+    if (item.artifactType === CODE_ARCHITECTURE_FUNCTIONAL_ARTIFACT_TYPE) {
+      const rowIndex = item.currentContent?.rowIndex ?? item.originalContent?.rowIndex;
+      handleOpenCodeArchitectureFunctionalRow(rowIndex);
+      return;
+    }
+    if (/safety_case/i.test(item.artifactType || item.reviewUnitType || "")) {
+      setSection("safety-case");
+      return;
+    }
+    if (/requirement/i.test(item.artifactType || item.reviewUnitType || "")) {
+      setSection("requirements");
+      return;
+    }
+    setSection("projects");
+  }, [
+    activeProjectId,
+    getReviewItemProjectId,
+    handleOpenCodeArchitectureFunctionalRow,
+    handleOpenCodeArchitectureHazardSummaryRow,
+    handleOpenFunctionalRow,
+    handleOpenHazardSummaryRow,
+    loadedProjectId,
+    pendingReviewSourceJump,
+    projectLoaded,
+  ]);
+
+  useEffect(() => {
+    const focusHandler = (event) => {
+      const item = event.detail?.reviewItem;
+      if (item?.artifactType === "hazard_summary_table") {
+        const rowIndex = item.currentContent?.rowIndex ?? item.originalContent?.rowIndex;
+        handleOpenHazardSummaryRow(rowIndex);
+        return;
+      }
+      if (item?.artifactType === "functional_decomposition_table") {
+        const rowIndex = item.currentContent?.rowIndex ?? item.originalContent?.rowIndex;
+        handleOpenFunctionalRow(rowIndex);
+        return;
+      }
+      if (item?.artifactType === CODE_ARCHITECTURE_HAZARD_ARTIFACT_TYPE) {
+        const rowIndex = item.currentContent?.rowIndex ?? item.originalContent?.rowIndex;
+        handleOpenCodeArchitectureHazardSummaryRow(rowIndex);
+        return;
+      }
+      if (item?.artifactType === CODE_ARCHITECTURE_FUNCTIONAL_ARTIFACT_TYPE) {
+        const rowIndex = item.currentContent?.rowIndex ?? item.originalContent?.rowIndex;
+        handleOpenCodeArchitectureFunctionalRow(rowIndex);
+      }
+    };
+    const updateHandler = (event) => {
+      const item = event.detail?.reviewItem;
+      const action = event.detail?.action;
+      if (item?.artifactType === "hazard_summary_table") {
+        const rowIndex = Number(item.currentContent?.rowIndex ?? item.originalContent?.rowIndex);
+        if (!Number.isFinite(rowIndex)) return;
+
+        handleOpenHazardSummaryRow(rowIndex);
+
+        if (action === "approve_with_modifications" && Array.isArray(item.currentContent?.row)) {
+          setAnalysisResult((prev) => {
+            if (!prev?.Summary || !Array.isArray(prev.Summary)) return prev;
+            const nextSummary = prev.Summary.map((row, idx) => (idx === rowIndex + 1 ? item.currentContent.row : row));
+            return { ...prev, Summary: nextSummary };
+          });
+        }
+        return;
+      }
+      if (item?.artifactType === "functional_decomposition_table") {
+        const rowIndex = Number(item.currentContent?.rowIndex ?? item.originalContent?.rowIndex);
+        if (!Number.isFinite(rowIndex)) return;
+
+        handleOpenFunctionalRow(rowIndex);
+
+        if (action === "approve_with_modifications" && item.currentContent?.row && typeof item.currentContent.row === "object" && !Array.isArray(item.currentContent.row)) {
+          setResponseRows((prev) => prev.map((row, idx) => (idx === rowIndex ? { ...row, ...item.currentContent.row } : row)));
+        }
+        return;
+      }
+      if (item?.artifactType === CODE_ARCHITECTURE_FUNCTIONAL_ARTIFACT_TYPE) {
+        const rowIndex = Number(item.currentContent?.rowIndex ?? item.originalContent?.rowIndex);
+        if (!Number.isFinite(rowIndex)) return;
+
+        handleOpenCodeArchitectureFunctionalRow(rowIndex);
+
+        if (action === "approve_with_modifications" && item.currentContent?.row && typeof item.currentContent.row === "object" && !Array.isArray(item.currentContent.row)) {
+          const reviewedRow = item.currentContent.row;
+          setCbaTableData((prev) => {
+            const next = prev.map((row, idx) => (idx === rowIndex ? {
+              ...row,
+              from: reviewedRow.from ?? row.from,
+              fromFile: reviewedRow.fromFile ?? row.fromFile,
+              fromDetails: reviewedRow.fromDetails ?? row.fromDetails,
+              action: reviewedRow.action ?? row.action,
+              controlActionDetails: reviewedRow.controlActionDetails ?? row.controlActionDetails,
+              to: reviewedRow.to ?? row.to,
+              toFile: reviewedRow.toFile ?? row.toFile,
+              toDetails: reviewedRow.toDetails ?? row.toDetails,
+              architecture: {
+                ...(row.architecture || {}),
+                subsystem: reviewedRow.subsystem ?? row.architecture?.subsystem,
+                csci: reviewedRow.csci ?? row.architecture?.csci,
+                csc: reviewedRow.csc ?? row.architecture?.csc,
+                csu: reviewedRow.csu ?? row.architecture?.csu,
+                rationale: reviewedRow.architectureRationale ?? row.architecture?.rationale,
+              },
+            } : row));
+            writeCbaRowsToIndexedDB(activeCodeArchitectureRowsKey, next).catch(() => {});
+            return next;
+          });
+        }
+        return;
+      }
+      if (item?.artifactType === CODE_ARCHITECTURE_HAZARD_ARTIFACT_TYPE) {
+        const rowIndex = Number(item.currentContent?.rowIndex ?? item.originalContent?.rowIndex);
+        if (!Number.isFinite(rowIndex)) return;
+
+        handleOpenCodeArchitectureHazardSummaryRow(rowIndex);
+
+        if (action === "approve_with_modifications" && Array.isArray(item.currentContent?.row)) {
+          setCodeArchitectureHazardRun((prev) => {
+            if (!prev?.generatedSheets?.Summary || !Array.isArray(prev.generatedSheets.Summary)) return prev;
+            const nextSummary = prev.generatedSheets.Summary.map((row, idx) => (idx === rowIndex + 1 ? item.currentContent.row : row));
+            return {
+              ...prev,
+              generatedSheets: {
+                ...prev.generatedSheets,
+                Summary: nextSummary,
+              },
+            };
+          });
+        }
+      }
+    };
+
+    window.addEventListener("xhandle:results-review:focus", focusHandler);
+    window.addEventListener("xhandle:results-review:item-updated", updateHandler);
+    return () => {
+      window.removeEventListener("xhandle:results-review:focus", focusHandler);
+      window.removeEventListener("xhandle:results-review:item-updated", updateHandler);
+    };
+  }, [activeCodeArchitectureRowsKey, handleOpenCodeArchitectureFunctionalRow, handleOpenCodeArchitectureHazardSummaryRow, handleOpenHazardSummaryRow, handleOpenFunctionalRow]);
+
+  const generateFunctionalRowsFromWizard = async (combinedPrompt, onProgress = () => {}) => {
+    let parsedRows = [];
+    onProgress({
+      step: 1,
+      total: 2,
+      message: "Generating functional architecture decomposition..."
+    });
+    await handleLitePromptSubmit(
+      combinedPrompt,
+      (response) => {
+        const jsonMatch = response.match(/```json\s*([\s\S]*?)```/i);
+        const cleanJson = jsonMatch ? jsonMatch[1] : response;
+        try {
+          const parsed = JSON.parse(cleanJson);
+          parsedRows = Array.isArray(parsed) ? parsed : [];
+        } catch (err) {
+          console.error("Failed to parse response as JSON array", err);
+          parsedRows = [];
+        }
+      },
+      () => {},
+      {}
+    );
+
+    onProgress({
+      step: 2,
+      total: 2,
+      message: "Classifying functional architecture categories..."
+    });
+    const categories = parsedRows.length
+      ? await classifyPromptWizardDiagramCategories(parsedRows, combinedPrompt)
+      : null;
+    setResponseRows(parsedRows);
+    setDiagramCategories(categories);
+    return parsedRows;
+  };
+
+  const handlePromptWizardSubmit = async (combinedPrompt) => {
+    const activityId = `wizard-decomposition-${activeProjectId || "default"}`;
+    const sourceRunId = `functional-decomposition-${activeProjectId || "default"}-${Date.now()}`;
+    setFunctionalReviewRunId(sourceRunId);
+    startActivity(activityId, {
+      title: "Generating functional architecture",
+      step: 0,
+      total: 2,
+      message: "Starting prompt wizard generation..."
+    });
+
+    setIsGeneratingDecomposition(true);
+    try {
+      const parsedRows = await generateFunctionalRowsFromWizard(combinedPrompt, (progressPatch) => {
+        updateActivity(activityId, progressPatch);
+      });
+      if (parsedRows.length > 0) {
+        try {
+          await resultsReview.createReviewItems(createReviewItemsFromGeneratedTable({
+            sourceFeature: "Prompt Wizard",
+            sourceMethod: promptMode,
+            sourceRunId,
+            artifactType: "functional_decomposition_table",
+            artifactId: `functional-decomposition:${activeProjectId || "default"}`,
+            rows: parsedRows,
+            columns: functionalTableColumns.map((column) => column.key),
+          }));
+        } catch (error) {
+          console.warn("[results-review] Failed to register functional decomposition review items", error);
+        }
+      }
+      finishActivity(activityId, "success", `${parsedRows.length} functions ready`);
+      setShowPromptWizard(false);
+      setCleanOnceKey(`wizard-${Date.now()}`);
+    } catch (error) {
+      console.error("Prompt wizard decomposition failed:", error);
+      finishActivity(activityId, "error", error?.message || "Generation failed");
+      alert(error?.message || "Sorry — functional architecture generation failed.");
+    } finally {
+      setIsGeneratingDecomposition(false);
+    }
+  };
 
   const handleRowChange = (index, field, value) => {
     const updated = [...responseRows];
@@ -1835,8 +4915,55 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   };
   const handleAddRow = () => setResponseRows([...responseRows, { fromFunction:'', fromDetails:'', controlAction:'', controlDetails:'', toFunction:'', toDetails:'' }]);
   const handleRemoveRow = (index) => setResponseRows(responseRows.filter((_, i) => i !== index));
+  const functionalTableColumns = [
+    { key: 'fromFunction', label: 'Function (From)' },
+    { key: 'fromDetails', label: 'Function (From) Details' },
+    { key: 'controlAction', label: 'Control Action' },
+    { key: 'controlDetails', label: 'Control Action Details' },
+    { key: 'toFunction', label: 'Function (To)' },
+    { key: 'toDetails', label: 'Function (To) Details' },
+  ];
+  const getFunctionalCellValue = (row, field) => String(row?.[field] ?? '').trim();
+  const getUniqueFunctionalColumnValues = (field, searchText = '') => {
+    const unique = new Set();
+    responseRows.forEach((row) => {
+      const value = getFunctionalCellValue(row, field);
+      if (value) unique.add(value);
+    });
+    const q = String(searchText || '').toLowerCase();
+    return Array.from(unique)
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }))
+      .filter((val) => val.toLowerCase().includes(q));
+  };
+  const setFunctionalFilterValues = (field, values) => {
+    setFunctionalColumnFilters((prev) => ({ ...prev, [field]: values }));
+  };
+  const toggleFunctionalFilterValue = (field, value) => {
+    setFunctionalColumnFilters((prev) => {
+      const current = prev[field] || [];
+      const updated = current.includes(value)
+        ? current.filter((item) => item !== value)
+        : [...current, value];
+      return { ...prev, [field]: updated };
+    });
+  };
+  const clearAllFunctionalFilters = () => {
+    setFunctionalColumnFilters({});
+    setFunctionalColumnSearches({});
+    setFunctionalFilterColumn(null);
+  };
+  const activeFunctionalFilterCount = Object.values(functionalColumnFilters)
+    .reduce((count, values) => count + (Array.isArray(values) ? values.length : 0), 0);
+  const filteredFunctionalRows = responseRows
+    .map((row, originalIndex) => ({ row, originalIndex }))
+    .filter(({ row }) =>
+      Object.entries(functionalColumnFilters).every(([field, allowed]) =>
+        !allowed?.length || allowed.includes(getFunctionalCellValue(row, field))
+      )
+    );
 
   const handleRunAnalysis = async (selectedMethod) => {
+    const sourceRunId = `hazard-${activeProjectId || "default"}-${Date.now()}`;
     const functionalDecompositionSheet = [
       ["Function (From)", "Control Action", "Function (To)"],
       ...responseRows.map(row => [row.fromFunction || "", row.controlAction || "", row.toFunction || ""])
@@ -1844,9 +4971,10 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const sheets = { "Functional Decomposition": functionalDecompositionSheet };
     const dummySetFolders = async (updater) => { const prev = {}; const newState = await updater(prev); return newState; };
     const currentFolder = "LiteProject";
-  
+
     // NEW: start activity
     const actId = `hazard-${activeProjectId || "default"}`;
+    setHazardReviewRunId(sourceRunId);
     setAnalysisActivityId(actId);
     startActivity(actId, {
       title: "Running hazard analysis",
@@ -1854,10 +4982,10 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       total: stepDescriptionsMap[selectedMethod]?.total || 9,
       message: "Starting analysis..."
     });
-  
+
     setIsAnalyzing(true);
-    setProgress({ step: 0, total: stepDescriptionsMap[selectedMethod].total });
-  
+    setProgress({ step: 0, total: stepDescriptionsMap[selectedMethod]?.total || 9 });
+
     const finalSheets = await runLiteAIAnalysis({
       tableRows: responseRows,
       sheets,
@@ -1868,15 +4996,158 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       setProgress,              // keeps your UI updated
       hazardMethod: selectedMethod,
     });
-  
+
     setAnalysisResult(finalSheets);
+    if (activeProjectId) {
+      saveProjectPatch(activeProjectId, {
+        analysisResult: finalSheets,
+        riskMethod: selectedMethod,
+      });
+    }
+    if (Array.isArray(finalSheets?.Summary) && finalSheets.Summary.length > 1) {
+      try {
+        const [columns, ...rows] = finalSheets.Summary;
+        await resultsReview.createReviewItems(createReviewItemsFromGeneratedTable({
+          sourceFeature: "AI Hazard Analysis",
+          sourceMethod: selectedMethod,
+          sourceRunId,
+          artifactType: "hazard_summary_table",
+          artifactId: `hazard-summary:${activeProjectId || "default"}`,
+          rows,
+          columns,
+        }));
+      } catch (error) {
+        console.warn("[results-review] Failed to register hazard Summary review items", error);
+      }
+    }
     setIsAnalyzing(false);
+    setShowDiagram(false);
     setActiveTab('Hazard Analysis');
-  
+
     // NEW: finish activity
     finishActivity(actId, "success", "Analysis complete");
   };
-  
+
+  const handleRunCodeArchitectureHazardAnalysis = async (
+    selectedMethod = codeArchitectureHazardMethod,
+    options = {}
+  ) => {
+    const selectedHazardGenerationMode =
+      options.hazardGenerationMode || options.fhaGenerationMode || codeArchitectureHazardGenerationMode;
+    const repoMeta = activeCodeArchitectureRepoMeta;
+    const repoId = repoMeta.repoId || repoMeta.repoName || "repo";
+    const reviewRepoId = activeCodeArchitectureRepo?.id || repoId;
+    const cbaProjectId = activeCodeArchitectureProjectId || activeProjectId || "";
+    const actId = `cba-hazard-${cbaProjectId || "default"}-${repoId}`;
+    setCodeArchitectureHazardMethod(selectedMethod);
+    setCodeArchitectureHazardGenerationMode(selectedHazardGenerationMode);
+    setIsRunningCodeArchitectureHazard(true);
+    setCodeArchitectureHazardProgress({
+      step: 0,
+      total: stepDescriptionsMap[selectedMethod]?.total || 9,
+      message: "Starting code architecture hazard analysis...",
+    });
+    startActivity(actId, {
+      title: "Running code architecture hazard analysis",
+      step: 0,
+      total: stepDescriptionsMap[selectedMethod]?.total || 9,
+      message: "Starting analysis...",
+    });
+
+    try {
+      const run = await runCodeArchitectureHazardAnalysis({
+        cbaRows: cbaTableData,
+        method: selectedMethod,
+        hazardGenerationMode: selectedHazardGenerationMode,
+        repoMeta,
+        projectId: cbaProjectId,
+        onPartialRunUpdate: (partialRun) => {
+          setCodeArchitectureHazardRun(partialRun);
+        },
+        setProgress: (nextProgress) => {
+          const step = nextProgress?.step || 0;
+          const total = nextProgress?.total || stepDescriptionsMap[selectedMethod]?.total || 9;
+          const message = stepDescriptionsMap[selectedMethod]?.steps?.[step] || "Running code architecture hazard analysis...";
+          setCodeArchitectureHazardProgress({ step, total, message });
+          updateActivity(actId, { step, total, message });
+        },
+        onActivityUpdate: (patch) => {
+          updateActivity(actId, {
+            step: patch?.step || 0,
+            total: stepDescriptionsMap[selectedMethod]?.total || 9,
+            message: patch?.message || "Running code architecture hazard analysis...",
+          });
+        },
+      });
+      setCodeArchitectureHazardRun(run);
+      if (Array.isArray(run?.generatedSheets?.Summary) && run.generatedSheets.Summary.length > 1) {
+        try {
+          const [columns, ...rows] = run.generatedSheets.Summary;
+          await resultsReview.createReviewItems(createReviewItemsFromGeneratedTable({
+            sourceFeature: "Code-Based Architecture Hazard Analysis",
+            sourceMethod: selectedMethod,
+            sourceRunId: run.id,
+            artifactType: CODE_ARCHITECTURE_HAZARD_ARTIFACT_TYPE,
+            artifactId: `code-architecture-hazard-summary:${cbaProjectId || run.projectId || "default"}:${reviewRepoId}`,
+            projectId: cbaProjectId || run.projectId || "default",
+            rows,
+            columns,
+          }));
+        } catch (error) {
+          console.warn("[results-review] Failed to register code architecture hazard Summary review items", error);
+        }
+      }
+      finishActivity(actId, "success", "Code architecture hazard analysis complete");
+    } catch (error) {
+      console.error("[code-architecture-hazard-analysis] Run failed", error);
+      setCodeArchitectureHazardProgress((prev) => ({
+        ...prev,
+        message: error?.message || "Code architecture hazard analysis failed.",
+      }));
+      finishActivity(actId, "error", error?.message || "Code architecture hazard analysis failed");
+    } finally {
+      setIsRunningCodeArchitectureHazard(false);
+    }
+  };
+
+  const handleClearCodeArchitectureHazardContents = async () => {
+    const repoMeta = activeCodeArchitectureRepoMeta || {};
+    const repoId = repoMeta.repoId || repoMeta.repoName || "repo";
+    const projectId = activeCodeArchitectureProjectId || activeProjectId || "";
+    const summaryCount = Math.max(0, (codeArchitectureHazardRun?.generatedSheets?.Summary?.length || 1) - 1);
+    const confirmed = window.confirm(
+      `Permanently clear code architecture hazard analysis contents${summaryCount ? ` (${summaryCount} summary row${summaryCount === 1 ? "" : "s"})` : ""} for this repository? This cannot be undone.`,
+    );
+    if (!confirmed) return;
+    await deleteCodeArchitectureHazardRuns({ projectId, repoId });
+    setCodeArchitectureHazardRun(null);
+    setCodeArchitectureHazardProgress({
+      step: 0,
+      total: stepDescriptionsMap[codeArchitectureHazardMethod]?.total || 9,
+      message: "",
+    });
+  };
+
+  const handleDeleteCodeArchitectureHazardSummaryRow = useCallback(async (rowIndex) => {
+    const targetIndex = Number(rowIndex);
+    if (!Number.isFinite(targetIndex)) return;
+    const summary = codeArchitectureHazardRun?.generatedSheets?.Summary;
+    if (!Array.isArray(summary) || targetIndex < 0 || targetIndex >= summary.length - 1) return;
+    const confirmed = window.confirm("Delete this hazard summary row? This cannot be undone.");
+    if (!confirmed) return;
+    const nextSummary = summary.filter((_, index) => index !== targetIndex + 1);
+    const nextRun = {
+      ...codeArchitectureHazardRun,
+      generatedSheets: {
+        ...codeArchitectureHazardRun.generatedSheets,
+        Summary: nextSummary,
+      },
+      updatedAt: new Date().toISOString(),
+    };
+    await saveCodeArchitectureHazardRun(nextRun);
+    setCodeArchitectureHazardRun(nextRun);
+  }, [codeArchitectureHazardRun]);
+
 
   // Exporters
   const exportDecompositionCSV = () => {
@@ -1892,7 +5163,6 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   };
 
-  
 // Apply agent suggestions (create/update/link) into local Requirements state
 const handleApplyTraceabilityPatches = async (suggestions) => {
   if (!Array.isArray(suggestions) || suggestions.length === 0) return;
@@ -1926,8 +5196,9 @@ const handleApplyTraceabilityPatches = async (suggestions) => {
             ...next[idx],
             title: s.title != null ? s.title : next[idx].title,
             attributes: s.attributes || next[idx].attributes,
-          };
-        }
+    };
+  }
+
       });
 
     // 3) Apply links (auto-create placeholders for HZ:/MT: ids)
@@ -1966,7 +5237,6 @@ const handleApplyTraceabilityPatches = async (suggestions) => {
   const displayedReport = (
     agentReportResult?.report ?? agentReportResult?.markdown ?? agentReportResult?.text ?? agentReportResult?.content ?? ""
   ).trim();
-
   // Console summary
   // ── Console dashboard data ─────────────────────────────────────────────
 const activeProject = useMemo(
@@ -1974,14 +5244,664 @@ const activeProject = useMemo(
   [projects, activeProjectId]
 );
 
+const activeProjectFolder = useMemo(
+  () => projectFolders.find((folder) => folder.id === activeProjectFolderId) || null,
+  [projectFolders, activeProjectFolderId]
+);
+
+const folderDashboardPanels = useMemo(
+  () => (activeProjectFolderId && folderDashboards[activeProjectFolderId]?.length
+    ? folderDashboards[activeProjectFolderId]
+    : getDefaultFolderDashboardPanels()),
+  [activeProjectFolderId, folderDashboards]
+);
+
+const folderDashboardProjectIds = useMemo(() => {
+  if (!activeProjectFolderId) return new Set();
+  const folderIds = new Set([activeProjectFolderId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    projectFolders.forEach((folder) => {
+      if (folder.parentId && folderIds.has(folder.parentId) && !folderIds.has(folder.id)) {
+        folderIds.add(folder.id);
+        changed = true;
+      }
+    });
+  }
+  return new Set(projects.filter((project) => folderIds.has(project.folderId || null)).map((project) => project.id));
+}, [activeProjectFolderId, projectFolders, projects]);
+
+const folderDashboardProjects = useMemo(
+  () => projects.filter((project) => folderDashboardProjectIds.has(project.id)),
+  [projects, folderDashboardProjectIds]
+);
+
+const folderDashboardRisks = useMemo(() => {
+  const map = readProjectMap();
+  return folderDashboardProjects.flatMap((project) => {
+    const rows = Array.isArray(map?.[project.id]?.riskRegister) ? map[project.id].riskRegister : [];
+    return rows.map((risk) => ({ ...risk, projectId: project.id, projectName: project.name }));
+  });
+}, [folderDashboardProjects]);
+
+const folderDashboardRiskStatusData = useMemo(() => {
+  const counts = { Open: 0, "In Progress": 0, Mitigated: 0, Accepted: 0, Closed: 0 };
+  folderDashboardRisks.forEach((risk) => {
+    const status = risk?.status || "Open";
+    counts[status] = (counts[status] || 0) + 1;
+  });
+  return Object.entries(counts).map(([name, value]) => ({ name, value }));
+}, [folderDashboardRisks]);
+
+const folderDashboardActivity = useMemo(() => {
+  const map = readProjectMap();
+  return folderDashboardProjects
+    .map((project) => {
+      const data = map?.[project.id] || {};
+      const risks = Array.isArray(data.riskRegister) ? data.riskRegister.length : 0;
+      const functions = Array.isArray(data.responseRows) ? data.responseRows.length : 0;
+      return {
+        project,
+        count: risks || functions,
+        label: risks ? `${risks} risks` : `${functions} functions`,
+        when: data._updatedAt || project.updatedAt || project.createdAt || "",
+      };
+    })
+    .filter((entry) => entry.count || entry.when)
+    .sort((a, b) => new Date(b.when || 0) - new Date(a.when || 0))
+    .slice(0, 6);
+}, [folderDashboardProjects]);
+
+const projectsDashboardRows = useMemo(() => {
+  const map = readProjectMap();
+  return (projects || [])
+    .map((project) => {
+      const data = map?.[project.id] || {};
+      const risks = Array.isArray(data.riskRegister) ? data.riskRegister : [];
+      const functions = Array.isArray(data.responseRows) ? data.responseRows : [];
+      const openRisks = risks.filter((risk) => (risk?.status || "Open") !== "Closed").length;
+      const folder = project.folderId ? projectFolders.find((entry) => entry.id === project.folderId) : null;
+      return {
+        ...project,
+        folderName: folder?.name || "Top level",
+        riskCount: risks.length,
+        openRisks,
+        functionCount: functions.length,
+        updatedAt: data._updatedAt || project.updatedAt || project.createdAt || "",
+      };
+    })
+    .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+}, [projects, projectFolders, activeProjectId, riskRegister]);
+
+const projectsDashboardOpenRisks = useMemo(
+  () => consoleRiskRegister.filter((risk) => (risk?.status || "Open") !== "Closed").length,
+  [consoleRiskRegister]
+);
+
+const codeArchitectureDashboardRows = useMemo(() => {
+  return (codeArchitectureProjects || [])
+    .map((project) => {
+      const folder = project.folderId ? codeArchitectureFolders.find((entry) => entry.id === project.folderId) : null;
+      const repos = Array.isArray(project.repos) ? project.repos : [];
+      const activeRepo = repos.find((entry) => entry.id === project.activeRepoId) || repos[0] || null;
+      const isCurrentWorkspaceRepo = project.id === activeCodeArchitectureProject?.id && activeRepo?.id === activeCodeArchitectureRepo?.id;
+      const meta = activeRepo ? (() => {
+        try { return JSON.parse(localStorage.getItem(codeArchitectureMetaKey(project.id, activeRepo.id)) || "null"); }
+        catch { return null; }
+      })() : null;
+      return {
+        ...project,
+        folderName: folder?.name || "Top level",
+        repoCount: repos.length,
+        activeRepoName: activeRepo?.repoName || activeRepo?.repoId || "No repo connected",
+        rowCount: isCurrentWorkspaceRepo ? cbaTableData.length : Number(meta?.rowCount || 0),
+        metricsSummary: codeArchitectureMetricsSummary(meta?.metrics),
+        updatedAt: project.updatedAt || activeRepo?.updatedAt || project.createdAt || "",
+      };
+    })
+    .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+}, [codeArchitectureProjects, codeArchitectureFolders, activeCodeArchitectureProject, activeCodeArchitectureRepo, cbaTableData]);
+
+const reviewCenterProjects = useMemo(() => ([
+  ...projects,
+  ...(codeArchitectureProjects || []).map((project) => ({
+    id: project.id,
+    name: `${project.name || "Code Architecture"} Code Architecture`,
+    updatedAt: project.updatedAt,
+    createdAt: project.createdAt,
+    _reviewProjectType: "code-architecture",
+  })),
+]), [projects, codeArchitectureProjects]);
+
+const hazardSummaryRowCount = useCallback((run) => (
+  Array.isArray(run?.generatedSheets?.Summary)
+    ? Math.max(0, run.generatedSheets.Summary.length - 1)
+    : 0
+), []);
+
+const repoIdentityCandidatesForReview = useCallback((repo = {}) => (
+  Array.from(new Set([
+    repo?.id,
+    repo?.repoId,
+    repo?.repoName,
+    [repo?.owner, repo?.repo].filter(Boolean).join("/"),
+  ].map((value) => String(value || "").trim()).filter(Boolean)))
+), []);
+
+const safetyRemediationFindingCountForRepo = useCallback(async ({ projectId, repoIds }) => {
+  try {
+    const repoIdSet = new Set(repoIds);
+    const state = await safetyRemediationStore.loadAll();
+    return (state.safetyFindings || []).filter((finding) => {
+      const findingProjectId = String(finding?.projectId || "").trim();
+      const findingRepoId = String(finding?.repoId || finding?.repoName || "").trim();
+      if (projectId && findingProjectId && findingProjectId !== String(projectId)) return false;
+      if (repoIdSet.size && findingRepoId && !repoIdSet.has(findingRepoId)) return false;
+      return true;
+    }).length;
+  } catch {
+    return 0;
+  }
+}, []);
+
+const analysisCountsForRepo = useCallback(async ({ project, repo }) => {
+  const projectId = project?.id || "";
+  const repoIds = repoIdentityCandidatesForReview(repo);
+  const artifactCounts = {};
+  await Promise.all([
+    ARTIFACT_KINDS.SOFTWARE,
+    ARTIFACT_KINDS.SYSTEM,
+    ARTIFACT_KINDS.SUBSYSTEM,
+    ARTIFACT_KINDS.DESIGN,
+  ].map(async (kind) => {
+    const counts = await Promise.all(repoIds.map(async (repoId) => {
+      const rows = projectId && repoId ? await loadArtifactRowsAsync(kind, projectId, repoId) : [];
+      return Array.isArray(rows) ? rows.length : 0;
+    }));
+    artifactCounts[kind] = Math.max(0, ...counts);
+  }));
+  const activeHazardMatches = codeArchitectureHazardRun && (
+    repoIds.includes(String(codeArchitectureHazardRun.repoId || "").trim())
+  );
+  const hazardRun = activeHazardMatches && hazardSummaryRowCount(codeArchitectureHazardRun) > 0
+    ? codeArchitectureHazardRun
+    : (await Promise.all(repoIds.map((repoId) => (
+      getLatestCodeArchitectureHazardRun({ projectId, repoId })
+    )))).find((run) => hazardSummaryRowCount(run) > 0);
+  const remediationCount = await safetyRemediationFindingCountForRepo({ projectId, repoIds });
+  const traceabilityCount = Object.values(artifactCounts).reduce((sum, count) => sum + count, 0);
+  return {
+    [REVIEW_ANALYSIS_SECTIONS.HAZARD]: Math.max(hazardSummaryRowCount(hazardRun), remediationCount),
+    [REVIEW_ANALYSIS_SECTIONS.SOFTWARE]: artifactCounts[ARTIFACT_KINDS.SOFTWARE] || 0,
+    [REVIEW_ANALYSIS_SECTIONS.SYSTEM]: artifactCounts[ARTIFACT_KINDS.SYSTEM] || 0,
+    [REVIEW_ANALYSIS_SECTIONS.SUBSYSTEM]: artifactCounts[ARTIFACT_KINDS.SUBSYSTEM] || 0,
+    [REVIEW_ANALYSIS_SECTIONS.DESIGN]: artifactCounts[ARTIFACT_KINDS.DESIGN] || 0,
+    [REVIEW_ANALYSIS_SECTIONS.TRACEABILITY]: traceabilityCount,
+  };
+}, [codeArchitectureHazardRun, hazardSummaryRowCount, repoIdentityCandidatesForReview, safetyRemediationFindingCountForRepo]);
+
+const addAnalysisCounts = useCallback((base = {}, next = {}) => (
+  CODE_ARCHITECTURE_REVIEW_ANALYSIS_OPTIONS.reduce((acc, option) => {
+    acc[option.key] = Number(base[option.key] || 0) + Number(next[option.key] || 0);
+    return acc;
+  }, {})
+), []);
+
+const buildCodeArchitectureReviewTargetOptions = useCallback(async () => {
+  const targets = [];
+  for (const project of codeArchitectureProjects || []) {
+    const reposWithRows = [];
+    let rowCount = 0;
+    let analysisCounts = {};
+    for (const projectRepo of project.repos || []) {
+      const activeRows = project.id === activeCodeArchitectureProject?.id && projectRepo.id === activeCodeArchitectureRepo?.id
+        ? cbaTableData
+        : null;
+      const rows = Array.isArray(activeRows) && activeRows.length
+        ? activeRows
+        : await readCbaRowsFromIndexedDB(codeArchitectureRowsKey(project.id, projectRepo.id));
+      if (!Array.isArray(rows) || rows.length === 0) continue;
+      reposWithRows.push(projectRepo);
+      rowCount += rows.length;
+      analysisCounts = addAnalysisCounts(analysisCounts, await analysisCountsForRepo({ project, repo: projectRepo }));
+    }
+    if (reposWithRows.length) {
+      const folder = project.folderId
+        ? codeArchitectureFolders.find((entry) => entry.id === project.folderId) || null
+        : null;
+      targets.push({
+        id: `project:${project.id}`,
+        type: "project",
+        label: project.name || "Code Architecture Project",
+        description: `${reposWithRows.length} analyzed repo${reposWithRows.length === 1 ? "" : "s"} · ${rowCount} architecture row${rowCount === 1 ? "" : "s"}`,
+        available: true,
+        project,
+        folder,
+        repos: reposWithRows,
+        rowCount,
+        analysisCounts,
+      });
+    }
+  }
+
+  for (const folder of codeArchitectureFolders || []) {
+    const crossRepoRows = await loadArtifactRowsAsync(CROSS_REPO_ARCHITECTURE_KIND, folder.id, "folder");
+    const crossRepoRowCount = Array.isArray(crossRepoRows) ? crossRepoRows.length : 0;
+    const folderProjects = getCbaProjectsInFolderTree(codeArchitectureProjects, codeArchitectureFolders, folder.id);
+    let analysisCounts = {};
+    const analyzedProjectIds = new Set();
+    let analyzedRepoCount = 0;
+    let functionalRowCount = 0;
+    for (const project of folderProjects) {
+      for (const projectRepo of project.repos || []) {
+        const rows = await readCbaRowsFromIndexedDB(codeArchitectureRowsKey(project.id, projectRepo.id));
+        if (!Array.isArray(rows) || rows.length === 0) continue;
+        analyzedProjectIds.add(project.id);
+        analyzedRepoCount += 1;
+        functionalRowCount += rows.length;
+        analysisCounts = addAnalysisCounts(analysisCounts, await analysisCountsForRepo({ project, repo: projectRepo }));
+      }
+    }
+    const generatedMeta = getCrossRepoGeneratedMeta(folder.id);
+    const hasCrossRepoArchitecture = crossRepoRowCount > 0 || Boolean(generatedMeta?.generatedAt) || analyzedProjectIds.size >= 2;
+    if (!hasCrossRepoArchitecture) continue;
+    const crossRepoHazardRun = await getLatestCodeArchitectureHazardRun({ projectId: folder.id, repoId: "folder" });
+    analysisCounts[REVIEW_ANALYSIS_SECTIONS.HAZARD] = Math.max(
+      Number(analysisCounts[REVIEW_ANALYSIS_SECTIONS.HAZARD] || 0),
+      hazardSummaryRowCount(crossRepoHazardRun)
+    );
+    const rowDescription = crossRepoRowCount
+      ? `${crossRepoRowCount} cross-repo row${crossRepoRowCount === 1 ? "" : "s"}`
+      : `${functionalRowCount} architecture row${functionalRowCount === 1 ? "" : "s"} across ${analyzedRepoCount} repo${analyzedRepoCount === 1 ? "" : "s"}`;
+    targets.push({
+      id: `cross-repo:${folder.id}`,
+      type: "cross-repo",
+      label: `${folder.name || "Folder"} Cross-Repo Architecture`,
+      description: `${analyzedProjectIds.size || folderProjects.length} project${(analyzedProjectIds.size || folderProjects.length) === 1 ? "" : "s"} · ${rowDescription}`,
+      available: true,
+      folder,
+      rowCount: crossRepoRowCount || functionalRowCount,
+      analysisCounts,
+    });
+  }
+
+  return targets;
+}, [
+  activeCodeArchitectureProject,
+  activeCodeArchitectureRepo,
+  addAnalysisCounts,
+  analysisCountsForRepo,
+  cbaTableData,
+  codeArchitectureFolders,
+  codeArchitectureProjects,
+  hazardSummaryRowCount,
+]);
+
+const defaultCodeArchitectureReviewAppName = useCallback(({ project, repo, targets } = {}) => {
+  if (Array.isArray(targets) && targets.length === 1) {
+    return `${targets[0].label || "Code Architecture"} Review`;
+  }
+  if (Array.isArray(targets) && targets.length > 1) {
+    return `${targets.length} Code Architecture Reviews`;
+  }
+  const projectName = String(project?.name || "Code Architecture").trim();
+  const repoName = String(repo?.repoName || repo?.repoId || repo?.id || "").trim();
+  return `${[projectName, repoName].filter(Boolean).join(" - ")} Review`;
+}, []);
+
+const requestCodeArchitectureReviewAnalysisSelection = useCallback((targetOptions, defaultAppName) => (
+  new Promise((resolve) => {
+    const selectedTargetIds = targetOptions.filter((option) => option.available !== false).map((option) => option.id);
+    const options = analysisOptionsForReviewTargets(targetOptions, selectedTargetIds);
+    const selectedKeys = options.filter((option) => option.available).map((option) => option.key);
+    codeArchitectureReviewAnalysisSelectionRef.current = resolve;
+    setCodeArchitectureReviewAnalysisModal({
+      targetOptions,
+      selectedTargetIds,
+      options,
+      selectedKeys,
+      appName: defaultAppName || "Code Architecture Review",
+      reviewAppTarget: "mac",
+      destinationDirectory: "",
+    });
+  })
+), []);
+
+const handleExportCodeArchitectureReviewPackage = useCallback(async () => {
+  if (isGeneratingCodeArchitectureReviewApp) return;
+  let activityId = null;
+  try {
+    const targetOptions = await buildCodeArchitectureReviewTargetOptions();
+    const availableTargets = targetOptions.filter((target) => target.available !== false);
+    if (!availableTargets.length) {
+      alert("Analyze at least one Code-Based Architecture project or cross-repo architecture before exporting a review app.");
+      return;
+    }
+    const selection = await requestCodeArchitectureReviewAnalysisSelection(
+      targetOptions,
+      defaultCodeArchitectureReviewAppName({ targets: availableTargets })
+    );
+    if (!selection) return;
+    const selectedTargetIds = new Set(selection.selectedTargetIds || []);
+    const selectedTargets = targetOptions.filter((target) => target.available !== false && selectedTargetIds.has(target.id));
+    if (!selectedTargets.length) return;
+    const isHostedReviewPackager = isHostedCodeArchitectureReviewPackagerConfigured();
+    const analysisOptions = analysisOptionsForReviewTargets(targetOptions, selectedTargets.map((target) => target.id));
+    const selectedAnalysisKeys = selection.selectedKeys || [];
+    const appDisplayName = selection.appName || defaultCodeArchitectureReviewAppName({ targets: selectedTargets });
+    const reviewAppTarget = selection.reviewAppTarget || "mac";
+    const destinationDirectory = isHostedReviewPackager ? "" : String(selection.destinationDirectory || "").trim();
+    const includedAnalysis = Object.fromEntries(
+      analysisOptions.map((option) => [option.key, option.available && selectedAnalysisKeys.includes(option.key)])
+    );
+    const primaryProjectTarget = selectedTargets.find((target) => target.type === "project");
+    const primaryProject = primaryProjectTarget?.project || activeCodeArchitectureProject || codeArchitectureProjects[0] || null;
+    const primaryRepo = primaryProjectTarget?.repos?.[0] || activeCodeArchitectureRepo || null;
+    setIsGeneratingCodeArchitectureReviewApp(true);
+    activityId = `code-architecture-review-app:${Date.now()}`;
+    startActivity(activityId, {
+      title: `Generating ${appDisplayName}`,
+      step: 2,
+      total: 100,
+      message: "Collecting review package data...",
+    });
+    const selectedProjectIds = new Set(selectedTargets.flatMap((target) => (
+      target.type === "project"
+        ? [target.project?.id]
+        : getCbaProjectsInFolderTree(codeArchitectureProjects, codeArchitectureFolders, target.folder?.id).map((entry) => entry.id)
+    )).filter(Boolean));
+    const selectedFolderIds = new Set(selectedTargets
+      .filter((target) => target.type === "cross-repo" && target.folder?.id)
+      .map((target) => target.folder.id));
+    const relevantReviewItems = (resultsReview.reviewItems || []).filter((item) => {
+      const text = [item.id, item.artifactId, item.sourceRunId, item.projectId]
+        .filter(Boolean)
+        .join(" ");
+      return (
+        selectedProjectIds.has(item.projectId) ||
+        selectedFolderIds.has(item.projectId) ||
+        Array.from(selectedProjectIds).some((projectId) => text.includes(projectId)) ||
+        Array.from(selectedFolderIds).some((folderId) => text.includes(folderId))
+      );
+    });
+    const reviewTargets = selectedTargets.map((target) => (
+      target.type === "cross-repo"
+        ? {
+          type: "cross-repo",
+          folder: target.folder,
+          folders: codeArchitectureFolders,
+          projects: codeArchitectureProjects,
+        }
+        : {
+          type: "project",
+          project: target.project,
+          folder: target.folder,
+          repos: target.repos,
+          activeRepo: target.project?.id === activeCodeArchitectureProject?.id ? activeCodeArchitectureRepo : target.repos?.[0] || null,
+          cbaRows: target.project?.id === activeCodeArchitectureProject?.id ? cbaTableData : null,
+        }
+    ));
+    const reviewPackage = await collectCodeArchitectureReviewPackage({
+      project: primaryProject,
+      folder: primaryProjectTarget?.folder || null,
+      repo: primaryRepo,
+      repos: primaryProjectTarget?.repos || [],
+      reviewTargets,
+      hazardRun: codeArchitectureHazardRun,
+      appDisplayName,
+      reviewAppTarget,
+      includedAnalysis,
+      reviewItems: relevantReviewItems,
+      uiState: {
+        activeWorkspaceTab: codeArchitectureWorkspaceTab,
+        hazardRemediationTab,
+      },
+    });
+    updateActivity(activityId, {
+      step: 8,
+      total: 100,
+      message: `Sending review package to ${isHostedReviewPackager ? "hosted" : "local"} app builder...`,
+    });
+    await downloadCodeArchitectureReviewApp(reviewPackage, {
+      reviewAppTarget,
+      destinationDirectory,
+      onProgress: (job) => {
+        const percent = Math.max(0, Math.min(100, Number(job?.percent || 0)));
+        const counts = job?.counts || null;
+        const countsText = counts
+          ? ` ${counts.totalItems || 0} items across ${counts.repositories || 0} repo${counts.repositories === 1 ? "" : "s"}.`
+          : "";
+        updateActivity(activityId, {
+          step: percent,
+          total: 100,
+          message: `${job?.message || "Generating review app..."}${countsText}`,
+        });
+      },
+    });
+    finishActivity(activityId, "success", `${appDisplayName} downloaded.`);
+  } catch (error) {
+    if (activityId) {
+      finishActivity(activityId, "error", error?.message || "Failed to generate Code-Based Architecture review app.");
+    }
+    alert(error?.message || "Failed to generate Code-Based Architecture review app.");
+  } finally {
+    setIsGeneratingCodeArchitectureReviewApp(false);
+  }
+}, [
+  activeCodeArchitectureProject,
+  activeCodeArchitectureRepo,
+  buildCodeArchitectureReviewTargetOptions,
+  cbaTableData,
+  defaultCodeArchitectureReviewAppName,
+  codeArchitectureProjects,
+  codeArchitectureFolders,
+  codeArchitectureHazardRun,
+  codeArchitectureWorkspaceTab,
+  finishActivity,
+  hazardRemediationTab,
+  isGeneratingCodeArchitectureReviewApp,
+  requestCodeArchitectureReviewAnalysisSelection,
+  resultsReview.reviewItems,
+  startActivity,
+  updateActivity,
+]);
+
+const codeArchitectureFolderProjectIds = useMemo(() => {
+  if (!activeCodeArchitectureFolderId) return new Set();
+  const folderIds = new Set([activeCodeArchitectureFolderId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    codeArchitectureFolders.forEach((folder) => {
+      if (folder.parentId && folderIds.has(folder.parentId) && !folderIds.has(folder.id)) {
+        folderIds.add(folder.id);
+        changed = true;
+      }
+    });
+  }
+  return new Set(codeArchitectureProjects.filter((project) => folderIds.has(project.folderId || null)).map((project) => project.id));
+}, [activeCodeArchitectureFolderId, codeArchitectureFolders, codeArchitectureProjects]);
+
+const codeArchitectureFolderProjects = useMemo(
+  () => codeArchitectureDashboardRows.filter((project) => codeArchitectureFolderProjectIds.has(project.id)),
+  [codeArchitectureDashboardRows, codeArchitectureFolderProjectIds]
+);
+
+const updateFolderDashboardPanels = (updater) => {
+  if (!activeProjectFolderId) return;
+  setFolderDashboards((prev) => {
+    const current = prev[activeProjectFolderId]?.length ? prev[activeProjectFolderId] : getDefaultFolderDashboardPanels();
+    return { ...prev, [activeProjectFolderId]: updater(current) };
+  });
+};
+
+const addFolderDashboardPanel = () => {
+  updateFolderDashboardPanels((current) => [...current, makeFolderDashboardPanel(newFolderDashboardPanelType)]);
+};
+
+const removeFolderDashboardPanel = (panelId) => {
+  updateFolderDashboardPanels((current) => current.filter((panel) => panel.id !== panelId));
+};
+
+const moveFolderDashboardPanel = (panelId, direction) => {
+  updateFolderDashboardPanels((current) => {
+    const index = current.findIndex((panel) => panel.id === panelId);
+    const nextIndex = index + direction;
+    if (index < 0 || nextIndex < 0 || nextIndex >= current.length) return current;
+    const next = [...current];
+    const [panel] = next.splice(index, 1);
+    next.splice(nextIndex, 0, panel);
+    return next;
+  });
+};
+
+const updateFolderDashboardPanel = (panelId, patch) => {
+  updateFolderDashboardPanels((current) =>
+    current.map((panel) => panel.id === panelId ? { ...panel, ...patch } : panel)
+  );
+};
+
+const renderFolderDashboardPanel = (panel, index) => {
+  const panelClass = panel.size === "wide" ? "lg:col-span-2" : "";
+  const removable = folderDashboardPanels.length > 1;
+
+  const body = (() => {
+    if (panel.type === "projectList") {
+      return (
+        <div className="space-y-2">
+          {folderDashboardProjects.length === 0 ? (
+            <div className="text-sm text-gray-500">No projects in this folder yet.</div>
+          ) : folderDashboardProjects.map((project) => (
+            <button
+              key={project.id}
+              type="button"
+              onClick={() => { setActiveProjectId(project.id); setActiveProjectFolderId(null); }}
+              className="w-full rounded-lg border border-gray-100 px-3 py-2 text-left hover:bg-gray-50"
+            >
+              <div className="text-sm font-medium text-gray-900 truncate">{project.name}</div>
+              <div className="text-[11px] text-gray-500">{project.createdAt ? `Created ${new Date(project.createdAt).toLocaleDateString()}` : "Project"}</div>
+            </button>
+          ))}
+        </div>
+      );
+    }
+
+    if (panel.type === "riskStatus") {
+      const hasRisks = folderDashboardRisks.length > 0;
+      return hasRisks ? (
+        <div className="h-56">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={folderDashboardRiskStatusData} layout="vertical">
+              <XAxis type="number" hide />
+              <YAxis type="category" dataKey="name" width={110} />
+              <Tooltip />
+              <Bar dataKey="value">
+                {folderDashboardRiskStatusData.map((_, i) => (
+                  <Cell key={i} fill={['#2D7DFE', '#F59E0B', '#10B981', '#7A37FF', '#EF4444'][i % 5]} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      ) : (
+        <div className="text-sm text-gray-500">No risks in these projects yet.</div>
+      );
+    }
+
+    if (panel.type === "recentActivity") {
+      return (
+        <div className="space-y-3">
+          {folderDashboardActivity.length === 0 ? (
+            <div className="text-sm text-gray-500">No recent project updates yet.</div>
+          ) : folderDashboardActivity.map((entry) => (
+            <button
+              key={entry.project.id}
+              type="button"
+              onClick={() => { setActiveProjectId(entry.project.id); setActiveProjectFolderId(null); }}
+              className="w-full text-left text-sm"
+            >
+              <span className="font-medium">{entry.project.name}</span>
+              {entry.label && <span className="text-gray-500"> · {entry.label}</span>}
+              {entry.when && <div className="text-[11px] text-gray-400">{new Date(entry.when).toLocaleString()}</div>}
+            </button>
+          ))}
+        </div>
+      );
+    }
+
+    const openRisks = folderDashboardRisks.filter((risk) => (risk?.status || "Open") !== "Closed").length;
+    const subfolderCount = projectFolders.filter((folder) => folder.parentId === activeProjectFolderId).length;
+    return (
+      <div className="grid grid-cols-3 gap-3">
+        <div>
+          <div className="text-2xl font-semibold">{folderDashboardProjects.length}</div>
+          <div className="text-xs text-gray-500">Projects</div>
+        </div>
+        <div>
+          <div className="text-2xl font-semibold">{subfolderCount}</div>
+          <div className="text-xs text-gray-500">Subfolders</div>
+        </div>
+        <div>
+          <div className="text-2xl font-semibold">{openRisks}</div>
+          <div className="text-xs text-gray-500">Open risks</div>
+        </div>
+      </div>
+    );
+  })();
+
+  return (
+    <section key={panel.id} className={`rounded-xl border border-gray-200 bg-white p-4 ${panelClass}`}>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <input
+          className="min-w-0 flex-1 rounded-md border border-gray-200 px-2 py-1 text-sm font-medium"
+          value={panel.title}
+          onChange={(e) => updateFolderDashboardPanel(panel.id, { title: e.target.value })}
+          aria-label="Panel title"
+        />
+        <select
+          className="rounded-md border border-gray-200 px-2 py-1 text-xs"
+          value={panel.type}
+          onChange={(e) => {
+            const option = FOLDER_DASHBOARD_PANEL_TYPES.find((entry) => entry.type === e.target.value);
+            updateFolderDashboardPanel(panel.id, { type: e.target.value, title: option?.label || panel.title });
+          }}
+          aria-label="Panel type"
+        >
+          {FOLDER_DASHBOARD_PANEL_TYPES.map((option) => (
+            <option key={option.type} value={option.type}>{option.label}</option>
+          ))}
+        </select>
+        <select
+          className="rounded-md border border-gray-200 px-2 py-1 text-xs"
+          value={panel.size}
+          onChange={(e) => updateFolderDashboardPanel(panel.id, { size: e.target.value })}
+          aria-label="Panel size"
+        >
+          <option value="normal">Normal</option>
+          <option value="wide">Wide</option>
+        </select>
+        <button type="button" className="rounded-md border p-1 text-gray-600 hover:bg-gray-50" onClick={() => moveFolderDashboardPanel(panel.id, -1)} disabled={index === 0} title="Move panel up">
+          <ArrowUp size={14} />
+        </button>
+        <button type="button" className="rounded-md border p-1 text-gray-600 hover:bg-gray-50" onClick={() => moveFolderDashboardPanel(panel.id, 1)} disabled={index === folderDashboardPanels.length - 1} title="Move panel down">
+          <ArrowDown size={14} />
+        </button>
+        <button type="button" className="rounded-md border p-1 text-red-500 hover:bg-red-50 disabled:opacity-40" onClick={() => removeFolderDashboardPanel(panel.id)} disabled={!removable} title="Remove panel">
+          <Trash2 size={14} />
+        </button>
+      </div>
+      {body}
+    </section>
+  );
+};
+
 // Hint the Copilot about repo/baseline context (optional keys)
-const projectHint = {
+const projectHint = useMemo(() => ({
   owner: localStorage.getItem("repoOwner") || undefined,
   repo: localStorage.getItem("repoName") || undefined,
   baselineKey: localStorage.getItem("activeBaselineKey") || undefined,
-};
-
-// Donut + horizontal bars: risk counts by status
+}), [activeProjectId]);
 
   // 🔧 fit-to-view utilities so the canvas isn’t stuck zoomed
   const fitDiagramToView = (padding = 0.2) => {
@@ -2002,6 +5922,67 @@ const projectHint = {
     return () => clearTimeout(t);
   }, [analysisResult]);
 
+    // Gate the whole app
+    if (gate.phase === 'checking') return null;
+
+    if (gate.phase === 'onboarding') {
+      const providerLabel = getAIProviderLabel(aiProviderInput);
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-white p-6">
+          <div className="w-full max-w-md border rounded-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h1 className="text-xl font-semibold">Choose your AI provider</h1>
+                <p className="text-sm text-gray-500">
+                  Pick one provider at a time. Your API key is saved encrypted and you can change it later in Settings.
+                </p>
+              </div>
+              <button className="text-xs text-gray-600 underline" onClick={signOut}>Sign out</button>
+            </div>
+
+            {gate.error && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                We signed you in, but loading AI provider setup hit an error: {gate.error}
+              </div>
+            )}
+
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-gray-700">AI provider</label>
+              <select
+                className="w-full border rounded px-3 py-2 text-sm bg-white"
+                value={aiProviderInput}
+                onChange={(e) => setAiProviderInput(e.target.value)}
+              >
+                {AI_PROVIDER_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <input
+              className="w-full border rounded px-3 py-2 text-sm"
+              placeholder={getProviderKeyPlaceholder(aiProviderInput)}
+              value={providerKeyInput}
+              onChange={e => setProviderKeyInput(e.target.value)}
+            />
+            <p className="text-xs text-gray-500">{getProviderKeyHelpText(aiProviderInput)}</p>
+            <button
+              onClick={saveUserAIProvider}
+              disabled={savingKey}
+              className="w-full px-3 py-2 rounded bg-[#2D7DFE] text-white text-sm disabled:opacity-60"
+            >
+              {savingKey ? 'Saving…' : `Save ${providerLabel} key`}
+            </button>
+
+            {gate.last4 && (
+              <p className="text-xs text-gray-500">
+                Existing {gate.provider ? getAIProviderLabel(gate.provider) : "AI provider"} key on file (last 4): <b>{gate.last4}</b>
+              </p>
+            )}
+          </div>
+        </div>
+      );
+    }
 // ⬇️ INSERT JUST ABOVE `return ( ... )`
 
 const ColumnFilterButton = ({ col }) => {
@@ -2084,16 +6065,20 @@ const ColumnFilterButton = ({ col }) => {
       {/* Fixed top nav (56px tall) */}
       <div className="fixed inset-x-0 top-0 z-40">
               <TopNavBar
-  onUpgrade={() => setLicenseModalOpen(true)}
+  userInitials={(gate.user?.email || 'U?').slice(0,2).toUpperCase()}
+  onSearch={(q) => {}}
+  onCreate={() => {
+    if (!guardNewProjectIntent()) return;
+    setSection('projects');
+    setShowNewProject(true);
+  }}
   onOpenSettings={() => setShowSettingsModal(true)}
   onOpenReadme={() => setShowReadmeModal(true)}
-  onSignOut={resetLocalSession}
+  onSignOut={signOut}
   rightActions={
     <div className="flex items-center gap-2 shrink-0">
-      <AgentHubButton onOpen={() => setAgentsOpen(true)} />
-  
       <ActivitiesButton />
-  
+
       <button
         type="button"
         onClick={toggle}
@@ -2122,34 +6107,21 @@ const ColumnFilterButton = ({ col }) => {
 
 {createPortal(
       dockOpen ? (
-        <div className="fixed top-14 right-0 bottom-0 z-[1000] w-[380px] md:w-[420px] border-l bg-white shadow-2xl flex flex-col">
+        <div className={`fixed top-14 right-0 bottom-0 z-[1000] border-l bg-white shadow-2xl flex flex-col transition-[width] duration-200 ease-out ${
+          dockExpanded ? "w-[min(760px,100vw)]" : "w-[380px] md:w-[420px]"
+        }`}>
           {/* Dock header */}
           <div className="h-10 border-b flex items-center justify-between px-2 text-xs">
-            <div className="font-semibold">Copilot</div>
+            <div className="font-semibold">Collaborator</div>
             <div className="flex items-center gap-1">
-  {/* Agent toggle */}
   <button
-    type="button"
-    onClick={() => {
-      const next = !agentMode;
-      setAgentMode(next);
-      try {
-        // Let the docked copilot know to enable/disable agent mode
-        window.dispatchEvent(new CustomEvent("xhandle:copilot-set-agent", { detail: { on: next } }));
-        localStorage.setItem("xhandle.agentMode", JSON.stringify(next));
-      } catch {}
-    }}
-    className={`inline-flex items-center gap-1 px-2 py-1 text-xs rounded border transition ${
-      agentMode
-        ? "bg-indigo-600 text-white border-indigo-600"
-        : "bg-white text-neutral-700 border-neutral-300 hover:bg-neutral-50"
-    }`}
-    title={agentMode ? "Agent On" : "Agent Off"}
+    className="px-2 py-1 rounded hover:bg-gray-100"
+    title={dockExpanded ? "Collapse Collaborator" : "Expand Collaborator"}
+    aria-pressed={dockExpanded}
+    onClick={() => setDockExpanded((expanded) => !expanded)}
   >
-    <Bot className="w-4 h-4" />
-    <span>{agentMode ? "Agent On" : "Agent Off"}</span>
+    {dockExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
   </button>
-
   {/* Undock (return to full-screen Copilot) */}
   <button
     className="px-2 py-1 rounded hover:bg-gray-100"
@@ -2186,6 +6158,7 @@ const ColumnFilterButton = ({ col }) => {
               <XHandleCopilotView
                 projectHint={projectHint}
                 copilotContext={getActiveProjectContext()}
+                appFocus={getCollaboratorAppFocus()}
                 onRequestDock={() => {
                   setDockOpen(true);
                   try { localStorage.setItem('xhandle.copilotDockOpen','true'); } catch {}
@@ -2200,7 +6173,7 @@ const ColumnFilterButton = ({ col }) => {
             </div>
           ) : (
             <div className="flex-1 min-h-0 grid place-items-center text-xs text-gray-500">
-              Copilot docked (collapsed)
+            Collaborator docked (collapsed)
             </div>
           )}
         </div>
@@ -2208,16 +6181,9 @@ const ColumnFilterButton = ({ col }) => {
       document.body
     )}
 
-<AgentsConsole
-  isOpen={agentsOpen}
-  onClose={() => setAgentsOpen(false)}
-  performTask={performTask}
-  activeProjectId={activeProjectId}
-/>
-
 {/* tiny signed-in indicator (optional) */}
       </div>
-  
+
       {/* Push page content below the header */}
       <div className={`${dockPaddingClass} fixed inset-x-0 top-14 bottom-0`}>
   <div className="flex h-full bg-white overflow-hidden">
@@ -2234,72 +6200,371 @@ const ColumnFilterButton = ({ col }) => {
           </div>
         </div>
 
-        <div className="px-3 py-2 space-y-1">
-          <NavItem icon={LayoutDashboard} label="Console" active={section === 'console'} onClick={() => setSection('console')} />
-          <NavItem
-  icon={ShieldAlert}
-  label="Risk Register"
-  active={section === 'risk'}
-  onClick={() => setSection('risk')}
-/>
-{/* AI Project Manager (with badge) */}
-<NavItem
-  icon={CalendarClock}
-  label={
-    isSidebarOpen ? (
-      <span className="inline-flex items-center gap-2">
-        <span>Project Manager</span>
-        {/* Removed badge display */}
-      </span>
-    ) : (
-      'AI PM'
-    )
-  }
-  active={section === 'ai-pm'}
-  onClick={() => setSection('ai-pm')}
-/>
+        <div className="px-3 py-2 flex flex-col gap-1">
+<div className="order-3">
+  <NavItem
+    icon={ClipboardCheck}
+    label="Review Center"
+    active={section === 'review-center'}
+    onClick={() => setSection('review-center')}
+  />
+</div>
 
-<NavItem
-  icon={GitCommit}
-  label="Code-Based Architecture"
-  active={section === 'code-architecture'}
-  onClick={() => setSection('code-architecture')}
-/>
+<div className="order-1">
+  <div className={`w-full ${isSidebarOpen ? '' : 'flex justify-center'}`}>
+    <div className={`flex items-center ${isSidebarOpen ? 'gap-1' : ''} w-full min-w-0`}>
+      <div className="min-w-0 flex-1">
+        <NavItem
+          icon={GitCommit}
+          label={isSidebarOpen ? (
+            <span className="inline-flex min-w-0 max-w-full items-center gap-1.5">
+              <span className={`shrink-0 transition-transform ${isCodeArchitectureProjectsOpen ? 'rotate-90' : ''}`}>
+                <ChevronRight size={14} />
+              </span>
+              <span className="min-w-0 truncate">Code-Based Architecture</span>
+              {codeArchitectureProjects.length > 0 && (
+                <span className="shrink-0 text-[10px] leading-none px-1.5 py-0.5 rounded bg-gray-200 text-gray-700">
+                  {codeArchitectureProjects.length}
+                </span>
+              )}
+            </span>
+          ) : 'Code-Based Architecture'}
+          active={section === 'code-architecture'}
+          onClick={() => {
+            setSection('code-architecture');
+            setActiveCodeArchitectureProjectId(null);
+            setActiveCodeArchitectureFolderId(null);
+            setIsCodeArchitectureProjectsOpen((open) => !open);
+          }}
+        />
+      </div>
+      <button
+        className={`rounded-lg hover:bg-gray-100 text-gray-700 ${isSidebarOpen ? 'p-1.5 shrink-0' : 'w-0 p-0 overflow-hidden opacity-0 pointer-events-none shrink'}`}
+        title="New code architecture project"
+        aria-label="New code architecture project"
+        onClick={() => {
+          setSection('code-architecture');
+          setNewCodeArchitectureTargetFolderId(null);
+          setNewCodeArchitectureError('');
+          setShowNewCodeArchitectureProject(true);
+        }}
+      >
+        <Plus size={16} className="block" />
+      </button>
+      <button
+        className={`rounded-lg hover:bg-gray-100 text-gray-700 ${isSidebarOpen ? 'p-1.5 shrink-0' : 'w-0 p-0 overflow-hidden opacity-0 pointer-events-none shrink'}`}
+        title="New code architecture folder"
+        aria-label="New code architecture folder"
+        onClick={() => {
+          setSection('code-architecture');
+          setNewCodeArchitectureFolderParentId(null);
+          setNewCodeArchitectureFolderError('');
+          setShowNewCodeArchitectureFolder(true);
+        }}
+      >
+        <FolderPlus size={16} className="block" />
+      </button>
+    </div>
+  </div>
 
-<NavItem
-  icon={FileText}
-  label="Requirements Management"
-  active={section === 'requirements'}
-  onClick={() => setSection('requirements')}
-/>
+  {isSidebarOpen && isCodeArchitectureProjectsOpen && (codeArchitectureProjects.length > 0 || codeArchitectureFolders.length > 0) && (
+    <div
+      className={`mt-1 ml-9 pr-1 max-h-56 overflow-auto space-y-1 rounded-lg transition-colors ${
+        draggingCodeArchitectureProjectId && dragOverCodeArchitectureFolderId === "__root__" ? "bg-blue-50 ring-1 ring-[#2D7DFE]" : ""
+      }`}
+      role="list"
+      aria-label="Code-Based Architecture projects"
+      onDragOver={(e) => {
+        if (!draggingCodeArchitectureProjectId) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        setDragOverCodeArchitectureFolderId("__root__");
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget)) setDragOverCodeArchitectureFolderId(null);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        const projectId = e.dataTransfer.getData("application/x-xhandle-cba-project-id") || draggingCodeArchitectureProjectId;
+        moveCodeArchitectureProjectToFolder(projectId, null);
+      }}
+    >
+      {(() => {
+        const foldersByParent = new Map();
+        const projectsByFolder = new Map();
+        codeArchitectureFolders.forEach((folder) => {
+          const key = folder.parentId || null;
+          if (!foldersByParent.has(key)) foldersByParent.set(key, []);
+          foldersByParent.get(key).push(folder);
+        });
+        codeArchitectureProjects.forEach((project) => {
+          const key = project.folderId || null;
+          if (!projectsByFolder.has(key)) projectsByFolder.set(key, []);
+          projectsByFolder.get(key).push(project);
+        });
+        foldersByParent.forEach((items) => items.sort((a, b) => a.name.localeCompare(b.name)));
 
-<NavItem
-  icon={FlaskConical}
-  label="V&V Center"
-  active={section === 'vnv'}
-  onClick={() => setSection('vnv')}
-/>
+        const renderCbaProject = (project, depth = 0) => (
+          <div
+            key={project.id}
+            className={`group relative rounded-lg ${draggingCodeArchitectureProjectId === project.id ? 'opacity-50' : ''}`}
+            draggable={editingCodeArchitectureProjectId !== project.id}
+            onDragStart={(e) => {
+              setDraggingCodeArchitectureProjectId(project.id);
+              setDragOverCodeArchitectureFolderId(null);
+              e.dataTransfer.effectAllowed = "move";
+              e.dataTransfer.setData("application/x-xhandle-cba-project-id", project.id);
+              e.dataTransfer.setData("text/plain", project.name || "Code architecture project");
+            }}
+            onDragEnd={() => {
+              setDraggingCodeArchitectureProjectId(null);
+              setDragOverCodeArchitectureFolderId(null);
+            }}
+          >
+            <div className="flex items-center justify-between" style={{ paddingLeft: depth * 12 }}>
+              {editingCodeArchitectureProjectId === project.id ? (
+                <div className="flex-1 flex items-center gap-2 px-2 py-1.5">
+                  <input
+                    autoFocus
+                    className="flex-1 bg-white border rounded px-2 py-1 text-sm min-w-0"
+                    value={editingCodeArchitectureProjectName}
+                    onChange={(e) => { setEditingCodeArchitectureProjectName(e.target.value); if (codeArchitectureRenameError) setCodeArchitectureRenameError(''); }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); commitCodeArchitectureRename(); }
+                      if (e.key === 'Escape') { e.preventDefault(); cancelCodeArchitectureRename(); }
+                    }}
+                    placeholder="Project name"
+                  />
+                  <button onClick={(e) => { e.stopPropagation(); commitCodeArchitectureRename(); }} className="text-sm text-[#2D7DFE] hover:underline">Save</button>
+                  <button onClick={(e) => { e.stopPropagation(); cancelCodeArchitectureRename(); }} className="text-sm text-gray-600 hover:underline">Cancel</button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => {
+                    setSection('code-architecture');
+                    setActiveCodeArchitectureProjectId(project.id);
+                    setActiveCodeArchitectureFolderId(null);
+                  }}
+                  className={`flex-1 text-left px-2 py-1.5 rounded-lg truncate transition-colors ${
+                    activeCodeArchitectureProjectId === project.id ? 'bg-[#ECEEFF] text-[#0F0F12]' : 'text-gray-700 hover:bg-gray-100'
+                  }`}
+                  title={project.name}
+                >
+                  {project.name}
+                </button>
+              )}
+              {editingCodeArchitectureProjectId !== project.id && (
+                <button
+                  ref={(el) => (codeArchitectureProjectMenuAnchorEls.current[project.id] = el)}
+                  data-cba-project-menu-trigger="true"
+                  onMouseDown={(e) => { e.stopPropagation(); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setOpenCodeArchitectureFolderMenuId(null);
+                    setOpenCodeArchitectureProjectMenuId((current) => current === project.id ? null : project.id);
+                  }}
+                  className="ml-1 p-1.5 rounded hover:bg-gray-100 text-gray-600 invisible group-hover:visible"
+                  title="More options"
+                >
+                  <MoreVertical size={16} />
+                </button>
+              )}
+            </div>
+            {openCodeArchitectureProjectMenuId === project.id && (
+              <ProjectMenuPortal
+                anchorEl={codeArchitectureProjectMenuAnchorEls.current[project.id]}
+                setPortalRef={(el) => (codeArchitectureProjectMenuPortalRefs.current[project.id] = el)}
+                onRename={() => { setOpenCodeArchitectureProjectMenuId(null); beginRenameCodeArchitectureProject(project); }}
+                onDelete={() => { setOpenCodeArchitectureProjectMenuId(null); deleteCodeArchitectureProject(project.id); }}
+              />
+            )}
+            {editingCodeArchitectureProjectId === project.id && codeArchitectureRenameError && (
+              <div className="px-2 text-[11px] text-red-600 mt-1">{codeArchitectureRenameError}</div>
+            )}
+          </div>
+        );
 
-{/* xHandle Copilot (full-screen view) */}
-<NavItem
-  icon={() => (
-    <div className="flex items-center justify-center w-[30px] h-[30px]">
-      <img
-        src="/x_Logo.PNG"
-        alt="Copilot"
-        className={`w-full h-full object-contain transition-all duration-300 ${
-          section === 'copilot' && !dockOpen
-            ? 'drop-shadow-[0_0_6px_#2D7DFE]'
-            : ''
-        }`}
-      />
+        const renderCbaFolder = (folder, depth = 0) => {
+          const childFolders = foldersByParent.get(folder.id) || [];
+          const childProjects = projectsByFolder.get(folder.id) || [];
+          const isOpen = openCodeArchitectureFolderIds[folder.id] !== false;
+          return (
+            <div
+              key={folder.id}
+              className={`relative rounded-lg transition-colors ${
+                draggingCodeArchitectureProjectId && dragOverCodeArchitectureFolderId === folder.id ? "bg-blue-50 ring-1 ring-[#2D7DFE]" : ""
+              }`}
+              onDragOver={(e) => {
+                if (!draggingCodeArchitectureProjectId) return;
+                e.preventDefault();
+                e.stopPropagation();
+                setDragOverCodeArchitectureFolderId(folder.id);
+                if (!isOpen) setOpenCodeArchitectureFolderIds((prev) => ({ ...prev, [folder.id]: true }));
+              }}
+              onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget)) setDragOverCodeArchitectureFolderId(null);
+              }}
+              onDrop={(e) => {
+                if (!draggingCodeArchitectureProjectId) return;
+                e.preventDefault();
+                e.stopPropagation();
+                const projectId = e.dataTransfer.getData("application/x-xhandle-cba-project-id") || draggingCodeArchitectureProjectId;
+                moveCodeArchitectureProjectToFolder(projectId, folder.id);
+              }}
+            >
+              <div className="group flex items-center justify-between" style={{ paddingLeft: depth * 12 }}>
+                {editingCodeArchitectureFolderId === folder.id ? (
+                  <div className="flex-1 flex items-center gap-2 px-2 py-1.5">
+                    <input
+                      autoFocus
+                      className="flex-1 bg-white border rounded px-2 py-1 text-sm min-w-0"
+                      value={editingCodeArchitectureFolderName}
+                      onChange={(e) => { setEditingCodeArchitectureFolderName(e.target.value); if (codeArchitectureRenameError) setCodeArchitectureRenameError(''); }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); commitCodeArchitectureFolderRename(); }
+                        if (e.key === 'Escape') { e.preventDefault(); cancelCodeArchitectureRename(); }
+                      }}
+                      placeholder="Folder name"
+                    />
+                    <button onClick={(e) => { e.stopPropagation(); commitCodeArchitectureFolderRename(); }} className="text-sm text-[#2D7DFE] hover:underline">Save</button>
+                    <button onClick={(e) => { e.stopPropagation(); cancelCodeArchitectureRename(); }} className="text-sm text-gray-600 hover:underline">Cancel</button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setSection('code-architecture');
+                      setActiveCodeArchitectureProjectId(null);
+                      setActiveCodeArchitectureFolderId(folder.id);
+                      setCodeArchitectureFolderView("projects");
+                    }}
+                    className={`flex-1 min-w-0 text-left px-2 py-1.5 rounded-lg inline-flex items-center gap-1.5 ${
+                      activeCodeArchitectureFolderId === folder.id ? 'bg-[#ECEEFF] text-[#0F0F12]' : 'text-gray-700 hover:bg-gray-100'
+                    }`}
+                    title={folder.name}
+                  >
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenCodeArchitectureFolderIds((prev) => ({ ...prev, [folder.id]: !isOpen }));
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setOpenCodeArchitectureFolderIds((prev) => ({ ...prev, [folder.id]: !isOpen }));
+                        }
+                      }}
+                      className="shrink-0 rounded hover:bg-gray-200"
+                    >
+                      <ChevronRight size={13} className={`transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+                    </span>
+                    <Folder size={14} className="shrink-0 text-gray-500" />
+                    <span className="truncate">{folder.name}</span>
+                  </button>
+                )}
+                {editingCodeArchitectureFolderId !== folder.id && (
+                  <div className="ml-1 hidden group-hover:flex items-center">
+                    <button
+                      ref={(el) => (codeArchitectureFolderMenuAnchorEls.current[folder.id] = el)}
+                      data-cba-folder-menu-trigger="true"
+                      onMouseDown={(e) => { e.stopPropagation(); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenCodeArchitectureProjectMenuId(null);
+                        setOpenCodeArchitectureFolderMenuId((current) => current === folder.id ? null : folder.id);
+                      }}
+                      className="p-1.5 rounded hover:bg-gray-100 text-gray-600"
+                      title="Folder options"
+                    >
+                      <MoreVertical size={16} />
+                    </button>
+                  </div>
+                )}
+              </div>
+              {openCodeArchitectureFolderMenuId === folder.id && (
+                <FolderMenuPortal
+                  anchorEl={codeArchitectureFolderMenuAnchorEls.current[folder.id]}
+                  setPortalRef={(el) => (codeArchitectureFolderMenuPortalRefs.current[folder.id] = el)}
+                  onNewProject={() => {
+                    setOpenCodeArchitectureFolderMenuId(null);
+                    setNewCodeArchitectureTargetFolderId(folder.id);
+                    setNewCodeArchitectureError('');
+                    setShowNewCodeArchitectureProject(true);
+                  }}
+                  onNewFolder={() => {
+                    setOpenCodeArchitectureFolderMenuId(null);
+                    setNewCodeArchitectureFolderParentId(folder.id);
+                    setNewCodeArchitectureFolderError('');
+                    setShowNewCodeArchitectureFolder(true);
+                  }}
+                  onRename={() => { setOpenCodeArchitectureFolderMenuId(null); beginRenameCodeArchitectureFolder(folder); }}
+                  onDelete={() => { setOpenCodeArchitectureFolderMenuId(null); deleteCodeArchitectureFolder(folder.id); }}
+                />
+              )}
+              {isOpen && (
+                <div className="space-y-1">
+                  {childFolders.map((child) => renderCbaFolder(child, depth + 1))}
+                  {childProjects.map((child) => renderCbaProject(child, depth + 1))}
+                </div>
+              )}
+            </div>
+          );
+        };
+
+        return (
+          <>
+            {(foldersByParent.get(null) || []).map((folder) => renderCbaFolder(folder, 0))}
+            {(projectsByFolder.get(null) || []).map((project) => renderCbaProject(project, 0))}
+          </>
+        );
+      })()}
     </div>
   )}
-  label="Copilot"
-  active={section === 'copilot' && !dockOpen}
-  disabled={dockOpen}
-  onClick={() => setSection('copilot')}
-/>
+</div>
+
+<div className="order-6">
+  <NavItem
+    icon={ShieldCheck}
+    label="Safety Case"
+    active={section === 'safety-case'}
+    onClick={() => setSection('safety-case')}
+  />
+</div>
+
+<div className="order-4">
+  <NavItem
+    icon={FileText}
+    label="Design Management"
+    active={section === 'requirements'}
+    onClick={() => setSection('requirements')}
+  />
+</div>
+
+<div className="order-5">
+  <NavItem
+    icon={FlaskConical}
+    label="System Test"
+    active={section === 'vnv'}
+    onClick={() => setSection('vnv')}
+  />
+</div>
+
+{/* xHandle Copilot dock */}
+<div className="order-7">
+  <NavItem
+    icon={CollaboratorNavIcon}
+    iconProps={{ active: dockOpen }}
+    label="Collaborator"
+    active={dockOpen}
+    onClick={() => {
+      setDockOpen(true);
+      setDockCollapsed(false);
+      try { localStorage.setItem('xhandle.copilotDockOpen','true'); } catch {}
+    }}
+  />
+</div>
 
 
 
@@ -2308,6 +6573,7 @@ const ColumnFilterButton = ({ col }) => {
 
 
           {/* Projects row with + and collapsible list */}
+          <div className="order-2">
           <div className={`w-full ${isSidebarOpen ? '' : 'flex justify-center'}`}>
             <div className={`flex items-center ${isSidebarOpen ? 'gap-2' : ''} w-full`}>
               <NavItem
@@ -2320,36 +6586,52 @@ const ColumnFilterButton = ({ col }) => {
                     <span>Projects</span>
                     {projects.length > 0 && (
   <span className="text-[10px] leading-none px-1.5 py-0.5 rounded bg-gray-200 text-gray-700">
-    {projects.length}/{projectLimit}
+    {projects.length}
   </span>
 )}
 
                   </span>
                 ) : 'Projects'}
                 active={section === 'projects'}
-                onClick={() => { setSection('projects'); setIsProjectsOpen(o => !o); }}
+                onClick={() => {
+                  setSection('projects');
+                  setActiveProjectId(null);
+                  setActiveProjectFolderId(null);
+                  setIsProjectsOpen(o => !o);
+                }}
               />
 <button
-  disabled={atProjectLimit}
-  className={`rounded-lg ${
-    atProjectLimit ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100'
-  } text-gray-700
+  className={`rounded-lg hover:bg-gray-100 text-gray-700
   ${isSidebarOpen ? 'p-1.5 shrink-0' : 'w-0 p-0 overflow-hidden opacity-0 pointer-events-none shrink'}`}
-  title={
-    atProjectLimit
-      ? `Limit reached (${projectLimit}) — Upgrade to add more`
-      : 'New project'
-  }
+  title="New project"
   aria-label="New project"
   aria-hidden={!isSidebarOpen}
   tabIndex={isSidebarOpen ? 0 : -1}
   onClick={() => {
     if (!guardNewProjectIntent()) return;
     setSection('projects');
+    setNewProjectTargetFolderId(null);
+    setNewProjectError('');
     setShowNewProject(true);
   }}
 >
   <Plus size={16} className="block" />
+</button>
+<button
+  className={`rounded-lg hover:bg-gray-100 text-gray-700
+  ${isSidebarOpen ? 'p-1.5 shrink-0' : 'w-0 p-0 overflow-hidden opacity-0 pointer-events-none shrink'}`}
+  title="New folder"
+  aria-label="New folder"
+  aria-hidden={!isSidebarOpen}
+  tabIndex={isSidebarOpen ? 0 : -1}
+  onClick={() => {
+    setSection('projects');
+    setNewProjectFolderParentId(null);
+    setNewProjectFolderError('');
+    setShowNewProjectFolder(true);
+  }}
+>
+  <FolderPlus size={16} className="block" />
 </button>
 
 
@@ -2358,11 +6640,61 @@ const ColumnFilterButton = ({ col }) => {
           </div>
 
           {/* Collapsible list */}
-          {isSidebarOpen && isProjectsOpen && projects.length > 0 && (
-            <div className="mt-1 ml-9 pr-1 max-h-56 overflow-auto space-y-1" role="list" aria-label="Projects">
-{projects.map((p) => (
-  <div key={p.id} className="group relative">
-    <div className="flex items-center justify-between">
+          {isSidebarOpen && isProjectsOpen && (projects.length > 0 || projectFolders.length > 0) && (
+            <div
+              className={`mt-1 ml-9 pr-1 max-h-56 overflow-auto space-y-1 rounded-lg transition-colors ${
+                draggingProjectId && dragOverProjectFolderId === "__root__" ? "bg-blue-50 ring-1 ring-[#2D7DFE]" : ""
+              }`}
+              role="list"
+              aria-label="Projects"
+              onDragOver={(e) => {
+                if (!draggingProjectId) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                setDragOverProjectFolderId("__root__");
+              }}
+              onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget)) setDragOverProjectFolderId(null);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                const projectId = e.dataTransfer.getData("application/x-xhandle-project-id") || draggingProjectId;
+                moveProjectToFolder(projectId, null);
+              }}
+            >
+{(() => {
+  const foldersByParent = new Map();
+  const projectsByFolder = new Map();
+  projectFolders.forEach((folder) => {
+    const key = folder.parentId || null;
+    if (!foldersByParent.has(key)) foldersByParent.set(key, []);
+    foldersByParent.get(key).push(folder);
+  });
+  projects.forEach((project) => {
+    const key = project.folderId || null;
+    if (!projectsByFolder.has(key)) projectsByFolder.set(key, []);
+    projectsByFolder.get(key).push(project);
+  });
+  foldersByParent.forEach((items) => items.sort((a, b) => a.name.localeCompare(b.name)));
+
+  const renderProject = (p, depth = 0) => (
+  <div
+    key={p.id}
+    className={`group relative rounded-lg ${draggingProjectId === p.id ? 'opacity-50' : ''}`}
+    draggable={editingProjectId !== p.id}
+    onDragStart={(e) => {
+      setDraggingProjectId(p.id);
+      setDragOverProjectFolderId(null);
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("application/x-xhandle-project-id", p.id);
+      e.dataTransfer.setData("text/plain", p.name || "Project");
+    }}
+    onDragEnd={() => {
+      setDraggingProjectId(null);
+      setDragOverProjectFolderId(null);
+    }}
+  >
+    <div className="flex items-center justify-between" style={{ paddingLeft: depth * 12 }}>
       {editingProjectId === p.id ? (
         <div className="flex-1 flex items-center gap-2 px-2 py-1.5">
           <input
@@ -2393,7 +6725,7 @@ const ColumnFilterButton = ({ col }) => {
         </div>
       ) : (
         <button
-          onClick={() => { setSection('projects'); setActiveProjectId(p.id); }}
+          onClick={() => { setSection('projects'); setActiveProjectId(p.id); setActiveProjectFolderId(null); }}
           className={`flex-1 text-left px-2 py-1.5 rounded-lg truncate transition-colors ${
             activeProjectId === p.id ? 'bg-[#ECEEFF] text-[#0F0F12]' : 'text-gray-700 hover:bg-gray-100'
           }`}
@@ -2411,6 +6743,7 @@ const ColumnFilterButton = ({ col }) => {
        onMouseDown={(e) => { e.stopPropagation(); }}
        onClick={(e) => {
          e.stopPropagation();
+         setOpenProjectFolderMenuId(null);
          setOpenProjectMenuId((cur) => (cur === p.id ? null : p.id));
        }}
        className="ml-1 p-1.5 rounded hover:bg-gray-100 text-gray-600 invisible group-hover:visible"
@@ -2420,7 +6753,7 @@ const ColumnFilterButton = ({ col }) => {
      >
        <MoreVertical size={16} />
      </button>
-     
+
 
       )}
     </div>
@@ -2431,6 +6764,7 @@ const ColumnFilterButton = ({ col }) => {
   anchorEl={projectMenuAnchorEls.current[p.id]}
   setPortalRef={(el) => (projectMenuPortalRefs.current[p.id] = el)}
   onRename={() => { setOpenProjectMenuId(null); beginRename(p); }}
+  onInvite={() => { setOpenProjectMenuId(null); setInviteForProjectId(p.id); }}
   onDelete={() => { setOpenProjectMenuId(null); deleteProject(p.id); }}
 />
 
@@ -2442,11 +6776,169 @@ const ColumnFilterButton = ({ col }) => {
       <div className="px-2 text-[11px] text-red-600 mt-1">{renameError}</div>
     )}
   </div>
-))}
+  );
+
+  const renderFolder = (folder, depth = 0) => {
+    const childFolders = foldersByParent.get(folder.id) || [];
+    const childProjects = projectsByFolder.get(folder.id) || [];
+    const isOpen = openProjectFolderIds[folder.id] !== false;
+
+    return (
+      <div
+        key={folder.id}
+        className={`relative rounded-lg transition-colors ${
+          draggingProjectId && dragOverProjectFolderId === folder.id ? "bg-blue-50 ring-1 ring-[#2D7DFE]" : ""
+        }`}
+        onDragOver={(e) => {
+          if (!draggingProjectId) return;
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = "move";
+          setDragOverProjectFolderId(folder.id);
+          if (!isOpen) setOpenProjectFolderIds((prev) => ({ ...prev, [folder.id]: true }));
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget)) setDragOverProjectFolderId(null);
+        }}
+        onDrop={(e) => {
+          if (!draggingProjectId) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const projectId = e.dataTransfer.getData("application/x-xhandle-project-id") || draggingProjectId;
+          moveProjectToFolder(projectId, folder.id);
+        }}
+      >
+        <div className="group flex items-center justify-between" style={{ paddingLeft: depth * 12 }}>
+          {editingProjectFolderId === folder.id ? (
+            <div className="flex-1 flex items-center gap-2 px-2 py-1.5">
+              <input
+                autoFocus
+                className="flex-1 bg-white border rounded px-2 py-1 text-sm min-w-0"
+                value={editingProjectFolderName}
+                onChange={(e) => { setEditingProjectFolderName(e.target.value); if (renameError) setRenameError(''); }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); commitFolderRename(); }
+                  if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
+                }}
+                placeholder="Folder name"
+              />
+              <button onClick={(e) => { e.stopPropagation(); commitFolderRename(); }} className="text-sm text-[#2D7DFE] hover:underline" title="Save folder name">
+                Save
+              </button>
+              <button onClick={(e) => { e.stopPropagation(); cancelRename(); }} className="text-sm text-gray-600 hover:underline" title="Cancel rename">
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => {
+                setSection('projects');
+                setActiveProjectId(null);
+                setActiveProjectFolderId(folder.id);
+              }}
+              className={`flex-1 min-w-0 text-left px-2 py-1.5 rounded-lg inline-flex items-center gap-1.5 ${
+                activeProjectFolderId === folder.id ? 'bg-[#ECEEFF] text-[#0F0F12]' : 'text-gray-700 hover:bg-gray-100'
+              }`}
+              title={folder.name}
+            >
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpenProjectFolderIds((prev) => ({ ...prev, [folder.id]: !isOpen }));
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setOpenProjectFolderIds((prev) => ({ ...prev, [folder.id]: !isOpen }));
+                  }
+                }}
+                className="shrink-0 rounded hover:bg-gray-200"
+                aria-label={isOpen ? "Collapse folder" : "Expand folder"}
+              >
+                <ChevronRight size={13} className={`transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+              </span>
+              <Folder size={14} className="shrink-0 text-gray-500" />
+              <span className="truncate">{folder.name}</span>
+            </button>
+          )}
+
+          {editingProjectFolderId !== folder.id && (
+            <div className="ml-1 hidden group-hover:flex items-center">
+              <button
+                ref={(el) => (projectFolderMenuAnchorEls.current[folder.id] = el)}
+                data-project-folder-menu-trigger="true"
+                onMouseDown={(e) => { e.stopPropagation(); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpenProjectMenuId(null);
+                  setOpenProjectFolderMenuId((cur) => (cur === folder.id ? null : folder.id));
+                }}
+                className="p-1.5 rounded hover:bg-gray-100 text-gray-600"
+                aria-haspopup="menu"
+                aria-expanded={openProjectFolderMenuId === folder.id}
+                title="Folder options"
+                aria-label="Folder options"
+              >
+                <MoreVertical size={15} />
+              </button>
+            </div>
+          )}
+        </div>
+        {openProjectFolderMenuId === folder.id && (
+          <FolderMenuPortal
+            anchorEl={projectFolderMenuAnchorEls.current[folder.id]}
+            setPortalRef={(el) => (projectFolderMenuPortalRefs.current[folder.id] = el)}
+            onNewProject={() => {
+              setOpenProjectFolderMenuId(null);
+              if (!guardNewProjectIntent()) return;
+              setNewProjectTargetFolderId(folder.id);
+              setNewProjectError('');
+              setShowNewProject(true);
+            }}
+            onNewFolder={() => {
+              setOpenProjectFolderMenuId(null);
+              setNewProjectFolderParentId(folder.id);
+              setNewProjectFolderError('');
+              setShowNewProjectFolder(true);
+            }}
+            onRename={() => {
+              setOpenProjectFolderMenuId(null);
+              beginRenameFolder(folder);
+            }}
+            onDelete={() => {
+              setOpenProjectFolderMenuId(null);
+              deleteProjectFolder(folder.id);
+            }}
+          />
+        )}
+        {editingProjectFolderId === folder.id && renameError && (
+          <div className="px-2 text-[11px] text-red-600 mt-1" style={{ marginLeft: depth * 12 }}>{renameError}</div>
+        )}
+        {isOpen && (
+          <div className="space-y-1">
+            {childFolders.map((child) => renderFolder(child, depth + 1))}
+            {childProjects.map((child) => renderProject(child, depth + 1))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const rootFolders = foldersByParent.get(null) || [];
+  const rootProjects = projectsByFolder.get(null) || [];
+  return [
+    ...rootFolders.map((folder) => renderFolder(folder, 0)),
+    ...rootProjects.map((project) => renderProject(project, 0)),
+  ];
+})()}
 
 
             </div>
           )}
+        </div>
         </div>
 
         <div className="mt-auto px-3 pb-4">
@@ -2461,58 +6953,585 @@ const ColumnFilterButton = ({ col }) => {
   <XHandleCopilotView
     projectHint={projectHint}
     copilotContext={getActiveProjectContext()}
+    appFocus={getCollaboratorAppFocus()}
   />
 )}
 
 
 
 
-        {/* License toolbar (shows only if not licensed) */}
-{/* License toolbar (shows only if not licensed) */}
-{!lic.loading && !lic.ok && (
-  <>
-    {/* Fixed just under the fixed TopNavBar (h-14) */}
-    <div className="fixed top-14 inset-x-0 z-30 bg-yellow-50 border-b border-yellow-200">
-    <div className="sticky top-0 z-20 bg-yellow-50 border-b border-yellow-200 px-4 py-2 flex justify-center">
-    <div className="text-sm text-yellow-800 text-center">
-          You’re on the free tier. Click Upgrade to unlock Pro features.
-        </div>
-      </div>
-    </div>
+{section === 'review-center' && React.createElement(ReviewCenter, {
+  activeProjectId,
+  projects: reviewCenterProjects,
+  onOpenSource: jumpToReviewSource,
+  onExportCodeArchitectureReviewPackage: handleExportCodeArchitectureReviewPackage,
+  isExportingCodeArchitectureReviewPackage: isGeneratingCodeArchitectureReviewApp,
+})}
 
-    {/* Spacer so content doesn’t sit under the fixed bar */}
-    <div className="h-10" />
-  </>
-)}
     {/* CODE BASED ANALYSIS */}
 {section === 'code-architecture' && (
-  <div className="flex flex-col flex-1 min-h-0 overflow-auto bg-white py-1 px-3 md:px-5 lg:px-7 w-full">
-    <div className="mb-6 flex items-center justify-between">
-      <div>
-        <h1 className="text-2xl md:text-2xl font-semibold">Code-Based Architecture</h1>
-        <p className="text-gray-500 text-sm">
-          Analyze your repository’s code to extract a functional architecture table and diagram.
-        </p>
-      </div>
+  <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-white px-3 py-1 md:px-5 lg:px-7">
+    <div className="mb-2 flex shrink-0 items-center justify-between">
+      <h1 className="flex items-center gap-2 text-xl font-semibold">
+        Code-Based Architecture
+        <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-700 border" title="Code architecture projects">
+          {codeArchitectureProjects.length}
+        </span>
+      </h1>
     </div>
 
-    {cbaLoading
-  ? null
-  : cbaTableData.length > 0 ? (
-      <div className="rounded-2xl border bg-white p-4">
-        <FunctionalDecompositionTable
-          data={cbaTableData}
-          onRequestCreateProject={handleCreateProjectFromSelection}
-        />
+    {!activeCodeArchitectureProject && !activeCodeArchitectureFolder && (
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden pb-3">
+        <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm text-gray-500">All projects</p>
+            <h2 className="text-xl font-semibold text-gray-900">Code architecture dashboard</h2>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setNewCodeArchitectureTargetFolderId(null);
+                setNewCodeArchitectureError('');
+                setShowNewCodeArchitectureProject(true);
+              }}
+              className="inline-flex items-center gap-2 rounded-md bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]"
+            >
+              <Plus size={15} />
+              Project
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setNewCodeArchitectureFolderParentId(null);
+                setNewCodeArchitectureFolderError('');
+                setShowNewCodeArchitectureFolder(true);
+              }}
+              className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+            >
+              <FolderPlus size={15} />
+              Folder
+            </button>
+          </div>
+        </div>
+
+        <div className="mb-4 grid shrink-0 grid-cols-2 gap-3 md:grid-cols-4">
+          <div className="rounded-xl border border-gray-200 bg-white p-4">
+            <div className="text-2xl font-semibold">{codeArchitectureProjects.length}</div>
+            <div className="text-xs text-gray-500">Projects</div>
+          </div>
+          <div className="rounded-xl border border-gray-200 bg-white p-4">
+            <div className="text-2xl font-semibold">{codeArchitectureFolders.length}</div>
+            <div className="text-xs text-gray-500">Folders</div>
+          </div>
+          <div className="rounded-xl border border-gray-200 bg-white p-4">
+            <div className="text-2xl font-semibold">{codeArchitectureProjects.reduce((sum, project) => sum + (project.repos?.length || 0), 0)}</div>
+            <div className="text-xs text-gray-500">Repositories</div>
+          </div>
+          <div className="rounded-xl border border-gray-200 bg-white p-4">
+            <div className="text-2xl font-semibold">{codeArchitectureDashboardRows.reduce((sum, project) => sum + (project.rowCount ? 1 : 0), 0)}</div>
+            <div className="text-xs text-gray-500">Analyzed repos</div>
+          </div>
+        </div>
+
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden lg:grid-cols-2 lg:grid-rows-[minmax(0,0.35fr)_minmax(0,0.65fr)]">
+          <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white p-4">
+            <h3 className="mb-3 shrink-0 text-sm font-semibold text-gray-900">Hazard status</h3>
+            <div className="min-h-0 overflow-auto text-sm text-gray-500">Run code architecture hazard analysis inside a connected repo project.</div>
+          </section>
+          <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white p-4">
+            <h3 className="mb-3 shrink-0 text-sm font-semibold text-gray-900">Recent activity</h3>
+            {codeArchitectureDashboardRows.length === 0 ? (
+              <div className="min-h-0 overflow-auto text-sm text-gray-500">Nothing to show yet.</div>
+            ) : (
+              <div className="min-h-0 space-y-3 overflow-auto pr-1">
+                {codeArchitectureDashboardRows.map((project) => (
+                  <div key={project.id} className="text-sm text-gray-800">
+                    <span className="font-medium">{project.name}</span>
+                    <span className="text-gray-500"> · {project.activeRepoName}</span>
+                    {project.updatedAt && <div className="text-[11px] text-gray-400">{new Date(project.updatedAt).toLocaleString()}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+          <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white p-4 lg:col-span-2">
+            <h3 className="mb-3 shrink-0 text-sm font-semibold text-gray-900">Code architecture projects</h3>
+            {codeArchitectureDashboardRows.length === 0 ? (
+              <div className="min-h-0 overflow-auto text-sm text-gray-500">Create a Code-Based Architecture project and connect a GitHub repo to begin.</div>
+            ) : (
+              <div className="min-h-0 overflow-auto">
+                <table className="min-w-full text-left text-sm">
+                  <thead className="sticky top-0 z-10 bg-white text-xs text-gray-500">
+                    <tr>
+                      <th className="border-b px-3 py-2 font-medium">Project</th>
+                      <th className="border-b px-3 py-2 font-medium">Folder</th>
+                      <th className="border-b px-3 py-2 font-medium">Repositories</th>
+                      <th className="border-b px-3 py-2 font-medium">Active repo</th>
+                      <th className="border-b px-3 py-2 font-medium">Rows</th>
+                      <th className="border-b px-3 py-2 font-medium">Metrics</th>
+                      <th className="border-b px-3 py-2 font-medium">Updated</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {codeArchitectureDashboardRows.map((project) => (
+                      <tr key={project.id} className="hover:bg-gray-50">
+                        <td className="border-b px-3 py-2">
+                          <button
+                            type="button"
+                            onClick={() => { setActiveCodeArchitectureProjectId(project.id); setActiveCodeArchitectureFolderId(null); }}
+                            className="font-medium text-[#2D7DFE] hover:underline"
+                          >
+                            {project.name}
+                          </button>
+                        </td>
+                        <td className="border-b px-3 py-2 text-gray-600">{project.folderName}</td>
+                        <td className="border-b px-3 py-2 text-gray-600">{project.repoCount}</td>
+                        <td className="border-b px-3 py-2 text-gray-600">{project.activeRepoName}</td>
+                        <td className="border-b px-3 py-2 text-gray-600">{project.rowCount}</td>
+                        <td className="border-b px-3 py-2 text-gray-500">{project.metricsSummary || "Not captured"}</td>
+                        <td className="border-b px-3 py-2 text-gray-500">{project.updatedAt ? new Date(project.updatedAt).toLocaleString() : "Never"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </div>
+      </section>
+    )}
+
+    {activeCodeArchitectureFolder && (
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden pb-2">
+        <div className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <div className="flex min-w-0 items-center gap-2 pr-2">
+              <Folder size={15} className="shrink-0 text-slate-500" />
+              <h2 className="truncate text-lg font-semibold text-gray-900">{activeCodeArchitectureFolder.name}</h2>
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
+                {codeArchitectureFolderProjects.length} project{codeArchitectureFolderProjects.length === 1 ? "" : "s"}
+              </span>
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setCodeArchitectureFolderView("projects")}
+                className={`rounded-md px-2.5 py-1 text-sm font-semibold ${
+                  codeArchitectureFolderView === "projects"
+                    ? "bg-blue-600 text-white"
+                    : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                }`}
+              >
+                Projects
+              </button>
+              <button
+                type="button"
+                onClick={() => setCodeArchitectureFolderView("cross-repo")}
+                className={`rounded-md px-2.5 py-1 text-sm font-semibold ${
+                  codeArchitectureFolderView === "cross-repo"
+                    ? "bg-blue-600 text-white"
+                    : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                }`}
+              >
+                Cross-Repo Architecture
+              </button>
+            </div>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setNewCodeArchitectureTargetFolderId(activeCodeArchitectureFolder.id);
+                setNewCodeArchitectureError('');
+                setShowNewCodeArchitectureProject(true);
+              }}
+              className="inline-flex items-center gap-2 rounded-md bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]"
+            >
+              <Plus size={15} />
+              Project
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setNewCodeArchitectureFolderParentId(activeCodeArchitectureFolder.id);
+                setNewCodeArchitectureFolderError('');
+                setShowNewCodeArchitectureFolder(true);
+              }}
+              className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+            >
+              <FolderPlus size={15} />
+              Folder
+            </button>
+          </div>
+        </div>
+        {codeArchitectureFolderView === "cross-repo" ? (
+          <div className="min-h-0 flex-1">
+            <CrossRepoArchitecturePanel
+              folder={activeCodeArchitectureFolder}
+              folders={codeArchitectureFolders}
+              projects={codeArchitectureProjects}
+              onOpenFunctionalRow={handleOpenCrossRepoFunctionalRow}
+              readCbaRows={readCodeArchitectureRepoRows}
+              resultsReview={resultsReview}
+            />
+          </div>
+        ) : (
+          <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white p-4">
+            <h3 className="mb-3 shrink-0 text-sm font-semibold text-gray-900">Projects</h3>
+            {codeArchitectureFolderProjects.length === 0 ? (
+              <div className="min-h-0 overflow-auto text-sm text-gray-500">No Code-Based Architecture projects in this folder yet.</div>
+            ) : (
+              <div className="min-h-0 overflow-auto">
+                <table className="min-w-full text-left text-sm">
+                  <thead className="sticky top-0 z-10 bg-white text-xs text-gray-500">
+                    <tr>
+                      <th className="border-b px-3 py-2 font-medium">Project</th>
+                      <th className="border-b px-3 py-2 font-medium">Repositories</th>
+                      <th className="border-b px-3 py-2 font-medium">Active repo</th>
+                      <th className="border-b px-3 py-2 font-medium">Rows</th>
+                      <th className="border-b px-3 py-2 font-medium">Updated</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {codeArchitectureFolderProjects.map((project) => (
+                      <tr key={project.id} className="hover:bg-gray-50">
+                        <td className="border-b px-3 py-2">
+                          <button
+                            type="button"
+                            onClick={() => { setActiveCodeArchitectureProjectId(project.id); setActiveCodeArchitectureFolderId(null); }}
+                            className="font-medium text-[#2D7DFE] hover:underline"
+                          >
+                            {project.name}
+                          </button>
+                        </td>
+                        <td className="border-b px-3 py-2 text-gray-600">{project.repoCount}</td>
+                        <td className="border-b px-3 py-2 text-gray-600">{project.activeRepoName}</td>
+                        <td className="border-b px-3 py-2 text-gray-600">{project.rowCount}</td>
+                        <td className="border-b px-3 py-2 text-gray-500">{project.updatedAt ? new Date(project.updatedAt).toLocaleString() : "Never"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        )}
+      </section>
+    )}
+
+    {activeCodeArchitectureProject && (
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden pb-3">
+        <div className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm text-gray-500">Code architecture project</p>
+            <h2 className="text-xl font-semibold text-gray-900">{activeCodeArchitectureProject.name}</h2>
+            <p className="text-xs text-gray-500">{activeCodeArchitectureRepo ? activeCodeArchitectureRepo.repoName || activeCodeArchitectureRepo.repoId : "No GitHub repo connected"}</p>
+            {activeCodeArchitectureMetricsSummary && (
+              <p className="mt-1 text-xs text-gray-500">Last run: {activeCodeArchitectureMetricsSummary}</p>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {activeCodeArchitectureProject.repos?.length > 0 && (
+              <select
+                className="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm"
+                value={activeCodeArchitectureProject.activeRepoId || activeCodeArchitectureProject.repos[0]?.id || ""}
+                onChange={(event) => {
+                  const repoId = event.target.value;
+                  updateCodeArchitectureProject(activeCodeArchitectureProject.id, { activeRepoId: repoId });
+                }}
+              >
+                {activeCodeArchitectureProject.repos.map((repoConfig) => (
+                  <option key={repoConfig.id} value={repoConfig.id}>{repoConfig.repoName || repoConfig.repoId}</option>
+                ))}
+              </select>
+            )}
+            <button
+              type="button"
+              onClick={() => openCodeArchitectureRepoConfig(activeCodeArchitectureProject.id, activeCodeArchitectureRepo?.id || null)}
+              className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+            >
+              <SettingsIcon size={15} />
+              GitHub config
+            </button>
+            <button
+              type="button"
+              onClick={() => openCodeArchitectureRepoConfig(activeCodeArchitectureProject.id, null)}
+              className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+            >
+              <Plus size={15} />
+              Repo
+            </button>
+            {activeCodeArchitectureRepo && (
+              <button
+                type="button"
+                onClick={() => handleBaselineRepo({ projectId: activeCodeArchitectureProject.id, repoConfig: activeCodeArchitectureRepo })}
+                className="inline-flex items-center gap-2 rounded-md bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]"
+              >
+                Analyze
+              </button>
+            )}
+          </div>
+        </div>
+
+        {cbaLoading
+          ? (
+            <div className="min-h-0 overflow-auto rounded-xl border bg-white p-8 text-gray-600 text-sm">{cbaLoadingLabel}</div>
+          )
+          : !activeCodeArchitectureRepo ? (
+            <div className="min-h-0 overflow-auto rounded-xl border bg-white p-8 text-gray-600 text-sm">
+              Connect a GitHub repository to start code-based architecture analysis.
+            </div>
+          )
+          : cbaTableData.length > 0 ? (
+          <div className="flex min-h-0 flex-1 flex-col gap-2">
+            <div className="shrink-0 flex flex-wrap items-center gap-2 border-b border-slate-200 pb-1.5">
+              <button
+                type="button"
+                onClick={() => setCodeArchitectureWorkspaceTab("architecture")}
+                className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                  codeArchitectureWorkspaceTab === "architecture"
+                    ? "bg-blue-600 text-white"
+                    : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                }`}
+              >
+                Architecture Diagram
+              </button>
+              <button
+                type="button"
+                onClick={() => setCodeArchitectureWorkspaceTab("safety")}
+                className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                  codeArchitectureWorkspaceTab === "safety"
+                    ? "bg-blue-600 text-white"
+                    : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                }`}
+              >
+                Hazard & Remediation
+              </button>
+              {[
+                [ARTIFACT_KINDS.SOFTWARE, "Software Requirements"],
+                [ARTIFACT_KINDS.SYSTEM, "System Requirements"],
+                [ARTIFACT_KINDS.SUBSYSTEM, "Subsystem Requirements"],
+                [ARTIFACT_KINDS.DESIGN, "System / Subsystem Design"],
+                ["traceability-matrix", "Traceability Matrix"],
+              ].map(([tab, label]) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setCodeArchitectureWorkspaceTab(tab)}
+                  className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                    codeArchitectureWorkspaceTab === tab
+                      ? "bg-blue-600 text-white"
+                      : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {codeArchitectureWorkspaceTab === "architecture" ? (
+              <div className="min-h-0 flex-1 overflow-hidden rounded-xl border bg-white p-3">
+                <FunctionalDecompositionTable
+                  data={cbaTableData}
+                  repoMeta={activeCodeArchitectureRepoMeta}
+                  onRequestCreateProject={handleCreateProjectFromSelection}
+                  reviewItems={codeArchitectureFunctionalReviewItems}
+                  reviewByRow={codeArchitectureFunctionalReviewByRow}
+                  reviewDrawerOptions={codeArchitectureFunctionalReviewDrawerOptions}
+                  forceTableOpenKey={codeArchitectureFunctionalTableOpenKey}
+                  highlightedRowIndex={highlightedCodeArchitectureFunctionalRowIndex}
+                  hazardSummary={codeArchitectureHazardRun?.generatedSheets?.Summary}
+                  assuranceArtifacts={{
+                    softwareRequirements: loadArtifactRows(ARTIFACT_KINDS.SOFTWARE, activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id),
+                    systemRequirements: loadArtifactRows(ARTIFACT_KINDS.SYSTEM, activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id),
+                    subsystemRequirements: loadArtifactRows(ARTIFACT_KINDS.SUBSYSTEM, activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id),
+                    designElements: loadArtifactRows(ARTIFACT_KINDS.DESIGN, activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id),
+                  }}
+                  onOpenHazardRow={(rowIndex) => {
+                    handleOpenCodeArchitectureHazardSummaryRow(rowIndex);
+                    setHazardRemediationTab("hazard-analysis");
+                  }}
+                  onOpenFunctionalRow={handleOpenCodeArchitectureFunctionalRow}
+                  onOpenAssuranceArtifactRow={handleOpenCodeArchitectureArtifactRows}
+                  focusTarget={pendingCodeArchitectureDiagramTarget}
+                  onFocusTargetHandled={() => setPendingCodeArchitectureDiagramTarget(null)}
+                  onSelectArchitectureElement={(element) => {
+                    setSelectedCbaElement(element);
+                    setCodeArchitectureWorkspaceTab("safety");
+                    setHazardRemediationTab("remediation");
+                  }}
+                  reviewMode={false}
+                />
+              </div>
+            ) : codeArchitectureWorkspaceTab === ARTIFACT_KINDS.SOFTWARE ? (
+              <div className="min-h-0 flex-1">
+                <EngineeringArtifactPanel
+                  key={ARTIFACT_KINDS.SOFTWARE}
+                  kind={ARTIFACT_KINDS.SOFTWARE}
+                  cbaRows={cbaTableData}
+                  project={activeCodeArchitectureProject}
+                  repo={activeCodeArchitectureRepo}
+                  focusTarget={codeArchitectureArtifactFocus}
+                  onFocusResolved={handleCodeArchitectureArtifactFocusResolved}
+                  onOpenTrace={handleOpenCodeArchitectureAssuranceTrace}
+                  hazardAnalysis={codeArchitectureHazardRun}
+                  reviewMode={false}
+                />
+              </div>
+            ) : codeArchitectureWorkspaceTab === ARTIFACT_KINDS.SYSTEM ? (
+              <div className="min-h-0 flex-1">
+                <EngineeringArtifactPanel
+                  key={ARTIFACT_KINDS.SYSTEM}
+                  kind={ARTIFACT_KINDS.SYSTEM}
+                  cbaRows={cbaTableData}
+                  sourceRows={loadArtifactRows(ARTIFACT_KINDS.SOFTWARE, activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id)}
+                  project={activeCodeArchitectureProject}
+                  repo={activeCodeArchitectureRepo}
+                  focusTarget={codeArchitectureArtifactFocus}
+                  onFocusResolved={handleCodeArchitectureArtifactFocusResolved}
+                  onOpenTrace={handleOpenCodeArchitectureAssuranceTrace}
+                  reviewMode={false}
+                />
+              </div>
+            ) : codeArchitectureWorkspaceTab === ARTIFACT_KINDS.SUBSYSTEM ? (
+              <div className="min-h-0 flex-1">
+                <EngineeringArtifactPanel
+                  key={ARTIFACT_KINDS.SUBSYSTEM}
+                  kind={ARTIFACT_KINDS.SUBSYSTEM}
+                  cbaRows={cbaTableData}
+                  sourceRows={loadArtifactRows(ARTIFACT_KINDS.SYSTEM, activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id)}
+                  project={activeCodeArchitectureProject}
+                  repo={activeCodeArchitectureRepo}
+                  focusTarget={codeArchitectureArtifactFocus}
+                  onFocusResolved={handleCodeArchitectureArtifactFocusResolved}
+                  onOpenTrace={handleOpenCodeArchitectureAssuranceTrace}
+                  reviewMode={false}
+                />
+              </div>
+            ) : codeArchitectureWorkspaceTab === ARTIFACT_KINDS.DESIGN ? (
+              <div className="min-h-0 flex-1">
+                <EngineeringArtifactPanel
+                  key={ARTIFACT_KINDS.DESIGN}
+                  kind={ARTIFACT_KINDS.DESIGN}
+                  cbaRows={cbaTableData}
+                  sourceRows={loadArtifactRows(ARTIFACT_KINDS.SUBSYSTEM, activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id)}
+                  project={activeCodeArchitectureProject}
+                  repo={activeCodeArchitectureRepo}
+                  focusTarget={codeArchitectureArtifactFocus}
+                  onFocusResolved={handleCodeArchitectureArtifactFocusResolved}
+                  onOpenTrace={handleOpenCodeArchitectureAssuranceTrace}
+                  reviewMode={false}
+                />
+              </div>
+            ) : codeArchitectureWorkspaceTab === "traceability-matrix" ? (
+              <div className="min-h-0 flex-1">
+                <TraceabilityMatrixPanel
+                  cbaRows={cbaTableData}
+                  project={activeCodeArchitectureProject}
+                  repo={activeCodeArchitectureRepo}
+                  onOpenTrace={handleOpenCodeArchitectureAssuranceTrace}
+                />
+              </div>
+            ) : (
+              <div className="flex min-h-0 flex-1 flex-col gap-2">
+                <div className="shrink-0 flex flex-wrap items-center gap-2 border-b border-slate-200 pb-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setHazardRemediationTab("hazard-analysis")}
+                    className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                      hazardRemediationTab === "hazard-analysis"
+                        ? "bg-blue-600 text-white"
+                        : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                    }`}
+                  >
+                    Code Architecture Hazard Analysis
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setHazardRemediationTab("remediation")}
+                    className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                      hazardRemediationTab === "remediation"
+                        ? "bg-blue-600 text-white"
+                        : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                    }`}
+                  >
+                    Safety Remediation
+                  </button>
+                </div>
+                {hazardRemediationTab === "hazard-analysis" ? (
+                  <div className="min-h-0 flex-1">
+                    <CodeArchitectureHazardPanel
+                      cbaRows={cbaTableData}
+                      latestRun={codeArchitectureHazardRun}
+                      method={codeArchitectureHazardMethod}
+                      onMethodChange={setCodeArchitectureHazardMethod}
+                      hazardGenerationMode={codeArchitectureHazardGenerationMode}
+                      onHazardGenerationModeChange={setCodeArchitectureHazardGenerationMode}
+                      onRunAnalysis={handleRunCodeArchitectureHazardAnalysis}
+                      onClearContents={handleClearCodeArchitectureHazardContents}
+                      isRunning={isRunningCodeArchitectureHazard}
+                      progress={codeArchitectureHazardProgress}
+                      reviewItems={codeArchitectureHazardReviewItems}
+                      reviewByRow={codeArchitectureHazardReviewByRow}
+                      reviewDrawerOptions={codeArchitectureHazardReviewDrawerOptions}
+                      forceSummaryOpenKey={codeArchitectureHazardSummaryOpenKey}
+                      highlightedRowIndex={highlightedCodeArchitectureHazardRowIndex}
+                      onDeleteSummaryRow={handleDeleteCodeArchitectureHazardSummaryRow}
+                      onOpenArchitectureTarget={(target) => {
+                        setPendingCodeArchitectureDiagramTarget(target);
+                        setCodeArchitectureWorkspaceTab("architecture");
+                      }}
+                      reviewMode={false}
+                    />
+                  </div>
+                ) : (
+                  <div className="min-h-0 flex-1">
+                    <SafetyRemediationPanel
+                      project={activeCodeArchitectureProject}
+                      projectId={activeCodeArchitectureProject.id}
+                      cbaRows={cbaTableData}
+                      selectedElement={selectedCbaElement}
+                      hazardSummarySheet={codeArchitectureHazardRun?.generatedSheets?.Summary}
+                      codeArchitectureHazardAnalysis={codeArchitectureHazardRun}
+                      isCodeArchitectureHazardAnalysisStale={
+                        codeArchitectureHazardRun
+                          ? isCodeArchitectureHazardAnalysisStale({ run: codeArchitectureHazardRun, cbaRows: cbaTableData })
+                          : false
+                      }
+                      riskRegister={riskRegister}
+                      repoMeta={activeCodeArchitectureRepoMeta}
+                      onOpenHazardSummaryRow={(rowIndex) => {
+                        handleOpenCodeArchitectureHazardSummaryRow(rowIndex);
+                        setHazardRemediationTab("hazard-analysis");
+                      }}
+                      reviewMode={false}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="min-h-0 overflow-auto rounded-xl border bg-white p-8 text-gray-600 text-sm">
+            {activeCodeArchitectureUnavailableRowCount > 0 ? (
+              <>
+                Analysis metadata lists <span className="font-medium">{activeCodeArchitectureUnavailableRowCount}</span> row{activeCodeArchitectureUnavailableRowCount === 1 ? "" : "s"} for {activeCodeArchitectureRepo.repoName || activeCodeArchitectureRepo.repoId}, but the stored table rows are unavailable in browser storage. Run <span className="font-medium">Analyze</span> again to rebuild the table and diagram.
+              </>
+            ) : (
+              <>
+                Click <span className="font-medium">Analyze</span> to fetch repo files, build a dependency graph,
+                and generate the functional interaction table for {activeCodeArchitectureRepo.repoName || activeCodeArchitectureRepo.repoId}.
+              </>
+            )}
+          </div>
+        )}
       </div>
-    ) : (
-      <div className="rounded-xl border bg-white p-8 text-gray-600 text-sm">
-        Click <span className="font-medium">Analyze</span> to fetch repo files, build a dependency graph,
-        and generate the functional interaction table. You can switch to Diagram View on the table once it’s populated.
-      </div>
-    )
-}
+    )}
   </div>
+)}
+
+{section === 'safety-case' && (
+  <SafetyCaseView activeProjectId={activeProjectId} />
 )}
 
 
@@ -2641,30 +7660,222 @@ const ColumnFilterButton = ({ col }) => {
     Projects
     <span
       className="text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-700 border"
-      title={`You can create up to ${projectLimit} project${projectLimit === 1 ? '' : 's'} on your plan`}
+      title="Active projects"
     >
-      {projects.length}/{projectLimit}
+      {projects.length}
     </span>
   </h1>
 </div>
 
-{!activeProjectId && (
-  <div className="rounded-xl border bg-white p-6 text-gray-600 text-sm mb-8">
-    {atProjectLimit ? (
-      <>
-        You’re at your plan limit of <span className="font-medium">{projectLimit}</span> project{projectLimit === 1 ? '' : 's'}.{" "}
-        <button className="underline text-[#2D7DFE]" onClick={() => setLicenseModalOpen(true)}>
-          Upgrade
-        </button>{" "}
-        to create more.
-      </>
-    ) : (
-      <>
-        Use the sidebar to select a project, or click the “+” next to{" "}
-        <span className="font-medium">Projects</span> to create one.
-      </>
-    )}
-  </div>
+{!activeProjectId && !activeProjectFolder && (
+  <section className="mb-8">
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <p className="text-sm text-gray-500">All projects</p>
+        <h2 className="text-xl font-semibold text-gray-900">Projects dashboard</h2>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            if (!guardNewProjectIntent()) return;
+            setNewProjectTargetFolderId(null);
+            setNewProjectError('');
+            setShowNewProject(true);
+          }}
+          className="inline-flex items-center gap-2 rounded-md bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]"
+        >
+          <Plus size={15} />
+          Project
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setNewProjectFolderParentId(null);
+            setNewProjectFolderError('');
+            setShowNewProjectFolder(true);
+          }}
+          className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+        >
+          <FolderPlus size={15} />
+          Folder
+        </button>
+      </div>
+    </div>
+
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-4 mb-4">
+      <div className="rounded-xl border border-gray-200 bg-white p-4">
+        <div className="text-2xl font-semibold">{projects.length}</div>
+        <div className="text-xs text-gray-500">Projects</div>
+      </div>
+      <div className="rounded-xl border border-gray-200 bg-white p-4">
+        <div className="text-2xl font-semibold">{projectFolders.length}</div>
+        <div className="text-xs text-gray-500">Folders</div>
+      </div>
+      <div className="rounded-xl border border-gray-200 bg-white p-4">
+        <div className="text-2xl font-semibold">{consoleRiskRegister.length}</div>
+        <div className="text-xs text-gray-500">Total risks</div>
+      </div>
+      <div className="rounded-xl border border-gray-200 bg-white p-4">
+        <div className="text-2xl font-semibold">{projectsDashboardOpenRisks}</div>
+        <div className="text-xs text-gray-500">Open risks</div>
+      </div>
+    </div>
+
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <section className="rounded-xl border border-gray-200 bg-white p-4">
+        <h3 className="mb-3 text-sm font-semibold text-gray-900">Risk status</h3>
+        {consoleRiskRegister.length === 0 ? (
+          <div className="text-sm text-gray-500">No risks across projects yet.</div>
+        ) : (
+          <div className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={consoleRiskStatusData} layout="vertical">
+                <XAxis type="number" hide />
+                <YAxis type="category" dataKey="name" width={110} />
+                <Tooltip />
+                <Bar dataKey="value">
+                  {consoleRiskStatusData.map((_, i) => (
+                    <Cell key={i} fill={['#2D7DFE', '#F59E0B', '#10B981', '#7A37FF', '#EF4444'][i % 5]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-xl border border-gray-200 bg-white p-4">
+        <h3 className="mb-3 text-sm font-semibold text-gray-900">Recent activity</h3>
+        <div className="space-y-3">
+          {consoleRecentActivity.length === 0 ? (
+            <div className="text-sm text-gray-500">Nothing to show yet.</div>
+          ) : consoleRecentActivity.slice(0, 6).map((act, i) => (
+            <div key={i} className="text-sm text-gray-800">
+              <span className="font-medium">{act.user}</span> updated{" "}
+              <span className="text-[#2D7DFE]">{act.item}</span>
+              {act.status && <span className="text-gray-500"> · {act.status}</span>}
+              {act.when && <div className="text-[11px] text-gray-400">{act.when}</div>}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-gray-200 bg-white p-4 lg:col-span-2">
+        <h3 className="mb-3 text-sm font-semibold text-gray-900">Projects</h3>
+        {projectsDashboardRows.length === 0 ? (
+          <div className="text-sm text-gray-500">Create a project to start building your workspace.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-sm">
+              <thead className="text-xs text-gray-500">
+                <tr>
+                  <th className="border-b px-3 py-2 font-medium">Project</th>
+                  <th className="border-b px-3 py-2 font-medium">Folder</th>
+                  <th className="border-b px-3 py-2 font-medium">Functions</th>
+                  <th className="border-b px-3 py-2 font-medium">Risks</th>
+                  <th className="border-b px-3 py-2 font-medium">Updated</th>
+                </tr>
+              </thead>
+              <tbody>
+                {projectsDashboardRows.map((project) => (
+                  <tr key={project.id} className="hover:bg-gray-50">
+                    <td className="border-b px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() => { setActiveProjectId(project.id); setActiveProjectFolderId(null); }}
+                        className="font-medium text-[#2D7DFE] hover:underline"
+                      >
+                        {project.name}
+                      </button>
+                    </td>
+                    <td className="border-b px-3 py-2 text-gray-600">{project.folderName}</td>
+                    <td className="border-b px-3 py-2 text-gray-600">{project.functionCount}</td>
+                    <td className="border-b px-3 py-2 text-gray-600">{project.openRisks} open / {project.riskCount} total</td>
+                    <td className="border-b px-3 py-2 text-gray-500">
+                      {project.updatedAt ? new Date(project.updatedAt).toLocaleString() : "Never"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
+  </section>
+)}
+
+{activeProjectFolder && (
+  <section className="mb-8">
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <div className="inline-flex items-center gap-2 text-sm text-gray-500">
+          <Folder size={15} />
+          Project folder
+        </div>
+        <h2 className="mt-1 text-xl font-semibold text-gray-900">{activeProjectFolder.name}</h2>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            if (!guardNewProjectIntent()) return;
+            setNewProjectTargetFolderId(activeProjectFolder.id);
+            setNewProjectError('');
+            setShowNewProject(true);
+          }}
+          className="inline-flex items-center gap-2 rounded-md bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]"
+        >
+          <Plus size={15} />
+          Project
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setNewProjectFolderParentId(activeProjectFolder.id);
+            setNewProjectFolderError('');
+            setShowNewProjectFolder(true);
+          }}
+          className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+        >
+          <FolderPlus size={15} />
+          Folder
+        </button>
+      </div>
+    </div>
+
+    <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-[#F8FAFC] p-3">
+      <span className="text-xs font-medium text-gray-600">Add panel</span>
+      <select
+        className="rounded-md border border-gray-200 bg-white px-2 py-1 text-sm"
+        value={newFolderDashboardPanelType}
+        onChange={(e) => setNewFolderDashboardPanelType(e.target.value)}
+      >
+        {FOLDER_DASHBOARD_PANEL_TYPES.map((option) => (
+          <option key={option.type} value={option.type}>{option.label}</option>
+        ))}
+      </select>
+      <button
+        type="button"
+        onClick={addFolderDashboardPanel}
+        className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+      >
+        Add
+      </button>
+      <button
+        type="button"
+        onClick={() => updateFolderDashboardPanels(() => getDefaultFolderDashboardPanels())}
+        className="ml-auto rounded-md border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+      >
+        Reset
+      </button>
+    </div>
+
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      {folderDashboardPanels.map((panel, index) => renderFolderDashboardPanel(panel, index))}
+    </div>
+  </section>
 )}
 
 
@@ -2680,7 +7891,10 @@ const ColumnFilterButton = ({ col }) => {
 
   <button
     key={t}
-    onClick={() => setActiveTab(t)}
+    onClick={() => {
+      setActiveTab(t);
+      if (t === 'Hazard Analysis') setShowDiagram(false);
+    }}
     role="tab"
     aria-selected={activeTab === t}
     className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px ${
@@ -2696,17 +7910,6 @@ const ColumnFilterButton = ({ col }) => {
     </div>
   </div>
 </div>
-{isGeneratingDecomposition && (
-  <div className="fixed inset-0 flex items-center justify-center bg-white bg-opacity-80 z-50">
-    <div className="flex flex-col items-center space-y-4">
-      <div className="w-12 h-12 border-4 border-gray-500 border-t-transparent rounded-full animate-spin"></div>
-      <span className="text-lg text-gray-700 font-medium">
-        Generating functional architecture decomposition...
-      </span>
-    </div>
-  </div>
-)}
-
 {activeTab === 'Coverage Auditor' && (
   <section className="mt-4" role="tabpanel" aria-label="Coverage Auditor">
     {!activeProjectId ? (
@@ -2725,20 +7928,11 @@ const ColumnFilterButton = ({ col }) => {
     )}
   </section>
 )}
-                {isGeneratingDecomposition && (
-                  <div className="fixed inset-0 flex items-center justify-center bg-white bg-opacity-80 z-50">
-                    <div className="flex flex-col items-center space-y-4">
-                      <div className="w-12 h-12 border-4 border-gray-500 border-t-transparent rounded-full animate-spin"></div>
-                      <span className="text-lg text-gray-700 font-medium">Generating functional architecture decomposition...</span>
-                    </div>
-                  </div>
-                )}
-
 {activeTab === 'Functional Diagramming' && (
   <div className="text-center">
                   {showPromptWizard && (
                     <>
-                    
+
                     </>
                   )}
 
@@ -2750,12 +7944,14 @@ const ColumnFilterButton = ({ col }) => {
     <button
       className={`px-3 py-1.5 rounded-lg text-sm ${promptMode==='structured' ? 'bg-white shadow' : ''}`}
       onClick={() => setPromptMode('structured')}
+      disabled={isGeneratingDecomposition}
     >
       Structured
     </button>
     <button
       className={`px-3 py-1.5 rounded-lg text-sm ${promptMode==='conversational' ? 'bg-white shadow' : ''}`}
       onClick={() => setPromptMode('conversational')}
+      disabled={isGeneratingDecomposition}
     >
       Conversational
     </button>
@@ -2766,83 +7962,44 @@ const ColumnFilterButton = ({ col }) => {
                       {/* Wizard / Realtime */}
                       {promptMode === 'structured' ? (
                         <PromptWizard
-                          onSubmit={async (combinedPrompt) => {
-                            setIsGeneratingDecomposition(true);
-                            await handleLitePromptSubmit(
-                              combinedPrompt,
-                              (response) => {
-                                const jsonMatch = response.match(/```json\s*([\s\S]*?)```/i);
-                                const cleanJson = jsonMatch ? jsonMatch[1] : response;
-                                try {
-                                  const parsed = JSON.parse(cleanJson);
-                                  setResponseRows(Array.isArray(parsed) ? parsed : []);
-                                } catch (err) {
-                                  logger.error("Failed to parse response as JSON array", err);
-                                }
-                              },
-                              () => {},
-                              {}
-                            );
-                            setIsGeneratingDecomposition(false);
-                            setShowPromptWizard(false);
-                            setCleanOnceKey(`wizard-${Date.now()}`);
-                          }}
+                          onSubmit={handlePromptWizardSubmit}
                           onSkip={() => {
                             setResponseRows([
                               { fromFunction: 'Node 1', fromDetails: '...', controlAction: 'Control', controlDetails: '...', toFunction: 'Node 2', toDetails: '...' }
                             ]);
+                            setDiagramCategories(null);
                             setShowPromptWizard(false);
                             setCleanOnceKey(`wizard-${Date.now()}`);
                           }}
                         />
                       ) : (
                         <ConversationalWizard
-                          onSubmit={async (combinedPrompt) => {
-                            setIsGeneratingDecomposition(true);
-                            await handleLitePromptSubmit(
-                              combinedPrompt,
-                              (response) => {
-                                const jsonMatch = response.match(/```json\s*([\s\S]*?)```/i);
-                                const cleanJson = jsonMatch ? jsonMatch[1] : response;
-                                try {
-                                  const parsed = JSON.parse(cleanJson);
-                                  setResponseRows(Array.isArray(parsed) ? parsed : []);
-                                } catch (err) {
-                                  logger.error("Failed to parse response as JSON array", err);
-                                }
-                              },
-                              () => {},
-                              {}
-                            );
-                            setIsGeneratingDecomposition(false);
-                            setShowPromptWizard(false);
-                            setCleanOnceKey(`wizard-${Date.now()}`);
-                          }}
+                          onSubmit={handlePromptWizardSubmit}
                           onSkip={() => {
                             setResponseRows([
                               { fromFunction: 'Node 1', fromDetails: '...', controlAction: 'Control', controlDetails: '...', toFunction: 'Node 2', toDetails: '...' }
                             ]);
+                            setDiagramCategories(null);
                             setShowPromptWizard(false);
                             setCleanOnceKey(`wizard-${Date.now()}`);
                           }}
                         />
                       )}
-                      
+
                     </div>
                   )}
 
                   {responseRows.length > 0 && (
                     <>
-
-
-
                       <div className="mb-4 flex justify-center gap-3">
                         <div className="flex items-center space-x-2">
                           <label className="text-sm text-gray-700">Method:</label>
-<select className="text-sm border rounded px-2 py-1" value={riskMethod} onChange={(e) => setRiskMethod(e.target.value)}>
+                          <select className="text-sm border rounded px-2 py-1" value={riskMethod} onChange={(e) => setRiskMethod(e.target.value)}>
   <option value="STPA-Textbook">STPA</option>
   <option value="FMEA-Textbook">FMEA</option>
-  <option value="WhatIf-Textbook">What-If</option>
+  <option value="HARA">HARA</option>
+  <option value="FHA">FHA</option>
+  <option value="WhatIf-Textbook">What-if</option>
 </select>
                         </div>
 
@@ -2875,16 +8032,19 @@ const ColumnFilterButton = ({ col }) => {
                       <div className={`${showFunctionalDiagram ? '' : 'hidden'} mb-10 w-full space-y-6`}>
                         <div className="pt-6">
                           {/* relative/pb-10/overflow-visible prevents clipping of bottom-right controls */}
-                          <div className="relative pb-10 h-[560px] min-h-[560px] w-full rounded-2xl bg-white overflow-visible">
+                          <div className="relative h-[calc(100vh-285px)] min-h-[560px] w-full rounded-2xl bg-white overflow-visible">
                           <LiteSummaryDiagramReactFlow
   key={activeProjectId}
   ref={diagramRef}
   rows={responseRows}
+  autoCategories={diagramCategories}
   cleanOnceKey={cleanOnceKey}
   onCleanApplied={() => setCleanOnceKey(null)}   // ← clear after first use
   storageKey={`diagram:positions:${activeProjectId}`} // ← per-project persistence
   onUpdateRows={setResponseRows}
   onRequestCreateProject={handleCreateProjectFromSelection}   // ← ADD THIS
+  hazardSummary={analysisResult?.Summary}
+  onOpenHazardRow={handleOpenHazardSummaryRow}
 />
 
 
@@ -2893,28 +8053,188 @@ const ColumnFilterButton = ({ col }) => {
                       </div>
 
                       {/* Table */}
-                      <div className={`${showFunctionalDiagram ? 'hidden' : ''} mb-10 w-full overflow-auto max-h-[500px]`}>
-                        <table className="min-w-full border-collapse text-sm text-left shadow-sm rounded-md overflow-hidden">
-                          <thead className="sticky top-0 bg-white z-10 shadow">
+                      <div className={`${showFunctionalDiagram ? 'hidden' : ''} relative mb-10 h-[calc(100vh-260px)] min-h-[420px] w-full overflow-auto rounded-md shadow-sm`}>
+                        <table className="min-w-full border-separate border-spacing-0 text-sm text-left">
+                          <thead>
                             <tr className="text-[#4B5563] text-sm font-medium">
-                              {["Function (From)","Function (From) Details","Control Action","Control Action Details","Function (To)","Function (To) Details","Remove"].map((header) => (
-                                <th key={header} className="px-6 py-4 border-b border-gray-200 bg-white whitespace-nowrap">{header}</th>
+                              {functionalReviewItems.length > 0 && (
+                                <th className="sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap">
+                                  Review
+                                </th>
+                              )}
+                              {functionalTableColumns.map((column) => (
+                                <th key={column.key} className="sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap">
+                                  <div ref={(el) => (functionalDropdownRefs.current[column.key] = el)} className="relative">
+                                    <button
+                                      type="button"
+                                      onClick={() => setFunctionalFilterColumn((prev) => (prev === column.key ? null : column.key))}
+                                      className={`w-full min-w-44 rounded-md border px-3 py-2 text-left transition flex items-center justify-between gap-3 ${
+                                        functionalFilterColumn === column.key || (functionalColumnFilters[column.key] || []).length
+                                          ? 'border-[#2D7DFE] bg-[#EEF4FF] text-[#0B3EA8]'
+                                          : 'border-gray-200 bg-white text-[#4B5563] hover:border-gray-300'
+                                      }`}
+                                      title={`Filter ${column.label}`}
+                                    >
+                                      <span className="min-w-0 flex-1 truncate">{column.label}</span>
+                                      <span className="shrink-0 inline-flex items-center gap-2">
+                                        {(functionalColumnFilters[column.key] || []).length > 0 && (
+                                          <span className="rounded-full bg-[#2D7DFE] px-2 py-0.5 text-[11px] font-semibold text-white">
+                                            {(functionalColumnFilters[column.key] || []).length}
+                                          </span>
+                                        )}
+                                        <svg
+                                          width="14"
+                                          height="14"
+                                          viewBox="0 0 20 20"
+                                          fill="currentColor"
+                                          className={`${functionalFilterColumn === column.key ? 'rotate-180' : ''} transition-transform`}
+                                          aria-hidden="true"
+                                        >
+                                          <path d="M5.5 7.5 10 12l4.5-4.5h-9Z" />
+                                        </svg>
+                                      </span>
+                                    </button>
+                                    {functionalFilterColumn === column.key && (
+                                      <div className="absolute left-0 mt-2 w-80 bg-white border border-gray-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                                        <div className="p-3 border-b sticky top-0 bg-white z-10 space-y-2">
+                                          <div className="flex items-center justify-between gap-2">
+                                            <div className="text-xs font-semibold text-gray-700 truncate">{column.label}</div>
+                                            {(functionalColumnFilters[column.key] || []).length > 0 && (
+                                              <button
+                                                type="button"
+                                                onClick={() => setFunctionalFilterValues(column.key, [])}
+                                                className="text-[11px] text-[#2D7DFE] hover:underline"
+                                              >
+                                                Clear
+                                              </button>
+                                            )}
+                                          </div>
+                                          <input
+                                            type="text"
+                                            placeholder={`Search ${column.label}...`}
+                                            value={functionalColumnSearches[column.key] || ''}
+                                            onChange={(e) =>
+                                              setFunctionalColumnSearches({ ...functionalColumnSearches, [column.key]: e.target.value })
+                                            }
+                                            className="w-full px-3 py-2 text-xs border rounded-md"
+                                          />
+                                          <div className="flex items-center gap-2">
+                                            <button
+                                              type="button"
+                                              onClick={() => setFunctionalFilterValues(column.key, getUniqueFunctionalColumnValues(column.key, functionalColumnSearches[column.key] || ''))}
+                                              className="px-2 py-1 text-[11px] border rounded-md bg-[#F8FAFC] hover:bg-[#EEF2F7]"
+                                            >
+                                              Select Visible
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => setFunctionalFilterValues(column.key, [])}
+                                              className="px-2 py-1 text-[11px] border rounded-md bg-[#F8FAFC] hover:bg-[#EEF2F7]"
+                                            >
+                                              Clear All
+                                            </button>
+                                          </div>
+                                        </div>
+                                        <div className="max-h-72 overflow-y-auto p-2">
+                                          {getUniqueFunctionalColumnValues(column.key, functionalColumnSearches[column.key] || '').length === 0 ? (
+                                            <div className="px-2 py-3 text-xs text-gray-500">No matching values</div>
+                                          ) : getUniqueFunctionalColumnValues(column.key, functionalColumnSearches[column.key] || '').map((val) => (
+                                            <label
+                                              key={val}
+                                              className="flex items-start gap-2 px-2 py-2 rounded-md text-xs text-gray-700 hover:bg-[#F8FAFC]"
+                                            >
+                                              <input
+                                                type="checkbox"
+                                                checked={(functionalColumnFilters[column.key] || []).includes(val)}
+                                                onChange={() => toggleFunctionalFilterValue(column.key, val)}
+                                                className="mt-0.5"
+                                              />
+                                              <span className="break-words">{val}</span>
+                                            </label>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                </th>
                               ))}
+                              <th className="sticky top-0 z-30 px-6 py-4 border-b border-gray-200 bg-white whitespace-nowrap">
+                                Remove
+                              </th>
                             </tr>
+                            {activeFunctionalFilterCount > 0 && (
+                              <tr>
+                                <th colSpan={functionalTableColumns.length + 1 + (functionalReviewItems.length > 0 ? 1 : 0)} className="sticky top-[64px] z-20 bg-[#F8FAFC] border-b border-gray-200 px-4 py-2 text-left">
+                                  <div className="flex items-center justify-between gap-3 text-xs text-gray-600">
+                                    <span>
+                                      Showing {filteredFunctionalRows.length} of {responseRows.length} rows with {activeFunctionalFilterCount} selected filter{activeFunctionalFilterCount === 1 ? '' : 's'}.
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={clearAllFunctionalFilters}
+                                      className="rounded border border-gray-200 bg-white px-2 py-1 text-[#2D7DFE] hover:bg-blue-50"
+                                    >
+                                      Clear filters
+                                    </button>
+                                  </div>
+                                </th>
+                              </tr>
+                            )}
                           </thead>
                           <tbody className="text-[#374151] text-sm">
-                            {responseRows.map((row, idx) => (
-                              <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]"}>
-                                {['fromFunction','fromDetails','controlAction','controlDetails','toFunction','toDetails'].map((field) => (
-                                  <td key={field} className="px-6 py-4 align-top whitespace-pre-wrap border-b border-gray-100">
-                                    <textarea className="w-full resize-none bg-transparent focus:outline-none text-sm" value={row[field]} onChange={(e) => handleRowChange(idx, field, e.target.value)} style={{ minHeight: '40px' }} />
+                            {filteredFunctionalRows.map(({ row, originalIndex }, idx) => {
+                              const reviewItem = functionalReviewByRow.get(originalIndex);
+                              const rejected = reviewItem?.status === REVIEW_STATUSES.REJECTED;
+                              const highlighted = highlightedFunctionalRowIndex === originalIndex;
+                              return (
+                                <tr
+                                  key={originalIndex}
+                                  ref={(el) => {
+                                    if (el) functionalRowRefs.current[originalIndex] = el;
+                                    else delete functionalRowRefs.current[originalIndex];
+                                  }}
+                                  className={`transition-colors ${
+                                    highlighted
+                                      ? 'bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset'
+                                      : rejected
+                                        ? 'bg-rose-50/60'
+                                        : idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]"
+                                  }`}
+                                >
+                                  {functionalReviewItems.length > 0 && (
+                                    <td className="px-6 py-4 align-top border-b border-gray-100">
+                                      <ReviewStatusBadge
+                                        reviewItem={reviewItem}
+                                        openOptions={{
+                                          ...functionalReviewDrawerOptions,
+                                          reviewItemIds: functionalReviewItems.map((item) => item.id),
+                                        }}
+                                      />
+                                    </td>
+                                  )}
+                                  {functionalTableColumns.map(({ key: field }) => (
+                                    <td key={field} className={`px-6 py-4 align-top whitespace-pre-wrap border-b border-gray-100 ${rejected ? 'text-rose-900' : ''}`}>
+                                      <textarea
+                                        className={`w-full resize-none bg-transparent focus:outline-none text-sm ${rejected ? 'line-through decoration-rose-400' : ''}`}
+                                        value={row[field]}
+                                        onChange={(e) => handleRowChange(originalIndex, field, e.target.value)}
+                                        style={{ minHeight: '40px' }}
+                                      />
+                                    </td>
+                                  ))}
+                                  <td className="px-6 py-4 text-center text-red-500 font-bold cursor-pointer align-middle border-b border-gray-100">
+                                    <button onClick={() => handleRemoveRow(originalIndex)}>×</button>
                                   </td>
-                                ))}
-                                <td className="px-6 py-4 text-center text-red-500 font-bold cursor-pointer align-middle border-b border-gray-100">
-                                  <button onClick={() => handleRemoveRow(idx)}>×</button>
+                                </tr>
+                              );
+                            })}
+                            {filteredFunctionalRows.length === 0 && (
+                              <tr>
+                                <td colSpan={functionalTableColumns.length + 1 + (functionalReviewItems.length > 0 ? 1 : 0)} className="px-6 py-8 text-center text-sm text-gray-500">
+                                  No rows match the current filters.
                                 </td>
                               </tr>
-                            ))}
+                            )}
                           </tbody>
                         </table>
                         <div className="mt-4 text-right">
@@ -2954,42 +8274,106 @@ const ColumnFilterButton = ({ col }) => {
   </div>
 </div>
 ) : (
-          <div className="overflow-auto max-h-[600px]">
-            <table className="table-fixed w-full border-collapse text-sm text-left">
-              <thead className="sticky top-0 bg-white z-10 shadow-sm">
-                <tr>
+          <div className="relative mb-10 h-[calc(100vh-235px)] min-h-[420px] w-full overflow-auto rounded-md shadow-sm">
+            <table className="min-w-full border-separate border-spacing-0 text-sm text-left">
+              <thead>
+                <tr className="text-[#4B5563] text-sm font-medium">
+                  {hazardSummaryReviewItems.length > 0 && (
+                    <th className="sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap">
+                      Review
+                    </th>
+                  )}
                   {analysisResult["Summary"][0].map((header, idx) => (
-                    <th key={idx} className="px-6 py-4 border-b font-semibold text-gray-700 text-left">
+                    <th
+                      key={idx}
+                      className="sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap"
+                    >
                       <div ref={(el) => (dropdownRefs.current[idx] = el)} className="relative">
                         <button
+                          type="button"
                           onClick={() => setFilterColumnIndex((prev) => (prev === idx ? null : idx))}
-                          className="text-sm w-full text-left"
+                          className={`w-full min-w-44 rounded-md border px-3 py-2 text-left transition flex items-center justify-between gap-3 ${
+                            filterColumnIndex === idx || (columnFilters[idx] || []).length
+                              ? 'border-[#2D7DFE] bg-[#EEF4FF] text-[#0B3EA8]'
+                              : 'border-gray-200 bg-white text-[#4B5563] hover:border-gray-300'
+                          }`}
+                          title={`Filter ${header}`}
                         >
-                          {header}
+                          <span className="min-w-0 flex-1 truncate">{header}</span>
+                          <span className="shrink-0 inline-flex items-center gap-2">
+                            {(columnFilters[idx] || []).length > 0 && (
+                              <span className="rounded-full bg-[#2D7DFE] px-2 py-0.5 text-[11px] font-semibold text-white">
+                                {(columnFilters[idx] || []).length}
+                              </span>
+                            )}
+                            <svg
+                              width="14"
+                              height="14"
+                              viewBox="0 0 20 20"
+                              fill="currentColor"
+                              className={`${filterColumnIndex === idx ? 'rotate-180' : ''} transition-transform`}
+                              aria-hidden="true"
+                            >
+                              <path d="M5.5 7.5 10 12l4.5-4.5h-9Z" />
+                            </svg>
+                          </span>
                         </button>
                         {filterColumnIndex === idx && (
-                          <div className="absolute left-0 mt-2 w-48 bg-white border rounded shadow-md z-20">
-                            <div className="p-2 border-b sticky top-0 bg-white z-10">
+                          <div className="absolute left-0 mt-2 w-72 bg-white border border-gray-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                            <div className="p-3 border-b sticky top-0 bg-white z-10 space-y-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="text-xs font-semibold text-gray-700 truncate">{header}</div>
+                                {(columnFilters[idx] || []).length > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setColumnFilterValues(idx, [])}
+                                    className="text-[11px] text-[#2D7DFE] hover:underline"
+                                  >
+                                    Clear
+                                  </button>
+                                )}
+                              </div>
                               <input
                                 type="text"
-                                placeholder="Search..."
+                                placeholder={`Search ${header}...`}
                                 value={columnSearches[idx] || ''}
                                 onChange={(e) =>
                                   setColumnSearches({ ...columnSearches, [idx]: e.target.value })
                                 }
-                                className="w-full px-2 py-1 text-xs border rounded"
+                                className="w-full px-3 py-2 text-xs border rounded-md"
                               />
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setColumnFilterValues(idx, getUniqueColumnValues(idx, columnSearches[idx] || ''))}
+                                  className="px-2 py-1 text-[11px] border rounded-md bg-[#F8FAFC] hover:bg-[#EEF2F7]"
+                                >
+                                  Select Visible
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setColumnFilterValues(idx, [])}
+                                  className="px-2 py-1 text-[11px] border rounded-md bg-[#F8FAFC] hover:bg-[#EEF2F7]"
+                                >
+                                  Clear All
+                                </button>
+                              </div>
                             </div>
-                            <div className="max-h-48 overflow-y-auto p-2">
-                              {getUniqueColumnValues(idx, columnSearches[idx] || '').map((val) => (
-                                <label key={val} className="block text-xs text-gray-700">
+                            <div className="max-h-72 overflow-y-auto p-2">
+                              {getUniqueColumnValues(idx, columnSearches[idx] || '').length === 0 ? (
+                                <div className="px-2 py-3 text-xs text-gray-500">No matching values</div>
+                              ) : getUniqueColumnValues(idx, columnSearches[idx] || '').map((val) => (
+                                <label
+                                  key={val}
+                                  className="flex items-start gap-2 px-2 py-2 rounded-md text-xs text-gray-700 hover:bg-[#F8FAFC]"
+                                >
                                   <input
                                     type="checkbox"
                                     checked={(columnFilters[idx] || []).includes(val)}
                                     onChange={() => toggleFilterValue(idx, val)}
-                                    className="mr-2"
+                                    className="mt-0.5"
                                   />
-                                  {val}
+                                  <span className="break-words">{val}</span>
                                 </label>
                               ))}
                             </div>
@@ -2999,15 +8383,72 @@ const ColumnFilterButton = ({ col }) => {
                     </th>
                   ))}
                 </tr>
-              </thead>
-              <tbody>
-                {applyFilters(analysisResult["Summary"].slice(1)).map((row, rowIdx) => (
-                  <tr key={rowIdx} className="hover:bg-gray-50">
-                    {row.map((cell, colIdx) => (
-                      <td key={colIdx} className="px-6 py-4 border-b text-gray-800 break-words">{cell}</td>
-                    ))}
+                {activeHazardFilterCount > 0 && (
+                  <tr>
+                    <th colSpan={analysisResult["Summary"][0].length + (hazardSummaryReviewItems.length > 0 ? 1 : 0)} className="sticky top-[64px] z-20 bg-[#F8FAFC] border-b border-gray-200 px-4 py-2 text-left">
+                      <div className="flex items-center justify-between gap-3 text-xs text-gray-600">
+                        <span>
+                          Showing {filteredHazardSummaryRows.length} of {analysisResult["Summary"].length - 1} rows with {activeHazardFilterCount} selected filter{activeHazardFilterCount === 1 ? '' : 's'}.
+                        </span>
+                        <button
+                          type="button"
+                          onClick={clearAllHazardFilters}
+                          className="rounded border border-gray-200 bg-white px-2 py-1 text-[#2D7DFE] hover:bg-blue-50"
+                        >
+                          Clear filters
+                        </button>
+                      </div>
+                    </th>
                   </tr>
-                ))}
+                )}
+              </thead>
+              <tbody className="text-[#374151] text-sm">
+                {filteredHazardSummaryRows
+                  .map(({ row, originalIndex }, idx) => {
+                    const reviewItem = hazardSummaryReviewByRow.get(originalIndex);
+                    const rejected = reviewItem?.status === REVIEW_STATUSES.REJECTED;
+                    const highlighted = highlightedHazardRowIndex === originalIndex;
+                    return (
+                      <tr
+                        key={originalIndex}
+                        ref={(el) => {
+                          if (el) hazardRowRefs.current[originalIndex] = el;
+                          else delete hazardRowRefs.current[originalIndex];
+                        }}
+                        className={`transition-colors ${
+                          highlighted
+                            ? 'bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset'
+                            : rejected
+                              ? 'bg-rose-50/60'
+                              : idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]"
+                        }`}
+                      >
+                        {hazardSummaryReviewItems.length > 0 && (
+                          <td className="px-6 py-4 align-top border-b border-gray-100">
+                            <ReviewStatusBadge
+                              reviewItem={reviewItem}
+                              openOptions={{
+                                ...hazardReviewDrawerOptions,
+                                reviewItemIds: hazardSummaryReviewItems.map((item) => item.id),
+                              }}
+                            />
+                          </td>
+                        )}
+                        {row.map((cell, colIdx) => (
+                          <td key={colIdx} className={`px-6 py-4 align-top whitespace-pre-wrap border-b border-gray-100 ${rejected ? 'text-rose-900 line-through decoration-rose-400' : ''}`}>
+                            {cell}
+                          </td>
+                        ))}
+                      </tr>
+                    );
+                  })}
+                {filteredHazardSummaryRows.length === 0 && (
+                  <tr>
+                    <td colSpan={analysisResult["Summary"][0].length + (hazardSummaryReviewItems.length > 0 ? 1 : 0)} className="px-6 py-8 text-center text-sm text-gray-500">
+                      No rows match the current filters.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -3417,9 +8858,9 @@ const ColumnFilterButton = ({ col }) => {
     <button
       disabled
       className="px-3 py-2 rounded bg-gray-200 text-gray-500"
-      title="Activate a Pro license to enable AI report generation"
+      title="AI report generation is unavailable"
     >
-      Generate AI Report (Pro)
+      Generate AI Report
     </button>
   }
 >
@@ -3518,7 +8959,7 @@ const ColumnFilterButton = ({ col }) => {
       <div className="flex flex-col flex-1 min-h-0 overflow-auto bg-white py-0 px-3 md:px-5 lg:px-7 w-full">
         <div className="mb-6">
           <h1 className="text-2xl font-semibold">Project Manager</h1>
-          <p className="text-gray-500 text-sm">Loading license…</p>
+          <p className="text-gray-500 text-sm">Loading local workspace…</p>
         </div>
         <div className="rounded-xl border bg-white p-6 text-gray-600 text-sm animate-pulse">
           Checking your access…
@@ -3530,11 +8971,11 @@ const ColumnFilterButton = ({ col }) => {
         <div className="mb-6">
           <h1 className="text-2xl font-semibold">Project Manager</h1>
           <p className="text-gray-500 text-sm">
-            Upgrade to Pro to unlock project-wide monitoring & triage.
+            Project-wide monitoring and triage are available in the local workspace.
           </p>
         </div>
         <div className="rounded-2xl border bg-white p-6 text-gray-700 text-sm">
-          This feature is available on the <span className="font-medium">Pro</span> plan.
+          This feature is enabled for local open-source use.
         </div>
       </div>
     }
@@ -3548,7 +8989,7 @@ const ColumnFilterButton = ({ col }) => {
       </div>
 
       {(() => {
-        // ------- helpers -------        
+        // ------- helpers -------
         const rpnOf = (r) => (Number(r?.likelihood) || 0) * (Number(r?.severity) || 0);
         const daysUntil = (dateStr) => {
           if (!dateStr) return Infinity;
@@ -3577,7 +9018,7 @@ const ColumnFilterButton = ({ col }) => {
           likelihood: Number(r?.likelihood) || 0,
           severity: Number(r?.severity) || 0,
         });
-        
+
         // ---- build multi-project risk view from storage (no map over unknowns) ----
         const pmProjectMap = readProjectMap() || {};
         const allRisks = (projects || []).reduce((acc, p) => {
@@ -3998,7 +9439,7 @@ const updateRiskInProject = (projectId, predicate) => {
         <div className="mb-6 flex items-center justify-between">
           <div>
             <h1 className="mt-0 text-2xl font-semibold">Risk Register</h1>
-            <p className="text-gray-500 text-sm">Loading license…</p>
+            <p className="text-gray-500 text-sm">Loading local workspace…</p>
           </div>
         </div>
         <div className="rounded-xl border bg-white p-6 text-gray-600 text-sm animate-pulse">
@@ -4011,11 +9452,11 @@ const updateRiskInProject = (projectId, predicate) => {
         <div className="mb-6">
           <h1 className="mt-0 text-2xl font-semibold">Risk Register</h1>
           <p className="text-gray-500 text-sm">
-            Upgrade to Pro to unlock aggregated risk management across all projects.
+            Aggregated risk management is available in the local workspace.
           </p>
         </div>
         <div className="rounded-xl border bg-white p-6 text-gray-700 text-sm">
-          This feature is available on the <span className="font-medium">Pro</span> plan.
+          This feature is enabled for local open-source use.
         </div>
       </div>
     }
@@ -4444,8 +9885,8 @@ const updateRiskInProject = (projectId, predicate) => {
     loadingFallback={
       <div className="flex flex-col flex-1 min-h-0 overflow-auto bg-white py-0 px-3 md:px-5 lg:px-7 w-full">
         <div className="mb-6">
-          <h1 className="text-2xl font-semibold">Requirements Management</h1>
-          <p className="text-gray-500 text-sm">Loading license…</p>
+          <h1 className="text-2xl font-semibold">Design Management</h1>
+          <p className="text-gray-500 text-sm">Loading local workspace…</p>
         </div>
         <div className="rounded-xl border bg-white p-6 text-gray-600 text-sm animate-pulse">
           Checking your access…
@@ -4455,61 +9896,38 @@ const updateRiskInProject = (projectId, predicate) => {
     fallback={
       <div className="flex flex-col flex-1 min-h-0 overflow-auto bg-white py-1 px-3 md:px-5 lg:px-7 w-full">
         <div className="mb-6">
-          <h1 className="text-2xl font-semibold">Requirements Management</h1>
+          <h1 className="text-2xl font-semibold">Design Management</h1>
           <p className="text-gray-500 text-sm">
-            Upgrade to Pro to unlock object-oriented modules, custom attributes, and bi-directional links.
+            Object-oriented design artifacts, custom attributes, and bi-directional links are available locally.
           </p>
         </div>
         <div className="rounded-xl border bg-white p-6 text-gray-700 text-sm">
-          This feature is available on the <span className="font-medium">Pro</span> plan.
+          This feature is enabled for local open-source use.
         </div>
       </div>
     }
   >
-    <div className="flex flex-col flex-1 min-h-0 overflow-auto bg-white py-0 px-3 md:px-5 lg:px-7 w-full">
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold">Requirements Management</h1>
-        <p className="text-gray-500 text-sm">
-          Object-oriented modules, custom attributes, and bi-directional links.
-        </p>
-      </div>
-
-      {!activeProjectId ? (
-        <div className="rounded-xl border bg-white p-6 text-gray-600 text-sm">
-          Select a project in the sidebar to manage requirements.
-        </div>
-      ) : (
-<RequirementsManager
-  key={activeProjectId}
-  projectName={projects.find((p) => p.id === activeProjectId)?.name || "Current Project"}
-  requirements={requirements}
-  setRequirements={setRequirements}
-/>
-
-      )}
-    </div>
+    <DesignManagementView
+      requirements={requirements}
+      setRequirements={setRequirements}
+      onApplyWorkflowArtifacts={applyWorkflowArtifacts}
+    />
   </Gate>
 )}
 
 {section === 'vnv' && (
-  <div className="flex-1 min-h-0 overflow-auto bg-white py-1 px-3 md:px-5 lg:px-7 w-full">
-    {!activeProjectId ? (
-      <div className="rounded-xl border bg-white p-6 text-gray-600 text-sm">
-        Select a project to use V&V.
-      </div>
-    ) : (
-<VnVCenterPro
-  activeProject={activeProject}
-  activeProjectId={activeProjectId}
-  analysisResult={analysisResult}
-  riskRegister={riskRegister}
-  requirements={requirements}
-  vnvArtifacts={vnvArtifacts}
-  setVnvArtifacts={setVnvArtifacts}
-  saveProjectPatch={saveProjectPatch}
-  projects={projects}
-/>
-    )}
+  <div className="flex-1 min-h-0 overflow-hidden bg-white p-1 w-full">
+    <VnVCenterPro
+      activeProject={activeProject}
+      activeProjectId={activeProjectId}
+      analysisResult={analysisResult}
+      riskRegister={riskRegister}
+      requirements={requirements}
+      vnvArtifacts={vnvArtifacts}
+      setVnvArtifacts={setVnvArtifacts}
+      saveProjectPatch={saveProjectPatch}
+      projects={projects}
+    />
   </div>
 )}
 
@@ -4524,6 +9942,7 @@ const updateRiskInProject = (projectId, predicate) => {
     setRepoConnected(true);      // ✅ switch to "Baseline Repo"
   }}
   onBaselineRepo={handleBaselineRepo} // ✅ runs the same analyzer as "Analyze"
+  onAIProviderSaved={refreshGate}
  />
 )}
 
@@ -4789,6 +10208,282 @@ const updateRiskInProject = (projectId, predicate) => {
   </div>
 )}
 
+{inviteForProjectId && (
+  <InviteCollaboratorsModal
+    projectName={projects.find(p => p.id === inviteForProjectId)?.name || "Project"}
+    onClose={() => setInviteForProjectId(null)}
+    onSubmit={async ({ emails, role }) => {
+      const projectId = inviteForProjectId;
+      const origin = window.location.origin;
+
+      const linkFromToken = (token) =>
+        `${origin}/local-invite/${encodeURIComponent(token)}`;
+
+      async function createInvite(email) {
+        const token = makeId();
+        try {
+          const key = "xhandle.localInvites";
+          const invites = JSON.parse(localStorage.getItem(key) || "[]");
+          invites.push({ token, projectId, email, role, createdAt: new Date().toISOString() });
+          localStorage.setItem(key, JSON.stringify(invites));
+        } catch {}
+        return token;
+      }
+
+      const results = [];
+      for (const email of emails) {
+        const token = await createInvite(email);
+        results.push({ email, link: linkFromToken(token) });
+      }
+
+      const lines = results.map((r) => `${r.email}: ${r.link}`);
+      try {
+        await navigator.clipboard.writeText(lines.join("\n"));
+        alert(`Invite link(s) copied to your clipboard:\n\n${lines.join("\n")}`);
+      } catch {
+        alert(`Invite link(s):\n\n${lines.join("\n")}`);
+      }
+    }}
+  />
+)}
+
+        {showNewCodeArchitectureProject && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/40" onClick={() => {
+              setShowNewCodeArchitectureProject(false);
+              setNewCodeArchitectureProjectName('');
+              setNewCodeArchitectureTargetFolderId(null);
+              setNewCodeArchitectureError('');
+            }} />
+            <div className="relative z-[101] w-full max-w-md rounded-2xl border-2 border-[#2D7DFE] bg-white shadow-xl">
+              <div className="px-5 py-4 border-b">
+                <h2 className="text-base font-semibold text-slate-800">Create Code-Based Architecture project</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {newCodeArchitectureTargetFolderId
+                    ? `Inside ${codeArchitectureFolders.find((folder) => folder.id === newCodeArchitectureTargetFolderId)?.name || 'selected folder'}`
+                    : 'Create a repo-backed architecture analysis workspace.'}
+                </p>
+              </div>
+              <div className="px-5 py-4">
+                <label className="block text-sm font-medium mb-1">Project name</label>
+                <input
+                  autoFocus
+                  className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring"
+                  value={newCodeArchitectureProjectName}
+                  onChange={(e) => {
+                    setNewCodeArchitectureProjectName(e.target.value);
+                    if (newCodeArchitectureError) setNewCodeArchitectureError('');
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') createCodeArchitectureProject();
+                    if (e.key === 'Escape') {
+                      setShowNewCodeArchitectureProject(false);
+                      setNewCodeArchitectureProjectName('');
+                      setNewCodeArchitectureTargetFolderId(null);
+                      setNewCodeArchitectureError('');
+                    }
+                  }}
+                  placeholder="e.g., Interlock System"
+                />
+                {newCodeArchitectureError && <div className="text-xs text-red-600 mt-1">{newCodeArchitectureError}</div>}
+              </div>
+              <div className="px-5 py-4 border-t flex items-center justify-end gap-2">
+                <button onClick={() => {
+                  setShowNewCodeArchitectureProject(false);
+                  setNewCodeArchitectureProjectName('');
+                  setNewCodeArchitectureTargetFolderId(null);
+                  setNewCodeArchitectureError('');
+                }} className="px-3 py-2 rounded border text-sm hover:bg-gray-50">
+                  Cancel
+                </button>
+                <button onClick={createCodeArchitectureProject} className="px-3 py-2 rounded text-sm bg-[#2D7DFE] text-white hover:bg-[#1E61D6]">
+                  Create
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showNewCodeArchitectureFolder && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/40" onClick={() => {
+              setShowNewCodeArchitectureFolder(false);
+              setNewCodeArchitectureFolderName('');
+              setNewCodeArchitectureFolderParentId(null);
+              setNewCodeArchitectureFolderError('');
+            }} />
+            <div className="relative z-[101] w-full max-w-md rounded-2xl border-2 border-[#2D7DFE] bg-white shadow-xl">
+              <div className="px-5 py-4 border-b">
+                <h2 className="text-base font-semibold text-slate-800">Create Code-Based Architecture folder</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {newCodeArchitectureFolderParentId
+                    ? `Inside ${codeArchitectureFolders.find((folder) => folder.id === newCodeArchitectureFolderParentId)?.name || 'selected folder'}`
+                    : 'Organize repo architecture projects in the sidebar.'}
+                </p>
+              </div>
+              <div className="px-5 py-4">
+                <label className="block text-sm font-medium mb-1">Folder name</label>
+                <input
+                  autoFocus
+                  className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring"
+                  value={newCodeArchitectureFolderName}
+                  onChange={(e) => {
+                    setNewCodeArchitectureFolderName(e.target.value);
+                    if (newCodeArchitectureFolderError) setNewCodeArchitectureFolderError('');
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') createCodeArchitectureFolder();
+                    if (e.key === 'Escape') {
+                      setShowNewCodeArchitectureFolder(false);
+                      setNewCodeArchitectureFolderName('');
+                      setNewCodeArchitectureFolderParentId(null);
+                      setNewCodeArchitectureFolderError('');
+                    }
+                  }}
+                  placeholder="e.g., Vehicle software"
+                />
+                {newCodeArchitectureFolderError && <div className="text-xs text-red-600 mt-1">{newCodeArchitectureFolderError}</div>}
+              </div>
+              <div className="px-5 py-4 border-t flex items-center justify-end gap-2">
+                <button onClick={() => {
+                  setShowNewCodeArchitectureFolder(false);
+                  setNewCodeArchitectureFolderName('');
+                  setNewCodeArchitectureFolderParentId(null);
+                  setNewCodeArchitectureFolderError('');
+                }} className="px-3 py-2 rounded border text-sm hover:bg-gray-50">
+                  Cancel
+                </button>
+                <button onClick={createCodeArchitectureFolder} className="px-3 py-2 rounded text-sm bg-[#2D7DFE] text-white hover:bg-[#1E61D6]">
+                  Create
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showCodeArchitectureRepoConfig && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/40" onClick={() => setShowCodeArchitectureRepoConfig(false)} />
+            <div className="relative z-[121] w-full max-w-2xl rounded-2xl border bg-white shadow-xl">
+              <div className="px-5 py-4 border-b flex items-center justify-between">
+                <div>
+                  <h2 className="text-base font-semibold text-slate-800">GitHub repo configuration</h2>
+                  <p className="text-xs text-slate-500 mt-0.5">Connect, verify, and analyze a repository for this Code-Based Architecture project.</p>
+                </div>
+                <button className="rounded px-2 py-1 text-xs text-gray-600 hover:bg-gray-100" onClick={() => setShowCodeArchitectureRepoConfig(false)}>✕</button>
+              </div>
+              <div className="px-5 py-4 space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Repository URL</label>
+                  <input
+                    className="w-full border rounded px-3 py-2 text-sm"
+                    value={codeArchitectureRepoDraft.repoUrl}
+                    onChange={(e) => {
+                      const repoUrl = e.target.value;
+                      const parsed = parseGitHubRepoUrl(repoUrl);
+                      setCodeArchitectureRepoDraft((draft) => ({
+                        ...draft,
+                        repoUrl,
+                        owner: parsed?.owner || draft.owner,
+                        repo: parsed?.repo || draft.repo,
+                      }));
+                    }}
+                    onPaste={(e) => {
+                      const pasted = e.clipboardData?.getData("text") || "";
+                      const parsed = parseGitHubRepoUrl(pasted);
+                      if (!parsed) return;
+                      e.preventDefault();
+                      setCodeArchitectureRepoDraft((draft) => ({
+                        ...draft,
+                        repoUrl: parsed.repoUrl,
+                        owner: parsed.owner,
+                        repo: parsed.repo,
+                      }));
+                    }}
+                    placeholder="https://github.com/github-org/repo-name"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">Paste a GitHub URL, or enter owner and repository manually below.</p>
+                </div>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Owner</label>
+                    <input className="w-full border rounded px-3 py-2 text-sm" value={codeArchitectureRepoDraft.owner} onChange={(e) => setCodeArchitectureRepoDraft((draft) => ({ ...draft, owner: e.target.value }))} placeholder="github-org" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Repository</label>
+                    <input className="w-full border rounded px-3 py-2 text-sm" value={codeArchitectureRepoDraft.repo} onChange={(e) => setCodeArchitectureRepoDraft((draft) => ({ ...draft, repo: e.target.value }))} placeholder="repo-name" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">GitHub token</label>
+                  <input type="password" className="w-full border rounded px-3 py-2 text-sm" value={codeArchitectureRepoDraft.token} onChange={(e) => setCodeArchitectureRepoDraft((draft) => ({ ...draft, token: e.target.value }))} placeholder="Optional for public repos" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Analysis context</label>
+                  <textarea className="min-h-24 w-full border rounded px-3 py-2 text-sm" value={codeArchitectureRepoDraft.analysisContextText} onChange={(e) => setCodeArchitectureRepoDraft((draft) => ({ ...draft, analysisContextText: e.target.value }))} placeholder="Optional context about the product, repo boundaries, terminology, or safety focus." />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Context files</label>
+                  <input
+                    type="file"
+                    multiple
+                    className="w-full rounded border px-3 py-2 text-sm"
+                    onChange={async (event) => {
+                      const files = Array.from(event.target.files || []);
+                      const loaded = await Promise.all(files.map((file) => new Promise((resolve) => {
+                        const reader = new FileReader();
+                        reader.onload = () => resolve({
+                          name: file.name,
+                          content: String(reader.result || "").slice(0, 60000),
+                        });
+                        reader.onerror = () => resolve(null);
+                        reader.readAsText(file);
+                      })));
+                      setCodeArchitectureRepoDraft((draft) => ({
+                        ...draft,
+                        analysisContextFiles: loaded.filter(Boolean),
+                      }));
+                    }}
+                  />
+                  {codeArchitectureRepoDraft.analysisContextFiles.length > 0 && (
+                    <div className="mt-1 text-xs text-gray-500">
+                      {codeArchitectureRepoDraft.analysisContextFiles.length} context file{codeArchitectureRepoDraft.analysisContextFiles.length === 1 ? "" : "s"} attached.
+                    </div>
+                  )}
+                </div>
+                {codeArchitectureRepoConfigMessage && (
+                  <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">{codeArchitectureRepoConfigMessage}</div>
+                )}
+              </div>
+              <div className="px-5 py-4 border-t flex flex-wrap items-center justify-end gap-2">
+                <button onClick={() => setShowCodeArchitectureRepoConfig(false)} className="px-3 py-2 rounded border text-sm hover:bg-gray-50">Cancel</button>
+                <button onClick={() => saveCodeArchitectureRepoConfig({ analyze: false })} disabled={isCodeArchitectureRepoVerifying || isCodeArchitectureRepoAnalyzing} className="px-3 py-2 rounded border text-sm hover:bg-gray-50 disabled:opacity-60">
+                  {isCodeArchitectureRepoVerifying ? "Verifying..." : "Verify & save"}
+                </button>
+                <button onClick={() => saveCodeArchitectureRepoConfig({ analyze: true })} disabled={isCodeArchitectureRepoVerifying || isCodeArchitectureRepoAnalyzing} className="px-3 py-2 rounded text-sm bg-[#2D7DFE] text-white hover:bg-[#1E61D6] disabled:opacity-60">
+                  {isCodeArchitectureRepoAnalyzing ? "Starting..." : "Analyze"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <FileTypeSelectorModal
+          open={codeArchitectureFileSelectorOpen}
+          files={codeArchitectureRepoFilesForModal}
+          onCancel={() => {
+            setCodeArchitectureFileSelectorOpen(false);
+            codeArchitectureFileSelectorResolver.current?.([]);
+            codeArchitectureFileSelectorResolver.current = null;
+          }}
+          onConfirm={(selectedExtensions) => {
+            setCodeArchitectureFileSelectorOpen(false);
+            codeArchitectureFileSelectorResolver.current?.(selectedExtensions || []);
+            codeArchitectureFileSelectorResolver.current = null;
+          }}
+        />
+
+
         {/* New Project Modal */}
         {showNewProject && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center">
@@ -4798,6 +10493,7 @@ const updateRiskInProject = (projectId, predicate) => {
               onClick={() => {
                 setShowNewProject(false);
                 setNewProjectName('');
+                setNewProjectTargetFolderId(null);
                 setNewProjectError('');
               }}
             />
@@ -4805,7 +10501,11 @@ const updateRiskInProject = (projectId, predicate) => {
             <div className="relative z-[101] w-full max-w-md rounded-2xl border-2 border-[#2D7DFE] bg-white shadow-xl">
               <div className="px-5 py-4 border-b">
                 <h2 className="text-base font-semibold text-slate-800">Create new project</h2>
-                <p className="text-xs text-slate-500 mt-0.5">Give your project a short, memorable name.</p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {newProjectTargetFolderId
+                    ? `Inside ${projectFolders.find((folder) => folder.id === newProjectTargetFolderId)?.name || 'selected folder'}`
+                    : 'Give your project a short, memorable name.'}
+                </p>
               </div>
 
               <div className="px-5 py-4">
@@ -4823,6 +10523,7 @@ const updateRiskInProject = (projectId, predicate) => {
                     if (e.key === 'Escape') {
                       setShowNewProject(false);
                       setNewProjectName('');
+                      setNewProjectTargetFolderId(null);
                       setNewProjectError('');
                     }
                   }}
@@ -4833,7 +10534,7 @@ const updateRiskInProject = (projectId, predicate) => {
                 )}
                 {!newProjectError && (
   <div className="text-[11px] text-gray-500 mt-1">
-    {projects.length}/{projectLimit} projects used on your plan.
+    {projects.length} active project{projects.length === 1 ? "" : "s"}.
   </div>
 )}
               </div>
@@ -4843,6 +10544,7 @@ const updateRiskInProject = (projectId, predicate) => {
                   onClick={() => {
                     setShowNewProject(false);
                     setNewProjectName('');
+                    setNewProjectTargetFolderId(null);
                     setNewProjectError('');
                   }}
                   className="px-3 py-2 rounded border text-sm hover:bg-gray-50"
@@ -4851,24 +10553,200 @@ const updateRiskInProject = (projectId, predicate) => {
                 </button>
                 <button
   onClick={createProject}
-  disabled={atProjectLimit}
-  title={atProjectLimit ? `Limit reached (${projectLimit}). Upgrade to add more.` : undefined}
-  className={`px-3 py-2 rounded text-sm ${
-    atProjectLimit
-      ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
-      : 'bg-[#2D7DFE] text-white hover:bg-[#1E61D6]'
-  }`}
+  className="px-3 py-2 rounded text-sm bg-[#2D7DFE] text-white hover:bg-[#1E61D6]"
 >
-  {atProjectLimit ? 'Limit reached' : 'Create'}
+  Create
 </button>
 
               </div>
             </div>
           </div>
         )}
-        {/* License activation modal */}
-{licenseModalOpen && (
-  <ActivateLicenseModal onClose={() => setLicenseModalOpen(false)} />
+        {/* New Project Folder Modal */}
+        {showNewProjectFolder && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center">
+            <div
+              className="absolute inset-0 bg-black/40"
+              onClick={() => {
+                setShowNewProjectFolder(false);
+                setNewProjectFolderName('');
+                setNewProjectFolderParentId(null);
+                setNewProjectFolderError('');
+              }}
+            />
+            <div className="relative z-[101] w-full max-w-md rounded-2xl border-2 border-[#2D7DFE] bg-white shadow-xl">
+              <div className="px-5 py-4 border-b">
+                <h2 className="text-base font-semibold text-slate-800">Create project folder</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {newProjectFolderParentId
+                    ? `Inside ${projectFolders.find((folder) => folder.id === newProjectFolderParentId)?.name || 'selected folder'}`
+                    : 'Organize related projects in the sidebar.'}
+                </p>
+              </div>
+
+              <div className="px-5 py-4">
+                <label className="block text-sm font-medium mb-1">Folder name</label>
+                <input
+                  autoFocus
+                  className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring"
+                  value={newProjectFolderName}
+                  onChange={(e) => {
+                    setNewProjectFolderName(e.target.value);
+                    if (newProjectFolderError) setNewProjectFolderError('');
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') createProjectFolder();
+                    if (e.key === 'Escape') {
+                      setShowNewProjectFolder(false);
+                      setNewProjectFolderName('');
+                      setNewProjectFolderParentId(null);
+                      setNewProjectFolderError('');
+                    }
+                  }}
+                  placeholder="e.g., Sensor platforms"
+                />
+                {newProjectFolderError && (
+                  <div className="text-xs text-red-600 mt-1">{newProjectFolderError}</div>
+                )}
+              </div>
+
+              <div className="px-5 py-4 border-t flex items-center justify-end gap-2">
+                <button
+                  onClick={() => {
+                    setShowNewProjectFolder(false);
+                    setNewProjectFolderName('');
+                    setNewProjectFolderParentId(null);
+                    setNewProjectFolderError('');
+                  }}
+                  className="px-3 py-2 rounded border text-sm hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={createProjectFolder}
+                  className="px-3 py-2 rounded text-sm bg-[#2D7DFE] text-white hover:bg-[#1E61D6]"
+                >
+                  Create
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+{codeArchitectureReviewAnalysisModal && (
+  <CodeArchitectureReviewAnalysisModal
+    appName={codeArchitectureReviewAnalysisModal.appName}
+    reviewAppTarget={codeArchitectureReviewAnalysisModal.reviewAppTarget || "mac"}
+    destinationDirectory={codeArchitectureReviewAnalysisModal.destinationDirectory || ""}
+    isHostedPackager={isHostedCodeArchitectureReviewPackagerConfigured()}
+    targetOptions={codeArchitectureReviewAnalysisModal.targetOptions}
+    selectedTargetIds={codeArchitectureReviewAnalysisModal.selectedTargetIds}
+    options={codeArchitectureReviewAnalysisModal.options}
+    selectedKeys={codeArchitectureReviewAnalysisModal.selectedKeys}
+    onAppNameChange={(appName) => {
+      setCodeArchitectureReviewAnalysisModal((current) => (
+        current ? { ...current, appName } : current
+      ));
+    }}
+    onReviewAppTargetChange={(reviewAppTarget) => {
+      setCodeArchitectureReviewAnalysisModal((current) => (
+        current ? { ...current, reviewAppTarget } : current
+      ));
+    }}
+    onChooseDestination={async () => {
+      const selection = await chooseCodeArchitectureReviewDestination();
+      if (!selection?.cancelled && selection?.path) {
+        setCodeArchitectureReviewAnalysisModal((current) => (
+          current ? { ...current, destinationDirectory: selection.path } : current
+        ));
+      }
+    }}
+    onDestinationDirectoryChange={(destinationDirectory) => {
+      setCodeArchitectureReviewAnalysisModal((current) => (
+        current ? { ...current, destinationDirectory } : current
+      ));
+    }}
+    onToggleTarget={(targetId) => {
+      setCodeArchitectureReviewAnalysisModal((current) => {
+        if (!current) return current;
+        const target = current.targetOptions.find((entry) => entry.id === targetId);
+        if (!target || target.available === false) return current;
+        const selectedTargets = new Set(current.selectedTargetIds);
+        if (selectedTargets.has(targetId)) selectedTargets.delete(targetId);
+        else selectedTargets.add(targetId);
+        const selectedTargetIds = Array.from(selectedTargets);
+        const options = analysisOptionsForReviewTargets(current.targetOptions, selectedTargetIds);
+        const availableKeys = new Set(options.filter((option) => option.available).map((option) => option.key));
+        return {
+          ...current,
+          selectedTargetIds,
+          options,
+          selectedKeys: current.selectedKeys.filter((key) => availableKeys.has(key)),
+        };
+      });
+    }}
+    onSelectAllTargets={() => {
+      setCodeArchitectureReviewAnalysisModal((current) => {
+        if (!current) return current;
+        const selectedTargetIds = current.targetOptions
+          .filter((target) => target.available !== false)
+          .map((target) => target.id);
+        const options = analysisOptionsForReviewTargets(current.targetOptions, selectedTargetIds);
+        const availableKeys = new Set(options.filter((option) => option.available).map((option) => option.key));
+        return {
+          ...current,
+          selectedTargetIds,
+          options,
+          selectedKeys: current.selectedKeys.filter((key) => availableKeys.has(key)),
+        };
+      });
+    }}
+    onDeselectAllTargets={() => {
+      setCodeArchitectureReviewAnalysisModal((current) => {
+        if (!current) return current;
+        const options = analysisOptionsForReviewTargets(current.targetOptions, []);
+        return { ...current, selectedTargetIds: [], options, selectedKeys: [] };
+      });
+    }}
+    onToggle={(key) => {
+      setCodeArchitectureReviewAnalysisModal((current) => {
+        if (!current) return current;
+        const option = current.options.find((entry) => entry.key === key);
+        if (!option?.available) return current;
+        const selected = new Set(current.selectedKeys);
+        if (selected.has(key)) selected.delete(key);
+        else selected.add(key);
+        return { ...current, selectedKeys: Array.from(selected) };
+      });
+    }}
+    onSelectAll={() => {
+      setCodeArchitectureReviewAnalysisModal((current) => (
+        current
+          ? { ...current, selectedKeys: current.options.filter((option) => option.available).map((option) => option.key) }
+          : current
+      ));
+    }}
+    onDeselectAll={() => {
+      setCodeArchitectureReviewAnalysisModal((current) => (
+        current ? { ...current, selectedKeys: [] } : current
+      ));
+    }}
+    onCancel={() => {
+      codeArchitectureReviewAnalysisSelectionRef.current?.(null);
+      codeArchitectureReviewAnalysisSelectionRef.current = null;
+      setCodeArchitectureReviewAnalysisModal(null);
+    }}
+    onConfirm={() => {
+      const selectedKeys = codeArchitectureReviewAnalysisModal.selectedKeys;
+      const selectedTargetIds = codeArchitectureReviewAnalysisModal.selectedTargetIds;
+      const appName = String(codeArchitectureReviewAnalysisModal.appName || "").trim();
+      const reviewAppTarget = codeArchitectureReviewAnalysisModal.reviewAppTarget || "mac";
+      const destinationDirectory = String(codeArchitectureReviewAnalysisModal.destinationDirectory || "").trim();
+      if (!appName || !selectedTargetIds?.length) return;
+      codeArchitectureReviewAnalysisSelectionRef.current?.({ appName, selectedKeys, selectedTargetIds, reviewAppTarget, destinationDirectory });
+      codeArchitectureReviewAnalysisSelectionRef.current = null;
+      setCodeArchitectureReviewAnalysisModal(null);
+    }}
+  />
 )}
       </main>
     </div>          {/* closes .flex */}
@@ -4878,13 +10756,6 @@ const updateRiskInProject = (projectId, predicate) => {
 }
 
 
-/**
- * Panel renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param title Input consumed by this step of the xHandle workflow.
- * @param subtitle Input consumed by this step of the xHandle workflow.
- * @param children Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function Panel({ title, subtitle, children }) {
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
@@ -4897,11 +10768,6 @@ function Panel({ title, subtitle, children }) {
   );
 }
 
-/**
- * Badge renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param children Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function Badge({ children }) {
   return (
     <span className="inline-block text-xs px-2 py-0.5 rounded bg-gray-100 border border-gray-200">
@@ -4910,23 +10776,16 @@ function Badge({ children }) {
   );
 }
 
-/**
- * EmptyState renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param text Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function EmptyState({ text }) {
   return <div className="text-sm text-gray-500">{text}</div>;
 }
 
-/**
- * App renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function App() {
   return (
     <ActivityProvider>
-      <LiteXHandle />
+      <ResultsReviewProvider>
+        <LiteXHandle />
+      </ResultsReviewProvider>
     </ActivityProvider>
   );
 }

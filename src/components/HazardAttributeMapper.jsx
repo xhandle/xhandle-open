@@ -1,19 +1,7 @@
-/**
- * xHandle: hazard attribute mapper shared application component.
- * This file implements a reusable application-level component or helper that participates in xHandle's end-to-end engineering workflows.
- * Shared components connect the main workspace, diagrams, copilot features, reporting, and local persistence so individual features can cooperate as one system.
- * Related files: src/App.js, src/lib/storage/indexedDB.js, src/features/hazard-analysis/aiAnalysisLite.js.
- */
-
 import React, { useEffect, useMemo, useState } from "react";
 
 const TYPE_OPTIONS = ["text", "number", "boolean", "date"];
 
-/**
- * toSafeKey renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param label Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 const toSafeKey = (label) =>
   String(label)
     .trim()
@@ -22,11 +10,6 @@ const toSafeKey = (label) =>
     .toLowerCase()
     .slice(0, 48);
 
-/**
- * guessType renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param val Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 const guessType = (val) => {
   if (val === "true" || val === "false" || typeof val === "boolean") return "boolean";
   if (!isNaN(Number(val)) && val !== "" && val !== null && val !== undefined) return "number";

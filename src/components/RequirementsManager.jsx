@@ -1,11 +1,3 @@
-/* eslint-disable react-hooks/exhaustive-deps */
-/**
- * xHandle: requirements manager shared application component.
- * This file implements a reusable application-level component or helper that participates in xHandle's end-to-end engineering workflows.
- * Shared components connect the main workspace, diagrams, copilot features, reporting, and local persistence so individual features can cooperate as one system.
- * Related files: src/App.js, src/lib/storage/indexedDB.js, src/features/hazard-analysis/aiAnalysisLite.js.
- */
-
 // RequirementsManager.jsx — Folders • Modules • Requirements
 // xHandle Lite: outline + table views, hierarchy, versioning, traceability, import/export
 // New in this version:
@@ -18,22 +10,31 @@
 // - Cross-module linking & Reuse/Derivation across folders
 // - Access control hooks (canEdit/currentRole/moduleAccess)
 
-import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { logger } from "./utils/logger";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
-    Boxes, Plus, Trash2, Edit3, History, Link2, X,
+    Download, Boxes, Upload, Plus, Trash2, Edit3, History, Link2, X, Search, PlusCircle,
     ArrowUp, ArrowDown, IndentIncrease, IndentDecrease, Layers,
-    Table as TableIcon, Folder as FolderIcon,
-    FolderOpen, ChevronDown, ChevronRight, ChevronLeft, Image as ImageIcon, Grid3x3
+    Table as TableIcon, FileStack, Save, RotateCcw, Folder as FolderIcon,
+    FolderOpen, ChevronDown, ChevronRight, ChevronLeft, Image as ImageIcon, Grid3x3,
+    Copy
   } from "lucide-react";
-  
+
 import HazardAttributeMapper from "./HazardAttributeMapper";
 // ADD
-import LLMModuleLinkerModal from "./modals/LLMModuleLinkerModal";
+import LLMModuleLinkerModal from "./LLMModuleLinkerModal";
 import {
   listRequirementsByFolder,
   updateRequirement
 } from "./utils/requirementsStore";
+import {
+  getActiveFolderId as getSharedActiveFolderId,
+  loadFolders as loadSharedFolders,
+  loadRequirements as loadSharedRequirements,
+  migrateRequirementsState,
+} from "../features/requirements/actions";
+import { registerActionProvider } from "../features/app/actionRegistry";
+import ReactFlow, { Background, Controls, MiniMap } from "reactflow";
+import "reactflow/dist/style.css";
 import { FolderPlus } from "lucide-react";
 
 
@@ -61,19 +62,10 @@ const DND_MIME_MODULE = "application/x-xhandle-module";   // ← NEW
 // ───────────────── Module Attribute Schema (per moduleId) ─────────────────
 const LS_MODULE_SCHEMAS = "xhandle:module-schemas";
 
-/**
- * loadAllModuleSchemas renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function loadAllModuleSchemas() {
   try { return JSON.parse(localStorage.getItem(LS_MODULE_SCHEMAS) || "[]"); }
   catch { return []; }
 }
-/**
- * saveAllModuleSchemas renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param all Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function saveAllModuleSchemas(all) {
   localStorage.setItem(LS_MODULE_SCHEMAS, JSON.stringify(all));
 }
@@ -92,22 +84,12 @@ async function upsertModuleAttributeDefinitions(moduleId, defs) {
   }
   saveAllModuleSchemas(all);
 }
-/**
- * dedupeByKey renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param list Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function dedupeByKey(list) {
   const m = new Map();
   for (const d of (list || [])) m.set(d.key, d);
   return Array.from(m.values());
 }
 
-/**
- * normalizeAttrTemplate renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param raw Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function normalizeAttrTemplate(raw) {
   // Accept legacy: ["Priority", "Owner"] and new typed: [{ key, type, options }]
   return (raw || []).map((item) =>
@@ -121,11 +103,6 @@ function normalizeAttrTemplate(raw) {
   );
 }
 
-/**
- * defaultForType renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param t Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function defaultForType(t) {
   switch (t) {
     case "number": return null;
@@ -137,12 +114,6 @@ function defaultForType(t) {
   }
 }
 
-/**
- * coerceToType renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param val Input consumed by this step of the xHandle workflow.
- * @param type Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function coerceToType(val, type) {
   if (val == null) return null;
   const s = String(val).trim();
@@ -167,33 +138,14 @@ function makeId(prefix = "REQ") {
   const ts = Date.now().toString(36).toUpperCase();
   return `${prefix}-${ts}-${rnd}`;
 }
-/**
- * nowISO renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 const nowISO = () => new Date().toISOString();
-/**
- * deepClone renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param o Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 const deepClone = (o) => JSON.parse(JSON.stringify(o));
 
-/**
- * escapeCSV renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param s Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function escapeCSV(s) {
   const str = String(s ?? "");
-  if (/[",]/.test(str)) return '"' + str.replaceAll('"', '""') + '"';
+  if (/[\",]/.test(str)) return '"' + str.replaceAll('"', '""') + '"';
   return str;
 }
-/**
- * splitCSVLine renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param line Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function splitCSVLine(line){
   const out=[]; let cur=""; let inQ=false;
   for(let i=0;i<line.length;i++){
@@ -207,19 +159,50 @@ function splitCSVLine(line){
 }
 
 // ===== Pull Summary from Hazard Analysis (LiteXHandle) =====
+const LITE_ACTIVE_PROJECT_ID_KEY = "xhandle.activeProjectId";
 const LITE_PROJECT_DATA_KEY = "xhandle.projectData";
 
+// Parse pasted/loaded CSV to 2D
+function parseCSV2D(text){
+  const lines = text.split(/\r?\n/).filter(l => l.trim().length);
+  if (!lines.length) return [];
+  const rows = [splitCSVLine(lines[0])];
+  for (let i = 1; i < lines.length; i++) rows.push(splitCSVLine(lines[i]));
+  return rows;
+}
+function normalizeCategory(val){
+  const v = String(val || "").trim().toLowerCase();
+  if (!v) return "";
+  if (/^loss(es)?$/.test(v)) return "Loss";
+  if (/^hazard(s)?$/.test(v)) return "Hazard";
+  if (/^mitigation(s)?$/.test(v)) return "Mitigation";
+  if (/^(safety )?requirement(s)?$/.test(v)) return "Requirement";
+  if (/^constraint(s)?$/.test(v)) return "Constraint";
+  if (/^uca(s)?$/.test(v)) return "UCA";
+  if (/^control(s)?$/.test(v)) return "Control";
+  return v[0].toUpperCase() + v.slice(1);
+}
+
+/**
+ * Read the active Lite project’s Summary 2D array from localStorage.
+ * Returns [] if not available.
+ */
+function getActiveHazardSummary2D(){
+  try {
+    const pid = localStorage.getItem(LITE_ACTIVE_PROJECT_ID_KEY);
+    if (!pid) return [];
+    const map = JSON.parse(localStorage.getItem(LITE_PROJECT_DATA_KEY) || "{}");
+    const pack = map?.[pid];
+    const summary = pack?.analysisResult?.Summary;
+    return (Array.isArray(summary) && Array.isArray(summary[0])) ? summary : [];
+  } catch { return []; }
+}
 
 /** List all Lite projects available in localStorage for Hazard Analysis */
 function safeParseJSON(s) {
     try { return JSON.parse(s); } catch { return undefined; }
   }
-  
-/**
- * probeProjectNameById renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param id Stable identifier used to match records or nodes across the workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
+
   function probeProjectNameById(id) {
     const KNOWN_KEYS = [
       "xhandle.projects",
@@ -230,12 +213,12 @@ function safeParseJSON(s) {
       "hazardProjectList",
       "projects",
     ];
-  
+
     // 1) Check known keys explicitly
     for (const key of KNOWN_KEYS) {
       const v = safeParseJSON(localStorage.getItem(key));
       if (!v) continue;
-  
+
       // Array of {id,name|title}
       if (Array.isArray(v)) {
         const hit = v.find(p =>
@@ -245,7 +228,7 @@ function safeParseJSON(s) {
         );
         if (hit) return hit.name || hit.title;
       }
-  
+
       // Object map { [id]: {name|title: ...} } or { [id]: "Name" }
       if (v && typeof v === "object" && !Array.isArray(v)) {
         const maybe = v[id];
@@ -253,13 +236,13 @@ function safeParseJSON(s) {
         if (maybe && typeof maybe === "object") return maybe.name || maybe.title;
       }
     }
-  
+
     // 2) Fallback: scan all localStorage for common shapes
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       const val = safeParseJSON(localStorage.getItem(key));
       if (!val) continue;
-  
+
       // Array of project-ish objects
       if (Array.isArray(val)) {
         const hit = val.find(p =>
@@ -270,7 +253,7 @@ function safeParseJSON(s) {
         );
         if (hit) return hit.name || hit.title;
       }
-  
+
       // Object map
       if (val && typeof val === "object") {
         const maybe = val[id];
@@ -279,7 +262,7 @@ function safeParseJSON(s) {
           return maybe.name || maybe.title;
         }
       }
-  
+
       // Wrapped under { projects: [...] }
       if (val && typeof val === "object" && Array.isArray(val.projects)) {
         const hit = val.projects.find(p =>
@@ -290,15 +273,15 @@ function safeParseJSON(s) {
         if (hit) return hit.name || hit.title;
       }
     }
-  
+
     return undefined;
   }
-  
+
   /** List all Lite projects available in localStorage for Hazard Analysis */
   function listLiteProjects() {
     try {
       const map = JSON.parse(localStorage.getItem(LITE_PROJECT_DATA_KEY) || "{}");
-  
+
       return Object.entries(map).map(([id, pack]) => {
         const inlineName =
           pack?.project?.name ||
@@ -309,9 +292,9 @@ function safeParseJSON(s) {
           pack?.metadata?.name ||
           pack?.analysisResult?.Meta?.ProjectName ||
           pack?.analysisResult?.Meta?.Name;
-  
+
         const probedName = inlineName || probeProjectNameById(id);
-  
+
         return {
           id,
           name: String(probedName || `Project ${id.slice(-6)}`),
@@ -320,8 +303,8 @@ function safeParseJSON(s) {
     } catch {
       return [];
     }
-  }  
-  
+  }
+
   /** Get a project's Summary 2D by id */
   function getHazardSummary2DByProjectId(projectId) {
     try {
@@ -334,15 +317,50 @@ function safeParseJSON(s) {
     }
   }
 
-/**
- * normalizeHeaderLabel renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param s Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
+  // ---- Flexible header handling (aliases + helpers)
+const HEADER_ALIASES = {
+    // risk score or combined risk column
+    risk: [
+      "risk", "risk score", "risk_score", "riskscore", "rpn", "rpn score", "risk priority number",
+      "level", "risk level", "risk_level", "risk rating", "risk_rating", "riskrank", "risk rank"
+    ],
+    // severity / consequence
+    severity: [
+      "severity", "sev", "s", "consequence", "impact", "harm severity", "harm_severity"
+    ],
+    // likelihood / probability / frequency
+    likelihood: [
+      "likelihood", "probability", "prob", "p", "freq", "frequency", "occurrence", "occurrence rating"
+    ],
+    // textual priority labels (High/Med/Low)
+    priority: [
+      "priority", "risk category", "risk_category", "risk class", "risk_class", "risk band", "risk_band"
+    ],
+    // headers that typically contain “content” we want to import as requirement titles
+    contentHints: [
+      "requirement", "requirements", "mitigation", "mitigations", "hazard", "hazards", "loss", "losses",
+      "constraint", "constraints", "uca", "control", "controls", "safety requirement", "safety requirements"
+    ]
+  };
+
   function normalizeHeaderLabel(s) {
     return String(s || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
   }
-  
+
+  function findHeaderIndex(headers, aliasList) {
+    const normHeaders = headers.map(normalizeHeaderLabel);
+    const normAliases = aliasList.map(normalizeHeaderLabel);
+    // exact normalized match
+    for (let i = 0; i < normHeaders.length; i++) {
+      if (normAliases.includes(normHeaders[i])) return i;
+    }
+    // partial contains fallback (e.g., "risk_score (calc)")
+    for (let i = 0; i < normHeaders.length; i++) {
+      if (normAliases.some(a => normHeaders[i].includes(a))) return i;
+    }
+    return -1;
+  }
+
   // If user picks a header label (headerName), map back to the index even if spacing/case varies
   function findPickedHeaderIndex(headers, pickedHeaderName) {
     const normPicked = normalizeHeaderLabel(pickedHeaderName);
@@ -353,8 +371,120 @@ function safeParseJSON(s) {
     idx = normHeaders.findIndex(h => h.includes(normPicked));
     return idx;
   }
-  
-  
+
+  // Try to pick “content columns” for suggestions
+  function pickContentColumns(headers) {
+    const normHeaders = headers.map(normalizeHeaderLabel);
+    const hints = HEADER_ALIASES.contentHints.map(normalizeHeaderLabel);
+    const out = [];
+    for (let i = 0; i < headers.length; i++) {
+      if (hints.some(h => normHeaders[i].includes(h))) out.push(headers[i]);
+    }
+    // if nothing matched, return all headers (caller can filter again)
+    return out.length ? out : headers;
+  }
+
+  // Map text like "High/Medium/Low" or numbers into a canonical priority string
+  function toPriorityString({ riskScore, sev, lik, textPriority }) {
+    // direct textual priority takes precedence
+    const tp = String(textPriority || "").trim().toLowerCase();
+    if (tp) {
+      if (/^(highest|very high|extreme|critical|catastrophic)$/.test(tp)) return "Highest";
+      if (/^(high|major|significant)$/.test(tp)) return "High";
+      if (/^(medium|moderate)$/.test(tp)) return "Medium";
+      if (/^(low|minor)$/.test(tp)) return "Low";
+    }
+
+    // numeric risk score (RPN or similar)
+    const r = Number(riskScore);
+    if (!Number.isNaN(r) && r > 0) {
+      if (r >= 20) return "Highest";
+      if (r >= 15) return "High";
+      if (r >= 8)  return "Medium";
+      if (r >= 4)  return "Low";
+    }
+
+    // fallback to sev * lik
+    const s = Number(sev);
+    const l = Number(lik);
+    if (s > 0 && l > 0) {
+      const rpn = s * l;
+      if (rpn >= 20) return "Highest";
+      if (rpn >= 15) return "High";
+      if (rpn >= 8)  return "Medium";
+      if (rpn >= 4)  return "Low";
+    }
+    return ""; // unknown/blank
+  }
+
+
+/**
+ * Build requirement-like items from a Summary 2D table.
+ * If categoryFilter is "All", import Requirement + Mitigation + Hazard + Loss.
+ * targetModule is the module to assign inside RequirementsManager.
+ */
+/**
+ * Build requirements from a specific Summary column header.
+ * headerName must match a header in the first row of the Summary table.
+ */
+function buildReqsFromSummary2D(summary2D, headerName, targetModule) {
+    if (!Array.isArray(summary2D) || summary2D.length < 2) return [];
+    const headers = summary2D[0].map(h => String(h || ""));
+    const rows = summary2D.slice(1);
+
+    // Map the user-picked display header to an index, even if formatting differs
+    const colIdx = findPickedHeaderIndex(headers, headerName);
+    if (colIdx < 0) return [];
+
+    // Find optional helpers: risk / severity / likelihood / textual priority
+    const riskIdx = findHeaderIndex(headers, HEADER_ALIASES.risk);
+    const sevIdx  = findHeaderIndex(headers, HEADER_ALIASES.severity);
+    const likIdx  = findHeaderIndex(headers, HEADER_ALIASES.likelihood);
+    const priIdx  = findHeaderIndex(headers, HEADER_ALIASES.priority);
+
+    const out = [];
+    for (const row of rows) {
+      const text = row[colIdx];
+      if (!text || !String(text).trim()) continue;
+
+      const sev = sevIdx >= 0 ? row[sevIdx] : undefined;
+      const lik = likIdx >= 0 ? row[likIdx] : undefined;
+      const riskScore = riskIdx >= 0 ? row[riskIdx] : undefined;
+      const textPriority = priIdx >= 0 ? row[priIdx] : undefined;
+
+      const priority = toPriorityString({ riskScore, sev, lik, textPriority });
+
+      const attributes = {};
+      if (priority) attributes["Priority"] = priority;
+      if (headerName) attributes["Category"] = headerName;
+      if (riskIdx >= 0 && row[riskIdx] != null && String(row[riskIdx]).trim() !== "") {
+        attributes["RiskScore"] = String(row[riskIdx]).trim();
+      }
+      if (sevIdx >= 0 && row[sevIdx] != null && String(row[sevIdx]).trim() !== "") {
+        attributes["Severity"] = String(row[sevIdx]).trim();
+      }
+      if (likIdx >= 0 && row[likIdx] != null && String(row[likIdx]).trim() !== "") {
+        attributes["Likelihood"] = String(row[likIdx]).trim();
+      }
+
+      out.push({
+        title: String(text).trim(),
+        module: targetModule || "Requirement",
+        attributes,
+      });
+    }
+
+    // de-dupe by normalized title
+    const seen = new Set();
+    const dedup = [];
+    for (const r of out) {
+      const k = r.title.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      dedup.push(r);
+    }
+    return dedup;
+  }
 
 // ---- File helpers
 function download(filename, blob) {
@@ -363,10 +493,6 @@ function download(filename, blob) {
   a.href = url; a.download = filename; a.click();
   setTimeout(() => URL.revokeObjectURL(url), 3000);
 }
-/**
- * loadXLSX renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 async function loadXLSX() {
   try {
     return await import(/* webpackChunkName: "xlsx" */ "xlsx");
@@ -385,11 +511,6 @@ const LS_BASELINES_V2 = "xhandle:req-baselines:v2"; // { [folderId]: { [moduleId
 // Limit how much we keep in history to avoid storage blow-ups
 const MAX_HISTORY_ENTRIES = 30;
 
-/**
- * pruneForStorage renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param rows Worksheet or table rows that this step transforms.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function pruneForStorage(rows) {
   return (rows || []).map(r => {
     const out = { ...r };
@@ -424,15 +545,15 @@ const Storage = {
         // Retry with a pruned copy
         const pruned = pruneForStorage(rows);
         localStorage.setItem(LS_KEY, JSON.stringify(pruned));
-        logger.warn("[xhandle] localStorage full; saved pruned requirements");
+        console.warn("[xhandle] localStorage full; saved pruned requirements");
       } catch (e2) {
         try {
           // Last-resort: sessionStorage (will be lost on tab close)
           const pruned = pruneForStorage(rows);
           sessionStorage.setItem(LS_KEY, JSON.stringify(pruned));
-          logger.warn("[xhandle] fell back to sessionStorage for requirements");
+          console.warn("[xhandle] fell back to sessionStorage for requirements");
         } catch (e3) {
-          logger.error("[xhandle] failed to persist requirements:", e3);
+          console.error("[xhandle] failed to persist requirements:", e3);
         }
       }
     }
@@ -515,11 +636,6 @@ function buildIndex(rows) {
   for (const list of children.values()) list.sort((a,b)=> (a.order??0)-(b.order??0) || (a.title||'').localeCompare(b.title||''));
   return { byId, children };
 }
-/**
- * computeNumbering renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param moduleRows Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function computeNumbering(moduleRows) {
   const { children } = buildIndex(moduleRows);
   const res = new Map();
@@ -534,28 +650,16 @@ function computeNumbering(moduleRows) {
   dfs(null, []);
   return res;
 }
-/**
- * siblingsOf renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param rows Worksheet or table rows that this step transforms.
- * @param id Stable identifier used to match records or nodes across the workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function siblingsOf(rows, id) {
   const { byId, children } = buildIndex(rows);
   const me = byId.get(id); if (!me) return [];
   const list = children.get(me.parentId||null) || [];
   return list;
 }
-/**
- * nextOrderAmong renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param rows Worksheet or table rows that this step transforms.
- * @param parentId Parent identifier used to maintain tree structure.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function nextOrderAmong(rows, parentId) {
   const list = rows.filter(r => (r.parentId||null) === (parentId||null));
   return (Math.max(-1, ...list.map(r => r.order ?? 0)) + 1);
-} 
+}
 
 // ----------------------------- CSV / XLSX helpers ---------------------------
 function toCSV(rows, fallbackFolderId, moduleByName) {
@@ -588,7 +692,7 @@ function toCSV(rows, fallbackFolderId, moduleByName) {
     }
     return lines.join("");
   }
-  
+
 
 // ----------------------------- Folder tree utils ----------------------------
 function buildFolderTree(folders){
@@ -618,65 +722,27 @@ function collectDescendantIds(folders, folderId) {
   })(folderId);
   return out; // excludes the root folderId itself
 }
-/**
- * hasRequirementsInScope renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param requirements Requirement records participating in this step.
- * @param folderId Folder identifier used to scope hierarchical requirement records.
- * @param descendantIds Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function hasRequirementsInScope(requirements, folderId, descendantIds) {
   const inScope = new Set([folderId, ...descendantIds]);
   return requirements.some(r => inScope.has(r.folderId ?? r.projectId));
 }
 
-/**
- * MenuBar renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param selectedReq Input consumed by this step of the xHandle workflow.
- * @param onNewSibling Callback used to notify the surrounding workflow about progress or user actions.
- * @param onNewChild Callback used to notify the surrounding workflow about progress or user actions.
- * @param onEdit Callback used to notify the surrounding workflow about progress or user actions.
- * @param onDelete Callback used to notify the surrounding workflow about progress or user actions.
- * @param onNewParent Callback used to notify the surrounding workflow about progress or user actions.
- * @param onMoveUp Callback used to notify the surrounding workflow about progress or user actions.
- * @param onMoveDown Callback used to notify the surrounding workflow about progress or user actions.
- * @param onPromote Callback used to notify the surrounding workflow about progress or user actions.
- * @param onDemote Callback used to notify the surrounding workflow about progress or user actions.
- * @param onImportFile Callback used to notify the surrounding workflow about progress or user actions.
- * @param onOpenImportHazardModal Callback used to notify the surrounding workflow about progress or user actions.
- * @param onExportJSON Callback used to notify the surrounding workflow about progress or user actions.
- * @param onExportCSV Callback used to notify the surrounding workflow about progress or user actions.
- * @param onExportXLSX Callback used to notify the surrounding workflow about progress or user actions.
- * @param onSaveBaseline Callback used to notify the surrounding workflow about progress or user actions.
- * @param onRestoreBaseline Callback used to notify the surrounding workflow about progress or user actions.
- * @param viewMode Input consumed by this step of the xHandle workflow.
- * @param setViewMode React state setter supplied by the parent workflow.
- * @param sidebarOpen Input consumed by this step of the xHandle workflow.
- * @param setSidebarOpen React state setter supplied by the parent workflow.
- * @param savedViews Input consumed by this step of the xHandle workflow.
- * @param onApplyView Callback used to notify the surrounding workflow about progress or user actions.
- * @param onSaveView Callback used to notify the surrounding workflow about progress or user actions.
- * @param onReuse Callback used to notify the surrounding workflow about progress or user actions.
- * @param onManageModulesClick Callback used to notify the surrounding workflow about progress or user actions.
- * @param onOpenLinker Callback used to notify the surrounding workflow about progress or user actions.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function MenuBar({
     // selection + actions
     selectedReq, onNewSibling,
     onNewChild, onEdit, onDelete, onNewParent,
     onMoveUp, onMoveDown, onPromote, onDemote,
-  
+
     // file ops
     onImportFile, onOpenImportHazardModal,
     onExportJSON, onExportCSV, onExportXLSX,
     onSaveBaseline, onRestoreBaseline,
-  
+
     // view ops
     viewMode, setViewMode,
     sidebarOpen, setSidebarOpen,
     savedViews = [], onApplyView, onSaveView,
-  
+
     // extras
     onReuse, onManageModulesClick, // pass if you still want access via menu
     onOpenLinker,
@@ -684,7 +750,7 @@ function MenuBar({
     const [open, setOpen] = React.useState(null); // "File" | "Edit" | ...
     const fileRef = React.useRef();
     const hasSel = !!selectedReq;
-  
+
     React.useEffect(() => {
       function onDocClick(e) {
         // close menus if clicking outside
@@ -693,14 +759,14 @@ function MenuBar({
       document.addEventListener('click', onDocClick);
       return () => document.removeEventListener('click', onDocClick);
     }, []);
-  
+
     const Btn = ({label}) => (
       <button
         className={`px-3 py-1.5 text-sm hover:bg-gray-100 rounded ${open===label?'bg-gray-100':''}`}
         onClick={(e)=>{ e.stopPropagation(); setOpen(m => m===label ? null : label); }}
       >{label}</button>
     );
-  
+
     const Item = ({children, onClick, disabled}) => (
       <button
         className={`flex w-full items-center justify-between px-3 py-1.5 text-sm hover:bg-gray-50 ${disabled?'opacity-40 cursor-not-allowed':''}`}
@@ -709,9 +775,9 @@ function MenuBar({
         role="menuitem"
       >{children}</button>
     );
-  
+
     const Divider = () => <div className="my-1 h-px bg-gray-200" />;
-  
+
     return (
       <div className="mb-2" data-menubar>
         <div className="flex gap-1 text-gray-800">
@@ -722,7 +788,7 @@ function MenuBar({
           <Btn label="Extras" />
           <Btn label="Help" />
         </div>
-  
+
         {/* Hidden file input for Import… */}
         <input
           ref={fileRef}
@@ -731,7 +797,7 @@ function MenuBar({
           className="hidden"
           onChange={(e)=>{ onImportFile?.(e.target.files?.[0]); e.target.value=""; }}
         />
-  
+
         {/* Menus */}
         {open && (
           <div className="relative">
@@ -750,7 +816,7 @@ function MenuBar({
                   <Item onClick={onRestoreBaseline}>Restore Baseline…</Item>
                 </div>
               )}
-  
+
   {open === "Edit" && (
   <div role="menu" aria-label="Edit">
     <Item onClick={() => onNewChild?.()} disabled={!onNewChild}>New Child</Item>
@@ -766,7 +832,7 @@ function MenuBar({
 )}
 
 
-  
+
               {open === "View" && (
                 <div role="menu" aria-label="View">
                   <Item onClick={()=>setViewMode("outline")}>{viewMode==="outline" ? "✓ " : ""}Outline</Item>
@@ -782,7 +848,7 @@ function MenuBar({
                   ))}
                 </div>
               )}
-  
+
               {open === "Arrange" && (
                 <div role="menu" aria-label="Arrange">
                   <Item onClick={()=>onMoveUp?.(selectedReq?.id)} disabled={!hasSel}>Move Up</Item>
@@ -791,14 +857,14 @@ function MenuBar({
                   <Item onClick={()=>onDemote?.(selectedReq?.id)} disabled={!hasSel}>Demote</Item>
                 </div>
               )}
-  
+
               {open === "Extras" && (
                 <div role="menu" aria-label="Extras">
                   <Item onClick={onReuse}>Duplicate Module</Item>
                   {!!onManageModulesClick && <Item onClick={onManageModulesClick}>Manage Modules…</Item>}
                 </div>
               )}
-  
+
               {open === "Help" && (
                 <div role="menu" aria-label="Help">
                   <div className="px-3 py-1.5 text-sm text-gray-700">
@@ -806,7 +872,7 @@ function MenuBar({
                   </div>
                 </div>
               )}
-              
+
             </div>
           </div>
         )}
@@ -815,15 +881,228 @@ function MenuBar({
       </div>
     );
   }
-  
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TraceabilityLinkEditor — module → scrollable requirement list with search
+// Uses existing LINK_TYPES constant and your Requirement shape { id, title, module, links[] }
+// Props:
+//   draft, setDraft            -> the form state you’re editing
+//   allModules: string[]       -> list of module names (e.g., ["System","Requirement",...])
+//   allCandidates: Requirement[] -> ALL requirements (across folders + modules)
+// ─────────────────────────────────────────────────────────────────────────────
+function TraceabilityLinkEditor({ draft, setDraft, allModules, allCandidates }) {
+  const [newLinkType, setNewLinkType] = React.useState("refines");
+  const [targetModuleName, setTargetModuleName] = React.useState(null);
+  const [reqSearch, setReqSearch] = React.useState("");
+  const [selectedChildIds, setSelectedChildIds] = React.useState(() => new Set());
+
+  // modules except the current requirement's module (no intra-module linking)
+  const moduleOptions = React.useMemo(
+    () => (allModules || []).filter((name) => name !== (draft.module || "")),
+    [allModules, draft.module]
+  );
+
+  // candidates within the chosen module (exclude self; belt-and-suspenders exclude same-module)
+  const availableReqs = React.useMemo(() => {
+    if (!targetModuleName) return [];
+    return (allCandidates || [])
+      .filter((r) => r.id !== draft.id)
+      .filter((r) => r.module === targetModuleName)
+      .filter((r) => r.module !== draft.module);
+  }, [allCandidates, targetModuleName, draft.id, draft.module]);
+
+  // search filter
+  const visibleReqs = React.useMemo(() => {
+    const q = reqSearch.trim().toLowerCase();
+    if (!q) return availableReqs;
+    return availableReqs.filter(
+      (r) =>
+        String(r.title || "").toLowerCase().includes(q) ||
+        String(r.id || "").toLowerCase().includes(q)
+    );
+  }, [availableReqs, reqSearch]);
+
+  function togglePick(id) {
+    setSelectedChildIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function addSelectedLinks() {
+    if (!selectedChildIds.size) return;
+    const toAdd = Array.from(selectedChildIds).map((id) => ({ toId: id, type: newLinkType }));
+
+    const existing = Array.isArray(draft.links) ? draft.links : [];
+    const existingKeys = new Set(existing.map((l) => `${l.type}::${l.toId}`));
+
+    const merged = [
+      ...existing,
+      ...toAdd.filter((l) => !existingKeys.has(`${l.type}::${l.toId}`)),
+    ];
+
+    setDraft((d) => ({ ...d, links: merged }));
+    setSelectedChildIds(new Set());
+  }
+
+  function removeLink(idx) {
+    const next = (draft.links || []).filter((_, i) => i !== idx);
+    setDraft((d) => ({ ...d, links: next }));
+  }
+
+  function findReqById(id) {
+    return (allCandidates || []).find((r) => r.id === id) || null;
+  }
+
+  return (
+    <div className="mt-4">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="text-sm font-medium text-gray-700">Traceability Links</span>
+        <span className="text-xs text-gray-500">(select a module, then pick one or more requirements)</span>
+      </div>
+
+      {/* Controls row */}
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          className="rounded-md border px-2 py-1 text-sm"
+          value={newLinkType}
+          onChange={(e) => setNewLinkType(e.target.value)}
+        >
+          {LINK_TYPES.map((t) => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </select>
+
+        <select
+          className="rounded-md border px-2 py-1 text-sm"
+          value={targetModuleName || ""}
+          onChange={(e) => setTargetModuleName(e.target.value || null)}
+        >
+          <option value="">Choose module…</option>
+          {moduleOptions.map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </select>
+
+        {targetModuleName && (
+          <div className="relative ml-auto w-64">
+            <div className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-gray-400">
+              <Search size={14} />
+            </div>
+            <input
+              className="w-full rounded-md border pl-7 pr-2 py-1 text-sm"
+              placeholder="Search requirements…"
+              value={reqSearch}
+              onChange={(e) => setReqSearch(e.target.value)}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Scrollable list */}
+      {targetModuleName && (
+        <div className="mt-2 rounded-md border">
+          <div className="max-h-56 overflow-y-auto">
+            {visibleReqs.length === 0 ? (
+              <div className="p-3 text-sm text-gray-500">
+                No requirements found in “{targetModuleName}”.
+              </div>
+            ) : (
+              <ul className="divide-y">
+                {visibleReqs.map((r) => (
+                  <li key={r.id} className="flex items-start gap-2 px-3 py-2 hover:bg-gray-50">
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={selectedChildIds.has(r.id)}
+                      onChange={() => togglePick(r.id)}
+                    />
+                    <div className="min-w-0">
+                    <div className={`truncate text-sm ${r.heading ? "font-semibold" : "font-medium"}`}>
+  {r.title || "(untitled)"}
+</div>
+                      <div className="text-xs text-gray-500">[{r.module}] {r.id}</div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between border-t px-3 py-2">
+            <div className="text-xs text-gray-500">
+              {selectedChildIds.size} selected
+            </div>
+            <button
+              type="button"
+              onClick={addSelectedLinks}
+              className="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
+              disabled={selectedChildIds.size === 0}
+              title="Add selected requirement links"
+            >
+              <PlusCircle size={14} /> Add link(s)
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Existing links on this requirement */}
+      {!!(draft.links && draft.links.length) && (
+        <div className="mt-3">
+          <div className="mb-1 text-xs font-medium text-gray-600">Current Links</div>
+          <ul className="divide-y rounded-md border">
+            {(draft.links || []).map((l, idx) => {
+              const tgt = findReqById(l.toId);
+              return (
+                <li key={`${l.type}-${l.toId}-${idx}`} className="flex items-start justify-between gap-2 px-3 py-2">
+                  <div className="min-w-0">
+                    <div className="text-xs uppercase tracking-wide text-gray-500">{l.type}</div>
+                    <div className="truncate text-sm">
+                    {tgt ? (
+  <>
+    <span className="text-gray-600">[{tgt.module}] </span>
+    <span className={tgt.heading ? "font-semibold" : ""}>
+      {tgt.title || tgt.id}
+    </span>
+  </>
+) : (
+  <span className="text-gray-400">(missing target: {l.toId})</span>
+)}
+
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeLink(idx)}
+                    className="rounded p-1 text-gray-500 hover:bg-gray-100"
+                    title="Remove link"
+                    aria-label="Remove link"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+
 // ----------------------------- Component ------------------------------------
 export default function RequirementsManager({
   canEdit = true,
   moduleAccess = {},
   currentUser = "anonymous",
   currentRole = "Owner", // "Owner" | "Editor" | "Viewer"
+  onActiveDesignContextChange,
 }) {
-  useEffect(() => { migrateIfNeeded(); }, []);
+  useEffect(() => { migrateIfNeeded(); migrateRequirementsState(); }, []);
 
   // --- folders & selection
   const [folders, setFolders] = useState(Folders.loadAll());
@@ -849,6 +1128,35 @@ const updateRequirements = (apply) => {
 
 useEffect(() => { (async ()=> setRequirements(await Storage.load()))(); }, []);
 
+  useEffect(() => {
+    const syncFromSharedState = () => {
+      const nextFolders = loadSharedFolders();
+      const nextRequirements = loadSharedRequirements();
+      setFolders(nextFolders);
+      setRequirements(nextRequirements);
+      setActiveFolderId(getSharedActiveFolderId() || nextFolders[0]?.id || null);
+    };
+
+    const onFocusModule = (event) => {
+      syncFromSharedState();
+      const detail = event?.detail || {};
+      if (detail.folderId) setActiveFolderId(detail.folderId);
+      if (detail.moduleName) setSelectedModule(detail.moduleName);
+      if (detail.moduleId && !detail.moduleName) {
+        const targetFolder = loadSharedFolders().find((folder) => folder.id === (detail.folderId || getSharedActiveFolderId()));
+        const targetModule = (targetFolder?.modules || []).find((module) => module.id === detail.moduleId);
+        if (targetModule?.name) setSelectedModule(targetModule.name);
+      }
+    };
+
+    window.addEventListener("xhandle:requirements-data-changed", syncFromSharedState);
+    window.addEventListener("xhandle:requirements-focus-module", onFocusModule);
+    return () => {
+      window.removeEventListener("xhandle:requirements-data-changed", syncFromSharedState);
+      window.removeEventListener("xhandle:requirements-focus-module", onFocusModule);
+    };
+  }, []);
+
   const [showLinker, setShowLinker] = useState(false);
   const getAllReqs = useCallback(() => {
     try {
@@ -866,8 +1174,8 @@ useEffect(() => { (async ()=> setRequirements(await Storage.load()))(); }, []);
       }
     } catch {}
     return Array.isArray(requirements) ? requirements : [];
-  }, [activeFolderId, requirements]);  
-  
+  }, [activeFolderId, requirements]);
+
   const listModulesLocal = useCallback(() => {
     // Inferred from requirements (existing logic)
     const reqs = getAllReqs();
@@ -879,38 +1187,38 @@ useEffect(() => { (async ()=> setRequirements(await Storage.load()))(); }, []);
       if (modId) inferred.set(modId, { id: modId, name: modName });
     }
 
-    // Declared on the folder (module manager / agent creates)
+    // Declared on the folder by the module manager.
     for (const m of (moduleMetas || [])) {
       inferred.set(m.id, { id: m.id, name: m.name });
     }
 
     return Array.from(inferred.values());
   }, [getAllReqs, moduleMetas]);
-  
+
   const listRequirementsByModuleLocal = useCallback((moduleId) => {
     const reqs = getAllReqs();
     const arr = Array.isArray(reqs) ? reqs : [];
     return arr.filter(r => r.moduleId === moduleId || r.module === moduleId);
-  }, [getAllReqs]);  
-  
+  }, [getAllReqs]);
+
   async function addTraceLinkLocal(parentId, childId, type) {
     const inverse = LINK_INVERSE?.[type] || `${type}-by`;
     let blocked = false;
-  
+
     // Update state first so the UI reflects immediately
     updateRequirements((prev) => {
       const next = deepClone(prev);
       const parent = next.find((r) => r.id === parentId);
       const child  = next.find((r) => r.id === childId);
       if (!parent || !child) return prev;
-  
+
       // 🚫 Disallow intra-module links
       const sameModule =
         (parent.moduleId && child.moduleId && parent.moduleId === child.moduleId) ||
         (parent.module && child.module && parent.module === child.module);
-  
+
       if (sameModule) { blocked = true; return prev; }
-  
+
       // ---- parent → child (forward)
       const pLinks = Array.isArray(parent.links) ? parent.links : [];
       if (!pLinks.some((l) => l.toId === childId && l.type === type)) {
@@ -928,7 +1236,7 @@ useEffect(() => { (async ()=> setRequirements(await Storage.load()))(); }, []);
         ];
         parent.version = newVersion;
       }
-  
+
       // ---- child ← parent (inverse/backlink)
       const cLinks = Array.isArray(child.links) ? child.links : [];
       if (!cLinks.some((l) => l.toId === parentId && l.type === inverse)) {
@@ -946,30 +1254,30 @@ useEffect(() => { (async ()=> setRequirements(await Storage.load()))(); }, []);
         ];
         child.version = newVersion;
       }
-  
+
       return next;
     });
-  
+
     if (blocked) {
       throw new Error("Links within the same module are not allowed.");
     }
-  
+
     // Persist both sides (best-effort)
     try {
       const all = getAllReqs();
       const parent = all.find((r) => r.id === parentId);
       const child  = all.find((r) => r.id === childId);
       if (!parent || !child) return;
-  
+
       // Defensive same-module check again
       const sameModule =
         (parent.moduleId && child.moduleId && parent.moduleId === child.moduleId) ||
         (parent.module && child.module && parent.module === child.module);
       if (sameModule) return;
-  
+
       const parentLinks = Array.isArray(parent.links) ? parent.links : [];
       const childLinks  = Array.isArray(child.links)  ? child.links  : [];
-  
+
       if (!parentLinks.some((l) => l.toId === childId && l.type === type)) {
         await updateRequirement(parentId, { links: [...parentLinks, { toId: childId, type }] });
       }
@@ -977,25 +1285,25 @@ useEffect(() => { (async ()=> setRequirements(await Storage.load()))(); }, []);
         await updateRequirement(childId, { links: [...childLinks, { toId: parentId, type: inverse }] });
       }
     } catch (e) {
-      logger.warn("Persisting link/backlink failed:", e);
+      console.warn("Persisting link/backlink failed:", e);
     }
   }
-   
-  
+
+
 // Create a blank parent above the selected item and reparent it under the new node
 function createParentFor(id){
     if (!id) return;
     const newId = makeId("REQ");
     let newParentObj = null;
-  
+
     updateRequirements(prev => {
       const me = prev.find(r => r.id === id);
       if (!me) return prev;
-  
+
       const sameScope = prev.filter(
         r => (r.folderId ?? r.projectId) === me.folderId && r.module === me.module
       );
-  
+
       newParentObj = {
         id: newId,
         title: "",
@@ -1014,30 +1322,30 @@ function createParentFor(id){
         createdAt: nowISO(),
         updatedAt: nowISO(),
       };
-  
+
       const next = deepClone(prev);
       next.push(newParentObj);
-  
+
       const idx = next.findIndex(r => r.id === me.id);
       next[idx].parentId = newId;
       next[idx].order = nextOrderAmong(
         next.filter(r => (r.folderId ?? r.projectId) === me.folderId && r.module === me.module),
         newId
       );
-  
+
       return next;
     });
-  
+
     // Open the form on the new parent for immediate naming
     if (newParentObj) { setEditing(newParentObj); setShowForm(true); setSelectedId(newId); }
   }
-  
+
   // Start a new requirement as a sibling of the selected item
   function createSiblingFor(id){
     if (!id) return;
     const me = requirements.find(r => r.id === id);
     if (!me) return;
-  
+
     const draft = {
       id: makeId(),
       title: "",
@@ -1059,16 +1367,29 @@ function createParentFor(id){
       createdAt: nowISO(),
       updatedAt: nowISO(),
     };
-  
+
     setEditing(draft);
     setShowForm(true);
-  }  
-  
+  }
+
   // inside RequirementsManager component, near other useMemos
 const folderNameById = useMemo(
     () => Object.fromEntries(folders.map(f => [f.id, f.name])),
     [folders]
   );
+
+  function resolveFolderLocal(folderId = activeFolderId) {
+    const all = Folders.loadAll();
+    return all.find((folder) => folder.id === folderId) || null;
+  }
+
+  function resolveModuleLocal(moduleRef, folderId = activeFolderId) {
+    const folder = resolveFolderLocal(folderId);
+    if (!folder || !moduleRef) return null;
+    return (folder.modules || []).find((module) =>
+      module.id === moduleRef || String(module.name || "").toLowerCase() === String(moduleRef).toLowerCase()
+    ) || null;
+  }
 
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     try { return JSON.parse(localStorage.getItem(LS_SIDEBAR_OPEN) ?? "true"); }
@@ -1077,10 +1398,10 @@ const folderNameById = useMemo(
   useEffect(() => {
     localStorage.setItem(LS_SIDEBAR_OPEN, JSON.stringify(sidebarOpen));
   }, [sidebarOpen]);
-  
+
 // UI state (near sidebarOpen)
 const [isRootDrop, setIsRootDrop] = useState(false);
-  
+
   // --- UI state
   const [viewMode, setViewMode] = useState(VIEW_MODES.OUTLINE);
   const [selectedModule, setSelectedModule] = useState(moduleMetas[0]?.name || "System");
@@ -1136,156 +1457,6 @@ function clearSelection() {
   setSelectedIds(new Set());
 }
 
-const handleAgentApplyRef = useRef(null);
-const saveRequirementRef = useRef(null);
-const promoteRef = useRef(null);
-const demoteRef = useRef(null);
-const copySelectionRef = useRef(null);
-const cutSelectionRef = useRef(null);
-const pasteClipboardRef = useRef(null);
-
-useEffect(() => {
-  const onAgentApply = (e) => {
-    const { actions = [] } = e.detail || {};
-    handleAgentApplyRef.current?.(actions);
-  };
-
-  // primary + a couple of safe fallbacks
-  window.addEventListener("xhandle:agent-apply", onAgentApply);
-  window.addEventListener("agent-apply", onAgentApply);
-  window.addEventListener("xhandle:agent.apply", onAgentApply);
-
-  return () => {
-    window.removeEventListener("xhandle:agent-apply", onAgentApply);
-    window.removeEventListener("agent-apply", onAgentApply);
-    window.removeEventListener("xhandle:agent.apply", onAgentApply);
-  };
-}, []);
-
-
-async function handleAgentApply(actions) {
-  const list = Array.isArray(actions) ? actions : [];
-
-  // helper: live map of moduleName -> moduleId for the ACTIVE folder
-  function buildModuleIdByName(folderId) {
-    const all = Folders.loadAll();
-    const folder = all.find(f => f.id === folderId);
-    const map = {};
-    for (const m of (folder?.modules || [])) map[m.name] = m.id;
-    return map;
-  }
-
-  let moduleIdByName = buildModuleIdByName(activeFolderId);
-
-  // 1) Always create modules first so they exist for downstream actions
-  for (const a of list) {
-    if (a.type !== "CREATE_MODULE") continue;
-
-    const { name, type = "Requirement", attrTemplate = [], viewTemplates = [] } = a.payload || {};
-    if (!name?.trim()) continue;
-
-    const all = Folders.loadAll();
-    const folder = all.find(f => f.id === activeFolderId);
-    if (!folder) continue;
-
-    const exists = (folder.modules || []).some(m => m.name === name.trim());
-    if (exists) {
-      // update local map even if it already existed
-      const hit = (folder.modules || []).find(m => m.name === name.trim());
-      if (hit) moduleIdByName[name.trim()] = hit.id;
-      continue;
-    }
-
-    const mod = {
-      id: makeId("MOD"),
-      name: name.trim(),
-      type,
-      attrTemplate: normalizeAttrTemplate(attrTemplate),
-      viewTemplates: Array.isArray(viewTemplates) ? viewTemplates : []
-    };
-
-    const updatedFolder = { ...folder, modules: [ ...(folder.modules || []), mod ] };
-    Folders.upsert(updatedFolder);
-
-    // refresh UI + map immediately
-    setFolders(Folders.loadAll());
-    setSelectedModule(mod.name);
-    moduleIdByName[mod.name] = mod.id;
-
-    await upsertModuleAttributeDefinitions(mod.id, mod.attrTemplate);
-  }
-
-  // 2) Handle the rest (requirements, updates, links, etc.)
-  for (const a of list) {
-    try {
-      switch (a.type) {
-        case "CREATE_REQUIREMENT": {
-          const { title, module, attributes = {} } = a.payload || {};
-          if (!title || !module) break;
-
-          // use the FRESH moduleId if we just created the module above
-          const modId = moduleIdByName[module] || null;
-
-          const draft = {
-            id: makeId(),
-            title,
-            module,
-            moduleId: modId,
-            projectId: activeFolderId,
-            folderId: activeFolderId,
-            status: "Proposed",
-            heading: false,
-            attributes,
-            links: [],
-            parentId: null,
-            order: nextOrderAmong(
-              requirements.filter(r => (r.folderId ?? r.projectId) === activeFolderId && r.module === module),
-              null
-            ),
-            version: 1,
-            history: [],
-            createdAt: nowISO(),
-            updatedAt: nowISO(),
-          };
-          saveRequirement(draft);
-          break;
-        }
-
-        case "UPDATE_REQUIREMENT": {
-          const { id, patch = {} } = a.payload || {};
-          const row = requirements.find(r => r.id === id);
-          if (row) saveRequirement({ ...row, ...patch });
-          break;
-        }
-
-        case "CREATE_TRACE_LINK": {
-          const { fromId, toId, linkType } = a.payload || {};
-          if (fromId && toId && linkType) await addTraceLinkLocal(fromId, toId, linkType);
-          break;
-        }
-
-        case "CREATE_DIAGRAM_NODE":
-        case "CREATE_DIAGRAM_EDGE":
-          window.dispatchEvent(new CustomEvent("xhandle:diagram-apply", { detail: a }));
-          break;
-
-        case "UPDATE_RISK":
-          window.dispatchEvent(new CustomEvent("xhandle:risk-apply", { detail: a }));
-          break;
-
-        // already handled above
-        case "CREATE_MODULE":
-        default:
-          break;
-      }
-    } catch (err) {
-      logger.warn("[agent-apply] failed on action", a, err);
-    }
-  }
-}
-
-handleAgentApplyRef.current = handleAgentApply;
-
 // Attribute mapper state (opened after Title is chosen)
 const [showAttrMapper, setShowAttrMapper] = useState(false);
 const [mapperColumns, setMapperColumns] = useState([]);     // string[] headers
@@ -1321,6 +1492,17 @@ const moduleRows = useMemo(
 );
 
 useEffect(() => {
+  if (typeof onActiveDesignContextChange !== "function") return;
+  onActiveDesignContextChange({
+    activeFolderId,
+    activeFolderName: activeFolder?.name || "Current Design Folder",
+    selectedModule,
+    selectedModuleId: moduleByName[selectedModule]?.id || null,
+    rows: moduleRows,
+  });
+}, [activeFolderId, activeFolder?.name, selectedModule, moduleByName, moduleRows, onActiveDesignContextChange]);
+
+useEffect(() => {
   function onKeyDown(e) {
     // don't hijack arrows while typing
     const tag = (e.target && e.target.tagName) || "";
@@ -1338,7 +1520,7 @@ useEffect(() => {
       e.preventDefault();
       for (const id of ids) {
         const row = moduleRows.find(r => r.id === id);
-        if (row && !row.heading) saveRequirementRef.current?.({ ...row, heading: true });
+        if (row && !row.heading) saveRequirement({ ...row, heading: true });
       }
     }
 
@@ -1347,40 +1529,40 @@ useEffect(() => {
       e.preventDefault();
       for (const id of ids) {
         const row = moduleRows.find(r => r.id === id);
-        if (row && row.heading) saveRequirementRef.current?.({ ...row, heading: false });
+        if (row && row.heading) saveRequirement({ ...row, heading: false });
       }
     }
 
     // Shift + ArrowRight → Demote
     if (e.shiftKey && e.key === "ArrowRight") {
       e.preventDefault();
-      ids.forEach(id => demoteRef.current?.(id));
+      ids.forEach(id => demote?.(id));
     }
 
     // Shift + ArrowLeft → Promote
     if (e.shiftKey && e.key === "ArrowLeft") {
       e.preventDefault();
-      ids.forEach(id => promoteRef.current?.(id));
+      ids.forEach(id => promote?.(id));
     }
 
     // Clipboard (works for multi or single)
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c") {
       e.preventDefault();
-      copySelectionRef.current?.(true);
+      copySelection(true);
     }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "x") {
       e.preventDefault();
-      cutSelectionRef.current?.();
+      cutSelection();
     }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "v") {
       e.preventDefault();
-      pasteClipboardRef.current?.();
+      pasteClipboard();
     }
   }
 
   window.addEventListener("keydown", onKeyDown);
   return () => window.removeEventListener("keydown", onKeyDown);
-}, [selectedReq, selectedIds, moduleRows]);
+}, [selectedReq, selectedIds, moduleRows, saveRequirement, promote, demote, copySelection, cutSelection, pasteClipboard]);
 
 
 // Columns for the Table view (template + keys present in data)
@@ -1523,11 +1705,11 @@ const tableFiltered = useMemo(() => {
         tpl.filter(t => t.key).map(t => [t.key, defaultForType(t.type)])
       );
     }
-    
+
     setEditing(draft); setShowForm(true);
   }
   function onEdit(r) { setEditing(deepClone(r)); setShowForm(true); }
-  
+
   function onDelete(id) {
     if (!window.confirm("Delete this requirement? Links to it will be removed.")) return;
     updateRequirements(prev => {
@@ -1538,7 +1720,7 @@ const tableFiltered = useMemo(() => {
       return next;
     });
   }
-  
+
   function describeChange(before, after) {
     try {
       const diffs = [];
@@ -1559,7 +1741,7 @@ const tableFiltered = useMemo(() => {
     setMapperTitleCol(titleColumn);
     setShowAttrMapper(true);
   }
-  
+
   // Baselines (namespaced per folder + module)
 function saveBaseline() {
     if (!activeFolder || !selectedModule) {
@@ -1568,7 +1750,7 @@ function saveBaseline() {
     }
     const name = window.prompt("Baseline name (e.g., v1.0 or 2025-08-22):");
     if (!name) return;
-  
+
     const map = Baselines.loadMap();
     map[activeFolder.id] ||= {};
     const modId = moduleByName[selectedModule]?.id;
@@ -1580,7 +1762,7 @@ function saveBaseline() {
     Baselines.saveMap(map);
     toastOnce(`Baseline '${name}' saved for ${selectedModule}`);
   }
-  
+
   function restoreBaseline() {
     if (!activeFolder || !selectedModule) {
       toastOnce("Pick a folder and module first");
@@ -1596,13 +1778,13 @@ function saveBaseline() {
     const name = window.prompt(`Restore which baseline?\n${choices.join("\n")}`);
     const pack = map?.[activeFolder.id]?.[modId]?.[name];
     if (!pack) return;
-  
+
     const restored = pack.data;
     updateRequirements(prev => {
         const keep = prev.filter(r => !((r.folderId ?? r.projectId) === activeFolder.id && r.module === selectedModule));
         return [...keep, ...restored];
     });
-             
+
     toastOnce(`Restored '${name}' to ${selectedModule}`);
   }
 
@@ -1628,7 +1810,7 @@ async function importFromHazardAnalysis(projectId, headerName){
   toastOnce(`Selected '${headerName}' as Title — map remaining columns next`);
 }
 
-  
+
   function saveRequirement(draft) {
     const modMeta = moduleByName[draft.module];
 draft.moduleId = modMeta?.id ?? null;
@@ -1674,8 +1856,579 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
     setEditing(null);
   }
 
-  saveRequirementRef.current = saveRequirement;
-  
+  function createFolderAction({ name, parentId = null } = {}) {
+    const folderName = String(name || "").trim();
+    if (!folderName) throw new Error("Folder name is required.");
+    const folder = {
+      id: makeId("FOL"),
+      parentId,
+      name: folderName,
+      modules: [],
+      roles: { Owner: [], Editor: [], Viewer: [] },
+    };
+    Folders.upsert(folder);
+    setFolders(Folders.loadAll());
+    setActiveFolderId(folder.id);
+    return folder;
+  }
+
+  async function createModuleAction({ folderId = activeFolderId, name, type = "Requirement", description = "" } = {}) {
+    const folder = resolveFolderLocal(folderId);
+    if (!folder) throw new Error("Target folder not found.");
+    const moduleName = String(name || "").trim();
+    if (!moduleName) throw new Error("Module name is required.");
+
+    const existing = (folder.modules || []).find(
+      (module) => String(module.name || "").toLowerCase() === moduleName.toLowerCase()
+    );
+    if (existing) {
+      setActiveFolderId(folderId);
+      setSelectedModule(existing.name);
+      return existing;
+    }
+
+    const mod = {
+      id: makeId("MOD"),
+      name: moduleName,
+      type,
+      description,
+      attrTemplate: [],
+      viewTemplates: [],
+    };
+    Folders.upsert({ ...folder, modules: [...(folder.modules || []), mod] });
+    setFolders(Folders.loadAll());
+    setActiveFolderId(folderId);
+    setSelectedModule(mod.name);
+    return mod;
+  }
+
+  function openModuleAction({ folderId = activeFolderId, moduleRef } = {}) {
+    const module = resolveModuleLocal(moduleRef, folderId);
+    if (!module) throw new Error("Module not found.");
+    setActiveFolderId(folderId);
+    setSelectedModule(module.name);
+    return module;
+  }
+
+  function saveModuleAction({ folderId = activeFolderId, moduleRef } = {}) {
+    return openModuleAction({ folderId, moduleRef });
+  }
+
+  function renameModuleAction({ folderId = activeFolderId, moduleRef, newName } = {}) {
+    const module = resolveModuleLocal(moduleRef, folderId);
+    if (!module) throw new Error("Module not found.");
+    const nextName = String(newName || "").trim();
+    if (!nextName) throw new Error("A new module name is required.");
+
+    const folder = resolveFolderLocal(folderId);
+    const updatedFolder = {
+      ...folder,
+      modules: (folder.modules || []).map((entry) =>
+        entry.id === module.id ? { ...entry, name: nextName } : entry
+      ),
+    };
+    Folders.upsert(updatedFolder);
+    setFolders(Folders.loadAll());
+    updateRequirements((prev) =>
+      prev.map((row) =>
+        (row.folderId ?? row.projectId) === folderId && row.moduleId === module.id
+          ? { ...row, module: nextName, updatedAt: nowISO() }
+          : row
+      )
+    );
+    if (selectedModule === module.name) setSelectedModule(nextName);
+    return { ...module, name: nextName };
+  }
+
+  function validateModuleQualityAction({ folderId = activeFolderId, moduleRef = selectedModule } = {}) {
+    const module = resolveModuleLocal(moduleRef, folderId);
+    if (!module) throw new Error("Module not found.");
+    const rows = requirements.filter(
+      (row) => (row.folderId ?? row.projectId) === folderId && (row.moduleId === module.id || row.module === module.name)
+    );
+    const findings = [];
+    const byTitle = new Map();
+    const children = new Map();
+    rows.forEach((row) => {
+      const key = String(row.title || "").trim().toLowerCase();
+      if (key) byTitle.set(key, [...(byTitle.get(key) || []), row]);
+      const parent = row.parentId || null;
+      children.set(parent, [...(children.get(parent) || []), row]);
+    });
+    rows.forEach((row) => {
+      if (row.heading && !(children.get(row.id) || []).length) {
+        findings.push({ severity: "warning", title: "Empty section", rowId: row.id, message: `${row.title} has no child objects.` });
+      }
+      if (!row.heading) {
+        const title = String(row.title || "");
+        if (!/\bshall\b/i.test(title)) {
+          findings.push({ severity: "warning", title: "Requirement may not be normative", rowId: row.id, message: `"${title}" does not include shall.` });
+        }
+        if (/\b(fast|robust|adequate|easy|user[- ]friendly|as needed|where appropriate|etc\.?|reasonable)\b/i.test(title)) {
+          findings.push({ severity: "warning", title: "Ambiguous wording", rowId: row.id, message: `"${title}" contains wording that may not be verifiable.` });
+        }
+        if (!row.attributes?.Verification) {
+          findings.push({ severity: "info", title: "Missing verification method", rowId: row.id, message: `"${title}" has no Verification attribute.` });
+        }
+      }
+    });
+    byTitle.forEach((dupes) => {
+      if (dupes.length > 1) {
+        findings.push({ severity: "warning", title: "Duplicate title", rowIds: dupes.map((row) => row.id), message: `${dupes.length} rows share the same title.` });
+      }
+    });
+    return { module, rowCount: rows.length, findingCount: findings.length, findings };
+  }
+
+  function buildRequirementRow(row, module, folderId, index) {
+    const modMeta = moduleByName[module.name] || module;
+    const template = normalizeAttrTemplate(modMeta?.attrTemplate);
+    const defaults = Object.fromEntries(
+      (template || []).filter((item) => item.key).map((item) => [item.key, defaultForType(item.type)])
+    );
+    const isHeading = !!row.heading;
+    return {
+      id: row.id || makeId(),
+      title: row.title || `Item ${index + 1}`,
+      projectId: folderId,
+      folderId,
+      moduleId: module.id,
+      module: module.name,
+      status: row.status || STATUSES[0],
+      heading: isHeading,
+      attributes: isHeading ? {} : { ...defaults, ...(row.attributes || {}) },
+      links: row.links || [],
+      parentId: row.parentId ?? null,
+      order: typeof row.order === "number" ? row.order : index,
+      version: 1,
+      history: [],
+      content: isHeading ? undefined : row.content,
+      createdAt: nowISO(),
+      updatedAt: nowISO(),
+    };
+  }
+
+  const AGENT_SNAPSHOTS_KEY = "xhandle.designManagement.agentSnapshots";
+  function readAgentSnapshots() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(AGENT_SNAPSHOTS_KEY) || "[]");
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function writeAgentSnapshots(snapshots) {
+    try {
+      localStorage.setItem(AGENT_SNAPSHOTS_KEY, JSON.stringify((snapshots || []).slice(0, 12)));
+    } catch {}
+  }
+
+  function snapshotModuleAction({ folderId = activeFolderId, moduleRef = selectedModule, reason = "Collaborator edit" } = {}) {
+    const module = resolveModuleLocal(moduleRef, folderId);
+    if (!module) throw new Error("Module not found.");
+    const rows = requirements.filter(
+      (row) => (row.folderId ?? row.projectId) === folderId && (row.moduleId === module.id || row.module === module.name)
+    );
+    const snapshot = {
+      id: makeId("SNAP"),
+      reason,
+      folderId,
+      moduleId: module.id,
+      moduleName: module.name,
+      rows: deepClone(rows),
+      createdAt: nowISO(),
+    };
+    writeAgentSnapshots([snapshot, ...readAgentSnapshots()]);
+    return snapshot;
+  }
+
+  function restoreLastAgentSnapshotAction({ snapshotId } = {}) {
+    const snapshots = readAgentSnapshots();
+    const snapshot = snapshotId
+      ? snapshots.find((entry) => entry.id === snapshotId)
+      : snapshots[0];
+    if (!snapshot) throw new Error("No Collaborator snapshot is available to restore.");
+    const folderId = snapshot.folderId;
+    const module = resolveModuleLocal(snapshot.moduleId || snapshot.moduleName, folderId);
+    if (!module) throw new Error("Snapshot module no longer exists.");
+    updateRequirements((prev) => {
+      const keep = prev.filter(
+        (row) => !((row.folderId ?? row.projectId) === folderId && (row.moduleId === module.id || row.module === module.name))
+      );
+      return [...keep, ...deepClone(snapshot.rows || [])];
+    });
+    setActiveFolderId(folderId);
+    setSelectedModule(module.name);
+    toastOnce(`Restored Collaborator snapshot for ${module.name}`);
+    return { snapshotId: snapshot.id, module, restored: snapshot.rows?.length || 0 };
+  }
+
+  function findRowsByQuery(rows, query) {
+    const q = String(query || "").trim().toLowerCase();
+    if (!q) return [];
+    return rows.filter((row) =>
+      `${row.title || ""} ${row.attributes?.Description || ""} ${row.attributes?.Rationale || ""} ${row.content || ""}`
+        .toLowerCase()
+        .includes(q)
+    );
+  }
+
+  function expandHeadingDetails(rows = []) {
+    const expanded = [];
+    let currentHeadingId = null;
+    const titleWithoutNumber = (title) => String(title || "").replace(/^\s*\d+(?:\.\d+)*\.?\s*/, "").trim();
+    const hasDetails = (row) => {
+      if (row?.content) return true;
+      const attrs = row?.attributes || {};
+      return Object.values(attrs).some((value) => String(value || "").trim());
+    };
+
+    rows.forEach((row, index) => {
+      if (!row?.heading) {
+        expanded.push({
+          ...row,
+          parentId: row.parentId ?? currentHeadingId,
+        });
+        return;
+      }
+
+      const headingId = row.id || makeId("HD");
+      currentHeadingId = headingId;
+      const detailAttrs = row.attributes || {};
+      const detailContent = row.content;
+      expanded.push({
+        ...row,
+        id: headingId,
+        attributes: {},
+        content: undefined,
+        order: typeof row.order === "number" ? row.order : index,
+      });
+
+      if (hasDetails(row)) {
+        expanded.push({
+          title: `${titleWithoutNumber(row.title) || "Section"} overview`,
+          heading: false,
+          parentId: headingId,
+          order: 0,
+          attributes: {
+            ...(detailAttrs.Description ? { Description: detailAttrs.Description } : {}),
+            ...(detailAttrs.Rationale ? { Rationale: detailAttrs.Rationale } : {}),
+            ...Object.fromEntries(
+              Object.entries(detailAttrs).filter(([key, value]) =>
+                !["Description", "Rationale"].includes(key) && String(value || "").trim()
+              )
+            ),
+          },
+          content: detailContent,
+          status: row.status,
+        });
+      }
+    });
+
+    return expanded;
+  }
+
+  function replaceModuleRowsAction({ folderId = activeFolderId, moduleRef, rows = [], mode = "replace" } = {}) {
+    const module = resolveModuleLocal(moduleRef, folderId);
+    if (!module) throw new Error("Module not found.");
+
+    setActiveFolderId(folderId);
+    setSelectedModule(module.name);
+
+    updateRequirements((prev) => {
+      const scopeMatch = (row) =>
+        (row.folderId ?? row.projectId) === folderId &&
+        (row.moduleId === module.id || row.module === module.name);
+
+      const base = mode === "replace" ? prev.filter((row) => !scopeMatch(row)) : [...prev];
+      const normalizedRows = expandHeadingDetails(rows);
+      const created = normalizedRows.map((row, index) => buildRequirementRow(row, module, folderId, index));
+      return [...base, ...created];
+    });
+
+    return {
+      module,
+      rows: expandHeadingDetails(rows).map((row, index) => buildRequirementRow(row, module, folderId, index)),
+    };
+  }
+
+  function appendModuleRowsAction({ folderId = activeFolderId, moduleRef, rows = [] } = {}) {
+    const module = resolveModuleLocal(moduleRef, folderId);
+    if (!module) throw new Error("Module not found.");
+    const existing = requirements.filter(
+      (row) => (row.folderId ?? row.projectId) === folderId && (row.moduleId === module.id || row.module === module.name)
+    );
+    const prepared = rows.map((row, index) => ({
+      ...row,
+      order: typeof row.order === "number" ? row.order : existing.length + index,
+    }));
+    return replaceModuleRowsAction({ folderId, moduleRef: module.id, rows: prepared, mode: "append" });
+  }
+
+  function findSectionRow(rows, sectionTitle, sectionId = "") {
+    const id = String(sectionId || "").trim().toLowerCase();
+    if (id) {
+      const byId = rows.find((row) => String(row.id || "").toLowerCase() === id);
+      if (byId) return byId;
+    }
+    const q = String(sectionTitle || "").trim().toLowerCase();
+    if (!q) return null;
+    return rows.find((row) =>
+      row.heading &&
+      String(row.title || "").trim().toLowerCase() === q
+    ) || rows.find((row) =>
+      row.heading &&
+      String(row.title || "").toLowerCase().includes(q)
+    ) || null;
+  }
+
+  function createSectionAction({ folderId = activeFolderId, moduleRef = selectedModule, title, parentSectionId = null, parentSectionTitle = "" } = {}) {
+    const module = resolveModuleLocal(moduleRef, folderId);
+    if (!module) throw new Error("Module not found.");
+    const sectionTitle = String(title || "").trim();
+    if (!sectionTitle) throw new Error("Section title is required.");
+
+    let createdSection = null;
+    updateRequirements((prev) => {
+      const moduleScope = prev.filter(
+        (row) => (row.folderId ?? row.projectId) === folderId && (row.moduleId === module.id || row.module === module.name)
+      );
+      const existing = findSectionRow(moduleScope, sectionTitle);
+      if (existing) {
+        createdSection = existing;
+        return prev;
+      }
+      const parent = parentSectionId || parentSectionTitle
+        ? findSectionRow(moduleScope, parentSectionTitle, parentSectionId)
+        : null;
+      createdSection = buildRequirementRow({
+        title: sectionTitle,
+        heading: true,
+        parentId: parent?.id || null,
+        order: nextOrderAmong(moduleScope, parent?.id || null),
+      }, module, folderId, moduleScope.length);
+      return [...prev, createdSection];
+    });
+
+    setActiveFolderId(folderId);
+    setSelectedModule(module.name);
+    return { module, section: createdSection, created: true };
+  }
+
+  function appendRowsToSectionAction({ folderId = activeFolderId, moduleRef = selectedModule, sectionTitle, sectionId = "", rows = [], createSection = true } = {}) {
+    const module = resolveModuleLocal(moduleRef, folderId);
+    if (!module) throw new Error("Module not found.");
+    const incoming = Array.isArray(rows) ? rows : [];
+    if (!incoming.length) return { module, section: null, rows: [], appended: 0 };
+
+    let section = null;
+    let createdSection = null;
+    updateRequirements((prev) => {
+      const moduleScope = prev.filter(
+        (row) => (row.folderId ?? row.projectId) === folderId && (row.moduleId === module.id || row.module === module.name)
+      );
+      section = findSectionRow(moduleScope, sectionTitle, sectionId);
+      const next = [...prev];
+      if (!section && createSection && String(sectionTitle || "").trim()) {
+        createdSection = buildRequirementRow({
+          title: String(sectionTitle).trim(),
+          heading: true,
+          attributes: { Description: "Section created by Collaborator." },
+          parentId: null,
+          order: nextOrderAmong(moduleScope, null),
+        }, module, folderId, moduleScope.length);
+        section = createdSection;
+        next.push(createdSection);
+      }
+      if (!section) throw new Error(`Section not found: ${sectionTitle}`);
+
+      const latestScope = [...moduleScope, ...(createdSection ? [createdSection] : [])];
+      const baseOrder = nextOrderAmong(latestScope, section.id);
+      const prepared = incoming.map((row, index) => buildRequirementRow({
+        ...row,
+        heading: !!row.heading && row.heading !== "false",
+        parentId: section.id,
+        order: baseOrder + index,
+      }, module, folderId, latestScope.length + index));
+      return [...next, ...prepared];
+    });
+
+    setActiveFolderId(folderId);
+    setSelectedModule(module.name);
+    return { module, section, rows: incoming, appended: incoming.length };
+  }
+
+  function moveRowsToSectionAction({ folderId = activeFolderId, moduleRef = selectedModule, rowIds = [], query = "", sectionTitle, sectionId = "", createSection = true } = {}) {
+    const module = resolveModuleLocal(moduleRef, folderId);
+    if (!module) throw new Error("Module not found.");
+    let movedRows = [];
+    let section = null;
+    updateRequirements((prev) => {
+      const moduleScope = prev.filter(
+        (row) => (row.folderId ?? row.projectId) === folderId && (row.moduleId === module.id || row.module === module.name)
+      );
+      section = findSectionRow(moduleScope, sectionTitle, sectionId);
+      const next = [...prev];
+      if (!section && createSection && String(sectionTitle || "").trim()) {
+        section = buildRequirementRow({
+          title: String(sectionTitle).trim(),
+          heading: true,
+          parentId: null,
+          order: nextOrderAmong(moduleScope, null),
+        }, module, folderId, moduleScope.length);
+        next.push(section);
+      }
+      if (!section) throw new Error(`Section not found: ${sectionTitle}`);
+      const ids = new Set(Array.isArray(rowIds) ? rowIds.filter(Boolean) : []);
+      const targets = ids.size
+        ? moduleScope.filter((row) => ids.has(row.id))
+        : findRowsByQuery(moduleScope, query);
+      if (!targets.length) return next;
+      const baseOrder = nextOrderAmong(moduleScope, section.id);
+      movedRows = targets.map((row) => row.id);
+      return next.map((row) => {
+        const index = targets.findIndex((target) => target.id === row.id);
+        if (index < 0) return row;
+        return { ...row, parentId: section.id, order: baseOrder + index, updatedAt: nowISO() };
+      });
+    });
+    setActiveFolderId(folderId);
+    setSelectedModule(module.name);
+    return { module, section, movedIds: movedRows, movedCount: movedRows.length };
+  }
+
+  function rewriteModuleRowsAction({ folderId = activeFolderId, moduleRef = selectedModule, rowIds = [], query = "", updates = [] } = {}) {
+    const module = resolveModuleLocal(moduleRef, folderId);
+    if (!module) throw new Error("Module not found.");
+    const updateById = new Map((updates || []).filter((entry) => entry?.id).map((entry) => [entry.id, entry]));
+    let updatedCount = 0;
+    updateRequirements((prev) => {
+      const moduleScope = prev.filter(
+        (row) => (row.folderId ?? row.projectId) === folderId && (row.moduleId === module.id || row.module === module.name)
+      );
+      const ids = new Set(Array.isArray(rowIds) ? rowIds.filter(Boolean) : []);
+      const targets = ids.size
+        ? moduleScope.filter((row) => ids.has(row.id))
+        : findRowsByQuery(moduleScope, query);
+      const targetIds = new Set(targets.map((row) => row.id));
+      return prev.map((row) => {
+        if (!targetIds.has(row.id)) return row;
+        const patch = updateById.get(row.id) || updates[updatedCount] || {};
+        updatedCount += 1;
+        return {
+          ...row,
+          ...patch,
+          id: row.id,
+          heading: !!row.heading,
+          attributes: row.heading ? {} : { ...(row.attributes || {}), ...(patch.attributes || {}) },
+          updatedAt: nowISO(),
+        };
+      });
+    });
+    setActiveFolderId(folderId);
+    setSelectedModule(module.name);
+    return { module, updatedCount };
+  }
+
+  function collectDescendantIds(rows, rootIds) {
+    const ids = new Set(rootIds);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      rows.forEach((row) => {
+        if (row.parentId && ids.has(row.parentId) && !ids.has(row.id)) {
+          ids.add(row.id);
+          changed = true;
+        }
+      });
+    }
+    return ids;
+  }
+
+  function deleteModuleRowsAction({ folderId = activeFolderId, moduleRef = selectedModule, rowIds = [], query = "", sectionTitle = "", sectionId = "", includeChildren = true } = {}) {
+    const module = resolveModuleLocal(moduleRef, folderId);
+    if (!module) throw new Error("Module not found.");
+    const q = String(query || "").trim().toLowerCase();
+    const ids = new Set(Array.isArray(rowIds) ? rowIds.filter(Boolean) : []);
+    const existing = requirements.filter(
+      (row) => (row.folderId ?? row.projectId) === folderId && (row.moduleId === module.id || row.module === module.name)
+    );
+    const section = findSectionRow(existing, sectionTitle, sectionId);
+    const matched = existing.filter((row) =>
+      ids.has(row.id) ||
+      (section && row.id === section.id) ||
+      (q && `${row.title || ""} ${row.attributes?.Description || ""} ${row.content || ""}`.toLowerCase().includes(q))
+    );
+    if (!matched.length) return { module, deletedIds: [], deletedCount: 0 };
+
+    const deleteIds = includeChildren
+      ? collectDescendantIds(existing, matched.map((row) => row.id))
+      : new Set(matched.map((row) => row.id));
+    updateRequirements((prev) =>
+      prev
+        .filter((row) => !deleteIds.has(row.id))
+        .map((row) => ({
+          ...row,
+          links: (row.links || []).filter((link) => !deleteIds.has(link.toId) && !deleteIds.has(link.fromId)),
+        }))
+    );
+    setActiveFolderId(folderId);
+    setSelectedModule(module.name);
+    return { module, deletedIds: Array.from(deleteIds), deletedCount: deleteIds.size };
+  }
+
+  function deleteRequirementAction(id) {
+    onDelete(id);
+    return { deletedId: id };
+  }
+
+  useEffect(() => {
+    const provider = {
+      createFolder: createFolderAction,
+      createModule: createModuleAction,
+      renameModule: renameModuleAction,
+      openModule: openModuleAction,
+      saveModule: saveModuleAction,
+      replaceModuleRows: replaceModuleRowsAction,
+      appendModuleRows: appendModuleRowsAction,
+      createSection: createSectionAction,
+      appendRowsToSection: appendRowsToSectionAction,
+      moveRowsToSection: moveRowsToSectionAction,
+      rewriteModuleRows: rewriteModuleRowsAction,
+      deleteModuleRows: deleteModuleRowsAction,
+      snapshotModule: snapshotModuleAction,
+      restoreLastAgentSnapshot: restoreLastAgentSnapshotAction,
+      validateModuleQuality: validateModuleQualityAction,
+      saveRequirement: saveRequirement,
+      deleteRequirement: deleteRequirementAction,
+      listModuleRows: ({ folderId = activeFolderId, moduleRef } = {}) => {
+        const module = resolveModuleLocal(moduleRef, folderId);
+        if (!module) return [];
+        return requirements.filter(
+          (row) => (row.folderId ?? row.projectId) === folderId && (row.moduleId === module.id || row.module === module.name)
+        );
+      },
+      resolveModule: ({ folderId = activeFolderId, moduleRef } = {}) => resolveModuleLocal(moduleRef, folderId),
+      getState: () => ({
+        activeFolderId,
+        activeFolderName: activeFolder?.name || null,
+        selectedModule,
+        selectedModuleId: moduleByName[selectedModule]?.id || null,
+        selectedRowId: selectedId || null,
+        selectedRowIds: selectedIds?.size ? Array.from(selectedIds) : (selectedId ? [selectedId] : []),
+        selectedRow: selectedReq || null,
+        folderCount: folders.length,
+        requirementCount: requirements.length,
+        visibleModuleRowCount: moduleRows.length,
+        visibleModuleRows: moduleRows.slice(0, 80),
+        lastAgentSnapshot: readAgentSnapshots()[0] || null,
+      }),
+    };
+
+    return registerActionProvider("requirements", provider);
+  }, [activeFolderId, activeFolder?.name, folders.length, requirements, selectedModule, moduleByName, selectedId, selectedIds, selectedReq, moduleRows]);
+
 
   // ----------------------------- Reorder / Promote / Demote -----------------
   function moveUp(id){
@@ -1708,50 +2461,49 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
     updateRequirements(prev => {
       const me = prev.find(r => r.id === id);
       if (!me || !me.parentId) return prev; // already at root or not found
-  
+
       const parent = prev.find(r => r.id === me.parentId);
       if (!parent) return prev;
-  
+
       const newParentId = parent.parentId ?? null;
-  
+
       // Work on a clone
       const next = deepClone(prev);
-  
+
       // Constrain to same folder/project + module (matches your original filter)
       const same = next.filter(
         r => (r.folderId ?? r.projectId) === me.folderId && r.module === me.module
       );
-  
+
       // Locate live references in `next`
       const n = next.find(r => r.id === id);
       const p = next.find(r => r.id === parent.id);
-  
+
       const oldParentId = me.parentId;
       const oldOrder = me.order ?? 0;
       const parentOrder = p?.order ?? 0;
-  
+
       // 1) Close the gap in the old sibling group (children of oldParentId)
       for (const s of same) {
         if (s.parentId === oldParentId && s.id !== me.id && (s.order ?? 0) > oldOrder) {
           s.order = (s.order ?? 0) - 1;
         }
       }
-  
+
       // 2) Make space in the new sibling group *after the parent*
       for (const s of same) {
         if (s.parentId === newParentId && (s.order ?? 0) > parentOrder) {
           s.order = (s.order ?? 0) + 1;
         }
       }
-  
+
       // 3) Move the node right after the parent in the new level
       n.parentId = newParentId;
       n.order = parentOrder + 1;
-  
+
       return next;
     });
-  }  
-  promoteRef.current = promote;
+  }
   function demote(id){
     updateRequirements(prev => {
       const me = prev.find(r=>r.id===id); if (!me) return prev;
@@ -1764,8 +2516,7 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
       n.parentId = newParent.id; n.order = nextOrderAmong(same, newParent.id);
       return next;
     });
-  }  
-  demoteRef.current = demote;
+  }
 
   function collectSubtree(rows, rootId) {
     const byId = new Map(rows.map(r => [r.id, r]));
@@ -1779,7 +2530,7 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
     for (const list of children.values()) {
       list.sort((a,b) => (a.order ?? 0) - (b.order ?? 0) || String(a.title||"").localeCompare(b.title||""));
     }
-  
+
     const out = [];
     const stack = [rootId];
     while (stack.length) {
@@ -1793,8 +2544,8 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
     }
     return out;
   }
-  
-  
+
+
   function copySelection(withHierarchy = true) {
     const ids = selectedIds.size ? Array.from(selectedIds) : (selectedId ? [selectedId] : []);
     if (!ids.length) return;
@@ -1809,8 +2560,7 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
     }
     setClipboard({ moduleName: selectedModule, roots, withHierarchy });
   }
-  copySelectionRef.current = copySelection;
-  
+
   function cutSelection() {
     copySelection(true);
     const ids = selectedIds.size ? Array.from(selectedIds) : (selectedId ? [selectedId] : []);
@@ -1819,13 +2569,12 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
     }
     clearSelection();
   }
-  cutSelectionRef.current = cutSelection;
-  
+
   function pasteClipboard() {
     if (!clipboard || !clipboard.roots || !clipboard.roots.length) return;
     const targetParentId = selectedId || null;
     const idMap = new Map();
-  
+
     updateRequirements(prev => {
       const next = deepClone(prev);
       for (const { items } of clipboard.roots) {
@@ -1857,9 +2606,8 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
       return next;
     });
   }
-  pasteClipboardRef.current = pasteClipboard;
-  
-  
+
+
   // ----------------------------- Import/Export/Baselines --------------------
   async function exportJSON(){
     const blob = new Blob([JSON.stringify(requirements,null,2)],{type:"application/json"});
@@ -1894,13 +2642,13 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
   async function handleConfirmAttributeMapping(mappings) {
     // mappings = [{ sourceCol, attrKey, type, required }, ...]
     setShowAttrMapper(false);
-  
+
     if (!Array.isArray(mapperSummary2D) || mapperSummary2D.length < 2) return;
     const headers = mapperSummary2D[0].map(h => String(h || ""));
     const rows = mapperSummary2D.slice(1);
     const titleIdx = findPickedHeaderIndex(headers, mapperTitleCol);
     if (titleIdx < 0) { toastOnce("Title column not found anymore"); return; }
-  
+
     // 1) Upsert module attribute definitions
     const modId = moduleByName[selectedModule]?.id || null;
     if (modId) {
@@ -1912,14 +2660,14 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
       }));
       await upsertModuleAttributeDefinitions(modId, defs);
     }
-  
+
     // 2) Build rows → requirements using title column + mapped attributes
     const colIndexByName = Object.fromEntries(headers.map((h, i) => [h, i]));
     const fresh = [];
     for (const row of rows) {
       const title = String(row[titleIdx] ?? "").trim();
       if (!title) continue;
-  
+
       const attrs = {};
       for (const m of mappings) {
         const i = colIndexByName[m.sourceCol];
@@ -1928,7 +2676,7 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
           attrs[m.attrKey] = coerceToType(raw, m.type);
         }
       }
-  
+
       fresh.push({
         id: makeId(),
         title,
@@ -1947,12 +2695,12 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
         updatedAt: nowISO(),
       });
     }
-  
+
     if (!fresh.length) {
       toastOnce("No rows to import after mapping");
       return;
     }
-  
+
     // 3) De-dupe & stamp order
 // 3) De-dupe (within this import AND vs existing) & stamp order
 updateRequirements(prev => {
@@ -1996,10 +2744,10 @@ updateRequirements(prev => {
   return next;
 });
 
-  
+
     toastOnce(`Imported ${fresh.length} item(s) from '${mapperTitleCol}' into ${selectedModule}`);
-  }  
-  
+  }
+
   async function onImportFile(file){
     if(!file) return; const name = file.name.toLowerCase();
     try{
@@ -2028,31 +2776,31 @@ updateRequirements(prev => {
       return obj;
     });
   }
-  
+
   function importRows(rows) {
     if (!Array.isArray(rows)) throw new Error("Import expects an array");
     const existingIds = new Set(requirements.map(r => r.id));
     const idMap = new Map();
-  
+
     const normalized = rows.map(raw => {
       const moduleName = String(raw.module ?? selectedModule);
       const modMeta = moduleByName[moduleName];
-  
+
       const contentParsed =
         typeof raw.content === "string" ? safeParseJSON(raw.content) :
         raw.content ? raw.content :
         (typeof raw.content_json === "string" ? safeParseJSON(raw.content_json) : raw.content_json);
-  
+
       const attrParsed =
         typeof raw.attributes === "string" ? safeParseJSON(raw.attributes) :
         raw.attributes ? raw.attributes :
         (typeof raw.attributes_json === "string" ? safeParseJSON(raw.attributes_json) : raw.attributes_json);
-  
+
       const linksParsed =
         typeof raw.links === "string" ? safeParseJSON(raw.links) :
         Array.isArray(raw.links) ? raw.links :
         (typeof raw.links_json === "string" ? safeParseJSON(raw.links_json) : raw.links_json);
-  
+
       const r = {
         id: String(raw.id || makeId()),
         title: String(raw.title ?? ""),
@@ -2074,25 +2822,25 @@ updateRequirements(prev => {
       if (existingIds.has(r.id)) { const newId = makeId(); idMap.set(r.id, newId); r.id = newId; }
       return r;
     });
-  
+
     for (const r of normalized) {
       r.links = (r.links || []).map(l => ({ type: l.type, toId: idMap.get(l.toId) || l.toId }));
     }
-  
+
     updateRequirements(prev => [...prev, ...normalized]);
     toastOnce(`Imported ${normalized.length} requirements`);
   }
-   
+
 
   // ----------------------------- Folder deletion (NEW) ----------------------
   function deleteFolder(folderId) {
     const fol = folders.find(f => f.id === folderId);
     if (!fol) return;
-  
+
     const descendants = collectDescendantIds(folders, folderId);
     const hasChildren = descendants.size > 0;
     const hasReqs = hasRequirementsInScope(requirements, folderId, descendants);
-  
+
     // If empty, remove immediately
     if (!hasChildren && !hasReqs) {
       const remainingFolders = folders.filter(f => f.id !== folderId);
@@ -2104,7 +2852,7 @@ updateRequirements(prev => {
       }
       return;
     }
-  
+
     const choice = window.prompt(
       `Folder '${fol.name}' is not empty.\n` +
       `Type DELETE to remove this folder, all subfolders, and their requirements.\n` +
@@ -2112,42 +2860,42 @@ updateRequirements(prev => {
       `Leave blank to cancel.`
     );
     if (!choice) return;
-  
+
     if (choice.toUpperCase() === "DELETE") {
       const scopeIds = new Set([folderId, ...descendants]);
-  
+
       // Remove folders in scope
       const remainingFolders = folders.filter(f => !scopeIds.has(f.id));
       Folders.saveAll(remainingFolders);
       setFolders(remainingFolders);
-  
+
       // Remove requirements in scope
       updateRequirements(reqs => reqs.filter(r => !scopeIds.has(r.folderId ?? r.projectId)));
-  
+
       // Remove baselines buckets in scope
       const baseMap = Baselines.loadMap();
       for (const id of scopeIds) delete baseMap[id];
       Baselines.saveMap(baseMap);
-  
+
       // Fix active folder if it was deleted
       if (activeFolderId && scopeIds.has(activeFolderId)) {
         const fallback = remainingFolders.find(f => f.id === fol.parentId) || remainingFolders[0] || null;
         setActiveFolderId(fallback?.id || null);
       }
-  
+
       toastOnce("Folder and contents deleted");
       return;
     }
-  
+
     if (choice.toUpperCase() === "MOVE") {
       const parentId = fol.parentId || null;
-  
+
       // Reparent direct children
       const movedFolders = folders.map(f => f.parentId === folderId ? { ...f, parentId } : f);
       const remainingFolders = movedFolders.filter(f => f.id !== folderId);
       Folders.saveAll(remainingFolders);
       setFolders(remainingFolders);
-  
+
       // Move direct requirements to parent
       updateRequirements(reqs =>
         reqs.map(r => {
@@ -2155,7 +2903,7 @@ updateRequirements(prev => {
           return fid === folderId ? { ...r, folderId: parentId, projectId: parentId } : r;
         })
       );
-  
+
       // Move baselines bucket (merge into parent)
       const baseMap = Baselines.loadMap();
       if (baseMap[folderId]) {
@@ -2164,7 +2912,7 @@ updateRequirements(prev => {
         delete baseMap[folderId];
         Baselines.saveMap(baseMap);
       }
-  
+
       if (activeFolderId === folderId) {
         const fallback = remainingFolders.find(f => f.id === parentId) || remainingFolders[0] || null;
         setActiveFolderId(fallback?.id || null);
@@ -2175,26 +2923,26 @@ updateRequirements(prev => {
 
   function moveModule(moduleId, fromFolderId, toFolderId) {
     if (!moduleId || !fromFolderId || !toFolderId || fromFolderId === toFolderId) return;
-  
+
     // 1) Move the module definition between folders
     const all = Folders.loadAll();
     const sIdx = all.findIndex(f => f.id === fromFolderId);
     const dIdx = all.findIndex(f => f.id === toFolderId);
     if (sIdx < 0 || dIdx < 0) return;
-  
+
     const src = all[sIdx];
     const dst = all[dIdx];
-  
+
     const mod = (src.modules || []).find(m => m.id === moduleId);
     if (!mod) return;
-  
+
     src.modules = (src.modules || []).filter(m => m.id !== moduleId);
     const modAlreadyInDst = (dst.modules || []).some(m => m.id === moduleId);
     if (!modAlreadyInDst) dst.modules = [ ...(dst.modules || []), mod ];
-  
+
     Folders.saveAll(all);
     setFolders(Folders.loadAll());
-  
+
     // 2) Move all requirements under that module from src → dst
     updateRequirements(prev => {
       const next = deepClone(prev);
@@ -2208,35 +2956,35 @@ updateRequirements(prev => {
       }
       return next;
     });
-  
+
     toastOnce?.(`Moved module '${mod.name}' to '${dst.name}'`);
-  }  
+  }
 
   function moveFolder(folderId, newParentId) {
     const src = folders.find(f => f.id === folderId);
     if (!src) return;                       // unknown source
     if (folderId === newParentId) return;   // no-op
-  
+
     if (newParentId && !folders.some(f => f.id === newParentId)) return; // bad target
-  
+
     // prevent cycles (can’t move into your own descendant)
     const descendants = collectDescendantIds(folders, folderId);
     if (newParentId && descendants.has(newParentId)) {
       toastOnce("Can't move a folder into its own descendant");
       return;
     }
-  
+
     // no-op if parent is unchanged
     if ((src.parentId ?? null) === (newParentId ?? null)) return;
-  
+
     const updated = folders.map(f =>
       f.id === folderId ? { ...f, parentId: newParentId || null } : f
     );
     Folders.saveAll(updated);
     setFolders(updated);
   }
-  
-  
+
+
   // Saved views
   function saveCurrentView(){
     const name = window.prompt("Save view as:"); if(!name) return;
@@ -2247,6 +2995,7 @@ updateRequirements(prev => {
     setFilterText(v.filterText||""); setFilterStatus(v.filterStatus||"all"); setFilterModule(v.filterModule||"all");
     setSortKey(v.sortKey||"updatedAt"); setSortDir(v.sortDir||"desc"); setSelectedModule(v.selectedModule||selectedModule); setViewMode(v.viewMode||VIEW_MODES.OUTLINE);
   }
+  function deleteView(name){ setSavedViews(prev=>prev.filter(v=>v.name!==name)); }
 
   // ----------------------------- UI -----------------------------------------
   const folderTree = useMemo(()=> buildFolderTree(folders), [folders]);
@@ -2294,10 +3043,7 @@ updateRequirements(prev => {
       onClick={() => {
         const name = window.prompt("Folder name:");
         if (!name?.trim()) return;
-        const fol = { id: makeId("FOL"), parentId: null, name: name.trim(), modules: [], roles:{Owner:[],Editor:[],Viewer:[]} };
-        Folders.upsert(fol);
-        setFolders(Folders.loadAll());
-        setActiveFolderId(fol.id);
+        createFolderAction({ name: name.trim(), parentId: null });
       }}
     >
       <Plus className="h-4 w-4" />
@@ -2314,30 +3060,19 @@ updateRequirements(prev => {
       onSelect={(id)=>setActiveFolderId(id)}
       onCreateChild={(parentId)=>{
         const name = window.prompt("Folder name:"); if(!name) return;
-        const fol = { id: makeId("FOL"), parentId, name, modules: [], roles:{Owner:[],Editor:[],Viewer:[]} };
-        Folders.upsert(fol);
-        setFolders(Folders.loadAll());
-        setActiveFolderId(fol.id);
+        createFolderAction({ name, parentId });
       }}
       onDeleteFolder={(id) => deleteFolder(id)}
       onManageModules={(id)=>{ setActiveFolderId(id); setShowModuleManager(true); }}
       selectedModule={selectedModule}
       onSelectModule={(moduleName)=> setSelectedModule(moduleName)}
       onCreateModule={(folderId)=>{
-        const foldersAll = Folders.loadAll();
-        const folder = foldersAll.find(f=>f.id===folderId);
-        if (!folder) return;
         const name = window.prompt("Module name:", "Requirement");
         if (!name?.trim()) return;
-        const mod = { id: makeId("MOD"), name: name.trim(), type: "Requirement", attrTemplate: [], viewTemplates: [] };
-        const updated = { ...folder, modules: [...(folder.modules || []), mod] };
-        Folders.upsert(updated);
-        setFolders(Folders.loadAll());
-        setActiveFolderId(folderId);
-        setSelectedModule(mod.name);
+        createModuleAction({ folderId, name: name.trim(), type: "Requirement" });
       }}
       onMoveFolder={(folderId, newParentId) => moveFolder(folderId, newParentId)}
-      onMoveModule={moveModule} 
+      onMoveModule={moveModule}
     />
   </div>
 </div>
@@ -2480,7 +3215,7 @@ updateRequirements(prev => {
     draft={editing}
     onCancel={() => { setShowForm(false); setEditing(null); }}
     onSave={saveRequirement}
-    moduleMetaByName={moduleByName} 
+    moduleMetaByName={moduleByName}
   />
 )}
 
@@ -2494,23 +3229,19 @@ updateRequirements(prev => {
             project={activeFolder} // reusing same shape; this “project” is a folder
             onClose={()=>setShowModuleManager(false)}
             onSave={(updated) => {
-              // 1) Figure out which modules were removed from this folder
               const before = activeFolder?.modules || [];
               const after  = updated?.modules || [];
               const removed = before.filter(m => !after.some(mm => mm.id === m.id)); // [{id, name, ...}]
-            
-              // 2) If any were removed, purge their requirements in THIS folder
+
               if (removed.length) {
                 const removedIds   = new Set(removed.map(m => m.id));
                 const removedNames = new Set(removed.map(m => m.name));
-            
+
                 updateRequirements(prev => prev.filter(r => {
                   const fid = r.folderId ?? r.projectId;
-                  // keep rows that are not in this folder OR not in the deleted modules
                   return !(fid === activeFolderId && removedIds.has(r.moduleId));
                 }));
-            
-                // 3) Drop baselines for those modules in this folder
+
                 const baseMap = Baselines.loadMap();
                 if (baseMap?.[activeFolderId]) {
                   for (const m of removed) {
@@ -2520,22 +3251,42 @@ updateRequirements(prev => {
                   }
                   Baselines.saveMap(baseMap);
                 }
-            
-                // 4) If the currently selected module was deleted in this folder, pick a safe fallback
+
                 if (removedNames.has(selectedModule) && activeFolderId === activeFolder?.id) {
                   const fallback = after[0]?.name || "";
                   setSelectedModule(fallback);
                 }
-            
+
                 toastOnce(`Deleted module(s): ${[...removedNames].join(", ")} and their requirements from this folder`);
               }
-            
-              // 5) Persist folder changes (module list) and close
+
+              const renamedById = new Map();
+              for (const nextModule of after) {
+                const prevModule = before.find((entry) => entry.id === nextModule.id);
+                if (prevModule && prevModule.name !== nextModule.name) {
+                  renamedById.set(nextModule.id, { from: prevModule.name, to: nextModule.name });
+                }
+              }
+
               Folders.upsert(updated);
               setFolders(Folders.loadAll());
+
+              if (renamedById.size) {
+                updateRequirements((prev) =>
+                  prev.map((row) => {
+                    if ((row.folderId ?? row.projectId) !== activeFolderId) return row;
+                    const rename = renamedById.get(row.moduleId);
+                    return rename ? { ...row, module: rename.to, updatedAt: nowISO() } : row;
+                  })
+                );
+
+                const currentRename = Array.from(renamedById.values()).find((entry) => entry.from === selectedModule);
+                if (currentRename) setSelectedModule(currentRename.to);
+              }
+
               setShowModuleManager(false);
             }}
-            
+
           />
         )}
 
@@ -2643,9 +3394,9 @@ function FolderTree({
     onSelectModule,
     onCreateChild,
     onManageModules,
-    onDeleteFolder, 
+    onDeleteFolder,
     onCreateModule,
-    onMoveFolder, 
+    onMoveFolder,
     onMoveModule,
   }) {
     const [open, setOpen] = useState(() => {
@@ -2659,13 +3410,34 @@ function FolderTree({
     });
 
       // NEW: highlight the folder currently being hovered during drag
-  const [, setDragOverId] = useState(null);
-  
+  const [dragOverId, setDragOverId] = useState(null);
+
     // persist open set
     useEffect(() => {
       localStorage.setItem(LS_FOLDER_OPEN, JSON.stringify([...open]));
     }, [open]);
-  
+
+    function toggle(id) {
+      setOpen((s) => {
+        const n = new Set(s);
+        if (n.has(id)) n.delete(id);
+        else n.add(id);
+        return n;
+      });
+    }
+
+    function setAll(expanded) {
+      const gather = (nodes, acc) => {
+        for (const n of nodes) {
+          acc.push(n.id);
+          if (n.children?.length) gather(n.children, acc);
+        }
+        return acc;
+      };
+      const allIds = gather(roots, []);
+      setOpen(expanded ? new Set(allIds) : new Set());
+    }
+
     function ModuleRow({ folderId, m, isActiveFolder, isActiveModule }) {
         return (
           <div
@@ -2695,15 +3467,15 @@ function FolderTree({
             </button>
           </div>
         );
-      }      
-  
+      }
+
     function Node({ n }) {
       const isOpen = open.has(n.id);
       const modules = n.modules || [];
       const hasChildren = (n.children || []).length > 0;
       const hasContent = hasChildren || modules.length > 0;
       const Chevron = isOpen ? ChevronDown : ChevronRight;
-    
+
       const handleToggle = () => {
         if (hasContent) {
           setOpen(s => {
@@ -2715,7 +3487,7 @@ function FolderTree({
         }
         onSelect(n.id);
       };
-    
+
       return (
         <div>
 <div
@@ -2766,7 +3538,7 @@ function FolderTree({
             {hasContent ? <Chevron className="h-4 w-4" /> : <span className="inline-block w-4" />}
             {isOpen ? <FolderOpen className="h-4 w-4" /> : <FolderIcon className="h-4 w-4" />}
             <span className="flex-1 text-left text-sm">{n.name}</span>
-    
+
             {/* Manage button */}
             <button
   className="rounded px-1 text-xs hover:bg-gray-100"
@@ -2791,7 +3563,7 @@ function FolderTree({
   <Trash2 className="h-4 w-4" />
 </button>
           </div>
-    
+
           {isOpen && modules.map(m => (
             <ModuleRow
               key={m.id}
@@ -2801,7 +3573,7 @@ function FolderTree({
               isActiveModule={selectedModule === m.name}
             />
           ))}
-    
+
           {isOpen && (
             <div className="ml-4">
               {(n.children || []).map(ch => <Node key={ch.id} n={ch} />)}
@@ -2809,8 +3581,8 @@ function FolderTree({
           )}
         </div>
       );
-    }        
-  
+    }
+
     // expose expand/collapse all via a tiny header bar returned alongside the tree
     return (
         <div>
@@ -2818,8 +3590,8 @@ function FolderTree({
             <Node key={r.id} n={r} />
           ))}
         </div>
-      );      
-  }  
+      );
+  }
 
 // ----------------------------- Header Bar -----------------------------------
 function HeaderBar({ folderName, filterText, setFilterText, filterStatus, setFilterStatus, sortKey, setSortKey, sortDir, setSortDir, attrColumns = [] })
@@ -2835,7 +3607,7 @@ function HeaderBar({ folderName, filterText, setFilterText, filterStatus, setFil
             value={filterText}
           />
         </div>
-  
+
         <div>
           <label className="block text-xs font-medium text-gray-700 mb-1">Status</label>
           <select
@@ -2847,7 +3619,7 @@ function HeaderBar({ folderName, filterText, setFilterText, filterStatus, setFil
             {STATUSES.map(s=> <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
-  
+
         <div>
           <label className="block text-xs font-medium text-gray-700 mb-1">Sort</label>
           <div className="flex items-center gap-2">
@@ -2879,26 +3651,40 @@ function HeaderBar({ folderName, filterText, setFilterText, filterStatus, setFil
       </div>
     );
   }
-  
-/**
- * RowActionsBar renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param disabled Input consumed by this step of the xHandle workflow.
- * @param selection Input consumed by this step of the xHandle workflow.
- * @param numbering Input consumed by this step of the xHandle workflow.
- * @param onClear Callback used to notify the surrounding workflow about progress or user actions.
- * @param onNewChild Callback used to notify the surrounding workflow about progress or user actions.
- * @param onEdit Callback used to notify the surrounding workflow about progress or user actions.
- * @param onDelete Callback used to notify the surrounding workflow about progress or user actions.
- * @param onMoveUp Callback used to notify the surrounding workflow about progress or user actions.
- * @param onMoveDown Callback used to notify the surrounding workflow about progress or user actions.
- * @param onPromote Callback used to notify the surrounding workflow about progress or user actions.
- * @param onDemote Callback used to notify the surrounding workflow about progress or user actions.
- * @param onHistory Callback used to notify the surrounding workflow about progress or user actions.
- * @param viewMode Input consumed by this step of the xHandle workflow.
- * @param setViewMode React state setter supplied by the parent workflow.
- * @param onSetContent Callback used to notify the surrounding workflow about progress or user actions.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
+
+function ViewsDropdown({ views, onApply, onDelete, moduleViewTemplates = [] }){
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative">
+      <button onClick={()=>setOpen(o=>!o)} className="px-3 py-2 text-sm hover:bg-gray-50">Views ▾</button>
+      {open && (
+        <div className="absolute right-0 z-10 mt-1 w-64 rounded-md border bg-white shadow">
+          {!views.length && !moduleViewTemplates.length && <div className="p-2 text-xs text-gray-500">No saved views</div>}
+
+          {!!moduleViewTemplates.length && (
+            <>
+              <div className="px-2 py-1 text-[11px] uppercase tracking-wide text-gray-500">Module presets</div>
+              {moduleViewTemplates.map((v, i)=> (
+                <div key={`mvt-${i}`} className="flex items-center justify-between px-2 py-1 text-sm hover:bg-gray-50">
+                  <button onClick={()=>{ onApply({ name: v.name, selectedModule: undefined, viewMode: v.mode, sort: v.sort }); setOpen(false); }}>{v.name}</button>
+                </div>
+              ))}
+              <div className="my-1 h-px bg-gray-200" />
+            </>
+          )}
+
+          {views.map(v=> (
+            <div key={v.name} className="flex items-center justify-between px-2 py-1 text-sm hover:bg-gray-50">
+              <button onClick={()=>{ onApply(v); setOpen(false); }}>{v.name}</button>
+              <button className="text-xs text-red-600" onClick={()=>onDelete(v.name)}>Delete</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RowActionsBar({
     disabled,
     selection,
@@ -2916,9 +3702,13 @@ function RowActionsBar({
     setViewMode,
     onSetContent,     // ← receives { type: "image"| "table", ... }
   }) {
+    const label = selection
+      ? `${numbering?.get?.(selection.id) ? numbering.get(selection.id) + " — " : ""}${selection.title || selection.id}`
+      : "No requirement selected";
+
     const [showTableMaker, setShowTableMaker] = React.useState(false);
     const fileRef = React.useRef(null);
-  
+
     function onPickImage(file) {
       if (!file) return;
       const fr = new FileReader();
@@ -2928,11 +3718,11 @@ function RowActionsBar({
       });
       fr.readAsDataURL(file);
     }
-  
+
     return (
         <div className="flex flex-wrap items-center gap-2">
              <div className="flex flex-wrap items-center gap-1">
-        
+
 {/* View toggle */}
 <div className="inline-flex overflow-hidden rounded border">
   <button
@@ -2963,7 +3753,7 @@ function RowActionsBar({
   </button>
 </div>
 
-  
+
           {/* New child */}
           <button
             onClick={onNewChild}
@@ -2974,7 +3764,7 @@ function RowActionsBar({
           >
             <Plus className="h-4 w-4" />
           </button>
-  
+
           {/* Insert image */}
           <input
             ref={fileRef}
@@ -2991,7 +3781,7 @@ function RowActionsBar({
           >
             <ImageIcon className="h-4 w-4" />
           </button>
-  
+
           {/* Insert table */}
           <button
             onClick={() => setShowTableMaker(true)}
@@ -3001,9 +3791,9 @@ function RowActionsBar({
           >
             <Grid3x3 className="h-4 w-4" />
           </button>
-  
+
           <div className="mx-1 h-5 w-px bg-gray-200" />
-  
+
           {/* Edit / Delete */}
           <button
             onClick={onEdit}
@@ -3021,9 +3811,9 @@ function RowActionsBar({
           >
             <Trash2 className="h-4 w-4" />
           </button>
-  
+
           <div className="mx-1 h-5 w-px bg-gray-200" />
-  
+
           {/* Ordering / hierarchy */}
           <button onClick={onMoveUp} disabled={!selection || disabled} title="Move up"
                   className="rounded border p-2 hover:bg-gray-50 disabled:opacity-50">
@@ -3041,9 +3831,9 @@ function RowActionsBar({
                   className="rounded border p-2 hover:bg-gray-50 disabled:opacity-50">
             <IndentIncrease className="h-4 w-4" />
           </button>
-  
+
           <div className="mx-1 h-5 w-px bg-gray-200" />
-  
+
           {/* History / clear */}
           <button onClick={onHistory} disabled={!selection} title="History"
                   className="rounded border p-2 hover:bg-gray-50 disabled:opacity-50">
@@ -3053,7 +3843,7 @@ function RowActionsBar({
             <X className="h-4 w-4" />
           </button>
         </div>
-  
+
         {showTableMaker && (
           <QuickTableModal
             onCancel={() => setShowTableMaker(false)}
@@ -3065,7 +3855,7 @@ function RowActionsBar({
         )}
       </div>
     );
-  }  
+  }
 
 // ----------------------------- Outline Panel --------------------------------
 function OutlinePanel({
@@ -3081,16 +3871,16 @@ function OutlinePanel({
 }) {
 
     const { children } = buildIndex(rows);
-  
+
     const [editState, setEditState] = React.useState({ id: null, title: "" });
     const [editTable, setEditTable] = React.useState({ open: false, row: null, cells: [[]] });
 
     const inputRef = React.useRef(null);
-  
+
     React.useEffect(() => {
       if (editState.id && inputRef.current) inputRef.current.focus();
     }, [editState.id]);
-  
+
     function startInlineEdit(node) {
       if (disabled) return;
       onSelect?.(node.id);
@@ -3108,20 +3898,20 @@ function OutlinePanel({
     function cancelInlineEdit() {
       setEditState({ id: null, title: "" });
     }
-  
+
     function renderBranch(parentId) {
       const list = children.get(parentId || null) || [];
       return list.map(node => {
         const isSelected = selectedId === node.id || selectedIds?.has?.(node.id);
         const isEditing = editState.id === node.id;
-  
+
         return (
           <div key={node.id} className="border-t first:border-t-0">
            <div
   className={`flex cursor-pointer items-center gap-2 px-3 py-2 hover:bg-gray-50 ${isSelected ? "bg-blue-50 ring-1 ring-blue-300" : ""}`}
   role="button"
   tabIndex={0}
-  aria-pressed={isSelected}
+  aria-selected={isSelected}
   onMouseDown={(e) => {
     const t = e.target;
     const tag = t.tagName;
@@ -3144,7 +3934,7 @@ function OutlinePanel({
               <div className="w-24 shrink-0 text-xs font-mono text-gray-500">
                 {numbering.get(node.id)}
               </div>
-  
+
               <div className="flex-1">
                 {isEditing ? (
                   <input
@@ -3179,7 +3969,7 @@ function OutlinePanel({
                       <MiniTable cells={node.content?.table?.cells || []} />
                     </div>
                   ) : (
-                  
+
 <div
   className={node.heading ? "font-semibold" : "font-medium"}
   title="Double-click to edit title"
@@ -3189,19 +3979,19 @@ function OutlinePanel({
 </div>
 
                 )}
-  
+
                 <div className="text-xs text-gray-500">
                   {node.status} · v{node.version} · {(node.updatedAt || "").replace("T", " ").slice(0, 16)}
                 </div>
               </div>
             </div>
-  
+
             <div className="pl-8">{renderBranch(node.id)}</div>
           </div>
         );
       });
     }
-  
+
     return (
       <div className="mt-4 overflow-hidden rounded-xl border bg-white">
         <div className="border-b px-3 py-2 text-sm text-gray-600">{moduleName} — Outline</div>
@@ -3227,8 +4017,8 @@ function OutlinePanel({
 
       </div>
     );
-  }  
-  
+  }
+
 
 // ----------------------------- Table Panel ----------------------------------
 function TablePanel({ rows, numbering, moduleName, attrColumns = [],
@@ -3333,16 +4123,17 @@ function TablePanel({ rows, numbering, moduleName, attrColumns = [],
     if (typeof v === "boolean") return v ? "Yes" : "No";
     return String(v);
   };
-    
+
     const [editState, setEditState] = React.useState({ id: null, title: "" });
-    const [, setEditTable] = React.useState({ open: false, row: null, cells: [[]] });
+    const [editTable, setEditTable] = React.useState({ open: false, row: null, cells: [[]] });
+    const [copiedId, setCopiedId] = React.useState(null);
 
     const inputRef = React.useRef(null);
-  
+
     React.useEffect(() => {
       if (editState.id && inputRef.current) inputRef.current.focus();
     }, [editState.id]);
-  
+
     function startInlineEdit(row) {
       setEditState({ id: row.id, title: row.title || "" });
     }
@@ -3358,7 +4149,31 @@ function TablePanel({ rows, numbering, moduleName, attrColumns = [],
     function cancelInlineEdit() {
       setEditState({ id: null, title: "" });
     }
-  
+
+    async function copyRequirementId(id) {
+      const text = String(id || "");
+      if (!text) return;
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const textarea = document.createElement("textarea");
+          textarea.value = text;
+          textarea.setAttribute("readonly", "");
+          textarea.style.position = "fixed";
+          textarea.style.opacity = "0";
+          document.body.appendChild(textarea);
+          textarea.select();
+          document.execCommand("copy");
+          document.body.removeChild(textarea);
+        }
+        setCopiedId(text);
+        window.setTimeout(() => setCopiedId((current) => (current === text ? null : current)), 1200);
+      } catch {
+        setCopiedId(null);
+      }
+    }
+
     return (
       <div className="mt-4 rounded-xl border bg-white">
         {/* NEW: scrolling container for both axes */}
@@ -3372,7 +4187,7 @@ function TablePanel({ rows, numbering, moduleName, attrColumns = [],
                 />
               ))}
             </colgroup>
-    
+
             {/* NEW: sticky header */}
             <thead className="sticky top-0 z-20 bg-gray-50 text-xs uppercase text-gray-600">
               <tr>
@@ -3396,12 +4211,12 @@ function TablePanel({ rows, numbering, moduleName, attrColumns = [],
                 ))}
               </tr>
             </thead>
-    
+
             <tbody>
               {rows.map((r) => {
 const isSelected = selectedId === r.id || selectedIds?.has?.(r.id);
 const isEditing = editState.id === r.id;
-    
+
                 return (
                   <tr
   key={r.id}
@@ -3423,11 +4238,35 @@ const isEditing = editState.id === r.id;
   onClick={(e) => onSelect?.(r.id, e)}
   onDoubleClick={(e) => { e.stopPropagation(); onEdit(r); }}
   role="button"
-  aria-pressed={isSelected}
+  aria-selected={isSelected}
 >
+                    <td className="group/id-cell px-3 py-2 align-top font-mono text-[11px] text-gray-500">
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <span className="truncate" title={r.id}>{r.id}</span>
+                        <button
+                          type="button"
+                          title={copiedId === r.id ? "Copied" : "Copy requirement ID"}
+                          aria-label={`Copy requirement ID ${r.id}`}
+                          className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-transparent transition ${
+                            copiedId === r.id
+                              ? "bg-emerald-50 text-emerald-700 opacity-100"
+                              : "text-gray-400 opacity-0 hover:border-gray-200 hover:bg-white hover:text-gray-700 focus:opacity-100 group-hover/id-cell:opacity-100"
+                          }`}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                          }}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            copyRequirementId(r.id);
+                          }}
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </td>
 
-                    <td className="px-3 py-2 font-mono text-[11px] text-gray-500">{r.id}</td>
-    
                     <td className="px-3 py-2 align-top">
                       {(() => {
                         const num = numbering?.get?.(r.id);
@@ -3440,7 +4279,7 @@ const isEditing = editState.id === r.id;
                             {num}
                           </span>
                         ) : null;
-    
+
                         if (isEditing) {
                           return (
                             <div className="flex items-start gap-2">
@@ -3459,7 +4298,7 @@ const isEditing = editState.id === r.id;
                             </div>
                           );
                         }
-    
+
                         if (r?.content?.type === "image") {
                           return (
                             <div className="flex items-start gap-2">
@@ -3473,7 +4312,7 @@ const isEditing = editState.id === r.id;
                             </div>
                           );
                         }
-    
+
                         if (r?.content?.type === "table") {
                           return (
                             <div
@@ -3494,7 +4333,7 @@ const isEditing = editState.id === r.id;
                             </div>
                           );
                         }
-    
+
                         return (
 <div
   className="flex items-start gap-2"
@@ -3510,14 +4349,14 @@ const isEditing = editState.id === r.id;
                         );
                       })()}
                     </td>
-    
+
                     {/* attribute cells */}
                     {attrColumns.map((k) => (
                       <td key={`c-${r.id}-${k}`} className="px-3 py-2">
                         {renderAttrVal(r.attributes?.[k])}
                       </td>
                     ))}
-    
+
                     <td className="px-3 py-2">
                       <select
                         className="rounded border px-2 py-1 text-sm"
@@ -3530,7 +4369,7 @@ const isEditing = editState.id === r.id;
                         ))}
                       </select>
                     </td>
-    
+
                     <td className="px-3 py-2">{r.version ?? 1}</td>
                     <td className="px-3 py-2 text-xs text-gray-500">
                       {(r.updatedAt || "").replace("T", " ").slice(0, 16)}
@@ -3539,7 +4378,7 @@ const isEditing = editState.id === r.id;
                   </tr>
                 );
               })}
-    
+
               {!rows.length && (
                 <tr>
                   <td colSpan={columns.length} className="px-4 py-8 text-center text-sm text-gray-500">
@@ -3556,17 +4395,12 @@ const isEditing = editState.id === r.id;
           </table>
         </div>
       </div>
-    );    
+    );
   }
-  
-  
-/**
- * MultiSelect renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param value Input consumed by this step of the xHandle workflow.
- * @param options Optional behavior switches for this step.
- * @param onChange Callback used to notify the surrounding workflow about progress or user actions.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
+
+
+function Th({ label }){ return <th className="px-3 py-2 text-left font-medium">{label}</th>; }
+
 function MultiSelect({ value = [], options = [], onChange }) {
     return (
       <select
@@ -3585,12 +4419,6 @@ function MultiSelect({ value = [], options = [], onChange }) {
     );
   }
 
-/**
- * MiniTable renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param cells Input consumed by this step of the xHandle workflow.
- * @param dense Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
   function MiniTable({ cells = [[]], dense = false }) {
     const cls = dense ? "px-1 py-0.5" : "px-2 py-1";
     return (
@@ -3607,19 +4435,11 @@ function MultiSelect({ value = [], options = [], onChange }) {
       </table>
     );
   }
-/**
- * QuickTableModal renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param title Input consumed by this step of the xHandle workflow.
- * @param initial Input consumed by this step of the xHandle workflow.
- * @param onCancel Callback used to notify the surrounding workflow about progress or user actions.
- * @param onSave Callback used to notify the surrounding workflow about progress or user actions.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
   function QuickTableModal({ title = "Insert Table", initial, onCancel, onSave }) {
     // If `initial` is provided, prefill from it
     const initialRows = Array.isArray(initial) && initial.length ? initial.length : 3;
     const initialCols = Array.isArray(initial?.[0]) && initial[0].length ? initial[0].length : 3;
-  
+
     const [rows, setRows] = React.useState(initialRows);
     const [cols, setCols] = React.useState(initialCols);
     const [grid, setGrid] = React.useState(
@@ -3627,7 +4447,7 @@ function MultiSelect({ value = [], options = [], onChange }) {
         Array.from({ length: initialCols }, (_, j) => initial?.[i]?.[j] ?? "")
       )
     );
-  
+
     // When rows/cols change, preserve existing cells
     React.useEffect(() => {
       setGrid((g) => {
@@ -3638,7 +4458,7 @@ function MultiSelect({ value = [], options = [], onChange }) {
         return next;
       });
     }, [rows, cols]);
-  
+
     return (
       <Modal title={title} onClose={onCancel}>
         <div className="space-y-3">
@@ -3662,7 +4482,7 @@ function MultiSelect({ value = [], options = [], onChange }) {
               />
             </Field>
           </div>
-  
+
           <div className="overflow-auto max-h-72 rounded border p-2">
             <table className="text-xs">
               <tbody>
@@ -3691,7 +4511,7 @@ function MultiSelect({ value = [], options = [], onChange }) {
               </tbody>
             </table>
           </div>
-  
+
           <div className="flex justify-end gap-2">
             <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={onCancel}>
               Cancel
@@ -3707,7 +4527,7 @@ function MultiSelect({ value = [], options = [], onChange }) {
       </Modal>
     );
   }
-  
+
 // ----------------------------- Traceability View -----------------------------
 function TraceabilityView({
   allRequirements = [],
@@ -3994,14 +4814,20 @@ function RequirementForm({
     folderNameById,
     moduleMetaByName,   // ← NEW
   }) {
-  
+
     const [form, setForm] = useState(() => deepClone(draft));
     const setField = (k, v) => setForm(f => ({ ...f, [k]: v }));
     const activeMeta = moduleMetaByName?.[form.module];
 const template = useMemo(() => normalizeAttrTemplate(activeMeta?.attrTemplate), [activeMeta]);
 const templateKeys = new Set((template || []).map(t => t.key).filter(Boolean));
 
-  
+
+    const attrPairs = useMemo(() => {
+      const obj = form.attributes || {};
+      const entries = Object.entries(obj);
+      return entries.length ? entries : [["", ""]];
+    }, [form.attributes]);
+
     function upsertAttribute(oldKey, newKey, newValue) {
         setForm(f => {
           const obj = { ...(f.attributes || {}) };
@@ -4020,8 +4846,8 @@ const templateKeys = new Set((template || []).map(t => t.key).filter(Boolean));
           return { ...f, attributes: obj };
         });
       }
-      
-  
+
+
       function addLink() {
         // preselect the first linkable module (if any)
         const linkable = Array.from(
@@ -4032,32 +4858,32 @@ const templateKeys = new Set((template || []).map(t => t.key).filter(Boolean));
           )
         ).sort();
         const defaultModule = linkable[0] || "";
-      
+
         setForm(f => ({
           ...f,
           links: [ ...(f.links || []), { type: LINK_TYPES[0], toId: "", __module: defaultModule } ]
         }));
-      }      
+      }
     function updateLink(i, patch) {
       setForm(f => ({ ...f, links: (f.links || []).map((l, idx) => idx === i ? { ...l, ...patch } : l) }));
     }
     function removeLink(i) {
       setForm(f => ({ ...f, links: (f.links || []).filter((_, idx) => idx !== i) }));
     }
-  
+
     function submit() {
       const payload = deepClone(form);
       if (!payload.title?.trim()) return alert("Title is required");
       payload.updatedAt = nowISO();
-    
+
       // strip UI-only helpers and drop empty links
       payload.links = (payload.links || [])
         .map(({ __module, ...l }) => l)
         .filter(l => l.toId && l.type);
-    
+
       onSave(payload);
-    }    
-  
+    }
+
     // GLOBAL link targets (every req except self)
     const candidateTargets = useMemo(() => {
       const list = (allCandidates || []).filter(r => r.id !== form.id);
@@ -4072,7 +4898,7 @@ const templateKeys = new Set((template || []).map(t => t.key).filter(Boolean));
         );
       });
     }, [allCandidates, form.id, folderNameById]);
-  
+
     // List of modules you’re allowed to link to (exclude current module)
 const linkableModules = useMemo(() => {
   const mods = new Set(
@@ -4110,7 +4936,7 @@ function updateLinkModule(i, moduleName) {
                 onChange={e => setField("title", e.target.value)}
               />
             </Field>
-  
+
             <Field label="Module (Group)">
   <datalist id="modules">{allModules.map(m => <option key={m} value={m} />)}</datalist>
   <input
@@ -4124,7 +4950,7 @@ function updateLinkModule(i, moduleName) {
   />
 </Field>
 
-  
+
             <Field label="Status">
               <select
                 className="w-full rounded border px-2 py-1 text-sm"
@@ -4134,7 +4960,7 @@ function updateLinkModule(i, moduleName) {
                 {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </Field>
-  
+
   {/* --- Type (Heading/Text) --- */}
 <div className="mt-3">
   <div className="text-xs font-semibold text-gray-600 mb-1">Type</div>
@@ -4177,7 +5003,7 @@ function updateLinkModule(i, moduleName) {
               </select>
             </Field>
           </div>
-  
+
           <div>
   <div className="mb-2 text-xs font-semibold text-gray-700">Attributes</div>
 
@@ -4287,7 +5113,7 @@ function updateLinkModule(i, moduleName) {
   </div>
 </div>
 
-  
+
           <div>
           <div>
   <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-gray-700">
@@ -4393,7 +5219,7 @@ function updateLinkModule(i, moduleName) {
 </div>
 
           </div>
-  
+
           <div className="flex justify-end gap-2 pt-2">
             <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={onCancel}>Cancel</button>
             <button className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]" onClick={submit}>Save</button>
@@ -4402,13 +5228,7 @@ function updateLinkModule(i, moduleName) {
       </Modal>
     );
   }
-  
-/**
- * Field renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param label Input consumed by this step of the xHandle workflow.
- * @param children Input consumed by this step of the xHandle workflow.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
+
 function Field({label, children}){ return (<label className="block"><div className="mb-1 text-xs font-medium text-gray-700">{label}</div>{children}</label>); }
 
 // ----------------------------- History Modal --------------------------------
@@ -4440,14 +5260,18 @@ function ModuleManager({ project, onSave, onClose }) {
       })),
     }));
   }, [project.id]);
-  
+
   function addModule() { setDraft(p => ({ ...p, modules: [...(p.modules||[]), { id: makeId("MOD"), name: "New Module", type: "Requirement", attrTemplate: [], viewTemplates: [] }] })); }
   function updateModule(mid, patch) { setDraft(p => ({ ...p, modules: (p.modules||[]).map(m => m.id===mid?{...m, ...patch}:m) })); }
   function removeModule(mid) {
     if (!window.confirm("Remove this module from the folder?\n\nAll requirements in this folder that belong to it will be deleted when you click Save.")) return;
     setDraft(p => ({ ...p, modules: (p.modules || []).filter(m => m.id !== mid) }));
   }
-  
+
+  function addAttr(mid){ updateModule(mid, { attrTemplate: [ ...((draft.modules||[]).find(m=>m.id===mid)?.attrTemplate||[]), "" ] }); }
+  function setAttr(mid, idx, v){ updateModule(mid, { attrTemplate: ((draft.modules||[]).find(m=>m.id===mid)?.attrTemplate||[]).map((a,i)=> i===idx?v:a) }); }
+  function delAttr(mid, idx){ updateModule(mid, { attrTemplate: ((draft.modules||[]).find(m=>m.id===mid)?.attrTemplate||[]).filter((_,i)=>i!==idx) }); }
+
   function addView(mid){ const m = (draft.modules||[]).find(m=>m.id===mid); updateModule(mid, { viewTemplates: [...(m?.viewTemplates||[]), { name: "New View", mode: "table", columns: [], filters: {}, sort: { key:"updatedAt", dir:"desc" } }] }); }
   function setView(mid, idx, patch){ const m = (draft.modules||[]).find(m=>m.id===mid); const arr = (m?.viewTemplates||[]).map((v,i)=> i===idx?{...v, ...patch}:v); updateModule(mid, { viewTemplates: arr }); }
   function delView(mid, idx){ const m = (draft.modules||[]).find(m=>m.id===mid); updateModule(mid, { viewTemplates: (m?.viewTemplates||[]).filter((_,i)=>i!==idx) }); }
@@ -4597,14 +5421,6 @@ function ModuleManager({ project, onSave, onClose }) {
     </Modal>
   );
 }
-/**
- * ReuseModal renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param projects Input consumed by this step of the xHandle workflow.
- * @param activeProjectId Stable identifier for the entity this step works with.
- * @param onCancel Callback used to notify the surrounding workflow about progress or user actions.
- * @param onApply Callback used to notify the surrounding workflow about progress or user actions.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function ReuseModal({ projects, activeProjectId, onCancel, onApply }) {
   const other = projects.filter(p=>p.id!==activeProjectId);
   const [sourceProjectId, setSourceProjectId] = useState(other[0]?.id || "");
@@ -4635,13 +5451,6 @@ function ReuseModal({ projects, activeProjectId, onCancel, onApply }) {
     </Modal>
   );
 }
-/**
- * NewFolderModal renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param parents Input consumed by this step of the xHandle workflow.
- * @param onCancel Callback used to notify the surrounding workflow about progress or user actions.
- * @param onCreate Callback used to notify the surrounding workflow about progress or user actions.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function NewFolderModal({ parents, onCancel, onCreate }){
   const [name, setName] = useState("");
   const [parentId, setParentId] = useState("");
@@ -4666,20 +5475,14 @@ function NewFolderModal({ parents, onCancel, onCreate }){
   );
 }
 
-/**
- * ImportFromHazardModal renders a React component. It gives users access to the main engineering workspace while keeping the surrounding xHandle workspace in sync with local state and feature-specific actions.
- * @param onCancel Callback used to notify the surrounding workflow about progress or user actions.
- * @param onImport Callback used to notify the surrounding workflow about progress or user actions.
- * @returns Rendered React UI for this part of the xHandle workspace.
- */
 function ImportFromHazardModal({ onCancel, onImport }) {
     const projects = listLiteProjects();
     const activeLite = typeof window !== 'undefined' ? localStorage.getItem("xhandle.activeProjectId") : null;
     const initialProjectId = projects.find(p => p.id === activeLite)?.id || projects[0]?.id || "";
-    const [projectId, setProjectId] = useState(initialProjectId);    
+    const [projectId, setProjectId] = useState(initialProjectId);
     const [columns, setColumns] = useState([]);
     const [headerName, setHeaderName] = useState("");
-  
+
     useEffect(() => {
         if (!projectId) { setColumns([]); setHeaderName(""); return; }
         const summary = getHazardSummary2DByProjectId(projectId);
@@ -4691,8 +5494,8 @@ const opts = hdrs.filter(Boolean);
 // keep current selection if still present, otherwise pick the first
 setColumns(opts);
 setHeaderName(prev => (opts.includes(prev) ? prev : (opts[0] || "")));
-      }, [projectId]);      
-  
+      }, [projectId]);
+
     return (
       <Modal title="Import from Hazard Analysis" onClose={onCancel}>
         <div className="space-y-4">
@@ -4706,7 +5509,7 @@ setHeaderName(prev => (opts.includes(prev) ? prev : (opts[0] || "")));
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </Field>
-  
+
           <Field label="Summary column">
             <select
               className="w-full rounded border px-2 py-1 text-sm"
@@ -4718,7 +5521,7 @@ setHeaderName(prev => (opts.includes(prev) ? prev : (opts[0] || "")));
               {columns.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </Field>
-  
+
           <div className="flex justify-end gap-2">
             <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={onCancel}>Cancel</button>
             <button
@@ -4733,7 +5536,7 @@ setHeaderName(prev => (opts.includes(prev) ? prev : (opts[0] || "")));
       </Modal>
     );
   }
-  
+
 
 // ----------------------------- Modal (shared) --------------------------------
 function Modal({ title, onClose, children }) {
@@ -4762,4 +5565,4 @@ function Modal({ title, onClose, children }) {
       </div>
     );
   }
-  
+

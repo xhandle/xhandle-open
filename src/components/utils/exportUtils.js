@@ -1,21 +1,8 @@
-/**
- * xHandle: export utils shared UI utility.
- * This file provides shared helper logic used by frontend components, often as a compatibility layer while imports converge on the newer lib-oriented architecture.
- * Keeping reusable helpers in one place reduces duplication across feature surfaces and makes local-first data handling, exports, and copilot context easier to evolve safely.
- * Related files: src/lib/storage/indexedDB.js, src/lib/storage/requirementsStore.ts, src/components/XHandleCopilotView.jsx.
- */
-
 // components/utils/exportUtils.js
 import { saveAs } from "file-saver";
 import { jsPDF } from "jspdf";
 import { Document, Packer, Paragraph, TextRun } from "docx";
 
-/**
- * exportReport encapsulates a focused piece of workspace orchestration flow logic for xHandle. Giving this behavior a named function makes the surrounding module easier to scan and helps new contributors see where one responsibility ends and the next begins.
- * @param text Input consumed by this step of the xHandle workflow.
- * @param type Input consumed by this step of the xHandle workflow.
- * @returns Promise resolving to the value that the next step in this workflow consumes.
- */
 export async function exportReport(text, type) {
   if (!text) return;
 

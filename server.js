@@ -2,7 +2,7 @@
  * xHandle: backend API entrypoint.
  * This file boots the Express-based backend used by xHandle for LLM proxying, document ingestion, licensing, lightweight persistence, and external integration helpers.
  * It is the server-side boundary between the local-first UI and any operations that need secrets, rate limiting, filesystem access, or third-party API calls.
- * Related files: server/logger.js, server/db.js, server/license/routes.js, src/lib/api/backendConfig.js.
+ * Related files: server/logger.js, src/lib/api/backendConfig.js.
  */
 
 /* ----------------------------- Dependencies ----------------------------- */
@@ -30,7 +30,8 @@ const CORS_ALLOWED_HEADERS = [
   "Origin",
   "x-account-id",
   "x-ai-provider",
-  "x-ai-api-key"
+  "x-ai-api-key",
+  "x-ai-model"
 ];
 const configuredCorsOrigins = String(process.env.CORS_ALLOWED_ORIGINS || "")
   .split(",")
@@ -131,9 +132,6 @@ const llmLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
-
-// [LICENSING] bring in the license API router
-const licenseRouter = require("./server/license/routes");
 
 /* ----------------------------- OpenAI Realtime: ephemeral session ----------------------------- */
 app.post("/api/rt/session", async (req, res) => {
@@ -267,14 +265,40 @@ const AI_PROVIDERS = {
   },
   claude: {
     label: "Claude",
-    defaultModel: process.env.CLAUDE_MODEL || process.env.ANTHROPIC_MODEL || "claude-sonnet-4-20250514",
+    defaultModel: process.env.CLAUDE_MODEL || process.env.ANTHROPIC_MODEL || "claude-haiku-4-5",
     envKey: () => process.env.ANTHROPIC_API_KEY || null,
   },
   gemini: {
     label: "Gemini",
-    defaultModel: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+    defaultModel: process.env.GEMINI_MODEL || "gemini-3.6-flash",
     envKey: () => process.env.GEMINI_API_KEY || null,
   },
+};
+
+const GEMINI_MODEL_REPLACEMENTS = {
+  "gemini-1.5-flash": "gemini-3.6-flash",
+  "gemini-1.5-flash-001": "gemini-3.6-flash",
+  "gemini-2.0-flash": "gemini-3.6-flash",
+  "gemini-2.0-flash-001": "gemini-3.6-flash",
+  "gemini-2.0-flash-lite": "gemini-3.1-flash-lite",
+  "gemini-2.0-flash-lite-001": "gemini-3.1-flash-lite",
+  "gemini-2.5-flash": "gemini-3.6-flash",
+  "gemini-2.5-flash-preview-05-20": "gemini-3.6-flash",
+  "gemini-2.5-flash-preview-09-25": "gemini-3.6-flash",
+  "gemini-2.5-flash-lite": "gemini-3.1-flash-lite",
+  "gemini-2.5-flash-lite-preview-09-2025": "gemini-3.1-flash-lite",
+  "gemini-2.5-pro": "gemini-3.1-pro-preview",
+};
+
+const CLAUDE_MODEL_REPLACEMENTS = {
+  "claude-3-5-haiku-latest": "claude-haiku-4-5",
+  "claude-3-haiku-20240307": "claude-haiku-4-5",
+  "claude-3-5-sonnet-latest": "claude-sonnet-5",
+  "claude-3-5-sonnet-20241022": "claude-sonnet-5",
+  "claude-3-7-sonnet-20250219": "claude-sonnet-5",
+  "claude-sonnet-4-20250514": "claude-sonnet-5",
+  "claude-opus-4-20250514": "claude-opus-5",
+  "claude-opus-4-1-20250805": "claude-opus-5",
 };
 
 function normalizeAIProvider(provider) {
@@ -291,6 +315,25 @@ function normalizeProviderApiKey(provider, apiKey) {
     return trimmed.replace(/^Anthropic\s+/i, "").trim();
   }
   return trimmed;
+}
+
+function isPlaceholderAIKey(apiKey) {
+  const key = String(apiKey || "").trim().toLowerCase();
+  if (!key) return true;
+  return (
+    key.includes("your-") ||
+    key.includes("your_") ||
+    key.includes("placeholder") ||
+    key.includes("example") ||
+    key === "sk-your-openai-key" ||
+    key === "sk-your-api-key" ||
+    key === "sk-your-key"
+  );
+}
+
+function usableProviderApiKey(provider, apiKey) {
+  const key = normalizeProviderApiKey(provider, apiKey);
+  return isPlaceholderAIKey(key) ? "" : key;
 }
 
 function providerLabel(provider) {
@@ -340,11 +383,24 @@ function extractProviderErrorMessage(err) {
 
 function resolveModelForProvider(provider, requestedModel) {
   const model = typeof requestedModel === "string" ? requestedModel.trim() : "";
-  if (!model) return AI_PROVIDERS[provider]?.defaultModel || null;
+  const providerDefault = AI_PROVIDERS[provider]?.defaultModel || null;
+  if (!model) {
+    if (provider === "claude" && providerDefault) {
+      return CLAUDE_MODEL_REPLACEMENTS[providerDefault] || providerDefault;
+    }
+    if (provider === "gemini" && providerDefault) {
+      return GEMINI_MODEL_REPLACEMENTS[providerDefault] || providerDefault;
+    }
+    return providerDefault;
+  }
 
   if (provider === "openai") return model;
-  if (provider === "claude" && /^claude/i.test(model)) return model;
-  if (provider === "gemini" && /^gemini/i.test(model)) return model;
+  if (provider === "claude" && /^claude/i.test(model)) {
+    return CLAUDE_MODEL_REPLACEMENTS[model] || model;
+  }
+  if (provider === "gemini" && /^gemini/i.test(model)) {
+    return GEMINI_MODEL_REPLACEMENTS[model] || model;
+  }
 
   return AI_PROVIDERS[provider]?.defaultModel || model;
 }
@@ -614,52 +670,62 @@ function deleteStoredOpenAIKey(accountId) {
  * @returns Promise resolving to the value that the next step in this workflow consumes.
  */
 async function resolveOpenAIKeyForRequest(req) {
+  const headerProvider = normalizeAIProvider(req.header("x-ai-provider")) || "openai";
+  const headerApiKey = usableProviderApiKey(headerProvider, req.header("x-ai-api-key"));
+  if (headerProvider === "openai" && headerApiKey) {
+    return headerApiKey;
+  }
+
   const accountId = req.user?.account_id;
 
   if (accountId) {
     const stored = await getStoredOpenAIKey(accountId);
-    if (stored?.api_key) {
-      return stored.api_key;
+    const storedKey = usableProviderApiKey("openai", stored?.api_key);
+    if (storedKey) {
+      return storedKey;
     }
   }
 
-  return process.env.OPENAI_API_KEY || process.env.OPENAI_TOKEN || null;
+  return usableProviderApiKey("openai", process.env.OPENAI_API_KEY || process.env.OPENAI_TOKEN);
 }
 
 async function resolveAIConfigForRequest(req) {
   const body = req.body || {};
   const requestedProvider = normalizeAIProvider(body.provider);
   const headerProvider = normalizeAIProvider(req.header("x-ai-provider"));
-  const headerApiKey = normalizeProviderApiKey(headerProvider || requestedProvider, req.header("x-ai-api-key"));
+  const headerApiKey = usableProviderApiKey(headerProvider || requestedProvider, req.header("x-ai-api-key"));
+  const headerModel = req.header("x-ai-model");
   const accountId = req.user?.account_id;
 
   if (headerProvider && headerApiKey) {
     return {
       provider: headerProvider,
       apiKey: headerApiKey,
-      model: resolveModelForProvider(headerProvider, body.model),
+      model: resolveModelForProvider(headerProvider, headerModel || body.model),
     };
   }
 
   if (accountId) {
     if (requestedProvider) {
       const stored = await getStoredAIProviderKey(accountId, requestedProvider);
-      if (stored?.api_key) {
+      const storedKey = usableProviderApiKey(requestedProvider, stored?.api_key);
+      if (storedKey) {
         return {
           provider: requestedProvider,
-          apiKey: stored.api_key,
-          model: resolveModelForProvider(requestedProvider, body.model),
+          apiKey: storedKey,
+          model: resolveModelForProvider(requestedProvider, headerModel || body.model),
         };
       }
     }
 
     const savedProviders = await listStoredAIProviderKeys(accountId);
     const activeStored = savedProviders.find((row) => row.is_active);
-    if (activeStored?.api_key) {
+    const activeStoredKey = usableProviderApiKey(activeStored?.provider, activeStored?.api_key);
+    if (activeStoredKey) {
       return {
         provider: activeStored.provider,
-        apiKey: activeStored.api_key,
-        model: resolveModelForProvider(activeStored.provider, body.model),
+        apiKey: activeStoredKey,
+        model: resolveModelForProvider(activeStored.provider, headerModel || body.model),
       };
     }
   }
@@ -669,12 +735,12 @@ async function resolveAIConfigForRequest(req) {
     : ["openai", "claude", "gemini"];
 
   for (const provider of envProviderOrder) {
-    const apiKey = AI_PROVIDERS[provider]?.envKey?.();
+    const apiKey = usableProviderApiKey(provider, AI_PROVIDERS[provider]?.envKey?.());
     if (apiKey) {
       return {
         provider,
         apiKey,
-        model: resolveModelForProvider(provider, body.model),
+        model: resolveModelForProvider(provider, headerModel || body.model),
       };
     }
   }
@@ -720,6 +786,15 @@ function toOpenAICompatibleResponse({ provider, model, text, raw }) {
   };
 }
 
+function writeTextAsSse(res, text) {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  if (text) res.write(`data: ${JSON.stringify(text)}\n\n`);
+  res.write("event: done\ndata: [DONE]\n\n");
+  res.end();
+}
+
 async function callClaudeChat({ apiKey, body, messages, model }) {
   const { system, conversation } = splitSystemMessages(messages);
   const payload = {
@@ -729,8 +804,11 @@ async function callClaudeChat({ apiKey, body, messages, model }) {
   };
 
   if (system) payload.system = system;
-  if (typeof body.temperature === "number") payload.temperature = body.temperature;
-  if (typeof body.top_p === "number") payload.top_p = body.top_p;
+  if (typeof body.temperature === "number") {
+    payload.temperature = body.temperature;
+  } else if (typeof body.top_p === "number") {
+    payload.top_p = body.top_p;
+  }
   if (typeof body.top_k === "number") payload.top_k = body.top_k;
   if (Array.isArray(body.stop_sequences)) payload.stop_sequences = body.stop_sequences;
 
@@ -777,17 +855,38 @@ async function callGeminiChat({ apiKey, body, messages, model }) {
   if (Array.isArray(body.stop_sequences)) generationConfig.stopSequences = body.stop_sequences;
   if (Object.keys(generationConfig).length) payload.generationConfig = generationConfig;
 
-  const resp = await axios.post(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-    payload,
-    {
-      headers: {
-        "x-goog-api-key": apiKey,
-        "content-type": "application/json",
-      },
-      timeout: 60_000,
+  let resolvedModel = GEMINI_MODEL_REPLACEMENTS[model] || model;
+  let resp;
+  try {
+    resp = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(resolvedModel)}:generateContent`,
+      payload,
+      {
+        headers: {
+          "x-goog-api-key": apiKey,
+          "content-type": "application/json",
+        },
+        timeout: 60_000,
+      }
+    );
+  } catch (error) {
+    const replacement = GEMINI_MODEL_REPLACEMENTS[resolvedModel];
+    if (!(replacement && error?.response?.status === 404)) {
+      throw error;
     }
-  );
+    resolvedModel = replacement;
+    resp = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(resolvedModel)}:generateContent`,
+      payload,
+      {
+        headers: {
+          "x-goog-api-key": apiKey,
+          "content-type": "application/json",
+        },
+        timeout: 60_000,
+      }
+    );
+  }
 
   const text = Array.isArray(resp.data?.candidates)
     ? resp.data.candidates
@@ -798,7 +897,7 @@ async function callGeminiChat({ apiKey, body, messages, model }) {
 
   return toOpenAICompatibleResponse({
     provider: "gemini",
-    model,
+    model: resolvedModel,
     text,
     raw: resp.data,
   });
@@ -1374,15 +1473,14 @@ app.delete("/api/baselines/:id", (req, res) => {
   });
 });
 
-/* ----------------------------- Licensing API ----------------------------- */
-app.use("/api/license", licenseRouter);
-
 /* ----------------------------- Secure AI chat proxy ----------------------------- */
 app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) => {
   try {
     const resolved = await resolveAIConfigForRequest(req);
     if (!resolved?.apiKey || !resolved?.provider) {
-      return res.status(500).json({ error: "No AI provider key available" });
+      return res.status(401).json({
+        error: "No AI provider key available. Save a local AI provider key in Settings before running AI workflows.",
+      });
     }
 
     const body = req.body || {};
@@ -1398,29 +1496,29 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
     const provider = resolved.provider;
     const model = resolved.model || AI_PROVIDERS[provider]?.defaultModel;
 
-    if (stream && provider !== "openai") {
-      return res.status(400).json({
-        error: `${providerLabel(provider)} streaming is not enabled on this proxy yet`,
-      });
-    }
-
-    if (!stream && provider === "claude") {
+    if (provider === "claude") {
       const resp = await callClaudeChat({
         apiKey: resolved.apiKey,
         body: { temperature: 0.2, ...body },
         messages,
         model,
       });
+      if (stream) {
+        return writeTextAsSse(res, resp.choices?.[0]?.message?.content || "");
+      }
       return res.json(resp);
     }
 
-    if (!stream && provider === "gemini") {
+    if (provider === "gemini") {
       const resp = await callGeminiChat({
         apiKey: resolved.apiKey,
         body: { temperature: 0.2, ...body },
         messages,
         model,
       });
+      if (stream) {
+        return writeTextAsSse(res, resp.choices?.[0]?.message?.content || "");
+      }
       return res.json(resp);
     }
 
@@ -1485,7 +1583,9 @@ app.post("/api/openai", llmLimiter, async (req, res) => {
   try {
     const apiKey = await resolveOpenAIKeyForRequest(req);
     if (!apiKey) {
-      return res.status(500).json({ error: "No OpenAI key available" });
+      return res.status(401).json({
+        error: "No OpenAI key available. Save a local OpenAI API key in Settings before running OpenAI workflows.",
+      });
     }
 
     const openai = new OpenAI({ apiKey });
@@ -1507,8 +1607,9 @@ app.post("/api/openai", llmLimiter, async (req, res) => {
     const result = completion?.choices?.[0]?.message?.content?.trim() || "";
     res.json({ result, model });
   } catch (err) {
-    logger.error("❌ /api/openai error:", err?.response?.data || err.message);
-    res.status(500).json({ error: "LLM request failed" });
+    const extracted = extractProviderErrorMessage(err);
+    logger.error("❌ /api/openai error:", extracted.details || extracted.message);
+    res.status(extracted.status || 500).json({ error: extracted.message || "LLM request failed" });
   }
 });
 

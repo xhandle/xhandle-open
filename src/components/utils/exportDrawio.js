@@ -1,10 +1,3 @@
-/**
- * xHandle: export drawio shared UI utility.
- * This file provides shared helper logic used by frontend components, often as a compatibility layer while imports converge on the newer lib-oriented architecture.
- * Keeping reusable helpers in one place reduces duplication across feature surfaces and makes local-first data handling, exports, and copilot context easier to evolve safely.
- * Related files: src/lib/storage/indexedDB.js, src/lib/storage/requirementsStore.ts, src/components/XHandleCopilotView.jsx.
- */
-
 // utils/exportDrawio.js
 // Convert React Flow nodes/edges into draw.io (mxGraphModel) XML and trigger a download.
 
@@ -19,9 +12,9 @@ function escapeXml(text = "") {
   
   /**
    * reactFlowToDrawioXML
-   * @param Array nodes - React Flow nodes (id, position, data, width/height if available)
-   * @param Array edges - React Flow edges (id, source, target, label)
-   * @param Object opts  - { pageWidth, pageHeight, nodeSize, nodeStyle, edgeStyle }
+   * @param {Array} nodes - React Flow nodes (id, position, data, width/height if available)
+   * @param {Array} edges - React Flow edges (id, source, target, label)
+   * @param {Object} opts  - { pageWidth, pageHeight, nodeSize, nodeStyle, edgeStyle }
    * @returns {string} - XML string representing an <mxGraphModel/>
    */
   export function reactFlowToDrawioXML(

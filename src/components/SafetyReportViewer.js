@@ -1,10 +1,3 @@
-/**
- * xHandle: safety report viewer shared application component.
- * This file implements a reusable application-level component or helper that participates in xHandle's end-to-end engineering workflows.
- * Shared components connect the main workspace, diagrams, copilot features, reporting, and local persistence so individual features can cooperate as one system.
- * Related files: src/App.js, src/lib/storage/indexedDB.js, src/features/hazard-analysis/aiAnalysisLite.js.
- */
-
 // SafetyReportViewer.js
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -38,13 +31,13 @@ export default function SafetyReportViewer({ reportText, report, functionalDiagr
 
   const markdownComponents = {
     h1: ({ node, children, ...props }) => (
-      <h1 className="text-2xl font-bold text-gray-900 mb-4" {...props}>{children}</h1>
+      children ? <h1 className="text-2xl font-bold text-gray-900 mb-4" {...props}>{children}</h1> : null
     ),
     h2: ({ node, children, ...props }) => (
-      <h2 className="text-xl font-bold text-gray-800 mt-8 mb-3" {...props}>{children}</h2>
+      children ? <h2 className="text-xl font-bold text-gray-800 mt-8 mb-3" {...props}>{children}</h2> : null
     ),
     h3: ({ node, children, ...props }) => (
-      <h3 className="text-lg font-semibold text-gray-700 mt-6 mb-2" {...props}>{children}</h3>
+      children ? <h3 className="text-lg font-semibold text-gray-700 mt-6 mb-2" {...props}>{children}</h3> : null
     ),
     ul: ({ node, ...props }) => (
       <ul className="ml-6 list-disc space-y-1" {...props} />

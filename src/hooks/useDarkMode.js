@@ -1,10 +1,3 @@
-/**
- * xHandle: use dark mode custom hook.
- * This file encapsulates reusable React state logic that multiple xHandle surfaces can consume without duplicating effect or persistence code.
- * Custom hooks keep cross-cutting UI behavior isolated from the larger feature components that focus on engineering workflows.
- * Related files: src/App.js, src/features/settings/SettingsModal.jsx.
- */
-
 import { useEffect, useState } from 'react';
 
 const STORAGE_KEY = 'xhandle.darkMode'; // 'dark' | 'light'

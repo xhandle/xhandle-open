@@ -6,6 +6,12 @@
  */
 
 // backendConfig.js
+import {
+  getStoredAIProviderApiKey,
+  getStoredActiveAIProvider,
+  getStoredAIProviderModelPreference,
+  isPlaceholderProviderApiKey,
+} from "../aiProviderConfig";
 import { logger } from "../utils/logger";
 
 const isBrowser = typeof window !== "undefined";
@@ -31,6 +37,10 @@ export const backendURL =
   (isLocalHost ? localBackendDefault : (browserOrigin || localBackendDefault));
 export const ACCOUNT_ID = "xhandle-local";
 
+export function getLocalAccessToken() {
+  return null;
+}
+
 function normalizeAIProvider(provider) {
   const normalized = String(provider || "").trim().toLowerCase();
   if (normalized === "anthropic") return "claude";
@@ -43,13 +53,34 @@ function normalizeAIProvider(provider) {
 
 function safeReadProviderMap() {
   if (!isBrowser) return {};
+  const providerMap = {};
   try {
     const raw = localStorage.getItem(LOCAL_AI_PROVIDER_KEYS_KEY);
     const parsed = raw ? JSON.parse(raw) : {};
-    return parsed && typeof parsed === "object" ? parsed : {};
+    if (parsed && typeof parsed === "object") {
+      Object.assign(providerMap, parsed);
+    }
   } catch {
-    return {};
+    // Continue with the newer local provider settings below.
   }
+  try {
+    const rows = JSON.parse(localStorage.getItem("xhandle.localAIProviderSettings") || "[]");
+    if (Array.isArray(rows)) {
+      rows.forEach((row) => {
+        const provider = normalizeAIProvider(row?.provider || "openai");
+        const apiKey = String(row?.apiKey || "").trim();
+        if (apiKey && !isPlaceholderProviderApiKey(apiKey)) {
+          providerMap[provider] = {
+            apiKey,
+            updatedAt: row.updated_at || row.updatedAt || providerMap[provider]?.updatedAt || null,
+          };
+        }
+      });
+    }
+  } catch {
+    // Ignore malformed local settings.
+  }
+  return providerMap;
 }
 
 function safeWriteProviderMap(providerMap) {
@@ -66,7 +97,7 @@ function maskProviderKey(apiKey) {
 export function getLocalAIProviderStatus() {
   const providerMap = safeReadProviderMap();
   const activeProvider = normalizeAIProvider(
-    (isBrowser && localStorage.getItem(LOCAL_AI_PROVIDER_KEY)) ||
+    (isBrowser && (getStoredActiveAIProvider() || localStorage.getItem(LOCAL_AI_PROVIDER_KEY))) ||
     Object.keys(providerMap)[0] ||
     "openai"
   );
@@ -167,11 +198,17 @@ export function buildAIAuthOpts(extraHeaders = {}) {
   const activeProvider = status.activeProvider;
   const activeRecord = status.savedProviders.find((provider) => provider.provider === activeProvider);
   const providerMap = safeReadProviderMap();
-  const apiKey = activeProvider ? providerMap[activeProvider]?.apiKey || "" : "";
+  const apiKey = activeProvider
+    ? providerMap[activeProvider]?.apiKey || getStoredAIProviderApiKey(activeProvider) || ""
+    : "";
+  const selectedModel = activeProvider
+    ? getStoredAIProviderModelPreference(activeProvider, { includeDefault: true })
+    : "";
 
   return buildAuthOpts({
     ...(activeProvider && activeRecord?.connected ? { "x-ai-provider": activeProvider } : {}),
     ...(apiKey ? { "x-ai-api-key": apiKey } : {}),
+    ...(selectedModel ? { "x-ai-model": selectedModel } : {}),
     ...extraHeaders,
   });
 }

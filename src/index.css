@@ -12,6 +12,37 @@ body {
 }
 html, body, #root { width: 100vw; height: 100vh; overflow: auto; background: var(--bg); color: var(--text); }
 
+/* Results Review drawer: desktop reserves visual space by shrinking the workspace. */
+:root {
+  --results-review-drawer-width: min(520px, 100vw);
+  --results-review-drawer-expanded-width: min(920px, 100vw);
+  --safety-remediation-drawer-width: min(560px, 100vw);
+}
+.results-review-app-frame {
+  min-height: 100vh;
+  width: 100%;
+  transition: width 200ms ease-out;
+}
+@media (min-width: 1024px) {
+  .results-review-app-frame--drawer-open {
+    width: calc(100vw - var(--results-review-drawer-width));
+    overflow: hidden;
+  }
+  .results-review-app-frame--drawer-open.results-review-app-frame--drawer-expanded {
+    width: calc(100vw - var(--results-review-drawer-expanded-width));
+  }
+  .results-review-app-frame--drawer-open .fixed.inset-x-0.top-14 {
+    right: var(--results-review-drawer-width) !important;
+  }
+  .results-review-app-frame--drawer-open.results-review-app-frame--drawer-expanded .fixed.inset-x-0.top-14 {
+    right: var(--results-review-drawer-expanded-width) !important;
+  }
+  .safety-remediation-workspace--drawer-open {
+    right: var(--safety-remediation-drawer-width) !important;
+    transition: right 200ms ease-out;
+  }
+}
+
 /* Selection & scrollbars */
 *::selection { background: rgba(76,154,255,0.28); }
 * { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
@@ -82,6 +113,15 @@ html, body, #root { width: 100vw; height: 100vh; overflow: auto; background: var
   box-shadow: 1px 1px 5px rgba(0,0,0,0.1);
 }
 .react-flow__node-toolbar button:hover { background: var(--border-strong); }
+
+/* Code architecture category boxes are visual containers. Let interface edges and labels beneath them receive clicks. */
+.react-flow__node.x-category-box-node {
+  pointer-events: none !important;
+}
+
+.react-flow__node.x-category-box-node .react-flow__handle {
+  pointer-events: none !important;
+}
 
 .resizer-node { border: 2px solid var(--border-strong); background: var(--card); position: relative; padding: 10px; }
 .resizer-node__handles { position: absolute; bottom: 0; width: 100%; display: flex; justify-content: space-evenly; }
