@@ -1,16 +1,36 @@
 import React, { useEffect } from "react";
-import { X, BookOpen, Rocket, GitBranch, FolderPlus, ShieldAlert, Bot, ClipboardCheck } from "lucide-react";
+import {
+  Bot,
+  ClipboardCheck,
+  Database,
+  Download,
+  GitBranch,
+  Network,
+  Rocket,
+  ShieldAlert,
+  Workflow,
+  X,
+} from "lucide-react";
 
-function Section({ icon: Icon, title, children }) {
+const logoSrc = `${process.env.PUBLIC_URL || ""}/xHandle_Logo.PNG`;
+
+function Section({ icon: Icon, title, eyebrow, children }) {
   return (
-    <section className="rounded-2xl border border-gray-200 bg-white shadow-sm">
-      <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
-          <Icon className="w-4 h-4" />
+    <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+      <div className="flex items-start gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-blue-700 ring-1 ring-slate-200">
+          <Icon className="h-4 w-4" />
         </div>
-        <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
+        <div>
+          {eyebrow && (
+            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-600">
+              {eyebrow}
+            </div>
+          )}
+          <h2 className="text-base font-semibold text-slate-950">{title}</h2>
+        </div>
       </div>
-      <div className="px-5 py-5 text-sm leading-7 text-gray-700">
+      <div className="px-5 py-5 text-sm leading-7 text-slate-800">
         {children}
       </div>
     </section>
@@ -22,7 +42,7 @@ function BulletList({ items }) {
     <ul className="space-y-2">
       {items.map((item, idx) => (
         <li key={idx} className="flex gap-3">
-          <span className="mt-[9px] h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-500" />
+          <span className="mt-[10px] h-1.5 w-1.5 shrink-0 rounded-full bg-blue-700" />
           <span>{item}</span>
         </li>
       ))}
@@ -34,11 +54,11 @@ function StepList({ steps }) {
   return (
     <div className="space-y-3">
       {steps.map((step, idx) => (
-        <div key={idx} className="flex gap-4 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xs font-semibold text-white">
+        <div key={idx} className="flex gap-4 rounded-lg border border-slate-200 bg-white px-4 py-3">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-700 text-xs font-semibold text-white">
             {idx + 1}
           </div>
-          <div className="text-sm leading-6 text-gray-700">{step}</div>
+          <div className="text-sm leading-6 text-slate-800">{step}</div>
         </div>
       ))}
     </div>
@@ -47,9 +67,22 @@ function StepList({ steps }) {
 
 function Pill({ children }) {
   return (
-    <span className="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700 mr-2 mb-2">
+    <span className="mb-2 mr-2 inline-flex items-center rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-800">
       {children}
     </span>
+  );
+}
+
+function FeatureGrid({ features }) {
+  return (
+    <div className="grid gap-3 md:grid-cols-2">
+      {features.map(({ title, text }) => (
+        <div key={title} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <div className="mb-1 text-sm font-semibold text-slate-950">{title}</div>
+          <p className="text-sm leading-6 text-slate-700">{text}</p>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -57,8 +90,8 @@ export default function ReadmeModal({ open, onClose }) {
   useEffect(() => {
     if (!open) return;
 
-    const onKeyDown = (e) => {
-      if (e.key === "Escape") onClose();
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") onClose();
     };
 
     document.body.style.overflow = "hidden";
@@ -74,20 +107,19 @@ export default function ReadmeModal({ open, onClose }) {
 
   return (
     <div className="fixed inset-0 z-[1200] flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-[2px]" onClick={onClose} />
 
-      <div className="relative z-10 flex h-[90vh] w-[96vw] max-w-6xl flex-col overflow-hidden rounded-3xl border border-gray-200 bg-[#F8FAFC] shadow-2xl">
-        {/* Header */}
-        <div className="sticky top-0 z-20 border-b border-gray-200 bg-white/95 backdrop-blur">
-          <div className="flex items-center justify-between px-6 py-4">
-            <div className="flex items-center gap-4">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-sm">
-                <BookOpen className="h-5 w-5" />
+      <div className="relative z-10 flex h-[92vh] w-[96vw] max-w-6xl flex-col overflow-hidden rounded-xl border border-slate-300 bg-slate-100 shadow-2xl">
+        <div className="sticky top-0 z-20 border-b border-slate-300 bg-white">
+          <div className="flex items-center justify-between gap-4 px-6 py-4">
+            <div className="flex min-w-0 items-center gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white">
+                <img src={logoSrc} className="max-h-8 max-w-9 object-contain" alt="xHandle" />
               </div>
-              <div>
-                <div className="text-lg font-semibold text-gray-900">xHandle Guide</div>
-                <div className="text-sm text-gray-500">
-                  Learn how to navigate the platform and get value fast
+              <div className="min-w-0">
+                <div className="text-lg font-semibold text-slate-950">xHandle Guide</div>
+                <div className="text-sm font-medium text-slate-600">
+                  Local-first systems engineering, architecture review, safety analysis, and verification
                 </div>
               </div>
             </div>
@@ -95,7 +127,7 @@ export default function ReadmeModal({ open, onClose }) {
             <button
               type="button"
               onClick={onClose}
-              className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 transition hover:bg-gray-100"
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
               aria-label="Close guide"
               title="Close"
             >
@@ -103,172 +135,179 @@ export default function ReadmeModal({ open, onClose }) {
             </button>
           </div>
 
-          {/* quick tags */}
-          <div className="px-6 pb-4">
-            <Pill>AI-powered architecture</Pill>
-            <Pill>Hazard analysis</Pill>
-            <Pill>Risk management</Pill>
-            <Pill>Requirements & traceability</Pill>
-            <Pill>Verification & validation</Pill>
+          <div className="border-t border-slate-200 px-6 py-3">
+            <Pill>Local-only</Pill>
+            <Pill>Code architecture</Pill>
+            <Pill>Review apps</Pill>
+            <Pill>Hazards and remediation</Pill>
+            <Pill>Requirements and V&V</Pill>
+            <Pill>OpenAI, Claude, Gemini</Pill>
           </div>
         </div>
 
-        {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-6">
           <div className="mx-auto max-w-5xl space-y-6">
-            {/* Hero */}
-            <div className="rounded-3xl border border-indigo-200 bg-gradient-to-r from-indigo-600 to-violet-600 px-6 py-7 text-white shadow-sm">
-              <h1 className="text-3xl font-semibold tracking-tight">Welcome to xHandle</h1>
-              <p className="mt-3 max-w-3xl text-sm leading-7 text-indigo-50">
-                xHandle helps you move from architecture to risk to requirements to verification
-                in a single connected workflow. You can start from an existing codebase or define
-                a system from scratch and let AI build the structure for you.
-              </p>
+            <div className="rounded-lg border border-slate-300 bg-white px-6 py-7 shadow-sm">
+              <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h1 className="text-3xl font-semibold tracking-tight text-slate-950">Build, review, and assure engineering data locally</h1>
+                  <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-700">
+                    xHandle connects functional architecture, code decomposition, hazard analysis, risk,
+                    requirements, traceability, safety remediation, and verification planning in one local workspace.
+                    Your app data stays on this machine unless you explicitly send selected context to your chosen AI provider.
+                  </p>
+                </div>
+                <div className="shrink-0 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-900">
+                  No Supabase, hosted auth, telemetry, billing gates, or cloud persistence.
+                </div>
+              </div>
             </div>
 
-            <Section icon={Rocket} title="Quick Start">
+            <Section icon={Rocket} title="Quick Start" eyebrow="First path">
               <StepList
                 steps={[
-                  "After logging in, click the profile button in the upper-right corner next to the settings gear. Add a profile picture and fill in your details.",
-                  "Choose how you want to begin: explore code-based architecture from GitHub, or create your first project manually or with AI assistance.",
-                  "Once your functional decomposition is ready, run hazard analysis using STPA, FMEA, What-If, or other supported methods.",
-                  "Use the generated outputs to explore risk, create requirements, manage traceability, and experiment with AI-generated verification artifacts.",
+                  "Open Settings, add your AI provider key, and choose OpenAI, Claude, or Gemini as the active provider.",
+                  "Start with a GitHub repository for code-based architecture, or create a project manually or with AI-assisted prompts.",
+                  "Generate or edit the functional decomposition table, then use the diagram and table views to inspect relationships.",
+                  "Use the review workspace, assurance artifacts, hazard analysis, remediation, requirements, traceability, and V&V views to deepen the engineering record.",
                 ]}
               />
             </Section>
 
-            <Section icon={GitBranch} title="Explore Code-Based Architecture">
+            <Section icon={GitBranch} title="Code-Based Architecture" eyebrow="Repository analysis">
               <p className="mb-4">
-                Use xHandle to transform a repository into an interactive functional architecture.
+                The code architecture workflow turns selected GitHub files into a functional decomposition table and
+                interactive architecture diagram.
               </p>
-              <StepList
-                steps={[
-                  "Open Settings and go to the GitHub integration.",
-                  "Enter the repository owner and repository name.",
-                  "If the repository is private, provide your GitHub token.",
-                  "Sync the repository, select the file types you want to analyze, and generate the functional decomposition.",
+              <BulletList
+                items={[
+                  "Analyze public repositories directly, or add a GitHub token in Settings for private repositories and higher rate limits.",
+                  "Use README and repository context to improve system understanding before file chunks are sent to the selected AI provider.",
+                  "Review generated rows, classifications, confidence, evidence, source files, functions, and relationships.",
+                  "Switch between table and diagram views, edit rows, filter views, and preserve manual diagram positioning locally.",
+                  "Create focused subprojects from selected diagram nodes when a subset deserves deeper analysis.",
                 ]}
               />
-              <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                This can take a few minutes because the AI is analyzing your code and building a data-rich system representation.
-              </div>
-
-              <div className="mt-5">
-                <div className="mb-2 text-sm font-semibold text-gray-900">What you can do once it loads</div>
-                <BulletList
-                  items={[
-                    "Double-click nodes and edges to inspect descriptions and relationships.",
-                    "Manually rearrange the canvas to make the architecture easier to understand.",
-                    "Filter elements to focus on the parts of the system you care about.",
-                    "Toggle to table view for structured editing and review.",
-                    "Hold Shift and drag across nodes, then use Add Selection → Analyze to turn a subset into a focused project.",
-                  ]}
-                />
-              </div>
             </Section>
 
-            <Section icon={FolderPlus} title="Create a Project">
+            <Section icon={Download} title="Generate Review App" eyebrow="Portable review artifact">
               <p className="mb-4">
-                Click the plus button under Projects in the left sidebar to create a new project.
+                After a code-based architecture table exists, use Generate Review App to create a downloadable,
+                read-only Electron app for architecture review.
               </p>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
-                  <div className="mb-2 text-base font-semibold text-gray-900">Manual Mode</div>
-                  <p className="text-sm leading-6 text-gray-700">
-                    Build your system architecture from scratch by defining functions, control
-                    actions, and relationships directly.
-                  </p>
-                </div>
-
-                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
-                  <div className="mb-2 text-base font-semibold text-gray-900">AI-Assisted Mode</div>
-                  <p className="text-sm leading-6 text-gray-700">
-                    Answer guided prompts describing your system. xHandle generates a detailed
-                    functional decomposition that you can refine in either diagram or table view.
-                  </p>
-                </div>
-              </div>
+              <FeatureGrid
+                features={[
+                  {
+                    title: "Selectable scope",
+                    text: "Choose one or more architecture projects or cross-repo targets and include the analysis sections that are ready.",
+                  },
+                  {
+                    title: "Local packaging",
+                    text: "The local API server builds the review-mode React app, wraps it with Electron Builder, and writes a zip locally.",
+                  },
+                  {
+                    title: "Review-ready data",
+                    text: "The package can include architecture rows, diagram positions, assurance artifacts, hazard runs, remediation context, and review items.",
+                  },
+                  {
+                    title: "No hosted packager",
+                    text: "The open-source flow does not call Supabase, cloud storage, hosted review services, signing services, or billing systems.",
+                  },
+                ]}
+              />
             </Section>
 
-            <Section icon={ShieldAlert} title="Run Hazard Analysis">
-              <p className="mb-4">
-                Once your functional decomposition is ready, use AI-powered analysis methods to
-                identify risks and derive engineering artifacts.
-              </p>
+            <Section icon={ClipboardCheck} title="Assurance and Results Review" eyebrow="Review workspace">
+              <BulletList
+                items={[
+                  "Use the assurance workspace after architecture generation to create and review engineering artifacts.",
+                  "Manage software requirements, system requirements, subsystem requirements, design elements, and traceability views.",
+                  "Use review statuses and review scaffolding to separate draft AI output from reviewed engineering decisions.",
+                  "Export architecture review data for offline review through the local review app flow.",
+                ]}
+              />
+            </Section>
 
+            <Section icon={ShieldAlert} title="Hazard Analysis and Safety Remediation" eyebrow="Safety workflow">
               <div className="mb-4">
                 <Pill>STPA</Pill>
                 <Pill>FMEA</Pill>
                 <Pill>What-If</Pill>
-                <Pill>Additional methods</Pill>
+                <Pill>HARA/FHA</Pill>
+                <Pill>STPA-Sec</Pill>
+                <Pill>Code-hazard review</Pill>
               </div>
-
               <BulletList
                 items={[
-                  "Generate hazards, risks, causal factors, and mitigation strategies.",
-                  "Derive system requirements from identified mitigations.",
-                  "Produce structured outputs that feed directly into downstream modules.",
-                  "Expect more than 10 minutes for complex systems or large decompositions.",
+                  "Generate hazards, unsafe control actions, causal factors, mitigations, and risk-oriented outputs from functional architecture.",
+                  "Review safety findings with source context, impacted files, patch proposals, review decisions, and verification evidence.",
+                  "Use lightweight verification scaffolding to record commands, outcomes, evidence, and remaining safety work.",
+                  "Keep findings and remediation state locally while using AI only when you choose to generate or refine analysis.",
                 ]}
               />
             </Section>
 
-            <Section icon={BookOpen} title="Explore the Platform">
-              <div className="space-y-5">
-                <div>
-                  <div className="mb-1 text-base font-semibold text-gray-900">Console</div>
-                  <p className="text-sm leading-6 text-gray-700">
-                    Get a top-down, cross-project view of system activity, risk posture, and recent changes.
-                  </p>
-                </div>
-
-                <div>
-                  <div className="mb-1 text-base font-semibold text-gray-900">Risk Management</div>
-                  <p className="text-sm leading-6 text-gray-700">
-                    Review risks with full context, prioritize them, assign owners, and track mitigation progress.
-                  </p>
-                </div>
-
-                <div>
-                  <div className="mb-1 text-base font-semibold text-gray-900">Project Management</div>
-                  <p className="text-sm leading-6 text-gray-700">
-                    Track project progress, artifact completion, and execution status across your portfolio.
-                  </p>
-                </div>
-
-                <div>
-                  <div className="mb-1 text-base font-semibold text-gray-900">Requirements & Traceability</div>
-                  <p className="text-sm leading-6 text-gray-700">
-                    Import analysis outputs, create requirements manually, and use AI to connect
-                    functions, hazards, risks, mitigations, requirements, and tests into a living trace model.
-                  </p>
-                </div>
-              </div>
-            </Section>
-
-            <Section icon={Bot} title="Collaborator">
-              <BulletList
-                items={[
-                  "Collaborator uses your project data as context to generate insights and support engineering work.",
-                  "In docked mode, the crosshair icon lets you capture targeted UI context for more precise prompts.",
-                  "It is designed to help you navigate and reason across the platform’s connected data model.",
+            <Section icon={Network} title="Traceability, Requirements, and V&V" eyebrow="Connected artifacts">
+              <FeatureGrid
+                features={[
+                  {
+                    title: "Requirements management",
+                    text: "Create, edit, organize, and derive requirements from architecture and hazard outputs.",
+                  },
+                  {
+                    title: "Traceability",
+                    text: "Connect functions, hazards, risks, mitigations, requirements, design elements, and verification targets.",
+                  },
+                  {
+                    title: "V&V planning",
+                    text: "Generate and manage test cases, verification activities, evidence, and document-style review artifacts.",
+                  },
+                  {
+                    title: "Risk register",
+                    text: "Track risk context, ownership, status, priority, mitigation progress, and project-level posture.",
+                  },
                 ]}
               />
             </Section>
 
-            <Section icon={ClipboardCheck} title="Verification & Validation">
-              <p>
-                The V&V area explores AI-generated test artifacts derived from functional
-                architecture, hazard analysis, and requirements. This helps you move from analysis
-                to verification using connected system context rather than disconnected documents.
-              </p>
+            <Section icon={Workflow} title="Project and Cross-Repo Workspaces" eyebrow="Larger systems">
+              <BulletList
+                items={[
+                  "Organize architecture projects and folders in the left sidebar.",
+                  "Use cross-repo architecture views to inspect interfaces and relationships across multiple repositories.",
+                  "Carry assurance artifacts and traceability context into folder-level review packages.",
+                  "Use local storage and local backups to keep the workspace portable without cloud persistence.",
+                ]}
+              />
             </Section>
 
-            <div className="rounded-2xl border border-gray-200 bg-white px-5 py-4 text-xs leading-6 text-gray-500">
-              xHandle is still an MVP. Expect rough edges, bugs, and evolving capabilities. The goal
-              is to make system engineering, hazard analysis, traceability, and verification more
-              accessible and more connected.
+            <Section icon={Bot} title="Copilot / Collaborator" eyebrow="AI assistance">
+              <BulletList
+                items={[
+                  "Ask questions about the current workspace, selected artifacts, architecture rows, hazards, risks, requirements, and remediation context.",
+                  "Use your own provider keys through the local API server; supported providers are OpenAI, Claude, and Gemini.",
+                  "Provider errors, quotas, and billing come from the provider account you configure. xHandle does not include hosted billing or paid gates.",
+                  "For sensitive work, review prompts and generated outputs before treating them as engineering evidence.",
+                ]}
+              />
+            </Section>
+
+            <Section icon={Database} title="Local-First Data Model" eyebrow="Open-source behavior">
+              <BulletList
+                items={[
+                  "Workspace state is stored locally in browser storage and local IndexedDB-backed stores.",
+                  "Secrets such as AI provider keys and GitHub tokens are entered locally and used by the local server/browser flow.",
+                  "Generated backups, review packages, and Electron review apps are written to local files when you choose to export them.",
+                  "The open-source app intentionally avoids Supabase, hosted authentication, telemetry, cloud persistence, and license enforcement.",
+                ]}
+              />
+            </Section>
+
+            <div className="rounded-lg border border-amber-300 bg-amber-50 px-5 py-4 text-sm leading-6 text-amber-950">
+              <div className="mb-1 font-semibold">Engineering judgment still matters.</div>
+              xHandle is an AI-assisted workspace. Treat generated architecture, hazards, requirements,
+              remediation plans, and verification artifacts as review candidates until a qualified engineer
+              has checked the evidence, assumptions, and safety impact.
             </div>
           </div>
         </div>

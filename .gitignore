@@ -50,8 +50,17 @@ index_metadata.pickle
 # Archives / artifacts
 # -------------------------
 *.zip
+*.blockmap
 deployment.zip
 git-files.zip
+
+# -------------------------
+# Local review app packaging artifacts
+# -------------------------
+/review-package.json
+/.review-package-work/
+/dist-review/
+builder-debug.yml
 
 # -------------------------
 # Optional (recommended)

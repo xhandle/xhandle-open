@@ -19,6 +19,7 @@ const path = require("path");
 const rateLimit = require("express-rate-limit");
 const { OpenAI } = require("openai");
 const { logger } = require("./server/logger");
+const { spawn, spawnSync } = require("child_process");
 
 const app = express();
 
@@ -116,13 +117,331 @@ app.set("trust proxy", 1);
 
 app.use((req, res, next) => {
   if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) {
-    express.json({ limit: "10mb" })(req, res, (err) => {
+    express.json({ limit: "100mb" })(req, res, (err) => {
       if (err) return next(err);
-      express.urlencoded({ extended: true, limit: "10mb" })(req, res, next);
+      express.urlencoded({ extended: true, limit: "100mb" })(req, res, next);
     });
   } else {
     next();
   }
+});
+
+/* ----------------------------- Code Architecture Review App Packaging ----------------------------- */
+let reviewPackageBuildInProgress = false;
+const reviewPackageJobs = new Map();
+
+function slugForFilename(value, fallback = "code-architecture-review") {
+  return String(value || fallback)
+    .replace(/[^a-z0-9._-]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase() || fallback;
+}
+
+function normalizeReviewAppTarget(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (["mac", "macos", "darwin"].includes(raw)) return "mac";
+  if (["win", "windows", "win32"].includes(raw)) return "win";
+  if (raw === "linux") return "linux";
+  if (process.platform === "win32") return "win";
+  if (process.platform === "linux") return "linux";
+  return "mac";
+}
+
+function normalizeDestinationDirectory(destinationDirectory) {
+  const baseRaw = String(destinationDirectory || "").trim();
+  return baseRaw
+    ? (path.isAbsolute(baseRaw) ? path.resolve(baseRaw) : path.resolve(__dirname, baseRaw))
+    : path.join(__dirname, "dist-review");
+}
+
+function chooseSystemDestinationFolder() {
+  const prompt = "Choose destination folder for the review app";
+  if (process.platform === "darwin") {
+    const result = spawnSync("osascript", [
+      "-e",
+      `POSIX path of (choose folder with prompt "${prompt}")`,
+    ], { encoding: "utf8" });
+    if (result.status === 0) return { path: String(result.stdout || "").trim() };
+    if (String(result.stderr || "").toLowerCase().includes("user canceled")) return { cancelled: true };
+    throw new Error(String(result.stderr || "").trim() || "Could not open the macOS folder picker.");
+  }
+
+  if (process.platform === "win32") {
+    const script = [
+      "Add-Type -AssemblyName System.Windows.Forms",
+      "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog",
+      `$dialog.Description = "${prompt}"`,
+      "if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::WriteLine($dialog.SelectedPath) }",
+    ].join("; ");
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-STA", "-Command", script], { encoding: "utf8" });
+    if (result.status === 0) {
+      const selectedPath = String(result.stdout || "").trim();
+      return selectedPath ? { path: selectedPath } : { cancelled: true };
+    }
+    throw new Error(String(result.stderr || "").trim() || "Could not open the Windows folder picker.");
+  }
+
+  for (const command of [
+    ["zenity", ["--file-selection", "--directory", "--title", prompt]],
+    ["kdialog", ["--getexistingdirectory", process.env.HOME || "/", prompt]],
+  ]) {
+    const result = spawnSync(command[0], command[1], { encoding: "utf8" });
+    if (result.error?.code === "ENOENT") continue;
+    if (result.status === 0) return { path: String(result.stdout || "").trim() };
+    if (result.status === 1) return { cancelled: true };
+    throw new Error(String(result.stderr || "").trim() || `Could not open ${command[0]} folder picker.`);
+  }
+
+  throw new Error("No supported folder picker is available on this computer.");
+}
+
+function stripAnsiCodes(value) {
+  return String(value || "").replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "");
+}
+
+function runPackageCommand(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: __dirname,
+      env: { ...process.env, CI: "false", ...options.env },
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: false,
+    });
+    const chunks = [];
+    const collect = (chunk) => {
+      const text = stripAnsiCodes(chunk.toString());
+      chunks.push(text);
+      if (chunks.join("").length > 20000) chunks.splice(0, chunks.length - 12);
+      options.onOutput?.(text, chunks.join(""));
+    };
+    child.stdout.on("data", collect);
+    child.stderr.on("data", collect);
+    child.on("error", reject);
+    child.on("close", (code) => {
+      const output = chunks.join("");
+      if (code === 0) resolve(output);
+      else reject(new Error(`Review package build failed with exit code ${code}.\n${output}`));
+    });
+  });
+}
+
+function reviewPackageItemCounts(reviewPackage = {}) {
+  const repositories = Array.isArray(reviewPackage?.data?.repositories) && reviewPackage.data.repositories.length
+    ? reviewPackage.data.repositories
+    : [{
+        cbaRows: reviewPackage?.data?.cbaRows || [],
+        assuranceArtifacts: reviewPackage?.data?.assuranceArtifacts || {},
+      }];
+  const repoCounts = repositories.map((entry) => {
+    const artifacts = entry.assuranceArtifacts || {};
+    const artifactRows = Object.values(artifacts).reduce((sum, rows) => sum + (Array.isArray(rows) ? rows.length : 0), 0);
+    return {
+      repoId: entry.repo?.repoId || entry.repo?.repoName || entry.repo?.id || "repo",
+      cbaRows: Array.isArray(entry.cbaRows) ? entry.cbaRows.length : 0,
+      artifactRows,
+    };
+  });
+  const hazardRows = Array.isArray(reviewPackage?.data?.hazardRun?.generatedSheets?.Summary)
+    ? reviewPackage.data.hazardRun.generatedSheets.Summary.length
+    : 0;
+  const reviewItems = Array.isArray(reviewPackage?.data?.reviewItems) ? reviewPackage.data.reviewItems.length : 0;
+  const cbaRows = repoCounts.reduce((sum, entry) => sum + entry.cbaRows, 0);
+  const artifactRows = repoCounts.reduce((sum, entry) => sum + entry.artifactRows, 0);
+  return {
+    repositories: repoCounts.length,
+    cbaRows,
+    artifactRows,
+    hazardRows,
+    reviewItems,
+    totalItems: cbaRows + artifactRows + hazardRows + reviewItems,
+    repos: repoCounts,
+  };
+}
+
+function createReviewPackageJob({ reviewPackage, downloadName, reviewAppTarget, destinationDirectory }) {
+  const now = new Date().toISOString();
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const counts = reviewPackageItemCounts(reviewPackage);
+  const job = {
+    id,
+    status: "queued",
+    percent: 1,
+    message: "Queued review app build...",
+    counts,
+    downloadName,
+    reviewAppTarget,
+    destinationDirectory,
+    zipPath: null,
+    error: null,
+    logTail: "",
+    createdAt: now,
+    updatedAt: now,
+  };
+  reviewPackageJobs.set(id, job);
+  return job;
+}
+
+function updateReviewPackageJob(id, patch) {
+  const job = reviewPackageJobs.get(id);
+  if (!job) return null;
+  Object.assign(job, patch, { updatedAt: new Date().toISOString() });
+  return job;
+}
+
+function publicReviewPackageJob(job) {
+  if (!job) return null;
+  const { zipPath, ...safeJob } = job;
+  return {
+    ...safeJob,
+    ready: job.status === "complete",
+    downloadUrl: job.status === "complete" ? `/api/code-architecture-review/package/${job.id}/download` : null,
+  };
+}
+
+function inferBuildProgressFromOutput(text, currentPercent) {
+  const value = String(text || "");
+  if (value.includes("Creating an optimized production build")) return { percent: Math.max(currentPercent, 45), message: "Building read-only review interface..." };
+  if (value.includes("Compiled with warnings") || value.includes("Compiled successfully")) return { percent: Math.max(currentPercent, 62), message: "Review interface built. Preparing desktop app..." };
+  if (value.includes("electron-builder")) return { percent: Math.max(currentPercent, 70), message: "Starting Electron app packaging..." };
+  if (value.includes("packaging")) return { percent: Math.max(currentPercent, 80), message: "Packaging Electron review app..." };
+  if (value.includes("building") && value.includes("zip")) return { percent: Math.max(currentPercent, 92), message: "Creating downloadable app zip..." };
+  if (value.includes("building block map")) return { percent: Math.max(currentPercent, 96), message: "Finalizing app package..." };
+  return null;
+}
+
+function listZipFilesRecursive(directory) {
+  if (!fs.existsSync(directory)) return [];
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const fullPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) return listZipFilesRecursive(fullPath);
+    return entry.isFile() && entry.name.toLowerCase().endsWith(".zip") ? [fullPath] : [];
+  });
+}
+
+function newestZipFile(directory, startedAtMs, reviewAppTarget) {
+  const targetSuffix = reviewAppTarget ? `-${reviewAppTarget}.zip` : ".zip";
+  return listZipFilesRecursive(directory)
+    .map((filePath) => ({ filePath, stat: fs.statSync(filePath) }))
+    .filter((entry) => (
+      entry.stat.mtimeMs >= startedAtMs - 1000 &&
+      path.basename(entry.filePath).toLowerCase().endsWith(targetSuffix)
+    ))
+    .sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs)[0]?.filePath || null;
+}
+
+async function runReviewPackageJob({ jobId, reviewPackage, startedAtMs }) {
+  const packagePath = path.join(__dirname, "review-package.json");
+
+  try {
+    const job = reviewPackageJobs.get(jobId);
+    const distDir = job?.destinationDirectory || path.join(__dirname, "dist-review");
+    updateReviewPackageJob(jobId, {
+      status: "running",
+      percent: 10,
+      message: `Preparing ${job?.counts?.totalItems || 0} review package item${job?.counts?.totalItems === 1 ? "" : "s"}...`,
+    });
+
+    fs.writeFileSync(packagePath, JSON.stringify(reviewPackage, null, 2));
+    fs.mkdirSync(distDir, { recursive: true });
+    updateReviewPackageJob(jobId, {
+      percent: 35,
+      message: `Packaged ${job?.counts?.totalItems || 0} item${job?.counts?.totalItems === 1 ? "" : "s"} from ${job?.counts?.repositories || 0} repos. Starting app build...`,
+    });
+
+    await runPackageCommand("npm", ["run", "package:review"], {
+      env: {
+        REVIEW_APP_TARGET: job?.reviewAppTarget || "mac",
+        REVIEW_OUTPUT_DIR: distDir,
+      },
+      onOutput: (text, output) => {
+        const current = reviewPackageJobs.get(jobId);
+        const inferred = inferBuildProgressFromOutput(text, current?.percent || 0);
+        updateReviewPackageJob(jobId, {
+          ...(inferred || {}),
+          logTail: output.slice(-12000),
+        });
+      },
+    });
+
+    const zipPath = newestZipFile(distDir, startedAtMs, job?.reviewAppTarget);
+    if (!zipPath) throw new Error("Electron Builder completed, but no review app zip was found.");
+
+    updateReviewPackageJob(jobId, {
+      status: "complete",
+      percent: 100,
+      message: `Review app package ready in ${distDir}.`,
+      zipPath,
+    });
+  } catch (error) {
+    const cleanError = stripAnsiCodes(error?.message || "Failed to generate the Code-Based Architecture review app.");
+    updateReviewPackageJob(jobId, {
+      status: "failed",
+      percent: Math.max(reviewPackageJobs.get(jobId)?.percent || 0, 1),
+      message: "Review app package build failed.",
+      error: cleanError,
+      logTail: cleanError.slice(-12000),
+    });
+  } finally {
+    reviewPackageBuildInProgress = false;
+  }
+}
+
+app.post("/api/code-architecture-review/package/start", async (req, res) => {
+  if (reviewPackageBuildInProgress) {
+    return res.status(409).json({ error: "A review app package is already being generated. Try again after it finishes." });
+  }
+
+  const reviewPackage = req.body?.reviewPackage || req.body;
+  if (!reviewPackage || reviewPackage.artifactType !== "code-based-architecture-review-package") {
+    return res.status(400).json({ error: "A valid Code-Based Architecture review package is required." });
+  }
+
+  reviewPackageBuildInProgress = true;
+  const startedAtMs = Date.now();
+  const reviewAppTarget = normalizeReviewAppTarget(req.body?.reviewAppTarget || req.body?.platform || req.body?.target);
+  let destinationDirectory;
+  try {
+    destinationDirectory = normalizeDestinationDirectory(req.body?.destinationDirectory);
+  } catch (error) {
+    reviewPackageBuildInProgress = false;
+    return res.status(400).json({ error: error?.message || "Invalid destination folder." });
+  }
+  const appDisplayName = reviewPackage?.appDisplayName || [
+    reviewPackage?.project?.name || "code-architecture",
+    reviewPackage?.activeRepo?.repoName || reviewPackage?.activeRepo?.repoId || "review",
+  ].filter(Boolean).join("-");
+  const downloadName = `${slugForFilename(appDisplayName)}-review-app-${reviewAppTarget}.zip`;
+  const job = createReviewPackageJob({ reviewPackage, downloadName, reviewAppTarget, destinationDirectory });
+
+  res.status(202).json(publicReviewPackageJob(job));
+  setImmediate(() => runReviewPackageJob({ jobId: job.id, reviewPackage, startedAtMs }));
+});
+
+app.post("/api/code-architecture-review/package/choose-destination", (_req, res) => {
+  try {
+    const result = chooseSystemDestinationFolder();
+    if (result.cancelled || !result.path) return res.json({ cancelled: true });
+    res.json({ path: result.path });
+  } catch (error) {
+    res.status(500).json({ error: error?.message || "Could not choose a destination folder." });
+  }
+});
+
+app.get("/api/code-architecture-review/package/:jobId/status", (req, res) => {
+  const job = reviewPackageJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: "Review app build job not found." });
+  res.json(publicReviewPackageJob(job));
+});
+
+app.get("/api/code-architecture-review/package/:jobId/download", (req, res) => {
+  const job = reviewPackageJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: "Review app build job not found." });
+  if (job.status !== "complete" || !job.zipPath || !fs.existsSync(job.zipPath)) {
+    return res.status(409).json({ error: "Review app package is not ready for download." });
+  }
+  res.download(job.zipPath, job.downloadName || path.basename(job.zipPath), (error) => {
+    if (error) logger.error("Review package download failed:", error);
+  });
 });
 
 // LLM rate limit

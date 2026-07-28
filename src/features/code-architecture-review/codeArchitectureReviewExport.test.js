@@ -1,5 +1,12 @@
+jest.mock("lucide-react", () => new Proxy({}, {
+  get: () => function MockIcon() {
+    return null;
+  },
+}));
+
 import {
   collectCodeArchitectureReviewPackage,
+  codeArchitectureReviewPackagingTarget,
   isHostedCodeArchitectureReviewPackagerConfigured,
 } from "./codeArchitectureReviewExport";
 
@@ -20,5 +27,9 @@ describe("codeArchitectureReviewExport", () => {
     expect(reviewPackage.data.repositories).toHaveLength(1);
     expect(reviewPackage.data.reviewItems).toHaveLength(1);
     expect(isHostedCodeArchitectureReviewPackagerConfigured()).toBe(false);
+    expect(codeArchitectureReviewPackagingTarget()).toEqual({
+      mode: "local",
+      url: "http://localhost:5001",
+    });
   });
 });

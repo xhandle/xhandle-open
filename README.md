@@ -218,6 +218,25 @@ The code-based architecture workflow can inspect public GitHub repositories with
 
 Repository analysis runs locally in the browser and local API server. Generated rows, review state, assurance artifacts, and related workspace data are stored in local browser storage.
 
+### Code architecture review app export
+
+After a code-based architecture table is generated, xHandle can package the selected architecture and assurance data into a read-only Electron review app.
+
+The review app export is local-only:
+
+* the browser sends the review package to the local API server on `http://localhost:5001`
+* the local server runs the review-mode React build and Electron Builder
+* the generated zip is written to the selected destination folder, or `dist-review/` by default
+* no hosted packager, Supabase service, cloud storage, signing service, or billing/license gate is used
+
+You can also package a review app from the command line after creating `review-package.json` in the repository root:
+
+```bash
+npm run package:review
+```
+
+Platform helpers are available as `npm run package:review:mac`, `npm run package:review:win`, and `npm run package:review:linux`.
+
 ### Troubleshooting
 
 #### "git" or "node" is not recognized
