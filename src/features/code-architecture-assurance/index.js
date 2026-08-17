@@ -8,4 +8,5 @@ export {
   functionalRowIndexForTraceValue,
   loadArtifactRows,
   loadArtifactRowsAsync,
+  saveArtifactRowsAsync,
 } from "./artifactUtils";

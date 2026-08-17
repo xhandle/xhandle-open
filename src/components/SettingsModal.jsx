@@ -13,6 +13,7 @@ import {
   AI_PROVIDER_OPTIONS,
   clearUserAIProviderSettings,
   fetchUserAIProviderSettings,
+  fetchProviderModelRecords,
   getAIProviderLabel,
   getDefaultProviderModel,
   getProviderKeyHelpText,
@@ -254,6 +255,9 @@ export default function SettingsModal({
   const [providerConnected, setProviderConnected] = useState(false);
   const [providerStatus, setProviderStatus] = useState(null);
   const [providerBusy, setProviderBusy] = useState(false);
+  const [providerModelsByProvider, setProviderModelsByProvider] = useState({});
+  const [providerModelsBusy, setProviderModelsBusy] = useState(false);
+  const [providerModelsMsg, setProviderModelsMsg] = useState("");
   const [backupState, setBackupState] = useState(getLocalBackupState());
   const [backupMsg, setBackupMsg] = useState("");
   const [graphInspection, setGraphInspection] = useState(null);
@@ -264,6 +268,26 @@ export default function SettingsModal({
     (row) => row.provider === normalizeAIProvider(aiProvider)
   );
   const selectedModelProfile = getProviderModelProfile(aiProvider, providerModel);
+  const providerModelOptions = (() => {
+    const provider = normalizeAIProvider(aiProvider);
+    const records = providerModelsByProvider[provider] || getProviderModelOptions(provider);
+    const normalizedRecords = records
+      .map((record) => ({
+        value: record.value || record.id,
+        label: record.label || record.displayName || record.id || record.value,
+        source: record.source || "fallback",
+      }))
+      .filter((record) => record.value);
+    const currentModel = normalizeProviderModel(provider, providerModel);
+    if (currentModel && !normalizedRecords.some((record) => record.value === currentModel)) {
+      normalizedRecords.unshift({
+        value: currentModel,
+        label: `${currentModel} (custom)`,
+        source: "custom",
+      });
+    }
+    return normalizedRecords;
+  })();
 
   useEffect(() => {
     let alive = true;
@@ -292,6 +316,35 @@ export default function SettingsModal({
       getStoredAIProviderModelPreference(provider, { includeDefault: true });
     setProviderModel(normalizeProviderModel(provider, savedModel));
   }, [aiProvider, selectedSavedProvider?.selectedModel]);
+
+  const loadProviderModels = async (providerInput = aiProvider, options = {}) => {
+    const provider = normalizeAIProvider(providerInput);
+    setProviderModelsBusy(true);
+    if (options.refresh) setProviderModelsMsg("");
+    try {
+      const models = await fetchProviderModelRecords(provider, {
+        backendURL,
+        accountId: ACCOUNT_ID,
+        accessToken: getLocalAccessToken(),
+        refresh: options.refresh,
+      });
+      setProviderModelsByProvider((current) => ({ ...current, [provider]: models }));
+      setProviderModelsMsg(
+        models.some((model) => model.source === "provider")
+          ? "Loaded current provider models."
+          : "Using fallback models."
+      );
+    } catch (e) {
+      setProviderModelsMsg(`Using fallback models: ${e?.message || e}`);
+    } finally {
+      setProviderModelsBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    loadProviderModels(aiProvider);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiProvider]);
 
   useEffect(() => {
     let alive = true;
@@ -899,7 +952,17 @@ export default function SettingsModal({
               </select>
             </div>
             <div className="space-y-1">
-              <label className="block text-sm font-medium text-gray-700">Model</label>
+              <div className="flex items-center justify-between gap-2">
+                <label className="block text-sm font-medium text-gray-700">Model</label>
+                <button
+                  type="button"
+                  className="rounded border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                  onClick={() => loadProviderModels(aiProvider, { refresh: true })}
+                  disabled={providerBusy || providerModelsBusy}
+                >
+                  {providerModelsBusy ? "Refreshing..." : "Refresh models"}
+                </button>
+              </div>
               <select
                 className="w-full border rounded px-3 py-2 text-sm bg-white"
                 value={normalizeProviderModel(aiProvider, providerModel)}
@@ -911,16 +974,24 @@ export default function SettingsModal({
                     setActive: providerStatus?.provider === provider,
                   });
                 }}
-                disabled={providerBusy}
+                disabled={providerBusy || providerModelsBusy}
               >
-                {getProviderModelOptions(aiProvider).map((option) => (
-                  <option key={option.value} value={option.value}>
+                {providerModelOptions.map((option) => (
+                  <option key={`${option.source}:${option.value}`} value={option.value}>
                     {option.label}
                   </option>
                 ))}
               </select>
+              <input
+                className="w-full border rounded px-3 py-2 text-sm bg-white"
+                value={providerModel}
+                onChange={(e) => setProviderModel(e.target.value)}
+                placeholder="Custom model ID"
+                disabled={providerBusy}
+              />
               <p className="text-xs text-gray-500">
                 {selectedModelProfile?.description ||
+                  providerModelsMsg ||
                   `Defaults to ${getDefaultProviderModel(aiProvider)}.`}
               </p>
             </div>

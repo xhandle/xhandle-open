@@ -620,6 +620,38 @@ const CLAUDE_MODEL_REPLACEMENTS = {
   "claude-opus-4-1-20250805": "claude-opus-5",
 };
 
+const MODEL_DISCOVERY_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const providerModelCache = new Map();
+
+const FALLBACK_PROVIDER_MODELS = {
+  openai: [
+    "gpt-4o-mini",
+    "gpt-4o",
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.4-nano",
+    "gpt-5.1",
+    "gpt-5",
+    "gpt-5-mini",
+    "gpt-4.1",
+  ],
+  claude: [
+    "claude-haiku-4-5",
+    "claude-sonnet-5",
+    "claude-opus-5",
+    "claude-fable-5",
+    "claude-haiku-4-5-20251001",
+  ],
+  gemini: [
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-pro-preview",
+    "gemini-3.1-flash-lite",
+  ],
+};
+
 function normalizeAIProvider(provider) {
   const normalized = String(provider || "").trim().toLowerCase();
   if (normalized === "anthropic") return "claude";
@@ -722,6 +754,106 @@ function resolveModelForProvider(provider, requestedModel) {
   }
 
   return AI_PROVIDERS[provider]?.defaultModel || model;
+}
+
+function modelLabelFromId(id) {
+  return String(id || "")
+    .replace(/^models\//, "")
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.length <= 3 ? part.toUpperCase() : part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function normalizeDiscoveredModels(provider, payload) {
+  const rows = provider === "openai"
+    ? payload?.data
+    : provider === "gemini"
+      ? payload?.models
+      : payload?.data;
+  const models = (Array.isArray(rows) ? rows : [])
+    .map((row) => {
+      const rawId = row?.id || row?.name || row?.model || "";
+      const id = String(rawId).replace(/^models\//, "").trim();
+      if (!id) return null;
+      if (provider === "gemini") {
+        const methods = Array.isArray(row.supportedGenerationMethods) ? row.supportedGenerationMethods : [];
+        if (methods.length && !methods.includes("generateContent")) return null;
+      }
+      return {
+        id,
+        value: id,
+        label: row.displayName || row.display_name || modelLabelFromId(id),
+        provider,
+        source: "provider",
+        description: row.description || "",
+        createdAt: row.created ? new Date(row.created * 1000).toISOString() : row.created_at || null,
+      };
+    })
+    .filter(Boolean);
+
+  const seen = new Set();
+  return models
+    .filter((model) => {
+      if (seen.has(model.id)) return false;
+      seen.add(model.id);
+      return true;
+    })
+    .sort((a, b) => String(b.id).localeCompare(String(a.id), undefined, { numeric: true }));
+}
+
+function fallbackProviderModels(provider, reason = null) {
+  return (FALLBACK_PROVIDER_MODELS[provider] || FALLBACK_PROVIDER_MODELS.openai).map((id) => ({
+    id,
+    value: id,
+    label: modelLabelFromId(id),
+    provider,
+    source: "fallback",
+    ...(reason ? { reason } : {}),
+  }));
+}
+
+async function getProviderModelApiKey({ req, provider }) {
+  const headerProvider = normalizeAIProvider(req.header("x-ai-provider")) || provider;
+  const headerKey = usableProviderApiKey(provider, headerProvider === provider ? req.header("x-ai-api-key") : "");
+  if (headerKey) return headerKey;
+
+  const accountId = req.user?.account_id;
+  if (accountId) {
+    const stored = await getStoredAIProviderKey(accountId, provider);
+    const storedKey = usableProviderApiKey(provider, stored?.api_key);
+    if (storedKey) return storedKey;
+  }
+
+  return usableProviderApiKey(provider, AI_PROVIDERS[provider]?.envKey?.());
+}
+
+async function discoverProviderModels(provider, apiKey) {
+  if (provider === "openai") {
+    const resp = await axios.get("https://api.openai.com/v1/models", {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      timeout: 20_000,
+    });
+    return normalizeDiscoveredModels(provider, resp.data);
+  }
+  if (provider === "claude") {
+    const resp = await axios.get("https://api.anthropic.com/v1/models", {
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      timeout: 20_000,
+    });
+    return normalizeDiscoveredModels(provider, resp.data);
+  }
+  if (provider === "gemini") {
+    const resp = await axios.get("https://generativelanguage.googleapis.com/v1beta/models", {
+      headers: { "x-goog-api-key": apiKey },
+      timeout: 20_000,
+    });
+    return normalizeDiscoveredModels(provider, resp.data);
+  }
+  return [];
 }
 
 /**
@@ -1250,6 +1382,51 @@ app.get("/api/ai-provider/status", async (req, res) => {
   } catch (e) {
     logger.error("GET /api/ai-provider/status error:", e);
     res.status(500).json({ error: "Failed to load AI provider status" });
+  }
+});
+
+app.get("/api/ai-provider/models", async (req, res) => {
+  const provider = normalizeAIProvider(req.query?.provider || req.header("x-ai-provider") || "openai");
+  if (!provider) return res.status(400).json({ ok: false, error: "Invalid provider" });
+
+  const cacheKey = provider;
+  const refresh = String(req.query?.refresh || "").toLowerCase() === "true";
+  const cached = providerModelCache.get(cacheKey);
+  if (!refresh && cached && Date.now() - cached.cachedAt < MODEL_DISCOVERY_CACHE_TTL_MS) {
+    return res.json({
+      ok: true,
+      provider,
+      source: cached.source,
+      cached: true,
+      cachedAt: new Date(cached.cachedAt).toISOString(),
+      models: cached.models,
+    });
+  }
+
+  try {
+    const apiKey = await getProviderModelApiKey({ req, provider });
+    if (!apiKey) {
+      const models = fallbackProviderModels(provider, "No provider API key available for discovery.");
+      return res.json({ ok: true, provider, source: "fallback", cached: false, models });
+    }
+
+    const discoveredModels = await discoverProviderModels(provider, apiKey);
+    const models = discoveredModels.length ? discoveredModels : fallbackProviderModels(provider, "Provider returned no models.");
+    const source = discoveredModels.length ? "provider" : "fallback";
+    providerModelCache.set(cacheKey, { source, models, cachedAt: Date.now() });
+    res.json({ ok: true, provider, source, cached: false, models });
+  } catch (e) {
+    const extracted = extractProviderErrorMessage(e);
+    logger.warn(`GET /api/ai-provider/models ${provider} fallback:`, extracted.message);
+    const models = cached?.models || fallbackProviderModels(provider, extracted.message);
+    res.json({
+      ok: true,
+      provider,
+      source: cached ? cached.source : "fallback",
+      cached: !!cached,
+      warning: extracted.message,
+      models,
+    });
   }
 });
 

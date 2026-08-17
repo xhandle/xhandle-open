@@ -1,7 +1,6 @@
 // 📁 generateFunctionalDecompositionFromGitHub.js
 
 import React, { useMemo, useRef, useState } from "react";
-import * as XLSX from "xlsx";
 import LiteSummaryDiagramReactFlowGitHub from "./LiteSummaryDiagramReactFlowGitHub";
 import ArchitectureReportViewer from "./ArchitectureReportViewer";
 import { FilterableHeaderCell, useColumnFilters } from "./FilterableTableHeader";
@@ -3081,75 +3080,6 @@ const repoName = useMemo(() => {
     }, 80);
   }, [highlightedRowIndex]);
 
-  const REQUIRED_COLUMNS = [
-    "Function (From)",
-    "Function (From) Related File(s)",
-    "Function (From) Details",
-    "Control Action",
-    "Control Action Details",
-    "Function (To)",
-    "Function (To) Related File(s)",
-    "Function (To) Details",
-  ];
-
-  const handleFileImport = async (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        if (file.name.endsWith(".json")) {
-          const parsed = JSON.parse(e.target.result);
-          if (Array.isArray(parsed)) setManualData(parsed);
-          else console.error("❌ Uploaded JSON must be an array.");
-        } else if (file.name.endsWith(".xlsx")) {
-          const workbook = XLSX.read(e.target.result, { type: "binary" });
-          const sheetName = workbook.SheetNames[0];
-          const sheet = workbook.Sheets[sheetName];
-          const parsed = XLSX.utils.sheet_to_json(sheet);
-
-          if (!Array.isArray(parsed)) {
-            console.error("❌ Uploaded Excel must contain a flat row array.");
-            return;
-          }
-          const headers = Object.keys(parsed[0] || {});
-          const hasAll = REQUIRED_COLUMNS.every((c) => headers.includes(c));
-          if (!hasAll) {
-            alert(
-              "❌ Excel file is missing one or more required columns:\n\n" + REQUIRED_COLUMNS.join(", ")
-            );
-            return;
-          }
-
-          const mapped = parsed.map((row) => ({
-            from: row["Function (From)"],
-            fromFile: row["Function (From) Related File(s)"],
-            fromDetails: row["Function (From) Details"],
-            action: row["Control Action"],
-            controlActionDetails: row["Control Action Details"],
-            to: row["Function (To)"],
-            toFile: row["Function (To) Related File(s)"],
-            toDetails: row["Function (To) Details"],
-            architecture: {
-              subsystem: row["Subsystem"] || "Application Subsystem",
-              csci: row["CSCI"] || "",
-              csc: row["CSC"] || "",
-              csu: row["CSU"] || "",
-              rationale: row["Architecture Rationale"] || "",
-            },
-          }));
-          setManualData(mapped);
-        } else {
-          console.error("❌ Unsupported file type.");
-        }
-      } catch (err) {
-        console.error("❌ Failed to parse file:", err);
-      }
-    };
-    reader.readAsBinaryString(file); // needed for xlsx
-  };
-
   const rowsWithTraceIds = useMemo(
     () => ensureCodeArchitectureTraceIds(manualData || data || []),
     [manualData, data]
@@ -3524,7 +3454,7 @@ React.useEffect(() => {
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
-	  }, [repoName, tableRowsWithTraceIds, tableColumns]);
+  }, [repoName, tableRowsWithTraceIds, tableColumns]);
   const includeRowFiles = React.useCallback((row, mode) => {
     const files = [];
     if (mode !== "to") files.push(row?.fromFile);
@@ -3630,13 +3560,6 @@ React.useEffect(() => {
           >
             Table
           </button>
-          {/* Optional: file import */}
-	          {!reviewMode && (
-	            <label className="px-3 py-2 rounded bg-slate-100 hover:bg-slate-200 text-sm cursor-pointer">
-	              Import .xlsx/.json
-	              <input type="file" accept=".xlsx,.json" className="hidden" onChange={handleFileImport} />
-	            </label>
-	          )}
 	          <button
 	            type="button"
 	            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 text-sm disabled:opacity-50"

@@ -63,8 +63,9 @@ export function getDefaultProviderModel(provider) {
 export function normalizeProviderModel(provider, model) {
   const normalizedProvider = normalizeAIProvider(provider);
   const value = String(model || "").trim();
+  if (value) return value;
   const options = getProviderModelOptions(normalizedProvider);
-  return options.some((option) => option.value === value) ? value : getDefaultProviderModel(normalizedProvider);
+  return options[0]?.value || getDefaultProviderModel(normalizedProvider);
 }
 
 export function storeAIProviderModelPreference(provider, model, options = {}) {
@@ -236,6 +237,52 @@ export async function fetchUserAIProviderSettings() {
     localStorage.setItem("xhandle.aiProvider.active", settings.provider);
   }
   return settings;
+}
+
+export function getFallbackProviderModelRecords(provider) {
+  const normalizedProvider = normalizeAIProvider(provider);
+  return getProviderModelOptions(normalizedProvider).map((option) => ({
+    id: option.value,
+    value: option.value,
+    label: option.label || option.value,
+    provider: normalizedProvider,
+    source: "fallback",
+  }));
+}
+
+export async function fetchProviderModelRecords(provider, options = {}) {
+  const normalizedProvider = normalizeAIProvider(provider);
+  const baseUrl = String(options.backendURL || "").replace(/\/$/, "");
+  if (!baseUrl) return getFallbackProviderModelRecords(normalizedProvider);
+
+  const params = new URLSearchParams({ provider: normalizedProvider });
+  if (options.refresh) params.set("refresh", "true");
+  const headers = {
+    "Content-Type": "application/json",
+    "x-ai-provider": normalizedProvider,
+  };
+  const apiKey = getStoredAIProviderApiKey(normalizedProvider);
+  if (apiKey) headers["x-ai-api-key"] = apiKey;
+  if (options.accountId) headers["x-account-id"] = options.accountId;
+  if (options.accessToken) headers.Authorization = `Bearer ${options.accessToken}`;
+
+  const response = await fetch(`${baseUrl}/api/ai-provider/models?${params.toString()}`, {
+    credentials: "include",
+    headers,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.error || "Failed to load provider models.");
+  }
+  const models = Array.isArray(payload?.models) ? payload.models : [];
+  return models.map((model) => ({
+    id: model.id || model.value,
+    value: model.value || model.id,
+    label: model.label || model.displayName || model.id || model.value,
+    provider: normalizeAIProvider(model.provider || normalizedProvider),
+    source: model.source || payload.source || "provider",
+    description: model.description || "",
+  })).filter((model) => model.value);
 }
 
 export function getStoredAIProviderApiKey(provider = null) {

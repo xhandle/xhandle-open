@@ -68,6 +68,7 @@ import {
   validateProviderApiKey,
 } from "./lib/aiProviderConfig";
 import { initializeLocalBackupRuntime } from "./lib/localBackupService";
+import { notifyBackupDataChanged } from "./lib/localBackupEvents";
 import {
   appendRequirementRows,
   createRequirementModule,
@@ -94,6 +95,7 @@ import {
   CodeArchitectureHazardPanel,
   deleteCodeArchitectureHazardRuns,
   ensureCodeArchitectureTraceIds,
+  getCodeArchitectureHazardRuns,
   getLatestCodeArchitectureHazardRun,
   isCodeArchitectureHazardAnalysisStale,
   runCodeArchitectureHazardAnalysis,
@@ -109,6 +111,7 @@ import {
   functionalRowIndexForTraceValue,
   loadArtifactRows,
   loadArtifactRowsAsync,
+  saveArtifactRowsAsync,
 } from "./features/code-architecture-assurance";
 import {
   XHANDLE_IDB_CBA_STORE,
@@ -1415,6 +1418,10 @@ const [openCodeArchitectureFolderIds, setOpenCodeArchitectureFolderIds] = useSta
 });
 const [showNewCodeArchitectureProject, setShowNewCodeArchitectureProject] = useState(false);
 const [showNewCodeArchitectureFolder, setShowNewCodeArchitectureFolder] = useState(false);
+const [showCodeArchitectureProjectExport, setShowCodeArchitectureProjectExport] = useState(false);
+const [codeArchitectureProjectExportSelection, setCodeArchitectureProjectExportSelection] = useState("");
+const [isExportingCodeArchitectureProject, setIsExportingCodeArchitectureProject] = useState(false);
+const [codeArchitectureProjectExportMsg, setCodeArchitectureProjectExportMsg] = useState("");
 const [newCodeArchitectureProjectName, setNewCodeArchitectureProjectName] = useState("");
 const [newCodeArchitectureFolderName, setNewCodeArchitectureFolderName] = useState("");
 const [newCodeArchitectureTargetFolderId, setNewCodeArchitectureTargetFolderId] = useState(null);
@@ -1434,6 +1441,8 @@ const codeArchitectureProjectMenuAnchorEls = useRef({});
 const codeArchitectureProjectMenuPortalRefs = useRef({});
 const codeArchitectureFolderMenuAnchorEls = useRef({});
 const codeArchitectureFolderMenuPortalRefs = useRef({});
+const codeArchitectureImportInputRef = useRef(null);
+const codeArchitectureProjectImportInputRef = useRef(null);
 const [showCodeArchitectureRepoConfig, setShowCodeArchitectureRepoConfig] = useState(false);
 const [codeArchitectureRepoConfigProjectId, setCodeArchitectureRepoConfigProjectId] = useState(null);
 const [codeArchitectureRepoConfigRepoId, setCodeArchitectureRepoConfigRepoId] = useState(null);
@@ -1824,6 +1833,456 @@ async function saveCodeArchitectureRepoConfig({ analyze = false } = {}) {
     }
   } finally {
     setIsCodeArchitectureRepoAnalyzing(false);
+  }
+}
+
+function normalizeImportedCodeArchitectureRows(value) {
+  const rawRows = Array.isArray(value)
+    ? value
+    : Array.isArray(value?.rows)
+      ? value.rows
+      : Array.isArray(value?.data)
+        ? value.data
+        : [];
+  return ensureCodeArchitectureTraceIds(rawRows.map((row) => ({
+    from: row.from || row.fromFunction || row["Function (From)"] || "",
+    fromFile: row.fromFile || row.fromRelatedFiles || row["Function (From) Related File(s)"] || "",
+    fromDetails: row.fromDetails || row.fromFunctionDetails || row["Function (From) Details"] || "",
+    action: row.action || row.controlAction || row["Control Action"] || "",
+    controlActionDetails: row.controlActionDetails || row.controlDetails || row["Control Action Details"] || "",
+    to: row.to || row.toFunction || row["Function (To)"] || "",
+    toFile: row.toFile || row.toRelatedFiles || row["Function (To) Related File(s)"] || "",
+    toDetails: row.toDetails || row.toFunctionDetails || row["Function (To) Details"] || "",
+    architecture: row.architecture || {
+      subsystem: row.subsystem || row["Subsystem"] || "Application Subsystem",
+      csci: row.csci || row["CSCI"] || "",
+      csc: row.csc || row["CSC"] || "",
+      csu: row.csu || row["CSU"] || "",
+      rationale: row.architectureRationale || row["Architecture Rationale"] || "",
+    },
+    codeEvidence: row.codeEvidence || null,
+    sourceEvidence: row.sourceEvidence || null,
+    rowRef: row.rowRef || null,
+    traceId: row.traceId || null,
+    fromNodeId: row.fromNodeId || null,
+    edgeId: row.edgeId || null,
+    toNodeId: row.toNodeId || null,
+  }))).filter((row) => row.from || row.action || row.to);
+}
+
+async function saveImportedCodeArchitectureRows({ project, file, rows, repoPackage = null }) {
+  const importedAt = new Date().toISOString();
+  const safeFileName = String(
+    repoPackage?.repoName ||
+    repoPackage?.repo?.repoName ||
+    repoPackage?.repo?.repo ||
+    file.name.replace(/\.[^.]+$/, "")
+  ).trim() || "Imported Architecture";
+  const repoOwner = String(repoPackage?.repo?.owner || "manual").trim() || "manual";
+  const repoName = String(repoPackage?.repo?.repo || safeFileName).trim() || safeFileName;
+  const repoConfig = makeRepoConfig({
+    owner: repoOwner,
+    repo: repoName,
+    repoUrl: repoPackage?.repo?.repoUrl || "",
+    branch: repoPackage?.repo?.branch || "imported",
+    commitSha: repoPackage?.repo?.commitSha || "",
+    filesFound: rows.length,
+  });
+  repoConfig.repoId = repoPackage?.repo?.repoId || `${repoOwner}/${repoName}`;
+  repoConfig.repoName = safeFileName;
+  repoConfig.imported = true;
+  repoConfig.importedFileName = file.name;
+  repoConfig.lastAnalyzedAt = importedAt;
+
+  const storageKey = codeArchitectureRowsKey(project.id, repoConfig.id);
+  const rowsPersisted = await writeCbaRowsToIndexedDB(storageKey, rows);
+  localStorage.setItem(codeArchitectureMetaKey(project.id, repoConfig.id), JSON.stringify({
+    repoId: repoConfig.repoId,
+    repoName: repoConfig.repoName,
+    rowCount: rowsPersisted ? rows.length : 0,
+    storage: rowsPersisted ? "indexedDB" : "unavailable",
+    storageError: rowsPersisted ? "" : "Imported rows could not be saved to browser storage.",
+    importSource: file.name,
+    importedAt,
+    metrics: null,
+    indexedDB: { database: XHANDLE_IDB_NAME, store: XHANDLE_IDB_CBA_STORE, key: storageKey },
+    updatedAt: importedAt,
+  }));
+  return repoConfig;
+}
+
+function codeArchitectureExportFileName(projectName) {
+  const safeName = String(projectName || "code-architecture-project")
+    .replace(/[^a-z0-9._-]+/gi, "-")
+    .replace(/^-+|-+$/g, "") || "code-architecture-project";
+  return `${safeName}-${new Date().toISOString().slice(0, 10)}.json`;
+}
+
+function codeArchitectureRepoIdentityCandidates(repo = {}) {
+  return Array.from(new Set([
+    repo?.id,
+    repo?.repoId,
+    repo?.repoName,
+    [repo?.owner, repo?.repo].filter(Boolean).join("/"),
+  ].map((value) => String(value || "").trim()).filter(Boolean)));
+}
+
+function escapeRegExp(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function filterCodeArchitectureReviewItemsForRepo(project, repo) {
+  const repoIds = codeArchitectureRepoIdentityCandidates(repo);
+  const prefixes = repoIds.flatMap((repoId) => [
+    `code-architecture-functional-decomposition:${project.id}:${repoId}`,
+    `code-architecture-hazard-summary:${project.id}:${repoId}`,
+  ]);
+  return (resultsReview.reviewItems || []).filter((item) => {
+    if (item.projectId && item.projectId !== project.id) return false;
+    const text = [item.artifactId, item.sourceRunId].filter(Boolean).join(" ");
+    return prefixes.some((prefix) => text.includes(prefix));
+  });
+}
+
+async function collectCodeArchitectureRepoAnalysis(project, repo) {
+  const repoIds = codeArchitectureRepoIdentityCandidates(repo);
+  const artifactRows = {};
+  await Promise.all([
+    ARTIFACT_KINDS.SOFTWARE,
+    ARTIFACT_KINDS.SYSTEM,
+    ARTIFACT_KINDS.SUBSYSTEM,
+    ARTIFACT_KINDS.DESIGN,
+  ].map(async (kind) => {
+    for (const repoId of repoIds) {
+      const rows = await loadArtifactRowsAsync(kind, project.id, repoId);
+      if (rows.length) {
+        artifactRows[kind] = rows;
+        return;
+      }
+    }
+    artifactRows[kind] = [];
+  }));
+
+  const allHazardRuns = await getCodeArchitectureHazardRuns({ projectId: project.id });
+  const repoIdSet = new Set(repoIds);
+  const hazardRuns = allHazardRuns.filter((run) => repoIdSet.has(String(run.repoId || "").trim()));
+  const remediationState = await safetyRemediationStore.loadAll();
+  const safetyFindings = (remediationState.safetyFindings || []).filter((finding) => {
+    const findingProjectId = String(finding.projectId || "").trim();
+    const findingRepoId = String(finding.repoId || finding.repoName || "").trim();
+    return (!findingProjectId || findingProjectId === project.id) && (!findingRepoId || repoIdSet.has(findingRepoId));
+  });
+  const findingIds = new Set(safetyFindings.map((finding) => finding.id).filter(Boolean));
+  const patchProposals = (remediationState.patchProposals || []).filter((patch) => findingIds.has(patch.safetyFindingId));
+  const patchIds = new Set(patchProposals.map((patch) => patch.id).filter(Boolean));
+  const reviewDecisions = (remediationState.reviewDecisions || []).filter((decision) => findingIds.has(decision.targetId) || patchIds.has(decision.targetId));
+  const verificationRuns = (remediationState.verificationRuns || []).filter((run) => findingIds.has(run.safetyFindingId) || patchIds.has(run.patchProposalId));
+  const safetyRemediationEvidence = (remediationState.safetyRemediationEvidence || []).filter((item) => findingIds.has(item.safetyFindingId) || patchIds.has(item.patchProposalId));
+
+  return {
+    artifactRows,
+    hazardRuns,
+    safetyRemediation: {
+      safetyFindings,
+      patchProposals,
+      reviewDecisions,
+      verificationRuns,
+      safetyRemediationEvidence,
+    },
+    reviewItems: filterCodeArchitectureReviewItemsForRepo(project, repo),
+  };
+}
+
+function remapImportedCodeArchitectureReviewValue(value, { project, repoConfig, repoPackage, originalProjectId }) {
+  if (!value) return value;
+  let next = String(value);
+  next = next.replace(/code-architecture-functional-decomposition:[^:]+:[^:\s]+/g, `code-architecture-functional-decomposition:${project.id}:${repoConfig.id}`);
+  next = next.replace(/code-architecture-hazard-summary:[^:]+:[^:\s]+/g, `code-architecture-hazard-summary:${project.id}:${repoConfig.id}`);
+  if (originalProjectId) {
+    next = next.replace(new RegExp(escapeRegExp(originalProjectId), "g"), project.id);
+  }
+  for (const repoId of codeArchitectureRepoIdentityCandidates(repoPackage?.repo || {})) {
+    if (repoId && repoId !== repoConfig.id) {
+      next = next.replace(new RegExp(escapeRegExp(repoId), "g"), repoConfig.id);
+    }
+  }
+  return next;
+}
+
+async function restoreImportedCodeArchitectureRepoAnalysis({ project, repoConfig, repoPackage }) {
+  const analysis = repoPackage?.analysis || {};
+  const importedAt = new Date().toISOString();
+  const artifactRows = analysis.artifactRows || {};
+  await Promise.all(Object.entries(artifactRows).map(([kind, rows]) => (
+    saveArtifactRowsAsync(kind, project.id, repoConfig.id, Array.isArray(rows) ? rows : [])
+  )));
+
+  const runIdMap = new Map();
+  for (const run of (analysis.hazardRuns || [])) {
+    const nextId = `imported-${makeId()}`;
+    if (run?.id) runIdMap.set(run.id, nextId);
+    await saveCodeArchitectureHazardRun({
+      ...run,
+      id: nextId,
+      projectId: project.id,
+      repoId: repoConfig.id,
+      importedFromRunId: run?.id || null,
+      updatedAt: importedAt,
+    });
+  }
+
+  const remediation = analysis.safetyRemediation || {};
+  const findingIdMap = new Map();
+  const patchIdMap = new Map();
+  const findings = (remediation.safetyFindings || []).map((finding) => {
+    const nextId = `imported-${makeId()}`;
+    if (finding?.id) findingIdMap.set(finding.id, nextId);
+    return {
+      ...finding,
+      id: nextId,
+      projectId: project.id,
+      repoId: repoConfig.id,
+      hazardAnalysisRunId: runIdMap.get(finding?.hazardAnalysisRunId) || finding?.hazardAnalysisRunId || null,
+      importedFromFindingId: finding?.id || null,
+      updatedAt: importedAt,
+    };
+  });
+  const patches = (remediation.patchProposals || []).map((patch) => {
+    const nextId = `imported-${makeId()}`;
+    if (patch?.id) patchIdMap.set(patch.id, nextId);
+    return {
+      ...patch,
+      id: nextId,
+      safetyFindingId: findingIdMap.get(patch?.safetyFindingId) || patch?.safetyFindingId,
+      importedFromPatchId: patch?.id || null,
+      updatedAt: importedAt,
+    };
+  });
+  const decisions = (remediation.reviewDecisions || []).map((decision) => ({
+    ...decision,
+    id: `imported-${makeId()}`,
+    targetId: findingIdMap.get(decision?.targetId) || patchIdMap.get(decision?.targetId) || decision?.targetId,
+    importedFromDecisionId: decision?.id || null,
+    updatedAt: importedAt,
+  }));
+  const verificationRuns = (remediation.verificationRuns || []).map((run) => ({
+    ...run,
+    id: `imported-${makeId()}`,
+    safetyFindingId: findingIdMap.get(run?.safetyFindingId) || run?.safetyFindingId,
+    patchProposalId: patchIdMap.get(run?.patchProposalId) || run?.patchProposalId,
+    importedFromVerificationRunId: run?.id || null,
+    updatedAt: importedAt,
+  }));
+  const evidence = (remediation.safetyRemediationEvidence || []).map((item) => ({
+    ...item,
+    id: `imported-${makeId()}`,
+    safetyFindingId: findingIdMap.get(item?.safetyFindingId) || item?.safetyFindingId,
+    patchProposalId: patchIdMap.get(item?.patchProposalId) || item?.patchProposalId,
+    importedFromEvidenceId: item?.id || null,
+    updatedAt: importedAt,
+  }));
+  await Promise.all([
+    findings.length ? safetyRemediationStore.upsertFindings(findings) : Promise.resolve(),
+    patches.length ? safetyRemediationStore.upsertPatchProposals(patches) : Promise.resolve(),
+    decisions.length ? safetyRemediationStore.upsertReviewDecisions(decisions) : Promise.resolve(),
+    verificationRuns.length ? safetyRemediationStore.upsertVerificationRuns(verificationRuns) : Promise.resolve(),
+    evidence.length ? safetyRemediationStore.upsertSafetyRemediationEvidence(evidence) : Promise.resolve(),
+  ]);
+
+  const originalProjectId = repoPackage?.projectId || repoPackage?.project?.id || (analysis.reviewItems || []).find((item) => item?.projectId)?.projectId || "";
+  const reviewItems = (analysis.reviewItems || []).map((item) => ({
+    ...item,
+    id: `imported-${makeId()}`,
+    projectId: project.id,
+    artifactId: remapImportedCodeArchitectureReviewValue(item?.artifactId, { project, repoConfig, repoPackage, originalProjectId }),
+    sourceRunId: remapImportedCodeArchitectureReviewValue(item?.sourceRunId, { project, repoConfig, repoPackage, originalProjectId }),
+    importedFromReviewItemId: item?.id || null,
+    updatedAt: importedAt,
+  }));
+  if (reviewItems.length) {
+    await resultsReview.createReviewItems(reviewItems);
+  }
+}
+
+async function collectCodeArchitectureProjectExport(projectId) {
+  const project = codeArchitectureProjects.find((entry) => entry.id === projectId);
+  if (!project) throw new Error("Select a project to export.");
+  const repos = Array.isArray(project.repos) ? project.repos : [];
+  const exportedRepos = [];
+  for (const repo of repos) {
+    const primaryKey = codeArchitectureRowsKey(project.id, repo.id);
+    const isCurrentRepo = project.id === activeCodeArchitectureProject?.id && repo.id === activeCodeArchitectureRepo?.id;
+    const readResult = isCurrentRepo && Array.isArray(cbaTableData) && cbaTableData.length
+      ? { rows: cbaTableData, sourceKey: primaryKey }
+      : await readCodeArchitectureRowsForRepo(project, repo, primaryKey);
+    let meta = null;
+    try { meta = JSON.parse(localStorage.getItem(codeArchitectureMetaKey(project.id, repo.id)) || "null"); } catch {}
+    exportedRepos.push({
+      projectId: project.id,
+      repo: {
+        id: repo.id,
+        owner: repo.owner || "",
+        repo: repo.repo || "",
+        repoId: repo.repoId || normalizeRepoIdentity(repo),
+        repoName: repo.repoName || repo.repoId || normalizeRepoIdentity(repo),
+        repoUrl: repo.repoUrl || "",
+        selectedExtensions: repo.selectedExtensions || [],
+        analysisContext: repo.analysisContext || { text: "", files: [] },
+        branch: repo.branch || "",
+        commitSha: repo.commitSha || "",
+        filesFound: repo.filesFound || 0,
+        imported: !!repo.imported,
+        createdAt: repo.createdAt || null,
+        updatedAt: repo.updatedAt || null,
+        lastAnalyzedAt: repo.lastAnalyzedAt || null,
+      },
+      rows: ensureCodeArchitectureTraceIds(readResult.rows || []),
+      metadata: meta || null,
+      analysis: await collectCodeArchitectureRepoAnalysis(project, repo),
+      sourceKey: readResult.sourceKey || primaryKey,
+    });
+  }
+  return {
+    type: "xhandle-code-architecture-project",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    project: {
+      id: project.id,
+      name: project.name || "Code Architecture Project",
+      folderId: null,
+      createdAt: project.createdAt || null,
+      updatedAt: project.updatedAt || null,
+      activeRepoName: repos.find((repo) => repo.id === project.activeRepoId)?.repoName || null,
+    },
+    repos: exportedRepos,
+  };
+}
+
+async function exportSelectedCodeArchitectureProject() {
+  if (!codeArchitectureProjectExportSelection) {
+    setCodeArchitectureProjectExportMsg("Select one project to export.");
+    return;
+  }
+  setIsExportingCodeArchitectureProject(true);
+  setCodeArchitectureProjectExportMsg("");
+  try {
+    const payload = await collectCodeArchitectureProjectExport(codeArchitectureProjectExportSelection);
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = codeArchitectureExportFileName(payload.project?.name);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setShowCodeArchitectureProjectExport(false);
+  } catch (error) {
+    console.error("[cba] Failed to export code architecture project", error);
+    setCodeArchitectureProjectExportMsg(error?.message || "Failed to export project.");
+  } finally {
+    setIsExportingCodeArchitectureProject(false);
+  }
+}
+
+async function importCodeArchitectureProjectFile(event) {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+  const targetProject = activeCodeArchitectureProject;
+  if (!targetProject?.id) {
+    alert("Create or select a Code-Based Architecture project before importing.");
+    return;
+  }
+  try {
+    const parsed = JSON.parse(await file.text());
+    const rows = normalizeImportedCodeArchitectureRows(parsed);
+    if (!rows.length) {
+      alert("No code architecture rows were found in that JSON file.");
+      return;
+    }
+    const repoConfig = await saveImportedCodeArchitectureRows({ project: targetProject, file, rows });
+    upsertCodeArchitectureRepo(targetProject.id, repoConfig);
+    setActiveCodeArchitectureProjectId(targetProject.id);
+    setActiveCodeArchitectureFolderId(null);
+    setCbaTableData(rows);
+    setSelectedCbaElement(null);
+    setCodeArchitectureHazardRun(null);
+    setCodeArchitectureWorkspaceTab("architecture");
+    setCodeArchitectureFunctionalTableOpenKey(`imported-${Date.now()}`);
+    setHighlightedCodeArchitectureFunctionalRowIndex(null);
+    setPendingCodeArchitectureDiagramTarget(null);
+    notifyBackupDataChanged("code-architecture-import");
+  } catch (error) {
+    console.error("[cba] Failed to import code architecture JSON", error);
+    alert(error?.message || "Failed to import code architecture JSON.");
+  }
+}
+
+async function importCodeArchitectureProjectFromFile(event) {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+  try {
+    const parsed = JSON.parse(await file.text());
+    const now = new Date().toISOString();
+    const projectName = String(parsed?.project?.name || parsed?.projectName || file.name.replace(/\.[^.]+$/, "") || "Imported Architecture").trim();
+    const project = {
+      id: makeId(),
+      name: projectName,
+      folderId: null,
+      repos: [],
+      activeRepoId: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const packageRepos = parsed?.type === "xhandle-code-architecture-project" && Array.isArray(parsed?.repos)
+      ? parsed.repos
+      : null;
+    const importedRepos = [];
+    let firstRows = [];
+    if (packageRepos) {
+      for (const repoPackage of packageRepos) {
+        const rows = normalizeImportedCodeArchitectureRows(repoPackage?.rows || repoPackage);
+        if (!rows.length) continue;
+        const repoConfig = await saveImportedCodeArchitectureRows({ project, file, rows, repoPackage });
+        await restoreImportedCodeArchitectureRepoAnalysis({ project, repoConfig, repoPackage });
+        importedRepos.push(repoConfig);
+        if (!firstRows.length) firstRows = rows;
+      }
+    } else {
+      const rows = normalizeImportedCodeArchitectureRows(parsed);
+      if (rows.length) {
+        const repoConfig = await saveImportedCodeArchitectureRows({ project, file, rows });
+        importedRepos.push(repoConfig);
+        firstRows = rows;
+      }
+    }
+    if (!importedRepos.length) {
+      alert("No code architecture rows were found in that JSON file.");
+      return;
+    }
+    const importedProject = {
+      ...project,
+      repos: importedRepos,
+      activeRepoId: importedRepos[0].id,
+      updatedAt: new Date().toISOString(),
+    };
+    setCodeArchitectureProjects((prev) => [importedProject, ...prev]);
+    setActiveCodeArchitectureProjectId(importedProject.id);
+    setActiveCodeArchitectureFolderId(null);
+    setCbaTableData(firstRows);
+    setSelectedCbaElement(null);
+    setCodeArchitectureHazardRun(null);
+    setCodeArchitectureWorkspaceTab("architecture");
+    setCodeArchitectureFunctionalTableOpenKey(`imported-project-${Date.now()}`);
+    setSection("code-architecture");
+    setIsSidebarOpen(true);
+    setIsCodeArchitectureProjectsOpen(true);
+    notifyBackupDataChanged("code-architecture-project-import");
+  } catch (error) {
+    console.error("[cba] Failed to import code architecture project JSON", error);
+    alert(error?.message || "Failed to import code architecture project JSON.");
   }
 }
 
@@ -6986,23 +7445,54 @@ const ColumnFilterButton = ({ col }) => {
           <div>
             <p className="text-sm text-gray-500">All projects</p>
             <h2 className="text-xl font-semibold text-gray-900">Code architecture dashboard</h2>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
+	          </div>
+	          <div className="flex flex-wrap items-center gap-2">
+	            <input
+	              ref={codeArchitectureProjectImportInputRef}
+	              type="file"
+	              accept=".json,application/json"
+	              className="hidden"
+	              onChange={importCodeArchitectureProjectFromFile}
+	            />
+	            <button
+	              type="button"
+	              onClick={() => {
                 setNewCodeArchitectureTargetFolderId(null);
                 setNewCodeArchitectureError('');
                 setShowNewCodeArchitectureProject(true);
               }}
               className="inline-flex items-center gap-2 rounded-md bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]"
             >
-              <Plus size={15} />
-              Project
-            </button>
-            <button
-              type="button"
-              onClick={() => {
+	              <Plus size={15} />
+	              Project
+	            </button>
+	            <button
+	              type="button"
+	              onClick={() => codeArchitectureProjectImportInputRef.current?.click()}
+	              className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+	              title="Import a code architecture JSON file as a new project"
+	            >
+	              <FileText size={15} />
+	              Import Project
+	            </button>
+	            <button
+	              type="button"
+	              onClick={() => {
+	                const firstProjectId = codeArchitectureDashboardRows[0]?.id || codeArchitectureProjects[0]?.id || "";
+	                setCodeArchitectureProjectExportSelection(firstProjectId);
+	                setCodeArchitectureProjectExportMsg("");
+	                setShowCodeArchitectureProjectExport(true);
+	              }}
+	              disabled={!codeArchitectureProjects.length}
+	              className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+	              title="Export one Code-Based Architecture project"
+	            >
+	              <FileText size={15} />
+	              Export Project
+	            </button>
+	            <button
+	              type="button"
+	              onClick={() => {
                 setNewCodeArchitectureFolderParentId(null);
                 setNewCodeArchitectureFolderError('');
                 setShowNewCodeArchitectureFolder(true);
@@ -7230,10 +7720,17 @@ const ColumnFilterButton = ({ col }) => {
             {activeCodeArchitectureMetricsSummary && (
               <p className="mt-1 text-xs text-gray-500">Last run: {activeCodeArchitectureMetricsSummary}</p>
             )}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {activeCodeArchitectureProject.repos?.length > 0 && (
-              <select
+	          </div>
+	          <div className="flex flex-wrap items-center gap-2">
+	            <input
+	              ref={codeArchitectureImportInputRef}
+	              type="file"
+	              accept=".json,application/json"
+	              className="hidden"
+	              onChange={importCodeArchitectureProjectFile}
+	            />
+	            {activeCodeArchitectureProject.repos?.length > 0 && (
+	              <select
                 className="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm"
                 value={activeCodeArchitectureProject.activeRepoId || activeCodeArchitectureProject.repos[0]?.id || ""}
                 onChange={(event) => {
@@ -7244,10 +7741,19 @@ const ColumnFilterButton = ({ col }) => {
                 {activeCodeArchitectureProject.repos.map((repoConfig) => (
                   <option key={repoConfig.id} value={repoConfig.id}>{repoConfig.repoName || repoConfig.repoId}</option>
                 ))}
-              </select>
-            )}
-            <button
-              type="button"
+	              </select>
+	            )}
+	            <button
+	              type="button"
+	              onClick={() => codeArchitectureImportInputRef.current?.click()}
+	              className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+	              title="Import a code architecture JSON export into this project"
+	            >
+	              <FileText size={15} />
+	              Import
+	            </button>
+	            <button
+	              type="button"
               onClick={() => openCodeArchitectureRepoConfig(activeCodeArchitectureProject.id, activeCodeArchitectureRepo?.id || null)}
               className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
             >
@@ -7278,11 +7784,11 @@ const ColumnFilterButton = ({ col }) => {
           ? (
             <div className="min-h-0 overflow-auto rounded-xl border bg-white p-8 text-gray-600 text-sm">{cbaLoadingLabel}</div>
           )
-          : !activeCodeArchitectureRepo ? (
-            <div className="min-h-0 overflow-auto rounded-xl border bg-white p-8 text-gray-600 text-sm">
-              Connect a GitHub repository to start code-based architecture analysis.
-            </div>
-          )
+	          : !activeCodeArchitectureRepo ? (
+	            <div className="min-h-0 overflow-auto rounded-xl border bg-white p-8 text-gray-600 text-sm">
+	              Connect a GitHub repository or import a code architecture JSON file to start analysis.
+	            </div>
+	          )
           : cbaTableData.length > 0 ? (
           <div className="flex min-h-0 flex-1 flex-col gap-2">
             <div className="shrink-0 flex flex-wrap items-center gap-2 border-b border-slate-200 pb-1.5">
@@ -10246,6 +10752,75 @@ const updateRiskInProject = (projectId, predicate) => {
     }}
   />
 )}
+
+        {showCodeArchitectureProjectExport && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/40" onClick={() => {
+              if (!isExportingCodeArchitectureProject) setShowCodeArchitectureProjectExport(false);
+            }} />
+            <div className="relative z-[101] w-full max-w-lg rounded-2xl border-2 border-[#2D7DFE] bg-white shadow-xl">
+              <div className="px-5 py-4 border-b">
+                <h2 className="text-base font-semibold text-slate-800">Export Code-Based Architecture project</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Choose one project to export as a JSON package.</p>
+              </div>
+              <div className="max-h-[55vh] overflow-auto px-5 py-4">
+                {codeArchitectureDashboardRows.length === 0 ? (
+                  <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">
+                    No Code-Based Architecture projects are available to export.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {codeArchitectureDashboardRows.map((project) => (
+                      <label
+                        key={project.id}
+                        className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2 text-sm ${
+                          codeArchitectureProjectExportSelection === project.id
+                            ? "border-[#2D7DFE] bg-blue-50"
+                            : "border-gray-200 hover:bg-gray-50"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="codeArchitectureProjectExport"
+                          className="mt-1"
+                          checked={codeArchitectureProjectExportSelection === project.id}
+                          onChange={() => setCodeArchitectureProjectExportSelection(project.id)}
+                        />
+                        <span className="min-w-0">
+                          <span className="block font-medium text-gray-900">{project.name}</span>
+                          <span className="block text-xs text-gray-500">
+                            {project.repoCount} repo{project.repoCount === 1 ? "" : "s"} · {project.rowCount || 0} rows · {project.activeRepoName}
+                          </span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+                {codeArchitectureProjectExportMsg && (
+                  <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                    {codeArchitectureProjectExportMsg}
+                  </div>
+                )}
+              </div>
+              <div className="px-5 py-4 border-t flex items-center justify-end gap-2">
+                <button
+                  onClick={() => setShowCodeArchitectureProjectExport(false)}
+                  disabled={isExportingCodeArchitectureProject}
+                  className="px-3 py-2 rounded border text-sm hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={exportSelectedCodeArchitectureProject}
+                  disabled={isExportingCodeArchitectureProject || !codeArchitectureProjectExportSelection}
+                  className="px-3 py-2 rounded text-sm bg-[#2D7DFE] text-white hover:bg-[#1E61D6] disabled:opacity-50"
+                >
+                  {isExportingCodeArchitectureProject ? "Exporting..." : "Export"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {showNewCodeArchitectureProject && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center">
