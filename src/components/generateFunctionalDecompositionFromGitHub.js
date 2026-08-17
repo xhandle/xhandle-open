@@ -252,7 +252,7 @@ function extractFunctionRangesPython(source, meta) {
   const lines = source.split("\n");
   const ranges = [];
   for (let i = 0; i < lines.length; i++) {
-    const match = /^(\s*)def\s+([A-Za-z0-9_]+)\s*\(/.exec(lines[i]);
+    const match = /^(\s*)(?:async\s+def|def|class)\s+([A-Za-z0-9_]+)\s*(?:\(|:)/.exec(lines[i]);
     if (!match) continue;
     const indent = match[1].length;
     let end = i + 1;
@@ -305,7 +305,7 @@ function extractSourceFunctions(source, lang, meta) {
   return [];
 }
 
-async function indexSourceFileToIDB({ owner, repo, path, content, branch, commitSha }) {
+function buildSourceFileIndexRecord({ owner, repo, path, content, branch, commitSha }) {
   const MAX_BYTES = 80000; // keep per-file small
   const lang = detectLangFromPath(path);
   const clipped = (content || "").slice(0, MAX_BYTES);
@@ -323,7 +323,7 @@ async function indexSourceFileToIDB({ owner, repo, path, content, branch, commit
       const imports = new Set();
       const functionsFound = new Set();
       const importRe = /(?:from\s+([a-zA-Z0-9_.]+)\s+import|import\s+([a-zA-Z0-9_.]+))/g;
-      const fnRe = /def\s+([A-Za-z0-9_]+)\s*\(/g;
+      const fnRe = /(?:async\s+def|def|class)\s+([A-Za-z0-9_]+)\s*(?:\(|:)/g;
       let m;
       while ((m = importRe.exec(clipped))) imports.add(m[1] || m[2]);
       while ((m = fnRe.exec(clipped))) functionsFound.add(m[1]);
@@ -332,7 +332,6 @@ async function indexSourceFileToIDB({ owner, repo, path, content, branch, commit
     } catch {}
   }
 
-  const key = `code:file:${owner}/${repo}:${path}`;
   const sourceFunctions = extractSourceFunctions(clipped, lang, { owner, repo, path, branch, commitSha });
   const indexedFunctionNames = new Set(functions);
   sourceFunctions.forEach((fn) => indexedFunctionNames.add(fn.functionName));
@@ -349,13 +348,19 @@ async function indexSourceFileToIDB({ owner, repo, path, content, branch, commit
     exports: exportsList,
     content: clipped,
   };
+  return record;
+}
+
+async function indexSourceFileToIDB({ owner, repo, path, content, branch, commitSha }) {
+  const record = buildSourceFileIndexRecord({ owner, repo, path, content, branch, commitSha });
 
   try {
-    await idbPut(IDB_STORES.codeIndex, key, record);
+    await idbPut(IDB_STORES.codeIndex, `code:file:${owner}/${repo}:${path}`, record);
   } catch (e) {
     // As a last resort, no-throw fallback to localStorage (rare)
-    try { localStorage.setItem(key, JSON.stringify(record)); } catch {}
+    try { localStorage.setItem(`code:file:${owner}/${repo}:${path}`, JSON.stringify(record)); } catch {}
   }
+  return record;
 }
 
 async function clearIndexedFilesForRepo(owner, repo) {
@@ -399,13 +404,11 @@ const LANGUAGE_GROUPS = [
 
 const SPECIAL_FILENAMES = new Set(["Dockerfile", "Makefile", "CMakeLists.txt", "Jenkinsfile"]);
 const NO_EXTENSION_TOKEN = "(no extension)";
-const PROBABLY_BINARY_EXTENSIONS = new Set([
-  ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".ico", ".svg",
-  ".pdf", ".zip", ".tar", ".gz", ".tgz", ".7z", ".rar",
-  ".mp3", ".wav", ".ogg", ".mp4", ".mov", ".avi", ".mkv",
-  ".ttf", ".otf", ".woff", ".woff2",
-  ".exe", ".dll", ".so", ".dylib", ".bin",
-  ".stl", ".step", ".stp", ".iges", ".igs", ".f3d",
+const DEFAULT_CODE_ARCHITECTURE_SOURCE_EXTENSIONS = new Set([
+  ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".py",
+  ".go", ".java", ".kt", ".kts", ".c", ".cc", ".cp", ".cpp", ".cxx", ".c++",
+  ".h", ".hh", ".hpp", ".hxx", ".h++", ".ipp", ".inl", ".tpp", ".rs", ".rb", ".php",
+  ".sh", ".bash", ".zsh",
 ]);
 
 function extOf(path) {
@@ -420,6 +423,7 @@ const MAX_FUNCTIONAL_ANALYSIS_CHUNKS_PER_FILE = 8;
 const MAX_AI_ARCHITECTURE_ALLOCATION_ROWS = 300;
 const MAX_FUNCTIONAL_SOURCE_FILE_BYTES = 350000;
 const FUNCTIONAL_DECOMPOSITION_CHECKPOINT_PREFIX = "functional-decomposition-checkpoint:";
+const FUNCTIONAL_GROUNDING_VERSION = 5;
 const FUNCTIONAL_ANALYSIS_VENDOR_PATH_RE = /(^|\/)(venv|site-packages|node_modules|\.git|\.next|dist|build|target|__pycache__|coverage|thirdparty|third_party|3rdparty|vendor|external|extern|submodules|sdkclient[^/]*|[^/]*sdk|sdk[^/]*|sdk_client|sdk-client|dependencies|deps)(\/|$)/i;
 
 function isVendorFunctionalAnalysisPath(path = "") {
@@ -468,7 +472,10 @@ function prioritizeFunctionalAnalysisFiles(files = [], maxFiles = 0) {
 
 function shouldIndexFunctionalAnalysisSource(path = "") {
   const extension = extOf(String(path || ""));
-  return [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".py"].includes(extension);
+  return [
+    ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".py",
+    ".c", ".cc", ".cp", ".cpp", ".cxx", ".c++", ".h", ".hh", ".hpp", ".hxx", ".h++", ".ipp", ".inl", ".tpp",
+  ].includes(extension);
 }
 
 function tallyExtensions(files) {
@@ -480,11 +487,9 @@ function tallyExtensions(files) {
   return map;
 }
 
-function isProbablyTextLikeSelection(extToken) {
+function isDefaultCodeArchitectureSourceSelection(extToken) {
   if (!extToken) return false;
-  if (extToken === NO_EXTENSION_TOKEN) return false;
-  if (SPECIAL_FILENAMES.has(extToken)) return true;
-  return !PROBABLY_BINARY_EXTENSIONS.has(extToken);
+  return DEFAULT_CODE_ARCHITECTURE_SOURCE_EXTENSIONS.has(String(extToken || "").toLowerCase());
 }
 
 function buildFileTypeGroups(counts) {
@@ -535,7 +540,7 @@ export function FileTypeSelectorModal({ open, files, onCancel, onConfirm }) {
   const defaultSelected = React.useMemo(
     () =>
       new Set(
-        Array.from(counts.keys()).filter((ext) => isProbablyTextLikeSelection(ext))
+        Array.from(counts.keys()).filter((ext) => isDefaultCodeArchitectureSourceSelection(ext))
       ),
     [counts]
   );
@@ -580,7 +585,7 @@ export function FileTypeSelectorModal({ open, files, onCancel, onConfirm }) {
 
         <div className="p-5 space-y-4 overflow-auto max-h-[60vh]">
           <p className="text-sm text-slate-600">
-            xHandle scanned the repo and found these file types. Text-based files are preselected by default; media, archives, CAD, and other binary-ish types are left unchecked unless you choose them.
+            xHandle scanned the repo and found these file types. Source-code files are preselected by default; notebooks, docs, config, media, archives, CAD, and other support files are left unchecked unless you choose them.
           </p>
           <div className="flex gap-2">
             <button
@@ -976,6 +981,260 @@ function chunksForFunctionalAnalysis(text = "") {
     ? LARGE_FILE_MAX_CHARS_PER_PROMPT
     : MAX_CHARS_PER_PROMPT;
   return chunkTextWithOverlap(source, maxLen, CHUNK_OVERLAP_CHARS);
+}
+
+const PLACEHOLDER_RELATED_FILE_VALUES = new Set(["none", "n/a", "na", "-", "null", "undefined"]);
+const PLACEHOLDER_ENDPOINT_VALUES = new Set([...PLACEHOLDER_RELATED_FILE_VALUES, "return"]);
+const LOW_VALUE_ENDPOINT_VALUES = new Set([
+  "data",
+  "input",
+  "inputs",
+  "output",
+  "outputs",
+  "message",
+  "messages",
+  "model inputs",
+  "model input",
+  "model outputs",
+  "prediction",
+  "predictions",
+  "result",
+  "results",
+  "extra",
+  "extras",
+]);
+const SPECULATIVE_RELATIONSHIP_PATTERNS = [
+  /\bdoes\s+not\s+directly\s+call\b/i,
+  /\bnot\s+directly\s+call(?:s|ed|ing)?\b/i,
+  /\blikely\s+used\b/i,
+  /\bmay\s+be\s+used\b/i,
+  /\bmight\s+be\s+used\b/i,
+  /\bcould\s+be\s+used\b/i,
+  /\bbroader\s+context\b/i,
+  /\bsimilar\s+structure(?:s)?\b/i,
+  /\bpart\s+of\s+the\s+overall\s+system\b/i,
+];
+
+function createRepoPathResolver(files = []) {
+  const paths = (files || []).map((file) => String(file?.path || "").trim()).filter(Boolean);
+  const exact = new Set(paths);
+  const suffixMap = new Map();
+  for (const path of paths) {
+    const parts = path.split("/");
+    for (let index = 0; index < parts.length; index += 1) {
+      const suffix = parts.slice(index).join("/");
+      if (!suffix) continue;
+      const current = suffixMap.get(suffix) || [];
+      current.push(path);
+      suffixMap.set(suffix, current);
+    }
+  }
+
+  return {
+    has(path) {
+      return exact.has(String(path || "").trim());
+    },
+    resolve(value, currentPath = "") {
+      const raw = String(value || "").trim();
+      if (!raw) return { status: "missing", raw, path: "" };
+      if (PLACEHOLDER_RELATED_FILE_VALUES.has(raw.toLowerCase())) return { status: "placeholder", raw, path: "" };
+      if (exact.has(raw)) return { status: "exact", raw, path: raw };
+      const current = String(currentPath || "").trim();
+      if (current && raw === current.split("/").pop()) return { status: "current-basename", raw, path: current };
+      const matches = suffixMap.get(raw) || paths.filter((path) => path.endsWith(`/${raw}`));
+      const uniqueMatches = Array.from(new Set(matches));
+      if (uniqueMatches.length === 1) return { status: "normalized", raw, path: uniqueMatches[0] };
+      if (uniqueMatches.length > 1) return { status: "ambiguous", raw, path: "", matches: uniqueMatches.slice(0, 8) };
+      return { status: "not-found", raw, path: "" };
+    },
+  };
+}
+
+function normalizeFunctionLabelForEvidence(value) {
+  return String(value || "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function functionLabelMatchesSource(label, sourceFunctions = [], imports = []) {
+  const normalizedLabel = normalizeFunctionLabelForEvidence(label);
+  if (!normalizedLabel || PLACEHOLDER_ENDPOINT_VALUES.has(normalizedLabel)) return false;
+  const compactLabel = normalizedLabel.replace(/\s+/g, "");
+  const names = [
+    ...(sourceFunctions || []).map((fn) => fn?.functionName),
+    ...(imports || []),
+  ].filter(Boolean);
+  return names.some((name) => {
+    const normalizedName = normalizeFunctionLabelForEvidence(name);
+    const compactName = normalizedName.replace(/\s+/g, "");
+    return normalizedName === normalizedLabel ||
+      compactName === compactLabel ||
+      (normalizedName.length >= 3 && normalizedLabel.includes(normalizedName)) ||
+      (compactName.length >= 3 && compactLabel.includes(compactName)) ||
+      (normalizedLabel.length >= 4 && normalizedName.includes(normalizedLabel)) ||
+      (compactLabel.length >= 4 && compactName.includes(compactLabel));
+  });
+}
+
+function isLowValueEndpointLabel(label) {
+  const normalizedLabel = normalizeFunctionLabelForEvidence(label);
+  if (!normalizedLabel) return true;
+  if (LOW_VALUE_ENDPOINT_VALUES.has(normalizedLabel)) return true;
+  if (String(label || "").includes(",")) return true;
+  return false;
+}
+
+function createFunctionalGroundingStats() {
+  return {
+    accepted: 0,
+    rejected: 0,
+    normalizedPathCount: 0,
+    weakEvidenceCount: 0,
+    duplicateRowCount: 0,
+    rejectionReasons: {},
+    rejectedRows: [],
+  };
+}
+
+function describesSpeculativeRelationship(row = {}) {
+  const text = [
+    row.fromDetails,
+    row.controlActionDetails,
+    row.toDetails,
+  ].map((value) => String(value || "")).join("\n");
+  return SPECULATIVE_RELATIONSHIP_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function recordFunctionalGroundingRejection(stats, reason, row, context = {}) {
+  if (!stats) return;
+  stats.rejected += 1;
+  stats.rejectionReasons[reason] = (stats.rejectionReasons[reason] || 0) + 1;
+  if (stats.rejectedRows.length < 50) {
+    stats.rejectedRows.push({
+      reason,
+      filePath: context.filePath || "",
+      chunk: context.chunk || "",
+      from: row?.from || "",
+      action: row?.action || "",
+      to: row?.to || "",
+      fromFile: row?.fromFile || "",
+      toFile: row?.toFile || "",
+    });
+  }
+}
+
+function groundFunctionalDecompositionRow({
+  row,
+  currentFile,
+  currentFileRecord,
+  repoPathResolver,
+  stats,
+  chunkIndex,
+}) {
+  const baseRow = {
+    ...row,
+    from: String(row?.from || "").trim(),
+    fromFile: String(row?.fromFile || "").trim(),
+    fromDetails: String(row?.fromDetails || "").trim(),
+    action: String(row?.action || "").trim(),
+    controlActionDetails: String(row?.controlActionDetails || "").trim(),
+    to: String(row?.to || "").trim(),
+    toFile: String(row?.toFile || "").trim(),
+    toDetails: String(row?.toDetails || "").trim(),
+  };
+  if (!baseRow.from || !baseRow.action || !baseRow.to) {
+    recordFunctionalGroundingRejection(stats, "missing_required_relationship_fields", baseRow, { filePath: currentFile?.path, chunk: chunkIndex });
+    return null;
+  }
+  if (PLACEHOLDER_ENDPOINT_VALUES.has(normalizeFunctionLabelForEvidence(baseRow.from)) || PLACEHOLDER_ENDPOINT_VALUES.has(normalizeFunctionLabelForEvidence(baseRow.to))) {
+    recordFunctionalGroundingRejection(stats, "placeholder_endpoint_label", baseRow, { filePath: currentFile?.path, chunk: chunkIndex });
+    return null;
+  }
+  if (describesSpeculativeRelationship(baseRow)) {
+    recordFunctionalGroundingRejection(stats, "speculative_relationship", baseRow, { filePath: currentFile?.path, chunk: chunkIndex });
+    return null;
+  }
+
+  const fromResolution = repoPathResolver.resolve(baseRow.fromFile, currentFile?.path);
+  const toResolution = repoPathResolver.resolve(baseRow.toFile, currentFile?.path);
+  const invalidResolution = [fromResolution, toResolution].find((item) =>
+    ["missing", "placeholder", "ambiguous", "not-found"].includes(item.status)
+  );
+  if (invalidResolution) {
+    recordFunctionalGroundingRejection(stats, `invalid_related_file_${invalidResolution.status}`, baseRow, { filePath: currentFile?.path, chunk: chunkIndex });
+    return null;
+  }
+
+  const normalizedFromFile = fromResolution.path;
+  const normalizedToFile = toResolution.path;
+  if (normalizedFromFile !== baseRow.fromFile || normalizedToFile !== baseRow.toFile) {
+    stats.normalizedPathCount += 1;
+  }
+
+  const sourceFunctions = currentFileRecord?.sourceFunctions || [];
+  const imports = currentFileRecord?.imports || [];
+  const currentFileIsCode = !!(currentFileRecord?.lang && ["js", "ts", "py", "cpp"].includes(currentFileRecord.lang));
+  const rowTouchesCurrentFile = normalizedFromFile === currentFile?.path || normalizedToFile === currentFile?.path;
+  const fromSymbolGrounded = normalizedFromFile === currentFile?.path
+    ? functionLabelMatchesSource(baseRow.from, sourceFunctions, imports)
+    : true;
+  const toSymbolGrounded = normalizedToFile === currentFile?.path
+    ? functionLabelMatchesSource(baseRow.to, sourceFunctions, imports)
+    : true;
+  const currentFileSymbolMismatch = currentFileIsCode && sourceFunctions.length && (
+    (normalizedFromFile === currentFile?.path && !fromSymbolGrounded) ||
+    (normalizedToFile === currentFile?.path && !toSymbolGrounded)
+  );
+
+  if (rowTouchesCurrentFile && currentFileSymbolMismatch) {
+    recordFunctionalGroundingRejection(stats, "current_file_symbol_mismatch", baseRow, { filePath: currentFile?.path, chunk: chunkIndex });
+    return null;
+  }
+  if (isLowValueEndpointLabel(baseRow.from) || isLowValueEndpointLabel(baseRow.to)) {
+    recordFunctionalGroundingRejection(stats, "low_value_endpoint_label", baseRow, { filePath: currentFile?.path, chunk: chunkIndex });
+    return null;
+  }
+
+  const evidenceConfidence = currentFileIsCode && rowTouchesCurrentFile && sourceFunctions.length
+    ? (fromSymbolGrounded && toSymbolGrounded ? "high" : "medium")
+    : "path-only";
+  if (evidenceConfidence !== "high") stats.weakEvidenceCount += 1;
+  stats.accepted += 1;
+
+  return {
+    ...baseRow,
+    fromFile: normalizedFromFile,
+    toFile: normalizedToFile,
+    grounding: {
+      evidenceConfidence,
+      currentFile: currentFile?.path || "",
+      fromFileResolution: fromResolution.status,
+      toFileResolution: toResolution.status,
+      fromSymbolGrounded,
+      toSymbolGrounded,
+    },
+  };
+}
+
+function dedupeFunctionalDecompositionRows(rows = [], stats = null) {
+  const seen = new Set();
+  const deduped = [];
+  for (const row of rows) {
+    const key = [
+      normalizeFunctionLabelForEvidence(row?.from),
+      normalizeFunctionLabelForEvidence(row?.action),
+      normalizeFunctionLabelForEvidence(row?.to),
+    ].join("|");
+    if (seen.has(key)) {
+      if (stats) stats.duplicateRowCount = (stats.duplicateRowCount || 0) + 1;
+      continue;
+    }
+    seen.add(key);
+    deduped.push(row);
+  }
+  return deduped;
 }
 
 function estimateFunctionalAnalysisChunkCount(file = {}) {
@@ -1890,6 +2149,78 @@ function normalizeArchitectureLabel(value, fallback) {
   return text.replace(/\s+/g, " ").slice(0, 80);
 }
 
+const GENERIC_ARCHITECTURE_PATH_SEGMENTS = new Set([
+  "src",
+  "source",
+  "lib",
+  "libs",
+  "app",
+  "apps",
+  "pkg",
+  "pkgs",
+  "package",
+  "packages",
+  "include",
+  "includes",
+  "test",
+  "tests",
+  "spec",
+  "specs",
+  "docs",
+  "doc",
+  "notebook",
+  "notebooks",
+  "config",
+  "configs",
+  "script",
+  "scripts",
+]);
+
+function normalizeArchitectureSegmentKey(value = "") {
+  return String(value || "")
+    .replace(/\.[^.]+$/, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function isGenericArchitectureSegment(value = "") {
+  const key = normalizeArchitectureSegmentKey(value);
+  if (!key) return true;
+  return GENERIC_ARCHITECTURE_PATH_SEGMENTS.has(key);
+}
+
+function isGenericSubsystemLabel(value = "") {
+  const key = normalizeArchitectureSegmentKey(
+    String(value || "").replace(/\b(subsystem|system|software|application|service)\b/gi, "")
+  );
+  return isGenericArchitectureSegment(key);
+}
+
+function meaningfulArchitecturePathSegments(files = [], repoContext = {}) {
+  const segments = [];
+  for (const file of files) {
+    String(file || "")
+      .split("/")
+      .filter(Boolean)
+      .forEach((part, index, parts) => {
+        if (index === parts.length - 1 && /\.[a-z0-9]+$/i.test(part)) return;
+        if (isGenericArchitectureSegment(part)) return;
+        segments.push(part);
+      });
+  }
+  if (!segments.length && repoContext.repoName) {
+    const repoName = String(repoContext.repoName || "").split("/").pop();
+    if (repoName && !isGenericArchitectureSegment(repoName)) segments.push(repoName);
+  }
+  return segments;
+}
+
+function domainSubsystemLabelFromFiles(files = [], repoContext = {}) {
+  const meaningful = meaningfulArchitecturePathSegments(files, repoContext);
+  const base = humanizePathSegment(meaningful[0], "Application");
+  return normalizeArchitectureLabel(`${base} Subsystem`, "Application Subsystem");
+}
+
 function parseStrictJsonFromText(text) {
   const raw = String(text || "").trim();
   const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
@@ -1907,17 +2238,35 @@ function inferArchitectureFallback(row, repoContext = {}) {
   const files = [...splitRelatedFiles(row.fromFile), ...splitRelatedFiles(row.toFile)];
   const primary = files[0] || "Unfiled";
   const parts = primary.split("/").filter(Boolean);
-  const firstTopLevel = parts[0] || repoContext.topLevelEntries?.find((entry) => entry.type === "directory")?.name || repoContext.repoName || "";
-  const subsystemBase = humanizePathSegment(firstTopLevel, "Application");
-  const csci = normalizeArchitectureLabel(parts[0], "Application Software");
-  const csc = normalizeArchitectureLabel(parts.length > 2 ? parts[1] : parts[0], "Core Components");
+  const meaningfulParts = meaningfulArchitecturePathSegments(files, repoContext);
+  const csciBase = meaningfulParts[0] || parts.find((part) => !isGenericArchitectureSegment(part)) || repoContext.repoName || "Application";
+  const cscBase = meaningfulParts[1] || meaningfulParts[0] || parts.find((part) => !isGenericArchitectureSegment(part)) || "Core Components";
   const source = row.from || row.to || row.action || "Functional Unit";
   return {
-    subsystem: normalizeArchitectureLabel(`${subsystemBase} Subsystem`, "Application Subsystem"),
-    csci,
-    csc,
+    subsystem: domainSubsystemLabelFromFiles(files, repoContext),
+    csci: normalizeArchitectureLabel(`${humanizePathSegment(csciBase, "Application")} Software`, "Application Software"),
+    csc: normalizeArchitectureLabel(`${humanizePathSegment(cscBase, "Core")} Components`, "Core Components"),
     csu: normalizeArchitectureLabel(source, "Functional Unit"),
     rationale: "Heuristic allocation derived from repository structure, file path, and functional decomposition labels.",
+  };
+}
+
+function refineArchitectureAllocation(row, architecture = {}, repoContext = {}) {
+  const fallback = inferArchitectureFallback(row, repoContext);
+  return {
+    ...architecture,
+    subsystem: isGenericSubsystemLabel(architecture.subsystem)
+      ? fallback.subsystem
+      : normalizeArchitectureLabel(architecture.subsystem, fallback.subsystem),
+    csci: isGenericArchitectureSegment(architecture.csci)
+      ? fallback.csci
+      : normalizeArchitectureLabel(architecture.csci, fallback.csci),
+    csc: isGenericArchitectureSegment(architecture.csc)
+      ? fallback.csc
+      : normalizeArchitectureLabel(architecture.csc, fallback.csc),
+    csu: normalizeArchitectureLabel(architecture.csu, fallback.csu),
+    rationale: architecture.rationale || fallback.rationale,
+    _architectureNamingAdjusted: isGenericSubsystemLabel(architecture.subsystem) || isGenericArchitectureSegment(architecture.csci) || isGenericArchitectureSegment(architecture.csc),
   };
 }
 
@@ -2043,6 +2392,8 @@ Rules:
 - Each CSCI should usually contain multiple CSCs, but may contain 1 when evidence is narrow.
 - Each CSC should contain one or more CSUs.
 - Prefer meaningful responsibility names over file-path echoing.
+- Do not use generic container folders such as "src", "lib", "app", "package", "notebooks", "config", or "docs" as Subsystem or CSCI names. Use the package/domain/responsibility visible under those folders instead.
+- Subsystem names should describe product/domain capability or a major software boundary, such as "Model Inference Subsystem", "Action Planning Subsystem", or "Dataset Interface Subsystem".
 - Preserve domain terms/acronyms from evidence.
 - Keep names concise and review-ready.
 - Do not invent unsupported product requirements.
@@ -2341,10 +2692,12 @@ async function buildCodeEvidenceForRows({ owner, repo, rows }) {
         files: fileRecords,
         functions: Array.from(new Set([row.from, row.to].filter(Boolean))),
         sourceFunctions,
+        grounding: row.grounding || null,
       },
       sourceEvidence: {
         rowRefs: [index + 1],
         functions: sourceFunctions,
+        confidence: row.grounding?.evidenceConfidence || (sourceFunctions.length ? "medium" : "path-only"),
       },
     });
   }
@@ -2411,9 +2764,10 @@ async function classifyArchitectureRows({ rows, owner, repo, repoContext = {}, b
   for (let index = 0; index < rowsWithEvidence.length; index++) {
     if (index > 0 && index % 50 === 0) await sleep(0);
     const row = rowsWithEvidence[index];
+    const architecture = allocations.get(Number(row.rowRef)) || inferArchitectureFallback(row, repoContext);
     architectureRows.push({
       ...row,
-      architecture: allocations.get(Number(row.rowRef)) || inferArchitectureFallback(row, repoContext),
+      architecture: refineArchitectureAllocation(row, architecture, repoContext),
     });
   }
   const descriptions = await generateArchitectureComponentDescriptions(architectureRows, bearer, metricsRun);
@@ -2497,6 +2851,8 @@ export const generateFunctionalDecompositionFromGitHub = async (
     // List all repo files via GitHub Trees API (no backend state)
     const allFiles = await listRepoFilesViaGitHub(owner, repo, token, ref);
     if (!allFiles.length) throw new Error("No files found in GitHub repository.");
+    const repoPathResolver = createRepoPathResolver(allFiles);
+    const groundingStats = createFunctionalGroundingStats();
     opts?.onProgress?.({
       phase: "scan",
       completedFiles: 0,
@@ -2608,20 +2964,34 @@ Step 3: From your analysis, derive a structured list of interactions between fun
 
 Rules:
 - Output only the markdown table; no commentary or code.
-- "Function (From)" and "Function (To)" must be 2–3 word phrases (no periods).
+- "Function (From)" and "Function (To)" should use actual function, method, class, imported API, or file-level artifact names from the supplied current file evidence whenever possible. Do not invent conceptual steps such as "Load Model", "Run Inference", "User Interaction", or "Return Predictions" unless those exact artifacts are present in the current file evidence.
 - Use multi-sentence prose for both Details fields.
 - "Control Action" should be an imperative verb phrase.
-- Include file extensions in Related File(s) columns.
+- Related File(s) columns must use exact repository-relative paths from the supplied current file evidence or imported/referenced files visible in the source chunk. Never use placeholders such as None, N/A, "-", or files that are not present in the repository evidence.
 - Every row must have all columns populated.
 - Keep control action details in base form tense.
+- Only emit source-evidenced relationships: direct calls, inheritance, imports/exports, concrete data/control flows, shared state mutations, API boundaries, or explicit artifact dependencies. Do not emit rows for conceptual similarity or speculative sequencing. If you would need to write "does not directly call", "likely used", "may be used", "similar structure", or "broader context", omit that row.
 - Prefer interface-rich interactions when source evidence supports them, including APIs, callbacks, message/event flows, hardware boundaries, shared state, configuration files, protocols, imports/includes, and library/framework boundaries.
+- Analyze the current file/chunk only. README and repository context may guide terminology, but they are not evidence for rows unless the current source chunk also supports the interaction.
     `.trim();
     const checkpointKey = `${FUNCTIONAL_DECOMPOSITION_CHECKPOINT_PREFIX}${outputStorageKey}:${commitSha || ref}`;
     const planSignature = functionalAnalysisPlanSignature(validFiles);
     const savedCheckpoint = opts?.resumeFromCheckpoint === false
       ? null
       : await idbGet(IDB_STORES.cba, checkpointKey).catch(() => null);
-    const checkpoint = savedCheckpoint?.planSignature === planSignature ? savedCheckpoint : null;
+    const checkpoint = savedCheckpoint?.planSignature === planSignature && savedCheckpoint?.groundingVersion === FUNCTIONAL_GROUNDING_VERSION
+      ? savedCheckpoint
+      : null;
+    if (checkpoint?.groundingStats && typeof checkpoint.groundingStats === "object") {
+      Object.assign(groundingStats, {
+        ...groundingStats,
+        ...checkpoint.groundingStats,
+        rejectionReasons: { ...(checkpoint.groundingStats.rejectionReasons || {}) },
+        rejectedRows: Array.isArray(checkpoint.groundingStats.rejectedRows)
+          ? checkpoint.groundingStats.rejectedRows.slice(0, 50)
+          : [],
+      });
+    }
     if (savedCheckpoint && !checkpoint) {
       console.info("Ignoring functional decomposition checkpoint because the selected file plan changed.");
     }
@@ -2681,9 +3051,17 @@ Rules:
             throw new Error(`Could not fetch ${file.path} from GitHub.`);
           }
 
+          let currentFileRecord = buildSourceFileIndexRecord({
+            owner,
+            repo,
+            path: file.path,
+            content: got.content,
+            branch: ref,
+            commitSha,
+          });
           if (shouldIndexFunctionalAnalysisSource(file.path)) {
             try {
-              await indexSourceFileToIDB({
+              currentFileRecord = await indexSourceFileToIDB({
                 owner,
                 repo,
                 path: file.path,
@@ -2714,7 +3092,24 @@ Rules:
             console.log(
               `📤 Sending ${file.path} chunk ${i + 1}/${total} to LLM (len=${chunkedContent.length})`
             );
-            const filePrompt = `${prompt}\n\n${chunkedContent}`;
+            const sourceEvidenceContract = {
+              currentFile: file.path,
+              currentFileSymbols: (currentFileRecord.sourceFunctions || []).map((fn) => ({
+                name: fn.functionName,
+                startLine: fn.startLine,
+                endLine: fn.endLine,
+              })).slice(0, 200),
+              imports: (currentFileRecord.imports || []).slice(0, 80),
+              repositoryPathsAvailableForRelatedFiles: allFiles.map((entry) => entry.path).slice(0, 1200),
+            };
+            const filePrompt = `${prompt}
+
+Current file evidence contract:
+${JSON.stringify(sourceEvidenceContract, null, 2)}
+
+Rows that do not use exact repository paths and current-file symbols/imported APIs will be rejected by deterministic validation.
+
+${chunkedContent}`;
 
             const { result } = await requestOpenAIProxyJsonWithMetrics({
               prompt: filePrompt,
@@ -2753,7 +3148,7 @@ Rules:
                   toDetails,
                 ] = cols;
 
-                return {
+                const candidateRow = {
                   from,
                   fromFile,
                   fromDetails,
@@ -2763,6 +3158,14 @@ Rules:
                   toFile,
                   toDetails,
                 };
+                return groundFunctionalDecompositionRow({
+                  row: candidateRow,
+                  currentFile: file,
+                  currentFileRecord,
+                  repoPathResolver,
+                  stats: groundingStats,
+                  chunkIndex: i + 1,
+                });
               })
               .filter(Boolean);
 
@@ -2799,6 +3202,8 @@ Rules:
           repo,
           ref,
           commitSha,
+          groundingVersion: FUNCTIONAL_GROUNDING_VERSION,
+          groundingStats,
           planSignature,
           totalFiles: validFiles.length,
           completedPaths: Array.from(completedPathSet),
@@ -2818,6 +3223,8 @@ Rules:
         await sleep(0);
       }
     }
+
+    allTableData = dedupeFunctionalDecompositionRows(allTableData, groundingStats);
 
     console.log("🏛️ Classifying functional decomposition into Subsystem/CSCI/CSC/CSU architecture...");
     opts?.onProgress?.({
@@ -2852,6 +3259,8 @@ Rules:
           repo,
           ref,
           commitSha,
+          groundingVersion: FUNCTIONAL_GROUNDING_VERSION,
+          groundingStats,
           planSignature,
           totalFiles: validFiles.length,
           completedPaths: Array.from(completedPathSet),
@@ -2898,6 +3307,7 @@ Rules:
       storageSaved,
       storageError,
       metrics: finalMetrics,
+      grounding: groundingStats,
     };
     return opts?.repoConfig || opts?.storageKey
       ? { rows: architectureRows, metadata }

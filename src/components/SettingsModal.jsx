@@ -45,6 +45,150 @@ const VSCODE_EXTENSION_VERSION = "0.0.10";
 const VSCODE_EXTENSION_FILENAME = `xhandle-safety-${VSCODE_EXTENSION_VERSION}.vsix`;
 const VSCODE_EXTENSION_DOWNLOAD_URL = `/downloads/${VSCODE_EXTENSION_FILENAME}`;
 const MAX_ANALYSIS_CONTEXT_FILE_CHARS = 60000;
+const STORAGE_DATABASES = [
+  "xhandle",
+  "xhandle-workspace-graph",
+  "xhandle-results-review",
+  "xhandle-safety-remediation",
+  "xhandle-code-architecture-hazard-analysis",
+  "xhandle-code-architecture-assurance",
+  "TraceabilityDB",
+  "TraceabilityMeta",
+  "BaselinesDB",
+  "SafetyCaseEvidenceDB",
+];
+const CREDENTIAL_STORAGE_KEYS = new Set([
+  "githubToken",
+  "jiraToken",
+  "xhandle.localAIProviderSettings",
+  "xhandle.aiProvider.keys",
+]);
+
+function storageByteLength(value) {
+  const text = typeof value === "string" ? value : JSON.stringify(value ?? "");
+  return new Blob([text]).size;
+}
+
+function formatStorageBytes(bytes = 0) {
+  const value = Number(bytes || 0);
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(value < 10 * 1024 ? 1 : 0)} KB`;
+  if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(value < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+  return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function isXHandleLocalStorageKey(key = "") {
+  return /^xhandle[:.]|^cbaMeta:|^code-architecture-|^architecture-report:|^diagram:|^functional-|^settings\.|^repoOwner$|^repoName$|^githubSelectedExtensions$|^jira|^google/i.test(key);
+}
+
+function localStorageCategoryForKey(key = "") {
+  if (CREDENTIAL_STORAGE_KEYS.has(key)) return "credentials";
+  if (/^cbaMeta:|^xhandle\.codeArchitecture|^xhandle:code-architecture|^code-architecture-|^architecture-report:|^diagram:github|^xhandle:cba-/i.test(key)) return "codeArchitecture";
+  if (/^xhandle\.project|^xhandle\.activeProject|^xhandle:requirements|^xhandle:req-|^xhandle:risk|^functional-|^diagram:positions/i.test(key)) return "projects";
+  if (/review|remediation|hazard|safety-case|vnv|traceability/i.test(key)) return "analysis";
+  if (/backup|settings\.|repoOwner|repoName|githubSelectedExtensions|jira|google|copilotDock/i.test(key)) return "settings";
+  return "other";
+}
+
+function localStorageCategoryLabel(id) {
+  return {
+    codeArchitecture: "Code architecture metadata and UI state",
+    projects: "Projects, requirements, diagrams, and risk data",
+    analysis: "Analysis, review, remediation, safety case, and V&V data",
+    settings: "Non-secret settings and preferences",
+    credentials: "Credentials and API keys",
+    other: "Other xHandle localStorage data",
+  }[id] || id;
+}
+
+function openRawIndexedDb(name) {
+  return new Promise((resolve) => {
+    if (typeof indexedDB === "undefined" || !name) {
+      resolve(null);
+      return;
+    }
+    const request = indexedDB.open(name);
+    request.onerror = () => resolve(null);
+    request.onblocked = () => resolve(null);
+    request.onsuccess = () => resolve(request.result);
+  });
+}
+
+async function inspectIndexedDbStore(dbName, storeName) {
+  const db = await openRawIndexedDb(dbName);
+  if (!db || !db.objectStoreNames.contains(storeName)) {
+    try { db?.close(); } catch {}
+    return null;
+  }
+  return new Promise((resolve) => {
+    let count = 0;
+    let bytes = 0;
+    let sampleKey = "";
+    try {
+      const tx = db.transaction(storeName, "readonly");
+      const store = tx.objectStore(storeName);
+      const cursorRequest = store.openCursor();
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor) return;
+        count += 1;
+        if (!sampleKey) sampleKey = String(cursor.key || "");
+        try { bytes += storageByteLength(cursor.value); } catch {}
+        cursor.continue();
+      };
+      tx.oncomplete = () => {
+        try { db.close(); } catch {}
+        resolve({ count, bytes, sampleKey });
+      };
+      tx.onerror = () => {
+        try { db.close(); } catch {}
+        resolve({ count, bytes, sampleKey, error: tx.error?.message || "Unable to inspect store." });
+      };
+    } catch (error) {
+      try { db.close(); } catch {}
+      resolve({ count, bytes, sampleKey, error: error?.message || String(error) });
+    }
+  });
+}
+
+async function clearIndexedDbStore(dbName, storeName) {
+  const db = await openRawIndexedDb(dbName);
+  if (!db || !db.objectStoreNames.contains(storeName)) {
+    try { db?.close(); } catch {}
+    return false;
+  }
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(storeName, "readwrite");
+      tx.objectStore(storeName).clear();
+      tx.oncomplete = () => {
+        try { db.close(); } catch {}
+        resolve(true);
+      };
+      tx.onerror = () => {
+        try { db.close(); } catch {}
+        resolve(false);
+      };
+    } catch {
+      try { db.close(); } catch {}
+      resolve(false);
+    }
+  });
+}
+
+function indexedDbStoreLabel(dbName, storeName) {
+  if (dbName === "xhandle" && storeName === "copilot_baseline") return "Code architecture rows";
+  if (dbName === "xhandle" && storeName === "code_index") return "Code source index/cache";
+  if (dbName === "xhandle" && storeName === "diagram_positions") return "Diagram positions";
+  if (dbName === "xhandle-code-architecture-assurance") return "Code architecture assurance artifacts";
+  if (dbName === "xhandle-code-architecture-hazard-analysis") return "Code architecture hazard analysis";
+  if (dbName === "xhandle-safety-remediation") return "Safety remediation";
+  if (dbName === "xhandle-results-review") return "Results review";
+  if (dbName === "xhandle-workspace-graph") return "Workspace graph";
+  if (dbName === "SafetyCaseEvidenceDB") return "Safety case evidence";
+  if (dbName === "TraceabilityDB" || dbName === "TraceabilityMeta" || dbName === "BaselinesDB") return "Traceability and baselines";
+  return `${dbName} / ${storeName}`;
+}
 
 export default function SettingsModal({
   onClose,
@@ -263,6 +407,10 @@ export default function SettingsModal({
   const [graphInspection, setGraphInspection] = useState(null);
   const [graphInspectionBusy, setGraphInspectionBusy] = useState(false);
   const [graphInspectionMsg, setGraphInspectionMsg] = useState("");
+  const [storageInventory, setStorageInventory] = useState(null);
+  const [storageBusy, setStorageBusy] = useState(false);
+  const [storageMsg, setStorageMsg] = useState("");
+  const [selectedStorageItems, setSelectedStorageItems] = useState({});
   const fileInputRef = useRef(null);
   const selectedSavedProvider = providerStatus?.savedProviders?.find(
     (row) => row.provider === normalizeAIProvider(aiProvider)
@@ -345,6 +493,85 @@ export default function SettingsModal({
     loadProviderModels(aiProvider);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aiProvider]);
+
+  const refreshStorageInventory = async () => {
+    setStorageBusy(true);
+    setStorageMsg("");
+    try {
+      const usage = typeof navigator !== "undefined" && navigator.storage?.estimate
+        ? await navigator.storage.estimate().catch(() => null)
+        : null;
+      const localGroups = {};
+      if (typeof localStorage !== "undefined") {
+        for (let index = 0; index < localStorage.length; index += 1) {
+          const key = localStorage.key(index);
+          if (!key || !isXHandleLocalStorageKey(key)) continue;
+          const value = localStorage.getItem(key) || "";
+          const groupId = localStorageCategoryForKey(key);
+          if (!localGroups[groupId]) {
+            localGroups[groupId] = {
+              id: `localStorage:${groupId}`,
+              kind: "localStorage",
+              groupId,
+              label: localStorageCategoryLabel(groupId),
+              description: groupId === "credentials"
+                ? "Saved API keys and tokens. This is not selected by default."
+                : "xHandle data stored in localStorage.",
+              bytes: 0,
+              count: 0,
+              keys: [],
+              dangerous: groupId === "credentials",
+            };
+          }
+          localGroups[groupId].bytes += storageByteLength(value);
+          localGroups[groupId].count += 1;
+          localGroups[groupId].keys.push(key);
+        }
+      }
+
+      const indexedDbItems = [];
+      for (const dbName of STORAGE_DATABASES) {
+        const db = await openRawIndexedDb(dbName);
+        if (!db) continue;
+        const storeNames = Array.from(db.objectStoreNames || []);
+        try { db.close(); } catch {}
+        for (const storeName of storeNames) {
+          const inspected = await inspectIndexedDbStore(dbName, storeName);
+          if (!inspected) continue;
+          indexedDbItems.push({
+            id: `indexedDB:${dbName}:${storeName}`,
+            kind: "indexedDB",
+            dbName,
+            storeName,
+            label: indexedDbStoreLabel(dbName, storeName),
+            description: `${dbName} / ${storeName}${inspected.sampleKey ? ` · sample key: ${inspected.sampleKey}` : ""}`,
+            bytes: inspected.bytes || 0,
+            count: inspected.count || 0,
+            error: inspected.error || "",
+          });
+        }
+      }
+
+      const items = [
+        ...Object.values(localGroups),
+        ...indexedDbItems,
+      ].sort((a, b) => Number(b.bytes || 0) - Number(a.bytes || 0));
+      setStorageInventory({
+        usageBytes: usage?.usage || 0,
+        quotaBytes: usage?.quota || 0,
+        items,
+        refreshedAt: new Date().toISOString(),
+      });
+      setSelectedStorageItems((current) => {
+        const allowedIds = new Set(items.map((item) => item.id));
+        return Object.fromEntries(Object.entries(current || {}).filter(([id]) => allowedIds.has(id)));
+      });
+    } catch (error) {
+      setStorageMsg(`❌ ${error?.message || error}`);
+    } finally {
+      setStorageBusy(false);
+    }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -470,6 +697,57 @@ export default function SettingsModal({
     } finally {
       setProviderBusy(false);
       clearProviderMsgSoon();
+    }
+  };
+
+  const toggleStorageItem = (itemId) => {
+    setSelectedStorageItems((current) => ({
+      ...current,
+      [itemId]: !current?.[itemId],
+    }));
+  };
+
+  const setAllStorageItemsSelected = (checked, { includeCredentials = false } = {}) => {
+    const items = storageInventory?.items || [];
+    setSelectedStorageItems(Object.fromEntries(
+      items
+        .filter((item) => includeCredentials || !item.dangerous)
+        .map((item) => [item.id, checked])
+    ));
+  };
+
+  const deleteSelectedStorageItems = async () => {
+    const items = (storageInventory?.items || []).filter((item) => selectedStorageItems[item.id]);
+    if (!items.length) {
+      setStorageMsg("Select at least one storage category to delete.");
+      return;
+    }
+    const includesCredentials = items.some((item) => item.dangerous);
+    const label = items.length === 1 ? items[0].label : `${items.length} storage categories`;
+    const confirmed = window.confirm(
+      `Delete ${label}? This removes local browser data for this xHandle installation.${includesCredentials ? "\n\nCredentials/API keys are included in this deletion." : ""}\n\nThis cannot be undone unless you have a backup.`
+    );
+    if (!confirmed) return;
+
+    setStorageBusy(true);
+    try {
+      for (const item of items) {
+        if (item.kind === "localStorage") {
+          (item.keys || []).forEach((key) => {
+            try { localStorage.removeItem(key); } catch {}
+          });
+        } else if (item.kind === "indexedDB") {
+          await clearIndexedDbStore(item.dbName, item.storeName);
+        }
+      }
+      window.dispatchEvent?.(new CustomEvent("xhandle:data-changed", { detail: { source: "settings-storage-cleanup" } }));
+      setSelectedStorageItems({});
+      setStorageMsg(`✅ Deleted ${label}.`);
+      await refreshStorageInventory();
+    } catch (error) {
+      setStorageMsg(`❌ ${error?.message || error}`);
+    } finally {
+      setStorageBusy(false);
     }
   };
 
@@ -704,6 +982,7 @@ export default function SettingsModal({
           <TabButton label="AI Provider" active={tab === "openai"} onClick={() => setTab("openai")} />
           <TabButton label="VS Code" active={tab === "vscode"} onClick={() => setTab("vscode")} />
           <TabButton label="Backup" active={tab === "backup"} onClick={() => setTab("backup")} />
+          <TabButton label="Storage" active={tab === "storage"} onClick={() => setTab("storage")} />
           <TabButton label="Graph" active={tab === "graph"} onClick={() => setTab("graph")} />
         </div>
 
@@ -1232,6 +1511,115 @@ export default function SettingsModal({
           </section>
         )}
 
+        {tab === "storage" && (
+          <section className="space-y-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-2">
+              <div className="text-sm font-medium text-slate-900">Browser data management</div>
+              <p className="text-sm text-slate-600">
+                Review and delete xHandle data stored in this browser. Credentials and API keys are separated and are never selected by default.
+              </p>
+              <div className="text-sm text-slate-700">
+                <span className="font-medium">Origin usage:</span>{" "}
+                {storageInventory
+                  ? `${formatStorageBytes(storageInventory.usageBytes)}${storageInventory.quotaBytes ? ` of ${formatStorageBytes(storageInventory.quotaBytes)} quota` : ""}`
+                  : "Not scanned yet"}
+              </div>
+              {storageInventory?.refreshedAt && (
+                <div className="text-xs text-slate-500">
+                  Last scanned {new Date(storageInventory.refreshedAt).toLocaleString()}. Sizes are approximate JSON payload sizes; browser overhead may differ.
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                className="bg-slate-900 hover:bg-slate-800 text-white rounded px-3 py-2 disabled:opacity-50"
+                onClick={refreshStorageInventory}
+                disabled={storageBusy}
+              >
+                {storageBusy ? "Scanning..." : "Scan Storage"}
+              </button>
+              <button
+                className="bg-gray-100 hover:bg-gray-200 rounded px-3 py-2 disabled:opacity-50"
+                onClick={() => setAllStorageItemsSelected(true)}
+                disabled={storageBusy || !storageInventory?.items?.length}
+              >
+                Select Cleanable
+              </button>
+              <button
+                className="bg-gray-100 hover:bg-gray-200 rounded px-3 py-2 disabled:opacity-50"
+                onClick={() => setAllStorageItemsSelected(false)}
+                disabled={storageBusy || !storageInventory?.items?.length}
+              >
+                Clear Selection
+              </button>
+              <button
+                className="bg-red-600 hover:bg-red-700 text-white rounded px-3 py-2 disabled:opacity-50"
+                onClick={deleteSelectedStorageItems}
+                disabled={storageBusy || !Object.values(selectedStorageItems || {}).some(Boolean)}
+              >
+                Delete Selected
+              </button>
+            </div>
+
+            {storageInventory?.items?.length > 0 ? (
+              <div className="max-h-[46vh] overflow-auto rounded-2xl border border-slate-200">
+                <table className="w-full text-left text-sm">
+                  <thead className="sticky top-0 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="border-b px-3 py-2">Delete</th>
+                      <th className="border-b px-3 py-2">Data</th>
+                      <th className="border-b px-3 py-2">Records</th>
+                      <th className="border-b px-3 py-2">Approx. size</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {storageInventory.items.map((item) => (
+                      <tr key={item.id} className={item.dangerous ? "bg-rose-50/60" : "bg-white"}>
+                        <td className="border-b px-3 py-2 align-top">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4"
+                            checked={!!selectedStorageItems[item.id]}
+                            onChange={() => toggleStorageItem(item.id)}
+                            disabled={storageBusy}
+                          />
+                        </td>
+                        <td className="border-b px-3 py-2 align-top">
+                          <div className="font-medium text-slate-900">
+                            {item.label}
+                            {item.dangerous && <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-xs text-rose-700">credentials</span>}
+                          </div>
+                          <div className="mt-1 text-xs text-slate-500">{item.description}</div>
+                          {item.error && <div className="mt-1 text-xs text-amber-700">{item.error}</div>}
+                        </td>
+                        <td className="border-b px-3 py-2 align-top text-slate-600">{Number(item.count || 0).toLocaleString()}</td>
+                        <td className="border-b px-3 py-2 align-top font-medium text-slate-700">{formatStorageBytes(item.bytes)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-sm text-slate-500">
+                {storageInventory ? "No xHandle browser data was found." : "Scan storage to see xHandle localStorage and IndexedDB data."}
+              </div>
+            )}
+
+            {!!storageMsg && <div className="text-sm">{storageMsg}</div>}
+
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+              Deleting browser data may remove projects, generated analyses, review decisions, diagram layouts, and cached source indexes. Use Backup first if you may need this data later.
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <button className="ml-auto px-3 py-2" onClick={onClose}>
+                Close
+              </button>
+            </div>
+          </section>
+        )}
+
         {tab === "graph" && (
           <section className="space-y-4">
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-2">
@@ -1375,6 +1763,13 @@ export default function SettingsModal({
                 name="Backup"
                 connected={backupState.folderConfigured || !!backupState.lastBackupAt}
                 spinning={backupState.busy}
+              />
+            )}
+            {tab === "storage" && (
+              <IntegrationBadge
+                name="Storage"
+                connected={!!storageInventory}
+                spinning={storageBusy}
               />
             )}
             {tab === "vscode" && (

@@ -716,6 +716,36 @@ function codeArchitectureMetricsSummary(metrics = null) {
   return parts.join(" · ");
 }
 
+function normalizeCodeArchitectureGroundingStats(grounding = null) {
+  if (!grounding || typeof grounding !== "object") return null;
+  const rejectionReasons = grounding.rejectionReasons && typeof grounding.rejectionReasons === "object"
+    ? Object.fromEntries(
+      Object.entries(grounding.rejectionReasons)
+        .map(([key, value]) => [key, Number(value || 0)])
+        .filter(([, value]) => value > 0)
+    )
+    : {};
+  return {
+    accepted: Number(grounding.accepted || 0),
+    rejected: Number(grounding.rejected || 0),
+    weakEvidenceCount: Number(grounding.weakEvidenceCount || 0),
+    duplicateRowCount: Number(grounding.duplicateRowCount || 0),
+    normalizedPathCount: Number(grounding.normalizedPathCount || 0),
+    rejectionReasons,
+  };
+}
+
+function codeArchitectureGroundingSummary(grounding = null) {
+  const stats = normalizeCodeArchitectureGroundingStats(grounding);
+  if (!stats) return "";
+  const parts = [];
+  if (stats.accepted) parts.push(`${stats.accepted.toLocaleString()} accepted`);
+  if (stats.rejected) parts.push(`${stats.rejected.toLocaleString()} rejected`);
+  if (stats.duplicateRowCount) parts.push(`${stats.duplicateRowCount.toLocaleString()} duplicate${stats.duplicateRowCount === 1 ? "" : "s"} removed`);
+  if (stats.weakEvidenceCount) parts.push(`${stats.weakEvidenceCount.toLocaleString()} weak evidence`);
+  return parts.join(" · ");
+}
+
 function parseGitHubRepoUrl(value = "") {
   const raw = String(value || "").trim();
   if (!raw) return null;
@@ -1530,6 +1560,7 @@ const activeCodeArchitectureStoredMeta = useMemo(() => {
 }, [activeCodeArchitectureProject, activeCodeArchitectureRepo]);
 const activeCodeArchitectureUnavailableRowCount = Number(activeCodeArchitectureStoredMeta?.rowCount || 0);
 const activeCodeArchitectureMetricsSummary = codeArchitectureMetricsSummary(activeCodeArchitectureStoredMeta?.metrics);
+const activeCodeArchitectureGroundingSummary = codeArchitectureGroundingSummary(activeCodeArchitectureStoredMeta?.grounding);
 
 async function readCodeArchitectureRowsForRepo(project, repo, primaryKey) {
   if (!project || !repo || !primaryKey) return { rows: [], sourceKey: primaryKey || "" };
@@ -1904,7 +1935,8 @@ async function saveImportedCodeArchitectureRows({ project, file, rows, repoPacka
     storageError: rowsPersisted ? "" : "Imported rows could not be saved to browser storage.",
     importSource: file.name,
     importedAt,
-    metrics: null,
+    metrics: repoPackage?.metadata?.metrics || null,
+    grounding: normalizeCodeArchitectureGroundingStats(repoPackage?.metadata?.grounding),
     indexedDB: { database: XHANDLE_IDB_NAME, store: XHANDLE_IDB_CBA_STORE, key: storageKey },
     updatedAt: importedAt,
   }));
@@ -2398,6 +2430,7 @@ async function handleBaselineRepo({
           storage: rowsPersisted ? "indexedDB" : "unavailable",
           storageError: rowsPersisted ? "" : (metadata.storageError || "Generated rows could not be saved to browser storage."),
           metrics: metadata.metrics || null,
+          grounding: normalizeCodeArchitectureGroundingStats(metadata.grounding),
           indexedDB: { database: XHANDLE_IDB_NAME, store: XHANDLE_IDB_CBA_STORE, key: storageKey },
           updatedAt: new Date().toISOString(),
         }));
@@ -2506,6 +2539,7 @@ useEffect(() => {
           storage: rowsPersisted ? "indexedDB" : "unavailable",
           storageError: rowsPersisted ? "" : "Code architecture rows could not be saved to browser storage.",
           metrics: activeCodeArchitectureStoredMeta?.metrics || null,
+          grounding: normalizeCodeArchitectureGroundingStats(activeCodeArchitectureStoredMeta?.grounding),
           indexedDB: {
             database: XHANDLE_IDB_NAME,
             store: XHANDLE_IDB_CBA_STORE,
@@ -2520,7 +2554,7 @@ useEffect(() => {
   return () => {
     cancelled = true;
   };
-}, [activeCodeArchitectureProject, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey, activeCodeArchitectureStoredMeta?.metrics, cbaTableData]);
+}, [activeCodeArchitectureProject, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey, activeCodeArchitectureStoredMeta?.grounding, activeCodeArchitectureStoredMeta?.metrics, cbaTableData]);
 
 useEffect(() => {
   if (!cbaTableData?.length) {
@@ -7719,6 +7753,9 @@ const ColumnFilterButton = ({ col }) => {
             <p className="text-xs text-gray-500">{activeCodeArchitectureRepo ? activeCodeArchitectureRepo.repoName || activeCodeArchitectureRepo.repoId : "No GitHub repo connected"}</p>
             {activeCodeArchitectureMetricsSummary && (
               <p className="mt-1 text-xs text-gray-500">Last run: {activeCodeArchitectureMetricsSummary}</p>
+            )}
+            {activeCodeArchitectureGroundingSummary && (
+              <p className="mt-1 text-xs text-gray-500">Analysis quality: {activeCodeArchitectureGroundingSummary}</p>
             )}
 	          </div>
 	          <div className="flex flex-wrap items-center gap-2">
