@@ -213,7 +213,7 @@ function consolidateTraceRowsByArtifactChain(rows = []) {
   ];
 }
 
-function buildTraceabilityRows({ cbaRows, softwareRows, systemRows, subsystemRows, designRows }) {
+export function buildTraceabilityRows({ cbaRows, softwareRows, systemRows, subsystemRows, designRows }) {
   const artifacts = { softwareRows, systemRows, subsystemRows, designRows };
   const sysById = rowsById(systemRows);
   const subById = rowsById(subsystemRows);

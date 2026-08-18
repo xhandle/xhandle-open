@@ -87,10 +87,19 @@ export async function runLiteAIAnalysis({
   hazardMethod = "STPA",
   fhaGenerationMode = "standard",
   hazardGenerationMode = fhaGenerationMode,
+  operationalContext = "",
+  analysisContext = null,
+  contextSources = null,
 }) {
   const totalSteps = 9;
   let step = 0;
-  const updateProgress = () => setProgress?.({ step, total: totalSteps });
+  const updateProgress = (patch = {}) => setProgress?.({ step, total: totalSteps, ...patch });
+  const updateGeneratorProgress = (patch = {}) => setProgress?.({
+    step: patch.step ?? step,
+    total: patch.total ?? totalSteps,
+    message: patch.message,
+    completed: patch.completed,
+  });
   const selectedHazardGenerationMode = hazardGenerationMode || fhaGenerationMode || "standard";
 
   const existingDecomposition = sheets?.["Functional Decomposition"];
@@ -132,6 +141,10 @@ export async function runLiteAIAnalysis({
         setFolders,
         currentFolder,
         method: "FMEA",
+        operationalContext,
+        analysisContext,
+        contextSources,
+        onProgress: updateGeneratorProgress,
       })) || updatedSheets;
       step = 9;
       updateProgress();
@@ -298,6 +311,10 @@ export async function runLiteAIAnalysis({
         setFolders,
         currentFolder,
         method: "WhatIf",
+        operationalContext,
+        analysisContext,
+        contextSources,
+        onProgress: updateGeneratorProgress,
       })) || updatedSheets;
       step = 9;
       updateProgress();
@@ -387,6 +404,10 @@ export async function runLiteAIAnalysis({
         setFolders,
         currentFolder,
         method: "STPA",
+        operationalContext,
+        analysisContext,
+        contextSources,
+        onProgress: updateGeneratorProgress,
       })) || updatedSheets;
       step = 9;
       updateProgress();
@@ -478,6 +499,10 @@ export async function runLiteAIAnalysis({
       setFolders,
       currentFolder,
       haraGenerationMode: selectedHazardGenerationMode,
+      operationalContext,
+      analysisContext,
+      contextSources,
+      onProgress: updateGeneratorProgress,
     })) || updatedSheets;
 
     step = 9;
@@ -494,6 +519,10 @@ export async function runLiteAIAnalysis({
       setFolders,
       currentFolder,
       fhaGenerationMode: selectedHazardGenerationMode,
+      operationalContext,
+      analysisContext,
+      contextSources,
+      onProgress: updateGeneratorProgress,
     })) || updatedSheets;
 
     step = 9;

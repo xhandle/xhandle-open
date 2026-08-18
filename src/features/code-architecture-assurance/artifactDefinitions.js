@@ -57,6 +57,8 @@ export const ARTIFACT_DEFINITIONS = {
       { key: "rationale", label: "Rationale", width: 360, longText: true },
       { key: "linkedSourceCode", label: "Linked Source Code", width: 300 },
       { key: "linkedHazards", label: "Linked Hazards", width: 220, linkType: "hazard-row" },
+      { key: "safetySignificant", label: "Safety Significant", width: 180, readOnly: true },
+      { key: "safetySignificanceRationale", label: "Safety Significance Rationale", width: 360, longText: true, readOnly: true },
       { key: "updatedAt", label: "Last Updated", width: 220, readOnly: true },
     ],
     defaultRow: {
@@ -68,6 +70,8 @@ export const ARTIFACT_DEFINITIONS = {
       rationale: "",
       linkedSourceCode: "",
       linkedHazards: "",
+      safetySignificant: "",
+      safetySignificanceRationale: "",
       parentHazard: "",
       mitigationStrategy: "",
       criticalitySeverity: "",

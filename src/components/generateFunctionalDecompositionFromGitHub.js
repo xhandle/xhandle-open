@@ -3308,6 +3308,15 @@ ${chunkedContent}`;
       storageError,
       metrics: finalMetrics,
       grounding: groundingStats,
+      operationalContext: systemUnderstanding || buildFallbackSystemUnderstanding(repoContext, userAnalysisContext),
+      contextSources: {
+        readmePath: repoContext.readmePath || "",
+        hasReadme: Boolean(String(repoContext.readmeText || "").trim()),
+        hasUserContextText: Boolean(String(userAnalysisContext?.text || "").trim()),
+        userContextFiles: (userAnalysisContext?.files || [])
+          .map((file) => String(file?.name || "").trim())
+          .filter(Boolean),
+      },
     };
     return opts?.repoConfig || opts?.storageKey
       ? { rows: architectureRows, metadata }

@@ -49,6 +49,8 @@ export async function runCodeArchitectureHazardAnalysis({
     hazardMethod: method,
     hazardGenerationMode: selectedHazardGenerationMode,
     fhaGenerationMode: method === "FHA" ? selectedHazardGenerationMode : undefined,
+    operationalContext: input.operationalContext,
+    contextSources: input.contextSources,
     generatedSheets,
   }, {
     projectId,
@@ -58,6 +60,8 @@ export async function runCodeArchitectureHazardAnalysis({
     hazardMethod: method,
     hazardGenerationMode: selectedHazardGenerationMode,
     fhaGenerationMode: method === "FHA" ? selectedHazardGenerationMode : undefined,
+    operationalContext: input.operationalContext,
+    contextSources: input.contextSources,
   });
   const setFolders = async (updater) => {
     const prev = { [currentFolder]: currentGeneratedSheets };
@@ -80,6 +84,9 @@ export async function runCodeArchitectureHazardAnalysis({
     hazardMethod: method,
     hazardGenerationMode: selectedHazardGenerationMode,
     fhaGenerationMode: selectedHazardGenerationMode,
+    operationalContext: input.operationalContext,
+    analysisContext: input.analysisContext,
+    contextSources: input.contextSources,
   });
   const generatedSheets = ensureHazardSummaryTraceColumns(generatedSheetsRaw, input.tableRows);
 
@@ -99,6 +106,8 @@ export async function runCodeArchitectureHazardAnalysis({
     hazardMethod: method,
     hazardGenerationMode: selectedHazardGenerationMode,
     fhaGenerationMode: method === "FHA" ? selectedHazardGenerationMode : undefined,
+    operationalContext: input.operationalContext,
+    contextSources: input.contextSources,
     generatedSheets,
   }, {
     projectId,
@@ -108,6 +117,8 @@ export async function runCodeArchitectureHazardAnalysis({
     hazardMethod: method,
     hazardGenerationMode: selectedHazardGenerationMode,
     fhaGenerationMode: method === "FHA" ? selectedHazardGenerationMode : undefined,
+    operationalContext: input.operationalContext,
+    contextSources: input.contextSources,
   });
 
   await saveCodeArchitectureHazardRun(run);

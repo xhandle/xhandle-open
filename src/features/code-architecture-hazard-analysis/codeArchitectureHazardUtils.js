@@ -478,6 +478,9 @@ export function buildCodeArchitectureHazardInput({ cbaRows = [], repoMeta = {}, 
     architectureSnapshotHash,
     architectureRowsSnapshot: tableRows,
     traceabilityMap: buildCodeArchitectureTraceabilityMap(cbaRows),
+    operationalContext: String(repoMeta.operationalContext || "").trim(),
+    analysisContext: repoMeta.analysisContext || { text: "", files: [] },
+    contextSources: repoMeta.contextSources || null,
   };
 }
 
@@ -605,6 +608,8 @@ export function normalizeCodeArchitectureHazardRun(raw = {}, context = {}) {
     hazardMethod: raw.hazardMethod || context.hazardMethod || "STPA-Textbook",
     hazardGenerationMode: raw.hazardGenerationMode || context.hazardGenerationMode || raw.fhaGenerationMode || context.fhaGenerationMode || "",
     fhaGenerationMode: raw.fhaGenerationMode || context.fhaGenerationMode || "",
+    operationalContext: raw.operationalContext || context.operationalContext || context.repoMeta?.operationalContext || "",
+    contextSources: raw.contextSources || context.contextSources || context.repoMeta?.contextSources || null,
     generatedSheets: raw.generatedSheets || raw.analysisResult || {},
     summaryRows,
     reviewStatus: raw.reviewStatus || CODE_ARCHITECTURE_HAZARD_REVIEW_STATUSES.DRAFT_AI_GENERATED,

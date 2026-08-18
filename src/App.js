@@ -17,6 +17,7 @@ import {
   ArrowDown,
   Trash2,             // for delete buttons
   MoreVertical,
+  Download,
   PanelLeftClose,
   Maximize2,
   Minimize2,
@@ -114,6 +115,11 @@ import {
   saveArtifactRowsAsync,
 } from "./features/code-architecture-assurance";
 import {
+  ARTIFACT_DEFINITIONS,
+  TRACEABILITY_MATRIX_COLUMNS,
+} from "./features/code-architecture-assurance/artifactDefinitions";
+import { buildTraceabilityRows } from "./features/code-architecture-assurance/TraceabilityMatrixPanel";
+import {
   XHANDLE_IDB_CBA_STORE,
   XHANDLE_IDB_NAME,
   codeArchitectureMetaKey,
@@ -162,6 +168,105 @@ function analysisOptionsForReviewTargets(targetOptions = [], selectedTargetIds =
       available: count > 0,
     };
   });
+}
+
+const CODE_ARCHITECTURE_WORKBOOK_SHEET_OPTIONS = [
+  { key: "functional", label: "Architecture Diagram table" },
+  { key: "hazard", label: "Hazard analysis" },
+  { key: ARTIFACT_KINDS.SOFTWARE, label: "Software requirements" },
+  { key: ARTIFACT_KINDS.SYSTEM, label: "System requirements" },
+  { key: ARTIFACT_KINDS.SUBSYSTEM, label: "Subsystem requirements" },
+  { key: ARTIFACT_KINDS.DESIGN, label: "System / subsystem design" },
+  { key: "traceability", label: "Traceability matrix" },
+  { key: "remediation", label: "Safety remediation" },
+];
+
+function CodeArchitectureWorkbookExportModal({
+  projectName = "",
+  repoName = "",
+  scope = "project",
+  selectedSheets = [],
+  isExporting = false,
+  message = "",
+  onScopeChange,
+  onToggleSheet,
+  onSelectAll,
+  onDeselectAll,
+  onCancel,
+  onConfirm,
+}) {
+  const selectedSet = new Set(selectedSheets);
+  const scopeLabel = scope === "analysis" ? (repoName || "current analysis") : (projectName || "project");
+  return createPortal(
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/40 p-4">
+      <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl ring-1 ring-slate-200">
+        <div className="shrink-0 border-b border-slate-200 px-5 py-4">
+          <h2 className="text-base font-semibold text-slate-950">Export Workbook</h2>
+          <p className="mt-1 text-sm text-slate-500">Choose the analysis scope and sheets to include in the workbook.</p>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          <div className="mb-5">
+            <span className="mb-2 block text-sm font-semibold text-slate-800">Scope</span>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {[
+                { key: "project", label: "Entire project", detail: projectName || "All repos in this project" },
+                { key: "analysis", label: "Current analysis", detail: repoName || "Active repository only" },
+              ].map((option) => (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => onScopeChange?.(option.key)}
+                  className={`rounded-lg border px-3 py-2 text-left transition ${
+                    scope === option.key
+                      ? "border-blue-500 bg-blue-50 text-blue-900"
+                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  <span className="block text-sm font-semibold">{option.label}</span>
+                  <span className="mt-0.5 block truncate text-xs text-slate-500">{option.detail}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="text-sm font-semibold text-slate-800">Workbook contents</span>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={onSelectAll} className="text-xs font-semibold text-blue-700 hover:underline">Select all</button>
+                <button type="button" onClick={onDeselectAll} className="text-xs font-semibold text-slate-500 hover:underline">Clear</button>
+              </div>
+            </div>
+            <div className="space-y-2">
+              {CODE_ARCHITECTURE_WORKBOOK_SHEET_OPTIONS.map((option) => (
+                <label key={option.key} className="flex cursor-pointer items-center gap-3 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                  <input
+                    type="checkbox"
+                    checked={selectedSet.has(option.key)}
+                    onChange={() => onToggleSheet?.(option.key)}
+                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="font-medium">{option.label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          {message && <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{message}</div>}
+        </div>
+        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-200 px-5 py-4">
+          <span className="min-w-0 truncate text-xs text-slate-500">Exporting {scopeLabel}</span>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={onCancel} className="rounded-md border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50" disabled={isExporting}>
+              Cancel
+            </button>
+            <button type="button" onClick={onConfirm} className="rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60" disabled={isExporting}>
+              {isExporting ? "Exporting..." : "Export Workbook"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
 }
 
 function CodeArchitectureReviewAnalysisModal({
@@ -837,6 +942,8 @@ function normalizeCodeArchitectureProjects(raw) {
             token: repo.token || "",
             selectedExtensions: Array.isArray(repo.selectedExtensions) ? repo.selectedExtensions : [],
             analysisContext: repo.analysisContext || { text: "", files: [] },
+            operationalContext: repo.operationalContext || "",
+            contextSources: repo.contextSources || null,
             branch: repo.branch || "",
             commitSha: repo.commitSha || "",
             filesFound: Number(repo.filesFound || 0),
@@ -1452,6 +1559,13 @@ const [showCodeArchitectureProjectExport, setShowCodeArchitectureProjectExport] 
 const [codeArchitectureProjectExportSelection, setCodeArchitectureProjectExportSelection] = useState("");
 const [isExportingCodeArchitectureProject, setIsExportingCodeArchitectureProject] = useState(false);
 const [codeArchitectureProjectExportMsg, setCodeArchitectureProjectExportMsg] = useState("");
+const [showCodeArchitectureWorkbookExport, setShowCodeArchitectureWorkbookExport] = useState(false);
+const [codeArchitectureWorkbookExportScope, setCodeArchitectureWorkbookExportScope] = useState("project");
+const [codeArchitectureWorkbookExportSheets, setCodeArchitectureWorkbookExportSheets] = useState(
+  CODE_ARCHITECTURE_WORKBOOK_SHEET_OPTIONS.map((option) => option.key)
+);
+const [isExportingCodeArchitectureWorkbook, setIsExportingCodeArchitectureWorkbook] = useState(false);
+const [codeArchitectureWorkbookExportMsg, setCodeArchitectureWorkbookExportMsg] = useState("");
 const [newCodeArchitectureProjectName, setNewCodeArchitectureProjectName] = useState("");
 const [newCodeArchitectureFolderName, setNewCodeArchitectureFolderName] = useState("");
 const [newCodeArchitectureTargetFolderId, setNewCodeArchitectureTargetFolderId] = useState(null);
@@ -1471,7 +1585,6 @@ const codeArchitectureProjectMenuAnchorEls = useRef({});
 const codeArchitectureProjectMenuPortalRefs = useRef({});
 const codeArchitectureFolderMenuAnchorEls = useRef({});
 const codeArchitectureFolderMenuPortalRefs = useRef({});
-const codeArchitectureImportInputRef = useRef(null);
 const codeArchitectureProjectImportInputRef = useRef(null);
 const [showCodeArchitectureRepoConfig, setShowCodeArchitectureRepoConfig] = useState(false);
 const [codeArchitectureRepoConfigProjectId, setCodeArchitectureRepoConfigProjectId] = useState(null);
@@ -1537,6 +1650,14 @@ const activeCodeArchitectureRepo = useMemo(() => {
 const activeCodeArchitectureRowsKey = activeCodeArchitectureProject && activeCodeArchitectureRepo
   ? codeArchitectureRowsKey(activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id)
   : null;
+const activeCodeArchitectureStoredMeta = useMemo(() => {
+  if (!activeCodeArchitectureProject || !activeCodeArchitectureRepo) return null;
+  try {
+    return JSON.parse(localStorage.getItem(codeArchitectureMetaKey(activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id)) || "null");
+  } catch {
+    return null;
+  }
+}, [activeCodeArchitectureProject, activeCodeArchitectureRepo]);
 const activeCodeArchitectureRepoMeta = useMemo(() => {
   if (!activeCodeArchitectureRepo) return getRepoMeta();
   return {
@@ -1547,17 +1668,11 @@ const activeCodeArchitectureRepoMeta = useMemo(() => {
     repoUrl: activeCodeArchitectureRepo.repoUrl || "",
     branch: activeCodeArchitectureRepo.branch || "main",
     commitSha: activeCodeArchitectureRepo.commitSha || "",
+    analysisContext: activeCodeArchitectureRepo.analysisContext || { text: "", files: [] },
+    operationalContext: activeCodeArchitectureStoredMeta?.operationalContext || activeCodeArchitectureRepo.operationalContext || "",
+    contextSources: activeCodeArchitectureStoredMeta?.contextSources || activeCodeArchitectureRepo.contextSources || null,
   };
-}, [activeCodeArchitectureRepo]);
-
-const activeCodeArchitectureStoredMeta = useMemo(() => {
-  if (!activeCodeArchitectureProject || !activeCodeArchitectureRepo) return null;
-  try {
-    return JSON.parse(localStorage.getItem(codeArchitectureMetaKey(activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id)) || "null");
-  } catch {
-    return null;
-  }
-}, [activeCodeArchitectureProject, activeCodeArchitectureRepo]);
+}, [activeCodeArchitectureRepo, activeCodeArchitectureStoredMeta]);
 const activeCodeArchitectureUnavailableRowCount = Number(activeCodeArchitectureStoredMeta?.rowCount || 0);
 const activeCodeArchitectureMetricsSummary = codeArchitectureMetricsSummary(activeCodeArchitectureStoredMeta?.metrics);
 const activeCodeArchitectureGroundingSummary = codeArchitectureGroundingSummary(activeCodeArchitectureStoredMeta?.grounding);
@@ -1924,6 +2039,8 @@ async function saveImportedCodeArchitectureRows({ project, file, rows, repoPacka
   repoConfig.imported = true;
   repoConfig.importedFileName = file.name;
   repoConfig.lastAnalyzedAt = importedAt;
+  repoConfig.operationalContext = repoPackage?.metadata?.operationalContext || repoPackage?.repo?.operationalContext || "";
+  repoConfig.contextSources = repoPackage?.metadata?.contextSources || repoPackage?.repo?.contextSources || null;
 
   const storageKey = codeArchitectureRowsKey(project.id, repoConfig.id);
   const rowsPersisted = await writeCbaRowsToIndexedDB(storageKey, rows);
@@ -1937,6 +2054,8 @@ async function saveImportedCodeArchitectureRows({ project, file, rows, repoPacka
     importedAt,
     metrics: repoPackage?.metadata?.metrics || null,
     grounding: normalizeCodeArchitectureGroundingStats(repoPackage?.metadata?.grounding),
+    operationalContext: repoConfig.operationalContext,
+    contextSources: repoConfig.contextSources,
     indexedDB: { database: XHANDLE_IDB_NAME, store: XHANDLE_IDB_CBA_STORE, key: storageKey },
     updatedAt: importedAt,
   }));
@@ -2160,6 +2279,8 @@ async function collectCodeArchitectureProjectExport(projectId) {
         repoUrl: repo.repoUrl || "",
         selectedExtensions: repo.selectedExtensions || [],
         analysisContext: repo.analysisContext || { text: "", files: [] },
+        operationalContext: repo.operationalContext || "",
+        contextSources: repo.contextSources || null,
         branch: repo.branch || "",
         commitSha: repo.commitSha || "",
         filesFound: repo.filesFound || 0,
@@ -2190,6 +2311,289 @@ async function collectCodeArchitectureProjectExport(projectId) {
   };
 }
 
+async function loadWorkbookXlsx() {
+  try {
+    return await import(/* webpackChunkName: "xlsx" */ "xlsx");
+  } catch {
+    throw new Error("XLSX export is unavailable. Install the xlsx package to export workbooks.");
+  }
+}
+
+function codeArchitectureWorkbookFileName(projectName, scope) {
+  const safeName = String(projectName || "code-architecture")
+    .replace(/[^a-z0-9._-]+/gi, "-")
+    .replace(/^-+|-+$/g, "") || "code-architecture";
+  const suffix = scope === "analysis" ? "analysis-workbook" : "project-workbook";
+  return `${safeName}-${suffix}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+}
+
+function codeArchitectureSheetName(baseName, usedNames) {
+  const cleaned = String(baseName || "Sheet")
+    .replace(/[:\\/?*[\]]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim() || "Sheet";
+  let name = cleaned.slice(0, 31);
+  let index = 2;
+  while (usedNames.has(name)) {
+    const suffix = ` ${index}`;
+    name = `${cleaned.slice(0, 31 - suffix.length)}${suffix}`;
+    index += 1;
+  }
+  usedNames.add(name);
+  return name;
+}
+
+function codeArchitectureCellValue(value) {
+  if (value == null) return "";
+  if (Array.isArray(value)) return value.map(codeArchitectureCellValue).filter(Boolean).join("; ");
+  if (typeof value === "object") return JSON.stringify(value);
+  return value;
+}
+
+function rowsForCodeArchitectureColumns(rows = [], columns = []) {
+  return rows.map((row) => {
+    const out = {};
+    columns.forEach((column) => {
+      out[column.label] = codeArchitectureCellValue(
+        typeof column.getValue === "function" ? column.getValue(row) : row?.[column.key]
+      );
+    });
+    return out;
+  });
+}
+
+function functionalRowsForWorkbook(rows = []) {
+  return rows.map((row, index) => ({
+    "Row": row.traceId || row.rowRef || index + 1,
+    "Function (From)": row.from || row.fromFunction || "",
+    "Function (From) File(s)": row.fromFile || "",
+    "Function (From) Details": row.fromDetails || row.fromFunctionDetails || "",
+    "Control Action": row.action || row.controlAction || "",
+    "Control Action Details": row.controlActionDetails || row.controlDetails || "",
+    "Function (To)": row.to || row.toFunction || "",
+    "Function (To) File(s)": row.toFile || "",
+    "Function (To) Details": row.toDetails || row.toFunctionDetails || "",
+    "Subsystem": row.architecture?.subsystem || row.subsystem || "",
+    "CSCI": row.architecture?.csci || row.csci || "",
+    "CSC": row.architecture?.csc || row.csc || "",
+    "CSU": row.architecture?.csu || row.csu || "",
+    "Architecture Rationale": row.architecture?.rationale || row.architectureRationale || "",
+  }));
+}
+
+function latestCodeArchitectureHazardRun(hazardRuns = [], fallbackRun = null) {
+  const candidates = [...(Array.isArray(hazardRuns) ? hazardRuns : []), fallbackRun].filter(Boolean);
+  return candidates.sort((a, b) => (
+    (Date.parse(b?.updatedAt || b?.createdAt || 0) || 0) - (Date.parse(a?.updatedAt || a?.createdAt || 0) || 0)
+  ))[0] || null;
+}
+
+function hazardSummaryRowsForWorkbook(run) {
+  const summary = run?.generatedSheets?.Summary;
+  if (!Array.isArray(summary) || !summary.length) return [];
+  if (Array.isArray(summary[0])) {
+    const headers = summary[0].map((header, index) => String(header || `Column ${index + 1}`));
+    return summary.slice(1).map((row) => {
+      const out = {};
+      headers.forEach((header, index) => {
+        out[header] = codeArchitectureCellValue(row?.[index]);
+      });
+      return out;
+    });
+  }
+  return summary.map((row) => ({ ...row }));
+}
+
+function remediationRowsForWorkbook(remediation = {}) {
+  const findings = Array.isArray(remediation.safetyFindings) ? remediation.safetyFindings : [];
+  const patches = Array.isArray(remediation.patchProposals) ? remediation.patchProposals : [];
+  const decisions = Array.isArray(remediation.reviewDecisions) ? remediation.reviewDecisions : [];
+  const verificationRuns = Array.isArray(remediation.verificationRuns) ? remediation.verificationRuns : [];
+  const evidence = Array.isArray(remediation.safetyRemediationEvidence) ? remediation.safetyRemediationEvidence : [];
+  return [
+    ...findings.map((item) => ({
+      Type: "Finding",
+      ID: item.id || "",
+      Title: item.title || item.summary || "",
+      Status: item.status || "",
+      Severity: item.severity || "",
+      Detail: item.description || item.detail || "",
+      LinkedFinding: "",
+      Updated: item.updatedAt || item.createdAt || "",
+    })),
+    ...patches.map((item) => ({
+      Type: "Patch Proposal",
+      ID: item.id || "",
+      Title: item.title || item.summary || "",
+      Status: item.status || "",
+      Severity: "",
+      Detail: item.description || item.rationale || "",
+      LinkedFinding: item.safetyFindingId || "",
+      Updated: item.updatedAt || item.createdAt || "",
+    })),
+    ...decisions.map((item) => ({
+      Type: "Review Decision",
+      ID: item.id || "",
+      Title: item.decision || item.status || "",
+      Status: item.status || "",
+      Severity: "",
+      Detail: item.notes || item.comment || "",
+      LinkedFinding: item.targetId || "",
+      Updated: item.updatedAt || item.createdAt || "",
+    })),
+    ...verificationRuns.map((item) => ({
+      Type: "Verification Run",
+      ID: item.id || "",
+      Title: item.name || item.result || "",
+      Status: item.status || item.result || "",
+      Severity: "",
+      Detail: item.summary || item.notes || "",
+      LinkedFinding: item.safetyFindingId || item.patchProposalId || "",
+      Updated: item.updatedAt || item.createdAt || "",
+    })),
+    ...evidence.map((item) => ({
+      Type: "Evidence",
+      ID: item.id || "",
+      Title: item.title || item.name || "",
+      Status: item.status || "",
+      Severity: "",
+      Detail: item.description || item.notes || "",
+      LinkedFinding: item.safetyFindingId || item.patchProposalId || "",
+      Updated: item.updatedAt || item.createdAt || "",
+    })),
+  ];
+}
+
+function appendJsonSheet(XLSX, workbook, usedSheetNames, name, rows) {
+  const normalizedRows = Array.isArray(rows) && rows.length ? rows : [{ Notice: "No rows available" }];
+  const sheet = XLSX.utils.json_to_sheet(normalizedRows);
+  XLSX.utils.book_append_sheet(workbook, sheet, codeArchitectureSheetName(name, usedSheetNames));
+}
+
+async function collectCodeArchitectureWorkbookRepoData(project, repo) {
+  const primaryKey = codeArchitectureRowsKey(project.id, repo.id);
+  const isCurrentRepo = project.id === activeCodeArchitectureProject?.id && repo.id === activeCodeArchitectureRepo?.id;
+  const readResult = isCurrentRepo && Array.isArray(cbaTableData) && cbaTableData.length
+    ? { rows: cbaTableData, sourceKey: primaryKey }
+    : await readCodeArchitectureRowsForRepo(project, repo, primaryKey);
+  const cbaRows = ensureCodeArchitectureTraceIds(readResult.rows || []);
+  const analysis = await collectCodeArchitectureRepoAnalysis(project, repo);
+  const artifactRows = analysis.artifactRows || {};
+  const artifacts = {
+    softwareRows: artifactRows[ARTIFACT_KINDS.SOFTWARE] || [],
+    systemRows: artifactRows[ARTIFACT_KINDS.SYSTEM] || [],
+    subsystemRows: artifactRows[ARTIFACT_KINDS.SUBSYSTEM] || [],
+    designRows: artifactRows[ARTIFACT_KINDS.DESIGN] || [],
+  };
+  return {
+    repo,
+    cbaRows,
+    artifacts,
+    hazardRun: latestCodeArchitectureHazardRun(
+      analysis.hazardRuns,
+      isCurrentRepo ? codeArchitectureHazardRun : null
+    ),
+    safetyRemediation: analysis.safetyRemediation || {},
+  };
+}
+
+async function exportCodeArchitectureWorkbook() {
+  if (!activeCodeArchitectureProject?.id) {
+    setCodeArchitectureWorkbookExportMsg("Select a Code-Based Architecture project to export.");
+    return;
+  }
+  if (!codeArchitectureWorkbookExportSheets.length) {
+    setCodeArchitectureWorkbookExportMsg("Select at least one workbook sheet.");
+    return;
+  }
+  const repos = codeArchitectureWorkbookExportScope === "analysis"
+    ? [activeCodeArchitectureRepo].filter(Boolean)
+    : (activeCodeArchitectureProject.repos || []);
+  if (!repos.length) {
+    setCodeArchitectureWorkbookExportMsg("There is no analyzed repository to export.");
+    return;
+  }
+
+  setIsExportingCodeArchitectureWorkbook(true);
+  setCodeArchitectureWorkbookExportMsg("");
+  try {
+    const XLSX = await loadWorkbookXlsx();
+    const workbook = XLSX.utils.book_new();
+    const usedSheetNames = new Set();
+    appendJsonSheet(XLSX, workbook, usedSheetNames, "Summary", [{
+      Project: activeCodeArchitectureProject.name || "",
+      Scope: codeArchitectureWorkbookExportScope === "analysis" ? "Current analysis" : "Entire project",
+      Repositories: repos.length,
+      ExportedAt: new Date().toISOString(),
+    }]);
+
+    for (const repo of repos) {
+      const repoData = await collectCodeArchitectureWorkbookRepoData(activeCodeArchitectureProject, repo);
+      const prefix = String(repo.repoName || repo.repoId || repo.repo || "repo").slice(0, 12);
+      if (codeArchitectureWorkbookExportSheets.includes("functional")) {
+        appendJsonSheet(XLSX, workbook, usedSheetNames, `${prefix} Architecture`, functionalRowsForWorkbook(repoData.cbaRows));
+      }
+      if (codeArchitectureWorkbookExportSheets.includes("hazard")) {
+        appendJsonSheet(XLSX, workbook, usedSheetNames, `${prefix} Hazards`, hazardSummaryRowsForWorkbook(repoData.hazardRun));
+      }
+      [
+        ARTIFACT_KINDS.SOFTWARE,
+        ARTIFACT_KINDS.SYSTEM,
+        ARTIFACT_KINDS.SUBSYSTEM,
+        ARTIFACT_KINDS.DESIGN,
+      ].forEach((kind) => {
+        if (!codeArchitectureWorkbookExportSheets.includes(kind)) return;
+        const definition = ARTIFACT_DEFINITIONS[kind];
+        const artifactRowsByKind = {
+          [ARTIFACT_KINDS.SOFTWARE]: repoData.artifacts.softwareRows,
+          [ARTIFACT_KINDS.SYSTEM]: repoData.artifacts.systemRows,
+          [ARTIFACT_KINDS.SUBSYSTEM]: repoData.artifacts.subsystemRows,
+          [ARTIFACT_KINDS.DESIGN]: repoData.artifacts.designRows,
+        };
+        appendJsonSheet(
+          XLSX,
+          workbook,
+          usedSheetNames,
+          `${prefix} ${definition?.idPrefix || kind}`,
+          rowsForCodeArchitectureColumns(artifactRowsByKind[kind] || [], definition?.columns || [])
+        );
+      });
+      if (codeArchitectureWorkbookExportSheets.includes("traceability")) {
+        appendJsonSheet(
+          XLSX,
+          workbook,
+          usedSheetNames,
+          `${prefix} Traceability`,
+          rowsForCodeArchitectureColumns(
+            buildTraceabilityRows({ cbaRows: repoData.cbaRows, ...repoData.artifacts }),
+            TRACEABILITY_MATRIX_COLUMNS
+          )
+        );
+      }
+      if (codeArchitectureWorkbookExportSheets.includes("remediation")) {
+        appendJsonSheet(XLSX, workbook, usedSheetNames, `${prefix} Remediation`, remediationRowsForWorkbook(repoData.safetyRemediation));
+      }
+    }
+
+    const out = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
+    const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = codeArchitectureWorkbookFileName(activeCodeArchitectureProject.name, codeArchitectureWorkbookExportScope);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setShowCodeArchitectureWorkbookExport(false);
+  } catch (error) {
+    console.error("[cba] Failed to export code architecture workbook", error);
+    setCodeArchitectureWorkbookExportMsg(error?.message || "Failed to export workbook.");
+  } finally {
+    setIsExportingCodeArchitectureWorkbook(false);
+  }
+}
+
 async function exportSelectedCodeArchitectureProject() {
   if (!codeArchitectureProjectExportSelection) {
     setCodeArchitectureProjectExportMsg("Select one project to export.");
@@ -2214,40 +2618,6 @@ async function exportSelectedCodeArchitectureProject() {
     setCodeArchitectureProjectExportMsg(error?.message || "Failed to export project.");
   } finally {
     setIsExportingCodeArchitectureProject(false);
-  }
-}
-
-async function importCodeArchitectureProjectFile(event) {
-  const file = event.target.files?.[0];
-  event.target.value = "";
-  if (!file) return;
-  const targetProject = activeCodeArchitectureProject;
-  if (!targetProject?.id) {
-    alert("Create or select a Code-Based Architecture project before importing.");
-    return;
-  }
-  try {
-    const parsed = JSON.parse(await file.text());
-    const rows = normalizeImportedCodeArchitectureRows(parsed);
-    if (!rows.length) {
-      alert("No code architecture rows were found in that JSON file.");
-      return;
-    }
-    const repoConfig = await saveImportedCodeArchitectureRows({ project: targetProject, file, rows });
-    upsertCodeArchitectureRepo(targetProject.id, repoConfig);
-    setActiveCodeArchitectureProjectId(targetProject.id);
-    setActiveCodeArchitectureFolderId(null);
-    setCbaTableData(rows);
-    setSelectedCbaElement(null);
-    setCodeArchitectureHazardRun(null);
-    setCodeArchitectureWorkspaceTab("architecture");
-    setCodeArchitectureFunctionalTableOpenKey(`imported-${Date.now()}`);
-    setHighlightedCodeArchitectureFunctionalRowIndex(null);
-    setPendingCodeArchitectureDiagramTarget(null);
-    notifyBackupDataChanged("code-architecture-import");
-  } catch (error) {
-    console.error("[cba] Failed to import code architecture JSON", error);
-    alert(error?.message || "Failed to import code architecture JSON.");
   }
 }
 
@@ -2416,6 +2786,8 @@ async function handleBaselineRepo({
         repoUrl: effectiveRepoConfig.repoUrl || `https://github.com/${finalOwner}/${finalRepo}`,
         selectedExtensions: effectiveSelectedExtensions,
         analysisContext: analysisContext || effectiveRepoConfig.analysisContext || { text: "", files: [] },
+        operationalContext: metadata.operationalContext || effectiveRepoConfig.operationalContext || "",
+        contextSources: metadata.contextSources || effectiveRepoConfig.contextSources || null,
         branch: metadata.branch || metadata.ref || effectiveRepoConfig.branch || "",
         commitSha: metadata.commitSha || effectiveRepoConfig.commitSha || "",
         filesFound: metadata.filesFound || effectiveRepoConfig.filesFound || 0,
@@ -2431,6 +2803,8 @@ async function handleBaselineRepo({
           storageError: rowsPersisted ? "" : (metadata.storageError || "Generated rows could not be saved to browser storage."),
           metrics: metadata.metrics || null,
           grounding: normalizeCodeArchitectureGroundingStats(metadata.grounding),
+          operationalContext: updatedRepo.operationalContext,
+          contextSources: updatedRepo.contextSources,
           indexedDB: { database: XHANDLE_IDB_NAME, store: XHANDLE_IDB_CBA_STORE, key: storageKey },
           updatedAt: new Date().toISOString(),
         }));
@@ -2540,6 +2914,8 @@ useEffect(() => {
           storageError: rowsPersisted ? "" : "Code architecture rows could not be saved to browser storage.",
           metrics: activeCodeArchitectureStoredMeta?.metrics || null,
           grounding: normalizeCodeArchitectureGroundingStats(activeCodeArchitectureStoredMeta?.grounding),
+          operationalContext: activeCodeArchitectureStoredMeta?.operationalContext || activeCodeArchitectureRepo.operationalContext || "",
+          contextSources: activeCodeArchitectureStoredMeta?.contextSources || activeCodeArchitectureRepo.contextSources || null,
           indexedDB: {
             database: XHANDLE_IDB_NAME,
             store: XHANDLE_IDB_CBA_STORE,
@@ -2554,7 +2930,7 @@ useEffect(() => {
   return () => {
     cancelled = true;
   };
-}, [activeCodeArchitectureProject, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey, activeCodeArchitectureStoredMeta?.grounding, activeCodeArchitectureStoredMeta?.metrics, cbaTableData]);
+}, [activeCodeArchitectureProject, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey, activeCodeArchitectureStoredMeta?.grounding, activeCodeArchitectureStoredMeta?.metrics, activeCodeArchitectureStoredMeta?.operationalContext, activeCodeArchitectureStoredMeta?.contextSources, cbaTableData]);
 
 useEffect(() => {
   if (!cbaTableData?.length) {
@@ -2933,10 +3309,18 @@ const buildRequirementsFromSummary = (summary) => {
 
   const sevIdx = headers.findIndex(h => /severity/i.test(h));
   const likIdx = headers.findIndex(h => /likelihood|probability/i.test(h));
+  const safetySignificanceIdx = headers.findIndex(h => /^safety\s+significant$/i.test(h.trim()));
+  const safetyRationaleIdx = headers.findIndex(h => /^safety\s+significance\s+rationale$/i.test(h.trim()));
+  const hasSafetySignificanceTags = safetySignificanceIdx >= 0
+    && rows.some((row) => String(row?.[safetySignificanceIdx] || "").trim());
 
   const out = [];
   for (let idx = 0; idx < rows.length; idx++) {
     const row = rows[idx];
+    if (hasSafetySignificanceTags) {
+      const tag = String(row?.[safetySignificanceIdx] || "").trim().toLowerCase();
+      if (tag !== "yes") continue;
+    }
     const text = reqCols.map(i => row[i]).find(v => v && String(v).trim());
     if (!text) continue;
 
@@ -2951,6 +3335,12 @@ const buildRequirementsFromSummary = (summary) => {
 
     const attrs = {};
     if (priority) attrs['Priority'] = priority;
+    if (hasSafetySignificanceTags) {
+      attrs['Safety Significant'] = String(row?.[safetySignificanceIdx] || "").trim();
+      if (safetyRationaleIdx >= 0 && row?.[safetyRationaleIdx]) {
+        attrs['Safety Significance Rationale'] = String(row[safetyRationaleIdx]);
+      }
+    }
 
     out.push({
       id: makeId(),
@@ -5560,15 +5950,27 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         setProgress: (nextProgress) => {
           const step = nextProgress?.step || 0;
           const total = nextProgress?.total || stepDescriptionsMap[selectedMethod]?.total || 9;
-          const message = stepDescriptionsMap[selectedMethod]?.steps?.[step] || "Running code architecture hazard analysis...";
+          const message = nextProgress?.message
+            || stepDescriptionsMap[selectedMethod]?.steps?.[step]
+            || "Running code architecture hazard analysis...";
           setCodeArchitectureHazardProgress({ step, total, message });
-          updateActivity(actId, { step, total, message });
+          updateActivity(actId, {
+            step,
+            total,
+            message,
+            completed: nextProgress?.completed,
+          });
         },
         onActivityUpdate: (patch) => {
+          const step = patch?.step ?? 0;
+          const total = patch?.total || stepDescriptionsMap[selectedMethod]?.total || 9;
+          const message = patch?.message || "Running code architecture hazard analysis...";
+          setCodeArchitectureHazardProgress({ step, total, message });
           updateActivity(actId, {
-            step: patch?.step || 0,
-            total: stepDescriptionsMap[selectedMethod]?.total || 9,
-            message: patch?.message || "Running code architecture hazard analysis...",
+            step,
+            total,
+            message,
+            completed: patch?.completed,
           });
         },
       });
@@ -7759,13 +8161,6 @@ const ColumnFilterButton = ({ col }) => {
             )}
 	          </div>
 	          <div className="flex flex-wrap items-center gap-2">
-	            <input
-	              ref={codeArchitectureImportInputRef}
-	              type="file"
-	              accept=".json,application/json"
-	              className="hidden"
-	              onChange={importCodeArchitectureProjectFile}
-	            />
 	            {activeCodeArchitectureProject.repos?.length > 0 && (
 	              <select
                 className="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm"
@@ -7782,12 +8177,17 @@ const ColumnFilterButton = ({ col }) => {
 	            )}
 	            <button
 	              type="button"
-	              onClick={() => codeArchitectureImportInputRef.current?.click()}
+	              onClick={() => {
+	                setCodeArchitectureWorkbookExportScope("project");
+	                setCodeArchitectureWorkbookExportSheets(CODE_ARCHITECTURE_WORKBOOK_SHEET_OPTIONS.map((option) => option.key));
+	                setCodeArchitectureWorkbookExportMsg("");
+	                setShowCodeArchitectureWorkbookExport(true);
+	              }}
 	              className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-	              title="Import a code architecture JSON export into this project"
+	              title="Export this Code-Based Architecture project or analysis as a workbook"
 	            >
-	              <FileText size={15} />
-	              Import
+	              <Download size={15} />
+	              Export
 	            </button>
 	            <button
 	              type="button"
@@ -7823,7 +8223,7 @@ const ColumnFilterButton = ({ col }) => {
           )
 	          : !activeCodeArchitectureRepo ? (
 	            <div className="min-h-0 overflow-auto rounded-xl border bg-white p-8 text-gray-600 text-sm">
-	              Connect a GitHub repository or import a code architecture JSON file to start analysis.
+	              Connect a GitHub repository to start analysis.
 	            </div>
 	          )
           : cbaTableData.length > 0 ? (
@@ -10789,6 +11189,39 @@ const updateRiskInProject = (projectId, predicate) => {
     }}
   />
 )}
+
+        {showCodeArchitectureWorkbookExport && (
+          <CodeArchitectureWorkbookExportModal
+            projectName={activeCodeArchitectureProject?.name || ""}
+            repoName={activeCodeArchitectureRepo?.repoName || activeCodeArchitectureRepo?.repoId || ""}
+            scope={codeArchitectureWorkbookExportScope}
+            selectedSheets={codeArchitectureWorkbookExportSheets}
+            isExporting={isExportingCodeArchitectureWorkbook}
+            message={codeArchitectureWorkbookExportMsg}
+            onScopeChange={(scope) => {
+              setCodeArchitectureWorkbookExportScope(scope);
+              setCodeArchitectureWorkbookExportMsg("");
+            }}
+            onToggleSheet={(key) => {
+              setCodeArchitectureWorkbookExportSheets((prev) => (
+                prev.includes(key) ? prev.filter((entry) => entry !== key) : [...prev, key]
+              ));
+              setCodeArchitectureWorkbookExportMsg("");
+            }}
+            onSelectAll={() => {
+              setCodeArchitectureWorkbookExportSheets(CODE_ARCHITECTURE_WORKBOOK_SHEET_OPTIONS.map((option) => option.key));
+              setCodeArchitectureWorkbookExportMsg("");
+            }}
+            onDeselectAll={() => {
+              setCodeArchitectureWorkbookExportSheets([]);
+              setCodeArchitectureWorkbookExportMsg("");
+            }}
+            onCancel={() => {
+              if (!isExportingCodeArchitectureWorkbook) setShowCodeArchitectureWorkbookExport(false);
+            }}
+            onConfirm={exportCodeArchitectureWorkbook}
+          />
+        )}
 
         {showCodeArchitectureProjectExport && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center">

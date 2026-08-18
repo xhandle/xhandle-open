@@ -636,9 +636,20 @@ function normalizeSafetyRequirementText(text = "") {
   return `The software shall ${raw.charAt(0).toLowerCase()}${raw.slice(1)}`;
 }
 
+function safetySignificanceTagForHazardRow(row = {}) {
+  return pickField(row, ["Safety Significant", "safetySignificant"]);
+}
+
+function isSafetySignificantHazardRow(row = {}) {
+  const tag = cellText(safetySignificanceTagForHazardRow(row)).trim();
+  if (!tag) return true;
+  return /^yes$/i.test(tag);
+}
+
 function hazardSafetyRequirementRows(hazardAnalysis = null) {
   const rows = summaryRowsFromHazardAnalysis(hazardAnalysis);
   return rows.flatMap((row, index) => {
+    if (!isSafetySignificantHazardRow(row)) return [];
     const requirement = normalizeSafetyRequirementText(pickField(row, [
       "Software Safety Requirement",
       "Safety Requirement",
@@ -669,6 +680,8 @@ function hazardSafetyRequirementRows(hazardAnalysis = null) {
       linkedHazards: hazardRef,
       mitigationStrategy: mitigation,
       criticalitySeverity: severity,
+      safetySignificant: safetySignificanceTagForHazardRow(row),
+      safetySignificanceRationale: pickField(row, ["Safety Significance Rationale"]),
       linkedVerification: verification,
       linkedTests: "",
       sourceTraceId: sourceId,
@@ -2252,7 +2265,7 @@ async function deriveHazardSystemRequirements({ hazardRows = [], projectName = "
       }, startIndex + index, hazardRows);
       return normalizedRow.requirementText ? normalizedRow : null;
     })
-    .filter((row) => row.requirementText);
+    .filter((row) => row?.requirementText);
 }
 
 export async function deriveSystemRequirements({ softwareRequirements = [], projectName = "", repoName = "", onProgress = null } = {}) {

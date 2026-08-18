@@ -1,6 +1,7 @@
 jest.mock("../../components/backendConfig", () => ({
   backendURL: "https://api.example.test",
   buildAuthOpts: () => ({ headers: {}, credentials: "include" }),
+  buildAIAuthOpts: () => ({ headers: {}, credentials: "include" }),
 }));
 
 const {
@@ -176,6 +177,26 @@ describe("code architecture assurance artifact AI helpers", () => {
     expect(rows[0].requirementText).toMatch(/^The software shall prevent stale control data/);
     expect(rows[1].requirementText).toMatch(/^The software shall reject stale control data/);
     expect(rows[2].requirementText).toMatch(/^The software shall validate operator input/);
+  });
+
+  it("imports only Yes-tagged hazard requirements and excludes historical No or Needs Review tags", () => {
+    const rows = importHazardSoftwareRequirements({
+      hazardAnalysis: {
+        generatedSheets: {
+          Summary: [
+            ["Safety Requirements/Constraints", "Hazards", "Trace ID", "Safety Significant", "Safety Significance Rationale"],
+            ["prevent loss of control", "Loss of control", "FD-1", "Yes", "Credible safety consequence"],
+            ["log malformed debug payloads", "Debug log issue", "FD-2", "No", "Routine reliability issue"],
+            ["review ambiguous behavior", "Ambiguous issue", "FD-3", "Needs Review", "Insufficient context"],
+          ],
+        },
+      },
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].requirementText).toMatch(/^The software shall prevent loss of control/);
+    expect(rows[0].safetySignificant).toBe("Yes");
+    expect(rows[0].safetySignificanceRationale).toBe("Credible safety consequence");
   });
 
   it("derives stronger safety artifacts instead of raw code-symbol requirements", async () => {
