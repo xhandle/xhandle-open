@@ -626,14 +626,16 @@ function normalizeSafetyRequirementText(text = "") {
     if (!normalized) return "The software shall";
     return `The software shall ${normalized.charAt(0).toLowerCase()}${normalized.slice(1)}`;
   };
+  const functionSubjectMatch = raw.match(/^the\s+software\s+shall\s+the\s+function\s+[`'"]?[\w.]+[`'"]?\s+(?:shall|must|should)\s+(.+)$/i);
+  if (functionSubjectMatch) return cleanImplementationRequirementText(toSoftwareShall(functionSubjectMatch[1]));
   const duplicateSubjectMatch = raw.match(/^the\s+software\s+shall\s+(?:the\s+)?(?:system|subsystem|software)\s+(?:shall|must)\s+(.+)$/i);
-  if (duplicateSubjectMatch) return toSoftwareShall(duplicateSubjectMatch[1]);
+  if (duplicateSubjectMatch) return cleanImplementationRequirementText(toSoftwareShall(duplicateSubjectMatch[1]));
   const subjectModalMatch = raw.match(/^(?:the\s+)?(?:system|subsystem|software)\s+(?:shall|must)\s+(.+)$/i);
-  if (subjectModalMatch) return toSoftwareShall(subjectModalMatch[1]);
+  if (subjectModalMatch) return cleanImplementationRequirementText(toSoftwareShall(subjectModalMatch[1]));
   if (/^the\s+software\s+shall\b/i.test(raw)) {
-    return raw.replace(/^the\s+software\s+shall\b/i, "The software shall");
+    return cleanImplementationRequirementText(raw.replace(/^the\s+software\s+shall\b/i, "The software shall"));
   }
-  return `The software shall ${raw.charAt(0).toLowerCase()}${raw.slice(1)}`;
+  return cleanImplementationRequirementText(`The software shall ${raw.charAt(0).toLowerCase()}${raw.slice(1)}`);
 }
 
 function safetySignificanceTagForHazardRow(row = {}) {
@@ -726,6 +728,181 @@ function normalizeSoftwareRow(raw = {}, index, cbaRows = []) {
     sourceArchitectureRefs: [architectureRef],
     source: "functional-derived",
   }, index);
+}
+
+function codeSymbolTokensFromFunctionalRow(row = {}) {
+  return compactList([
+    row.from,
+    row.fromFunction,
+    row.to,
+    row.toFunction,
+    row.action,
+    row.controlAction,
+  ])
+    .split(/[,;]\s*|\s+->\s+/)
+    .map((token) => token.trim())
+    .filter((token) => (
+      token.length >= 3 &&
+      (/^_/.test(token) || /_$/.test(token) || token.includes("_") || /^[a-z][A-Za-z0-9]*$/.test(token))
+    ));
+}
+
+function looksLikeCodeEchoSoftwareRequirement(row = {}, sourceRow = {}) {
+  const text = cellText(row.requirementText);
+  if (!text) return false;
+  if (/\b(function|method|class|constructor)\b/i.test(text)) return true;
+  if (/\b(call|calls|called|calling|invoke|invokes|invoking|return|returns|returned|create|creates|created|creating|set|sets|setting|instance)\b/i.test(text)) return true;
+  const tokens = codeSymbolTokensFromFunctionalRow(sourceRow);
+  return tokens.some((token) => token.length >= 4 && text.includes(token));
+}
+
+function readableCodeSymbol(token = "") {
+  const raw = cellText(token).replace(/^[`'"]|[`'"]$/g, "");
+  if (/^_{0,2}init_{0,2}$/i.test(raw)) return "initialization";
+  if (/\.py$/i.test(raw)) return "model component";
+  const lastPart = raw.split(".").filter(Boolean).pop() || raw;
+  const words = lastPart
+    .replace(/^_+|_+$/g, "")
+    .replace(/_torch$/i, "")
+    .replace(/_/g, " ")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/\bvlm\b/ig, "vision-language model")
+    .replace(/\bvla\b/ig, "vision-language action")
+    .replace(/\bmlp\b/ig, "MLP")
+    .replace(/\brms\b/ig, "RMS")
+    .trim();
+  return words || "related capability";
+}
+
+function cleanImplementationRequirementText(text = "") {
+  let body = stripRequirementLeadIn(text);
+  if (!body) return "";
+  body = body
+    .replace(/\bthe\s+function\s+[`'"]?[\w.]+[`'"]?\s+(?:shall|must|should)\s+/ig, "")
+    .replace(/\b(?:when|before|after)\s+(?:the\s+)?[`'"]?[\w.]+[`'"]?\s+(?:function|method)\s+is\s+(?:called|invoked)\b/ig, "")
+    .replace(/\b(?:function|method|class)\s+[`'"]?[\w.]+[`'"]?\b/ig, "")
+    .replace(/\s+\bin\s+[`'"]?[\w.-]+\.py[`'"]?/ig, "")
+    .replace(/[`'"]?[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?[`'"]?/g, (match) => {
+      const unquoted = match.replace(/^[`'"]|[`'"]$/g, "");
+      return /_|\.|^__/.test(unquoted) ? readableCodeSymbol(unquoted) : match;
+    })
+    .replace(/^only\s+return\s+(.+?)\s+(when|before|after)\s+(.+)$/i, "only make $1 available $2 $3")
+    .replace(/^only\s+return\s+(.+)$/i, "only make $1 available")
+    .replace(/^return\s+(.+?)\s+(when|before|after)\s+(.+)$/i, "make $1 available $2 $3")
+    .replace(/^return\s+(.+)$/i, "make $1 available")
+    .replace(/^returns\s+(.+)$/i, "make $1 available")
+    .replace(/^create\s+an?\s+instance\s+of\s+(?:the\s+)?(.+?)\s+that\s+is\s+capable\s+of\s+(.+)$/i, (_, name, capability) => `provide ${readableCodeSymbol(name)} capability for ${capability}`)
+    .replace(/^create\s+an?\s+instance\s+of\s+(?:the\s+)?(.+?)\s+for\s+(.+)$/i, (_, name, purpose) => `provide ${readableCodeSymbol(name)} capability for ${purpose}`)
+    .replace(/^create\s+an?\s+instance\s+of\s+(?:the\s+)?(.+)$/i, (_, name) => `provide ${readableCodeSymbol(name)} capability`)
+    .replace(/^provide\s+an?\s+instance\s+of\s+(?:the\s+)?(.+?)\s+for\s+(.+)$/i, (_, name, purpose) => `provide ${readableCodeSymbol(name)} capability for ${purpose}`)
+    .replace(/^provide\s+an?\s+instance\s+of\s+(?:the\s+)?(.+)$/i, (_, name) => `provide access to ${readableCodeSymbol(name)} capability`)
+    .replace(/^provide\s+a\s+mechanism\s+to\s+initialize\s+an?\s+(.+?)\s+instance\s+with\s+(.+)$/i, (_, name, params) => `configure ${readableCodeSymbol(name)} capability with ${params}`)
+    .replace(/^enable\s+the\s+creation\s+of\s+an?\s+(.+?)\s+instance\s+capable\s+of\s+(.+)$/i, (_, name, capability) => `provide ${readableCodeSymbol(name)} capability for ${capability}`)
+    .replace(/\bbefore\s+calling\s+(.+)$/i, "before using $1")
+    .replace(/\barctangent\s+function\b/ig, "arctangent calculation")
+    .replace(/\band\s+return\s+/ig, "and make available ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\s+\./g, ".")
+    .replace(/[.]+$/g, "");
+  const prefixed = ensureRequirementPrefix(body, "The software shall");
+  return prefixed ? `${prefixed}.` : "";
+}
+
+function cleanCodeEchoSoftwareRequirement(row = {}) {
+  const requirementText = cleanImplementationRequirementText(row.requirementText);
+  if (!requirementText || requirementText === row.requirementText) return row;
+  return {
+    ...row,
+    requirementText,
+    rationale: cellText(row.rationale) || "Locally rewritten to describe externally reviewable software behavior.",
+  };
+}
+
+async function repairCodeEchoSoftwareRequirements({ rows = [], cbaRows = [], projectName = "", repoName = "", onProgress = null } = {}) {
+  const repairItems = rows
+    .map((row, index) => ({ row, index, sourceRow: cbaRows[index] || {} }))
+    .filter(({ row, sourceRow }) => looksLikeCodeEchoSoftwareRequirement(row, sourceRow));
+  if (!repairItems.length) return rows;
+
+  onProgress?.({
+    phase: "Software requirements rewrite",
+    completed: 0,
+    total: repairItems.length,
+    message: `Rewriting ${repairItems.length} code-level software requirement${repairItems.length === 1 ? "" : "s"} into behavior requirements...`,
+  });
+
+  const systemPrompt = "You are a senior software requirements engineer. Rewrite implementation-level software requirement drafts into black-box, testable software behavior requirements. Return only valid JSON matching the requested schema.";
+  const repairedByIndex = new Map();
+  for (let start = 0; start < repairItems.length; start += ASSURANCE_PROMPT_BATCH_SIZE) {
+    const batch = repairItems.slice(start, start + ASSURANCE_PROMPT_BATCH_SIZE);
+    const payload = {
+      task: "rewrite_code_echo_software_requirements",
+      projectName,
+      repoName,
+      instructions: [
+        "Rewrite each draft as externally reviewable software behavior, not an implementation step.",
+        "Use 'The software shall ...' language.",
+        "Do not mention function names, method names, class names, private symbols, file paths, or phrases like when the function is called.",
+        "Translate code symbols into domain behavior using the functional row context.",
+        "Keep sourceTraceId unchanged.",
+        "Return one requirement object for each input in the same order.",
+      ],
+      schema: {
+        requirements: [{
+          id: "same id as input",
+          requirementText: "The software shall ...",
+          requirementType: "Functional | Interface | Data | Performance | Safety-Related | Other",
+          priority: "High | Medium | Low",
+          rationale: "Why this behavior follows from the functional row",
+          sourceTraceId: "same sourceTraceId as input",
+        }],
+      },
+      requirements: batch.map(({ row, sourceRow, index }) => ({
+        id: row.id,
+        sourceTraceId: row.sourceTraceId,
+        draftRequirementText: row.requirementText,
+        derivedFromFunction: row.derivedFromFunction,
+        derivedFromInterface: row.derivedFromInterface,
+        functionalRow: compactFunctionalRowForPrompt(sourceRow, index, 220),
+      })),
+    };
+
+    try {
+      const raw = await callAssuranceModel(payload, {
+        systemPrompt,
+        errorLabel: "Software requirements rewrite",
+        retryDelays: ASSURANCE_TRANSIENT_RETRY_DELAYS_MS,
+        markTransientUnavailable: false,
+        respectUnavailable: false,
+      });
+      const parsed = extractJson(raw);
+      const repairedRows = Array.isArray(parsed.requirements) ? parsed.requirements : [];
+      batch.forEach(({ row, index, sourceRow }, batchIndex) => {
+        const repaired = normalizeSoftwareRow({
+          ...row,
+          ...repairedRows[batchIndex],
+          id: row.id,
+          sourceTraceId: row.sourceTraceId,
+          linkedSourceCode: row.linkedSourceCode,
+        }, index, cbaRows);
+        repairedByIndex.set(index, looksLikeCodeEchoSoftwareRequirement(repaired, sourceRow) ? cleanCodeEchoSoftwareRequirement(row) : repaired);
+      });
+    } catch (error) {
+      console.warn(`[xHandle AI] Software requirements rewrite rows ${start + 1}-${start + batch.length}/${repairItems.length} failed; keeping original AI rows.`, error);
+      batch.forEach(({ row, index }) => repairedByIndex.set(index, cleanCodeEchoSoftwareRequirement(row)));
+    }
+
+    onProgress?.({
+      phase: "Software requirements rewrite",
+      completed: Math.min(repairItems.length, start + batch.length),
+      total: repairItems.length,
+      message: `Software requirement rewrite: rows ${start + 1}-${start + batch.length} of ${repairItems.length}`,
+    });
+  }
+
+  return rows.map((row, index) => repairedByIndex.get(index) || row);
 }
 
 function generatedIdFor(prefix, rawId, index) {
@@ -2080,7 +2257,7 @@ export async function deriveFunctionalSoftwareRequirements({ cbaRows = [], proje
   if (!Array.isArray(cbaRows) || !cbaRows.length) {
     return [];
   }
-  const systemPrompt = "You are a senior software requirements engineer. Derive one reviewable software requirement for each provided code-based functional decomposition row. Do not invent unsupported capabilities, source files, hazards, tests, or evidence. Return only valid JSON matching the requested schema.";
+  const systemPrompt = "You are a senior software requirements engineer. Derive externally reviewable, black-box software requirements from code-based functional decomposition rows. Translate implementation names into domain behavior. Return only valid JSON matching the requested schema.";
   const basePayload = {
     task: "derive_software_requirements_from_functional_decomposition_batch",
     projectName,
@@ -2088,6 +2265,10 @@ export async function deriveFunctionalSoftwareRequirements({ cbaRows = [], proje
     instructions: [
       "Create one concise, testable software requirement for each provided functional decomposition row unless a row is clearly non-behavioral.",
       "Use 'The software shall ...' language.",
+      "Describe the observable behavior, data obligation, interface contract, or validation outcome implied by the row.",
+      "Do not restate implementation mechanics such as calling a function, returning a value, initializing a method, setting a private field, or invoking a class.",
+      "Do not mention function names, method names, class names, private symbols, file paths, or phrases like when the function is called in requirementText.",
+      "Use code symbols only in traceability fields such as derivedFromFunction, derivedFromInterface, and linkedSourceCode.",
       "Preserve traceability by setting sourceTraceId to the input traceId when available, otherwise rowRef.",
       "Do not mark anything approved.",
       "Return requirements in the same order as the input rows.",
@@ -2159,10 +2340,14 @@ export async function deriveFunctionalSoftwareRequirements({ cbaRows = [], proje
     });
   }
 
-  return ensureUniqueGeneratedIds(
-    softwareRows.filter((row) => row.requirementText),
-    "SWR"
-  );
+  const repairedRows = await repairCodeEchoSoftwareRequirements({
+    rows: softwareRows.filter((row) => row.requirementText),
+    cbaRows,
+    projectName,
+    repoName,
+    onProgress,
+  });
+  return ensureUniqueGeneratedIds(repairedRows, "SWR");
 }
 
 export function importHazardSoftwareRequirements({ hazardAnalysis = null } = {}) {

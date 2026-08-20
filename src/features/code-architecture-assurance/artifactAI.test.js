@@ -158,6 +158,166 @@ describe("code architecture assurance artifact AI helpers", () => {
     expect(new Set(rows.map((row) => row.internalId)).size).toBe(rows.length);
   });
 
+  it("rewrites code-echoed software requirements into reviewable behavior requirements", async () => {
+    global.fetch = jest.fn().mockImplementation((url, options = {}) => {
+      const body = JSON.parse(options.body || "{}");
+      const payload = JSON.parse(body.messages?.[1]?.content || "{}");
+      if (payload.task === "rewrite_code_echo_software_requirements") {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ answer: JSON.stringify({ requirements: [{
+            id: "SWR-001",
+            requirementText: "The software shall prepare validated vision-language model backbone capabilities before trajectory planning uses model outputs.",
+            requirementType: "Functional",
+            priority: "High",
+            rationale: "The architecture row shows model setup behavior that must support downstream trajectory planning.",
+            sourceTraceId: "FD-1",
+          }] }) }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ answer: JSON.stringify({ requirements: [{
+          id: "SWR-001",
+          requirementText: "The software shall initialize the VLM backbone when the _initialize_vlm_backbone function is called.",
+          derivedFromFunction: "_initialize_vlm_backbone",
+          derivedFromInterface: "Initialize VLM backbone",
+          requirementType: "Functional",
+          priority: "High",
+          rationale: "The function initializes the VLM backbone.",
+          sourceTraceId: "FD-1",
+        }] }) }),
+      });
+    });
+
+    const rows = await deriveSoftwareRequirements({
+      cbaRows: [{
+        rowRef: "1",
+        traceId: "FD-1",
+        from: "_initialize_vlm_backbone",
+        action: "Initialize VLM backbone",
+        to: "sample_trajectories_from_data_with_vlm_rollout",
+        fromFile: "src/alpamayo1_5/model.py",
+      }],
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].requirementText).toBe("The software shall prepare validated vision-language model backbone capabilities before trajectory planning uses model outputs.");
+    expect(rows[0].requirementText).not.toMatch(/function|called|_initialize_vlm_backbone/);
+    expect(rows[0].derivedFromFunction).toBe("_initialize_vlm_backbone");
+  });
+
+  it("locally cleans code-echoed software requirements when the rewrite pass fails", async () => {
+    global.fetch = jest.fn().mockImplementation((url, options = {}) => {
+      const body = JSON.parse(options.body || "{}");
+      const payload = JSON.parse(body.messages?.[1]?.content || "{}");
+      if (payload.task === "rewrite_code_echo_software_requirements") {
+        return Promise.resolve({
+          ok: false,
+          status: 400,
+          text: () => Promise.resolve("bad rewrite payload"),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ answer: JSON.stringify({ requirements: [{
+          id: "SWR-001",
+          requirementText: "The software shall return a constructed list of image content for message creation.",
+          derivedFromFunction: "_build_image_content",
+          derivedFromInterface: "Image Content Construction for Message",
+          sourceTraceId: "FD-1",
+        }] }) }),
+      });
+    });
+
+    const rows = await deriveSoftwareRequirements({
+      cbaRows: [{
+        rowRef: "1",
+        traceId: "FD-1",
+        from: "_build_image_content",
+        action: "Image Content Construction for Message",
+        to: "create_message",
+      }],
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].requirementText).toBe("The software shall make a constructed list of image content for message creation available.");
+  });
+
+  it("locally cleans instance-oriented software requirements when the rewrite pass fails", async () => {
+    global.fetch = jest.fn().mockImplementation((url, options = {}) => {
+      const body = JSON.parse(options.body || "{}");
+      const payload = JSON.parse(body.messages?.[1]?.content || "{}");
+      if (payload.task === "rewrite_code_echo_software_requirements") {
+        return Promise.resolve({
+          ok: false,
+          status: 400,
+          text: () => Promise.resolve("bad rewrite payload"),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ answer: JSON.stringify({ requirements: [{
+          id: "SWR-001",
+          requirementText: "The software shall create an instance of the MLPEncoder that is capable of processing input data.",
+          derivedFromFunction: "__init__",
+          derivedFromInterface: "Create MLPEncoder instance",
+          sourceTraceId: "FD-1",
+        }] }) }),
+      });
+    });
+
+    const rows = await deriveSoftwareRequirements({
+      cbaRows: [{
+        rowRef: "1",
+        traceId: "FD-1",
+        from: "__init__",
+        action: "Create MLPEncoder instance",
+        to: "MLPEncoder",
+      }],
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].requirementText).toBe("The software shall provide MLP Encoder capability for processing input data.");
+  });
+
+  it("locally cleans processor-instance software requirements when the rewrite pass fails", async () => {
+    global.fetch = jest.fn().mockImplementation((url, options = {}) => {
+      const body = JSON.parse(options.body || "{}");
+      const payload = JSON.parse(body.messages?.[1]?.content || "{}");
+      if (payload.task === "rewrite_code_echo_software_requirements") {
+        return Promise.resolve({
+          ok: false,
+          status: 400,
+          text: () => Promise.resolve("bad rewrite payload"),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ answer: JSON.stringify({ requirements: [{
+          id: "SWR-001",
+          requirementText: "The software shall provide an instance of the processor for message creation.",
+          derivedFromFunction: "get_processor",
+          derivedFromInterface: "Return processor instance",
+          sourceTraceId: "FD-1",
+        }] }) }),
+      });
+    });
+
+    const rows = await deriveSoftwareRequirements({
+      cbaRows: [{
+        rowRef: "1",
+        traceId: "FD-1",
+        from: "get_processor",
+        action: "Return processor instance",
+        to: "create_message",
+      }],
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].requirementText).toBe("The software shall provide processor capability for message creation.");
+  });
+
   it("imports hazard software requirements from summary rows without AI", () => {
     const rows = importHazardSoftwareRequirements({
       hazardAnalysis: {
@@ -197,6 +357,38 @@ describe("code architecture assurance artifact AI helpers", () => {
     expect(rows[0].requirementText).toMatch(/^The software shall prevent loss of control/);
     expect(rows[0].safetySignificant).toBe("Yes");
     expect(rows[0].safetySignificanceRationale).toBe("Credible safety consequence");
+  });
+
+  it("cleans code-symbol hazard requirement text during import", () => {
+    const rows = importHazardSoftwareRequirements({
+      hazardAnalysis: {
+        generatedSheets: {
+          Summary: [
+            ["Safety Requirements/Constraints", "Hazards", "Trace ID"],
+            ["The software shall the function rot_2d_to_3d must only return a 3D rotation matrix when explicitly required by torch.cat.", "Invalid rotation", "FD-1"],
+          ],
+        },
+      },
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].requirementText).toBe("The software shall only make a 3D rotation matrix available when explicitly required by cat.");
+  });
+
+  it("cleans before-calling phrasing from hazard requirement text during import", () => {
+    const rows = importHazardSoftwareRequirements({
+      hazardAnalysis: {
+        generatedSheets: {
+          Summary: [
+            ["Safety Requirements/Constraints", "Hazards", "Trace ID"],
+            ["The software shall ensure that compare_nav_conditions provides up-to-date and accurate data before calling model.sample_trajectories_from_data_with_vlm_rollout.", "Stale navigation context", "FD-1"],
+          ],
+        },
+      },
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].requirementText).toBe("The software shall ensure that compare nav conditions provides up-to-date and accurate data before using sample trajectories from data with vision-language model rollout.");
   });
 
   it("derives stronger safety artifacts instead of raw code-symbol requirements", async () => {
