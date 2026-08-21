@@ -1,7 +1,9 @@
 import { runLiteAIAnalysis } from "../../components/aiAnalysisLite";
 import { saveCodeArchitectureHazardRun } from "./codeArchitectureHazardStore";
+import { enrichHazardTableRowsWithSourceContent } from "./codeArchitectureHazardSourceAudit";
 import {
   buildCodeArchitectureHazardInput,
+  ensureHazardSummaryEvidenceColumns,
   ensureHazardSummaryTraceColumns,
   makeCodeArchitectureHazardId,
   normalizeCodeArchitectureHazardRun,
@@ -27,6 +29,8 @@ export async function runCodeArchitectureHazardAnalysis({
   if (!input.tableRows.length) {
     throw new Error("No non-Markdown architecture rows are available for hazard analysis.");
   }
+  onActivityUpdate({ step: 0, message: "Preparing code architecture hazard analysis..." });
+  const sourceAuditedTableRows = await enrichHazardTableRowsWithSourceContent(input.tableRows, repoMeta);
 
   const id = makeCodeArchitectureHazardId("cba-hazard-run");
   const sourceRunId = id;
@@ -67,12 +71,15 @@ export async function runCodeArchitectureHazardAnalysis({
     const prev = { [currentFolder]: currentGeneratedSheets };
     const nextFolders = typeof updater === "function" ? await updater(prev) : prev;
     currentGeneratedSheets = nextFolders?.[currentFolder] || currentGeneratedSheets;
-    const tracedSheets = ensureHazardSummaryTraceColumns(currentGeneratedSheets, input.tableRows);
-    onPartialRunUpdate(buildRun(tracedSheets));
+    const reviewedSheets = ensureHazardSummaryEvidenceColumns(
+      ensureHazardSummaryTraceColumns(currentGeneratedSheets, sourceAuditedTableRows),
+      sourceAuditedTableRows
+    );
+    onPartialRunUpdate(buildRun(reviewedSheets));
     return nextFolders;
   };
 
-  onActivityUpdate({ step: 0, message: "Preparing code architecture hazard analysis..." });
+  onActivityUpdate({ step: 1, message: "Generating code architecture hazard analysis..." });
   const generatedSheetsRaw = await runLiteAIAnalysis({
     tableRows: input.tableRows,
     sheets: input.sheets,
@@ -88,7 +95,10 @@ export async function runCodeArchitectureHazardAnalysis({
     analysisContext: input.analysisContext,
     contextSources: input.contextSources,
   });
-  const generatedSheets = ensureHazardSummaryTraceColumns(generatedSheetsRaw, input.tableRows);
+  const generatedSheets = ensureHazardSummaryEvidenceColumns(
+    ensureHazardSummaryTraceColumns(generatedSheetsRaw, sourceAuditedTableRows),
+    sourceAuditedTableRows
+  );
 
   const run = normalizeCodeArchitectureHazardRun({
     id,

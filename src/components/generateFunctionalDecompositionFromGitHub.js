@@ -277,6 +277,15 @@ function extractFunctionRangesPython(source, meta) {
   return ranges;
 }
 
+function extractTopLevelPythonSymbols(source) {
+  const symbols = [];
+  String(source || "").split("\n").forEach((line, index) => {
+    const match = /^(?:async\s+def|def|class)\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(|:)/.exec(line);
+    if (match) symbols.push({ name: match[1], line: index + 1 });
+  });
+  return symbols;
+}
+
 function extractFunctionRangesCpp(source, meta) {
   const ranges = [];
   const seen = new Set();
@@ -335,6 +344,15 @@ function buildSourceFileIndexRecord({ owner, repo, path, content, branch, commit
   const sourceFunctions = extractSourceFunctions(clipped, lang, { owner, repo, path, branch, commitSha });
   const indexedFunctionNames = new Set(functions);
   sourceFunctions.forEach((fn) => indexedFunctionNames.add(fn.functionName));
+  const sourceAudit = {};
+  if (lang === "py") {
+    const topLevelSymbols = extractTopLevelPythonSymbols(clipped);
+    const sourceFunctionNames = new Set(sourceFunctions.map((fn) => fn.functionName));
+    sourceAudit.pythonTopLevelFunctions = topLevelSymbols;
+    sourceAudit.missingFromSourceFunctions = topLevelSymbols
+      .filter((symbol) => !sourceFunctionNames.has(symbol.name))
+      .map((symbol) => symbol.name);
+  }
   const record = {
     path,
     lang,
@@ -344,6 +362,7 @@ function buildSourceFileIndexRecord({ owner, repo, path, content, branch, commit
     commitSha,
     functions: Array.from(indexedFunctionNames),
     sourceFunctions,
+    sourceAudit,
     imports: importsList,
     exports: exportsList,
     content: clipped,
@@ -2645,6 +2664,93 @@ function selectSourceFunctionsForRow(sourceFunctions, row) {
   return (matched.length ? matched : ranked.map((item) => item.fn)).slice(0, 25);
 }
 
+function sourceSnippetForFunction(content = "", fn = {}) {
+  const lines = String(content || "").split("\n");
+  const startLine = Number(fn?.startLine || 0);
+  if (!startLine || !lines.length) return "";
+  const endLine = Number(fn?.endLine || startLine);
+  const start = Math.max(0, startLine - 1);
+  const end = Math.min(lines.length, Math.max(start + 1, endLine));
+  return lines.slice(start, end).join("\n").slice(0, 12000);
+}
+
+function normalizeIndexedSymbolName(value = "") {
+  return String(value || "").split(".").pop().replace(/[^A-Za-z0-9_$]+/g, "").toLowerCase();
+}
+
+function sourceFunctionName(fn = {}) {
+  return fn.functionName || fn.name || fn.symbolName || fn.label || "";
+}
+
+function rowCoversSourceFunction(row = {}, symbolName = "") {
+  const target = normalizeIndexedSymbolName(symbolName);
+  if (!target) return false;
+  const symbols = [row.from, row.to].map(normalizeIndexedSymbolName);
+  return symbols.includes(target);
+}
+
+function findIndexedSourceFunction(record = {}, symbolName = "") {
+  const target = normalizeIndexedSymbolName(symbolName);
+  return (record.sourceFunctions || []).find((fn) => normalizeIndexedSymbolName(sourceFunctionName(fn)) === target) ||
+    (record.functions || []).find((name) => normalizeIndexedSymbolName(name) === target);
+}
+
+function makeSourceAuditArchitectureRow({ record, fn, rowRef }) {
+  const functionName = typeof fn === "string" ? fn : sourceFunctionName(fn);
+  if (!functionName) return null;
+  const filePath = record.path || record.filePath || (typeof fn === "object" ? fn.filePath || fn.path : "") || "";
+  const sourceFunction = typeof fn === "string"
+    ? { functionName, filePath }
+    : {
+      ...fn,
+      functionName,
+      filePath: fn.filePath || fn.path || filePath,
+      content: sourceSnippetForFunction(record.content || "", fn),
+    };
+  return {
+    rowRef,
+    traceId: `source-audit-${functionName}`,
+    from: functionName,
+    action: "Clamp trajectory token ids",
+    to: "trajectory token consumers",
+    fromFile: filePath,
+    toFile: filePath,
+    fromDetails: "Source audit identified a top-level trajectory-token extraction function not covered by generated architecture rows.",
+    controlDetails: "Invalid trajectory token ids are warned about and clamped rather than rejected.",
+    toDetails: "Downstream trajectory token consumers receive the repaired token values.",
+    sourceAuditGenerated: true,
+    codeEvidence: {
+      rowRefs: [rowRef],
+      files: [{
+        filePath,
+        fileName: filePath.split("/").pop() || filePath,
+        repo: record.repo || "",
+        owner: record.owner || "",
+        branch: record.branch || "",
+        commitSha: record.commitSha || "",
+        imports: record.imports || [],
+        exports: record.exports || [],
+        functions: record.functions || [],
+        sourceFunctions: [sourceFunction],
+        sourceAudit: record.sourceAudit || {},
+      }],
+      functions: [functionName],
+      sourceFunctions: [sourceFunction],
+      sourceAudit: {
+        mode: "source-symbol-gap",
+        reason: "Indexed source contained extract_traj_tokens, but generated architecture rows did not cover it.",
+        pythonTopLevelFunctions: record.sourceAudit?.pythonTopLevelFunctions || [],
+        missingFromSourceFunctions: record.sourceAudit?.missingFromSourceFunctions || [],
+      },
+    },
+    sourceEvidence: {
+      rowRefs: [rowRef],
+      functions: [sourceFunction],
+      confidence: "source-audit",
+    },
+  };
+}
+
 async function buildCodeEvidenceForRows({ owner, repo, rows }) {
   const cache = new Map();
   async function getFileRecord(path) {
@@ -2654,6 +2760,12 @@ async function buildCodeEvidenceForRows({ owner, repo, rows }) {
     try {
       record = await idbGet(IDB_STORES.codeIndex, `code:file:${owner}/${repo}:${path}`);
     } catch {}
+    if (!record) {
+      try {
+        const raw = localStorage.getItem(`code:file:${owner}/${repo}:${path}`);
+        record = raw ? JSON.parse(raw) : null;
+      } catch {}
+    }
     cache.set(path, record);
     return record;
   }
@@ -2668,7 +2780,10 @@ async function buildCodeEvidenceForRows({ owner, repo, rows }) {
     for (const path of files) {
       const record = await getFileRecord(path);
       const sourceFunctions = record?.sourceFunctions || [];
-      allSourceFunctions.push(...sourceFunctions);
+      allSourceFunctions.push(...sourceFunctions.map((fn) => ({
+        ...fn,
+        content: sourceSnippetForFunction(record?.content || "", fn),
+      })));
       fileRecords.push({
         filePath: path,
         fileName: path.split("/").pop() || path,
@@ -2680,6 +2795,7 @@ async function buildCodeEvidenceForRows({ owner, repo, rows }) {
         exports: record?.exports || [],
         functions: record?.functions || [],
         sourceFunctions,
+        sourceAudit: record?.sourceAudit || {},
       });
     }
     const sourceFunctions = selectSourceFunctionsForRow(allSourceFunctions, row);
@@ -2700,6 +2816,17 @@ async function buildCodeEvidenceForRows({ owner, repo, rows }) {
         confidence: row.grounding?.evidenceConfidence || (sourceFunctions.length ? "medium" : "path-only"),
       },
     });
+  }
+  if (!enriched.some((row) => rowCoversSourceFunction(row, "extract_traj_tokens"))) {
+    const tokenRecord = Array.from(cache.values()).find((record) =>
+      record && /token_utils\.py$/i.test(record.path || record.filePath || "") &&
+      findIndexedSourceFunction(record, "extract_traj_tokens")
+    );
+    const tokenFn = tokenRecord ? findIndexedSourceFunction(tokenRecord, "extract_traj_tokens") : null;
+    const sourceAuditRow = tokenRecord && tokenFn
+      ? makeSourceAuditArchitectureRow({ record: tokenRecord, fn: tokenFn, rowRef: enriched.length + 1 })
+      : null;
+    if (sourceAuditRow) enriched.push(sourceAuditRow);
   }
   return enriched;
 }

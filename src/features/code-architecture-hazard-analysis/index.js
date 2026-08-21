@@ -19,6 +19,7 @@ export {
   buildCodeArchitectureHazardInput,
   codeArchitectureRowsToHazardTableRows,
   computeArchitectureSnapshotHash,
+  ensureHazardSummaryEvidenceColumns,
   ensureHazardSummaryTraceColumns,
   ensureCodeArchitectureTraceIds,
   isCodeArchitectureHazardAnalysisStale,
