@@ -1,5 +1,7 @@
 const {
+  buildCodeArchitectureHazardInput,
   ensureHazardSummaryEvidenceColumns,
+  extractFunctionalDecompositionTrace,
 } = require("./codeArchitectureHazardUtils");
 const {
   enrichHazardTableRowsWithSourceContent,
@@ -12,6 +14,31 @@ function rowObject(summary, rowIndex = 1) {
 }
 
 describe("code architecture hazard evidence review", () => {
+  it("aligns primitive call actions when building hazard input from architecture rows", () => {
+    const input = buildCodeArchitectureHazardInput({
+      cbaRows: [{
+        from: "replace_padding_after_eos",
+        action: "Call `torch.where`",
+        to: "torch.arange",
+        fromFile: "src/alpamayo1_5/models/token_utils.py",
+        toFile: "src/alpamayo1_5/models/token_utils.py",
+      }],
+      repoMeta: { repoName: "alpamayo1_5" },
+    });
+
+    expect(input.tableRows[0].controlAction).toBe("Call torch.arange");
+    expect(input.sheets["Functional Decomposition"][1][1]).toBe("Call torch.arange");
+  });
+
+  it("aligns primitive call actions when extracting traces from sheet rows", () => {
+    const trace = extractFunctionalDecompositionTrace(
+      ["Function (From)", "Control Action", "Function (To)"],
+      ["extract_traj_tokens", "Call `torch.cumsum`", "torch.clamp"],
+    );
+
+    expect(trace.controlAction).toBe("Call torch.clamp");
+  });
+
   it("loads per-row indexed source before classifying code relationship direction", async () => {
     const content = [
       "def dxy_theta_to_v(dxy):",
@@ -162,6 +189,7 @@ describe("code architecture hazard evidence review", () => {
 
     expect(row["Architecture Row Ref"]).toBe("source-audit-extract-traj-tokens");
     expect(row["Function (From)"]).toBe("extract_traj_tokens");
+    expect(row["Function (To)"]).toBe("torch.clamp");
     expect(row["Evidence Classification"]).toBe("Contradicted or mitigated by code");
     expect(row["Recommended Mitigation"]).toMatch(/trajectory token sequences/i);
   });
@@ -182,6 +210,7 @@ describe("code architecture hazard evidence review", () => {
 
     expect(row["Architecture Row Ref"]).toBe("source-audit-extract-traj-tokens");
     expect(row["Function (From)"]).toBe("extract_traj_tokens");
+    expect(row["Function (To)"]).toBe("torch.clamp");
     expect(row["Recommended Verification"]).toMatch(/token contract tests/i);
   });
 
@@ -208,6 +237,7 @@ describe("code architecture hazard evidence review", () => {
 
     expect(row["Architecture Row Ref"]).toBe("source-audit-extract-traj-tokens");
     expect(row["Function (From)"]).toBe("extract_traj_tokens");
+    expect(row["Function (To)"]).toBe("torch.clamp");
     expect(row["Code Evidence"]).toMatch(/Referenced code evidence/i);
   });
 
@@ -277,6 +307,7 @@ describe("code architecture hazard evidence review", () => {
     expect(rows.some((row) => row["Function (From)"] === "extract_traj_tokens")).toBe(true);
     expect(neighboringRow["Recommended Mitigation"]).not.toMatch(/trajectory token sequences/i);
     expect(sourceAuditRow["Architecture Row Ref"]).toBe("source-audit-extract-traj-tokens");
+    expect(sourceAuditRow["Function (To)"]).toBe("torch.clamp");
     expect(sourceAuditRow["Recommended Mitigation"]).toMatch(/trajectory token sequences/i);
   });
 
@@ -562,7 +593,7 @@ describe("code architecture hazard evidence review", () => {
     expect(row.Confidence).toBe("Medium");
   });
 
-  it("rewrites invalid token propagation when code evidence shows clamping", () => {
+  it("does not rewrite unrelated rows merely because nearby code evidence shows clamping", () => {
     const sheets = {
       Summary: [[
         "Architecture Row Ref",
@@ -595,9 +626,92 @@ describe("code architecture hazard evidence review", () => {
     const reviewed = ensureHazardSummaryEvidenceColumns(sheets, tableRows);
     const row = rowObject(reviewed.Summary);
 
+    expect(row["Evidence Classification"]).toBe("Generic/low confidence");
+    expect(row.Hazards).toMatch(/Needs review/i);
+    expect(row["Mitigation Evidence"]).not.toMatch(/Clamping mitigates raw invalid-token propagation/i);
+  });
+
+  it("does not propagate trajectory-token clamping hazards to neighboring non-clamp rows", () => {
+    const sheets = {
+      Summary: [[
+        "Architecture Row Ref",
+        "Function (From)",
+        "Control Action",
+        "Function (To)",
+        "Hazards",
+        "Safety Significant",
+      ], [
+        "58",
+        "DeltaTrajectoryTokenizer",
+        "Encode trajectories",
+        "einops.rearrange",
+        "Invalid trajectory token values are clamped into the accepted range, which may mask degraded model output unless the warning is surfaced through telemetry or converted into rejection logic.",
+        "Yes",
+      ]],
+    };
+    const tableRows = [{
+      rowRef: "58",
+      fromFunction: "DeltaTrajectoryTokenizer",
+      controlAction: "Encode trajectories",
+      toFunction: "einops.rearrange",
+      codeEvidence: {
+        files: [{
+          filePath: "src/alpamayo1_5/models/token_utils.py",
+          sourceFunctions: [{ functionName: "extract_traj_tokens", filePath: "src/alpamayo1_5/models/token_utils.py", startLine: 29 }],
+          content: "def extract_traj_tokens(values):\n    invalid_tokens = values < 0\n    return torch.clamp(values, min=0)",
+        }],
+      },
+    }];
+
+    const reviewed = ensureHazardSummaryEvidenceColumns(sheets, tableRows);
+    const row = rowObject(reviewed.Summary);
+
+    expect(row["Evidence Classification"]).toBe("Generic/low confidence");
+    expect(row["Safety Significant"]).toBe("Needs Review");
+    expect(row.Hazards).toMatch(/Needs review/i);
+    expect(row["Code Evidence"]).not.toMatch(/Token handling evidence includes clamping/i);
+    expect(row["Recommended Mitigation"]).not.toMatch(/trajectory token sequences/i);
+    expect(row.Assumptions).toMatch(/not the extract_traj_tokens -> torch.clamp endpoint/i);
+  });
+
+  it("keeps trajectory-token clamping mitigation only on extract_traj_tokens to torch.clamp", () => {
+    const sheets = {
+      Summary: [[
+        "Architecture Row Ref",
+        "Function (From)",
+        "Control Action",
+        "Function (To)",
+        "Hazards",
+      ], [
+        "63",
+        "extract_traj_tokens",
+        "Clamp trajectory token ids",
+        "torch.clamp",
+        "Invalid token values may be silently repaired.",
+      ]],
+    };
+    const tableRows = [{
+      rowRef: "63",
+      fromFunction: "extract_traj_tokens",
+      controlAction: "Clamp trajectory token ids",
+      toFunction: "torch.clamp",
+      codeEvidence: {
+        files: [{
+          filePath: "src/alpamayo1_5/models/token_utils.py",
+          sourceFunctions: [{ functionName: "extract_traj_tokens", filePath: "src/alpamayo1_5/models/token_utils.py", startLine: 1 }],
+          content: "def extract_traj_tokens(values):\n    invalid_tokens = values < 0\n    return torch.clamp(values, min=0)",
+        }],
+        sourceFunctions: [{ functionName: "extract_traj_tokens", filePath: "src/alpamayo1_5/models/token_utils.py", startLine: 1 }],
+      },
+    }];
+
+    const reviewed = ensureHazardSummaryEvidenceColumns(sheets, tableRows);
+    const row = rowObject(reviewed.Summary);
+
     expect(row["Evidence Classification"]).toBe("Contradicted or mitigated by code");
     expect(row.Hazards).toMatch(/clamped into the accepted range/i);
-    expect(row["Mitigation Evidence"]).toMatch(/Clamping mitigates raw invalid-token propagation/i);
+    expect(row["Code Evidence"]).toMatch(/Token handling evidence includes clamping/i);
+    expect(row["Recommended Mitigation"]).toMatch(/trajectory token sequences/i);
   });
 
   it("marks navigation freshness hazards as edge-unverified when source bodies are unavailable", () => {

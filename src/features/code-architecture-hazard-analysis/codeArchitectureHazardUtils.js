@@ -92,6 +92,22 @@ function normalizeText(value) {
   return String(value).trim();
 }
 
+const PRIMITIVE_CALL_TARGET_PREFIXES = ["torch.", "np.", "numpy.", "einops.", "scipy.", "math."];
+
+function normalizePrimitiveCallActionText(action = "", to = "") {
+  const actionText = normalizeText(action);
+  const toText = normalizeText(to);
+  if (!actionText || !toText) return actionText;
+  if (!PRIMITIVE_CALL_TARGET_PREFIXES.some((prefix) => toText.startsWith(prefix))) return actionText;
+  if (!/^call\b/i.test(actionText)) return actionText;
+  const quotedCall = /^call\s+`([^`]+)`$/i.exec(actionText);
+  const plainCall = /^call\s+([A-Za-z_][A-Za-z0-9_.]*)$/i.exec(actionText);
+  const namedTarget = quotedCall?.[1] || plainCall?.[1] || "";
+  if (!namedTarget) return actionText;
+  if (namedTarget === toText) return actionText;
+  return `Call ${toText}`;
+}
+
 export function isMarkdownSourcePath(value) {
   const normalized = normalizeText(value).replace(/\\/g, "/");
   if (!normalized) return false;
@@ -251,7 +267,7 @@ export function buildTraceabilityForArchitectureRow(row = {}, index = 0, repoMet
     architectureRowRef: rowRef,
     architectureElementId: architectureElementIdForRow(row, index),
     functionFrom: row?.from || "",
-    controlAction: row?.action || "",
+    controlAction: normalizePrimitiveCallActionText(row?.action || "", row?.to || ""),
     functionTo: row?.to || "",
     fromFile: row?.fromFile || "",
     toFile: row?.toFile || "",
@@ -304,7 +320,7 @@ export function extractFunctionalDecompositionTrace(headers = [], row = [], repo
     architectureRowRef: valueFor("Architecture Row Ref"),
     architectureElementId: valueFor("Architecture Element ID"),
     functionFrom: normalizeText(row[0]),
-    controlAction: normalizeText(row[1]),
+    controlAction: normalizePrimitiveCallActionText(row[1], row[2]),
     functionTo: normalizeText(row[2]),
     fromFile: valueFor("Function (From) Related File(s)"),
     toFile: valueFor("Function (To) Related File(s)"),
@@ -429,7 +445,7 @@ export function codeArchitectureRowsToHazardTableRows(cbaRows = [], repoMeta = {
       toNodeId: row.toNodeId || "",
       rowRef,
       fromFunction: row?.from || "",
-      controlAction: row?.action || "",
+      controlAction: normalizePrimitiveCallActionText(row?.action || "", row?.to || ""),
       toFunction: row?.to || "",
       fromDetails: row?.fromDetails || "",
       controlDetails: row?.controlActionDetails || row?.controlDetails || "",
@@ -920,13 +936,12 @@ function hasTokenClampEvidence(text = "") {
 }
 
 function hasTokenClampEndpointEvidence(sourceRow = {}, rowObject = {}) {
-  const endpoints = [
-    sourceRow.fromFunction || sourceRow.from || rowObject["Function (From)"],
-    sourceRow.toFunction || sourceRow.to || rowObject["Function (To)"],
-    sourceRow.rowRef || rowObject["Architecture Row Ref"],
-  ].map(normalizeCodeSymbol);
-  return endpoints.includes("extract_traj_tokens") ||
-    endpoints.includes("sourceauditextracttrajtokens");
+  const fromSymbol = normalizeCodeSymbol(sourceRow.fromFunction || sourceRow.from || rowObject["Function (From)"]);
+  const toSymbol = normalizeCodeSymbol(sourceRow.toFunction || sourceRow.to || rowObject["Function (To)"]);
+  const rowRef = normalizeCodeSymbol(sourceRow.rowRef || rowObject["Architecture Row Ref"]);
+  const isExtractTrajAudit = rowRef.includes("sourceauditextracttrajtokens");
+  return (fromSymbol === "extract_traj_tokens" || isExtractTrajAudit) &&
+    (toSymbol === "torchclamp" || toSymbol === "clamp" || isExtractTrajAudit);
 }
 
 function hasActionBoundsEvidence(text = "") {
@@ -1022,10 +1037,10 @@ function isGenericHazardText(hazardText = "") {
   return hasAny(text, genericTerms) && !hasAny(text, concreteTerms);
 }
 
-function rewriteHazardWithEvidence(hazardText = "", sourceRow = {}, evidenceText = "") {
+function rewriteHazardWithEvidence(hazardText = "", sourceRow = {}, evidenceText = "", options = {}) {
   const text = normalizeText(hazardText);
   const context = `${text} ${evidenceText}`;
-  if (hasAny(context, [/\btokens?\b/i, /\bindex\b/i, /\bindices\b/i]) && /\bclamp\b/i.test(evidenceText)) {
+  if (options.tokenClampEndpoint && hasAny(context, [/\btokens?\b/i, /\bindex\b/i, /\bindices\b/i]) && /\bclamp\b/i.test(evidenceText)) {
     return "Invalid trajectory token values are clamped into the accepted range, which may mask degraded model output unless the warning is surfaced through telemetry or converted into rejection logic.";
   }
   if (hasAny(context, [/\baction_to_traj\b/i, /\btrajectory\b/i, /\bcurvature\b/i, /\baccel(?:eration)?\b/i]) && /\bis_within_bounds\b/i.test(evidenceText)) {
@@ -1038,6 +1053,13 @@ function rewriteHazardWithEvidence(hazardText = "", sourceRow = {}, evidenceText
     return `${text} Evidence review found this row is better treated as a ${safetyConcernTypeForHazard(text, evidenceText).toLowerCase()} concern unless the architecture context shows a direct safety-control path.`;
   }
   return text;
+}
+
+function overAppliedTokenClampHazardText(rowObject = {}, sourceRow = {}) {
+  const from = normalizeText(rowObject["Function (From)"] || sourceRow.fromFunction || sourceRow.from || "the source function");
+  const action = normalizeText(rowObject["Control Action"] || sourceRow.controlAction || "the generated control action");
+  const to = normalizeText(rowObject["Function (To)"] || sourceRow.toFunction || sourceRow.to || "the target function");
+  return `Needs review: the ${from} -> ${to} row describes "${action}", but trajectory-token clamping evidence is only directly tied to the extract_traj_tokens -> torch.clamp endpoint.`;
 }
 
 function recommendedVerificationFor(type = "", evidenceText = "", options = {}) {
@@ -1096,10 +1118,15 @@ function evaluateHazardEvidence({ rowObject = {}, sourceRow = {} } = {}) {
   const combinedText = `${reviewText} ${evidenceText}`;
   const safeguards = detectSafeguards(evidenceText);
   const concernType = safetyConcernTypeForHazard(reviewText, evidenceText);
-  const rewrittenHazard = rewriteHazardWithEvidence(hazardText, sourceRow, evidenceText);
   const relationshipAudit = auditCodeRelationshipForRow(sourceRow);
   const usageAudit = repoWideUsageAuditForRow(sourceRow);
   const tokenClampEndpoint = hasTokenClampEndpointEvidence(sourceRow, rowObject);
+  const hasClampTheme = hasTokenClampEvidence(combinedText);
+  const overAppliedTokenClampTheme = hasClampTheme && !tokenClampEndpoint;
+  const rewrittenHazard = rewriteHazardWithEvidence(hazardText, sourceRow, evidenceText, { tokenClampEndpoint });
+  const reviewedHazard = overAppliedTokenClampTheme
+    ? overAppliedTokenClampHazardText(rowObject, sourceRow)
+    : rewrittenHazard;
 
   let evidenceClassification = "Plausible but not evidenced";
   let confidence = "Medium";
@@ -1119,6 +1146,12 @@ function evaluateHazardEvidence({ rowObject = {}, sourceRow = {} } = {}) {
     evidenceClassification = "Generic/low confidence";
     confidence = "Low";
     assumptions.push("Generated hazard wording is generic and does not establish a concrete safety-control path.");
+  }
+
+  if (overAppliedTokenClampTheme) {
+    evidenceClassification = "Generic/low confidence";
+    confidence = "Low";
+    assumptions.push("Trajectory-token clamping evidence was present in nearby source context but this row is not the extract_traj_tokens -> torch.clamp endpoint.");
   }
 
   if (safeguards.length) {
@@ -1153,7 +1186,8 @@ function evaluateHazardEvidence({ rowObject = {}, sourceRow = {} } = {}) {
 
   if (
     !["Contradicted by code relationship", "Code-supported independent finding"].includes(evidenceClassification) &&
-    hasTokenClampEvidence(combinedText)
+    tokenClampEndpoint &&
+    hasClampTheme
   ) {
     evidenceClassification = "Contradicted or mitigated by code";
     confidence = "Medium";
@@ -1201,7 +1235,7 @@ function evaluateHazardEvidence({ rowObject = {}, sourceRow = {} } = {}) {
   }
 
   return {
-    hazardText: rewrittenHazard || hazardText,
+    hazardText: reviewedHazard || hazardText,
     evidenceClassification,
     safetyConcernType: concernType,
     confidence,

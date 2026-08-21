@@ -2350,6 +2350,21 @@ function codeArchitectureCellValue(value) {
   return value;
 }
 
+const CODE_ARCHITECTURE_PRIMITIVE_TARGET_PREFIXES = ["torch.", "np.", "numpy.", "einops.", "scipy.", "math."];
+
+function normalizeCodeArchitecturePrimitiveCallAction(action = "", to = "") {
+  const actionText = String(action || "").trim();
+  const toText = String(to || "").trim();
+  if (!actionText || !toText) return actionText;
+  if (!CODE_ARCHITECTURE_PRIMITIVE_TARGET_PREFIXES.some((prefix) => toText.startsWith(prefix))) return actionText;
+  if (!/^call\b/i.test(actionText)) return actionText;
+  const quotedCall = /^call\s+`([^`]+)`$/i.exec(actionText);
+  const plainCall = /^call\s+([A-Za-z_][A-Za-z0-9_.]*)$/i.exec(actionText);
+  const namedTarget = quotedCall?.[1] || plainCall?.[1] || "";
+  if (!namedTarget || namedTarget === toText) return actionText;
+  return `Call ${toText}`;
+}
+
 function rowsForCodeArchitectureColumns(rows = [], columns = []) {
   return rows.map((row) => {
     const out = {};
@@ -2364,11 +2379,14 @@ function rowsForCodeArchitectureColumns(rows = [], columns = []) {
 
 function functionalRowsForWorkbook(rows = []) {
   return rows.map((row, index) => ({
-    "Row": row.traceId || row.rowRef || index + 1,
+    "Row": row.rowRef || index + 1,
     "Function (From)": row.from || row.fromFunction || "",
     "Function (From) File(s)": row.fromFile || "",
     "Function (From) Details": row.fromDetails || row.fromFunctionDetails || "",
-    "Control Action": row.action || row.controlAction || "",
+    "Control Action": normalizeCodeArchitecturePrimitiveCallAction(
+      row.action || row.controlAction || "",
+      row.to || row.toFunction || "",
+    ),
     "Control Action Details": row.controlActionDetails || row.controlDetails || "",
     "Function (To)": row.to || row.toFunction || "",
     "Function (To) File(s)": row.toFile || "",

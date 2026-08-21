@@ -314,7 +314,7 @@ function extractSourceFunctions(source, lang, meta) {
   return [];
 }
 
-function buildSourceFileIndexRecord({ owner, repo, path, content, branch, commitSha }) {
+export function buildSourceFileIndexRecord({ owner, repo, path, content, branch, commitSha }) {
   const MAX_BYTES = 80000; // keep per-file small
   const lang = detectLangFromPath(path);
   const clipped = (content || "").slice(0, MAX_BYTES);
@@ -442,7 +442,7 @@ const MAX_FUNCTIONAL_ANALYSIS_CHUNKS_PER_FILE = 8;
 const MAX_AI_ARCHITECTURE_ALLOCATION_ROWS = 300;
 const MAX_FUNCTIONAL_SOURCE_FILE_BYTES = 350000;
 const FUNCTIONAL_DECOMPOSITION_CHECKPOINT_PREFIX = "functional-decomposition-checkpoint:";
-const FUNCTIONAL_GROUNDING_VERSION = 5;
+const FUNCTIONAL_GROUNDING_VERSION = 6;
 const FUNCTIONAL_ANALYSIS_VENDOR_PATH_RE = /(^|\/)(venv|site-packages|node_modules|\.git|\.next|dist|build|target|__pycache__|coverage|thirdparty|third_party|3rdparty|vendor|external|extern|submodules|sdkclient[^/]*|[^/]*sdk|sdk[^/]*|sdk_client|sdk-client|dependencies|deps)(\/|$)/i;
 
 function isVendorFunctionalAnalysisPath(path = "") {
@@ -1081,20 +1081,346 @@ function functionLabelMatchesSource(label, sourceFunctions = [], imports = []) {
   const normalizedLabel = normalizeFunctionLabelForEvidence(label);
   if (!normalizedLabel || PLACEHOLDER_ENDPOINT_VALUES.has(normalizedLabel)) return false;
   const compactLabel = normalizedLabel.replace(/\s+/g, "");
-  const names = [
-    ...(sourceFunctions || []).map((fn) => fn?.functionName),
-    ...(imports || []),
-  ].filter(Boolean);
-  return names.some((name) => {
+  const rawLabel = String(label || "");
+  const qualifiedLabel = rawLabel.includes(".");
+  const sourceNames = (sourceFunctions || []).map((fn) => fn?.functionName).filter(Boolean);
+  const importNames = (imports || []).filter(Boolean);
+  const sourceMatch = sourceNames.some((name) => {
     const normalizedName = normalizeFunctionLabelForEvidence(name);
     const compactName = normalizedName.replace(/\s+/g, "");
     return normalizedName === normalizedLabel ||
       compactName === compactLabel ||
-      (normalizedName.length >= 3 && normalizedLabel.includes(normalizedName)) ||
-      (compactName.length >= 3 && compactLabel.includes(compactName)) ||
-      (normalizedLabel.length >= 4 && normalizedName.includes(normalizedLabel)) ||
-      (compactLabel.length >= 4 && compactName.includes(compactLabel));
+      (qualifiedLabel && normalizedName.length >= 3 && normalizedLabel.includes(normalizedName)) ||
+      (qualifiedLabel && compactName.length >= 3 && compactLabel.includes(compactName));
   });
+  if (sourceMatch) return true;
+  return importNames.some((name) => {
+    const normalizedName = normalizeFunctionLabelForEvidence(name);
+    const compactName = normalizedName.replace(/\s+/g, "");
+    return normalizedName === normalizedLabel ||
+      compactName === compactLabel ||
+      (qualifiedLabel && normalizedName.length >= 2 && normalizedLabel.startsWith(normalizedName)) ||
+      (qualifiedLabel && compactName.length >= 2 && compactLabel.startsWith(compactName));
+  });
+}
+
+function normalizeSourceSymbol(value) {
+  return String(value || "")
+    .split(".")
+    .pop()
+    .replace(/[^A-Za-z0-9_$]+/g, "")
+    .toLowerCase();
+}
+
+function sourceFunctionBody(content = "", fn = {}) {
+  const lines = String(content || "").split("\n");
+  const startLine = Number(fn?.startLine || 0);
+  if (!startLine || !lines.length) return "";
+  const endLine = Number(fn?.endLine || startLine);
+  const start = Math.max(0, startLine - 1);
+  const end = Math.min(lines.length, Math.max(start + 1, endLine));
+  return lines.slice(start, end).join("\n");
+}
+
+function pythonRangeLooksClass(content = "", fn = {}) {
+  return /^\s*class\s+/m.test(String(sourceFunctionBody(content, fn) || "").split("\n")[0] || "");
+}
+
+function pythonSourceFunctionsMatching(sourceFunctions = [], label = "") {
+  const target = normalizeSourceSymbol(label);
+  if (!target) return [];
+  return (sourceFunctions || []).filter((fn) =>
+    normalizeSourceSymbol(fn?.functionName || fn?.name || fn?.symbolName) === target
+  );
+}
+
+function pythonMethodsInsideClass(sourceFunctions = [], classFn = {}, methodName = "") {
+  const target = normalizeSourceSymbol(methodName);
+  if (!target) return [];
+  const startLine = Number(classFn?.startLine || 0);
+  const endLine = Number(classFn?.endLine || startLine);
+  return (sourceFunctions || []).filter((fn) =>
+    normalizeSourceSymbol(fn?.functionName || fn?.name || fn?.symbolName) === target &&
+    Number(fn?.startLine || 0) > startLine &&
+    Number(fn?.endLine || fn?.startLine || 0) <= endLine
+  );
+}
+
+function pythonBodyCallsSymbol(body = "", symbol = "") {
+  const target = normalizeSourceSymbol(symbol);
+  if (!body || !target) return false;
+  const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const callPattern = new RegExp(`(?:^|[^A-Za-z0-9_$])(?:self\\.|cls\\.|[A-Za-z_][A-Za-z0-9_]*\\.)?${escaped}\\s*\\(`, "i");
+  return callPattern.test(
+    String(body || "")
+      .split("\n")
+      .filter((line) => !/^\s*(?:async\s+def|def|class)\s+/.test(line))
+      .join("\n")
+  );
+}
+
+function pythonFunctionLooksAbstract(body = "") {
+  const text = String(body || "").toLowerCase();
+  return /@abstractmethod\b/.test(text) ||
+    /\braise\s+notimplementederror\b/.test(text) ||
+    /(^|\n)\s*(pass|\.{3})\s*(#.*)?($|\n)/.test(text);
+}
+
+function pythonClassExtendsSymbol(body = "", className = "", baseName = "") {
+  const child = String(className || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const parent = normalizeSourceSymbol(baseName);
+  if (!body || !child || !parent) return false;
+  const header = String(body || "").split("\n")[0] || "";
+  const match = new RegExp(`^\\s*class\\s+${child}\\s*\\(([^)]*)\\)\\s*:`, "i").exec(header);
+  if (!match) return false;
+  return match[1].split(",").some((item) => normalizeSourceSymbol(item) === parent);
+}
+
+function pythonClassBodyDefinesMethod(body = "", methodName = "") {
+  const target = normalizeSourceSymbol(methodName);
+  if (!body || !target) return false;
+  const methodPattern = /^\s+(?:async\s+def|def)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/gm;
+  let match;
+  while ((match = methodPattern.exec(String(body || "")))) {
+    if (normalizeSourceSymbol(match[1]) === target) return true;
+  }
+  return false;
+}
+
+function verifySameFilePythonRelationship(row = {}, currentFileRecord = {}) {
+  if (currentFileRecord?.lang !== "py") return { applicable: false };
+  if (!currentFileRecord?.content) return { applicable: false };
+  const sourceFunctions = currentFileRecord.sourceFunctions || [];
+  if (!sourceFunctions.length) return { applicable: false };
+  const fromMatches = pythonSourceFunctionsMatching(sourceFunctions, row.from);
+  const toMatches = pythonSourceFunctionsMatching(sourceFunctions, row.to);
+  if (!fromMatches.length || !toMatches.length) return { applicable: false };
+  const fromClassMatches = fromMatches.filter((fn) => pythonRangeLooksClass(currentFileRecord.content, fn));
+
+  const structuralMember = fromMatches.find((fromFn) =>
+    toMatches.some((toFn) =>
+      normalizeSourceSymbol(fromFn.functionName) !== normalizeSourceSymbol(toFn.functionName) &&
+      pythonClassBodyDefinesMethod(sourceFunctionBody(currentFileRecord.content, fromFn), toFn.functionName)
+    )
+  );
+  if (structuralMember) {
+    return {
+      applicable: true,
+      verified: true,
+      relationshipType: "structural_member",
+      evidence: `${row.from} defines ${row.to} in ${currentFileRecord.path || "current Python file"}.`,
+    };
+  }
+
+  if (fromClassMatches.length) {
+    const constructorCall = fromClassMatches.find((classFn) =>
+      pythonMethodsInsideClass(sourceFunctions, classFn, "__init__").some((initFn) =>
+        pythonBodyCallsSymbol(sourceFunctionBody(currentFileRecord.content, initFn), row.to)
+      )
+    );
+    if (constructorCall) {
+      return {
+        applicable: true,
+        verified: true,
+        relationshipType: "constructor_body_call",
+        evidence: `${row.from}.__init__ calls ${row.to} in ${currentFileRecord.path || "current Python file"}.`,
+      };
+    }
+
+    const inheritance = fromClassMatches.find((fromFn) =>
+      toMatches.some((toFn) => pythonClassExtendsSymbol(
+        sourceFunctionBody(currentFileRecord.content, fromFn),
+        fromFn.functionName,
+        toFn.functionName
+      ))
+    );
+    if (inheritance) {
+      return {
+        applicable: true,
+        verified: true,
+        relationshipType: "inheritance",
+        evidence: `${row.from} inherits from ${row.to} in ${currentFileRecord.path || "current Python file"}.`,
+      };
+    }
+
+    const reversedInheritance = toMatches.find((toFn) =>
+      fromClassMatches.some((fromFn) => pythonClassExtendsSymbol(
+        sourceFunctionBody(currentFileRecord.content, toFn),
+        toFn.functionName,
+        fromFn.functionName
+      ))
+    );
+    if (reversedInheritance) {
+      return {
+        applicable: true,
+        verified: false,
+        reason: "reversed_same_file_python_inheritance",
+        evidence: `${row.to} inherits from ${row.from}; the generated inheritance direction is reversed.`,
+      };
+    }
+
+    return {
+      applicable: true,
+      verified: false,
+      reason: "unverified_class_level_python_relationship",
+      evidence: `${row.from} is a class; no structural membership, inheritance, or constructor-body call to ${row.to} was found.`,
+    };
+  }
+
+  const direct = fromMatches.find((fn) => pythonBodyCallsSymbol(sourceFunctionBody(currentFileRecord.content, fn), row.to));
+  if (direct) {
+    return {
+      applicable: true,
+      verified: true,
+      relationshipType: "direct_call",
+      evidence: `${row.from} calls ${row.to} in ${direct.filePath || currentFileRecord.path || "current Python file"}.`,
+    };
+  }
+
+  const inheritance = fromMatches.find((fromFn) =>
+    toMatches.some((toFn) => pythonClassExtendsSymbol(
+      sourceFunctionBody(currentFileRecord.content, fromFn),
+      fromFn.functionName,
+      toFn.functionName
+    ))
+  );
+  if (inheritance) {
+    return {
+      applicable: true,
+      verified: true,
+      relationshipType: "inheritance",
+      evidence: `${row.from} inherits from ${row.to} in ${currentFileRecord.path || "current Python file"}.`,
+    };
+  }
+
+  const reversedInheritance = toMatches.find((toFn) =>
+    fromMatches.some((fromFn) => pythonClassExtendsSymbol(
+      sourceFunctionBody(currentFileRecord.content, toFn),
+      toFn.functionName,
+      fromFn.functionName
+    ))
+  );
+  if (reversedInheritance) {
+    return {
+      applicable: true,
+      verified: false,
+      reason: "reversed_same_file_python_inheritance",
+      evidence: `${row.to} inherits from ${row.from}; the generated inheritance direction is reversed.`,
+    };
+  }
+
+  const reverse = toMatches.find((fn) => pythonBodyCallsSymbol(sourceFunctionBody(currentFileRecord.content, fn), row.from));
+  if (reverse) {
+    return {
+      applicable: true,
+      verified: false,
+      reason: "reversed_same_file_python_call",
+      evidence: `${row.to} calls ${row.from}; the generated edge direction is reversed.`,
+    };
+  }
+
+  const abstractOnly = [...fromMatches, ...toMatches].some((fn) =>
+    pythonFunctionLooksAbstract(sourceFunctionBody(currentFileRecord.content, fn))
+  );
+  return {
+    applicable: true,
+    verified: false,
+    reason: abstractOnly ? "abstract_or_placeholder_python_endpoint" : "unverified_same_file_python_relationship",
+    evidence: abstractOnly
+      ? "Endpoint symbols are abstract or placeholder implementations; no concrete caller/callee relationship was found."
+      : "Endpoint symbols are defined in the same Python file, but no direct caller/callee relationship was found.",
+  };
+}
+
+function normalizeSafetyRelevantPythonRow(row = {}, currentFileRecord = {}, currentFilePath = "") {
+  if (currentFileRecord?.lang !== "py" || !currentFileRecord?.content) return row;
+  if (row?.fromFile !== currentFilePath) return row;
+  if (normalizeSourceSymbol(row?.from) !== "extract_traj_tokens") return row;
+  const sourceFunctions = currentFileRecord.sourceFunctions || [];
+  const extractFn = pythonSourceFunctionsMatching(sourceFunctions, "extract_traj_tokens")[0];
+  if (!extractFn) return row;
+  const body = sourceFunctionBody(currentFileRecord.content, extractFn);
+  if (!/\binvalid_?tokens?\b/i.test(body) || !/\btorch\.clamp\s*\(/i.test(body)) return row;
+  if (normalizeSourceSymbol(row?.to) === "clamp") return row;
+  return {
+    ...row,
+    action: "Clamp trajectory token ids",
+    controlActionDetails: "Invalid trajectory token ids are warned about and clamped rather than rejected.",
+    to: "torch.clamp",
+    toFile: row.fromFile || currentFilePath,
+    toDetails: "The implementation calls torch.clamp to force invalid trajectory token ids into the accepted vocabulary range.",
+  };
+}
+
+function verifyCurrentFilePythonRelationship(row = {}, currentFileRecord = {}, currentFilePath = "") {
+  if (currentFileRecord?.lang !== "py") return { applicable: false };
+  if (!currentFileRecord?.content || !currentFilePath) return { applicable: false };
+  const sourceFunctions = currentFileRecord.sourceFunctions || [];
+  if (!sourceFunctions.length) return { applicable: false };
+  const fromIsCurrent = row.fromFile === currentFilePath;
+  const toIsCurrent = row.toFile === currentFilePath;
+  if (!fromIsCurrent && !toIsCurrent) return {
+    applicable: true,
+    verified: false,
+    reason: "row_not_grounded_in_current_file",
+    evidence: "Neither endpoint is in the source file being analyzed.",
+  };
+  if (fromIsCurrent && toIsCurrent) return verifySameFilePythonRelationship(row, currentFileRecord);
+
+  const fromMatches = fromIsCurrent ? pythonSourceFunctionsMatching(sourceFunctions, row.from) : [];
+  const toMatches = toIsCurrent ? pythonSourceFunctionsMatching(sourceFunctions, row.to) : [];
+  if (fromIsCurrent && fromMatches.length) {
+    const direct = fromMatches.find((fn) => pythonBodyCallsSymbol(sourceFunctionBody(currentFileRecord.content, fn), row.to));
+    if (direct) {
+      return {
+        applicable: true,
+        verified: true,
+        relationshipType: "direct_call",
+        evidence: `${row.from} calls ${row.to} from ${currentFilePath}.`,
+      };
+    }
+    return {
+      applicable: true,
+      verified: false,
+      reason: "unverified_current_file_python_relationship",
+      evidence: `${row.from} is in ${currentFilePath}, but its body does not call ${row.to}.`,
+    };
+  }
+  if (toIsCurrent && toMatches.length) {
+    const reverse = toMatches.find((fn) => pythonBodyCallsSymbol(sourceFunctionBody(currentFileRecord.content, fn), row.from));
+    if (reverse) {
+      return {
+        applicable: true,
+        verified: false,
+        reason: "reversed_current_file_python_call",
+        evidence: `${row.to} calls ${row.from}; the generated edge direction is reversed.`,
+      };
+    }
+  }
+  return { applicable: false };
+}
+
+function verifiedPythonCallEdgesForRecord(record = {}) {
+  if (record?.lang !== "py" || !record?.content || !Array.isArray(record.sourceFunctions)) return [];
+  const edges = [];
+  const sourceFunctions = record.sourceFunctions.filter((fn) => fn?.functionName);
+  sourceFunctions.forEach((fromFn) => {
+    const body = sourceFunctionBody(record.content, fromFn);
+    if (!body) return;
+    sourceFunctions.forEach((toFn) => {
+      if (!toFn?.functionName || fromFn === toFn) return;
+      if (normalizeSourceSymbol(fromFn.functionName) === normalizeSourceSymbol(toFn.functionName)) return;
+      if (pythonBodyCallsSymbol(body, toFn.functionName)) {
+        edges.push({
+          from: fromFn.functionName,
+          to: toFn.functionName,
+          fromLine: fromFn.startLine,
+          toLine: toFn.startLine,
+        });
+      }
+    });
+  });
+  return edges.slice(0, 300);
 }
 
 function isLowValueEndpointLabel(label) {
@@ -1103,6 +1429,19 @@ function isLowValueEndpointLabel(label) {
   if (LOW_VALUE_ENDPOINT_VALUES.has(normalizedLabel)) return true;
   if (String(label || "").includes(",")) return true;
   return false;
+}
+
+function normalizePrimitiveCallActionText(action = "", to = "") {
+  const actionText = String(action || "").trim();
+  const toText = String(to || "").trim();
+  if (!actionText || !toText) return actionText;
+  if (!/^call\b/i.test(actionText)) return actionText;
+  const quotedCall = /^call\s+`([^`]+)`$/i.exec(actionText);
+  const plainCall = /^call\s+([A-Za-z_][A-Za-z0-9_.]*)$/i.exec(actionText);
+  const namedTarget = quotedCall?.[1] || plainCall?.[1] || "";
+  if (!namedTarget) return actionText;
+  if (normalizeSourceSymbol(namedTarget) === normalizeSourceSymbol(toText)) return actionText;
+  return `Call ${toText}`;
 }
 
 function createFunctionalGroundingStats() {
@@ -1144,7 +1483,7 @@ function recordFunctionalGroundingRejection(stats, reason, row, context = {}) {
   }
 }
 
-function groundFunctionalDecompositionRow({
+export function groundFunctionalDecompositionRow({
   row,
   currentFile,
   currentFileRecord,
@@ -1152,7 +1491,7 @@ function groundFunctionalDecompositionRow({
   stats,
   chunkIndex,
 }) {
-  const baseRow = {
+  let baseRow = {
     ...row,
     from: String(row?.from || "").trim(),
     fromFile: String(row?.fromFile || "").trim(),
@@ -1191,24 +1530,41 @@ function groundFunctionalDecompositionRow({
   if (normalizedFromFile !== baseRow.fromFile || normalizedToFile !== baseRow.toFile) {
     stats.normalizedPathCount += 1;
   }
+  baseRow = {
+    ...baseRow,
+    fromFile: normalizedFromFile,
+    toFile: normalizedToFile,
+  };
+  baseRow = normalizeSafetyRelevantPythonRow(baseRow, currentFileRecord, currentFile?.path);
 
   const sourceFunctions = currentFileRecord?.sourceFunctions || [];
   const imports = currentFileRecord?.imports || [];
   const currentFileIsCode = !!(currentFileRecord?.lang && ["js", "ts", "py", "cpp"].includes(currentFileRecord.lang));
   const rowTouchesCurrentFile = normalizedFromFile === currentFile?.path || normalizedToFile === currentFile?.path;
-  const fromSymbolGrounded = normalizedFromFile === currentFile?.path
+  if (currentFileIsCode && !rowTouchesCurrentFile) {
+    recordFunctionalGroundingRejection(stats, "row_not_grounded_in_current_file", baseRow, { filePath: currentFile?.path, chunk: chunkIndex });
+    return null;
+  }
+  const fromSymbolGrounded = baseRow.fromFile === currentFile?.path
     ? functionLabelMatchesSource(baseRow.from, sourceFunctions, imports)
     : true;
-  const toSymbolGrounded = normalizedToFile === currentFile?.path
+  const toSymbolGrounded = baseRow.toFile === currentFile?.path
     ? functionLabelMatchesSource(baseRow.to, sourceFunctions, imports)
     : true;
   const currentFileSymbolMismatch = currentFileIsCode && sourceFunctions.length && (
-    (normalizedFromFile === currentFile?.path && !fromSymbolGrounded) ||
-    (normalizedToFile === currentFile?.path && !toSymbolGrounded)
+    (baseRow.fromFile === currentFile?.path && !fromSymbolGrounded) ||
+    (baseRow.toFile === currentFile?.path && !toSymbolGrounded)
   );
 
   if (rowTouchesCurrentFile && currentFileSymbolMismatch) {
     recordFunctionalGroundingRejection(stats, "current_file_symbol_mismatch", baseRow, { filePath: currentFile?.path, chunk: chunkIndex });
+    return null;
+  }
+  const relationshipEvidence = currentFileIsCode && currentFileRecord?.lang === "py"
+    ? verifyCurrentFilePythonRelationship(baseRow, currentFileRecord, currentFile?.path)
+    : { applicable: false };
+  if (relationshipEvidence.applicable && !relationshipEvidence.verified) {
+    recordFunctionalGroundingRejection(stats, relationshipEvidence.reason || "unverified_same_file_python_relationship", baseRow, { filePath: currentFile?.path, chunk: chunkIndex });
     return null;
   }
   if (isLowValueEndpointLabel(baseRow.from) || isLowValueEndpointLabel(baseRow.to)) {
@@ -1222,10 +1578,24 @@ function groundFunctionalDecompositionRow({
   if (evidenceConfidence !== "high") stats.weakEvidenceCount += 1;
   stats.accepted += 1;
 
+  const alignedAction = normalizePrimitiveCallActionText(baseRow.action, baseRow.to);
+  const normalizedAction = relationshipEvidence.verified && relationshipEvidence.relationshipType === "structural_member"
+    ? `Define ${baseRow.to}`
+    : relationshipEvidence.verified && relationshipEvidence.relationshipType === "inheritance"
+      ? `Inherit from ${baseRow.to}`
+      : alignedAction;
+  const normalizedControlDetails = relationshipEvidence.verified && relationshipEvidence.relationshipType === "structural_member"
+    ? `${baseRow.from} exposes ${baseRow.to} as a defined class member in source.`
+    : relationshipEvidence.verified && relationshipEvidence.relationshipType === "inheritance"
+      ? `${baseRow.from} is declared as a subclass or implementation of ${baseRow.to}.`
+      : baseRow.controlActionDetails;
+
   return {
     ...baseRow,
-    fromFile: normalizedFromFile,
-    toFile: normalizedToFile,
+    action: normalizedAction,
+    controlActionDetails: normalizedControlDetails,
+    fromFile: baseRow.fromFile,
+    toFile: baseRow.toFile,
     grounding: {
       evidenceConfidence,
       currentFile: currentFile?.path || "",
@@ -1233,6 +1603,8 @@ function groundFunctionalDecompositionRow({
       toFileResolution: toResolution.status,
       fromSymbolGrounded,
       toSymbolGrounded,
+      relationshipType: relationshipEvidence.verified ? relationshipEvidence.relationshipType : "",
+      relationshipEvidence: relationshipEvidence.verified ? relationshipEvidence.evidence : "",
     },
   };
 }
@@ -2712,12 +3084,12 @@ function makeSourceAuditArchitectureRow({ record, fn, rowRef }) {
     traceId: `source-audit-${functionName}`,
     from: functionName,
     action: "Clamp trajectory token ids",
-    to: "trajectory token consumers",
+    to: "torch.clamp",
     fromFile: filePath,
     toFile: filePath,
     fromDetails: "Source audit identified a top-level trajectory-token extraction function not covered by generated architecture rows.",
     controlDetails: "Invalid trajectory token ids are warned about and clamped rather than rejected.",
-    toDetails: "Downstream trajectory token consumers receive the repaired token values.",
+    toDetails: "The implementation calls torch.clamp to force invalid trajectory token ids into the accepted vocabulary range; no source call sites were found in the indexed repository.",
     sourceAuditGenerated: true,
     codeEvidence: {
       rowRefs: [rowRef],
@@ -3098,6 +3470,12 @@ Rules:
 - Every row must have all columns populated.
 - Keep control action details in base form tense.
 - Only emit source-evidenced relationships: direct calls, inheritance, imports/exports, concrete data/control flows, shared state mutations, API boundaries, or explicit artifact dependencies. Do not emit rows for conceptual similarity or speculative sequencing. If you would need to write "does not directly call", "likely used", "may be used", "similar structure", or "broader context", omit that row.
+- For sequential pipeline code where a caller invokes A and then B, do not emit A -> B unless A actually calls B. Emit caller -> A and caller -> B rows instead when the current source chunk supports those calls.
+- For inheritance, use subclass -> base class direction. Do not emit base class -> subclass rows merely because the subclass imports or extends the base.
+- For class membership, describe the relationship as defining or exposing a method/member; do not label it as a runtime call unless the method body actually calls the target.
+- Do not use instance attribute names as Function (To) endpoints unless the attribute is itself a source-defined callable or imported API being invoked in the current function body.
+- If a helper is only called inside one method, emit method -> helper, not ClassName -> helper.
+- For invalid token handling, prefer the safety-relevant validation or repair operation such as torch.clamp over incidental tensor plumbing such as torch.where or torch.zeros_like.
 - Prefer interface-rich interactions when source evidence supports them, including APIs, callbacks, message/event flows, hardware boundaries, shared state, configuration files, protocols, imports/includes, and library/framework boundaries.
 - Analyze the current file/chunk only. README and repository context may guide terminology, but they are not evidence for rows unless the current source chunk also supports the interaction.
     `.trim();
@@ -3226,6 +3604,7 @@ Rules:
                 startLine: fn.startLine,
                 endLine: fn.endLine,
               })).slice(0, 200),
+              verifiedSameFilePythonCallEdges: verifiedPythonCallEdgesForRecord(currentFileRecord),
               imports: (currentFileRecord.imports || []).slice(0, 80),
               repositoryPathsAvailableForRelatedFiles: allFiles.map((entry) => entry.path).slice(0, 1200),
             };
