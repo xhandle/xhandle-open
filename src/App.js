@@ -269,6 +269,51 @@ function CodeArchitectureWorkbookExportModal({
   );
 }
 
+function ProjectExportModal({
+  projects = [],
+  selectedProjectId = "",
+  isExporting = false,
+  message = "",
+  onSelectionChange,
+  onCancel,
+  onConfirm,
+}) {
+  return createPortal(
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/40 p-4">
+      <div className="w-full max-w-md overflow-hidden rounded-xl bg-white shadow-2xl ring-1 ring-slate-200">
+        <div className="border-b border-slate-200 px-5 py-4">
+          <h2 className="text-base font-semibold text-slate-950">Export Project</h2>
+          <p className="mt-1 text-sm text-slate-500">Choose one project and export its locally stored artifacts as JSON.</p>
+        </div>
+        <div className="px-5 py-4">
+          <label className="block">
+            <span className="mb-1 block text-sm font-semibold text-slate-800">Project</span>
+            <select
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              value={selectedProjectId}
+              onChange={(event) => onSelectionChange?.(event.target.value)}
+            >
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>{project.name}</option>
+              ))}
+            </select>
+          </label>
+          {message && <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{message}</div>}
+        </div>
+        <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
+          <button type="button" onClick={onCancel} className="rounded-md border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50" disabled={isExporting}>
+            Cancel
+          </button>
+          <button type="button" onClick={onConfirm} className="rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60" disabled={isExporting || !selectedProjectId}>
+            {isExporting ? "Exporting..." : "Export Project"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 function CodeArchitectureReviewAnalysisModal({
   appName = "",
   reviewAppTarget = "mac",
@@ -1064,6 +1109,44 @@ function saveProjectPatch(projectId, patch) {
 function loadProjectData(projectId) {
   const map = readProjectMap();
   return map[projectId] || null;
+}
+function projectExportFileName(projectName) {
+  const safeName = String(projectName || "xhandle-project")
+    .replace(/[^a-z0-9._-]+/gi, "-")
+    .replace(/^-+|-+$/g, "") || "xhandle-project";
+  return `${safeName}-${new Date().toISOString().slice(0, 10)}.json`;
+}
+function projectStorageKeyPart(projectId) {
+  return `proj_${String(projectId || "").toLowerCase().trim().replace(/[^a-z0-9]+/gi, "_")}`;
+}
+function isProjectScopedLocalStorageKey(key, projectId) {
+  const rawKey = String(key || "");
+  const diagramBase = `diagram:positions:${projectId}`;
+  const liteBase = `LiteSummaryDiagram::${projectStorageKeyPart(projectId)}::`;
+  return rawKey === diagramBase || rawKey.startsWith(`${diagramBase}:`) || rawKey.startsWith(liteBase);
+}
+function collectProjectLocalStorageEntries(projectId) {
+  if (!projectId || typeof localStorage === "undefined") return [];
+  const entries = [];
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index);
+    if (!isProjectScopedLocalStorageKey(key, projectId)) continue;
+    entries.push({ key, value: localStorage.getItem(key) || "" });
+  }
+  return entries;
+}
+function remapProjectScopedLocalStorageKey(key, oldProjectId, newProjectId) {
+  const rawKey = String(key || "");
+  if (!oldProjectId || !newProjectId) return rawKey;
+  const oldDiagramBase = `diagram:positions:${oldProjectId}`;
+  if (rawKey === oldDiagramBase || rawKey.startsWith(`${oldDiagramBase}:`)) {
+    return `diagram:positions:${newProjectId}${rawKey.slice(oldDiagramBase.length)}`;
+  }
+  const oldLiteBase = `LiteSummaryDiagram::${projectStorageKeyPart(oldProjectId)}::`;
+  if (rawKey.startsWith(oldLiteBase)) {
+    return `LiteSummaryDiagram::${projectStorageKeyPart(newProjectId)}::${rawKey.slice(oldLiteBase.length)}`;
+  }
+  return rawKey;
 }
 function hasAnalysisSummary(value) {
   return Array.isArray(value?.Summary) && value.Summary.length > 0;
@@ -3208,10 +3291,15 @@ const [renameError, setRenameError] = useState('');
 // Three-dots menu state
 const [openProjectMenuId, setOpenProjectMenuId] = useState(null);
 const [openProjectFolderMenuId, setOpenProjectFolderMenuId] = useState(null);
+const [showProjectExport, setShowProjectExport] = useState(false);
+const [projectExportSelection, setProjectExportSelection] = useState("");
+const [isExportingProject, setIsExportingProject] = useState(false);
+const [projectExportMsg, setProjectExportMsg] = useState("");
 const projectMenuPortalRefs = useRef({}); // portal root (for outside-click)
 const projectMenuAnchorEls = useRef({});  // the trigger button element
 const projectFolderMenuPortalRefs = useRef({});
 const projectFolderMenuAnchorEls = useRef({});
+const projectImportInputRef = useRef(null);
 const riskDiagramContainerRef = useRef(null);
 const [inviteForProjectId, setInviteForProjectId] = useState(null);
 
@@ -3555,6 +3643,125 @@ const buildRiskRegisterFromSummary = (summary) => {
     setSection('projects');
 
   };
+
+  async function collectProjectExport(projectId) {
+    const project = projects.find((entry) => entry.id === projectId);
+    if (!project) throw new Error("Select a project to export.");
+    return {
+      type: "xhandle-project",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      project: {
+        id: project.id,
+        name: project.name || "Project",
+        folderId: null,
+        createdAt: project.createdAt || null,
+        updatedAt: project.updatedAt || null,
+      },
+      data: loadProjectData(project.id) || {},
+      localStorageEntries: collectProjectLocalStorageEntries(project.id),
+      reviewItems: (resultsReview.reviewItems || []).filter((item) => item.projectId === project.id),
+    };
+  }
+
+  async function exportSelectedProject() {
+    if (!projectExportSelection) {
+      setProjectExportMsg("Select one project to export.");
+      return;
+    }
+    setIsExportingProject(true);
+    setProjectExportMsg("");
+    try {
+      const payload = await collectProjectExport(projectExportSelection);
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = projectExportFileName(payload.project?.name);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setShowProjectExport(false);
+    } catch (error) {
+      console.error("[projects] Failed to export project", error);
+      setProjectExportMsg(error?.message || "Failed to export project.");
+    } finally {
+      setIsExportingProject(false);
+    }
+  }
+
+  async function importProjectFromFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      const now = new Date().toISOString();
+      const originalProject = parsed?.type === "xhandle-project" ? parsed.project : parsed?.project;
+      const originalProjectId = originalProject?.id || parsed?.projectId || null;
+      const projectData = parsed?.type === "xhandle-project"
+        ? (parsed.data || {})
+        : (parsed?.data || parsed?.projectData || parsed);
+      const baseName = String(
+        originalProject?.name ||
+        parsed?.projectName ||
+        projectData?.name ||
+        file.name.replace(/\.[^.]+$/, "") ||
+        "Imported Project"
+      ).trim();
+      const importedProject = {
+        id: makeId(),
+        name: baseName || "Imported Project",
+        folderId: null,
+        createdAt: now,
+        updatedAt: now,
+        importedFromProjectId: originalProjectId,
+        importedAt: now,
+      };
+      const data = projectData && typeof projectData === "object" && !Array.isArray(projectData)
+        ? { ...projectData, _importedAt: now, _updatedAt: now }
+        : { importedPayload: projectData, _importedAt: now, _updatedAt: now };
+      const map = readProjectMap();
+      map[importedProject.id] = data;
+      writeProjectMap(map);
+
+      const localStorageEntries = Array.isArray(parsed?.localStorageEntries)
+        ? parsed.localStorageEntries
+        : Array.isArray(parsed?.localStorage)
+          ? parsed.localStorage
+          : [];
+      localStorageEntries.forEach((entry) => {
+        const sourceKey = typeof entry === "string" ? entry : entry?.key;
+        if (!sourceKey) return;
+        const value = typeof entry === "string" ? "" : String(entry?.value ?? "");
+        const targetKey = remapProjectScopedLocalStorageKey(sourceKey, originalProjectId, importedProject.id);
+        if (targetKey && isProjectScopedLocalStorageKey(targetKey, importedProject.id)) {
+          localStorage.setItem(targetKey, value);
+        }
+      });
+
+      const reviewItems = (Array.isArray(parsed?.reviewItems) ? parsed.reviewItems : []).map((item) => ({
+        ...item,
+        id: `imported-${makeId()}`,
+        projectId: importedProject.id,
+        importedFromReviewItemId: item?.id || null,
+        updatedAt: now,
+      }));
+      if (reviewItems.length) await resultsReview.createReviewItems(reviewItems);
+
+      setProjects((prev) => [importedProject, ...prev]);
+      setActiveProjectId(importedProject.id);
+      setActiveProjectFolderId(null);
+      setSection("projects");
+      setIsSidebarOpen(true);
+      setIsProjectsOpen(true);
+      notifyBackupDataChanged("project-import");
+    } catch (error) {
+      console.error("[projects] Failed to import project JSON", error);
+      alert(error?.message || "Failed to import project JSON.");
+    }
+  }
 
   const createProjectFolder = () => {
     const name = newProjectFolderName.trim();
@@ -8640,6 +8847,13 @@ const ColumnFilterButton = ({ col }) => {
         <h2 className="text-xl font-semibold text-gray-900">Projects dashboard</h2>
       </div>
       <div className="flex flex-wrap items-center gap-2">
+        <input
+          ref={projectImportInputRef}
+          type="file"
+          accept=".json,application/json"
+          className="hidden"
+          onChange={importProjectFromFile}
+        />
         <button
           type="button"
           onClick={() => {
@@ -8652,6 +8866,30 @@ const ColumnFilterButton = ({ col }) => {
         >
           <Plus size={15} />
           Project
+        </button>
+        <button
+          type="button"
+          onClick={() => projectImportInputRef.current?.click()}
+          className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+          title="Import a project JSON file as a new project"
+        >
+          <FileText size={15} />
+          Import Project
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            const firstProjectId = projectsDashboardRows[0]?.id || projects[0]?.id || "";
+            setProjectExportSelection(firstProjectId);
+            setProjectExportMsg("");
+            setShowProjectExport(true);
+          }}
+          disabled={!projects.length}
+          className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+          title="Export one project"
+        >
+          <FileText size={15} />
+          Export Project
         </button>
         <button
           type="button"
@@ -11550,6 +11788,20 @@ const updateRiskInProject = (projectId, predicate) => {
           }}
         />
 
+        {showProjectExport && (
+          <ProjectExportModal
+            projects={projectsDashboardRows.length ? projectsDashboardRows : projects}
+            selectedProjectId={projectExportSelection}
+            isExporting={isExportingProject}
+            message={projectExportMsg}
+            onSelectionChange={(projectId) => {
+              setProjectExportSelection(projectId);
+              setProjectExportMsg("");
+            }}
+            onCancel={() => setShowProjectExport(false)}
+            onConfirm={exportSelectedProject}
+          />
+        )}
 
         {/* New Project Modal */}
         {showNewProject && (

@@ -25,7 +25,6 @@ import ReactFlow, {
   useEdgesState,
   ConnectionMode,
   BaseEdge,
-  updateEdge,
   useReactFlow,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
@@ -493,6 +492,8 @@ const GroupBoxNode = ({ data, selected }) => {
       <NodeResizer
         minWidth={GROUP.minW}
         minHeight={GROUP.minH}
+        onResize={(_, params) => data.onResize?.(params)}
+        onResizeEnd={(_, params) => data.onResize?.(params)}
         lineStyle={{ borderColor: rgba(brandColor, 0.45), borderWidth: 1, pointerEvents: 'auto' }}
         handleStyle={{
           width: 10,
@@ -734,7 +735,9 @@ function buildEdgesFromRaw(rawEdges, positions) {
     const pairIdx = pairSeq.get(key) || 0;
     pairSeq.set(key, pairIdx + 1);
 
-    const [sourceHandle, targetHandle] = assignHandles(
+    const savedSourceHandle = parseHandleId(e.sourceHandle) ? e.sourceHandle : null;
+    const savedTargetHandle = parseHandleId(e.targetHandle) ? e.targetHandle : null;
+    const [autoSourceHandle, autoTargetHandle] = assignHandles(
       e.source,
       e.target,
       positions,
@@ -743,6 +746,8 @@ function buildEdgesFromRaw(rawEdges, positions) {
       i,
       pairIdx
     );
+    const sourceHandle = savedSourceHandle || autoSourceHandle;
+    const targetHandle = savedTargetHandle || autoTargetHandle;
 
     const sParsed = parseHandleId(sourceHandle);
     const tParsed = parseHandleId(targetHandle);
@@ -826,6 +831,8 @@ function rowsToRawEdges(rows) {
       updatable: true,
       markerEnd: { type: MarkerType.ArrowClosed, width: ARROW_SIZE, height: ARROW_SIZE, color: BRAND.blue },
       label: row.controlAction,
+      sourceHandle: row.sourceHandle || row.edgeSourceHandle || row.handles?.source || null,
+      targetHandle: row.targetHandle || row.edgeTargetHandle || row.handles?.target || null,
       data: { offsetIndex: 0, description: row.controlDetails || '' },
     });
   });
@@ -892,6 +899,8 @@ function rowCategorySignature(rows) {
     fromDetails: (row.fromDetails || '').trim(),
     controlAction: (row.controlAction || '').trim(),
     controlDetails: (row.controlDetails || '').trim(),
+    sourceHandle: (row.sourceHandle || '').trim(),
+    targetHandle: (row.targetHandle || '').trim(),
     toFunction: (row.toFunction || '').trim(),
     toDetails: (row.toDetails || '').trim(),
   })));
@@ -1438,6 +1447,7 @@ const DiagramBody = forwardRef(function DiagramBody(
   const saveTimer = useRef(null);
   const resizeFrameRef = useRef(null);
   const pendingGroupResizeRef = useRef(new Map());
+  const groupBoxesRef = useRef(groupBoxes);
   const appliedAutoCategoriesRef = useRef(null);
   const groupDragRef = useRef(null);
   const persistSoon = useCallback(() => {
@@ -1445,6 +1455,7 @@ const DiagramBody = forwardRef(function DiagramBody(
     saveTimer.current = setTimeout(() => savePositions(storageKey, posRef.current), 120);
   }, [storageKey]);
   const persistGroupsSoon = useCallback((nextBoxes) => {
+    groupBoxesRef.current = nextBoxes;
     if (groupSaveTimer.current) clearTimeout(groupSaveTimer.current);
     groupSaveTimer.current = setTimeout(() => saveGroupBoxes(storageKey, nextBoxes), 120);
   }, [storageKey]);
@@ -1462,12 +1473,33 @@ const DiagramBody = forwardRef(function DiagramBody(
 
   // Track the connect drag start
   const connectStartRef = useRef(null);
+  const edgeUpdateGestureRef = useRef({ active: false, oldEdgeId: null });
+  const suppressedEdgeRemovalIdsRef = useRef(new Set());
 
   const { fitView, project, getNodes, getEdges, getViewport } = useReactFlow();
 
   useEffect(() => {
+    groupBoxesRef.current = groupBoxes;
+  }, [groupBoxes]);
+
+  const getConnectableFunctionName = useCallback((nodeId) => {
+    const node = getNodes().find((entry) => entry.id === nodeId) || nodes.find((entry) => entry.id === nodeId);
+    if (!node || node.type === 'groupBox' || node.type === 'note') return '';
+    if (!String(node.id || '').startsWith('n:')) return '';
+    return normalizeFunctionName(node.data?.label || String(node.id).replace(/^n:/, ''));
+  }, [getNodes, nodes]);
+
+  const rebuildRenderedEdgesFromRows = useCallback((nextRows, sourceNodes = null) => {
+    const graphNodes = sourceNodes || getNodes();
+    const rawEdges = rowsToRawEdges(nextRows);
+    setEdges(buildEdgesFromRaw(rawEdges, buildAbsolutePositionMap(graphNodes)));
+  }, [getNodes, setEdges]);
+
+  useEffect(() => {
     posRef.current = loadPositions(storageKey);
-    setGroupBoxes(loadGroupBoxes(storageKey));
+    const loadedGroupBoxes = loadGroupBoxes(storageKey);
+    groupBoxesRef.current = loadedGroupBoxes;
+    setGroupBoxes(loadedGroupBoxes);
     setManualNodesStore(loadManualNodes(storageKey));
     setNodes([]);
     setEdges([]);
@@ -1555,10 +1587,14 @@ useEffect(() => {
 
       const targetNode = findNodeUnderPointer(evt);
       if (!targetNode || !start?.nodeId) return;
+      if (edgeUpdateGestureRef.current.active) return;
 
       const fromId = start.nodeId;
       const toId = targetNode.id;
       if (fromId === toId) return;
+      const fromFunction = getConnectableFunctionName(fromId);
+      const toFunction = getConnectableFunctionName(toId);
+      if (!fromFunction || !toFunction) return;
 
       const srcNode = nodes.find((n) => n.id === fromId);
       const tgtNode = nodes.find((n) => n.id === toId);
@@ -1601,14 +1637,21 @@ useEffect(() => {
 
       setEdges((eds) => addEdge(newEdge, eds));
 
-      const fromFunction = fromId.replace(/^n:/, '');
-      const toFunction = toId.replace(/^n:/, '');
       onUpdateRows?.([
         ...rows,
-        { fromFunction, fromDetails: '', controlAction: '', controlDetails: '', toFunction, toDetails: '' },
+        {
+          fromFunction,
+          fromDetails: '',
+          controlAction: '',
+          controlDetails: '',
+          toFunction,
+          toDetails: '',
+          sourceHandle,
+          targetHandle,
+        },
       ]);
     },
-    [nodes, edges, rows, onUpdateRows, persistSoon]
+    [getConnectableFunctionName, nodes, edges, rows, onUpdateRows, persistSoon]
   );
 
   useEffect(() => {
@@ -1618,20 +1661,35 @@ useEffect(() => {
       if (manualSaveTimer.current) clearTimeout(manualSaveTimer.current);
       if (resizeFrameRef.current) cancelAnimationFrame(resizeFrameRef.current);
       savePositions(storageKey, posRef.current);
-      saveGroupBoxes(storageKey, groupBoxes);
+      saveGroupBoxes(storageKey, groupBoxesRef.current);
       saveManualNodes(storageKey, manualNodesStore);
     };
-  }, [storageKey, groupBoxes, manualNodesStore]);
+  }, [storageKey, manualNodesStore]);
 
   const queueGroupResizeUpdate = useCallback((id, dimensions) => {
     if (!id || !dimensions) return;
-    const width = Math.max(GROUP.minW, Math.round(dimensions.width || GROUP.w));
-    const height = Math.max(GROUP.minH, Math.round(dimensions.height || GROUP.h));
+    const rawWidth = Number(dimensions.width);
+    const rawHeight = Number(dimensions.height);
+    if (!Number.isFinite(rawWidth) || !Number.isFinite(rawHeight)) return;
+    const width = Math.max(GROUP.minW, Math.round(rawWidth));
+    const height = Math.max(GROUP.minH, Math.round(rawHeight));
 
     pendingGroupResizeRef.current.set(id, {
       width,
       height,
     });
+    setNodes((nds) => nds.map((node) => (
+      node.id === id
+        ? {
+            ...node,
+            style: {
+              ...(node.style || {}),
+              width,
+              height,
+            },
+          }
+        : node
+    )));
 
     if (resizeFrameRef.current) return;
 
@@ -1641,8 +1699,9 @@ useEffect(() => {
       pendingGroupResizeRef.current = new Map();
 
       setGroupBoxes((currentBoxes) => {
+        const baseBoxes = groupBoxesRef.current.length ? groupBoxesRef.current : currentBoxes;
         let changed = false;
-        const nextBoxes = currentBoxes.map((box) => {
+        const nextBoxes = baseBoxes.map((box) => {
           const nextSize = pending.get(box.id);
           if (!nextSize) return box;
           const width = nextSize.width;
@@ -1658,10 +1717,10 @@ useEffect(() => {
           persistGroupsSoon(nextBoxes);
           return nextBoxes;
         }
-        return currentBoxes;
+        return baseBoxes;
       });
     });
-  }, [persistGroupsSoon]);
+  }, [persistGroupsSoon, setNodes]);
 
   const exportDiagramJson = useCallback(() => {
     const exportedAt = new Date().toISOString();
@@ -1785,6 +1844,7 @@ useEffect(() => {
     if (!boxes.length) return;
 
     appliedAutoCategoriesRef.current = signature;
+    groupBoxesRef.current = boxes;
     setGroupBoxes(boxes);
     saveGroupBoxes(storageKey, boxes);
     savePositions(storageKey, posRef.current);
@@ -1818,6 +1878,7 @@ useEffect(() => {
         posMap: posRef.current,
       });
       if (boxes.length) {
+        groupBoxesRef.current = boxes;
         setGroupBoxes(boxes);
         saveGroupBoxes(storageKey, boxes);
         savePositions(storageKey, posRef.current);
@@ -2009,7 +2070,7 @@ useEffect(() => {
         }
         if (c.type === 'dimensions' && c.id && c.dimensions) {
           const targetBox = groupBoxes.find((box) => box.id === c.id);
-          if (targetBox && c.resizing !== true) {
+          if (targetBox) {
             queueGroupResizeUpdate(c.id, c.dimensions);
           }
         }
@@ -2053,13 +2114,18 @@ useEffect(() => {
 
   const onEdgesChange = useCallback(
     (changes) => {
-      const removals = changes.filter((c) => c.type === 'remove').map((c) => c.id);
+      const removals = changes
+        .filter((c) => c.type === 'remove')
+        .map((c) => c.id)
+        .filter((id) => !suppressedEdgeRemovalIdsRef.current.has(id));
       if (removals.length) {
         const removalSet = new Set(removals);
         const updatedRows = rows.filter((r, i) => !removalSet.has(edgeIdForRow(r, i)));
         onUpdateRows?.(updatedRows);
       }
-      reactflowOnEdgesChange(changes);
+      reactflowOnEdgesChange(changes.filter((change) => (
+        change.type !== 'remove' || !suppressedEdgeRemovalIdsRef.current.has(change.id)
+      )));
     },
     [rows, reactflowOnEdgesChange, onUpdateRows]
   );
@@ -2075,7 +2141,7 @@ useEffect(() => {
     let cancelled = false;
 
     const sig = structureSignature(rows);
-    const groupSig = JSON.stringify(groupBoxes.map((box) => [box.id, box.label, box.description, box.position.x, box.position.y, box.width, box.height]));
+    const groupSig = JSON.stringify(groupBoxes.map((box) => [box.id, box.label, box.description, box.brandColor, box.autoGenerated]));
     const fullSig = `${sig}::${groupSig}`;
     const structureUnchanged = builtOnceRef.current && fullSig === structureRef.current;
     if (structureUnchanged) return;
@@ -2095,7 +2161,12 @@ const groupNodes = groupBoxes.map((box) => ({
   id: box.id,
   type: 'groupBox',
   position: box.position,
-  data: { label: box.label, description: box.description || '', brandColor: box.brandColor || BRAND.purple },
+  data: {
+    label: box.label,
+    description: box.description || '',
+    brandColor: box.brandColor || BRAND.purple,
+    onResize: (dimensions) => queueGroupResizeUpdate(box.id, dimensions),
+  },
   zIndex: 0,
   style: {
     width: box.width || GROUP.w,
@@ -2256,7 +2327,7 @@ if (nextFunctionalNodes.length > 1) {
 }
     }
     return () => { cancelled = true; };
-  }, [rows, persistSoon, nodes, setNodes, setEdges, runCleanAndSpread, groupBoxes]);
+  }, [rows, persistSoon, nodes, setNodes, setEdges, runCleanAndSpread, groupBoxes, queueGroupResizeUpdate]);
 
   useEffect(() => {
     if (!groupBoxes.length) return;
@@ -2387,6 +2458,10 @@ if (nextFunctionalNodes.length > 1) {
   /* Connect / Update */
   const onConnect = useCallback(
     (connection) => {
+      if (edgeUpdateGestureRef.current.active) return;
+      const fromFunction = getConnectableFunctionName(connection.source);
+      const toFunction = getConnectableFunctionName(connection.target);
+      if (!fromFunction || !toFunction || fromFunction === toFunction) return;
       setEdges((eds) => {
         const count = eds.filter(
           (e) =>
@@ -2402,9 +2477,6 @@ if (nextFunctionalNodes.length > 1) {
           markerEnd: { type: MarkerType.ArrowClosed, width: ARROW_SIZE, height: ARROW_SIZE, color: BRAND.blue },
         };
 
-        const fromFunction = (connection.source || '').replace(/^n:/, '');
-        const toFunction = (connection.target || '').replace(/^n:/, '');
-
         const srcNode = nodes.find((n) => n.id === connection.source);
         const tgtNode = nodes.find((n) => n.id === connection.target);
         const srcBuiltId = nodeIdForFunction(fromFunction);
@@ -2415,31 +2487,62 @@ if (nextFunctionalNodes.length > 1) {
 
         onUpdateRows?.([
           ...rows,
-          { fromFunction, fromDetails: '', controlAction: '', controlDetails: '', toFunction, toDetails: '' },
+          {
+            fromFunction,
+            fromDetails: '',
+            controlAction: '',
+            controlDetails: '',
+            toFunction,
+            toDetails: '',
+            sourceHandle: connection.sourceHandle || null,
+            targetHandle: connection.targetHandle || null,
+          },
         ]);
 
         return addEdge(newEdge, eds);
       });
     },
-    [setEdges, rows, onUpdateRows, nodes, persistSoon]
+    [getConnectableFunctionName, setEdges, rows, onUpdateRows, nodes, persistSoon]
   );
+
+  const onEdgeUpdateStart = useCallback((_, edge) => {
+    edgeUpdateGestureRef.current = { active: true, oldEdgeId: edge?.id || null };
+    if (edge?.id) suppressedEdgeRemovalIdsRef.current.add(edge.id);
+  }, []);
 
   const onEdgeUpdate = useCallback(
     (oldEdge, newConn) => {
-      setEdges((eds) =>
-        updateEdge(
-          oldEdge,
-          {
-            ...newConn,
-            type: 'smartBezier',
-            markerEnd: { type: MarkerType.ArrowClosed, width: ARROW_SIZE, height: ARROW_SIZE, color: BRAND.blue },
-          },
-          eds
-        )
-      );
+      const oldRowIndex = rows.findIndex((row, index) => edgeIdForRow(row, index) === oldEdge.id);
+      const fromFunction = getConnectableFunctionName(newConn.source);
+      const toFunction = getConnectableFunctionName(newConn.target);
+      if (oldEdge?.id) suppressedEdgeRemovalIdsRef.current.add(oldEdge.id);
+      if (oldRowIndex < 0 || !fromFunction || !toFunction || fromFunction === toFunction) return;
+      if (oldRowIndex >= 0) {
+        const nextRows = rows.map((row, index) => (
+          index === oldRowIndex
+            ? {
+                ...row,
+                fromFunction,
+                toFunction,
+                sourceHandle: newConn.sourceHandle || row.sourceHandle || null,
+                targetHandle: newConn.targetHandle || row.targetHandle || null,
+              }
+            : row
+        ));
+        onUpdateRows?.(nextRows);
+        rebuildRenderedEdgesFromRows(nextRows);
+      }
     },
-    [setEdges]
+    [getConnectableFunctionName, onUpdateRows, rebuildRenderedEdgesFromRows, rows]
   );
+
+  const onEdgeUpdateEnd = useCallback(() => {
+    const oldEdgeId = edgeUpdateGestureRef.current.oldEdgeId;
+    window.setTimeout(() => {
+      if (oldEdgeId) suppressedEdgeRemovalIdsRef.current.delete(oldEdgeId);
+      edgeUpdateGestureRef.current = { active: false, oldEdgeId: null };
+    }, 0);
+  }, []);
 
   const canUngroupSelected = selectedNodeIds.some((id) => (
     nodes.some((node) => node.id === id && node.parentNode)
@@ -2620,7 +2723,9 @@ if (nextFunctionalNodes.length > 1) {
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onEdgeUpdateStart={onEdgeUpdateStart}
           onEdgeUpdate={onEdgeUpdate}
+          onEdgeUpdateEnd={onEdgeUpdateEnd}
           onEdgeClick={(evt, edge) => setHighlightedEdgeId(edge.id)}
           onPaneClick={() => { setHighlightedEdgeId(null); setContextMenu(null); }}
           onPaneContextMenu={(event) => {
@@ -2706,7 +2811,7 @@ if (nextFunctionalNodes.length > 1) {
           }}
           onNodeDragStart={(_, node) => {
             if (node?.type !== 'groupBox') return;
-            const startBox = groupBoxes.find((box) => box.id === node.id);
+            const startBox = groupBoxesRef.current.find((box) => box.id === node.id);
             if (!startBox) return;
             const childPositions = getNodes()
               .filter((n) => n.id !== node.id && n.type !== 'groupBox' && !n.parentNode && isNodeInsideBox(n, startBox))
@@ -2741,7 +2846,7 @@ if (nextFunctionalNodes.length > 1) {
             if (node?.id && node?.position) {
               let finalParentId = node.parentNode || null;
               if (node.type === 'groupBox') {
-                const previousBox = groupBoxes.find((box) => box.id === node.id);
+                const previousBox = groupBoxesRef.current.find((box) => box.id === node.id);
                 const activeGroupDrag = groupDragRef.current?.groupId === node.id
                   ? groupDragRef.current
                   : null;
@@ -2753,7 +2858,8 @@ if (nextFunctionalNodes.length > 1) {
                   : { x: 0, y: 0 };
 
                 setGroupBoxes((currentBoxes) => {
-                  const nextBoxes = currentBoxes.map((box) => (
+                  const baseBoxes = groupBoxesRef.current.length ? groupBoxesRef.current : currentBoxes;
+                  const nextBoxes = baseBoxes.map((box) => (
                     box.id === node.id ? { ...box, position: { ...node.position } } : box
                   ));
                   persistGroupsSoon(nextBoxes);
@@ -2893,7 +2999,9 @@ if (nextFunctionalNodes.length > 1) {
             alignItems: 'center',
             justifyContent: 'center',
           }}
-          onClick={() => setEditModal(null)}
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget) setEditModal(null);
+          }}
         >
           <div
             style={{
@@ -2907,6 +3015,9 @@ if (nextFunctionalNodes.length > 1) {
               flexDirection: 'column',
               boxShadow: '0 12px 28px rgba(0,0,0,0.18)',
             }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onMouseUp={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >
             <div
@@ -2924,6 +3035,10 @@ if (nextFunctionalNodes.length > 1) {
                 type="text"
                 value={editModal.label}
                 onChange={(e) => setEditModal((m) => ({ ...m, label: e.target.value }))}
+                onPointerDown={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                onMouseUp={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
                 style={{ width: '100%', marginTop: 4, padding: 8, borderRadius: 8, border: '1px solid #ddd' }}
               />
             </label>
@@ -2932,6 +3047,10 @@ if (nextFunctionalNodes.length > 1) {
               <textarea
                 value={editModal.description}
                 onChange={(e) => setEditModal((m) => ({ ...m, description: e.target.value }))}
+                onPointerDown={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                onMouseUp={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
                 style={{ width: '100%', marginTop: 4, padding: 8, borderRadius: 8, border: '1px solid #ddd' }}
                 rows={4}
               />
@@ -3100,7 +3219,8 @@ if (nextFunctionalNodes.length > 1) {
                       editModal.nodeType === 'note' ? rgba(nodeColor, 0.2) : rgba(nodeColor, 0.08);
 		                  if (editModal.id.startsWith('g:')) {
 	                    setGroupBoxes((currentBoxes) => {
-	                      const nextBoxes = currentBoxes.map((box) => (
+                        const baseBoxes = groupBoxesRef.current.length ? groupBoxesRef.current : currentBoxes;
+	                      const nextBoxes = baseBoxes.map((box) => (
 	                        box.id === editModal.id
                             ? {
                                 ...box,
