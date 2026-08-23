@@ -3275,6 +3275,7 @@ Output: clean Markdown only (no surrounding backticks).
     catch { return {}; }
   });
   const [activeProjectId, setActiveProjectId] = useState(null);
+  const activeProjectIdRef = useRef(activeProjectId);
   const [activeProjectFolderId, setActiveProjectFolderId] = useState(null);
   const [showNewProject, setShowNewProject] = useState(false);
   const [showNewProjectFolder, setShowNewProjectFolder] = useState(false);
@@ -3313,6 +3314,7 @@ React.useEffect(() => {
 }, [projects, activeProjectId]);
 
   const [projectLoaded, setProjectLoaded] = useState(false);
+  const [loadingProjectId, setLoadingProjectId] = useState(null);
 
   // Rename state
 const [editingProjectId, setEditingProjectId] = useState(null);
@@ -5175,6 +5177,7 @@ const filteredRiskRows = useMemo(() => {
   useEffect(() => {
     setProjectLoaded(false);
     setLoadedProjectId(null);
+    setLoadingProjectId(activeProjectId || null);
     if (!activeProjectId) {
       setResponseRows([]);
       setDiagramCategories(null);
@@ -5187,9 +5190,11 @@ const filteredRiskRows = useMemo(() => {
       setShowPromptWizard(true);
       setProjectLoaded(false);
       setLoadedProjectId(null);
+      setLoadingProjectId(null);
       return;
     }
     const data = loadProjectData(activeProjectId);
+    const projectIdForLoad = activeProjectId;
     setResponseRows(data?.responseRows || []);
     setDiagramCategories(data?.diagramCategories || null);
     setAnalysisResult(data?.analysisResult ? stripProjectRiskProfileColumns(data.analysisResult) : null);
@@ -5198,10 +5203,18 @@ const filteredRiskRows = useMemo(() => {
     setAgentReportResult(data?.agentReportResult || null); // NEW: restore report
     setRiskRegister(data?.riskRegister || []);
     setShowPromptWizard(!(data?.responseRows && data.responseRows.length > 0));
-    setProjectLoaded(true);
-    setLoadedProjectId(activeProjectId);
     setRequirements(data?.requirements || []);   // ← add this
+    const loadTimer = setTimeout(() => {
+      setLoadedProjectId(projectIdForLoad);
+      setProjectLoaded(true);
+      setLoadingProjectId((current) => (current === projectIdForLoad ? null : current));
+    }, 0);
 
+    return () => clearTimeout(loadTimer);
+  }, [activeProjectId]);
+
+  useEffect(() => {
+    activeProjectIdRef.current = activeProjectId;
   }, [activeProjectId]);
 
   useEffect(() => {
@@ -5248,7 +5261,7 @@ const filteredRiskRows = useMemo(() => {
 
 // Persist per-project state whenever it changes (including the report)
 useEffect(() => {
-  if (!activeProjectId || !projectLoaded || loadedProjectId !== activeProjectId) return;
+  if (!activeProjectId || loadingProjectId || !projectLoaded || loadedProjectId !== activeProjectId) return;
   const existingProjectData = loadProjectData(activeProjectId) || {};
   const patch = {
     responseRows,
@@ -5267,6 +5280,7 @@ useEffect(() => {
   saveProjectPatch(activeProjectId, patch);
 }, [
   activeProjectId,
+  loadingProjectId,
   projectLoaded,
   loadedProjectId,
   responseRows,
@@ -5278,6 +5292,20 @@ useEffect(() => {
   riskRegister, // <-- ensure riskRegister is in the deps
   requirements,
 ]);
+
+const handleProjectDiagramRowsUpdate = useCallback((nextRowsOrUpdater) => {
+  const projectIdAtUpdate = activeProjectId;
+  if (!projectIdAtUpdate || loadingProjectId || !projectLoaded || loadedProjectId !== projectIdAtUpdate) return;
+  setResponseRows((currentRows) => {
+    if (activeProjectId !== projectIdAtUpdate || loadingProjectId || !projectLoaded || loadedProjectId !== projectIdAtUpdate) {
+      return currentRows;
+    }
+    const nextRows = typeof nextRowsOrUpdater === "function"
+      ? nextRowsOrUpdater(currentRows)
+      : nextRowsOrUpdater;
+    return Array.isArray(nextRows) ? nextRows : currentRows;
+  });
+}, [activeProjectId, loadingProjectId, projectLoaded, loadedProjectId]);
 
    // Accept an optional prompt override so we don't rely on async state
 // Accept an optional prompt override for Custom Report
@@ -5977,7 +6005,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     };
   }, [activeCodeArchitectureRowsKey, handleOpenCodeArchitectureFunctionalRow, handleOpenCodeArchitectureHazardSummaryRow, handleOpenHazardSummaryRow, handleOpenFunctionalRow]);
 
-  const generateFunctionalRowsFromWizard = async (combinedPrompt, onProgress = () => {}) => {
+  const generateFunctionalRowsFromWizard = async (combinedPrompt, onProgress = () => {}, projectIdAtStart = activeProjectId) => {
     let parsedRows = [];
     onProgress({
       step: 1,
@@ -6009,12 +6037,16 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const categories = parsedRows.length
       ? await classifyPromptWizardDiagramCategories(parsedRows, combinedPrompt)
       : null;
+    if (projectIdAtStart && activeProjectIdRef.current !== projectIdAtStart) {
+      return parsedRows;
+    }
     setResponseRows(parsedRows);
     setDiagramCategories(categories);
     return parsedRows;
   };
 
   const handlePromptWizardSubmit = async (combinedPrompt) => {
+    const projectIdAtStart = activeProjectId;
     const activityId = `wizard-decomposition-${activeProjectId || "default"}`;
     const sourceRunId = `functional-decomposition-${activeProjectId || "default"}-${Date.now()}`;
     setFunctionalReviewRunId(sourceRunId);
@@ -6029,7 +6061,11 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     try {
       const parsedRows = await generateFunctionalRowsFromWizard(combinedPrompt, (progressPatch) => {
         updateActivity(activityId, progressPatch);
-      });
+      }, projectIdAtStart);
+      if (projectIdAtStart && activeProjectIdRef.current !== projectIdAtStart) {
+        finishActivity(activityId, "error", "Project changed before generation completed");
+        return;
+      }
       if (parsedRows.length > 0) {
         try {
           await resultsReview.createReviewItems(createReviewItemsFromGeneratedTable({
@@ -6110,6 +6146,9 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         !allowed?.length || allowed.includes(getFunctionalCellValue(row, field))
       )
     );
+  const activeProjectDiagramKey = activeProjectId
+    ? `diagram:${activeProjectId}:${loadedProjectId === activeProjectId && projectLoaded ? "ready" : "loading"}`
+    : "diagram:none";
 
   const handleRunAnalysis = async (selectedMethod) => {
     const usesProjectRiskProfileGenerationMode = selectedMethod === "STPA-Textbook";
@@ -9300,14 +9339,14 @@ const ColumnFilterButton = ({ col }) => {
                           {/* relative/pb-10/overflow-visible prevents clipping of bottom-right controls */}
                           <div className="relative h-[calc(100vh-285px)] min-h-[560px] w-full rounded-2xl bg-white overflow-visible">
                           <LiteSummaryDiagramReactFlow
-  key={activeProjectId}
+  key={activeProjectDiagramKey}
   ref={diagramRef}
   rows={responseRows}
   autoCategories={diagramCategories}
   cleanOnceKey={cleanOnceKey}
   onCleanApplied={() => setCleanOnceKey(null)}   // ← clear after first use
   storageKey={`diagram:positions:${activeProjectId}`} // ← per-project persistence
-  onUpdateRows={setResponseRows}
+  onUpdateRows={handleProjectDiagramRowsUpdate}
   onRequestCreateProject={handleCreateProjectFromSelection}   // ← ADD THIS
   hazardSummary={analysisResult?.Summary}
   onOpenHazardRow={handleOpenHazardSummaryRow}

@@ -337,6 +337,22 @@ function saveAutoCategoryMeta(storageKey, meta) {
   } catch {}
 }
 
+function loadDeletedAutoGroupIds(storageKey) {
+  try {
+    const raw = localStorage.getItem(`${storageKey}:deleted-auto-groups:v1`);
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr.filter(Boolean) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveDeletedAutoGroupIds(storageKey, deletedIds) {
+  try {
+    localStorage.setItem(`${storageKey}:deleted-auto-groups:v1`, JSON.stringify(Array.from(deletedIds || [])));
+  } catch {}
+}
+
 function loadManualNodes(storageKey) {
   try {
     const raw = localStorage.getItem(`${storageKey}:manual:v1`);
@@ -940,6 +956,7 @@ function normalizeCategories(aiPlan, rows) {
       const functions = Array.from(fnSet).filter(Boolean);
       return {
         name: cleanCategoryTitle(category?.name || `Category ${index + 1}`),
+        sourceIndex: index,
         functions,
         description: String(category?.description || '').trim(),
       };
@@ -1037,13 +1054,14 @@ function generateGroupDescription(label, functions = [], rows = []) {
 }
 
 function stableAutoCategoryId(category, index) {
+  const stableIndex = Number.isFinite(Number(category?.sourceIndex)) ? Number(category.sourceIndex) : index;
   const label = cleanCategoryTitle(category?.name || `Category ${index + 1}`);
   const slug = label
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 48);
-  return `g:auto:${index}:${slug || 'category'}`;
+  return `g:auto:${stableIndex}:${slug || 'category'}`;
 }
 
 function buildAutoCategoryLayout(categories) {
@@ -1324,6 +1342,7 @@ const DiagramBody = forwardRef(function DiagramBody(
   const [highlightedEdgeId, setHighlightedEdgeId] = useState(null);
   const [groupBoxes, setGroupBoxes] = useState(() => loadGroupBoxes(storageKey));
   const [manualNodesStore, setManualNodesStore] = useState(() => loadManualNodes(storageKey));
+  const [deletedAutoGroupIds, setDeletedAutoGroupIds] = useState(() => loadDeletedAutoGroupIds(storageKey));
   const [selectedNodeIds, setSelectedNodeIds] = useState([]);
   const [contextMenu, setContextMenu] = useState(null);
 
@@ -1448,6 +1467,7 @@ const DiagramBody = forwardRef(function DiagramBody(
   const resizeFrameRef = useRef(null);
   const pendingGroupResizeRef = useRef(new Map());
   const groupBoxesRef = useRef(groupBoxes);
+  const deletedAutoGroupIdsRef = useRef(deletedAutoGroupIds);
   const appliedAutoCategoriesRef = useRef(null);
   const groupDragRef = useRef(null);
   const persistSoon = useCallback(() => {
@@ -1468,6 +1488,32 @@ const DiagramBody = forwardRef(function DiagramBody(
   const builtOnceRef = useRef(false);
   const structureRef = useRef('');
 
+  const flushGroupResizeAndPersistence = useCallback(({ updateState = true } = {}) => {
+    if (resizeFrameRef.current) {
+      cancelAnimationFrame(resizeFrameRef.current);
+      resizeFrameRef.current = null;
+    }
+    const pending = pendingGroupResizeRef.current;
+    if (pending.size) {
+      pendingGroupResizeRef.current = new Map();
+      const baseBoxes = groupBoxesRef.current || [];
+      const nextBoxes = baseBoxes.map((box) => {
+        const nextSize = pending.get(box.id);
+        if (!nextSize) return box;
+        const width = nextSize.width;
+        const height = nextSize.height;
+        if (width === (box.width || GROUP.w) && height === (box.height || GROUP.h)) return box;
+        return { ...box, width, height, userResized: true };
+      });
+      groupBoxesRef.current = nextBoxes;
+      if (updateState) setGroupBoxes(nextBoxes);
+    }
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    if (groupSaveTimer.current) clearTimeout(groupSaveTimer.current);
+    savePositions(storageKey, posRef.current);
+    saveGroupBoxes(storageKey, groupBoxesRef.current);
+  }, [storageKey]);
+
   // track which clean keys have been applied
   const cleanedKeysRef = useRef(new Set());
 
@@ -1481,6 +1527,10 @@ const DiagramBody = forwardRef(function DiagramBody(
   useEffect(() => {
     groupBoxesRef.current = groupBoxes;
   }, [groupBoxes]);
+
+  useEffect(() => {
+    deletedAutoGroupIdsRef.current = deletedAutoGroupIds;
+  }, [deletedAutoGroupIds]);
 
   const getConnectableFunctionName = useCallback((nodeId) => {
     const node = getNodes().find((entry) => entry.id === nodeId) || nodes.find((entry) => entry.id === nodeId);
@@ -1501,6 +1551,9 @@ const DiagramBody = forwardRef(function DiagramBody(
     groupBoxesRef.current = loadedGroupBoxes;
     setGroupBoxes(loadedGroupBoxes);
     setManualNodesStore(loadManualNodes(storageKey));
+    const loadedDeletedAutoGroupIds = loadDeletedAutoGroupIds(storageKey);
+    deletedAutoGroupIdsRef.current = loadedDeletedAutoGroupIds;
+    setDeletedAutoGroupIds(loadedDeletedAutoGroupIds);
     setNodes([]);
     setEdges([]);
     setSelectedNodeIds([]);
@@ -1656,15 +1709,11 @@ useEffect(() => {
 
   useEffect(() => {
     return () => {
-      if (saveTimer.current) clearTimeout(saveTimer.current);
-      if (groupSaveTimer.current) clearTimeout(groupSaveTimer.current);
+      flushGroupResizeAndPersistence({ updateState: false });
       if (manualSaveTimer.current) clearTimeout(manualSaveTimer.current);
-      if (resizeFrameRef.current) cancelAnimationFrame(resizeFrameRef.current);
-      savePositions(storageKey, posRef.current);
-      saveGroupBoxes(storageKey, groupBoxesRef.current);
       saveManualNodes(storageKey, manualNodesStore);
     };
-  }, [storageKey, manualNodesStore]);
+  }, [flushGroupResizeAndPersistence, storageKey, manualNodesStore]);
 
   const queueGroupResizeUpdate = useCallback((id, dimensions) => {
     if (!id || !dimensions) return;
@@ -1694,33 +1743,9 @@ useEffect(() => {
     if (resizeFrameRef.current) return;
 
     resizeFrameRef.current = requestAnimationFrame(() => {
-      resizeFrameRef.current = null;
-      const pending = pendingGroupResizeRef.current;
-      pendingGroupResizeRef.current = new Map();
-
-      setGroupBoxes((currentBoxes) => {
-        const baseBoxes = groupBoxesRef.current.length ? groupBoxesRef.current : currentBoxes;
-        let changed = false;
-        const nextBoxes = baseBoxes.map((box) => {
-          const nextSize = pending.get(box.id);
-          if (!nextSize) return box;
-          const width = nextSize.width;
-          const height = nextSize.height;
-          if (width === (box.width || GROUP.w) && height === (box.height || GROUP.h)) {
-            return box;
-          }
-          changed = true;
-          return { ...box, width, height, userResized: true };
-        });
-
-        if (changed) {
-          persistGroupsSoon(nextBoxes);
-          return nextBoxes;
-        }
-        return baseBoxes;
-      });
+      flushGroupResizeAndPersistence();
     });
-  }, [persistGroupsSoon, setNodes]);
+  }, [flushGroupResizeAndPersistence, setNodes]);
 
   const exportDiagramJson = useCallback(() => {
     const exportedAt = new Date().toISOString();
@@ -1813,8 +1838,24 @@ useEffect(() => {
 
   useEffect(() => {
     const signature = autoCategories?.signature || rowCategorySignature(rows);
-    const categories = Array.isArray(autoCategories?.categories) ? autoCategories.categories : [];
+    if (!Array.isArray(autoCategories?.categories)) return;
+    const categories = autoCategories.categories;
+    const activeCategories = normalizeCategories({ categories }, rows)
+      .filter((category, index) => !deletedAutoGroupIds.has(stableAutoCategoryId(category, index)));
+    const activeAutoGroupIds = new Set(activeCategories.map((category, index) => stableAutoCategoryId(category, index)));
     if (groupDragRef.current) return;
+    if (groupBoxes.some((box) => box.autoGenerated && !activeAutoGroupIds.has(box.id))) {
+      setGroupBoxes((currentBoxes) => {
+        const nextBoxes = currentBoxes.filter((box) => !box.autoGenerated || activeAutoGroupIds.has(box.id));
+        if (nextBoxes.length !== currentBoxes.length) {
+          groupBoxesRef.current = nextBoxes;
+          persistGroupsSoon(nextBoxes);
+          return nextBoxes;
+        }
+        return currentBoxes;
+      });
+      return;
+    }
     const wantedNodeIds = buildWantedNodeIdSet(rows);
     const functionalNodes = nodes.filter((node) => wantedNodeIds.has(node.id) && node.type !== 'groupBox');
     const autoBoxesOverlap = groupBoxes.some((box, index) => (
@@ -1833,11 +1874,21 @@ useEffect(() => {
         ))
       )
     );
-    if (!categories.length || (appliedAutoCategoriesRef.current === signature && !needsAutoCategoryRepair)) return;
+    const savedAutoGroupIds = new Set(groupBoxes.filter((box) => box.autoGenerated).map((box) => box.id));
+    const hasCompleteSavedAutoLayout = Boolean(
+      activeAutoGroupIds.size &&
+      savedAutoGroupIds.size === activeAutoGroupIds.size &&
+      Array.from(activeAutoGroupIds).every((id) => savedAutoGroupIds.has(id))
+    );
+    if (hasCompleteSavedAutoLayout && !needsAutoCategoryRepair) {
+      appliedAutoCategoriesRef.current = signature;
+      return;
+    }
+    if (!activeCategories.length || (appliedAutoCategoriesRef.current === signature && !needsAutoCategoryRepair)) return;
     if (groupBoxes.some((box) => !box.autoGenerated)) return;
 
     const boxes = applyCategoryLayoutToPositionMap({
-      categories: normalizeCategories({ categories }, rows),
+      categories: activeCategories,
       rows,
       posMap: posRef.current,
     });
@@ -1855,7 +1906,7 @@ useEffect(() => {
       generatedAt: autoCategories?.generatedAt || new Date().toISOString(),
     });
     structureRef.current = '';
-  }, [autoCategories, rows, groupBoxes, nodes, storageKey, setGroupBoxes]);
+  }, [autoCategories, rows, groupBoxes, nodes, storageKey, deletedAutoGroupIds, persistGroupsSoon, setGroupBoxes]);
 
   // Extra fit when parent flips cleanOnceKey (used after prompt finishes)
 useEffect(() => {
@@ -1900,6 +1951,7 @@ useEffect(() => {
     });
     elkNodes.forEach((n) => posRef.current.set(n.id, { position: { ...n.position }, parentId: null }));
     persistSoon();
+    savePositions(storageKey, posRef.current);
     const rawEdges = rowsToRawEdges(rows);
     const absolutePositions = buildAbsolutePositionMap(
       nodes.map((node) => {
@@ -2085,6 +2137,18 @@ useEffect(() => {
         const deletedIds = new Set(deletions.map((cc) => cc.id));
         const deletedGroups = groupBoxes.filter((box) => deletedIds.has(box.id));
         if (deletedGroups.length) {
+          const deletedAutoIds = deletedGroups
+            .filter((box) => box.autoGenerated)
+            .map((box) => box.id);
+          if (deletedAutoIds.length) {
+            setDeletedAutoGroupIds((currentIds) => {
+              const nextIds = new Set(currentIds);
+              deletedAutoIds.forEach((id) => nextIds.add(id));
+              deletedAutoGroupIdsRef.current = nextIds;
+              saveDeletedAutoGroupIds(storageKey, nextIds);
+              return nextIds;
+            });
+          }
           setGroupBoxes((currentBoxes) => {
             const nextBoxes = currentBoxes.filter((box) => !deletedIds.has(box.id));
             persistGroupsSoon(nextBoxes);
@@ -2109,7 +2173,7 @@ useEffect(() => {
       }
       reactflowOnNodesChange(changes);
     },
-    [rows, reactflowOnNodesChange, onUpdateRows, persistSoon, groupBoxes, queueGroupResizeUpdate, persistGroupsSoon, setNodes]
+    [rows, reactflowOnNodesChange, onUpdateRows, persistSoon, groupBoxes, queueGroupResizeUpdate, persistGroupsSoon, setNodes, storageKey]
   );
 
   const onEdgesChange = useCallback(
@@ -2310,6 +2374,7 @@ if (nextFunctionalNodes.length > 1) {
         });
         elkNodes.forEach((n) => posRef.current.set(n.id, { position: { ...n.position }, parentId: null }));
         persistSoon();
+        savePositions(storageKey, posRef.current);
         const rawEdges = rowsToRawEdges(rows);
         const absolutePositions = buildAbsolutePositionMap(
           currentNodes.map((node) => {
@@ -2936,6 +3001,7 @@ if (nextFunctionalNodes.length > 1) {
                 }
               }
               persistSoon();
+              savePositions(storageKey, posRef.current);
               if (node.type !== 'groupBox' && !finalParentId) {
                 nudgeIfOverlapping(node.id, nodes.filter((n) => !n.parentNode && n.type !== 'groupBox'), setNodes);
               }
