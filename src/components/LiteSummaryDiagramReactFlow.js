@@ -25,6 +25,7 @@ import ReactFlow, {
   useEdgesState,
   ConnectionMode,
   BaseEdge,
+  StepEdge,
   useReactFlow,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
@@ -112,6 +113,23 @@ const COLOR_PRESETS = [
 
 // Arrow size knob (in px)
 const ARROW_SIZE = 18;
+
+const EDGE_ROUTING_STYLES = {
+  BEZIER: 'bezier',
+  RECTANGULAR: 'rectangular',
+};
+
+function normalizeEdgeRoutingStyle(value) {
+  return value === EDGE_ROUTING_STYLES.RECTANGULAR
+    ? EDGE_ROUTING_STYLES.RECTANGULAR
+    : EDGE_ROUTING_STYLES.BEZIER;
+}
+
+function edgeTypeForRoutingStyle(value) {
+  return normalizeEdgeRoutingStyle(value) === EDGE_ROUTING_STYLES.RECTANGULAR
+    ? 'smartStep'
+    : 'smartBezier';
+}
 
 /* ================================
  * Utilities
@@ -366,6 +384,57 @@ function loadManualNodes(storageKey) {
 function saveManualNodes(storageKey, manualNodes) {
   try {
     localStorage.setItem(`${storageKey}:manual:v1`, JSON.stringify(manualNodes || []));
+  } catch {}
+}
+
+function loadEdgeAggregationState(storageKey) {
+  try {
+    const raw = localStorage.getItem(`${storageKey}:edge-aggregation:v1`);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return {
+      aggregateAll: Boolean(parsed?.aggregateAll),
+      aggregatedPairs: new Set(Array.isArray(parsed?.aggregatedPairs) ? parsed.aggregatedPairs.filter(Boolean) : []),
+      expandedPairs: new Set(Array.isArray(parsed?.expandedPairs) ? parsed.expandedPairs.filter(Boolean) : []),
+    };
+  } catch {
+    return { aggregateAll: false, aggregatedPairs: new Set(), expandedPairs: new Set() };
+  }
+}
+
+function saveEdgeAggregationState(storageKey, state = {}) {
+  try {
+    localStorage.setItem(`${storageKey}:edge-aggregation:v1`, JSON.stringify({
+      aggregateAll: Boolean(state.aggregateAll),
+      aggregatedPairs: Array.from(state.aggregatedPairs || []),
+      expandedPairs: Array.from(state.expandedPairs || []),
+    }));
+  } catch {}
+}
+
+function loadEdgeRoutingState(storageKey) {
+  try {
+    const raw = localStorage.getItem(`${storageKey}:edge-routing:v1`);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const overrides = parsed?.overrides && typeof parsed.overrides === 'object' ? parsed.overrides : {};
+    return {
+      defaultStyle: normalizeEdgeRoutingStyle(parsed?.defaultStyle),
+      overrides: Object.fromEntries(
+        Object.entries(overrides)
+          .filter(([key]) => Boolean(key))
+          .map(([key, value]) => [key, normalizeEdgeRoutingStyle(value)])
+      ),
+    };
+  } catch {
+    return { defaultStyle: EDGE_ROUTING_STYLES.BEZIER, overrides: {} };
+  }
+}
+
+function saveEdgeRoutingState(storageKey, state = {}) {
+  try {
+    localStorage.setItem(`${storageKey}:edge-routing:v1`, JSON.stringify({
+      defaultStyle: normalizeEdgeRoutingStyle(state.defaultStyle),
+      overrides: state.overrides && typeof state.overrides === 'object' ? state.overrides : {},
+    }));
   } catch {}
 }
 
@@ -743,11 +812,77 @@ function assignHandles(fromId, toId, positions, occupiedSpots, _edgeLabel, edgeI
 /* ================================
  * Edge building (no layout dependency)
  * ================================ */
-function buildEdgesFromRaw(rawEdges, positions) {
+function edgePairKey(source, target) {
+  return `${source || ''}->${target || ''}`;
+}
+
+function aggregateEdgeIdForPair(pairKey) {
+  return `e:aggregate:${pairKey}`;
+}
+
+function shouldAggregatePair(pairKey, count, options = {}) {
+  if (count <= 1) return false;
+  if (options.aggregateAll) return !options.expandedPairs?.has(pairKey);
+  return Boolean(options.aggregatedPairs?.has(pairKey));
+}
+
+function summarizeEdgeLabels(edges = []) {
+  const labels = Array.from(new Set(edges.map((edge) => String(edge.label || '').trim()).filter(Boolean)));
+  if (!labels.length) return '';
+  const preview = labels.slice(0, 3).join(', ');
+  return labels.length > 3 ? `${preview} +${labels.length - 3}` : preview;
+}
+
+function edgeRoutingTargetKey(edge) {
+  if (!edge) return '';
+  if (edge.data?.aggregated && edge.data?.pairKey) return `pair:${edge.data.pairKey}`;
+  return edge.id || '';
+}
+
+function resolveEdgeRoutingStyle(edge, routing = {}) {
+  const targetKey = edgeRoutingTargetKey(edge);
+  const override = targetKey ? routing.overrides?.[targetKey] : null;
+  return normalizeEdgeRoutingStyle(override || routing.defaultStyle);
+}
+
+function buildEdgesFromRaw(rawEdges, positions, aggregation = {}, routing = {}) {
+  const grouped = new Map();
+  rawEdges.forEach((edge, rowIndex) => {
+    const pairKey = edgePairKey(edge.source, edge.target);
+    if (!grouped.has(pairKey)) grouped.set(pairKey, []);
+    grouped.get(pairKey).push({ ...edge, rowIndex });
+  });
+
+  const displayEdges = [];
+  grouped.forEach((pairEdges, pairKey) => {
+    if (shouldAggregatePair(pairKey, pairEdges.length, aggregation)) {
+      const first = pairEdges[0];
+      displayEdges.push({
+        ...first,
+        id: aggregateEdgeIdForPair(pairKey),
+        label: `${pairEdges.length} edges`,
+        sourceHandle: null,
+        targetHandle: null,
+        updatable: false,
+        data: {
+          ...(first.data || {}),
+          aggregated: true,
+          pairKey,
+          count: pairEdges.length,
+          summary: summarizeEdgeLabels(pairEdges),
+          edgeIds: pairEdges.map((edge) => edge.id),
+          rowIndexes: pairEdges.map((edge) => edge.rowIndex),
+        },
+      });
+      return;
+    }
+    displayEdges.push(...pairEdges);
+  });
+
   const occupiedSpots = new Set();
   const pairSeq = new Map();
-  return rawEdges.map((e, i) => {
-    const key = e.source < e.target ? `${e.source}|${e.target}` : `${e.target}|${e.source}`;
+  return displayEdges.map((e, i) => {
+    const key = edgePairKey(e.source, e.target);
     const pairIdx = pairSeq.get(key) || 0;
     pairSeq.set(key, pairIdx + 1);
 
@@ -770,14 +905,27 @@ function buildEdgesFromRaw(rawEdges, positions) {
     if (sParsed) occupiedSpots.add(spotKey(e.source, sParsed.side, sParsed.idx));
     if (tParsed) occupiedSpots.add(spotKey(e.target, tParsed.side, tParsed.idx));
 
-    const stroke = BRAND.blue;
+    const isAggregated = Boolean(e.data?.aggregated);
+    const stroke = isAggregated ? BRAND.purple : BRAND.blue;
+    const routingTargetKey = edgeRoutingTargetKey(e);
+    const routingStyle = resolveEdgeRoutingStyle(e, routing);
     return {
       ...e,
-      type: 'smartBezier',
+      type: edgeTypeForRoutingStyle(routingStyle),
       sourceHandle,
       targetHandle,
-      style: { stroke, strokeWidth: 3 },
+      data: {
+        ...(e.data || {}),
+        routingStyle,
+        routingTargetKey,
+      },
+      style: {
+        stroke,
+        strokeWidth: isAggregated ? 5 : 3,
+        strokeDasharray: isAggregated ? '8 5' : undefined,
+      },
       markerEnd: { type: MarkerType.ArrowClosed, color: stroke, width: ARROW_SIZE, height: ARROW_SIZE },
+      label: isAggregated && e.data?.summary ? `${e.label}: ${e.data.summary}` : e.label,
     };
   });
 }
@@ -1337,14 +1485,18 @@ const DiagramBody = forwardRef(function DiagramBody(
   );
   const edgeTypes = useMemo(() => {
     const Smart = !hasGroups && typeof SmartBezierEdge === 'function' && SmartBezierEdge;
-    return { smartBezier: Smart };
+    return { smartBezier: Smart, smartStep: StepEdge };
   }, [hasGroups]);
   const [highlightedEdgeId, setHighlightedEdgeId] = useState(null);
   const [groupBoxes, setGroupBoxes] = useState(() => loadGroupBoxes(storageKey));
   const [manualNodesStore, setManualNodesStore] = useState(() => loadManualNodes(storageKey));
   const [deletedAutoGroupIds, setDeletedAutoGroupIds] = useState(() => loadDeletedAutoGroupIds(storageKey));
+  const [edgeAggregation, setEdgeAggregation] = useState(() => loadEdgeAggregationState(storageKey));
+  const [edgeRouting, setEdgeRouting] = useState(() => loadEdgeRoutingState(storageKey));
+  const [hydratedStorageKey, setHydratedStorageKey] = useState(storageKey);
   const [selectedNodeIds, setSelectedNodeIds] = useState([]);
   const [contextMenu, setContextMenu] = useState(null);
+  const storageReady = hydratedStorageKey === storageKey;
 
   const viewNodes = useMemo(() => {
     const active = edges.find((e) => e.id === highlightedEdgeId);
@@ -1359,17 +1511,18 @@ const DiagramBody = forwardRef(function DiagramBody(
     () =>
       edges.map((e) => {
         const isOn = e.id === highlightedEdgeId;
+        const stroke = e.data?.aggregated ? BRAND.purple : BRAND.blue;
         return {
           ...e,
           animated: isOn,
           style: {
             ...(e.style || {}),
-            stroke: BRAND.blue,
-            strokeWidth: isOn ? 4.5 : THEME.edge.width,
+            stroke,
+            strokeWidth: isOn ? (e.data?.aggregated ? 6 : 4.5) : (e.data?.aggregated ? 5 : THEME.edge.width),
             opacity: isOn ? 1 : THEME.edge.opacity,
             filter: isOn ? 'drop-shadow(0 0 6px rgba(45,125,254,0.45))' : undefined,
           },
-          markerEnd: e.markerEnd ?? { type: MarkerType.ArrowClosed, color: BRAND.blue, width: ARROW_SIZE, height: ARROW_SIZE },
+          markerEnd: e.markerEnd ?? { type: MarkerType.ArrowClosed, color: stroke, width: ARROW_SIZE, height: ARROW_SIZE },
         };
       }),
     [edges, highlightedEdgeId]
@@ -1468,6 +1621,9 @@ const DiagramBody = forwardRef(function DiagramBody(
   const pendingGroupResizeRef = useRef(new Map());
   const groupBoxesRef = useRef(groupBoxes);
   const deletedAutoGroupIdsRef = useRef(deletedAutoGroupIds);
+  const edgeAggregationRef = useRef(edgeAggregation);
+  const edgeRoutingRef = useRef(edgeRouting);
+  const storageKeyRef = useRef(storageKey);
   const appliedAutoCategoriesRef = useRef(null);
   const groupDragRef = useRef(null);
   const persistSoon = useCallback(() => {
@@ -1532,6 +1688,18 @@ const DiagramBody = forwardRef(function DiagramBody(
     deletedAutoGroupIdsRef.current = deletedAutoGroupIds;
   }, [deletedAutoGroupIds]);
 
+  useEffect(() => {
+    edgeAggregationRef.current = edgeAggregation;
+    if (storageKeyRef.current !== storageKey) return;
+    saveEdgeAggregationState(storageKey, edgeAggregation);
+  }, [edgeAggregation, storageKey]);
+
+  useEffect(() => {
+    edgeRoutingRef.current = edgeRouting;
+    if (storageKeyRef.current !== storageKey) return;
+    saveEdgeRoutingState(storageKey, edgeRouting);
+  }, [edgeRouting, storageKey]);
+
   const getConnectableFunctionName = useCallback((nodeId) => {
     const node = getNodes().find((entry) => entry.id === nodeId) || nodes.find((entry) => entry.id === nodeId);
     if (!node || node.type === 'groupBox' || node.type === 'note') return '';
@@ -1542,10 +1710,12 @@ const DiagramBody = forwardRef(function DiagramBody(
   const rebuildRenderedEdgesFromRows = useCallback((nextRows, sourceNodes = null) => {
     const graphNodes = sourceNodes || getNodes();
     const rawEdges = rowsToRawEdges(nextRows);
-    setEdges(buildEdgesFromRaw(rawEdges, buildAbsolutePositionMap(graphNodes)));
+    setEdges(buildEdgesFromRaw(rawEdges, buildAbsolutePositionMap(graphNodes), edgeAggregationRef.current, edgeRoutingRef.current));
   }, [getNodes, setEdges]);
 
   useEffect(() => {
+    storageKeyRef.current = storageKey;
+    setHydratedStorageKey(null);
     posRef.current = loadPositions(storageKey);
     const loadedGroupBoxes = loadGroupBoxes(storageKey);
     groupBoxesRef.current = loadedGroupBoxes;
@@ -1554,6 +1724,12 @@ const DiagramBody = forwardRef(function DiagramBody(
     const loadedDeletedAutoGroupIds = loadDeletedAutoGroupIds(storageKey);
     deletedAutoGroupIdsRef.current = loadedDeletedAutoGroupIds;
     setDeletedAutoGroupIds(loadedDeletedAutoGroupIds);
+    const loadedEdgeAggregation = loadEdgeAggregationState(storageKey);
+    edgeAggregationRef.current = loadedEdgeAggregation;
+    setEdgeAggregation(loadedEdgeAggregation);
+    const loadedEdgeRouting = loadEdgeRoutingState(storageKey);
+    edgeRoutingRef.current = loadedEdgeRouting;
+    setEdgeRouting(loadedEdgeRouting);
     setNodes([]);
     setEdges([]);
     setSelectedNodeIds([]);
@@ -1563,6 +1739,7 @@ const DiagramBody = forwardRef(function DiagramBody(
     structureRef.current = '';
     builtCountRef.current = 0;
     appliedAutoCategoriesRef.current = null;
+    setHydratedStorageKey(storageKey);
   }, [storageKey, setEdges, setNodes]);
 
   // Auto-fit when graph is (re)built or changes noticeably
@@ -1683,7 +1860,7 @@ useEffect(() => {
         sourceHandle,
         targetHandle,
         animated: false,
-        type: 'smartBezier',
+        type: edgeTypeForRoutingStyle(edgeRoutingRef.current.defaultStyle),
         style: { strokeWidth: 3, stroke: BRAND.blue },
         markerEnd: { type: MarkerType.ArrowClosed, width: ARROW_SIZE, height: ARROW_SIZE, color: BRAND.blue },
       };
@@ -1766,7 +1943,7 @@ useEffect(() => {
 
   const refreshEdgesFromNodes = useCallback((nextNodes) => {
     const raw = rowsToRawEdges(rows);
-    setEdges(buildEdgesFromRaw(raw, positionsAbsMapFromRF(nextNodes)));
+    setEdges(buildEdgesFromRaw(raw, positionsAbsMapFromRF(nextNodes), edgeAggregationRef.current, edgeRoutingRef.current));
   }, [rows, setEdges]);
 
   const growGroupToFitMembers = useCallback((groupId, sourceNodes = null) => {
@@ -1837,6 +2014,7 @@ useEffect(() => {
   }, [getNodes, persistSoon, refreshEdgesFromNodes, setNodes]);
 
   useEffect(() => {
+    if (!storageReady) return;
     const signature = autoCategories?.signature || rowCategorySignature(rows);
     if (!Array.isArray(autoCategories?.categories)) return;
     const categories = autoCategories.categories;
@@ -1906,7 +2084,7 @@ useEffect(() => {
       generatedAt: autoCategories?.generatedAt || new Date().toISOString(),
     });
     structureRef.current = '';
-  }, [autoCategories, rows, groupBoxes, nodes, storageKey, deletedAutoGroupIds, persistGroupsSoon, setGroupBoxes]);
+  }, [autoCategories, rows, groupBoxes, nodes, storageKey, deletedAutoGroupIds, persistGroupsSoon, setGroupBoxes, storageReady]);
 
   // Extra fit when parent flips cleanOnceKey (used after prompt finishes)
 useEffect(() => {
@@ -1959,7 +2137,7 @@ useEffect(() => {
         return match ? { ...node, position: match.position } : node;
       })
     );
-    setEdges(buildEdgesFromRaw(rawEdges, absolutePositions));
+    setEdges(buildEdgesFromRaw(rawEdges, absolutePositions, edgeAggregationRef.current, edgeRoutingRef.current));
     if (fitAfterClean) setTimeout(() => fitView({ padding: 0.2, duration: 600, includeHiddenNodes: true }), 0);
   }, [autoCategories, groupBoxes, nodes, edges, rows, storageKey, fitAfterClean, fitView, persistSoon]);
 
@@ -2202,6 +2380,7 @@ useEffect(() => {
 
   /* Build when structure changes */
   useEffect(() => {
+    if (!storageReady) return;
     let cancelled = false;
 
     const sig = structureSignature(rows);
@@ -2343,7 +2522,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
 
     const nextNodes = [...groupNodes, ...nextFunctionalNodes, ...manualNodes];
     const rawEdges = rowsToRawEdges(rows);
-    const nextEdges = buildEdgesFromRaw(rawEdges, buildAbsolutePositionMap(nextNodes));
+    const nextEdges = buildEdgesFromRaw(rawEdges, buildAbsolutePositionMap(nextNodes), edgeAggregationRef.current, edgeRoutingRef.current);
 
     if (!cancelled) {
       setNodes(nextNodes);
@@ -2382,7 +2561,7 @@ if (nextFunctionalNodes.length > 1) {
             return laid ? { ...node, position: laid.position } : node;
           })
         );
-        setEdges(buildEdgesFromRaw(rawEdges, absolutePositions));
+        setEdges(buildEdgesFromRaw(rawEdges, absolutePositions, edgeAggregationRef.current, edgeRoutingRef.current));
         if (fitAfterClean) {
           setTimeout(() => fitView({ padding: 0.2, duration: 600, includeHiddenNodes: true }), 0);
         }
@@ -2392,9 +2571,10 @@ if (nextFunctionalNodes.length > 1) {
 }
     }
     return () => { cancelled = true; };
-  }, [rows, persistSoon, nodes, setNodes, setEdges, runCleanAndSpread, groupBoxes, queueGroupResizeUpdate]);
+  }, [rows, persistSoon, nodes, setNodes, setEdges, runCleanAndSpread, groupBoxes, queueGroupResizeUpdate, storageReady]);
 
   useEffect(() => {
+    if (!storageReady) return;
     if (!groupBoxes.length) return;
     if (groupDragRef.current) return;
 
@@ -2418,9 +2598,10 @@ if (nextFunctionalNodes.length > 1) {
       }
       return currentBoxes;
     });
-  }, [groupBoxes, nodes, rows, persistGroupsSoon]);
+  }, [groupBoxes, nodes, rows, persistGroupsSoon, storageReady]);
 
   useEffect(() => {
+    if (!storageReady) return;
     if (!groupBoxes.length || !nodes.length) return;
     if (groupDragRef.current) return;
     setGroupBoxes((currentBoxes) => {
@@ -2450,9 +2631,10 @@ if (nextFunctionalNodes.length > 1) {
 
       return currentBoxes;
     });
-  }, [autoCategories, groupBoxes, nodes, rows, persistGroupsSoon]);
+  }, [autoCategories, groupBoxes, nodes, rows, persistGroupsSoon, storageReady]);
 
   useEffect(() => {
+    if (!storageReady) return;
     if (!builtOnceRef.current) return;
     const wantedNodeIds = buildWantedNodeIdSet(rows);
     const nextManualNodes = nodes
@@ -2465,10 +2647,11 @@ if (nextFunctionalNodes.length > 1) {
 
     setManualNodesStore(nextManualNodes);
     persistManualSoon(nextManualNodes);
-  }, [nodes, rows, manualNodesStore, persistManualSoon]);
+  }, [nodes, rows, manualNodesStore, persistManualSoon, storageReady]);
 
   // Sync labels/details without moving nodes
   useEffect(() => {
+    if (!storageReady) return;
     if (!builtOnceRef.current) return;
 
     const nodeDetails = new Map();
@@ -2497,10 +2680,11 @@ if (nextFunctionalNodes.length > 1) {
           : e
       )
     );
-  }, [rows, setNodes, setEdges]);
+  }, [rows, setNodes, setEdges, storageReady]);
 
   /* One-time clean+spread trigger */
   useEffect(() => {
+    if (!storageReady) return;
     if (!cleanOnceKey) return;
     if (cleanedKeysRef.current.has(cleanOnceKey)) return;
     if (!nodes.length) return;
@@ -2518,7 +2702,7 @@ if (nextFunctionalNodes.length > 1) {
     cleanedKeysRef.current.add(cleanOnceKey);
     // tell parent we consumed the key so it won't fire on remount
     try { onCleanApplied?.(cleanOnceKey); } catch {}
-  }, [cleanOnceKey, nodes, autoCategories, fitView, runCleanAndSpread, onCleanApplied]);
+  }, [cleanOnceKey, nodes, autoCategories, fitView, runCleanAndSpread, onCleanApplied, storageReady]);
 
   /* Connect / Update */
   const onConnect = useCallback(
@@ -2537,7 +2721,7 @@ if (nextFunctionalNodes.length > 1) {
         const newEdge = {
           ...connection,
           animated: false,
-          type: 'smartBezier',
+          type: edgeTypeForRoutingStyle(edgeRoutingRef.current.defaultStyle),
           style: { strokeWidth: 3 },
           markerEnd: { type: MarkerType.ArrowClosed, width: ARROW_SIZE, height: ARROW_SIZE, color: BRAND.blue },
         };
@@ -2612,6 +2796,106 @@ if (nextFunctionalNodes.length > 1) {
   const canUngroupSelected = selectedNodeIds.some((id) => (
     nodes.some((node) => node.id === id && node.parentNode)
   ));
+  const edgePairs = useMemo(() => {
+    const pairs = new Map();
+    rowsToRawEdges(rows).forEach((edge) => {
+      const pairKey = edgePairKey(edge.source, edge.target);
+      if (!pairs.has(pairKey)) pairs.set(pairKey, []);
+      pairs.get(pairKey).push(edge);
+    });
+    return pairs;
+  }, [rows]);
+  const multiEdgePairCount = useMemo(
+    () => Array.from(edgePairs.values()).filter((pairEdges) => pairEdges.length > 1).length,
+    [edgePairs]
+  );
+  const highlightedEdge = useMemo(
+    () => edges.find((edge) => edge.id === highlightedEdgeId),
+    [edges, highlightedEdgeId]
+  );
+  const highlightedPairKey = highlightedEdge
+    ? highlightedEdge.data?.pairKey || edgePairKey(highlightedEdge.source, highlightedEdge.target)
+    : '';
+  const highlightedPairEdges = highlightedPairKey ? edgePairs.get(highlightedPairKey) || [] : [];
+  const canToggleHighlightedPair = highlightedPairEdges.length > 1;
+  const highlightedPairAggregated = canToggleHighlightedPair
+    ? shouldAggregatePair(highlightedPairKey, highlightedPairEdges.length, edgeAggregation)
+    : false;
+  const highlightedRoutingTargetKey = highlightedEdge ? edgeRoutingTargetKey(highlightedEdge) : '';
+  const highlightedRoutingStyle = highlightedEdge
+    ? resolveEdgeRoutingStyle(highlightedEdge, edgeRouting)
+    : normalizeEdgeRoutingStyle(edgeRouting.defaultStyle);
+  const highlightedRoutingLabel = highlightedRoutingStyle === EDGE_ROUTING_STYLES.RECTANGULAR ? 'Bezier Edge' : 'Rect Edge';
+  const rebuildEdgesWithRouting = useCallback((nextRouting) => {
+    const rawEdges = rowsToRawEdges(rows);
+    setEdges(buildEdgesFromRaw(rawEdges, buildAbsolutePositionMap(getNodes()), edgeAggregationRef.current, nextRouting));
+  }, [getNodes, rows, setEdges]);
+  const applyEdgeAggregation = useCallback((updater) => {
+    setEdgeAggregation((current) => {
+      const next = updater({
+        aggregateAll: Boolean(current.aggregateAll),
+        aggregatedPairs: new Set(current.aggregatedPairs || []),
+        expandedPairs: new Set(current.expandedPairs || []),
+      });
+      edgeAggregationRef.current = next;
+      const rawEdges = rowsToRawEdges(rows);
+      setEdges(buildEdgesFromRaw(rawEdges, buildAbsolutePositionMap(getNodes()), next, edgeRoutingRef.current));
+      return next;
+    });
+  }, [getNodes, rows, setEdges]);
+  const toggleAggregateAllEdges = useCallback(() => {
+    applyEdgeAggregation((current) => ({
+      aggregateAll: !current.aggregateAll,
+      aggregatedPairs: new Set(),
+      expandedPairs: new Set(),
+    }));
+    setHighlightedEdgeId(null);
+  }, [applyEdgeAggregation]);
+  const toggleHighlightedEdgePairAggregation = useCallback(() => {
+    if (!canToggleHighlightedPair || !highlightedPairKey) return;
+    applyEdgeAggregation((current) => {
+      if (current.aggregateAll) {
+        if (current.expandedPairs.has(highlightedPairKey)) {
+          current.expandedPairs.delete(highlightedPairKey);
+        } else {
+          current.expandedPairs.add(highlightedPairKey);
+        }
+      } else if (current.aggregatedPairs.has(highlightedPairKey)) {
+        current.aggregatedPairs.delete(highlightedPairKey);
+      } else {
+        current.aggregatedPairs.add(highlightedPairKey);
+      }
+      return current;
+    });
+    setHighlightedEdgeId(null);
+  }, [applyEdgeAggregation, canToggleHighlightedPair, highlightedPairKey]);
+  const setAllEdgeRoutingStyle = useCallback((style) => {
+    const next = {
+      defaultStyle: normalizeEdgeRoutingStyle(style),
+      overrides: {},
+    };
+    edgeRoutingRef.current = next;
+    setEdgeRouting(next);
+    rebuildEdgesWithRouting(next);
+  }, [rebuildEdgesWithRouting]);
+  const toggleHighlightedEdgeRoutingStyle = useCallback(() => {
+    if (!highlightedRoutingTargetKey) return;
+    const nextStyle = highlightedRoutingStyle === EDGE_ROUTING_STYLES.RECTANGULAR
+      ? EDGE_ROUTING_STYLES.BEZIER
+      : EDGE_ROUTING_STYLES.RECTANGULAR;
+    setEdgeRouting((current) => {
+      const next = {
+        defaultStyle: normalizeEdgeRoutingStyle(current.defaultStyle),
+        overrides: {
+          ...(current.overrides || {}),
+          [highlightedRoutingTargetKey]: nextStyle,
+        },
+      };
+      edgeRoutingRef.current = next;
+      rebuildEdgesWithRouting(next);
+      return next;
+    });
+  }, [highlightedRoutingStyle, highlightedRoutingTargetKey, rebuildEdgesWithRouting]);
 
   /* Render */
   return (
@@ -2733,6 +3017,111 @@ if (nextFunctionalNodes.length > 1) {
           </button>
           <button
             type="button"
+            onClick={toggleAggregateAllEdges}
+            title={edgeAggregation.aggregateAll ? 'Expand all aggregated edge bundles' : 'Aggregate all repeated node-pair edges'}
+            disabled={!multiEdgePairCount}
+            style={{
+              padding: '10px 16px',
+              borderRadius: 10,
+              border: `1px solid ${BRAND.purple}`,
+              background: edgeAggregation.aggregateAll ? BRAND.purple : 'white',
+              color: edgeAggregation.aggregateAll ? 'white' : BRAND.purple,
+              fontWeight: 800,
+              fontSize: 15,
+              boxShadow: multiEdgePairCount ? '0 8px 18px rgba(122,55,255,0.10)' : 'none',
+              cursor: multiEdgePairCount ? 'pointer' : 'not-allowed',
+              opacity: multiEdgePairCount ? 1 : 0.55,
+            }}
+          >
+            {edgeAggregation.aggregateAll ? '⇄ Expand Edges' : '⇉ Aggregate Edges'}
+          </button>
+          <button
+            type="button"
+            onClick={toggleHighlightedEdgePairAggregation}
+            title="Select an edge to aggregate or expand only that node pair"
+            disabled={!canToggleHighlightedPair}
+            style={{
+              padding: '10px 16px',
+              borderRadius: 10,
+              border: `1px solid ${BRAND.blue}`,
+              background: highlightedPairAggregated ? BRAND.blue : 'white',
+              color: canToggleHighlightedPair ? (highlightedPairAggregated ? 'white' : BRAND.blue) : 'rgba(45,125,254,0.45)',
+              fontWeight: 800,
+              fontSize: 15,
+              boxShadow: canToggleHighlightedPair ? '0 8px 18px rgba(45,125,254,0.10)' : 'none',
+              cursor: canToggleHighlightedPair ? 'pointer' : 'not-allowed',
+              opacity: canToggleHighlightedPair ? 1 : 0.55,
+            }}
+          >
+            {highlightedPairAggregated ? 'Expand Pair' : 'Aggregate Pair'}
+          </button>
+          <div
+            role="group"
+            aria-label="Default edge routing style"
+            style={{
+              display: 'flex',
+              border: `1px solid ${BRAND.blue}`,
+              borderRadius: 10,
+              overflow: 'hidden',
+              boxShadow: '0 8px 18px rgba(45,125,254,0.08)',
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setAllEdgeRoutingStyle(EDGE_ROUTING_STYLES.BEZIER)}
+              title="Set all edges to Bezier routing"
+              style={{
+                padding: '10px 12px',
+                border: 0,
+                borderRight: `1px solid ${rgba(BRAND.blue, 0.35)}`,
+                background: edgeRouting.defaultStyle === EDGE_ROUTING_STYLES.BEZIER && !Object.keys(edgeRouting.overrides || {}).length ? BRAND.blue : 'white',
+                color: edgeRouting.defaultStyle === EDGE_ROUTING_STYLES.BEZIER && !Object.keys(edgeRouting.overrides || {}).length ? 'white' : BRAND.blue,
+                fontWeight: 800,
+                fontSize: 14,
+                cursor: 'pointer',
+              }}
+            >
+              Bezier All
+            </button>
+            <button
+              type="button"
+              onClick={() => setAllEdgeRoutingStyle(EDGE_ROUTING_STYLES.RECTANGULAR)}
+              title="Set all edges to rectangular routing"
+              style={{
+                padding: '10px 12px',
+                border: 0,
+                background: edgeRouting.defaultStyle === EDGE_ROUTING_STYLES.RECTANGULAR && !Object.keys(edgeRouting.overrides || {}).length ? BRAND.blue : 'white',
+                color: edgeRouting.defaultStyle === EDGE_ROUTING_STYLES.RECTANGULAR && !Object.keys(edgeRouting.overrides || {}).length ? 'white' : BRAND.blue,
+                fontWeight: 800,
+                fontSize: 14,
+                cursor: 'pointer',
+              }}
+            >
+              Rect All
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={toggleHighlightedEdgeRoutingStyle}
+            title="Select an edge to override only that edge or aggregate pair"
+            disabled={!highlightedRoutingTargetKey}
+            style={{
+              padding: '10px 16px',
+              borderRadius: 10,
+              border: `1px solid ${BRAND.purple}`,
+              background: highlightedRoutingTargetKey && highlightedRoutingStyle === EDGE_ROUTING_STYLES.RECTANGULAR ? BRAND.purple : 'white',
+              color: highlightedRoutingTargetKey ? (highlightedRoutingStyle === EDGE_ROUTING_STYLES.RECTANGULAR ? 'white' : BRAND.purple) : 'rgba(122,55,255,0.45)',
+              fontWeight: 800,
+              fontSize: 15,
+              boxShadow: highlightedRoutingTargetKey ? '0 8px 18px rgba(122,55,255,0.10)' : 'none',
+              cursor: highlightedRoutingTargetKey ? 'pointer' : 'not-allowed',
+              opacity: highlightedRoutingTargetKey ? 1 : 0.55,
+            }}
+          >
+            {highlightedRoutingLabel}
+          </button>
+          <button
+            type="button"
             onClick={exportDiagramXml}
             title="Export XML"
             style={{
@@ -2780,7 +3169,7 @@ if (nextFunctionalNodes.length > 1) {
           }}
           
           defaultEdgeOptions={{
-            type: 'smartBezier',
+            type: edgeTypeForRoutingStyle(edgeRouting.defaultStyle),
             markerEnd: { type: MarkerType.ArrowClosed, width: ARROW_SIZE, height: ARROW_SIZE, color: BRAND.blue },
           }}
           nodeTypes={nodeTypes}
