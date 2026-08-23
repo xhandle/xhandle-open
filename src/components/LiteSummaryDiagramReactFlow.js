@@ -1412,17 +1412,10 @@ const DiagramBody = forwardRef(function DiagramBody(
       });
     }
 
-    let associated = Array.from(matchedIndexes)
+    const associated = Array.from(matchedIndexes)
       .sort((a, b) => a - b)
       .map((idx) => ({ sourceIndex: idx, cells: hazardDataRows[idx] }))
       .filter((entry) => Array.isArray(entry.cells));
-
-    if (!associated.length && target.type === 'node' && !isGroupTarget) {
-      const label = normalizeAssociationText(target.label);
-      associated = hazardDataRows
-        .map((cells, idx) => ({ sourceIndex: idx, cells }))
-        .filter(({ cells }) => cells.some((cell) => normalizeAssociationText(cell).includes(label)));
-    }
 
     return associated;
   }, [hazardDataRows, nodes, normalizeAssociationText, rows]);

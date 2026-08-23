@@ -77,6 +77,7 @@ export default function ResultsReviewItemView({
   setFeedback,
   onApproveAsIs,
   onApproveWithEdits,
+  onUpdateCurrentContent,
   onReject,
   onRegenerate,
   onRequestRegeneration,
@@ -180,6 +181,14 @@ export default function ResultsReviewItemView({
         <div className="grid grid-cols-2 gap-2">
           <button className="rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700" onClick={onApproveAsIs}>Approve as-is</button>
           <button className="rounded-md bg-[#2D7DFE] px-3 py-2 text-xs font-semibold text-white hover:bg-[#1f66d1]" onClick={() => onApproveWithEdits(parsedCurrent())}>Approve with edits</button>
+          {onUpdateCurrentContent && (
+            <button
+              className="col-span-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+              onClick={() => onUpdateCurrentContent(parsedCurrent())}
+            >
+              Update table
+            </button>
+          )}
           <button className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100" onClick={onReject}>Reject</button>
           {canRegenerateElement ? (
             <button

@@ -12,6 +12,7 @@ export default function ResultsReviewDrawer({
   onToggleExpanded,
   onApproveAsIs,
   onApproveWithModifications,
+  onUpdateCurrentContent,
   onReject,
   onNeedsRegeneration,
   onRequestRegeneration,
@@ -94,6 +95,10 @@ export default function ResultsReviewDrawer({
             if (!item) return;
             await onApproveWithModifications(item.id, updatedContent, feedback);
             advance();
+          }}
+          onUpdateCurrentContent={async (updatedContent) => {
+            if (!item || !onUpdateCurrentContent) return;
+            await onUpdateCurrentContent(item.id, updatedContent, feedback);
           }}
           onReject={async () => {
             if (!item) return;

@@ -2111,7 +2111,6 @@ const DiagramBody = forwardRef(function DiagramBody(
       const controlAction = normalizeAssociationText(getHazardCell(cells, 'Control Action'));
       const functionTo = normalizeAssociationText(getHazardCell(cells, 'Function (To)'));
       const rowSymbols = splitTraceCell(getHazardCell(cells, 'Source Symbols')).map(normalizeAssociationText);
-      const rowFiles = splitTraceCell(getHazardCell(cells, 'Related Source File(s)')).map(normalizeAssociationText);
 
       const architectureRowRefs = splitTraceCell(architectureRowRef).map((ref) => String(ref || '').trim());
       if (architectureRowRefs.some((ref) => targetRowRefs.has(ref))) {
@@ -2143,34 +2142,22 @@ const DiagramBody = forwardRef(function DiagramBody(
 
       if (target.type === 'architectureBox') {
         const arch = target.architecture || {};
-        const archPairs = [
-          ['Subsystem', arch.subsystem],
-          ['CSCI', arch.csci],
-          ['CSC', arch.csc],
+        const deepestArchPair = [
           ['CSU', arch.csu],
-        ].filter(([, value]) => normalizeAssociationText(value));
-        if (archPairs.some(([header, value]) => normalizeAssociationText(getHazardCell(cells, header)) === normalizeAssociationText(value))) {
+          ['CSC', arch.csc],
+          ['CSCI', arch.csci],
+          ['Subsystem', arch.subsystem],
+        ].find(([, value]) => normalizeAssociationText(value));
+        if (deepestArchPair && normalizeAssociationText(getHazardCell(cells, deepestArchPair[0])) === normalizeAssociationText(deepestArchPair[1])) {
           matchedIndexes.add(idx);
-          return;
         }
-      }
-
-      const targetFiles = (target.codeEvidence?.files || []).map(normalizeAssociationText);
-      if (targetFiles.length && rowFiles.some((file) => targetFiles.includes(file))) {
-        matchedIndexes.add(idx);
       }
     });
 
-    let associated = Array.from(matchedIndexes)
+    const associated = Array.from(matchedIndexes)
       .sort((a, b) => a - b)
       .map((idx) => ({ sourceIndex: idx, cells: hazardDataRows[idx] }))
       .filter((entry) => Array.isArray(entry.cells));
-
-    if (!associated.length && targetLabel) {
-      associated = hazardDataRows
-        .map((cells, idx) => ({ sourceIndex: idx, cells }))
-        .filter(({ cells }) => cells.some((cell) => normalizeAssociationText(cell).includes(targetLabel)));
-    }
 
     return associated;
   }, [getHazardCell, hazardDataRows, normalizeAssociationText]);

@@ -237,6 +237,18 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
         onToggleExpanded={toggleResultsReviewDrawerExpanded}
         onApproveAsIs={readOnly ? undefined : approveAsIs}
         onApproveWithModifications={readOnly ? undefined : approveWithModifications}
+        onUpdateCurrentContent={readOnly ? undefined : async (id, updatedContent, feedback = "") => {
+          const updated = await updateReviewItem(id, {
+            currentContent: updatedContent,
+            reviewerFeedback: feedback,
+          });
+          if (updated) {
+            window.dispatchEvent(new CustomEvent("xhandle:results-review:item-updated", {
+              detail: { reviewItem: updated, action: "update_current_content" },
+            }));
+          }
+          return updated;
+        }}
         onReject={readOnly ? undefined : rejectReviewItem}
         onNeedsRegeneration={readOnly ? undefined : markNeedsRegeneration}
         onRequestRegeneration={readOnly ? undefined : requestReviewItemRegeneration}

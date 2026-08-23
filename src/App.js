@@ -5639,13 +5639,14 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const updateHandler = (event) => {
       const item = event.detail?.reviewItem;
       const action = event.detail?.action;
+      const shouldApplyReviewedRow = action === "approve_with_modifications" || action === "update_current_content";
       if (item?.artifactType === "hazard_summary_table") {
         const rowIndex = Number(item.currentContent?.rowIndex ?? item.originalContent?.rowIndex);
         if (!Number.isFinite(rowIndex)) return;
 
         handleOpenHazardSummaryRow(rowIndex);
 
-        if (action === "approve_with_modifications" && Array.isArray(item.currentContent?.row)) {
+        if (shouldApplyReviewedRow && Array.isArray(item.currentContent?.row)) {
           setAnalysisResult((prev) => {
             if (!prev?.Summary || !Array.isArray(prev.Summary)) return prev;
             const nextSummary = prev.Summary.map((row, idx) => (idx === rowIndex + 1 ? item.currentContent.row : row));
@@ -5660,7 +5661,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
 
         handleOpenFunctionalRow(rowIndex);
 
-        if (action === "approve_with_modifications" && item.currentContent?.row && typeof item.currentContent.row === "object" && !Array.isArray(item.currentContent.row)) {
+        if (shouldApplyReviewedRow && item.currentContent?.row && typeof item.currentContent.row === "object" && !Array.isArray(item.currentContent.row)) {
           setResponseRows((prev) => prev.map((row, idx) => (idx === rowIndex ? { ...row, ...item.currentContent.row } : row)));
         }
         return;
@@ -5671,7 +5672,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
 
         handleOpenCodeArchitectureFunctionalRow(rowIndex);
 
-        if (action === "approve_with_modifications" && item.currentContent?.row && typeof item.currentContent.row === "object" && !Array.isArray(item.currentContent.row)) {
+        if (shouldApplyReviewedRow && item.currentContent?.row && typeof item.currentContent.row === "object" && !Array.isArray(item.currentContent.row)) {
           const reviewedRow = item.currentContent.row;
           setCbaTableData((prev) => {
             const next = prev.map((row, idx) => (idx === rowIndex ? {
@@ -5705,17 +5706,20 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
 
         handleOpenCodeArchitectureHazardSummaryRow(rowIndex);
 
-        if (action === "approve_with_modifications" && Array.isArray(item.currentContent?.row)) {
+        if (shouldApplyReviewedRow && Array.isArray(item.currentContent?.row)) {
           setCodeArchitectureHazardRun((prev) => {
             if (!prev?.generatedSheets?.Summary || !Array.isArray(prev.generatedSheets.Summary)) return prev;
             const nextSummary = prev.generatedSheets.Summary.map((row, idx) => (idx === rowIndex + 1 ? item.currentContent.row : row));
-            return {
+            const nextRun = {
               ...prev,
               generatedSheets: {
                 ...prev.generatedSheets,
                 Summary: nextSummary,
               },
+              updatedAt: new Date().toISOString(),
             };
+            saveCodeArchitectureHazardRun(nextRun).catch(() => {});
+            return nextRun;
           });
         }
       }
