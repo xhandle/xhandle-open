@@ -94,6 +94,7 @@ import {
 import {
   CODE_ARCHITECTURE_HAZARD_ARTIFACT_TYPE,
   CodeArchitectureHazardPanel,
+  CODE_ARCHITECTURE_HAZARD_GENERATION_MODE_OPTIONS,
   deleteCodeArchitectureHazardRuns,
   ensureCodeArchitectureTraceIds,
   getCodeArchitectureHazardRuns,
@@ -154,6 +155,37 @@ const CODE_ARCHITECTURE_REVIEW_ANALYSIS_OPTIONS = [
   { key: REVIEW_ANALYSIS_SECTIONS.DESIGN, label: "System / Subsystem Design", artifactKind: ARTIFACT_KINDS.DESIGN },
   { key: REVIEW_ANALYSIS_SECTIONS.TRACEABILITY, label: "Traceability Matrix" },
 ];
+
+const PROJECT_RISK_PROFILE_OMITTED_COLUMNS = new Set([
+  "Trace ID",
+  "From Node ID",
+  "Control Edge ID",
+  "To Node ID",
+  "Architecture Row Ref",
+  "Architecture Element ID",
+  "Function (From) Related File(s)",
+  "Function (To) Related File(s)",
+  "Related Source File(s)",
+  "Source Symbols",
+  "Source Line Ranges",
+  "Subsystem",
+  "CSCI",
+  "CSC",
+  "CSU",
+]);
+
+function stripProjectRiskProfileColumns(sheets = {}) {
+  if (!sheets || typeof sheets !== "object") return sheets;
+  return Object.fromEntries(Object.entries(sheets).map(([sheetName, sheetRows]) => {
+    if (!Array.isArray(sheetRows) || !Array.isArray(sheetRows[0])) return [sheetName, sheetRows];
+    const keepIndexes = sheetRows[0]
+      .map((header, index) => ({ header: String(header || "").trim(), index }))
+      .filter(({ header }) => !PROJECT_RISK_PROFILE_OMITTED_COLUMNS.has(header))
+      .map(({ index }) => index);
+    if (keepIndexes.length === sheetRows[0].length) return [sheetName, sheetRows];
+    return [sheetName, sheetRows.map((row) => keepIndexes.map((index) => row?.[index] ?? ""))];
+  }));
+}
 
 function analysisOptionsForReviewTargets(targetOptions = [], selectedTargetIds = []) {
   const selectedSet = new Set(selectedTargetIds);
@@ -4753,6 +4785,7 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [isGeneratingDecomposition, setIsGeneratingDecomposition] = useState(false);
   const [showFunctionalDiagram, setShowFunctionalDiagram] = useState(true);
   const [riskMethod, setRiskMethod] = useState("STPA");
+  const [projectRiskProfileGenerationMode, setProjectRiskProfileGenerationMode] = useState("standard");
   const [progress, setProgress] = useState({ step: 0, total: stepDescriptionsMap["STPA"].total });
   const [agentReportResult, setAgentReportResult] = useState(null); // NEW: persisted report state
   const [isGeneratingAgentReport, setIsGeneratingAgentReport] = useState(false);
@@ -5147,6 +5180,7 @@ const filteredRiskRows = useMemo(() => {
       setDiagramCategories(null);
       setAnalysisResult(null);
       setRiskMethod('STPA');
+      setProjectRiskProfileGenerationMode('standard');
       setAgentReportResult(null); // NEW: reset when no project
       setRiskRegister([]);
       setRequirements([]);
@@ -5158,8 +5192,9 @@ const filteredRiskRows = useMemo(() => {
     const data = loadProjectData(activeProjectId);
     setResponseRows(data?.responseRows || []);
     setDiagramCategories(data?.diagramCategories || null);
-    setAnalysisResult(data?.analysisResult || null);
+    setAnalysisResult(data?.analysisResult ? stripProjectRiskProfileColumns(data.analysisResult) : null);
     setRiskMethod(data?.riskMethod || 'STPA');
+    setProjectRiskProfileGenerationMode(data?.projectRiskProfileGenerationMode || 'standard');
     setAgentReportResult(data?.agentReportResult || null); // NEW: restore report
     setRiskRegister(data?.riskRegister || []);
     setShowPromptWizard(!(data?.responseRows && data.responseRows.length > 0));
@@ -5219,6 +5254,7 @@ useEffect(() => {
     responseRows,
     diagramCategories,
     riskMethod,
+    projectRiskProfileGenerationMode,
     agentReportResult,
     riskRegister,
     requirements,        // ← add this
@@ -5237,6 +5273,7 @@ useEffect(() => {
   diagramCategories,
   analysisResult,
   riskMethod,
+  projectRiskProfileGenerationMode,
   agentReportResult,
   riskRegister, // <-- ensure riskRegister is in the deps
   requirements,
@@ -6075,6 +6112,10 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     );
 
   const handleRunAnalysis = async (selectedMethod) => {
+    const usesProjectRiskProfileGenerationMode = selectedMethod === "STPA-Textbook";
+    const selectedGenerationMode = usesProjectRiskProfileGenerationMode
+      ? projectRiskProfileGenerationMode
+      : undefined;
     const sourceRunId = `hazard-${activeProjectId || "default"}-${Date.now()}`;
     const functionalDecompositionSheet = [
       ["Function (From)", "Control Action", "Function (To)"],
@@ -6098,7 +6139,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setIsAnalyzing(true);
     setProgress({ step: 0, total: stepDescriptionsMap[selectedMethod]?.total || 9 });
 
-    const finalSheets = await runLiteAIAnalysis({
+    const rawFinalSheets = await runLiteAIAnalysis({
       tableRows: responseRows,
       sheets,
       setFolders: dummySetFolders,
@@ -6107,13 +6148,20 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       setChatResponse: () => {},
       setProgress,              // keeps your UI updated
       hazardMethod: selectedMethod,
+      ...(usesProjectRiskProfileGenerationMode
+        ? { hazardGenerationMode: selectedGenerationMode, fhaGenerationMode: selectedGenerationMode }
+        : {}),
     });
+    const finalSheets = stripProjectRiskProfileColumns(rawFinalSheets);
 
     setAnalysisResult(finalSheets);
     if (activeProjectId) {
       saveProjectPatch(activeProjectId, {
         analysisResult: finalSheets,
         riskMethod: selectedMethod,
+        ...(usesProjectRiskProfileGenerationMode
+          ? { projectRiskProfileGenerationMode: selectedGenerationMode }
+          : {}),
       });
     }
     if (Array.isArray(finalSheets?.Summary) && finalSheets.Summary.length > 1) {
@@ -9198,13 +9246,28 @@ const ColumnFilterButton = ({ col }) => {
                         <div className="flex items-center space-x-2">
                           <label className="text-sm text-gray-700">Method:</label>
                           <select className="text-sm border rounded px-2 py-1" value={riskMethod} onChange={(e) => setRiskMethod(e.target.value)}>
-  <option value="STPA-Textbook">STPA</option>
+  <option value="STPA">STPA</option>
+  <option value="STPA-Textbook">STPA (standard/detailed)</option>
   <option value="FMEA-Textbook">FMEA</option>
   <option value="HARA">HARA</option>
   <option value="FHA">FHA</option>
   <option value="WhatIf-Textbook">What-if</option>
 </select>
                         </div>
+                        {riskMethod === "STPA-Textbook" && (
+                          <select
+                            className="text-sm border rounded px-2 py-1"
+                            value={projectRiskProfileGenerationMode}
+                            onChange={(e) => setProjectRiskProfileGenerationMode(e.target.value)}
+                            aria-label="STPA generation mode"
+                          >
+                            {CODE_ARCHITECTURE_HAZARD_GENERATION_MODE_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label} - {option.description}
+                              </option>
+                            ))}
+                          </select>
+                        )}
 
                         <button onClick={() => handleRunAnalysis(riskMethod)} className="px-3 py-2 text-white rounded bg-[#2D7DFE] hover:bg-[#1E61D6]">
                           Develop risk profile

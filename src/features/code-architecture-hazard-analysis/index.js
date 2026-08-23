@@ -2,6 +2,7 @@ export { default as CodeArchitectureHazardPanel } from "./CodeArchitectureHazard
 export { default as CodeArchitectureHazardSummaryTable } from "./CodeArchitectureHazardSummaryTable";
 export {
   CODE_ARCHITECTURE_HAZARD_ARTIFACT_TYPE,
+  CODE_ARCHITECTURE_HAZARD_GENERATION_MODE_OPTIONS,
   CODE_ARCHITECTURE_HAZARD_METHOD_OPTIONS,
   CODE_ARCHITECTURE_HAZARD_REVIEW_STATUSES,
   CODE_ARCHITECTURE_HAZARD_SOURCE_TYPE,
