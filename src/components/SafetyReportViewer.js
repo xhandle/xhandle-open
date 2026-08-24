@@ -42,6 +42,20 @@ export default function SafetyReportViewer({ reportText, report, functionalDiagr
     ul: ({ node, ...props }) => (
       <ul className="ml-6 list-disc space-y-1" {...props} />
     ),
+    table: ({ node, ...props }) => (
+      <div className="my-5 overflow-x-auto">
+        <table className="w-full border-collapse border border-gray-300 text-sm" {...props} />
+      </div>
+    ),
+    thead: ({ node, ...props }) => (
+      <thead className="bg-gray-50" {...props} />
+    ),
+    th: ({ node, ...props }) => (
+      <th className="border border-gray-300 px-3 py-2 text-left font-semibold text-gray-900" {...props} />
+    ),
+    td: ({ node, ...props }) => (
+      <td className="border border-gray-300 px-3 py-2 align-top text-gray-800" {...props} />
+    ),
     li: ({ node, children, ...props }) => {
       const text = children?.[0]?.props?.children?.[0] || '';
       const isFakeSubBullet = typeof text === 'string' && text.trim().startsWith('○');

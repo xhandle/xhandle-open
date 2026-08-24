@@ -21,6 +21,7 @@ import {
   PanelLeftClose,
   Maximize2,
   Minimize2,
+  Loader2,
   ShieldCheck,
   ClipboardCheck,
   Sparkles,
@@ -340,6 +341,32 @@ function isMeaningfullyGeneratedDraftRow(row = [], fallbackRow = []) {
     String(cell || "").trim() &&
     String(cell || "").trim() !== String(fallbackRow[index] || "").trim()
   ));
+}
+
+function getFunctionalControlActionKey(functionalRow = {}) {
+  return [
+    functionalRow?.fromFunction,
+    functionalRow?.controlAction,
+    functionalRow?.toFunction,
+  ].map(normalizeAllocationText).join("::");
+}
+
+function buildHazardRowControlActionKey(row = [], headers = []) {
+  const fromIdx = findSummaryColumn(headers, ["Function (From)", "From Function", "Source Function", "Controller"]);
+  const actionIdx = findSummaryColumn(headers, ["Control Action", "Unsafe Control Action", "UCA", "Action", "What-If Scenario", "Failure Mode", "Malfunction"]);
+  const toIdx = findSummaryColumn(headers, ["Function (To)", "To Function", "Target Function", "Controlled Process"]);
+  return [
+    fromIdx >= 0 ? row?.[fromIdx] : "",
+    actionIdx >= 0 ? row?.[actionIdx] : "",
+    toIdx >= 0 ? row?.[toIdx] : "",
+  ].map(normalizeAllocationText).join("::");
+}
+
+function findExistingHazardRowForFunctionalRow(functionalRow = {}, summary = null) {
+  if (!Array.isArray(summary) || !Array.isArray(summary[0]) || summary.length < 2) return null;
+  const headers = summary[0];
+  const targetKey = getFunctionalControlActionKey(functionalRow);
+  return summary.slice(1).find((row) => buildHazardRowControlActionKey(row, headers) === targetKey) || null;
 }
 
 function stripProjectRiskProfileColumns(sheets = {}) {
@@ -1450,6 +1477,44 @@ function parseJsonObjectFromText(text) {
     try { return JSON.parse(candidate.slice(start, end + 1)); } catch {}
   }
   return null;
+}
+
+function parseJsonArrayFromText(text) {
+  const raw = String(text || "").trim();
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+  const candidate = fenced || raw;
+  try {
+    const parsed = JSON.parse(candidate);
+    if (Array.isArray(parsed)) return parsed;
+    if (Array.isArray(parsed?.risks)) return parsed.risks;
+    if (Array.isArray(parsed?.riskRegister)) return parsed.riskRegister;
+  } catch {}
+  const start = candidate.indexOf("[");
+  const end = candidate.lastIndexOf("]");
+  if (start >= 0 && end > start) {
+    try {
+      const parsed = JSON.parse(candidate.slice(start, end + 1));
+      if (Array.isArray(parsed)) return parsed;
+    } catch {}
+  }
+  return [];
+}
+
+function extractAIText(payload) {
+  const candidates = [
+    payload?.choices?.[0]?.message?.content,
+    payload?.choices?.[0]?.text,
+    payload?.result,
+    payload?.answer,
+    payload?.content,
+    payload?.message,
+    payload?.text,
+    payload?.data?.result,
+    payload?.data?.content,
+  ];
+  return candidates
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .find(Boolean) || "";
 }
 
 function generateDiagramCategoryDescription(name, functions = [], rows = []) {
@@ -3796,6 +3861,150 @@ const buildRiskRegisterFromSummary = (summary) => {
   }));
 };
 
+function clampRiskScore(value, fallback = 3) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(5, Math.max(1, Math.round(numeric)));
+}
+
+function normalizeRiskStatus(value) {
+  const text = String(value || "").trim();
+  return ['Open','In Progress','Mitigated','Accepted','Closed'].includes(text) ? text : 'Open';
+}
+
+function normalizeRiskAssessmentRows(rows = []) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row, index) => {
+      const title = String(row?.title || row?.hazard || row?.risk || row?.name || "").trim();
+      const description = String(row?.description || row?.unsafeControlAction || row?.uca || row?.rationale || row?.summary || "").trim();
+      if (!title && !description) return null;
+      const tags = Array.isArray(row?.tags)
+        ? row.tags.map((tag) => String(tag || "").trim()).filter(Boolean).join(", ")
+        : String(row?.tags || "").trim();
+      const sourceIndexes = Array.isArray(row?.sourceIndexes)
+        ? row.sourceIndexes.map((item) => Number(item)).filter((item) => Number.isFinite(item) && item > 0)
+        : [];
+      const sourceIndex = Number(row?.sourceIndex);
+      return {
+        id: row?.id || makeId(),
+        title: title || `Risk ${index + 1}`,
+        description: description || title,
+        likelihood: clampRiskScore(row?.likelihood, 3),
+        severity: clampRiskScore(row?.severity, 3),
+        status: normalizeRiskStatus(row?.status),
+        owner: String(row?.owner || "").trim(),
+        dueDate: String(row?.dueDate || "").trim(),
+        tags,
+        sourceIndex: sourceIndexes[0] || (Number.isFinite(sourceIndex) && sourceIndex > 0 ? sourceIndex : null),
+        sourceIndexes,
+      };
+    })
+    .filter(Boolean);
+}
+
+function applyStableRiskIds(existingRows = [], consolidatedRows = []) {
+  const usedExistingIds = new Set();
+  const existingBySourceIndex = new Map();
+  (existingRows || []).forEach((row) => {
+    getRiskSourceIndexes(row).forEach((sourceIndex) => {
+      if (!existingBySourceIndex.has(sourceIndex)) existingBySourceIndex.set(sourceIndex, []);
+      existingBySourceIndex.get(sourceIndex).push(row);
+    });
+  });
+
+  return (consolidatedRows || []).map((row) => {
+    const sourceIndexes = getRiskSourceIndexes(row);
+    let bestMatch = null;
+    let bestOverlap = 0;
+    sourceIndexes.forEach((sourceIndex) => {
+      (existingBySourceIndex.get(sourceIndex) || []).forEach((candidate) => {
+        if (!candidate?.id || usedExistingIds.has(candidate.id)) return;
+        const overlap = getRiskSourceIndexes(candidate).filter((index) => sourceIndexes.includes(index)).length;
+        if (overlap > bestOverlap) {
+          bestOverlap = overlap;
+          bestMatch = candidate;
+        }
+      });
+    });
+    const nextId = bestMatch?.id || row.id || makeId();
+    usedExistingIds.add(nextId);
+    return { ...row, id: nextId };
+  });
+}
+
+function getRiskPriority(score) {
+  const numeric = Number(score) || 0;
+  if (numeric >= 20) return "P0";
+  if (numeric >= 15) return "P1";
+  if (numeric >= 9) return "P2";
+  return "P3+";
+}
+
+function getRiskScore(row) {
+  return (Number(row?.likelihood) || 0) * (Number(row?.severity) || 0);
+}
+
+function getRiskSourceIndexes(row) {
+  const indexes = Array.isArray(row?.sourceIndexes) ? row.sourceIndexes : [];
+  const sourceIndex = Number(row?.sourceIndex);
+  return Array.from(new Set([
+    ...indexes.map((item) => Number(item)).filter((item) => Number.isFinite(item) && item > 0),
+    ...(Number.isFinite(sourceIndex) && sourceIndex > 0 ? [sourceIndex] : []),
+  ])).sort((a, b) => a - b);
+}
+
+function downloadMarkdownFile(filename, markdown) {
+  const blob = new Blob([markdown || ""], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function getSafetyIssueReportBounds(markdown, issueId) {
+  const id = String(issueId || "").trim();
+  if (!id) return null;
+  const source = String(markdown || "");
+  const startMarker = `<!-- SAFETY_ISSUE_REPORT_START id="${id}" -->`;
+  const endMarker = `<!-- SAFETY_ISSUE_REPORT_END id="${id}" -->`;
+  const start = source.indexOf(startMarker);
+  if (start < 0) return null;
+  const contentStart = start + startMarker.length;
+  const end = source.indexOf(endMarker, contentStart);
+  if (end < 0) return null;
+  return { start, contentStart, end, endWithMarker: end + endMarker.length, startMarker, endMarker };
+}
+
+function extractSafetyIssueReportMarkdown(markdown, issue) {
+  const source = String(markdown || "").trim();
+  if (!source || !issue?.id) return source;
+  const bounds = getSafetyIssueReportBounds(source, issue.id);
+  if (bounds) return source.slice(bounds.contentStart, bounds.end).trim();
+  const title = String(issue.title || "").trim();
+  if (!title) return source;
+  const headingPattern = new RegExp(
+    `(^#{2,4}\\s+.*${escapeRegExp(title)}.*(?:\\n|$))([\\s\\S]*?)(?=^#{2,4}\\s+|$)`,
+    "im"
+  );
+  return source.match(headingPattern)?.[0]?.trim() || source;
+}
+
+function replaceSafetyIssueReportMarkdown(markdown, issueId, nextIssueMarkdown) {
+  const source = String(markdown || "");
+  const next = String(nextIssueMarkdown || "").trim();
+  const bounds = getSafetyIssueReportBounds(source, issueId);
+  if (!bounds) return next;
+  return [
+    source.slice(0, bounds.contentStart),
+    `\n${next}\n`,
+    source.slice(bounds.end),
+  ].join("");
+}
+
   // Collapsible state for sidebar projects
   const [isProjectsOpen, setIsProjectsOpen] = useState(() => {
     const saved = localStorage.getItem(PROJECTS_OPEN_KEY);
@@ -3912,6 +4121,7 @@ const buildRiskRegisterFromSummary = (summary) => {
       analysisResult: null,
       riskMethod: 'STPA',
       agentReportResult: null,
+      riskAssessmentReportMarkdown: "",
       riskRegister: [],
       requirements: [],      // ← add this
       vnvArtifacts: {
@@ -5049,6 +5259,15 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [showFunctionalDiagram, setShowFunctionalDiagram] = useState(true);
   const [riskMethod, setRiskMethod] = useState("STPA");
   const [projectRiskProfileGenerationMode, setProjectRiskProfileGenerationMode] = useState("standard");
+  const [isGeneratingRiskAssessment, setIsGeneratingRiskAssessment] = useState(false);
+  const [riskAssessmentReportMarkdown, setRiskAssessmentReportMarkdown] = useState("");
+  const [isGeneratingRiskAssessmentReport, setIsGeneratingRiskAssessmentReport] = useState(false);
+  const [generatingSafetyIssueReportIds, setGeneratingSafetyIssueReportIds] = useState(new Set());
+  const [selectedRiskPriority, setSelectedRiskPriority] = useState("All");
+  const [activeRiskId, setActiveRiskId] = useState(null);
+  const [riskReportMode, setRiskReportMode] = useState("preview");
+  const [showSafetyIssueReportDrawer, setShowSafetyIssueReportDrawer] = useState(true);
+  const [isSafetyIssueReportFullscreen, setIsSafetyIssueReportFullscreen] = useState(false);
   const [progress, setProgress] = useState({ step: 0, total: stepDescriptionsMap["STPA"].total });
   const [agentReportResult, setAgentReportResult] = useState(null); // NEW: persisted report state
   const [isGeneratingAgentReport, setIsGeneratingAgentReport] = useState(false);
@@ -5068,91 +5287,6 @@ const [inboxBulk, setInboxBulk] = useState({
   tags: "",
   tagsMode: "replace", // "replace" | "append" | "clear"
 });
-
-  // NEW: bulk edit + selection state (put near your other useState hooks)
-const [selectedIds, setSelectedIds] = useState(new Set());
-const [bulk, setBulk] = useState({
-  status: "",
-  owner: "",
-  dueDate: "",
-  likelihood: "",
-  severity: "",
-  tags: "",
-  tagsMode: "replace", // "replace" | "append" | "clear"
-});
-
-// Keep selection sane when the list changes
-useEffect(() => {
-  setSelectedIds(prev => {
-    const keep = new Set();
-    for (const id of prev) {
-      if (riskRegister.some(r => r.id === id)) keep.add(id);
-    }
-    return keep;
-  });
-}, [riskRegister]);
-
-// Helpers
-const allVisibleIds = useMemo(
-  () =>
-    riskRegister
-      .slice()
-      .sort(
-        (a, b) =>
-          (Number(b.likelihood) || 0) * (Number(b.severity) || 0) -
-          (Number(a.likelihood) || 0) * (Number(a.severity) || 0)
-      )
-      .map(r => r.id),
-  [riskRegister]
-);
-const toggleAll = () => {
-  if (selectedIds.size === allVisibleIds.length) {
-    setSelectedIds(new Set());
-  } else {
-    setSelectedIds(new Set(allVisibleIds));
-  }
-};
-const toggleOne = (id) => {
-  setSelectedIds(prev => {
-    const next = new Set(prev);
-    next.has(id) ? next.delete(id) : next.add(id);
-    return next;
-  });
-};
-
-// Apply bulk changes
-const applyBulk = () => {
-  if (selectedIds.size === 0) return;
-
-  setRiskRegister(prev =>
-    prev.map(r => {
-      if (!selectedIds.has(r.id)) return r;
-
-      let next = { ...r };
-
-      if (bulk.status) next.status = bulk.status;
-      if (bulk.owner !== "") next.owner = bulk.owner;
-      if (bulk.dueDate !== "") next.dueDate = bulk.dueDate;
-      if (bulk.likelihood !== "") next.likelihood = Number(bulk.likelihood);
-      if (bulk.severity !== "") next.severity = Number(bulk.severity);
-
-      if (bulk.tagsMode === "clear") {
-        next.tags = "";
-      } else if (bulk.tags.trim()) {
-        if (bulk.tagsMode === "replace") {
-          next.tags = bulk.tags.trim();
-        } else if (bulk.tagsMode === "append") {
-          const existing = (next.tags || "").trim();
-          next.tags = existing
-            ? `${existing}, ${bulk.tags.trim()}`
-            : bulk.tags.trim();
-        }
-      }
-
-      return next;
-    })
-  );
-};
 
   const { startActivity, updateActivity, finishActivity } = useActivityCenter();
 const [analysisActivityId, setAnalysisActivityId] = useState(null);
@@ -5225,9 +5359,6 @@ useEffect(() => {
   }, [activeCodeArchitectureProject, activeCodeArchitectureRepo]);
 
 
-  // Risk Register sidebar selection + filters
-const [riskListSelection, setRiskListSelection] = useState(new Set());
-
 // Map labels dynamically to match the analysis / functional decomposition
 const CANDIDATE_LABELS = {
   hazard: ['Hazard','Hazards','Failure Mode','Risk','Risk Title','What-If','Scenario','Event'],
@@ -5255,159 +5386,6 @@ const ucaLabel = useMemo(
   () => pickLabel(CANDIDATE_LABELS.uca, 'Unsafe Control Actions'),
   [availableSummaryHeaders]
 );
-
-// ⬇️ INSERT RIGHT AFTER hazardLabel and ucaLabel useMemos
-
-// --- Column definitions used by the Risk Register table header ---
-const COLS = useMemo(() => ([
-  { key: 'id',          label: 'ID',                type: 'text' },
-  { key: 'title',       label: hazardLabel,         type: 'text' },
-  { key: 'description', label: ucaLabel,            type: 'text' },
-  { key: 'likelihood',  label: 'Likelihood',        type: 'number' },
-  { key: 'severity',    label: 'Severity',          type: 'number' },
-  { key: 'priority',    label: 'Priority',          type: 'derived' }, // L*S
-  { key: 'status',      label: 'Status',            type: 'text' },
-  { key: 'owner',       label: 'Owner',             type: 'text' },
-  { key: 'dueDate',     label: 'Due Date',          type: 'date' },
-  { key: 'tags',        label: 'Tags',              type: 'tags' },
-  { key: 'actions',     label: '',                  type: 'none' },     // aligns with last actions col
-]), [hazardLabel, ucaLabel]);
-
-// Build per-column option lists from current Risk Register
-const columnOptions = useMemo(() => {
-  const opts = {};
-  const rows = riskRegister || [];
-
-  const add = (k, v) => {
-    if (!opts[k]) opts[k] = new Set();
-    if (v !== undefined && v !== null && String(v).trim() !== '') {
-      opts[k].add(String(v));
-    }
-  };
-
-  rows.forEach(r => {
-    add('id', r.id);
-    add('title', r.title);
-    add('description', r.description);
-    add('likelihood', r.likelihood);
-    add('severity', r.severity);
-    add('priority', (Number(r.likelihood)||0) * (Number(r.severity)||0));
-    add('status', r.status);
-    add('owner', r.owner);
-    add('dueDate', r.dueDate);
-    if (r.tags) {
-      String(r.tags).split(',').map(s=>s.trim()).filter(Boolean).forEach(t => add('tags', t));
-    }
-  });
-
-  const out = {};
-  Object.entries(opts).forEach(([k, set]) => {
-    const arr = Array.from(set);
-    if (['likelihood','severity','priority'].includes(k)) {
-      out[k] = arr.map(Number).sort((a,b)=>a-b).map(String);
-    } else {
-      out[k] = arr.sort((a,b)=>String(a).localeCompare(String(b)));
-    }
-  });
-  return out;
-}, [riskRegister]);
-
-// Selected values per column (multi-select)
-const [colFilters, setColFilters] = useState({});
-// Which column's dropdown is open
-const [openFilterKey, setOpenFilterKey] = useState(null);
-// Per-column search text in the dropdown
-const [filterSearch, setFilterSearch] = useState({});
-
-// Close dropdowns on outside click
-useEffect(() => {
-  const onDocClick = (e) => {
-    if (!e.target.closest?.('[data-filter-panel="true"]') &&
-        !e.target.closest?.('[data-filter-button="true"]')) {
-      setOpenFilterKey(null);
-    }
-  };
-  document.addEventListener('pointerdown', onDocClick);
-  return () => document.removeEventListener('pointerdown', onDocClick);
-}, []);
-
-
-const [riskTableFilters] = useState({
-  title: "",
-  status: [],
-  owner: [],
-  tags: "",
-  likelihood: [],
-  severity: [],
-});
-
-useEffect(() => {
-  const allIds = new Set((riskRegister || []).map(r => r.id));
-  if (riskListSelection.size === 0) {
-    setRiskListSelection(allIds);
-  } else {
-    const next = new Set();
-    for (const id of riskListSelection) if (allIds.has(id)) next.add(id);
-    if (next.size !== riskListSelection.size) setRiskListSelection(next);
-  }
-}, [riskRegister]);
-
-const displayedRiskIds = riskListSelection;
-const filteredRiskRows = useMemo(() => {
-  const titleQ = (riskTableFilters.title || "").toLowerCase();
-  const tagsQ  = (riskTableFilters.tags || "").toLowerCase();
-  const statusSet = new Set(riskTableFilters.status);
-  const ownerSet  = new Set(riskTableFilters.owner);
-  const likSet    = new Set(riskTableFilters.likelihood.map(Number));
-  const sevSet    = new Set(riskTableFilters.severity.map(Number));
-
-  const headerPass = (row) => {
-    // no header filters? quick pass
-    if (!colFilters || Object.keys(colFilters).length === 0) return true;
-
-    const has = (k, v) => (colFilters[k] && colFilters[k].size > 0) ? colFilters[k].has(String(v)) : true;
-
-    // Priority is derived (L*S)
-    const priorityVal = (Number(row.likelihood)||0) * (Number(row.severity)||0);
-
-    // Tags: match if any selected tag appears in row.tags
-    const tagTokens = String(row.tags || '').split(',').map(s=>s.trim()).filter(Boolean);
-    const tagsSelected = colFilters['tags'] && colFilters['tags'].size > 0
-      ? tagTokens.some(t => colFilters['tags'].has(String(t)))
-      : true;
-
-    return (
-      has('id', row.id) &&
-      has('title', row.title ?? '') &&
-      has('description', row.description ?? '') &&
-      has('likelihood', Number(row.likelihood)||0) &&
-      has('severity', Number(row.severity)||0) &&
-      (colFilters['priority']?.size ? colFilters['priority'].has(String(priorityVal)) : true) &&
-      has('status', row.status ?? '') &&
-      has('owner', row.owner ?? '') &&
-      has('dueDate', row.dueDate ?? '') &&
-      tagsSelected
-    );
-  };
-
-  return (riskRegister || [])
-    .filter(r => displayedRiskIds.has(r.id))
-    // existing simple filters
-    .filter(r => !titleQ || `${r.title||""} ${r.description||""}`.toLowerCase().includes(titleQ))
-    .filter(r => statusSet.size === 0 || statusSet.has(r.status))
-    .filter(r => ownerSet.size === 0 || ownerSet.has((r.owner||"").trim()))
-    .filter(r => !tagsQ || (r.tags||"").toLowerCase().includes(tagsQ))
-    .filter(r => likSet.size === 0 || likSet.has(Number(r.likelihood)||0))
-    .filter(r => sevSet.size === 0 || sevSet.has(Number(r.severity)||0))
-    // header multi-select filters
-    .filter(headerPass)
-    .slice()
-    .sort((a,b) =>
-      ((Number(b.likelihood)||0)*(Number(b.severity)||0)) -
-      ((Number(a.likelihood)||0)*(Number(a.severity)||0))
-    );
-}, [riskRegister, displayedRiskIds, riskTableFilters, colFilters]);
-
 
   // Dropdown outside click
   useEffect(() => {
@@ -5463,6 +5441,11 @@ const filteredRiskRows = useMemo(() => {
       setRiskMethod('STPA');
       setProjectRiskProfileGenerationMode('standard');
       setAgentReportResult(null); // NEW: reset when no project
+      setRiskAssessmentReportMarkdown("");
+      setGeneratingSafetyIssueReportIds(new Set());
+      setActiveRiskId(null);
+      setSelectedRiskPriority("All");
+      setRiskReportMode("preview");
       setRiskRegister([]);
       setRequirements([]);
       setShowPromptWizard(true);
@@ -5484,6 +5467,11 @@ const filteredRiskRows = useMemo(() => {
     setRiskMethod(data?.riskMethod || 'STPA');
     setProjectRiskProfileGenerationMode(data?.projectRiskProfileGenerationMode || 'standard');
     setAgentReportResult(data?.agentReportResult || null); // NEW: restore report
+    setRiskAssessmentReportMarkdown(data?.riskAssessmentReportMarkdown || "");
+    setGeneratingSafetyIssueReportIds(new Set());
+    setActiveRiskId(null);
+    setSelectedRiskPriority("All");
+    setRiskReportMode("preview");
     setRiskRegister(data?.riskRegister || []);
     setShowPromptWizard(!(data?.responseRows && data.responseRows.length > 0));
     setRequirements(data?.requirements || []);   // ← add this
@@ -5552,6 +5540,7 @@ useEffect(() => {
     riskMethod,
     projectRiskProfileGenerationMode,
 	    agentReportResult,
+    riskAssessmentReportMarkdown,
 	    riskRegister,
 	    requirements,        // ← add this
     draftHazardRowsByIndex,
@@ -5573,6 +5562,7 @@ useEffect(() => {
   riskMethod,
   projectRiskProfileGenerationMode,
   agentReportResult,
+  riskAssessmentReportMarkdown,
 	  riskRegister, // <-- ensure riskRegister is in the deps
 	  requirements,
   draftHazardRowsByIndex,
@@ -5786,6 +5776,77 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       !allowed?.length || allowed.includes(String(row[colIdx] ?? ''))
     )
   );
+  const riskAssessmentSource = useMemo(() => {
+    if (Array.isArray(analysisResult?.Summary?.[0]) && analysisResult.Summary.length > 1) {
+      const [headers, ...rows] = analysisResult.Summary;
+      return {
+        source: "completed",
+        headers: headers.map((header) => String(header || "")),
+        rows: rows.map((row, index) => ({
+          sourceIndex: index + 1,
+          values: row,
+        })),
+      };
+    }
+    const generatedDraftRows = draftHazardSummaryRows
+      .filter((item) => item.generated)
+      .map((item) => ({
+        sourceIndex: item.originalIndex + 1,
+        values: item.row,
+      }));
+    return {
+      source: "draft",
+      headers: draftHazardHeaders,
+      rows: generatedDraftRows,
+    };
+  }, [analysisResult, draftHazardHeaders, draftHazardSummaryRows]);
+  const canGenerateRiskAssessment = riskAssessmentSource.rows.length > 0;
+  const riskAssessmentSourceRowsByIndex = useMemo(() => {
+    const map = new Map();
+    riskAssessmentSource.rows.forEach((entry) => {
+      const cells = {};
+      riskAssessmentSource.headers.forEach((header, index) => {
+        const label = String(header || `Column ${index + 1}`).trim();
+        const value = String(entry.values?.[index] ?? "").trim();
+        if (label && value) cells[label] = value;
+      });
+      map.set(Number(entry.sourceIndex), {
+        sourceIndex: Number(entry.sourceIndex),
+        cells,
+        values: entry.values || [],
+      });
+    });
+    return map;
+  }, [riskAssessmentSource]);
+  const risksWithEvidence = useMemo(() => {
+    return (riskRegister || [])
+      .map((risk) => {
+        const score = getRiskScore(risk);
+        const priority = getRiskPriority(score);
+        const sourceIndexes = getRiskSourceIndexes(risk);
+        const evidence = sourceIndexes
+          .map((sourceIndex) => riskAssessmentSourceRowsByIndex.get(sourceIndex))
+          .filter(Boolean);
+        const reportGenerated = Boolean(getSafetyIssueReportBounds(riskAssessmentReportMarkdown, risk.id));
+        const reportGenerating = generatingSafetyIssueReportIds.has(risk.id);
+        return { ...risk, score, priority, sourceIndexes, evidence, reportGenerated, reportGenerating };
+      })
+      .sort((a, b) => b.score - a.score);
+  }, [riskRegister, riskAssessmentSourceRowsByIndex, riskAssessmentReportMarkdown, generatingSafetyIssueReportIds]);
+  const riskPriorityCounts = useMemo(() => {
+    const counts = { All: risksWithEvidence.length, P0: 0, P1: 0, P2: 0, "P3+": 0 };
+    risksWithEvidence.forEach((risk) => {
+      counts[risk.priority] = (counts[risk.priority] || 0) + 1;
+    });
+    return counts;
+  }, [risksWithEvidence]);
+  const displayedRiskCards = selectedRiskPriority === "All"
+    ? risksWithEvidence
+    : risksWithEvidence.filter((risk) => risk.priority === selectedRiskPriority);
+  const activeRisk = risksWithEvidence.length
+    ? risksWithEvidence.find((risk) => risk.id === activeRiskId) || displayedRiskCards[0] || risksWithEvidence[0]
+    : null;
+  const activeSafetyIssueReportMarkdown = extractSafetyIssueReportMarkdown(riskAssessmentReportMarkdown, activeRisk);
 
   const draftHazardReviewItems = useMemo(() => {
     const draftArtifactPrefix = `hazard-summary-draft:${activeProjectId || "default"}:row:`;
@@ -6587,9 +6648,79 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       ? projectRiskProfileGenerationMode
       : undefined;
     const sourceRunId = `hazard-${activeProjectId || "default"}-${Date.now()}`;
+    const targetHeaders = getProjectDraftHazardHeaders(selectedMethod);
+    const existingSummary = Array.isArray(analysisResult?.Summary) ? analysisResult.Summary : null;
+    const startingDraftRows = loadProjectData(activeProjectId)?.draftHazardRowsByIndex || draftHazardRowsByIndex || {};
+    const rowsToGenerate = [];
+    const preservedDraftRows = {};
+
+    responseRows.forEach((functionalRow, originalIndex) => {
+      const fallbackRow = buildProjectDraftHazardRow(functionalRow, targetHeaders);
+      const savedDraft = startingDraftRows[originalIndex];
+      const savedDraftRow = Array.isArray(savedDraft?.row)
+        ? alignSummaryRowToHeaders(draftHazardHeaders, savedDraft.row, targetHeaders, fallbackRow)
+        : null;
+      const savedDraftIsMeaningful = savedDraftRow
+        ? (savedDraft?.generated || isMeaningfullyGeneratedDraftRow(savedDraftRow, fallbackRow))
+        : false;
+      if (savedDraftIsMeaningful) {
+        preservedDraftRows[originalIndex] = {
+          row: savedDraftRow,
+          generated: true,
+        };
+        return;
+      }
+
+      const completedRow = findExistingHazardRowForFunctionalRow(functionalRow, existingSummary);
+      if (completedRow) {
+        const completedHeaders = existingSummary[0] || [];
+        const alignedCompletedRow = alignSummaryRowToHeaders(completedHeaders, completedRow, targetHeaders, fallbackRow);
+        if (isMeaningfullyGeneratedDraftRow(alignedCompletedRow, fallbackRow)) {
+          preservedDraftRows[originalIndex] = {
+            row: alignedCompletedRow,
+            generated: true,
+          };
+          return;
+        }
+      }
+
+      rowsToGenerate.push({ functionalRow, originalIndex, fallbackRow });
+    });
+
+    if (responseRows.length > 0 && rowsToGenerate.length === 0) {
+      const finalSheets = {
+        ...(analysisResult || {}),
+        Summary: [
+          targetHeaders,
+          ...responseRows
+            .map((functionalRow, index) => preservedDraftRows[index]?.row || buildProjectDraftHazardRow(functionalRow, targetHeaders))
+            .filter((row, index) => isMeaningfullyGeneratedDraftRow(row, buildProjectDraftHazardRow(responseRows[index], targetHeaders))),
+        ],
+      };
+      setDraftHazardRowsByIndex((prev) => ({ ...prev, ...preservedDraftRows }));
+      setAnalysisResult(finalSheets);
+      if (activeProjectId) {
+        saveProjectPatch(activeProjectId, {
+          analysisResult: finalSheets,
+          riskMethod: selectedMethod,
+          draftHazardRowsByIndex: {
+            ...(loadProjectData(activeProjectId)?.draftHazardRowsByIndex || {}),
+            ...preservedDraftRows,
+          },
+          ...(usesProjectRiskProfileGenerationMode
+            ? { projectRiskProfileGenerationMode: selectedGenerationMode }
+            : {}),
+        });
+      }
+      setShowDiagram(false);
+      setActiveTab('Hazard Analysis');
+      window.alert("All control actions already have hazard analysis rows, so nothing was overwritten.");
+      return;
+    }
+
     const functionalDecompositionSheet = [
       ["Function (From)", "Control Action", "Function (To)"],
-      ...responseRows.map(row => [row.fromFunction || "", row.controlAction || "", row.toFunction || ""])
+      ...rowsToGenerate.map(({ functionalRow }) => [functionalRow.fromFunction || "", functionalRow.controlAction || "", functionalRow.toFunction || ""])
     ];
     const sheets = { "Functional Decomposition": functionalDecompositionSheet };
     const dummySetFolders = async (updater) => { const prev = {}; const newState = await updater(prev); return newState; };
@@ -6610,7 +6741,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setProgress({ step: 0, total: stepDescriptionsMap[selectedMethod]?.total || 9 });
 
     const rawFinalSheets = await runLiteAIAnalysis({
-      tableRows: responseRows,
+      tableRows: rowsToGenerate.map(({ functionalRow }) => functionalRow),
       sheets,
       setFolders: dummySetFolders,
       currentFolder,
@@ -6622,16 +6753,52 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         ? { hazardGenerationMode: selectedGenerationMode, fhaGenerationMode: selectedGenerationMode }
         : {}),
     });
-    const finalSheets = addSubsystemAllocationsToProjectHazardSummary(
+    const generatedSheets = addSubsystemAllocationsToProjectHazardSummary(
       stripProjectRiskProfileColumns(rawFinalSheets),
-      responseRows
+      rowsToGenerate.map(({ functionalRow }) => functionalRow)
     );
+    const generatedSummary = findBestGeneratedHazardSummary(generatedSheets);
+    const generatedHeaders = Array.isArray(generatedSummary?.[0]) ? generatedSummary[0] : [];
+    const generatedRows = Array.isArray(generatedSummary) ? generatedSummary.slice(1) : [];
+    const generatedDraftRows = {};
+
+    rowsToGenerate.forEach(({ functionalRow, originalIndex, fallbackRow }, generatedIndex) => {
+      const generatedRow = generatedRows[generatedIndex];
+      const nextRow = Array.isArray(generatedRow)
+        ? alignSummaryRowToHeaders(generatedHeaders, generatedRow, targetHeaders, fallbackRow)
+        : fallbackRow;
+      if (isMeaningfullyGeneratedDraftRow(nextRow, fallbackRow)) {
+        generatedDraftRows[originalIndex] = {
+          row: nextRow,
+          generated: true,
+        };
+      }
+    });
+
+    const mergedDraftRows = {
+      ...startingDraftRows,
+      ...preservedDraftRows,
+      ...generatedDraftRows,
+    };
+    const mergedSummaryRows = responseRows
+      .map((functionalRow, index) => {
+        const fallbackRow = buildProjectDraftHazardRow(functionalRow, targetHeaders);
+        const row = mergedDraftRows[index]?.row || fallbackRow;
+        return isMeaningfullyGeneratedDraftRow(row, fallbackRow) ? row : null;
+      })
+      .filter(Boolean);
+    const finalSheets = {
+      ...generatedSheets,
+      Summary: [targetHeaders, ...mergedSummaryRows],
+    };
 
     setAnalysisResult(finalSheets);
+    setDraftHazardRowsByIndex(mergedDraftRows);
     if (activeProjectId) {
       saveProjectPatch(activeProjectId, {
         analysisResult: finalSheets,
         riskMethod: selectedMethod,
+        draftHazardRowsByIndex: mergedDraftRows,
         ...(usesProjectRiskProfileGenerationMode
           ? { projectRiskProfileGenerationMode: selectedGenerationMode }
           : {}),
@@ -6663,28 +6830,24 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
 
   const handleProjectRiskMethodChange = (nextMethod) => {
     setRiskMethod(nextMethod);
-    setDraftHazardRowsByIndex({});
     setDraftHazardColumnFilters({});
     setDraftHazardColumnSearches({});
     setDraftHazardFilterColumnIndex(null);
     if (activeProjectId) {
       saveProjectPatch(activeProjectId, {
         riskMethod: nextMethod,
-        draftHazardRowsByIndex: {},
       });
     }
   };
 
   const handleProjectRiskProfileGenerationModeChange = (nextMode) => {
     setProjectRiskProfileGenerationMode(nextMode);
-    setDraftHazardRowsByIndex({});
     setDraftHazardColumnFilters({});
     setDraftHazardColumnSearches({});
     setDraftHazardFilterColumnIndex(null);
     if (activeProjectId) {
       saveProjectPatch(activeProjectId, {
         projectRiskProfileGenerationMode: nextMode,
-        draftHazardRowsByIndex: {},
       });
     }
   };
@@ -6826,6 +6989,334 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       }).catch((error) => {
         console.warn("[results-review] Failed to sync draft hazard cell edit", error);
       });
+    }
+  };
+
+  const generateSafetyIssueReportsMarkdown = async (rowsForReport = riskRegister) => {
+    const risksForReport = (rowsForReport || [])
+      .map((risk) => {
+        const score = getRiskScore(risk);
+        const priority = getRiskPriority(score);
+        const sourceIndexes = getRiskSourceIndexes(risk);
+        const evidence = sourceIndexes
+          .map((sourceIndex) => riskAssessmentSourceRowsByIndex.get(sourceIndex))
+          .filter(Boolean);
+        return { ...risk, score, priority, sourceIndexes, evidence };
+      })
+      .sort((a, b) => b.score - a.score);
+    if (!risksForReport.length || isGeneratingRiskAssessmentReport) return "";
+    setIsGeneratingRiskAssessmentReport(true);
+    try {
+      const mdCell = (value) => String(value ?? "").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
+      const sourceLinks = (indexes = []) => indexes.length
+        ? indexes.map((index) => `[Source Row ${index}](#hazard-source-row-${index})`).join(", ")
+        : "Not linked";
+      const listBlock = (value) => {
+        const items = Array.isArray(value) ? value : [value];
+        return items
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+          .map((item) => `- ${item}`)
+          .join("\n") || "- Not specified in the available evidence.";
+      };
+      const renderEvidenceRows = (issue, report) => {
+        const evidenceRows = Array.isArray(report?.keyEvidenceRows) && report.keyEvidenceRows.length
+          ? report.keyEvidenceRows
+          : issue.evidence.map((item) => ({
+              sourceIndex: item.sourceIndex,
+              hazardUnsafeCondition: Object.entries(item.cells || {}).slice(0, 2).map(([label, value]) => `${label}: ${value}`).join("; "),
+              affectedFunctionOrSubsystem: Object.entries(item.cells || {}).find(([label]) => /function|subsystem|component|allocation/i.test(label))?.[1] || "",
+              controlActionOrFailureMode: Object.entries(item.cells || {}).find(([label]) => /control|action|failure|unsafe/i.test(label))?.[1] || "",
+              whyThisMatters: "This source row is part of the hazard-analysis evidence consolidated into the safety issue.",
+            }));
+        return [
+          "| Evidence Link | Hazard/Unsafe Condition | Affected Function or Subsystem | Control Action or Failure Mode | Why This Matters |",
+          "| --- | --- | --- | --- | --- |",
+          ...evidenceRows.map((row) => {
+            const sourceIndex = Number(row?.sourceIndex) || issue.sourceIndexes[0] || "";
+            return `| ${sourceIndex ? `[Source Row ${sourceIndex}](#hazard-source-row-${sourceIndex})` : "Not linked"} | ${mdCell(row?.hazardUnsafeCondition)} | ${mdCell(row?.affectedFunctionOrSubsystem)} | ${mdCell(row?.controlActionOrFailureMode)} | ${mdCell(row?.whyThisMatters)} |`;
+          }),
+        ].join("\n");
+      };
+      const normalizeIssueReport = (issue, parsed) => ({
+        executiveSummary: parsed?.executiveSummary || `This ${issue.priority} safety issue consolidates hazard-analysis evidence related to ${issue.title}.`,
+        observedConditionType: /implementation/i.test(parsed?.observedConditionType) ? "Implementation" : "System",
+        observedCondition: parsed?.observedCondition || issue.description || "No observed condition was returned.",
+        keyEvidenceRows: Array.isArray(parsed?.keyEvidenceRows) ? parsed.keyEvidenceRows : [],
+        safetySignificance: parsed?.safetySignificance || "Safety significance should be reviewed against the linked hazard-analysis evidence.",
+        existingControlsMitigations: parsed?.existingControlsMitigations || "No explicit controls or mitigations were identified in the available evidence.",
+        uncertaintySystemBoundary: parsed?.uncertaintySystemBoundary || "Assumptions and boundary conditions should be confirmed during review.",
+        recommendedEngineeringAction: parsed?.recommendedEngineeringAction || "Define and assign mitigation actions proportional to the priority of this safety issue.",
+        recommendedVerification: parsed?.recommendedVerification || "Verify mitigations with targeted analysis, review, and testing tied to the source evidence.",
+        finalAssessment: parsed?.finalAssessment || "Open pending engineering disposition and verification.",
+      });
+      const renderIssueReport = (issue, report) => {
+        const observedHeading = report.observedConditionType === "Implementation"
+          ? "Observed Implementation Condition"
+          : "Observed System Condition";
+        return [
+          `<!-- SAFETY_ISSUE_REPORT_START id="${issue.id}" -->`,
+          `### **Safety Issue: ${issue.title}**`,
+          "",
+          "| Field | Value |",
+          "| --- | --- |",
+          `| Issue ID | ${mdCell(issue.id)} |`,
+          `| Priority | ${mdCell(issue.priority)} |`,
+          `| Likelihood | ${mdCell(issue.likelihood)} |`,
+          `| Severity | ${mdCell(issue.severity)} |`,
+          `| Score | ${mdCell(issue.score)} |`,
+          `| Status | ${mdCell(issue.status || "Open")} |`,
+          `| Owner | ${mdCell(issue.owner || "Unassigned")} |`,
+          `| Due Date | ${mdCell(issue.dueDate || "Not set")} |`,
+          `| Source Rows | ${sourceLinks(issue.sourceIndexes)} |`,
+          "",
+          "### **Executive Summary**",
+          listBlock(report.executiveSummary),
+          "",
+          `### **${observedHeading}**`,
+          listBlock(report.observedCondition),
+          "",
+          "### **Key Evidence**",
+          renderEvidenceRows(issue, report),
+          "",
+          "### **Safety Significance**",
+          listBlock(report.safetySignificance),
+          "",
+          "### **Existing Controls / Mitigations**",
+          listBlock(report.existingControlsMitigations),
+          "",
+          "### **Uncertainty / System Boundary**",
+          listBlock(report.uncertaintySystemBoundary),
+          "",
+          "### **Recommended Engineering Action**",
+          listBlock(report.recommendedEngineeringAction),
+          "",
+          "### **Recommended Verification**",
+          listBlock(report.recommendedVerification),
+          "",
+          "### **Final Assessment**",
+          listBlock(report.finalAssessment),
+          `<!-- SAFETY_ISSUE_REPORT_END id="${issue.id}" -->`,
+        ].join("\n");
+      };
+      const buildReportsMarkdown = (issueReports) => {
+        const issueIndex = [
+          "| Issue ID | Priority | Safety Issue | Score | Status | Source Rows |",
+          "| --- | --- | --- | --- | --- | --- |",
+          ...risksForReport.map((issue) => `| ${mdCell(shortId(issue.id, issue.id))} | ${issue.priority} | ${mdCell(issue.title)} | ${issue.score} | ${mdCell(issue.status || "Open")} | ${sourceLinks(issue.sourceIndexes)} |`),
+        ].join("\n");
+        const prioritySections = ["P0", "P1", "P2", "P3+"].map((priority) => {
+          const reports = issueReports
+            .filter(({ issue }) => issue.priority === priority)
+            .map(({ issue, report }) => renderIssueReport(issue, report));
+          return [
+            `## **${priority} Safety Issues**`,
+            "",
+            reports.length ? reports.join("\n\n") : `_No ${priority} safety issue reports generated yet._`,
+          ].join("\n");
+        });
+        return [
+          "# **Safety Issue Reports**",
+          "",
+          `Project: **${activeProject?.name || "Untitled project"}**`,
+          `Hazard Method: **${riskMethod}**`,
+          "",
+          "## **Issue Index**",
+          "",
+          issueIndex,
+          "",
+          ...prioritySections,
+        ].join("\n\n").trim();
+      };
+      const issueReports = [];
+      setGeneratingSafetyIssueReportIds(new Set(risksForReport.map((issue) => issue.id)));
+      for (const issue of risksForReport) {
+        const prompt = `
+Create detailed content for one Safety Issue Report. Return strict JSON only.
+
+Project: ${activeProject?.name || "Untitled project"}
+Hazard method: ${riskMethod}
+
+Safety issue:
+${JSON.stringify({
+  id: issue.id,
+  title: issue.title,
+  description: issue.description,
+  likelihood: issue.likelihood,
+  severity: issue.severity,
+  score: issue.score,
+  priority: issue.priority,
+  status: issue.status,
+  owner: issue.owner,
+  dueDate: issue.dueDate,
+  tags: issue.tags,
+  sourceIndexes: issue.sourceIndexes,
+  hazardEvidence: issue.evidence.map((item) => ({ sourceIndex: item.sourceIndex, cells: item.cells })),
+}, null, 2)}
+
+Required JSON schema:
+{
+  "executiveSummary": ["2-4 detailed bullets explaining the issue and priority"],
+  "observedConditionType": "System or Implementation",
+  "observedCondition": ["2-4 detailed bullets describing the observed condition using only supplied evidence"],
+  "keyEvidenceRows": [
+    {
+      "sourceIndex": 1,
+      "hazardUnsafeCondition": "specific hazard or unsafe condition",
+      "affectedFunctionOrSubsystem": "affected function, subsystem, component, interface, or allocation",
+      "controlActionOrFailureMode": "unsafe control action, failure mode, control action, or data/control flow",
+      "whyThisMatters": "why this evidence supports the safety issue"
+    }
+  ],
+  "safetySignificance": ["2-4 detailed bullets explaining credible safety impact and escalation path"],
+  "existingControlsMitigations": ["2-4 bullets distinguishing explicit controls from inferred or missing controls"],
+  "uncertaintySystemBoundary": ["2-4 bullets listing assumptions, unknowns, and boundary questions"],
+  "recommendedEngineeringAction": ["3-5 concrete design, process, allocation, interface, or assurance actions"],
+  "recommendedVerification": ["3-5 specific test, analysis, review, traceability, or acceptance evidence actions"],
+  "finalAssessment": ["1-3 decisive bullets summarizing disposition and next review focus"]
+}
+
+Rules:
+- Use the same level of detail for every section.
+- Do not invent facts not supported by the safety issue or evidence.
+- Preserve sourceIndex values exactly in keyEvidenceRows.
+- Return only strict JSON. No Markdown. No code fences.
+        `.trim();
+        const response = await fetch(`${backendURL}/api/chat`, {
+          method: "POST",
+          ...buildAIAuthOpts({ "Content-Type": "application/json" }),
+          body: JSON.stringify({
+            model: "gpt-4o",
+            messages: [
+              { role: "system", content: "Return only strict JSON. No prose or markdown." },
+              { role: "user", content: prompt },
+            ],
+            temperature: 0.2,
+            max_tokens: 2800,
+          }),
+        });
+        if (!response.ok) throw new Error(`Safety issue report AI HTTP ${response.status}`);
+        const parsed = parseJsonObjectFromText(extractAIText(await response.json())) || {};
+        issueReports.push({ issue, report: normalizeIssueReport(issue, parsed) });
+        const partialMarkdown = buildReportsMarkdown(issueReports);
+        setRiskAssessmentReportMarkdown(partialMarkdown);
+        setRiskReportMode("preview");
+        setGeneratingSafetyIssueReportIds((prev) => {
+          const next = new Set(prev);
+          next.delete(issue.id);
+          return next;
+        });
+        if (activeProjectId) saveProjectPatch(activeProjectId, { riskAssessmentReportMarkdown: partialMarkdown });
+      }
+      const markdown = buildReportsMarkdown(issueReports);
+      setRiskAssessmentReportMarkdown(markdown);
+      setRiskReportMode("preview");
+      if (activeProjectId) saveProjectPatch(activeProjectId, { riskAssessmentReportMarkdown: markdown });
+      return markdown;
+    } catch (error) {
+      console.error("[risk-assessment] AI safety issue report generation failed", error);
+      window.alert(error?.message || "Unable to generate the Safety Issue Reports. Check your AI provider settings and try again.");
+      return "";
+    } finally {
+      setIsGeneratingRiskAssessmentReport(false);
+      setGeneratingSafetyIssueReportIds(new Set());
+    }
+  };
+
+  const handleGenerateRiskAssessment = async () => {
+    if (!canGenerateRiskAssessment || isGeneratingRiskAssessment || isGeneratingRiskAssessmentReport) return;
+    setIsGeneratingRiskAssessment(true);
+    try {
+      const compactHazardRows = riskAssessmentSource.rows.map(({ sourceIndex, values }) => {
+        const rowObject = { sourceIndex };
+        riskAssessmentSource.headers.forEach((header, index) => {
+          const value = values?.[index];
+          if (value !== undefined && value !== null && String(value).trim()) {
+            rowObject[header || `Column ${index + 1}`] = String(value).trim();
+          }
+        });
+        return rowObject;
+      });
+      const prompt = `
+You are consolidating a project hazard analysis into actionable safety issues for the risk assessment workspace.
+
+Input source: ${riskAssessmentSource.source === "completed" ? "completed hazard analysis summary" : "generated draft hazard rows"}
+Selected hazard method: ${riskMethod}
+Total hazard rows supplied: ${compactHazardRows.length}
+
+Complete hazard row list:
+${JSON.stringify(compactHazardRows, null, 2)}
+
+Create a complete consolidated safety issue register from the entire hazard row list:
+- Analyze the full set of hazard rows together before deciding groups. Do not consolidate one row at a time.
+- Use the entire supplied hazard list as the source of truth for determining which safety issues exist, how hazard rows group together, and how priorities should be assigned.
+- Consolidate duplicate, overlapping, or closely related hazard rows into one safety issue when they share the same unsafe state, causal chain, affected function/subsystem, mitigation theme, requirement gap, or credible accident path.
+- Do not copy the hazard table row-for-row unless the rows truly represent distinct safety issues.
+- Preserve traceability by including sourceIndexes for every hazard row represented by each consolidated safety issue.
+- Every supplied sourceIndex from the complete hazard row list must appear in exactly one consolidated safety issue unless the row is unusable; if unusable, include it in the closest issue and note the uncertainty in description.
+- Use concise, engineering-specific safety issue titles.
+- Put the hazardous condition, unsafe control action/failure mode, affected functions/subsystems, and mitigation/requirement rationale in description.
+- Score likelihood and severity from 1 to 5 using the full hazard evidence across all source rows in the consolidated issue. Use 3 when evidence is insufficient.
+- Prioritize comparatively across the complete list: P0-equivalent issues should have the highest severity/likelihood combination, P1/P2 should reflect meaningful but lower urgency, and P3+ should be lower-priority residual or localized concerns.
+- Use status "Open" unless the evidence clearly indicates the issue is already mitigated or accepted.
+- Keep owner and dueDate empty unless explicitly stated.
+- Use tags for method, subsystem/allocation, hazard family, or mitigation theme.
+- Return strict JSON only.
+
+Return this schema:
+[
+  {
+    "title": "Concise safety issue title",
+    "description": "Consolidated safety issue description",
+    "likelihood": 3,
+    "severity": 4,
+    "status": "Open",
+    "owner": "",
+    "dueDate": "",
+    "tags": ["STPA", "Guidance"],
+    "sourceIndexes": [1, 3]
+  }
+]
+      `.trim();
+      const response = await fetch(`${backendURL}/api/chat`, {
+        method: "POST",
+        ...buildAIAuthOpts({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          model: "gpt-4o",
+          messages: [
+            { role: "system", content: "Return only strict JSON. No prose or markdown." },
+            { role: "user", content: prompt },
+          ],
+          temperature: 0.2,
+          max_tokens: 2500,
+        }),
+      });
+      if (!response.ok) throw new Error(`Risk assessment AI HTTP ${response.status}`);
+      const content = extractAIText(await response.json());
+      const generated = normalizeRiskAssessmentRows(parseJsonArrayFromText(content));
+      if (!generated.length) throw new Error("The AI returned no usable safety issue rows.");
+      const suppliedSourceIndexes = new Set(compactHazardRows.map((row) => Number(row.sourceIndex)).filter((index) => Number.isFinite(index) && index > 0));
+      const coveredSourceIndexes = new Set(generated.flatMap((row) => getRiskSourceIndexes(row)));
+      const missingSourceIndexes = Array.from(suppliedSourceIndexes).filter((index) => !coveredSourceIndexes.has(index));
+      if (missingSourceIndexes.length) {
+        console.warn("[risk-assessment] Consolidation response omitted hazard source rows", missingSourceIndexes);
+      }
+      const nextRows = applyStableRiskIds(riskRegister, generated);
+      setRiskRegister(nextRows);
+      if (activeProjectId) saveProjectPatch(activeProjectId, { riskRegister: nextRows });
+      setIsGeneratingRiskAssessment(false);
+      const markdown = await generateSafetyIssueReportsMarkdown(nextRows);
+      if (activeProjectId && markdown) {
+        saveProjectPatch(activeProjectId, {
+          riskRegister: nextRows,
+          riskAssessmentReportMarkdown: markdown,
+        });
+      }
+    } catch (error) {
+      console.error("[risk-assessment] AI risk assessment generation failed", error);
+      window.alert(error?.message || "Unable to generate the risk assessment. Check your AI provider settings and try again.");
+    } finally {
+      setIsGeneratingRiskAssessment(false);
     }
   };
 
@@ -6974,6 +7465,30 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const filename = `functional_decomposition_${ts}.csv`;
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  };
+
+  const exportHazardAnalysisCSV = () => {
+    const hasCompletedSummary = Array.isArray(analysisResult?.Summary?.[0]);
+    const headers = hasCompletedSummary
+      ? analysisResult.Summary[0]
+      : draftHazardHeaders;
+    const rows2D = hasCompletedSummary
+      ? filteredHazardSummaryRows.map(({ row }) => row)
+      : filteredDraftHazardSummaryRows.map(({ row }) => row);
+    if (!headers?.length || !rows2D.length) return;
+    const escapeCell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const csv = [headers, ...rows2D].map(r => r.map(escapeCell).join(',')).join('\r\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const ts = new Date().toISOString().slice(0, 10);
+    const filename = `hazard_analysis_${ts}.csv`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   };
 
 // Apply agent suggestions (create/update/link) into local Requirements state
@@ -7796,82 +8311,63 @@ const projectHint = useMemo(() => ({
         </div>
       );
     }
-// ⬇️ INSERT JUST ABOVE `return ( ... )`
 
-const ColumnFilterButton = ({ col }) => {
-  const k = col.key;
-  if (k === 'actions') return null;
-
-  const options = columnOptions[k] || [];
-  const active = (colFilters[k]?.size || 0) > 0;
-  const search = filterSearch[k] || '';
-
-  const visibleOptions = options.filter(v =>
-    !search || String(v).toLowerCase().includes(search.toLowerCase())
-  );
-
-  const toggleValue = (val) => {
-    setColFilters(prev => {
-      const cur = new Set(prev[k] || []);
-      if (cur.has(val)) cur.delete(val); else cur.add(val);
-      return { ...prev, [k]: cur };
-    });
-  };
-
-  const setAll = () => setColFilters(prev => ({ ...prev, [k]: new Set(visibleOptions) }));
-  const setNone = () => setColFilters(prev => ({ ...prev, [k]: new Set() }));
-  const clearAll = () => setColFilters(prev => { const next={...prev}; delete next[k]; return next; });
-
-  return (
-    <div className="relative">
+  const hazardAnalysisControls = responseRows.length > 0 ? (
+    <div className="mb-4 flex flex-wrap items-center justify-center gap-3">
+      <div className="flex items-center space-x-2">
+        <label className="text-sm text-gray-700">Method:</label>
+        <select
+          className="text-sm border rounded px-2 py-1"
+          value={riskMethod}
+          onChange={(e) => handleProjectRiskMethodChange(e.target.value)}
+          disabled={isAnalyzing || draftHazardGeneratingIndex !== null}
+        >
+          <option value="STPA">STPA</option>
+          <option value="STPA-Textbook">STPA (standard/detailed)</option>
+          <option value="FMEA-Textbook">FMEA</option>
+          <option value="HARA">HARA</option>
+          <option value="FHA">FHA</option>
+          <option value="WhatIf-Textbook">What-if</option>
+        </select>
+      </div>
+      {riskMethod === "STPA-Textbook" && (
+        <select
+          className="max-w-full text-sm border rounded px-2 py-1"
+          value={projectRiskProfileGenerationMode}
+          onChange={(e) => handleProjectRiskProfileGenerationModeChange(e.target.value)}
+          disabled={isAnalyzing || draftHazardGeneratingIndex !== null}
+          aria-label="STPA generation mode"
+        >
+          {CODE_ARCHITECTURE_HAZARD_GENERATION_MODE_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label} - {option.description}
+            </option>
+          ))}
+        </select>
+      )}
       <button
         type="button"
-        data-filter-button="true"
-        onClick={() => setOpenFilterKey(openFilterKey === k ? null : k)}
-        className={`inline-flex items-center gap-1 hover:underline ${active ? 'text-[#2D7DFE] font-semibold' : ''}`}
-        title={`Filter ${col.label}`}
+        onClick={() => handleRunAnalysis(riskMethod)}
+        className="px-3 py-2 text-white rounded bg-[#2D7DFE] hover:bg-[#1E61D6] disabled:cursor-not-allowed disabled:opacity-60"
+        disabled={isAnalyzing || draftHazardGeneratingIndex !== null}
       >
-        {col.label}
-        <svg width="12" height="12" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 7l5 6 5-6H5z" /></svg>
+        {isAnalyzing ? 'Developing risk profile...' : 'Develop risk profile'}
       </button>
-
-      {openFilterKey === k && (
-        <div
-          data-filter-panel="true"
-          className="absolute left-0 mt-2 z-50 w-64 rounded-lg border bg-white shadow-lg p-2"
-        >
-          <input
-            className="w-full border rounded px-2 py-1 text-xs mb-2"
-            placeholder={`Search ${col.label}…`}
-            value={search}
-            onChange={e => setFilterSearch(s => ({ ...s, [k]: e.target.value }))}
-          />
-
-          <div className="flex items-center gap-2 mb-2">
-            <button className="text-xs border rounded px-2 py-1" onClick={setAll}>All</button>
-            <button className="text-xs border rounded px-2 py-1" onClick={setNone}>None</button>
-            <button className="text-xs border rounded px-2 py-1 ml-auto" onClick={clearAll}>Clear</button>
-          </div>
-
-          <div className="max-h-56 overflow-auto pr-1">
-            {visibleOptions.length === 0 ? (
-              <div className="text-xs text-gray-500 px-1 py-1.5">No matches</div>
-            ) : visibleOptions.map(v => (
-              <label key={v} className="flex items-center gap-2 text-sm px-1 py-1">
-                <input
-                  type="checkbox"
-                  checked={colFilters[k]?.has?.(String(v)) || false}
-                  onChange={() => toggleValue(String(v))}
-                />
-                <span className="truncate" title={String(v)}>{String(v)}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-      )}
+      <button
+        type="button"
+        onClick={exportHazardAnalysisCSV}
+        className="px-3 py-2 text-white rounded bg-[#10B981] hover:bg-[#059669] disabled:cursor-not-allowed disabled:opacity-60"
+        disabled={
+          (Array.isArray(analysisResult?.Summary?.[0])
+            ? filteredHazardSummaryRows.length
+            : filteredDraftHazardSummaryRows.length) === 0
+        }
+        title="Export the visible hazard analysis table rows as CSV"
+      >
+        Export CSV
+      </button>
     </div>
-  );
-};
+  ) : null;
 
   return (
 <>
@@ -9884,36 +10380,6 @@ const ColumnFilterButton = ({ col }) => {
                   {responseRows.length > 0 && (
                     <>
                       <div className="mb-4 flex justify-center gap-3">
-                        <div className="flex items-center space-x-2">
-                          <label className="text-sm text-gray-700">Method:</label>
-	                          <select className="text-sm border rounded px-2 py-1" value={riskMethod} onChange={(e) => handleProjectRiskMethodChange(e.target.value)}>
-  <option value="STPA">STPA</option>
-  <option value="STPA-Textbook">STPA (standard/detailed)</option>
-  <option value="FMEA-Textbook">FMEA</option>
-  <option value="HARA">HARA</option>
-  <option value="FHA">FHA</option>
-  <option value="WhatIf-Textbook">What-if</option>
-</select>
-                        </div>
-                        {riskMethod === "STPA-Textbook" && (
-                          <select
-                            className="text-sm border rounded px-2 py-1"
-                            value={projectRiskProfileGenerationMode}
-	                            onChange={(e) => handleProjectRiskProfileGenerationModeChange(e.target.value)}
-                            aria-label="STPA generation mode"
-                          >
-                            {CODE_ARCHITECTURE_HAZARD_GENERATION_MODE_OPTIONS.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label} - {option.description}
-                              </option>
-                            ))}
-                          </select>
-                        )}
-
-                        <button onClick={() => handleRunAnalysis(riskMethod)} className="px-3 py-2 text-white rounded bg-[#2D7DFE] hover:bg-[#1E61D6]">
-                          Develop risk profile
-                        </button>
-
                         {!showFunctionalDiagram && responseRows.length > 0 && (
                           <button onClick={exportDecompositionCSV} className="px-3 py-2 text-white rounded bg-[#10B981] hover:bg-[#059669]" title="Export the functional decomposition table as CSV">
                             Export CSV
@@ -10162,43 +10628,13 @@ const ColumnFilterButton = ({ col }) => {
             )}
             {activeTab === 'Hazard Analysis' && (
   <section className="mt-2">
+    {hazardAnalysisControls}
     {!analysisResult?.Summary ? (
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-white px-4 py-3 text-sm text-gray-600">
           <div>
             <p className="font-medium text-gray-900">Incomplete hazard analysis draft</p>
             <p>Known functional decomposition fields are populated. Use the row magic button to generate a hazard row with the selected method.</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Method</span>
-            <select
-              className="text-sm border rounded px-2 py-1"
-              value={riskMethod}
-              onChange={(e) => handleProjectRiskMethodChange(e.target.value)}
-              disabled={draftHazardGeneratingIndex !== null}
-            >
-              <option value="STPA">STPA</option>
-              <option value="STPA-Textbook">STPA (standard/detailed)</option>
-              <option value="FMEA-Textbook">FMEA</option>
-              <option value="HARA">HARA</option>
-              <option value="FHA">FHA</option>
-              <option value="WhatIf-Textbook">What-if</option>
-            </select>
-            {riskMethod === "STPA-Textbook" && (
-              <select
-                className="text-sm border rounded px-2 py-1"
-                value={projectRiskProfileGenerationMode}
-                onChange={(e) => handleProjectRiskProfileGenerationModeChange(e.target.value)}
-                disabled={draftHazardGeneratingIndex !== null}
-                aria-label="STPA generation mode"
-              >
-                {CODE_ARCHITECTURE_HAZARD_GENERATION_MODE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label} - {option.description}
-                  </option>
-                ))}
-              </select>
-            )}
           </div>
         </div>
         <div className="relative mb-10 h-[calc(100vh-235px)] min-h-[420px] w-full overflow-auto rounded-md shadow-sm">
@@ -10332,7 +10768,11 @@ const ColumnFilterButton = ({ col }) => {
                 const generating = draftHazardGeneratingIndex === originalIndex;
                 const reviewItem = draftHazardReviewByRow.get(originalIndex);
                 return (
-                  <tr key={originalIndex} className={`${idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]"} transition-colors`}>
+                  <tr
+                    id={`hazard-source-row-${originalIndex + 1}`}
+                    key={originalIndex}
+                    className={`${idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]"} transition-colors`}
+                  >
                     <td className="px-6 py-4 align-top border-b border-gray-100">
                       <div className="flex flex-col items-start gap-2">
                         <button
@@ -10541,6 +10981,7 @@ const ColumnFilterButton = ({ col }) => {
                     const highlighted = highlightedHazardRowIndex === originalIndex;
                     return (
                       <tr
+                        id={`hazard-source-row-${originalIndex + 1}`}
                         key={originalIndex}
                         ref={(el) => {
                           if (el) hazardRowRefs.current[originalIndex] = el;
@@ -10590,11 +11031,8 @@ const ColumnFilterButton = ({ col }) => {
 )}
 
 {activeTab === 'Risk Assessment' && (
-  <section className="mt-2">
-<div className="w-full">
-    {/* ── RIGHT CONTENT: your existing toolbar + table (now using filteredRiskRows) ── */}
-    <div className="flex-1 min-w-0">
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+  <section className="mt-2 space-y-5">
+    <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={() => setRiskRegister(prev => ([
             ...prev,
@@ -10613,7 +11051,7 @@ const ColumnFilterButton = ({ col }) => {
           ]))}
           className="px-3 py-2 text-white rounded bg-[#2D7DFE] hover:bg-[#1E61D6] text-sm"
         >
-          + Add Risk
+          + Add Safety Issue
         </button>
 
         <button
@@ -10632,6 +11070,20 @@ const ColumnFilterButton = ({ col }) => {
           title={analysisResult?.Summary ? 'Import risks from current Analysis' : 'Run Analysis first'}
         >
           Import from Analysis
+        </button>
+
+        <button
+          onClick={handleGenerateRiskAssessment}
+          className="inline-flex items-center gap-2 px-3 py-2 text-white rounded bg-[#0F766E] hover:bg-[#115E59] text-sm disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={!canGenerateRiskAssessment || isGeneratingRiskAssessment || isGeneratingRiskAssessmentReport}
+          title={canGenerateRiskAssessment ? 'Use AI to consolidate hazard analysis rows into safety issues and generate Safety Issue Reports' : 'Generate hazard analysis rows first'}
+        >
+          <Sparkles size={16} aria-hidden="true" />
+          {isGeneratingRiskAssessment
+            ? 'Generating safety issues...'
+            : isGeneratingRiskAssessmentReport
+              ? 'Writing Safety Issue Reports...'
+              : 'AI Generate Risk Assessment'}
         </button>
 
         <button
@@ -10659,296 +11111,377 @@ const ColumnFilterButton = ({ col }) => {
             URL.revokeObjectURL(url);
           }}
           className="px-3 py-2 text-white rounded bg-[#10B981] hover:bg-[#059669] text-sm"
-          title="Export Risk Register as CSV"
+          title="Export safety issue register as CSV"
         >
           Export CSV
         </button>
 
-        {/* BULK EDIT BAR (right-aligned) */}
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <span className="text-xs text-gray-500">{selectedIds.size} selected</span>
+        <button
+          onClick={() => downloadMarkdownFile(`safety_issue_reports_${new Date().toISOString().slice(0,10)}.md`, riskAssessmentReportMarkdown)}
+          className="inline-flex items-center gap-2 px-3 py-2 rounded border border-gray-200 bg-white text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={!riskAssessmentReportMarkdown.trim()}
+          title="Download the editable Safety Issue Reports as Markdown"
+        >
+          <Download size={16} aria-hidden="true" />
+          Export MD
+        </button>
 
-          {/* Status */}
-          <select
-            className="border rounded px-2 py-1 text-sm"
-            value={bulk.status}
-            onChange={(e) => setBulk(b => ({ ...b, status: e.target.value }))}
-          >
-            <option value="">Status…</option>
-            {['Open','In Progress','Mitigated','Accepted','Closed'].map(s => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-
-          {/* Owner */}
-          <input
-            className="border rounded px-2 py-1 text-sm"
-            placeholder="Owner…"
-            value={bulk.owner}
-            onChange={(e) => setBulk(b => ({ ...b, owner: e.target.value }))}
-          />
-
-          {/* Due Date */}
-          <input
-            type="date"
-            className="border rounded px-2 py-1 text-sm"
-            value={bulk.dueDate}
-            onChange={(e) => setBulk(b => ({ ...b, dueDate: e.target.value }))}
-          />
-
-          {/* Likelihood / Severity */}
-          <select
-            className="border rounded px-2 py-1 text-sm"
-            value={bulk.likelihood}
-            onChange={(e) => setBulk(b => ({ ...b, likelihood: e.target.value }))}
-          >
-            <option value="">L…</option>
-            {[1,2,3,4,5].map(n => <option key={n} value={n}>{n}</option>)}
-          </select>
-
-          <select
-            className="border rounded px-2 py-1 text-sm"
-            value={bulk.severity}
-            onChange={(e) => setBulk(b => ({ ...b, severity: e.target.value }))}
-          >
-            <option value="">S…</option>
-            {[1,2,3,4,5].map(n => <option key={n} value={n}>{n}</option>)}
-          </select>
-
-          {/* Tags (mode + value) */}
-          <select
-            className="border rounded px-2 py-1 text-sm"
-            value={bulk.tagsMode}
-            onChange={(e) => setBulk(b => ({ ...b, tagsMode: e.target.value }))}
-            title="Replace: overwrite, Append: add to end, Clear: remove tags"
-          >
-            <option value="replace">Replace</option>
-            <option value="append">Append</option>
-            <option value="clear">Clear</option>
-          </select>
-          <input
-            className="border rounded px-2 py-1 text-sm"
-            placeholder="tags (comma sep)"
-            value={bulk.tags}
-            onChange={(e) => setBulk(b => ({ ...b, tags: e.target.value }))}
-            disabled={bulk.tagsMode === 'clear'}
-          />
-
-          <button
-            className="px-3 py-1.5 rounded text-white bg-[#2D7DFE] hover:bg-[#1E61D6] text-sm disabled:opacity-50"
-            onClick={applyBulk}
-            disabled={selectedIds.size === 0}
-            title="Apply bulk changes to selected rows"
-          >
-            Apply to Selected
-          </button>
-
-          <button
-            className="px-3 py-1.5 rounded border text-sm"
-            onClick={() => setSelectedIds(new Set())}
-            title="Clear selection"
-          >
-            Clear Selection
-          </button>
-        </div>
       </div>
 
-      {/* Risk table OR empty state */}
       {riskRegister.length === 0 ? (
         <div className="rounded-xl border bg-white p-6 text-gray-600 text-sm">
-          <p className="mb-2">No risks yet for this project.</p>
+          <p className="mb-2">No safety issues yet for this project.</p>
           {analysisResult?.Summary ? (
             <p>
               Use <span className="font-medium">Import from Analysis</span> above to pull items from your latest risk profile,
-              or click <span className="font-medium">+ Add Risk</span> to create one manually.
+              or click <span className="font-medium">+ Add Safety Issue</span> to create one manually.
             </p>
           ) : (
             <p>
-              Click <span className="font-medium">+ Add Risk</span> to create one manually. To import automatically, run
+              Click <span className="font-medium">+ Add Safety Issue</span> to create one manually. To import automatically, run
               <span className="font-medium"> “Develop risk profile”</span> on the Analysis tab first.
             </p>
           )}
         </div>
       ) : (
-<Panel title="Risk Register" subtitle={`Current project · ${hazardLabel} / ${ucaLabel}`}>
-{/* make this the only scroll + clipping container */}
-<div className="max-h-[550px] overflow-y-auto rounded-md shadow-sm">
-            <table className="min-w-full border-collapse text-sm text-left">
-            <thead>
-  <tr>
-    {/* Select all (on visible rows only) */}
-    <th className="sticky top-0 z-20 bg-white px-2 py-1.5 border-b">
-      <input
-        type="checkbox"
-        aria-label="Select all"
-        checked={selectedIds.size === allVisibleIds.length && allVisibleIds.length > 0}
-        onChange={toggleAll}
-      />
-    </th>
+        <>
+          <div className={`relative transition-[padding] duration-300 ${showSafetyIssueReportDrawer && !isSafetyIssueReportFullscreen ? '2xl:pr-[700px]' : ''}`}>
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+            <div className="rounded-lg border border-gray-200 bg-white">
+              <div className="border-b border-gray-200 px-4 py-3">
+                <div className="text-sm font-semibold text-gray-900">Consolidated Safety Issues</div>
+                <div className="mt-3 grid grid-cols-5 gap-1">
+                  {['All','P0','P1','P2','P3+'].map((priority) => (
+                    <button
+                      key={priority}
+                      type="button"
+                      onClick={() => setSelectedRiskPriority(priority)}
+                      className={`rounded-md border px-2 py-1.5 text-xs font-semibold ${
+                        selectedRiskPriority === priority
+                          ? 'border-[#2D7DFE] bg-[#EEF4FF] text-[#0B3EA8]'
+                          : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      {priority}
+                      <span className="ml-1 text-[11px] font-medium">{riskPriorityCounts[priority] || 0}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="max-h-[680px] overflow-y-auto p-2">
+                {displayedRiskCards.map((risk) => (
+                  <button
+                    key={risk.id}
+                    type="button"
+                    onClick={() => setActiveRiskId(risk.id)}
+                    className={`mb-2 w-full rounded-md border p-3 text-left transition ${
+                      activeRisk?.id === risk.id
+                        ? 'border-[#2D7DFE] bg-[#F5F8FF] shadow-sm'
+                        : 'border-gray-200 bg-white hover:bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-gray-900">{risk.title}</div>
+                        <div className="mt-1 line-clamp-2 text-xs text-gray-600">{risk.description}</div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        {risk.reportGenerating && (
+                          <Loader2
+                            size={16}
+                            className="animate-spin text-[#2D7DFE]"
+                            aria-label="Generating Safety Issue Report"
+                          />
+                        )}
+                        <span className={`rounded px-2 py-1 text-xs font-bold ${
+                          risk.priority === 'P0' ? 'bg-red-100 text-red-700' :
+                          risk.priority === 'P1' ? 'bg-orange-100 text-orange-700' :
+                          risk.priority === 'P2' ? 'bg-amber-100 text-amber-700' :
+                          'bg-gray-100 text-gray-700'
+                        }`}>
+                          {risk.priority}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
+                      <span className="rounded bg-gray-100 px-2 py-0.5">Score {risk.score}</span>
+                      <span className="rounded bg-gray-100 px-2 py-0.5">L{risk.likelihood}</span>
+                      <span className="rounded bg-gray-100 px-2 py-0.5">S{risk.severity}</span>
+                      <span className="rounded bg-gray-100 px-2 py-0.5">{risk.evidence.length} evidence row{risk.evidence.length === 1 ? '' : 's'}</span>
+                    </div>
+                  </button>
+                ))}
+                {displayedRiskCards.length === 0 && (
+                  <div className="px-3 py-8 text-center text-sm text-gray-500">No safety issues in this priority group.</div>
+                )}
+              </div>
+            </div>
 
-    {COLS.map((col) => (
-      <th
-        key={col.key}
-        className="sticky top-0 z-20 bg-white px-2 py-1.5 border-b font-semibold text-xs text-left"
-      >
-        {col.key === 'actions' ? null : <ColumnFilterButton col={col} />}
-      </th>
-    ))}
-  </tr>
-</thead>
+            <div className="rounded-lg border border-gray-200 bg-white">
+              <div className="border-b border-gray-200 px-4 py-3">
+                <div className="text-sm font-semibold text-gray-900">Safety Issue Detail</div>
+                <div className="text-xs text-gray-500">Linked hazard-analysis rows are shown below the editable fields.</div>
+              </div>
+              {activeRisk ? (
+                <div className="max-h-[680px] overflow-y-auto p-4">
+                  <div className="mb-4 flex flex-wrap items-center gap-2">
+                    <span className={`rounded px-2 py-1 text-xs font-bold ${
+                      activeRisk.priority === 'P0' ? 'bg-red-100 text-red-700' :
+                      activeRisk.priority === 'P1' ? 'bg-orange-100 text-orange-700' :
+                      activeRisk.priority === 'P2' ? 'bg-amber-100 text-amber-700' :
+                      'bg-gray-100 text-gray-700'
+                    }`}>
+                      {activeRisk.priority}
+                    </span>
+                    <span className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700">Score {activeRisk.score}</span>
+                    <span className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700">Status {activeRisk.status || 'Open'}</span>
+                  </div>
 
-
-              <tbody className="text-[#374151] text-sm">
-                {filteredRiskRows.map((r, idx) => (
-                  <tr key={r.id} className={idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]"}>
-                    {/* Row checkbox */}
-                    <td className="px-4 py-3 border-b align-top">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <label className="md:col-span-2 block text-xs font-semibold text-gray-600">
+                      Title
                       <input
-                        type="checkbox"
-                        aria-label="Select row"
-                        checked={selectedIds.has(r.id)}
-                        onChange={() => toggleOne(r.id)}
-                      />
-                    </td>
-
-                    <td className="px-4 py-3 border-b align-top whitespace-nowrap font-mono text-xs text-gray-600">
-                      <button
-                        type="button"
-                        title={r.id}
-                        onClick={() => navigator.clipboard?.writeText(r.id)}
-                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-gray-200 hover:bg-gray-50 active:bg-gray-100"
-                      >
-                        {shortId(r.id, String(idx + 1).padStart(3, "0"))}
-                        <span className="text-gray-400">↘</span>
-                      </button>
-                    </td>
-
-                    {/* Hazard (title) */}
-                    <td className="px-4 py-3 border-b align-top min-w-[220px]">
-                      <input
-                        className="w-full bg-transparent focus:outline-none"
-                        value={r.title}
+                        className="mt-1 w-full rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-900 focus:border-[#2D7DFE] focus:outline-none"
+                        value={activeRisk.title}
                         onChange={(e) => {
                           const v = e.target.value;
-                          setRiskRegister(prev => prev.map(x => x.id === r.id ? { ...x, title: v } : x));
+                          setRiskRegister(prev => prev.map(x => x.id === activeRisk.id ? { ...x, title: v } : x));
                         }}
                       />
-                    </td>
-
-                    {/* Unsafe Control Actions (description) */}
-                    <td className="px-4 py-3 border-b align-top min-w-[320px]">
+                    </label>
+                    <label className="md:col-span-2 block text-xs font-semibold text-gray-600">
+                      Description
                       <textarea
-                        className="w-full bg-transparent focus:outline-none resize-y"
-                        rows={2}
-                        value={r.description}
+                        className="mt-1 min-h-28 w-full rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-900 focus:border-[#2D7DFE] focus:outline-none"
+                        value={activeRisk.description}
                         onChange={(e) => {
                           const v = e.target.value;
-                          setRiskRegister(prev => prev.map(x => x.id === r.id ? { ...x, description: v } : x));
+                          setRiskRegister(prev => prev.map(x => x.id === activeRisk.id ? { ...x, description: v } : x));
                         }}
                       />
-                    </td>
-
-                    <td className="px-4 py-3 border-b align-top">
+                    </label>
+                    <label className="block text-xs font-semibold text-gray-600">
+                      Likelihood
                       <select
-                        className="border rounded px-2 py-1"
-                        value={r.likelihood}
+                        className="mt-1 w-full rounded-md border border-gray-200 px-3 py-2 text-sm"
+                        value={activeRisk.likelihood}
                         onChange={(e) => {
                           const v = Number(e.target.value);
-                          setRiskRegister(prev => prev.map(x => x.id === r.id ? { ...x, likelihood: v } : x));
+                          setRiskRegister(prev => prev.map(x => x.id === activeRisk.id ? { ...x, likelihood: v } : x));
                         }}
                       >
                         {[1,2,3,4,5].map(n => <option key={n} value={n}>{n}</option>)}
                       </select>
-                    </td>
-
-                    <td className="px-4 py-3 border-b align-top">
+                    </label>
+                    <label className="block text-xs font-semibold text-gray-600">
+                      Severity
                       <select
-                        className="border rounded px-2 py-1"
-                        value={r.severity}
+                        className="mt-1 w-full rounded-md border border-gray-200 px-3 py-2 text-sm"
+                        value={activeRisk.severity}
                         onChange={(e) => {
                           const v = Number(e.target.value);
-                          setRiskRegister(prev => prev.map(x => x.id === r.id ? { ...x, severity: v } : x));
+                          setRiskRegister(prev => prev.map(x => x.id === activeRisk.id ? { ...x, severity: v } : x));
                         }}
                       >
                         {[1,2,3,4,5].map(n => <option key={n} value={n}>{n}</option>)}
                       </select>
-                    </td>
-
-                    <td className="px-4 py-3 border-b align-top">
-                      <span className="inline-flex items-center px-2 py-1 rounded bg-gray-100">
-                        {(Number(r.likelihood)||0) * (Number(r.severity)||0)}
-                      </span>
-                    </td>
-
-                    <td className="px-4 py-3 border-b align-top">
+                    </label>
+                    <label className="block text-xs font-semibold text-gray-600">
+                      Status
                       <select
-                        className="border rounded px-2 py-1"
-                        value={r.status}
+                        className="mt-1 w-full rounded-md border border-gray-200 px-3 py-2 text-sm"
+                        value={activeRisk.status}
                         onChange={(e) => {
                           const v = e.target.value;
-                          setRiskRegister(prev => prev.map(x => x.id === r.id ? { ...x, status: v } : x));
+                          setRiskRegister(prev => prev.map(x => x.id === activeRisk.id ? { ...x, status: v } : x));
                         }}
                       >
                         {['Open','In Progress','Mitigated','Accepted','Closed'].map(s => <option key={s} value={s}>{s}</option>)}
                       </select>
-                    </td>
-
-                    <td className="px-4 py-3 border-b align-top min-w-[140px]">
+                    </label>
+                    <label className="block text-xs font-semibold text-gray-600">
+                      Owner
                       <input
-                        className="w-full bg-transparent focus:outline-none"
-                        placeholder="e.g., Alex"
-                        value={r.owner}
+                        className="mt-1 w-full rounded-md border border-gray-200 px-3 py-2 text-sm"
+                        value={activeRisk.owner || ''}
                         onChange={(e) => {
                           const v = e.target.value;
-                          setRiskRegister(prev => prev.map(x => x.id === r.id ? { ...x, owner: v } : x));
+                          setRiskRegister(prev => prev.map(x => x.id === activeRisk.id ? { ...x, owner: v } : x));
                         }}
                       />
-                    </td>
-
-                    <td className="px-4 py-3 border-b align-top">
+                    </label>
+                    <label className="block text-xs font-semibold text-gray-600">
+                      Due Date
                       <input
                         type="date"
-                        className="border rounded px-2 py-1"
-                        value={r.dueDate}
+                        className="mt-1 w-full rounded-md border border-gray-200 px-3 py-2 text-sm"
+                        value={activeRisk.dueDate || ''}
                         onChange={(e) => {
                           const v = e.target.value;
-                          setRiskRegister(prev => prev.map(x => x.id === r.id ? { ...x, dueDate: v } : x));
+                          setRiskRegister(prev => prev.map(x => x.id === activeRisk.id ? { ...x, dueDate: v } : x));
                         }}
                       />
-                    </td>
-
-                    <td className="px-4 py-3 border-b align-top min-w-[160px]">
+                    </label>
+                    <label className="block text-xs font-semibold text-gray-600">
+                      Tags
                       <input
-                        className="w-full bg-transparent focus:outline-none"
-                        placeholder="comma, tags"
-                        value={r.tags}
+                        className="mt-1 w-full rounded-md border border-gray-200 px-3 py-2 text-sm"
+                        value={activeRisk.tags || ''}
                         onChange={(e) => {
                           const v = e.target.value;
-                          setRiskRegister(prev => prev.map(x => x.id === r.id ? { ...x, tags: v } : x));
+                          setRiskRegister(prev => prev.map(x => x.id === activeRisk.id ? { ...x, tags: v } : x));
                         }}
                       />
-                    </td>
+                    </label>
+                  </div>
 
-                    <td className="px-4 py-3 border-b align-top text-right">
+                  <div className="mt-6">
+                    <div className="mb-2 text-sm font-semibold text-gray-900">Hazard Analysis Evidence</div>
+                    {activeRisk.evidence.length ? (
+                      <div className="space-y-3">
+                        {activeRisk.evidence.map((item) => (
+                          <div
+                            id={`hazard-source-row-${item.sourceIndex}`}
+                            key={item.sourceIndex}
+                            className="scroll-mt-24 rounded-md border border-gray-200 bg-[#F8FAFC] p-3"
+                          >
+                            <div className="mb-2 text-xs font-semibold text-gray-700">Source Row {item.sourceIndex}</div>
+                            <dl className="grid gap-2 text-xs md:grid-cols-2">
+                              {Object.entries(item.cells).map(([label, value]) => (
+                                <div key={label} className="min-w-0">
+                                  <dt className="font-semibold uppercase tracking-wide text-gray-500">{label}</dt>
+                                  <dd className="mt-0.5 whitespace-pre-wrap text-gray-800">{value}</dd>
+                                </div>
+                              ))}
+                            </dl>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="rounded-md border border-dashed border-gray-300 p-4 text-sm text-gray-500">
+                        This risk has no linked source rows yet. Regenerate consolidated risks from hazard analysis to add traceability.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-6 text-sm text-gray-500">Select a consolidated safety issue to review details.</div>
+              )}
+            </div>
+
+            {!showSafetyIssueReportDrawer && (
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSafetyIssueReportDrawer(true);
+                  setIsSafetyIssueReportFullscreen(false);
+                }}
+                className="fixed right-0 top-1/2 z-30 flex -translate-y-1/2 items-center gap-2 rounded-l-lg border border-r-0 border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-lg hover:bg-gray-50"
+                title="Show Safety Issue Report drawer"
+              >
+                <FileText size={16} aria-hidden="true" />
+                <span className="[writing-mode:vertical-rl] rotate-180">Reports</span>
+              </button>
+            )}
+
+            <div className={`fixed z-30 rounded-lg border border-gray-200 bg-white shadow-2xl transition-all duration-300 ease-out ${
+              isSafetyIssueReportFullscreen
+                ? 'left-4 right-4 bottom-4 top-24 w-auto'
+                : 'bottom-4 right-4 top-24 w-[min(92vw,680px)]'
+            } ${
+              showSafetyIssueReportDrawer ? 'translate-x-0 opacity-100' : 'translate-x-[calc(100%+2rem)] opacity-0 pointer-events-none'
+            }`}>
+              <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-4 py-3">
+                <div>
+                  <div className="text-sm font-semibold text-gray-900">Safety Issue Report</div>
+                  <div className="text-xs text-gray-500">
+                    {activeRisk ? `Showing ${shortId(activeRisk.id, "selected")} · export downloads all reports.` : 'Select a safety issue to view its report.'}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex rounded-md border border-gray-200 bg-gray-50 p-0.5">
+                    {['preview','edit'].map((mode) => (
                       <button
-                        className="text-red-500 hover:underline"
-                        onClick={() => setRiskRegister(prev => prev.filter(x => x.id !== r.id))}
-                        title="Delete risk"
+                        key={mode}
+                        type="button"
+                        onClick={() => setRiskReportMode(mode)}
+                        className={`rounded px-2 py-1 text-xs font-medium capitalize ${
+                          riskReportMode === mode ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'
+                        }`}
                       >
-                        Remove
+                        {mode}
                       </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsSafetyIssueReportFullscreen((value) => !value)}
+                    className="rounded-md border border-gray-200 bg-white p-1.5 text-gray-500 hover:bg-gray-50 hover:text-gray-800"
+                    title={isSafetyIssueReportFullscreen ? 'Exit fullscreen' : 'View fullscreen'}
+                    aria-label={isSafetyIssueReportFullscreen ? 'Exit fullscreen' : 'View fullscreen'}
+                  >
+                    {isSafetyIssueReportFullscreen ? <Minimize2 size={16} aria-hidden="true" /> : <Maximize2 size={16} aria-hidden="true" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowSafetyIssueReportDrawer(false);
+                      setIsSafetyIssueReportFullscreen(false);
+                    }}
+                    className="rounded-md border border-gray-200 bg-white p-1.5 text-gray-500 hover:bg-gray-50 hover:text-gray-800"
+                    title="Hide Safety Issue Report drawer"
+                    aria-label="Hide Safety Issue Report drawer"
+                  >
+                    <PanelLeftClose size={16} aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+              <div className="h-[calc(100%-65px)] overflow-y-auto p-4">
+                {activeRisk ? (
+                  activeRisk.reportGenerated ? (
+                    riskReportMode === 'edit' ? (
+                    <textarea
+                      className="min-h-[610px] w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-sm leading-6 text-gray-900 focus:border-[#2D7DFE] focus:outline-none"
+                      value={activeSafetyIssueReportMarkdown}
+                      onChange={(e) => {
+                        const nextMarkdown = replaceSafetyIssueReportMarkdown(
+                          riskAssessmentReportMarkdown,
+                          activeRisk.id,
+                          e.target.value
+                        );
+                        setRiskAssessmentReportMarkdown(nextMarkdown);
+                      }}
+                    />
+                    ) : (
+                    <div className="prose prose-sm max-w-none prose-headings:text-gray-900 prose-table:text-xs">
+                      <SafetyReportViewer reportText={activeSafetyIssueReportMarkdown} />
+                    </div>
+                    )
+                  ) : (
+                    <div className="flex min-h-[280px] items-center justify-center rounded-md border border-dashed border-gray-300 p-6 text-sm text-gray-500">
+                      {activeRisk.reportGenerating ? (
+                        <div className="flex items-center gap-2">
+                          <Loader2 size={18} className="animate-spin text-[#2D7DFE]" aria-hidden="true" />
+                          <span>Generating this Safety Issue Report...</span>
+                        </div>
+                      ) : (
+                        <span>This Safety Issue Report has not been generated yet.</span>
+                      )}
+                    </div>
+                  )
+                ) : (
+                  <div className="rounded-md border border-dashed border-gray-300 p-6 text-sm text-gray-500">
+                    Select a safety issue to view its report.
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
-        </Panel>
-      )}
-    </div>
-  </div>
-</section>
+          </div>
 
+        </>
+      )}
+  </section>
 )}
 
 
