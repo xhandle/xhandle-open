@@ -187,6 +187,81 @@ function stripProjectRiskProfileColumns(sheets = {}) {
   }));
 }
 
+function normalizeAllocationText(value) {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function findSummaryColumn(headers = [], candidates = []) {
+  const normalized = headers.map((header) => normalizeAllocationText(header));
+  return candidates
+    .map((candidate) => normalized.indexOf(normalizeAllocationText(candidate)))
+    .find((index) => index >= 0) ?? -1;
+}
+
+function rowIncludesPhrase(rowText, phrase) {
+  const needle = normalizeAllocationText(phrase);
+  return Boolean(needle && rowText.includes(needle));
+}
+
+function buildSubsystemAllocationForSummaryRow(row = [], headers = [], functionalRows = []) {
+  const fromIdx = findSummaryColumn(headers, ["Function (From)", "From Function", "Source Function", "Controller"]);
+  const actionIdx = findSummaryColumn(headers, ["Control Action", "Unsafe Control Action", "UCA", "Action"]);
+  const toIdx = findSummaryColumn(headers, ["Function (To)", "To Function", "Target Function", "Controlled Process"]);
+  const from = fromIdx >= 0 ? normalizeAllocationText(row[fromIdx]) : "";
+  const action = actionIdx >= 0 ? normalizeAllocationText(row[actionIdx]) : "";
+  const to = toIdx >= 0 ? normalizeAllocationText(row[toIdx]) : "";
+  const rowText = normalizeAllocationText(row.join(" "));
+
+  let bestScore = 0;
+  const matches = [];
+
+  (functionalRows || []).forEach((functionalRow) => {
+    const subsystem = String(functionalRow?.subsystem || "").trim();
+    if (!subsystem) return;
+    const fnFrom = normalizeAllocationText(functionalRow?.fromFunction);
+    const fnAction = normalizeAllocationText(functionalRow?.controlAction);
+    const fnTo = normalizeAllocationText(functionalRow?.toFunction);
+
+    let score = 0;
+    if (from && fnFrom && from === fnFrom) score += 6;
+    else if (rowIncludesPhrase(rowText, fnFrom)) score += 4;
+    if (action && fnAction && action === fnAction) score += 6;
+    else if (rowIncludesPhrase(rowText, fnAction)) score += 4;
+    if (to && fnTo && to === fnTo) score += 6;
+    else if (rowIncludesPhrase(rowText, fnTo)) score += 3;
+
+    if (!score) return;
+    if (score > bestScore) {
+      bestScore = score;
+      matches.length = 0;
+    }
+    if (score === bestScore) matches.push(subsystem);
+  });
+
+  const allocations = Array.from(new Set(matches)).filter(Boolean);
+  return allocations.length ? allocations.join("; ") : "Unallocated";
+}
+
+function addSubsystemAllocationsToProjectHazardSummary(sheets = {}, functionalRows = []) {
+  if (!sheets || typeof sheets !== "object") return sheets;
+  const summary = sheets.Summary;
+  if (!Array.isArray(summary) || !Array.isArray(summary[0]) || summary.length < 2) return sheets;
+  const headers = summary[0].map((header) => String(header || ""));
+  const existingIdx = headers.findIndex((header) => normalizeAllocationText(header) === "subsystem allocation");
+  const nextHeaders = existingIdx >= 0 ? headers : [...headers, "Subsystem Allocation"];
+  const nextSummary = [
+    nextHeaders,
+    ...summary.slice(1).map((row) => {
+      const nextRow = [...row];
+      const allocation = buildSubsystemAllocationForSummaryRow(nextRow, headers, functionalRows);
+      if (existingIdx >= 0) nextRow[existingIdx] = allocation;
+      else nextRow.push(allocation);
+      return nextRow;
+    }),
+  ];
+  return { ...sheets, Summary: nextSummary };
+}
+
 function analysisOptionsForReviewTargets(targetOptions = [], selectedTargetIds = []) {
   const selectedSet = new Set(selectedTargetIds);
   const selectedTargets = targetOptions.filter((target) => target.available !== false && selectedSet.has(target.id));
@@ -1186,6 +1261,7 @@ function hasAnalysisSummary(value) {
 
 function functionalRowSignature(rows) {
   return JSON.stringify((rows || []).map((row) => ({
+    subsystem: String(row?.subsystem || "").trim(),
     fromFunction: String(row?.fromFunction || "").trim(),
     fromDetails: String(row?.fromDetails || "").trim(),
     controlAction: String(row?.controlAction || "").trim(),
@@ -1248,6 +1324,7 @@ function normalizeWizardDiagramCategories(plan, rows) {
       .filter(Boolean)
   ));
   const exactByLower = new Map(allFunctions.map((fn) => [fn.toLowerCase(), fn]));
+  const assignedFunctionNames = new Set();
 
   const categories = (Array.isArray(plan?.categories) ? plan.categories : [])
     .map((category, index) => {
@@ -1262,7 +1339,14 @@ function normalizeWizardDiagramCategories(plan, rows) {
         const exact = exactByLower.get(String(fn || "").trim().toLowerCase());
         if (exact) fnSet.add(exact);
       });
-      const functions = Array.from(fnSet).filter(Boolean);
+      const functions = Array.from(fnSet)
+        .filter(Boolean)
+        .filter((fn) => {
+          const key = fn.toLowerCase();
+          if (assignedFunctionNames.has(key)) return false;
+          assignedFunctionNames.add(key);
+          return true;
+        });
       return {
         name: cleanDiagramCategoryName(category?.name || `Category ${index + 1}`),
         functions,
@@ -1398,12 +1482,13 @@ function fallbackWizardDiagramCategories(rows, wizardPrompt = "") {
       row?.controlDetails,
       row?.toFunction,
       row?.toDetails,
+      row?.subsystem,
     ].filter(Boolean).join("\n");
     const ranked = rules
       .map((rule) => ({ ...rule, score: scoreTextForTerms(rowText, rule.terms) }))
       .filter((rule) => rule.score > 0)
       .sort((a, b) => b.score - a.score);
-    const name = cleanDiagramCategoryName(ranked[0]?.name || row?.fromFunction || row?.toFunction || "System Architecture");
+    const name = cleanDiagramCategoryName(row?.subsystem || ranked[0]?.name || row?.fromFunction || row?.toFunction || "System Architecture");
     if (!buckets.has(name)) buckets.set(name, { name, rowIndexes: [], functions: [] });
     const bucket = buckets.get(name);
     bucket.rowIndexes.push(index);
@@ -1424,6 +1509,7 @@ async function classifyPromptWizardDiagramCategories(rows, wizardPrompt) {
 
   const compactRows = rows.slice(0, 160).map((row, index) => ({
     index,
+    subsystem: row.subsystem || "",
     fromFunction: row.fromFunction || "",
     fromDetails: row.fromDetails || "",
     controlAction: row.controlAction || "",
@@ -1441,6 +1527,7 @@ Rules:
 - Use only the supplied wizard prompt and functional decomposition rows.
 - Read the System Overview first and use it as the mission/context for interpreting every row.
 - Review every row by row index before assigning categories.
+- When a row has a subsystem value, treat it as the preferred CSCI/category grouping hint unless the function descriptions clearly contradict it.
 - Assign each row to a category based on the source function, destination function, interface/control action, and the detailed descriptions for that row.
 - Create concise subsystem/responsibility category names from the system context, such as "Launch Control", "Authentication and Cybersecurity", "Sensing and Safety Monitoring", or "Operator Interface".
 - Create one category description after reviewing the generated function and interface descriptions.
@@ -6098,9 +6185,10 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     updated[index][field] = value;
     setResponseRows(updated);
   };
-  const handleAddRow = () => setResponseRows([...responseRows, { fromFunction:'', fromDetails:'', controlAction:'', controlDetails:'', toFunction:'', toDetails:'' }]);
+  const handleAddRow = () => setResponseRows([...responseRows, { subsystem:'', fromFunction:'', fromDetails:'', controlAction:'', controlDetails:'', toFunction:'', toDetails:'' }]);
   const handleRemoveRow = (index) => setResponseRows(responseRows.filter((_, i) => i !== index));
   const functionalTableColumns = [
+    { key: 'subsystem', label: 'Subsystem' },
     { key: 'fromFunction', label: 'Function (From)' },
     { key: 'fromDetails', label: 'Function (From) Details' },
     { key: 'controlAction', label: 'Control Action' },
@@ -6197,7 +6285,10 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         ? { hazardGenerationMode: selectedGenerationMode, fhaGenerationMode: selectedGenerationMode }
         : {}),
     });
-    const finalSheets = stripProjectRiskProfileColumns(rawFinalSheets);
+    const finalSheets = addSubsystemAllocationsToProjectHazardSummary(
+      stripProjectRiskProfileColumns(rawFinalSheets),
+      responseRows
+    );
 
     setAnalysisResult(finalSheets);
     if (activeProjectId) {

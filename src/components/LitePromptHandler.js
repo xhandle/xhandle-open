@@ -148,6 +148,35 @@ function normalizeComponents(componentsText) {
   );
 }
 
+function parseComponentEntries(componentsText) {
+  return String(componentsText || "")
+    .split(/\n+/)
+    .map((line) => line.replace(/^[\s*-]+/, "").trim())
+    .filter(Boolean)
+    .map((line) => {
+      const fields = {};
+      line.split("|").forEach((part) => {
+        const colonIndex = part.indexOf(":");
+        if (colonIndex <= 0) return;
+        fields[part.slice(0, colonIndex).trim().toLowerCase()] = part.slice(colonIndex + 1).trim();
+      });
+      if (fields.function || fields.component || fields.name || fields.subsystem || fields.description) {
+        return {
+          name: normalizeField(fields.function || fields.component || fields.name),
+          subsystem: normalizeField(fields.subsystem),
+          description: normalizeField(fields.description || fields.role),
+        };
+      }
+      const colonIndex = line.indexOf(":");
+      return {
+        name: normalizeField(colonIndex > 0 ? line.slice(0, colonIndex) : line),
+        subsystem: "",
+        description: normalizeField(colonIndex > 0 ? line.slice(colonIndex + 1) : ""),
+      };
+    })
+    .filter((entry) => entry.name);
+}
+
 function chunkText(text, maxChars = MAX_CHARS_PER_CHUNK) {
   const src = normalizeField(text);
   if (!src) return [];
@@ -187,9 +216,15 @@ function chunkText(text, maxChars = MAX_CHARS_PER_CHUNK) {
 
 function buildChunkRequests(prompt) {
   const sections = extractStructuredInput(prompt);
-  const componentList = normalizeComponents(sections.functionalComponents);
-  const componentBlock = componentList.length
-    ? componentList.map((name) => `- ${name}`).join("\n")
+  const componentEntries = parseComponentEntries(sections.functionalComponents);
+  const componentList = componentEntries.length
+    ? uniqueStrings(componentEntries.map((entry) => entry.name))
+    : normalizeComponents(sections.functionalComponents);
+  const subsystemByComponent = new Map(componentEntries.map((entry) => [entry.name.toLowerCase(), entry.subsystem]));
+  const componentBlock = componentEntries.length
+    ? componentEntries.map((entry) => `- ${entry.name}${entry.subsystem ? ` [Subsystem: ${entry.subsystem}]` : ""}${entry.description ? `: ${entry.description}` : ""}`).join("\n")
+    : componentList.length
+      ? componentList.map((name) => `- ${name}`).join("\n")
     : sections.functionalComponents || "None provided";
 
   const longSections = [
@@ -214,7 +249,8 @@ function buildChunkRequests(prompt) {
     systemPrompt: [
       "You are an AI system engineering assistant.",
       "Return ONLY a JSON array.",
-      "Each item must include: fromFunction, fromDetails, controlAction, controlDetails, toFunction, toDetails.",
+      "Each item must include: subsystem, fromFunction, fromDetails, controlAction, controlDetails, toFunction, toDetails.",
+      "Set subsystem to the supplied subsystem for the source/from function when available; otherwise infer the most appropriate subsystem from the component list and system context.",
       "Use exact component names from the provided component list whenever possible.",
       "Represent bidirectional interfaces as two separate objects.",
       "Write detailed descriptions, not labels: fromDetails and toDetails must explain each function's responsibility, inputs it consumes, outputs it produces, state/data it owns or transforms, and relevant operating constraints.",
@@ -230,16 +266,18 @@ function buildChunkRequests(prompt) {
     ].join("\n\n"),
     index,
     total: chunkBodies.length,
+    subsystemByComponent,
   }));
 }
 
-function mergeRows(chunks) {
+function mergeRows(chunks, subsystemLookup = new Map()) {
   const merged = [];
   const seen = new Set();
 
   (chunks || []).forEach((row) => {
     if (!row || typeof row !== "object") return;
     const normalized = {
+      subsystem: normalizeField(row.subsystem) || subsystemLookup.get(normalizeField(row.fromFunction).toLowerCase()) || "",
       fromFunction: normalizeField(row.fromFunction),
       fromDetails: normalizeField(row.fromDetails),
       controlAction: normalizeField(row.controlAction),
@@ -255,6 +293,7 @@ function mergeRows(chunks) {
       normalized.fromDetails.toLowerCase(),
       normalized.controlDetails.toLowerCase(),
       normalized.toDetails.toLowerCase(),
+      normalized.subsystem.toLowerCase(),
     ].join("|");
     if (seen.has(key)) return;
     seen.add(key);
@@ -268,7 +307,11 @@ function fallbackRowsFromPrompt(prompt) {
   const sections = extractStructuredInput(prompt);
   const rows = [];
   const arrowRe = /(.+?)\s*(?:->|→)\s*(.+?)\s*(?:->|→)\s*(.+)/;
-  const componentList = normalizeComponents(sections.functionalComponents);
+  const componentEntries = parseComponentEntries(sections.functionalComponents);
+  const componentList = componentEntries.length
+    ? uniqueStrings(componentEntries.map((entry) => entry.name))
+    : normalizeComponents(sections.functionalComponents);
+  const subsystemLookup = new Map(componentEntries.map((entry) => [entry.name.toLowerCase(), entry.subsystem]));
 
   const matchNamedComponents = (line) => {
     const lower = line.toLowerCase();
@@ -299,6 +342,7 @@ function fallbackRowsFromPrompt(prompt) {
       const match = line.match(arrowRe);
       if (!match) return;
       rows.push({
+        subsystem: subsystemLookup.get(normalizeField(match[1]).toLowerCase()) || "",
         fromFunction: normalizeField(match[1]),
         fromDetails: "",
         controlAction: normalizeField(match[2]),
@@ -318,6 +362,7 @@ function fallbackRowsFromPrompt(prompt) {
         if (!pair) return;
         const [from, to] = pair;
         rows.push({
+          subsystem: subsystemLookup.get(from.toLowerCase()) || "",
           fromFunction: from,
           fromDetails: `${from} participates in the ${sections.systemName || "system"} functional architecture based on the prompt wizard inputs.`,
           controlAction: inferControlAction(line, from, to),
@@ -331,6 +376,7 @@ function fallbackRowsFromPrompt(prompt) {
   if (!rows.length && componentList.length >= 2) {
     for (let i = 0; i < componentList.length - 1; i += 1) {
       rows.push({
+        subsystem: subsystemLookup.get(componentList[i].toLowerCase()) || "",
         fromFunction: componentList[i],
         fromDetails: `${componentList[i]} is a prompt-specified functional component in ${sections.systemName || "the system"}.`,
         controlAction: "coordinates operational information",
@@ -341,7 +387,7 @@ function fallbackRowsFromPrompt(prompt) {
     }
   }
 
-  return mergeRows(rows);
+  return mergeRows(rows, subsystemLookup);
 }
 
 async function fetchChatChunk(systemPrompt, userPrompt) {
@@ -444,7 +490,7 @@ export const handleLitePromptSubmit = async (prompt, setResponse, setPrompt, con
       }
     }
 
-    const merged = mergeRows(allRows);
+    const merged = mergeRows(allRows, requests[0]?.subsystemByComponent || new Map());
     const fallback = merged.length ? merged : fallbackRowsFromPrompt(prompt);
     setResponse(JSON.stringify(fallback, null, 2));
   } catch (err) {

@@ -1108,6 +1108,7 @@ function normalizeCategories(aiPlan, rows) {
   const allFunctions = getUniqueFunctionsFromRows(rows);
   const exactByLower = new Map(allFunctions.map((fn) => [fn.toLowerCase(), fn]));
   const categories = Array.isArray(aiPlan?.categories) ? aiPlan.categories : [];
+  const assignedFunctionNames = new Set();
 
   const normalized = categories
     .map((category, index) => {
@@ -1126,7 +1127,14 @@ function normalizeCategories(aiPlan, rows) {
         if (exact) fnSet.add(exact);
       });
 
-      const functions = Array.from(fnSet).filter(Boolean);
+      const functions = Array.from(fnSet)
+        .filter(Boolean)
+        .filter((fn) => {
+          const key = fn.toLowerCase();
+          if (assignedFunctionNames.has(key)) return false;
+          assignedFunctionNames.add(key);
+          return true;
+        });
       return {
         name: cleanCategoryTitle(category?.name || `Category ${index + 1}`),
         sourceIndex: index,
@@ -1335,12 +1343,22 @@ function buildAutoCategoryLayout(categories) {
 
 function applyCategoryLayoutToPositionMap({ categories, rows, posMap }) {
   const functions = getUniqueFunctionsFromRows(rows);
-  const { boxes, positionByFunction } = buildAutoCategoryLayout(categories);
-  const functionsByGroupId = new Map(categories.map((category, index) => [
+  const renderableFunctions = new Set(functions);
+  const prunedCategories = (categories || [])
+    .map((category) => ({
+      ...category,
+      functions: Array.from(new Set((category.functions || [])
+        .map((fn) => String(fn || '').trim())
+        .filter((fn) => fn && renderableFunctions.has(fn)))),
+    }))
+    .filter((category) => category.functions.length);
+  if (!prunedCategories.length) return [];
+  const { boxes, positionByFunction } = buildAutoCategoryLayout(prunedCategories);
+  const functionsByGroupId = new Map(prunedCategories.map((category, index) => [
     stableAutoCategoryId(category, index),
     category.functions || [],
   ]));
-  const categoryByGroupId = new Map(categories.map((category, index) => [
+  const categoryByGroupId = new Map(prunedCategories.map((category, index) => [
     stableAutoCategoryId(category, index),
     category,
   ]));
