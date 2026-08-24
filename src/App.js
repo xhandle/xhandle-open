@@ -6149,6 +6149,12 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   const activeProjectDiagramKey = activeProjectId
     ? `diagram:${activeProjectId}:${loadedProjectId === activeProjectId && projectLoaded ? "ready" : "loading"}`
     : "diagram:none";
+  const activeProjectDiagramReady = Boolean(
+    activeProjectId &&
+    loadedProjectId === activeProjectId &&
+    projectLoaded &&
+    !loadingProjectId
+  );
 
   const handleRunAnalysis = async (selectedMethod) => {
     const usesProjectRiskProfileGenerationMode = selectedMethod === "STPA-Textbook";
@@ -9338,7 +9344,8 @@ const ColumnFilterButton = ({ col }) => {
                         <div className="pt-6">
                           {/* relative/pb-10/overflow-visible prevents clipping of bottom-right controls */}
                           <div className="relative h-[calc(100vh-285px)] min-h-[560px] w-full rounded-2xl bg-white overflow-visible">
-                          <LiteSummaryDiagramReactFlow
+                          {activeProjectDiagramReady ? (
+                            <LiteSummaryDiagramReactFlow
   key={activeProjectDiagramKey}
   ref={diagramRef}
   rows={responseRows}
@@ -9351,6 +9358,11 @@ const ColumnFilterButton = ({ col }) => {
   hazardSummary={analysisResult?.Summary}
   onOpenHazardRow={handleOpenHazardSummaryRow}
 />
+                          ) : (
+                            <div className="flex h-full min-h-[560px] items-center justify-center text-sm font-medium text-gray-500">
+                              Loading project diagram...
+                            </div>
+                          )}
 
 
                           </div>
