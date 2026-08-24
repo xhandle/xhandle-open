@@ -96,6 +96,28 @@ function normalizeField(value) {
   return String(value || "").replace(/\r/g, "").trim();
 }
 
+function formatClarificationsForPrompt(value) {
+  const blocks = [];
+  const appendQuestion = (stepLabel, item) => {
+    const question = normalizeField(item?.question);
+    const answer = normalizeField(item?.answer);
+    if (!question || !answer) return;
+    blocks.push(`- ${stepLabel}: ${question}\n  Answer: ${answer}`);
+  };
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => appendQuestion("General", item));
+  } else if (value && typeof value === "object") {
+    Object.entries(value).forEach(([stepKey, items]) => {
+      if (!Array.isArray(items)) return;
+      const stepLabel = stepKey.replace(/([a-z])([A-Z])/g, "$1 $2");
+      items.forEach((item) => appendQuestion(stepLabel, item));
+    });
+  }
+
+  return blocks.join("\n");
+}
+
 function extractStructuredInput(prompt) {
   const raw = String(prompt || "").trim();
   const parsed = parseJsonMaybe(raw);
@@ -106,6 +128,7 @@ function extractStructuredInput(prompt) {
       functionalComponents: normalizeField(parsed.components || parsed.functionalComponents),
       interactions: normalizeField(parsed.interactions),
       ops: normalizeField(parsed?.optional?.operationalScenarios || parsed.ops || parsed.operationalScenarios),
+      clarifications: formatClarificationsForPrompt(parsed.clarifications || parsed.clarificationResponses),
       raw,
     };
   }
@@ -126,11 +149,12 @@ function extractStructuredInput(prompt) {
       functionalComponents: "",
       interactions: raw,
       ops: "",
+      clarifications: "",
       raw,
     };
   }
 
-  const out = { systemName: "", systemOverview: "", functionalComponents: "", interactions: "", ops: "", raw };
+  const out = { systemName: "", systemOverview: "", functionalComponents: "", interactions: "", ops: "", clarifications: "", raw };
   positions.forEach((cur, i) => {
     const next = positions[i + 1];
     const start = cur.idx + cur.name.length + 1;
@@ -260,10 +284,11 @@ function buildChunkRequests(prompt) {
     ].join(" "),
     userPrompt: [
       `System Name: ${sections.systemName || "System"}`,
+      sections.clarifications ? `Clarification Answers:\n${sections.clarifications}` : "",
       "Functional Components (exact names):",
       componentBlock,
       body,
-    ].join("\n\n"),
+    ].filter(Boolean).join("\n\n"),
     index,
     total: chunkBodies.length,
     subsystemByComponent,

@@ -1,10 +1,110 @@
 import React, { useState } from 'react';
-import { MessageSquarePlus, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { MessageSquarePlus, Plus, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
 import { backendURL, buildAIAuthOpts } from './backendConfig';
 import { EXAMPLES } from './DemoExamples';
 
 const AI_COMPLETION_STEPS = new Set(['systemOverview', 'functionalComponents', 'interactions', 'ops']);
 const TABLE_STEP_KEYS = new Set(['functionalComponents', 'interactions', 'ops']);
+
+function createClarificationQuestion(raw = {}, index = 0) {
+  const options = Array.isArray(raw.options)
+    ? raw.options.map((option) => String(option || '').trim()).filter(Boolean).slice(0, 6)
+    : [];
+  const type = raw.type === 'single' || raw.type === 'multi' || raw.type === 'text'
+    ? raw.type
+    : options.length ? 'multi' : 'text';
+  return {
+    id: `clarification-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+    question: String(raw.question || raw.prompt || '').trim(),
+    type,
+    options,
+    selectedOptions: [],
+    text: '',
+  };
+}
+
+function parseJsonArrayFromText(text) {
+  const raw = String(text || '').trim();
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed;
+  } catch {}
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+  if (fenced) {
+    try {
+      const parsedFence = JSON.parse(fenced);
+      if (Array.isArray(parsedFence)) return parsedFence;
+    } catch {}
+  }
+  const start = raw.indexOf('[');
+  const end = raw.lastIndexOf(']');
+  if (start >= 0 && end > start) {
+    try {
+      const parsedSlice = JSON.parse(raw.slice(start, end + 1));
+      if (Array.isArray(parsedSlice)) return parsedSlice;
+    } catch {}
+  }
+  return null;
+}
+
+function serializeClarificationAnswers(questions = []) {
+  return (questions || [])
+    .map((item) => {
+      const selected = (item.selectedOptions || []).filter(Boolean);
+      const text = String(item.text || '').trim();
+      if (!item.question || (!selected.length && !text)) return null;
+      return {
+        question: item.question,
+        answer: [...selected, text].filter(Boolean).join('; '),
+      };
+    })
+    .filter(Boolean);
+}
+
+function formatClarificationAnswersForPrompt(questions = []) {
+  const answered = serializeClarificationAnswers(questions);
+  if (!answered.length) return '';
+  return answered.map((item) => `- ${item.question}\n  Answer: ${item.answer}`).join('\n');
+}
+
+const CLARIFICATION_STOP_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'be', 'by', 'do', 'does', 'for', 'from', 'how', 'if', 'in',
+  'is', 'it', 'of', 'or', 'should', 'the', 'there', 'this', 'to', 'what', 'when', 'where',
+  'which', 'who', 'with', 'would', 'you', 'your',
+]);
+
+function normalizeClarificationQuestion(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((token) => token.length > 2 && !CLARIFICATION_STOP_WORDS.has(token))
+    .join(' ');
+}
+
+function clarificationSimilarity(a, b) {
+  const aTokens = new Set(normalizeClarificationQuestion(a).split(/\s+/).filter(Boolean));
+  const bTokens = new Set(normalizeClarificationQuestion(b).split(/\s+/).filter(Boolean));
+  if (!aTokens.size || !bTokens.size) return 0;
+  const intersection = Array.from(aTokens).filter((token) => bTokens.has(token)).length;
+  return intersection / Math.min(aTokens.size, bTokens.size);
+}
+
+function isSimilarClarificationQuestion(question, priorQuestions = []) {
+  const normalized = normalizeClarificationQuestion(question);
+  if (!normalized) return true;
+  return priorQuestions.some((prior) => {
+    const priorNormalized = normalizeClarificationQuestion(prior);
+    return priorNormalized === normalized || clarificationSimilarity(normalized, priorNormalized) >= 0.7;
+  });
+}
+
+function flattenClarificationQuestions(clarificationsByStep = {}, exceptStep = '') {
+  return Object.entries(clarificationsByStep)
+    .filter(([stepKey]) => stepKey !== exceptStep)
+    .flatMap(([, questions]) => (questions || []).map((item) => item.question))
+    .filter(Boolean);
+}
 
 function createArtifactRow(key, values = {}) {
   const defaults = {
@@ -311,7 +411,7 @@ const PromptWizard = ({ onSubmit, onSkip, examples = EXAMPLES }) => {
     loadingKey: null,
     error: '',
   });
-  const [followUpQuestions, setFollowUpQuestions] = useState({});
+  const [clarificationsByStep, setClarificationsByStep] = useState({});
 
   const steps = [
     {
@@ -353,6 +453,7 @@ const PromptWizard = ({ onSubmit, onSkip, examples = EXAMPLES }) => {
       ? reviewTables[current.key]
       : parseArtifactRowsFromText(responses[current.key], current.key))
     : [];
+  const currentClarifications = clarificationsByStep[current.key] || [];
 
   const handleChange = (e) => {
     const nextValue = e.target.value;
@@ -388,6 +489,34 @@ const PromptWizard = ({ onSubmit, onSkip, examples = EXAMPLES }) => {
     syncRowsForCurrentStep(nextRows);
   };
 
+  const setClarificationsForCurrentStep = (questions) => {
+    setClarificationsByStep((prev) => ({
+      ...prev,
+      [current.key]: questions,
+    }));
+  };
+
+  const handleClarificationSelection = (questionId, option, checked = true) => {
+    const nextQuestions = currentClarifications.map((question) => {
+      if (question.id !== questionId) return question;
+      if (question.type === 'multi') {
+        const currentSelection = new Set(question.selectedOptions || []);
+        if (checked) currentSelection.add(option);
+        else currentSelection.delete(option);
+        return { ...question, selectedOptions: Array.from(currentSelection) };
+      }
+      return { ...question, selectedOptions: [option] };
+    });
+    setClarificationsForCurrentStep(nextQuestions);
+  };
+
+  const handleClarificationText = (questionId, value) => {
+    const nextQuestions = currentClarifications.map((question) => (
+      question.id === questionId ? { ...question, text: value } : question
+    ));
+    setClarificationsForCurrentStep(nextQuestions);
+  };
+
   const buildCompletionPrompt = (targetStep) => {
     const guidance = COMPLETION_GUIDANCE[targetStep.key];
     const existingText = String(responses[targetStep.key] || '').trim();
@@ -405,6 +534,7 @@ Prior inputs:
 - Functional Components: ${responses.functionalComponents || '(not provided)'}
 - Control Interactions: ${responses.interactions || '(not provided)'}
 - Operational Scenarios / Modes: ${responses.ops || '(not provided)'}
+- Clarification answers: ${formatClarificationAnswersForPrompt(currentClarifications) || '(none provided)'}
 
 Current target field content:
 ${existingText || '(empty)'}
@@ -478,7 +608,8 @@ Prefer specific nouns and verbs over generic placeholders. Include enough detail
           [current.key]: parseArtifactRowsFromText(content, current.key),
         }));
       }
-      setCompletionState({ loadingKey: null, error: '' });
+      setCompletionState({ loadingKey: `${current.key}:questions`, error: '' });
+      await generateClarificationQuestions(content);
     } catch (error) {
       console.error('Prompt wizard AI completion failed:', error);
       setCompletionState({
@@ -488,10 +619,12 @@ Prefer specific nouns and verbs over generic placeholders. Include enough detail
     }
   };
 
-  const buildFollowUpPrompt = () => `
+  const buildFollowUpPrompt = (completedContent = '') => {
+    const priorQuestions = flattenClarificationQuestions(clarificationsByStep, current.key);
+    return `
 You are helping prepare inputs for functional architecture generation.
 
-Review the current wizard content and identify concise follow-up questions only where uncertainty would materially affect the architecture, interfaces, operational modes, or later safety analysis.
+Review the current wizard content and identify concise follow-up questions only where uncertainty would materially affect the architecture, interfaces, operational modes, subsystem allocation, or later safety analysis.
 
 Current step: ${current.label}
 System Name: ${responses.systemName || '(not provided)'}
@@ -499,40 +632,68 @@ System Overview: ${responses.systemOverview || '(not provided)'}
 Functional Components: ${responses.functionalComponents || '(not provided)'}
 Control Interactions: ${responses.interactions || '(not provided)'}
 Operational Scenarios / Modes: ${responses.ops || '(not provided)'}
+Latest AI completion for this step:
+${completedContent || responses[current.key] || '(not provided)'}
 
-Return 0-5 questions as plain bullet lines. Do not include headings or explanations. If no clarification is needed, return "No follow-up questions needed."
+Questions already asked in earlier wizard steps:
+${priorQuestions.length ? priorQuestions.map((question) => `- ${question}`).join('\n') : '(none)'}
+
+Return strict JSON only.
+Return [] if no clarification is needed.
+Otherwise return 1-4 objects using this schema:
+[
+  {
+    "question": "Short clarification question",
+    "type": "multi",
+    "options": ["Option A", "Option B", "Option C"]
+  }
+]
+
+Rules:
+- Prefer type "multi" with concise options by default so users can choose all applicable answers.
+- Use type "single" only when the choices are mutually exclusive and one answer is clearly expected.
+- Use type "multi" when multiple choices may apply or when there is any uncertainty about exclusivity.
+- Use type "text" when options would be misleading; omit options or return [] for options.
+- Keep option labels concise and domain-specific.
+- Do not repeat or lightly rephrase any question already asked in an earlier wizard step.
 `.trim();
+  };
 
-  const handleAIFollowUpQuestions = async () => {
-    if (!AI_COMPLETION_STEPS.has(current.key) || completionState.loadingKey) return;
-
-    setCompletionState({ loadingKey: `${current.key}:questions`, error: '' });
-
+  const generateClarificationQuestions = async (completedContent = '') => {
     try {
       const content = await callWizardAI({
-        prompt: buildFollowUpPrompt(),
+        prompt: buildFollowUpPrompt(completedContent),
         maxTokens: 500,
         system:
-          'You are a systems engineering reviewer. Ask only high-value clarification questions that improve functional architecture generation.',
+          'You are a systems engineering reviewer. Return only strict JSON for high-value clarification questions.',
       });
 
       if (!content || /no follow-up questions needed/i.test(content)) {
         setCompletionState({ loadingKey: null, error: 'No follow-up questions needed for this step.' });
+        setClarificationsForCurrentStep([]);
         return;
       }
 
-      const questions = content
-        .split(/\n+/)
-        .map((line) => stripListMarker(line))
-        .filter(Boolean)
-        .slice(0, 5);
+      const parsed = parseJsonArrayFromText(content);
+      const priorQuestions = flattenClarificationQuestions(clarificationsByStep, current.key);
+      const seenQuestions = [...priorQuestions];
+      const questions = (parsed || [])
+        .map((item, index) => createClarificationQuestion(item, index))
+        .filter((item) => item.question)
+        .filter((item) => {
+          if (isSimilarClarificationQuestion(item.question, seenQuestions)) return false;
+          seenQuestions.push(item.question);
+          return true;
+        })
+        .slice(0, 4);
 
-      if (!questions.length) throw new Error('AI returned no follow-up questions.');
+      if (!questions.length) {
+        setCompletionState({ loadingKey: null, error: 'No follow-up questions needed for this step.' });
+        setClarificationsForCurrentStep([]);
+        return;
+      }
 
-      setFollowUpQuestions((prev) => ({
-        ...prev,
-        [current.key]: questions,
-      }));
+      setClarificationsForCurrentStep(questions);
       setCompletionState({ loadingKey: null, error: '' });
     } catch (error) {
       console.error('Prompt wizard follow-up question generation failed:', error);
@@ -541,6 +702,12 @@ Return 0-5 questions as plain bullet lines. Do not include headings or explanati
         error: error?.message || 'AI follow-up generation failed. Check your AI provider settings and try again.',
       });
     }
+  };
+
+  const handleAIFollowUpQuestions = async () => {
+    if (!AI_COMPLETION_STEPS.has(current.key) || completionState.loadingKey) return;
+    setCompletionState({ loadingKey: `${current.key}:questions`, error: '' });
+    await generateClarificationQuestions();
   };
 
   const handleNext = () => {
@@ -552,6 +719,9 @@ Return 0-5 questions as plain bullet lines. Do not include headings or explanati
   };
 
   const handleFinalSubmit = () => {
+    const clarifications = Object.fromEntries(
+      Object.entries(clarificationsByStep).map(([key, questions]) => [key, serializeClarificationAnswers(questions)])
+    );
     const combinedPrompt = JSON.stringify(
       {
         mode: "structured",
@@ -560,6 +730,7 @@ Return 0-5 questions as plain bullet lines. Do not include headings or explanati
         functionalComponents: responses.functionalComponents,
         interactions: responses.interactions,
         ops: responses.ops,
+        clarifications,
       },
       null,
       2
@@ -568,110 +739,103 @@ Return 0-5 questions as plain bullet lines. Do not include headings or explanati
     onSubmit(combinedPrompt);
   };
 
+  const hasAICompletionStep = AI_COMPLETION_STEPS.has(current.key);
+
   return (
-    <div className="max-w-5xl mx-auto mb-10 p-4 bg-white rounded-xl border shadow">
+    <div className="mx-auto mb-10 w-full max-w-[min(96vw,1500px)] p-5 bg-white rounded-xl border shadow">
       {/* Main wizard step */}
       <h2 className="text-xl font-semibold mb-1">{current.label}</h2>
       <p className="text-gray-600 text-sm mb-2">{current.question}</p>
-      <textarea
-        rows={4}
-        className="w-full p-3 border border-gray-300 rounded focus:outline-none focus:ring resize-none whitespace-pre-wrap"
-        placeholder={current.placeholder}
-        value={responses[current.key]}
-        onChange={handleChange}
-      />
-      {AI_COMPLETION_STEPS.has(current.key) && (
-        <div className="mt-3 flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={handleAIComplete}
-            disabled={completionState.loadingKey === current.key}
-            className="inline-flex items-center gap-2 rounded border border-[#2D7DFE] bg-white px-3 py-2 text-sm font-medium text-[#1c5fde] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
-            title="Complete this field using the prior wizard inputs"
-          >
-            <Sparkles size={16} aria-hidden="true" />
-            {completionState.loadingKey === current.key ? 'Completing...' : 'AI Complete'}
-          </button>
-          <button
-            type="button"
-            onClick={handleAIFollowUpQuestions}
-            disabled={completionState.loadingKey === `${current.key}:questions`}
-            className="inline-flex items-center gap-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
-            title="Ask AI to identify clarification questions for this step"
-          >
-            <MessageSquarePlus size={16} aria-hidden="true" />
-            {completionState.loadingKey === `${current.key}:questions` ? 'Reviewing...' : 'AI Questions'}
-          </button>
-          {completionState.error && (
-            <p className={`text-xs ${/No follow-up/i.test(completionState.error) ? 'text-gray-500' : 'text-red-600'}`}>{completionState.error}</p>
+      <div className={`grid gap-4 ${hasAICompletionStep ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : ''}`}>
+        <div>
+          <textarea
+            rows={4}
+            className="w-full p-3 border border-gray-300 rounded focus:outline-none focus:ring resize-none whitespace-pre-wrap"
+            placeholder={current.placeholder}
+            value={responses[current.key]}
+            onChange={handleChange}
+          />
+          {hasAICompletionStep && (
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={handleAIComplete}
+                disabled={Boolean(completionState.loadingKey)}
+                className="inline-flex items-center gap-2 rounded border border-[#2D7DFE] bg-white px-3 py-2 text-sm font-medium text-[#1c5fde] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+                title="Complete this field using the prior wizard inputs"
+              >
+                <Sparkles size={16} aria-hidden="true" />
+                {completionState.loadingKey === current.key ? 'Completing...' : 'AI Complete'}
+              </button>
+              <button
+                type="button"
+                onClick={handleAIFollowUpQuestions}
+                disabled={Boolean(completionState.loadingKey)}
+                className="inline-flex items-center gap-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                title="Refresh clarification questions for this step"
+              >
+                <RefreshCw size={16} aria-hidden="true" />
+                {completionState.loadingKey === `${current.key}:questions` ? 'Reviewing...' : 'Refresh Questions'}
+              </button>
+              {completionState.error && (
+                <p className={`text-xs ${/No follow-up/i.test(completionState.error) ? 'text-gray-500' : 'text-red-600'}`}>{completionState.error}</p>
+              )}
+            </div>
           )}
-        </div>
-      )}
 
-      {followUpQuestions[current.key]?.length > 0 && (
-        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-left">
-          <h3 className="text-sm font-semibold text-amber-900">Follow-up questions</h3>
-          <ul className="mt-2 space-y-1 text-sm text-amber-900">
-            {followUpQuestions[current.key].map((question, index) => (
-              <li key={`${current.key}-question-${index}`}>{question}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {currentSchema && (
-      <div className="mt-4 overflow-hidden rounded-lg border border-gray-200 bg-white text-left">
-        <div className="flex items-center justify-between border-b border-gray-200 px-3 py-2">
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900">{currentSchema.title}</h3>
-            <p className="text-xs text-gray-500">Edit cells before moving on; these values feed project generation.</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => handleAddReviewRow()}
-            className="inline-flex items-center gap-1.5 rounded border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
-          >
-            <Plus size={14} aria-hidden="true" />
-            Add row
-          </button>
-        </div>
-        <div className="max-h-72 overflow-auto">
-            <table className="min-w-full table-fixed border-collapse text-sm">
-              <thead className="sticky top-0 z-10 bg-gray-50 text-xs font-semibold uppercase text-gray-500 shadow-sm">
-                <tr>
+          {currentSchema && (
+          <div className="mt-4 overflow-hidden rounded-md bg-white text-left shadow-sm">
+            <div className="flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900">{currentSchema.title}</h3>
+                <p className="text-xs text-gray-500">Edit cells before moving on; these values feed project generation.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleAddReviewRow()}
+                className="inline-flex items-center gap-1.5 rounded border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+              >
+                <Plus size={14} aria-hidden="true" />
+                Add row
+              </button>
+            </div>
+            <div className="max-h-[420px] overflow-auto">
+              <table className="min-w-full border-separate border-spacing-0 table-fixed text-sm text-left">
+              <thead>
+                <tr className="text-[#4B5563] text-sm font-medium">
                   {currentSchema.columns.map((column) => (
-                    <th key={column.key} className={`${column.width || ''} border-b border-gray-200 px-3 py-2 text-left`}>
+                    <th key={column.key} className={`${column.width || ''} sticky top-0 z-30 border-b border-gray-200 bg-white px-6 py-3 text-left whitespace-nowrap`}>
                       {column.label}
                     </th>
                   ))}
-                  <th className="w-16 border-b border-gray-200 px-3 py-2 text-center">Remove</th>
+                  <th className="sticky top-0 z-30 w-24 border-b border-gray-200 bg-white px-6 py-3 text-center whitespace-nowrap">Remove</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="text-[#374151] text-sm">
                 {currentRows.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-6 text-center text-sm text-gray-500" colSpan={currentSchema.columns.length + 1}>
+                    <td className="px-6 py-8 text-center text-sm text-gray-500" colSpan={currentSchema.columns.length + 1}>
                       {currentSchema.emptyText}
                     </td>
                   </tr>
-                ) : currentRows.map((row) => (
-                  <tr key={row.id} className="border-b border-gray-100 align-top last:border-b-0">
+                ) : currentRows.map((row, rowIndex) => (
+                  <tr key={row.id} className={`${rowIndex % 2 === 0 ? 'bg-white' : 'bg-[#F9FAFB]'} align-top transition-colors`}>
                     {currentSchema.columns.map((column) => (
-                      <td key={column.key} className="px-3 py-2">
+                      <td key={column.key} className="border-b border-gray-100 px-6 py-4 align-top whitespace-pre-wrap">
                         <textarea
                           value={row[column.key] || ''}
                           onChange={(event) => handleReviewCellChange(row.id, column.key, event.target.value)}
                           rows={2}
-                          className="min-h-[44px] w-full resize-y rounded border border-gray-300 px-2 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                          className="min-h-[44px] w-full resize-none bg-transparent text-sm text-gray-900 focus:outline-none"
                           placeholder={column.placeholder}
                         />
                       </td>
                     ))}
-                    <td className="px-3 py-2 text-center">
+                    <td className="border-b border-gray-100 px-6 py-4 text-center align-middle">
                       <button
                         type="button"
                         onClick={() => handleRemoveReviewRow(row.id)}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-red-50 hover:text-red-600"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded border border-gray-200 bg-white text-gray-500 hover:bg-red-50 hover:text-red-600"
                         title="Remove row"
                       >
                         <Trash2 size={14} aria-hidden="true" />
@@ -680,10 +844,79 @@ Return 0-5 questions as plain bullet lines. Do not include headings or explanati
                   </tr>
                 ))}
               </tbody>
-            </table>
+              </table>
+            </div>
           </div>
+          )}
+        </div>
+
+        {hasAICompletionStep && (
+          <aside className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-left">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-semibold text-amber-950">Clarifications</h3>
+                <p className="text-xs text-amber-800">Answers are included when you submit.</p>
+              </div>
+              <MessageSquarePlus size={16} className="shrink-0 text-amber-700" aria-hidden="true" />
+            </div>
+            {completionState.loadingKey === `${current.key}:questions` ? (
+              <div className="rounded border border-amber-200 bg-white/70 px-3 py-4 text-sm text-amber-900">
+                Reviewing uncertainty...
+              </div>
+            ) : currentClarifications.length ? (
+              <div className="max-h-[460px] space-y-3 overflow-auto pr-1">
+                {currentClarifications.map((question) => (
+                  <div key={question.id} className="rounded-md border border-amber-200 bg-white p-3">
+                    <p className="text-sm font-medium text-gray-900">{question.question}</p>
+                    {question.options.length > 0 && (
+                      <div className="mt-2 space-y-1.5">
+                        {question.options.map((option) => {
+                          const selected = (question.selectedOptions || []).includes(option);
+                          return question.type === 'multi' ? (
+                            <label key={option} className="flex items-start gap-2 rounded border border-gray-200 px-2 py-1.5 text-xs text-gray-700 hover:bg-gray-50">
+                              <input
+                                type="checkbox"
+                                checked={selected}
+                                onChange={(event) => handleClarificationSelection(question.id, option, event.target.checked)}
+                                className="mt-0.5"
+                              />
+                              <span>{option}</span>
+                            </label>
+                          ) : (
+                            <button
+                              key={option}
+                              type="button"
+                              onClick={() => handleClarificationSelection(question.id, option)}
+                              className={`w-full rounded border px-2 py-1.5 text-left text-xs ${
+                                selected
+                                  ? 'border-amber-500 bg-amber-100 text-amber-950'
+                                  : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                              }`}
+                            >
+                              {option}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <textarea
+                      rows={2}
+                      value={question.text}
+                      onChange={(event) => handleClarificationText(question.id, event.target.value)}
+                      className="mt-2 w-full resize-y rounded border border-gray-300 px-2 py-1.5 text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-amber-100"
+                      placeholder="Add context if needed"
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded border border-amber-200 bg-white/70 px-3 py-4 text-sm text-amber-900">
+                AI Complete will add questions here when clarification would improve the generated project.
+              </div>
+            )}
+          </aside>
+        )}
       </div>
-      )}
 
       <div className="flex justify-between mt-4">
         <button

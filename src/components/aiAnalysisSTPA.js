@@ -980,7 +980,8 @@ Do not number the items.
 export async function generateSummarySheetFromMappings({
   sheets,
   setFolders,
-  currentFolder
+  currentFolder,
+  omitConsolidatedRequirement = false,
 }) {
   console.log("🔍 [Summary Gen] Checking required sheets...");
   const ucaSheet = sheets["Causal Factors"];
@@ -996,7 +997,9 @@ export async function generateSummarySheetFromMappings({
     "Loss Mappings": !!lossSheet && lossSheet.length >= 2,
     "Mitigation Strategies": !!mitigationSheet && mitigationSheet.length >= 2,
     "System Requirements": !!systemReqSheet && systemReqSheet.length >= 2,
-    "Consolidated Requirements": !!consolidatedReqSheet && consolidatedReqSheet.length >= 2,
+    ...(!omitConsolidatedRequirement
+      ? { "Consolidated Requirements": !!consolidatedReqSheet && consolidatedReqSheet.length >= 2 }
+      : {}),
   };
   
   console.log("🔍 [Summary Gen] Sheet presence check:", sheetStatus);
@@ -1016,10 +1019,10 @@ export async function generateSummarySheetFromMappings({
     "Loss",
     "Hazard",
     "Unsafe Control Action",
-    "Mitigation Strategy",
-    "System Requirement",
-    "Consolidated Requirement"
-  ];
+	    "Mitigation Strategy",
+	    "System Requirement",
+	    ...(!omitConsolidatedRequirement ? ["Consolidated Requirement"] : [])
+	  ];
 
   const rows = [header];
 
@@ -1062,11 +1065,13 @@ export async function generateSummarySheetFromMappings({
     }
   }
 
-  for (let i = 1; i < consolidatedReqSheet.length; i++) {
-    const original = getCellText(consolidatedReqSheet[i][0]);
-    const consolidated = getCellText(consolidatedReqSheet[i][1]);
-    if (original && consolidated) {
-      systemReqToConsolidated.set(normalizeText(original), consolidated.trim());
+  if (!omitConsolidatedRequirement && consolidatedReqSheet) {
+    for (let i = 1; i < consolidatedReqSheet.length; i++) {
+      const original = getCellText(consolidatedReqSheet[i][0]);
+      const consolidated = getCellText(consolidatedReqSheet[i][1]);
+      if (original && consolidated) {
+        systemReqToConsolidated.set(normalizeText(original), consolidated.trim());
+      }
     }
   }
 
@@ -1080,9 +1085,9 @@ export async function generateSummarySheetFromMappings({
     const rawSystemReq = mitigationToSystemReq.get(mitigation.trim());
     const systemReq = rawSystemReq || "(requirement not found)";
 
-    const consolidated = rawSystemReq
-      ? systemReqToConsolidated.get(normalizeText(rawSystemReq)) || "(consolidated requirement not found)"
-      : "(requirement not found)";
+	    const consolidated = rawSystemReq
+	      ? systemReqToConsolidated.get(normalizeText(rawSystemReq)) || "(consolidated requirement not found)"
+	      : "(requirement not found)";
 
     for (const loss of losses) {
       rows.push([
@@ -1090,10 +1095,10 @@ export async function generateSummarySheetFromMappings({
         sanitizeText(loss),
         sanitizeText(hazard),
         sanitizeText(uca),
-        sanitizeText(mitigation),
-        sanitizeText(systemReq),
-        sanitizeText(consolidated)
-      ]);
+	        sanitizeText(mitigation),
+	        sanitizeText(systemReq),
+	        ...(!omitConsolidatedRequirement ? [sanitizeText(consolidated)] : [])
+	      ]);
     }
   }
 

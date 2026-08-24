@@ -90,6 +90,7 @@ export async function runLiteAIAnalysis({
   operationalContext = "",
   analysisContext = null,
   contextSources = null,
+  omitConsolidatedRequirement = false,
 }) {
   const totalSteps = 9;
   let step = 0;
@@ -145,6 +146,7 @@ export async function runLiteAIAnalysis({
         analysisContext,
         contextSources,
         onProgress: updateGeneratorProgress,
+        omitConsolidatedRequirement,
       })) || updatedSheets;
       step = 9;
       updateProgress();
@@ -315,6 +317,7 @@ export async function runLiteAIAnalysis({
         analysisContext,
         contextSources,
         onProgress: updateGeneratorProgress,
+        omitConsolidatedRequirement,
       })) || updatedSheets;
       step = 9;
       updateProgress();
@@ -408,6 +411,7 @@ export async function runLiteAIAnalysis({
         analysisContext,
         contextSources,
         onProgress: updateGeneratorProgress,
+        omitConsolidatedRequirement,
       })) || updatedSheets;
       step = 9;
       updateProgress();
@@ -456,13 +460,15 @@ export async function runLiteAIAnalysis({
       currentFolder,
     })) || updatedSheets;
 
-    step = 6;
-    updateProgress();
-    updatedSheets = (await generateBatchedRequirementsSheet({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
-    })) || updatedSheets;
+    if (!omitConsolidatedRequirement) {
+      step = 6;
+      updateProgress();
+      updatedSheets = (await generateBatchedRequirementsSheet({
+        sheets: updatedSheets,
+        setFolders,
+        currentFolder,
+      })) || updatedSheets;
+    }
 
     step = 7;
     updateProgress();
@@ -597,13 +603,15 @@ export async function runLiteAIAnalysis({
       currentFolder,
     })) || updatedSheets;
 
-    step = 6;
-    updateProgress();
-    updatedSheets = (await generateBatchedRequirementsSheet({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
-    })) || updatedSheets;
+    if (!omitConsolidatedRequirement) {
+      step = 6;
+      updateProgress();
+      updatedSheets = (await generateBatchedRequirementsSheet({
+        sheets: updatedSheets,
+        setFolders,
+        currentFolder,
+      })) || updatedSheets;
+    }
 
     step = 7;
     updateProgress();
@@ -627,6 +635,7 @@ export async function runLiteAIAnalysis({
       sheets: updatedSheets,
       setFolders,
       currentFolder,
+      omitConsolidatedRequirement,
     })) || updatedSheets;
   }
 

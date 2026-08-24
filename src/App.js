@@ -23,6 +23,7 @@ import {
   Minimize2,
   ShieldCheck,
   ClipboardCheck,
+  Sparkles,
 } from 'lucide-react';
 import XHandleCopilotView from "./components/XHandleCopilotView";
 import { handleLitePromptSubmit } from './components/LitePromptHandler';
@@ -82,7 +83,10 @@ import {
   ReviewCenter,
   ReviewStatusBadge,
   REVIEW_STATUSES,
+  REVIEW_UNIT_TYPES,
+  createReviewId,
   createReviewItemsFromGeneratedTable,
+  normalizeReviewItem,
   useResultsReview,
 } from "./features/results-review";
 import {
@@ -165,6 +169,7 @@ const PROJECT_RISK_PROFILE_OMITTED_COLUMNS = new Set([
   "Architecture Element ID",
   "Function (From) Related File(s)",
   "Function (To) Related File(s)",
+  "Consolidated Requirement",
   "Related Source File(s)",
   "Source Symbols",
   "Source Line Ranges",
@@ -173,6 +178,169 @@ const PROJECT_RISK_PROFILE_OMITTED_COLUMNS = new Set([
   "CSC",
   "CSU",
 ]);
+
+const PROJECT_DRAFT_HAZARD_BASE_HEADERS = [
+  "Function (From)",
+  "Control Action",
+  "Function (To)",
+  "Subsystem Allocation",
+];
+
+const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
+  STPA: [
+    "Loss",
+    "Hazard",
+    "Unsafe Control Action",
+    "Mitigation Strategy",
+    "System Requirement",
+  ],
+  "STPA-Textbook": [
+    "Loss",
+    "Hazard",
+    "Unsafe Control Action",
+    "Mitigation Strategy",
+    "System Requirement",
+  ],
+  "FMEA-Textbook": [
+    "Loss",
+    "Hazard",
+    "Failure Mode",
+    "Causal Factor",
+    "Mitigation Strategy",
+    "System Requirement",
+  ],
+  HARA: [
+    "Item / Function",
+    "Loss",
+    "Hazard",
+    "Hazardous Event",
+    "Malfunction",
+    "Severity",
+    "Exposure",
+    "Controllability",
+    "ASIL",
+    "Safety Goal",
+    "Rationale",
+    "Safety Significant",
+    "Safety Significance Rationale",
+  ],
+  FHA: [
+    "Function",
+    "Functional Degradation / Loss",
+    "Hazard",
+    "Mishap",
+    "Effect",
+    "Severity Category",
+    "Software Control Category",
+    "Software Criticality Index",
+    "LOR Tasks",
+    "Causal Factors",
+    "Mitigation Strategy",
+    "Software Safety Requirement",
+    "Verification",
+    "Rationale",
+    "Safety Significant",
+    "Safety Significance Rationale",
+  ],
+  "WhatIf-Textbook": [
+    "Loss",
+    "Hazard",
+    "What-If Scenario",
+    "Causal Factor",
+    "Mitigation Strategy",
+    "System Requirement",
+  ],
+};
+
+function getProjectDraftHazardHeaders(method = "STPA") {
+  const methodHeaders = PROJECT_DRAFT_HAZARD_METHOD_HEADERS[method] || PROJECT_DRAFT_HAZARD_METHOD_HEADERS.STPA;
+  return Array.from(new Set([...PROJECT_DRAFT_HAZARD_BASE_HEADERS, ...methodHeaders]));
+}
+
+function buildProjectDraftHazardRow(functionalRow = {}, headers = getProjectDraftHazardHeaders()) {
+  const fallbackSubsystem = String(functionalRow?.subsystem || "").trim() || "Unallocated";
+  const knownValues = {
+    "Function (From)": functionalRow?.fromFunction || "",
+    "Control Action": functionalRow?.controlAction || "",
+    "Function (To)": functionalRow?.toFunction || "",
+    "Subsystem Allocation": fallbackSubsystem,
+    "Item / Function": functionalRow?.fromFunction || functionalRow?.toFunction || "",
+    "Function": functionalRow?.fromFunction || functionalRow?.toFunction || "",
+  };
+  return headers.map((header) => knownValues[header] || "");
+}
+
+const PROJECT_DRAFT_HAZARD_HEADER_ALIASES = {
+  "Function (From)": ["Function (From)", "From Function", "Source Function", "Controller"],
+  "Control Action": ["Control Action", "Unsafe Control Action", "UCA", "Action", "What-If Scenario", "Failure Mode", "Malfunction"],
+  "Function (To)": ["Function (To)", "To Function", "Target Function", "Controlled Process"],
+  "Subsystem Allocation": ["Subsystem Allocation", "Subsystem"],
+  "Unsafe Control Action": ["Unsafe Control Action", "UCA", "Control Action"],
+  "Mitigation Strategy": ["Mitigation Strategy", "Controls", "Safeguard", "Recommendation"],
+  "System Requirement": ["System Requirement", "Software Safety Requirement", "Safety Goal", "Design Requirement"],
+  "Causal Factor": ["Causal Factor", "Causal Factors", "Cause", "Causes"],
+  "Failure Mode": ["Failure Mode", "Malfunction"],
+  "Item / Function": ["Item / Function", "Function"],
+  "Function": ["Function", "Item / Function"],
+};
+
+function alignSummaryRowToHeaders(sourceHeaders = [], row = [], targetHeaders = [], fallbackRow = []) {
+  const normalizedSourceHeaders = sourceHeaders.map((header) => normalizeAllocationText(header));
+  const usedSourceIndexes = new Set();
+  const aligned = targetHeaders.map((header, index) => {
+    const candidates = PROJECT_DRAFT_HAZARD_HEADER_ALIASES[header] || [header];
+    const sourceIndex = candidates
+      .map((candidate) => normalizedSourceHeaders.indexOf(normalizeAllocationText(candidate)))
+      .find((candidateIndex) => candidateIndex >= 0);
+    if (sourceIndex >= 0) usedSourceIndexes.add(sourceIndex);
+    const generatedValue = sourceIndex >= 0 ? row?.[sourceIndex] : "";
+    return generatedValue || fallbackRow[index] || "";
+  });
+  const remainingGeneratedValues = row
+    .map((cell, index) => ({ cell, index }))
+    .filter(({ cell, index }) => !usedSourceIndexes.has(index) && String(cell || "").trim())
+    .map(({ cell }) => cell);
+  let remainingIndex = 0;
+  return aligned.map((cell, index) => {
+    if (String(cell || "").trim()) return cell;
+    if (index < PROJECT_DRAFT_HAZARD_BASE_HEADERS.length) return cell;
+    const nextValue = remainingGeneratedValues[remainingIndex];
+    if (nextValue) remainingIndex += 1;
+    return nextValue || cell;
+  });
+}
+
+function findBestGeneratedHazardSummary(sheets = {}) {
+  const candidateNames = [
+    "Summary",
+    "Security Summary",
+    "FMEA",
+    "What-If",
+    "What If",
+    "HARA",
+    "FHA",
+    "Unsafe Control Actions",
+    "Unsafe Control Action",
+    "Causal Factors",
+  ];
+  const candidates = candidateNames
+    .map((name) => sheets?.[name])
+    .filter((sheet) => Array.isArray(sheet) && Array.isArray(sheet[0]) && Array.isArray(sheet[1]));
+  if (candidates.length) return candidates[0];
+  return Object.values(sheets || {}).find((sheet) => (
+    Array.isArray(sheet) &&
+    Array.isArray(sheet[0]) &&
+    Array.isArray(sheet[1])
+  ));
+}
+
+function isMeaningfullyGeneratedDraftRow(row = [], fallbackRow = []) {
+  return row.some((cell, index) => (
+    index >= PROJECT_DRAFT_HAZARD_BASE_HEADERS.length &&
+    String(cell || "").trim() &&
+    String(cell || "").trim() !== String(fallbackRow[index] || "").trim()
+  ));
+}
 
 function stripProjectRiskProfileColumns(sheets = {}) {
   if (!sheets || typeof sheets !== "object") return sheets;
@@ -4861,6 +5029,12 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const hazardRowRefs = useRef({});
   const [highlightedHazardRowIndex, setHighlightedHazardRowIndex] = useState(null);
   const [hazardReviewRunId, setHazardReviewRunId] = useState(null);
+  const [draftHazardRowsByIndex, setDraftHazardRowsByIndex] = useState({});
+  const [draftHazardGeneratingIndex, setDraftHazardGeneratingIndex] = useState(null);
+  const [draftHazardFilterColumnIndex, setDraftHazardFilterColumnIndex] = useState(null);
+  const [draftHazardColumnFilters, setDraftHazardColumnFilters] = useState({});
+  const [draftHazardColumnSearches, setDraftHazardColumnSearches] = useState({});
+  const draftHazardDropdownRefs = useRef({});
   const [pendingReviewSourceJump, setPendingReviewSourceJump] = useState(null);
   const [filterColumnIndex, setFilterColumnIndex] = useState(null);
   const [columnSearches, setColumnSearches] = useState({});
@@ -5260,6 +5434,18 @@ const filteredRiskRows = useMemo(() => {
     return () => { document.removeEventListener('mousedown', handleClickOutside); };
   }, [functionalFilterColumn]);
 
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      const activeRef = draftHazardDropdownRefs.current[draftHazardFilterColumnIndex];
+      if (activeRef && !activeRef.contains(event.target)) {
+        setDraftHazardColumnSearches({});
+        setDraftHazardFilterColumnIndex(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => { document.removeEventListener('mousedown', handleClickOutside); };
+  }, [draftHazardFilterColumnIndex]);
+
   // Load per-project state whenever activeProjectId changes
   useEffect(() => {
     setProjectLoaded(false);
@@ -5269,6 +5455,11 @@ const filteredRiskRows = useMemo(() => {
       setResponseRows([]);
       setDiagramCategories(null);
       setAnalysisResult(null);
+      setDraftHazardRowsByIndex({});
+      setDraftHazardGeneratingIndex(null);
+      setDraftHazardColumnFilters({});
+      setDraftHazardColumnSearches({});
+      setDraftHazardFilterColumnIndex(null);
       setRiskMethod('STPA');
       setProjectRiskProfileGenerationMode('standard');
       setAgentReportResult(null); // NEW: reset when no project
@@ -5285,6 +5476,11 @@ const filteredRiskRows = useMemo(() => {
     setResponseRows(data?.responseRows || []);
     setDiagramCategories(data?.diagramCategories || null);
     setAnalysisResult(data?.analysisResult ? stripProjectRiskProfileColumns(data.analysisResult) : null);
+    setDraftHazardRowsByIndex(data?.draftHazardRowsByIndex || {});
+    setDraftHazardGeneratingIndex(null);
+    setDraftHazardColumnFilters({});
+    setDraftHazardColumnSearches({});
+    setDraftHazardFilterColumnIndex(null);
     setRiskMethod(data?.riskMethod || 'STPA');
     setProjectRiskProfileGenerationMode(data?.projectRiskProfileGenerationMode || 'standard');
     setAgentReportResult(data?.agentReportResult || null); // NEW: restore report
@@ -5355,10 +5551,11 @@ useEffect(() => {
     diagramCategories,
     riskMethod,
     projectRiskProfileGenerationMode,
-    agentReportResult,
-    riskRegister,
-    requirements,        // ← add this
-  };
+	    agentReportResult,
+	    riskRegister,
+	    requirements,        // ← add this
+    draftHazardRowsByIndex,
+	  };
   if (analysisResult !== null && analysisResult !== undefined) {
     patch.analysisResult = analysisResult;
   } else if (!hasAnalysisSummary(existingProjectData.analysisResult)) {
@@ -5376,9 +5573,10 @@ useEffect(() => {
   riskMethod,
   projectRiskProfileGenerationMode,
   agentReportResult,
-  riskRegister, // <-- ensure riskRegister is in the deps
-  requirements,
-]);
+	  riskRegister, // <-- ensure riskRegister is in the deps
+	  requirements,
+  draftHazardRowsByIndex,
+	]);
 
 const handleProjectDiagramRowsUpdate = useCallback((nextRowsOrUpdater) => {
   const projectIdAtUpdate = activeProjectId;
@@ -5539,6 +5737,109 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       setAnalysisResult(savedAnalysis);
     }
   }, [activeProjectId, activeTab, analysisResult]);
+
+  useEffect(() => {
+    setDraftHazardGeneratingIndex(null);
+    setDraftHazardColumnFilters({});
+    setDraftHazardColumnSearches({});
+    setDraftHazardFilterColumnIndex(null);
+  }, [activeProjectId, riskMethod]);
+
+  const draftHazardHeaders = useMemo(() => getProjectDraftHazardHeaders(riskMethod), [riskMethod]);
+  const draftHazardSummaryRows = useMemo(() => (
+    responseRows.map((row, index) => ({
+      row: draftHazardRowsByIndex[index]?.row || buildProjectDraftHazardRow(row, draftHazardHeaders),
+      originalIndex: index,
+      generated: Boolean(draftHazardRowsByIndex[index]?.generated),
+    }))
+  ), [draftHazardHeaders, draftHazardRowsByIndex, responseRows]);
+
+  const getUniqueDraftHazardColumnValues = (colIdx, searchText = '') => {
+    const unique = new Set();
+    draftHazardSummaryRows.forEach(({ row }) => {
+      const value = row[colIdx];
+      if (value !== undefined && value !== null && String(value).trim() !== '') unique.add(String(value));
+    });
+    return Array.from(unique)
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }))
+      .filter((val) => String(val).toLowerCase().includes(String(searchText || '').toLowerCase()));
+  };
+  const toggleDraftHazardFilterValue = (colIdx, value) => {
+    setDraftHazardColumnFilters((prev) => {
+      const current = prev[colIdx] || [];
+      const updated = current.includes(value) ? current.filter((item) => item !== value) : [...current, value];
+      return { ...prev, [colIdx]: updated };
+    });
+  };
+  const setDraftHazardColumnFilterValues = (colIdx, values) => {
+    setDraftHazardColumnFilters((prev) => ({ ...prev, [colIdx]: values }));
+  };
+  const clearAllDraftHazardFilters = () => {
+    setDraftHazardColumnFilters({});
+    setDraftHazardColumnSearches({});
+    setDraftHazardFilterColumnIndex(null);
+  };
+  const activeDraftHazardFilterCount = Object.values(draftHazardColumnFilters)
+    .reduce((count, values) => count + (Array.isArray(values) ? values.length : 0), 0);
+  const filteredDraftHazardSummaryRows = draftHazardSummaryRows.filter(({ row }) =>
+    Object.entries(draftHazardColumnFilters).every(([colIdx, allowed]) =>
+      !allowed?.length || allowed.includes(String(row[colIdx] ?? ''))
+    )
+  );
+
+  const draftHazardReviewItems = useMemo(() => {
+    const draftArtifactPrefix = `hazard-summary-draft:${activeProjectId || "default"}:row:`;
+    return (resultsReview.reviewItems || []).filter((item) =>
+      item.sourceFeature === "AI Hazard Analysis" &&
+      item.artifactType === "hazard_summary_draft_table" &&
+      String(item.artifactId || "").startsWith(draftArtifactPrefix)
+    );
+  }, [activeProjectId, resultsReview.reviewItems]);
+
+  const draftHazardReviewByRow = useMemo(() => {
+    const map = new Map();
+    draftHazardReviewItems.forEach((item) => {
+      const rowIndex = item.currentContent?.rowIndex ?? item.originalContent?.rowIndex ?? item.traceLinks?.find?.((link) => link.type === "table_row")?.rowIndex;
+      if (!Number.isFinite(Number(rowIndex))) return;
+      const existing = map.get(Number(rowIndex));
+      const existingTime = Date.parse(existing?.updatedAt || existing?.createdAt || 0) || 0;
+      const itemTime = Date.parse(item.updatedAt || item.createdAt || 0) || 0;
+      if (!existing || itemTime >= existingTime) map.set(Number(rowIndex), item);
+    });
+    return map;
+  }, [draftHazardReviewItems]);
+
+  const draftHazardReviewDrawerOptions = useMemo(() => ({
+    sourceFeature: "AI Hazard Analysis",
+    sourceMethod: riskMethod,
+    artifactType: "hazard_summary_draft_table",
+    reviewItemIds: draftHazardReviewItems.map((item) => item.id),
+    startAtFirstPending: true,
+  }), [draftHazardReviewItems, riskMethod]);
+
+  useEffect(() => {
+    if (!activeProjectId || !projectLoaded || loadedProjectId !== activeProjectId) return;
+    if (Object.keys(draftHazardRowsByIndex || {}).length > 0) return;
+    if (!draftHazardReviewItems.length) return;
+    const restored = {};
+    draftHazardReviewItems.forEach((item) => {
+      const rowIndex = Number(item.currentContent?.rowIndex ?? item.originalContent?.rowIndex);
+      if (!Number.isFinite(rowIndex) || !Array.isArray(item.currentContent?.row)) return;
+      restored[rowIndex] = {
+        row: item.currentContent.row,
+        generated: true,
+      };
+    });
+    if (!Object.keys(restored).length) return;
+    setDraftHazardRowsByIndex(restored);
+    saveProjectPatch(activeProjectId, { draftHazardRowsByIndex: restored });
+  }, [
+    activeProjectId,
+    draftHazardReviewItems,
+    draftHazardRowsByIndex,
+    loadedProjectId,
+    projectLoaded,
+  ]);
 
   const hazardSummaryReviewItems = useMemo(() => {
     const projectArtifactPrefix = `hazard-summary:${activeProjectId || "default"}:row:`;
@@ -5936,7 +6237,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       handleOpenFunctionalRow(rowIndex);
       return;
     }
-    if (item.artifactType === "hazard_summary_table") {
+    if (item.artifactType === "hazard_summary_table" || item.artifactType === "hazard_summary_draft_table") {
       const rowIndex = item.currentContent?.rowIndex ?? item.originalContent?.rowIndex;
       handleOpenHazardSummaryRow(rowIndex);
       return;
@@ -5975,7 +6276,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   useEffect(() => {
     const focusHandler = (event) => {
       const item = event.detail?.reviewItem;
-      if (item?.artifactType === "hazard_summary_table") {
+      if (item?.artifactType === "hazard_summary_table" || item?.artifactType === "hazard_summary_draft_table") {
         const rowIndex = item.currentContent?.rowIndex ?? item.originalContent?.rowIndex;
         handleOpenHazardSummaryRow(rowIndex);
         return;
@@ -6011,6 +6312,34 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
             const nextSummary = prev.Summary.map((row, idx) => (idx === rowIndex + 1 ? item.currentContent.row : row));
             return { ...prev, Summary: nextSummary };
           });
+        }
+        return;
+      }
+      if (item?.artifactType === "hazard_summary_draft_table") {
+        const rowIndex = Number(item.currentContent?.rowIndex ?? item.originalContent?.rowIndex);
+        if (!Number.isFinite(rowIndex)) return;
+
+        handleOpenHazardSummaryRow(rowIndex);
+
+        if (shouldApplyReviewedRow && Array.isArray(item.currentContent?.row)) {
+          setDraftHazardRowsByIndex((prev) => ({
+            ...prev,
+            [rowIndex]: {
+              row: item.currentContent.row,
+              generated: true,
+            },
+          }));
+          const projectId = getReviewItemProjectId(item) || activeProjectId;
+          if (projectId) {
+            const savedDraftRows = {
+              ...(loadProjectData(projectId)?.draftHazardRowsByIndex || {}),
+              [rowIndex]: {
+                row: item.currentContent.row,
+                generated: true,
+              },
+            };
+            saveProjectPatch(projectId, { draftHazardRowsByIndex: savedDraftRows });
+          }
         }
         return;
       }
@@ -6090,7 +6419,15 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       window.removeEventListener("xhandle:results-review:focus", focusHandler);
       window.removeEventListener("xhandle:results-review:item-updated", updateHandler);
     };
-  }, [activeCodeArchitectureRowsKey, handleOpenCodeArchitectureFunctionalRow, handleOpenCodeArchitectureHazardSummaryRow, handleOpenHazardSummaryRow, handleOpenFunctionalRow]);
+  }, [
+    activeCodeArchitectureRowsKey,
+    activeProjectId,
+    getReviewItemProjectId,
+    handleOpenCodeArchitectureFunctionalRow,
+    handleOpenCodeArchitectureHazardSummaryRow,
+    handleOpenHazardSummaryRow,
+    handleOpenFunctionalRow,
+  ]);
 
   const generateFunctionalRowsFromWizard = async (combinedPrompt, onProgress = () => {}, projectIdAtStart = activeProjectId) => {
     let parsedRows = [];
@@ -6322,6 +6659,174 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
 
     // NEW: finish activity
     finishActivity(actId, "success", "Analysis complete");
+  };
+
+  const handleProjectRiskMethodChange = (nextMethod) => {
+    setRiskMethod(nextMethod);
+    setDraftHazardRowsByIndex({});
+    setDraftHazardColumnFilters({});
+    setDraftHazardColumnSearches({});
+    setDraftHazardFilterColumnIndex(null);
+    if (activeProjectId) {
+      saveProjectPatch(activeProjectId, {
+        riskMethod: nextMethod,
+        draftHazardRowsByIndex: {},
+      });
+    }
+  };
+
+  const handleProjectRiskProfileGenerationModeChange = (nextMode) => {
+    setProjectRiskProfileGenerationMode(nextMode);
+    setDraftHazardRowsByIndex({});
+    setDraftHazardColumnFilters({});
+    setDraftHazardColumnSearches({});
+    setDraftHazardFilterColumnIndex(null);
+    if (activeProjectId) {
+      saveProjectPatch(activeProjectId, {
+        projectRiskProfileGenerationMode: nextMode,
+        draftHazardRowsByIndex: {},
+      });
+    }
+  };
+
+  const handleGenerateDraftHazardRow = async (functionalRowIndex) => {
+    if (draftHazardGeneratingIndex !== null) return;
+    const functionalRow = responseRows[functionalRowIndex];
+    if (!functionalRow) return;
+
+    const selectedMethod = riskMethod;
+    const usesProjectRiskProfileGenerationMode = selectedMethod === "STPA-Textbook";
+    const selectedGenerationMode = usesProjectRiskProfileGenerationMode
+      ? projectRiskProfileGenerationMode
+      : undefined;
+    const functionalDecompositionSheet = [
+      ["Function (From)", "Control Action", "Function (To)"],
+      [functionalRow.fromFunction || "", functionalRow.controlAction || "", functionalRow.toFunction || ""],
+    ];
+    const sheets = { "Functional Decomposition": functionalDecompositionSheet };
+    const dummySetFolders = async (updater) => {
+      const prev = {};
+      return typeof updater === "function" ? updater(prev) : updater;
+    };
+    const targetHeaders = getProjectDraftHazardHeaders(selectedMethod);
+    const fallbackRow = buildProjectDraftHazardRow(functionalRow, targetHeaders);
+
+    setDraftHazardGeneratingIndex(functionalRowIndex);
+    try {
+      const rawSheets = await runLiteAIAnalysis({
+        tableRows: [functionalRow],
+        sheets,
+        setFolders: dummySetFolders,
+        currentFolder: "LiteProject",
+        setChatPrompt: () => {},
+        setChatResponse: () => {},
+        setProgress: () => {},
+        hazardMethod: selectedMethod,
+        omitConsolidatedRequirement: true,
+        ...(usesProjectRiskProfileGenerationMode
+          ? { hazardGenerationMode: selectedGenerationMode, fhaGenerationMode: selectedGenerationMode }
+          : {}),
+      });
+      const generatedSheets = addSubsystemAllocationsToProjectHazardSummary(
+        stripProjectRiskProfileColumns(rawSheets),
+        [functionalRow]
+      );
+      const summary = findBestGeneratedHazardSummary(generatedSheets);
+      const generatedHeaders = Array.isArray(summary?.[0]) ? summary[0] : [];
+      const generatedRow = Array.isArray(summary?.[1]) ? summary[1] : null;
+      const nextRow = generatedRow
+        ? alignSummaryRowToHeaders(generatedHeaders, generatedRow, targetHeaders, fallbackRow)
+        : fallbackRow;
+      const generated = isMeaningfullyGeneratedDraftRow(nextRow, fallbackRow);
+      if (!generated) {
+        throw new Error("The selected method completed but did not return usable hazard values for this row.");
+      }
+
+      setDraftHazardRowsByIndex((prev) => ({
+        ...prev,
+        [functionalRowIndex]: {
+          row: nextRow,
+          generated,
+        },
+      }));
+      if (activeProjectId) {
+        const savedDraftRows = {
+          ...(loadProjectData(activeProjectId)?.draftHazardRowsByIndex || {}),
+          [functionalRowIndex]: {
+            row: nextRow,
+            generated,
+          },
+        };
+        saveProjectPatch(activeProjectId, { draftHazardRowsByIndex: savedDraftRows });
+      }
+      const reviewItem = normalizeReviewItem({
+        id: createReviewId(
+          `hazard-draft-${activeProjectId || "default"}`,
+          "hazard_summary_draft_table",
+          `row:${functionalRowIndex}`
+        ),
+        artifactType: "hazard_summary_draft_table",
+        artifactId: `hazard-summary-draft:${activeProjectId || "default"}:row:${functionalRowIndex}`,
+        reviewUnitType: REVIEW_UNIT_TYPES.TABLE_ROW,
+        sourceFeature: "AI Hazard Analysis",
+        sourceMethod: selectedMethod,
+        sourceRunId: `hazard-draft-${activeProjectId || "default"}`,
+        projectId: activeProjectId || "",
+        originalContent: { rowIndex: functionalRowIndex, columns: targetHeaders, row: nextRow },
+        currentContent: { rowIndex: functionalRowIndex, columns: targetHeaders, row: nextRow },
+        traceLinks: [{ type: "table_row", rowIndex: functionalRowIndex }],
+      });
+      await resultsReview.createReviewItems([reviewItem]);
+    } catch (error) {
+      console.error("[project-hazard-draft] Failed to generate draft hazard row", error);
+      window.alert(error?.message || "Unable to generate this hazard row. Check your AI provider settings and try again.");
+    } finally {
+      setDraftHazardGeneratingIndex(null);
+    }
+  };
+
+  const handleDraftHazardCellChange = (functionalRowIndex, columnIndex, value) => {
+    const functionalRow = responseRows[functionalRowIndex];
+    if (!functionalRow) return;
+    let nextRowForReview = null;
+    setDraftHazardRowsByIndex((prev) => {
+      const existing = prev[functionalRowIndex];
+      const baseRow = existing?.row || buildProjectDraftHazardRow(functionalRow, draftHazardHeaders);
+      const nextRow = baseRow.map((cell, index) => (index === columnIndex ? value : cell));
+      nextRowForReview = nextRow;
+      return {
+        ...prev,
+        [functionalRowIndex]: {
+          row: nextRow,
+          generated: existing?.generated || isMeaningfullyGeneratedDraftRow(nextRow, buildProjectDraftHazardRow(functionalRow, draftHazardHeaders)),
+        },
+      };
+    });
+
+    if (activeProjectId && nextRowForReview) {
+      const savedDraftRows = {
+        ...(loadProjectData(activeProjectId)?.draftHazardRowsByIndex || {}),
+        [functionalRowIndex]: {
+          row: nextRowForReview,
+          generated: true,
+        },
+      };
+      saveProjectPatch(activeProjectId, { draftHazardRowsByIndex: savedDraftRows });
+    }
+
+    const reviewItem = draftHazardReviewByRow.get(functionalRowIndex);
+    if (reviewItem && nextRowForReview) {
+      resultsReview.updateReviewItem(reviewItem.id, {
+        currentContent: {
+          ...(reviewItem.currentContent || {}),
+          rowIndex: functionalRowIndex,
+          columns: draftHazardHeaders,
+          row: nextRowForReview,
+        },
+      }).catch((error) => {
+        console.warn("[results-review] Failed to sync draft hazard cell edit", error);
+      });
+    }
   };
 
   const handleRunCodeArchitectureHazardAnalysis = async (
@@ -9324,7 +9829,7 @@ const ColumnFilterButton = ({ col }) => {
                   )}
 
                   {showPromptWizard && (
-                    <div className="max-w-4xl mx-auto w-full">
+                    <div className="mx-auto w-full max-w-[min(96vw,calc(100vw-9rem))]">
                       {/* Mode Toggle */}
                       <div className="flex items-center justify-center mb-4">
   <div className="inline-flex p-1 bg-gray-100 rounded-xl">
@@ -9381,7 +9886,7 @@ const ColumnFilterButton = ({ col }) => {
                       <div className="mb-4 flex justify-center gap-3">
                         <div className="flex items-center space-x-2">
                           <label className="text-sm text-gray-700">Method:</label>
-                          <select className="text-sm border rounded px-2 py-1" value={riskMethod} onChange={(e) => setRiskMethod(e.target.value)}>
+	                          <select className="text-sm border rounded px-2 py-1" value={riskMethod} onChange={(e) => handleProjectRiskMethodChange(e.target.value)}>
   <option value="STPA">STPA</option>
   <option value="STPA-Textbook">STPA (standard/detailed)</option>
   <option value="FMEA-Textbook">FMEA</option>
@@ -9394,7 +9899,7 @@ const ColumnFilterButton = ({ col }) => {
                           <select
                             className="text-sm border rounded px-2 py-1"
                             value={projectRiskProfileGenerationMode}
-                            onChange={(e) => setProjectRiskProfileGenerationMode(e.target.value)}
+	                            onChange={(e) => handleProjectRiskProfileGenerationModeChange(e.target.value)}
                             aria-label="STPA generation mode"
                           >
                             {CODE_ARCHITECTURE_HAZARD_GENERATION_MODE_OPTIONS.map((option) => (
@@ -9658,12 +10163,230 @@ const ColumnFilterButton = ({ col }) => {
             {activeTab === 'Hazard Analysis' && (
   <section className="mt-2">
     {!analysisResult?.Summary ? (
-      <div className="rounded-xl border bg-white p-6 text-gray-600 text-sm">
-        <p className="mb-2">No hazard analysis yet.</p>
-        <p>
-          Go to <span className="font-medium">Functional Diagramming</span> and click
-          <span className="font-medium"> “Develop risk profile”</span> to generate it.
-        </p>
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-white px-4 py-3 text-sm text-gray-600">
+          <div>
+            <p className="font-medium text-gray-900">Incomplete hazard analysis draft</p>
+            <p>Known functional decomposition fields are populated. Use the row magic button to generate a hazard row with the selected method.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Method</span>
+            <select
+              className="text-sm border rounded px-2 py-1"
+              value={riskMethod}
+              onChange={(e) => handleProjectRiskMethodChange(e.target.value)}
+              disabled={draftHazardGeneratingIndex !== null}
+            >
+              <option value="STPA">STPA</option>
+              <option value="STPA-Textbook">STPA (standard/detailed)</option>
+              <option value="FMEA-Textbook">FMEA</option>
+              <option value="HARA">HARA</option>
+              <option value="FHA">FHA</option>
+              <option value="WhatIf-Textbook">What-if</option>
+            </select>
+            {riskMethod === "STPA-Textbook" && (
+              <select
+                className="text-sm border rounded px-2 py-1"
+                value={projectRiskProfileGenerationMode}
+                onChange={(e) => handleProjectRiskProfileGenerationModeChange(e.target.value)}
+                disabled={draftHazardGeneratingIndex !== null}
+                aria-label="STPA generation mode"
+              >
+                {CODE_ARCHITECTURE_HAZARD_GENERATION_MODE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label} - {option.description}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        </div>
+        <div className="relative mb-10 h-[calc(100vh-235px)] min-h-[420px] w-full overflow-auto rounded-md shadow-sm">
+          <table className="min-w-full border-separate border-spacing-0 text-sm text-left">
+            <thead>
+              <tr className="text-[#4B5563] text-sm font-medium">
+                <th className="sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap">
+                  Generate
+                </th>
+                {draftHazardHeaders.map((header, idx) => (
+                  <th
+                    key={`${header}-${idx}`}
+                    className="sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap"
+                  >
+                    <div ref={(el) => (draftHazardDropdownRefs.current[idx] = el)} className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setDraftHazardFilterColumnIndex((prev) => (prev === idx ? null : idx))}
+                        className={`w-full min-w-44 rounded-md border px-3 py-2 text-left transition flex items-center justify-between gap-3 ${
+                          draftHazardFilterColumnIndex === idx || (draftHazardColumnFilters[idx] || []).length
+                            ? 'border-[#2D7DFE] bg-[#EEF4FF] text-[#0B3EA8]'
+                            : 'border-gray-200 bg-white text-[#4B5563] hover:border-gray-300'
+                        }`}
+                        title={`Filter ${header}`}
+                      >
+                        <span className="min-w-0 flex-1 truncate">{header}</span>
+                        <span className="shrink-0 inline-flex items-center gap-2">
+                          {(draftHazardColumnFilters[idx] || []).length > 0 && (
+                            <span className="rounded-full bg-[#2D7DFE] px-2 py-0.5 text-[11px] font-semibold text-white">
+                              {(draftHazardColumnFilters[idx] || []).length}
+                            </span>
+                          )}
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 20 20"
+                            fill="currentColor"
+                            className={`${draftHazardFilterColumnIndex === idx ? 'rotate-180' : ''} transition-transform`}
+                            aria-hidden="true"
+                          >
+                            <path d="M5.5 7.5 10 12l4.5-4.5h-9Z" />
+                          </svg>
+                        </span>
+                      </button>
+                      {draftHazardFilterColumnIndex === idx && (
+                        <div className="absolute left-0 mt-2 w-72 bg-white border border-gray-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                          <div className="p-3 border-b sticky top-0 bg-white z-10 space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="text-xs font-semibold text-gray-700 truncate">{header}</div>
+                              {(draftHazardColumnFilters[idx] || []).length > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setDraftHazardColumnFilterValues(idx, [])}
+                                  className="text-[11px] text-[#2D7DFE] hover:underline"
+                                >
+                                  Clear
+                                </button>
+                              )}
+                            </div>
+                            <input
+                              type="text"
+                              placeholder={`Search ${header}...`}
+                              value={draftHazardColumnSearches[idx] || ''}
+                              onChange={(e) =>
+                                setDraftHazardColumnSearches({ ...draftHazardColumnSearches, [idx]: e.target.value })
+                              }
+                              className="w-full px-3 py-2 text-xs border rounded-md"
+                            />
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setDraftHazardColumnFilterValues(idx, getUniqueDraftHazardColumnValues(idx, draftHazardColumnSearches[idx] || ''))}
+                                className="px-2 py-1 text-[11px] border rounded-md bg-[#F8FAFC] hover:bg-[#EEF2F7]"
+                              >
+                                Select Visible
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setDraftHazardColumnFilterValues(idx, [])}
+                                className="px-2 py-1 text-[11px] border rounded-md bg-[#F8FAFC] hover:bg-[#EEF2F7]"
+                              >
+                                Clear All
+                              </button>
+                            </div>
+                          </div>
+                          <div className="max-h-72 overflow-y-auto p-2">
+                            {getUniqueDraftHazardColumnValues(idx, draftHazardColumnSearches[idx] || '').length === 0 ? (
+                              <div className="px-2 py-3 text-xs text-gray-500">No matching values</div>
+                            ) : getUniqueDraftHazardColumnValues(idx, draftHazardColumnSearches[idx] || '').map((val) => (
+                              <label
+                                key={val}
+                                className="flex items-start gap-2 px-2 py-2 rounded-md text-xs text-gray-700 hover:bg-[#F8FAFC]"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={(draftHazardColumnFilters[idx] || []).includes(val)}
+                                  onChange={() => toggleDraftHazardFilterValue(idx, val)}
+                                  className="mt-0.5"
+                                />
+                                <span className="break-words">{val}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </th>
+                ))}
+              </tr>
+              {activeDraftHazardFilterCount > 0 && (
+                <tr>
+                  <th colSpan={draftHazardHeaders.length + 1} className="sticky top-[64px] z-20 bg-[#F8FAFC] border-b border-gray-200 px-4 py-2 text-left">
+                    <div className="flex items-center justify-between gap-3 text-xs text-gray-600">
+                      <span>
+                        Showing {filteredDraftHazardSummaryRows.length} of {draftHazardSummaryRows.length} rows with {activeDraftHazardFilterCount} selected filter{activeDraftHazardFilterCount === 1 ? '' : 's'}.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={clearAllDraftHazardFilters}
+                        className="rounded border border-gray-200 bg-white px-2 py-1 text-[#2D7DFE] hover:bg-blue-50"
+                      >
+                        Clear filters
+                      </button>
+                    </div>
+                  </th>
+                </tr>
+              )}
+            </thead>
+            <tbody className="text-[#374151] text-sm">
+              {filteredDraftHazardSummaryRows.map(({ row, originalIndex, generated }, idx) => {
+                const generating = draftHazardGeneratingIndex === originalIndex;
+                const reviewItem = draftHazardReviewByRow.get(originalIndex);
+                return (
+                  <tr key={originalIndex} className={`${idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]"} transition-colors`}>
+                    <td className="px-6 py-4 align-top border-b border-gray-100">
+                      <div className="flex flex-col items-start gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleGenerateDraftHazardRow(originalIndex)}
+                          disabled={draftHazardGeneratingIndex !== null}
+                          className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-medium ${
+                            generated
+                              ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                              : 'border-[#2D7DFE] bg-white text-[#1c5fde] hover:bg-blue-50'
+                          } disabled:cursor-not-allowed disabled:opacity-60`}
+                          title="Autogenerate this hazard row with the selected method"
+                        >
+                          <Sparkles size={14} aria-hidden="true" />
+                          {generating ? 'Generating...' : generated ? 'Regenerate' : 'Generate'}
+                        </button>
+                        {reviewItem && (
+                          <ReviewStatusBadge
+                            reviewItem={reviewItem}
+                            openOptions={draftHazardReviewDrawerOptions}
+                          />
+                        )}
+                      </div>
+                    </td>
+                    {row.map((cell, colIdx) => (
+                      <td key={colIdx} className="px-6 py-4 align-top whitespace-pre-wrap border-b border-gray-100">
+                        <textarea
+                          className="min-h-[44px] w-full resize-none bg-transparent text-sm text-gray-900 focus:outline-none"
+                          value={cell}
+                          onChange={(event) => handleDraftHazardCellChange(originalIndex, colIdx, event.target.value)}
+                          rows={2}
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+              {draftHazardSummaryRows.length === 0 && (
+                <tr>
+                  <td colSpan={draftHazardHeaders.length + 1} className="px-6 py-8 text-center text-sm text-gray-500">
+                    No functional decomposition rows are available yet.
+                  </td>
+                </tr>
+              )}
+              {draftHazardSummaryRows.length > 0 && filteredDraftHazardSummaryRows.length === 0 && (
+                <tr>
+                  <td colSpan={draftHazardHeaders.length + 1} className="px-6 py-8 text-center text-sm text-gray-500">
+                    No rows match the current filters.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     ) : (
       <>

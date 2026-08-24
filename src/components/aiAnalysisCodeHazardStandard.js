@@ -200,6 +200,20 @@ function chunkItemsByCount(items = [], size = STANDARD_RETRY_ROWS_PER_PROMPT) {
   return chunks;
 }
 
+function omitConsolidatedRequirementFromConfig(config) {
+  if (!config) return config;
+  return {
+    ...config,
+    promptGuidance: String(config.promptGuidance || "")
+      .replace(/,?\s*and consolidated requirement/gi, "")
+      .replace(/consolidated requirement,?\s*/gi, ""),
+    fields: (config.fields || []).filter(([fieldName, label]) => (
+      fieldName !== "consolidatedRequirement" &&
+      label !== "Consolidated Requirement"
+    )),
+  };
+}
+
 function getStandardConfig(method) {
   if (method === "FMEA") {
     return {
@@ -654,11 +668,14 @@ export async function generateStandardCodeHazardAnalysisSheets({
   analysisContext = null,
   contextSources = null,
   onProgress = () => {},
+  omitConsolidatedRequirement = false,
 }) {
   const items = flattenDecomposition(sheets);
   if (!items.length) return sheets;
 
-  const config = getStandardConfig(method);
+  const config = omitConsolidatedRequirement
+    ? omitConsolidatedRequirementFromConfig(getStandardConfig(method))
+    : getStandardConfig(method);
   const promptChunks = items.length <= STANDARD_MAX_ROWS_PER_PROMPT && compactPromptRowsLength(items) <= STANDARD_SINGLE_PROMPT_MAX_CHARS
     ? [items]
     : chunkItemsForPrompt(items);
