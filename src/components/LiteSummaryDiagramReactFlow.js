@@ -193,6 +193,7 @@ function cleanEdgeForExport(edge) {
     type: edge.type || 'default',
     animated: !!edge.animated,
     style: edge.style || null,
+    markerStart: edge.markerStart || null,
     markerEnd: edge.markerEnd || null,
     data: edge.data || null,
   };
@@ -420,9 +421,19 @@ function loadEdgeAggregationState(storageKey) {
       aggregateAll: Boolean(parsed?.aggregateAll),
       aggregatedPairs: new Set(Array.isArray(parsed?.aggregatedPairs) ? parsed.aggregatedPairs.filter(Boolean) : []),
       expandedPairs: new Set(Array.isArray(parsed?.expandedPairs) ? parsed.expandedPairs.filter(Boolean) : []),
+      aggregateBidirectionalAll: Boolean(parsed?.aggregateBidirectionalAll),
+      aggregatedBidirectionalPairs: new Set(Array.isArray(parsed?.aggregatedBidirectionalPairs) ? parsed.aggregatedBidirectionalPairs.filter(Boolean) : []),
+      expandedBidirectionalPairs: new Set(Array.isArray(parsed?.expandedBidirectionalPairs) ? parsed.expandedBidirectionalPairs.filter(Boolean) : []),
     };
   } catch {
-    return { aggregateAll: false, aggregatedPairs: new Set(), expandedPairs: new Set() };
+    return {
+      aggregateAll: false,
+      aggregatedPairs: new Set(),
+      expandedPairs: new Set(),
+      aggregateBidirectionalAll: false,
+      aggregatedBidirectionalPairs: new Set(),
+      expandedBidirectionalPairs: new Set(),
+    };
   }
 }
 
@@ -432,6 +443,9 @@ function saveEdgeAggregationState(storageKey, state = {}) {
       aggregateAll: Boolean(state.aggregateAll),
       aggregatedPairs: Array.from(state.aggregatedPairs || []),
       expandedPairs: Array.from(state.expandedPairs || []),
+      aggregateBidirectionalAll: Boolean(state.aggregateBidirectionalAll),
+      aggregatedBidirectionalPairs: Array.from(state.aggregatedBidirectionalPairs || []),
+      expandedBidirectionalPairs: Array.from(state.expandedBidirectionalPairs || []),
     }));
   } catch {}
 }
@@ -668,7 +682,7 @@ const NoteNode = ({ data, selected }) => {
  * Edge fallback (orthogonal)
  * ================================ */
 function OrthogonalFallbackEdge(props) {
-  const { id, sourceX, sourceY, targetX, targetY, markerEnd, style, selected } = props;
+  const { id, sourceX, sourceY, targetX, targetY, markerStart, markerEnd, style, selected } = props;
   const viaX = { x: targetX, y: sourceY };
   const useHV = Math.abs(targetX - sourceX) > Math.abs(targetY - sourceY);
   const d = useHV
@@ -680,6 +694,7 @@ function OrthogonalFallbackEdge(props) {
     <BaseEdge
       id={id}
       path={d}
+      markerStart={markerStart}
       markerEnd={{ ...(markerEnd || {}), color: stroke, width: ARROW_SIZE, height: ARROW_SIZE, type: MarkerType.ArrowClosed }}
       style={{ stroke, strokeWidth: width }}
     />
@@ -842,14 +857,28 @@ function edgePairKey(source, target) {
   return `${source || ''}->${target || ''}`;
 }
 
+function edgeBidirectionalPairKey(source, target) {
+  return [source || '', target || ''].sort().join('<->');
+}
+
 function aggregateEdgeIdForPair(pairKey) {
   return `e:aggregate:${pairKey}`;
+}
+
+function aggregateEdgeIdForBidirectionalPair(pairKey) {
+  return `e:aggregate:bidirectional:${pairKey}`;
 }
 
 function shouldAggregatePair(pairKey, count, options = {}) {
   if (count <= 1) return false;
   if (options.aggregateAll) return !options.expandedPairs?.has(pairKey);
   return Boolean(options.aggregatedPairs?.has(pairKey));
+}
+
+function shouldAggregateBidirectionalPair(pairKey, count, options = {}) {
+  if (count <= 1) return false;
+  if (options.aggregateBidirectionalAll) return !options.expandedBidirectionalPairs?.has(pairKey);
+  return Boolean(options.aggregatedBidirectionalPairs?.has(pairKey));
 }
 
 function summarizeEdgeLabels(edges = []) {
@@ -861,6 +890,7 @@ function summarizeEdgeLabels(edges = []) {
 
 function edgeRoutingTargetKey(edge) {
   if (!edge) return '';
+  if (edge.data?.bidirectionalAggregated && edge.data?.bidirectionalPairKey) return `bipair:${edge.data.bidirectionalPairKey}`;
   if (edge.data?.aggregated && edge.data?.pairKey) return `pair:${edge.data.pairKey}`;
   return edge.id || '';
 }
@@ -872,11 +902,45 @@ function resolveEdgeRoutingStyle(edge, routing = {}) {
 }
 
 function buildEdgesFromRaw(rawEdges, positions, aggregation = {}, routing = {}) {
-  const grouped = new Map();
+  const bidirectionalGrouped = new Map();
   rawEdges.forEach((edge, rowIndex) => {
+    const pairKey = edgeBidirectionalPairKey(edge.source, edge.target);
+    if (!bidirectionalGrouped.has(pairKey)) bidirectionalGrouped.set(pairKey, []);
+    bidirectionalGrouped.get(pairKey).push({ ...edge, rowIndex });
+  });
+
+  const bidirectionalDisplayEdges = [];
+  bidirectionalGrouped.forEach((pairEdges, pairKey) => {
+    if (shouldAggregateBidirectionalPair(pairKey, pairEdges.length, aggregation)) {
+      const first = pairEdges[0];
+      bidirectionalDisplayEdges.push({
+        ...first,
+        id: aggregateEdgeIdForBidirectionalPair(pairKey),
+        label: `${pairEdges.length} bidirectional edges`,
+        sourceHandle: null,
+        targetHandle: null,
+        updatable: false,
+        data: {
+          ...(first.data || {}),
+          aggregated: true,
+          bidirectionalAggregated: true,
+          bidirectionalPairKey: pairKey,
+          count: pairEdges.length,
+          summary: summarizeEdgeLabels(pairEdges),
+          edgeIds: pairEdges.map((edge) => edge.id),
+          rowIndexes: pairEdges.map((edge) => edge.rowIndex),
+        },
+      });
+      return;
+    }
+    bidirectionalDisplayEdges.push(...pairEdges);
+  });
+
+  const grouped = new Map();
+  bidirectionalDisplayEdges.forEach((edge) => {
     const pairKey = edgePairKey(edge.source, edge.target);
     if (!grouped.has(pairKey)) grouped.set(pairKey, []);
-    grouped.get(pairKey).push({ ...edge, rowIndex });
+    grouped.get(pairKey).push(edge);
   });
 
   const displayEdges = [];
@@ -932,6 +996,7 @@ function buildEdgesFromRaw(rawEdges, positions, aggregation = {}, routing = {}) 
     if (tParsed) occupiedSpots.add(spotKey(e.target, tParsed.side, tParsed.idx));
 
     const isAggregated = Boolean(e.data?.aggregated);
+    const isBidirectionalAggregated = Boolean(e.data?.bidirectionalAggregated);
     const stroke = isAggregated ? BRAND.purple : BRAND.blue;
     const routingTargetKey = edgeRoutingTargetKey(e);
     const routingStyle = resolveEdgeRoutingStyle(e, routing);
@@ -950,6 +1015,9 @@ function buildEdgesFromRaw(rawEdges, positions, aggregation = {}, routing = {}) 
         strokeWidth: isAggregated ? 5 : 3,
         strokeDasharray: isAggregated ? '8 5' : undefined,
       },
+      markerStart: isBidirectionalAggregated
+        ? { type: MarkerType.ArrowClosed, color: stroke, width: ARROW_SIZE, height: ARROW_SIZE }
+        : undefined,
       markerEnd: { type: MarkerType.ArrowClosed, color: stroke, width: ARROW_SIZE, height: ARROW_SIZE },
       label: isAggregated && e.data?.summary ? `${e.label}: ${e.data.summary}` : e.label,
     };
@@ -1482,7 +1550,7 @@ function spreadToViewport({ nodes, containerW, containerH, padX = THEME.canvas.p
  * Component
  * ================================ */
 const DiagramBody = forwardRef(function DiagramBody(
-    { rows = [], onUpdateRows, storageKey = 'diagram:positions:v1', cleanOnceKey = null, onCleanApplied, fitAfterClean = true, autoCategories = null, hazardSummary = null, onOpenHazardRow },
+    { rows = [], onUpdateRows, storageKey = 'diagram:positions:v1', cleanOnceKey = null, onCleanApplied, fitAfterClean = true, autoCategories = null, hazardSummary = null, riskRegister = [], onOpenHazardRow, onOpenSafetyIssue },
     ref
 ) {
   const nodeTypes = useMemo(() => ({ bidirectional: BidirectionalNode, groupBox: GroupBoxNode, note: NoteNode }), []);
@@ -1506,6 +1574,8 @@ const DiagramBody = forwardRef(function DiagramBody(
   const [hydratedStorageKey, setHydratedStorageKey] = useState(storageKey);
   const [selectedNodeIds, setSelectedNodeIds] = useState([]);
   const [contextMenu, setContextMenu] = useState(null);
+  const [canvasToolbarCollapsed, setCanvasToolbarCollapsed] = useState(false);
+  const [activeCanvasToolSection, setActiveCanvasToolSection] = useState('create');
   const storageReady = hydratedStorageKey === storageKey;
 
   const viewNodes = useMemo(() => {
@@ -1565,14 +1635,61 @@ const DiagramBody = forwardRef(function DiagramBody(
     return value || `Hazard ${sourceIndex + 1}`;
   }, [hazardTitleIndex]);
 
+  const getRiskSourceIndexes = useCallback((risk) => {
+    const indexes = Array.isArray(risk?.sourceIndexes) ? risk.sourceIndexes : [];
+    const sourceIndex = Number(risk?.sourceIndex);
+    return Array.from(new Set([
+      ...indexes.map((item) => Number(item)).filter((item) => Number.isFinite(item) && item > 0),
+      ...(Number.isFinite(sourceIndex) && sourceIndex > 0 ? [sourceIndex] : []),
+    ])).sort((a, b) => a - b);
+  }, []);
+
+  const getRiskScore = useCallback((risk) => (
+    (Number(risk?.likelihood) || 0) * (Number(risk?.severity) || 0)
+  ), []);
+
   const normalizeAssociationText = useCallback((value) => (
     String(value || '').trim().toLowerCase().replace(/\s+/g, ' ')
   ), []);
+
+  const collectAssociationTerms = useCallback((target) => {
+    if (!target) return [];
+    const terms = new Set();
+    const add = (value) => {
+      const normalized = normalizeAssociationText(value);
+      if (normalized) terms.add(normalized);
+    };
+    const isGroupTarget = target.type === 'node' && (target.nodeType === 'groupBox' || String(target.id || '').startsWith('g:'));
+
+    if (isGroupTarget) {
+      add(target.label);
+      const childNodes = nodes.filter((node) => node.parentNode === target.id && node.type !== 'groupBox');
+      childNodes.forEach((node) => add(node?.data?.label || String(node?.id || '').replace(/^n:/, '')));
+    } else if (target.type === 'node') {
+      add(target.label);
+    } else if (target.type === 'edge') {
+      add(target.label);
+      const aggregatedIndexes = new Set(
+        (target.data?.rowIndexes || []).map((idx) => Number(idx)).filter((idx) => Number.isFinite(idx))
+      );
+      rows.forEach((row, idx) => {
+        const edgeId = edgeIdForRow(row, idx);
+        if (edgeId === target.id || aggregatedIndexes.has(idx)) {
+          add(row?.fromFunction);
+          add(row?.controlAction);
+          add(row?.toFunction);
+        }
+      });
+    }
+
+    return Array.from(terms);
+  }, [nodes, normalizeAssociationText, rows]);
 
   const getAssociatedHazardRows = useCallback((target) => {
     if (!hazardDataRows.length || !target) return [];
 
     const matchedIndexes = new Set();
+    const targetTerms = collectAssociationTerms(target);
     const isGroupTarget = target.type === 'node' && (target.nodeType === 'groupBox' || String(target.id || '').startsWith('g:'));
 
     if (isGroupTarget) {
@@ -1598,9 +1715,20 @@ const DiagramBody = forwardRef(function DiagramBody(
         if (from === label || to === label) matchedIndexes.add(idx);
       });
     } else if (target.type === 'edge') {
+      const aggregatedIndexes = Array.isArray(target.data?.rowIndexes)
+        ? target.data.rowIndexes.map((idx) => Number(idx)).filter((idx) => Number.isFinite(idx))
+        : [];
+      aggregatedIndexes.forEach((idx) => matchedIndexes.add(idx));
       rows.forEach((row, idx) => {
         const edgeId = edgeIdForRow(row, idx);
         if (edgeId === target.id) matchedIndexes.add(idx);
+      });
+    }
+
+    if (targetTerms.length) {
+      hazardDataRows.forEach((cells, idx) => {
+        const rowText = normalizeAssociationText((cells || []).join(' '));
+        if (targetTerms.some((term) => rowText.includes(term))) matchedIndexes.add(idx);
       });
     }
 
@@ -1610,12 +1738,25 @@ const DiagramBody = forwardRef(function DiagramBody(
       .filter((entry) => Array.isArray(entry.cells));
 
     return associated;
-  }, [hazardDataRows, nodes, normalizeAssociationText, rows]);
+  }, [collectAssociationTerms, hazardDataRows, nodes, normalizeAssociationText, rows]);
 
   const editHazardRows = useMemo(
     () => getAssociatedHazardRows(editModal),
     [editModal, getAssociatedHazardRows]
   );
+
+  const editSafetyIssues = useMemo(() => {
+    if (!Array.isArray(riskRegister) || !riskRegister.length || !editHazardRows.length) return [];
+    const hazardSourceIndexes = new Set(editHazardRows.map(({ sourceIndex }) => sourceIndex + 1));
+    return riskRegister
+      .map((risk) => ({
+        ...risk,
+        sourceIndexes: getRiskSourceIndexes(risk),
+        score: getRiskScore(risk),
+      }))
+      .filter((risk) => risk.sourceIndexes.some((sourceIndex) => hazardSourceIndexes.has(sourceIndex)))
+      .sort((a, b) => b.score - a.score);
+  }, [editHazardRows, getRiskScore, getRiskSourceIndexes, riskRegister]);
 
   const clearBrowserTextSelection = useCallback(() => {
     try {
@@ -1695,6 +1836,7 @@ const DiagramBody = forwardRef(function DiagramBody(
   const connectStartRef = useRef(null);
   const edgeUpdateGestureRef = useRef({ active: false, oldEdgeId: null });
   const suppressedEdgeRemovalIdsRef = useRef(new Set());
+  const pendingEdgeUpdateRowsRef = useRef(null);
 
   const { fitView, project, getNodes, getEdges, getViewport } = useReactFlow();
 
@@ -2866,25 +3008,28 @@ if (nextFunctionalNodes.length > 1) {
                 ...row,
                 fromFunction,
                 toFunction,
-                sourceHandle: newConn.sourceHandle || row.sourceHandle || null,
-                targetHandle: newConn.targetHandle || row.targetHandle || null,
+                sourceHandle: parseHandleId(newConn.sourceHandle) ? newConn.sourceHandle : (row.sourceHandle || null),
+                targetHandle: parseHandleId(newConn.targetHandle) ? newConn.targetHandle : (row.targetHandle || null),
               }
             : row
         ));
+        pendingEdgeUpdateRowsRef.current = nextRows;
         onUpdateRows?.(nextRows);
-        rebuildRenderedEdgesFromRows(nextRows);
       }
     },
-    [getConnectableFunctionName, onUpdateRows, rebuildRenderedEdgesFromRows, rows]
+    [getConnectableFunctionName, onUpdateRows, rows]
   );
 
   const onEdgeUpdateEnd = useCallback(() => {
     const oldEdgeId = edgeUpdateGestureRef.current.oldEdgeId;
     window.setTimeout(() => {
+      const nextRows = pendingEdgeUpdateRowsRef.current;
+      pendingEdgeUpdateRowsRef.current = null;
+      if (nextRows) rebuildRenderedEdgesFromRows(nextRows);
       if (oldEdgeId) suppressedEdgeRemovalIdsRef.current.delete(oldEdgeId);
       edgeUpdateGestureRef.current = { active: false, oldEdgeId: null };
     }, 0);
-  }, []);
+  }, [rebuildRenderedEdgesFromRows]);
 
   const canUngroupSelected = selectedNodeIds.some((id) => (
     nodes.some((node) => node.id === id && node.parentNode)
@@ -2898,9 +3043,22 @@ if (nextFunctionalNodes.length > 1) {
     });
     return pairs;
   }, [rows]);
+  const bidirectionalEdgePairs = useMemo(() => {
+    const pairs = new Map();
+    rowsToRawEdges(rows).forEach((edge) => {
+      const pairKey = edgeBidirectionalPairKey(edge.source, edge.target);
+      if (!pairs.has(pairKey)) pairs.set(pairKey, []);
+      pairs.get(pairKey).push(edge);
+    });
+    return pairs;
+  }, [rows]);
   const multiEdgePairCount = useMemo(
     () => Array.from(edgePairs.values()).filter((pairEdges) => pairEdges.length > 1).length,
     [edgePairs]
+  );
+  const multiBidirectionalEdgePairCount = useMemo(
+    () => Array.from(bidirectionalEdgePairs.values()).filter((pairEdges) => pairEdges.length > 1).length,
+    [bidirectionalEdgePairs]
   );
   const highlightedEdge = useMemo(
     () => edges.find((edge) => edge.id === highlightedEdgeId),
@@ -2909,16 +3067,23 @@ if (nextFunctionalNodes.length > 1) {
   const highlightedPairKey = highlightedEdge
     ? highlightedEdge.data?.pairKey || edgePairKey(highlightedEdge.source, highlightedEdge.target)
     : '';
+  const highlightedBidirectionalPairKey = highlightedEdge
+    ? highlightedEdge.data?.bidirectionalPairKey || edgeBidirectionalPairKey(highlightedEdge.source, highlightedEdge.target)
+    : '';
   const highlightedPairEdges = highlightedPairKey ? edgePairs.get(highlightedPairKey) || [] : [];
+  const highlightedBidirectionalPairEdges = highlightedBidirectionalPairKey ? bidirectionalEdgePairs.get(highlightedBidirectionalPairKey) || [] : [];
   const canToggleHighlightedPair = highlightedPairEdges.length > 1;
+  const canToggleHighlightedBidirectionalPair = highlightedBidirectionalPairEdges.length > 1;
   const highlightedPairAggregated = canToggleHighlightedPair
     ? shouldAggregatePair(highlightedPairKey, highlightedPairEdges.length, edgeAggregation)
+    : false;
+  const highlightedBidirectionalPairAggregated = canToggleHighlightedBidirectionalPair
+    ? shouldAggregateBidirectionalPair(highlightedBidirectionalPairKey, highlightedBidirectionalPairEdges.length, edgeAggregation)
     : false;
   const highlightedRoutingTargetKey = highlightedEdge ? edgeRoutingTargetKey(highlightedEdge) : '';
   const highlightedRoutingStyle = highlightedEdge
     ? resolveEdgeRoutingStyle(highlightedEdge, edgeRouting)
     : normalizeEdgeRoutingStyle(edgeRouting.defaultStyle);
-  const highlightedRoutingLabel = highlightedRoutingStyle === EDGE_ROUTING_STYLES.RECTANGULAR ? 'Bezier Edge' : 'Rect Edge';
   const rebuildEdgesWithRouting = useCallback((nextRouting) => {
     const rawEdges = rowsToRawEdges(rows);
     setEdges(buildEdgesFromRaw(rawEdges, buildAbsolutePositionMap(getNodes()), edgeAggregationRef.current, nextRouting));
@@ -2929,6 +3094,9 @@ if (nextFunctionalNodes.length > 1) {
         aggregateAll: Boolean(current.aggregateAll),
         aggregatedPairs: new Set(current.aggregatedPairs || []),
         expandedPairs: new Set(current.expandedPairs || []),
+        aggregateBidirectionalAll: Boolean(current.aggregateBidirectionalAll),
+        aggregatedBidirectionalPairs: new Set(current.aggregatedBidirectionalPairs || []),
+        expandedBidirectionalPairs: new Set(current.expandedBidirectionalPairs || []),
       });
       edgeAggregationRef.current = next;
       const rawEdges = rowsToRawEdges(rows);
@@ -2938,9 +3106,19 @@ if (nextFunctionalNodes.length > 1) {
   }, [getNodes, rows, setEdges]);
   const toggleAggregateAllEdges = useCallback(() => {
     applyEdgeAggregation((current) => ({
+      ...current,
       aggregateAll: !current.aggregateAll,
       aggregatedPairs: new Set(),
       expandedPairs: new Set(),
+    }));
+    setHighlightedEdgeId(null);
+  }, [applyEdgeAggregation]);
+  const toggleAggregateAllBidirectionalEdges = useCallback(() => {
+    applyEdgeAggregation((current) => ({
+      ...current,
+      aggregateBidirectionalAll: !current.aggregateBidirectionalAll,
+      aggregatedBidirectionalPairs: new Set(),
+      expandedBidirectionalPairs: new Set(),
     }));
     setHighlightedEdgeId(null);
   }, [applyEdgeAggregation]);
@@ -2962,6 +3140,24 @@ if (nextFunctionalNodes.length > 1) {
     });
     setHighlightedEdgeId(null);
   }, [applyEdgeAggregation, canToggleHighlightedPair, highlightedPairKey]);
+  const toggleHighlightedBidirectionalEdgePairAggregation = useCallback(() => {
+    if (!canToggleHighlightedBidirectionalPair || !highlightedBidirectionalPairKey) return;
+    applyEdgeAggregation((current) => {
+      if (current.aggregateBidirectionalAll) {
+        if (current.expandedBidirectionalPairs.has(highlightedBidirectionalPairKey)) {
+          current.expandedBidirectionalPairs.delete(highlightedBidirectionalPairKey);
+        } else {
+          current.expandedBidirectionalPairs.add(highlightedBidirectionalPairKey);
+        }
+      } else if (current.aggregatedBidirectionalPairs.has(highlightedBidirectionalPairKey)) {
+        current.aggregatedBidirectionalPairs.delete(highlightedBidirectionalPairKey);
+      } else {
+        current.aggregatedBidirectionalPairs.add(highlightedBidirectionalPairKey);
+      }
+      return current;
+    });
+    setHighlightedEdgeId(null);
+  }, [applyEdgeAggregation, canToggleHighlightedBidirectionalPair, highlightedBidirectionalPairKey]);
   const setAllEdgeRoutingStyle = useCallback((style) => {
     const next = {
       defaultStyle: normalizeEdgeRoutingStyle(style),
@@ -2990,6 +3186,132 @@ if (nextFunctionalNodes.length > 1) {
     });
   }, [highlightedRoutingStyle, highlightedRoutingTargetKey, rebuildEdgesWithRouting]);
 
+  const toolSectionLabelStyle = {
+    margin: '6px 2px 2px',
+    color: 'rgba(15,15,18,0.52)',
+    fontSize: 10,
+    fontWeight: 800,
+    letterSpacing: 0,
+    textTransform: 'uppercase',
+  };
+  const toolGridStyle = {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, 32px)',
+    gap: 6,
+  };
+  const toolButtonStyle = ({ active = false, disabled = false, tone = BRAND.blue } = {}) => ({
+    width: 32,
+    height: 32,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 6,
+    border: `1px solid ${disabled ? 'rgba(15,15,18,0.12)' : rgba(tone, active ? 0.8 : 0.32)}`,
+    background: disabled ? '#F8FAFC' : active ? tone : 'white',
+    color: disabled ? 'rgba(15,15,18,0.34)' : active ? 'white' : tone,
+    fontWeight: 800,
+    fontSize: 13,
+    lineHeight: 1,
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    opacity: disabled ? 0.62 : 1,
+  });
+  const toolCategoryButtonStyle = ({ active = false } = {}) => ({
+    width: 30,
+    height: 30,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 6,
+    border: `1px solid ${active ? rgba(BRAND.blue, 0.6) : 'rgba(15,15,18,0.12)'}`,
+    background: active ? '#EEF4FF' : 'white',
+    color: active ? BRAND.blue : 'rgba(15,15,18,0.68)',
+    fontWeight: 900,
+    fontSize: 13,
+    cursor: 'pointer',
+  });
+  const toolCategories = [
+    { id: 'create', label: 'Create', icon: '+' },
+    { id: 'layout', label: 'Layout', icon: '↱' },
+    { id: 'aggregate', label: 'Aggregate', icon: '↔' },
+    { id: 'route', label: 'Route', icon: 'R' },
+    { id: 'export', label: 'Export', icon: '⇩' },
+  ];
+  const openCanvasToolSection = (sectionId) => {
+    if (canvasToolbarCollapsed) {
+      setActiveCanvasToolSection(sectionId);
+      setCanvasToolbarCollapsed(false);
+    }
+  };
+  const renderCanvasToolSection = (sectionId = activeCanvasToolSection) => {
+    if (sectionId === 'layout') {
+      return (
+        <>
+          <div style={toolSectionLabelStyle}>Layout</div>
+          <div style={toolGridStyle}>
+            <button type="button" onClick={ungroupSelectedNodes} disabled={!canUngroupSelected} title="Ungroup selected nodes" style={toolButtonStyle({ disabled: !canUngroupSelected, tone: BRAND.purple })}>↱</button>
+            <button type="button" onClick={runCleanAndSpread} title="Auto arrange" style={toolButtonStyle({ active: true })}>⚡</button>
+          </div>
+        </>
+      );
+    }
+    if (sectionId === 'aggregate') {
+      return (
+        <>
+          <div style={toolSectionLabelStyle}>Aggregate</div>
+          <div style={toolGridStyle}>
+            <button type="button" onClick={toggleAggregateAllEdges} title={edgeAggregation.aggregateAll ? 'Expand directional edge bundles' : 'Aggregate repeated directional edges'} disabled={!multiEdgePairCount} style={toolButtonStyle({ active: edgeAggregation.aggregateAll, disabled: !multiEdgePairCount, tone: BRAND.purple })}>→</button>
+            <button type="button" onClick={toggleHighlightedEdgePairAggregation} title="Aggregate or expand the selected directional pair" disabled={!canToggleHighlightedPair} style={toolButtonStyle({ active: highlightedPairAggregated, disabled: !canToggleHighlightedPair })}>⇄</button>
+            <button type="button" onClick={toggleAggregateAllBidirectionalEdges} title={edgeAggregation.aggregateBidirectionalAll ? 'Expand all bidirectional bundles' : 'Aggregate all traffic between node pairs regardless of direction'} disabled={!multiBidirectionalEdgePairCount} style={toolButtonStyle({ active: edgeAggregation.aggregateBidirectionalAll, disabled: !multiBidirectionalEdgePairCount, tone: BRAND.purple })}>↔</button>
+            <button type="button" onClick={toggleHighlightedBidirectionalEdgePairAggregation} title="Aggregate or expand selected bidirectional node pair" disabled={!canToggleHighlightedBidirectionalPair} style={toolButtonStyle({ active: highlightedBidirectionalPairAggregated, disabled: !canToggleHighlightedBidirectionalPair })}>⟷</button>
+          </div>
+        </>
+      );
+    }
+    if (sectionId === 'route') {
+      return (
+        <>
+          <div style={toolSectionLabelStyle}>Route</div>
+          <div style={toolGridStyle}>
+            <button type="button" onClick={() => setAllEdgeRoutingStyle(EDGE_ROUTING_STYLES.BEZIER)} title="Set all edges to Bezier routing" style={toolButtonStyle({ active: edgeRouting.defaultStyle === EDGE_ROUTING_STYLES.BEZIER && !Object.keys(edgeRouting.overrides || {}).length })}>B</button>
+            <button type="button" onClick={() => setAllEdgeRoutingStyle(EDGE_ROUTING_STYLES.RECTANGULAR)} title="Set all edges to rectangular routing" style={toolButtonStyle({ active: edgeRouting.defaultStyle === EDGE_ROUTING_STYLES.RECTANGULAR && !Object.keys(edgeRouting.overrides || {}).length })}>R</button>
+            <button type="button" onClick={toggleHighlightedEdgeRoutingStyle} title="Toggle routing for selected edge or bundle" disabled={!highlightedRoutingTargetKey} style={toolButtonStyle({ active: Boolean(highlightedRoutingTargetKey), disabled: !highlightedRoutingTargetKey, tone: BRAND.purple })}>{highlightedRoutingStyle === EDGE_ROUTING_STYLES.RECTANGULAR ? 'B' : 'R'}</button>
+          </div>
+        </>
+      );
+    }
+    if (sectionId === 'export') {
+      return (
+        <>
+          <div style={toolSectionLabelStyle}>Export</div>
+          <div style={toolGridStyle}>
+            <button type="button" onClick={exportDiagramXml} title="Export XML" style={toolButtonStyle({ active: true })}>X</button>
+            <button type="button" onClick={exportDiagramJson} title="Export JSON" style={toolButtonStyle({ active: true })}>J</button>
+          </div>
+        </>
+      );
+    }
+    return (
+      <>
+        <div style={toolSectionLabelStyle}>Create</div>
+        <div style={toolGridStyle}>
+          <button type="button" onClick={addManualDiagramNode} title="Add node" style={toolButtonStyle({ active: true })}>+</button>
+          <button type="button" onClick={createGroupBox} title="Group selected nodes" style={toolButtonStyle({ active: true, tone: BRAND.purple })}>□</button>
+          <button type="button" onClick={addNoteNode} title="Add note" style={toolButtonStyle({ tone: BRAND.yellow })}>📝</button>
+        </div>
+      </>
+    );
+  };
+  const renderAllCanvasToolSections = () => (
+    <>
+      {toolCategories.map((category, index) => (
+        <React.Fragment key={category.id}>
+          {index > 0 && <div style={{ height: 1, background: 'rgba(15,15,18,0.08)', margin: '2px 0' }} />}
+          {renderCanvasToolSection(category.id)}
+        </React.Fragment>
+      ))}
+    </>
+  );
+
   /* Render */
   return (
     <div ref={diagramHostRef} style={{ width: '100%', height: '100%', minHeight: 560, position: 'relative' }}>
@@ -3007,248 +3329,80 @@ if (nextFunctionalNodes.length > 1) {
           style={{
             position: 'absolute',
             top: 12,
+            bottom: 12,
             left: 12,
             zIndex: 25,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            flexWrap: 'wrap',
-            maxWidth: 'calc(100% - 24px)',
+            width: canvasToolbarCollapsed ? 36 : 128,
             pointerEvents: 'auto',
+            transition: 'width 160ms ease',
           }}
         >
-          <button
-            type="button"
-            onClick={addManualDiagramNode}
-            title="Add Node"
-            style={{
-              padding: '10px 16px',
-              borderRadius: 10,
-              border: `1px solid ${BRAND.blue}`,
-              background: BRAND.blue,
-              color: 'white',
-              fontWeight: 800,
-              fontSize: 15,
-              boxShadow: '0 8px 18px rgba(45,125,254,0.18)',
-              cursor: 'pointer',
-            }}
-          >
-            + Add Node
-          </button>
-          <button
-            type="button"
-            onClick={createGroupBox}
-            title="Group"
-            style={{
-              padding: '10px 16px',
-              borderRadius: 10,
-              border: `1px solid ${BRAND.purple}`,
-              background: BRAND.purple,
-              color: 'white',
-              fontWeight: 800,
-              fontSize: 15,
-              boxShadow: '0 8px 18px rgba(122,55,255,0.18)',
-              cursor: 'pointer',
-            }}
-          >
-            □ Group
-          </button>
-          <button
-            type="button"
-            onClick={addNoteNode}
-            title="Note"
-            style={{
-              padding: '10px 16px',
-              borderRadius: 10,
-              border: `1px solid ${BRAND.yellow}`,
-              background: '#FFF8E6',
-              color: BRAND.dark,
-              fontWeight: 800,
-              fontSize: 15,
-              boxShadow: '0 8px 18px rgba(243,182,63,0.14)',
-              cursor: 'pointer',
-            }}
-          >
-            📝 Note
-          </button>
-          <button
-            type="button"
-            onClick={ungroupSelectedNodes}
-            disabled={!canUngroupSelected}
-            title="Ungroup"
-            style={{
-              padding: '10px 16px',
-              borderRadius: 10,
-              border: `1px solid ${BRAND.purple}`,
-              background: canUngroupSelected ? 'white' : '#F8F5FF',
-              color: canUngroupSelected ? BRAND.purple : 'rgba(122,55,255,0.48)',
-              fontWeight: 800,
-              fontSize: 15,
-              boxShadow: canUngroupSelected ? '0 8px 18px rgba(122,55,255,0.10)' : 'none',
-              cursor: canUngroupSelected ? 'pointer' : 'not-allowed',
-            }}
-          >
-            ↱ Ungroup
-          </button>
-          <button
-            type="button"
-            onClick={runCleanAndSpread}
-            title="Auto Arrange"
-            style={{
-              padding: '10px 16px',
-              borderRadius: 10,
-              border: `1px solid ${BRAND.blue}`,
-              background: BRAND.blue,
-              color: 'white',
-              fontWeight: 800,
-              fontSize: 15,
-              boxShadow: '0 8px 18px rgba(45,125,254,0.18)',
-              cursor: 'pointer',
-            }}
-          >
-            ⚡ Auto Arrange
-          </button>
-          <button
-            type="button"
-            onClick={toggleAggregateAllEdges}
-            title={edgeAggregation.aggregateAll ? 'Expand all aggregated edge bundles' : 'Aggregate all repeated node-pair edges'}
-            disabled={!multiEdgePairCount}
-            style={{
-              padding: '10px 16px',
-              borderRadius: 10,
-              border: `1px solid ${BRAND.purple}`,
-              background: edgeAggregation.aggregateAll ? BRAND.purple : 'white',
-              color: edgeAggregation.aggregateAll ? 'white' : BRAND.purple,
-              fontWeight: 800,
-              fontSize: 15,
-              boxShadow: multiEdgePairCount ? '0 8px 18px rgba(122,55,255,0.10)' : 'none',
-              cursor: multiEdgePairCount ? 'pointer' : 'not-allowed',
-              opacity: multiEdgePairCount ? 1 : 0.55,
-            }}
-          >
-            {edgeAggregation.aggregateAll ? '⇄ Expand Edges' : '⇉ Aggregate Edges'}
-          </button>
-          <button
-            type="button"
-            onClick={toggleHighlightedEdgePairAggregation}
-            title="Select an edge to aggregate or expand only that node pair"
-            disabled={!canToggleHighlightedPair}
-            style={{
-              padding: '10px 16px',
-              borderRadius: 10,
-              border: `1px solid ${BRAND.blue}`,
-              background: highlightedPairAggregated ? BRAND.blue : 'white',
-              color: canToggleHighlightedPair ? (highlightedPairAggregated ? 'white' : BRAND.blue) : 'rgba(45,125,254,0.45)',
-              fontWeight: 800,
-              fontSize: 15,
-              boxShadow: canToggleHighlightedPair ? '0 8px 18px rgba(45,125,254,0.10)' : 'none',
-              cursor: canToggleHighlightedPair ? 'pointer' : 'not-allowed',
-              opacity: canToggleHighlightedPair ? 1 : 0.55,
-            }}
-          >
-            {highlightedPairAggregated ? 'Expand Pair' : 'Aggregate Pair'}
-          </button>
           <div
-            role="group"
-            aria-label="Default edge routing style"
             style={{
-              display: 'flex',
-              border: `1px solid ${BRAND.blue}`,
+              height: '100%',
+              border: '1px solid rgba(15,15,18,0.12)',
               borderRadius: 10,
+              background: 'rgba(255,255,255,0.96)',
+              boxShadow: '0 12px 28px rgba(15,15,18,0.16)',
               overflow: 'hidden',
-              boxShadow: '0 8px 18px rgba(45,125,254,0.08)',
+              display: 'flex',
+              flexDirection: 'column',
             }}
           >
             <button
               type="button"
-              onClick={() => setAllEdgeRoutingStyle(EDGE_ROUTING_STYLES.BEZIER)}
-              title="Set all edges to Bezier routing"
+              onClick={() => setCanvasToolbarCollapsed((value) => !value)}
+              title={canvasToolbarCollapsed ? 'Show canvas tools' : 'Hide canvas tools'}
+              aria-label={canvasToolbarCollapsed ? 'Show canvas tools' : 'Hide canvas tools'}
               style={{
-                padding: '10px 12px',
+                height: 34,
                 border: 0,
-                borderRight: `1px solid ${rgba(BRAND.blue, 0.35)}`,
-                background: edgeRouting.defaultStyle === EDGE_ROUTING_STYLES.BEZIER && !Object.keys(edgeRouting.overrides || {}).length ? BRAND.blue : 'white',
-                color: edgeRouting.defaultStyle === EDGE_ROUTING_STYLES.BEZIER && !Object.keys(edgeRouting.overrides || {}).length ? 'white' : BRAND.blue,
-                fontWeight: 800,
-                fontSize: 14,
+                borderBottom: canvasToolbarCollapsed ? 0 : '1px solid rgba(15,15,18,0.08)',
+                background: canvasToolbarCollapsed ? BRAND.blue : '#F8FAFC',
+                color: canvasToolbarCollapsed ? 'white' : BRAND.dark,
+                fontWeight: 900,
+                fontSize: 12,
                 cursor: 'pointer',
               }}
             >
-              Bezier All
+              {canvasToolbarCollapsed ? '›' : '‹ Tools'}
             </button>
-            <button
-              type="button"
-              onClick={() => setAllEdgeRoutingStyle(EDGE_ROUTING_STYLES.RECTANGULAR)}
-              title="Set all edges to rectangular routing"
+            <div
               style={{
-                padding: '10px 12px',
-                border: 0,
-                background: edgeRouting.defaultStyle === EDGE_ROUTING_STYLES.RECTANGULAR && !Object.keys(edgeRouting.overrides || {}).length ? BRAND.blue : 'white',
-                color: edgeRouting.defaultStyle === EDGE_ROUTING_STYLES.RECTANGULAR && !Object.keys(edgeRouting.overrides || {}).length ? 'white' : BRAND.blue,
-                fontWeight: 800,
-                fontSize: 14,
-                cursor: 'pointer',
+                flex: '1 1 auto',
+                minHeight: 0,
+                overflowY: 'auto',
+                padding: canvasToolbarCollapsed ? '8px 3px' : 8,
+                display: 'grid',
+                gap: 6,
+                alignContent: 'start',
               }}
             >
-              Rect All
-            </button>
+              {canvasToolbarCollapsed ? (
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr',
+                    gap: 5,
+                    justifyContent: 'center',
+                  }}
+                >
+                  {toolCategories.map((category) => (
+                    <button
+                      key={category.id}
+                      type="button"
+                      title={category.label}
+                      aria-label={category.label}
+                      onClick={() => openCanvasToolSection(category.id)}
+                      style={toolCategoryButtonStyle({ active: false })}
+                    >
+                      {category.icon}
+                    </button>
+                  ))}
+                </div>
+              ) : renderAllCanvasToolSections()}
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={toggleHighlightedEdgeRoutingStyle}
-            title="Select an edge to override only that edge or aggregate pair"
-            disabled={!highlightedRoutingTargetKey}
-            style={{
-              padding: '10px 16px',
-              borderRadius: 10,
-              border: `1px solid ${BRAND.purple}`,
-              background: highlightedRoutingTargetKey && highlightedRoutingStyle === EDGE_ROUTING_STYLES.RECTANGULAR ? BRAND.purple : 'white',
-              color: highlightedRoutingTargetKey ? (highlightedRoutingStyle === EDGE_ROUTING_STYLES.RECTANGULAR ? 'white' : BRAND.purple) : 'rgba(122,55,255,0.45)',
-              fontWeight: 800,
-              fontSize: 15,
-              boxShadow: highlightedRoutingTargetKey ? '0 8px 18px rgba(122,55,255,0.10)' : 'none',
-              cursor: highlightedRoutingTargetKey ? 'pointer' : 'not-allowed',
-              opacity: highlightedRoutingTargetKey ? 1 : 0.55,
-            }}
-          >
-            {highlightedRoutingLabel}
-          </button>
-          <button
-            type="button"
-            onClick={exportDiagramXml}
-            title="Export XML"
-            style={{
-              padding: '10px 16px',
-              borderRadius: 10,
-              border: `1px solid ${BRAND.blue}`,
-              background: BRAND.blue,
-              color: 'white',
-              fontWeight: 800,
-              fontSize: 15,
-              boxShadow: '0 8px 18px rgba(45,125,254,0.18)',
-              cursor: 'pointer',
-            }}
-          >
-            📥 Export .XML
-          </button>
-          <button
-            type="button"
-            onClick={exportDiagramJson}
-            title="Export JSON"
-            style={{
-              padding: '10px 16px',
-              borderRadius: 10,
-              border: `1px solid ${BRAND.blue}`,
-              background: BRAND.blue,
-              color: 'white',
-              fontWeight: 800,
-              fontSize: 15,
-              boxShadow: '0 8px 18px rgba(45,125,254,0.18)',
-              cursor: 'pointer',
-            }}
-          >
-            📥 Export .JSON
-          </button>
         </div>
         <ReactFlow
           nodes={viewNodes}
@@ -3328,7 +3482,14 @@ if (nextFunctionalNodes.length > 1) {
             event.preventDefault();
             event.stopPropagation();
             clearBrowserTextSelection();
-            setEditModal({ type: 'edge', id: edge.id, label: edge.label || '', description: edge.data?.description || '' });
+            setEditModal({
+              type: 'edge',
+              id: edge.id,
+              label: edge.label || '',
+              description: edge.data?.description || edge.data?.summary || '',
+              data: edge.data || {},
+              aggregated: Boolean(edge.data?.aggregated),
+            });
             requestAnimationFrame(clearBrowserTextSelection);
           }}
           onDoubleClick={(event) => {
@@ -3527,7 +3688,9 @@ if (nextFunctionalNodes.length > 1) {
                 minHeight: 0,
               }}
             >
-            <h3 style={{ marginBottom: 10 }}>Edit {editModal.type === 'node' ? 'Node' : 'Edge'}</h3>
+            <h3 style={{ marginBottom: 10 }}>
+              Edit {editModal.type === 'node' ? 'Node' : editModal.aggregated ? 'Aggregated Edge' : 'Edge'}
+            </h3>
             <label style={{ display: 'block', marginBottom: 8 }}>
               Label:
               <input
@@ -3612,7 +3775,7 @@ if (nextFunctionalNodes.length > 1) {
               ) : (
                 <div style={{ display: 'grid', gap: 10 }}>
                   {editHazardRows.map(({ sourceIndex, cells }) => (
-                    <div
+                    <details
                       key={`${sourceIndex}-${cells.join('|')}`}
                       style={{
                         border: '1px solid rgba(45,125,254,0.18)',
@@ -3621,8 +3784,10 @@ if (nextFunctionalNodes.length > 1) {
                         overflow: 'hidden',
                       }}
                     >
-                      <div
+                      <summary
                         style={{
+                          cursor: 'pointer',
+                          listStyle: 'none',
                           padding: '8px 10px',
                           background: '#EEF4FF',
                           color: '#0B3EA8',
@@ -3630,7 +3795,7 @@ if (nextFunctionalNodes.length > 1) {
                           fontWeight: 700,
                         }}
                       >
-                        <span>{getHazardCardTitle(cells, sourceIndex)}</span>
+                        <span>Source Row {sourceIndex + 1}: {getHazardCardTitle(cells, sourceIndex)}</span>
                         {typeof onOpenHazardRow === 'function' && (
                           <button
                             type="button"
@@ -3650,7 +3815,7 @@ if (nextFunctionalNodes.length > 1) {
                             Open in table
                           </button>
                         )}
-                      </div>
+                      </summary>
                       <div
                         style={{
                           display: 'grid',
@@ -3688,7 +3853,133 @@ if (nextFunctionalNodes.length > 1) {
                           </React.Fragment>
                         ))}
                       </div>
-                    </div>
+                    </details>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div
+              style={{
+                marginTop: 16,
+                borderTop: '1px solid rgba(15,15,18,0.1)',
+                paddingTop: 14,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.dark }}>
+                  Associated Safety Issues
+                </div>
+                <div style={{ fontSize: 12, color: 'rgba(15,15,18,0.58)' }}>
+                  {editSafetyIssues.length} issue{editSafetyIssues.length === 1 ? '' : 's'}
+                </div>
+              </div>
+              {!Array.isArray(riskRegister) || !riskRegister.length ? (
+                <div style={{ fontSize: 13, color: 'rgba(15,15,18,0.58)' }}>
+                  Generate the risk assessment to see consolidated safety issues here.
+                </div>
+              ) : editSafetyIssues.length === 0 ? (
+                <div style={{ fontSize: 13, color: 'rgba(15,15,18,0.58)' }}>
+                  No consolidated safety issues are linked to this {editModal.aggregated ? 'aggregated edge' : editModal.type}.
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gap: 10 }}>
+                  {editSafetyIssues.map((issue, index) => (
+                    <details
+                      key={issue.id || `${issue.title}-${index}`}
+                      style={{
+                        border: '1px solid rgba(122,55,255,0.18)',
+                        borderRadius: 8,
+                        background: '#F8FAFC',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <summary
+                        style={{
+                          cursor: 'pointer',
+                          listStyle: 'none',
+                          padding: '8px 10px',
+                          background: '#F5F0FF',
+                          color: '#4C1D95',
+                          fontSize: 12,
+                          fontWeight: 700,
+                        }}
+                      >
+                        <span>{issue.priority || 'P3+'} · {issue.title || `Safety Issue ${index + 1}`}</span>
+                        <span style={{ float: 'right', display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+                          {typeof onOpenSafetyIssue === 'function' && (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                onOpenSafetyIssue(issue);
+                                setEditModal(null);
+                              }}
+                              style={{
+                                border: 'none',
+                                background: 'transparent',
+                                color: BRAND.purple,
+                                fontSize: 12,
+                                fontWeight: 700,
+                                textDecoration: 'underline',
+                                cursor: 'pointer',
+                                padding: 0,
+                              }}
+                            >
+                              Open issue
+                            </button>
+                          )}
+                          <span style={{ color: 'rgba(76,29,149,0.72)', fontWeight: 600 }}>
+                            Score {issue.score || 0}
+                          </span>
+                        </span>
+                      </summary>
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'minmax(140px, 190px) minmax(0, 1fr)',
+                          gap: 0,
+                        }}
+                      >
+                        {[
+                          ['Description', issue.description],
+                          ['Status', issue.status || 'Open'],
+                          ['Owner', issue.owner || 'Unassigned'],
+                          ['Due Date', issue.dueDate || 'Not set'],
+                          ['Likelihood', issue.likelihood],
+                          ['Severity', issue.severity],
+                          ['Source Rows', issue.sourceIndexes?.length ? issue.sourceIndexes.map((sourceIndex) => `Source Row ${sourceIndex}`).join(', ') : 'Not linked'],
+                        ].map(([label, value]) => (
+                          <React.Fragment key={`${issue.id || index}-${label}`}>
+                            <div
+                              style={{
+                                padding: '8px 10px',
+                                borderTop: '1px solid rgba(15,15,18,0.08)',
+                                fontSize: 12,
+                                fontWeight: 700,
+                                color: '#4B5563',
+                                background: 'white',
+                              }}
+                            >
+                              {label}
+                            </div>
+                            <div
+                              style={{
+                                padding: '8px 10px',
+                                borderTop: '1px solid rgba(15,15,18,0.08)',
+                                fontSize: 12,
+                                color: '#111827',
+                                background: 'white',
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-word',
+                              }}
+                            >
+                              {String(value ?? '') || '—'}
+                            </div>
+                          </React.Fragment>
+                        ))}
+                      </div>
+                    </details>
                   ))}
                 </div>
               )}

@@ -3665,6 +3665,15 @@ function guardNewProjectIntent() {
 // --- Tabs ---
 const [activeTab, setActiveTab] = useState('Functional Diagramming'); // 'Analysis' | 'Risk Assessment'
 
+useEffect(() => {
+  if (activeTab === 'Reporting') {
+    setActiveTab('Functional Diagramming');
+    setSection('reports');
+  } else if (activeTab === 'Risk Assessment') {
+    setActiveTab('Safety Issues & Risk Assessment');
+  }
+}, [activeTab]);
+
 // --- Risk register state (persisted per-project) ---
 const [riskRegister, setRiskRegister] = useState([]);
 // --- Requirements state (persisted per-project) ---
@@ -5683,15 +5692,6 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
 };
 
 
-  useEffect(() => {
-    if (!analysisResult?.Summary) return;
-    // Only seed if empty so you don't overwrite edits
-    if (riskRegister.length === 0) {
-      const seeded = buildRiskRegisterFromSummary(analysisResult.Summary);
-      if (seeded.length) setRiskRegister(seeded);
-    }
-  }, [analysisResult?.Summary]); // eslint-disable-line react-hooks/exhaustive-deps
-
   // Capture diagram image after analysis completes
   useEffect(() => {
     if (!analysisResult) return;
@@ -5808,6 +5808,16 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       !allowed?.length || allowed.includes(String(row[colIdx] ?? ''))
     )
   );
+  const getDraftHazardCellRows = (value) => {
+    const text = String(value ?? '');
+    if (!text.trim()) return 2;
+    return Math.max(
+      2,
+      text.split(/\r?\n/).reduce((rows, line) => (
+        rows + Math.max(1, Math.ceil(String(line || '').length / 46))
+      ), 0)
+    );
+  };
   const riskAssessmentSource = useMemo(() => {
     if (Array.isArray(analysisResult?.Summary?.[0]) && analysisResult.Summary.length > 1) {
       const [headers, ...rows] = analysisResult.Summary;
@@ -8731,6 +8741,15 @@ const projectHint = useMemo(() => ({
   />
 </div>
 
+<div className="order-4">
+  <NavItem
+    icon={FileText}
+    label="Reports"
+    active={section === 'reports'}
+    onClick={() => setSection('reports')}
+  />
+</div>
+
 <div className="order-1">
   <div className={`w-full ${isSidebarOpen ? '' : 'flex justify-center'}`}>
     <div className={`flex items-center ${isSidebarOpen ? 'gap-1' : ''} w-full min-w-0`}>
@@ -9045,7 +9064,7 @@ const projectHint = useMemo(() => ({
   )}
 </div>
 
-<div className="order-6">
+<div className="order-7">
   <NavItem
     icon={ShieldCheck}
     label="Safety Case"
@@ -9054,7 +9073,7 @@ const projectHint = useMemo(() => ({
   />
 </div>
 
-<div className="order-4">
+<div className="order-5">
   <NavItem
     icon={FileText}
     label="Design Management"
@@ -9063,7 +9082,7 @@ const projectHint = useMemo(() => ({
   />
 </div>
 
-<div className="order-5">
+<div className="order-6">
   <NavItem
     icon={FlaskConical}
     label="System Test"
@@ -9073,7 +9092,7 @@ const projectHint = useMemo(() => ({
 </div>
 
 {/* xHandle Copilot dock */}
-<div className="order-7">
+<div className="order-8">
   <NavItem
     icon={CollaboratorNavIcon}
     iconProps={{ active: dockOpen }}
@@ -9488,6 +9507,142 @@ const projectHint = useMemo(() => ({
   onExportCodeArchitectureReviewPackage: handleExportCodeArchitectureReviewPackage,
   isExportingCodeArchitectureReviewPackage: isGeneratingCodeArchitectureReviewApp,
 })}
+
+{section === 'reports' && (
+  <div className="flex h-full min-h-0 w-full flex-col overflow-auto bg-white px-3 py-1 md:px-5 lg:px-7">
+    <div className="mb-4 flex shrink-0 items-center justify-between">
+      <div>
+        <h1 className="text-2xl font-semibold text-gray-900">Reports</h1>
+        <p className="text-sm text-gray-500">
+          Generate and export project reports from the active project workspace.
+        </p>
+      </div>
+      {activeProject && (
+        <div className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-medium text-gray-600">
+          {activeProject.name}
+        </div>
+      )}
+    </div>
+
+    {!activeProjectId ? (
+      <div className="rounded-xl border bg-white p-6 text-sm text-gray-600">
+        Select a project from the Projects sidebar to generate reports.
+      </div>
+    ) : !analysisResult?.Summary ? (
+      <div className="rounded-xl border bg-white p-6 text-sm text-gray-600">
+        <p className="mb-2">No risk profile yet.</p>
+        <p>
+          Open the active project Hazard Analysis tab and click
+          <span className="font-medium"> Develop risk profile</span> to enable reporting.
+        </p>
+      </div>
+    ) : (
+      <>
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-3">
+            <select
+              value={reportType}
+              onChange={(e) => setReportType(e.target.value)}
+              className="rounded-md border px-2 py-2 text-sm"
+              title="Select report type"
+            >
+              {REPORT_TYPE_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+
+            <Gate
+              feature="agentic_reports"
+              fallback={
+                <button
+                  disabled
+                  className="px-3 py-2 rounded bg-gray-200 text-gray-500"
+                  title="AI report generation is unavailable"
+                >
+                  Generate AI Report
+                </button>
+              }
+            >
+              <button
+                onClick={() => {
+                  if (reportType === "Custom Report") {
+                    setShowCustomPromptModal(true);
+                  } else {
+                    handleGenerateAgentReport();
+                  }
+                }}
+                disabled={isGeneratingAgentReport}
+                className="px-3 py-2 text-white rounded bg-[#2D7DFE] hover:bg-[#1E61D6]"
+                title="Generate a full AI report from the completed risk profile"
+              >
+                {isGeneratingAgentReport ? "Generating Report..." : "Generate AI Report"}
+              </button>
+            </Gate>
+          </div>
+        </div>
+
+        <div className="mb-6 rounded-2xl border bg-white p-4">
+          <div className="text-sm font-semibold mb-2">Exports</div>
+          <div className="flex flex-wrap gap-3">
+            <button
+              onClick={() => exportReport(displayedReport, 'pdf')}
+              className="px-3 py-2 text-white rounded bg-[#2D7DFE] hover:bg-[#1E61D6] text-sm"
+              disabled={!displayedReport}
+            >
+              Export Report as PDF
+            </button>
+
+            <button
+              onClick={() => exportReport(displayedReport, 'word')}
+              className="px-3 py-2 text-white rounded bg-[#7A37FF] hover:bg-[#5E2AD1] text-sm"
+              disabled={!displayedReport}
+            >
+              Export Report as Word (.docx)
+            </button>
+
+            <button
+              onClick={() => exportReport(displayedReport, 'gdocs')}
+              className="px-3 py-2 text-white rounded bg-[#F59E0B] hover:bg-[#D97706] text-sm"
+              disabled={!displayedReport}
+            >
+              Export Report to Google Docs
+            </button>
+          </div>
+
+          <div className="text-xs text-gray-500 mt-2">
+            Tip: Risk Profile CSV honors any filters you set on the Hazard Analysis tab.
+          </div>
+        </div>
+
+        {agentReportResult ? (
+          <section className="mt-2 w-full">
+            <div className="rounded-2xl border border-gray-200 bg-white shadow-sm p-4 space-y-6">
+              <div className="w-full overflow-x-auto overflow-y-auto max-h-[calc(100vh-310px)]
+                                [&_.prose]:max-w-none
+                                [&_.prose]:w-full
+                                [&_.prose]:px-0
+                                [&_.prose_img]:max-w-none
+                                [&_.prose_img]:w-full
+                                [&_.prose_table]:min-w-full">
+                <SafetyReportViewer
+                  reportText={displayedReport}
+                  functionalDiagramImage={functionalDiagramImage}
+                />
+              </div>
+            </div>
+          </section>
+        ) : (
+          <div className="rounded-xl border bg-white p-6 text-gray-600 text-sm">
+            <p className="mb-2">No AI report yet.</p>
+            <p>Use the controls above to generate your report.</p>
+          </div>
+        )}
+      </>
+    )}
+  </div>
+)}
 
     {/* CODE BASED ANALYSIS */}
 {section === 'code-architecture' && (
@@ -10487,7 +10642,7 @@ const projectHint = useMemo(() => ({
 <div className="mb-5">
   <div className="border-b" role="tablist" aria-label="Project sections">
     <div className="flex items-center gap-2">
-    {['Functional Diagramming', 'Hazard Analysis', 'Risk Assessment', 'Reporting'].map((t) => (
+    {['Functional Diagramming', 'Hazard Analysis', 'Safety Issues & Risk Assessment'].map((t) => (
 
   <button
     key={t}
@@ -10630,7 +10785,18 @@ const projectHint = useMemo(() => ({
   onUpdateRows={handleProjectDiagramRowsUpdate}
   onRequestCreateProject={handleCreateProjectFromSelection}   // ← ADD THIS
   hazardSummary={analysisResult?.Summary}
+  riskRegister={riskRegister}
   onOpenHazardRow={handleOpenHazardSummaryRow}
+  onOpenSafetyIssue={(issueOrId) => {
+    const issueId = typeof issueOrId === 'string' ? issueOrId : issueOrId?.id;
+    if (!issueId) return;
+    const priority = typeof issueOrId === 'object'
+      ? issueOrId?.priority
+      : riskRegister.find((risk) => risk.id === issueId)?.priority;
+    setActiveTab('Safety Issues & Risk Assessment');
+    setSelectedRiskPriority(priority || 'All');
+    setActiveRiskId(issueId);
+  }}
 />
                           ) : (
                             <div className="flex h-full min-h-[560px] items-center justify-center text-sm font-medium text-gray-500">
@@ -10849,7 +11015,7 @@ const projectHint = useMemo(() => ({
             <p>Known functional decomposition fields are populated. Use the row magic button to generate a hazard row with the selected method.</p>
           </div>
         </div>
-        <div className="relative mb-10 h-[calc(100vh-235px)] min-h-[420px] w-full overflow-auto rounded-md shadow-sm">
+        <div className="relative h-[calc(100dvh-285px)] min-h-0 w-full overflow-auto rounded-md shadow-sm">
           <table className="min-w-full border-separate border-spacing-0 text-sm text-left">
             <thead>
               <tr className="text-[#4B5563] text-sm font-medium">
@@ -11012,10 +11178,10 @@ const projectHint = useMemo(() => ({
                     {row.map((cell, colIdx) => (
                       <td key={colIdx} className="px-6 py-4 align-top whitespace-pre-wrap border-b border-gray-100">
                         <textarea
-                          className="min-h-[44px] w-full resize-none bg-transparent text-sm text-gray-900 focus:outline-none"
+                          className="min-h-[44px] w-full resize-none overflow-hidden bg-transparent text-sm text-gray-900 focus:outline-none"
                           value={cell}
                           onChange={(event) => handleDraftHazardCellChange(originalIndex, colIdx, event.target.value)}
-                          rows={2}
+                          rows={getDraftHazardCellRows(cell)}
                         />
                       </td>
                     ))}
@@ -11057,7 +11223,7 @@ const projectHint = useMemo(() => ({
   </div>
 </div>
 ) : (
-          <div className="relative mb-10 h-[calc(100vh-235px)] min-h-[420px] w-full overflow-auto rounded-md shadow-sm">
+          <div className="relative h-[calc(100dvh-285px)] min-h-0 w-full overflow-auto rounded-md shadow-sm">
             <table className="min-w-full border-separate border-spacing-0 text-sm text-left">
               <thead>
                 <tr className="text-[#4B5563] text-sm font-medium">
@@ -11242,8 +11408,8 @@ const projectHint = useMemo(() => ({
   </section>
 )}
 
-{activeTab === 'Risk Assessment' && (
-  <section className="mt-2 space-y-5">
+{activeTab === 'Safety Issues & Risk Assessment' && (
+  <section className="mt-2 flex min-h-0 flex-col space-y-4">
     <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={() => setRiskRegister(prev => ([
@@ -11267,24 +11433,6 @@ const projectHint = useMemo(() => ({
         </button>
 
         <button
-          onClick={() => {
-            if (!analysisResult?.Summary) return;
-            const seeded = buildRiskRegisterFromSummary(analysisResult.Summary);
-            const byTitle = new Map(riskRegister.map(r => [r.title, r]));
-            const merged = [
-              ...riskRegister,
-              ...seeded.filter(s => !byTitle.has(s.title))
-            ];
-            setRiskRegister(merged);
-          }}
-          className="px-3 py-2 text-white rounded bg-[#7A37FF] hover:bg-[#5E2AD1] text-sm"
-          disabled={!analysisResult?.Summary}
-          title={analysisResult?.Summary ? 'Import risks from current Analysis' : 'Run Analysis first'}
-        >
-          Import from Analysis
-        </button>
-
-        <button
           onClick={handleGenerateRiskAssessment}
           className="inline-flex items-center gap-2 px-3 py-2 text-white rounded bg-[#0F766E] hover:bg-[#115E59] text-sm disabled:cursor-not-allowed disabled:opacity-50"
           disabled={!canGenerateRiskAssessment || isGeneratingRiskAssessment || isGeneratingRiskAssessmentReport}
@@ -11295,7 +11443,7 @@ const projectHint = useMemo(() => ({
             ? 'Generating safety issues...'
             : isGeneratingRiskAssessmentReport
               ? 'Writing Safety Issue Reports...'
-              : 'AI Generate Risk Assessment'}
+              : 'AI Generate Safety Issues'}
         </button>
 
         <button
@@ -11345,21 +11493,20 @@ const projectHint = useMemo(() => ({
           <p className="mb-2">No safety issues yet for this project.</p>
           {analysisResult?.Summary ? (
             <p>
-              Use <span className="font-medium">Import from Analysis</span> above to pull items from your latest risk profile,
+              Click <span className="font-medium">AI Generate Safety Issues</span> to consolidate the hazard analysis into safety issues,
               or click <span className="font-medium">+ Add Safety Issue</span> to create one manually.
             </p>
           ) : (
             <p>
-              Click <span className="font-medium">+ Add Safety Issue</span> to create one manually. To import automatically, run
-              <span className="font-medium"> “Develop risk profile”</span> on the Analysis tab first.
+              Click <span className="font-medium">+ Add Safety Issue</span> to create one manually. To generate with AI, create hazard analysis rows first.
             </p>
           )}
         </div>
       ) : (
         <>
-          <div className={`relative transition-[padding] duration-300 ${showSafetyIssueReportDrawer && !isSafetyIssueReportFullscreen ? '2xl:pr-[700px]' : ''}`}>
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
-            <div className="rounded-lg border border-gray-200 bg-white">
+          <div className={`relative min-h-0 transition-[padding] duration-300 ${showSafetyIssueReportDrawer && !isSafetyIssueReportFullscreen ? '2xl:pr-[700px]' : ''}`}>
+          <div className="grid h-[calc(100dvh-265px)] min-h-0 grid-cols-1 gap-4 overflow-hidden xl:grid-cols-[360px_minmax(0,1fr)]">
+            <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white">
               <div className="border-b border-gray-200 px-4 py-3">
                 <div className="text-sm font-semibold text-gray-900">Consolidated Safety Issues</div>
                 <div className="mt-3 grid grid-cols-5 gap-1">
@@ -11380,7 +11527,7 @@ const projectHint = useMemo(() => ({
                   ))}
                 </div>
               </div>
-              <div className="max-h-[680px] overflow-y-auto p-2">
+              <div className="min-h-0 flex-1 overflow-y-auto p-2">
                 {displayedRiskCards.map((risk) => (
                   <button
                     key={risk.id}
@@ -11429,13 +11576,13 @@ const projectHint = useMemo(() => ({
               </div>
             </div>
 
-            <div className="rounded-lg border border-gray-200 bg-white">
+            <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white">
               <div className="border-b border-gray-200 px-4 py-3">
                 <div className="text-sm font-semibold text-gray-900">Safety Issue Detail</div>
                 <div className="text-xs text-gray-500">Linked hazard-analysis rows are shown below the editable fields.</div>
               </div>
               {activeRisk ? (
-                <div className="max-h-[680px] overflow-y-auto p-4">
+                <div className="min-h-0 flex-1 overflow-y-auto p-4">
                   <div className="mb-4 flex flex-wrap items-center gap-2">
                     <span className={`rounded px-2 py-1 text-xs font-bold ${
                       activeRisk.priority === 'P0' ? 'bg-red-100 text-red-700' :

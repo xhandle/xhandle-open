@@ -195,6 +195,40 @@ function parseInteractionLine(line) {
   };
 }
 
+function parseOpsLine(line) {
+  const clean = stripListMarker(line);
+  const fieldPairs = {};
+  clean.split('|').forEach((part) => {
+    const colonIndex = part.indexOf(':');
+    if (colonIndex <= 0) return;
+    const key = part.slice(0, colonIndex).trim().toLowerCase();
+    const value = part.slice(colonIndex + 1).trim();
+    fieldPairs[key] = value;
+  });
+  if (
+    fieldPairs.mode ||
+    fieldPairs.scenario ||
+    fieldPairs['scenario / mode'] ||
+    fieldPairs.description ||
+    fieldPairs.context
+  ) {
+    return {
+      mode: fieldPairs.mode || fieldPairs.scenario || fieldPairs['scenario / mode'] || '',
+      description: fieldPairs.description || fieldPairs.context || fieldPairs.details || '',
+    };
+  }
+
+  const scenarioMatch = clean.match(/^(?:mode|scenario)\s*:\s*(.+?)(?:\s*\|\s*(?:description|context|details)\s*:\s*(.+)|$)/i);
+  if (scenarioMatch) {
+    return {
+      mode: scenarioMatch[1].trim(),
+      description: scenarioMatch[2]?.trim() || '',
+    };
+  }
+
+  return splitNameAndDescription(clean);
+}
+
 function isCompleteArtifactRow(row, key) {
   if (key === 'functionalComponents') {
     return Boolean(String(row.subsystem || '').trim() && String(row.name || '').trim() && String(row.description || '').trim());
@@ -257,12 +291,9 @@ function parseArtifactRowsFromText(text, key) {
       .filter((row) => isCompleteArtifactRow(row, key));
   }
 
-  return lines.map((line) => {
-    const parsed = splitNameAndDescription(line);
-    return createArtifactRow(key, key === 'ops'
-      ? { mode: parsed.name, description: parsed.description }
-      : parsed);
-  }).filter((row) => isCompleteArtifactRow(row, key));
+  return lines
+    .map((line) => createArtifactRow(key, key === 'ops' ? parseOpsLine(line) : splitNameAndDescription(line)))
+    .filter((row) => isCompleteArtifactRow(row, key));
 }
 
 function serializeArtifactRows(rows, key) {
@@ -392,7 +423,7 @@ const COMPLETION_GUIDANCE = {
     instruction:
       'Generate a comprehensive set of operational scenarios and modes, including startup, initialization, nominal operation, automated/autonomous operation, manual override, degraded/fault operation, communication loss, emergency/abort, maintenance/test, shutdown, and recovery when applicable. These are context only, not nodes or edges.',
     format:
-      'Use grouped bullets. For each mode, include a brief phrase describing what changes in control authority, timing, configuration, or safety constraints.',
+      'Use 8-12 bullet rows. Format each item exactly as "- Mode: scenario or mode name | Description: what changes in control authority, timing, configuration, safety constraints, and recovery expectations." Do not use section headings and do not leave either field blank.',
   },
 };
 
@@ -742,12 +773,14 @@ Rules:
   const hasAICompletionStep = AI_COMPLETION_STEPS.has(current.key);
 
   return (
-    <div className="mx-auto mb-10 w-full max-w-[min(96vw,1500px)] p-5 bg-white rounded-xl border shadow">
+    <div className="mx-auto flex max-h-[calc(100dvh-340px)] min-h-[320px] w-full max-w-[min(96vw,1500px)] flex-col overflow-hidden rounded-xl border bg-white p-5 shadow">
       {/* Main wizard step */}
-      <h2 className="text-xl font-semibold mb-1">{current.label}</h2>
-      <p className="text-gray-600 text-sm mb-2">{current.question}</p>
-      <div className={`grid gap-4 ${hasAICompletionStep ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : ''}`}>
-        <div>
+      <div className="shrink-0">
+        <h2 className="text-xl font-semibold mb-1">{current.label}</h2>
+        <p className="text-gray-600 text-sm mb-2">{current.question}</p>
+      </div>
+      <div className={`grid min-h-0 flex-1 gap-4 overflow-hidden ${hasAICompletionStep ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : ''}`}>
+        <div className="min-h-0 overflow-auto pr-1">
           <textarea
             rows={4}
             className="w-full p-3 border border-gray-300 rounded focus:outline-none focus:ring resize-none whitespace-pre-wrap"
@@ -799,7 +832,7 @@ Rules:
                 Add row
               </button>
             </div>
-            <div className="max-h-[420px] overflow-auto">
+            <div className="max-h-[calc(100dvh-560px)] min-h-[180px] overflow-auto">
               <table className="min-w-full border-separate border-spacing-0 table-fixed text-sm text-left">
               <thead>
                 <tr className="text-[#4B5563] text-sm font-medium">
@@ -851,7 +884,7 @@ Rules:
         </div>
 
         {hasAICompletionStep && (
-          <aside className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-left">
+          <aside className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-amber-200 bg-amber-50 p-3 text-left">
             <div className="mb-3 flex items-center justify-between gap-2">
               <div>
                 <h3 className="text-sm font-semibold text-amber-950">Clarifications</h3>
@@ -864,7 +897,7 @@ Rules:
                 Reviewing uncertainty...
               </div>
             ) : currentClarifications.length ? (
-              <div className="max-h-[460px] space-y-3 overflow-auto pr-1">
+              <div className="min-h-0 flex-1 space-y-3 overflow-auto pr-1">
                 {currentClarifications.map((question) => (
                   <div key={question.id} className="rounded-md border border-amber-200 bg-white p-3">
                     <p className="text-sm font-medium text-gray-900">{question.question}</p>
@@ -918,7 +951,7 @@ Rules:
         )}
       </div>
 
-      <div className="flex justify-between mt-4">
+      <div className="mt-4 flex shrink-0 justify-between border-t border-gray-100 pt-4">
         <button
           onClick={handleBack}
           disabled={step === 0}
