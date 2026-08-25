@@ -1479,27 +1479,6 @@ function parseJsonObjectFromText(text) {
   return null;
 }
 
-function parseJsonArrayFromText(text) {
-  const raw = String(text || "").trim();
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
-  const candidate = fenced || raw;
-  try {
-    const parsed = JSON.parse(candidate);
-    if (Array.isArray(parsed)) return parsed;
-    if (Array.isArray(parsed?.risks)) return parsed.risks;
-    if (Array.isArray(parsed?.riskRegister)) return parsed.riskRegister;
-  } catch {}
-  const start = candidate.indexOf("[");
-  const end = candidate.lastIndexOf("]");
-  if (start >= 0 && end > start) {
-    try {
-      const parsed = JSON.parse(candidate.slice(start, end + 1));
-      if (Array.isArray(parsed)) return parsed;
-    } catch {}
-  }
-  return [];
-}
-
 function extractAIText(payload) {
   const candidates = [
     payload?.choices?.[0]?.message?.content,
@@ -3870,77 +3849,6 @@ const buildRiskRegisterFromSummary = (summary) => {
   }));
 };
 
-function clampRiskScore(value, fallback = 3) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return fallback;
-  return Math.min(5, Math.max(1, Math.round(numeric)));
-}
-
-function normalizeRiskStatus(value) {
-  const text = String(value || "").trim();
-  return ['Open','In Progress','Mitigated','Accepted','Closed'].includes(text) ? text : 'Open';
-}
-
-function normalizeRiskAssessmentRows(rows = []) {
-  return (Array.isArray(rows) ? rows : [])
-    .map((row, index) => {
-      const title = String(row?.title || row?.hazard || row?.risk || row?.name || "").trim();
-      const description = String(row?.description || row?.unsafeControlAction || row?.uca || row?.rationale || row?.summary || "").trim();
-      if (!title && !description) return null;
-      const tags = Array.isArray(row?.tags)
-        ? row.tags.map((tag) => String(tag || "").trim()).filter(Boolean).join(", ")
-        : String(row?.tags || "").trim();
-      const sourceIndexes = Array.isArray(row?.sourceIndexes)
-        ? row.sourceIndexes.map((item) => Number(item)).filter((item) => Number.isFinite(item) && item > 0)
-        : [];
-      const sourceIndex = Number(row?.sourceIndex);
-      return {
-        id: row?.id || makeId(),
-        title: title || `Risk ${index + 1}`,
-        description: description || title,
-        likelihood: clampRiskScore(row?.likelihood, 3),
-        severity: clampRiskScore(row?.severity, 3),
-        status: normalizeRiskStatus(row?.status),
-        owner: String(row?.owner || "").trim(),
-        dueDate: String(row?.dueDate || "").trim(),
-        tags,
-        sourceIndex: sourceIndexes[0] || (Number.isFinite(sourceIndex) && sourceIndex > 0 ? sourceIndex : null),
-        sourceIndexes,
-      };
-    })
-    .filter(Boolean);
-}
-
-function applyStableRiskIds(existingRows = [], consolidatedRows = []) {
-  const usedExistingIds = new Set();
-  const existingBySourceIndex = new Map();
-  (existingRows || []).forEach((row) => {
-    getRiskSourceIndexes(row).forEach((sourceIndex) => {
-      if (!existingBySourceIndex.has(sourceIndex)) existingBySourceIndex.set(sourceIndex, []);
-      existingBySourceIndex.get(sourceIndex).push(row);
-    });
-  });
-
-  return (consolidatedRows || []).map((row) => {
-    const sourceIndexes = getRiskSourceIndexes(row);
-    let bestMatch = null;
-    let bestOverlap = 0;
-    sourceIndexes.forEach((sourceIndex) => {
-      (existingBySourceIndex.get(sourceIndex) || []).forEach((candidate) => {
-        if (!candidate?.id || usedExistingIds.has(candidate.id)) return;
-        const overlap = getRiskSourceIndexes(candidate).filter((index) => sourceIndexes.includes(index)).length;
-        if (overlap > bestOverlap) {
-          bestOverlap = overlap;
-          bestMatch = candidate;
-        }
-      });
-    });
-    const nextId = bestMatch?.id || row.id || makeId();
-    usedExistingIds.add(nextId);
-    return { ...row, id: nextId };
-  });
-}
-
 function getRiskPriority(score) {
   const numeric = Number(score) || 0;
   if (numeric >= 20) return "P0";
@@ -3960,18 +3868,6 @@ function getRiskSourceIndexes(row) {
     ...indexes.map((item) => Number(item)).filter((item) => Number.isFinite(item) && item > 0),
     ...(Number.isFinite(sourceIndex) && sourceIndex > 0 ? [sourceIndex] : []),
   ])).sort((a, b) => a - b);
-}
-
-function downloadMarkdownFile(filename, markdown) {
-  const blob = new Blob([markdown || ""], { type: "text/markdown;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
 }
 
 function getSafetyIssueReportBounds(markdown, issueId) {
@@ -5300,8 +5196,7 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [showFunctionalDiagram, setShowFunctionalDiagram] = useState(true);
   const [riskMethod, setRiskMethod] = useState("STPA");
   const [projectRiskProfileGenerationMode, setProjectRiskProfileGenerationMode] = useState("standard");
-  const [isGeneratingRiskAssessment, setIsGeneratingRiskAssessment] = useState(false);
-  const [riskAssessmentReportMarkdown, setRiskAssessmentReportMarkdown] = useState("");
+	  const [riskAssessmentReportMarkdown, setRiskAssessmentReportMarkdown] = useState("");
   const [isGeneratingRiskAssessmentReport, setIsGeneratingRiskAssessmentReport] = useState(false);
   const [generatingSafetyIssueReportIds, setGeneratingSafetyIssueReportIds] = useState(new Set());
   const [selectedRiskPriority, setSelectedRiskPriority] = useState("All");
@@ -5399,34 +5294,6 @@ useEffect(() => {
     });
   }, [activeCodeArchitectureProject, activeCodeArchitectureRepo]);
 
-
-// Map labels dynamically to match the analysis / functional decomposition
-const CANDIDATE_LABELS = {
-  hazard: ['Hazard','Hazards','Failure Mode','Risk','Risk Title','What-If','Scenario','Event'],
-  uca: ['Unsafe Control Actions','Unsafe Control Action','UCA','Effect','Cause','Causal Factor','Causal Factors','What-If Detail','Consequence','Description'],
-};
-
-const availableSummaryHeaders = useMemo(() => {
-  const firstRow = Array.isArray(analysisResult?.Summary) && analysisResult.Summary.length > 0
-    ? analysisResult.Summary[0]
-    : null;
-  return firstRow ? new Set(firstRow.map(String)) : new Set();
-}, [analysisResult]);
-
-function pickLabel(candidates, fallback) {
-  for (const c of candidates) if (availableSummaryHeaders.has(c)) return c;
-  return fallback;
-}
-
-const hazardLabel = useMemo(
-  () => pickLabel(CANDIDATE_LABELS.hazard, 'Hazard'),
-  [availableSummaryHeaders]
-);
-
-const ucaLabel = useMemo(
-  () => pickLabel(CANDIDATE_LABELS.uca, 'Unsafe Control Actions'),
-  [availableSummaryHeaders]
-);
 
   // Dropdown outside click
   useEffect(() => {
@@ -5842,7 +5709,6 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       rows: generatedDraftRows,
     };
   }, [analysisResult, draftHazardHeaders, draftHazardSummaryRows]);
-  const canGenerateRiskAssessment = riskAssessmentSource.rows.length > 0;
   const riskAssessmentSourceRowsByIndex = useMemo(() => {
     const map = new Map();
     riskAssessmentSource.rows.forEach((entry) => {
@@ -7190,7 +7056,7 @@ Rules:
   };
 
   const handleRegenerateActiveSafetyIssueReport = async () => {
-    if (!activeRisk || activeRisk.reportGenerating || isGeneratingRiskAssessment || isGeneratingRiskAssessmentReport) return;
+	    if (!activeRisk || activeRisk.reportGenerating || isGeneratingRiskAssessmentReport) return;
     setGeneratingSafetyIssueReportIds((prev) => new Set([...prev, activeRisk.id]));
     try {
       const nextSection = await fetchSafetyIssueReportSection(activeRisk);
@@ -7222,6 +7088,7 @@ Rules:
     }
   };
 
+  // eslint-disable-next-line no-unused-vars
   const generateSafetyIssueReportsMarkdown = async (rowsForReport = riskRegister) => {
     const risksForReport = (rowsForReport || [])
       .map((risk) => {
@@ -7443,103 +7310,6 @@ Rules:
     } finally {
       setIsGeneratingRiskAssessmentReport(false);
       setGeneratingSafetyIssueReportIds(new Set());
-    }
-  };
-
-  const handleGenerateRiskAssessment = async () => {
-    if (!canGenerateRiskAssessment || isGeneratingRiskAssessment || isGeneratingRiskAssessmentReport) return;
-    setIsGeneratingRiskAssessment(true);
-    try {
-      const compactHazardRows = riskAssessmentSource.rows.map(({ sourceIndex, values }) => {
-        const rowObject = { sourceIndex };
-        riskAssessmentSource.headers.forEach((header, index) => {
-          const value = values?.[index];
-          if (value !== undefined && value !== null && String(value).trim()) {
-            rowObject[header || `Column ${index + 1}`] = String(value).trim();
-          }
-        });
-        return rowObject;
-      });
-      const prompt = `
-You are consolidating a project hazard analysis into actionable safety issues for the risk assessment workspace.
-
-Input source: ${riskAssessmentSource.source === "completed" ? "completed hazard analysis summary" : "generated draft hazard rows"}
-Selected hazard method: ${riskMethod}
-Total hazard rows supplied: ${compactHazardRows.length}
-
-Complete hazard row list:
-${JSON.stringify(compactHazardRows, null, 2)}
-
-Create a complete consolidated safety issue register from the entire hazard row list:
-- Analyze the full set of hazard rows together before deciding groups. Do not consolidate one row at a time.
-- Use the entire supplied hazard list as the source of truth for determining which safety issues exist, how hazard rows group together, and how priorities should be assigned.
-- Consolidate duplicate, overlapping, or closely related hazard rows into one safety issue when they share the same unsafe state, causal chain, affected function/subsystem, mitigation theme, requirement gap, or credible accident path.
-- Do not copy the hazard table row-for-row unless the rows truly represent distinct safety issues.
-- Preserve traceability by including sourceIndexes for every hazard row represented by each consolidated safety issue.
-- Every supplied sourceIndex from the complete hazard row list must appear in exactly one consolidated safety issue unless the row is unusable; if unusable, include it in the closest issue and note the uncertainty in description.
-- Use concise, engineering-specific safety issue titles.
-- Put the hazardous condition, unsafe control action/failure mode, affected functions/subsystems, and mitigation/requirement rationale in description.
-- Score likelihood and severity from 1 to 5 using the full hazard evidence across all source rows in the consolidated issue. Use 3 when evidence is insufficient.
-- Prioritize comparatively across the complete list: P0-equivalent issues should have the highest severity/likelihood combination, P1/P2 should reflect meaningful but lower urgency, and P3+ should be lower-priority residual or localized concerns.
-- Use status "Open" unless the evidence clearly indicates the issue is already mitigated or accepted.
-- Keep owner and dueDate empty unless explicitly stated.
-- Use tags for method, subsystem/allocation, hazard family, or mitigation theme.
-- Return strict JSON only.
-
-Return this schema:
-[
-  {
-    "title": "Concise safety issue title",
-    "description": "Consolidated safety issue description",
-    "likelihood": 3,
-    "severity": 4,
-    "status": "Open",
-    "owner": "",
-    "dueDate": "",
-    "tags": ["STPA", "Guidance"],
-    "sourceIndexes": [1, 3]
-  }
-]
-      `.trim();
-      const response = await fetch(`${backendURL}/api/chat`, {
-        method: "POST",
-        ...buildAIAuthOpts({ "Content-Type": "application/json" }),
-        body: JSON.stringify({
-          model: "gpt-4o",
-          messages: [
-            { role: "system", content: "Return only strict JSON. No prose or markdown." },
-            { role: "user", content: prompt },
-          ],
-          temperature: 0.2,
-          max_tokens: 2500,
-        }),
-      });
-      if (!response.ok) throw new Error(`Risk assessment AI HTTP ${response.status}`);
-      const content = extractAIText(await response.json());
-      const generated = normalizeRiskAssessmentRows(parseJsonArrayFromText(content));
-      if (!generated.length) throw new Error("The AI returned no usable safety issue rows.");
-      const suppliedSourceIndexes = new Set(compactHazardRows.map((row) => Number(row.sourceIndex)).filter((index) => Number.isFinite(index) && index > 0));
-      const coveredSourceIndexes = new Set(generated.flatMap((row) => getRiskSourceIndexes(row)));
-      const missingSourceIndexes = Array.from(suppliedSourceIndexes).filter((index) => !coveredSourceIndexes.has(index));
-      if (missingSourceIndexes.length) {
-        console.warn("[risk-assessment] Consolidation response omitted hazard source rows", missingSourceIndexes);
-      }
-      const nextRows = applyStableRiskIds(riskRegister, generated);
-      setRiskRegister(nextRows);
-      if (activeProjectId) saveProjectPatch(activeProjectId, { riskRegister: nextRows });
-      setIsGeneratingRiskAssessment(false);
-      const markdown = await generateSafetyIssueReportsMarkdown(nextRows);
-      if (activeProjectId && markdown) {
-        saveProjectPatch(activeProjectId, {
-          riskRegister: nextRows,
-          riskAssessmentReportMarkdown: markdown,
-        });
-      }
-    } catch (error) {
-      console.error("[risk-assessment] AI risk assessment generation failed", error);
-      window.alert(error?.message || "Unable to generate the risk assessment. Check your AI provider settings and try again.");
-    } finally {
-      setIsGeneratingRiskAssessment(false);
     }
   };
 
@@ -11411,99 +11181,7 @@ const projectHint = useMemo(() => ({
 
 {activeTab === 'Safety Issues & Risk Assessment' && (
   <section className="mt-2 flex min-h-0 flex-col space-y-4">
-    <div className="flex flex-wrap items-center gap-2">
-        <button
-          onClick={() => setRiskRegister(prev => ([
-            ...prev,
-            {
-              id: makeId(),
-              title: `New Hazard ${prev.length + 1}`,
-              description: '',
-              likelihood: 3,
-              severity: 3,
-              status: 'Open',
-              owner: '',
-              dueDate: '',
-              tags: '',
-              sourceIndex: null,
-            }
-          ]))}
-          className="px-3 py-2 text-white rounded bg-[#2D7DFE] hover:bg-[#1E61D6] text-sm"
-        >
-          + Add Safety Issue
-        </button>
-
-        <button
-          onClick={handleGenerateRiskAssessment}
-          className="inline-flex items-center gap-2 px-3 py-2 text-white rounded bg-[#0F766E] hover:bg-[#115E59] text-sm disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={!canGenerateRiskAssessment || isGeneratingRiskAssessment || isGeneratingRiskAssessmentReport}
-          title={canGenerateRiskAssessment ? 'Use AI to consolidate hazard analysis rows into safety issues and generate Safety Issue Reports' : 'Generate hazard analysis rows first'}
-        >
-          <Sparkles size={16} aria-hidden="true" />
-          {isGeneratingRiskAssessment
-            ? 'Generating safety issues...'
-            : isGeneratingRiskAssessmentReport
-              ? 'Writing Safety Issue Reports...'
-              : 'AI Generate Safety Issues'}
-        </button>
-
-        <button
-          onClick={() => {
-            const headers = [hazardLabel, ucaLabel, 'Likelihood','Severity','Priority','Status','Owner','Due Date','Tags','SourceIndex'];
-            const rows = riskRegister.map(r => [
-              r.title,
-              r.description,
-              r.likelihood,
-              r.severity,
-              (Number(r.likelihood)||0) * (Number(r.severity)||0),
-              r.status,
-              r.owner,
-              r.dueDate,
-              r.tags,
-              r.sourceIndex ?? ''
-            ]);
-            const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-            const csv = [headers, ...rows].map(r => r.map(esc).join(',')).join('\r\n');
-            const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url; a.download = `risk_register_${new Date().toISOString().slice(0,10)}.csv`;
-            document.body.appendChild(a); a.click(); a.remove();
-            URL.revokeObjectURL(url);
-          }}
-          className="px-3 py-2 text-white rounded bg-[#10B981] hover:bg-[#059669] text-sm"
-          title="Export safety issue register as CSV"
-        >
-          Export CSV
-        </button>
-
-        <button
-          onClick={() => downloadMarkdownFile(`safety_issue_reports_${new Date().toISOString().slice(0,10)}.md`, riskAssessmentReportMarkdown)}
-          className="inline-flex items-center gap-2 px-3 py-2 rounded border border-gray-200 bg-white text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={!riskAssessmentReportMarkdown.trim()}
-          title="Download the editable Safety Issue Reports as Markdown"
-        >
-          <Download size={16} aria-hidden="true" />
-          Export MD
-        </button>
-
-      </div>
-
-      {riskRegister.length === 0 ? (
-        <div className="rounded-xl border bg-white p-6 text-gray-600 text-sm">
-          <p className="mb-2">No safety issues yet for this project.</p>
-          {analysisResult?.Summary ? (
-            <p>
-              Click <span className="font-medium">AI Generate Safety Issues</span> to consolidate the hazard analysis into safety issues,
-              or click <span className="font-medium">+ Add Safety Issue</span> to create one manually.
-            </p>
-          ) : (
-            <p>
-              Click <span className="font-medium">+ Add Safety Issue</span> to create one manually. To generate with AI, create hazard analysis rows first.
-            </p>
-          )}
-        </div>
-      ) : (
+      {riskRegister.length > 0 && (
         <>
           <div className={`relative min-h-0 transition-[padding] duration-300 ${showSafetyIssueReportDrawer && !isSafetyIssueReportFullscreen ? '2xl:pr-[700px]' : ''}`}>
           <div className="grid h-[calc(100dvh-265px)] min-h-0 grid-cols-1 gap-4 overflow-hidden xl:grid-cols-[360px_minmax(0,1fr)]">
@@ -11762,7 +11440,7 @@ const projectHint = useMemo(() => ({
                   <button
                     type="button"
                     onClick={handleRegenerateActiveSafetyIssueReport}
-                    disabled={!activeRisk || activeRisk.reportGenerating || isGeneratingRiskAssessment || isGeneratingRiskAssessmentReport}
+	                    disabled={!activeRisk || activeRisk.reportGenerating || isGeneratingRiskAssessmentReport}
                     className="inline-flex items-center gap-1.5 rounded-md border border-[#2D7DFE]/30 bg-white px-2 py-1.5 text-xs font-medium text-[#1c5fde] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
                     title={activeRisk ? 'Regenerate this Safety Issue Report' : 'Select a safety issue first'}
                     aria-label="Regenerate selected Safety Issue Report"
