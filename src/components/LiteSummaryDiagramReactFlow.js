@@ -602,8 +602,9 @@ const GroupBoxNode = ({ data, selected }) => {
       <NodeResizer
         minWidth={GROUP.minW}
         minHeight={GROUP.minH}
+        onResizeStart={(_, params) => data.onResizeStart?.(params)}
         onResize={(_, params) => data.onResize?.(params)}
-        onResizeEnd={(_, params) => data.onResize?.(params)}
+        onResizeEnd={(_, params) => data.onResizeEnd?.(params)}
         lineStyle={{ borderColor: rgba(brandColor, 0.45), borderWidth: 1, pointerEvents: 'auto' }}
         handleStyle={{
           width: 10,
@@ -1629,6 +1630,7 @@ const DiagramBody = forwardRef(function DiagramBody(
   const saveTimer = useRef(null);
   const resizeFrameRef = useRef(null);
   const pendingGroupResizeRef = useRef(new Map());
+  const groupResizeSessionRef = useRef(new Map());
   const groupBoxesRef = useRef(groupBoxes);
   const deletedAutoGroupIdsRef = useRef(deletedAutoGroupIds);
   const edgeAggregationRef = useRef(edgeAggregation);
@@ -1668,8 +1670,14 @@ const DiagramBody = forwardRef(function DiagramBody(
         if (!nextSize) return box;
         const width = nextSize.width;
         const height = nextSize.height;
-        if (width === (box.width || GROUP.w) && height === (box.height || GROUP.h)) return box;
-        return { ...box, width, height, userResized: true };
+        const position = nextSize.position || box.position;
+        if (
+          width === (box.width || GROUP.w) &&
+          height === (box.height || GROUP.h) &&
+          position?.x === box.position?.x &&
+          position?.y === box.position?.y
+        ) return box;
+        return { ...box, position, width, height, userResized: true };
       });
       groupBoxesRef.current = nextBoxes;
       if (updateState) setGroupBoxes(nextBoxes);
@@ -1917,23 +1925,58 @@ useEffect(() => {
     if (!Number.isFinite(rawWidth) || !Number.isFinite(rawHeight)) return;
     const width = Math.max(GROUP.minW, Math.round(rawWidth));
     const height = Math.max(GROUP.minH, Math.round(rawHeight));
+    const currentBox = groupBoxesRef.current.find((box) => box.id === id);
+    const resizeSession = groupResizeSessionRef.current.get(id);
+    const baselineBox = resizeSession?.startBox || currentBox;
+    const rawX = Number(dimensions.x);
+    const rawY = Number(dimensions.y);
+    const position = {
+      x: Number.isFinite(rawX) ? Math.round(rawX) : (baselineBox?.position?.x ?? 0),
+      y: Number.isFinite(rawY) ? Math.round(rawY) : (baselineBox?.position?.y ?? 0),
+    };
+    const resizedBox = {
+      ...(baselineBox || {}),
+      id,
+      position,
+      width,
+      height,
+    };
 
     pendingGroupResizeRef.current.set(id, {
       width,
       height,
+      position,
     });
-    setNodes((nds) => nds.map((node) => (
-      node.id === id
-        ? {
-            ...node,
-            style: {
-              ...(node.style || {}),
-              width,
-              height,
-            },
-          }
-        : node
-    )));
+    setNodes((nds) => nds.map((node) => {
+      if (node.id === id) {
+        return {
+          ...node,
+          position,
+          style: {
+            ...(node.style || {}),
+            width,
+            height,
+          },
+        };
+      }
+      if (node.parentNode !== id || node.type === 'groupBox') return node;
+      const absolutePosition = resizeSession?.childAbsolutePositions?.get(node.id) || {
+        x: (baselineBox?.position?.x ?? 0) + (node.position?.x ?? GROUP.padX),
+        y: (baselineBox?.position?.y ?? 0) + (node.position?.y ?? GROUP.padTop),
+      };
+      const nextPosition = clampToGroup(
+        {
+          x: absolutePosition.x - position.x,
+          y: absolutePosition.y - position.y,
+        },
+        resizedBox
+      );
+      posRef.current.set(node.id, { position: nextPosition, parentId: id });
+      return {
+        ...node,
+        position: nextPosition,
+      };
+    }));
 
     if (resizeFrameRef.current) return;
 
@@ -1941,6 +1984,43 @@ useEffect(() => {
       flushGroupResizeAndPersistence();
     });
   }, [flushGroupResizeAndPersistence, setNodes]);
+
+  const startGroupResize = useCallback((id, dimensions = {}) => {
+    if (!id) return;
+    const currentBox = groupBoxesRef.current.find((box) => box.id === id);
+    const rawX = Number(dimensions.x);
+    const rawY = Number(dimensions.y);
+    const rawWidth = Number(dimensions.width);
+    const rawHeight = Number(dimensions.height);
+    const startBox = {
+      ...(currentBox || {}),
+      id,
+      position: {
+        x: Number.isFinite(rawX) ? Math.round(rawX) : (currentBox?.position?.x ?? 0),
+        y: Number.isFinite(rawY) ? Math.round(rawY) : (currentBox?.position?.y ?? 0),
+      },
+      width: Number.isFinite(rawWidth) ? Math.max(GROUP.minW, Math.round(rawWidth)) : (currentBox?.width || GROUP.w),
+      height: Number.isFinite(rawHeight) ? Math.max(GROUP.minH, Math.round(rawHeight)) : (currentBox?.height || GROUP.h),
+    };
+    const childAbsolutePositions = new Map();
+    getNodes().forEach((node) => {
+      if (node.parentNode !== id || node.type === 'groupBox') return;
+      childAbsolutePositions.set(node.id, {
+        x: startBox.position.x + (node.position?.x ?? GROUP.padX),
+        y: startBox.position.y + (node.position?.y ?? GROUP.padTop),
+      });
+    });
+    groupResizeSessionRef.current.set(id, {
+      startBox,
+      childAbsolutePositions,
+    });
+  }, [getNodes]);
+
+  const endGroupResize = useCallback((id, dimensions) => {
+    queueGroupResizeUpdate(id, dimensions);
+    groupResizeSessionRef.current.delete(id);
+    flushGroupResizeAndPersistence();
+  }, [flushGroupResizeAndPersistence, queueGroupResizeUpdate]);
 
   const exportDiagramJson = useCallback(() => {
     const exportedAt = new Date().toISOString();
@@ -2311,7 +2391,7 @@ useEffect(() => {
         }
         if (c.type === 'dimensions' && c.id && c.dimensions) {
           const targetBox = groupBoxes.find((box) => box.id === c.id);
-          if (targetBox) {
+          if (targetBox && !groupResizeSessionRef.current.has(c.id)) {
             queueGroupResizeUpdate(c.id, c.dimensions);
           }
         }
@@ -2419,7 +2499,9 @@ const groupNodes = groupBoxes.map((box) => ({
     label: box.label,
     description: box.description || '',
     brandColor: box.brandColor || BRAND.purple,
+    onResizeStart: (dimensions) => startGroupResize(box.id, dimensions),
     onResize: (dimensions) => queueGroupResizeUpdate(box.id, dimensions),
+    onResizeEnd: (dimensions) => endGroupResize(box.id, dimensions),
   },
   zIndex: 0,
   style: {
@@ -2582,7 +2664,7 @@ if (nextFunctionalNodes.length > 1) {
 }
     }
     return () => { cancelled = true; };
-  }, [rows, persistSoon, nodes, setNodes, setEdges, runCleanAndSpread, groupBoxes, queueGroupResizeUpdate, storageReady]);
+  }, [rows, persistSoon, nodes, setNodes, setEdges, runCleanAndSpread, groupBoxes, startGroupResize, queueGroupResizeUpdate, endGroupResize, storageReady]);
 
   useEffect(() => {
     if (!storageReady) return;
