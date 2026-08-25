@@ -488,7 +488,8 @@ return nextUpdatedSheets;
 export async function generateMitigationStrategiesSheet({
   sheets,
   setFolders,
-  currentFolder
+  currentFolder,
+  omitConsolidatedRequirement = false,
 }) {
   const causalSheet = sheets["Causal Factors"];
   if (!causalSheet || causalSheet.length < 2) {
@@ -545,7 +546,8 @@ export async function generateMitigationStrategiesSheet({
   const nextUpdatedSheets = await generateSystemRequirementsSheet({
     sheets: updatedSheets,
     setFolders,
-    currentFolder
+    currentFolder,
+    omitConsolidatedRequirement,
   });
   
   return nextUpdatedSheets;
@@ -555,7 +557,8 @@ export async function generateMitigationStrategiesSheet({
 export async function generateSystemRequirementsSheet({
   sheets,
   setFolders,
-  currentFolder
+  currentFolder,
+  omitConsolidatedRequirement = false,
 }) 
 
 {
@@ -602,7 +605,10 @@ ${mitigation}
       ...updatedSheets,
     },
   }));
-  
+
+  if (omitConsolidatedRequirement) {
+    return updatedSheets;
+  }
 
   // ✅ THEN generate the batched sheet
   const nextUpdatedSheets = await generateBatchedRequirementsSheet({
@@ -757,7 +763,8 @@ for (const item of parsed) {
 export async function generateHazardMappingsSheet({
   sheets,
   setFolders,
-  currentFolder
+  currentFolder,
+  omitConsolidatedRequirement = false,
 }) {
   const ucaSheet = sheets["Causal Factors"];
   if (!ucaSheet || ucaSheet.length < 2) {
@@ -815,7 +822,8 @@ ${uca}
   const nextUpdatedSheets = await generateLossMappingsSheet({
     sheets: updatedSheets,
     setFolders,
-    currentFolder
+    currentFolder,
+    omitConsolidatedRequirement,
   });
   
   return nextUpdatedSheets;
@@ -826,7 +834,8 @@ ${uca}
 export async function generateLossMappingsSheet({
   sheets,
   setFolders,
-  currentFolder
+  currentFolder,
+  omitConsolidatedRequirement = false,
 }) {
   const hazardSheet = sheets["Hazard Mappings"];
   if (!hazardSheet || hazardSheet.length < 2) {
@@ -896,7 +905,8 @@ List each loss on a new line. Do not explain or add commentary.
   const nextUpdatedSheets = await generateSummarySheetFromMappings({
     sheets: updatedSheets,
     setFolders,
-    currentFolder
+    currentFolder,
+    omitConsolidatedRequirement,
   });
   
   return nextUpdatedSheets;
@@ -1131,7 +1141,8 @@ export async function generateSummarySheetFromMappings({
 export async function generateTextbookSummarySheetFromMappings({
   sheets,
   setFolders,
-  currentFolder
+  currentFolder,
+  omitConsolidatedRequirement = false,
 }) {
   const causalFactorsSheet = sheets["Causal Factors (Textbook)"];
   const hazardSheet = sheets["Hazard Mappings"];
@@ -1146,7 +1157,9 @@ export async function generateTextbookSummarySheetFromMappings({
     "Loss Mappings": !!lossSheet && lossSheet.length >= 2,
     "Mitigation Strategies": !!mitigationSheet && mitigationSheet.length >= 2,
     "System Requirements": !!systemReqSheet && systemReqSheet.length >= 2,
-    "Consolidated Requirements": !!consolidatedReqSheet && consolidatedReqSheet.length >= 2,
+    ...(!omitConsolidatedRequirement
+      ? { "Consolidated Requirements": !!consolidatedReqSheet && consolidatedReqSheet.length >= 2 }
+      : {}),
   };
 
   const missingSheets = Object.entries(sheetStatus)
@@ -1207,11 +1220,13 @@ export async function generateTextbookSummarySheetFromMappings({
     }
   }
 
-  for (let i = 1; i < consolidatedReqSheet.length; i++) {
-    const original = sanitizeText(getCellText(consolidatedReqSheet[i][0]));
-    const consolidated = sanitizeText(getCellText(consolidatedReqSheet[i][1]));
-    if (original && consolidated && !systemReqToConsolidated.has(normalizeText(original))) {
-      systemReqToConsolidated.set(normalizeText(original), consolidated);
+  if (!omitConsolidatedRequirement && consolidatedReqSheet) {
+    for (let i = 1; i < consolidatedReqSheet.length; i++) {
+      const original = sanitizeText(getCellText(consolidatedReqSheet[i][0]));
+      const consolidated = sanitizeText(getCellText(consolidatedReqSheet[i][1]));
+      if (original && consolidated && !systemReqToConsolidated.has(normalizeText(original))) {
+        systemReqToConsolidated.set(normalizeText(original), consolidated);
+      }
     }
   }
 
@@ -1225,7 +1240,9 @@ export async function generateTextbookSummarySheetFromMappings({
     const mitigation = mitigationMap.get(uca) || "";
     const rawSystemReq = mitigation ? mitigationToSystemReq.get(mitigation) : "";
     const safetyConstraint = rawSystemReq
-      ? (systemReqToConsolidated.get(normalizeText(rawSystemReq)) || rawSystemReq)
+      ? (!omitConsolidatedRequirement
+          ? (systemReqToConsolidated.get(normalizeText(rawSystemReq)) || rawSystemReq)
+          : rawSystemReq)
       : "(safety requirement/constraint not found)";
 
     for (const loss of losses) {

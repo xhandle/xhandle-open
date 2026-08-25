@@ -1647,9 +1647,22 @@ const DiagramBody = forwardRef(function DiagramBody(
     ])).sort((a, b) => a - b);
   }, []);
 
-  const getRiskScore = useCallback((risk) => (
-    (Number(risk?.likelihood) || 0) * (Number(risk?.severity) || 0)
-  ), []);
+  const getRiskScore = useCallback((risk) => {
+    const likelihood = Number(risk?.likelihood) || 0;
+    const severity = Number(risk?.severity) || 0;
+    const computedScore = likelihood * severity;
+    return computedScore || Number(risk?.score) || 0;
+  }, []);
+
+  const getRiskPriority = useCallback((risk, score) => {
+    const explicitPriority = String(risk?.priority || '').trim().toUpperCase();
+    if (['P0', 'P1', 'P2', 'P3+'].includes(explicitPriority)) return explicitPriority;
+    const numeric = Number(score) || getRiskScore(risk);
+    if (numeric >= 20) return 'P0';
+    if (numeric >= 15) return 'P1';
+    if (numeric >= 9) return 'P2';
+    return 'P3+';
+  }, [getRiskScore]);
 
   const normalizeAssociationText = useCallback((value) => (
     String(value || '').trim().toLowerCase().replace(/\s+/g, ' ')
@@ -1752,14 +1765,18 @@ const DiagramBody = forwardRef(function DiagramBody(
     if (!Array.isArray(riskRegister) || !riskRegister.length || !editHazardRows.length) return [];
     const hazardSourceIndexes = new Set(editHazardRows.map(({ sourceIndex }) => sourceIndex + 1));
     return riskRegister
-      .map((risk) => ({
-        ...risk,
-        sourceIndexes: getRiskSourceIndexes(risk),
-        score: getRiskScore(risk),
-      }))
+      .map((risk) => {
+        const score = getRiskScore(risk);
+        return {
+          ...risk,
+          sourceIndexes: getRiskSourceIndexes(risk),
+          score,
+          priority: getRiskPriority(risk, score),
+        };
+      })
       .filter((risk) => risk.sourceIndexes.some((sourceIndex) => hazardSourceIndexes.has(sourceIndex)))
       .sort((a, b) => b.score - a.score);
-  }, [editHazardRows, getRiskScore, getRiskSourceIndexes, riskRegister]);
+  }, [editHazardRows, getRiskPriority, getRiskScore, getRiskSourceIndexes, riskRegister]);
 
   const clearBrowserTextSelection = useCallback(() => {
     try {

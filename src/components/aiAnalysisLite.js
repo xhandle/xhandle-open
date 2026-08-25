@@ -450,6 +450,7 @@ export async function runLiteAIAnalysis({
       sheets: updatedSheets,
       setFolders,
       currentFolder,
+      omitConsolidatedRequirement,
     })) || updatedSheets;
 
     step = 5;
@@ -458,6 +459,7 @@ export async function runLiteAIAnalysis({
       sheets: updatedSheets,
       setFolders,
       currentFolder,
+      omitConsolidatedRequirement,
     })) || updatedSheets;
 
     if (!omitConsolidatedRequirement) {
@@ -476,6 +478,7 @@ export async function runLiteAIAnalysis({
       sheets: updatedSheets,
       setFolders,
       currentFolder,
+      omitConsolidatedRequirement,
     })) || updatedSheets;
 
     step = 8;
@@ -484,6 +487,7 @@ export async function runLiteAIAnalysis({
       sheets: updatedSheets,
       setFolders,
       currentFolder,
+      omitConsolidatedRequirement,
     })) || updatedSheets;
 
     step = 9;
@@ -492,6 +496,7 @@ export async function runLiteAIAnalysis({
       sheets: updatedSheets,
       setFolders,
       currentFolder,
+      omitConsolidatedRequirement,
     })) || updatedSheets;
 
   } else if (hazardMethod === "HARA") {
@@ -593,6 +598,7 @@ export async function runLiteAIAnalysis({
       sheets: updatedSheets,
       setFolders,
       currentFolder,
+      omitConsolidatedRequirement,
     })) || updatedSheets;
 
     step = 5;
@@ -601,6 +607,7 @@ export async function runLiteAIAnalysis({
       sheets: updatedSheets,
       setFolders,
       currentFolder,
+      omitConsolidatedRequirement,
     })) || updatedSheets;
 
     if (!omitConsolidatedRequirement) {
@@ -619,6 +626,7 @@ export async function runLiteAIAnalysis({
       sheets: updatedSheets,
       setFolders,
       currentFolder,
+      omitConsolidatedRequirement,
     })) || updatedSheets;
 
     step = 8;
@@ -627,6 +635,7 @@ export async function runLiteAIAnalysis({
       sheets: updatedSheets,
       setFolders,
       currentFolder,
+      omitConsolidatedRequirement,
     })) || updatedSheets;
 
     step = 9;

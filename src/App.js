@@ -5238,7 +5238,7 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
       }
     },
     STPA: { total: 9, steps: { 1:"Identifying unsafe control actions...",2:"Populating hazard timing columns...",3:"Identifying causal factors...",4:"Generating mitigation strategies...",5:"Deriving system requirements...",6:"Consolidating requirements...",7:"Mapping hazards to behaviors...",8:"Linking losses to hazards...",9:"Compiling safety summary..." } },
-    "STPA-Textbook": { total: 9, steps: { 1:"Identifying unsafe control actions...",2:"Populating STPA control contexts...",3:"Identifying textbook causal factors...",4:"Generating safety constraints...",5:"Deriving safety requirements...",6:"Consolidating safety requirements...",7:"Mapping hazards to unsafe control actions...",8:"Linking losses to hazards...",9:"Compiling STPA traceability matrix..." } },
+    "STPA-Textbook": { total: 9, steps: { 1:"Identifying unsafe control actions...",2:"Populating STPA control contexts...",3:"Identifying textbook causal factors...",4:"Generating safety constraints...",5:"Deriving safety requirements...",6:"Preparing hazard traceability...",7:"Mapping hazards to unsafe control actions...",8:"Linking losses to hazards...",9:"Compiling STPA traceability matrix..." } },
     FMEA: { total: 9, steps: { 1:"Seeding failure mode candidates...",2:"Analyzing effects and causes...",3:"Extracting causal factors...",4:"Generating mitigation strategies...",5:"Deriving system requirements...",6:"Consolidating requirements...",7:"Mapping hazards to failure effects...",8:"Linking losses to hazards...",9:"Compiling safety summary..." } },
     "FMEA-Textbook": { total: 9, steps: { 1:"Seeding textbook failure modes...",2:"Analyzing textbook effects and causes...",3:"Extracting textbook causal factors...",4:"Generating recommended controls...",5:"Deriving design requirements...",6:"Consolidating requirements...",7:"Mapping failure modes to hazards...",8:"Linking losses to hazards...",9:"Compiling textbook FMEA summary..." } },
     HARA: { total: 9, steps: { 1:"Preparing HARA item/function context...",2:"Identifying hazardous events and S/E/C ratings...",3:"Reviewing controllability rationale...",4:"Assigning ASIL classifications...",5:"Deriving safety goals...",6:"Consolidating HARA rows...",7:"Mapping hazards to potential harm...",8:"Checking HARA traceability...",9:"Compiling HARA summary..." } },
@@ -6791,6 +6791,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       setChatResponse: () => {},
       setProgress,              // keeps your UI updated
       hazardMethod: selectedMethod,
+      omitConsolidatedRequirement: true,
       ...(usesProjectRiskProfileGenerationMode
         ? { hazardGenerationMode: selectedGenerationMode, fhaGenerationMode: selectedGenerationMode }
         : {}),
