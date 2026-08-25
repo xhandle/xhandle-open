@@ -4005,6 +4005,38 @@ function replaceSafetyIssueReportMarkdown(markdown, issueId, nextIssueMarkdown) 
   ].join("");
 }
 
+function buildFallbackSafetyIssueEvidenceRow(item = {}) {
+  const cells = item.cells || {};
+  return {
+    sourceIndex: item.sourceIndex,
+    hazardUnsafeCondition: Object.entries(cells).slice(0, 2).map(([label, value]) => `${label}: ${value}`).join("; "),
+    affectedFunctionOrSubsystem: Object.entries(cells).find(([label]) => /function|subsystem|component|allocation/i.test(label))?.[1] || "",
+    controlActionOrFailureMode: Object.entries(cells).find(([label]) => /control|action|failure|unsafe/i.test(label))?.[1] || "",
+    whyThisMatters: "This source row is part of the hazard-analysis evidence consolidated into the safety issue.",
+  };
+}
+
+function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
+  const rowsBySourceIndex = new Map();
+  (Array.isArray(keyEvidenceRows) ? keyEvidenceRows : []).forEach((row) => {
+    const sourceIndex = Number(row?.sourceIndex);
+    if (Number.isFinite(sourceIndex) && sourceIndex > 0) rowsBySourceIndex.set(sourceIndex, row);
+  });
+  (issue.evidence || []).forEach((item) => {
+    const sourceIndex = Number(item?.sourceIndex);
+    if (!Number.isFinite(sourceIndex) || sourceIndex <= 0 || rowsBySourceIndex.has(sourceIndex)) return;
+    rowsBySourceIndex.set(sourceIndex, buildFallbackSafetyIssueEvidenceRow(item));
+  });
+  return (issue.sourceIndexes || [])
+    .map((sourceIndex) => rowsBySourceIndex.get(Number(sourceIndex)) || {
+      sourceIndex,
+      hazardUnsafeCondition: "Linked hazard-analysis source row.",
+      affectedFunctionOrSubsystem: "",
+      controlActionOrFailureMode: "",
+      whyThisMatters: "This linked source row is part of the consolidated safety issue and should be reviewed with the complete hazard table.",
+    });
+}
+
   // Collapsible state for sidebar projects
   const [isProjectsOpen, setIsProjectsOpen] = useState(() => {
     const saved = localStorage.getItem(PROJECTS_OPEN_KEY);
@@ -6992,6 +7024,193 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     }
   };
 
+  const renderSafetyIssueReportSection = (issue, parsedReport = {}) => {
+    const mdCell = (value) => String(value ?? "").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
+    const sourceLinks = (indexes = []) => indexes.length
+      ? indexes.map((index) => `[Source Row ${index}](#hazard-source-row-${index})`).join(", ")
+      : "Not linked";
+    const listBlock = (value) => {
+      const items = Array.isArray(value) ? value : [value];
+      return items
+        .map((item) => String(item || "").trim())
+        .filter(Boolean)
+        .map((item) => `- ${item}`)
+        .join("\n") || "- Not specified in the available evidence.";
+    };
+    const report = {
+      executiveSummary: parsedReport?.executiveSummary || `This ${issue.priority} safety issue consolidates hazard-analysis evidence related to ${issue.title}.`,
+      observedConditionType: /implementation/i.test(parsedReport?.observedConditionType) ? "Implementation" : "System",
+      observedCondition: parsedReport?.observedCondition || issue.description || "No observed condition was returned.",
+      keyEvidenceRows: Array.isArray(parsedReport?.keyEvidenceRows) ? parsedReport.keyEvidenceRows : [],
+      safetySignificance: parsedReport?.safetySignificance || "Safety significance should be reviewed against the linked hazard-analysis evidence.",
+      existingControlsMitigations: parsedReport?.existingControlsMitigations || "No explicit controls or mitigations were identified in the available evidence.",
+      uncertaintySystemBoundary: parsedReport?.uncertaintySystemBoundary || "Assumptions and boundary conditions should be confirmed during review.",
+      recommendedEngineeringAction: parsedReport?.recommendedEngineeringAction || "Define and assign mitigation actions proportional to the priority of this safety issue.",
+      recommendedVerification: parsedReport?.recommendedVerification || "Verify mitigations with targeted analysis, review, and testing tied to the source evidence.",
+      finalAssessment: parsedReport?.finalAssessment || "Open pending engineering disposition and verification.",
+    };
+    const evidenceRows = completeSafetyIssueEvidenceRows(issue, report.keyEvidenceRows);
+    const evidenceTable = [
+      "| Evidence Link | Hazard/Unsafe Condition | Affected Function or Subsystem | Control Action or Failure Mode | Why This Matters |",
+      "| --- | --- | --- | --- | --- |",
+      ...evidenceRows.map((row) => {
+        const sourceIndex = Number(row?.sourceIndex) || issue.sourceIndexes[0] || "";
+        return `| ${sourceIndex ? `[Source Row ${sourceIndex}](#hazard-source-row-${sourceIndex})` : "Not linked"} | ${mdCell(row?.hazardUnsafeCondition)} | ${mdCell(row?.affectedFunctionOrSubsystem)} | ${mdCell(row?.controlActionOrFailureMode)} | ${mdCell(row?.whyThisMatters)} |`;
+      }),
+    ].join("\n");
+    const observedHeading = report.observedConditionType === "Implementation"
+      ? "Observed Implementation Condition"
+      : "Observed System Condition";
+    return [
+      `<!-- SAFETY_ISSUE_REPORT_START id="${issue.id}" -->`,
+      `### **Safety Issue: ${issue.title}**`,
+      "",
+      "| Field | Value |",
+      "| --- | --- |",
+      `| Issue ID | ${mdCell(issue.id)} |`,
+      `| Priority | ${mdCell(issue.priority)} |`,
+      `| Likelihood | ${mdCell(issue.likelihood)} |`,
+      `| Severity | ${mdCell(issue.severity)} |`,
+      `| Score | ${mdCell(issue.score)} |`,
+      `| Status | ${mdCell(issue.status || "Open")} |`,
+      `| Owner | ${mdCell(issue.owner || "Unassigned")} |`,
+      `| Due Date | ${mdCell(issue.dueDate || "Not set")} |`,
+      `| Source Rows | ${sourceLinks(issue.sourceIndexes)} |`,
+      "",
+      "### **Executive Summary**",
+      listBlock(report.executiveSummary),
+      "",
+      `### **${observedHeading}**`,
+      listBlock(report.observedCondition),
+      "",
+      "### **Key Evidence**",
+      evidenceTable,
+      "",
+      "### **Safety Significance**",
+      listBlock(report.safetySignificance),
+      "",
+      "### **Existing Controls / Mitigations**",
+      listBlock(report.existingControlsMitigations),
+      "",
+      "### **Uncertainty / System Boundary**",
+      listBlock(report.uncertaintySystemBoundary),
+      "",
+      "### **Recommended Engineering Action**",
+      listBlock(report.recommendedEngineeringAction),
+      "",
+      "### **Recommended Verification**",
+      listBlock(report.recommendedVerification),
+      "",
+      "### **Final Assessment**",
+      listBlock(report.finalAssessment),
+      `<!-- SAFETY_ISSUE_REPORT_END id="${issue.id}" -->`,
+    ].join("\n");
+  };
+
+  const fetchSafetyIssueReportSection = async (issue) => {
+    const prompt = `
+Create detailed content for one Safety Issue Report. Return strict JSON only.
+
+Project: ${activeProject?.name || "Untitled project"}
+Hazard method: ${riskMethod}
+
+Safety issue:
+${JSON.stringify({
+  id: issue.id,
+  title: issue.title,
+  description: issue.description,
+  likelihood: issue.likelihood,
+  severity: issue.severity,
+  score: issue.score,
+  priority: issue.priority,
+  status: issue.status,
+  owner: issue.owner,
+  dueDate: issue.dueDate,
+  tags: issue.tags,
+  sourceIndexes: issue.sourceIndexes,
+  hazardEvidence: issue.evidence.map((item) => ({ sourceIndex: item.sourceIndex, cells: item.cells })),
+}, null, 2)}
+
+Required JSON schema:
+{
+  "executiveSummary": ["2-4 detailed bullets explaining the issue and priority"],
+  "observedConditionType": "System or Implementation",
+  "observedCondition": ["2-4 detailed bullets describing the observed condition using only supplied evidence"],
+  "keyEvidenceRows": [
+    {
+      "sourceIndex": 1,
+      "hazardUnsafeCondition": "specific hazard or unsafe condition",
+      "affectedFunctionOrSubsystem": "affected function, subsystem, component, interface, or allocation",
+      "controlActionOrFailureMode": "unsafe control action, failure mode, control action, or data/control flow",
+      "whyThisMatters": "why this evidence supports the safety issue"
+    }
+  ],
+  "safetySignificance": ["2-4 detailed bullets explaining credible safety impact and escalation path"],
+  "existingControlsMitigations": ["2-4 bullets distinguishing explicit controls from inferred or missing controls"],
+  "uncertaintySystemBoundary": ["2-4 bullets listing assumptions, unknowns, and boundary questions"],
+  "recommendedEngineeringAction": ["3-5 concrete design, process, allocation, interface, or assurance actions"],
+  "recommendedVerification": ["3-5 specific test, analysis, review, traceability, or acceptance evidence actions"],
+  "finalAssessment": ["1-3 decisive bullets summarizing disposition and next review focus"]
+}
+
+Rules:
+- Use the same level of detail for every section.
+- Do not invent facts not supported by the safety issue or evidence.
+- Preserve sourceIndex values exactly in keyEvidenceRows.
+- Include one keyEvidenceRows entry for every sourceIndex listed on the safety issue.
+- Return only strict JSON. No Markdown. No code fences.
+    `.trim();
+    const response = await fetch(`${backendURL}/api/chat`, {
+      method: "POST",
+      ...buildAIAuthOpts({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        model: "gpt-4o",
+        messages: [
+          { role: "system", content: "Return only strict JSON. No prose or markdown." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.2,
+        max_tokens: 2800,
+      }),
+    });
+    if (!response.ok) throw new Error(`Safety issue report AI HTTP ${response.status}`);
+    const parsed = parseJsonObjectFromText(extractAIText(await response.json())) || {};
+    return renderSafetyIssueReportSection(issue, parsed);
+  };
+
+  const handleRegenerateActiveSafetyIssueReport = async () => {
+    if (!activeRisk || activeRisk.reportGenerating || isGeneratingRiskAssessment || isGeneratingRiskAssessmentReport) return;
+    setGeneratingSafetyIssueReportIds((prev) => new Set([...prev, activeRisk.id]));
+    try {
+      const nextSection = await fetchSafetyIssueReportSection(activeRisk);
+      const hasExistingReport = Boolean(getSafetyIssueReportBounds(riskAssessmentReportMarkdown, activeRisk.id));
+      const nextMarkdown = hasExistingReport
+        ? replaceSafetyIssueReportMarkdown(riskAssessmentReportMarkdown, activeRisk.id, nextSection)
+        : [
+            riskAssessmentReportMarkdown.trim() || [
+              "# **Safety Issue Reports**",
+              "",
+              `Project: **${activeProject?.name || "Untitled project"}**`,
+              `Hazard Method: **${riskMethod}**`,
+            ].join("\n"),
+            "",
+            nextSection,
+          ].join("\n").trim();
+      setRiskAssessmentReportMarkdown(nextMarkdown);
+      setRiskReportMode("preview");
+      if (activeProjectId) saveProjectPatch(activeProjectId, { riskAssessmentReportMarkdown: nextMarkdown });
+    } catch (error) {
+      console.error("[risk-assessment] Single Safety Issue Report regeneration failed", error);
+      window.alert(error?.message || "Unable to regenerate this Safety Issue Report. Check your AI provider settings and try again.");
+    } finally {
+      setGeneratingSafetyIssueReportIds((prev) => {
+        const next = new Set(prev);
+        next.delete(activeRisk.id);
+        return next;
+      });
+    }
+  };
+
   const generateSafetyIssueReportsMarkdown = async (rowsForReport = riskRegister) => {
     const risksForReport = (rowsForReport || [])
       .map((risk) => {
@@ -7020,15 +7239,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
           .join("\n") || "- Not specified in the available evidence.";
       };
       const renderEvidenceRows = (issue, report) => {
-        const evidenceRows = Array.isArray(report?.keyEvidenceRows) && report.keyEvidenceRows.length
-          ? report.keyEvidenceRows
-          : issue.evidence.map((item) => ({
-              sourceIndex: item.sourceIndex,
-              hazardUnsafeCondition: Object.entries(item.cells || {}).slice(0, 2).map(([label, value]) => `${label}: ${value}`).join("; "),
-              affectedFunctionOrSubsystem: Object.entries(item.cells || {}).find(([label]) => /function|subsystem|component|allocation/i.test(label))?.[1] || "",
-              controlActionOrFailureMode: Object.entries(item.cells || {}).find(([label]) => /control|action|failure|unsafe/i.test(label))?.[1] || "",
-              whyThisMatters: "This source row is part of the hazard-analysis evidence consolidated into the safety issue.",
-            }));
+        const evidenceRows = completeSafetyIssueEvidenceRows(issue, report?.keyEvidenceRows);
         return [
           "| Evidence Link | Hazard/Unsafe Condition | Affected Function or Subsystem | Control Action or Failure Mode | Why This Matters |",
           "| --- | --- | --- | --- | --- |",
@@ -7180,6 +7391,7 @@ Rules:
 - Use the same level of detail for every section.
 - Do not invent facts not supported by the safety issue or evidence.
 - Preserve sourceIndex values exactly in keyEvidenceRows.
+- Include one keyEvidenceRows entry for every sourceIndex listed on the safety issue.
 - Return only strict JSON. No Markdown. No code fences.
         `.trim();
         const response = await fetch(`${backendURL}/api/chat`, {
@@ -11399,6 +11611,21 @@ const projectHint = useMemo(() => ({
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleRegenerateActiveSafetyIssueReport}
+                    disabled={!activeRisk || activeRisk.reportGenerating || isGeneratingRiskAssessment || isGeneratingRiskAssessmentReport}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-[#2D7DFE]/30 bg-white px-2 py-1.5 text-xs font-medium text-[#1c5fde] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    title={activeRisk ? 'Regenerate this Safety Issue Report' : 'Select a safety issue first'}
+                    aria-label="Regenerate selected Safety Issue Report"
+                  >
+                    {activeRisk?.reportGenerating ? (
+                      <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Sparkles size={14} aria-hidden="true" />
+                    )}
+                    Regenerate
+                  </button>
                   <div className="flex rounded-md border border-gray-200 bg-gray-50 p-0.5">
                     {['preview','edit'].map((mode) => (
                       <button
