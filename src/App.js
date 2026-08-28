@@ -185,7 +185,76 @@ const PROJECT_DRAFT_HAZARD_BASE_HEADERS = [
   "Control Action",
   "Function (To)",
   "Subsystem Allocation",
+  "Guide Phrase",
+  "Guide Phrase Applicable",
+  "Guide Phrase Applicability Rationale",
 ];
+
+const STPA_CONTROL_ACTION_GUIDE_PHRASES = [
+  "Not providing the control action causes a hazard",
+  "Providing the control action causes a hazard",
+  "The control action is provided too early",
+  "The control action is provided too late",
+  "The control action is provided in the wrong order",
+  "The control action is stopped too soon",
+  "The control action is applied too long",
+];
+
+function getProjectHazardGuidePhrases(method = "STPA-Textbook") {
+  return method === "STPA-Textbook" || method === "STPA"
+    ? STPA_CONTROL_ACTION_GUIDE_PHRASES
+    : [""];
+}
+
+function getProjectDraftHazardRowKey(functionalRowIndex, guidePhraseIndex = 0) {
+  return `${Number(functionalRowIndex) || 0}:guide:${Number(guidePhraseIndex) || 0}`;
+}
+
+function buildProjectDraftHazardTargets(functionalRows = [], method = "STPA-Textbook") {
+  const guidePhrases = getProjectHazardGuidePhrases(method);
+  return (functionalRows || []).flatMap((functionalRow, originalIndex) => (
+    guidePhrases.map((guidePhrase, guidePhraseIndex) => {
+      const rowKey = getProjectDraftHazardRowKey(originalIndex, guidePhraseIndex);
+      return {
+        functionalRow,
+        analysisRow: {
+          ...functionalRow,
+          guidePhrase,
+          guidePhraseIndex,
+          guidePhraseApplicable: "",
+          guidePhraseApplicabilityRationale: "",
+        },
+        originalIndex,
+        interfaceIndex: originalIndex,
+        guidePhrase,
+        guidePhraseIndex,
+        rowKey,
+      };
+    })
+  ));
+}
+
+function hasProjectDiagramRelationship(row = {}) {
+  return Boolean(
+    String(row?.fromFunction || "").trim() &&
+    String(row?.toFunction || "").trim()
+  );
+}
+
+function hasProjectHazardAnalysisInputs(row = {}) {
+  return Boolean(
+    hasProjectDiagramRelationship(row) &&
+    String(row?.controlAction || "").trim()
+  );
+}
+
+function getProjectDiagramRows(functionalRows = []) {
+  return (functionalRows || []).filter(hasProjectDiagramRelationship);
+}
+
+function getProjectHazardAnalysisRows(functionalRows = []) {
+  return (functionalRows || []).filter(hasProjectHazardAnalysisInputs);
+}
 
 const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
   STPA: [
@@ -194,6 +263,8 @@ const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
     "Unsafe Control Action",
     "Mitigation Strategy",
     "System Requirement",
+    "Proposed Safety Assessment",
+    "Proposed Safety Assessment Rationale",
   ],
   "STPA-Textbook": [
     "Loss",
@@ -201,6 +272,8 @@ const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
     "Unsafe Control Action",
     "Mitigation Strategy",
     "System Requirement",
+    "Proposed Safety Assessment",
+    "Proposed Safety Assessment Rationale",
   ],
   "FMEA-Textbook": [
     "Loss",
@@ -209,6 +282,8 @@ const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
     "Causal Factor",
     "Mitigation Strategy",
     "System Requirement",
+    "Proposed Safety Assessment",
+    "Proposed Safety Assessment Rationale",
   ],
   HARA: [
     "Item / Function",
@@ -222,6 +297,8 @@ const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
     "ASIL",
     "Safety Goal",
     "Rationale",
+    "Proposed Safety Assessment",
+    "Proposed Safety Assessment Rationale",
     "Safety Significant",
     "Safety Significance Rationale",
   ],
@@ -240,6 +317,8 @@ const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
     "Software Safety Requirement",
     "Verification",
     "Rationale",
+    "Proposed Safety Assessment",
+    "Proposed Safety Assessment Rationale",
     "Safety Significant",
     "Safety Significance Rationale",
   ],
@@ -250,6 +329,8 @@ const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
     "Causal Factor",
     "Mitigation Strategy",
     "System Requirement",
+    "Proposed Safety Assessment",
+    "Proposed Safety Assessment Rationale",
   ],
 };
 
@@ -265,6 +346,9 @@ function buildProjectDraftHazardRow(functionalRow = {}, headers = getProjectDraf
     "Control Action": functionalRow?.controlAction || "",
     "Function (To)": functionalRow?.toFunction || "",
     "Subsystem Allocation": fallbackSubsystem,
+    "Guide Phrase": functionalRow?.guidePhrase || "",
+    "Guide Phrase Applicable": functionalRow?.guidePhraseApplicable || "",
+    "Guide Phrase Applicability Rationale": functionalRow?.guidePhraseApplicabilityRationale || "",
     "Item / Function": functionalRow?.fromFunction || functionalRow?.toFunction || "",
     "Function": functionalRow?.fromFunction || functionalRow?.toFunction || "",
   };
@@ -276,13 +360,20 @@ const PROJECT_DRAFT_HAZARD_HEADER_ALIASES = {
   "Control Action": ["Control Action", "Unsafe Control Action", "UCA", "Action", "What-If Scenario", "Failure Mode", "Malfunction"],
   "Function (To)": ["Function (To)", "To Function", "Target Function", "Controlled Process"],
   "Subsystem Allocation": ["Subsystem Allocation", "Subsystem"],
-  "Unsafe Control Action": ["Unsafe Control Action", "UCA", "Control Action"],
+  "Guide Phrase": ["Guide Phrase", "Guide Word", "Guideword", "Guideword Phrase", "STPA Guide Phrase"],
+  "Guide Phrase Applicable": ["Guide Phrase Applicable", "Guide Applicable", "Applicability", "Applicable"],
+  "Guide Phrase Applicability Rationale": ["Guide Phrase Applicability Rationale", "Applicability Rationale", "Guide Phrase Rationale"],
+  "Unsafe Control Action": ["Unsafe Control Action", "Unsafe Control Actions", "UCA"],
   "Mitigation Strategy": ["Mitigation Strategy", "Controls", "Safeguard", "Recommendation"],
   "System Requirement": ["System Requirement", "Software Safety Requirement", "Safety Goal", "Design Requirement"],
   "Causal Factor": ["Causal Factor", "Causal Factors", "Cause", "Causes"],
   "Failure Mode": ["Failure Mode", "Malfunction"],
   "Item / Function": ["Item / Function", "Function"],
   "Function": ["Function", "Item / Function"],
+  "Proposed Safety Assessment": ["Proposed Safety Assessment", "Safety Assessment", "Safety Concern Type"],
+  "Proposed Safety Assessment Rationale": ["Proposed Safety Assessment Rationale", "Safety Assessment Rationale", "Safety Significance Rationale", "Assumptions"],
+  "Safety Significant": ["Safety Significant"],
+  "Safety Significance Rationale": ["Safety Significance Rationale"],
 };
 
 function alignSummaryRowToHeaders(sourceHeaders = [], row = [], targetHeaders = [], fallbackRow = []) {
@@ -362,11 +453,57 @@ function buildHazardRowControlActionKey(row = [], headers = []) {
   ].map(normalizeAllocationText).join("::");
 }
 
-function findExistingHazardRowForFunctionalRow(functionalRow = {}, summary = null) {
+function getHazardInterfaceGroupMeta(row = [], headers = []) {
+  const fromIdx = findSummaryColumn(headers, ["Function (From)", "From Function", "Source Function", "Controller"]);
+  const actionIdx = findSummaryColumn(headers, ["Control Action", "Unsafe Control Action", "UCA", "Action"]);
+  const toIdx = findSummaryColumn(headers, ["Function (To)", "To Function", "Target Function", "Controlled Process"]);
+  const from = fromIdx >= 0 ? String(row?.[fromIdx] || "").trim() : "";
+  const action = actionIdx >= 0 ? String(row?.[actionIdx] || "").trim() : "";
+  const to = toIdx >= 0 ? String(row?.[toIdx] || "").trim() : "";
+  const key = [from, action, to].map(normalizeAllocationText).join("::");
+  const label = [from || "Unknown source", action || "unspecified action", to || "Unknown target"].join(" → ");
+  return { key, label, from, action, to };
+}
+
+function annotateHazardInterfaceRows(rows = [], headers = []) {
+  const metas = rows.map((item) => getHazardInterfaceGroupMeta(item.row, headers));
+  const runCounts = new Map();
+  let runStart = 0;
+  while (runStart < metas.length) {
+    const runKey = metas[runStart]?.key || `__empty_${runStart}`;
+    let runEnd = runStart + 1;
+    while (runEnd < metas.length && (metas[runEnd]?.key || `__empty_${runEnd}`) === runKey) {
+      runEnd += 1;
+    }
+    for (let index = runStart; index < runEnd; index += 1) {
+      runCounts.set(index, runEnd - runStart);
+    }
+    runStart = runEnd;
+  }
+  return rows.map((item, index) => {
+    const groupMeta = metas[index];
+    const previousGroupMeta = index > 0 ? metas[index - 1] : null;
+    return {
+      ...item,
+      groupMeta,
+      isFirstInGroup: !previousGroupMeta || previousGroupMeta.key !== groupMeta.key,
+      groupCount: runCounts.get(index) || 1,
+    };
+  });
+}
+
+function findExistingHazardRowForFunctionalRow(functionalRow = {}, summary = null, guidePhrase = "") {
   if (!Array.isArray(summary) || !Array.isArray(summary[0]) || summary.length < 2) return null;
   const headers = summary[0];
   const targetKey = getFunctionalControlActionKey(functionalRow);
-  return summary.slice(1).find((row) => buildHazardRowControlActionKey(row, headers) === targetKey) || null;
+  const guideIdx = findSummaryColumn(headers, ["Guide Phrase", "Guide Word", "Guideword", "Guideword Phrase", "STPA Guide Phrase"]);
+  const normalizedGuidePhrase = normalizeAllocationText(guidePhrase);
+  return summary.slice(1).find((row) => {
+    if (buildHazardRowControlActionKey(row, headers) !== targetKey) return false;
+    if (!normalizedGuidePhrase) return true;
+    if (guideIdx < 0) return false;
+    return normalizeAllocationText(row?.[guideIdx]) === normalizedGuidePhrase;
+  }) || null;
 }
 
 function stripProjectRiskProfileColumns(sheets = {}) {
@@ -1540,8 +1677,11 @@ function normalizeWizardDiagramCategories(plan, rows) {
 
   const categories = (Array.isArray(plan?.categories) ? plan.categories : [])
     .map((category, index) => {
+      const rowIndexes = (Array.isArray(category?.rowIndexes) ? category.rowIndexes : [])
+        .map((rowIndex) => Number(rowIndex))
+        .filter((rowIndex) => Number.isInteger(rowIndex) && rowIndex >= 0 && rowIndex < rows.length);
       const fnSet = new Set();
-      (Array.isArray(category?.rowIndexes) ? category.rowIndexes : []).forEach((rowIndex) => {
+      rowIndexes.forEach((rowIndex) => {
         const row = rows[Number(rowIndex)];
         if (!row) return;
         if (row.fromFunction) fnSet.add(String(row.fromFunction).trim());
@@ -1561,6 +1701,7 @@ function normalizeWizardDiagramCategories(plan, rows) {
         });
       return {
         name: cleanDiagramCategoryName(category?.name || `Category ${index + 1}`),
+        rowIndexes,
         functions,
         description: String(category?.description || "").trim(),
       };
@@ -1596,9 +1737,50 @@ function normalizeWizardDiagramCategories(plan, rows) {
 
   categories.forEach((category) => {
     category.functions = Array.from(new Set(category.functions)).filter(Boolean);
+    category.rowIndexes = Array.from(new Set((category.rowIndexes || [])
+      .map((rowIndex) => Number(rowIndex))
+      .filter((rowIndex) => Number.isInteger(rowIndex) && rowIndex >= 0 && rowIndex < rows.length)
+    ));
     category.description = category.description || generateDiagramCategoryDescription(category.name, category.functions, rows);
   });
   return categories;
+}
+
+function applyDiagramCategorySubsystemAllocations(rows = [], categories = [], options = {}) {
+  if (!Array.isArray(rows) || !rows.length || !Array.isArray(categories) || !categories.length) {
+    return Array.isArray(rows) ? rows : [];
+  }
+  const preserveExisting = Boolean(options.preserveExisting);
+
+  const categoryByRowIndex = new Map();
+  const categoryByFunction = new Map();
+  categories.forEach((category) => {
+    const name = cleanDiagramCategoryName(category?.name || "");
+    if (!name) return;
+    (category.rowIndexes || []).forEach((rowIndex) => {
+      const idx = Number(rowIndex);
+      if (Number.isInteger(idx) && idx >= 0 && idx < rows.length && !categoryByRowIndex.has(idx)) {
+        categoryByRowIndex.set(idx, name);
+      }
+    });
+    (category.functions || []).forEach((fn) => {
+      const key = String(fn || "").trim().toLowerCase();
+      if (key && !categoryByFunction.has(key)) categoryByFunction.set(key, name);
+    });
+  });
+
+  return rows.map((row, rowIndex) => {
+    const existingSubsystem = String(row?.subsystem || "").trim();
+    if (preserveExisting && existingSubsystem) return row;
+    const fromKey = String(row?.fromFunction || "").trim().toLowerCase();
+    const toKey = String(row?.toFunction || "").trim().toLowerCase();
+    const allocatedName = categoryByRowIndex.get(rowIndex)
+      || categoryByFunction.get(fromKey)
+      || categoryByFunction.get(toKey)
+      || row?.subsystem
+      || "";
+    return { ...row, subsystem: allocatedName };
+  });
 }
 
 function cleanDiagramCategoryName(value) {
@@ -3812,6 +3994,28 @@ const buildRequirementsFromSummary = (summary) => {
 };
 
 
+function normalizeProposedSafetyAssessmentValue(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (/^safety\b|safety[-\s]?critical|safety\s*significant/.test(text)) return "Safety";
+  return "Mission/Reliability";
+}
+
+function shouldUseHazardSummaryRowForSafetyIssue(row = [], headers = []) {
+  const guideApplicableIdx = headers.findIndex((header) => /^guide\s+phrase\s+applicable$/i.test(String(header || "").trim()));
+  if (guideApplicableIdx >= 0 && /^no\b|^not applicable\b/i.test(String(row?.[guideApplicableIdx] || "").trim())) {
+    return false;
+  }
+
+  const proposedIdx = headers.findIndex((header) => /^proposed\s+safety\s+assessment$/i.test(String(header || "").trim()));
+  if (proposedIdx >= 0) {
+    return normalizeProposedSafetyAssessmentValue(row?.[proposedIdx]) === "Safety";
+  }
+
+  const safetySignificanceIdx = headers.findIndex((header) => /^safety\s+significant$/i.test(String(header || "").trim()));
+  if (safetySignificanceIdx < 0) return true;
+  return /^yes\b|^safety\b/i.test(String(row?.[safetySignificanceIdx] || "").trim());
+}
+
 
 // Seed risks from the Summary sheet (very generic so it doesn't depend on headers)
 // Seed risks from the Summary sheet
@@ -3830,23 +4034,26 @@ const buildRiskRegisterFromSummary = (summary) => {
       ? headers.findIndex(h => /\brisk\b|\bfailure mode\b|\buca\b|\bunsafe control action(s)?\b|\bwhat[-\s]?if\b|\bscenario\b/i.test(h))
       : 0;
 
-  return rows.map((row, idx) => ({
-    id: makeId(),
-    title: String(row[titleIdx] ?? `Risk ${idx + 1}`),
-    // ⬇️ description strictly from hazard column (or a minimal fallback)
-    description: String(
-      hazardIdx >= 0
-        ? (row[hazardIdx] ?? '—')
-        : (row[1] ?? '—') // fallback if no explicit Hazard column exists
-    ),
-    likelihood: 3,
-    severity: 3,
-    status: 'Open',
-    owner: '',
-    dueDate: '',
-    tags: '',
-    sourceIndex: idx + 1,
-  }));
+  return rows
+    .map((row, idx) => ({ row, idx }))
+    .filter(({ row }) => shouldUseHazardSummaryRowForSafetyIssue(row, headers))
+    .map(({ row, idx }) => ({
+      id: makeId(),
+      title: String(row[titleIdx] ?? `Risk ${idx + 1}`),
+      // ⬇️ description strictly from hazard column (or a minimal fallback)
+      description: String(
+        hazardIdx >= 0
+          ? (row[hazardIdx] ?? '—')
+          : (row[1] ?? '—') // fallback if no explicit Hazard column exists
+      ),
+      likelihood: 3,
+      severity: 3,
+      status: 'Open',
+      owner: '',
+      dueDate: '',
+      tags: '',
+      sourceIndex: idx + 1,
+    }));
 };
 
 function getRiskPriority(score) {
@@ -4056,7 +4263,7 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
       responseRows: [],
       diagramCategories: null,
       analysisResult: null,
-      riskMethod: 'STPA',
+      riskMethod: 'STPA-Textbook',
       agentReportResult: null,
       riskAssessmentReportMarkdown: "",
       riskRegister: [],
@@ -4070,8 +4277,10 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
         datasets: [],
       },
     });
-        setActiveProjectId(id);
+    setActiveProjectId(id);
     setActiveProjectFolderId(null);
+    setActiveTab('Functional Diagramming');
+    setShowPromptWizard(true);
     setNewProjectName('');
     setNewProjectTargetFolderId(null);
     setNewProjectError('');
@@ -5100,7 +5309,7 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
     responseRows: Array.isArray(filteredRows) ? filteredRows : [],
     diagramCategories: null,
     analysisResult: null,
-    riskMethod: 'STPA',
+    riskMethod: 'STPA-Textbook',
     agentReportResult: null,
     riskRegister: [],
     requirements: [],
@@ -5166,9 +5375,11 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   };
 
   const [responseRows, setResponseRows] = useState([]);
+  const [committedFunctionalDiagramRows, setCommittedFunctionalDiagramRows] = useState([]);
   const [diagramCategories, setDiagramCategories] = useState(null);
   const [analysisResult, setAnalysisResult] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isRegeneratingRiskProfile, setIsRegeneratingRiskProfile] = useState(false);
   const [showDiagram, setShowDiagram] = useState(false);
   const [selectedLabel, setSelectedLabel] = useState(null);
   const [columnFilters, setColumnFilters] = useState({});
@@ -5182,6 +5393,7 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [draftHazardColumnFilters, setDraftHazardColumnFilters] = useState({});
   const [draftHazardColumnSearches, setDraftHazardColumnSearches] = useState({});
   const draftHazardDropdownRefs = useRef({});
+  const [collapsedHazardInterfaceKeys, setCollapsedHazardInterfaceKeys] = useState(new Set());
   const [pendingReviewSourceJump, setPendingReviewSourceJump] = useState(null);
   const [filterColumnIndex, setFilterColumnIndex] = useState(null);
   const [columnSearches, setColumnSearches] = useState({});
@@ -5194,10 +5406,11 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [functionalColumnSearches, setFunctionalColumnSearches] = useState({});
   const [isGeneratingDecomposition, setIsGeneratingDecomposition] = useState(false);
   const [showFunctionalDiagram, setShowFunctionalDiagram] = useState(true);
-  const [riskMethod, setRiskMethod] = useState("STPA");
+  const [riskMethod, setRiskMethod] = useState("STPA-Textbook");
   const [projectRiskProfileGenerationMode, setProjectRiskProfileGenerationMode] = useState("standard");
 	  const [riskAssessmentReportMarkdown, setRiskAssessmentReportMarkdown] = useState("");
   const [isGeneratingRiskAssessmentReport, setIsGeneratingRiskAssessmentReport] = useState(false);
+  const [isConsolidatingSafetyIssues, setIsConsolidatingSafetyIssues] = useState(false);
   const [generatingSafetyIssueReportIds, setGeneratingSafetyIssueReportIds] = useState(new Set());
   const [selectedRiskPriority, setSelectedRiskPriority] = useState("All");
   const [activeRiskId, setActiveRiskId] = useState(null);
@@ -5339,6 +5552,7 @@ useEffect(() => {
     setLoadingProjectId(activeProjectId || null);
     if (!activeProjectId) {
       setResponseRows([]);
+      setCommittedFunctionalDiagramRows([]);
       setDiagramCategories(null);
       setAnalysisResult(null);
       setDraftHazardRowsByIndex({});
@@ -5364,7 +5578,9 @@ useEffect(() => {
     }
     const data = loadProjectData(activeProjectId);
     const projectIdForLoad = activeProjectId;
-    setResponseRows(data?.responseRows || []);
+    const loadedResponseRows = data?.responseRows || [];
+    setResponseRows(loadedResponseRows);
+    setCommittedFunctionalDiagramRows(getProjectDiagramRows(loadedResponseRows));
     setDiagramCategories(data?.diagramCategories || null);
     setAnalysisResult(data?.analysisResult ? stripProjectRiskProfileColumns(data.analysisResult) : null);
     setDraftHazardRowsByIndex(data?.draftHazardRowsByIndex || {});
@@ -5372,7 +5588,7 @@ useEffect(() => {
     setDraftHazardColumnFilters({});
     setDraftHazardColumnSearches({});
     setDraftHazardFilterColumnIndex(null);
-    setRiskMethod(data?.riskMethod || 'STPA');
+    setRiskMethod('STPA-Textbook');
     setProjectRiskProfileGenerationMode(data?.projectRiskProfileGenerationMode || 'standard');
     setAgentReportResult(data?.agentReportResult || null); // NEW: restore report
     setRiskAssessmentReportMarkdown(data?.riskAssessmentReportMarkdown || "");
@@ -5409,6 +5625,17 @@ useEffect(() => {
       generatedAt: new Date().toISOString(),
     };
     if (repaired.categories.length) setDiagramCategories(repaired);
+  }, [projectLoaded, responseRows, diagramCategories]);
+
+  useEffect(() => {
+    if (!projectLoaded || !responseRows.length || !diagramCategories?.categories?.length) return;
+    const allocatedRows = applyDiagramCategorySubsystemAllocations(responseRows, diagramCategories.categories, { preserveExisting: true });
+    const hasSubsystemMismatch = allocatedRows.some((row, index) => (
+      String(row?.subsystem || "").trim() !== String(responseRows[index]?.subsystem || "").trim()
+    ));
+    if (!hasSubsystemMismatch) return;
+    setResponseRows(allocatedRows);
+    setCommittedFunctionalDiagramRows(getProjectDiagramRows(allocatedRows));
   }, [projectLoaded, responseRows, diagramCategories]);
 
   useEffect(() => {
@@ -5486,9 +5713,17 @@ const handleProjectDiagramRowsUpdate = useCallback((nextRowsOrUpdater) => {
     const nextRows = typeof nextRowsOrUpdater === "function"
       ? nextRowsOrUpdater(currentRows)
       : nextRowsOrUpdater;
-    return Array.isArray(nextRows) ? nextRows : currentRows;
+    if (!Array.isArray(nextRows)) return currentRows;
+    const nextCommittedRows = getProjectDiagramRows(nextRows);
+    const tableOnlyRows = currentRows.filter((row) => !hasProjectDiagramRelationship(row));
+    setCommittedFunctionalDiagramRows(nextCommittedRows);
+    return [...nextCommittedRows, ...tableOnlyRows];
   });
 }, [activeProjectId, loadingProjectId, projectLoaded, loadedProjectId]);
+
+const commitFunctionalRowsToDiagram = useCallback(() => {
+  setCommittedFunctionalDiagramRows(getProjectDiagramRows(responseRows));
+}, [responseRows]);
 
    // Accept an optional prompt override so we don't rely on async state
 // Accept an optional prompt override for Custom Report
@@ -5580,10 +5815,153 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     exportDiagram();
   }, [analysisResult, showFunctionalDiagram, responseRows?.length]);
 
+  const draftHazardHeaders = useMemo(() => getProjectDraftHazardHeaders(riskMethod), [riskMethod]);
+  const hazardAnalysisRows = useMemo(
+    () => getProjectHazardAnalysisRows(responseRows),
+    [responseRows]
+  );
+  const incompleteHazardAnalysisRowCount = useMemo(
+    () => responseRows.filter((row) => hasProjectDiagramRelationship(row) && !hasProjectHazardAnalysisInputs(row)).length,
+    [responseRows]
+  );
+  const draftHazardTargets = useMemo(
+    () => buildProjectDraftHazardTargets(hazardAnalysisRows, riskMethod),
+    [hazardAnalysisRows, riskMethod]
+  );
+  useEffect(() => {
+    if (!Array.isArray(analysisResult?.Summary?.[0])) return;
+    let cancelled = false;
+    const targetHeaders = getProjectDraftHazardHeaders(riskMethod);
+    const existingSummary = analysisResult.Summary;
+    const nextDraftRows = {};
+    const nextSummaryRows = draftHazardTargets
+      .map((target) => {
+        const fallbackRow = buildProjectDraftHazardRow(target.analysisRow, targetHeaders);
+        const existingDraft = draftHazardRowsByIndex[target.rowKey] || (target.guidePhraseIndex === 0 ? draftHazardRowsByIndex[target.originalIndex] : null);
+        if (Array.isArray(existingDraft?.row)) {
+          const alignedDraft = alignSummaryRowToHeaders(targetHeaders, existingDraft.row, targetHeaders, fallbackRow);
+          if (isMeaningfullyGeneratedDraftRow(alignedDraft, fallbackRow)) {
+            nextDraftRows[target.rowKey] = {
+              row: alignedDraft,
+              generated: Boolean(existingDraft.generated),
+            };
+            return alignedDraft;
+          }
+        }
+        const existingCompletedRow = findExistingHazardRowForFunctionalRow(target.analysisRow, existingSummary, target.guidePhrase);
+        if (!existingCompletedRow) return null;
+        const alignedCompleted = alignSummaryRowToHeaders(existingSummary[0] || [], existingCompletedRow, targetHeaders, fallbackRow);
+        if (!isMeaningfullyGeneratedDraftRow(alignedCompleted, fallbackRow)) return null;
+        nextDraftRows[target.rowKey] = {
+          row: alignedCompleted,
+          generated: true,
+        };
+        return alignedCompleted;
+      })
+      .filter(Boolean);
+    const nextAnalysisResult = nextSummaryRows.length
+      ? { ...(analysisResult || {}), Summary: [targetHeaders, ...nextSummaryRows] }
+      : null;
+    const currentAnalysisSignature = JSON.stringify(analysisResult?.Summary || null);
+    const nextAnalysisSignature = JSON.stringify(nextAnalysisResult?.Summary || null);
+    if (currentAnalysisSignature !== nextAnalysisSignature) {
+      setAnalysisResult(nextAnalysisResult);
+      const maxSourceIndex = nextSummaryRows.length;
+      const nextRiskRegister = (riskRegister || [])
+        .map((risk) => {
+          const sourceIndexes = Array.from(new Set(
+            (Array.isArray(risk.sourceIndexes) ? risk.sourceIndexes : [risk.sourceIndex])
+              .map((value) => Number(value))
+              .filter((value) => Number.isFinite(value) && value >= 1 && value <= maxSourceIndex)
+          )).sort((a, b) => a - b);
+          if (!sourceIndexes.length) return null;
+          return { ...risk, sourceIndexes, sourceIndex: sourceIndexes[0] };
+        })
+        .filter(Boolean);
+      setRiskRegister(nextRiskRegister);
+      if (activeProjectId) {
+        saveProjectPatch(activeProjectId, {
+          analysisResult: nextAnalysisResult,
+          draftHazardRowsByIndex: nextDraftRows,
+          riskRegister: nextRiskRegister,
+        });
+      }
+      setIsConsolidatingSafetyIssues(true);
+      requestConsolidatedSafetyIssuesFromSummary(nextAnalysisResult?.Summary, { mergeExisting: true })
+        .then((consolidatedRiskRegister) => {
+          if (cancelled) return;
+          setRiskRegister(consolidatedRiskRegister);
+          if (activeProjectId) {
+            saveProjectPatch(activeProjectId, { riskRegister: consolidatedRiskRegister });
+          }
+        })
+        .catch((error) => {
+          console.error("[risk-assessment] Failed to refresh safety issues after functional decomposition changed", error);
+        })
+        .finally(() => {
+          if (!cancelled) setIsConsolidatingSafetyIssues(false);
+        });
+    }
+    const currentDraftSignature = JSON.stringify(draftHazardRowsByIndex || {});
+    const nextDraftSignature = JSON.stringify(nextDraftRows);
+    if (currentDraftSignature !== nextDraftSignature) {
+      setDraftHazardRowsByIndex(nextDraftRows);
+    }
+    return () => {
+      cancelled = true;
+    };
+    // requestConsolidatedSafetyIssuesFromSummary is intentionally omitted because it is a component-local async helper.
+    // Including it would rerun this downstream sync on unrelated renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProjectId, analysisResult, draftHazardRowsByIndex, draftHazardTargets, riskMethod, riskRegister]);
+  const hazardSummaryHeaders = draftHazardHeaders;
+  const hazardSummaryDisplayRows = useMemo(() => {
+    if (!Array.isArray(analysisResult?.Summary?.[0])) return [];
+    const completedHeaders = analysisResult.Summary[0] || [];
+    const completedRows = analysisResult.Summary.slice(1);
+    const completedItems = completedRows.map((row, originalIndex) => {
+      const target = draftHazardTargets[originalIndex];
+      const functionalRow = target?.analysisRow || responseRows[originalIndex];
+      const fallbackRow = functionalRow
+        ? buildProjectDraftHazardRow(functionalRow, hazardSummaryHeaders)
+        : Array(hazardSummaryHeaders.length).fill("");
+      return {
+        row: alignSummaryRowToHeaders(completedHeaders, row, hazardSummaryHeaders, fallbackRow),
+        originalIndex,
+        interfaceIndex: target?.interfaceIndex ?? originalIndex,
+        guidePhraseIndex: target?.guidePhraseIndex ?? 0,
+        rowKey: target?.rowKey || getProjectDraftHazardRowKey(originalIndex, 0),
+        generated: true,
+        pending: false,
+      };
+    });
+    const pendingItems = draftHazardTargets
+      .map((target, targetIndex) => {
+        const { analysisRow, originalIndex, rowKey } = target;
+        if (targetIndex < completedRows.length) return null;
+        const fallbackRow = buildProjectDraftHazardRow(analysisRow, hazardSummaryHeaders);
+        const savedDraft = draftHazardRowsByIndex[rowKey] || (target.guidePhraseIndex === 0 ? draftHazardRowsByIndex[originalIndex] : null);
+        const row = Array.isArray(savedDraft?.row)
+          ? alignSummaryRowToHeaders(draftHazardHeaders, savedDraft.row, hazardSummaryHeaders, fallbackRow)
+          : fallbackRow;
+        return {
+          row,
+          originalIndex: targetIndex,
+          interfaceIndex: originalIndex,
+          guidePhraseIndex: target.guidePhraseIndex,
+          rowKey,
+          generated: Boolean(savedDraft?.generated),
+          pending: true,
+        };
+      })
+      .filter(Boolean);
+    return [...pendingItems, ...completedItems];
+  }, [analysisResult, draftHazardHeaders, draftHazardRowsByIndex, draftHazardTargets, hazardSummaryHeaders, responseRows]);
+  const hasPendingHazardSummaryRows = hazardSummaryDisplayRows.some(({ pending, generated }) => pending && !generated);
+
   const getUniqueColumnValues = (colIdx, searchText = '') => {
-    const rows = analysisResult?.Summary?.slice(1) ?? [];
     const unique = new Set();
-    rows.forEach(row => {
+    hazardSummaryDisplayRows.forEach(({ row }) => {
       const value = row[colIdx];
       if (value !== undefined && value !== null && String(value).trim() !== '') unique.add(String(value));
     });
@@ -5604,20 +5982,21 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setColumnSearches({});
     setFilterColumnIndex(null);
   };
-  const applyFilters = (rows) => rows.filter((row) =>
-    Object.entries(columnFilters).every(([colIdx, allowed]) =>
-      allowed.length === 0 || allowed.includes(String(row[colIdx] ?? ''))
-    )
-  );
   const activeHazardFilterCount = Object.values(columnFilters)
     .reduce((count, values) => count + (Array.isArray(values) ? values.length : 0), 0);
-  const filteredHazardSummaryRows = (analysisResult?.Summary?.slice(1) || [])
-    .map((row, originalIndex) => ({ row, originalIndex }))
+  const filteredHazardSummaryRows = useMemo(() => hazardSummaryDisplayRows
     .filter(({ row }) =>
       Object.entries(columnFilters).every(([colIdx, allowed]) =>
         allowed.length === 0 || allowed.includes(String(row[colIdx] ?? ''))
       )
-    );
+    ), [columnFilters, hazardSummaryDisplayRows]);
+  const groupedFilteredHazardSummaryRows = useMemo(
+    () => annotateHazardInterfaceRows(filteredHazardSummaryRows, hazardSummaryHeaders),
+    [filteredHazardSummaryRows, hazardSummaryHeaders]
+  );
+  const filteredHazardSummaryInterfaceKeys = useMemo(() => Array.from(new Set(
+    groupedFilteredHazardSummaryRows.map(({ groupMeta }) => groupMeta?.key).filter(Boolean)
+  )), [groupedFilteredHazardSummaryRows]);
 
   useEffect(() => {
     if (!activeProjectId || activeTab !== 'Hazard Analysis' || hasAnalysisSummary(analysisResult)) return;
@@ -5632,16 +6011,30 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setDraftHazardColumnFilters({});
     setDraftHazardColumnSearches({});
     setDraftHazardFilterColumnIndex(null);
+    setCollapsedHazardInterfaceKeys(new Set());
   }, [activeProjectId, riskMethod]);
 
-  const draftHazardHeaders = useMemo(() => getProjectDraftHazardHeaders(riskMethod), [riskMethod]);
-  const draftHazardSummaryRows = useMemo(() => (
-    responseRows.map((row, index) => ({
-      row: draftHazardRowsByIndex[index]?.row || buildProjectDraftHazardRow(row, draftHazardHeaders),
-      originalIndex: index,
-      generated: Boolean(draftHazardRowsByIndex[index]?.generated),
-    }))
-  ), [draftHazardHeaders, draftHazardRowsByIndex, responseRows]);
+  const draftHazardSummaryRows = useMemo(() => {
+    return draftHazardTargets.map((target, index) => {
+      const savedDraft = draftHazardRowsByIndex[target.rowKey] || (target.guidePhraseIndex === 0 ? draftHazardRowsByIndex[target.originalIndex] : null);
+      return {
+        row: savedDraft?.row || buildProjectDraftHazardRow(target.analysisRow, draftHazardHeaders),
+        originalIndex: index,
+        interfaceIndex: target.originalIndex,
+        guidePhraseIndex: target.guidePhraseIndex,
+        rowKey: target.rowKey,
+        generated: Boolean(savedDraft?.generated),
+      };
+    });
+  }, [draftHazardHeaders, draftHazardRowsByIndex, draftHazardTargets]);
+  const hasRegeneratableRiskProfileRows = useMemo(() => (
+    draftHazardSummaryRows.some(({ generated }) => generated) ||
+    (Array.isArray(analysisResult?.Summary) && analysisResult.Summary.length > 1)
+  ), [analysisResult, draftHazardSummaryRows]);
+  const hasPendingRiskProfileRows = Array.isArray(analysisResult?.Summary?.[0])
+    ? hasPendingHazardSummaryRows
+    : draftHazardSummaryRows.some(({ generated }) => !generated);
+  const shouldRegenerateRiskProfileFromToolbar = hasRegeneratableRiskProfileRows && !hasPendingRiskProfileRows;
 
   const getUniqueDraftHazardColumnValues = (colIdx, searchText = '') => {
     const unique = new Set();
@@ -5670,20 +6063,43 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   };
   const activeDraftHazardFilterCount = Object.values(draftHazardColumnFilters)
     .reduce((count, values) => count + (Array.isArray(values) ? values.length : 0), 0);
-  const filteredDraftHazardSummaryRows = draftHazardSummaryRows.filter(({ row }) =>
+  const filteredDraftHazardSummaryRows = useMemo(() => draftHazardSummaryRows.filter(({ row }) =>
     Object.entries(draftHazardColumnFilters).every(([colIdx, allowed]) =>
       !allowed?.length || allowed.includes(String(row[colIdx] ?? ''))
     )
+  ), [draftHazardColumnFilters, draftHazardSummaryRows]);
+  const groupedFilteredDraftHazardSummaryRows = useMemo(
+    () => annotateHazardInterfaceRows(filteredDraftHazardSummaryRows, draftHazardHeaders),
+    [filteredDraftHazardSummaryRows, draftHazardHeaders]
   );
+  const filteredDraftHazardInterfaceKeys = useMemo(() => Array.from(new Set(
+    groupedFilteredDraftHazardSummaryRows.map(({ groupMeta }) => groupMeta?.key).filter(Boolean)
+  )), [groupedFilteredDraftHazardSummaryRows]);
+  const visibleHazardInterfaceKeys = Array.isArray(analysisResult?.Summary?.[0])
+    ? filteredHazardSummaryInterfaceKeys
+    : filteredDraftHazardInterfaceKeys;
+  const allVisibleHazardInterfacesCollapsed = visibleHazardInterfaceKeys.length > 0
+    && visibleHazardInterfaceKeys.every((key) => collapsedHazardInterfaceKeys.has(key));
+  const collapseAllHazardInterfaces = () => {
+    setCollapsedHazardInterfaceKeys(new Set(visibleHazardInterfaceKeys));
+  };
+  const expandAllHazardInterfaces = () => {
+    setCollapsedHazardInterfaceKeys(new Set());
+  };
+  const toggleAllHazardInterfacesCollapsed = () => {
+    if (allVisibleHazardInterfacesCollapsed) expandAllHazardInterfaces();
+    else collapseAllHazardInterfaces();
+  };
+  const toggleHazardInterfaceCollapsed = (key) => {
+    setCollapsedHazardInterfaceKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
   const getDraftHazardCellRows = (value) => {
-    const text = String(value ?? '');
-    if (!text.trim()) return 2;
-    return Math.max(
-      2,
-      text.split(/\r?\n/).reduce((rows, line) => (
-        rows + Math.max(1, Math.ceil(String(line || '').length / 46))
-      ), 0)
-    );
+    return estimateWrappedTextareaRows(value, 18, Infinity);
   };
   const riskAssessmentSource = useMemo(() => {
     if (Array.isArray(analysisResult?.Summary?.[0]) && analysisResult.Summary.length > 1) {
@@ -5755,6 +6171,10 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     ? risksWithEvidence.find((risk) => risk.id === activeRiskId) || displayedRiskCards[0] || risksWithEvidence[0]
     : null;
   const activeSafetyIssueReportMarkdown = extractSafetyIssueReportMarkdown(riskAssessmentReportMarkdown, activeRisk);
+  const currentSafetyIssueSummary = useMemo(() => [
+    riskAssessmentSource.headers,
+    ...riskAssessmentSource.rows.map((entry) => entry.values || []),
+  ], [riskAssessmentSource]);
 
   const draftHazardReviewItems = useMemo(() => {
     const draftArtifactPrefix = `hazard-summary-draft:${activeProjectId || "default"}:row:`;
@@ -5769,11 +6189,13 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const map = new Map();
     draftHazardReviewItems.forEach((item) => {
       const rowIndex = item.currentContent?.rowIndex ?? item.originalContent?.rowIndex ?? item.traceLinks?.find?.((link) => link.type === "table_row")?.rowIndex;
-      if (!Number.isFinite(Number(rowIndex))) return;
-      const existing = map.get(Number(rowIndex));
+      const rowKey = item.currentContent?.rowKey ?? item.originalContent?.rowKey ?? item.traceLinks?.find?.((link) => link.type === "table_row")?.rowKey;
+      if (!Number.isFinite(Number(rowIndex)) && !rowKey) return;
+      const mapKey = rowKey || Number(rowIndex);
+      const existing = map.get(mapKey);
       const existingTime = Date.parse(existing?.updatedAt || existing?.createdAt || 0) || 0;
       const itemTime = Date.parse(item.updatedAt || item.createdAt || 0) || 0;
-      if (!existing || itemTime >= existingTime) map.set(Number(rowIndex), item);
+      if (!existing || itemTime >= existingTime) map.set(mapKey, item);
     });
     return map;
   }, [draftHazardReviewItems]);
@@ -5793,8 +6215,9 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const restored = {};
     draftHazardReviewItems.forEach((item) => {
       const rowIndex = Number(item.currentContent?.rowIndex ?? item.originalContent?.rowIndex);
-      if (!Number.isFinite(rowIndex) || !Array.isArray(item.currentContent?.row)) return;
-      restored[rowIndex] = {
+      const rowKey = item.currentContent?.rowKey ?? item.originalContent?.rowKey;
+      if ((!Number.isFinite(rowIndex) && !rowKey) || !Array.isArray(item.currentContent?.row)) return;
+      restored[rowKey || rowIndex] = {
         row: item.currentContent.row,
         generated: true,
       };
@@ -6433,9 +6856,11 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     if (projectIdAtStart && activeProjectIdRef.current !== projectIdAtStart) {
       return parsedRows;
     }
-    setResponseRows(parsedRows);
+    const allocatedRows = applyDiagramCategorySubsystemAllocations(parsedRows, categories?.categories);
+    setResponseRows(allocatedRows);
+    setCommittedFunctionalDiagramRows(getProjectDiagramRows(allocatedRows));
     setDiagramCategories(categories);
-    return parsedRows;
+    return allocatedRows;
   };
 
   const handlePromptWizardSubmit = async (combinedPrompt) => {
@@ -6476,6 +6901,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       }
       finishActivity(activityId, "success", `${parsedRows.length} functions ready`);
       setShowPromptWizard(false);
+      setShowFunctionalDiagram(true);
       setCleanOnceKey(`wizard-${Date.now()}`);
     } catch (error) {
       console.error("Prompt wizard decomposition failed:", error);
@@ -6487,12 +6913,20 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   };
 
   const handleRowChange = (index, field, value) => {
-    const updated = [...responseRows];
-    updated[index][field] = value;
-    setResponseRows(updated);
+    setResponseRows((currentRows) => currentRows.map((row, rowIndex) => (
+      rowIndex === index ? { ...row, [field]: value } : row
+    )));
   };
-  const handleAddRow = () => setResponseRows([...responseRows, { subsystem:'', fromFunction:'', fromDetails:'', controlAction:'', controlDetails:'', toFunction:'', toDetails:'' }]);
-  const handleRemoveRow = (index) => setResponseRows(responseRows.filter((_, i) => i !== index));
+  const handleAddRow = () => {
+    setResponseRows((currentRows) => [
+      { subsystem:'', fromFunction:'', fromDetails:'', controlAction:'', controlDetails:'', toFunction:'', toDetails:'' },
+      ...currentRows,
+    ]);
+    setFunctionalFilterColumn(null);
+    setFunctionalColumnFilters({});
+    setFunctionalColumnSearches({});
+  };
+  const handleRemoveRow = (index) => setResponseRows((currentRows) => currentRows.filter((_, i) => i !== index));
   const functionalTableColumns = [
     { key: 'subsystem', label: 'Subsystem' },
     { key: 'fromFunction', label: 'Function (From)' },
@@ -6503,6 +6937,25 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     { key: 'toDetails', label: 'Function (To) Details' },
   ];
   const getFunctionalCellValue = (row, field) => String(row?.[field] ?? '').trim();
+  const estimateWrappedTextareaRows = (value, charsPerLine = 20, maxRows = 28) => {
+    const text = String(value ?? '');
+    if (!text.trim()) return 2;
+    const rows = text.split(/\r?\n/).reduce((total, rawLine) => {
+      const line = String(rawLine || '');
+      if (!line) return total + 1;
+      const longWordRows = line
+        .split(/\s+/)
+        .reduce((count, word) => count + Math.max(0, Math.ceil(String(word || '').length / charsPerLine) - 1), 0);
+      return total + Math.max(1, Math.ceil(line.length / charsPerLine) + longWordRows);
+    }, 0);
+    const estimatedRows = Math.max(2, rows + 1);
+    return Number.isFinite(maxRows) && maxRows > 0
+      ? Math.min(maxRows, estimatedRows)
+      : estimatedRows;
+  };
+  const getFunctionalCellRows = (value) => {
+    return estimateWrappedTextareaRows(value, 20, 28);
+  };
   const getUniqueFunctionalColumnValues = (field, searchText = '') => {
     const unique = new Set();
     responseRows.forEach((row) => {
@@ -6550,7 +7003,8 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     !loadingProjectId
   );
 
-  const handleRunAnalysis = async (selectedMethod) => {
+  const handleRunAnalysis = async (selectedMethod, options = {}) => {
+    const shouldRegenerate = Boolean(options.regenerate);
     const usesProjectRiskProfileGenerationMode = selectedMethod === "STPA-Textbook";
     const selectedGenerationMode = usesProjectRiskProfileGenerationMode
       ? projectRiskProfileGenerationMode
@@ -6559,54 +7013,67 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const targetHeaders = getProjectDraftHazardHeaders(selectedMethod);
     const existingSummary = Array.isArray(analysisResult?.Summary) ? analysisResult.Summary : null;
     const startingDraftRows = loadProjectData(activeProjectId)?.draftHazardRowsByIndex || draftHazardRowsByIndex || {};
+    const sourceFunctionalRows = getProjectHazardAnalysisRows(responseRows);
+    const hazardTargets = buildProjectDraftHazardTargets(sourceFunctionalRows, selectedMethod);
+    if (!hazardTargets.length) {
+      window.alert("Add at least one functional decomposition row with Function (From), Function (To), and Control Action before running hazard analysis.");
+      return;
+    }
     const rowsToGenerate = [];
     const preservedDraftRows = {};
 
-    responseRows.forEach((functionalRow, originalIndex) => {
-      const fallbackRow = buildProjectDraftHazardRow(functionalRow, targetHeaders);
-      const savedDraft = startingDraftRows[originalIndex];
+    hazardTargets.forEach((target) => {
+      const { analysisRow, originalIndex, guidePhrase, guidePhraseIndex, rowKey } = target;
+      const fallbackRow = buildProjectDraftHazardRow(analysisRow, targetHeaders);
+      const savedDraft = startingDraftRows[rowKey] || (guidePhraseIndex === 0 ? startingDraftRows[originalIndex] : null);
       const savedDraftRow = Array.isArray(savedDraft?.row)
         ? alignSummaryRowToHeaders(draftHazardHeaders, savedDraft.row, targetHeaders, fallbackRow)
         : null;
       const savedDraftIsMeaningful = savedDraftRow
         ? (savedDraft?.generated || isMeaningfullyGeneratedDraftRow(savedDraftRow, fallbackRow))
         : false;
-      if (savedDraftIsMeaningful) {
-        preservedDraftRows[originalIndex] = {
-          row: savedDraftRow,
-          generated: true,
-        };
-        return;
-      }
-
-      const completedRow = findExistingHazardRowForFunctionalRow(functionalRow, existingSummary);
-      if (completedRow) {
-        const completedHeaders = existingSummary[0] || [];
-        const alignedCompletedRow = alignSummaryRowToHeaders(completedHeaders, completedRow, targetHeaders, fallbackRow);
-        if (isMeaningfullyGeneratedDraftRow(alignedCompletedRow, fallbackRow)) {
-          preservedDraftRows[originalIndex] = {
-            row: alignedCompletedRow,
+      if (!shouldRegenerate) {
+        if (savedDraftIsMeaningful) {
+          preservedDraftRows[rowKey] = {
+            row: savedDraftRow,
             generated: true,
           };
           return;
         }
+
+        const completedRow = findExistingHazardRowForFunctionalRow(analysisRow, existingSummary, guidePhrase);
+        if (completedRow) {
+          const completedHeaders = existingSummary[0] || [];
+          const alignedCompletedRow = alignSummaryRowToHeaders(completedHeaders, completedRow, targetHeaders, fallbackRow);
+          if (isMeaningfullyGeneratedDraftRow(alignedCompletedRow, fallbackRow)) {
+            preservedDraftRows[rowKey] = {
+              row: alignedCompletedRow,
+              generated: true,
+            };
+            return;
+          }
+        }
       }
 
-      rowsToGenerate.push({ functionalRow, originalIndex, fallbackRow });
+      rowsToGenerate.push({ ...target, functionalRow: analysisRow, fallbackRow });
     });
 
-    if (responseRows.length > 0 && rowsToGenerate.length === 0) {
+    if (!shouldRegenerate && hazardTargets.length > 0 && rowsToGenerate.length === 0) {
       const finalSheets = {
         ...(analysisResult || {}),
         Summary: [
           targetHeaders,
-          ...responseRows
-            .map((functionalRow, index) => preservedDraftRows[index]?.row || buildProjectDraftHazardRow(functionalRow, targetHeaders))
-            .filter((row, index) => isMeaningfullyGeneratedDraftRow(row, buildProjectDraftHazardRow(responseRows[index], targetHeaders))),
+          ...hazardTargets
+            .map((target) => preservedDraftRows[target.rowKey]?.row || buildProjectDraftHazardRow(target.analysisRow, targetHeaders))
+            .filter((row, index) => isMeaningfullyGeneratedDraftRow(row, buildProjectDraftHazardRow(hazardTargets[index].analysisRow, targetHeaders))),
         ],
       };
+      setIsConsolidatingSafetyIssues(true);
+      const nextRiskRegister = await requestConsolidatedSafetyIssuesFromSummary(finalSheets.Summary, { mergeExisting: true });
+      setIsConsolidatingSafetyIssues(false);
       setDraftHazardRowsByIndex((prev) => ({ ...prev, ...preservedDraftRows }));
       setAnalysisResult(finalSheets);
+      setRiskRegister(nextRiskRegister);
       if (activeProjectId) {
         saveProjectPatch(activeProjectId, {
           analysisResult: finalSheets,
@@ -6615,6 +7082,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
             ...(loadProjectData(activeProjectId)?.draftHazardRowsByIndex || {}),
             ...preservedDraftRows,
           },
+          riskRegister: nextRiskRegister,
           ...(usesProjectRiskProfileGenerationMode
             ? { projectRiskProfileGenerationMode: selectedGenerationMode }
             : {}),
@@ -6627,8 +7095,15 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     }
 
     const functionalDecompositionSheet = [
-      ["Function (From)", "Control Action", "Function (To)"],
-      ...rowsToGenerate.map(({ functionalRow }) => [functionalRow.fromFunction || "", functionalRow.controlAction || "", functionalRow.toFunction || ""])
+      ["Function (From)", "Control Action", "Function (To)", "Guide Phrase", "Guide Phrase Applicable", "Guide Phrase Applicability Rationale"],
+      ...rowsToGenerate.map(({ functionalRow }) => [
+        functionalRow.fromFunction || "",
+        functionalRow.controlAction || "",
+        functionalRow.toFunction || "",
+        functionalRow.guidePhrase || "",
+        functionalRow.guidePhraseApplicable || "",
+        functionalRow.guidePhraseApplicabilityRationale || "",
+      ])
     ];
     const sheets = { "Functional Decomposition": functionalDecompositionSheet };
     const dummySetFolders = async (updater) => { const prev = {}; const newState = await updater(prev); return newState; };
@@ -6646,6 +7121,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     });
 
     setIsAnalyzing(true);
+    setIsRegeneratingRiskProfile(shouldRegenerate);
     setProgress({ step: 0, total: stepDescriptionsMap[selectedMethod]?.total || 9 });
 
     const rawFinalSheets = await runLiteAIAnalysis({
@@ -6671,13 +7147,13 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const generatedRows = Array.isArray(generatedSummary) ? generatedSummary.slice(1) : [];
     const generatedDraftRows = {};
 
-    rowsToGenerate.forEach(({ functionalRow, originalIndex, fallbackRow }, generatedIndex) => {
+    rowsToGenerate.forEach(({ rowKey, fallbackRow }, generatedIndex) => {
       const generatedRow = generatedRows[generatedIndex];
       const nextRow = Array.isArray(generatedRow)
         ? alignSummaryRowToHeaders(generatedHeaders, generatedRow, targetHeaders, fallbackRow)
         : fallbackRow;
       if (isMeaningfullyGeneratedDraftRow(nextRow, fallbackRow)) {
-        generatedDraftRows[originalIndex] = {
+        generatedDraftRows[rowKey] = {
           row: nextRow,
           generated: true,
         };
@@ -6689,10 +7165,10 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       ...preservedDraftRows,
       ...generatedDraftRows,
     };
-    const mergedSummaryRows = responseRows
-      .map((functionalRow, index) => {
-        const fallbackRow = buildProjectDraftHazardRow(functionalRow, targetHeaders);
-        const row = mergedDraftRows[index]?.row || fallbackRow;
+    const mergedSummaryRows = hazardTargets
+      .map((target) => {
+        const fallbackRow = buildProjectDraftHazardRow(target.analysisRow, targetHeaders);
+        const row = mergedDraftRows[target.rowKey]?.row || fallbackRow;
         return isMeaningfullyGeneratedDraftRow(row, fallbackRow) ? row : null;
       })
       .filter(Boolean);
@@ -6700,14 +7176,21 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       ...generatedSheets,
       Summary: [targetHeaders, ...mergedSummaryRows],
     };
+    setIsConsolidatingSafetyIssues(true);
+    const nextRiskRegister = await requestConsolidatedSafetyIssuesFromSummary(finalSheets.Summary, {
+      mergeExisting: Boolean(existingSummary) && !shouldRegenerate,
+    });
+    setIsConsolidatingSafetyIssues(false);
 
     setAnalysisResult(finalSheets);
     setDraftHazardRowsByIndex(mergedDraftRows);
+    setRiskRegister(nextRiskRegister);
     if (activeProjectId) {
       saveProjectPatch(activeProjectId, {
         analysisResult: finalSheets,
         riskMethod: selectedMethod,
         draftHazardRowsByIndex: mergedDraftRows,
+        riskRegister: nextRiskRegister,
         ...(usesProjectRiskProfileGenerationMode
           ? { projectRiskProfileGenerationMode: selectedGenerationMode }
           : {}),
@@ -6730,6 +7213,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       }
     }
     setIsAnalyzing(false);
+    setIsRegeneratingRiskProfile(false);
     setShowDiagram(false);
     setActiveTab('Hazard Analysis');
 
@@ -6761,10 +7245,12 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     }
   };
 
-  const handleGenerateDraftHazardRow = async (functionalRowIndex) => {
-    if (draftHazardGeneratingIndex !== null) return;
-    const functionalRow = responseRows[functionalRowIndex];
-    if (!functionalRow) return;
+  const handleGenerateDraftHazardRow = async (hazardTargetIndex) => {
+    if (draftHazardGeneratingIndex !== null || isAnalyzing) return;
+    const target = draftHazardTargets[hazardTargetIndex];
+    const functionalRow = target?.analysisRow;
+    if (!target || !functionalRow) return;
+    const rowKey = target.rowKey;
 
     const selectedMethod = riskMethod;
     const usesProjectRiskProfileGenerationMode = selectedMethod === "STPA-Textbook";
@@ -6772,8 +7258,15 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       ? projectRiskProfileGenerationMode
       : undefined;
     const functionalDecompositionSheet = [
-      ["Function (From)", "Control Action", "Function (To)"],
-      [functionalRow.fromFunction || "", functionalRow.controlAction || "", functionalRow.toFunction || ""],
+      ["Function (From)", "Control Action", "Function (To)", "Guide Phrase", "Guide Phrase Applicable", "Guide Phrase Applicability Rationale"],
+      [
+        functionalRow.fromFunction || "",
+        functionalRow.controlAction || "",
+        functionalRow.toFunction || "",
+        functionalRow.guidePhrase || "",
+        functionalRow.guidePhraseApplicable || "",
+        functionalRow.guidePhraseApplicabilityRationale || "",
+      ],
     ];
     const sheets = { "Functional Decomposition": functionalDecompositionSheet };
     const dummySetFolders = async (updater) => {
@@ -6783,7 +7276,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const targetHeaders = getProjectDraftHazardHeaders(selectedMethod);
     const fallbackRow = buildProjectDraftHazardRow(functionalRow, targetHeaders);
 
-    setDraftHazardGeneratingIndex(functionalRowIndex);
+    setDraftHazardGeneratingIndex(hazardTargetIndex);
     try {
       const rawSheets = await runLiteAIAnalysis({
         tableRows: [functionalRow],
@@ -6814,39 +7307,79 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         throw new Error("The selected method completed but did not return usable hazard values for this row.");
       }
 
-      setDraftHazardRowsByIndex((prev) => ({
-        ...prev,
-        [functionalRowIndex]: {
+      const completedDraftRows = {};
+      if (Array.isArray(analysisResult?.Summary?.[0])) {
+        const completedHeaders = analysisResult.Summary[0] || [];
+        analysisResult.Summary.slice(1).forEach((completedRow, index) => {
+          const completedTarget = draftHazardTargets[index];
+          const sourceRow = completedTarget?.analysisRow;
+          if (!completedTarget || !sourceRow) return;
+          const rowFallback = buildProjectDraftHazardRow(sourceRow, targetHeaders);
+          const alignedRow = alignSummaryRowToHeaders(completedHeaders, completedRow, targetHeaders, rowFallback);
+          if (isMeaningfullyGeneratedDraftRow(alignedRow, rowFallback)) {
+            completedDraftRows[completedTarget.rowKey] = {
+              row: alignedRow,
+              generated: true,
+            };
+          }
+        });
+      }
+      const nextDraftRows = {
+        ...completedDraftRows,
+        ...(loadProjectData(activeProjectId)?.draftHazardRowsByIndex || draftHazardRowsByIndex || {}),
+        [rowKey]: {
           row: nextRow,
           generated,
         },
-      }));
-      if (activeProjectId) {
-        const savedDraftRows = {
-          ...(loadProjectData(activeProjectId)?.draftHazardRowsByIndex || {}),
-          [functionalRowIndex]: {
-            row: nextRow,
-            generated,
-          },
+      };
+      setDraftHazardRowsByIndex(nextDraftRows);
+      const hasCompletedSummary = Array.isArray(analysisResult?.Summary?.[0]);
+      let nextAnalysisResult = null;
+      let nextRiskRegister = null;
+      if (hasCompletedSummary) {
+        const mergedSummaryRows = draftHazardTargets
+          .map((summaryTarget) => {
+            const rowFallback = buildProjectDraftHazardRow(summaryTarget.analysisRow, targetHeaders);
+            const rowForSummary = nextDraftRows[summaryTarget.rowKey]?.row || rowFallback;
+            return isMeaningfullyGeneratedDraftRow(rowForSummary, rowFallback) ? rowForSummary : null;
+          })
+          .filter(Boolean);
+        nextAnalysisResult = {
+          ...(analysisResult || {}),
+          Summary: [targetHeaders, ...mergedSummaryRows],
         };
-        saveProjectPatch(activeProjectId, { draftHazardRowsByIndex: savedDraftRows });
+        setAnalysisResult(nextAnalysisResult);
+        setIsConsolidatingSafetyIssues(true);
+        try {
+          nextRiskRegister = await requestConsolidatedSafetyIssuesFromSummary(nextAnalysisResult.Summary, { mergeExisting: true });
+          setRiskRegister(nextRiskRegister);
+        } finally {
+          setIsConsolidatingSafetyIssues(false);
+        }
+      }
+      if (activeProjectId) {
+        saveProjectPatch(activeProjectId, {
+          draftHazardRowsByIndex: nextDraftRows,
+          ...(nextAnalysisResult ? { analysisResult: nextAnalysisResult } : {}),
+          ...(nextRiskRegister ? { riskRegister: nextRiskRegister } : {}),
+        });
       }
       const reviewItem = normalizeReviewItem({
         id: createReviewId(
           `hazard-draft-${activeProjectId || "default"}`,
           "hazard_summary_draft_table",
-          `row:${functionalRowIndex}`
+          `row:${rowKey}`
         ),
         artifactType: "hazard_summary_draft_table",
-        artifactId: `hazard-summary-draft:${activeProjectId || "default"}:row:${functionalRowIndex}`,
+        artifactId: `hazard-summary-draft:${activeProjectId || "default"}:row:${rowKey}`,
         reviewUnitType: REVIEW_UNIT_TYPES.TABLE_ROW,
         sourceFeature: "AI Hazard Analysis",
         sourceMethod: selectedMethod,
         sourceRunId: `hazard-draft-${activeProjectId || "default"}`,
         projectId: activeProjectId || "",
-        originalContent: { rowIndex: functionalRowIndex, columns: targetHeaders, row: nextRow },
-        currentContent: { rowIndex: functionalRowIndex, columns: targetHeaders, row: nextRow },
-        traceLinks: [{ type: "table_row", rowIndex: functionalRowIndex }],
+        originalContent: { rowIndex: hazardTargetIndex, rowKey, interfaceIndex: target.interfaceIndex, guidePhraseIndex: target.guidePhraseIndex, columns: targetHeaders, row: nextRow },
+        currentContent: { rowIndex: hazardTargetIndex, rowKey, interfaceIndex: target.interfaceIndex, guidePhraseIndex: target.guidePhraseIndex, columns: targetHeaders, row: nextRow },
+        traceLinks: [{ type: "table_row", rowIndex: hazardTargetIndex, rowKey }],
       });
       await resultsReview.createReviewItems([reviewItem]);
     } catch (error) {
@@ -6857,18 +7390,20 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     }
   };
 
-  const handleDraftHazardCellChange = (functionalRowIndex, columnIndex, value) => {
-    const functionalRow = responseRows[functionalRowIndex];
-    if (!functionalRow) return;
+  const handleDraftHazardCellChange = (hazardTargetIndex, columnIndex, value) => {
+    const target = draftHazardTargets[hazardTargetIndex];
+    const functionalRow = target?.analysisRow;
+    if (!target || !functionalRow) return;
+    const rowKey = target.rowKey;
     let nextRowForReview = null;
     setDraftHazardRowsByIndex((prev) => {
-      const existing = prev[functionalRowIndex];
+      const existing = prev[rowKey] || (target.guidePhraseIndex === 0 ? prev[target.originalIndex] : null);
       const baseRow = existing?.row || buildProjectDraftHazardRow(functionalRow, draftHazardHeaders);
       const nextRow = baseRow.map((cell, index) => (index === columnIndex ? value : cell));
       nextRowForReview = nextRow;
       return {
         ...prev,
-        [functionalRowIndex]: {
+        [rowKey]: {
           row: nextRow,
           generated: existing?.generated || isMeaningfullyGeneratedDraftRow(nextRow, buildProjectDraftHazardRow(functionalRow, draftHazardHeaders)),
         },
@@ -6878,7 +7413,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     if (activeProjectId && nextRowForReview) {
       const savedDraftRows = {
         ...(loadProjectData(activeProjectId)?.draftHazardRowsByIndex || {}),
-        [functionalRowIndex]: {
+        [rowKey]: {
           row: nextRowForReview,
           generated: true,
         },
@@ -6886,12 +7421,15 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       saveProjectPatch(activeProjectId, { draftHazardRowsByIndex: savedDraftRows });
     }
 
-    const reviewItem = draftHazardReviewByRow.get(functionalRowIndex);
+    const reviewItem = draftHazardReviewByRow.get(rowKey) || draftHazardReviewByRow.get(hazardTargetIndex);
     if (reviewItem && nextRowForReview) {
       resultsReview.updateReviewItem(reviewItem.id, {
         currentContent: {
           ...(reviewItem.currentContent || {}),
-          rowIndex: functionalRowIndex,
+          rowIndex: hazardTargetIndex,
+          rowKey,
+          interfaceIndex: target.interfaceIndex,
+          guidePhraseIndex: target.guidePhraseIndex,
           columns: draftHazardHeaders,
           row: nextRowForReview,
         },
@@ -7313,6 +7851,186 @@ Rules:
     }
   };
 
+  function mergeSafetyIssueEdits(refreshed = [], existingRows = []) {
+    const existingByKey = new Map((existingRows || []).map((risk) => [
+      [risk.title, risk.description].map((value) => String(value || "").trim().toLowerCase()).join("::"),
+      risk,
+    ]));
+    return (refreshed || []).map((risk) => {
+      const key = [risk.title, risk.description].map((value) => String(value || "").trim().toLowerCase()).join("::");
+      const existing = existingByKey.get(key);
+      return existing
+        ? {
+            ...risk,
+            id: existing.id || risk.id,
+            likelihood: existing.likelihood ?? risk.likelihood,
+            severity: existing.severity ?? risk.severity,
+            status: existing.status || risk.status,
+            owner: existing.owner ?? risk.owner,
+            dueDate: existing.dueDate ?? risk.dueDate,
+            tags: existing.tags ?? risk.tags,
+          }
+        : risk;
+    });
+  }
+
+  async function requestConsolidatedSafetyIssuesFromSummary(summary, { mergeExisting = false } = {}) {
+    if (!Array.isArray(summary) || !Array.isArray(summary[0]) || summary.length < 2) return [];
+    const headers = summary[0].map((header) => String(header || ""));
+    const safetyRows = summary
+      .slice(1)
+      .map((row, index) => ({ row, sourceIndex: index + 1 }))
+      .filter(({ row }) => shouldUseHazardSummaryRowForSafetyIssue(row, headers))
+      .map(({ row, sourceIndex }) => {
+        const cells = {};
+        headers.forEach((header, index) => {
+          const label = String(header || `Column ${index + 1}`).trim();
+          const value = String(row?.[index] ?? "").trim();
+          if (label && value) cells[label] = value;
+        });
+        return { sourceIndex, cells };
+      });
+    if (!safetyRows.length) return [];
+
+    const fallback = buildRiskRegisterFromSummary(summary);
+    try {
+      const prompt = `
+You are consolidating hazard-analysis rows into a concise set of Consolidated Safety Issues.
+
+Project: ${activeProject?.name || "Untitled project"}
+Hazard method: ${riskMethod}
+
+Only the rows below are eligible because their Proposed Safety Assessment is Safety. Do not use or infer from Mission/Reliability rows.
+
+Safety hazard rows:
+${JSON.stringify(safetyRows, null, 2)}
+
+Return strict JSON only with this schema:
+{
+  "issues": [
+    {
+      "title": "short consolidated safety issue title",
+      "description": "specific consolidated issue description grounded in the source rows",
+      "likelihood": 1,
+      "severity": 1,
+      "status": "Open",
+      "owner": "",
+      "dueDate": "",
+      "tags": "comma-separated tags",
+      "sourceIndexes": [1, 2]
+    }
+  ]
+}
+
+Rules:
+- Consolidate related rows into one issue when they share the same hazard theme, unsafe condition, affected function/subsystem, mitigation need, or verification concern.
+- Keep unrelated safety hazards as separate issues.
+- Every sourceIndexes value must come from the supplied Safety hazard rows.
+- Use likelihood and severity integers from 1 to 5. If the rows do not provide enough evidence, choose conservative middle values based on the row severity wording.
+- Do not invent hazards, controls, owners, or dates.
+- Return only strict JSON. No Markdown. No code fences.
+      `.trim();
+      const response = await fetch(`${backendURL}/api/chat`, {
+        method: "POST",
+        ...buildAIAuthOpts({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          model: "gpt-4o",
+          messages: [
+            { role: "system", content: "Return only strict JSON. No prose or markdown." },
+            { role: "user", content: prompt },
+          ],
+          temperature: 0.2,
+          max_tokens: 2200,
+        }),
+      });
+      if (!response.ok) throw new Error(`Safety issue consolidation AI HTTP ${response.status}`);
+      const parsed = parseJsonObjectFromText(extractAIText(await response.json())) || {};
+      const allowedIndexes = new Set(safetyRows.map((item) => item.sourceIndex));
+      const issues = (Array.isArray(parsed?.issues) ? parsed.issues : [])
+        .map((issue, index) => {
+          const sourceIndexes = Array.from(new Set((Array.isArray(issue?.sourceIndexes) ? issue.sourceIndexes : [])
+            .map((value) => Number(value))
+            .filter((value) => allowedIndexes.has(value))))
+            .sort((a, b) => a - b);
+          if (!sourceIndexes.length) return null;
+          return {
+            id: makeId(),
+            title: String(issue?.title || `Consolidated Safety Issue ${index + 1}`).trim(),
+            description: String(issue?.description || "Consolidated from Safety-assessed hazard analysis rows.").trim(),
+            likelihood: Math.min(5, Math.max(1, Number(issue?.likelihood) || 3)),
+            severity: Math.min(5, Math.max(1, Number(issue?.severity) || 3)),
+            status: String(issue?.status || "Open").trim() || "Open",
+            owner: String(issue?.owner || "").trim(),
+            dueDate: String(issue?.dueDate || "").trim(),
+            tags: String(issue?.tags || "").trim(),
+            sourceIndexes,
+            sourceIndex: sourceIndexes[0],
+          };
+        })
+        .filter(Boolean);
+      const nextIssues = issues.length ? issues : fallback;
+      return mergeExisting ? mergeSafetyIssueEdits(nextIssues, riskRegister) : nextIssues;
+    } catch (error) {
+      console.error("[risk-assessment] AI safety issue consolidation failed", error);
+      return mergeExisting ? mergeSafetyIssueEdits(fallback, riskRegister) : fallback;
+    }
+  }
+
+  async function refreshSafetyIssuesFromSummary({ mergeExisting = false } = {}) {
+    if (isConsolidatingSafetyIssues) return;
+    setIsConsolidatingSafetyIssues(true);
+    try {
+      const nextRiskRegister = await requestConsolidatedSafetyIssuesFromSummary(currentSafetyIssueSummary, { mergeExisting });
+      setRiskRegister(nextRiskRegister);
+      setActiveRiskId((currentId) => (nextRiskRegister.some((risk) => risk.id === currentId) ? currentId : nextRiskRegister[0]?.id || null));
+      if (activeProjectId) saveProjectPatch(activeProjectId, { riskRegister: nextRiskRegister });
+      return nextRiskRegister;
+    } finally {
+      setIsConsolidatingSafetyIssues(false);
+    }
+  }
+
+  const exportSafetyIssuesCSV = () => {
+    const headers = [
+      "Title",
+      "Description",
+      "Likelihood",
+      "Severity",
+      "Score",
+      "Priority",
+      "Status",
+      "Owner",
+      "Due Date",
+      "Tags",
+      "Source Rows",
+    ];
+    const rows = risksWithEvidence.map((risk) => [
+      risk.title || "",
+      risk.description || "",
+      risk.likelihood || "",
+      risk.severity || "",
+      risk.score || "",
+      risk.priority || "",
+      risk.status || "",
+      risk.owner || "",
+      risk.dueDate || "",
+      risk.tags || "",
+      getRiskSourceIndexes(risk).join("; "),
+    ]);
+    const escapeCell = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const csv = [headers, ...rows].map((row) => row.map(escapeCell).join(",")).join("\r\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const ts = new Date().toISOString().slice(0, 10);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `consolidated_safety_issues_${ts}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
   const handleRunCodeArchitectureHazardAnalysis = async (
     selectedMethod = codeArchitectureHazardMethod,
     options = {}
@@ -7463,7 +8181,7 @@ Rules:
   const exportHazardAnalysisCSV = () => {
     const hasCompletedSummary = Array.isArray(analysisResult?.Summary?.[0]);
     const headers = hasCompletedSummary
-      ? analysisResult.Summary[0]
+      ? hazardSummaryHeaders
       : draftHazardHeaders;
     const rows2D = hasCompletedSummary
       ? filteredHazardSummaryRows.map(({ row }) => row)
@@ -8224,25 +8942,6 @@ const projectHint = useMemo(() => ({
   baselineKey: localStorage.getItem("activeBaselineKey") || undefined,
 }), [activeProjectId]);
 
-  // 🔧 fit-to-view utilities so the canvas isn’t stuck zoomed
-  const fitDiagramToView = (padding = 0.2) => {
-    try { diagramRef.current?.fitView?.({ padding }); } catch {}
-  };
-
-  useEffect(() => {
-    if (!showFunctionalDiagram) return;
-    if (responseRows.length > 0) {
-      const t = setTimeout(() => fitDiagramToView(0.2), 60);
-      return () => clearTimeout(t);
-    }
-  }, [responseRows.length, showFunctionalDiagram]);
-
-  useEffect(() => {
-    if (!analysisResult) return;
-    const t = setTimeout(() => fitDiagramToView(0.2), 60);
-    return () => clearTimeout(t);
-  }, [analysisResult]);
-
     // Gate the whole app
     if (gate.phase === 'checking') return null;
 
@@ -8315,12 +9014,7 @@ const projectHint = useMemo(() => ({
           onChange={(e) => handleProjectRiskMethodChange(e.target.value)}
           disabled={isAnalyzing || draftHazardGeneratingIndex !== null}
         >
-          <option value="STPA">STPA</option>
           <option value="STPA-Textbook">STPA (standard/detailed)</option>
-          <option value="FMEA-Textbook">FMEA</option>
-          <option value="HARA">HARA</option>
-          <option value="FHA">FHA</option>
-          <option value="WhatIf-Textbook">What-if</option>
         </select>
       </div>
       {riskMethod === "STPA-Textbook" && (
@@ -8340,11 +9034,21 @@ const projectHint = useMemo(() => ({
       )}
       <button
         type="button"
-        onClick={() => handleRunAnalysis(riskMethod)}
+        onClick={() => handleRunAnalysis(riskMethod, { regenerate: shouldRegenerateRiskProfileFromToolbar })}
         className="px-3 py-2 text-white rounded bg-[#2D7DFE] hover:bg-[#1E61D6] disabled:cursor-not-allowed disabled:opacity-60"
-        disabled={isAnalyzing || draftHazardGeneratingIndex !== null}
+        disabled={isAnalyzing || draftHazardGeneratingIndex !== null || hazardAnalysisRows.length === 0}
+        title={
+          hazardAnalysisRows.length === 0
+            ? "Add Function (From), Function (To), and Control Action before running hazard analysis"
+            :
+          shouldRegenerateRiskProfileFromToolbar
+            ? "Regenerate hazard analysis for all functional rows"
+            : "Generate hazard analysis for the functional decomposition"
+        }
       >
-        {isAnalyzing ? 'Developing risk profile...' : 'Develop risk profile'}
+        {isAnalyzing
+          ? (isRegeneratingRiskProfile ? 'Regenerating risk profile...' : 'Developing risk profile...')
+          : (shouldRegenerateRiskProfileFromToolbar ? 'Regenerate risk profile' : 'Develop risk profile')}
       </button>
       <button
         type="button"
@@ -8358,6 +9062,17 @@ const projectHint = useMemo(() => ({
         title="Export the visible hazard analysis table rows as CSV"
       >
         Export CSV
+      </button>
+      <button
+        type="button"
+        onClick={toggleAllHazardInterfacesCollapsed}
+        className="px-3 py-2 text-[#374151] rounded border border-gray-200 bg-white hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+        disabled={!visibleHazardInterfaceKeys.length}
+        title={allVisibleHazardInterfacesCollapsed
+          ? "Expand all visible interface guide-phrase groups"
+          : "Collapse all visible interface guide-phrase groups"}
+      >
+        {allVisibleHazardInterfacesCollapsed ? 'Expand all' : 'Collapse all'}
       </button>
     </div>
   ) : null;
@@ -10418,6 +11133,9 @@ const projectHint = useMemo(() => ({
   <button
     key={t}
     onClick={() => {
+      if (activeTab === 'Functional Diagramming' && t !== 'Functional Diagramming') {
+        commitFunctionalRowsToDiagram();
+      }
       setActiveTab(t);
       if (t === 'Hazard Analysis') setShowDiagram(false);
     }}
@@ -10490,9 +11208,11 @@ const projectHint = useMemo(() => ({
                         <PromptWizard
                           onSubmit={handlePromptWizardSubmit}
                           onSkip={() => {
-                            setResponseRows([
+                            const starterRows = [
                               { fromFunction: 'Node 1', fromDetails: '...', controlAction: 'Control', controlDetails: '...', toFunction: 'Node 2', toDetails: '...' }
-                            ]);
+                            ];
+                            setResponseRows(starterRows);
+                            setCommittedFunctionalDiagramRows(getProjectDiagramRows(starterRows));
                             setDiagramCategories(null);
                             setShowPromptWizard(false);
                             setCleanOnceKey(`wizard-${Date.now()}`);
@@ -10502,9 +11222,11 @@ const projectHint = useMemo(() => ({
                         <ConversationalWizard
                           onSubmit={handlePromptWizardSubmit}
                           onSkip={() => {
-                            setResponseRows([
+                            const starterRows = [
                               { fromFunction: 'Node 1', fromDetails: '...', controlAction: 'Control', controlDetails: '...', toFunction: 'Node 2', toDetails: '...' }
-                            ]);
+                            ];
+                            setResponseRows(starterRows);
+                            setCommittedFunctionalDiagramRows(getProjectDiagramRows(starterRows));
                             setDiagramCategories(null);
                             setShowPromptWizard(false);
                             setCleanOnceKey(`wizard-${Date.now()}`);
@@ -10528,6 +11250,7 @@ const projectHint = useMemo(() => ({
                           onClick={() => {
                             setShowFunctionalDiagram((v) => {
                               const nv = !v;
+                              if (nv) commitFunctionalRowsToDiagram();
                               // 🔧 nudge React Flow to recompute bounds after the view becomes visible
                               setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
                               return nv;
@@ -10548,7 +11271,7 @@ const projectHint = useMemo(() => ({
                             <LiteSummaryDiagramReactFlow
   key={activeProjectDiagramKey}
   ref={diagramRef}
-  rows={responseRows}
+  rows={committedFunctionalDiagramRows}
   autoCategories={diagramCategories}
   cleanOnceKey={cleanOnceKey}
   onCleanApplied={() => setCleanOnceKey(null)}   // ← clear after first use
@@ -10582,6 +11305,9 @@ const projectHint = useMemo(() => ({
 
                       {/* Table */}
                       <div className={`${showFunctionalDiagram ? 'hidden' : ''} relative mb-10 h-[calc(100vh-260px)] min-h-[420px] w-full overflow-auto rounded-md shadow-sm`}>
+                        <div className="flex justify-end border-b border-gray-200 bg-white px-4 py-3">
+                          <button onClick={handleAddRow} className="px-4 py-2 text-sm border rounded bg-[#ECEEFF] hover:bg-[#D7DAFF] text-[#0F0F12]">+ Add Row</button>
+                        </div>
                         <table className="min-w-full border-separate border-spacing-0 text-sm text-left">
                           <thead>
                             <tr className="text-[#4B5563] text-sm font-medium">
@@ -10743,10 +11469,10 @@ const projectHint = useMemo(() => ({
                                   {functionalTableColumns.map(({ key: field }) => (
                                     <td key={field} className={`px-6 py-4 align-top whitespace-pre-wrap border-b border-gray-100 ${rejected ? 'text-rose-900' : ''}`}>
                                       <textarea
-                                        className={`w-full resize-none bg-transparent focus:outline-none text-sm ${rejected ? 'line-through decoration-rose-400' : ''}`}
+                                        className={`w-full resize-none overflow-hidden break-words bg-transparent text-sm leading-5 [overflow-wrap:anywhere] focus:outline-none ${rejected ? 'line-through decoration-rose-400' : ''}`}
                                         value={row[field]}
                                         onChange={(e) => handleRowChange(originalIndex, field, e.target.value)}
-                                        style={{ minHeight: '40px' }}
+                                        rows={getFunctionalCellRows(row[field])}
                                       />
                                     </td>
                                   ))}
@@ -10765,9 +11491,6 @@ const projectHint = useMemo(() => ({
                             )}
                           </tbody>
                         </table>
-                        <div className="mt-4 text-right">
-                          <button onClick={handleAddRow} className="px-4 py-2 text-sm border rounded bg-[#ECEEFF] hover:bg-[#D7DAFF] text-[#0F0F12]">+ Add Row</button>
-                        </div>
                       </div>
                     </>
                   )}
@@ -10775,9 +11498,14 @@ const projectHint = useMemo(() => ({
               )}
               </>
             )}
-            {activeTab === 'Hazard Analysis' && (
+{activeTab === 'Hazard Analysis' && (
   <section className="mt-2">
     {hazardAnalysisControls}
+    {incompleteHazardAnalysisRowCount > 0 && (
+      <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-left text-sm text-amber-800">
+        {incompleteHazardAnalysisRowCount} functional relationship row{incompleteHazardAnalysisRowCount === 1 ? '' : 's'} will appear in the diagram but cannot be analyzed for hazards until Control Action is populated.
+      </div>
+    )}
     {!analysisResult?.Summary ? (
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-white px-4 py-3 text-sm text-gray-600">
@@ -10786,7 +11514,7 @@ const projectHint = useMemo(() => ({
             <p>Known functional decomposition fields are populated. Use the row magic button to generate a hazard row with the selected method.</p>
           </div>
         </div>
-        <div className="relative h-[calc(100dvh-285px)] min-h-0 w-full overflow-auto rounded-md shadow-sm">
+        <div className="relative h-[calc(100dvh-360px)] min-h-[260px] w-full overflow-auto rounded-md shadow-sm">
           <table className="min-w-full border-separate border-spacing-0 text-sm text-left">
             <thead>
               <tr className="text-[#4B5563] text-sm font-medium">
@@ -10913,50 +11641,71 @@ const projectHint = useMemo(() => ({
               )}
             </thead>
             <tbody className="text-[#374151] text-sm">
-              {filteredDraftHazardSummaryRows.map(({ row, originalIndex, generated }, idx) => {
+              {groupedFilteredDraftHazardSummaryRows.map(({ row, originalIndex, rowKey, generated, groupMeta, isFirstInGroup, groupCount }, idx) => {
                 const generating = draftHazardGeneratingIndex === originalIndex;
-                const reviewItem = draftHazardReviewByRow.get(originalIndex);
+                const reviewItem = draftHazardReviewByRow.get(rowKey) || draftHazardReviewByRow.get(originalIndex);
+                const groupCollapsed = collapsedHazardInterfaceKeys.has(groupMeta.key);
                 return (
-                  <tr
-                    id={`hazard-source-row-${originalIndex + 1}`}
-                    key={originalIndex}
-                    className={`${idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]"} transition-colors`}
-                  >
-                    <td className="px-6 py-4 align-top border-b border-gray-100">
-                      <div className="flex flex-col items-start gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleGenerateDraftHazardRow(originalIndex)}
-                          disabled={draftHazardGeneratingIndex !== null}
-                          className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-medium ${
-                            generated
-                              ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                              : 'border-[#2D7DFE] bg-white text-[#1c5fde] hover:bg-blue-50'
-                          } disabled:cursor-not-allowed disabled:opacity-60`}
-                          title="Autogenerate this hazard row with the selected method"
-                        >
-                          <Sparkles size={14} aria-hidden="true" />
-                          {generating ? 'Generating...' : generated ? 'Regenerate' : 'Generate'}
-                        </button>
-                        {reviewItem && (
-                          <ReviewStatusBadge
-                            reviewItem={reviewItem}
-                            openOptions={draftHazardReviewDrawerOptions}
-                          />
-                        )}
-                      </div>
-                    </td>
-                    {row.map((cell, colIdx) => (
-                      <td key={colIdx} className="px-6 py-4 align-top whitespace-pre-wrap border-b border-gray-100">
-                        <textarea
-                          className="min-h-[44px] w-full resize-none overflow-hidden bg-transparent text-sm text-gray-900 focus:outline-none"
-                          value={cell}
-                          onChange={(event) => handleDraftHazardCellChange(originalIndex, colIdx, event.target.value)}
-                          rows={getDraftHazardCellRows(cell)}
-                        />
-                      </td>
-                    ))}
-                  </tr>
+                  <React.Fragment key={rowKey || originalIndex}>
+                    {isFirstInGroup && (
+                      <tr className="bg-[#EEF4FF]">
+                        <td colSpan={draftHazardHeaders.length + 1} className="px-4 py-2 border-b border-blue-100">
+                          <button
+                            type="button"
+                            onClick={() => toggleHazardInterfaceCollapsed(groupMeta.key)}
+                            className="inline-flex items-center gap-2 text-left text-sm font-semibold text-[#0B3EA8]"
+                          >
+                            <span aria-hidden="true">{groupCollapsed ? '▸' : '▾'}</span>
+                            <span>{groupMeta.label}</span>
+                            <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-[#2D7DFE]">
+                              {groupCount} guide phrase{groupCount === 1 ? '' : 's'}
+                            </span>
+                          </button>
+                        </td>
+                      </tr>
+                    )}
+                    {!groupCollapsed && (
+                      <tr
+                        id={`hazard-source-row-${originalIndex + 1}`}
+                        className={`${idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]"} transition-colors`}
+                      >
+                        <td className="px-6 py-4 align-top border-b border-gray-100">
+                          <div className="flex flex-col items-start gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleGenerateDraftHazardRow(originalIndex)}
+                              disabled={draftHazardGeneratingIndex !== null}
+                              className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-medium ${
+                                generated
+                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                                  : 'border-[#2D7DFE] bg-white text-[#1c5fde] hover:bg-blue-50'
+                              } disabled:cursor-not-allowed disabled:opacity-60`}
+                              title="Autogenerate this hazard row with the selected method"
+                            >
+                              <Sparkles size={14} aria-hidden="true" />
+                              {generating ? 'Generating...' : generated ? 'Regenerate' : 'Generate'}
+                            </button>
+                            {reviewItem && (
+                              <ReviewStatusBadge
+                                reviewItem={reviewItem}
+                                openOptions={draftHazardReviewDrawerOptions}
+                              />
+                            )}
+                          </div>
+                        </td>
+                        {row.map((cell, colIdx) => (
+                          <td key={colIdx} className="px-6 py-4 align-top whitespace-pre-wrap border-b border-gray-100">
+                            <textarea
+                              className="min-h-[44px] w-full resize-none overflow-hidden break-words bg-transparent text-sm leading-5 text-gray-900 [overflow-wrap:anywhere] focus:outline-none"
+                              value={cell}
+                              onChange={(event) => handleDraftHazardCellChange(originalIndex, colIdx, event.target.value)}
+                              rows={getDraftHazardCellRows(cell)}
+                            />
+                          </td>
+                        ))}
+                      </tr>
+                    )}
+                  </React.Fragment>
                 );
               })}
               {draftHazardSummaryRows.length === 0 && (
@@ -10986,7 +11735,7 @@ const projectHint = useMemo(() => ({
   <LiteSummaryDiagram
   key={`hazards:${activeProjectId}`}
   projectId={activeProjectId}
-  summaryData={{ Summary: [ analysisResult.Summary[0], ...applyFilters(analysisResult.Summary.slice(1)) ] }}
+  summaryData={{ Summary: [hazardSummaryHeaders, ...filteredHazardSummaryRows.map(({ row }) => row)] }}
   selectedLabel={selectedLabel}
   setSelectedLabel={setSelectedLabel}
 />
@@ -10994,16 +11743,14 @@ const projectHint = useMemo(() => ({
   </div>
 </div>
 ) : (
-          <div className="relative h-[calc(100dvh-285px)] min-h-0 w-full overflow-auto rounded-md shadow-sm">
+          <div className="relative h-[calc(100dvh-360px)] min-h-[260px] w-full overflow-auto rounded-md shadow-sm">
             <table className="min-w-full border-separate border-spacing-0 text-sm text-left">
               <thead>
                 <tr className="text-[#4B5563] text-sm font-medium">
-                  {hazardSummaryReviewItems.length > 0 && (
-                    <th className="sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap">
-                      Review
-                    </th>
-                  )}
-                  {analysisResult["Summary"][0].map((header, idx) => (
+                  <th className="sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap">
+                    Review
+                  </th>
+                  {hazardSummaryHeaders.map((header, idx) => (
                     <th
                       key={idx}
                       className="sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap"
@@ -11105,10 +11852,10 @@ const projectHint = useMemo(() => ({
                 </tr>
                 {activeHazardFilterCount > 0 && (
                   <tr>
-                    <th colSpan={analysisResult["Summary"][0].length + (hazardSummaryReviewItems.length > 0 ? 1 : 0)} className="sticky top-[64px] z-20 bg-[#F8FAFC] border-b border-gray-200 px-4 py-2 text-left">
+                    <th colSpan={hazardSummaryHeaders.length + 1} className="sticky top-[64px] z-20 bg-[#F8FAFC] border-b border-gray-200 px-4 py-2 text-left">
                       <div className="flex items-center justify-between gap-3 text-xs text-gray-600">
                         <span>
-                          Showing {filteredHazardSummaryRows.length} of {analysisResult["Summary"].length - 1} rows with {activeHazardFilterCount} selected filter{activeHazardFilterCount === 1 ? '' : 's'}.
+                          Showing {filteredHazardSummaryRows.length} of {hazardSummaryDisplayRows.length} rows with {activeHazardFilterCount} selected filter{activeHazardFilterCount === 1 ? '' : 's'}.
                         </span>
                         <button
                           type="button"
@@ -11123,49 +11870,88 @@ const projectHint = useMemo(() => ({
                 )}
               </thead>
               <tbody className="text-[#374151] text-sm">
-                {filteredHazardSummaryRows
-                  .map(({ row, originalIndex }, idx) => {
+                {groupedFilteredHazardSummaryRows
+                  .map(({ row, originalIndex, generated, pending, groupMeta, isFirstInGroup, groupCount }, idx) => {
+                    const generating = draftHazardGeneratingIndex === originalIndex;
                     const reviewItem = hazardSummaryReviewByRow.get(originalIndex);
                     const rejected = reviewItem?.status === REVIEW_STATUSES.REJECTED;
                     const highlighted = highlightedHazardRowIndex === originalIndex;
+                    const groupCollapsed = collapsedHazardInterfaceKeys.has(groupMeta.key);
                     return (
-                      <tr
-                        id={`hazard-source-row-${originalIndex + 1}`}
-                        key={originalIndex}
-                        ref={(el) => {
-                          if (el) hazardRowRefs.current[originalIndex] = el;
-                          else delete hazardRowRefs.current[originalIndex];
-                        }}
-                        className={`transition-colors ${
-                          highlighted
-                            ? 'bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset'
-                            : rejected
-                              ? 'bg-rose-50/60'
-                              : idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]"
-                        }`}
-                      >
-                        {hazardSummaryReviewItems.length > 0 && (
-                          <td className="px-6 py-4 align-top border-b border-gray-100">
-                            <ReviewStatusBadge
-                              reviewItem={reviewItem}
-                              openOptions={{
-                                ...hazardReviewDrawerOptions,
-                                reviewItemIds: hazardSummaryReviewItems.map((item) => item.id),
-                              }}
-                            />
-                          </td>
+                      <React.Fragment key={`${originalIndex}-${groupMeta.key}`}>
+                        {isFirstInGroup && (
+                          <tr className="bg-[#EEF4FF]">
+                            <td colSpan={hazardSummaryHeaders.length + 1} className="px-4 py-2 border-b border-blue-100">
+                              <button
+                                type="button"
+                                onClick={() => toggleHazardInterfaceCollapsed(groupMeta.key)}
+                                className="inline-flex items-center gap-2 text-left text-sm font-semibold text-[#0B3EA8]"
+                              >
+                                <span aria-hidden="true">{groupCollapsed ? '▸' : '▾'}</span>
+                                <span>{groupMeta.label}</span>
+                                <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-[#2D7DFE]">
+                                  {groupCount} guide phrase{groupCount === 1 ? '' : 's'}
+                                </span>
+                              </button>
+                            </td>
+                          </tr>
                         )}
-                        {row.map((cell, colIdx) => (
-                          <td key={colIdx} className={`px-6 py-4 align-top whitespace-pre-wrap border-b border-gray-100 ${rejected ? 'text-rose-900 line-through decoration-rose-400' : ''}`}>
-                            {cell}
-                          </td>
-                        ))}
-                      </tr>
+                        {!groupCollapsed && (
+                          <tr
+                            id={`hazard-source-row-${originalIndex + 1}`}
+                            ref={(el) => {
+                              if (el) hazardRowRefs.current[originalIndex] = el;
+                              else delete hazardRowRefs.current[originalIndex];
+                            }}
+                            className={`transition-colors ${
+                              highlighted
+                                ? 'bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset'
+                                : rejected
+                                  ? 'bg-rose-50/60'
+                                  : idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]"
+                            }`}
+                          >
+                            <td className="px-6 py-4 align-top border-b border-gray-100">
+                              <div className="flex flex-col items-start gap-2">
+                                {reviewItem && (
+                                  <ReviewStatusBadge
+                                    reviewItem={reviewItem}
+                                    openOptions={{
+                                      ...hazardReviewDrawerOptions,
+                                      reviewItemIds: hazardSummaryReviewItems.map((item) => item.id),
+                                    }}
+                                  />
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleGenerateDraftHazardRow(originalIndex)}
+                                  disabled={isAnalyzing || draftHazardGeneratingIndex !== null}
+                                  className="inline-flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                  title="Regenerate this hazard analysis row with the selected method"
+                                >
+                                  <Sparkles size={14} aria-hidden="true" />
+                                  {generating ? 'Generating...' : generated ? 'Regenerate' : 'Generate'}
+                                </button>
+                                {pending && !generated && (
+                                  <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                                    New row
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            {row.map((cell, colIdx) => (
+                              <td key={colIdx} className={`min-w-56 max-w-xl break-words px-6 py-4 align-top whitespace-pre-wrap [overflow-wrap:anywhere] border-b border-gray-100 ${rejected ? 'text-rose-900 line-through decoration-rose-400' : ''}`}>
+                                {cell}
+                              </td>
+                            ))}
+                          </tr>
+                        )}
+                      </React.Fragment>
                     );
                   })}
                 {filteredHazardSummaryRows.length === 0 && (
                   <tr>
-                    <td colSpan={analysisResult["Summary"][0].length + (hazardSummaryReviewItems.length > 0 ? 1 : 0)} className="px-6 py-8 text-center text-sm text-gray-500">
+                    <td colSpan={hazardSummaryHeaders.length + 1} className="px-6 py-8 text-center text-sm text-gray-500">
                       No rows match the current filters.
                     </td>
                   </tr>
@@ -11181,8 +11967,58 @@ const projectHint = useMemo(() => ({
 
 {activeTab === 'Safety Issues & Risk Assessment' && (
   <section className="mt-2 flex min-h-0 flex-col space-y-4">
-      {riskRegister.length > 0 && (
-        <>
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
+            <button
+              type="button"
+              onClick={() => refreshSafetyIssuesFromSummary({ mergeExisting: true })}
+              disabled={isConsolidatingSafetyIssues}
+              className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              title="Use the LLM to consolidate Safety-marked hazard rows while preserving matching issue edits"
+            >
+              {isConsolidatingSafetyIssues && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
+              Merge & Refresh
+            </button>
+            <button
+              type="button"
+              onClick={() => refreshSafetyIssuesFromSummary({ mergeExisting: false })}
+              disabled={isConsolidatingSafetyIssues}
+              className="inline-flex items-center gap-1.5 rounded-md border border-[#2D7DFE]/30 bg-[#EEF4FF] px-3 py-2 text-sm font-medium text-[#0B3EA8] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+              title="Use the LLM to regenerate consolidated safety issues from rows marked Safety"
+            >
+              {isConsolidatingSafetyIssues && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
+              Regenerate Safety Issues
+            </button>
+            <button
+              type="button"
+              onClick={() => generateSafetyIssueReportsMarkdown(riskRegister)}
+              disabled={!riskRegister.length || isGeneratingRiskAssessmentReport || isConsolidatingSafetyIssues}
+              className="inline-flex items-center gap-1.5 rounded-md border border-[#2D7DFE]/30 bg-white px-3 py-2 text-sm font-medium text-[#1c5fde] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+              title="Generate Safety Issue Reports for consolidated safety issues"
+            >
+              {isGeneratingRiskAssessmentReport && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
+              {isGeneratingRiskAssessmentReport ? "Generating Reports..." : "Generate Reports"}
+            </button>
+            <button
+              type="button"
+              onClick={exportSafetyIssuesCSV}
+              disabled={!riskRegister.length}
+              className="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              title="Export consolidated safety issues as CSV"
+            >
+              Export CSV
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowSafetyIssueReportDrawer((visible) => !visible);
+                if (showSafetyIssueReportDrawer) setIsSafetyIssueReportFullscreen(false);
+              }}
+              className="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              title={showSafetyIssueReportDrawer ? "Hide Safety Issue Reports" : "Show Safety Issue Reports"}
+            >
+              {showSafetyIssueReportDrawer ? "Hide Reports" : "Show Reports"}
+            </button>
+          </div>
           <div className={`relative min-h-0 transition-[padding] duration-300 ${showSafetyIssueReportDrawer && !isSafetyIssueReportFullscreen ? '2xl:pr-[700px]' : ''}`}>
           <div className="grid h-[calc(100dvh-265px)] min-h-0 grid-cols-1 gap-4 overflow-hidden xl:grid-cols-[360px_minmax(0,1fr)]">
             <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white">
@@ -11250,7 +12086,11 @@ const projectHint = useMemo(() => ({
                   </button>
                 ))}
                 {displayedRiskCards.length === 0 && (
-                  <div className="px-3 py-8 text-center text-sm text-gray-500">No safety issues in this priority group.</div>
+                  <div className="px-3 py-8 text-center text-sm text-gray-500">
+                    {riskRegister.length
+                      ? "No safety issues in this priority group."
+                      : "No consolidated safety issues yet. Run hazard analysis, then use Regenerate Safety Issues to consolidate rows marked Safety."}
+                  </div>
                 )}
               </div>
             </div>
@@ -11531,9 +12371,6 @@ const projectHint = useMemo(() => ({
             </div>
           </div>
           </div>
-
-        </>
-      )}
   </section>
 )}
 

@@ -33,13 +33,29 @@ function truncateForPrompt(value, maxChars = 120) {
 function flattenDecomposition(sheets) {
   const decomposition = sheets["Functional Decomposition"] || [];
   const headers = decomposition[0] || [];
+  const findColumn = (candidates, fallback) => {
+    const normalized = headers.map((header) => sanitizeText(header).toLowerCase());
+    const index = candidates
+      .map((candidate) => normalized.indexOf(String(candidate).toLowerCase()))
+      .find((candidateIndex) => candidateIndex >= 0);
+    return index >= 0 ? index : fallback;
+  };
+  const fromIdx = findColumn(["Function (From)", "From Function", "Source Function"], 0);
+  const actionIdx = findColumn(["Control Action", "Unsafe Control Action", "UCA", "Action"], 1);
+  const toIdx = findColumn(["Function (To)", "To Function", "Target Function"], 2);
+  const guidePhraseIdx = findColumn(["Guide Phrase", "Guide Word", "Guideword", "STPA Guide Phrase"], -1);
+  const guideApplicableIdx = findColumn(["Guide Phrase Applicable", "Guide Applicable", "Applicability", "Applicable"], -1);
+  const guideRationaleIdx = findColumn(["Guide Phrase Applicability Rationale", "Applicability Rationale", "Guide Phrase Rationale"], -1);
   return decomposition
     .slice(1)
     .map((row, index) => ({
       id: `FD-${index + 1}`,
-      from: sanitizeText(getCellText(row[0])),
-      controlAction: sanitizeText(getCellText(row[1])),
-      to: sanitizeText(getCellText(row[2])),
+      from: sanitizeText(getCellText(row[fromIdx])),
+      controlAction: sanitizeText(getCellText(row[actionIdx])),
+      to: sanitizeText(getCellText(row[toIdx])),
+      guidePhrase: guidePhraseIdx >= 0 ? sanitizeText(getCellText(row[guidePhraseIdx])) : "",
+      guidePhraseApplicable: guideApplicableIdx >= 0 ? sanitizeText(getCellText(row[guideApplicableIdx])) : "",
+      guidePhraseApplicabilityRationale: guideRationaleIdx >= 0 ? sanitizeText(getCellText(row[guideRationaleIdx])) : "",
       traceability: extractFunctionalDecompositionTrace(headers, row),
     }))
     .filter((row) => row.from || row.controlAction || row.to);
@@ -60,6 +76,9 @@ function compactPromptItem(item = {}, maxChars = 120) {
     functionFrom: truncateForPrompt(item.from, maxChars),
     controlAction: truncateForPrompt(item.controlAction, maxChars),
     functionTo: truncateForPrompt(item.to, maxChars),
+    guidePhrase: truncateForPrompt(item.guidePhrase, maxChars),
+    guidePhraseApplicable: truncateForPrompt(item.guidePhraseApplicable, 24),
+    guidePhraseApplicabilityRationale: truncateForPrompt(item.guidePhraseApplicabilityRationale, maxChars),
     fromFile: truncateForPrompt(trace.fromFile, maxChars),
     toFile: truncateForPrompt(trace.toFile, maxChars),
     sourceFiles: truncateForPrompt(trace.sourceFiles, maxChars),
@@ -86,6 +105,8 @@ const STANDARD_MAX_ROWS_PER_PROMPT = 10;
 const STANDARD_RETRY_ROWS_PER_PROMPT = 4;
 const STANDARD_MISSING_ROW_RETRIES = 2;
 const SAFETY_SIGNIFICANCE_FIELDS = [
+  ["proposedSafetyAssessment", "Proposed Safety Assessment"],
+  ["proposedSafetyAssessmentRationale", "Proposed Safety Assessment Rationale"],
   ["safetySignificant", "Safety Significant"],
   ["safetySignificanceRationale", "Safety Significance Rationale"],
 ];
@@ -277,9 +298,14 @@ ${SPECIFICITY_SELF_CHECK_GUIDANCE}
     rowIdSuffix: "STPA",
     promptGuidance: `
 For each functional decomposition row, identify one credible unsafe control action and the safety constraint. Be specific:
+- If a Guide Phrase is supplied, first decide whether that guide phrase is applicable to the exact Function From / Control Action / Function To interface.
+- guidePhraseApplicable must be exactly Yes or No.
+- guidePhraseApplicabilityRationale must briefly explain the applicability decision for that guide phrase and interface.
+- Only assess applicable guide phrases. If guidePhraseApplicable is No, set hazard-bearing fields to "Not applicable:" with a short reason and classify the row as Mission/Reliability during safety significance review.
 - Losses must describe plausible adverse end states or consequences.
 - Hazards must describe unsafe system states, not generic failures, and include the local effect, system-level effect, and plausible consequence.
-- Unsafe control action must name whether the action is missing, wrong, provided too early or late, stopped too soon, applied too long, or provided when not needed, and identify the affected data, command, state, or interface.
+- Unsafe control action must be phrased as the supplied Control Action combined with the applicable Guide Phrase. For example, if controlAction is "send braking command" and guidePhrase is "The control action is provided too late", write "Send braking command is provided too late..." and then add the affected data, command, state, or interface.
+- Unsafe control action must name whether the control action is missing, provided when hazardous, too early, too late, in the wrong order, stopped too soon, or applied too long.
 - Causal factors must name concrete technical, data, timing, interface, human, or environmental contributors.
 - Safety requirement or constraint must be tailored and testable.
 ${CONCRETE_CAUSAL_CHAIN_GUIDANCE}
@@ -287,6 +313,9 @@ ${DOMAIN_NOUN_GUIDANCE}
 ${SPECIFICITY_SELF_CHECK_GUIDANCE}
 `.trim(),
     fields: [
+      ["guidePhrase", "Guide Phrase"],
+      ["guidePhraseApplicable", "Guide Phrase Applicable"],
+      ["guidePhraseApplicabilityRationale", "Guide Phrase Applicability Rationale"],
       ["losses", "Losses"],
       ["hazards", "Hazards"],
       ["unsafeControlActions", "Unsafe Control Actions"],
@@ -298,7 +327,7 @@ ${SPECIFICITY_SELF_CHECK_GUIDANCE}
 
 function generatedRowKey(row = {}) {
   const id = sanitizeText(row.id);
-  const match = id.match(/\bFD-\d+\b/i);
+    const match = id.match(/\bFD-\d+(?:-GP-\d+)?\b/i);
   return match ? match[0].toUpperCase() : id.toUpperCase();
 }
 
@@ -324,6 +353,9 @@ function generatedRowForItem(rowsById, rows, index, item) {
 function fallbackRow(config, item, index) {
   const common = {
     id: `${item.id || `FD-${index + 1}`}-${config.rowIdSuffix}`,
+    guidePhrase: sanitizeText(item.guidePhrase),
+    guidePhraseApplicable: normalizeGuidePhraseApplicability(item.guidePhraseApplicable),
+    guidePhraseApplicabilityRationale: sanitizeText(item.guidePhraseApplicabilityRationale) || "Needs review: guide phrase applicability was not generated.",
     loss: `Needs review: loss was not generated for ${item.id || `FD-${index + 1}`}.`,
     losses: `Needs review: losses were not generated for ${item.id || `FD-${index + 1}`}.`,
     hazard: `Needs review: hazard was not generated for ${item.id || `FD-${index + 1}`}.`,
@@ -341,23 +373,104 @@ function fallbackRow(config, item, index) {
   return common;
 }
 
+function formatControlActionForUca(controlAction = "") {
+  const action = sanitizeText(controlAction);
+  if (!action) return "The control action";
+  return action.charAt(0).toUpperCase() + action.slice(1);
+}
+
+function buildGuidePhraseUnsafeControlAction(item = {}, generatedValue = "", guidePhraseApplicableValue = "") {
+  const guidePhrase = sanitizeText(item?.guidePhrase);
+  const controlAction = formatControlActionForUca(item?.controlAction);
+  const generated = sanitizeText(generatedValue);
+  const applicable = normalizeGuidePhraseApplicability(guidePhraseApplicableValue || item?.guidePhraseApplicable);
+
+  if (applicable === "No") {
+    return generated.startsWith("Not applicable:")
+      ? generated
+      : `Not applicable: ${guidePhrase || "the guide phrase"} is not applicable to ${sanitizeText(item?.controlAction) || "this control action"} for this interface.`;
+  }
+
+  const lowerGuide = guidePhrase.toLowerCase();
+  let requiredPrefix = "";
+  if (/not providing/.test(lowerGuide)) {
+    requiredPrefix = `${controlAction} is not provided`;
+  } else if (/providing the control action/.test(lowerGuide)) {
+    requiredPrefix = `${controlAction} is provided when hazardous or not needed`;
+  } else if (/too early/.test(lowerGuide)) {
+    requiredPrefix = `${controlAction} is provided too early`;
+  } else if (/too late/.test(lowerGuide)) {
+    requiredPrefix = `${controlAction} is provided too late`;
+  } else if (/wrong order/.test(lowerGuide)) {
+    requiredPrefix = `${controlAction} is provided in the wrong order`;
+  } else if (/stopped too soon/.test(lowerGuide)) {
+    requiredPrefix = `${controlAction} is stopped too soon`;
+  } else if (/applied too long/.test(lowerGuide)) {
+    requiredPrefix = `${controlAction} is applied too long`;
+  } else if (guidePhrase) {
+    requiredPrefix = `${controlAction} under guide phrase "${guidePhrase}"`;
+  } else {
+    return generated || `Needs review: unsafe control action was not generated for ${item.id || "this row"}.`;
+  }
+
+  const normalizedGenerated = generated.toLowerCase();
+  if (generated && normalizedGenerated.includes(requiredPrefix.toLowerCase())) return generated;
+  if (!generated || /^needs review:/i.test(generated)) {
+    return `${requiredPrefix} for ${sanitizeText(item?.to) || "the target function"}.`;
+  }
+  return `${requiredPrefix}: ${generated}`;
+}
+
 function normalizeRow(config, row, item, index) {
   const base = fallbackRow(config, item, index);
   const normalized = {
     id: sanitizeText(row.id) || base.id,
+    proposedSafetyAssessment: normalizeProposedSafetyAssessment(
+      row.proposedSafetyAssessment || row["Proposed Safety Assessment"] || row.safetyAssessment || row["Safety Assessment"],
+      row.safetySignificant || row["Safety Significant"],
+    ),
+    proposedSafetyAssessmentRationale: sanitizeText(row.proposedSafetyAssessmentRationale || row["Proposed Safety Assessment Rationale"]),
     safetySignificant: normalizeSafetySignificance(row.safetySignificant || row["Safety Significant"]),
     safetySignificanceRationale: sanitizeText(row.safetySignificanceRationale || row["Safety Significance Rationale"]),
   };
   config.fields.forEach(([fieldName]) => {
-    normalized[fieldName] = sanitizeText(row[fieldName]) || base[fieldName] || "";
+    if (fieldName === "guidePhrase") {
+      normalized[fieldName] = sanitizeText(item?.guidePhrase) || sanitizeText(row[fieldName] || row["Guide Phrase"]) || base[fieldName] || "";
+    } else if (fieldName === "guidePhraseApplicable") {
+      normalized[fieldName] = normalizeGuidePhraseApplicability(row[fieldName] || row["Guide Phrase Applicable"] || item?.guidePhraseApplicable);
+    } else if (fieldName === "guidePhraseApplicabilityRationale") {
+      normalized[fieldName] = sanitizeText(row[fieldName] || row["Guide Phrase Applicability Rationale"] || item?.guidePhraseApplicabilityRationale) || base[fieldName] || "";
+    } else if (fieldName === "unsafeControlActions") {
+      normalized[fieldName] = buildGuidePhraseUnsafeControlAction(
+        item,
+        row[fieldName] || row["Unsafe Control Actions"] || base[fieldName],
+        normalized.guidePhraseApplicable || row.guidePhraseApplicable || row["Guide Phrase Applicable"],
+      );
+    } else {
+      normalized[fieldName] = sanitizeText(row[fieldName]) || base[fieldName] || "";
+    }
   });
   return normalized;
 }
 
+function normalizeGuidePhraseApplicability(value) {
+  const text = sanitizeText(value).toLowerCase();
+  if (/^yes\b|^applicable\b|^true\b/.test(text)) return "Yes";
+  if (/^no\b|^not applicable\b|^false\b/.test(text)) return "No";
+  return "Yes";
+}
+
 function normalizeSafetySignificance(value) {
   const text = sanitizeText(value).toLowerCase();
-  if (/^yes\b|^safety\s*significant\b|^significant\b/i.test(text)) return "Yes";
+  if (/^yes\b|^safety\b|^safety\s*significant\b|^significant\b/i.test(text)) return "Yes";
   return "Needs Review";
+}
+
+function normalizeProposedSafetyAssessment(value, safetySignificantValue = "") {
+  const text = sanitizeText(value).toLowerCase();
+  if (/^safety\b|safety[-\s]?critical|safety\s*significant/.test(text)) return "Safety";
+  if (!text && normalizeSafetySignificance(safetySignificantValue) === "Yes") return "Safety";
+  return "Mission/Reliability";
 }
 
 function rowContainsGenericHazardLanguage(config, row = {}) {
@@ -535,12 +648,17 @@ Project / operational context:
 ${operationalContextBlock || "No explicit project or operational context was available. Infer cautiously from row evidence only."}
 
 Return ONLY a JSON array. Each object must include:
-id, safetySignificant, safetySignificanceRationale.
+id, proposedSafetyAssessment, proposedSafetyAssessmentRationale, safetySignificant, safetySignificanceRationale.
 
 Safety significance rules:
+- If generated.guidePhraseApplicable is No, proposedSafetyAssessment must be Mission/Reliability and safetySignificant must be Needs Review because the guide phrase is not applicable for that interface.
+- proposedSafetyAssessment must be exactly one of: Safety or Mission/Reliability.
+- proposedSafetyAssessmentRationale must briefly explain why the row belongs in Safety or Mission/Reliability, using the generated row text and supplied project/code context.
+- Mark Safety when the row describes a credible path to harm involving people, operators, bystanders, environment, physical assets, security/safety controls, critical data integrity, loss of control, or another safety-relevant hazardous state in the stated project context.
+- Mark Mission/Reliability when the row is mainly about routine reliability, mission availability/performance, developer experience, formatting, logging, non-critical latency, internal cleanup, recoverable behavior, ambiguity, insufficient support, or assumptions not present in the row/context.
 - safetySignificant must be exactly one of: Yes or Needs Review. Never output No.
-- Tag Yes when the generated row describes a credible path to harm involving people, operators, bystanders, mission-critical operation, environment, physical assets, security/safety controls, critical data integrity, or loss of control in the stated project context.
-- Tag Needs Review when credible safety significance is not evident, including rows that appear to be routine reliability, developer experience, formatting, logging, non-critical latency, internal cleanup, recoverable behavior, ambiguous, insufficiently supported, or dependent on assumptions not present in the row/context.
+- Set safetySignificant to Yes when proposedSafetyAssessment is Safety.
+- Set safetySignificant to Needs Review when proposedSafetyAssessment is Mission/Reliability.
 - Do not change the hazard text or requirements. Only classify the row.
 - Do not hardcode or assume any specific domain when context is absent.
 - Base the rationale on the generated hazard/requirement text, functional decomposition row, traceability/source symbols/files, and project/operational context.
@@ -580,6 +698,8 @@ async function tagSafetySignificanceForStandardRows(config, rows, items, context
         const tag = generatedRowForItem(tagsById, tags, 0, item);
         taggedRows[index] = normalizeRow(config, {
           ...row,
+          proposedSafetyAssessment: normalizeProposedSafetyAssessment(tag?.proposedSafetyAssessment, tag?.safetySignificant),
+          proposedSafetyAssessmentRationale: sanitizeText(tag?.proposedSafetyAssessmentRationale) || sanitizeText(tag?.safetySignificanceRationale) || "Needs review: proposed safety assessment rationale was not generated.",
           safetySignificant: normalizeSafetySignificance(tag?.safetySignificant),
           safetySignificanceRationale: sanitizeText(tag?.safetySignificanceRationale) || "Needs review: safety significance rationale was not generated.",
         }, item, index);
@@ -589,6 +709,8 @@ async function tagSafetySignificanceForStandardRows(config, rows, items, context
       tagChunk.forEach(({ row, item, index }) => {
         taggedRows[index] = normalizeRow(config, {
           ...row,
+          proposedSafetyAssessment: "Mission/Reliability",
+          proposedSafetyAssessmentRationale: "Needs review: proposed safety assessment rationale was not generated.",
           safetySignificant: "Needs Review",
           safetySignificanceRationale: "Needs review: safety significance classification was not generated.",
         }, item, index);

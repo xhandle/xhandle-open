@@ -107,11 +107,14 @@ export async function runLiteAIAnalysis({
   const decompositionSheet = Array.isArray(existingDecomposition) && existingDecomposition.length > 1
     ? existingDecomposition
     : [
-      ["Function (From)", "Control Action", "Function (To)", ...CODE_ARCHITECTURE_TRACEABILITY_COLUMNS],
+      ["Function (From)", "Control Action", "Function (To)", "Guide Phrase", "Guide Phrase Applicable", "Guide Phrase Applicability Rationale", ...CODE_ARCHITECTURE_TRACEABILITY_COLUMNS],
       ...tableRows.map((row) => [
         getCellText(row.fromFunction),
         getCellText(row.controlAction),
         getCellText(row.toFunction),
+        getCellText(row.guidePhrase),
+        getCellText(row.guidePhraseApplicable),
+        getCellText(row.guidePhraseApplicabilityRationale),
         ...traceabilityToSheetCells(row.traceability || {}),
       ]),
     ];

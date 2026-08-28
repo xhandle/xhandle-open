@@ -391,6 +391,8 @@ export const HAZARD_SUMMARY_TRACEABILITY_COLUMNS = [
 ];
 
 export const HAZARD_SUMMARY_EVIDENCE_COLUMNS = [
+  "Proposed Safety Assessment",
+  "Proposed Safety Assessment Rationale",
   "Evidence Classification",
   "Safety Concern Type",
   "Confidence",
@@ -1000,6 +1002,19 @@ function safetyConcernTypeForHazard(hazardText = "", evidenceText = "") {
   return "Low safety relevance";
 }
 
+function proposedSafetyAssessmentForEvidence(evidenceClassification = "", concernType = "") {
+  if (evidenceClassification === "Code-supported independent finding") return "Safety";
+  if (concernType !== "Safety-critical") return "Mission/Reliability";
+  if ([
+    "Contradicted by code relationship",
+    "Generic/low confidence",
+    "Symbol-supported, edge unverified",
+  ].includes(evidenceClassification)) {
+    return "Mission/Reliability";
+  }
+  return "Safety";
+}
+
 function isGenericHazardText(hazardText = "") {
   const text = normalizeText(hazardText);
   if (!text) return true;
@@ -1234,27 +1249,32 @@ function evaluateHazardEvidence({ rowObject = {}, sourceRow = {} } = {}) {
     confidence = evidenceClassification === "Code-supported" ? "High" : "Medium";
   }
 
+  const safetySignificantOverride = evidenceClassification === "Code-supported independent finding"
+    ? "Yes"
+    : ([
+      "Contradicted by code relationship",
+      "Generic/low confidence",
+      "Symbol-supported, edge unverified",
+    ].includes(evidenceClassification) ? "Needs Review" : "");
+  const safetySignificanceRationaleOverride = evidenceClassification === "Code-supported independent finding"
+    ? "Independent repo-wide source audit supports the hazard even though the pairwise architecture edge may need review."
+    : (evidenceClassification === "Contradicted by code relationship"
+      ? "Code relationship audit did not support the claimed architecture edge; review or correct the architecture row before carrying this hazard forward."
+      : (evidenceClassification === "Generic/low confidence"
+        ? "Evidence review found generic or low-confidence hazard wording; keep this row in review until a concrete safety-control path is confirmed."
+        : (evidenceClassification === "Symbol-supported, edge unverified"
+          ? "Source symbols were found, but the row lacks verified caller/callee evidence; keep this row in review unless a separate hazard justification supports it."
+          : "")));
+
   return {
     hazardText: reviewedHazard || hazardText,
     evidenceClassification,
+    proposedSafetyAssessment: proposedSafetyAssessmentForEvidence(evidenceClassification, concernType),
+    proposedSafetyAssessmentRationale: safetySignificanceRationaleOverride || assumptions[0] || "Assessment is based on generated hazard text plus referenced architecture/code evidence.",
     safetyConcernType: concernType,
     confidence,
-    safetySignificantOverride: evidenceClassification === "Code-supported independent finding"
-      ? "Yes"
-      : ([
-        "Contradicted by code relationship",
-        "Generic/low confidence",
-        "Symbol-supported, edge unverified",
-      ].includes(evidenceClassification) ? "Needs Review" : ""),
-    safetySignificanceRationaleOverride: evidenceClassification === "Code-supported independent finding"
-      ? "Independent repo-wide source audit supports the hazard even though the pairwise architecture edge may need review."
-      : (evidenceClassification === "Contradicted by code relationship"
-        ? "Code relationship audit did not support the claimed architecture edge; review or correct the architecture row before carrying this hazard forward."
-        : (evidenceClassification === "Generic/low confidence"
-          ? "Evidence review found generic or low-confidence hazard wording; keep this row in review until a concrete safety-control path is confirmed."
-          : (evidenceClassification === "Symbol-supported, edge unverified"
-            ? "Source symbols were found, but the row lacks verified caller/callee evidence; keep this row in review unless a separate hazard justification supports it."
-            : ""))),
+    safetySignificantOverride,
+    safetySignificanceRationaleOverride,
     relationshipAudit: relationshipAudit.label,
     usageAudit: usageAudit.label,
     codeEvidence: joinEvidence(codeEvidence),
@@ -1312,6 +1332,8 @@ export function ensureHazardSummaryEvidenceColumns(generatedSheets = {}, tableRo
     }
 
     const evidenceValues = {
+      "Proposed Safety Assessment": evidence.proposedSafetyAssessment,
+      "Proposed Safety Assessment Rationale": evidence.proposedSafetyAssessmentRationale,
       "Evidence Classification": evidence.evidenceClassification,
       "Safety Concern Type": evidence.safetyConcernType,
       Confidence: evidence.confidence,

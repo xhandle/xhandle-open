@@ -95,6 +95,8 @@ describe("code architecture hazard evidence review", () => {
     const row = rowObject(reviewed.Summary);
 
     expect(enrichedRows[0].codeEvidence.sourceAudit.mode).toBe("per-row-indexed-source");
+    expect(row["Proposed Safety Assessment"]).toBe("Mission/Reliability");
+    expect(row["Proposed Safety Assessment Rationale"]).toMatch(/did not support the claimed architecture edge/i);
     expect(row["Evidence Classification"]).toBe("Contradicted by code relationship");
     expect(row["Code Relationship Audit"]).toMatch(/reverse call evidence/i);
   });

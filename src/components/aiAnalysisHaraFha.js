@@ -86,6 +86,8 @@ const FHA_MAX_ROWS_PER_PROMPT = 10;
 const FHA_RETRY_ROWS_PER_PROMPT = 4;
 const FHA_MISSING_ROW_RETRIES = 2;
 const SAFETY_SIGNIFICANCE_FIELDS = [
+  ["proposedSafetyAssessment", "Proposed Safety Assessment"],
+  ["proposedSafetyAssessmentRationale", "Proposed Safety Assessment Rationale"],
   ["safetySignificant", "Safety Significant"],
   ["safetySignificanceRationale", "Safety Significance Rationale"],
 ];
@@ -492,6 +494,11 @@ function normalizeHaraRow(row, item, index) {
   const base = fallbackHazardRow(item, index);
   return {
     id: sanitizeText(row.id) || base.id,
+    proposedSafetyAssessment: normalizeProposedSafetyAssessment(
+      row.proposedSafetyAssessment || row["Proposed Safety Assessment"] || row.safetyAssessment || row["Safety Assessment"],
+      row.safetySignificant || row["Safety Significant"],
+    ),
+    proposedSafetyAssessmentRationale: sanitizeText(row.proposedSafetyAssessmentRationale || row["Proposed Safety Assessment Rationale"]),
     safetySignificant: normalizeSafetySignificance(row.safetySignificant || row["Safety Significant"]),
     safetySignificanceRationale: sanitizeText(row.safetySignificanceRationale || row["Safety Significance Rationale"]),
     itemFunction: sanitizeText(row.itemFunction) || base.itemFunction,
@@ -518,6 +525,11 @@ function normalizeFhaRow(row, item, index) {
   const swci = deriveFhaSwci(severityCategory, softwareControlCategory);
   return {
     id: sanitizeText(row.id) || base.id,
+    proposedSafetyAssessment: normalizeProposedSafetyAssessment(
+      row.proposedSafetyAssessment || row["Proposed Safety Assessment"] || row.safetyAssessment || row["Safety Assessment"],
+      row.safetySignificant || row["Safety Significant"],
+    ),
+    proposedSafetyAssessmentRationale: sanitizeText(row.proposedSafetyAssessmentRationale || row["Proposed Safety Assessment Rationale"]),
     safetySignificant: normalizeSafetySignificance(row.safetySignificant || row["Safety Significant"]),
     safetySignificanceRationale: sanitizeText(row.safetySignificanceRationale || row["Safety Significance Rationale"]),
     functionName: sanitizeText(row.functionName) || base.itemFunction,
@@ -539,8 +551,15 @@ function normalizeFhaRow(row, item, index) {
 
 function normalizeSafetySignificance(value) {
   const text = sanitizeText(value).toLowerCase();
-  if (/^yes\b|^safety\s*significant\b|^significant\b/i.test(text)) return "Yes";
+  if (/^yes\b|^safety\b|^safety\s*significant\b|^significant\b/i.test(text)) return "Yes";
   return "Needs Review";
+}
+
+function normalizeProposedSafetyAssessment(value, safetySignificantValue = "") {
+  const text = sanitizeText(value).toLowerCase();
+  if (/^safety\b|safety[-\s]?critical|safety\s*significant/.test(text)) return "Safety";
+  if (!text && normalizeSafetySignificance(safetySignificantValue) === "Yes") return "Safety";
+  return "Mission/Reliability";
 }
 
 function genericHazardFields(fieldNames = [], row = {}) {
@@ -659,12 +678,16 @@ Project / operational context:
 ${operationalContextBlock || "No explicit project or operational context was available. Infer cautiously from row evidence only."}
 
 Return ONLY a JSON array. Each object must include:
-id, safetySignificant, safetySignificanceRationale.
+id, proposedSafetyAssessment, proposedSafetyAssessmentRationale, safetySignificant, safetySignificanceRationale.
 
 Safety significance rules:
+- proposedSafetyAssessment must be exactly one of: Safety or Mission/Reliability.
+- proposedSafetyAssessmentRationale must briefly explain why the row belongs in Safety or Mission/Reliability, using the generated row text and supplied project/code context.
+- Mark Safety when the row describes a credible path to harm involving people, operators, bystanders, environment, physical assets, security/safety controls, critical data integrity, loss of control, or another safety-relevant hazardous state in the stated project context.
+- Mark Mission/Reliability when the row is mainly about routine reliability, mission availability/performance, developer experience, formatting, logging, non-critical latency, internal cleanup, recoverable behavior, ambiguity, insufficient support, or assumptions not present in the row/context.
 - safetySignificant must be exactly one of: Yes or Needs Review. Never output No.
-- Tag Yes when the generated row describes a credible path to harm involving people, operators, bystanders, mission-critical operation, environment, physical assets, security/safety controls, critical data integrity, or loss of control in the stated project context.
-- Tag Needs Review when credible safety significance is not evident, including rows that appear to be routine reliability, developer experience, formatting, logging, non-critical latency, internal cleanup, recoverable behavior, ambiguous, insufficiently supported, or dependent on assumptions not present in the row/context.
+- Set safetySignificant to Yes when proposedSafetyAssessment is Safety.
+- Set safetySignificant to Needs Review when proposedSafetyAssessment is Mission/Reliability.
 - Do not change the hazard text or requirements. Only classify the row.
 - Do not hardcode or assume any specific domain when context is absent.
 - Base the rationale on the generated hazard/requirement text, functional decomposition row, traceability/source symbols/files, and project/operational context.
@@ -710,6 +733,8 @@ async function tagSafetySignificanceForRows({
         const tag = generatedRowForItem(tagsById, tags, 0, item);
         taggedRows[index] = normalize({
           ...row,
+          proposedSafetyAssessment: normalizeProposedSafetyAssessment(tag?.proposedSafetyAssessment, tag?.safetySignificant),
+          proposedSafetyAssessmentRationale: sanitizeText(tag?.proposedSafetyAssessmentRationale) || sanitizeText(tag?.safetySignificanceRationale) || "Needs review: proposed safety assessment rationale was not generated.",
           safetySignificant: normalizeSafetySignificance(tag?.safetySignificant),
           safetySignificanceRationale: sanitizeText(tag?.safetySignificanceRationale) || "Needs review: safety significance rationale was not generated.",
         }, item, index);
@@ -719,6 +744,8 @@ async function tagSafetySignificanceForRows({
       tagChunk.forEach(({ row, item, index }) => {
         taggedRows[index] = normalize({
           ...row,
+          proposedSafetyAssessment: "Mission/Reliability",
+          proposedSafetyAssessmentRationale: "Needs review: proposed safety assessment rationale was not generated.",
           safetySignificant: "Needs Review",
           safetySignificanceRationale: "Needs review: safety significance classification was not generated.",
         }, item, index);
