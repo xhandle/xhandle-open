@@ -30,6 +30,7 @@ import {
   PanelLeftOpen,
   PanelLeftClose,
   Crosshair,
+  ClipboardCheck,
 } from "lucide-react";
 import {
   loadThreads, saveThreads, newThread, renameThread, deleteThread,
@@ -45,6 +46,31 @@ import {
 import { openRegionSelector } from "./RegionLassoOverlay";
 import { pushRegionContext, popAllRegionContext } from "./utils/copilotContextBus";
 import { buildWorkspaceLLMContext } from "../features/workspace-graph";
+import { waitForActionProvider } from "../features/app/actionRegistry";
+
+const USER_PROFILE_STORAGE_KEY = "xhandle.userProfile";
+
+function loadUserProfileFirstName() {
+  try {
+    const raw = typeof localStorage !== "undefined"
+      ? localStorage.getItem(USER_PROFILE_STORAGE_KEY)
+      : "";
+    if (!raw) return "";
+    const profile = JSON.parse(raw);
+    const name = String(profile?.name || "").trim();
+    if (!name) return "";
+    return name.split(/\s+/)[0] || "";
+  } catch {
+    return "";
+  }
+}
+
+function buildNewThreadGreeting() {
+  const firstName = loadUserProfileFirstName();
+  return firstName
+    ? `Hi ${firstName}. How can I help?`
+    : "New thread. How can I help?";
+}
 
 function QuickSuggestions({ onPick }) {
   const items = [
@@ -52,6 +78,12 @@ function QuickSuggestions({ onPick }) {
       label: "Visualize Functional Architecture",
       prompt: "Visualize the functional architecture from the current project data. If a functional decomposition table exists, use it to build the diagram and call out the most connected nodes.",
       icon: Network,
+      tone: "primary",
+    },
+    {
+      label: "Audit Functional Decomposition",
+      prompt: "Audit the current project functional decomposition for completeness. Propose missing functional rows, control actions, interfaces, and subsystem allocations for me to review before applying.",
+      icon: ClipboardCheck,
       tone: "primary",
     },
     {
@@ -178,6 +210,284 @@ function compactPromptArtifact(artifact) {
   };
 }
 
+function normalizeGraphLabel(value = "") {
+  return String(value || "").trim().replace(/\s+/g, " ");
+}
+
+function buildFunctionalGraphConnectivity(rows = []) {
+  const functionalRows = Array.isArray(rows) ? rows : [];
+  const nodeLabels = new Map();
+  const adjacency = new Map();
+  const edges = [];
+  const degree = new Map();
+
+  const ensureNode = (label) => {
+    const clean = normalizeGraphLabel(label);
+    if (!clean) return "";
+    const key = clean.toLowerCase();
+    if (!nodeLabels.has(key)) nodeLabels.set(key, clean);
+    if (!adjacency.has(key)) adjacency.set(key, new Set());
+    if (!degree.has(key)) degree.set(key, { incoming: 0, outgoing: 0, total: 0 });
+    return key;
+  };
+
+  functionalRows.forEach((row, rowIndex) => {
+    const fromKey = ensureNode(row?.fromFunction);
+    const toKey = ensureNode(row?.toFunction);
+    if (!fromKey || !toKey) return;
+    adjacency.get(fromKey).add(toKey);
+    adjacency.get(toKey).add(fromKey);
+    degree.get(fromKey).outgoing += 1;
+    degree.get(fromKey).total += 1;
+    degree.get(toKey).incoming += 1;
+    degree.get(toKey).total += 1;
+    edges.push({
+      rowNumber: rowIndex + 1,
+      subsystem: normalizeGraphLabel(row?.subsystem),
+      from: nodeLabels.get(fromKey),
+      controlAction: normalizeGraphLabel(row?.controlAction),
+      to: nodeLabels.get(toKey),
+    });
+  });
+
+  const visited = new Set();
+  const components = [];
+  Array.from(nodeLabels.keys()).forEach((startKey) => {
+    if (visited.has(startKey)) return;
+    const stack = [startKey];
+    const componentKeys = [];
+    visited.add(startKey);
+    while (stack.length) {
+      const key = stack.pop();
+      componentKeys.push(key);
+      (adjacency.get(key) || new Set()).forEach((neighbor) => {
+        if (visited.has(neighbor)) return;
+        visited.add(neighbor);
+        stack.push(neighbor);
+      });
+    }
+    const keySet = new Set(componentKeys);
+    const componentEdges = edges.filter((edge) => (
+      keySet.has(edge.from.toLowerCase()) && keySet.has(edge.to.toLowerCase())
+    ));
+    components.push({
+      functions: componentKeys.map((key) => nodeLabels.get(key)).sort((a, b) => a.localeCompare(b)),
+      rowNumbers: componentEdges.map((edge) => edge.rowNumber),
+      interfaces: componentEdges.map((edge) => ({
+        rowNumber: edge.rowNumber,
+        subsystem: edge.subsystem,
+        from: edge.from,
+        controlAction: edge.controlAction,
+        to: edge.to,
+      })),
+    });
+  });
+
+  components.sort((a, b) => b.functions.length - a.functions.length || a.functions[0]?.localeCompare(b.functions[0] || ""));
+  const largestSize = components[0]?.functions?.length || 0;
+  const orphanNodePairs = components
+    .filter((component) => component.functions.length === 2 && (components.length > 1 || largestSize > 2))
+    .map((component) => ({
+      functions: component.functions,
+      interfaces: component.interfaces,
+      reason: "This two-function component has no functional path to any other function in the current decomposition.",
+    }));
+  const isolatedNodes = components
+    .filter((component) => component.functions.length === 1)
+    .map((component) => component.functions[0])
+    .filter(Boolean);
+
+  return {
+    functionCount: nodeLabels.size,
+    interfaceCount: edges.length,
+    componentCount: components.length,
+    components: components.slice(0, 12),
+    orphanNodePairs,
+    isolatedNodes,
+    degrees: Array.from(degree.entries())
+      .map(([key, value]) => ({ function: nodeLabels.get(key), ...value }))
+      .sort((a, b) => b.total - a.total || a.function.localeCompare(b.function))
+      .slice(0, 30),
+  };
+}
+
+function isFunctionalRowLike(row) {
+  return Boolean(
+    row &&
+    typeof row === "object" &&
+    (row.fromFunction || row.functionFrom || row.from) &&
+    (row.toFunction || row.functionTo || row.to)
+  );
+}
+
+function normalizeFunctionalContextRows(rows = []) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => ({
+      subsystem: row?.subsystem || row?.allocatedSubsystem || row?.allocation || "",
+      fromFunction: row?.fromFunction || row?.functionFrom || row?.from || "",
+      fromDetails: row?.fromDetails || row?.functionFromDetails || row?.summary || row?.description || "",
+      controlAction: row?.controlAction || row?.action || row?.interface || "",
+      controlDetails: row?.controlDetails || row?.actionDetails || row?.interfaceDetails || "",
+      toFunction: row?.toFunction || row?.functionTo || row?.to || "",
+      toDetails: row?.toDetails || row?.functionToDetails || "",
+    }))
+    .filter(isFunctionalRowLike);
+}
+
+function resolveFunctionalRowsFromContext(ctx = {}, activeProjectId = null) {
+  const direct = normalizeFunctionalContextRows(ctx?.functionalDecomposition);
+  if (direct.length) return direct;
+
+  const projectSamples = Array.isArray(ctx?.workspace?.projects)
+    ? ctx.workspace.projects
+      .filter((project) => !activeProjectId || String(project?.id) === String(activeProjectId))
+      .flatMap((project) => project?.samples?.functionalDecomposition || [])
+    : [];
+  const sampled = normalizeFunctionalContextRows(projectSamples);
+  if (sampled.length) return sampled;
+
+  const artifactRows = Array.isArray(ctx?.relevantArtifacts)
+    ? ctx.relevantArtifacts
+      .filter((artifact) => (
+        artifact?.type === "functional_decomposition_row" &&
+        (!activeProjectId || !artifact?.projectId || String(artifact.projectId) === String(activeProjectId))
+      ))
+      .map((artifact) => artifact?.structuredData || artifact?.structuredDataSnippet || artifact)
+    : [];
+  return normalizeFunctionalContextRows(artifactRows);
+}
+
+function isFunctionalGraphConnectivityQuestion(text = "") {
+  const q = String(text || "").toLowerCase();
+  return (
+    /\b(orphan|isolated|disconnected|unconnected|standalone|stranded|island|floating)\b/.test(q) &&
+    /\b(node|nodes|pair|pairs|function|functions|component|components|diagram|graph|project)\b/.test(q)
+  );
+}
+
+function isFunctionalGraphConnectivityResolutionRequest(text = "") {
+  const q = String(text || "").toLowerCase();
+  return (
+    isFunctionalGraphConnectivityQuestion(text) &&
+    /\b(resolve|fix|connect|interface|bridge|integrate|repair|create|make|generate|propose|add)\b/.test(q) &&
+    /\b(table|rows?|functional decomposition|interface|interfaces?|connections?)\b/.test(q)
+  );
+}
+
+function getFunctionDetailsFromRows(rows = [], label = "") {
+  const key = normalizeGraphLabel(label).toLowerCase();
+  if (!key) return "";
+  for (const row of rows || []) {
+    if (normalizeGraphLabel(row?.fromFunction).toLowerCase() === key && normalizeGraphLabel(row?.fromDetails)) {
+      return normalizeGraphLabel(row.fromDetails);
+    }
+    if (normalizeGraphLabel(row?.toFunction).toLowerCase() === key && normalizeGraphLabel(row?.toDetails)) {
+      return normalizeGraphLabel(row.toDetails);
+    }
+  }
+  return "";
+}
+
+function chooseMainGraphAnchor(connectivity) {
+  const largest = connectivity?.components?.[0];
+  const largestFunctionSet = new Set((largest?.functions || []).map((name) => name.toLowerCase()));
+  const ranked = (connectivity?.degrees || [])
+    .filter((entry) => largestFunctionSet.has(String(entry.function || "").toLowerCase()))
+    .sort((a, b) => b.total - a.total || b.incoming - a.incoming || a.function.localeCompare(b.function));
+  return ranked[0]?.function || largest?.functions?.[0] || "";
+}
+
+function buildOrphanPairResolutionRows(rows = []) {
+  const functionalRows = normalizeFunctionalContextRows(rows);
+  const connectivity = buildFunctionalGraphConnectivity(functionalRows);
+  const anchorFunction = chooseMainGraphAnchor(connectivity);
+  if (!anchorFunction || !connectivity.orphanNodePairs.length) {
+    return { connectivity, rows: [] };
+  }
+
+  const proposals = connectivity.orphanNodePairs.map((pair) => {
+    const primaryInterface = pair.interfaces?.[0] || {};
+    const subsystem = primaryInterface.subsystem || functionalRows.find((row) => (
+      pair.functions.map((fn) => fn.toLowerCase()).includes(normalizeGraphLabel(row?.fromFunction).toLowerCase())
+    ))?.subsystem || "Integration";
+    const fromFunction = primaryInterface.to || pair.functions[0];
+    const toFunction = anchorFunction;
+    const controlAction = `Provide ${fromFunction} integration data`;
+    return {
+      subsystem,
+      fromFunction,
+      fromDetails: getFunctionDetailsFromRows(functionalRows, fromFunction) || `${fromFunction} participates in an otherwise disconnected two-function island that should be integrated with the main functional graph.`,
+      controlAction,
+      controlDetails: `${fromFunction} sends status, calibration, feedback, or coordination information needed to connect the orphan pair to the main project behavior.`,
+      toFunction,
+      toDetails: getFunctionDetailsFromRows(functionalRows, toFunction) || `${toFunction} is part of the main connected functional component and can consume integration information from disconnected functions.`,
+      rationale: `Connects the orphan pair ${pair.functions.join(" ↔ ")} to the main functional component through ${toFunction}.`,
+    };
+  });
+
+  return { connectivity, rows: proposals };
+}
+
+function formatFunctionalRowsMarkdown(rows = []) {
+  const headers = ["Subsystem", "Function From", "Function From Details", "Control Action", "Control Action Details", "Function To", "Function To Details"];
+  const escapeCell = (value) => String(value || "").replace(/\|/g, "\\|").replace(/\s+/g, " ").trim();
+  return [
+    `| ${headers.join(" | ")} |`,
+    `| ${headers.map(() => "---").join(" | ")} |`,
+    ...rows.map((row) => `| ${[
+      row.subsystem,
+      row.fromFunction,
+      row.fromDetails,
+      row.controlAction,
+      row.controlDetails,
+      row.toFunction,
+      row.toDetails,
+    ].map(escapeCell).join(" | ")} |`),
+  ].join("\n");
+}
+
+function buildFunctionalGraphConnectivityAnswer({ rows = [], projectName = "" } = {}) {
+  const connectivity = buildFunctionalGraphConnectivity(rows);
+  if (!connectivity.interfaceCount) {
+    return "I don’t see enough functional decomposition interfaces to evaluate orphan node pairs yet.";
+  }
+
+  const prefix = projectName ? `For “${projectName}”, ` : "";
+  const lines = [
+    `${prefix}I checked the functional decomposition graph for isolated islands.`,
+    "",
+    `Graph summary: ${connectivity.functionCount} function node${connectivity.functionCount === 1 ? "" : "s"}, ${connectivity.interfaceCount} interface row${connectivity.interfaceCount === 1 ? "" : "s"}, ${connectivity.componentCount} connected component${connectivity.componentCount === 1 ? "" : "s"}.`,
+  ];
+
+  if (connectivity.orphanNodePairs.length) {
+    lines.push("", `Orphan node pairs found (${connectivity.orphanNodePairs.length}):`);
+    connectivity.orphanNodePairs.forEach((pair, index) => {
+      const rowRefs = pair.interfaces.map((edge) => `row ${edge.rowNumber}`).join(", ");
+      const labels = pair.functions.join(" ↔ ");
+      const actions = pair.interfaces.map((edge) => `${edge.from} → ${edge.controlAction || "interface"} → ${edge.to}`).join("; ");
+      lines.push(`${index + 1}. ${labels} (${rowRefs})`);
+      lines.push(`   Interface: ${actions}`);
+      lines.push(`   Why: ${pair.reason}`);
+    });
+  } else {
+    lines.push("", "I don’t see any two-node orphan pairs in the current functional decomposition.");
+  }
+
+  if (connectivity.isolatedNodes.length) {
+    lines.push("", `Single isolated function nodes: ${connectivity.isolatedNodes.join(", ")}.`);
+  }
+
+  if (connectivity.componentCount > 1) {
+    lines.push("", "Connected components:");
+    connectivity.components.slice(0, 8).forEach((component, index) => {
+      lines.push(`${index + 1}. ${component.functions.join(", ")}${component.rowNumbers.length ? ` — rows ${component.rowNumbers.join(", ")}` : ""}`);
+    });
+  }
+
+  lines.push("", "In this app, an orphan node pair means two functions connected to each other but not connected by any functional decomposition row to the rest of the project graph.");
+  return lines.join("\n");
+}
+
 function compactPromptHistory(messages = [], { maxMessages = 10, maxCharsPerMessage = 3000 } = {}) {
   return messages.slice(-maxMessages).map((message) => ({
     ...message,
@@ -187,6 +497,8 @@ function compactPromptHistory(messages = [], { maxMessages = 10, maxCharsPerMess
 
 export function renderCopilotContext(ctx) {
   if (!ctx) return "You are xHandle Collaborator. Reason across the complete local xHandle workspace by default.";
+  const functionalRows = Array.isArray(ctx.functionalDecomposition) ? ctx.functionalDecomposition : [];
+  const functionalConnectivity = functionalRows.length ? buildFunctionalGraphConnectivity(functionalRows) : null;
   if (Array.isArray(ctx.relevantArtifacts) || Array.isArray(ctx.relationships)) {
     const artifacts = ctx.relevantArtifacts || [];
     const relationships = ctx.relationships || [];
@@ -245,8 +557,14 @@ export function renderCopilotContext(ctx) {
       `Use typed artifacts, relationships, runs, reviews, evidence, source files, and citations as the source of truth for local workspace context.`,
       ctx.scope?.projectId ? `Active project id: ${ctx.scope.projectId}` : `No active project boundary is required; reason workspace-wide unless the user names a project or artifact.`,
       `Active view: ${JSON.stringify(ctx.scope?.activeView || {})}`,
-      `Workspace graph counts => Projects: ${summary.projectCount || projects.length || 0}, Artifacts: ${summary.artifactCount || artifacts.length || 0}, Relationships: ${summary.relationshipCount || relationships.length || 0}, Relevant artifacts: ${summary.relevantArtifactCount || artifacts.length || 0}`,
-      `Cite artifact ids and source pointers when making claims about stored workspace data.`,
+      ctx.scope?.activeView?.functionalCanvasSelection?.hasSelection
+        ? `Active Functional Diagram canvas selection. Treat this as the likely referent for "this", "that", "it", "selected function", "selected edge", or similar wording: ${boundedJson(ctx.scope.activeView.functionalCanvasSelection, 5000)}`
+        : null,
+	      `Workspace graph counts => Projects: ${summary.projectCount || projects.length || 0}, Artifacts: ${summary.artifactCount || artifacts.length || 0}, Relationships: ${summary.relationshipCount || relationships.length || 0}, Relevant artifacts: ${summary.relevantArtifactCount || artifacts.length || 0}`,
+	      functionalConnectivity
+	        ? `Functional decomposition connectivity diagnostics. Use this for questions about orphan node pairs, isolated functions, disconnected graph islands, or missing diagram connections: ${boundedJson(functionalConnectivity, 5000)}`
+	        : null,
+	      `Cite artifact ids and source pointers when making claims about stored workspace data.`,
       `For destructive writes or ambiguous artifact generation, infer the best target from the prompt when clear; otherwise create/add to an appropriate workspace artifact or ask a short clarification.`,
       `Canonical graph sample (truncated):`,
       boundedJson(sample),
@@ -262,12 +580,14 @@ export function renderCopilotContext(ctx) {
   const workspaceSysMLCount = workspace.sysmlModels?.length || 0;
   const screen = ctx.focus?.screen || {};
   const designState = screen.designManagement || {};
+  const functionalCanvasSelection = ctx.focus?.functionalCanvasSelection || null;
 
-  const sample = {
+	  const sample = {
     requirements: (ctx.requirements || []).slice(0, 5).map(r => ({
       id: r.id, title: r.title, module: r.module, attrs: r.attributes
     })),
-    decomposition: (ctx.functionalDecomposition || []).slice(0, 5),
+	    decomposition: (ctx.functionalDecomposition || []).slice(0, 5),
+	    functionalConnectivity,
     risks: (ctx.riskRegister || []).slice(0, 5).map(r => ({
       id: r.id, title: r.title, lik: r.likelihood, sev: r.severity, status: r.status
     })),
@@ -288,10 +608,11 @@ export function renderCopilotContext(ctx) {
       relationshipCount: model.relationshipCount,
       elementNames: (model.elements || []).slice(0, 8).map(element => `${element.type}:${element.name}`),
     })),
-    currentScreen: {
-      feature: screen.feature || ctx.focus?.section || null,
-      view: screen.view || ctx.focus?.activeTab || null,
-      designManagement: designState ? {
+      currentScreen: {
+        feature: screen.feature || ctx.focus?.section || null,
+        view: screen.view || ctx.focus?.activeTab || null,
+        functionalCanvasSelection,
+        designManagement: designState ? {
         activeFolderId: designState.activeFolderId,
         activeFolderName: designState.activeFolderName,
         selectedModule: designState.selectedModule,
@@ -314,6 +635,9 @@ export function renderCopilotContext(ctx) {
     `Do not use an active-project boundary unless the user explicitly names a project or artifact scope.`,
     ctx.project ? `Recently opened project context: ${ctx.project.name} (id: ${ctx.project.id})` : `No project context is required; use workspace-wide context.`,
     `Current screen: ${screen.feature || ctx.focus?.section || "unknown"}${designState?.selectedModule ? `; Design Management module: ${designState.selectedModule}` : ""}`,
+    functionalCanvasSelection?.hasSelection
+      ? `Active Functional Diagram canvas selection. Treat this as the likely referent for "this", "that", "it", "selected function", "selected edge", or similar wording: ${boundedJson(functionalCanvasSelection, 5000)}`
+      : null,
     `Workspace counts ⇒ Projects: ${workspaceProjectCount}, SysML models: ${workspaceSysMLCount}, Workspace CodeArch rows: ${(workspace.codeArchitecture || []).length || cbaCount}`,
     `Artifact counts ⇒ Requirements: ${reqCount}, Decomposition links: ${linkCount}, Risks: ${riskCount}, RiskSummary rows: ${sumRows}, CodeArch rows: ${cbaCount}`,
     `For destructive writes or ambiguous artifact generation, infer the best target from the prompt when clear; otherwise create/add to an appropriate workspace artifact or ask a short clarification.`,
@@ -561,10 +885,170 @@ const STYLE_GENERAL_ASSISTANT = `
 You are xHandle Copilot, a helpful general-purpose AI assistant inside xHandle.
 Answer normal questions directly and naturally, including everyday questions that do not require project context.
 Use the available xHandle workspace context when the user asks about their project, requirements, architecture, safety analysis, files, or traceability.
+When the current user message includes attached image context, inspect it and use visible diagram/text/layout evidence from the image in your answer.
 If current workspace data is missing for a project-specific request, briefly say what is missing and offer a practical next step.
 If a question asks for current date or time, use the runtime context provided in this system message.
+Do not claim you added, removed, or saved rows/data unless an app action result in the conversation confirms that mutation actually happened. If you only drafted or proposed rows, say they are proposed and ask whether to apply them.
+When drafting functional decomposition rows, always use exactly these columns: Subsystem, Function From, Function From Details, Control Action, Control Action Details, Function To, Function To Details. Populate every cell; do not substitute Responsibilities/Interactions or another table shape.
 If you are uncertain, say so plainly without forcing a fixed refusal format.
 `;
+
+const COLLABORATOR_FILE_TEXT_LIMIT = 80_000;
+
+function formatFileSize(bytes = 0) {
+  const value = Number(bytes || 0);
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let size = value;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  return `${size.toFixed(size >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function isTextLikeFile(file) {
+  const type = String(file?.type || "").toLowerCase();
+  const name = String(file?.name || "").toLowerCase();
+  if (type.startsWith("text/")) return true;
+  if (/(json|xml|yaml|yml|csv|tsv|javascript|typescript|markdown|x-sh|sql|svg|graphql)/i.test(type)) return true;
+  return /\.(txt|md|markdown|csv|tsv|json|jsonl|xml|yaml|yml|js|jsx|ts|tsx|css|scss|html|htm|svg|py|rb|go|rs|java|c|cc|cpp|h|hpp|cs|sql|sh|zsh|bash|toml|ini|env|log|graphql|gql|mermaid|mmd)$/i.test(name);
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Unable to read file."));
+    reader.readAsText(file);
+  });
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Unable to read file."));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function buildFileContextChip(file) {
+  const base = {
+    file: {
+      name: file?.name || "Untitled file",
+      type: file?.type || "unknown",
+      size: file?.size || 0,
+      lastModified: file?.lastModified || null,
+    },
+  };
+  if (!file) return base;
+
+  if (isTextLikeFile(file)) {
+    const fullText = await readFileAsText(file);
+    const truncated = fullText.length > COLLABORATOR_FILE_TEXT_LIMIT;
+    return {
+      ...base,
+      fileText: truncated
+        ? `${fullText.slice(0, COLLABORATOR_FILE_TEXT_LIMIT)}\n\n[File truncated to ${COLLABORATOR_FILE_TEXT_LIMIT.toLocaleString()} characters before sending to Collaborator.]`
+        : fullText,
+      fileTextTruncated: truncated,
+    };
+  }
+
+  if (String(file.type || "").startsWith("image/")) {
+    return {
+      ...base,
+      imageDataUrl: await readFileAsDataUrl(file),
+    };
+  }
+
+  return {
+    ...base,
+    fileText: `[${file.name || "File"} attached. Binary or unsupported-for-text-preview file; Collaborator can see metadata but not extracted contents in this browser session.]`,
+  };
+}
+
+function renderContextForPrompt(c, idx) {
+  if (c.tableMarkdown) return `**Selection (table ${idx + 1}):**\n\n${c.tableMarkdown}`;
+  if (c.file) {
+    const file = c.file || {};
+    const metadata = [
+      `Name: ${file.name || "Untitled file"}`,
+      `Type: ${file.type || "unknown"}`,
+      `Size: ${formatFileSize(file.size || 0)}`,
+      file.lastModified ? `Last modified: ${new Date(file.lastModified).toLocaleString()}` : "",
+    ].filter(Boolean).join("\n");
+    const body = c.imageDataUrl
+      ? `![${file.name || "attached image"}](${c.imageDataUrl})`
+      : (c.fileText || c.text || "[No text content extracted.]");
+    return `**Attached file (${idx + 1}):**\n\n${metadata}\n\n${body}`;
+  }
+  if (c.text) return `**Selection (text ${idx + 1}):**\n\n${c.text}`;
+  if (c.imageDataUrl) return `**Selection (image ${idx + 1}):**\n\n![selection](${c.imageDataUrl})`;
+  return "";
+}
+
+function renderContextForHistory(c, idx) {
+  if (c.file?.name) {
+    const file = c.file || {};
+    const metadata = [
+      `Name: ${file.name || "Untitled file"}`,
+      `Type: ${file.type || "unknown"}`,
+      `Size: ${formatFileSize(file.size || 0)}`,
+      file.lastModified ? `Last modified: ${new Date(file.lastModified).toLocaleString()}` : "",
+    ].filter(Boolean).join("\n");
+    const body = c.imageDataUrl
+      ? "[Image attached for the active request; image data omitted from saved history.]"
+      : (c.fileText || c.text || "[No text content extracted.]");
+    return `**Attached file (${idx + 1}):**\n\n${metadata}\n\n${body}`;
+  }
+  if (c.imageDataUrl) return `**Selection (image ${idx + 1}):**\n\n[Image attached for the active request; image data omitted from saved history.]`;
+  return renderContextForPrompt(c, idx);
+}
+
+function buildPromptContentFromContext(contexts = [], promptText = "") {
+  const hasImages = contexts.some((context) => context.imageDataUrl);
+  if (!hasImages) {
+    const contextBlob = contexts.map(renderContextForPrompt).filter(Boolean).join("\n\n");
+    return [contextBlob, String(promptText || "").trim()].filter(Boolean).join("\n\n");
+  }
+
+  const parts = [];
+  contexts.forEach((context, index) => {
+    if (context.imageDataUrl) {
+      const text = renderContextForHistory(context, index);
+      if (text) parts.push({ type: "text", text });
+      parts.push({ type: "image_url", image_url: { url: context.imageDataUrl } });
+    } else {
+      const text = renderContextForPrompt(context, index);
+      if (text) parts.push({ type: "text", text });
+    }
+  });
+  const userText = String(promptText || "").trim();
+  if (userText) parts.push({ type: "text", text: userText });
+  return parts;
+}
+
+function buildHistoryContentFromContext(contexts = [], promptText = "") {
+  const contextBlob = contexts.map(renderContextForHistory).filter(Boolean).join("\n\n");
+  return [contextBlob, String(promptText || "").trim()].filter(Boolean).join("\n\n");
+}
+
+function getContextChipType(c) {
+  if (c.tableMarkdown) return "table";
+  if (c.file) return "file";
+  if (c.text) return "text";
+  return "image";
+}
+
+function getContextChipLabel(c) {
+  if (c.tableMarkdown) return "|…table…";
+  if (c.file) return `${c.file.name || "attached file"} (${formatFileSize(c.file.size || 0)})`;
+  if (c.text) return c.text.slice(0, 60) + (c.text.length > 60 ? "…" : "");
+  return "screenshot";
+}
 
 /* ------------------------------ Toolbar stuff ----------------------------- */
 
@@ -949,6 +1433,381 @@ function buildScopedContext(base, scope) {
   return scoped;
 }
 
+function isFunctionalDecompositionAuditRequest(text = "") {
+  const q = String(text || "").toLowerCase();
+  const asksForAudit = /\b(audit|review|assess|evaluate|inspect|check|gap|missing|complete|completeness|improve)\b/.test(q);
+  const functionalTarget = /functional\s+(decomposition|diagram|architecture|table|rows?)|function\s+(table|rows?)|decomposition\s+(table|rows?)|\bsubsystem\s+functions?\b|\bsubsystem\s+interfaces?\b|\binterfaces?\s+between\b/.test(q);
+  const subsystemAuditTarget = /\bsubsystems?\b/.test(q);
+  const proposalIntent = /\b(audit|review|assess|evaluate|inspect|check|propose|suggest|recommend|add|additional|missing|gap|complete|completeness|improve)\b/.test(q);
+  return asksForAudit && (functionalTarget || subsystemAuditTarget) && proposalIntent;
+}
+
+function isFunctionalSubsystemAllocationReviewRequest(text = "") {
+  const q = String(text || "").toLowerCase();
+  const reviewIntent = /\b(reevaluate|re-evaluate|review|audit|reassess|assess|evaluate|check|reallocate|reclassify)\b/.test(q);
+  const allocationTarget = /\b(subsystem\s+allocations?|subsystem\s+allocation|allocations?\s+to\s+subsystems?|allocated\s+subsystems?|subsystem\s+assignment|subsystem\s+assignments|function\s+allocations?|functional\s+allocations?)\b/.test(q);
+  const functionalContext = /\b(functional|function|decomposition|rows?|table|diagram|project)\b/.test(q);
+  return reviewIntent && allocationTarget && (functionalContext || /\bsubsystem\s+allocations?\b/.test(q));
+}
+
+function normalizeFunctionalLookupText(value = "") {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\bsusbsystem\b/g, "subsystem")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function extractSubsystemFunctionLookupRequest(text = "") {
+  const raw = String(text || "").trim();
+  const q = normalizeFunctionalLookupText(raw);
+  const asksForReadOnlyReview = /\b(review|show|list|tell|what|which|see|find|summarize|display)\b/.test(q);
+  const asksForFunctions = /\b(function|functions|functional decomposition|function decomposition|associated functions)\b/.test(q);
+  const mentionsSubsystem = /\bsubsystem\b/.test(q);
+  if (!asksForReadOnlyReview || !asksForFunctions || !mentionsSubsystem) return null;
+
+  const normalizedRaw = raw.replace(/\bsusbsystem\b/gi, "subsystem");
+  const patterns = [
+    /\b(?:for|of|in|under|within)\s+(?:the\s+)?(.+?)\s+subsystem\b/i,
+    /\b(?:the\s+)?(.+?)\s+subsystem\b/i,
+  ];
+  for (const pattern of patterns) {
+    const match = normalizedRaw.match(pattern);
+    const candidate = String(match?.[1] || "")
+      .replace(/\b(functional|function)\s+decomposition\b/gi, "")
+      .replace(/\b(review|show|list|tell|what|which|see|find|summarize|display)\b/gi, "")
+      .replace(/[?.!,;:]+$/g, "")
+      .trim();
+    if (candidate) return { subsystem: candidate };
+  }
+  return null;
+}
+
+function getFunctionalRowField(row = {}, fieldNames = []) {
+  for (const fieldName of fieldNames) {
+    const value = row?.[fieldName];
+    if (value != null && String(value).trim()) return String(value).trim();
+  }
+  return "";
+}
+
+function buildSubsystemFunctionLookupAnswer({ rows = [], requestedSubsystem = "", projectName = "" } = {}) {
+  const functionalRows = Array.isArray(rows) ? rows : [];
+  const requestedKey = normalizeFunctionalLookupText(requestedSubsystem);
+  const subsystemNames = Array.from(new Set(functionalRows
+    .map((row) => getFunctionalRowField(row, ["subsystem", "allocatedSubsystem", "allocation"]))
+    .filter(Boolean)));
+  const matchedSubsystem = subsystemNames.find((name) => {
+    const key = normalizeFunctionalLookupText(name);
+    return key === requestedKey || key.includes(requestedKey) || requestedKey.includes(key);
+  });
+
+  if (!functionalRows.length) {
+    return "I don’t see any functional decomposition rows in the active project yet.";
+  }
+
+  if (!matchedSubsystem) {
+    const available = subsystemNames.length
+      ? `\n\nSubsystems I do see: ${subsystemNames.join(", ")}.`
+      : "";
+    return `I don’t see a subsystem matching “${requestedSubsystem}” in the active functional decomposition.${available}`;
+  }
+
+  const subsystemRows = functionalRows.filter((row) => (
+    normalizeFunctionalLookupText(getFunctionalRowField(row, ["subsystem", "allocatedSubsystem", "allocation"])) === normalizeFunctionalLookupText(matchedSubsystem)
+  ));
+  const allocatedFunctions = Array.from(new Set(subsystemRows
+    .map((row) => getFunctionalRowField(row, ["fromFunction", "functionFrom", "from"]))
+    .filter(Boolean)));
+  const receivingFunctions = Array.from(new Set(subsystemRows
+    .map((row) => getFunctionalRowField(row, ["toFunction", "functionTo", "to"]))
+    .filter(Boolean)));
+
+  const interfaceLines = subsystemRows.map((row, index) => {
+    const from = getFunctionalRowField(row, ["fromFunction", "functionFrom", "from"]) || "Unknown function";
+    const action = getFunctionalRowField(row, ["controlAction", "action", "interface"]) || "interface";
+    const to = getFunctionalRowField(row, ["toFunction", "functionTo", "to"]) || "Unknown target";
+    return `${index + 1}. ${from} → ${action} → ${to}`;
+  });
+
+  return [
+    `For ${projectName ? `${projectName}, ` : ""}the “${matchedSubsystem}” subsystem has ${allocatedFunctions.length} allocated function${allocatedFunctions.length === 1 ? "" : "s"} based on the current functional decomposition.`,
+    "",
+    allocatedFunctions.length
+      ? `Allocated functions: ${allocatedFunctions.join(", ")}.`
+      : "I don’t see any Function (From) entries allocated to this subsystem.",
+    receivingFunctions.length
+      ? `\nExternal/target functions referenced by those rows: ${receivingFunctions.join(", ")}.`
+      : "",
+    "",
+    "Interfaces involving those allocated functions:",
+    ...interfaceLines,
+    "",
+    "Note: diagram group membership is based on the `Subsystem` column owning the `Function (From)` value.",
+  ].filter((line) => line !== "").join("\n");
+}
+
+function isFunctionalDecompositionMutationRequest(text = "", focus = {}) {
+  const q = String(text || "").toLowerCase();
+  const functionalTarget = /functional\s+(decomposition|diagram|architecture|table|rows?)|function\s+(table|rows?)|decomposition\s+(table|rows?)/.test(q);
+  const explicitFunctionalTableEdit = /functional\s+(decomposition|table|rows?)|function\s+(table|rows?)|decomposition\s+(table|rows?)|\brow(s)?\b|\bcontrol action\b|\binterface\b/.test(q);
+  const documentDraftIntent = /\b(create|draft|write|generate|make|prepare|produce)\b.*\b(document|doc|report|specification|spec|description|summary|overview|narrative|markdown)\b|\b(system design document|design document|architecture document|design spec|system spec)\b/.test(q);
+  if (documentDraftIntent && !explicitFunctionalTableEdit) return false;
+  const functionalDecompositionDraftIntent =
+    /\b(create|draft|generate|make|show|give|prepare|produce)\b.*\bfunctional\s+decomposition\b/.test(q) ||
+    /\bfunctional\s+decomposition\b.*\b(for|of)\b/.test(q);
+  const explicitApplyToFunctionalTable =
+    /\b(add|insert|append|apply|update|save|use|populate|put)\b.*\b(project|table|functional decomposition table|functional table|current project|active project|this project)\b/.test(q) ||
+    /\b(use|apply)\s+(this|that|it|these|those|the above)\s+as\s+(the\s+)?functional\s+decomposition\b/.test(q) ||
+    /\b(add|insert|append)\s+(this|that|it|these|those|the above|rows?)\b/.test(q);
+  if (functionalDecompositionDraftIntent && !explicitApplyToFunctionalTable) return false;
+  const focusIsFunctionalTable =
+    String(focus?.section || "").toLowerCase() === "projects" &&
+    String(focus?.activeTab || "").toLowerCase() === "functional diagramming";
+  const editIntent = /\b(add|insert|create|append|remove|delete|drop|allocate|set|change|update|make|use|rename)\b/.test(q);
+  const renameLabelIntent = /\b(rename|change|update|set|make)\b.*\b(label|name)\b/.test(q);
+  const rowIntent = /\b(row|rows|entry|entries|function|system|subsystem|component|capability|stack|architecture|module|service|control action|interface|label|name)\b/.test(q);
+  const conversationalAddIntent =
+    /\b(add|insert|create|append|have|make|connect|link)\b/.test(q) &&
+    /\b(send|sends|provide|provides|transmit|transmits|report|reports|notify|notifies|deliver|delivers|feed|feeds|command|commands|control|controls|update|updates)\b/.test(q) &&
+    /\b(to|into|for)\b/.test(q);
+  const createAndAddCapabilityIntent =
+    /\b(add|insert|create|append)\b/.test(q) &&
+    /\b(stack|architecture|system|subsystem|component|capability|module|service)\b/.test(q) &&
+    /\b(add|insert|append|table|functional|decomposition|diagram)\b/.test(q);
+  const cellUpdateIntent = /\b(subsystem|function from|from function|from details|control action|control details|function to|to function|to details)\b/.test(q);
+  return (functionalTarget || focusIsFunctionalTable || createAndAddCapabilityIntent || renameLabelIntent) && (editIntent || conversationalAddIntent) && (rowIntent || conversationalAddIntent || cellUpdateIntent || createAndAddCapabilityIntent || renameLabelIntent);
+}
+
+function isApplyPendingFunctionalRowsRequest(text = "") {
+  const q = String(text || "").toLowerCase();
+  const approval = /\b(yes|yep|yeah|ok|okay|sure|that works|looks good|go ahead|do it|proceed|apply|add|insert|use|update|incorporate|confirm|confirmed)\b/.test(q);
+  const target = /\b(it|them|those|that|this|rows?|entries|proposal|proposed|table|functional decomposition|decomposition)\b/.test(q);
+  const basedOnThisApply = /\b(based on|from|using)\s+(this|that|the above|the audit|these)\b/.test(q) && /\b(update|apply|add|incorporate)\b/.test(q);
+  const shortApprovalOnly = /^(yes|yep|yeah|ok|okay|sure|do it|go ahead|proceed|that works|looks good|confirm|confirmed)[.! ]*$/i.test(String(text || "").trim());
+  return basedOnThisApply || (approval && (target || shortApprovalOnly));
+}
+
+function isExplicitApplyPendingRowsRequest(text = "") {
+  const q = String(text || "").toLowerCase();
+  return /\b(apply|add|insert|incorporate|use|update|save)\b/.test(q) &&
+    /\b(these|those|them|rows?|entries|table|changes|proposal|proposed|above)\b/.test(q);
+}
+
+function cleanCollaboratorLabel(value = "") {
+  return String(value || "")
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/^[\s"'`]+|[\s"'`.!?]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractFunctionReferenceFromPrompt(text = "") {
+  const raw = String(text || "");
+  const patterns = [
+    /\b(?:the\s+)?["“]?([^"”\n]+?)["”]?\s+function\b/i,
+    /\bfunction\s+(?:called|named|label(?:ed)?|with label)\s+["“]?([^"”\n]+?)["”]?(?:[.,;!?]|$)/i,
+  ];
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    const label = cleanCollaboratorLabel(match?.[1] || "");
+    if (label) return label;
+  }
+  return "";
+}
+
+function extractFunctionLabelRenameRequest(text = "", pendingReference = null) {
+  const raw = String(text || "").trim();
+  if (!raw) return null;
+  const patterns = [
+    /\b(?:rename|change|update|set)\s+(?:the\s+)?(?:function\s+)?(?:label|name)\s+(?:from\s+["“]?(.+?)["”]?\s+)?(?:to|as)\s+["“]?(.+?)["”]?\s*$/i,
+    /\b(?:rename|change|update|set)\s+["“]?(.+?)["”]?\s+(?:function\s+)?(?:label|name)\s+(?:to|as)\s+["“]?(.+?)["”]?\s*$/i,
+    /\b(?:rename|change|update|set)\s+(?:it|its|that|this)\s+(?:function\s+)?(?:label|name)\s+(?:to|as)\s+["“]?(.+?)["”]?\s*$/i,
+    /\b(?:rename|change|update|set)\s+(?:it|its|that|this)\s+(?:to|as)\s+["“]?(.+?)["”]?\s*$/i,
+  ];
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    if (!match) continue;
+    if (match.length >= 3 && match[2]) {
+      const oldLabel = cleanCollaboratorLabel(match[1] || pendingReference?.oldLabel || pendingReference?.label || "");
+      const newLabel = cleanCollaboratorLabel(match[2]);
+      if (newLabel) return { oldLabel, newLabel };
+    }
+    const oldLabel = cleanCollaboratorLabel(pendingReference?.oldLabel || pendingReference?.label || "");
+    const newLabel = cleanCollaboratorLabel(match[1]);
+    if (newLabel) return { oldLabel, newLabel };
+  }
+  return null;
+}
+
+function getPendingFunctionalProjectCreateName(text = "") {
+  const raw = String(text || "").trim();
+  if (!/\b(create|make|start|new)\b/i.test(raw) || !/\bproject\b/i.test(raw)) return "";
+  if (!/\b(use|with|from|as|functional decomposition|decomposition|these|this|above|pending)\b/i.test(raw)) return "";
+  const patterns = [
+    /\b(?:create|make|start)\s+(?:a\s+)?new\s+project\s+(?:call|called|named|for)\s+["“]?(.+?)["”]?(?:\s+and\b|\s+with\b|\s+using\b|\s+use\b|\s+as\b|[.!?]?$)/i,
+    /\b(?:create|make|start)\s+(?:a\s+)?project\s+(?:call|called|named|for)\s+["“]?(.+?)["”]?(?:\s+and\b|\s+with\b|\s+using\b|\s+use\b|\s+as\b|[.!?]?$)/i,
+    /\bnew\s+project\s*:\s*["“]?(.+?)["”]?(?:\s+and\b|\s+with\b|\s+using\b|\s+use\b|\s+as\b|[.!?]?$)/i,
+  ];
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    const name = match?.[1]?.trim?.()
+      .replace(/[.!?]\s*$/g, "")
+      .replace(/\s+(?:and\s+)?(?:use|using|with|as)\s+.*$/i, "")
+      .trim();
+    if (name) return name;
+  }
+  return "";
+}
+
+function isFunctionalMutationContinuationRequest(text = "") {
+  const q = String(text || "").toLowerCase().trim();
+  return /\b(you decide|decide|use your judgment|use your judgement|make it reasonable|best guess|go ahead|yes|ok|okay|sure|do it|proceed)\b/.test(q);
+}
+
+function parsePendingFunctionalRowsCellUpdate(text = "") {
+  const raw = String(text || "").trim();
+  const subsystemMatch =
+    raw.match(/\b(?:allocate|set|use|make)\s+(.+?)\s+as\s+(?:their|the|all|those|these|row|rows)?\s*subsystem\b/i) ||
+    raw.match(/\bsubsystem\s+(?:should\s+be|is|=|to)\s+(.+?)(?:[.;]|$)/i);
+  if (subsystemMatch?.[1]) {
+    const subsystem = subsystemMatch[1]
+      .replace(/^the\s+/i, "")
+      .replace(/\s+(?:for|on|to)\s+.*$/i, "")
+      .trim();
+    if (subsystem) return { subsystem };
+  }
+  return null;
+}
+
+function splitAssistantTableLine(line = "") {
+  const trimmed = String(line || "").trim();
+  if (!trimmed) return [];
+  if (trimmed.includes("|")) {
+    return trimmed.split("|").map((cell) => cell.trim()).filter(Boolean);
+  }
+  if (trimmed.includes("\t")) {
+    return trimmed.split(/\t+/).map((cell) => cell.trim()).filter(Boolean);
+  }
+  return trimmed.split(/\s{2,}/).map((cell) => cell.trim()).filter(Boolean);
+}
+
+function normalizeFunctionalTableHeader(header = "") {
+  const value = String(header || "").toLowerCase().replace(/[^a-z]/g, "");
+  if (value === "subsystem" || value === "allocation") return "subsystem";
+  if (value === "summary" || value === "description") return "fromDetails";
+  if (value === "functionfrom" || value === "fromfunction" || value === "from") return "fromFunction";
+  if (value === "functionfromdetails" || value === "fromdetails") return "fromDetails";
+  if (value === "controlaction" || value === "action" || value === "interface") return "controlAction";
+  if (value === "controlactiondetails" || value === "controldetails" || value === "actiondetails") return "controlDetails";
+  if (value === "functionto" || value === "tofunction" || value === "to") return "toFunction";
+  if (value === "functiontodetails" || value === "todetails") return "toDetails";
+  if (value === "proposalrationale" || value === "rationale" || value === "reason") return "rationale";
+  return "";
+}
+
+function extractFunctionalRowsFromAssistantText(text = "") {
+  const lines = String(text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const rows = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const headers = splitAssistantTableLine(lines[index]).map(normalizeFunctionalTableHeader);
+    const hasFunctionalHeader =
+      headers.includes("fromFunction") &&
+      headers.includes("controlAction") &&
+      headers.includes("toFunction");
+    if (!hasFunctionalHeader) continue;
+    for (let rowIndex = index + 1; rowIndex < lines.length; rowIndex += 1) {
+      const rawLine = lines[rowIndex];
+      if (/^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?$/.test(rawLine)) continue;
+      const cells = splitAssistantTableLine(rawLine);
+      if (cells.length < 3) break;
+      const row = {};
+      headers.forEach((field, cellIndex) => {
+        if (field) row[field] = cells[cellIndex] || "";
+      });
+      if (row.fromFunction && row.controlAction && row.toFunction) {
+        rows.push(row);
+      }
+    }
+    if (rows.length) break;
+  }
+  if (rows.length) return rows;
+
+  const proseRows = [];
+  let currentSubsystem = "";
+  let current = {};
+  const flushCurrent = () => {
+    if (current.fromFunction && current.controlAction && current.toFunction) {
+      proseRows.push({
+        subsystem: current.subsystem || currentSubsystem || "",
+        fromFunction: current.fromFunction || "",
+        fromDetails: current.fromDetails || "",
+        controlAction: current.controlAction || "",
+        controlDetails: current.controlDetails || "",
+        toFunction: current.toFunction || "",
+        toDetails: current.toDetails || current.rationale || "",
+        rationale: current.rationale || "",
+      });
+    }
+    current = {};
+  };
+
+  lines.forEach((line) => {
+    const normalizedLine = String(line || "")
+      .replace(/^#{1,6}\s*/, "")
+      .replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "")
+      .trim();
+    if (/^(proposed|updated|added)?\s*(functional\s+decomposition\s+)?(table|rows?)\b/i.test(normalizedLine)) return;
+    if (/^would you like|^let me know|^i will now|^please hold|^the .+ has been/i.test(line)) return;
+
+    const heading = normalizedLine
+      .replace(/^#{1,6}\s*/, "")
+      .replace(/^\*\*(.+)\*\*$/, "$1")
+      .replace(/:$/, "")
+      .trim();
+    if (/^(audit findings|completeness|clarity|interfaces?|proposed interface rows?|adding proposed interface rows?|proposed rows?|findings)$/i.test(heading)) return;
+    const interfaceMatch = heading.match(/^(?:interface\s*:?\s*)?(.+?)\s*(?:->|→| to )\s*(.+)$/i);
+    if (interfaceMatch && !/^(function|control|subsystem)\b/i.test(heading)) {
+      if (Object.keys(current).length) flushCurrent();
+      current = {
+        subsystem: currentSubsystem,
+        fromFunction: interfaceMatch[1].trim(),
+        toFunction: interfaceMatch[2].trim(),
+      };
+      return;
+    }
+    const labeled = heading.match(/^(subsystem|summary|description|proposal\s*rationale|rationale|reason|function\s*from|function\s*\(from\)|from\s*function|function\s*from\s*details|function\s*\(from\)\s*details|from\s*details|control\s*action|control\s*action\s*details|control\s*details|function\s*to|function\s*\(to\)|to\s*function|function\s*to\s*details|function\s*\(to\)\s*details|to\s*details)\s*:\s*(.+)$/i);
+    if (!labeled) {
+      if (
+        heading &&
+        heading.length <= 80 &&
+        !/[.!?]$/.test(heading) &&
+        !/^(yes|no|ok|done|added rows?|proposed rows?)$/i.test(heading)
+      ) {
+        if (Object.keys(current).length) flushCurrent();
+        currentSubsystem = heading;
+      }
+      return;
+    }
+
+    const field = normalizeFunctionalTableHeader(labeled[1]);
+    const value = labeled[2].trim();
+    if (!field || !value) return;
+    if (field === "subsystem") {
+      if (Object.keys(current).length) flushCurrent();
+      currentSubsystem = value;
+      current.subsystem = value;
+      return;
+    }
+    current[field] = value;
+    if (field === "toDetails" || field === "rationale") flushCurrent();
+  });
+  flushCurrent();
+  return proseRows;
+}
+
 /* ------------------------------ Main Component ---------------------------- */
 
 export default function XHandleCopilotView({
@@ -968,8 +1827,9 @@ export default function XHandleCopilotView({
 
   // add state
 const [ctxEditorOpen, setCtxEditorOpen] = useState(false);
-const [ctxDraft, setCtxDraft] = useState(null); // { id, text?, tableMarkdown?, imageDataUrl? }
+const [ctxDraft, setCtxDraft] = useState(null); // { id, text?, tableMarkdown?, imageDataUrl?, file?, fileText? }
 const fileInputRef = useRef(null);
+const attachFileInputRef = useRef(null);
 
 // open editor for a chip
 function openCtxEditor(c) {
@@ -991,16 +1851,21 @@ function cancelCtxEditor() {
   setCtxDraft(null);
 }
 
-  const [threads, setThreads] = useState(() => {
-    const t = loadThreads();
-    if (t.length) return t;
-    newThread("Welcome");
-    return loadThreads();
-  });
+	  const [threads, setThreads] = useState(() => {
+	    const t = loadThreads();
+	    if (t.length) return t;
+	    newThread("Welcome", { greeting: buildNewThreadGreeting() });
+	    return loadThreads();
+	  });
   const [activeId, setActiveId] = useState(() => (loadThreads()[0] || {}).id);
   const active = useMemo(() => threads.find(t => t.id === activeId), [threads, activeId]);
   const [regionContexts, setRegionContexts] = useState([]);
   // items like { id, text?, tableMarkdown?, imageDataUrl? }
+  const [pendingFunctionalRows, setPendingFunctionalRows] = useState([]);
+  const [pendingFunctionalProjectName, setPendingFunctionalProjectName] = useState("");
+  const [pendingFunctionalMutationRequest, setPendingFunctionalMutationRequest] = useState("");
+  const [pendingFunctionLabelReference, setPendingFunctionLabelReference] = useState(null);
+  const [pendingFunctionRename, setPendingFunctionRename] = useState(null);
 
   const [input, setInput] = useState("");
   const [editingMessage, setEditingMessage] = useState(null);
@@ -1093,11 +1958,11 @@ useEffect(() => {
   return () => window.removeEventListener("xhandle:copilot-add-context", onRegion);
 }, [docked]);
 
-  function makeThread(title) {
-    newThread(title || "New topic");
-    const all = loadThreads();
-    setThreads(all);
-    setActiveId(all[0].id);
+	  function makeThread(title) {
+	    newThread(title || "New topic", { greeting: buildNewThreadGreeting() });
+	    const all = loadThreads();
+	    setThreads(all);
+	    setActiveId(all[0].id);
   }
   function doRename(id) {
     const title = window.prompt("Thread title:", threads.find(t => t.id === id)?.title || "");
@@ -1176,40 +2041,415 @@ useEffect(() => {
     await runCopilot(revisedContent);
   }
 
+  async function handleAttachFiles(event) {
+    const files = Array.from(event.target.files || []);
+    event.target.value = "";
+    if (!files.length) return;
+    const chips = await Promise.all(files.map(buildFileContextChip));
+    setRegionContexts(prev => [
+      ...prev,
+      ...chips.map((chip) => ({
+        id: crypto?.randomUUID?.() || String(Date.now() + Math.random()),
+        ...chip,
+      })),
+    ]);
+  }
+
   async function handleSend() {
     if ((!input.trim() && regionContexts.length === 0) || !active) return;
 
-    // Build a single markdown block from selected contexts
-    const contextBlob = regionContexts.map((c, idx) => {
-      if (c.tableMarkdown) return `**Selection (table ${idx+1}):**\n\n${c.tableMarkdown}`;
-      if (c.text)          return `**Selection (text ${idx+1}):**\n\n${c.text}`;
-      if (c.imageDataUrl)  return `**Selection (image ${idx+1}):**\n\n![selection](${c.imageDataUrl})`;
-      return "";
-    }).filter(Boolean).join("\n\n");
+    const modelContent = buildPromptContentFromContext(regionContexts, input);
+    const historyContent = buildHistoryContentFromContext(regionContexts, input);
 
-    const content = [contextBlob, input.trim()].filter(Boolean).join("\n\n");
-
-    const userMsg = { role: "user", content };
+    const userMsg = { role: "user", content: historyContent };
     setInput("");
     setRegionContexts([]);        // clear chips after send
 
     appendMessage(active.id, userMsg);
     setThreads(loadThreads());
 
-    await runCopilot(userMsg.content);
+    await runCopilot(historyContent, { modelUserContent: modelContent });
   }
 
 
-  async function runCopilot(userText) {
+  async function runCopilot(userText, options = {}) {
     setBusy(true);
     try {
-      const scope = parseScopeFromPrompt(userText);
-      const activeProjectId =
-        scope?.project?.id ||
-        appFocus?.activeProjectId ||
-        enrichedContext?.project?.id ||
-        enrichedContext?.workspace?.activeProjectId ||
-        null;
+      const mentionedFunctionLabel = extractFunctionReferenceFromPrompt(userText);
+      if (mentionedFunctionLabel) {
+        setPendingFunctionLabelReference({ label: mentionedFunctionLabel, updatedAt: Date.now() });
+      }
+	      const scope = parseScopeFromPrompt(userText);
+	      const requestedFunctionalProjectName = getPendingFunctionalProjectCreateName(userText);
+	      if (requestedFunctionalProjectName) {
+	        setPendingFunctionalProjectName(requestedFunctionalProjectName);
+	      }
+		      const activeProjectId =
+	        scope?.project?.id ||
+	        appFocus?.activeProjectId ||
+	        enrichedContext?.project?.id ||
+	        enrichedContext?.workspace?.activeProjectId ||
+	        null;
+		      const focusContext = appFocus || enrichedContext?.focus || {};
+		      const activeThreadAtStart = loadThreads().find((thread) => thread.id === activeId);
+		      const previousAssistantContent = [...(activeThreadAtStart?.messages || [])]
+		        .reverse()
+		        .find((message) => message?.role === "assistant" && String(message?.content || "").trim())?.content || "";
+		      const continuationOfPendingFunctionalMutation =
+		        pendingFunctionalMutationRequest &&
+		        isFunctionalMutationContinuationRequest(userText);
+      const subsystemLookupRequest = extractSubsystemFunctionLookupRequest(userText);
+	      if (subsystemLookupRequest) {
+	        const answer = buildSubsystemFunctionLookupAnswer({
+	          rows: enrichedContext?.functionalDecomposition || [],
+          requestedSubsystem: subsystemLookupRequest.subsystem,
+          projectName: enrichedContext?.project?.name || focusContext?.project?.name || "",
+        });
+        appendMessage(activeId, { role: "assistant", content: answer });
+	        setThreads(loadThreads());
+	        return;
+	      }
+		      if (isFunctionalGraphConnectivityQuestion(userText)) {
+		        let functionalRowsForConnectivity = resolveFunctionalRowsFromContext(enrichedContext, activeProjectId);
+		        if (!functionalRowsForConnectivity.length) {
+		          try {
+	            const graphContext = await buildWorkspaceLLMContext({
+	              projectId: activeProjectId,
+	              activeView: appFocus || enrichedContext?.focus || {},
+	              query: userText,
+	              tokenBudget: 7000,
+	            });
+		            functionalRowsForConnectivity = resolveFunctionalRowsFromContext(graphContext, activeProjectId);
+		          } catch {}
+		        }
+		        if (isFunctionalGraphConnectivityResolutionRequest(userText)) {
+		          const result = buildOrphanPairResolutionRows(functionalRowsForConnectivity);
+		          if (result.rows.length) {
+		            setPendingFunctionalRows(result.rows);
+		            appendMessage(activeId, {
+		              role: "assistant",
+		              content: [
+		                `I found ${result.connectivity.orphanNodePairs.length} orphan node pair${result.connectivity.orphanNodePairs.length === 1 ? "" : "s"} and drafted ${result.rows.length} bridging functional decomposition row${result.rows.length === 1 ? "" : "s"} to connect them back into the main graph.`,
+		                "",
+		                formatFunctionalRowsMarkdown(result.rows),
+		                "",
+		                "These are proposed rows only. Say “add them” if you want me to apply them to the functional decomposition table.",
+		              ].join("\n"),
+		            });
+		          } else {
+		            appendMessage(activeId, {
+		              role: "assistant",
+		              content: "I don’t see orphan node pairs that need bridging rows in the current functional decomposition.",
+		            });
+		          }
+		          setThreads(loadThreads());
+		          return;
+		        }
+		        const answer = buildFunctionalGraphConnectivityAnswer({
+		          rows: functionalRowsForConnectivity,
+		          projectName: enrichedContext?.project?.name || focusContext?.project?.name || "",
+	        });
+	        appendMessage(activeId, { role: "assistant", content: answer });
+	        setThreads(loadThreads());
+	        return;
+	      }
+	      const mutationUserText = continuationOfPendingFunctionalMutation
+        ? `${pendingFunctionalMutationRequest}\n\nAdditional user direction: ${userText}`
+        : userText;
+      const renameRequest = extractFunctionLabelRenameRequest(userText, pendingFunctionLabelReference);
+      if (renameRequest?.newLabel && (renameRequest.oldLabel || pendingFunctionLabelReference?.label)) {
+        const oldLabel = renameRequest.oldLabel || pendingFunctionLabelReference.label;
+        const explicitMutationText = `Rename function label from "${oldLabel}" to "${renameRequest.newLabel}".`;
+        if (!isApplyPendingFunctionalRowsRequest(userText)) {
+          setPendingFunctionRename({ oldLabel, newLabel: renameRequest.newLabel, updatedAt: Date.now() });
+          appendMessage(activeId, {
+            role: "assistant",
+            content: `I’ll rename the function label from “${oldLabel}” to “${renameRequest.newLabel}”. Please confirm if you want me to apply that to the functional decomposition.`,
+          });
+          setThreads(loadThreads());
+          return;
+        }
+        const provider = await waitForActionProvider("project-functional-diagram", 1800);
+        if (provider?.mutateFunctionalDecompositionFromPrompt) {
+          appendMessage(activeId, {
+            role: "assistant",
+            content: `I’ll apply the function label rename from “${oldLabel}” to “${renameRequest.newLabel}” now.`,
+          });
+          setThreads(loadThreads());
+          try {
+            const result = await provider.mutateFunctionalDecompositionFromPrompt({ userText: explicitMutationText, activeProjectId });
+            appendMessage(activeId, {
+              role: "assistant",
+              content: `${result?.message || "Function label renamed."} Updated ${result?.updatedCount ?? 0} row${result?.updatedCount === 1 ? "" : "s"}.`,
+            });
+            setPendingFunctionRename(null);
+            setPendingFunctionLabelReference({ label: renameRequest.newLabel, updatedAt: Date.now() });
+          } catch (error) {
+            appendMessage(activeId, {
+              role: "assistant",
+              content: `I couldn’t rename the function label: ${error?.message || "unknown error"}`,
+            });
+          }
+          setThreads(loadThreads());
+          return;
+        }
+      }
+      if (pendingFunctionRename && isApplyPendingFunctionalRowsRequest(userText)) {
+        const provider = await waitForActionProvider("project-functional-diagram", 1800);
+        if (provider?.mutateFunctionalDecompositionFromPrompt) {
+          const explicitMutationText = `Rename function label from "${pendingFunctionRename.oldLabel}" to "${pendingFunctionRename.newLabel}".`;
+          appendMessage(activeId, {
+            role: "assistant",
+            content: `I’ll apply the function label rename from “${pendingFunctionRename.oldLabel}” to “${pendingFunctionRename.newLabel}” now.`,
+          });
+          setThreads(loadThreads());
+          try {
+            const result = await provider.mutateFunctionalDecompositionFromPrompt({ userText: explicitMutationText, activeProjectId });
+            appendMessage(activeId, {
+              role: "assistant",
+              content: `${result?.message || "Function label renamed."} Updated ${result?.updatedCount ?? 0} row${result?.updatedCount === 1 ? "" : "s"}.`,
+            });
+            setPendingFunctionLabelReference({ label: pendingFunctionRename.newLabel, updatedAt: Date.now() });
+            setPendingFunctionRename(null);
+          } catch (error) {
+            appendMessage(activeId, {
+              role: "assistant",
+              content: `I couldn’t rename the function label: ${error?.message || "unknown error"}`,
+            });
+          }
+          setThreads(loadThreads());
+          return;
+        }
+      }
+      const pendingCellUpdate = pendingFunctionalRows.length ? parsePendingFunctionalRowsCellUpdate(userText) : null;
+      const pendingProjectCreateName = pendingFunctionalRows.length
+        ? (requestedFunctionalProjectName || pendingFunctionalProjectName)
+        : "";
+      if (pendingProjectCreateName && (requestedFunctionalProjectName || isApplyPendingFunctionalRowsRequest(userText))) {
+        const provider = await waitForActionProvider("project-functional-diagram", 1800);
+        if (provider?.createProjectFromFunctionalDecompositionRows) {
+          appendMessage(activeId, {
+            role: "assistant",
+            content: `I’ll create a new project called “${pendingProjectCreateName}” and use the pending functional decomposition rows.`,
+          });
+          setThreads(loadThreads());
+          try {
+            const result = await provider.createProjectFromFunctionalDecompositionRows({
+              projectName: pendingProjectCreateName,
+              rows: pendingFunctionalRows,
+              source: "collaborator-chat-new-project",
+            });
+            const skippedAdds = result?.skippedAddCount
+              ? ` ${result.skippedAddCount} candidate row${result.skippedAddCount === 1 ? " was" : "s were"} skipped because ${result.skippedAddCount === 1 ? "it" : "they"} duplicated an existing interface or conflicted with function/subsystem labels.`
+              : "";
+            appendMessage(activeId, {
+              role: "assistant",
+              content: `Done. Created project “${result?.projectName || pendingProjectCreateName}” and added ${result?.addedCount ?? 0} functional decomposition row${result?.addedCount === 1 ? "" : "s"}.${skippedAdds}`,
+            });
+            if ((result?.addedCount ?? 0) > 0) {
+              setPendingFunctionalRows([]);
+              setPendingFunctionalProjectName("");
+            }
+          } catch (error) {
+            appendMessage(activeId, {
+              role: "assistant",
+              content: `I couldn’t create the project from the pending functional decomposition: ${error?.message || "unknown error"}`,
+            });
+          }
+          setThreads(loadThreads());
+          return;
+        }
+      }
+      if (pendingCellUpdate) {
+        setPendingFunctionalRows((rows) => rows.map((row) => ({ ...row, ...pendingCellUpdate })));
+        appendMessage(activeId, {
+          role: "assistant",
+          content: `Updated the pending functional decomposition rows: ${Object.entries(pendingCellUpdate).map(([field, value]) => `${field} = ${value}`).join(", ")}. Say “add them” when you want me to apply them to the table.`,
+        });
+        setThreads(loadThreads());
+        return;
+      }
+	      if (isApplyPendingFunctionalRowsRequest(userText)) {
+	        const extractedPreviousRows = pendingFunctionalRows.length
+	          ? []
+	          : extractFunctionalRowsFromAssistantText(previousAssistantContent);
+	        const rowsToApply = pendingFunctionalRows.length ? pendingFunctionalRows : extractedPreviousRows;
+	        if (!rowsToApply.length && isExplicitApplyPendingRowsRequest(userText)) {
+	          appendMessage(activeId, {
+	            role: "assistant",
+	            content: "I couldn’t find proposed functional decomposition rows in the previous message to apply. Please ask me to propose the rows again, then say “add them.”",
+	          });
+	          setThreads(loadThreads());
+	          return;
+	        }
+	        if (!rowsToApply.length) {
+	          // Let short confirmations like "yes" continue to other pending flows or normal chat
+	        } else {
+	          const projectNameForApply = requestedFunctionalProjectName || pendingFunctionalProjectName;
+	          if (projectNameForApply) {
+	            const provider = await waitForActionProvider("project-functional-diagram", 1800);
+	            if (provider?.createProjectFromFunctionalDecompositionRows) {
+	              appendMessage(activeId, {
+	                role: "assistant",
+	                content: `I’ll create a new project called “${projectNameForApply}” and use the pending functional decomposition rows.`,
+	              });
+	              setThreads(loadThreads());
+	              try {
+	                const result = await provider.createProjectFromFunctionalDecompositionRows({
+	                  projectName: projectNameForApply,
+	                  rows: rowsToApply,
+	                  source: "collaborator-chat-new-project",
+	                });
+	                const skippedAdds = result?.skippedAddCount
+	                  ? ` ${result.skippedAddCount} candidate row${result.skippedAddCount === 1 ? " was" : "s were"} skipped because ${result.skippedAddCount === 1 ? "it" : "they"} duplicated an existing interface or conflicted with function/subsystem labels.`
+	                  : "";
+	                appendMessage(activeId, {
+	                  role: "assistant",
+	                  content: `Done. Created project “${result?.projectName || projectNameForApply}” and added ${result?.addedCount ?? 0} functional decomposition row${result?.addedCount === 1 ? "" : "s"}.${skippedAdds}`,
+	                });
+	                if ((result?.addedCount ?? 0) > 0) {
+	                  setPendingFunctionalRows([]);
+	                  setPendingFunctionalProjectName("");
+	                }
+	              } catch (error) {
+	                appendMessage(activeId, {
+	                  role: "assistant",
+	                  content: `I couldn’t create the project from the pending functional decomposition: ${error?.message || "unknown error"}`,
+	                });
+	              }
+	              setThreads(loadThreads());
+	              return;
+	            }
+	          }
+	        const provider = await waitForActionProvider("project-functional-diagram", 1800);
+	        if (provider?.addFunctionalDecompositionRowsFromCollaborator) {
+	          appendMessage(activeId, {
+	            role: "assistant",
+	            content: "I’ll add the pending functional decomposition rows now.",
+          });
+          setThreads(loadThreads());
+	          try {
+	            const result = await provider.addFunctionalDecompositionRowsFromCollaborator({
+	              rows: rowsToApply,
+	              source: "collaborator-chat-proposal",
+	            });
+            const skippedAdds = result?.skippedAddCount
+              ? ` ${result.skippedAddCount} candidate row${result.skippedAddCount === 1 ? " was" : "s were"} skipped because ${result.skippedAddCount === 1 ? "it" : "they"} duplicated an existing interface or conflicted with existing function/subsystem labels.`
+              : "";
+	            appendMessage(activeId, {
+	              role: "assistant",
+	              content: `Done. Added ${result?.addedCount ?? 0} functional decomposition row${result?.addedCount === 1 ? "" : "s"}.${skippedAdds}`,
+	            });
+	            if ((result?.addedCount ?? 0) > 0) setPendingFunctionalRows([]);
+          } catch (error) {
+            appendMessage(activeId, {
+              role: "assistant",
+              content: `I couldn’t add the pending functional decomposition rows: ${error?.message || "unknown error"}`,
+            });
+          }
+	          setThreads(loadThreads());
+	          return;
+	        }
+	        }
+	      }
+      if (isFunctionalSubsystemAllocationReviewRequest(userText)) {
+        const provider = await waitForActionProvider("project-functional-diagram", 1800);
+        if (provider?.reevaluateFunctionalSubsystemAllocations) {
+          appendMessage(activeId, {
+            role: "assistant",
+            content: "I’ll reevaluate the subsystem allocation for every existing functional decomposition row and open proposed changes for your review. I won’t apply anything until you accept selected rows.",
+          });
+          setThreads(loadThreads());
+          try {
+            const result = await provider.reevaluateFunctionalSubsystemAllocations({ userText, activeProjectId });
+            appendMessage(activeId, {
+              role: "assistant",
+              content: `Subsystem allocation review complete. I prepared ${result?.allocationCount ?? 0} proposed allocation${result?.allocationCount === 1 ? "" : "s"} for review in Functional Diagramming.`,
+            });
+          } catch (error) {
+            appendMessage(activeId, {
+              role: "assistant",
+              content: `I couldn’t reevaluate subsystem allocations: ${error?.message || "unknown error"}`,
+            });
+          }
+          setThreads(loadThreads());
+          return;
+        }
+      }
+      if (
+        activeProjectId &&
+        (continuationOfPendingFunctionalMutation || isFunctionalDecompositionMutationRequest(userText, focusContext)) &&
+        !isFunctionalDecompositionAuditRequest(userText)
+      ) {
+        const provider = await waitForActionProvider("project-functional-diagram", 1800);
+        if (provider?.mutateFunctionalDecompositionFromPrompt) {
+          appendMessage(activeId, {
+            role: "assistant",
+            content: "I’ll update the active functional decomposition table from your request.",
+          });
+          setThreads(loadThreads());
+          try {
+            const result = await provider.mutateFunctionalDecompositionFromPrompt({ userText: mutationUserText, activeProjectId });
+            if (result?.requiresClarification) {
+              setPendingFunctionalMutationRequest(mutationUserText);
+              appendMessage(activeId, {
+                role: "assistant",
+                content: result.message || "I need a little more detail before editing the functional decomposition table.",
+              });
+            } else {
+              setPendingFunctionalMutationRequest("");
+              const skipped = Array.isArray(result?.skippedRemovals) && result.skippedRemovals.length
+                ? ` I skipped ${result.skippedRemovals.length} removal${result.skippedRemovals.length === 1 ? "" : "s"} because the match was ambiguous or missing.`
+                : "";
+              const skippedUpdates = Array.isArray(result?.skippedUpdates) && result.skippedUpdates.length
+                ? ` I skipped ${result.skippedUpdates.length} update${result.skippedUpdates.length === 1 ? "" : "s"} because no matching rows were found.`
+                : "";
+              const skippedAdds = result?.skippedAddCount
+                ? ` ${result.skippedAddCount} candidate row${result.skippedAddCount === 1 ? " was" : "s were"} skipped because ${result.skippedAddCount === 1 ? "it" : "they"} duplicated an existing interface or conflicted with existing function/subsystem labels.`
+                : "";
+              appendMessage(activeId, {
+                role: "assistant",
+                content: `${result?.message || "Functional decomposition table updated."} Added ${result?.addedCount ?? 0} row${result?.addedCount === 1 ? "" : "s"}, updated ${result?.updatedCount ?? 0} row${result?.updatedCount === 1 ? "" : "s"}, and removed ${result?.removedCount ?? 0} row${result?.removedCount === 1 ? "" : "s"}.${skippedAdds}${skippedUpdates}${skipped}`,
+              });
+              if ((result?.addedCount ?? 0) > 0 || (result?.updatedCount ?? 0) > 0 || (result?.removedCount ?? 0) > 0) {
+                setPendingFunctionalRows([]);
+              }
+            }
+          } catch (error) {
+            setPendingFunctionalMutationRequest(mutationUserText);
+            appendMessage(activeId, {
+              role: "assistant",
+              content: `I couldn’t update the functional decomposition table: ${error?.message || "unknown error"}`,
+            });
+          }
+          setThreads(loadThreads());
+          return;
+        }
+      }
+      if (isFunctionalDecompositionAuditRequest(userText)) {
+        const provider = await waitForActionProvider("project-functional-diagram", 1800);
+        if (provider?.auditFunctionalDecompositionCompleteness) {
+          appendMessage(activeId, {
+            role: "assistant",
+            content: "I’ll audit the current functional decomposition for additive gaps only and open proposed new rows for your review. I won’t change existing rows or add anything until you accept selected rows.",
+          });
+          setThreads(loadThreads());
+          try {
+            const result = await provider.auditFunctionalDecompositionCompleteness({ userText, activeProjectId });
+            appendMessage(activeId, {
+              role: "assistant",
+              content: `Additive functional decomposition audit complete. I found ${result?.proposalCount ?? 0} proposed new row${result?.proposalCount === 1 ? "" : "s"} and ${result?.coverageGapCount ?? 0} additive gap${result?.coverageGapCount === 1 ? "" : "s"}. Review the proposal dialog in Functional Diagramming, edit/select rows, then add only the ones you want.`,
+            });
+          } catch (error) {
+            appendMessage(activeId, {
+              role: "assistant",
+              content: `I couldn’t complete the functional decomposition audit: ${error?.message || "unknown error"}`,
+            });
+          }
+          setThreads(loadThreads());
+          return;
+        }
+      }
       let graphContext = enrichedContext;
       try {
         graphContext = await buildWorkspaceLLMContext({
@@ -1274,7 +2514,19 @@ Runtime context:
         };
 
       const t = loadThreads().find(t => t.id === activeId);
-      const messages = [systemMsg, ...compactPromptHistory(t?.messages || [])];
+      const promptHistory = compactPromptHistory(t?.messages || []);
+      if (options?.modelUserContent) {
+        const lastUserIndex = [...promptHistory].map((message) => message.role).lastIndexOf("user");
+        if (lastUserIndex >= 0) {
+          promptHistory[lastUserIndex] = {
+            ...promptHistory[lastUserIndex],
+            content: options.modelUserContent,
+          };
+        } else {
+          promptHistory.push({ role: "user", content: options.modelUserContent });
+        }
+      }
+      const messages = [systemMsg, ...promptHistory];
 
       appendMessage(activeId, { role: "assistant", content: "" });
       setThreads(loadThreads());
@@ -1299,6 +2551,11 @@ Runtime context:
         onToken: (_token, fullText) => updateAssistant(fullText),
       });
       updateAssistant(answer || "No response.", true);
+      const proposedFunctionalRows = extractFunctionalRowsFromAssistantText(answer || "");
+      if (proposedFunctionalRows.length) {
+        setPendingFunctionalRows(proposedFunctionalRows);
+        if (requestedFunctionalProjectName) setPendingFunctionalProjectName(requestedFunctionalProjectName);
+      }
     } catch {
       appendMessage(activeId, { role: "assistant", content: "Sorry — I hit an issue generating a reply. Check server logs and try again." });
       setThreads(loadThreads());
@@ -1377,9 +2634,71 @@ Runtime context:
   const userH1 = docked ? "text-base" : "text-lg";
   const userH2 = docked ? "text-sm"  : "text-base";
   const userP  = docked ? "text-[13px]" : "text-[13px]";
+  const canSend = Boolean(active && !busy && (input.trim() || regionContexts.length));
+  const renderPendingContextChips = () => (
+    regionContexts.length > 0 && (
+      <div className="mb-2">
+        <div className="text-[11px] text-neutral-600 mb-1">
+          Context to send ({regionContexts.length})
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {regionContexts.map(c => (
+            <button
+              type="button"
+              key={c.id}
+              onClick={() => openCtxEditor(c)}
+              className="inline-flex items-center gap-2 max-w-[260px] truncate px-2 py-1 rounded-full text-xs border bg-neutral-50 hover:bg-neutral-100 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+              title="Click to preview/edit"
+            >
+              <span className="uppercase tracking-wide text-[10px] text-neutral-500">
+                {getContextChipType(c)}
+              </span>
+              <span className="truncate">
+                {getContextChipLabel(c)}
+              </span>
+              <span
+                role="button"
+                tabIndex={0}
+                className="ml-1 rounded hover:bg-neutral-200 px-1"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setRegionContexts(prev => prev.filter(x => x.id !== c.id));
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setRegionContexts(prev => prev.filter(x => x.id !== c.id));
+                  }
+                }}
+                aria-label="Remove"
+                title="Remove"
+              >
+                ✕
+              </span>
+            </button>
+          ))}
+          <button
+            className="ml-1 text-[11px] px-2 py-1 border rounded hover:bg-neutral-50"
+            onClick={() => setRegionContexts([])}
+            title="Clear all"
+          >
+            Clear all
+          </button>
+        </div>
+      </div>
+    )
+  );
 
   return (
     <div className={isDark ? "dark contents" : "contents"}>
+      <input
+        ref={attachFileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={handleAttachFiles}
+      />
       {/* Full view (embedded page) */}
       {!docked && (
         <div className="w-full max-w-none h-[calc(100dvh-40px)] flex bg-white">
@@ -1453,6 +2772,16 @@ Runtime context:
                 <span className="text-neutral-600">{active ? active.title : "No thread selected"}</span>
               </div>
               <div className="flex items-center gap-2">
+                {docked && !sidebarOpen && (
+                  <button
+                    onClick={() => makeThread("New topic")}
+                    className="inline-flex items-center gap-2 text-xs px-3 py-2 rounded border hover:bg-neutral-50"
+                    title="New thread"
+                  >
+                    <Plus className="w-4 h-4" />
+                    New Thread
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     if (typeof onRequestDock === "function") onRequestDock();
@@ -1603,6 +2932,7 @@ Runtime context:
               <div className="mb-2">
                 <MarkdownToolbar onChange={setInput} textareaRef={textareaRef} />
               </div>
+              {renderPendingContextChips()}
               <div className="flex items-end gap-2">
                 <div className="flex-1">
                   <textarea
@@ -1620,8 +2950,17 @@ Runtime context:
                   />
                 </div>
                 <button
+                  type="button"
+                  onClick={() => attachFileInputRef.current?.click()}
+                  className="inline-flex items-center gap-2 px-3 py-2 text-sm border rounded-lg hover:bg-neutral-50"
+                  title="Attach local files as Collaborator context"
+                >
+                  <FilePlus2 className="w-4 h-4" />
+                  Attach
+                </button>
+                <button
                   onClick={handleSend}
-                  disabled={busy || !input.trim() || !active}
+                  disabled={!canSend}
                   className="inline-flex items-center gap-2 px-3 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
                 >
                   <SendHorizonal className="w-4 h-4" />
@@ -1646,6 +2985,49 @@ Runtime context:
       {/* Compact view (when rendered inside the dock by App.js) */}
       {docked && (
         <div className="h-full min-w-0 flex flex-col">
+          <div className="shrink-0 border-b bg-white px-3 py-2 flex items-center justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Thread</div>
+              <select
+                value={activeId || ""}
+                onChange={(event) => setActiveId(event.target.value)}
+                className="mt-0.5 w-full rounded-md border border-neutral-200 bg-white px-2 py-1 text-sm font-medium text-neutral-800 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                title="Switch Collaborator thread"
+                disabled={!threads.length}
+              >
+                {!threads.length && <option value="">No thread selected</option>}
+                {threads
+                  .slice()
+                  .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt)
+                  .map((thread) => (
+                    <option key={thread.id} value={thread.id}>
+                      {thread.pinned ? "📌 " : ""}{thread.title || "Untitled thread"}
+                    </option>
+                  ))}
+              </select>
+            </div>
+            <div className="shrink-0 flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => active?.id && doRename(active.id)}
+                disabled={!active?.id}
+                className="inline-flex items-center gap-1 rounded-md border border-neutral-200 bg-white px-2 py-1.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Rename this Collaborator thread"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+                Rename
+              </button>
+              <button
+                type="button"
+                onClick={() => makeThread("New topic")}
+                className="inline-flex items-center gap-1.5 rounded-md border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+                title="Start a new Collaborator thread"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                New Thread
+              </button>
+            </div>
+          </div>
           <div
             ref={scrollRef}
             onScroll={handleScroll}
@@ -1753,51 +3135,7 @@ Runtime context:
           <div className="border-t bg-white p-2">
     <div className="flex flex-col gap-2">
     {/* Pending context chips */}
-{regionContexts.length > 0 && (
-  <div className="mb-2">
-    <div className="text-[11px] text-neutral-600 mb-1">
-      Context to send ({regionContexts.length})
-    </div>
-    <div className="flex flex-wrap gap-1.5">
-      {regionContexts.map(c => {
-        return (
-<button
-  type="button"
-  key={c.id}
-  onClick={() => openCtxEditor(c)}
-  className="inline-flex items-center gap-2 max-w-[220px] truncate px-2 py-1 rounded-full text-xs border bg-neutral-50 hover:bg-neutral-100 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-  title="Click to preview/edit"
->
-  <span className="uppercase tracking-wide text-[10px] text-neutral-500">
-    {c.tableMarkdown ? "table" : c.text ? "text" : "image"}
-  </span>
-  <span className="truncate">
-    {c.tableMarkdown ? "|…table…" : c.text ? c.text.slice(0, 60) + (c.text.length > 60 ? "…" : "") : "screenshot"}
-  </span>
-  <button
-    className="ml-1 rounded hover:bg-neutral-200 px-1"
-    onClick={(e) => {
-      e.stopPropagation(); // don’t open editor
-      setRegionContexts(prev => prev.filter(x => x.id !== c.id));
-    }}
-    aria-label="Remove"
-    title="Remove"
-  >
-    ✕
-  </button>
-</button>
-        );
-      })}
-      <button
-        className="ml-1 text-[11px] px-2 py-1 border rounded hover:bg-neutral-50"
-        onClick={() => setRegionContexts([])}
-        title="Clear all"
-      >
-        Clear all
-      </button>
-    </div>
-  </div>
-)}
+	{renderPendingContextChips()}
 
     {/* Row 1: textarea gets the full width */}
     <div>
@@ -1837,19 +3175,28 @@ Runtime context:
           }}
           className="inline-flex items-center gap-2 px-2.5 py-1.5 text-sm border rounded-lg hover:bg-neutral-50"
           title="Select on-screen region to use as Collaborator context"
-        >
-          <Crosshair className="w-4 h-4" />
-          Select
-        </button>
-
-      </div>
+	        >
+	          <Crosshair className="w-4 h-4" />
+	          Select
+	        </button>
+	        <button
+	          type="button"
+	          onClick={() => attachFileInputRef.current?.click()}
+	          className="inline-flex items-center gap-2 px-2.5 py-1.5 text-sm border rounded-lg hover:bg-neutral-50"
+	          title="Attach local files as Collaborator context"
+	        >
+	          <FilePlus2 className="w-4 h-4" />
+	          Attach
+	        </button>
+	
+	      </div>
 
       {/* Right: primary action */}
-      <button
-        onClick={handleSend}
-        disabled={busy || !input.trim() || !active}
-        className="inline-flex items-center gap-2 px-3 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-      >
+	      <button
+	        onClick={handleSend}
+	        disabled={!canSend}
+	        className="inline-flex items-center gap-2 px-3 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+	      >
         <SendHorizonal className="w-4 h-4" />
         Send
       </button>
@@ -1868,34 +3215,48 @@ Runtime context:
     className="fixed inset-0 z-[1200] bg-black/40 flex items-center justify-center"
     onKeyDown={(e) => { if (e.key === "Escape") cancelCtxEditor(); }}
   >
-    <div className="bg-white w-full max-w-[680px] rounded-xl shadow-xl">
-      <div className="px-4 py-3 border-b flex items-center justify-between">
-        <div className="font-semibold text-sm">
-          Edit context — {ctxDraft.tableMarkdown ? "Table" : ctxDraft.text ? "Text" : "Image"}
-        </div>
+	    <div className="bg-white w-full max-w-[680px] rounded-xl shadow-xl">
+	      <div className="px-4 py-3 border-b flex items-center justify-between">
+	        <div className="font-semibold text-sm">
+	          Edit context — {ctxDraft.tableMarkdown ? "Table" : ctxDraft.file ? "File" : ctxDraft.text ? "Text" : "Image"}
+	        </div>
         <button className="text-sm px-2 py-1 rounded border hover:bg-neutral-50" onClick={cancelCtxEditor}>
           Close
         </button>
       </div>
 
-      <div className="p-4 space-y-3 max-h-[70vh] overflow-auto">
-        {/* TEXT / TABLE */}
-        {(ctxDraft.text || ctxDraft.tableMarkdown) && (
-          <div className="space-y-2">
-            <label className="text-xs text-neutral-600 block">
-              {ctxDraft.tableMarkdown ? "Table (Markdown)" : "Text"}
-            </label>
-            <textarea
-              className="w-full border rounded-md p-2 text-sm min-h-[180px] focus:outline-none focus:ring focus:ring-indigo-200"
-              value={ctxDraft.tableMarkdown ?? ctxDraft.text ?? ""}
-              onChange={(e) => {
-                const v = e.target.value;
-                setCtxDraft(d => {
-                  const next = { ...d };
-                  if (d.tableMarkdown != null) next.tableMarkdown = v;
-                  else next.text = v;
-                  return next;
-                });
+	      <div className="p-4 space-y-3 max-h-[70vh] overflow-auto">
+	        {ctxDraft.file && (
+	          <div className="rounded-lg border bg-neutral-50 p-3 text-xs text-neutral-700 space-y-1">
+	            <div><span className="font-semibold">Name:</span> {ctxDraft.file.name || "Untitled file"}</div>
+	            <div><span className="font-semibold">Type:</span> {ctxDraft.file.type || "unknown"}</div>
+	            <div><span className="font-semibold">Size:</span> {formatFileSize(ctxDraft.file.size || 0)}</div>
+	            {ctxDraft.file.lastModified && (
+	              <div><span className="font-semibold">Last modified:</span> {new Date(ctxDraft.file.lastModified).toLocaleString()}</div>
+	            )}
+	            {ctxDraft.fileTextTruncated && (
+	              <div className="text-amber-700">Large text file truncated before sending to keep Collaborator responsive.</div>
+	            )}
+	          </div>
+	        )}
+	        {/* TEXT / TABLE */}
+	        {(ctxDraft.text || ctxDraft.tableMarkdown || ctxDraft.fileText) && (
+	          <div className="space-y-2">
+	            <label className="text-xs text-neutral-600 block">
+	              {ctxDraft.tableMarkdown ? "Table (Markdown)" : ctxDraft.file ? "File text" : "Text"}
+	            </label>
+	            <textarea
+	              className="w-full border rounded-md p-2 text-sm min-h-[180px] focus:outline-none focus:ring focus:ring-indigo-200"
+	              value={ctxDraft.tableMarkdown ?? ctxDraft.fileText ?? ctxDraft.text ?? ""}
+	              onChange={(e) => {
+	                const v = e.target.value;
+	                setCtxDraft(d => {
+	                  const next = { ...d };
+	                  if (d.tableMarkdown != null) next.tableMarkdown = v;
+	                  else if (d.fileText != null) next.fileText = v;
+	                  else next.text = v;
+	                  return next;
+	                });
               }}
             />
             <div className="text-[11px] text-neutral-500">

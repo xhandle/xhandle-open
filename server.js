@@ -919,21 +919,72 @@ function normalizeMessageContent(content) {
   return String(content);
 }
 
+function normalizeMultimodalMessageContent(content) {
+  if (typeof content === "string") return content;
+  if (content == null) return "";
+
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") return { type: "text", text: part };
+        if (!part || typeof part !== "object") return { type: "text", text: String(part ?? "") };
+        if ((part.type === "text" || part.type === "input_text") && typeof (part.text || part.input_text) === "string") {
+          return { type: "text", text: part.text || part.input_text };
+        }
+        const imageUrl = typeof part.image_url?.url === "string"
+          ? part.image_url.url
+          : (typeof part.image_url === "string"
+            ? part.image_url
+            : (typeof part.input_image === "string" ? part.input_image : ""));
+        if ((part.type === "image_url" || part.type === "input_image") && imageUrl) {
+          return { type: "image_url", image_url: { url: imageUrl } };
+        }
+        return { type: "text", text: JSON.stringify(toJsonSafe(part)) };
+      })
+      .filter((part) => {
+        if (part.type === "image_url") return Boolean(part.image_url?.url);
+        return String(part.text || "").trim().length > 0;
+      });
+  }
+
+  if (typeof content === "object") {
+    if (typeof content.text === "string") return content.text;
+    if (typeof content.input_text === "string") return content.input_text;
+    return JSON.stringify(toJsonSafe(content));
+  }
+
+  return String(content);
+}
+
+function hasUsableMessageContent(content) {
+  if (typeof content === "string") return content.trim().length > 0;
+  if (Array.isArray(content)) {
+    return content.some((part) => (
+      (part?.type === "text" && String(part?.text || "").trim()) ||
+      (part?.type === "image_url" && part?.image_url?.url)
+    ));
+  }
+  return false;
+}
+
 /**
  * normalizeChatMessages prepares raw input so downstream xHandle logic can rely on a predictable shape. Data-cleanup helpers like this are important because AI prompts, diagrams, and worksheet pipelines all depend on stable, human-readable text and identifiers.
  * @param messages} Input consumed by this step of the xHandle workflow.
  * @returns the value that the next step in this workflow consumes.
  */
-function normalizeChatMessages(messages) {
+function normalizeChatMessages(messages, options = {}) {
   if (!Array.isArray(messages)) return [];
+  const preserveMultimodal = Boolean(options.preserveMultimodal);
 
   return messages
     .filter((message) => message && typeof message === "object")
     .map((message) => ({
       role: typeof message.role === "string" ? message.role : "user",
-      content: normalizeMessageContent(message.content),
+      content: preserveMultimodal
+        ? normalizeMultimodalMessageContent(message.content)
+        : normalizeMessageContent(message.content),
     }))
-    .filter((message) => message.content.trim().length > 0);
+    .filter((message) => hasUsableMessageContent(message.content));
 }
 
 /**
@@ -1980,8 +2031,9 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
     }
 
     const body = req.body || {};
+    const provider = resolved.provider;
     const messages = Array.isArray(body.messages)
-      ? normalizeChatMessages(body.messages)
+      ? normalizeChatMessages(body.messages, { preserveMultimodal: provider === "openai" })
       : (typeof body.prompt === "string" ? [{ role: "user", content: body.prompt }] : []);
 
     if (messages.length === 0) {
@@ -1989,7 +2041,6 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
     }
 
     const stream = body.stream === true;
-    const provider = resolved.provider;
     const model = resolved.model || AI_PROVIDERS[provider]?.defaultModel;
 
     if (provider === "claude") {

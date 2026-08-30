@@ -78,7 +78,7 @@ import {
   loadRequirements,
   populateRequirementModule,
 } from "./features/requirements/actions";
-import { getActionProvider } from "./features/app/actionRegistry";
+import { getActionProvider, registerActionProvider } from "./features/app/actionRegistry";
 import {
   ResultsReviewProvider,
   ReviewCenter,
@@ -1017,7 +1017,7 @@ const CollaboratorNavIcon = React.memo(function CollaboratorNavIcon({ active = f
 const CODE_ARCHITECTURE_FUNCTIONAL_ARTIFACT_TYPE = "code_architecture_functional_decomposition_table";
 const DEFAULT_START_SECTION = "code-architecture";
 
-function ProjectMenuPortal({ anchorEl, setPortalRef, onRename, onInvite, onDelete }) {
+function ProjectMenuPortal({ anchorEl, setPortalRef, onRename, onDelete }) {
   const menuRef = useRef(null);
   const [pos, setPos] = useState({ top: 0, left: 0 });
 
@@ -1071,16 +1071,6 @@ function ProjectMenuPortal({ anchorEl, setPortalRef, onRename, onInvite, onDelet
       >
         Rename
       </button>
-
-      {onInvite && (
-        <button
-          className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50"
-          onClick={onInvite}
-          role="menuitem"
-        >
-          Invite collaborator(s)
-        </button>
-      )}
 
       <button
         className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-gray-50"
@@ -1150,91 +1140,6 @@ function FolderMenuPortal({ anchorEl, setPortalRef, onNewProject, onNewFolder, o
       </button>
     </div>,
     document.body
-  );
-}
-
-function InviteCollaboratorsModal({ projectName, onClose, onSubmit }) {
-  const [emails, setEmails] = useState("");
-  const [role, setRole] = useState("write");
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState("");
-
-  const handleInvite = async () => {
-    setError("");
-    const list = emails
-      .split(/[, \n]+/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (!list.length) {
-      setError("Enter at least one email.");
-      return;
-    }
-    setSending(true);
-    try {
-      await onSubmit({ emails: list, role });
-      onClose();
-    } catch (e) {
-      setError(String(e?.message || e) || "Failed to create invite.");
-    } finally {
-      setSending(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative z-[201] w-full max-w-lg rounded-2xl border-2 border-indigo-500 bg-white shadow-xl">
-        <div className="px-5 py-4 border-b">
-          <h2 className="text-base font-semibold">Invite collaborators</h2>
-          <p className="text-xs text-gray-500 mt-0.5">
-            Project: <span className="font-medium">{projectName}</span>
-          </p>
-        </div>
-
-        <div className="p-5 space-y-4">
-          <div>
-            <label className="text-xs text-gray-600">Email addresses</label>
-            <textarea
-              rows={3}
-              className="w-full mt-1 border rounded px-3 py-2 text-sm"
-              placeholder="alice@company.com, bob@company.com"
-              value={emails}
-              onChange={(e) => setEmails(e.target.value)}
-            />
-            <p className="text-[11px] text-gray-500 mt-1">
-              Comma, space, or newline separated. Local invites are stored on this machine.
-            </p>
-          </div>
-
-          <div>
-            <label className="text-xs text-gray-600">Permission</label>
-            <select
-              className="w-48 mt-1 border rounded px-2 py-1 text-sm"
-              value={role}
-              onChange={(e) => setRole(e.target.value)}
-            >
-              <option value="read">Read-only</option>
-              <option value="write">Read &amp; write</option>
-            </select>
-          </div>
-
-          {error && <div className="text-xs text-red-600">{error}</div>}
-        </div>
-
-        <div className="flex items-center justify-end gap-2 px-5 py-4 border-t">
-          <button className="px-3 py-2 rounded border" onClick={onClose} disabled={sending}>
-            Cancel
-          </button>
-          <button
-            className="px-3 py-2 text-white rounded bg-[#2D7DFE] hover:bg-[#1E61D6] disabled:opacity-60"
-            onClick={handleInvite}
-            disabled={sending}
-          >
-            {sending ? "Creating..." : "Create invite(s)"}
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -1603,6 +1508,875 @@ function functionalRowSignature(rows) {
   })));
 }
 
+function functionalDiagramMembershipSignature(rows = []) {
+  return JSON.stringify((rows || []).map((row) => ({
+    subsystem: String(row?.subsystem || "").trim(),
+    fromFunction: String(row?.fromFunction || "").trim(),
+    controlAction: String(row?.controlAction || "").trim(),
+    toFunction: String(row?.toFunction || "").trim(),
+  })));
+}
+
+function normalizeFunctionalAuditString(value, maxLength = 900) {
+  return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function functionalLabelKey(value) {
+  return normalizeFunctionalAuditString(value, 260).toLowerCase();
+}
+
+function functionalInterfaceKey(row) {
+  return [
+    row?.fromFunction,
+    row?.controlAction,
+    row?.toFunction,
+  ].map(functionalLabelKey).join("::");
+}
+
+function getFunctionOwnerMap(rows = []) {
+  const owners = new Map();
+  (rows || []).forEach((row) => {
+    const fnKey = functionalLabelKey(row?.fromFunction);
+    const subsystem = normalizeFunctionalAuditString(row?.subsystem, 220);
+    if (!fnKey || !subsystem) return;
+    if (!owners.has(fnKey)) owners.set(fnKey, subsystem);
+  });
+  return owners;
+}
+
+function filterFunctionalRowsForLabelConflicts(candidateRows = [], existingRows = []) {
+  const functionOwners = getFunctionOwnerMap(existingRows);
+  const interfaceKeys = new Set((existingRows || []).map(functionalInterfaceKey).filter((key) => key !== "::::"));
+  const accepted = [];
+  const skipped = [];
+
+  (candidateRows || []).forEach((row) => {
+    const fromKey = functionalLabelKey(row?.fromFunction);
+    const subsystem = normalizeFunctionalAuditString(row?.subsystem, 220);
+    const existingOwner = fromKey ? functionOwners.get(fromKey) : "";
+    const interfaceKey = functionalInterfaceKey(row);
+    if (fromKey && existingOwner && subsystem && functionalLabelKey(existingOwner) !== functionalLabelKey(subsystem)) {
+      skipped.push({
+        row,
+        reason: `Function "${row.fromFunction}" is already allocated to subsystem "${existingOwner}" and cannot also be allocated to "${subsystem}".`,
+      });
+      return;
+    }
+    if (interfaceKey && interfaceKeys.has(interfaceKey)) {
+      skipped.push({
+        row,
+        reason: `Interface "${row.fromFunction} / ${row.controlAction} / ${row.toFunction}" already exists.`,
+      });
+      return;
+    }
+    accepted.push(row);
+    if (fromKey && subsystem && !functionOwners.has(fromKey)) functionOwners.set(fromKey, subsystem);
+    if (interfaceKey) interfaceKeys.add(interfaceKey);
+  });
+
+  return { accepted, skipped };
+}
+
+function getFunctionalLabelConflictForEdit(rows = [], rowIndex, field, value) {
+  const currentRows = Array.isArray(rows) ? rows : [];
+  const draftRows = currentRows.map((row, index) => (
+    index === rowIndex ? { ...row, [field]: value } : row
+  ));
+  const row = draftRows[rowIndex] || {};
+  const fromKey = functionalLabelKey(row?.fromFunction);
+  const subsystem = normalizeFunctionalAuditString(row?.subsystem, 220);
+
+  if ((field === "fromFunction" || field === "subsystem") && fromKey && subsystem) {
+    const conflict = draftRows.find((candidate, index) => (
+      index !== rowIndex &&
+      functionalLabelKey(candidate?.fromFunction) === fromKey &&
+      functionalLabelKey(candidate?.subsystem) &&
+      functionalLabelKey(candidate?.subsystem) !== functionalLabelKey(subsystem)
+    ));
+    if (conflict) {
+      return `Function "${row.fromFunction}" is already allocated to subsystem "${conflict.subsystem}". Use a distinct function label or the same subsystem allocation.`;
+    }
+  }
+
+  if (field === "fromFunction" || field === "controlAction" || field === "toFunction") {
+    const nextInterfaceKey = functionalInterfaceKey(row);
+    if (nextInterfaceKey && nextInterfaceKey !== "::::") {
+      const conflict = draftRows.find((candidate, index) => (
+        index !== rowIndex &&
+        functionalInterfaceKey(candidate) === nextInterfaceKey
+      ));
+      if (conflict) {
+        return `Interface "${row.fromFunction} / ${row.controlAction} / ${row.toFunction}" already exists. Use a distinct control action or endpoint.`;
+      }
+    }
+  }
+
+  return "";
+}
+
+function completeFunctionalRowFields(row = {}, existingRows = [], options = {}) {
+  const fromFunction = normalizeFunctionalAuditString(row.fromFunction || row.functionFrom || row.from, 220);
+  const toFunction = normalizeFunctionalAuditString(row.toFunction || row.functionTo || row.to, 220);
+  const controlAction = normalizeFunctionalAuditString(row.controlAction || row.action || row.interface, 260);
+  const inferredSubsystem = inferSubsystemForFunction(fromFunction, existingRows);
+  const subsystem = normalizeFunctionalAuditString(
+    row.subsystem || row.allocatedSubsystem || row.allocation || options.defaultSubsystem || inferredSubsystem || fromFunction || "Functional Architecture",
+    220
+  );
+  const fromDetails = normalizeFunctionalAuditString(
+    row.fromDetails ||
+      row.functionFromDetails ||
+      row.fromDescription ||
+      (fromFunction ? `${fromFunction} performs the source function for this interface within the ${subsystem} subsystem.` : ""),
+    1200
+  );
+  const controlDetails = normalizeFunctionalAuditString(
+    row.controlDetails ||
+      row.controlActionDetails ||
+      row.actionDetails ||
+      (controlAction && fromFunction && toFunction
+        ? `${controlAction} is exchanged from ${fromFunction} to ${toFunction} to support the intended functional interaction.`
+        : ""),
+    1200
+  );
+  const toDetails = normalizeFunctionalAuditString(
+    row.toDetails ||
+      row.functionToDetails ||
+      row.toDescription ||
+      (toFunction ? `${toFunction} receives and uses the ${controlAction || "functional interaction"} provided by ${fromFunction || "the source function"}.` : ""),
+    1200
+  );
+
+  return {
+    subsystem,
+    fromFunction,
+    fromDetails,
+    controlAction,
+    controlDetails,
+    toFunction,
+    toDetails,
+    rationale: normalizeFunctionalAuditString(row.rationale || row.reason || row.why, 1400),
+    confidence: normalizeFunctionalAuditString(row.confidence || "Medium", 30) || "Medium",
+  };
+}
+
+function normalizeFunctionalAuditProposalRows(rawRows = [], existingRows = []) {
+  const existingKeys = new Set((existingRows || []).map(functionalInterfaceKey).filter((key) => key !== "::::"));
+  const seen = new Set();
+  const normalized = (Array.isArray(rawRows) ? rawRows : [])
+    .map((row) => completeFunctionalRowFields(row, existingRows))
+    .filter((row) => row.subsystem && row.fromFunction && row.fromDetails && row.controlAction && row.controlDetails && row.toFunction && row.toDetails)
+    .filter((row) => {
+      const key = functionalInterfaceKey(row);
+      if (!key || existingKeys.has(key) || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  return filterFunctionalRowsForLabelConflicts(normalized, existingRows).accepted;
+}
+
+function normalizeFunctionalAuditList(value, keys = []) {
+  const raw = Array.isArray(value) ? value : [];
+  return raw.map((entry) => {
+    if (typeof entry === "string") return { gap: normalizeFunctionalAuditString(entry, 900) };
+    const normalized = {};
+    keys.forEach((key) => {
+      normalized[key] = normalizeFunctionalAuditString(entry?.[key], 900);
+    });
+    return normalized;
+  }).filter((entry) => Object.values(entry).some(Boolean));
+}
+
+function normalizeFunctionalAllocationProposalRows(rawRows = [], existingRows = []) {
+  const rows = Array.isArray(rawRows) ? rawRows : [];
+  return rows.map((entry) => {
+    const rowNumber = Number(entry?.rowNumber ?? entry?.row ?? entry?.index);
+    const rowIndex = Number.isFinite(rowNumber) ? rowNumber - 1 : Number(entry?.rowIndex);
+    const existing = Number.isFinite(rowIndex) ? existingRows[rowIndex] : null;
+    if (!existing) return null;
+    const currentSubsystem = normalizeFunctionalAuditString(existing?.subsystem, 220);
+    const proposedSubsystem = normalizeFunctionalAuditString(
+      entry?.proposedSubsystem || entry?.subsystem || entry?.newSubsystem || currentSubsystem,
+      220
+    );
+    return {
+      rowIndex,
+      rowNumber: rowIndex + 1,
+      currentSubsystem,
+      proposedSubsystem,
+      fromFunction: normalizeFunctionalAuditString(existing?.fromFunction, 220),
+      controlAction: normalizeFunctionalAuditString(existing?.controlAction, 260),
+      toFunction: normalizeFunctionalAuditString(existing?.toFunction, 220),
+      rationale: normalizeFunctionalAuditString(entry?.rationale || entry?.reason || entry?.justification, 1400),
+      confidence: normalizeFunctionalAuditString(entry?.confidence || "Medium", 30) || "Medium",
+    };
+  }).filter((entry) => entry && entry.proposedSubsystem);
+}
+
+function buildFunctionalAllocationReevaluationPrompt({ project, rows, userText, feedback }) {
+  const compactRows = (rows || []).map((row, index) => ({
+    rowNumber: index + 1,
+    currentSubsystem: normalizeFunctionalAuditString(row?.subsystem, 220),
+    fromFunction: normalizeFunctionalAuditString(row?.fromFunction, 220),
+    fromDetails: normalizeFunctionalAuditString(row?.fromDetails, 700),
+    controlAction: normalizeFunctionalAuditString(row?.controlAction, 260),
+    controlDetails: normalizeFunctionalAuditString(row?.controlDetails, 700),
+    toFunction: normalizeFunctionalAuditString(row?.toFunction, 220),
+    toDetails: normalizeFunctionalAuditString(row?.toDetails, 700),
+  }));
+  const subsystemNames = [...new Set(compactRows.map((row) => row.currentSubsystem).filter(Boolean))];
+  return `You are reevaluating subsystem allocations for an existing functional decomposition.
+
+Scope boundary:
+- Do not add, remove, rewrite, rename, or reorder functional decomposition rows.
+- Propose a subsystem allocation for every existing row.
+- The subsystem allocation is the owner/group for Function (From).
+- Prefer existing subsystem names when they are technically appropriate.
+- You may propose a clearer new subsystem label only when the current subsystem set does not fit the Function (From).
+- Function labels are globally unique node identifiers, so assign each Function (From) label to one consistent subsystem across all rows where it appears.
+- Return strict JSON only. No markdown.
+
+Project:
+${JSON.stringify({ id: project?.id || null, name: project?.name || "Active project" }, null, 2)}
+
+Existing subsystem names:
+${JSON.stringify(subsystemNames, null, 2)}
+
+Existing functional decomposition rows:
+${JSON.stringify(compactRows, null, 2)}
+
+User request:
+${userText || "Reevaluate subsystem allocations for all existing functional decomposition rows."}
+
+User feedback/direction for this revision:
+${feedback || "(none)"}
+
+JSON schema:
+{
+  "summary": "short allocation review summary",
+  "allocationRows": [
+    {
+      "rowNumber": 1,
+      "proposedSubsystem": "recommended subsystem allocation for this existing row",
+      "rationale": "why this subsystem owns Function (From)",
+      "confidence": "High | Medium | Low"
+    }
+  ],
+  "questions": ["optional clarification questions for the user"]
+}`;
+}
+
+function buildFunctionalCompletenessAuditPrompt({ project, rows, diagramCategories, userText, feedback, priorProposedRows = [], continuation = false }) {
+  const compactRows = (rows || []).map((row, index) => ({
+    rowNumber: index + 1,
+    subsystem: normalizeFunctionalAuditString(row?.subsystem, 220),
+    fromFunction: normalizeFunctionalAuditString(row?.fromFunction, 220),
+    fromDetails: normalizeFunctionalAuditString(row?.fromDetails, 900),
+    controlAction: normalizeFunctionalAuditString(row?.controlAction, 260),
+    controlDetails: normalizeFunctionalAuditString(row?.controlDetails, 900),
+    toFunction: normalizeFunctionalAuditString(row?.toFunction, 220),
+    toDetails: normalizeFunctionalAuditString(row?.toDetails, 900),
+  }));
+  const compactCategories = (diagramCategories?.categories || []).map((category) => ({
+    subsystem: normalizeFunctionalAuditString(category?.name, 220),
+    functions: (category?.functions || []).map((fn) => normalizeFunctionalAuditString(fn, 220)).filter(Boolean).slice(0, 50),
+    description: normalizeFunctionalAuditString(category?.description, 800),
+  }));
+  const compactPriorProposals = (priorProposedRows || []).map((row, index) => ({
+    proposedRowNumber: index + 1,
+    subsystem: normalizeFunctionalAuditString(row?.subsystem, 220),
+    fromFunction: normalizeFunctionalAuditString(row?.fromFunction, 220),
+    controlAction: normalizeFunctionalAuditString(row?.controlAction, 260),
+    toFunction: normalizeFunctionalAuditString(row?.toFunction, 220),
+  }));
+
+  return `You are auditing a functional decomposition for completeness before downstream hazard analysis.
+
+Scope boundary:
+- This is an additive gap audit only.
+- Do not redevelop, replace, reorganize, rename, reclassify, summarize, compress, or remove any existing functional decomposition rows.
+- Treat the existing functional decomposition rows as the baseline source of truth.
+- Your output may only contain proposed new rows that could be appended/inserted into the existing table.
+- If an existing row is vague or appears wrong, identify the concern in coverageGaps, but do not rewrite that row.
+- Proposed rows should be interfaces/functions that are missing from the current decomposition, especially additive connections between existing functions/subsystems or clearly missing support/feedback paths.
+- Prefer proposing interfaces between existing functions over inventing new subsystem architectures.
+- Only propose a new function when it is necessary to close a concrete gap visible from the existing rows.
+- Do not propose an entirely new architecture or stack unless the user explicitly asks for a new architecture to be added.
+- Function labels are globally unique node identifiers. Do not reuse an existing Function (From) label with a different Subsystem allocation.
+- Subsystem labels are unique group-node identifiers; reuse the exact existing subsystem spelling/casing when referring to an existing subsystem.
+- Interface identity is Function (From) + Control Action + Function (To). Do not propose a row with the same interface identity as an existing row, even if the subsystem differs.
+- There is no required number of coverage gaps or proposed rows. Return zero rows if no additive gaps are warranted, one row if only one is warranted, or as many rows as are needed for a complete additive audit.
+- Do not stop at three examples. Exhaust the concrete additive gaps that are relevant to the user's request and current decomposition.
+- Avoid "top 3", "three examples", representative samples, or illustrative subsets. The user needs the actual set of warranted additive rows, not a small sample.
+
+Project:
+${JSON.stringify({
+    id: project?.id || null,
+    name: project?.name || "Active project",
+    description: project?.description || project?.prompt || "",
+  }, null, 2)}
+
+Existing functional decomposition rows:
+${JSON.stringify(compactRows, null, 2)}
+
+Known diagram subsystem/function groupings:
+${JSON.stringify(compactCategories, null, 2)}
+
+Already proposed rows during this audit run:
+${JSON.stringify(compactPriorProposals, null, 2)}
+
+User audit request:
+${userText || "Audit the current functional decomposition for missing plausible functions, interfaces, control actions, and subsystem allocations."}
+
+User feedback/direction for this revision:
+${feedback || "(none)"}
+
+Task:
+${continuation
+    ? "1. Continue the audit from the already proposed rows above. Look specifically for additional non-duplicate additive rows that were missed."
+    : "1. Review whether the existing decomposition has additive gaps for functional diagramming and STPA-style hazard analysis."}
+2. Check missing interfaces across subsystem boundaries, internal subsystem interfaces, feedback/status/reporting loops, command paths, data paths, health/fault/power/mode paths, operator/human/system interfaces, and receiver functions.
+3. Identify concrete additive gaps, especially missing interfaces between existing functions, missing receiver functions, missing monitor/feedback/reporting paths, missing mode/status/health-management functions, or missing subsystem allocations.
+4. Propose only new rows that are plausible additions to the current project context. Do not duplicate, replace, rename, or reinterpret existing rows.
+5. Each proposed row must include the functional decomposition table fields and a rationale.
+6. Use subsystem names that are consistent with the existing functional rows and diagram categories when possible; otherwise propose a clear subsystem name for only the newly proposed row.
+7. Return the full set of warranted proposed rows for the requested audit scope. Do not impose an upper or lower bound, and do not artificially limit the answer to three rows.
+8. If there are more than three warranted rows, return more than three. If there are no additional warranted rows, return an empty proposedRows array and explain why in summary.
+9. Return strict JSON only. No markdown.
+
+JSON schema:
+{
+  "summary": "short audit summary",
+  "coverageGaps": [
+    { "gap": "missing capability or interface", "evidence": "what in the current table/diagram suggests this", "recommendation": "what to add or clarify" }
+  ],
+  "proposedRows": [
+    {
+      "subsystem": "allocated subsystem for Function (From)",
+      "fromFunction": "Function (From)",
+      "fromDetails": "brief details for Function (From)",
+      "controlAction": "control action / interface",
+      "controlDetails": "brief details for the control action",
+      "toFunction": "Function (To)",
+      "toDetails": "brief details for Function (To)",
+      "rationale": "why this row improves completeness",
+      "confidence": "High | Medium | Low"
+    }
+  ],
+  "questions": ["optional clarification questions for the user"]
+}`;
+}
+
+function buildFunctionalMutationPrompt({ project, rows, diagramCategories, userText }) {
+  const compactRows = (rows || []).map((row, index) => ({
+    rowNumber: index + 1,
+    subsystem: normalizeFunctionalAuditString(row?.subsystem, 220),
+    fromFunction: normalizeFunctionalAuditString(row?.fromFunction, 220),
+    fromDetails: normalizeFunctionalAuditString(row?.fromDetails, 700),
+    controlAction: normalizeFunctionalAuditString(row?.controlAction, 260),
+    controlDetails: normalizeFunctionalAuditString(row?.controlDetails, 700),
+    toFunction: normalizeFunctionalAuditString(row?.toFunction, 220),
+    toDetails: normalizeFunctionalAuditString(row?.toDetails, 700),
+  }));
+  const compactCategories = (diagramCategories?.categories || []).map((category) => ({
+    subsystem: normalizeFunctionalAuditString(category?.name, 220),
+    functions: (category?.functions || []).map((fn) => normalizeFunctionalAuditString(fn, 220)).filter(Boolean).slice(0, 50),
+  }));
+
+  return `You convert an explicit user request into functional decomposition table edits.
+
+Project:
+${JSON.stringify({ id: project?.id || null, name: project?.name || "Active project" }, null, 2)}
+
+Existing rows:
+${JSON.stringify(compactRows, null, 2)}
+
+Known subsystem/function groupings:
+${JSON.stringify(compactCategories, null, 2)}
+
+User request:
+${userText}
+
+Rules:
+1. Only return add/remove/update/rename operations explicitly requested by the user.
+2. The user may speak conversationally. Infer functional rows from natural phrases like "add a monitor that sends status to sensor fusion" or "have the terrain sensor provide terrain data to the descent controller".
+3. For conversational add requests, map the source noun/function to fromFunction, the verb phrase/data transfer to controlAction, and the destination noun/function to toFunction.
+4. If the user asks for multiple additions, return multiple addRows.
+5. If the user asks to add a row, every addRows item must fully populate every functional decomposition table cell: subsystem, fromFunction, fromDetails, controlAction, controlDetails, toFunction, and toDetails. Do not return blank strings for add row cells.
+6. If the user gives natural-language guidance for a specific cell, apply it to the matching cell in addRows or updateRows. Examples: "allocate FMS as their subsystem" means set subsystem to "FMS" for the applicable rows; "make the control action report fault state" means update controlAction.
+7. If the user asks to add a subsystem/capability/system and says or implies you should decide the details, create a small coherent set of complete functional decomposition rows that connect its internal functions and at least one plausible existing function when possible.
+8. Prefer useful project-local rows over asking for clarification for add requests. Ask for clarification only when you cannot identify what capability or interface the user wants added.
+9. If the user asks to remove rows, identify the existing rowNumber whenever possible.
+10. If removal is ambiguous or the user request lacks enough information to safely edit the table, set requiresClarification true and explain the question.
+11. Do not invent broad redesigns. This is a table-edit command parser, not a completeness audit.
+12. Function labels are globally unique node identifiers. Do not add or update a Function (From) label so it belongs to two different subsystems.
+13. Subsystem labels are unique group-node identifiers; reuse the exact existing subsystem spelling/casing when referring to an existing subsystem.
+14. Interface identity is Function (From) + Control Action + Function (To). Do not add duplicate interface identities.
+15. If the user asks to rename or relabel a function, return renameFunctions. A function rename must update every Function (From) and Function (To) occurrence with the old label.
+16. Return strict JSON only. No markdown.
+
+JSON schema:
+{
+  "summary": "short description of intended edits",
+  "requiresClarification": false,
+  "clarificationQuestion": "",
+  "addRows": [
+    {
+      "subsystem": "allocated subsystem for Function (From)",
+      "fromFunction": "Function (From)",
+      "fromDetails": "Function (From) details",
+      "controlAction": "Control Action",
+      "controlDetails": "Control Action details",
+      "toFunction": "Function (To)",
+      "toDetails": "Function (To) details",
+      "rationale": "why this add matches the user request"
+    }
+  ],
+  "updateRows": [
+    {
+      "rowNumber": 1,
+      "match": {
+        "subsystem": "optional current subsystem match",
+        "fromFunction": "optional Function (From) match",
+        "controlAction": "optional Control Action match",
+        "toFunction": "optional Function (To) match",
+        "source": "optional row source match"
+      },
+      "changes": {
+        "subsystem": "new subsystem value if requested",
+        "fromFunction": "new Function (From) if requested",
+        "fromDetails": "new Function (From) details if requested",
+        "controlAction": "new Control Action if requested",
+        "controlDetails": "new Control Action details if requested",
+        "toFunction": "new Function (To) if requested",
+        "toDetails": "new Function (To) details if requested"
+      },
+      "reason": "why this update matches the user request"
+    }
+  ],
+  "removeRows": [
+    {
+      "rowNumber": 1,
+      "subsystem": "optional subsystem match",
+      "fromFunction": "optional Function (From) match",
+      "controlAction": "optional Control Action match",
+      "toFunction": "optional Function (To) match",
+      "reason": "why this row should be removed"
+    }
+  ],
+  "renameFunctions": [
+    {
+      "oldLabel": "current function label",
+      "newLabel": "new function label",
+      "reason": "why this rename matches the user request"
+    }
+  ]
+	}`;
+}
+
+function normalizeFunctionalMutationPlan(plan, existingRows = []) {
+  const addRows = normalizeFunctionalAuditProposalRows(plan?.addRows || [], []).map((row) => ({
+    subsystem: row.subsystem,
+    fromFunction: row.fromFunction,
+    fromDetails: row.fromDetails,
+    controlAction: row.controlAction,
+    controlDetails: row.controlDetails,
+    toFunction: row.toFunction,
+    toDetails: row.toDetails,
+    _source: "collaborator-functional-command",
+    _proposalRationale: row.rationale,
+    _createdAt: new Date().toISOString(),
+  }));
+  const updateRows = (Array.isArray(plan?.updateRows) ? plan.updateRows : [])
+    .map((row) => {
+      const rawChanges = row?.changes && typeof row.changes === "object" ? row.changes : row;
+      const allowedFields = ["subsystem", "fromFunction", "fromDetails", "controlAction", "controlDetails", "toFunction", "toDetails"];
+      const changes = {};
+      allowedFields.forEach((field) => {
+        const value = normalizeFunctionalAuditString(rawChanges?.[field], field.includes("Details") ? 1200 : 260);
+        if (value) changes[field] = value;
+      });
+      return {
+        rowNumber: Number(row?.rowNumber),
+        match: {
+          subsystem: normalizeFunctionalAuditString(row?.match?.subsystem || row?.subsystem, 220),
+          fromFunction: normalizeFunctionalAuditString(row?.match?.fromFunction || row?.fromFunction || row?.from, 220),
+          controlAction: normalizeFunctionalAuditString(row?.match?.controlAction || row?.controlAction || row?.action, 260),
+          toFunction: normalizeFunctionalAuditString(row?.match?.toFunction || row?.toFunction || row?.to, 220),
+          source: normalizeFunctionalAuditString(row?.match?.source || row?.source, 220),
+        },
+        changes,
+        reason: normalizeFunctionalAuditString(row?.reason || row?.rationale, 900),
+      };
+    })
+    .filter((row) => Object.keys(row.changes).length > 0);
+  const removeRows = (Array.isArray(plan?.removeRows) ? plan.removeRows : [])
+    .map((row) => ({
+      rowNumber: Number(row?.rowNumber),
+      subsystem: normalizeFunctionalAuditString(row?.subsystem, 220),
+      fromFunction: normalizeFunctionalAuditString(row?.fromFunction || row?.from, 220),
+      controlAction: normalizeFunctionalAuditString(row?.controlAction || row?.action, 260),
+      toFunction: normalizeFunctionalAuditString(row?.toFunction || row?.to, 220),
+      reason: normalizeFunctionalAuditString(row?.reason || row?.rationale, 900),
+    }))
+    .filter((row) => Number.isFinite(row.rowNumber) || row.subsystem || row.fromFunction || row.controlAction || row.toFunction);
+  const renameFunctions = (Array.isArray(plan?.renameFunctions) ? plan.renameFunctions : [])
+    .map((rename) => ({
+      oldLabel: normalizeFunctionalAuditString(rename?.oldLabel || rename?.from || rename?.currentLabel || rename?.current, 220),
+      newLabel: normalizeFunctionalAuditString(rename?.newLabel || rename?.to || rename?.proposedLabel || rename?.replacement, 220),
+      reason: normalizeFunctionalAuditString(rename?.reason || rename?.rationale, 900),
+    }))
+    .filter((rename) => rename.oldLabel && rename.newLabel && functionalLabelKey(rename.oldLabel) !== functionalLabelKey(rename.newLabel));
+
+  return {
+    summary: normalizeFunctionalAuditString(plan?.summary, 1200) || "Functional decomposition update request parsed.",
+    requiresClarification: Boolean(plan?.requiresClarification),
+    clarificationQuestion: normalizeFunctionalAuditString(plan?.clarificationQuestion, 900),
+    addRows,
+    updateRows,
+    removeRows,
+    renameFunctions,
+  };
+}
+
+function extractFunctionalCommandFields(text = "") {
+  const cleaned = String(text || "")
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+  const fieldDefinitions = [
+    ["subsystem", /\bsubsystem\b/gi],
+    ["fromDetails", /\bfunction\s*\(?from\)?\s+details\b|\bfrom\s+details\b/gi],
+    ["controlDetails", /\bcontrol\s+action\s+details\b|\bcontrol\s+details\b|\baction\s+details\b/gi],
+    ["toDetails", /\bfunction\s*\(?to\)?\s+details\b|\bto\s+details\b/gi],
+    ["fromFunction", /\bfunction\s*\(?from\)?\b|\bfrom\s+function\b|\bfunction\s+from\b/gi],
+    ["controlAction", /\bcontrol\s+action\b|\baction\b|\binterface\b/gi],
+    ["toFunction", /\bfunction\s*\(?to\)?\b|\bto\s+function\b|\bfunction\s+to\b/gi],
+  ];
+  const matches = [];
+  fieldDefinitions.forEach(([field, regex]) => {
+    regex.lastIndex = 0;
+    let match;
+    while ((match = regex.exec(cleaned)) !== null) {
+      matches.push({ field, index: match.index, end: match.index + match[0].length });
+    }
+  });
+  matches.sort((a, b) => (a.index - b.index) || (b.end - b.index) - (a.end - a.index));
+  const nonOverlappingMatches = [];
+  matches.forEach((match) => {
+    const previous = nonOverlappingMatches[nonOverlappingMatches.length - 1];
+    if (previous && match.index < previous.end) return;
+    nonOverlappingMatches.push(match);
+  });
+  const values = {};
+  nonOverlappingMatches.forEach((match, index) => {
+    if (values[match.field]) return;
+    const next = nonOverlappingMatches[index + 1];
+    const rawValue = cleaned.slice(match.end, next ? next.index : cleaned.length);
+    const value = rawValue
+      .replace(/^\s*(?:is|=|:|-|—|–)\s*/i, "")
+      .replace(/^[,;]\s*/, "")
+      .replace(/[,;]\s*$/g, "")
+      .replace(/[."']+$/g, "")
+      .trim();
+    if (value) values[match.field] = normalizeFunctionalAuditString(value, match.field.includes("Details") ? 1200 : 260);
+  });
+  return values;
+}
+
+function sentenceCaseFunctionalName(value = "") {
+  const cleaned = normalizeFunctionalAuditString(value, 220)
+    .replace(/\b(the|a|an|new|another|row|function|node|component|that|which)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return "";
+  return cleaned.split(/\s+/).map((word) => {
+    if (/^[A-Z0-9_-]{2,}$/.test(word)) return word;
+    return word.charAt(0).toUpperCase() + word.slice(1);
+  }).join(" ");
+}
+
+function inferSubsystemForFunction(functionName = "", existingRows = []) {
+  const target = normalizeFunctionalAuditString(functionName, 220).toLowerCase();
+  if (!target) return "";
+  const match = (existingRows || []).find((row) => (
+    normalizeFunctionalAuditString(row?.fromFunction, 220).toLowerCase() === target &&
+    normalizeFunctionalAuditString(row?.subsystem, 220)
+  ));
+  return normalizeFunctionalAuditString(match?.subsystem, 220);
+}
+
+function splitFunctionalMutationClauses(text = "") {
+  const stripped = String(text || "")
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/\r/g, "\n")
+    .trim();
+  const lines = stripped
+    .split(/\n+/)
+    .map((line) => line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "").trim())
+    .filter(Boolean);
+  if (lines.length > 1) return lines;
+  const afterIntro = stripped.replace(/^.*?\b(?:add|insert|create|append)\b(?:\s+(?:these|the following|rows?|entries?))*\s*:?\s*/i, "");
+  return afterIntro
+    .split(/\s*(?:;|\band then\b|\balso\b|\bplus\b)\s*/i)
+    .map((part) => part.trim())
+    .filter((part) => part && !/^(to|the)?\s*functional\s+(decomposition|diagram)/i.test(part));
+}
+
+function parseFunctionalCellUpdatePlanDirectly(userText = "") {
+  const text = String(userText || "").trim();
+  const normalized = text.toLowerCase();
+  const subsystemMatch =
+    text.match(/\b(?:allocate|set|use|make)\s+(.+?)\s+as\s+(?:their|the|all|those|these|row|rows)?\s*subsystem\b/i) ||
+    text.match(/\bsubsystem\s+(?:should\s+be|is|=|to)\s+(.+?)(?:[.;]|$)/i);
+  if (subsystemMatch?.[1]) {
+    const subsystem = normalizeFunctionalAuditString(subsystemMatch[1], 220)
+      .replace(/^the\s+/i, "")
+      .replace(/\s+(?:for|on|to)\s+.*$/i, "")
+      .trim();
+    if (subsystem) {
+      return normalizeFunctionalMutationPlan({
+        summary: `Set subsystem allocation to ${subsystem}.`,
+        requiresClarification: false,
+        addRows: [],
+        updateRows: [{
+          changes: { subsystem },
+          match: /\b(pending|recent|their|those|these|all)\b/.test(normalized)
+            ? { source: "collaborator" }
+            : {},
+          reason: "Updated from a Collaborator cell-level subsystem allocation request.",
+        }],
+        removeRows: [],
+      });
+    }
+  }
+  return null;
+}
+
+function parseFunctionalRenamePlanDirectly(userText = "") {
+  const text = String(userText || "").trim();
+  const patterns = [
+    /\b(?:rename|change|update|set)\s+(?:the\s+)?(?:function\s+)?(?:label|name)\s+from\s+["“]?(.+?)["”]?\s+(?:to|as)\s+["“]?(.+?)["”]?\s*$/i,
+    /\b(?:rename|change|update|set)\s+["“]?(.+?)["”]?\s+(?:function\s+)?(?:label|name)\s+(?:to|as)\s+["“]?(.+?)["”]?\s*$/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const oldLabel = normalizeFunctionalAuditString(match?.[1], 220);
+    const newLabel = normalizeFunctionalAuditString(match?.[2], 220);
+    if (oldLabel && newLabel) {
+      return normalizeFunctionalMutationPlan({
+        summary: `Rename function "${oldLabel}" to "${newLabel}".`,
+        requiresClarification: false,
+        addRows: [],
+        updateRows: [],
+        removeRows: [],
+        renameFunctions: [{ oldLabel, newLabel, reason: "Renamed from an explicit Collaborator function label request." }],
+      });
+    }
+  }
+  return null;
+}
+
+function parseConversationalAddClause(clause = "", existingRows = []) {
+  const text = String(clause || "")
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/\s+/g, " ")
+    .replace(/^[,.;:\s]+|[,.;:\s]+$/g, "")
+    .trim();
+  if (!text) return null;
+
+  const fields = extractFunctionalCommandFields(text);
+  if (fields.fromFunction && fields.controlAction && fields.toFunction) {
+    return {
+      subsystem: fields.subsystem || inferSubsystemForFunction(fields.fromFunction, existingRows),
+      fromFunction: fields.fromFunction,
+      fromDetails: fields.fromDetails || "",
+      controlAction: fields.controlAction,
+      controlDetails: fields.controlDetails || "",
+      toFunction: fields.toFunction,
+      toDetails: fields.toDetails || "",
+      rationale: "Added from a conversational Collaborator functional decomposition request.",
+    };
+  }
+
+  const patterns = [
+    /\b(?:add|insert|create|append)?\s*(?:a|an|the)?\s*(?<from>.+?)\s+(?:that|which)?\s*(?<action>sends?|provides?|transmits?|passes?|publishes?|reports?|notifies?|feeds?|delivers?|shares?|receives?|requests?|commands?|controls?|monitors?|updates?|stores?|logs?|validates?|calculates?|computes?|generates?|routes?)\s+(?<object>.+?)\s+\b(?:to|into|for)\s+(?<to>.+)$/i,
+    /\b(?:add|insert|create|append)?\s*(?:a|an|the)?\s*(?<from>.+?)\s+\b(?:to|should|will)\s+(?<action>send|provide|transmit|pass|publish|report|notify|feed|deliver|share|request|command|control|monitor|update|store|log|validate|calculate|compute|generate|route)\s+(?<object>.+?)\s+\b(?:to|into|for)\s+(?<to>.+)$/i,
+    /\b(?:from)\s+(?<from>.+?)\s+(?<action>sends?|provides?|transmits?|passes?|publishes?|reports?|notifies?|feeds?|delivers?|shares?|requests?|commands?|controls?|monitors?|updates?)\s+(?<object>.+?)\s+\b(?:to|into|for)\s+(?<to>.+)$/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const groups = match?.groups;
+    if (!groups?.from || !groups?.action || !groups?.to) continue;
+    const fromFunction = sentenceCaseFunctionalName(groups.from);
+    const toFunction = sentenceCaseFunctionalName(groups.to);
+    const actionVerb = normalizeFunctionalAuditString(groups.action, 80).replace(/s$/i, "");
+    const object = normalizeFunctionalAuditString(groups.object, 220);
+    const controlAction = normalizeFunctionalAuditString(`${actionVerb.charAt(0).toUpperCase()}${actionVerb.slice(1)} ${object}`, 260);
+    if (fromFunction && toFunction && controlAction) {
+      return {
+        subsystem: fields.subsystem || inferSubsystemForFunction(fromFunction, existingRows),
+        fromFunction,
+        fromDetails: fields.fromDetails || "",
+        controlAction,
+        controlDetails: fields.controlDetails || "",
+        toFunction,
+        toDetails: fields.toDetails || "",
+        rationale: "Added from a conversational Collaborator functional decomposition request.",
+      };
+    }
+  }
+
+  return null;
+}
+
+function parseFunctionalMutationPlanDirectly(userText = "", existingRows = []) {
+  const text = String(userText || "").trim();
+  const normalized = text.toLowerCase();
+  const wantsAdd = /\b(add|insert|create|append)\b/.test(normalized);
+  const wantsRemove = /\b(remove|delete|drop)\b/.test(normalized);
+  const renamePlan = parseFunctionalRenamePlanDirectly(text);
+  if (renamePlan) return renamePlan;
+  const cellUpdatePlan = parseFunctionalCellUpdatePlanDirectly(text);
+  if (cellUpdatePlan) return cellUpdatePlan;
+
+  if (wantsAdd) {
+    const clauses = splitFunctionalMutationClauses(text);
+    const conversationalRows = clauses
+      .map((clause) => parseConversationalAddClause(clause, existingRows))
+      .filter(Boolean);
+    if (conversationalRows.length) {
+      return normalizeFunctionalMutationPlan({
+        summary: `Add ${conversationalRows.length} functional decomposition row${conversationalRows.length === 1 ? "" : "s"}.`,
+        requiresClarification: false,
+        addRows: conversationalRows,
+        removeRows: [],
+      }, existingRows);
+    }
+  }
+
+  if (wantsRemove) {
+    const rowNumber = Number(normalized.match(/\brow\s+#?\s*(\d+)\b/)?.[1]);
+    const fields = extractFunctionalCommandFields(text);
+    if (Number.isFinite(rowNumber) || fields.fromFunction || fields.controlAction || fields.toFunction || fields.subsystem) {
+      return normalizeFunctionalMutationPlan({
+        summary: Number.isFinite(rowNumber)
+          ? `Remove functional decomposition row ${rowNumber}.`
+          : "Remove matching functional decomposition row.",
+        requiresClarification: false,
+        addRows: [],
+        removeRows: [{
+          rowNumber: Number.isFinite(rowNumber) ? rowNumber : undefined,
+          subsystem: fields.subsystem || "",
+          fromFunction: fields.fromFunction || "",
+          controlAction: fields.controlAction || "",
+          toFunction: fields.toFunction || "",
+          reason: "Removed from an explicit Collaborator functional decomposition table request.",
+        }],
+      }, existingRows);
+    }
+  }
+
+  return null;
+}
+
+function findFunctionalRowsToRemove(rows = [], removeRequests = []) {
+  const removeIndexes = new Set();
+  const skipped = [];
+  const norm = (value) => normalizeFunctionalAuditString(value, 260).toLowerCase();
+
+  removeRequests.forEach((request) => {
+    const requestedIndex = Number(request.rowNumber) - 1;
+    if (Number.isInteger(requestedIndex) && requestedIndex >= 0 && requestedIndex < rows.length) {
+      removeIndexes.add(requestedIndex);
+      return;
+    }
+
+    const criteria = {
+      subsystem: norm(request.subsystem),
+      fromFunction: norm(request.fromFunction),
+      controlAction: norm(request.controlAction),
+      toFunction: norm(request.toFunction),
+    };
+    const activeCriteria = Object.entries(criteria).filter(([, value]) => Boolean(value));
+    if (!activeCriteria.length) {
+      skipped.push({ request, reason: "No usable removal criteria." });
+      return;
+    }
+
+    const matches = rows
+      .map((row, index) => ({ row, index }))
+      .filter(({ row }) => activeCriteria.every(([field, value]) => norm(row?.[field]) === value));
+
+    if (matches.length === 1) {
+      removeIndexes.add(matches[0].index);
+    } else if (matches.length > 1) {
+      skipped.push({ request, reason: `Matched ${matches.length} rows; request is ambiguous.` });
+    } else {
+      skipped.push({ request, reason: "No matching row found." });
+    }
+  });
+
+  return { removeIndexes, skipped };
+}
+
+function findFunctionalRowsToUpdate(rows = [], updateRequests = []) {
+  const updateMap = new Map();
+  const skipped = [];
+  const norm = (value) => normalizeFunctionalAuditString(value, 260).toLowerCase();
+  const fieldNames = ["subsystem", "fromFunction", "fromDetails", "controlAction", "controlDetails", "toFunction", "toDetails"];
+
+  updateRequests.forEach((request) => {
+    const requestedIndex = Number(request.rowNumber) - 1;
+    let matches = [];
+    if (Number.isInteger(requestedIndex) && requestedIndex >= 0 && requestedIndex < rows.length) {
+      matches = [{ row: rows[requestedIndex], index: requestedIndex }];
+    } else {
+      const criteria = {
+        subsystem: norm(request.match?.subsystem),
+        fromFunction: norm(request.match?.fromFunction),
+        controlAction: norm(request.match?.controlAction),
+        toFunction: norm(request.match?.toFunction),
+      };
+      const source = norm(request.match?.source);
+      const activeCriteria = Object.entries(criteria).filter(([, value]) => Boolean(value));
+      matches = rows
+        .map((row, index) => ({ row, index }))
+        .filter(({ row }) => {
+          const criteriaMatch = activeCriteria.every(([field, value]) => norm(row?.[field]) === value);
+          if (!criteriaMatch) return false;
+          if (!source) return true;
+          return norm(row?._source).includes(source) || (!row?.subsystem && source === "collaborator");
+        });
+
+      if (!matches.length && source === "collaborator") {
+        matches = rows
+          .map((row, index) => ({ row, index }))
+          .filter(({ row }) => norm(row?._source).includes("collaborator") || !normalizeFunctionalAuditString(row?.subsystem, 220));
+      }
+    }
+
+    if (!matches.length) {
+      skipped.push({ request, reason: "No matching row found for update." });
+      return;
+    }
+
+    matches.forEach(({ index }) => {
+      const current = updateMap.get(index) || {};
+      fieldNames.forEach((field) => {
+        if (request.changes?.[field]) current[field] = request.changes[field];
+      });
+      updateMap.set(index, current);
+    });
+  });
+
+  return { updateMap, skipped };
+}
+
 function parseJsonObjectFromText(text) {
   const raw = String(text || "").trim();
   const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
@@ -1795,9 +2569,9 @@ function cleanDiagramCategoryName(value) {
 }
 
 function isGenericDiagramCategoryName(value) {
-  return /^(manages?|conducts?|controls?|verifies?|monitors?|provides?|handles?|supports?|processes?|system)$/i.test(
-    cleanDiagramCategoryName(value)
-  );
+  const cleaned = cleanDiagramCategoryName(value);
+  return /^(manages?|conducts?|controls?|verifies?|monitors?|provides?|handles?|supports?|processes?|system)$/i.test(cleaned)
+    || /^(system\s+architecture|functional\s+architecture|architecture)$/i.test(cleaned);
 }
 
 function parseWizardPromptContext(wizardPrompt) {
@@ -1869,6 +2643,7 @@ function fallbackWizardDiagramCategories(rows, wizardPrompt = "") {
   const buckets = new Map();
 
   (rows || []).forEach((row, index) => {
+    const explicitSubsystem = cleanDiagramCategoryName(row?.subsystem || "");
     const rowText = [
       row?.fromFunction,
       row?.fromDetails,
@@ -1882,12 +2657,12 @@ function fallbackWizardDiagramCategories(rows, wizardPrompt = "") {
       .map((rule) => ({ ...rule, score: scoreTextForTerms(rowText, rule.terms) }))
       .filter((rule) => rule.score > 0)
       .sort((a, b) => b.score - a.score);
-    const name = cleanDiagramCategoryName(row?.subsystem || ranked[0]?.name || row?.fromFunction || row?.toFunction || "System Architecture");
+    const name = cleanDiagramCategoryName(explicitSubsystem || ranked[0]?.name || row?.fromFunction || row?.toFunction || "Functional Architecture");
     if (!buckets.has(name)) buckets.set(name, { name, rowIndexes: [], functions: [] });
     const bucket = buckets.get(name);
     bucket.rowIndexes.push(index);
     if (row?.fromFunction) bucket.functions.push(String(row.fromFunction).trim());
-    if (row?.toFunction) bucket.functions.push(String(row.toFunction).trim());
+    if ((explicitSubsystem || ranked[0]?.name) && row?.toFunction) bucket.functions.push(String(row.toFunction).trim());
   });
 
   const categories = Array.from(buckets.values())
@@ -1895,6 +2670,245 @@ function fallbackWizardDiagramCategories(rows, wizardPrompt = "") {
     .sort((a, b) => b.rowIndexes.length - a.rowIndexes.length)
     .slice(0, 8);
   return { categories };
+}
+
+function buildSubsystemDiagramCategories(rows = []) {
+  const rowsArray = Array.isArray(rows) ? rows : [];
+  const subsystemByFunction = new Map();
+  const subsystemCountsByFunction = new Map();
+
+  rowsArray.forEach((row) => {
+    const subsystem = cleanDiagramCategoryName(row?.subsystem || "");
+    const fromFunction = String(row?.fromFunction || "").trim();
+    if (!subsystem || !fromFunction || /\b(unallocated|unassigned|uncategorized)\b/i.test(subsystem)) return;
+    const functionKey = fromFunction.toLowerCase();
+    const counts = subsystemCountsByFunction.get(functionKey) || new Map();
+    counts.set(subsystem, (counts.get(subsystem) || 0) + 1);
+    subsystemCountsByFunction.set(functionKey, counts);
+  });
+
+  subsystemCountsByFunction.forEach((counts, functionKey) => {
+    const ranked = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+    if (ranked[0]?.[0]) subsystemByFunction.set(functionKey, ranked[0][0]);
+  });
+
+  rowsArray.forEach((row) => {
+    const subsystem = cleanDiagramCategoryName(row?.subsystem || "");
+    const toFunction = String(row?.toFunction || "").trim();
+    if (!subsystem || !toFunction || /\b(unallocated|unassigned|uncategorized)\b/i.test(subsystem)) return;
+    const functionKey = toFunction.toLowerCase();
+    if (!subsystemByFunction.has(functionKey)) subsystemByFunction.set(functionKey, subsystem);
+  });
+
+  const buckets = new Map();
+  (rows || []).forEach((row, index) => {
+    const subsystem = cleanDiagramCategoryName(row?.subsystem || "");
+    if (!subsystem || /\b(unallocated|unassigned|uncategorized)\b/i.test(subsystem)) return;
+    if (!buckets.has(subsystem)) {
+      buckets.set(subsystem, {
+        name: subsystem,
+        rowIndexes: [],
+        functions: [],
+        description: "",
+      });
+    }
+    const bucket = buckets.get(subsystem);
+    bucket.rowIndexes.push(index);
+    [row?.fromFunction, row?.toFunction].forEach((fn) => {
+      const functionName = String(fn || "").trim();
+      if (!functionName) return;
+      const allocatedSubsystem = subsystemByFunction.get(functionName.toLowerCase());
+      if (allocatedSubsystem === subsystem) bucket.functions.push(functionName);
+    });
+  });
+
+  const categories = Array.from(buckets.values()).map((category) => ({
+    ...category,
+    rowIndexes: Array.from(new Set(category.rowIndexes)),
+    functions: Array.from(new Set(category.functions.filter(Boolean))),
+    description: category.description || generateDiagramCategoryDescription(category.name, category.functions, rows),
+  })).filter((category) => category.name);
+
+  return { categories };
+}
+
+function buildTableSubsystemDiagramCategoriesMeta(rows = []) {
+  const categories = buildSubsystemDiagramCategories(rows).categories;
+  const descriptionSignature = functionalSubsystemDescriptionSignature(rows);
+  return {
+    signature: `${functionalDiagramMembershipSignature(rows)}::table-subsystems-v2`,
+    descriptionSignature,
+    categories,
+    source: "table-subsystems",
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+function functionalSubsystemDescriptionSignature(rows = []) {
+  return JSON.stringify((Array.isArray(rows) ? rows : []).map((row) => ({
+    subsystem: String(row?.subsystem || "").trim(),
+    fromFunction: String(row?.fromFunction || "").trim(),
+    fromDetails: String(row?.fromDetails || "").trim(),
+    controlAction: String(row?.controlAction || "").trim(),
+    controlDetails: String(row?.controlDetails || "").trim(),
+    toFunction: String(row?.toFunction || "").trim(),
+    toDetails: String(row?.toDetails || "").trim(),
+  })));
+}
+
+function mergeSubsystemDescriptionMeta(baseMeta, existingMeta = {}) {
+  if (!baseMeta?.categories?.length) return baseMeta;
+  const existingByName = new Map((existingMeta?.categories || []).map((category) => [
+    cleanDiagramCategoryName(category?.name || "").toLowerCase(),
+    category,
+  ]));
+  return {
+    ...baseMeta,
+    categories: baseMeta.categories.map((category) => {
+      const existing = existingByName.get(cleanDiagramCategoryName(category?.name || "").toLowerCase());
+      if (
+        existing?.description &&
+        existingMeta?.descriptionSignature === baseMeta.descriptionSignature &&
+        /^llm-table-subsystems$/i.test(String(existing?.descriptionSource || ""))
+      ) {
+        return {
+          ...category,
+          description: existing.description,
+          descriptionSource: existing.descriptionSource,
+          descriptionGeneratedAt: existing.descriptionGeneratedAt,
+        };
+      }
+      return category;
+    }),
+  };
+}
+
+async function enrichSubsystemDiagramDescriptionsWithLLM({ project, rows = [], baseMeta } = {}) {
+  if (!baseMeta?.categories?.length) return baseMeta || null;
+  const descriptionSignature = baseMeta.descriptionSignature || functionalSubsystemDescriptionSignature(rows);
+  const compactRows = (Array.isArray(rows) ? rows : []).slice(0, 220).map((row, index) => ({
+    index,
+    subsystem: row?.subsystem || "",
+    fromFunction: row?.fromFunction || "",
+    fromDetails: row?.fromDetails || "",
+    controlAction: row?.controlAction || "",
+    controlDetails: row?.controlDetails || "",
+    toFunction: row?.toFunction || "",
+    toDetails: row?.toDetails || "",
+  }));
+  const compactCategories = baseMeta.categories.map((category) => ({
+    name: category.name,
+    functions: category.functions || [],
+    rowIndexes: category.rowIndexes || [],
+  }));
+
+  const prompt = `
+You are generating subsystem descriptions for an xHandle functional decomposition diagram.
+
+Rules:
+- Use only the supplied current functional decomposition rows.
+- Each subsystem description must describe what that subsystem owns, the main functions allocated to it, important interfaces/control actions, data/state it produces or consumes, and notable safety/reliability concerns visible in the rows.
+- Descriptions should be 35-70 words when evidence supports it.
+- Keep subsystem names exactly as supplied.
+- Do not invent new subsystems, functions, rows, or allocations.
+- Return strict JSON only.
+
+Project:
+${JSON.stringify({ id: project?.id || null, name: project?.name || "Active project" }, null, 2)}
+
+Subsystems to describe:
+${JSON.stringify(compactCategories, null, 2)}
+
+Current functional decomposition rows:
+${JSON.stringify(compactRows, null, 2)}
+
+Return this schema:
+{
+  "categories": [
+    {
+      "name": "exact supplied subsystem name",
+      "description": "LLM-generated subsystem description"
+    }
+  ]
+}
+`;
+
+  const response = await fetch("/api/chat", {
+    method: "POST",
+    ...buildAIAuthOpts({ "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      model: "gpt-4o",
+      temperature: 0.15,
+      max_tokens: 5000,
+      messages: [
+        {
+          role: "system",
+          content: "Generate concise subsystem descriptions from functional decomposition rows. Return strict JSON only.",
+        },
+        { role: "user", content: prompt },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(response.status === 401
+      ? "No AI provider key is configured. Add your API key in Settings and try again."
+      : `Subsystem description generation failed (${response.status}). ${detail}`.trim());
+  }
+
+  const parsed = parseJsonObjectFromText(extractAIText(await response.json())) || {};
+  const descriptionsByName = new Map((Array.isArray(parsed.categories) ? parsed.categories : [])
+    .map((category) => [
+      cleanDiagramCategoryName(category?.name || "").toLowerCase(),
+      normalizeFunctionalAuditString(category?.description, 900),
+    ])
+    .filter(([, description]) => Boolean(description)));
+  const now = new Date().toISOString();
+  return {
+    ...baseMeta,
+    descriptionSignature,
+    categories: baseMeta.categories.map((category) => {
+      const description = descriptionsByName.get(cleanDiagramCategoryName(category?.name || "").toLowerCase());
+      if (!description) return category;
+      return {
+        ...category,
+        description,
+        descriptionSource: "llm-table-subsystems",
+        descriptionGeneratedAt: now,
+      };
+    }),
+    generatedAt: now,
+  };
+}
+
+function comparableDiagramCategories(meta = {}) {
+  return JSON.stringify({
+    source: meta?.source || "",
+    categories: (meta?.categories || []).map((category) => ({
+      name: cleanDiagramCategoryName(category?.name || ""),
+      functions: (category?.functions || []).map((fn) => String(fn || "").trim()).filter(Boolean).sort((a, b) => a.localeCompare(b)),
+    })),
+  });
+}
+
+function mergeSubsystemDiagramCategories(existingMeta, rows = []) {
+  const meta = buildTableSubsystemDiagramCategoriesMeta(rows);
+  if (!meta.categories.length) return null;
+  const existingByName = new Map((existingMeta?.categories || []).map((category) => [
+    cleanDiagramCategoryName(category?.name || "").toLowerCase(),
+    category,
+  ]));
+  const categories = meta.categories.map((category) => {
+    const existing = existingByName.get(cleanDiagramCategoryName(category?.name || "").toLowerCase());
+    if (!existing?.id) return category;
+    return { ...category, id: existing.id };
+  });
+  const nextMeta = { ...meta, categories };
+  if (existingMeta && comparableDiagramCategories(existingMeta) === comparableDiagramCategories(nextMeta)) {
+    return existingMeta;
+  }
+  return nextMeta.categories.length ? nextMeta : null;
 }
 
 async function classifyPromptWizardDiagramCategories(rows, wizardPrompt) {
@@ -3816,7 +4830,6 @@ const projectFolderMenuPortalRefs = useRef({});
 const projectFolderMenuAnchorEls = useRef({});
 const projectImportInputRef = useRef(null);
 const riskDiagramContainerRef = useRef(null);
-const [inviteForProjectId, setInviteForProjectId] = useState(null);
 
 // --- Project cap from entitlements (fallbacks for safety) ---
 function guardNewProjectIntent() {
@@ -4718,6 +5731,7 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
         repoId: activeCodeArchitectureRepo.repoId || "",
         branch: activeCodeArchitectureRepo.branch || "main",
       } : null,
+      functionalCanvasSelection: functionalCanvasSelection?.hasSelection ? functionalCanvasSelection : null,
     };
   }
 
@@ -5406,6 +6420,11 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [functionalColumnSearches, setFunctionalColumnSearches] = useState({});
   const [isGeneratingDecomposition, setIsGeneratingDecomposition] = useState(false);
   const [showFunctionalDiagram, setShowFunctionalDiagram] = useState(true);
+  const [functionalAuditProposal, setFunctionalAuditProposal] = useState(null);
+  const [isFunctionalAuditRunning, setIsFunctionalAuditRunning] = useState(false);
+  const [functionalAuditSelectedRows, setFunctionalAuditSelectedRows] = useState({});
+  const [functionalAuditFeedback, setFunctionalAuditFeedback] = useState("");
+  const [functionalCanvasSelection, setFunctionalCanvasSelection] = useState(null);
   const [riskMethod, setRiskMethod] = useState("STPA-Textbook");
   const [projectRiskProfileGenerationMode, setProjectRiskProfileGenerationMode] = useState("standard");
 	  const [riskAssessmentReportMarkdown, setRiskAssessmentReportMarkdown] = useState("");
@@ -5571,6 +6590,9 @@ useEffect(() => {
       setRiskRegister([]);
       setRequirements([]);
       setShowPromptWizard(true);
+      setFunctionalAuditProposal(null);
+      setFunctionalAuditSelectedRows({});
+      setFunctionalAuditFeedback("");
       setProjectLoaded(false);
       setLoadedProjectId(null);
       setLoadingProjectId(null);
@@ -5599,6 +6621,9 @@ useEffect(() => {
     setRiskRegister(data?.riskRegister || []);
     setShowPromptWizard(!(data?.responseRows && data.responseRows.length > 0));
     setRequirements(data?.requirements || []);   // ← add this
+    setFunctionalAuditProposal(null);
+    setFunctionalAuditSelectedRows({});
+    setFunctionalAuditFeedback("");
     const loadTimer = setTimeout(() => {
       setLoadedProjectId(projectIdForLoad);
       setProjectLoaded(true);
@@ -5613,30 +6638,51 @@ useEffect(() => {
   }, [activeProjectId]);
 
   useEffect(() => {
-    if (!projectLoaded || !responseRows.length || !diagramCategories?.categories?.length) return;
-    const hasGenericNames = diagramCategories.categories.some((category) => isGenericDiagramCategoryName(category?.name));
-    const needsFallbackRepair = diagramCategories.source === "wizard-fallback" || hasGenericNames;
-    if (!needsFallbackRepair) return;
-
-    const repaired = {
-      signature: `${functionalRowSignature(responseRows)}::fallback-v2`,
-      categories: normalizeWizardDiagramCategories(fallbackWizardDiagramCategories(responseRows), responseRows),
-      source: "wizard-fallback-v2",
-      generatedAt: new Date().toISOString(),
-    };
-    if (repaired.categories.length) setDiagramCategories(repaired);
-  }, [projectLoaded, responseRows, diagramCategories]);
+    setFunctionalCanvasSelection(null);
+  }, [activeProjectId]);
 
   useEffect(() => {
-    if (!projectLoaded || !responseRows.length || !diagramCategories?.categories?.length) return;
-    const allocatedRows = applyDiagramCategorySubsystemAllocations(responseRows, diagramCategories.categories, { preserveExisting: true });
-    const hasSubsystemMismatch = allocatedRows.some((row, index) => (
-      String(row?.subsystem || "").trim() !== String(responseRows[index]?.subsystem || "").trim()
+    if (!projectLoaded) return;
+    const nextMeta = buildTableSubsystemDiagramCategoriesMeta(responseRows);
+    if (!nextMeta.categories.length) {
+      if (diagramCategories) setDiagramCategories(null);
+      return;
+    }
+    const mergedMeta = mergeSubsystemDescriptionMeta(nextMeta, diagramCategories);
+    const needsBaseUpdate =
+      comparableDiagramCategories(diagramCategories) !== comparableDiagramCategories(mergedMeta) ||
+      diagramCategories?.descriptionSignature !== mergedMeta.descriptionSignature;
+    if (needsBaseUpdate) {
+      setDiagramCategories(mergedMeta);
+    }
+    const needsLlmDescriptions = mergedMeta.categories.some((category) => (
+      !category.description ||
+      category.descriptionSource !== "llm-table-subsystems" ||
+      mergedMeta.descriptionSignature !== diagramCategories?.descriptionSignature
     ));
-    if (!hasSubsystemMismatch) return;
-    setResponseRows(allocatedRows);
-    setCommittedFunctionalDiagramRows(getProjectDiagramRows(allocatedRows));
-  }, [projectLoaded, responseRows, diagramCategories]);
+    if (!needsLlmDescriptions) return;
+
+    const project = projects.find((entry) => entry.id === activeProjectId) || { id: activeProjectId, name: "Active project" };
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      enrichSubsystemDiagramDescriptionsWithLLM({ project, rows: responseRows, baseMeta: mergedMeta })
+        .then((llmMeta) => {
+          if (cancelled || !llmMeta?.categories?.length) return;
+          setDiagramCategories((current) => {
+            if (current?.descriptionSignature !== llmMeta.descriptionSignature) return current;
+            if (comparableDiagramCategories(current) !== comparableDiagramCategories(llmMeta)) return current;
+            return llmMeta;
+          });
+        })
+        .catch((error) => {
+          console.warn("[functional-diagram] Unable to generate LLM subsystem descriptions", error);
+        });
+    }, 700);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [projectLoaded, responseRows, diagramCategories, activeProjectId, projects]);
 
   useEffect(() => {
     if (!projectLoaded) return;
@@ -6859,7 +7905,8 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const allocatedRows = applyDiagramCategorySubsystemAllocations(parsedRows, categories?.categories);
     setResponseRows(allocatedRows);
     setCommittedFunctionalDiagramRows(getProjectDiagramRows(allocatedRows));
-    setDiagramCategories(categories);
+    const tableSubsystemCategories = buildTableSubsystemDiagramCategoriesMeta(allocatedRows);
+    setDiagramCategories(tableSubsystemCategories.categories.length ? tableSubsystemCategories : null);
     return allocatedRows;
   };
 
@@ -6912,10 +7959,688 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     }
   };
 
+  const runFunctionalCompletenessAudit = useCallback(async ({ userText = "", feedback = "" } = {}) => {
+    if (!activeProjectId) {
+      throw new Error("Select a project before running a functional decomposition audit.");
+    }
+    if (!Array.isArray(responseRows) || responseRows.length === 0) {
+      throw new Error("Add or generate functional decomposition rows before running a completeness audit.");
+    }
+
+    const project = projects.find((entry) => entry.id === activeProjectId) || { id: activeProjectId, name: "Active project" };
+    const activityId = `functional-completeness-audit-${activeProjectId}`;
+    startActivity(activityId, {
+      title: "Auditing functional decomposition",
+      step: 0,
+      total: 2,
+      message: "Preparing current functional table and diagram context..."
+    });
+
+    setIsFunctionalAuditRunning(true);
+    try {
+      updateActivity(activityId, {
+        step: 1,
+        total: 3,
+        message: "Asking the LLM to identify completeness gaps and proposed rows..."
+      });
+
+      const requestAuditPass = async ({ priorProposedRows = [], continuation = false } = {}) => {
+        const prompt = buildFunctionalCompletenessAuditPrompt({
+          project,
+          rows: responseRows,
+          diagramCategories,
+          userText,
+          feedback,
+          priorProposedRows,
+          continuation,
+        });
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          ...buildAIAuthOpts({ "Content-Type": "application/json" }),
+          body: JSON.stringify({
+            model: "gpt-4o",
+            temperature: 0.2,
+            max_tokens: 12000,
+            messages: [
+              {
+                role: "system",
+                content: "You audit functional decompositions for additive completeness gaps only. Never rewrite, replace, remove, rename, or reclassify existing rows. Return every warranted proposed row for the requested scope without a fixed count limit. Return only strict JSON matching the requested schema.",
+              },
+              { role: "user", content: prompt },
+            ],
+          }),
+        });
+
+        if (!response.ok) {
+          const detail = await response.text().catch(() => "");
+          throw new Error(response.status === 401
+            ? "No AI provider key is configured. Add your API key in Settings and try again."
+            : `Functional completeness audit failed (${response.status}). ${detail}`.trim());
+        }
+        const parsed = parseJsonObjectFromText(extractAIText(await response.json())) || {};
+        const proposedRows = normalizeFunctionalAuditProposalRows(
+          parsed.proposedRows || parsed.rows || [],
+          [...responseRows, ...priorProposedRows]
+        );
+        return {
+          parsed,
+          proposedRows,
+          coverageGaps: normalizeFunctionalAuditList(parsed.coverageGaps, ["gap", "evidence", "recommendation"]),
+          questions: (Array.isArray(parsed.questions) ? parsed.questions : [])
+            .map((question) => normalizeFunctionalAuditString(question, 900))
+            .filter(Boolean),
+        };
+      };
+
+      const auditPasses = [];
+      const firstPass = await requestAuditPass();
+      auditPasses.push(firstPass);
+      let proposedRows = firstPass.proposedRows;
+
+      let latestPass = firstPass;
+      let expansionCount = 0;
+      while (latestPass.proposedRows.length === 3 && expansionCount < 5) {
+        updateActivity(activityId, {
+          step: 2,
+          total: 3,
+          message: "Checking for additional non-duplicate proposals beyond the first three..."
+        });
+        latestPass = await requestAuditPass({ priorProposedRows: proposedRows, continuation: true });
+        expansionCount += 1;
+        if (latestPass.proposedRows.length <= 0) break;
+        auditPasses.push(latestPass);
+        proposedRows = [...proposedRows, ...latestPass.proposedRows];
+      }
+
+      const coverageGaps = auditPasses.flatMap((pass) => pass.coverageGaps || []);
+      const questions = auditPasses.flatMap((pass) => pass.questions || []);
+      const summaries = auditPasses
+        .map((pass) => normalizeFunctionalAuditString(pass.parsed?.summary, 800))
+        .filter(Boolean);
+      const proposal = {
+        id: `functional-audit-${activeProjectId}-${Date.now()}`,
+        projectId: activeProjectId,
+        projectName: project.name || "Active project",
+        summary: normalizeFunctionalAuditString(summaries.join(" "), 1600) || "Functional decomposition audit complete.",
+        coverageGaps,
+        questions,
+        proposedRows,
+        userText,
+        feedback,
+        createdAt: new Date().toISOString(),
+      };
+
+      setFunctionalAuditProposal(proposal);
+      setFunctionalAuditSelectedRows(Object.fromEntries(proposedRows.map((_, index) => [index, true])));
+      setFunctionalAuditFeedback("");
+      setSection("projects");
+      setActiveTab("Functional Diagramming");
+      finishActivity(activityId, "success", `${proposedRows.length} proposed functional row${proposedRows.length === 1 ? "" : "s"} ready for review`);
+
+      return {
+        ok: true,
+        proposalCount: proposedRows.length,
+        coverageGapCount: proposal.coverageGaps.length,
+        questionCount: proposal.questions.length,
+      };
+    } catch (error) {
+      finishActivity(activityId, "error", error?.message || "Functional completeness audit failed");
+      throw error;
+    } finally {
+      setIsFunctionalAuditRunning(false);
+    }
+  }, [
+    activeProjectId,
+    responseRows,
+    projects,
+    diagramCategories,
+    startActivity,
+    updateActivity,
+    finishActivity,
+  ]);
+
+  const updateFunctionalAuditProposalRow = useCallback((rowIndex, field, value) => {
+    setFunctionalAuditProposal((prev) => {
+      if (!prev?.proposedRows?.[rowIndex]) return prev;
+      const proposedRows = prev.proposedRows.map((row, index) => (
+        index === rowIndex ? { ...row, [field]: value } : row
+      ));
+      return { ...prev, proposedRows };
+    });
+  }, []);
+
+  const updateFunctionalAllocationProposalRow = useCallback((rowIndex, field, value) => {
+    setFunctionalAuditProposal((prev) => {
+      if (!prev?.allocationRows?.[rowIndex]) return prev;
+      const allocationRows = prev.allocationRows.map((row, index) => (
+        index === rowIndex ? { ...row, [field]: value } : row
+      ));
+      return { ...prev, allocationRows };
+    });
+  }, []);
+
+  const applyFunctionalAuditSelectedRows = useCallback(async () => {
+    if (!functionalAuditProposal?.proposedRows?.length) return { appliedCount: 0 };
+    const acceptedRows = functionalAuditProposal.proposedRows
+      .filter((row, index) => functionalAuditSelectedRows[index])
+      .map((row) => ({
+        subsystem: normalizeFunctionalAuditString(row.subsystem, 220),
+        fromFunction: normalizeFunctionalAuditString(row.fromFunction, 220),
+        fromDetails: normalizeFunctionalAuditString(row.fromDetails, 1200),
+        controlAction: normalizeFunctionalAuditString(row.controlAction, 260),
+        controlDetails: normalizeFunctionalAuditString(row.controlDetails, 1200),
+        toFunction: normalizeFunctionalAuditString(row.toFunction, 220),
+        toDetails: normalizeFunctionalAuditString(row.toDetails, 1200),
+        _source: "collaborator-functional-completeness-audit",
+        _proposalRationale: normalizeFunctionalAuditString(row.rationale, 1400),
+        _proposalConfidence: normalizeFunctionalAuditString(row.confidence, 30) || "Medium",
+        _createdAt: new Date().toISOString(),
+      }))
+      .filter((row) => row.fromFunction && row.toFunction && (row.controlAction || row.controlDetails || row._proposalRationale));
+
+    if (!acceptedRows.length) return { appliedCount: 0 };
+    const { accepted: safeAcceptedRows, skipped: skippedConflicts } = filterFunctionalRowsForLabelConflicts(acceptedRows, responseRows || []);
+    if (!safeAcceptedRows.length) return { appliedCount: 0, skippedConflictCount: skippedConflicts.length };
+
+    setResponseRows((currentRows) => {
+      const nextRows = [...safeAcceptedRows, ...(currentRows || [])];
+      setCommittedFunctionalDiagramRows(getProjectDiagramRows(nextRows));
+      return nextRows;
+    });
+    setFunctionalFilterColumn(null);
+    setFunctionalColumnFilters({});
+    setFunctionalColumnSearches({});
+    setFunctionalAuditProposal(null);
+    setFunctionalAuditSelectedRows({});
+    setFunctionalAuditFeedback("");
+    setDiagramCategories((current) => mergeSubsystemDiagramCategories(current, [...safeAcceptedRows, ...responseRows]));
+    return { appliedCount: safeAcceptedRows.length, skippedConflictCount: skippedConflicts.length };
+  }, [functionalAuditProposal, functionalAuditSelectedRows, responseRows]);
+
+  const runFunctionalAllocationReevaluation = useCallback(async ({ userText = "", feedback = "" } = {}) => {
+    if (!activeProjectId) throw new Error("Select a project before reevaluating subsystem allocations.");
+    if (!Array.isArray(responseRows) || responseRows.length === 0) {
+      throw new Error("Add or generate functional decomposition rows before reevaluating subsystem allocations.");
+    }
+    const project = projects.find((entry) => entry.id === activeProjectId) || { id: activeProjectId, name: "Active project" };
+    const activityId = `functional-allocation-review-${activeProjectId}`;
+    startActivity(activityId, {
+      title: "Reevaluating subsystem allocations",
+      step: 0,
+      total: 2,
+      message: "Preparing existing functional rows..."
+    });
+    setIsFunctionalAuditRunning(true);
+    try {
+      updateActivity(activityId, {
+        step: 1,
+        total: 2,
+        message: "Asking the LLM to propose subsystem allocations for every row..."
+      });
+      const prompt = buildFunctionalAllocationReevaluationPrompt({ project, rows: responseRows, userText, feedback });
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        ...buildAIAuthOpts({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          model: "gpt-4o",
+          temperature: 0.15,
+          max_tokens: 12000,
+          messages: [
+            {
+              role: "system",
+              content: "You reevaluate subsystem allocations for existing functional decomposition rows. Return one allocation recommendation for every existing row. Do not add/remove/rewrite rows. Return strict JSON only.",
+            },
+            { role: "user", content: prompt },
+          ],
+        }),
+      });
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        throw new Error(response.status === 401
+          ? "No AI provider key is configured. Add your API key in Settings and try again."
+          : `Subsystem allocation review failed (${response.status}). ${detail}`.trim());
+      }
+      const parsed = parseJsonObjectFromText(extractAIText(await response.json())) || {};
+      const allocationRows = normalizeFunctionalAllocationProposalRows(
+        parsed.allocationRows || parsed.rows || parsed.proposedAllocations || [],
+        responseRows
+      );
+      const proposal = {
+        id: `functional-allocation-${activeProjectId}-${Date.now()}`,
+        kind: "allocation",
+        projectId: activeProjectId,
+        projectName: project.name || "Active project",
+        summary: normalizeFunctionalAuditString(parsed.summary, 1600) || "Subsystem allocation review complete.",
+        allocationRows,
+        proposedRows: [],
+        coverageGaps: [],
+        questions: (Array.isArray(parsed.questions) ? parsed.questions : [])
+          .map((question) => normalizeFunctionalAuditString(question, 900))
+          .filter(Boolean),
+        userText,
+        feedback,
+        createdAt: new Date().toISOString(),
+      };
+      setFunctionalAuditProposal(proposal);
+      setFunctionalAuditSelectedRows(Object.fromEntries(allocationRows.map((_, index) => [index, true])));
+      setFunctionalAuditFeedback("");
+      setSection("projects");
+      setActiveTab("Functional Diagramming");
+      finishActivity(activityId, "success", `${allocationRows.length} subsystem allocation proposal${allocationRows.length === 1 ? "" : "s"} ready for review`);
+      return { ok: true, allocationCount: allocationRows.length, questionCount: proposal.questions.length };
+    } catch (error) {
+      finishActivity(activityId, "error", error?.message || "Subsystem allocation review failed");
+      throw error;
+    } finally {
+      setIsFunctionalAuditRunning(false);
+    }
+  }, [activeProjectId, responseRows, projects, startActivity, updateActivity, finishActivity]);
+
+  const applyFunctionalAllocationSelectedRows = useCallback(async () => {
+    const allocationRows = functionalAuditProposal?.allocationRows || [];
+    if (!allocationRows.length) return { appliedCount: 0 };
+    const selectedSubsystemByFunction = new Map();
+    allocationRows.forEach((proposal, proposalIndex) => {
+      if (!functionalAuditSelectedRows[proposalIndex]) return;
+      const sourceRow = responseRows[proposal.rowIndex];
+      const functionKey = functionalLabelKey(sourceRow?.fromFunction || proposal.fromFunction);
+      const proposedSubsystem = normalizeFunctionalAuditString(proposal?.proposedSubsystem, 220);
+      if (!functionKey || !proposedSubsystem || selectedSubsystemByFunction.has(functionKey)) return;
+      selectedSubsystemByFunction.set(functionKey, {
+        subsystem: proposedSubsystem,
+        rationale: proposal?.rationale || "",
+        confidence: proposal?.confidence || "Medium",
+      });
+    });
+    let appliedCount = 0;
+    const nextRows = (responseRows || []).map((row) => {
+      const functionKey = functionalLabelKey(row?.fromFunction);
+      const proposal = functionKey ? selectedSubsystemByFunction.get(functionKey) : null;
+      if (!proposal) return row;
+      const proposedSubsystem = normalizeFunctionalAuditString(proposal.subsystem, 220);
+      if (!proposedSubsystem || proposedSubsystem === row.subsystem) return row;
+      appliedCount += 1;
+      return {
+        ...row,
+        subsystem: proposedSubsystem,
+        _allocationReviewRationale: proposal.rationale,
+        _allocationReviewConfidence: proposal.confidence,
+        _allocationReviewedAt: new Date().toISOString(),
+      };
+    });
+    setResponseRows(nextRows);
+    setCommittedFunctionalDiagramRows(getProjectDiagramRows(nextRows));
+    setDiagramCategories((current) => mergeSubsystemDiagramCategories(current, nextRows));
+    setFunctionalAuditProposal(null);
+    setFunctionalAuditSelectedRows({});
+    setFunctionalAuditFeedback("");
+    return { appliedCount };
+  }, [functionalAuditProposal, functionalAuditSelectedRows, responseRows]);
+
+  const addFunctionalDecompositionRowsFromCollaborator = useCallback(async ({ rows = [], source = "collaborator-proposal" } = {}) => {
+    if (!activeProjectId) {
+      throw new Error("Select a project before adding functional decomposition rows.");
+    }
+    const candidateRows = normalizeFunctionalAuditProposalRows(rows, responseRows).map((row) => ({
+      subsystem: row.subsystem,
+      fromFunction: row.fromFunction,
+      fromDetails: row.fromDetails,
+      controlAction: row.controlAction,
+      controlDetails: row.controlDetails,
+      toFunction: row.toFunction,
+      toDetails: row.toDetails,
+      _source: source,
+      _proposalRationale: row.rationale,
+      _proposalConfidence: row.confidence,
+      _createdAt: new Date().toISOString(),
+    }));
+    const rowsBefore = Array.isArray(responseRows) ? responseRows : [];
+    const { accepted: addRows, skipped: duplicateRows } = filterFunctionalRowsForLabelConflicts(candidateRows, rowsBefore);
+    if (addRows.length) {
+      const nextRows = [...addRows, ...rowsBefore];
+      setResponseRows(nextRows);
+      setCommittedFunctionalDiagramRows(getProjectDiagramRows(nextRows));
+      setDiagramCategories((current) => mergeSubsystemDiagramCategories(current, nextRows));
+      setFunctionalFilterColumn(null);
+      setFunctionalColumnFilters({});
+      setFunctionalColumnSearches({});
+    }
+    return {
+      ok: true,
+      addedCount: addRows.length,
+      skippedAddCount: duplicateRows.length,
+      candidateAddCount: candidateRows.length,
+    };
+  }, [activeProjectId, responseRows]);
+
+  const createProjectFromFunctionalDecompositionRows = useCallback(async ({ projectName = "", rows = [], source = "collaborator-new-project" } = {}) => {
+    if (!guardNewProjectIntent()) {
+      throw new Error("Unable to create a new project right now.");
+    }
+    const desired = normalizeFunctionalAuditString(projectName, 180) || "New Project";
+    const existingProjectNames = new Set((projects || []).map((project) => String(project?.name || "").toLowerCase()));
+    let finalName = desired;
+    let suffix = 2;
+    while (existingProjectNames.has(finalName.toLowerCase())) {
+      finalName = `${desired} (${suffix++})`;
+    }
+    const candidateRows = normalizeFunctionalAuditProposalRows(rows, []).map((row) => ({
+      subsystem: row.subsystem,
+      fromFunction: row.fromFunction,
+      fromDetails: row.fromDetails,
+      controlAction: row.controlAction,
+      controlDetails: row.controlDetails,
+      toFunction: row.toFunction,
+      toDetails: row.toDetails,
+      _source: source,
+      _proposalRationale: row.rationale,
+      _proposalConfidence: row.confidence,
+      _createdAt: new Date().toISOString(),
+    }));
+    const { accepted: functionalRows, skipped: duplicateRows } = filterFunctionalRowsForLabelConflicts(candidateRows, []);
+    if (!functionalRows.length) {
+      throw new Error("I found pending functional rows, but none had enough complete, non-duplicate table fields to create a project.");
+    }
+
+    const id = makeId();
+    const now = new Date().toISOString();
+    const proj = { id, name: finalName, folderId: null, createdAt: now };
+    const diagramMeta = buildTableSubsystemDiagramCategoriesMeta(functionalRows);
+
+    setProjects((prev) => [proj, ...prev]);
+    saveProjectPatch(id, {
+      responseRows: functionalRows,
+      diagramCategories: diagramMeta,
+      analysisResult: null,
+      riskMethod: "STPA-Textbook",
+      agentReportResult: null,
+      riskAssessmentReportMarkdown: "",
+      riskRegister: [],
+      requirements: [],
+      vnvArtifacts: {
+        summary: null,
+        testCases: [],
+        traceMatrix: [],
+        procedures: [],
+        hazardsCoverage: [],
+        datasets: [],
+      },
+    });
+    setActiveProjectId(id);
+    setActiveProjectFolderId(null);
+    setResponseRows(functionalRows);
+    setCommittedFunctionalDiagramRows(getProjectDiagramRows(functionalRows));
+    setDiagramCategories(diagramMeta);
+    setFunctionalFilterColumn(null);
+    setFunctionalColumnFilters({});
+    setFunctionalColumnSearches({});
+    setFunctionalAuditProposal(null);
+    setFunctionalAuditSelectedRows({});
+    setFunctionalAuditFeedback("");
+    setShowPromptWizard(false);
+    setSection("projects");
+    setActiveTab("Functional Diagramming");
+    setIsSidebarOpen(true);
+    setIsProjectsOpen(true);
+
+    return {
+      ok: true,
+      projectId: id,
+      projectName: finalName,
+      addedCount: functionalRows.length,
+      skippedAddCount: duplicateRows.length,
+      candidateAddCount: candidateRows.length,
+    };
+  }, [projects]);
+
+  const mutateFunctionalDecompositionFromPrompt = useCallback(async ({ userText = "" } = {}) => {
+    if (!activeProjectId) {
+      throw new Error("Select a project before editing the functional decomposition table.");
+    }
+    if (!String(userText || "").trim()) {
+      throw new Error("Tell Collaborator what row to add or remove.");
+    }
+
+    const project = projects.find((entry) => entry.id === activeProjectId) || { id: activeProjectId, name: "Active project" };
+    const activityId = `functional-command-${activeProjectId}-${Date.now()}`;
+    startActivity(activityId, {
+      title: "Updating functional decomposition",
+      step: 0,
+      total: 2,
+      message: "Parsing Collaborator table-edit request..."
+    });
+
+    try {
+      let plan = parseFunctionalMutationPlanDirectly(userText, responseRows);
+      if (!plan) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000);
+        let parsed = null;
+        try {
+          const response = await fetch("/api/chat", {
+            method: "POST",
+            ...buildAIAuthOpts({ "Content-Type": "application/json" }),
+            signal: controller.signal,
+            body: JSON.stringify({
+              model: "gpt-4o-mini",
+              temperature: 0,
+              max_tokens: 1400,
+              messages: [
+                {
+                  role: "system",
+                  content: "Convert explicit functional decomposition table edit requests into strict JSON operations. Return JSON only.",
+                },
+                {
+                  role: "user",
+                  content: buildFunctionalMutationPrompt({
+                    project,
+                    rows: responseRows,
+                    diagramCategories,
+                    userText,
+                  }),
+                },
+              ],
+            }),
+          });
+
+          if (!response.ok) {
+            const detail = await response.text().catch(() => "");
+            throw new Error(response.status === 401
+              ? "No AI provider key is configured. Add your API key in Settings and try again."
+              : `Functional table update failed (${response.status}). ${detail}`.trim());
+          }
+          parsed = parseJsonObjectFromText(extractAIText(await response.json()));
+        } catch (error) {
+          if (error?.name === "AbortError") {
+            throw new Error("Functional table update timed out while parsing the edit request. Try a more structured prompt with subsystem, Function From, control action, and Function To.");
+          }
+          throw error;
+        } finally {
+          clearTimeout(timeoutId);
+        }
+	        if (!parsed) {
+	          plan = {
+	            summary: "Collaborator could not parse the requested table edit.",
+	            requiresClarification: true,
+	            clarificationQuestion: "Please restate the edit using labels like: subsystem, Function From, control action, and Function To.",
+	            addRows: [],
+	            updateRows: [],
+	            removeRows: [],
+	            renameFunctions: [],
+	          };
+        } else {
+          plan = normalizeFunctionalMutationPlan(parsed, responseRows);
+        }
+      }
+      if (plan.requiresClarification) {
+        finishActivity(activityId, "error", plan.clarificationQuestion || "Collaborator needs clarification before editing the table.");
+        return {
+          ok: false,
+          requiresClarification: true,
+          message: plan.clarificationQuestion || "I need more detail before editing the functional decomposition table.",
+          addedCount: 0,
+          updatedCount: 0,
+          removedCount: 0,
+          skippedUpdates: [],
+          skippedRemovals: [],
+        };
+      }
+
+      updateActivity(activityId, {
+        step: 1,
+        total: 2,
+        message: "Applying functional decomposition table edits..."
+      });
+
+	      const rowsBefore = Array.isArray(responseRows) ? responseRows : [];
+	      const skippedRenameUpdates = [];
+	      let appliedRenameCount = 0;
+	      let rowsAfterRenames = rowsBefore;
+	      (plan.renameFunctions || []).forEach((rename) => {
+	        const oldKey = functionalLabelKey(rename.oldLabel);
+	        const newLabel = normalizeFunctionalAuditString(rename.newLabel, 220);
+	        if (!oldKey || !newLabel) return;
+	        const matchingIndexes = rowsAfterRenames
+	          .map((row, index) => ({ row, index }))
+	          .filter(({ row }) => (
+	            functionalLabelKey(row?.fromFunction) === oldKey ||
+	            functionalLabelKey(row?.toFunction) === oldKey
+	          ))
+	          .map(({ index }) => index);
+	        if (!matchingIndexes.length) {
+	          skippedRenameUpdates.push({ reason: `No function label "${rename.oldLabel}" was found to rename.` });
+	          return;
+	        }
+	        const draftRows = rowsAfterRenames.map((row, index) => {
+	          if (!matchingIndexes.includes(index)) return row;
+	          return {
+	            ...row,
+	            fromFunction: functionalLabelKey(row?.fromFunction) === oldKey ? newLabel : row.fromFunction,
+	            toFunction: functionalLabelKey(row?.toFunction) === oldKey ? newLabel : row.toFunction,
+	          };
+	        });
+	        const firstChangedIndex = matchingIndexes[0];
+	        const conflict = ["fromFunction", "controlAction", "toFunction"]
+	          .map((field) => getFunctionalLabelConflictForEdit(draftRows, firstChangedIndex, field, draftRows[firstChangedIndex]?.[field]))
+	          .find(Boolean);
+	        if (conflict) {
+	          skippedRenameUpdates.push({ reason: conflict });
+	          return;
+	        }
+	        rowsAfterRenames = draftRows;
+	        appliedRenameCount += matchingIndexes.length;
+	      });
+	      const { removeIndexes, skipped } = findFunctionalRowsToRemove(rowsAfterRenames, plan.removeRows);
+	      const { updateMap, skipped: skippedUpdates } = findFunctionalRowsToUpdate(rowsAfterRenames, plan.updateRows);
+	      const rowsAfterRemovals = rowsAfterRenames
+	        .map((row, originalIndex) => ({ row, originalIndex }))
+        .filter(({ originalIndex }) => !removeIndexes.has(originalIndex))
+        .map(({ row, originalIndex }) => ({ row, originalIndex }));
+      const skippedConflictUpdates = [];
+      let appliedUpdateCount = 0;
+      const keptRows = rowsAfterRemovals.map(({ row, originalIndex }, keptIndex) => {
+        const changes = updateMap.get(originalIndex);
+        if (!changes) return row;
+        const nextRow = completeFunctionalRowFields({ ...row, ...changes }, rowsBefore);
+        const currentDraftRows = rowsAfterRemovals.map((entry, entryIndex) => (
+          entryIndex === keptIndex ? nextRow : entry.row
+        ));
+        const conflict = ["subsystem", "fromFunction", "controlAction", "toFunction"]
+          .map((field) => getFunctionalLabelConflictForEdit(currentDraftRows, keptIndex, field, nextRow[field]))
+          .find(Boolean);
+        if (conflict) {
+          skippedConflictUpdates.push({ rowNumber: originalIndex + 1, reason: conflict });
+          return row;
+        }
+        appliedUpdateCount += 1;
+        return nextRow;
+      });
+      const { accepted: addRows, skipped: duplicateAdds } = filterFunctionalRowsForLabelConflicts(plan.addRows, keptRows);
+      const nextRows = [...addRows, ...keptRows];
+      const applied = {
+	        addedCount: addRows.length,
+	        removedCount: removeIndexes.size,
+	        updatedCount: appliedUpdateCount + appliedRenameCount,
+	        skippedRemovals: skipped,
+	        skippedUpdates: [...skippedUpdates, ...skippedConflictUpdates, ...skippedRenameUpdates],
+        skippedAddCount: duplicateAdds.length,
+        candidateAddCount: plan.addRows.length,
+      };
+
+      setResponseRows(nextRows);
+      setCommittedFunctionalDiagramRows(getProjectDiagramRows(nextRows));
+      setDiagramCategories((current) => mergeSubsystemDiagramCategories(current, nextRows));
+      setFunctionalFilterColumn(null);
+      setFunctionalColumnFilters({});
+      setFunctionalColumnSearches({});
+      finishActivity(activityId, "success", `Applied ${applied.addedCount} add${applied.addedCount === 1 ? "" : "s"}, ${applied.updatedCount} update${applied.updatedCount === 1 ? "" : "s"}, and ${applied.removedCount} removal${applied.removedCount === 1 ? "" : "s"}`);
+
+      return {
+        ok: true,
+        message: plan.summary,
+        addedCount: applied.addedCount,
+        updatedCount: applied.updatedCount,
+        removedCount: applied.removedCount,
+        skippedRemovals: applied.skippedRemovals,
+        skippedUpdates: applied.skippedUpdates,
+        skippedAddCount: applied.skippedAddCount,
+        candidateAddCount: applied.candidateAddCount,
+      };
+    } catch (error) {
+      finishActivity(activityId, "error", error?.message || "Functional table update failed");
+      throw error;
+    }
+  }, [
+    activeProjectId,
+    projects,
+    responseRows,
+    diagramCategories,
+    startActivity,
+    updateActivity,
+    finishActivity,
+  ]);
+
+  useEffect(() => {
+    return registerActionProvider("project-functional-diagram", {
+      getState: () => ({
+        activeProjectId,
+        projectName: projects.find((entry) => entry.id === activeProjectId)?.name || null,
+        rowCount: responseRows.length,
+        hasDiagramCategories: Boolean(diagramCategories?.categories?.length),
+      }),
+      auditFunctionalDecompositionCompleteness: runFunctionalCompletenessAudit,
+      reevaluateFunctionalSubsystemAllocations: runFunctionalAllocationReevaluation,
+      applyFunctionalDecompositionProposal: applyFunctionalAuditSelectedRows,
+      applyFunctionalAllocationProposal: applyFunctionalAllocationSelectedRows,
+      addFunctionalDecompositionRowsFromCollaborator,
+      createProjectFromFunctionalDecompositionRows,
+      mutateFunctionalDecompositionFromPrompt,
+    });
+  }, [
+    activeProjectId,
+    projects,
+    responseRows.length,
+    diagramCategories,
+    runFunctionalCompletenessAudit,
+    runFunctionalAllocationReevaluation,
+    applyFunctionalAuditSelectedRows,
+    applyFunctionalAllocationSelectedRows,
+    addFunctionalDecompositionRowsFromCollaborator,
+    createProjectFromFunctionalDecompositionRows,
+    mutateFunctionalDecompositionFromPrompt,
+  ]);
+
   const handleRowChange = (index, field, value) => {
-    setResponseRows((currentRows) => currentRows.map((row, rowIndex) => (
-      rowIndex === index ? { ...row, [field]: value } : row
-    )));
+    setResponseRows((currentRows) => {
+      const conflict = getFunctionalLabelConflictForEdit(currentRows, index, field, value);
+      if (conflict) {
+        window.alert(conflict);
+        return currentRows;
+      }
+      return currentRows.map((row, rowIndex) => (
+        rowIndex === index ? { ...row, [field]: value } : row
+      ));
+    });
   };
   const handleAddRow = () => {
     setResponseRows((currentRows) => [
@@ -9790,7 +11515,6 @@ const projectHint = useMemo(() => ({
   anchorEl={projectMenuAnchorEls.current[p.id]}
   setPortalRef={(el) => (projectMenuPortalRefs.current[p.id] = el)}
   onRename={() => { setOpenProjectMenuId(null); beginRename(p); }}
-  onInvite={() => { setOpenProjectMenuId(null); setInviteForProjectId(p.id); }}
   onDelete={() => { setOpenProjectMenuId(null); deleteProject(p.id); }}
 />
 
@@ -11276,8 +13000,9 @@ const projectHint = useMemo(() => ({
   cleanOnceKey={cleanOnceKey}
   onCleanApplied={() => setCleanOnceKey(null)}   // ← clear after first use
   storageKey={`diagram:positions:${activeProjectId}`} // ← per-project persistence
-  onUpdateRows={handleProjectDiagramRowsUpdate}
-  onRequestCreateProject={handleCreateProjectFromSelection}   // ← ADD THIS
+	  onUpdateRows={handleProjectDiagramRowsUpdate}
+	  onCanvasSelectionChange={setFunctionalCanvasSelection}
+	  onRequestCreateProject={handleCreateProjectFromSelection}   // ← ADD THIS
   hazardSummary={analysisResult?.Summary}
   riskRegister={riskRegister}
   onOpenHazardRow={handleOpenHazardSummaryRow}
@@ -13762,43 +15487,297 @@ const updateRiskInProject = (projectId, predicate) => {
   </div>
 )}
 
-{inviteForProjectId && (
-  <InviteCollaboratorsModal
-    projectName={projects.find(p => p.id === inviteForProjectId)?.name || "Project"}
-    onClose={() => setInviteForProjectId(null)}
-    onSubmit={async ({ emails, role }) => {
-      const projectId = inviteForProjectId;
-      const origin = window.location.origin;
+{functionalAuditProposal && (
+  <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/40 p-4">
+    <div className="flex max-h-[92vh] w-[min(1180px,96vw)] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+      <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900">Functional Decomposition Audit</h2>
+          <p className="mt-1 text-sm text-gray-600">
+            {functionalAuditProposal.kind === "allocation"
+              ? `Collaborator proposed subsystem allocations for ${functionalAuditProposal.projectName || "this project"}. Review, edit, or regenerate before applying changes.`
+              : `Collaborator proposed additions for ${functionalAuditProposal.projectName || "this project"}. Review, edit, or regenerate before adding anything to the table.`}
+          </p>
+        </div>
+        <button
+          type="button"
+          className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+          aria-label="Close functional decomposition audit"
+          onClick={() => setFunctionalAuditProposal(null)}
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
 
-      const linkFromToken = (token) =>
-        `${origin}/local-invite/${encodeURIComponent(token)}`;
+      <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
+        <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-950">
+          {functionalAuditProposal.summary}
+        </div>
 
-      async function createInvite(email) {
-        const token = makeId();
-        try {
-          const key = "xhandle.localInvites";
-          const invites = JSON.parse(localStorage.getItem(key) || "[]");
-          invites.push({ token, projectId, email, role, createdAt: new Date().toISOString() });
-          localStorage.setItem(key, JSON.stringify(invites));
-        } catch {}
-        return token;
-      }
+        {functionalAuditProposal.coverageGaps?.length > 0 && (
+          <div className="mt-4">
+            <h3 className="text-sm font-semibold text-gray-900">Completeness gaps</h3>
+            <div className="mt-2 grid gap-2">
+              {functionalAuditProposal.coverageGaps.map((gap, index) => (
+                <div key={`gap-${index}`} className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm">
+                  <div className="font-medium text-gray-900">{gap.gap || `Gap ${index + 1}`}</div>
+                  {gap.evidence && <div className="mt-1 text-gray-600">Evidence: {gap.evidence}</div>}
+                  {gap.recommendation && <div className="mt-1 text-gray-600">Recommendation: {gap.recommendation}</div>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
-      const results = [];
-      for (const email of emails) {
-        const token = await createInvite(email);
-        results.push({ email, link: linkFromToken(token) });
-      }
+        {functionalAuditProposal.kind === "allocation" ? (
+        <div className="mt-5">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold text-gray-900">
+              Proposed subsystem allocations ({functionalAuditProposal.allocationRows?.length || 0})
+            </h3>
+            {functionalAuditProposal.allocationRows?.length > 0 && (
+              <div className="flex items-center gap-2 text-xs">
+                <button
+                  type="button"
+                  className="rounded border px-2 py-1 hover:bg-gray-50"
+                  onClick={() => setFunctionalAuditSelectedRows(Object.fromEntries(functionalAuditProposal.allocationRows.map((_, index) => [index, true])))}
+                >
+                  Select all
+                </button>
+                <button
+                  type="button"
+                  className="rounded border px-2 py-1 hover:bg-gray-50"
+                  onClick={() => setFunctionalAuditSelectedRows({})}
+                >
+                  Select none
+                </button>
+              </div>
+            )}
+          </div>
+          {functionalAuditProposal.allocationRows?.length ? (
+            <div className="overflow-x-auto rounded-xl border border-gray-200">
+              <table className="min-w-full divide-y divide-gray-200 text-left text-xs">
+                <thead className="bg-gray-50 text-gray-600">
+                  <tr>
+                    <th className="w-12 px-3 py-2">Apply</th>
+                    <th className="min-w-[70px] px-3 py-2">Row</th>
+                    <th className="min-w-[160px] px-3 py-2">Current Subsystem</th>
+                    <th className="min-w-[190px] px-3 py-2">Proposed Subsystem</th>
+                    <th className="min-w-[170px] px-3 py-2">Function (From)</th>
+                    <th className="min-w-[170px] px-3 py-2">Control Action</th>
+                    <th className="min-w-[170px] px-3 py-2">Function (To)</th>
+                    <th className="min-w-[260px] px-3 py-2">Rationale</th>
+                    <th className="min-w-[90px] px-3 py-2">Confidence</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 bg-white">
+                  {functionalAuditProposal.allocationRows.map((row, index) => (
+                    <tr key={`allocation-proposal-${index}`} className="align-top">
+                      <td className="px-3 py-3">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(functionalAuditSelectedRows[index])}
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setFunctionalAuditSelectedRows((prev) => ({ ...prev, [index]: checked }));
+                          }}
+                        />
+                      </td>
+                      <td className="px-3 py-3 text-gray-600">{row.rowNumber}</td>
+                      <td className="px-3 py-3 text-gray-700">{row.currentSubsystem || "—"}</td>
+                      {[
+                        ["proposedSubsystem", 2],
+                        ["fromFunction", 2],
+                        ["controlAction", 2],
+                        ["toFunction", 2],
+                        ["rationale", 4],
+                        ["confidence", 2],
+                      ].map(([field, rows]) => (
+                        <td key={field} className="px-3 py-3">
+                          {["fromFunction", "controlAction", "toFunction"].includes(field) ? (
+                            <div className="whitespace-pre-wrap rounded border border-gray-100 bg-gray-50 px-2 py-1 text-xs leading-5 text-gray-700">
+                              {row[field] || "—"}
+                            </div>
+                          ) : (
+                            <textarea
+                              className="w-full resize-y rounded border border-gray-200 px-2 py-1 text-xs leading-5 focus:border-[#2D7DFE] focus:outline-none focus:ring-1 focus:ring-[#2D7DFE]"
+                              rows={rows}
+                              value={row[field] || ""}
+                              onChange={(event) => updateFunctionalAllocationProposalRow(index, field, event.target.value)}
+                            />
+                          )}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
+              No allocation proposals were returned. Add feedback below if you want Collaborator to use a different allocation strategy.
+            </div>
+          )}
+        </div>
+        ) : (
+        <div className="mt-5">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold text-gray-900">
+              Proposed rows ({functionalAuditProposal.proposedRows?.length || 0})
+            </h3>
+            {functionalAuditProposal.proposedRows?.length > 0 && (
+              <div className="flex items-center gap-2 text-xs">
+                <button
+                  type="button"
+                  className="rounded border px-2 py-1 hover:bg-gray-50"
+                  onClick={() => setFunctionalAuditSelectedRows(Object.fromEntries(functionalAuditProposal.proposedRows.map((_, index) => [index, true])))}
+                >
+                  Select all
+                </button>
+                <button
+                  type="button"
+                  className="rounded border px-2 py-1 hover:bg-gray-50"
+                  onClick={() => setFunctionalAuditSelectedRows({})}
+                >
+                  Select none
+                </button>
+              </div>
+            )}
+          </div>
 
-      const lines = results.map((r) => `${r.email}: ${r.link}`);
-      try {
-        await navigator.clipboard.writeText(lines.join("\n"));
-        alert(`Invite link(s) copied to your clipboard:\n\n${lines.join("\n")}`);
-      } catch {
-        alert(`Invite link(s):\n\n${lines.join("\n")}`);
-      }
-    }}
-  />
+          {functionalAuditProposal.proposedRows?.length ? (
+            <div className="overflow-x-auto rounded-xl border border-gray-200">
+              <table className="min-w-full divide-y divide-gray-200 text-left text-xs">
+                <thead className="bg-gray-50 text-gray-600">
+                  <tr>
+                    <th className="w-12 px-3 py-2">Add</th>
+                    <th className="min-w-[150px] px-3 py-2">Subsystem</th>
+                    <th className="min-w-[170px] px-3 py-2">Function (From)</th>
+                    <th className="min-w-[180px] px-3 py-2">Control Action</th>
+                    <th className="min-w-[170px] px-3 py-2">Function (To)</th>
+                    <th className="min-w-[260px] px-3 py-2">Rationale</th>
+                    <th className="min-w-[90px] px-3 py-2">Confidence</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 bg-white">
+                  {functionalAuditProposal.proposedRows.map((row, index) => (
+                    <tr key={`proposal-${index}`} className="align-top">
+                      <td className="px-3 py-3">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(functionalAuditSelectedRows[index])}
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setFunctionalAuditSelectedRows((prev) => ({ ...prev, [index]: checked }));
+                          }}
+                        />
+                      </td>
+                      {[
+                        ["subsystem", 2],
+                        ["fromFunction", 2],
+                        ["controlAction", 2],
+                        ["toFunction", 2],
+                        ["rationale", 4],
+                        ["confidence", 2],
+                      ].map(([field, rows]) => (
+                        <td key={field} className="px-3 py-3">
+                          <textarea
+                            className="w-full resize-y rounded border border-gray-200 px-2 py-1 text-xs leading-5 focus:border-[#2D7DFE] focus:outline-none focus:ring-1 focus:ring-[#2D7DFE]"
+                            rows={rows}
+                            value={row[field] || ""}
+                            onChange={(event) => updateFunctionalAuditProposalRow(index, field, event.target.value)}
+                          />
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
+              No non-duplicate rows were proposed. Add feedback below if you want Collaborator to look for a different kind of gap.
+            </div>
+          )}
+        </div>
+        )}
+
+        {functionalAuditProposal.questions?.length > 0 && (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+            <div className="font-semibold">Questions for you</div>
+            <ul className="mt-2 list-disc space-y-1 pl-5">
+              {functionalAuditProposal.questions.map((question, index) => (
+                <li key={`question-${index}`}>{question}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <div className="mt-5">
+          <label className="text-sm font-semibold text-gray-900" htmlFor="functional-audit-feedback">
+            Feedback or direction for Collaborator
+          </label>
+          <textarea
+            id="functional-audit-feedback"
+            className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#2D7DFE] focus:outline-none focus:ring-1 focus:ring-[#2D7DFE]"
+            rows={3}
+            placeholder="Example: focus on missing feedback/status paths, avoid adding new subsystems, or propose monitor functions for each controller."
+            value={functionalAuditFeedback}
+            onChange={(event) => setFunctionalAuditFeedback(event.target.value)}
+          />
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t px-5 py-4">
+        <div className="text-xs text-gray-500">
+          {functionalAuditProposal.kind === "allocation"
+            ? "Nothing changes until you select proposals and click “Apply selected allocations.”"
+            : "Nothing is added until you select rows and click “Add selected rows.”"}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="rounded border px-3 py-2 text-sm hover:bg-gray-50"
+            onClick={() => setFunctionalAuditProposal(null)}
+          >
+            Close
+          </button>
+          <button
+            type="button"
+            className="rounded border border-[#2D7DFE] px-3 py-2 text-sm text-[#1E61D6] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={isFunctionalAuditRunning}
+            onClick={() => (
+              functionalAuditProposal.kind === "allocation"
+                ? runFunctionalAllocationReevaluation({
+                    userText: functionalAuditProposal.userText,
+                    feedback: functionalAuditFeedback,
+                  })
+                : runFunctionalCompletenessAudit({
+                    userText: functionalAuditProposal.userText,
+                    feedback: functionalAuditFeedback,
+                  })
+            ).catch((error) => alert(error?.message || "Functional decomposition audit failed."))}
+          >
+            {isFunctionalAuditRunning ? "Regenerating..." : "Regenerate with feedback"}
+          </button>
+          <button
+            type="button"
+            className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6] disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={functionalAuditProposal.kind === "allocation"
+              ? !functionalAuditProposal.allocationRows?.some((_, index) => functionalAuditSelectedRows[index])
+              : !functionalAuditProposal.proposedRows?.some((_, index) => functionalAuditSelectedRows[index])}
+            onClick={() => (
+              functionalAuditProposal.kind === "allocation"
+                ? applyFunctionalAllocationSelectedRows()
+                : applyFunctionalAuditSelectedRows()
+            )}
+          >
+            {functionalAuditProposal.kind === "allocation" ? "Apply selected allocations" : "Add selected rows"}
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
 )}
 
         {showCodeArchitectureWorkbookExport && (
