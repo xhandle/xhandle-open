@@ -33,6 +33,7 @@ import { toPng } from 'html-to-image';
 import { SmartBezierEdge } from '@tisoap/react-flow-smart-edge';
 import ELK from 'elkjs/lib/elk.bundled.js';
 import { downloadDrawioXml } from './utils/exportDrawio';
+import { buildAIAuthOpts } from './backendConfig';
 
 /* ================================
  * Brand & Theme
@@ -165,6 +166,31 @@ function downloadJson(payload, filename) {
   URL.revokeObjectURL(url);
 }
 
+function extractChatText(payload) {
+  const candidates = [
+    payload?.choices?.[0]?.message?.content,
+    payload?.choices?.[0]?.text,
+    payload?.result,
+    payload?.answer,
+    payload?.content,
+    payload?.message,
+    payload?.text,
+    payload?.data?.result,
+    payload?.data?.content,
+  ];
+  return candidates
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .find(Boolean) || '';
+}
+
+function cleanGeneratedDescription(value) {
+  return String(value || '')
+    .replace(/^```(?:text|markdown)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .replace(/^description\s*:\s*/i, '')
+    .trim();
+}
+
 function cleanNodeForExport(node) {
   return {
     id: node.id,
@@ -283,6 +309,10 @@ const ELK_DEFAULTS = {
 };
 
 function toElkGraph({ nodes, edges }) {
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const layoutEdges = edges.filter((edge) => (
+    nodeIds.has(edge.source) && nodeIds.has(edge.target)
+  ));
   return {
     id: 'root',
     layoutOptions: ELK_DEFAULTS,
@@ -291,7 +321,7 @@ function toElkGraph({ nodes, edges }) {
       width: THEME.node.w,
       height: THEME.node.h,
     })),
-    edges: edges.map((e) => ({
+    edges: layoutEdges.map((e) => ({
       id: e.id,
       sources: [e.source],
       targets: [e.target],
@@ -302,14 +332,19 @@ function toElkGraph({ nodes, edges }) {
 async function runElkLayoutOnce({ nodes, edges }) {
   if (!nodes.length) return nodes;
   const graph = toElkGraph({ nodes, edges });
-  const laidOut = await elk.layout(graph);
-  const posById = new Map(
-    laidOut.children.map((c) => [c.id, { x: Math.round(c.x ?? 0), y: Math.round(c.y ?? 0) }])
-  );
-  return nodes.map((n) => ({
-    ...n,
-    position: posById.get(n.id) ?? n.position,
-  }));
+  try {
+    const laidOut = await elk.layout(graph);
+    const posById = new Map(
+      laidOut.children.map((c) => [c.id, { x: Math.round(c.x ?? 0), y: Math.round(c.y ?? 0) }])
+    );
+    return nodes.map((n) => ({
+      ...n,
+      position: posById.get(n.id) ?? n.position,
+    }));
+  } catch (error) {
+    console.warn('[functional-diagram] ELK layout failed; preserving current node positions.', error);
+    return nodes;
+  }
 }
 
 /* ===== Persisted positions helpers (localStorage) ===== */
@@ -2225,6 +2260,112 @@ const DiagramBody = forwardRef(function DiagramBody(
   const diagramHostRef = useRef(null);
   const nodeIdCounter = useRef(0);
   const [editModal, setEditModal] = useState(null);
+
+  const regenerateEditDescription = async () => {
+    if (!editModal || editModal.regeneratingDescription) return;
+
+    const modalSnapshot = editModal;
+    const currentNodes = getNodes();
+    const nodeById = new Map(currentNodes.map((node) => [node.id, node]));
+    let itemType = 'functional node';
+    let context = {};
+
+    if (modalSnapshot.type === 'edge') {
+      itemType = modalSnapshot.aggregated ? 'aggregated functional edge' : 'functional edge';
+      const currentEdge = edges.find((edge) => edge.id === modalSnapshot.id);
+      const rowIndexes = currentEdge?.data?.rowIndexes?.length
+        ? currentEdge.data.rowIndexes
+        : rows
+          .map((row, index) => (edgeIdForRow(row, index) === modalSnapshot.id ? index : -1))
+          .filter((index) => index >= 0);
+      context = {
+        source: nodeById.get(currentEdge?.source)?.data?.label || currentEdge?.source || '',
+        target: nodeById.get(currentEdge?.target)?.data?.label || currentEdge?.target || '',
+        currentLabel: modalSnapshot.label,
+        currentDescription: modalSnapshot.description,
+        functionalRows: rowIndexes.slice(0, 30).map((index) => rows[index]).filter(Boolean),
+      };
+    } else if (modalSnapshot.id.startsWith('g:') || modalSnapshot.nodeType === 'groupBox') {
+      itemType = 'functional subsystem group node';
+      const memberNodes = currentNodes.filter((node) => node.parentNode === modalSnapshot.id && node.type !== 'groupBox');
+      const memberLabels = memberNodes
+        .map((node) => String(node?.data?.label || '').trim())
+        .filter(Boolean);
+      const memberKeys = new Set(memberLabels.map((label) => label.toLowerCase()));
+      context = {
+        subsystem: modalSnapshot.label,
+        currentDescription: modalSnapshot.description,
+        memberFunctions: memberLabels,
+        functionalRows: rows.filter((row) => (
+          String(row?.subsystem || '').trim().toLowerCase() === String(modalSnapshot.label || '').trim().toLowerCase() ||
+          memberKeys.has(String(row?.fromFunction || '').trim().toLowerCase()) ||
+          memberKeys.has(String(row?.toFunction || '').trim().toLowerCase())
+        )).slice(0, 30),
+      };
+    } else {
+      const currentNode = nodeById.get(modalSnapshot.id);
+      const functionKey = String(modalSnapshot.label || '').trim().toLowerCase();
+      const parentGroup = currentNode?.parentNode
+        ? groupBoxes.find((box) => box.id === currentNode.parentNode)
+        : null;
+      context = {
+        function: modalSnapshot.label,
+        subsystem: parentGroup?.label || '',
+        currentDescription: modalSnapshot.description,
+        functionalRows: rows.filter((row) => (
+          String(row?.fromFunction || '').trim().toLowerCase() === functionKey ||
+          String(row?.toFunction || '').trim().toLowerCase() === functionKey
+        )).slice(0, 30),
+      };
+    }
+
+    setEditModal((current) => current?.id === modalSnapshot.id
+      ? { ...current, regeneratingDescription: true, descriptionError: '' }
+      : current);
+
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        ...buildAIAuthOpts({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          model: 'gpt-4o',
+          temperature: 0.15,
+          max_tokens: 450,
+          messages: [
+            {
+              role: 'system',
+              content: 'Write one concise, technically specific description for a functional architecture diagram item. Use only the supplied context. Explain responsibilities and relevant inputs, outputs, interfaces, state, timing, or safety constraints when supported. Return only the description as plain text, with no heading, quotes, or markdown.',
+            },
+            {
+              role: 'user',
+              content: `Regenerate the description for this ${itemType}:\n${JSON.stringify(context, null, 2)}`,
+            },
+          ],
+        }),
+      });
+
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        throw new Error(response.status === 401
+          ? 'Add an AI provider key in Settings before regenerating descriptions.'
+          : `Description regeneration failed (${response.status}). ${detail}`.trim());
+      }
+
+      const description = cleanGeneratedDescription(extractChatText(await response.json()));
+      if (!description) throw new Error('The AI provider returned an empty description.');
+      setEditModal((current) => current?.id === modalSnapshot.id
+        ? { ...current, description, regeneratingDescription: false, descriptionError: '' }
+        : current);
+    } catch (error) {
+      setEditModal((current) => current?.id === modalSnapshot.id
+        ? {
+            ...current,
+            regeneratingDescription: false,
+            descriptionError: error?.message || 'Unable to regenerate the description.',
+          }
+        : current);
+    }
+  };
 
   const hazardHeaders = useMemo(() => (
     Array.isArray(hazardSummary?.[0]) ? hazardSummary[0].map((header) => String(header || '')) : []
@@ -4954,7 +5095,35 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
               />
             </label>
             <label style={{ display: 'block' }}>
-              Description:
+              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <span>Description:</span>
+                {!(editModal.type === 'node' && (editModal.id.startsWith('note:') || editModal.nodeType === 'note')) && (
+                  <button
+                    type="button"
+                    onClick={regenerateEditDescription}
+                    disabled={Boolean(editModal.regeneratingDescription)}
+                    title="Regenerate description with AI"
+                    aria-label="Regenerate description with AI"
+                    style={{
+                      width: 28,
+                      height: 28,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRadius: 8,
+                      border: '1px solid rgba(122,55,255,0.28)',
+                      background: editModal.regeneratingDescription ? '#F3F4F6' : '#F5F0FF',
+                      color: BRAND.purple,
+                      cursor: editModal.regeneratingDescription ? 'wait' : 'pointer',
+                      fontSize: 16,
+                      lineHeight: 1,
+                      boxShadow: '0 2px 8px rgba(122,55,255,0.12)',
+                    }}
+                  >
+                    {editModal.regeneratingDescription ? '…' : '✦'}
+                  </button>
+                )}
+              </span>
               <textarea
                 value={editModal.description}
                 onChange={(e) => setEditModal((m) => ({ ...m, description: e.target.value }))}
@@ -4966,6 +5135,11 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                 rows={4}
               />
             </label>
+            {editModal.descriptionError && (
+              <div role="alert" style={{ marginTop: 6, fontSize: 12, color: '#B91C1C' }}>
+                {editModal.descriptionError}
+              </div>
+            )}
             {editModal.type === 'node' && (
               <div style={{ marginTop: 12 }}>
                 <div style={{ fontSize: 14, marginBottom: 6 }}>Color:</div>

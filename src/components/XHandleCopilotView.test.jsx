@@ -21,7 +21,11 @@ jest.mock("../features/workspace-graph", () => ({
   buildWorkspaceLLMContext: jest.fn(),
 }));
 
-const { renderCopilotContext } = require("./XHandleCopilotView");
+const {
+  buildPromptContentFromContext,
+  isDiagramFunctionalDecompositionRequest,
+  renderCopilotContext,
+} = require("./XHandleCopilotView");
 
 describe("renderCopilotContext", () => {
   it("renders canonical workspace graph context without crashing", () => {
@@ -72,5 +76,44 @@ describe("renderCopilotContext", () => {
     expect(rendered).toContain("artifact:file-1");
     expect(rendered).toContain("source_file");
     expect(rendered).toContain("derived_from");
+  });
+});
+
+describe("diagram functional decomposition prompting", () => {
+  const imageContext = [{
+    file: { name: "architecture.png", type: "image/png", size: 1234 },
+    imageDataUrl: "data:image/png;base64,abc123",
+  }];
+
+  it("detects image-grounded functional decomposition requests", () => {
+    expect(isDiagramFunctionalDecompositionRequest(
+      imageContext,
+      "Use this diagram to create a functional decomposition",
+    )).toBe(true);
+    expect(isDiagramFunctionalDecompositionRequest(
+      imageContext,
+      "Describe the colors in this image",
+    )).toBe(false);
+    expect(isDiagramFunctionalDecompositionRequest(
+      [],
+      "Create a functional decomposition",
+    )).toBe(false);
+  });
+
+  it("injects the visual inventory and coverage contract before the image", () => {
+    const content = buildPromptContentFromContext(
+      imageContext,
+      "Use this diagram to create a functional decomposition",
+    );
+
+    expect(Array.isArray(content)).toBe(true);
+    expect(content[0].type).toBe("text");
+    expect(content[0].text).toContain("Pass 1 — visual inventory");
+    expect(content[0].text).toContain("every visible directed interface");
+    expect(content[0].text).toContain("Never use connector text");
+    expect(content[0].text).toContain("exactly those seven columns");
+    expect(content[0].text).toContain("branched lines");
+    expect(content[0].text).toContain("Coverage Check");
+    expect(content.some((part) => part.type === "image_url")).toBe(true);
   });
 });

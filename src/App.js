@@ -1904,16 +1904,22 @@ Rules:
 4. If the user asks for multiple additions, return multiple addRows.
 5. If the user asks to add a row, every addRows item must fully populate every functional decomposition table cell: subsystem, fromFunction, fromDetails, controlAction, controlDetails, toFunction, and toDetails. Do not return blank strings for add row cells.
 6. If the user gives natural-language guidance for a specific cell, apply it to the matching cell in addRows or updateRows. Examples: "allocate FMS as their subsystem" means set subsystem to "FMS" for the applicable rows; "make the control action report fault state" means update controlAction.
-7. If the user asks to add a subsystem/capability/system and says or implies you should decide the details, create a small coherent set of complete functional decomposition rows that connect its internal functions and at least one plausible existing function when possible.
-8. Prefer useful project-local rows over asking for clarification for add requests. Ask for clarification only when you cannot identify what capability or interface the user wants added.
-9. If the user asks to remove rows, identify the existing rowNumber whenever possible.
-10. If removal is ambiguous or the user request lacks enough information to safely edit the table, set requiresClarification true and explain the question.
-11. Do not invent broad redesigns. This is a table-edit command parser, not a completeness audit.
-12. Function labels are globally unique node identifiers. Do not add or update a Function (From) label so it belongs to two different subsystems.
-13. Subsystem labels are unique group-node identifiers; reuse the exact existing subsystem spelling/casing when referring to an existing subsystem.
-14. Interface identity is Function (From) + Control Action + Function (To). Do not add duplicate interface identities.
-15. If the user asks to rename or relabel a function, return renameFunctions. A function rename must update every Function (From) and Function (To) occurrence with the old label.
-16. Return strict JSON only. No markdown.
+7. If the user asks to add a subsystem, capability, system, stack, module, or service and says or implies you should decide the details, treat that as a request for a detailed, architecture-review-ready functional decomposition—not a small illustrative sample.
+8. Scale the decomposition to the capability's complexity. For a substantial subsystem such as a flight management system, perception system, autonomy stack, propulsion controller, or mission-management system, normally create 8-14 distinct internal functions and 14-24 non-duplicate interface rows. Use fewer only when the requested capability is genuinely narrow. Do not stop after one generic component or two or three obvious interfaces.
+9. Decompose by responsibility rather than by implementation class names. Cover, when relevant: input acquisition and validation; normalization/fusion or state estimation; planning/decision/control; command or product generation; output distribution; configuration and mode management; data/state persistence; timing/synchronization; health monitoring and built-in test; fault detection, isolation, recovery, and degraded operation; operator or external-system interaction.
+10. Build a connected mini-architecture for the requested subsystem. Include internal processing chains, feedback/status paths, and at least two meaningful boundary interfaces with existing project functions or subsystems when the existing rows provide plausible endpoints. Every newly introduced internal function should participate in at least one interface, and each function allocated to the new subsystem should appear as Function (From) in at least one row so its subsystem ownership is represented by the table.
+11. Make every interface semantically distinct and directional. Include commands, requests, observations, state estimates, configuration, acknowledgements, status, quality/confidence, timing, and fault/degradation indications where supported. Do not pad the count with renamed duplicates or vague actions such as "sends data" or "communicates with."
+12. Write rich, consistent details. fromDetails and toDetails should explain the function's responsibility, important inputs, outputs, state/data owned or transformed, operating modes, and relevant timing, quality, safety, or failure constraints. controlDetails should explain the interface payload, trigger/cadence, purpose, receiver behavior, validity/quality expectations, and failure or stale-data handling when relevant. Repeated functions must use compatible descriptions across rows.
+13. Stay within the requested subsystem and the surrounding interfaces needed to integrate it. Detailed decomposition of the requested capability is not a broad redesign of unrelated existing subsystems. Prefer exact existing function and subsystem labels for boundary endpoints, and do not invent replacements for existing architecture.
+14. Prefer useful project-local rows over asking for clarification for add requests. Ask for clarification only when you cannot identify what capability or interface the user wants added.
+15. If the user asks to remove rows, identify the existing rowNumber whenever possible.
+16. If removal is ambiguous or the user request lacks enough information to safely edit the table, set requiresClarification true and explain the question.
+17. Do not invent broad redesigns. This is a table-edit command parser, not a completeness audit.
+18. Function labels are globally unique node identifiers. Do not add or update a Function (From) label so it belongs to two different subsystems.
+19. Subsystem labels are unique group-node identifiers; reuse the exact existing subsystem spelling/casing when referring to an existing subsystem.
+20. Interface identity is Function (From) + Control Action + Function (To). Do not add duplicate interface identities.
+21. If the user asks to rename or relabel a function, return renameFunctions. A function rename must update every Function (From) and Function (To) occurrence with the old label.
+22. Return strict JSON only. No markdown. Include every warranted addRows item; do not summarize omitted rows in the summary field.
 
 JSON schema:
 {
@@ -8414,7 +8420,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       let plan = parseFunctionalMutationPlanDirectly(userText, responseRows);
       if (!plan) {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30000);
+        const timeoutId = setTimeout(() => controller.abort(), 60000);
         let parsed = null;
         try {
           const response = await fetch("/api/chat", {
@@ -8424,11 +8430,11 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
             body: JSON.stringify({
               model: "gpt-4o-mini",
               temperature: 0,
-              max_tokens: 1400,
+              max_tokens: 7000,
               messages: [
                 {
                   role: "system",
-                  content: "Convert explicit functional decomposition table edit requests into strict JSON operations. Return JSON only.",
+                  content: "Convert explicit functional decomposition table edit requests into strict JSON operations. When adding a subsystem or substantial capability, produce a detailed architecture-review-ready functional decomposition with enough internal functions, internal interfaces, boundary interfaces, feedback, health, mode, and fault-management coverage for the capability's complexity. Populate every table cell with technically specific content. Return JSON only.",
                 },
                 {
                   role: "user",
