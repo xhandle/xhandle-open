@@ -1,4 +1,5 @@
 import {
+  AI_PROVIDER_PREFERENCE_CHANGED_EVENT,
   getDefaultProviderModel,
   getStoredAIProviderModelPreference,
   normalizeProviderModel,
@@ -23,5 +24,20 @@ describe("AI provider model preferences", () => {
   it("stores and reloads custom model ids", () => {
     storeAIProviderModelPreference("gemini", "gemini-next-flash");
     expect(getStoredAIProviderModelPreference("gemini")).toBe("gemini-next-flash");
+  });
+
+  it("notifies same-tab consumers when the active model changes", () => {
+    const listener = jest.fn();
+    window.addEventListener(AI_PROVIDER_PREFERENCE_CHANGED_EVENT, listener);
+
+    storeAIProviderModelPreference("openai", "gpt-4o");
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener.mock.calls[0][0].detail).toEqual(expect.objectContaining({
+      provider: "openai",
+      model: "gpt-4o",
+      active: true,
+    }));
+    window.removeEventListener(AI_PROVIDER_PREFERENCE_CHANGED_EVENT, listener);
   });
 });

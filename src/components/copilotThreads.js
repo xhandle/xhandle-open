@@ -2,7 +2,9 @@
 const KEY = "xhc.threads";
 const MAX_THREADS = 20;
 const MAX_MESSAGES_PER_THREAD = 80;
-const MAX_MESSAGE_CONTENT_CHARS = 12000;
+// Large engineering tables routinely exceed 12k characters. Keep complete
+// recent responses and let the thread-level quota perform the eventual trim.
+const MAX_MESSAGE_CONTENT_CHARS = 64000;
 const MAX_STORAGE_CHARS = 3_500_000;
 
 function isQuotaExceededError(error) {
@@ -22,7 +24,7 @@ function truncateText(value, maxChars = MAX_MESSAGE_CONTENT_CHARS) {
 
 function compactMessageForStorage(message = {}, aggressive = false) {
   const next = { ...message };
-  const contentLimit = aggressive ? 4000 : MAX_MESSAGE_CONTENT_CHARS;
+  const contentLimit = aggressive ? 16000 : MAX_MESSAGE_CONTENT_CHARS;
   if (typeof next.content === "string") next.content = truncateText(next.content, contentLimit);
 
   // Captured screenshots/data URLs can be several MB each. They are useful for
@@ -86,6 +88,10 @@ function serializeThreadsForStorage(threads = [], aggressive = false) {
   let serialized = JSON.stringify(compacted);
   while (serialized.length > MAX_STORAGE_CHARS && compacted.length > 1) {
     compacted = compactThreadsForStorage(compacted.slice(0, Math.max(1, compacted.length - 2)), true);
+    serialized = JSON.stringify(compacted);
+  }
+  if (serialized.length > MAX_STORAGE_CHARS) {
+    compacted = compactThreadsForStorage(compacted, true);
     serialized = JSON.stringify(compacted);
   }
   return { compacted, serialized };

@@ -1023,6 +1023,17 @@ function buildChatCompletionPayload(body, messages) {
     payload.user = String(body.userId);
   }
 
+  const modelName = String(payload.model || "").toLowerCase();
+  const usesReasoningModelControls = /^(gpt-5(?:[.-]|$)|o[1-9](?:[.-]|$))/.test(modelName);
+  if (usesReasoningModelControls) {
+    if (payload.max_tokens != null && payload.max_completion_tokens == null) {
+      payload.max_completion_tokens = payload.max_tokens;
+    }
+    delete payload.max_tokens;
+    delete payload.temperature;
+    delete payload.top_p;
+  }
+
   return payload;
 }
 
@@ -1267,7 +1278,7 @@ function splitSystemMessages(messages) {
   return { system, conversation };
 }
 
-function toOpenAICompatibleResponse({ provider, model, text, raw }) {
+function toOpenAICompatibleResponse({ provider, model, text, raw, finishReason = "stop" }) {
   return {
     id: raw?.id || `${provider}-${Date.now()}`,
     object: "chat.completion",
@@ -1281,18 +1292,19 @@ function toOpenAICompatibleResponse({ provider, model, text, raw }) {
           role: "assistant",
           content: text || "",
         },
-        finish_reason: "stop",
+        finish_reason: finishReason,
       },
     ],
     raw,
   };
 }
 
-function writeTextAsSse(res, text) {
+function writeTextAsSse(res, text, finishReason = "stop") {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
   if (text) res.write(`data: ${JSON.stringify(text)}\n\n`);
+  res.write(`event: metadata\ndata: ${JSON.stringify({ finish_reason: finishReason })}\n\n`);
   res.write("event: done\ndata: [DONE]\n\n");
   res.end();
 }
@@ -1320,7 +1332,7 @@ async function callClaudeChat({ apiKey, body, messages, model }) {
       "anthropic-version": "2023-06-01",
       "content-type": "application/json",
     },
-    timeout: 60_000,
+    timeout: 180_000,
   });
 
   const text = Array.isArray(resp.data?.content)
@@ -1332,6 +1344,7 @@ async function callClaudeChat({ apiKey, body, messages, model }) {
     model,
     text,
     raw: resp.data,
+    finishReason: resp.data?.stop_reason === "max_tokens" ? "length" : "stop",
   });
 }
 
@@ -1368,7 +1381,7 @@ async function callGeminiChat({ apiKey, body, messages, model }) {
           "x-goog-api-key": apiKey,
           "content-type": "application/json",
         },
-        timeout: 60_000,
+        timeout: 180_000,
       }
     );
   } catch (error) {
@@ -1385,7 +1398,7 @@ async function callGeminiChat({ apiKey, body, messages, model }) {
           "x-goog-api-key": apiKey,
           "content-type": "application/json",
         },
-        timeout: 60_000,
+        timeout: 180_000,
       }
     );
   }
@@ -1402,6 +1415,7 @@ async function callGeminiChat({ apiKey, body, messages, model }) {
     model: resolvedModel,
     text,
     raw: resp.data,
+    finishReason: resp.data?.candidates?.[0]?.finishReason === "MAX_TOKENS" ? "length" : "stop",
   });
 }
 
@@ -2051,7 +2065,11 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
         model,
       });
       if (stream) {
-        return writeTextAsSse(res, resp.choices?.[0]?.message?.content || "");
+        return writeTextAsSse(
+          res,
+          resp.choices?.[0]?.message?.content || "",
+          resp.choices?.[0]?.finish_reason || "stop",
+        );
       }
       return res.json(resp);
     }
@@ -2064,7 +2082,11 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
         model,
       });
       if (stream) {
-        return writeTextAsSse(res, resp.choices?.[0]?.message?.content || "");
+        return writeTextAsSse(
+          res,
+          resp.choices?.[0]?.message?.content || "",
+          resp.choices?.[0]?.finish_reason || "stop",
+        );
       }
       return res.json(resp);
     }
@@ -2107,10 +2129,14 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
       stream: true,
     });
 
+    let finishReason = "";
     for await (const chunk of completion) {
       const delta = chunk.choices?.[0]?.delta?.content ?? "";
       if (delta) res.write(`data: ${JSON.stringify(delta)}\n\n`);
+      const chunkFinishReason = chunk.choices?.[0]?.finish_reason;
+      if (chunkFinishReason) finishReason = chunkFinishReason;
     }
+    res.write(`event: metadata\ndata: ${JSON.stringify({ finish_reason: finishReason || "stop" })}\n\n`);
     res.write("event: done\ndata: [DONE]\n\n");
     res.end();
   } catch (err) {

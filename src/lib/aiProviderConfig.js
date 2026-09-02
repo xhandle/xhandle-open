@@ -4,6 +4,8 @@ export const AI_PROVIDER_OPTIONS = [
   { value: "gemini", label: "Gemini" },
 ];
 
+export const AI_PROVIDER_PREFERENCE_CHANGED_EVENT = "xhandle:ai-provider-preference-changed";
+
 export const AI_PROVIDER_MODEL_OPTIONS = {
   openai: [
     { value: "gpt-4o-mini", label: "GPT-4o mini", description: "Current xHandle default for existing OpenAI workflows.", speed: "High", intelligence: "Medium", bestFor: "Fast drafts, routine summaries, lightweight extraction, and lower-cost iterative work." },
@@ -73,9 +75,15 @@ export function storeAIProviderModelPreference(provider, model, options = {}) {
   const normalizedProvider = normalizeAIProvider(provider);
   const normalizedModel = normalizeProviderModel(normalizedProvider, model);
   localStorage.setItem(`xhandle.aiProviderModel.${normalizedProvider}`, normalizedModel);
-  if (options.setActive === false) return;
-  localStorage.setItem("xhandle.aiProvider.active", normalizedProvider);
-  localStorage.setItem("xhandle.aiProvider.activeModel", normalizedModel);
+  if (options.setActive !== false) {
+    localStorage.setItem("xhandle.aiProvider.active", normalizedProvider);
+    localStorage.setItem("xhandle.aiProvider.activeModel", normalizedModel);
+  }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(AI_PROVIDER_PREFERENCE_CHANGED_EVENT, {
+      detail: { provider: normalizedProvider, model: normalizedModel, active: options.setActive !== false },
+    }));
+  }
 }
 
 export function getStoredAIProviderModelPreference(provider, options = {}) {

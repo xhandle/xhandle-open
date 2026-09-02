@@ -126,6 +126,7 @@ function compactActiveView(activeView: any) {
 function citationForArtifact(artifact: WorkspaceArtifact) {
   return {
     artifactId: artifact.id,
+    projectId: artifact.projectId,
     sourceStore: artifact.sourceStore,
     sourceKey: artifact.sourceKey,
     sourceId: artifact.sourceId,
@@ -137,6 +138,7 @@ function citationForArtifact(artifact: WorkspaceArtifact) {
 function citationForSourceFile(file: WorkspaceSourceFile) {
   return {
     artifactId: file.id,
+    projectId: file.projectId,
     sourceStore: file.sourceStore,
     sourceKey: file.sourceKey,
     sourceId: file.sourceId,

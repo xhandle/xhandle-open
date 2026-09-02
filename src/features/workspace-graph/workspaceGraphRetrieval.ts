@@ -31,6 +31,7 @@ function artifactText(artifact: WorkspaceArtifact) {
 function citation(artifact: WorkspaceArtifact) {
   return {
     artifactId: artifact.id,
+    projectId: artifact.projectId,
     type: artifact.type,
     title: artifact.title,
     sourceStore: artifact.sourceStore,

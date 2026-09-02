@@ -80,6 +80,10 @@ import {
 } from "./features/requirements/actions";
 import { getActionProvider, registerActionProvider } from "./features/app/actionRegistry";
 import {
+  getArtifact as getWorkspaceArtifact,
+  listArtifacts as listWorkspaceArtifacts,
+} from "./features/workspace-graph";
+import {
   ResultsReviewProvider,
   ReviewCenter,
   ReviewStatusBadge,
@@ -8606,6 +8610,90 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     finishActivity,
   ]);
 
+  const openWorkspaceArtifact = useCallback(async ({ artifactId, sourceId: linkedSourceId = "", type = "", projectId: linkedProjectId = "" } = {}) => {
+    let artifact = artifactId ? await getWorkspaceArtifact(artifactId) : null;
+    if (!artifact && linkedSourceId) {
+      const replacements = await listWorkspaceArtifacts({
+        sourceId: linkedSourceId,
+        projectId: linkedProjectId || undefined,
+        type: type || undefined,
+        limit: 1,
+      });
+      artifact = replacements[0] || null;
+    }
+
+    if (!artifact && artifactId) {
+      const encodedId = String(artifactId).split(":").slice(1, -1).join(":");
+      const legacyFunctionalRow = encodedId.match(/^projectData3A(.+)3AresponseRows3A(?<index>\d+)$/i);
+      if (legacyFunctionalRow) {
+        const projectId = legacyFunctionalRow[1];
+        artifact = {
+          id: artifactId,
+          type: "functional_decomposition_row",
+          projectId,
+          sourceId: `${projectId}:responseRows:${legacyFunctionalRow.groups.index}`,
+        };
+      }
+    }
+
+    if (!artifact && (linkedSourceId || linkedProjectId || type)) {
+      artifact = {
+        id: artifactId,
+        type: type || "workspace_source",
+        projectId: linkedProjectId,
+        sourceId: linkedSourceId,
+      };
+    }
+
+    if (!artifact) {
+      console.warn("[collaborator] Linked workspace source could not be resolved", { artifactId });
+      return { ok: false, artifactId, destination: null };
+    }
+
+    const projectId = artifact.projectId || null;
+    const sourceId = String(artifact.sourceId || "");
+    const rowMatch = sourceId.match(/(?:responseRows|summary|row|rows):(?<index>\d+)$/i);
+    const rowIndex = rowMatch?.groups?.index == null ? null : Number(rowMatch.groups.index);
+
+    if (projectId) {
+      setActiveProjectId(projectId);
+      setActiveProjectFolderId(null);
+    }
+
+    if (artifact.type === "functional_decomposition_row" && Number.isFinite(rowIndex)) {
+      setSection("projects");
+      setPendingReviewSourceJump({
+        projectId,
+        artifactType: "functional_decomposition_table",
+        currentContent: { rowIndex },
+      });
+      return { ok: true, artifactId, destination: "functional-decomposition" };
+    }
+
+    if (/hazard_(analysis|summary)_row/i.test(String(artifact.type || "")) && Number.isFinite(rowIndex)) {
+      setSection("projects");
+      setPendingReviewSourceJump({
+        projectId,
+        artifactType: "hazard_summary_table",
+        currentContent: { rowIndex },
+      });
+      return { ok: true, artifactId, destination: "hazard-analysis" };
+    }
+
+    if (/requirement/i.test(String(artifact.type || ""))) {
+      setSection("requirements");
+      return { ok: true, artifactId, destination: "requirements" };
+    }
+
+    if (/source_file|code_architecture/i.test(String(artifact.type || ""))) {
+      setSection("code-architecture");
+      return { ok: true, artifactId, destination: "code-architecture" };
+    }
+
+    setSection("projects");
+    return { ok: true, artifactId, destination: "project" };
+  }, []);
+
   useEffect(() => {
     return registerActionProvider("project-functional-diagram", {
       getState: () => ({
@@ -8621,6 +8709,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       addFunctionalDecompositionRowsFromCollaborator,
       createProjectFromFunctionalDecompositionRows,
       mutateFunctionalDecompositionFromPrompt,
+      openWorkspaceArtifact,
     });
   }, [
     activeProjectId,
@@ -8634,6 +8723,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     addFunctionalDecompositionRowsFromCollaborator,
     createProjectFromFunctionalDecompositionRows,
     mutateFunctionalDecompositionFromPrompt,
+    openWorkspaceArtifact,
   ]);
 
   const handleRowChange = (index, field, value) => {

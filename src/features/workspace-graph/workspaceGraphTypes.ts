@@ -174,6 +174,7 @@ export type WorkspaceLLMContext = {
   sourceFiles: WorkspaceSourceFile[];
   citations: Array<{
     artifactId?: string;
+    projectId?: string;
     sourceStore?: string;
     sourceKey?: string;
     sourceId?: string;
