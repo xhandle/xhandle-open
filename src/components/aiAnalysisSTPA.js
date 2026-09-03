@@ -65,7 +65,8 @@ export const fetchLLMResponse = async (
   prompt,
   sysmlData = {},
   selectedContexts = ["google_drive"],
-  additionalContextText = ""
+  additionalContextText = "",
+  requestOptions = {}
 ) => {
 //export const fetchLLMResponse = async (prompt, sysmlData = {}, selectedContexts = ["google_drive", "jira", "github"]) => {
   try {
@@ -117,22 +118,67 @@ ${diagramContext.edges.length > 0
     }
 
     // small helper local to this function
-const wait = (ms) => new Promise(r => setTimeout(r, ms));
+const wait = (ms) => new Promise((resolve, reject) => {
+  let timeoutId;
+  const abort = () => {
+    clearTimeout(timeoutId);
+    requestOptions.signal?.removeEventListener?.("abort", abort);
+    const error = new Error("Hazard analysis was canceled.");
+    error.name = "AbortError";
+    reject(error);
+  };
+  if (requestOptions.signal?.aborted) {
+    abort();
+    return;
+  }
+  timeoutId = setTimeout(() => {
+    requestOptions.signal?.removeEventListener?.("abort", abort);
+    resolve();
+  }, ms);
+  requestOptions.signal?.addEventListener?.("abort", abort, { once: true });
+});
 
 let response;
 for (let attempt = 1; attempt <= 5; attempt++) {
-  response = await fetch("/api/chat", {
-    method: "POST",
-    ...buildAIAuthOpts({ "Content-Type": "application/json" }),
-    body: JSON.stringify({
-      model: "gpt-4o",
-      messages: [
-        { role: "system", content: fullContext },
-        { role: "user", content: prompt },
-      ],
-      temperature: 0.3,
-    }),
-  });
+  const timeoutController = new AbortController();
+  const abortFromCaller = () => timeoutController.abort();
+  const timeoutMs = Number(requestOptions.timeoutMs) > 0 ? Number(requestOptions.timeoutMs) : 120_000;
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    timeoutController.abort();
+  }, timeoutMs);
+  requestOptions.signal?.addEventListener?.("abort", abortFromCaller, { once: true });
+  if (requestOptions.signal?.aborted) abortFromCaller();
+
+  try {
+    response = await fetch("/api/chat", {
+      method: "POST",
+      ...buildAIAuthOpts({ "Content-Type": "application/json" }),
+      signal: timeoutController.signal,
+      body: JSON.stringify({
+        model: "gpt-4o",
+        messages: [
+          { role: "system", content: fullContext },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.3,
+        ...(Number(requestOptions.maxTokens) > 0
+          ? { max_tokens: Number(requestOptions.maxTokens) }
+          : {}),
+      }),
+    });
+  } catch (error) {
+    if (timedOut && !requestOptions.signal?.aborted) {
+      const timeoutError = new Error(`Hazard analysis request timed out after ${Math.max(1, Math.round(timeoutMs / 1000))} seconds.`);
+      timeoutError.name = "TimeoutError";
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+    requestOptions.signal?.removeEventListener?.("abort", abortFromCaller);
+  }
 
   // 429 handling with Retry-After + jittered backoff
   if (response.status === 429) {
@@ -174,6 +220,7 @@ return json?.choices?.[0]?.message?.content?.trim() || "(empty)";
 
 
   } catch (error) {
+    if (error?.name === "AbortError" || error?.name === "TimeoutError") throw error;
     console.error("🚨 Error in fetchLLMResponse (via ClayPrompt logic):", error);
     return "(error)";
   }

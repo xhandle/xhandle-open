@@ -23,6 +23,17 @@ import {
 } from "./workspaceGraphTypes";
 
 const DEFAULT_TOKEN_BUDGET = 6000;
+const HAZARD_CONTEXT_ARTIFACT_TYPES = new Set([
+  "hazard_analysis_row",
+  "risk",
+  "safety_finding",
+  "safety_case",
+  "safety_case_node",
+]);
+
+function isHazardAnalysisQuery(query = "") {
+  return /\b(hazards?|hazardous|unsafe control actions?|ucas?|guide phrases?|guide words?|stpa|fha|hara|what[- ]if|risk assessments?|safety issues?|causal factors?|mitigations?)\b/i.test(String(query || ""));
+}
 
 type WorkspaceContextArgs = {
   projectId?: string | null;
@@ -242,6 +253,20 @@ export async function buildWorkspaceLLMContext({
   const seedArtifacts = searched.length
     ? searched
     : clamp(totalArtifacts, limits.artifacts);
+  const hazardFocused = isHazardAnalysisQuery(query);
+  const hazardEvidence = hazardFocused
+    ? clamp(
+        totalArtifacts.filter((artifact) => HAZARD_CONTEXT_ARTIFACT_TYPES.has(String(artifact?.type || ""))),
+        limits.artifacts
+      )
+    : [];
+  const prioritizedSeeds = hazardFocused
+    ? clamp(uniqueById([
+        ...searched.filter((artifact) => HAZARD_CONTEXT_ARTIFACT_TYPES.has(String(artifact?.type || ""))),
+        ...hazardEvidence,
+        ...searched,
+      ]), limits.artifacts)
+    : seedArtifacts;
   const activeProjectArtifacts = projectId
     ? clamp(totalArtifacts.filter((artifact) => artifact.projectId === projectId), Math.max(8, Math.round(limits.artifacts * 0.25)))
     : [];
@@ -249,13 +274,13 @@ export async function buildWorkspaceLLMContext({
   const neighborhood = neighborhoodFromRows(
     totalArtifacts,
     totalRelationships,
-    clamp(seedArtifacts, limits.neighborhoodSeeds)
+    clamp(prioritizedSeeds, limits.neighborhoodSeeds)
   );
   const neighborhoodArtifacts = neighborhood.artifacts;
   const neighborhoodRelationships = neighborhood.relationships;
 
   const relevantArtifacts = clamp(
-    uniqueById([...seedArtifacts, ...neighborhoodArtifacts, ...activeProjectArtifacts]).map(compactArtifact),
+    uniqueById([...prioritizedSeeds, ...neighborhoodArtifacts, ...activeProjectArtifacts]).map(compactArtifact),
     limits.artifacts
   );
   const relevantIds = new Set(relevantArtifacts.map((artifact) => artifact.id));
@@ -273,7 +298,7 @@ export async function buildWorkspaceLLMContext({
   diagnostics.truncation = truncationDiagnostics({
     projects: projects.length,
     artifacts: totalArtifacts.length,
-    relevantArtifacts: uniqueById([...seedArtifacts, ...neighborhoodArtifacts, ...activeProjectArtifacts]).length,
+    relevantArtifacts: uniqueById([...prioritizedSeeds, ...neighborhoodArtifacts, ...activeProjectArtifacts]).length,
     relationships: uniqueById([...relationshipsTouching(totalRelationships, relevantIds), ...neighborhoodRelationships]).length,
     sourceFiles: allSourceFiles.length,
   }, limits);
@@ -281,6 +306,8 @@ export async function buildWorkspaceLLMContext({
     queryMatchedArtifactCount: searched.length,
     neighborhoodArtifactCount: uniqueById(neighborhoodArtifacts).length,
     activeProjectArtifactCount: activeProjectArtifacts.length,
+    hazardFocused,
+    hazardEvidenceCount: hazardEvidence.length,
   };
 
   return {

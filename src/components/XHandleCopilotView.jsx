@@ -49,6 +49,7 @@ import {
 import {
   Rocket, Link2, GitCommit, Network, FilePlus2, ShieldCheck, FolderGit2
 } from "lucide-react";
+import { FUNCTIONAL_DECOMPOSITION_CORE_INSTRUCTIONS } from "./functionalDecompositionGeneration";
 
 /* === NEW: region selection imports === */
 import { openRegionSelector } from "./RegionLassoOverlay";
@@ -221,7 +222,7 @@ export function formatCollaboratorSourceCitations(value = "", citations = []) {
       .filter((citation) => citation?.artifactId)
       .map((citation) => [String(citation.artifactId), citation]),
   );
-  return text.replace(
+  const legacyFormatted = text.replace(
     /\[\s*Artifact[\s\u00a0]+`([^`]+)`\s*;\s*source pointer[\s\u00a0]+`([^`]+)`\s*\]/gi,
     (_match, artifactId, sourceId) => {
       const inferredType = /responseRows/i.test(sourceId)
@@ -234,6 +235,19 @@ export function formatCollaboratorSourceCitations(value = "", citations = []) {
         sourceId,
         type: inferredType,
       };
+      return `[${readableWorkspaceCitationLabel(citation)}](${workspaceArtifactHref(citation)})`;
+    },
+  );
+  return legacyFormatted.replace(
+    /\[([^\]]+)\]\(#xhandle-artifact=([^\s)]+)\)/gi,
+    (match, _label, rawTarget) => {
+      const encodedArtifactId = String(rawTarget).split("&")[0];
+      let artifactId = encodedArtifactId;
+      try {
+        artifactId = decodeURIComponent(encodedArtifactId);
+      } catch {}
+      const citation = citationsByArtifactId.get(String(artifactId));
+      if (!citation) return match;
       return `[${readableWorkspaceCitationLabel(citation)}](${workspaceArtifactHref(citation)})`;
     },
   );
@@ -420,13 +434,14 @@ function boundedJson(value, max = 14000) {
 }
 
 function compactPromptArtifact(artifact) {
+  const hazardFocused = artifact?.type === "hazard_analysis_row" || artifact?.type === "risk";
   return {
     id: artifact.id,
     type: artifact.type,
     projectId: artifact.projectId,
     parentId: artifact.parentId,
     title: artifact.title,
-    summary: truncateText(artifact.summary, 500),
+    summary: truncateText(artifact.summary, hazardFocused ? 1000 : 500),
     status: artifact.status,
     sourceStore: artifact.sourceStore,
     sourceKey: artifact.sourceKey,
@@ -435,8 +450,15 @@ function compactPromptArtifact(artifact) {
     contentSnippet: truncateText(artifact.content, 500),
     structuredDataSnippet: artifact.structuredData == null
       ? undefined
-      : truncateText(typeof artifact.structuredData === "string" ? artifact.structuredData : JSON.stringify(artifact.structuredData), 600),
+      : truncateText(
+          typeof artifact.structuredData === "string" ? artifact.structuredData : JSON.stringify(artifact.structuredData),
+          hazardFocused ? 2200 : 600
+        ),
   };
+}
+
+export function isHazardAnalysisQuestion(value = "") {
+  return /\b(hazards?|hazardous|unsafe control actions?|ucas?|guide phrases?|guide words?|stpa|fha|hara|what[- ]if|risk assessments?|safety issues?|causal factors?|mitigations?)\b/i.test(String(value || ""));
 }
 
 function normalizeGraphLabel(value = "") {
@@ -734,13 +756,15 @@ export function renderCopilotContext(ctx) {
     const summary = ctx.workspaceSummary || {};
     const projects = ctx.projects || [];
     const sourceFiles = ctx.sourceFiles || [];
+    const hazardFocused = isHazardAnalysisQuestion(ctx.scope?.query || ctx.lastUserPrompt || "");
+    const artifactLimit = hazardFocused ? 36 : 18;
     const sample = {
       projects: projects.slice(0, 8).map(project => ({
         id: project.id,
         name: project.name,
         folderId: project.folderId,
       })),
-      relevantArtifacts: artifacts.slice(0, 18).map(compactPromptArtifact),
+      relevantArtifacts: artifacts.slice(0, artifactLimit).map(compactPromptArtifact),
       relationships: relationships.slice(0, 35).map(rel => ({
         id: rel.id,
         type: rel.type,
@@ -793,10 +817,13 @@ export function renderCopilotContext(ctx) {
 	      functionalConnectivity
 	        ? `Functional decomposition connectivity diagnostics. Use this for questions about orphan node pairs, isolated functions, disconnected graph islands, or missing diagram connections: ${boundedJson(functionalConnectivity, 5000)}`
 	        : null,
+	      hazardFocused
+	        ? `Hazard-analysis answering contract: answer from the supplied hazard_analysis_row artifacts and linked risk or safety artifacts. Treat incremental draft artifacts tagged "incremental" as generated evidence, distinguish them from a completed full analysis when relevant, use the stored column labels to interpret row values, and cite the specific source artifacts supporting the answer. If the requested evidence is not present, say exactly what is missing.`
+	        : null,
 	      `When making claims about stored workspace data, cite the supplied citation metadata as a readable Markdown link. Use the exact form [Source: <natural-language title> — <artifact type>](#xhandle-artifact=<URL-encoded artifactId>). Never expose raw artifact ids, source keys, or source pointers in visible prose.`,
       `For destructive writes or ambiguous artifact generation, infer the best target from the prompt when clear; otherwise create/add to an appropriate workspace artifact or ask a short clarification.`,
       `Canonical graph sample (truncated):`,
-      boundedJson(sample),
+      boundedJson(sample, hazardFocused ? 32000 : 14000),
     ].filter(Boolean).join("\n");
   }
   const reqCount   = (ctx.requirements || []).length;
@@ -2234,17 +2261,9 @@ const mdComponentsUser = {
 };
 
 export const FUNCTIONAL_DECOMPOSITION_GENERATION_INSTRUCTIONS = `
-When the user asks you to generate, add, expand, or propose a subsystem or functional decomposition, model it as an operational closed-loop architecture rather than a one-way happy-path pipeline.
+When the user asks you to generate, add, expand, or propose a subsystem or functional decomposition, follow this shared architecture contract:
 
-Subsystem generation rules:
-- Start with system scope and ownership. Keep suppliers, consumers, users, physical resources, and neighboring systems outside the requested boundary unless the user or project context explicitly assigns their behavior to it.
-- Derive technically meaningful internal functions from the requested purpose and domain evidence. Consider supporting lifecycle concerns only when relevant; do not copy a fixed catalog of functions from an example architecture.
-- Generate the primary forward flows, then perform a closed-loop interface audit for every connected function pair and every subsystem boundary.
-- For each forward interface, determine whether a distinct reverse interface is needed for acknowledgement/completion status, request/response behavior, configuration or parameter updates, health/fault reporting, confidence or data-quality feedback, timing/synchronization, calibration, flow control/backpressure, retry/rejection/exception handling, or operating-mode changes.
-- Also look for interfaces initiated by downstream consumers, including queries, processing requests, regions of interest, performance constraints, and configuration updates.
-- When a reverse interaction has a real engineering purpose, add it as a separate row with reversed endpoints and its own specific Control Action and Control Action Details.
-- Do not mechanically mirror every row, invent feedback solely to create symmetry, combine two directions into one row, or use a generic control action such as "Feedback" when a more precise action is available.
-- A subsystem should not be represented as a purely feed-forward chain unless that topology is justified by the architecture.
+${FUNCTIONAL_DECOMPOSITION_CORE_INSTRUCTIONS}
 
 Before returning generated subsystem rows, silently validate that every function is in scope and every justified reverse path has been included. After the seven-column table, include a concise Interface Direction Audit stating the forward-interface count, reverse/feedback-interface count, bidirectional function pairs, and any important pairs intentionally left unidirectional with a reason. Keep this audit outside the functional-decomposition table.
 `;
@@ -3138,7 +3157,7 @@ function normalizeFunctionalTableHeader(header = "") {
   return "";
 }
 
-function extractFunctionalRowsFromAssistantText(text = "") {
+export function extractFunctionalRowsFromAssistantText(text = "") {
   const lines = String(text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const rows = [];
   for (let index = 0; index < lines.length; index += 1) {
@@ -3470,6 +3489,51 @@ async function reconcileMultiLevelFunctionalResponse(userRequest, responseText) 
     }
   }
   return recalculateFunctionalDirectionAudit(reconciled, leafInventory);
+}
+
+export async function generateFunctionalDecompositionWithCollaborator({
+  userRequest,
+  abstractionLevel = "multi-level",
+  messages = null,
+  maxTokens = 16000,
+  maxContinuations = 2,
+  onToken,
+  onStage,
+} = {}) {
+  const requestText = String(userRequest || "").trim();
+  if (!requestText) throw new Error("A functional-decomposition request is required.");
+  const selectedLevel = inferFunctionalAbstractionLevel(abstractionLevel) || "multi-level";
+  const requestMessages = Array.isArray(messages) && messages.length
+    ? messages
+    : [
+      { role: "system", content: `Style:\n${STYLE_GENERAL_ASSISTANT}` },
+      {
+        role: "user",
+        content: `${requestText}\n\nAbstraction level selected by the user: ${selectedLevel}.\n${functionalAbstractionInstruction(selectedLevel)}`,
+      },
+    ];
+
+  onStage?.("Generating with the Collaborator functional-architecture workflow...", "");
+  const completion = await streamChatWithContinuation(requestMessages, {
+    onToken,
+    maxTokens,
+    maxContinuations,
+  });
+  let answer = completion.text;
+  if (selectedLevel === "multi-level" && answer) {
+    onStage?.("Reconciling hierarchy leaf coverage and interface rows...", answer);
+    answer = await reconcileMultiLevelFunctionalResponse(requestText, answer);
+  }
+  const rows = extractFunctionalRowsFromAssistantText(answer);
+  if (!rows.length) {
+    throw new Error("The Collaborator response did not contain a parseable seven-column functional decomposition table.");
+  }
+  return {
+    answer,
+    rows,
+    finishReason: completion.finishReason,
+    continuationCount: completion.continuationCount,
+  };
 }
 
 /* ------------------------------ Main Component ---------------------------- */
@@ -4273,7 +4337,7 @@ useEffect(() => {
           projectId: activeProjectId,
           activeView: appFocus || enrichedContext?.focus || {},
           query: userText,
-          tokenBudget: 5000,
+          tokenBudget: isHazardAnalysisQuestion(userText) ? 9000 : 5000,
         });
         graphContext.projectHint = projectHint || enrichedContext?.projectHint;
       } catch (error) {
@@ -4416,20 +4480,31 @@ Runtime context:
 
       const subsystemGenerationIntent = !options?.diagramFunctionalDecomposition && isSubsystemGenerationRequest(userText);
       const functionalGenerationIntent = subsystemGenerationIntent || Boolean(options?.diagramFunctionalDecomposition);
-      const completion = await streamChatWithContinuation(messages, {
-        onToken: (_token, fullText) => updateAssistant(fullText),
-        maxTokens: options?.diagramFunctionalDecomposition ? 12000 : (subsystemGenerationIntent ? 16000 : 3200),
-        maxContinuations: subsystemGenerationIntent || options?.diagramFunctionalDecomposition ? 2 : 1,
-      });
-      let answer = completion.text;
-      updateAssistant(answer || "No response.", true);
       const selectedAbstractionLevel = options?.abstractionLevel || inferFunctionalAbstractionLevel(userText);
-      if (functionalGenerationIntent && selectedAbstractionLevel === "multi-level" && answer) {
-        reportProgress("Checking hierarchy coverage and recalculating the interface audit.");
-        showProgressInAssistant(answer, { preferProgress: true });
-        answer = await reconcileMultiLevelFunctionalResponse(userText, answer);
-        updateAssistant(answer || "No response.", true);
+      let answer = "";
+      if (functionalGenerationIntent) {
+        const generation = await generateFunctionalDecompositionWithCollaborator({
+          userRequest: userText,
+          abstractionLevel: selectedAbstractionLevel || "multi-level",
+          messages,
+          maxTokens: options?.diagramFunctionalDecomposition ? 12000 : 16000,
+          maxContinuations: 2,
+          onToken: (_token, fullText) => updateAssistant(fullText),
+          onStage: (message, currentAnswer) => {
+            reportProgress(message);
+            showProgressInAssistant(currentAnswer, { preferProgress: true });
+          },
+        });
+        answer = generation.answer;
+      } else {
+        const completion = await streamChatWithContinuation(messages, {
+          onToken: (_token, fullText) => updateAssistant(fullText),
+          maxTokens: 3200,
+          maxContinuations: 1,
+        });
+        answer = completion.text;
       }
+      updateAssistant(answer || "No response.", true);
       const proposedFunctionalRows = extractFunctionalRowsFromAssistantText(answer || "");
       if (proposedFunctionalRows.length) {
         setPendingFunctionalRows(proposedFunctionalRows);

@@ -2092,7 +2092,7 @@ function spreadToViewport({ nodes, containerW, containerH, padX = THEME.canvas.p
  * Component
  * ================================ */
 const DiagramBody = forwardRef(function DiagramBody(
-    { rows = [], onUpdateRows, storageKey = 'diagram:positions:v1', cleanOnceKey = null, onCleanApplied, fitAfterClean = true, autoCategories = null, hazardSummary = null, riskRegister = [], onOpenHazardRow, onOpenSafetyIssue, onCanvasSelectionChange },
+    { rows = [], onUpdateRows, storageKey = 'diagram:positions:v1', cleanOnceKey = null, onCleanApplied, fitAfterClean = true, autoCategories = null, hazardSummary = null, hazardRowSourceIndexes = [], riskRegister = [], onOpenHazardRow, onOpenSafetyIssue, onCanvasSelectionChange },
     ref
 ) {
   const nodeTypes = useMemo(() => ({ bidirectional: BidirectionalNode, groupBox: GroupBoxNode, note: NoteNode }), []);
@@ -2491,11 +2491,18 @@ const DiagramBody = forwardRef(function DiagramBody(
     });
     const associated = Array.from(matchedIndexes)
       .sort((a, b) => a - b)
-      .map((idx) => ({ sourceIndex: idx, cells: hazardDataRows[idx] }))
+      .map((idx) => {
+        const mappedSourceIndex = Number(hazardRowSourceIndexes[idx]);
+        return {
+          summaryIndex: idx,
+          sourceIndex: Number.isFinite(mappedSourceIndex) ? mappedSourceIndex : idx,
+          cells: hazardDataRows[idx],
+        };
+      })
       .filter((entry) => Array.isArray(entry.cells));
 
     return associated;
-  }, [functionalRowInterfaceMatches, getHazardInterface, hazardDataRows, nodes, normalizeAssociationText, rows]);
+  }, [functionalRowInterfaceMatches, getHazardInterface, hazardDataRows, hazardRowSourceIndexes, nodes, normalizeAssociationText, rows]);
 
   const editHazardRows = useMemo(
     () => getAssociatedHazardRows(editModal),
@@ -2514,7 +2521,7 @@ const DiagramBody = forwardRef(function DiagramBody(
 
   const editSafetyIssues = useMemo(() => {
     if (!Array.isArray(riskRegister) || !riskRegister.length || !editSafetyHazardRows.length) return [];
-    const hazardSourceIndexes = new Set(editSafetyHazardRows.map(({ sourceIndex }) => sourceIndex + 1));
+    const hazardSourceIndexes = new Set(editSafetyHazardRows.map(({ summaryIndex }) => summaryIndex + 1));
     return riskRegister
       .map((risk) => {
         const score = getRiskScore(risk);

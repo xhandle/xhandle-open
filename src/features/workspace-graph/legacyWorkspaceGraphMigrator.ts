@@ -388,6 +388,71 @@ function migrateProjectData(artifacts: WorkspaceArtifact[], relationships: Works
       relationships.push(relationship({ type: "contains", projectId, fromArtifactId: parent, toArtifactId: id, sourceStore: "localStorage:xhandle.projectData" }));
     });
 
+    const draftHazardRows = data?.draftHazardRowsByIndex && typeof data.draftHazardRowsByIndex === "object"
+      ? data.draftHazardRowsByIndex
+      : {};
+    const draftHazardHeaders = Array.isArray(data?.draftHazardHeaders)
+      ? data.draftHazardHeaders
+      : (Array.isArray(data?.analysisResult?.Summary?.[0]) ? data.analysisResult.Summary[0] : []);
+    const configuredContextIds = (Array.isArray(data?.hazardOperationalContexts) ? data.hazardOperationalContexts : [])
+      .map((context: any) => String(context?.id || "").trim())
+      .filter(Boolean);
+    const hasUnspecifiedContext = Object.keys(draftHazardRows).some((key) => (
+      !String(key).includes(":context:") || String(key).includes(":context:context-unspecified")
+    ));
+    const contextIds = hasUnspecifiedContext
+      ? ["context-unspecified", ...configuredContextIds.filter((id: string) => id !== "context-unspecified")]
+      : configuredContextIds;
+    Object.entries(draftHazardRows).forEach(([rowKey, draft]: [string, any]) => {
+      if (!draft?.generated || !Array.isArray(draft.row)) return;
+      const keyMatch = String(rowKey).match(/^(?<functionalRowIndex>\d+):guide:(?<guidePhraseIndex>\d+)(?::context:(?<contextId>.+))?$/i);
+      const fallbackIndex = Number(rowKey);
+      const functionalRowIndex = keyMatch?.groups?.functionalRowIndex == null
+        ? (Number.isFinite(fallbackIndex) ? fallbackIndex : 0)
+        : Number(keyMatch.groups.functionalRowIndex);
+      const guidePhraseIndex = keyMatch?.groups?.guidePhraseIndex == null
+        ? 0
+        : Number(keyMatch.groups.guidePhraseIndex);
+      let contextId = keyMatch?.groups?.contextId || "context-unspecified";
+      try { contextId = decodeURIComponent(contextId); } catch {}
+      const guidePhraseCount = data?.riskMethod === "STPA-Textbook" || data?.riskMethod === "STPA" ? 7 : 1;
+      const contextCount = Math.max(1, contextIds.length);
+      const contextIndex = Math.max(0, contextIds.indexOf(contextId));
+      const targetIndex = keyMatch
+        ? (((functionalRowIndex * guidePhraseCount) + guidePhraseIndex) * contextCount) + contextIndex
+        : functionalRowIndex;
+      const structuredData = {
+        rowIndex: targetIndex,
+        rowKey,
+        functionalRowIndex,
+        guidePhraseIndex,
+        contextId,
+        columns: draftHazardHeaders,
+        row: draft.row,
+        generated: true,
+        draft: true,
+        riskMethod: data?.riskMethod || "",
+      };
+      const titledRow = Object.fromEntries(draftHazardHeaders.map((header: string, index: number) => [header, draft.row[index]]));
+      const id = stableId("artifact", "hazard-summary", projectId, targetIndex);
+      artifacts.push(artifactFromLegacy({
+        id,
+        type: "hazard_analysis_row",
+        projectId,
+        parentId: parent,
+        sourceFeature: "Hazard Analysis",
+        sourceStore: "localStorage:xhandle.projectData",
+        sourceKey: `xhandle.projectData.${projectId}.draftHazardRowsByIndex`,
+        sourceId: `${projectId}:draftHazardRowsByIndex:${rowKey}`,
+        title: titleFromRow(titledRow, `Generated hazard row ${targetIndex + 1}`),
+        summary: compact(structuredData, 900),
+        structuredData,
+        updatedAt: data?._updatedAt,
+        tags: ["hazard", "analysis", "incremental"],
+      }));
+      relationships.push(relationship({ type: "contains", projectId, fromArtifactId: parent, toArtifactId: id, sourceStore: "localStorage:xhandle.projectData" }));
+    });
+
     const summary = data?.analysisResult?.Summary;
     if (Array.isArray(summary) && summary.length > 1) {
       const headers = summary[0] || [];

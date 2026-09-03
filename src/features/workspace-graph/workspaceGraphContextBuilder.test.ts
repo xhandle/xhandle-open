@@ -235,4 +235,63 @@ describe("buildWorkspaceLLMContext", () => {
     expect(context.scope.activeView).toEqual(expect.objectContaining({ section: "requirements" }));
     expect(context.scope.activeView.hugeState).toBeUndefined();
   });
+
+  it("prioritizes generated hazard evidence for hazard-analysis questions", async () => {
+    const hazardArtifact = {
+      id: "artifact:hazard-1",
+      type: "hazard_analysis_row",
+      projectId: "p1",
+      title: "Trajectory command provided too late",
+      structuredData: {
+        rowKey: "0:guide:3",
+        columns: ["Function (From)", "Control Action", "Function (To)", "Guide Phrase", "Unsafe Control Action"],
+        row: ["Plan Motion", "Issue trajectory", "Control Motion", "Provided too late", "Trajectory arrives after the safe braking point"],
+        draft: true,
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      version: 1,
+    };
+    repository.listArtifacts.mockResolvedValue([
+      hazardArtifact,
+      {
+        id: "artifact:req-1",
+        type: "requirement",
+        projectId: "p1",
+        title: "Brake requirement",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        version: 1,
+      },
+    ]);
+    search.searchArtifacts.mockResolvedValue([
+      {
+        id: "artifact:req-1",
+        type: "requirement",
+        projectId: "p1",
+        title: "Brake requirement",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        version: 1,
+      },
+    ]);
+
+    const context = await buildWorkspaceLLMContext({
+      projectId: "p1",
+      query: "What guide phrase was analyzed for the trajectory hazard?",
+      tokenBudget: 6000,
+    });
+
+    expect(context.relevantArtifacts[0]).toEqual(expect.objectContaining({
+      id: "artifact:hazard-1",
+      type: "hazard_analysis_row",
+    }));
+    expect(context.citations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ artifactId: "artifact:hazard-1" }),
+    ]));
+    expect(context.diagnostics.selection).toEqual(expect.objectContaining({
+      hazardFocused: true,
+      hazardEvidenceCount: 1,
+    }));
+  });
 });

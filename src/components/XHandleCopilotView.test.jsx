@@ -32,8 +32,10 @@ const {
   buildPromptContentFromContext,
   isDiagramFunctionalDecompositionRequest,
   isFunctionalDecompositionTableResponse,
+  isHazardAnalysisQuestion,
   hasGenericControlActionsInFunctionalTable,
   inferFunctionalAbstractionLevel,
+  extractFunctionalRowsFromAssistantText,
   extractMultiLevelLeafInventory,
   formatCollaboratorReasoningList,
   formatCollaboratorSourceCitations,
@@ -117,6 +119,23 @@ describe("subsystem generation prompting", () => {
     expect(formatted).toContain("projectId=p1");
     expect(formatCollaboratorSourceCitations(response, [{ artifactId: "another-artifact" }]))
       .toContain(`[Source: row 12 — Functional Decomposition](#xhandle-artifact=${encodeURIComponent(artifactId)}&sourceId=p1%3AresponseRows%3A11`);
+  });
+
+  it("repairs model-generated hazard links with canonical navigation metadata", () => {
+    const artifactId = "artifact:hazard-summary3Ap13A3:hazard";
+    const response = `[Trajectory hazard](#xhandle-artifact=${encodeURIComponent(artifactId)})`;
+    const formatted = formatCollaboratorSourceCitations(response, [{
+      artifactId,
+      projectId: "p1",
+      type: "hazard_analysis_row",
+      title: "Trajectory command provided too late",
+      sourceId: "p1:draftHazardRowsByIndex:0:guide:3",
+    }]);
+
+    expect(formatted).toContain("Source: Trajectory command provided too late — Hazard Analysis");
+    expect(formatted).toContain("sourceId=p1%3AdraftHazardRowsByIndex%3A0%3Aguide%3A3");
+    expect(formatted).toContain("type=hazard_analysis_row");
+    expect(formatted).toContain("projectId=p1");
   });
 
   it("forwards the AI Provider modal's active model in request headers", () => {
@@ -240,6 +259,22 @@ describe("subsystem generation prompting", () => {
 
     expect(hasGenericControlActionsInFunctionalTable(genericTable)).toBe(true);
     expect(hasGenericControlActionsInFunctionalTable(specificTable)).toBe(false);
+  });
+  it("parses the same seven-column table format used for wizard persistence", () => {
+    const response = [
+      "| Subsystem | Function From | Function From Details | Control Action | Control Action Details | Function To | Function To Details |",
+      "| --- | --- | --- | --- | --- | --- | --- |",
+      "| State Estimation | Fuse Proprioceptive State | Fuses joint and inertial measurements. | Estimated Body State | Publishes pose, velocity, and uncertainty. | Stabilize Whole-Body Motion | Computes stabilizing motion corrections. |",
+    ].join("\n");
+
+    expect(extractFunctionalRowsFromAssistantText(response)).toEqual([
+      expect.objectContaining({
+        subsystem: "State Estimation",
+        fromFunction: "Fuse Proprioceptive State",
+        controlAction: "Estimated Body State",
+        toFunction: "Stabilize Whole-Body Motion",
+      }),
+    ]);
   });
   it("requires a justified closed-loop interface audit and boundary discipline", () => {
     const instructions = FUNCTIONAL_DECOMPOSITION_GENERATION_INSTRUCTIONS;
@@ -675,6 +710,13 @@ describe("renderCopilotContext", () => {
     expect(rendered).toContain("artifact:file-1");
     expect(rendered).toContain("source_file");
     expect(rendered).toContain("derived_from");
+    expect(rendered).toContain("Hazard-analysis answering contract");
+  });
+
+  it("recognizes hazard-analysis questions without capturing unrelated architecture prompts", () => {
+    expect(isHazardAnalysisQuestion("Which guide phrases produced unsafe control actions?")).toBe(true);
+    expect(isHazardAnalysisQuestion("Summarize the causal factors and mitigations in the hazard analysis")).toBe(true);
+    expect(isHazardAnalysisQuestion("Create a functional decomposition for localization")).toBe(false);
   });
 });
 

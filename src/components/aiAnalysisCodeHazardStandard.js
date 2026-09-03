@@ -46,6 +46,11 @@ function flattenDecomposition(sheets) {
   const guidePhraseIdx = findColumn(["Guide Phrase", "Guide Word", "Guideword", "STPA Guide Phrase"], -1);
   const guideApplicableIdx = findColumn(["Guide Phrase Applicable", "Guide Applicable", "Applicability", "Applicable"], -1);
   const guideRationaleIdx = findColumn(["Guide Phrase Applicability Rationale", "Applicability Rationale", "Guide Phrase Rationale"], -1);
+  const scenarioIdx = findColumn(["Operational Scenario", "Scenario", "Operating Scenario"], -1);
+  const contextIdIdx = findColumn(["Operational Context ID", "Context ID"], -1);
+  const modeIdx = findColumn(["Operational Mode", "Mode", "System Mode"], -1);
+  const conditionsIdx = findColumn(["Operating Conditions", "Conditions", "Environmental Conditions"], -1);
+  const assumptionsIdx = findColumn(["Context Assumptions", "Operational Assumptions", "Assumptions"], -1);
   return decomposition
     .slice(1)
     .map((row, index) => ({
@@ -56,6 +61,11 @@ function flattenDecomposition(sheets) {
       guidePhrase: guidePhraseIdx >= 0 ? sanitizeText(getCellText(row[guidePhraseIdx])) : "",
       guidePhraseApplicable: guideApplicableIdx >= 0 ? sanitizeText(getCellText(row[guideApplicableIdx])) : "",
       guidePhraseApplicabilityRationale: guideRationaleIdx >= 0 ? sanitizeText(getCellText(row[guideRationaleIdx])) : "",
+      operationalScenario: scenarioIdx >= 0 ? sanitizeText(getCellText(row[scenarioIdx])) : "",
+      operationalContextId: contextIdIdx >= 0 ? sanitizeText(getCellText(row[contextIdIdx])) : "",
+      operationalMode: modeIdx >= 0 ? sanitizeText(getCellText(row[modeIdx])) : "",
+      operatingConditions: conditionsIdx >= 0 ? sanitizeText(getCellText(row[conditionsIdx])) : "",
+      contextAssumptions: assumptionsIdx >= 0 ? sanitizeText(getCellText(row[assumptionsIdx])) : "",
       traceability: extractFunctionalDecompositionTrace(headers, row),
     }))
     .filter((row) => row.from || row.controlAction || row.to);
@@ -69,6 +79,12 @@ function extractJsonArray(text) {
   return JSON.parse(candidate);
 }
 
+function rethrowInterruptedRequest(error, signal) {
+  if (signal?.aborted || error?.name === "AbortError" || error?.name === "TimeoutError") {
+    throw error;
+  }
+}
+
 function compactPromptItem(item = {}, maxChars = 120) {
   const trace = item.traceability || {};
   return {
@@ -79,6 +95,11 @@ function compactPromptItem(item = {}, maxChars = 120) {
     guidePhrase: truncateForPrompt(item.guidePhrase, maxChars),
     guidePhraseApplicable: truncateForPrompt(item.guidePhraseApplicable, 24),
     guidePhraseApplicabilityRationale: truncateForPrompt(item.guidePhraseApplicabilityRationale, maxChars),
+    operationalScenario: truncateForPrompt(item.operationalScenario, maxChars),
+    operationalContextId: truncateForPrompt(item.operationalContextId, 100),
+    operationalMode: truncateForPrompt(item.operationalMode, maxChars),
+    operatingConditions: truncateForPrompt(item.operatingConditions, maxChars),
+    contextAssumptions: truncateForPrompt(item.contextAssumptions, maxChars),
     fromFile: truncateForPrompt(trace.fromFile, maxChars),
     toFile: truncateForPrompt(trace.toFile, maxChars),
     sourceFiles: truncateForPrompt(trace.sourceFiles, maxChars),
@@ -484,7 +505,11 @@ function genericHazardFields(config, row = {}) {
 }
 
 async function requestStandardRows(config, items, contextOptions = {}) {
-  const fieldNames = ["id", ...config.fields.map(([fieldName]) => fieldName)];
+  const fieldNames = [
+    "id",
+    ...config.fields.map(([fieldName]) => fieldName),
+    ...SAFETY_SIGNIFICANCE_FIELDS.map(([fieldName]) => fieldName),
+  ];
   const operationalContextBlock = formatHazardOperationalContext(contextOptions);
   const retryInstruction = sanitizeText(contextOptions.retryReason);
   const prompt = `
@@ -516,12 +541,19 @@ Quality rules:
 - Before returning JSON, silently run the specificity self-check and rewrite any field that still contains generic filler without a named row/context artifact and consumer.
 - If the row evidence is insufficient for a concrete field, write a short "Needs review:" note for that field instead of inventing a hazard.
 - It is acceptable for different rows to have similar themes, but the wording must still be specific to each row's action, target, files, and operational context.
+- Treat each row's operationalScenario, operationalMode, operatingConditions, and contextAssumptions as authoritative context for that row. Analyze its guide phrase independently even when another row has the same functional interface.
+- Distinguish hazards whose mechanism, system state, exposure, or consequence changes across operational contexts. Do not collapse contextual variants into generic wording.
+- proposedSafetyAssessment must be exactly Safety or Mission/Reliability, with a concise proposedSafetyAssessmentRationale grounded in the generated hazard and operational context.
+- safetySignificant must be exactly Yes when proposedSafetyAssessment is Safety, otherwise Needs Review, with a concise safetySignificanceRationale.
 
 Rows:
 ${JSON.stringify(compactPromptRows(items))}
   `.trim();
 
-  const response = await fetchLLMResponse(prompt);
+  const response = await fetchLLMResponse(prompt, {}, undefined, "", {
+    signal: contextOptions.signal,
+    maxTokens: 8_000,
+  });
   return extractJsonArray(response);
 }
 
@@ -537,6 +569,7 @@ async function requestStandardRowsWithRetries(config, chunk, contextOptions = {}
   try {
     mergeRows(await requestStandardRows(config, chunk, contextOptions));
   } catch (err) {
+    rethrowInterruptedRequest(err, contextOptions.signal);
     console.warn(`⚠️ ${config.sheetName} generation failed for ${chunk.length} rows; retrying smaller subchunks.`, err);
   }
 
@@ -554,6 +587,7 @@ async function requestStandardRowsWithRetries(config, chunk, contextOptions = {}
           retryReason: `Retry ${attempt + 1}: return exactly these missing row ids: ${retryChunk.map((item) => item.id).join(", ")}`,
         }));
       } catch (err) {
+        rethrowInterruptedRequest(err, contextOptions.signal);
         console.warn(`⚠️ ${config.sheetName} retry ${attempt + 1} failed for ${retryChunk.map((item) => item.id).join(", ")}.`, err);
       }
     }
@@ -590,7 +624,10 @@ ${JSON.stringify(repairItems.map(({ item, row, fieldsToRepair }) => ({
 })))}
   `.trim();
 
-  const response = await fetchLLMResponse(prompt);
+  const response = await fetchLLMResponse(prompt, {}, undefined, "", {
+    signal: contextOptions.signal,
+    maxTokens: 5_000,
+  });
   return extractJsonArray(response);
 }
 
@@ -627,6 +664,7 @@ async function repairGenericStandardRows(config, rows, items, contextOptions = {
         repairedRows[index] = normalizeRow(config, merged, item, index);
       });
     } catch (err) {
+      rethrowInterruptedRequest(err, contextOptions.signal);
       console.warn(`⚠️ ${config.sheetName} generic wording repair failed for chunk ${chunkIndex + 1}.`, err);
     }
   }
@@ -670,7 +708,10 @@ ${JSON.stringify(tagItems.map(({ item, row }) => ({
 })))}
   `.trim();
 
-  const response = await fetchLLMResponse(prompt);
+  const response = await fetchLLMResponse(prompt, {}, undefined, "", {
+    signal: contextOptions.signal,
+    maxTokens: 5_000,
+  });
   return extractJsonArray(response);
 }
 
@@ -682,7 +723,17 @@ async function tagSafetySignificanceForStandardRows(config, rows, items, context
   });
 
   const taggedRows = [...rows];
-  const tagItems = rows.map((row, index) => ({ row, item: items[index], index }));
+  const tagItems = rows
+    .map((row, index) => ({ row, item: items[index], index }))
+    .filter(({ row }) => !sanitizeText(row.proposedSafetyAssessmentRationale) || !sanitizeText(row.safetySignificanceRationale));
+  if (!tagItems.length) {
+    contextOptions.onProgress?.({
+      message: `${config.sheetName} safety significance was completed during generation.`,
+      completed: rows.length,
+      total: rows.length,
+    });
+    return rows;
+  }
   const tagChunks = chunkItemsByCount(tagItems, STANDARD_RETRY_ROWS_PER_PROMPT);
   for (let chunkIndex = 0; chunkIndex < tagChunks.length; chunkIndex += 1) {
     const tagChunk = tagChunks[chunkIndex];
@@ -705,6 +756,7 @@ async function tagSafetySignificanceForStandardRows(config, rows, items, context
         }, item, index);
       });
     } catch (err) {
+      rethrowInterruptedRequest(err, contextOptions.signal);
       console.warn(`⚠️ ${config.sheetName} safety significance review failed for chunk ${chunkIndex + 1}.`, err);
       tagChunk.forEach(({ row, item, index }) => {
         taggedRows[index] = normalizeRow(config, {
@@ -791,6 +843,7 @@ export async function generateStandardCodeHazardAnalysisSheets({
   contextSources = null,
   onProgress = () => {},
   omitConsolidatedRequirement = false,
+  signal = null,
 }) {
   const items = flattenDecomposition(sheets);
   if (!items.length) return sheets;
@@ -819,12 +872,14 @@ export async function generateStandardCodeHazardAnalysisSheets({
         operationalContext,
         analysisContext,
         contextSources,
+        signal,
         onProgress,
       });
       chunk.forEach((item, index) => {
         generatedRows[start + index] = chunkRows[index] || {};
       });
     } catch (err) {
+      rethrowInterruptedRequest(err, signal);
       console.warn(`⚠️ ${config.sheetName} standard generation failed for chunk ${chunkIndex + 1}; using local fallback rows for that chunk.`, err);
       chunk.forEach((item, index) => {
         generatedRows[start + index] = fallbackRow(config, item, start + index);
@@ -838,6 +893,7 @@ export async function generateStandardCodeHazardAnalysisSheets({
     operationalContext,
     analysisContext,
     contextSources,
+    signal,
     onProgress: (patch) => onProgress({
       step: promptChunks.length + 1,
       total: promptChunks.length + 1,
@@ -848,6 +904,7 @@ export async function generateStandardCodeHazardAnalysisSheets({
     operationalContext,
     analysisContext,
     contextSources,
+    signal,
     onProgress: (patch) => onProgress({
       step: promptChunks.length + 1,
       total: promptChunks.length + 2,

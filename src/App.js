@@ -19,6 +19,7 @@ import {
   MoreVertical,
   Download,
   PanelLeftClose,
+  PanelRightClose,
   Maximize2,
   Minimize2,
   Loader2,
@@ -26,11 +27,11 @@ import {
   ClipboardCheck,
   Sparkles,
 } from 'lucide-react';
-import XHandleCopilotView from "./components/XHandleCopilotView";
-import { handleLitePromptSubmit } from './components/LitePromptHandler';
+import XHandleCopilotView, { generateFunctionalDecompositionWithCollaborator } from "./components/XHandleCopilotView";
 import { runLiteAIAnalysis } from './components/aiAnalysisLite';
 import LiteSummaryDiagram from './components/LiteSummaryDiagram';
 import PromptWizard from './components/PromptWizard';
+import { buildPromptWizardCollaboratorRequest } from './components/functionalDecompositionGeneration';
 import ConversationalWizard from './components/ConversationalWizard';
 import LiteSummaryDiagramReactFlow from './components/LiteSummaryDiagramReactFlow';
 import { generateAgenticRiskReport } from './components/generateAgenticReport';
@@ -155,6 +156,26 @@ import {
   isHostedCodeArchitectureReviewPackagerConfigured,
   REVIEW_ANALYSIS_SECTIONS,
 } from "./features/code-architecture-review/codeArchitectureReviewExport";
+import {
+  buildProjectHazardDiagramSummary,
+  resolveProjectHazardArtifactNavigation,
+} from "./features/project-hazard-analysis/projectHazardDiagramSummary";
+import HazardOperationalContextManager from "./features/project-hazard-analysis/HazardOperationalContextManager";
+import { generateHazardOperationalContexts } from "./features/project-hazard-analysis/hazardOperationalContextAi";
+import {
+  buildSafetyIssueContextVariants,
+  getBoundingSafetyIssueContext,
+  getSafetyEvidenceCell,
+} from "./features/project-hazard-analysis/safetyIssueOperationalContexts";
+import {
+  buildHazardOperationalContextPrompt,
+  getEffectiveHazardOperationalContexts,
+  getHazardContextRowKey,
+  getHazardOperationalContextLabel,
+  getLegacyHazardRowKey,
+  isUnspecifiedHazardContext,
+  normalizeHazardOperationalContexts,
+} from "./features/project-hazard-analysis/hazardOperationalContexts";
 
 const CODE_ARCHITECTURE_REVIEW_ANALYSIS_OPTIONS = [
   { key: REVIEW_ANALYSIS_SECTIONS.HAZARD, label: "Hazard & Remediation" },
@@ -210,15 +231,21 @@ function getProjectHazardGuidePhrases(method = "STPA-Textbook") {
     : [""];
 }
 
-function getProjectDraftHazardRowKey(functionalRowIndex, guidePhraseIndex = 0) {
-  return `${Number(functionalRowIndex) || 0}:guide:${Number(guidePhraseIndex) || 0}`;
-}
+const PROJECT_HAZARD_CONTEXT_HEADER_LIST = [
+  "Operational Context ID",
+  "Operational Scenario",
+  "Operational Mode",
+  "Operating Conditions",
+  "Context Assumptions",
+];
+const PROJECT_HAZARD_CONTEXT_HEADERS = new Set(PROJECT_HAZARD_CONTEXT_HEADER_LIST);
 
-function buildProjectDraftHazardTargets(functionalRows = [], method = "STPA-Textbook") {
+function buildProjectDraftHazardTargets(functionalRows = [], method = "STPA-Textbook", contexts = []) {
   const guidePhrases = getProjectHazardGuidePhrases(method);
+  const effectiveContexts = getEffectiveHazardOperationalContexts(contexts);
   return (functionalRows || []).flatMap((functionalRow, originalIndex) => (
-    guidePhrases.map((guidePhrase, guidePhraseIndex) => {
-      const rowKey = getProjectDraftHazardRowKey(originalIndex, guidePhraseIndex);
+    guidePhrases.flatMap((guidePhrase, guidePhraseIndex) => effectiveContexts.map((context) => {
+      const rowKey = getHazardContextRowKey(originalIndex, guidePhraseIndex, context.id);
       return {
         functionalRow,
         analysisRow: {
@@ -227,14 +254,24 @@ function buildProjectDraftHazardTargets(functionalRows = [], method = "STPA-Text
           guidePhraseIndex,
           guidePhraseApplicable: "",
           guidePhraseApplicabilityRationale: "",
+          hazardContextId: context.id,
+          operationalScenario: context.scenario,
+          operationalMode: context.mode,
+          operatingConditions: context.conditions,
+          contextAssumptions: context.assumptions,
         },
         originalIndex,
         interfaceIndex: originalIndex,
         guidePhrase,
         guidePhraseIndex,
+        context,
+        contextId: context.id,
         rowKey,
+        legacyRowKey: isUnspecifiedHazardContext(context)
+          ? getLegacyHazardRowKey(originalIndex, guidePhraseIndex)
+          : null,
       };
-    })
+    }))
   ));
 }
 
@@ -340,7 +377,7 @@ const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
 
 function getProjectDraftHazardHeaders(method = "STPA") {
   const methodHeaders = PROJECT_DRAFT_HAZARD_METHOD_HEADERS[method] || PROJECT_DRAFT_HAZARD_METHOD_HEADERS.STPA;
-  return Array.from(new Set([...PROJECT_DRAFT_HAZARD_BASE_HEADERS, ...methodHeaders]));
+  return Array.from(new Set([...PROJECT_DRAFT_HAZARD_BASE_HEADERS, ...methodHeaders, ...PROJECT_HAZARD_CONTEXT_HEADER_LIST]));
 }
 
 function buildProjectDraftHazardRow(functionalRow = {}, headers = getProjectDraftHazardHeaders()) {
@@ -350,6 +387,11 @@ function buildProjectDraftHazardRow(functionalRow = {}, headers = getProjectDraf
     "Control Action": functionalRow?.controlAction || "",
     "Function (To)": functionalRow?.toFunction || "",
     "Subsystem Allocation": fallbackSubsystem,
+    "Operational Context ID": functionalRow?.hazardContextId || "context-unspecified",
+    "Operational Scenario": functionalRow?.operationalScenario || "Unspecified scenario",
+    "Operational Mode": functionalRow?.operationalMode || "Unspecified mode",
+    "Operating Conditions": functionalRow?.operatingConditions || "",
+    "Context Assumptions": functionalRow?.contextAssumptions || "",
     "Guide Phrase": functionalRow?.guidePhrase || "",
     "Guide Phrase Applicable": functionalRow?.guidePhraseApplicable || "",
     "Guide Phrase Applicability Rationale": functionalRow?.guidePhraseApplicabilityRationale || "",
@@ -364,6 +406,11 @@ const PROJECT_DRAFT_HAZARD_HEADER_ALIASES = {
   "Control Action": ["Control Action", "Unsafe Control Action", "UCA", "Action", "What-If Scenario", "Failure Mode", "Malfunction"],
   "Function (To)": ["Function (To)", "To Function", "Target Function", "Controlled Process"],
   "Subsystem Allocation": ["Subsystem Allocation", "Subsystem"],
+  "Operational Context ID": ["Operational Context ID", "Context ID"],
+  "Operational Scenario": ["Operational Scenario", "Scenario", "Operating Scenario"],
+  "Operational Mode": ["Operational Mode", "Mode", "System Mode"],
+  "Operating Conditions": ["Operating Conditions", "Conditions", "Environmental Conditions"],
+  "Context Assumptions": ["Context Assumptions", "Operational Assumptions"],
   "Guide Phrase": ["Guide Phrase", "Guide Word", "Guideword", "Guideword Phrase", "STPA Guide Phrase"],
   "Guide Phrase Applicable": ["Guide Phrase Applicable", "Guide Applicable", "Applicability", "Applicable"],
   "Guide Phrase Applicability Rationale": ["Guide Phrase Applicability Rationale", "Applicability Rationale", "Guide Phrase Rationale"],
@@ -471,7 +518,16 @@ function getHazardInterfaceGroupMeta(row = [], headers = []) {
 
 function annotateHazardInterfaceRows(rows = [], headers = []) {
   const metas = rows.map((item) => getHazardInterfaceGroupMeta(item.row, headers));
+  const guideIdx = findSummaryColumn(headers, ["Guide Phrase", "Guide Word", "Guideword", "Guideword Phrase", "STPA Guide Phrase"]);
+  const variantMetas = rows.map((item, index) => {
+    const guidePhrase = guideIdx >= 0 ? String(item.row?.[guideIdx] || "Unspecified guide phrase").trim() : "Hazard analysis";
+    return {
+      key: `${metas[index]?.key || "unknown-interface"}::${normalizeAllocationText(guidePhrase)}`,
+      label: guidePhrase || "Unspecified guide phrase",
+    };
+  });
   const runCounts = new Map();
+  const variantRunCounts = new Map();
   let runStart = 0;
   while (runStart < metas.length) {
     const runKey = metas[runStart]?.key || `__empty_${runStart}`;
@@ -484,29 +540,55 @@ function annotateHazardInterfaceRows(rows = [], headers = []) {
     }
     runStart = runEnd;
   }
+  let variantStart = 0;
+  while (variantStart < variantMetas.length) {
+    const runKey = variantMetas[variantStart]?.key || `__variant_${variantStart}`;
+    let variantEnd = variantStart + 1;
+    while (variantEnd < variantMetas.length && (variantMetas[variantEnd]?.key || `__variant_${variantEnd}`) === runKey) {
+      variantEnd += 1;
+    }
+    for (let index = variantStart; index < variantEnd; index += 1) {
+      variantRunCounts.set(index, variantEnd - variantStart);
+    }
+    variantStart = variantEnd;
+  }
   return rows.map((item, index) => {
     const groupMeta = metas[index];
     const previousGroupMeta = index > 0 ? metas[index - 1] : null;
+    const variantMeta = variantMetas[index];
+    const previousVariantMeta = index > 0 ? variantMetas[index - 1] : null;
     return {
       ...item,
       groupMeta,
+      variantMeta,
       isFirstInGroup: !previousGroupMeta || previousGroupMeta.key !== groupMeta.key,
+      isFirstInVariantGroup: !previousVariantMeta || previousVariantMeta.key !== variantMeta.key,
       groupCount: runCounts.get(index) || 1,
+      variantCount: variantRunCounts.get(index) || 1,
     };
   });
 }
 
-function findExistingHazardRowForFunctionalRow(functionalRow = {}, summary = null, guidePhrase = "") {
+function findExistingHazardRowForFunctionalRow(functionalRow = {}, summary = null, guidePhrase = "", context = null) {
   if (!Array.isArray(summary) || !Array.isArray(summary[0]) || summary.length < 2) return null;
   const headers = summary[0];
   const targetKey = getFunctionalControlActionKey(functionalRow);
   const guideIdx = findSummaryColumn(headers, ["Guide Phrase", "Guide Word", "Guideword", "Guideword Phrase", "STPA Guide Phrase"]);
+  const scenarioIdx = findSummaryColumn(headers, ["Operational Scenario", "Scenario", "Operating Scenario"]);
+  const modeIdx = findSummaryColumn(headers, ["Operational Mode", "Mode", "System Mode"]);
   const normalizedGuidePhrase = normalizeAllocationText(guidePhrase);
+  const normalizedScenario = normalizeAllocationText(context?.scenario);
+  const normalizedMode = normalizeAllocationText(context?.mode);
+  const contextIsUnspecified = !context || isUnspecifiedHazardContext(context);
   return summary.slice(1).find((row) => {
     if (buildHazardRowControlActionKey(row, headers) !== targetKey) return false;
     if (!normalizedGuidePhrase) return true;
     if (guideIdx < 0) return false;
-    return normalizeAllocationText(row?.[guideIdx]) === normalizedGuidePhrase;
+    if (normalizeAllocationText(row?.[guideIdx]) !== normalizedGuidePhrase) return false;
+    if (!contextIsUnspecified && (scenarioIdx < 0 || modeIdx < 0)) return false;
+    if (normalizedScenario && scenarioIdx >= 0 && normalizeAllocationText(row?.[scenarioIdx]) !== normalizedScenario) return false;
+    if (normalizedMode && modeIdx >= 0 && normalizeAllocationText(row?.[modeIdx]) !== normalizedMode) return false;
+    return true;
   }) || null;
 }
 
@@ -5060,23 +5142,34 @@ const buildRiskRegisterFromSummary = (summary) => {
   return rows
     .map((row, idx) => ({ row, idx }))
     .filter(({ row }) => shouldUseHazardSummaryRowForSafetyIssue(row, headers))
-    .map(({ row, idx }) => ({
-      id: makeId(),
-      title: String(row[titleIdx] ?? `Risk ${idx + 1}`),
-      // ⬇️ description strictly from hazard column (or a minimal fallback)
-      description: String(
+    .map(({ row, idx }) => {
+      const description = String(
         hazardIdx >= 0
           ? (row[hazardIdx] ?? '—')
-          : (row[1] ?? '—') // fallback if no explicit Hazard column exists
-      ),
-      likelihood: 3,
-      severity: 3,
-      status: 'Open',
-      owner: '',
-      dueDate: '',
-      tags: '',
-      sourceIndex: idx + 1,
-    }));
+          : (row[1] ?? '—')
+      );
+      const cells = Object.fromEntries(headers.map((header, index) => [header, String(row?.[index] ?? "").trim()]));
+      const contextVariants = buildSafetyIssueContextVariants({
+        description,
+        likelihood: 3,
+        severity: 3,
+        evidence: [{ sourceIndex: idx + 1, cells }],
+      });
+      return {
+        id: makeId(),
+        title: String(row[titleIdx] ?? `Risk ${idx + 1}`),
+        description,
+        likelihood: 3,
+        severity: 3,
+        status: 'Open',
+        owner: '',
+        dueDate: '',
+        tags: '',
+        sourceIndex: idx + 1,
+        sourceIndexes: [idx + 1],
+        contextVariants,
+      };
+    });
 };
 
 function getRiskPriority(score) {
@@ -5142,8 +5235,11 @@ function replaceSafetyIssueReportMarkdown(markdown, issueId, nextIssueMarkdown) 
 
 function buildFallbackSafetyIssueEvidenceRow(item = {}) {
   const cells = item.cells || {};
+  const scenario = getSafetyEvidenceCell(cells, [/^Operational Scenario$/i, /^Scenario$/i]) || "Unspecified scenario";
+  const mode = getSafetyEvidenceCell(cells, [/^Operational Mode$/i, /^Mode$/i]) || "Unspecified mode";
   return {
     sourceIndex: item.sourceIndex,
+    operationalContext: `${scenario} · ${mode}`,
     hazardUnsafeCondition: Object.entries(cells).slice(0, 2).map(([label, value]) => `${label}: ${value}`).join("; "),
     affectedFunctionOrSubsystem: Object.entries(cells).find(([label]) => /function|subsystem|component|allocation/i.test(label))?.[1] || "",
     controlActionOrFailureMode: Object.entries(cells).find(([label]) => /control|action|failure|unsafe/i.test(label))?.[1] || "",
@@ -5155,7 +5251,15 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
   const rowsBySourceIndex = new Map();
   (Array.isArray(keyEvidenceRows) ? keyEvidenceRows : []).forEach((row) => {
     const sourceIndex = Number(row?.sourceIndex);
-    if (Number.isFinite(sourceIndex) && sourceIndex > 0) rowsBySourceIndex.set(sourceIndex, row);
+    if (Number.isFinite(sourceIndex) && sourceIndex > 0) {
+      const evidence = (issue.evidence || []).find((item) => Number(item?.sourceIndex) === sourceIndex);
+      const fallback = evidence ? buildFallbackSafetyIssueEvidenceRow(evidence) : {};
+      rowsBySourceIndex.set(sourceIndex, {
+        ...fallback,
+        ...row,
+        operationalContext: String(row?.operationalContext || fallback.operationalContext || "").trim(),
+      });
+    }
   });
   (issue.evidence || []).forEach((item) => {
     const sourceIndex = Number(item?.sourceIndex);
@@ -5165,6 +5269,7 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
   return (issue.sourceIndexes || [])
     .map((sourceIndex) => rowsBySourceIndex.get(Number(sourceIndex)) || {
       sourceIndex,
+      operationalContext: "Unspecified scenario · Unspecified mode",
       hazardUnsafeCondition: "Linked hazard-analysis source row.",
       affectedFunctionOrSubsystem: "",
       controlActionOrFailureMode: "",
@@ -6418,6 +6523,10 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [draftHazardColumnSearches, setDraftHazardColumnSearches] = useState({});
   const draftHazardDropdownRefs = useRef({});
   const [collapsedHazardInterfaceKeys, setCollapsedHazardInterfaceKeys] = useState(new Set());
+  const [expandedHazardVariantKeys, setExpandedHazardVariantKeys] = useState(new Set());
+  const [hazardOperationalContexts, setHazardOperationalContexts] = useState([]);
+  const [selectedHazardContextId, setSelectedHazardContextId] = useState("all");
+  const [showHazardContextManager, setShowHazardContextManager] = useState(false);
   const [pendingReviewSourceJump, setPendingReviewSourceJump] = useState(null);
   const [filterColumnIndex, setFilterColumnIndex] = useState(null);
   const [columnSearches, setColumnSearches] = useState({});
@@ -6440,6 +6549,7 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
 	  const [riskAssessmentReportMarkdown, setRiskAssessmentReportMarkdown] = useState("");
   const [isGeneratingRiskAssessmentReport, setIsGeneratingRiskAssessmentReport] = useState(false);
   const [isConsolidatingSafetyIssues, setIsConsolidatingSafetyIssues] = useState(false);
+  const hazardAnalysisAbortControllerRef = useRef(null);
   const [generatingSafetyIssueReportIds, setGeneratingSafetyIssueReportIds] = useState(new Set());
   const [selectedRiskPriority, setSelectedRiskPriority] = useState("All");
   const [activeRiskId, setActiveRiskId] = useState(null);
@@ -6473,9 +6583,9 @@ useEffect(() => {
   updateActivity(analysisActivityId, {
     step: progress.step || 0,
     total: progress.total || 0,
-    message: stepDescriptionsMap[riskMethod]?.steps[progress.step] || "Working…"
+    message: progress.message || stepDescriptionsMap[riskMethod]?.steps[progress.step] || "Working…"
   });
-}, [analysisActivityId, isAnalyzing, progress.step, progress.total, riskMethod, updateActivity]);
+}, [analysisActivityId, isAnalyzing, progress.step, progress.total, progress.message, riskMethod, updateActivity]);
 
   useEffect(() => {
     if (!projectLoaded) return;
@@ -6589,6 +6699,10 @@ useEffect(() => {
       setDraftHazardColumnFilters({});
       setDraftHazardColumnSearches({});
       setDraftHazardFilterColumnIndex(null);
+      setHazardOperationalContexts([]);
+      setSelectedHazardContextId("all");
+      setShowHazardContextManager(false);
+      setExpandedHazardVariantKeys(new Set());
       setRiskMethod('STPA');
       setProjectRiskProfileGenerationMode('standard');
       setAgentReportResult(null); // NEW: reset when no project
@@ -6620,6 +6734,10 @@ useEffect(() => {
     setDraftHazardColumnFilters({});
     setDraftHazardColumnSearches({});
     setDraftHazardFilterColumnIndex(null);
+    setHazardOperationalContexts(normalizeHazardOperationalContexts(data?.hazardOperationalContexts || []));
+    setSelectedHazardContextId("all");
+    setShowHazardContextManager(false);
+    setExpandedHazardVariantKeys(new Set());
     setRiskMethod('STPA-Textbook');
     setProjectRiskProfileGenerationMode(data?.projectRiskProfileGenerationMode || 'standard');
     setAgentReportResult(data?.agentReportResult || null); // NEW: restore report
@@ -6733,8 +6851,9 @@ useEffect(() => {
 	    agentReportResult,
     riskAssessmentReportMarkdown,
 	    riskRegister,
-	    requirements,        // ← add this
+    requirements,        // ← add this
     draftHazardRowsByIndex,
+	    hazardOperationalContexts,
 	  };
   if (analysisResult !== null && analysisResult !== undefined) {
     patch.analysisResult = analysisResult;
@@ -6757,6 +6876,7 @@ useEffect(() => {
 	  riskRegister, // <-- ensure riskRegister is in the deps
 	  requirements,
   draftHazardRowsByIndex,
+	  hazardOperationalContexts,
 	]);
 
 const handleProjectDiagramRowsUpdate = useCallback((nextRowsOrUpdater) => {
@@ -6872,6 +6992,12 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   }, [analysisResult, showFunctionalDiagram, responseRows?.length]);
 
   const draftHazardHeaders = useMemo(() => getProjectDraftHazardHeaders(riskMethod), [riskMethod]);
+  useEffect(() => {
+    if (!activeProjectId || !Object.keys(draftHazardRowsByIndex || {}).length) return;
+    const savedHeaders = loadProjectData(activeProjectId)?.draftHazardHeaders;
+    if (JSON.stringify(savedHeaders || []) === JSON.stringify(draftHazardHeaders)) return;
+    saveProjectPatch(activeProjectId, { draftHazardHeaders });
+  }, [activeProjectId, draftHazardHeaders, draftHazardRowsByIndex]);
   const hazardAnalysisRows = useMemo(
     () => getProjectHazardAnalysisRows(responseRows),
     [responseRows]
@@ -6880,20 +7006,44 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     () => responseRows.filter((row) => hasProjectDiagramRelationship(row) && !hasProjectHazardAnalysisInputs(row)).length,
     [responseRows]
   );
+  const effectiveHazardOperationalContexts = useMemo(
+    () => getEffectiveHazardOperationalContexts(hazardOperationalContexts),
+    [hazardOperationalContexts]
+  );
   const draftHazardTargets = useMemo(
-    () => buildProjectDraftHazardTargets(hazardAnalysisRows, riskMethod),
-    [hazardAnalysisRows, riskMethod]
+    () => buildProjectDraftHazardTargets(hazardAnalysisRows, riskMethod, effectiveHazardOperationalContexts),
+    [effectiveHazardOperationalContexts, hazardAnalysisRows, riskMethod]
   );
   useEffect(() => {
     if (!Array.isArray(analysisResult?.Summary?.[0])) return;
     let cancelled = false;
     const targetHeaders = getProjectDraftHazardHeaders(riskMethod);
     const existingSummary = analysisResult.Summary;
-    const nextDraftRows = {};
+    const nextDraftRows = hazardOperationalContexts.length
+      ? Object.fromEntries(Object.entries(draftHazardRowsByIndex || {}).filter(([rowKey]) => (
+          !String(rowKey).includes(":context:") || String(rowKey).includes(":context:context-unspecified")
+        )))
+      : {};
+    if (
+      hazardOperationalContexts.length
+      && findSummaryColumn(existingSummary[0] || [], ["Operational Scenario", "Scenario", "Operating Scenario"]) < 0
+    ) {
+      const unspecifiedTargets = buildProjectDraftHazardTargets(hazardAnalysisRows, riskMethod, []);
+      existingSummary.slice(1).forEach((existingRow, index) => {
+        const legacyTarget = unspecifiedTargets[index];
+        if (!legacyTarget) return;
+        const fallbackRow = buildProjectDraftHazardRow(legacyTarget.analysisRow, targetHeaders);
+        const alignedRow = alignSummaryRowToHeaders(existingSummary[0] || [], existingRow, targetHeaders, fallbackRow);
+        if (!isMeaningfullyGeneratedDraftRow(alignedRow, fallbackRow)) return;
+        nextDraftRows[legacyTarget.rowKey] = { row: alignedRow, generated: true };
+      });
+    }
     const nextSummaryRows = draftHazardTargets
       .map((target) => {
         const fallbackRow = buildProjectDraftHazardRow(target.analysisRow, targetHeaders);
-        const existingDraft = draftHazardRowsByIndex[target.rowKey] || (target.guidePhraseIndex === 0 ? draftHazardRowsByIndex[target.originalIndex] : null);
+        const existingDraft = draftHazardRowsByIndex[target.rowKey]
+          || (target.legacyRowKey ? draftHazardRowsByIndex[target.legacyRowKey] : null)
+          || (target.legacyRowKey && target.guidePhraseIndex === 0 ? draftHazardRowsByIndex[target.originalIndex] : null);
         if (Array.isArray(existingDraft?.row)) {
           const alignedDraft = alignSummaryRowToHeaders(targetHeaders, existingDraft.row, targetHeaders, fallbackRow);
           if (isMeaningfullyGeneratedDraftRow(alignedDraft, fallbackRow)) {
@@ -6904,7 +7054,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
             return alignedDraft;
           }
         }
-        const existingCompletedRow = findExistingHazardRowForFunctionalRow(target.analysisRow, existingSummary, target.guidePhrase);
+        const existingCompletedRow = findExistingHazardRowForFunctionalRow(target.analysisRow, existingSummary, target.guidePhrase, target.context);
         if (!existingCompletedRow) return null;
         const alignedCompleted = alignSummaryRowToHeaders(existingSummary[0] || [], existingCompletedRow, targetHeaders, fallbackRow);
         if (!isMeaningfullyGeneratedDraftRow(alignedCompleted, fallbackRow)) return null;
@@ -6939,6 +7089,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         saveProjectPatch(activeProjectId, {
           analysisResult: nextAnalysisResult,
           draftHazardRowsByIndex: nextDraftRows,
+          draftHazardHeaders: targetHeaders,
           riskRegister: nextRiskRegister,
         });
       }
@@ -6969,50 +7120,56 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     // requestConsolidatedSafetyIssuesFromSummary is intentionally omitted because it is a component-local async helper.
     // Including it would rerun this downstream sync on unrelated renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeProjectId, analysisResult, draftHazardRowsByIndex, draftHazardTargets, riskMethod, riskRegister]);
+  }, [activeProjectId, analysisResult, draftHazardRowsByIndex, draftHazardTargets, hazardAnalysisRows, hazardOperationalContexts, riskMethod, riskRegister]);
   const hazardSummaryHeaders = draftHazardHeaders;
+  const visibleDraftHazardColumnCount = draftHazardHeaders.filter((header) => !PROJECT_HAZARD_CONTEXT_HEADERS.has(header)).length;
+  const visibleHazardSummaryColumnCount = hazardSummaryHeaders.filter((header) => !PROJECT_HAZARD_CONTEXT_HEADERS.has(header)).length;
   const hazardSummaryDisplayRows = useMemo(() => {
-    if (!Array.isArray(analysisResult?.Summary?.[0])) return [];
-    const completedHeaders = analysisResult.Summary[0] || [];
-    const completedRows = analysisResult.Summary.slice(1);
-    const completedItems = completedRows.map((row, originalIndex) => {
-      const target = draftHazardTargets[originalIndex];
-      const functionalRow = target?.analysisRow || responseRows[originalIndex];
-      const fallbackRow = functionalRow
-        ? buildProjectDraftHazardRow(functionalRow, hazardSummaryHeaders)
-        : Array(hazardSummaryHeaders.length).fill("");
+    const completedSummary = Array.isArray(analysisResult?.Summary?.[0])
+      ? analysisResult.Summary
+      : null;
+    const completedHeaders = completedSummary?.[0] || [];
+
+    return draftHazardTargets.map((target, targetIndex) => {
+      const { analysisRow, originalIndex, rowKey } = target;
+      const fallbackRow = buildProjectDraftHazardRow(analysisRow, hazardSummaryHeaders);
+      const savedDraft = draftHazardRowsByIndex[rowKey]
+        || (target.legacyRowKey ? draftHazardRowsByIndex[target.legacyRowKey] : null)
+        || (target.legacyRowKey && target.guidePhraseIndex === 0 ? draftHazardRowsByIndex[originalIndex] : null);
+      const alignedDraft = Array.isArray(savedDraft?.row)
+        ? alignSummaryRowToHeaders(draftHazardHeaders, savedDraft.row, hazardSummaryHeaders, fallbackRow)
+        : null;
+      const generatedDraft = Boolean(savedDraft?.generated) && Boolean(
+        alignedDraft && isMeaningfullyGeneratedDraftRow(alignedDraft, fallbackRow)
+      );
+      const completedRow = completedSummary
+        ? findExistingHazardRowForFunctionalRow(analysisRow, completedSummary, target.guidePhrase, target.context)
+        : null;
+      const alignedCompleted = completedRow
+        ? alignSummaryRowToHeaders(completedHeaders, completedRow, hazardSummaryHeaders, fallbackRow)
+        : null;
+      const generatedCompleted = Boolean(
+        alignedCompleted && isMeaningfullyGeneratedDraftRow(alignedCompleted, fallbackRow)
+      );
+      const generated = generatedDraft || generatedCompleted;
+
       return {
-        row: alignSummaryRowToHeaders(completedHeaders, row, hazardSummaryHeaders, fallbackRow),
-        originalIndex,
-        interfaceIndex: target?.interfaceIndex ?? originalIndex,
-        guidePhraseIndex: target?.guidePhraseIndex ?? 0,
-        rowKey: target?.rowKey || getProjectDraftHazardRowKey(originalIndex, 0),
-        generated: true,
-        pending: false,
+        row: generatedDraft ? alignedDraft : (generatedCompleted ? alignedCompleted : fallbackRow),
+        originalIndex: targetIndex,
+        interfaceIndex: originalIndex,
+        guidePhraseIndex: target.guidePhraseIndex,
+        context: target.context,
+        contextId: target.contextId,
+        rowKey,
+        generated,
+        pending: !generated,
       };
     });
-    const pendingItems = draftHazardTargets
-      .map((target, targetIndex) => {
-        const { analysisRow, originalIndex, rowKey } = target;
-        if (targetIndex < completedRows.length) return null;
-        const fallbackRow = buildProjectDraftHazardRow(analysisRow, hazardSummaryHeaders);
-        const savedDraft = draftHazardRowsByIndex[rowKey] || (target.guidePhraseIndex === 0 ? draftHazardRowsByIndex[originalIndex] : null);
-        const row = Array.isArray(savedDraft?.row)
-          ? alignSummaryRowToHeaders(draftHazardHeaders, savedDraft.row, hazardSummaryHeaders, fallbackRow)
-          : fallbackRow;
-        return {
-          row,
-          originalIndex: targetIndex,
-          interfaceIndex: originalIndex,
-          guidePhraseIndex: target.guidePhraseIndex,
-          rowKey,
-          generated: Boolean(savedDraft?.generated),
-          pending: true,
-        };
-      })
-      .filter(Boolean);
-    return [...pendingItems, ...completedItems];
-  }, [analysisResult, draftHazardHeaders, draftHazardRowsByIndex, draftHazardTargets, hazardSummaryHeaders, responseRows]);
+  }, [analysisResult, draftHazardHeaders, draftHazardRowsByIndex, draftHazardTargets, hazardSummaryHeaders]);
+  const diagramHazardData = useMemo(
+    () => buildProjectHazardDiagramSummary(hazardSummaryHeaders, hazardSummaryDisplayRows),
+    [hazardSummaryDisplayRows, hazardSummaryHeaders]
+  );
   const hasPendingHazardSummaryRows = hazardSummaryDisplayRows.some(({ pending, generated }) => pending && !generated);
 
   const getUniqueColumnValues = (colIdx, searchText = '') => {
@@ -7041,11 +7198,12 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   const activeHazardFilterCount = Object.values(columnFilters)
     .reduce((count, values) => count + (Array.isArray(values) ? values.length : 0), 0);
   const filteredHazardSummaryRows = useMemo(() => hazardSummaryDisplayRows
-    .filter(({ row }) =>
+    .filter(({ row, contextId }) =>
+      (selectedHazardContextId === "all" || contextId === selectedHazardContextId) &&
       Object.entries(columnFilters).every(([colIdx, allowed]) =>
         allowed.length === 0 || allowed.includes(String(row[colIdx] ?? ''))
       )
-    ), [columnFilters, hazardSummaryDisplayRows]);
+    ), [columnFilters, hazardSummaryDisplayRows, selectedHazardContextId]);
   const groupedFilteredHazardSummaryRows = useMemo(
     () => annotateHazardInterfaceRows(filteredHazardSummaryRows, hazardSummaryHeaders),
     [filteredHazardSummaryRows, hazardSummaryHeaders]
@@ -7068,16 +7226,21 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setDraftHazardColumnSearches({});
     setDraftHazardFilterColumnIndex(null);
     setCollapsedHazardInterfaceKeys(new Set());
+    setExpandedHazardVariantKeys(new Set());
   }, [activeProjectId, riskMethod]);
 
   const draftHazardSummaryRows = useMemo(() => {
     return draftHazardTargets.map((target, index) => {
-      const savedDraft = draftHazardRowsByIndex[target.rowKey] || (target.guidePhraseIndex === 0 ? draftHazardRowsByIndex[target.originalIndex] : null);
+      const savedDraft = draftHazardRowsByIndex[target.rowKey]
+        || (target.legacyRowKey ? draftHazardRowsByIndex[target.legacyRowKey] : null)
+        || (target.legacyRowKey && target.guidePhraseIndex === 0 ? draftHazardRowsByIndex[target.originalIndex] : null);
       return {
         row: savedDraft?.row || buildProjectDraftHazardRow(target.analysisRow, draftHazardHeaders),
         originalIndex: index,
         interfaceIndex: target.originalIndex,
         guidePhraseIndex: target.guidePhraseIndex,
+        context: target.context,
+        contextId: target.contextId,
         rowKey: target.rowKey,
         generated: Boolean(savedDraft?.generated),
       };
@@ -7091,6 +7254,26 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     ? hasPendingHazardSummaryRows
     : draftHazardSummaryRows.some(({ generated }) => !generated);
   const shouldRegenerateRiskProfileFromToolbar = hasRegeneratableRiskProfileRows && !hasPendingRiskProfileRows;
+
+  const handleSaveHazardOperationalContexts = (contexts) => {
+    const normalized = normalizeHazardOperationalContexts(contexts);
+    setHazardOperationalContexts(normalized);
+    setSelectedHazardContextId((current) => (
+      current === "all" || normalized.some((context) => context.id === current) ? current : "all"
+    ));
+    if (activeProjectId) {
+      saveProjectPatch(activeProjectId, { hazardOperationalContexts: normalized });
+    }
+  };
+  const handleGenerateHazardOperationalContexts = (description, existingContexts) => {
+    const projectName = projects.find((project) => project.id === activeProjectId)?.name || "Active project";
+    return generateHazardOperationalContexts({
+      description,
+      projectName,
+      functionalRows: responseRows,
+      existingContexts,
+    });
+  };
 
   const getUniqueDraftHazardColumnValues = (colIdx, searchText = '') => {
     const unique = new Set();
@@ -7119,11 +7302,12 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   };
   const activeDraftHazardFilterCount = Object.values(draftHazardColumnFilters)
     .reduce((count, values) => count + (Array.isArray(values) ? values.length : 0), 0);
-  const filteredDraftHazardSummaryRows = useMemo(() => draftHazardSummaryRows.filter(({ row }) =>
+  const filteredDraftHazardSummaryRows = useMemo(() => draftHazardSummaryRows.filter(({ row, contextId }) =>
+    (selectedHazardContextId === "all" || contextId === selectedHazardContextId) &&
     Object.entries(draftHazardColumnFilters).every(([colIdx, allowed]) =>
       !allowed?.length || allowed.includes(String(row[colIdx] ?? ''))
     )
-  ), [draftHazardColumnFilters, draftHazardSummaryRows]);
+  ), [draftHazardColumnFilters, draftHazardSummaryRows, selectedHazardContextId]);
   const groupedFilteredDraftHazardSummaryRows = useMemo(
     () => annotateHazardInterfaceRows(filteredDraftHazardSummaryRows, draftHazardHeaders),
     [filteredDraftHazardSummaryRows, draftHazardHeaders]
@@ -7148,6 +7332,14 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   };
   const toggleHazardInterfaceCollapsed = (key) => {
     setCollapsedHazardInterfaceKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+  const toggleHazardVariantExpanded = (key) => {
+    setExpandedHazardVariantKeys((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
@@ -7201,15 +7393,19 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   const risksWithEvidence = useMemo(() => {
     return (riskRegister || [])
       .map((risk) => {
-        const score = getRiskScore(risk);
-        const priority = getRiskPriority(score);
         const sourceIndexes = getRiskSourceIndexes(risk);
         const evidence = sourceIndexes
           .map((sourceIndex) => riskAssessmentSourceRowsByIndex.get(sourceIndex))
           .filter(Boolean);
+        const contextVariants = buildSafetyIssueContextVariants({ ...risk, evidence }, risk.contextVariants);
+        const boundingContext = getBoundingSafetyIssueContext(contextVariants);
+        const likelihood = risk.likelihood || boundingContext?.likelihood;
+        const severity = risk.severity || boundingContext?.severity;
+        const score = getRiskScore({ likelihood, severity });
+        const priority = getRiskPriority(score);
         const reportGenerated = Boolean(getSafetyIssueReportBounds(riskAssessmentReportMarkdown, risk.id));
         const reportGenerating = generatingSafetyIssueReportIds.has(risk.id);
-        return { ...risk, score, priority, sourceIndexes, evidence, reportGenerated, reportGenerating };
+        return { ...risk, likelihood, severity, score, priority, sourceIndexes, evidence, contextVariants, boundingContext, reportGenerated, reportGenerating };
       })
       .sort((a, b) => b.score - a.score);
   }, [riskRegister, riskAssessmentSourceRowsByIndex, riskAssessmentReportMarkdown, generatingSafetyIssueReportIds]);
@@ -7280,7 +7476,11 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     });
     if (!Object.keys(restored).length) return;
     setDraftHazardRowsByIndex(restored);
-    saveProjectPatch(activeProjectId, { draftHazardRowsByIndex: restored });
+    const restoredHeaders = draftHazardReviewItems.find((item) => Array.isArray(item.currentContent?.columns))?.currentContent.columns;
+    saveProjectPatch(activeProjectId, {
+      draftHazardRowsByIndex: restored,
+      ...(restoredHeaders ? { draftHazardHeaders: restoredHeaders } : {}),
+    });
   }, [
     activeProjectId,
     draftHazardReviewItems,
@@ -7466,11 +7666,24 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   const handleOpenHazardSummaryRow = useCallback((sourceIndex) => {
     const targetIndex = Number(sourceIndex);
     if (!Number.isFinite(targetIndex)) return;
+    const target = draftHazardTargets[targetIndex];
 
     setActiveTab('Hazard Analysis');
     setShowDiagram(false);
     setColumnFilters({});
     setFilterColumnIndex(null);
+    if (target?.contextId) setSelectedHazardContextId(target.contextId);
+    if (target?.analysisRow) {
+      const targetGroupKey = getHazardInterfaceGroupMeta(
+        buildProjectDraftHazardRow(target.analysisRow, draftHazardHeaders),
+        draftHazardHeaders
+      ).key;
+      setCollapsedHazardInterfaceKeys((current) => {
+        const next = new Set(current);
+        next.delete(targetGroupKey);
+        return next;
+      });
+    }
     setHighlightedHazardRowIndex(targetIndex);
 
     setTimeout(() => {
@@ -7481,7 +7694,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setTimeout(() => {
       setHighlightedHazardRowIndex((current) => (current === targetIndex ? null : current));
     }, 2600);
-  }, []);
+  }, [draftHazardHeaders, draftHazardTargets]);
 
   const handleOpenFunctionalRow = useCallback((sourceIndex) => {
     const targetIndex = Number(sourceIndex);
@@ -7786,7 +7999,11 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
                 generated: true,
               },
             };
-            saveProjectPatch(projectId, { draftHazardRowsByIndex: savedDraftRows });
+            const reviewedHeaders = item.currentContent?.columns || item.originalContent?.columns;
+            saveProjectPatch(projectId, {
+              draftHazardRowsByIndex: savedDraftRows,
+              ...(Array.isArray(reviewedHeaders) ? { draftHazardHeaders: reviewedHeaders } : {}),
+            });
           }
         }
         return;
@@ -7879,27 +8096,24 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
 
   const generateFunctionalRowsFromWizard = async (combinedPrompt, onProgress = () => {}, projectIdAtStart = activeProjectId) => {
     let parsedRows = [];
+    const collaboratorRequest = buildPromptWizardCollaboratorRequest(combinedPrompt);
     onProgress({
       step: 1,
       total: 2,
-      message: "Generating functional architecture decomposition..."
+      message: "Generating with the Collaborator functional-architecture workflow..."
     });
-    await handleLitePromptSubmit(
-      combinedPrompt,
-      (response) => {
-        const jsonMatch = response.match(/```json\s*([\s\S]*?)```/i);
-        const cleanJson = jsonMatch ? jsonMatch[1] : response;
-        try {
-          const parsed = JSON.parse(cleanJson);
-          parsedRows = Array.isArray(parsed) ? parsed : [];
-        } catch (err) {
-          console.error("Failed to parse response as JSON array", err);
-          parsedRows = [];
-        }
-      },
-      () => {},
-      {}
-    );
+    const generated = await generateFunctionalDecompositionWithCollaborator({
+      userRequest: collaboratorRequest.userRequest,
+      abstractionLevel: collaboratorRequest.abstractionLevel,
+      maxTokens: 16000,
+      maxContinuations: 2,
+      onStage: (message) => onProgress({
+        step: 1,
+        total: 2,
+        message,
+      }),
+    });
+    parsedRows = generated.rows;
 
     onProgress({
       step: 2,
@@ -7912,7 +8126,11 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     if (projectIdAtStart && activeProjectIdRef.current !== projectIdAtStart) {
       return parsedRows;
     }
-    const allocatedRows = applyDiagramCategorySubsystemAllocations(parsedRows, categories?.categories);
+    const allocatedRows = applyDiagramCategorySubsystemAllocations(
+      parsedRows,
+      categories?.categories,
+      { preserveExisting: true }
+    );
     setResponseRows(allocatedRows);
     setCommittedFunctionalDiagramRows(getProjectDiagramRows(allocatedRows));
     const tableSubsystemCategories = buildTableSubsystemDiagramCategoriesMeta(allocatedRows);
@@ -8654,6 +8872,10 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const sourceId = String(artifact.sourceId || "");
     const rowMatch = sourceId.match(/(?:responseRows|summary|row|rows):(?<index>\d+)$/i);
     const rowIndex = rowMatch?.groups?.index == null ? null : Number(rowMatch.groups.index);
+    const hazardNavigation = resolveProjectHazardArtifactNavigation(
+      artifact,
+      artifact.projectId ? loadProjectData(artifact.projectId)?.riskMethod : ""
+    );
 
     if (projectId) {
       setActiveProjectId(projectId);
@@ -8670,12 +8892,12 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       return { ok: true, artifactId, destination: "functional-decomposition" };
     }
 
-    if (/hazard_(analysis|summary)_row/i.test(String(artifact.type || "")) && Number.isFinite(rowIndex)) {
+    if (hazardNavigation) {
       setSection("projects");
       setPendingReviewSourceJump({
         projectId,
-        artifactType: "hazard_summary_table",
-        currentContent: { rowIndex },
+        artifactType: hazardNavigation.artifactType,
+        currentContent: { rowIndex: hazardNavigation.rowIndex },
       });
       return { ok: true, artifactId, destination: "hazard-analysis" };
     }
@@ -8835,7 +9057,11 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const existingSummary = Array.isArray(analysisResult?.Summary) ? analysisResult.Summary : null;
     const startingDraftRows = loadProjectData(activeProjectId)?.draftHazardRowsByIndex || draftHazardRowsByIndex || {};
     const sourceFunctionalRows = getProjectHazardAnalysisRows(responseRows);
-    const hazardTargets = buildProjectDraftHazardTargets(sourceFunctionalRows, selectedMethod);
+    const contextsToRun = selectedHazardContextId === "all"
+      ? effectiveHazardOperationalContexts
+      : effectiveHazardOperationalContexts.filter((context) => context.id === selectedHazardContextId);
+    const hazardTargets = buildProjectDraftHazardTargets(sourceFunctionalRows, selectedMethod, contextsToRun);
+    const allHazardTargets = buildProjectDraftHazardTargets(sourceFunctionalRows, selectedMethod, effectiveHazardOperationalContexts);
     if (!hazardTargets.length) {
       window.alert("Add at least one functional decomposition row with Function (From), Function (To), and Control Action before running hazard analysis.");
       return;
@@ -8846,7 +9072,9 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     hazardTargets.forEach((target) => {
       const { analysisRow, originalIndex, guidePhrase, guidePhraseIndex, rowKey } = target;
       const fallbackRow = buildProjectDraftHazardRow(analysisRow, targetHeaders);
-      const savedDraft = startingDraftRows[rowKey] || (guidePhraseIndex === 0 ? startingDraftRows[originalIndex] : null);
+      const savedDraft = startingDraftRows[rowKey]
+        || (target.legacyRowKey ? startingDraftRows[target.legacyRowKey] : null)
+        || (target.legacyRowKey && guidePhraseIndex === 0 ? startingDraftRows[originalIndex] : null);
       const savedDraftRow = Array.isArray(savedDraft?.row)
         ? alignSummaryRowToHeaders(draftHazardHeaders, savedDraft.row, targetHeaders, fallbackRow)
         : null;
@@ -8862,7 +9090,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
           return;
         }
 
-        const completedRow = findExistingHazardRowForFunctionalRow(analysisRow, existingSummary, guidePhrase);
+        const completedRow = findExistingHazardRowForFunctionalRow(analysisRow, existingSummary, guidePhrase, target.context);
         if (completedRow) {
           const completedHeaders = existingSummary[0] || [];
           const alignedCompletedRow = alignSummaryRowToHeaders(completedHeaders, completedRow, targetHeaders, fallbackRow);
@@ -8884,9 +9112,12 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         ...(analysisResult || {}),
         Summary: [
           targetHeaders,
-          ...hazardTargets
-            .map((target) => preservedDraftRows[target.rowKey]?.row || buildProjectDraftHazardRow(target.analysisRow, targetHeaders))
-            .filter((row, index) => isMeaningfullyGeneratedDraftRow(row, buildProjectDraftHazardRow(hazardTargets[index].analysisRow, targetHeaders))),
+          ...allHazardTargets
+            .map((target) => preservedDraftRows[target.rowKey]?.row
+              || startingDraftRows[target.rowKey]?.row
+              || (target.legacyRowKey ? startingDraftRows[target.legacyRowKey]?.row : null)
+              || buildProjectDraftHazardRow(target.analysisRow, targetHeaders))
+            .filter((row, index) => isMeaningfullyGeneratedDraftRow(row, buildProjectDraftHazardRow(allHazardTargets[index].analysisRow, targetHeaders))),
         ],
       };
       setIsConsolidatingSafetyIssues(true);
@@ -8899,6 +9130,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         saveProjectPatch(activeProjectId, {
           analysisResult: finalSheets,
           riskMethod: selectedMethod,
+          draftHazardHeaders: targetHeaders,
           draftHazardRowsByIndex: {
             ...(loadProjectData(activeProjectId)?.draftHazardRowsByIndex || {}),
             ...preservedDraftRows,
@@ -8916,11 +9148,16 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     }
 
     const functionalDecompositionSheet = [
-      ["Function (From)", "Control Action", "Function (To)", "Guide Phrase", "Guide Phrase Applicable", "Guide Phrase Applicability Rationale"],
+      ["Function (From)", "Control Action", "Function (To)", "Operational Context ID", "Operational Scenario", "Operational Mode", "Operating Conditions", "Context Assumptions", "Guide Phrase", "Guide Phrase Applicable", "Guide Phrase Applicability Rationale"],
       ...rowsToGenerate.map(({ functionalRow }) => [
         functionalRow.fromFunction || "",
         functionalRow.controlAction || "",
         functionalRow.toFunction || "",
+        functionalRow.hazardContextId || "context-unspecified",
+        functionalRow.operationalScenario || "",
+        functionalRow.operationalMode || "",
+        functionalRow.operatingConditions || "",
+        functionalRow.contextAssumptions || "",
         functionalRow.guidePhrase || "",
         functionalRow.guidePhraseApplicable || "",
         functionalRow.guidePhraseApplicabilityRationale || "",
@@ -8934,18 +9171,22 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const actId = `hazard-${activeProjectId || "default"}`;
     setHazardReviewRunId(sourceRunId);
     setAnalysisActivityId(actId);
+    const workloadMessage = `Preparing ${rowsToGenerate.length} hazard candidate${rowsToGenerate.length === 1 ? "" : "s"} across ${contextsToRun.length} operational context${contextsToRun.length === 1 ? "" : "s"}...`;
     startActivity(actId, {
       title: "Running hazard analysis",
       step: 0,
       total: stepDescriptionsMap[selectedMethod]?.total || 9,
-      message: "Starting analysis..."
+      message: workloadMessage,
     });
 
+    const abortController = new AbortController();
+    hazardAnalysisAbortControllerRef.current = abortController;
     setIsAnalyzing(true);
     setIsRegeneratingRiskProfile(shouldRegenerate);
-    setProgress({ step: 0, total: stepDescriptionsMap[selectedMethod]?.total || 9 });
+    setProgress({ step: 0, total: stepDescriptionsMap[selectedMethod]?.total || 9, message: workloadMessage });
 
-    const rawFinalSheets = await runLiteAIAnalysis({
+    try {
+      const rawFinalSheets = await runLiteAIAnalysis({
       tableRows: rowsToGenerate.map(({ functionalRow }) => functionalRow),
       sheets,
       setFolders: dummySetFolders,
@@ -8955,6 +9196,8 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       setProgress,              // keeps your UI updated
       hazardMethod: selectedMethod,
       omitConsolidatedRequirement: true,
+      operationalContext: buildHazardOperationalContextPrompt(contextsToRun),
+      signal: abortController.signal,
       ...(usesProjectRiskProfileGenerationMode
         ? { hazardGenerationMode: selectedGenerationMode, fhaGenerationMode: selectedGenerationMode }
         : {}),
@@ -8986,10 +9229,12 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       ...preservedDraftRows,
       ...generatedDraftRows,
     };
-    const mergedSummaryRows = hazardTargets
+    const mergedSummaryRows = allHazardTargets
       .map((target) => {
         const fallbackRow = buildProjectDraftHazardRow(target.analysisRow, targetHeaders);
-        const row = mergedDraftRows[target.rowKey]?.row || fallbackRow;
+        const row = mergedDraftRows[target.rowKey]?.row
+          || (target.legacyRowKey ? mergedDraftRows[target.legacyRowKey]?.row : null)
+          || fallbackRow;
         return isMeaningfullyGeneratedDraftRow(row, fallbackRow) ? row : null;
       })
       .filter(Boolean);
@@ -9000,6 +9245,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setIsConsolidatingSafetyIssues(true);
     const nextRiskRegister = await requestConsolidatedSafetyIssuesFromSummary(finalSheets.Summary, {
       mergeExisting: Boolean(existingSummary) && !shouldRegenerate,
+      signal: abortController.signal,
     });
     setIsConsolidatingSafetyIssues(false);
 
@@ -9010,6 +9256,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       saveProjectPatch(activeProjectId, {
         analysisResult: finalSheets,
         riskMethod: selectedMethod,
+        draftHazardHeaders: targetHeaders,
         draftHazardRowsByIndex: mergedDraftRows,
         riskRegister: nextRiskRegister,
         ...(usesProjectRiskProfileGenerationMode
@@ -9033,13 +9280,32 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         console.warn("[results-review] Failed to register hazard Summary review items", error);
       }
     }
-    setIsAnalyzing(false);
-    setIsRegeneratingRiskProfile(false);
     setShowDiagram(false);
     setActiveTab('Hazard Analysis');
 
     // NEW: finish activity
     finishActivity(actId, "success", "Analysis complete");
+    } catch (error) {
+      const wasCanceled = abortController.signal.aborted || error?.name === "AbortError";
+      const message = wasCanceled
+        ? "Hazard analysis canceled."
+        : (error?.message || "Hazard analysis failed.");
+      console.error("[hazard-analysis] Project hazard analysis did not complete", error);
+      finishActivity(actId, wasCanceled ? "canceled" : "error", message);
+      if (!wasCanceled) window.alert(message);
+    } finally {
+      if (hazardAnalysisAbortControllerRef.current === abortController) {
+        hazardAnalysisAbortControllerRef.current = null;
+      }
+      setIsAnalyzing(false);
+      setIsRegeneratingRiskProfile(false);
+      setIsConsolidatingSafetyIssues(false);
+      setAnalysisActivityId(null);
+    }
+  };
+
+  const handleCancelHazardAnalysis = () => {
+    hazardAnalysisAbortControllerRef.current?.abort();
   };
 
   const handleProjectRiskMethodChange = (nextMethod) => {
@@ -9079,11 +9345,16 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       ? projectRiskProfileGenerationMode
       : undefined;
     const functionalDecompositionSheet = [
-      ["Function (From)", "Control Action", "Function (To)", "Guide Phrase", "Guide Phrase Applicable", "Guide Phrase Applicability Rationale"],
+      ["Function (From)", "Control Action", "Function (To)", "Operational Context ID", "Operational Scenario", "Operational Mode", "Operating Conditions", "Context Assumptions", "Guide Phrase", "Guide Phrase Applicable", "Guide Phrase Applicability Rationale"],
       [
         functionalRow.fromFunction || "",
         functionalRow.controlAction || "",
         functionalRow.toFunction || "",
+        functionalRow.hazardContextId || "context-unspecified",
+        functionalRow.operationalScenario || "",
+        functionalRow.operationalMode || "",
+        functionalRow.operatingConditions || "",
+        functionalRow.contextAssumptions || "",
         functionalRow.guidePhrase || "",
         functionalRow.guidePhraseApplicable || "",
         functionalRow.guidePhraseApplicabilityRationale || "",
@@ -9109,6 +9380,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         setProgress: () => {},
         hazardMethod: selectedMethod,
         omitConsolidatedRequirement: true,
+        operationalContext: buildHazardOperationalContextPrompt([target.context]),
         ...(usesProjectRiskProfileGenerationMode
           ? { hazardGenerationMode: selectedGenerationMode, fhaGenerationMode: selectedGenerationMode }
           : {}),
@@ -9131,10 +9403,16 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       const completedDraftRows = {};
       if (Array.isArray(analysisResult?.Summary?.[0])) {
         const completedHeaders = analysisResult.Summary[0] || [];
-        analysisResult.Summary.slice(1).forEach((completedRow, index) => {
-          const completedTarget = draftHazardTargets[index];
+        draftHazardTargets.forEach((completedTarget) => {
           const sourceRow = completedTarget?.analysisRow;
           if (!completedTarget || !sourceRow) return;
+          const completedRow = findExistingHazardRowForFunctionalRow(
+            sourceRow,
+            analysisResult.Summary,
+            completedTarget.guidePhrase,
+            completedTarget.context
+          );
+          if (!completedRow) return;
           const rowFallback = buildProjectDraftHazardRow(sourceRow, targetHeaders);
           const alignedRow = alignSummaryRowToHeaders(completedHeaders, completedRow, targetHeaders, rowFallback);
           if (isMeaningfullyGeneratedDraftRow(alignedRow, rowFallback)) {
@@ -9181,6 +9459,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       if (activeProjectId) {
         saveProjectPatch(activeProjectId, {
           draftHazardRowsByIndex: nextDraftRows,
+          draftHazardHeaders: targetHeaders,
           ...(nextAnalysisResult ? { analysisResult: nextAnalysisResult } : {}),
           ...(nextRiskRegister ? { riskRegister: nextRiskRegister } : {}),
         });
@@ -9239,7 +9518,10 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
           generated: true,
         },
       };
-      saveProjectPatch(activeProjectId, { draftHazardRowsByIndex: savedDraftRows });
+      saveProjectPatch(activeProjectId, {
+        draftHazardRowsByIndex: savedDraftRows,
+        draftHazardHeaders,
+      });
     }
 
     const reviewItem = draftHazardReviewByRow.get(rowKey) || draftHazardReviewByRow.get(hazardTargetIndex);
@@ -9273,6 +9555,11 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         .map((item) => `- ${item}`)
         .join("\n") || "- Not specified in the available evidence.";
     };
+    const contextVariants = buildSafetyIssueContextVariants(
+      issue,
+      parsedReport?.operationalContextCoverage || issue.contextVariants
+    );
+    const boundingContext = getBoundingSafetyIssueContext(contextVariants);
     const report = {
       executiveSummary: parsedReport?.executiveSummary || `This ${issue.priority} safety issue consolidates hazard-analysis evidence related to ${issue.title}.`,
       observedConditionType: /implementation/i.test(parsedReport?.observedConditionType) ? "Implementation" : "System",
@@ -9284,15 +9571,21 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       recommendedEngineeringAction: parsedReport?.recommendedEngineeringAction || "Define and assign mitigation actions proportional to the priority of this safety issue.",
       recommendedVerification: parsedReport?.recommendedVerification || "Verify mitigations with targeted analysis, review, and testing tied to the source evidence.",
       finalAssessment: parsedReport?.finalAssessment || "Open pending engineering disposition and verification.",
+      operationalContextCoverage: contextVariants,
     };
     const evidenceRows = completeSafetyIssueEvidenceRows(issue, report.keyEvidenceRows);
     const evidenceTable = [
-      "| Evidence Link | Hazard/Unsafe Condition | Affected Function or Subsystem | Control Action or Failure Mode | Why This Matters |",
-      "| --- | --- | --- | --- | --- |",
+      "| Evidence Link | Operational Context | Hazard/Unsafe Condition | Affected Function or Subsystem | Control Action or Failure Mode | Why This Matters |",
+      "| --- | --- | --- | --- | --- | --- |",
       ...evidenceRows.map((row) => {
         const sourceIndex = Number(row?.sourceIndex) || issue.sourceIndexes[0] || "";
-        return `| ${sourceIndex ? `[Source Row ${sourceIndex}](#hazard-source-row-${sourceIndex})` : "Not linked"} | ${mdCell(row?.hazardUnsafeCondition)} | ${mdCell(row?.affectedFunctionOrSubsystem)} | ${mdCell(row?.controlActionOrFailureMode)} | ${mdCell(row?.whyThisMatters)} |`;
+        return `| ${sourceIndex ? `[Source Row ${sourceIndex}](#hazard-source-row-${sourceIndex})` : "Not linked"} | ${mdCell(row?.operationalContext)} | ${mdCell(row?.hazardUnsafeCondition)} | ${mdCell(row?.affectedFunctionOrSubsystem)} | ${mdCell(row?.controlActionOrFailureMode)} | ${mdCell(row?.whyThisMatters)} |`;
       }),
+    ].join("\n");
+    const contextCoverageTable = [
+      "| Scenario | Mode | Conditions | Hazard Manifestation | Likelihood | Severity | Source Rows |",
+      "| --- | --- | --- | --- | ---: | ---: | --- |",
+      ...report.operationalContextCoverage.map((context) => `| ${mdCell(context.scenario)} | ${mdCell(context.mode)} | ${mdCell(context.conditions || "Not specified")} | ${mdCell(context.hazardVariation)} | ${mdCell(context.likelihood)} | ${mdCell(context.severity)} | ${sourceLinks(context.sourceIndexes)} |`),
     ].join("\n");
     const observedHeading = report.observedConditionType === "Implementation"
       ? "Observed Implementation Condition"
@@ -9312,12 +9605,16 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       `| Owner | ${mdCell(issue.owner || "Unassigned")} |`,
       `| Due Date | ${mdCell(issue.dueDate || "Not set")} |`,
       `| Source Rows | ${sourceLinks(issue.sourceIndexes)} |`,
+      `| Bounding Context | ${mdCell(boundingContext ? `${boundingContext.scenario} · ${boundingContext.mode}` : "Not established")} |`,
       "",
       "### **Executive Summary**",
       listBlock(report.executiveSummary),
       "",
       `### **${observedHeading}**`,
       listBlock(report.observedCondition),
+      "",
+      "### **Operational Context Coverage**",
+      contextCoverageTable,
       "",
       "### **Key Evidence**",
       evidenceTable,
@@ -9364,6 +9661,7 @@ ${JSON.stringify({
   dueDate: issue.dueDate,
   tags: issue.tags,
   sourceIndexes: issue.sourceIndexes,
+  contextVariants: issue.contextVariants,
   hazardEvidence: issue.evidence.map((item) => ({ sourceIndex: item.sourceIndex, cells: item.cells })),
 }, null, 2)}
 
@@ -9372,9 +9670,24 @@ Required JSON schema:
   "executiveSummary": ["2-4 detailed bullets explaining the issue and priority"],
   "observedConditionType": "System or Implementation",
   "observedCondition": ["2-4 detailed bullets describing the observed condition using only supplied evidence"],
+  "operationalContextCoverage": [
+    {
+      "contextId": "preserve the supplied context id",
+      "scenario": "operational scenario",
+      "mode": "operational mode",
+      "conditions": "relevant operating conditions",
+      "assumptions": "analysis assumptions",
+      "hazardVariation": "how the hazard manifests in this context",
+      "likelihood": 1,
+      "severity": 1,
+      "riskRationale": "evidence-grounded rationale for this contextual rating",
+      "sourceIndexes": [1]
+    }
+  ],
   "keyEvidenceRows": [
     {
       "sourceIndex": 1,
+      "operationalContext": "scenario · mode",
       "hazardUnsafeCondition": "specific hazard or unsafe condition",
       "affectedFunctionOrSubsystem": "affected function, subsystem, component, interface, or allocation",
       "controlActionOrFailureMode": "unsafe control action, failure mode, control action, or data/control flow",
@@ -9394,6 +9707,9 @@ Rules:
 - Do not invent facts not supported by the safety issue or evidence.
 - Preserve sourceIndex values exactly in keyEvidenceRows.
 - Include one keyEvidenceRows entry for every sourceIndex listed on the safety issue.
+- Include one operationalContextCoverage entry for every supplied context variant. Preserve its contextId, scenario, mode, and sourceIndexes.
+- Explain material differences in hazard manifestation, likelihood, severity, mitigations, and verification across scenarios or modes.
+- Identify the highest-risk supplied context in the executive summary and final assessment. Do not flatten differing contexts into generic wording.
 - Return only strict JSON. No Markdown. No code fences.
     `.trim();
     const response = await fetch(`${backendURL}/api/chat`, {
@@ -9451,13 +9767,17 @@ Rules:
   const generateSafetyIssueReportsMarkdown = async (rowsForReport = riskRegister) => {
     const risksForReport = (rowsForReport || [])
       .map((risk) => {
-        const score = getRiskScore(risk);
-        const priority = getRiskPriority(score);
         const sourceIndexes = getRiskSourceIndexes(risk);
         const evidence = sourceIndexes
           .map((sourceIndex) => riskAssessmentSourceRowsByIndex.get(sourceIndex))
           .filter(Boolean);
-        return { ...risk, score, priority, sourceIndexes, evidence };
+        const contextVariants = buildSafetyIssueContextVariants({ ...risk, evidence }, risk.contextVariants);
+        const boundingContext = getBoundingSafetyIssueContext(contextVariants);
+        const likelihood = risk.likelihood || boundingContext?.likelihood;
+        const severity = risk.severity || boundingContext?.severity;
+        const score = getRiskScore({ likelihood, severity });
+        const priority = getRiskPriority(score);
+        return { ...risk, likelihood, severity, score, priority, sourceIndexes, evidence, contextVariants, boundingContext };
       })
       .sort((a, b) => b.score - a.score);
     if (!risksForReport.length || isGeneratingRiskAssessmentReport) return "";
@@ -9478,11 +9798,11 @@ Rules:
       const renderEvidenceRows = (issue, report) => {
         const evidenceRows = completeSafetyIssueEvidenceRows(issue, report?.keyEvidenceRows);
         return [
-          "| Evidence Link | Hazard/Unsafe Condition | Affected Function or Subsystem | Control Action or Failure Mode | Why This Matters |",
-          "| --- | --- | --- | --- | --- |",
+          "| Evidence Link | Operational Context | Hazard/Unsafe Condition | Affected Function or Subsystem | Control Action or Failure Mode | Why This Matters |",
+          "| --- | --- | --- | --- | --- | --- |",
           ...evidenceRows.map((row) => {
             const sourceIndex = Number(row?.sourceIndex) || issue.sourceIndexes[0] || "";
-            return `| ${sourceIndex ? `[Source Row ${sourceIndex}](#hazard-source-row-${sourceIndex})` : "Not linked"} | ${mdCell(row?.hazardUnsafeCondition)} | ${mdCell(row?.affectedFunctionOrSubsystem)} | ${mdCell(row?.controlActionOrFailureMode)} | ${mdCell(row?.whyThisMatters)} |`;
+            return `| ${sourceIndex ? `[Source Row ${sourceIndex}](#hazard-source-row-${sourceIndex})` : "Not linked"} | ${mdCell(row?.operationalContext)} | ${mdCell(row?.hazardUnsafeCondition)} | ${mdCell(row?.affectedFunctionOrSubsystem)} | ${mdCell(row?.controlActionOrFailureMode)} | ${mdCell(row?.whyThisMatters)} |`;
           }),
         ].join("\n");
       };
@@ -9490,6 +9810,7 @@ Rules:
         executiveSummary: parsed?.executiveSummary || `This ${issue.priority} safety issue consolidates hazard-analysis evidence related to ${issue.title}.`,
         observedConditionType: /implementation/i.test(parsed?.observedConditionType) ? "Implementation" : "System",
         observedCondition: parsed?.observedCondition || issue.description || "No observed condition was returned.",
+        operationalContextCoverage: buildSafetyIssueContextVariants(issue, parsed?.operationalContextCoverage || issue.contextVariants),
         keyEvidenceRows: Array.isArray(parsed?.keyEvidenceRows) ? parsed.keyEvidenceRows : [],
         safetySignificance: parsed?.safetySignificance || "Safety significance should be reviewed against the linked hazard-analysis evidence.",
         existingControlsMitigations: parsed?.existingControlsMitigations || "No explicit controls or mitigations were identified in the available evidence.",
@@ -9502,6 +9823,12 @@ Rules:
         const observedHeading = report.observedConditionType === "Implementation"
           ? "Observed Implementation Condition"
           : "Observed System Condition";
+        const boundingContext = getBoundingSafetyIssueContext(report.operationalContextCoverage);
+        const contextCoverageTable = [
+          "| Scenario | Mode | Conditions | Hazard Manifestation | Likelihood | Severity | Source Rows |",
+          "| --- | --- | --- | --- | ---: | ---: | --- |",
+          ...report.operationalContextCoverage.map((context) => `| ${mdCell(context.scenario)} | ${mdCell(context.mode)} | ${mdCell(context.conditions || "Not specified")} | ${mdCell(context.hazardVariation)} | ${mdCell(context.likelihood)} | ${mdCell(context.severity)} | ${sourceLinks(context.sourceIndexes)} |`),
+        ].join("\n");
         return [
           `<!-- SAFETY_ISSUE_REPORT_START id="${issue.id}" -->`,
           `### **Safety Issue: ${issue.title}**`,
@@ -9517,12 +9844,16 @@ Rules:
           `| Owner | ${mdCell(issue.owner || "Unassigned")} |`,
           `| Due Date | ${mdCell(issue.dueDate || "Not set")} |`,
           `| Source Rows | ${sourceLinks(issue.sourceIndexes)} |`,
+          `| Bounding Context | ${mdCell(boundingContext ? `${boundingContext.scenario} · ${boundingContext.mode}` : "Not established")} |`,
           "",
           "### **Executive Summary**",
           listBlock(report.executiveSummary),
           "",
           `### **${observedHeading}**`,
           listBlock(report.observedCondition),
+          "",
+          "### **Operational Context Coverage**",
+          contextCoverageTable,
           "",
           "### **Key Evidence**",
           renderEvidenceRows(issue, report),
@@ -9599,6 +9930,7 @@ ${JSON.stringify({
   dueDate: issue.dueDate,
   tags: issue.tags,
   sourceIndexes: issue.sourceIndexes,
+  contextVariants: issue.contextVariants,
   hazardEvidence: issue.evidence.map((item) => ({ sourceIndex: item.sourceIndex, cells: item.cells })),
 }, null, 2)}
 
@@ -9607,9 +9939,24 @@ Required JSON schema:
   "executiveSummary": ["2-4 detailed bullets explaining the issue and priority"],
   "observedConditionType": "System or Implementation",
   "observedCondition": ["2-4 detailed bullets describing the observed condition using only supplied evidence"],
+  "operationalContextCoverage": [
+    {
+      "contextId": "preserve the supplied context id",
+      "scenario": "operational scenario",
+      "mode": "operational mode",
+      "conditions": "relevant operating conditions",
+      "assumptions": "analysis assumptions",
+      "hazardVariation": "how the hazard manifests in this context",
+      "likelihood": 1,
+      "severity": 1,
+      "riskRationale": "evidence-grounded rationale for this contextual rating",
+      "sourceIndexes": [1]
+    }
+  ],
   "keyEvidenceRows": [
     {
       "sourceIndex": 1,
+      "operationalContext": "scenario · mode",
       "hazardUnsafeCondition": "specific hazard or unsafe condition",
       "affectedFunctionOrSubsystem": "affected function, subsystem, component, interface, or allocation",
       "controlActionOrFailureMode": "unsafe control action, failure mode, control action, or data/control flow",
@@ -9629,6 +9976,9 @@ Rules:
 - Do not invent facts not supported by the safety issue or evidence.
 - Preserve sourceIndex values exactly in keyEvidenceRows.
 - Include one keyEvidenceRows entry for every sourceIndex listed on the safety issue.
+- Include one operationalContextCoverage entry for every supplied context variant. Preserve its contextId, scenario, mode, and sourceIndexes.
+- Explain material differences in hazard manifestation, likelihood, severity, mitigations, and verification across scenarios or modes.
+- Identify the highest-risk supplied context in the executive summary and final assessment. Do not flatten differing contexts into generic wording.
 - Return only strict JSON. No Markdown. No code fences.
         `.trim();
         const response = await fetch(`${backendURL}/api/chat`, {
@@ -9695,7 +10045,7 @@ Rules:
     });
   }
 
-  async function requestConsolidatedSafetyIssuesFromSummary(summary, { mergeExisting = false } = {}) {
+  async function requestConsolidatedSafetyIssuesFromSummary(summary, { mergeExisting = false, signal = null } = {}) {
     if (!Array.isArray(summary) || !Array.isArray(summary[0]) || summary.length < 2) return [];
     const headers = summary[0].map((header) => String(header || ""));
     const safetyRows = summary
@@ -9738,7 +10088,21 @@ Return strict JSON only with this schema:
       "owner": "",
       "dueDate": "",
       "tags": "comma-separated tags",
-      "sourceIndexes": [1, 2]
+      "sourceIndexes": [1, 2],
+      "contextVariants": [
+        {
+          "contextId": "context id from source rows",
+          "scenario": "operational scenario from source rows",
+          "mode": "operational mode from source rows",
+          "conditions": "context conditions from source rows",
+          "assumptions": "context assumptions from source rows",
+          "hazardVariation": "how this issue manifests in this context",
+          "likelihood": 1,
+          "severity": 1,
+          "riskRationale": "why this context has these ratings",
+          "sourceIndexes": [1]
+        }
+      ]
     }
   ]
 }
@@ -9746,24 +10110,49 @@ Return strict JSON only with this schema:
 Rules:
 - Consolidate related rows into one issue when they share the same hazard theme, unsafe condition, affected function/subsystem, mitigation need, or verification concern.
 - Keep unrelated safety hazards as separate issues.
+- Never erase operational differences when consolidating rows. Preserve every represented scenario-mode combination in contextVariants.
+- Use context-specific likelihood and severity values from 1 to 5. The issue-level likelihood and severity must match the context variant with the highest likelihood × severity score.
+- Keep hazards separate when their scenario or mode produces a materially different unsafe state that cannot be explained clearly as a context variant of one issue.
 - Every sourceIndexes value must come from the supplied Safety hazard rows.
 - Use likelihood and severity integers from 1 to 5. If the rows do not provide enough evidence, choose conservative middle values based on the row severity wording.
 - Do not invent hazards, controls, owners, or dates.
 - Return only strict JSON. No Markdown. No code fences.
       `.trim();
-      const response = await fetch(`${backendURL}/api/chat`, {
-        method: "POST",
-        ...buildAIAuthOpts({ "Content-Type": "application/json" }),
-        body: JSON.stringify({
-          model: "gpt-4o",
-          messages: [
-            { role: "system", content: "Return only strict JSON. No prose or markdown." },
-            { role: "user", content: prompt },
-          ],
-          temperature: 0.2,
-          max_tokens: 2200,
-        }),
-      });
+      const timeoutController = new AbortController();
+      const abortFromCaller = () => timeoutController.abort();
+      let timedOut = false;
+      const timeoutId = setTimeout(() => {
+        timedOut = true;
+        timeoutController.abort();
+      }, 120_000);
+      signal?.addEventListener?.("abort", abortFromCaller, { once: true });
+      let response;
+      try {
+        response = await fetch(`${backendURL}/api/chat`, {
+          method: "POST",
+          ...buildAIAuthOpts({ "Content-Type": "application/json" }),
+          signal: timeoutController.signal,
+          body: JSON.stringify({
+            model: "gpt-4o",
+            messages: [
+              { role: "system", content: "Return only strict JSON. No prose or markdown." },
+              { role: "user", content: prompt },
+            ],
+            temperature: 0.2,
+            max_tokens: 2200,
+          }),
+        });
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        if (timedOut) {
+          console.warn("[risk-assessment] Safety issue consolidation timed out; using deterministic consolidation.");
+          return mergeExisting ? mergeSafetyIssueEdits(fallback, riskRegister) : fallback;
+        }
+        throw error;
+      } finally {
+        clearTimeout(timeoutId);
+        signal?.removeEventListener?.("abort", abortFromCaller);
+      }
       if (!response.ok) throw new Error(`Safety issue consolidation AI HTTP ${response.status}`);
       const parsed = parseJsonObjectFromText(extractAIText(await response.json())) || {};
       const allowedIndexes = new Set(safetyRows.map((item) => item.sourceIndex));
@@ -9774,24 +10163,36 @@ Rules:
             .filter((value) => allowedIndexes.has(value))))
             .sort((a, b) => a - b);
           if (!sourceIndexes.length) return null;
+          const evidence = safetyRows.filter((item) => sourceIndexes.includes(item.sourceIndex));
+          const proposedLikelihood = Math.min(5, Math.max(1, Number(issue?.likelihood) || 3));
+          const proposedSeverity = Math.min(5, Math.max(1, Number(issue?.severity) || 3));
+          const contextVariants = buildSafetyIssueContextVariants({
+            description: issue?.description,
+            likelihood: proposedLikelihood,
+            severity: proposedSeverity,
+            evidence,
+          }, issue?.contextVariants);
+          const boundingContext = getBoundingSafetyIssueContext(contextVariants);
           return {
             id: makeId(),
             title: String(issue?.title || `Consolidated Safety Issue ${index + 1}`).trim(),
             description: String(issue?.description || "Consolidated from Safety-assessed hazard analysis rows.").trim(),
-            likelihood: Math.min(5, Math.max(1, Number(issue?.likelihood) || 3)),
-            severity: Math.min(5, Math.max(1, Number(issue?.severity) || 3)),
+            likelihood: boundingContext?.likelihood || proposedLikelihood,
+            severity: boundingContext?.severity || proposedSeverity,
             status: String(issue?.status || "Open").trim() || "Open",
             owner: String(issue?.owner || "").trim(),
             dueDate: String(issue?.dueDate || "").trim(),
             tags: String(issue?.tags || "").trim(),
             sourceIndexes,
             sourceIndex: sourceIndexes[0],
+            contextVariants,
           };
         })
         .filter(Boolean);
       const nextIssues = issues.length ? issues : fallback;
       return mergeExisting ? mergeSafetyIssueEdits(nextIssues, riskRegister) : nextIssues;
     } catch (error) {
+      if (signal?.aborted || error?.name === "AbortError") throw error;
       console.error("[risk-assessment] AI safety issue consolidation failed", error);
       return mergeExisting ? mergeSafetyIssueEdits(fallback, riskRegister) : fallback;
     }
@@ -9823,6 +10224,8 @@ Rules:
       "Owner",
       "Due Date",
       "Tags",
+      "Operational Contexts",
+      "Bounding Context",
       "Source Rows",
     ];
     const rows = risksWithEvidence.map((risk) => [
@@ -9836,6 +10239,8 @@ Rules:
       risk.owner || "",
       risk.dueDate || "",
       risk.tags || "",
+      risk.contextVariants.map((context) => `${context.scenario} · ${context.mode} (L${context.likelihood}/S${context.severity})`).join("; "),
+      risk.boundingContext ? `${risk.boundingContext.scenario} · ${risk.boundingContext.mode}` : "",
       getRiskSourceIndexes(risk).join("; "),
     ]);
     const escapeCell = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
@@ -9988,8 +10393,10 @@ Rules:
   // Exporters
   const exportDecompositionCSV = () => {
     if (!responseRows?.length) return;
-    const headers = ["Function (From)","Function (From) Details","Control Action","Control Action Details","Function (To)","Function (To) Details"];
-    const rows2D = responseRows.map(r => ([ r.fromFunction ?? "", r.fromDetails ?? "", r.controlAction ?? "", r.controlDetails ?? "", r.toFunction ?? "", r.toDetails ?? "" ]));
+    const headers = functionalTableColumns.map(({ label }) => label);
+    const rows2D = responseRows.map((row) => (
+      functionalTableColumns.map(({ key }) => row?.[key] ?? "")
+    ));
     const escapeCell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const csv = [headers, ...rows2D].map(r => r.map(escapeCell).join(',')).join('\r\n');
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
@@ -10853,6 +11260,32 @@ const projectHint = useMemo(() => ({
           ))}
         </select>
       )}
+      <div className="flex items-center gap-2">
+        <label htmlFor="hazard-operational-context" className="text-sm text-gray-700">Context:</label>
+        <select
+          id="hazard-operational-context"
+          className="max-w-72 text-sm border rounded px-2 py-1"
+          value={selectedHazardContextId}
+          onChange={(event) => setSelectedHazardContextId(event.target.value)}
+          disabled={isAnalyzing || draftHazardGeneratingIndex !== null}
+          title="Filter and generate hazard analysis for an operational scenario and mode"
+        >
+          <option value="all">All contexts ({effectiveHazardOperationalContexts.length})</option>
+          {effectiveHazardOperationalContexts.map((context) => (
+            <option key={context.id} value={context.id}>
+              {getHazardOperationalContextLabel(context)}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={() => setShowHazardContextManager(true)}
+          disabled={isAnalyzing || draftHazardGeneratingIndex !== null}
+          className="rounded border border-gray-200 bg-white px-2.5 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+        >
+          Manage
+        </button>
+      </div>
       <button
         type="button"
         onClick={() => handleRunAnalysis(riskMethod, { regenerate: shouldRegenerateRiskProfileFromToolbar })}
@@ -10871,6 +11304,25 @@ const projectHint = useMemo(() => ({
           ? (isRegeneratingRiskProfile ? 'Regenerating risk profile...' : 'Developing risk profile...')
           : (shouldRegenerateRiskProfileFromToolbar ? 'Regenerate risk profile' : 'Develop risk profile')}
       </button>
+      {isAnalyzing && (
+        <button
+          type="button"
+          onClick={handleCancelHazardAnalysis}
+          className="inline-flex items-center gap-1.5 rounded border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+          title="Stop the current hazard analysis run"
+        >
+          <X size={15} aria-hidden="true" />
+          Stop
+        </button>
+      )}
+      {isAnalyzing && (
+        <div className="flex min-w-0 max-w-xl items-center gap-2 text-sm text-gray-600" role="status" aria-live="polite">
+          <Loader2 size={15} className="shrink-0 animate-spin text-[#2D7DFE]" aria-hidden="true" />
+          <span className="truncate">
+            {progress.message || stepDescriptionsMap[riskMethod]?.steps[progress.step] || "Working…"}
+          </span>
+        </div>
+      )}
       <button
         type="button"
         onClick={exportHazardAnalysisCSV}
@@ -13099,7 +13551,8 @@ const projectHint = useMemo(() => ({
 	  onUpdateRows={handleProjectDiagramRowsUpdate}
 	  onCanvasSelectionChange={setFunctionalCanvasSelection}
 	  onRequestCreateProject={handleCreateProjectFromSelection}   // ← ADD THIS
-  hazardSummary={analysisResult?.Summary}
+	  hazardSummary={diagramHazardData.summary}
+	  hazardRowSourceIndexes={diagramHazardData.sourceIndexes}
   riskRegister={riskRegister}
   onOpenHazardRow={handleOpenHazardSummaryRow}
   onOpenSafetyIssue={(issueOrId) => {
@@ -13319,9 +13772,26 @@ const projectHint = useMemo(() => ({
               )}
               </>
             )}
+<HazardOperationalContextManager
+  open={showHazardContextManager}
+  contexts={hazardOperationalContexts}
+  onClose={() => setShowHazardContextManager(false)}
+  onSave={handleSaveHazardOperationalContexts}
+  onGenerate={handleGenerateHazardOperationalContexts}
+/>
 {activeTab === 'Hazard Analysis' && (
   <section className="mt-2">
     {hazardAnalysisControls}
+    {hazardOperationalContexts.length === 0 && (
+      <button
+        type="button"
+        onClick={() => setShowHazardContextManager(true)}
+        className="mb-3 flex w-full items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-left text-sm text-amber-900 hover:bg-amber-100"
+      >
+        <span><strong>Generic operational context.</strong> Add scenarios and modes to generate context-specific hazards.</span>
+        <span className="shrink-0 font-semibold text-amber-800">Add context</span>
+      </button>
+    )}
     {incompleteHazardAnalysisRowCount > 0 && (
       <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-left text-sm text-amber-800">
         {incompleteHazardAnalysisRowCount} functional relationship row{incompleteHazardAnalysisRowCount === 1 ? '' : 's'} will appear in the diagram but cannot be analyzed for hazards until Control Action is populated.
@@ -13345,7 +13815,7 @@ const projectHint = useMemo(() => ({
                 {draftHazardHeaders.map((header, idx) => (
                   <th
                     key={`${header}-${idx}`}
-                    className="sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap"
+                    className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(header) ? 'hidden ' : ''}sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap`}
                   >
                     <div ref={(el) => (draftHazardDropdownRefs.current[idx] = el)} className="relative">
                       <button
@@ -13444,7 +13914,7 @@ const projectHint = useMemo(() => ({
               </tr>
               {activeDraftHazardFilterCount > 0 && (
                 <tr>
-                  <th colSpan={draftHazardHeaders.length + 1} className="sticky top-[64px] z-20 bg-[#F8FAFC] border-b border-gray-200 px-4 py-2 text-left">
+                  <th colSpan={visibleDraftHazardColumnCount + 1} className="sticky top-[64px] z-20 bg-[#F8FAFC] border-b border-gray-200 px-4 py-2 text-left">
                     <div className="flex items-center justify-between gap-3 text-xs text-gray-600">
                       <span>
                         Showing {filteredDraftHazardSummaryRows.length} of {draftHazardSummaryRows.length} rows with {activeDraftHazardFilterCount} selected filter{activeDraftHazardFilterCount === 1 ? '' : 's'}.
@@ -13462,15 +13932,17 @@ const projectHint = useMemo(() => ({
               )}
             </thead>
             <tbody className="text-[#374151] text-sm">
-              {groupedFilteredDraftHazardSummaryRows.map(({ row, originalIndex, rowKey, generated, groupMeta, isFirstInGroup, groupCount }, idx) => {
+              {groupedFilteredDraftHazardSummaryRows.map(({ row, originalIndex, rowKey, generated, context, groupMeta, variantMeta, isFirstInGroup, isFirstInVariantGroup, groupCount, variantCount }, idx) => {
                 const generating = draftHazardGeneratingIndex === originalIndex;
                 const reviewItem = draftHazardReviewByRow.get(rowKey) || draftHazardReviewByRow.get(originalIndex);
                 const groupCollapsed = collapsedHazardInterfaceKeys.has(groupMeta.key);
+                const highlighted = highlightedHazardRowIndex === originalIndex;
+                const variantCollapsed = variantCount > 1 && !expandedHazardVariantKeys.has(variantMeta.key);
                 return (
                   <React.Fragment key={rowKey || originalIndex}>
                     {isFirstInGroup && (
                       <tr className="bg-[#EEF4FF]">
-                        <td colSpan={draftHazardHeaders.length + 1} className="px-4 py-2 border-b border-blue-100">
+                        <td colSpan={visibleDraftHazardColumnCount + 1} className="px-4 py-2 border-b border-blue-100">
                           <button
                             type="button"
                             onClick={() => toggleHazardInterfaceCollapsed(groupMeta.key)}
@@ -13479,19 +13951,39 @@ const projectHint = useMemo(() => ({
                             <span aria-hidden="true">{groupCollapsed ? '▸' : '▾'}</span>
                             <span>{groupMeta.label}</span>
                             <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-[#2D7DFE]">
-                              {groupCount} guide phrase{groupCount === 1 ? '' : 's'}
+                              {groupCount} analysis variant{groupCount === 1 ? '' : 's'}
                             </span>
                           </button>
                         </td>
                       </tr>
                     )}
-                    {!groupCollapsed && (
+                    {!groupCollapsed && isFirstInVariantGroup && variantCount > 1 && (
+                      <tr className="bg-slate-50">
+                        <td colSpan={visibleDraftHazardColumnCount + 1} className="border-b border-slate-200 px-8 py-2">
+                          <button type="button" onClick={() => toggleHazardVariantExpanded(variantMeta.key)} className="inline-flex items-center gap-2 text-left text-xs font-medium text-slate-700">
+                            <span aria-hidden="true">{variantCollapsed ? '▸' : '▾'}</span>
+                            <span>{variantMeta.label}</span>
+                            <span className="rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-600">{variantCount} contexts</span>
+                          </button>
+                        </td>
+                      </tr>
+                    )}
+                    {!groupCollapsed && !variantCollapsed && (
                       <tr
                         id={`hazard-source-row-${originalIndex + 1}`}
-                        className={`${idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]"} transition-colors`}
+                        ref={(el) => {
+                          if (el) hazardRowRefs.current[originalIndex] = el;
+                          else delete hazardRowRefs.current[originalIndex];
+                        }}
+                        className={`${highlighted ? "bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset" : (idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]")} transition-colors`}
                       >
                         <td className="px-6 py-4 align-top border-b border-gray-100">
                           <div className="flex flex-col items-start gap-2">
+                            {!isUnspecifiedHazardContext(context) && (
+                              <span className="max-w-48 rounded-full bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-700" title={getHazardOperationalContextLabel(context)}>
+                                {getHazardOperationalContextLabel(context)}
+                              </span>
+                            )}
                             <button
                               type="button"
                               onClick={() => handleGenerateDraftHazardRow(originalIndex)}
@@ -13515,7 +14007,7 @@ const projectHint = useMemo(() => ({
                           </div>
                         </td>
                         {row.map((cell, colIdx) => (
-                          <td key={colIdx} className="px-6 py-4 align-top whitespace-pre-wrap border-b border-gray-100">
+                          <td key={colIdx} className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(draftHazardHeaders[colIdx]) ? 'hidden ' : ''}px-6 py-4 align-top whitespace-pre-wrap border-b border-gray-100`}>
                             <textarea
                               className="min-h-[44px] w-full resize-none overflow-hidden break-words bg-transparent text-sm leading-5 text-gray-900 [overflow-wrap:anywhere] focus:outline-none"
                               value={cell}
@@ -13531,14 +14023,14 @@ const projectHint = useMemo(() => ({
               })}
               {draftHazardSummaryRows.length === 0 && (
                 <tr>
-                  <td colSpan={draftHazardHeaders.length + 1} className="px-6 py-8 text-center text-sm text-gray-500">
+                  <td colSpan={visibleDraftHazardColumnCount + 1} className="px-6 py-8 text-center text-sm text-gray-500">
                     No functional decomposition rows are available yet.
                   </td>
                 </tr>
               )}
               {draftHazardSummaryRows.length > 0 && filteredDraftHazardSummaryRows.length === 0 && (
                 <tr>
-                  <td colSpan={draftHazardHeaders.length + 1} className="px-6 py-8 text-center text-sm text-gray-500">
+                  <td colSpan={visibleDraftHazardColumnCount + 1} className="px-6 py-8 text-center text-sm text-gray-500">
                     No rows match the current filters.
                   </td>
                 </tr>
@@ -13574,7 +14066,7 @@ const projectHint = useMemo(() => ({
                   {hazardSummaryHeaders.map((header, idx) => (
                     <th
                       key={idx}
-                      className="sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap"
+                      className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(header) ? 'hidden ' : ''}sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap`}
                     >
                       <div ref={(el) => (dropdownRefs.current[idx] = el)} className="relative">
                         <button
@@ -13673,7 +14165,7 @@ const projectHint = useMemo(() => ({
                 </tr>
                 {activeHazardFilterCount > 0 && (
                   <tr>
-                    <th colSpan={hazardSummaryHeaders.length + 1} className="sticky top-[64px] z-20 bg-[#F8FAFC] border-b border-gray-200 px-4 py-2 text-left">
+                    <th colSpan={visibleHazardSummaryColumnCount + 1} className="sticky top-[64px] z-20 bg-[#F8FAFC] border-b border-gray-200 px-4 py-2 text-left">
                       <div className="flex items-center justify-between gap-3 text-xs text-gray-600">
                         <span>
                           Showing {filteredHazardSummaryRows.length} of {hazardSummaryDisplayRows.length} rows with {activeHazardFilterCount} selected filter{activeHazardFilterCount === 1 ? '' : 's'}.
@@ -13692,17 +14184,18 @@ const projectHint = useMemo(() => ({
               </thead>
               <tbody className="text-[#374151] text-sm">
                 {groupedFilteredHazardSummaryRows
-                  .map(({ row, originalIndex, generated, pending, groupMeta, isFirstInGroup, groupCount }, idx) => {
+                  .map(({ row, originalIndex, generated, pending, context, groupMeta, variantMeta, isFirstInGroup, isFirstInVariantGroup, groupCount, variantCount }, idx) => {
                     const generating = draftHazardGeneratingIndex === originalIndex;
                     const reviewItem = hazardSummaryReviewByRow.get(originalIndex);
                     const rejected = reviewItem?.status === REVIEW_STATUSES.REJECTED;
                     const highlighted = highlightedHazardRowIndex === originalIndex;
                     const groupCollapsed = collapsedHazardInterfaceKeys.has(groupMeta.key);
+                    const variantCollapsed = variantCount > 1 && !expandedHazardVariantKeys.has(variantMeta.key);
                     return (
                       <React.Fragment key={`${originalIndex}-${groupMeta.key}`}>
                         {isFirstInGroup && (
                           <tr className="bg-[#EEF4FF]">
-                            <td colSpan={hazardSummaryHeaders.length + 1} className="px-4 py-2 border-b border-blue-100">
+                            <td colSpan={visibleHazardSummaryColumnCount + 1} className="px-4 py-2 border-b border-blue-100">
                               <button
                                 type="button"
                                 onClick={() => toggleHazardInterfaceCollapsed(groupMeta.key)}
@@ -13711,13 +14204,24 @@ const projectHint = useMemo(() => ({
                                 <span aria-hidden="true">{groupCollapsed ? '▸' : '▾'}</span>
                                 <span>{groupMeta.label}</span>
                                 <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-[#2D7DFE]">
-                                  {groupCount} guide phrase{groupCount === 1 ? '' : 's'}
+                                  {groupCount} analysis variant{groupCount === 1 ? '' : 's'}
                                 </span>
                               </button>
                             </td>
                           </tr>
                         )}
-                        {!groupCollapsed && (
+                        {!groupCollapsed && isFirstInVariantGroup && variantCount > 1 && (
+                          <tr className="bg-slate-50">
+                            <td colSpan={visibleHazardSummaryColumnCount + 1} className="border-b border-slate-200 px-8 py-2">
+                              <button type="button" onClick={() => toggleHazardVariantExpanded(variantMeta.key)} className="inline-flex items-center gap-2 text-left text-xs font-medium text-slate-700">
+                                <span aria-hidden="true">{variantCollapsed ? '▸' : '▾'}</span>
+                                <span>{variantMeta.label}</span>
+                                <span className="rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-600">{variantCount} contexts</span>
+                              </button>
+                            </td>
+                          </tr>
+                        )}
+                        {!groupCollapsed && !variantCollapsed && (
                           <tr
                             id={`hazard-source-row-${originalIndex + 1}`}
                             ref={(el) => {
@@ -13734,6 +14238,11 @@ const projectHint = useMemo(() => ({
                           >
                             <td className="px-6 py-4 align-top border-b border-gray-100">
                               <div className="flex flex-col items-start gap-2">
+                                {!isUnspecifiedHazardContext(context) && (
+                                  <span className="max-w-48 rounded-full bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-700" title={getHazardOperationalContextLabel(context)}>
+                                    {getHazardOperationalContextLabel(context)}
+                                  </span>
+                                )}
                                 {reviewItem && (
                                   <ReviewStatusBadge
                                     reviewItem={reviewItem}
@@ -13761,7 +14270,7 @@ const projectHint = useMemo(() => ({
                               </div>
                             </td>
                             {row.map((cell, colIdx) => (
-                              <td key={colIdx} className={`min-w-56 max-w-xl break-words px-6 py-4 align-top whitespace-pre-wrap [overflow-wrap:anywhere] border-b border-gray-100 ${rejected ? 'text-rose-900 line-through decoration-rose-400' : ''}`}>
+                              <td key={colIdx} className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(hazardSummaryHeaders[colIdx]) ? 'hidden ' : ''}min-w-56 max-w-xl break-words px-6 py-4 align-top whitespace-pre-wrap [overflow-wrap:anywhere] border-b border-gray-100 ${rejected ? 'text-rose-900 line-through decoration-rose-400' : ''}`}>
                                 {cell}
                               </td>
                             ))}
@@ -13772,7 +14281,7 @@ const projectHint = useMemo(() => ({
                   })}
                 {filteredHazardSummaryRows.length === 0 && (
                   <tr>
-                    <td colSpan={hazardSummaryHeaders.length + 1} className="px-6 py-8 text-center text-sm text-gray-500">
+                    <td colSpan={visibleHazardSummaryColumnCount + 1} className="px-6 py-8 text-center text-sm text-gray-500">
                       No rows match the current filters.
                     </td>
                   </tr>
@@ -13902,6 +14411,9 @@ const projectHint = useMemo(() => ({
                       <span className="rounded bg-gray-100 px-2 py-0.5">Score {risk.score}</span>
                       <span className="rounded bg-gray-100 px-2 py-0.5">L{risk.likelihood}</span>
                       <span className="rounded bg-gray-100 px-2 py-0.5">S{risk.severity}</span>
+                      <span className="rounded bg-blue-50 px-2 py-0.5 text-blue-700">
+                        {risk.contextVariants.length} context{risk.contextVariants.length === 1 ? '' : 's'}
+                      </span>
                       <span className="rounded bg-gray-100 px-2 py-0.5">{risk.evidence.length} evidence row{risk.evidence.length === 1 ? '' : 's'}</span>
                     </div>
                   </button>
@@ -14034,6 +14546,25 @@ const projectHint = useMemo(() => ({
                     </label>
                   </div>
 
+                  <details className="mt-6 rounded-lg border border-blue-100 bg-blue-50/50" open={activeRisk.contextVariants.length > 1}>
+                    <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-blue-950">
+                      Operational Context Coverage · {activeRisk.contextVariants.length}
+                    </summary>
+                    <div className="space-y-2 border-t border-blue-100 p-3">
+                      {activeRisk.contextVariants.map((context) => (
+                        <div key={`${context.contextId}-${context.scenario}-${context.mode}`} className="rounded-md border border-blue-100 bg-white p-3 text-xs text-gray-700">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="font-semibold text-gray-900">{context.scenario} · {context.mode}</span>
+                            <span className="rounded bg-gray-100 px-2 py-1 font-medium">L{context.likelihood} · S{context.severity}</span>
+                          </div>
+                          {context.conditions && <div className="mt-2"><strong>Conditions:</strong> {context.conditions}</div>}
+                          {context.hazardVariation && <div className="mt-1"><strong>Hazard:</strong> {context.hazardVariation}</div>}
+                          {context.assumptions && <div className="mt-1"><strong>Assumptions:</strong> {context.assumptions}</div>}
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+
                   <div className="mt-6">
                     <div className="mb-2 text-sm font-semibold text-gray-900">Hazard Analysis Evidence</div>
                     {activeRisk.evidence.length ? (
@@ -14146,7 +14677,7 @@ const projectHint = useMemo(() => ({
                     title="Hide Safety Issue Report drawer"
                     aria-label="Hide Safety Issue Report drawer"
                   >
-                    <PanelLeftClose size={16} aria-hidden="true" />
+                    <PanelRightClose size={16} aria-hidden="true" />
                   </button>
                 </div>
               </div>

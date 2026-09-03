@@ -1,10 +1,23 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { MessageSquarePlus, Plus, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
 import { backendURL, buildAIAuthOpts } from './backendConfig';
 import { EXAMPLES } from './DemoExamples';
+import {
+  DEFAULT_FUNCTIONAL_ABSTRACTION_LEVEL,
+  FUNCTIONAL_ABSTRACTION_LEVEL_OPTIONS,
+  getFunctionalAbstractionLevelOption,
+  getFunctionalAbstractionPromptGuidance,
+} from './functionalDecompositionAbstraction';
+import { FUNCTIONAL_DECOMPOSITION_SAMPLING } from './functionalDecompositionGeneration';
 
 const AI_COMPLETION_STEPS = new Set(['systemOverview', 'functionalComponents', 'interactions', 'ops']);
 const TABLE_STEP_KEYS = new Set(['functionalComponents', 'interactions', 'ops']);
+const COMPLETION_TOKEN_BUDGETS = {
+  systemOverview: 1800,
+  functionalComponents: 5000,
+  interactions: 7000,
+  ops: 3000,
+};
 
 function createClarificationQuestion(raw = {}, index = 0) {
   const options = Array.isArray(raw.options)
@@ -407,16 +420,16 @@ const COMPLETION_GUIDANCE = {
   functionalComponents: {
     title: 'Functional Components',
     instruction:
-      'Generate a comprehensive but bounded list of functional components/modules and assign each one to the most appropriate subsystem grouping. Include controllers, sensors, actuators, compute/AI elements, communications, user/operator interfaces, power/support functions, data stores, external actors, and safety/monitoring functions when they are implied by the prior inputs. For each component, describe its role, primary inputs, primary outputs, owned state/data, and safety or operational responsibility when applicable.',
+      'Generate a comprehensive but bounded domain-specific function inventory and assign every function to the subsystem that owns the behavior. Treat previously AI-completed wizard content as unverified architecture hypotheses. Infer the capabilities essential to the named system’s mission, environment, embodiment, control problem, and operating modes; do not fall back to a generic sensing-processing-decision-control chain when more precise architecture is warranted. When only a broad system class or name is supplied, create a conservative platform reference architecture centered on intrinsic enabling capabilities, not an invented customer persona, application vertical, companion role, healthcare role, entertainment role, or smart-environment integration. Decompose each major subsystem into multiple cohesive Title Case verb-noun functions at the selected depth; do not merely rename physical components. Separate acquisition, interpretation or estimation, state/world representation, planning, control, execution, and measured feedback where they are distinct responsibilities. Include operator/external interfaces, configuration/mode, health/fault, resource/power, communications, security, degraded operation, recovery, and safety functions only when applicable. For each function, describe its responsibility, primary inputs, outputs, owned or transformed state, constraints, and safety or operational role.',
     format:
-      'Use 8-14 bullet rows. Format each item exactly as "- Subsystem: subsystem name | Function: component/function name | Description: detailed responsibility; inputs; outputs; state/constraints."',
+      'Use the number and granularity of unique rows appropriate to the selected decomposition depth and system complexity. Format each item exactly as "- Subsystem: subsystem name | Function: verb-noun function name | Description: detailed responsibility; inputs; outputs; state/constraints."',
   },
   interactions: {
     title: 'Control Interactions',
     instruction:
-      'Generate comprehensive control/data interactions that cover nominal command flow, sensing/feedback, operator input, automation decisions, actuator commands, external communications, health monitoring, alerts, fallback behavior, and closed-loop feedback. Use only named or strongly implied components. For each interaction, describe the source component, target component, trigger/context, payload or signal, timing expectation, receiver action, and relevant safety/quality assumption when applicable. Use natural language sentences rather than arrow notation.',
+      'Generate a connected, non-duplicate, domain-specific set of interfaces covering every function in the inventory. Trace at least one complete mission flow from a genuine boundary input through acquisition, estimation or interpretation, representation, planning or decision, control, execution, and observable outcome as applicable. Add the purposeful feedback loops required to close control and decision behavior, plus warranted operator, configuration/mode, health/fault, resource, external communication, degraded, recovery, and emergency paths. Check that every payload can actually be produced by its source and consumed by its target, that control actions flow in the operationally correct direction, and that each function remains under one owner. Include reverse status, measurements, constraints, or corrective commands only when they change upstream behavior—never ceremonial acknowledgements. For each interaction, describe source, target, specific payload or command, trigger/context, timing expectation, receiver effect, and relevant safety/quality assumption.',
     format:
-      'Use 10-18 bullet rows when supported. Format each item exactly as "- From: source function | To: target function | Control Action: command/signal/request/data flow | Description: trigger, payload, timing, receiver behavior, assumptions." Do not leave any field blank.',
+      'Use the number and granularity of unique rows appropriate to the selected decomposition depth and system complexity. Format each item exactly as "- From: source function | To: target function | Control Action: specific command/signal/request/data product | Description: trigger, payload, timing, receiver behavior, assumptions." Do not leave any field blank.',
   },
   ops: {
     title: 'Operational Scenarios / Modes of Operation',
@@ -428,9 +441,12 @@ const COMPLETION_GUIDANCE = {
 };
 
 const PromptWizard = ({ onSubmit, onSkip, examples = EXAMPLES }) => {
+  const panelRef = useRef(null);
+  const [panelHeight, setPanelHeight] = useState(null);
   const [step, setStep] = useState(0);
   const [responses, setResponses] = useState({
     systemName: '',
+    abstractionLevel: DEFAULT_FUNCTIONAL_ABSTRACTION_LEVEL,
     systemOverview: '',
     functionalComponents: '',
     interactions: '',
@@ -442,6 +458,7 @@ const PromptWizard = ({ onSubmit, onSkip, examples = EXAMPLES }) => {
     loadingKey: null,
     error: '',
   });
+  const [aiGeneratedFields, setAiGeneratedFields] = useState({});
   const [clarificationsByStep, setClarificationsByStep] = useState({});
 
   const steps = [
@@ -489,6 +506,7 @@ const PromptWizard = ({ onSubmit, onSkip, examples = EXAMPLES }) => {
   const handleChange = (e) => {
     const nextValue = e.target.value;
     setResponses({ ...responses, [current.key]: nextValue });
+    setAiGeneratedFields((previous) => ({ ...previous, [current.key]: false }));
     if (TABLE_STEP_KEYS.has(current.key)) {
       setReviewTables((prev) => ({
         ...prev,
@@ -502,6 +520,7 @@ const PromptWizard = ({ onSubmit, onSkip, examples = EXAMPLES }) => {
     const nextText = serializeArtifactRows(nextRows, current.key);
     setReviewTables((prev) => ({ ...prev, [current.key]: nextRows }));
     setResponses((prev) => ({ ...prev, [current.key]: nextText }));
+    setAiGeneratedFields((previous) => ({ ...previous, [current.key]: false }));
   };
 
   const handleReviewCellChange = (rowId, field, value) => {
@@ -551,6 +570,10 @@ const PromptWizard = ({ onSubmit, onSkip, examples = EXAMPLES }) => {
   const buildCompletionPrompt = (targetStep) => {
     const guidance = COMPLETION_GUIDANCE[targetStep.key];
     const existingText = String(responses[targetStep.key] || '').trim();
+    const abstractionOption = getFunctionalAbstractionLevelOption(responses.abstractionLevel);
+    const aiAuthoredPriorFields = Object.entries(aiGeneratedFields)
+      .filter(([field, generated]) => generated && field !== targetStep.key)
+      .map(([field]) => field);
 
     return `
 You are helping complete a structured prompt wizard for functional architecture generation.
@@ -558,6 +581,11 @@ You are helping complete a structured prompt wizard for functional architecture 
 Target field: ${guidance.title}
 Task: ${guidance.instruction}
 Expected format: ${guidance.format}
+Selected decomposition depth: ${abstractionOption.label} — ${abstractionOption.description}
+Depth-specific generation guidance: ${getFunctionalAbstractionPromptGuidance(abstractionOption.value)}
+Evidence status: ${aiAuthoredPriorFields.length
+    ? `The following prior fields were AI-generated and are hypotheses to verify, not requirements: ${aiAuthoredPriorFields.join(', ')}.`
+    : 'The supplied prior fields are user-authored evidence.'}
 
 Prior inputs:
 - System Name: ${responses.systemName || '(not provided)'}
@@ -575,10 +603,11 @@ Prefer specific nouns and verbs over generic placeholders. Include enough detail
 `.trim();
   };
 
-  const callWizardAI = async ({ prompt, system, maxTokens = 1100 }) => {
+  const callWizardAI = async ({ prompt, system, maxTokens = 2500 }) => {
     const requestBody = {
       model: 'gpt-4o-mini',
-      temperature: 0.35,
+      temperature: FUNCTIONAL_DECOMPOSITION_SAMPLING.temperature,
+      top_p: FUNCTIONAL_DECOMPOSITION_SAMPLING.topP,
       max_tokens: maxTokens,
       messages: [
         { role: 'system', content: system },
@@ -627,12 +656,14 @@ Prefer specific nouns and verbs over generic placeholders. Include enough detail
       const prompt = buildCompletionPrompt(current);
       const content = await callWizardAI({
         prompt,
-        system: 'You are a concise systems engineering assistant. Complete wizard fields with technically plausible, safety-analysis-ready content.',
+        maxTokens: COMPLETION_TOKEN_BUDGETS[current.key] || 2500,
+        system: 'You are a senior systems architect. Complete wizard fields with domain-specific, internally consistent, safety-analysis-ready content at the user-selected abstraction level. Silently review coverage and interface semantics before returning the requested field.',
       });
 
       if (!content) throw new Error('AI completion returned no content.');
 
       setResponses((prev) => ({ ...prev, [current.key]: content }));
+      setAiGeneratedFields((previous) => ({ ...previous, [current.key]: true }));
       if (TABLE_STEP_KEYS.has(current.key)) {
         setReviewTables((prev) => ({
           ...prev,
@@ -658,6 +689,7 @@ You are helping prepare inputs for functional architecture generation.
 Review the current wizard content and identify concise follow-up questions only where uncertainty would materially affect the architecture, interfaces, operational modes, subsystem allocation, or later safety analysis.
 
 Current step: ${current.label}
+Selected decomposition depth: ${getFunctionalAbstractionLevelOption(responses.abstractionLevel).label}
 System Name: ${responses.systemName || '(not provided)'}
 System Overview: ${responses.systemOverview || '(not provided)'}
 Functional Components: ${responses.functionalComponents || '(not provided)'}
@@ -757,11 +789,17 @@ Rules:
       {
         mode: "structured",
         systemName: responses.systemName,
+        abstractionLevel: responses.abstractionLevel,
         systemOverview: responses.systemOverview,
         functionalComponents: responses.functionalComponents,
         interactions: responses.interactions,
         ops: responses.ops,
         clarifications,
+        evidenceProvenance: {
+          aiGeneratedFields: Object.entries(aiGeneratedFields)
+            .filter(([, generated]) => generated)
+            .map(([field]) => field),
+        },
       },
       null,
       2
@@ -772,8 +810,42 @@ Rules:
 
   const hasAICompletionStep = AI_COMPLETION_STEPS.has(current.key);
 
+  useEffect(() => {
+    let animationFrameId = null;
+    const updatePanelHeight = () => {
+      if (!panelRef.current) return;
+      const viewport = window.visualViewport;
+      const visibleBottom = viewport
+        ? viewport.offsetTop + viewport.height
+        : window.innerHeight;
+      const panelTop = panelRef.current.getBoundingClientRect().top;
+      const availableHeight = Math.max(0, Math.floor(visibleBottom - panelTop - 16));
+      setPanelHeight(availableHeight);
+    };
+    const schedulePanelHeightUpdate = () => {
+      if (animationFrameId !== null) cancelAnimationFrame(animationFrameId);
+      animationFrameId = requestAnimationFrame(updatePanelHeight);
+    };
+
+    updatePanelHeight();
+    schedulePanelHeightUpdate();
+    window.addEventListener('resize', schedulePanelHeightUpdate);
+    window.visualViewport?.addEventListener?.('resize', schedulePanelHeightUpdate);
+    window.visualViewport?.addEventListener?.('scroll', schedulePanelHeightUpdate);
+    return () => {
+      if (animationFrameId !== null) cancelAnimationFrame(animationFrameId);
+      window.removeEventListener('resize', schedulePanelHeightUpdate);
+      window.visualViewport?.removeEventListener?.('resize', schedulePanelHeightUpdate);
+      window.visualViewport?.removeEventListener?.('scroll', schedulePanelHeightUpdate);
+    };
+  }, []);
+
   return (
-    <div className="mx-auto flex max-h-[calc(100dvh-340px)] min-h-[320px] w-full max-w-[min(96vw,1500px)] flex-col overflow-hidden rounded-xl border bg-white p-5 shadow">
+    <div
+      ref={panelRef}
+      className="mx-auto flex w-full max-w-[min(96vw,1500px)] flex-col overflow-hidden rounded-xl border bg-white p-5 shadow"
+      style={{ height: panelHeight === null ? 'calc(100dvh - 340px)' : `${panelHeight}px` }}
+    >
       {/* Main wizard step */}
       <div className="shrink-0">
         <h2 className="text-xl font-semibold mb-1">{current.label}</h2>
@@ -788,6 +860,52 @@ Rules:
             value={responses[current.key]}
             onChange={handleChange}
           />
+          {current.key === 'systemName' && (
+            <fieldset className="mt-5 text-left">
+              <legend className="text-sm font-semibold text-gray-900">Functional decomposition depth</legend>
+              <p className="mt-1 text-xs text-gray-500">
+                This controls the granularity, subsystem coverage, interfaces, and expected detail throughout the wizard.
+              </p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {FUNCTIONAL_ABSTRACTION_LEVEL_OPTIONS.map((option) => {
+                  const selected = responses.abstractionLevel === option.value;
+                  return (
+                    <label
+                      key={option.value}
+                      className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition ${
+                        selected
+                          ? 'border-[#2D7DFE] bg-[#EEF4FF] ring-1 ring-[#2D7DFE]/20'
+                          : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="functional-decomposition-depth"
+                        value={option.value}
+                        checked={selected}
+                        onChange={(event) => setResponses((previous) => ({
+                          ...previous,
+                          abstractionLevel: event.target.value,
+                        }))}
+                        className="mt-1 h-4 w-4 shrink-0 accent-[#2D7DFE]"
+                      />
+                      <span className="min-w-0">
+                        <span className="flex flex-wrap items-center gap-2 text-sm font-medium text-gray-900">
+                          {option.label}
+                          {option.recommended && (
+                            <span className="rounded-full bg-[#2D7DFE] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+                              Recommended
+                            </span>
+                          )}
+                        </span>
+                        <span className="mt-0.5 block text-xs leading-5 text-gray-600">{option.description}</span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </fieldset>
+          )}
           {hasAICompletionStep && (
             <div className="mt-3 flex flex-wrap items-center gap-3">
               <button
