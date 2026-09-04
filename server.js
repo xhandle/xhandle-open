@@ -452,32 +452,133 @@ const llmLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-/* ----------------------------- OpenAI Realtime: ephemeral session ----------------------------- */
-app.post("/api/rt/session", async (req, res) => {
+/* ----------------------------- OpenAI Realtime: ephemeral WebRTC session ----------------------------- */
+const OPENAI_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || "gpt-realtime-2.1";
+const OPENAI_REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || "marin";
+const OPENAI_REALTIME_VOICES = new Set([
+  "alloy",
+  "ash",
+  "ballad",
+  "coral",
+  "echo",
+  "marin",
+  "sage",
+  "shimmer",
+  "verse",
+  "cedar",
+]);
+
+function buildConversationalWizardRealtimeInstructions(abstractionLabel) {
+  const selectedAbstraction = String(abstractionLabel || "Multi-level").trim().slice(0, 120);
+  return [
+    "You are xHandle's warm, concise voice collaborator for functional-decomposition discovery.",
+    `The selected decomposition depth is ${selectedAbstraction}.`,
+    "Hold a natural conversation and ask exactly one highest-value question at a time.",
+    "Before speaking after every user turn, call capture_architecture_brief with the complete user-grounded brief.",
+    "Use empty strings for facts the user has not supplied. Never invent user facts; corrections replace earlier values.",
+    "If the user supplies their name, greet them naturally once and remember it in the brief.",
+    "Set ready true once the system identity or boundary and mission are clear enough for a useful draft and no unanswered question would materially change the architecture.",
+    "Known functions, interfaces, and operating modes improve the result but are not mandatory because generation can infer them.",
+    "When ready is true, tell the user that you have enough context and are starting the functional decomposition.",
+    "Otherwise briefly reflect what you understood and ask one short question. Do not expose hidden reasoning or mention the tool.",
+    "Keep spoken turns conversational and under 55 words.",
+  ].join(" ");
+}
+
+app.post("/api/rt/session", llmLimiter, async (req, res) => {
   try {
-    const key = process.env.OPENAI_API_KEY || process.env.OPENAI_TOKEN;
-    if (!key) {
-      return res.status(500).json({ error: "OpenAI API key missing (OPENAI_API_KEY)" });
+    const apiKey = await resolveOpenAIKeyForRequest(req);
+    if (!apiKey) {
+      return res.status(401).json({
+        error: "An OpenAI API key is required for Realtime voice. Save one in Settings or configure OPENAI_API_KEY.",
+      });
     }
-    const { model = "gpt-4o-realtime-preview", voice = "verse" } = req.body || {};
+
+    const requestedVoice = String(req.body?.voice || "").trim().toLowerCase();
+    const voice = OPENAI_REALTIME_VOICES.has(requestedVoice)
+      ? requestedVoice
+      : (OPENAI_REALTIME_VOICES.has(OPENAI_REALTIME_VOICE) ? OPENAI_REALTIME_VOICE : "marin");
+    const abstractionLabel = String(req.body?.abstractionLabel || "Multi-level").trim();
     const r = await axios.post(
-      "https://api.openai.com/v1/realtime/sessions",
-      { model, voice },
+      "https://api.openai.com/v1/realtime/client_secrets",
+      {
+        session: {
+          type: "realtime",
+          model: OPENAI_REALTIME_MODEL,
+          output_modalities: ["audio"],
+          instructions: buildConversationalWizardRealtimeInstructions(abstractionLabel),
+          audio: {
+            input: {
+              transcription: {
+                model: "gpt-4o-mini-transcribe",
+                language: "en",
+              },
+              turn_detection: {
+                type: "semantic_vad",
+                eagerness: "medium",
+                create_response: true,
+                interrupt_response: true,
+              },
+            },
+            output: { voice },
+          },
+          tools: [
+            {
+              type: "function",
+              name: "capture_architecture_brief",
+              description: "Record the complete grounded discovery brief before replying to the user.",
+              parameters: {
+                type: "object",
+                properties: {
+                  userName: { type: "string", description: "User name only when explicitly supplied, otherwise empty." },
+                  systemName: { type: "string", description: "System name or boundary grounded in the conversation, otherwise empty." },
+                  purpose: { type: "string", description: "Mission and system boundary grounded in the conversation, otherwise empty." },
+                  components: { type: "string", description: "Concise newline-separated known functions or components, otherwise empty." },
+                  interactions: { type: "string", description: "Concise newline-separated known interfaces and interactions, otherwise empty." },
+                  operationalScenarios: { type: "string", description: "Concise newline-separated operational scenarios and modes, otherwise empty." },
+                  assumptions: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "Consequential assumptions that must remain visible to the user.",
+                  },
+                  ready: { type: "boolean", description: "Whether the grounded brief is ready for functional-decomposition generation." },
+                },
+                required: [
+                  "userName",
+                  "systemName",
+                  "purpose",
+                  "components",
+                  "interactions",
+                  "operationalScenarios",
+                  "assumptions",
+                  "ready",
+                ],
+                additionalProperties: false,
+              },
+            },
+          ],
+          tool_choice: "required",
+        },
+      },
       {
         headers: {
-          Authorization: `Bearer ${key}`,
+          Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
-          "OpenAI-Beta": "realtime=v1",
         },
         timeout: 15_000,
       }
     );
+    res.set({
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+      "X-AI-Voice-Model": OPENAI_REALTIME_MODEL,
+      "X-AI-Voice": voice,
+    });
     return res.status(r.status).json(r.data);
   } catch (err) {
-    const status = err.response?.status || 500;
-    const data = err.response?.data || { error: err.message };
-    logger.error("❌ /api/rt/session error:", data);
-    return res.status(status).json(data);
+    const normalized = extractProviderErrorMessage(err);
+    logger.error("❌ /api/rt/session error:", normalized.details || normalized.message);
+    return res.status(normalized.status).json({ error: normalized.message });
   }
 });
 
@@ -2032,6 +2133,77 @@ app.delete("/api/baselines/:id", (req, res) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ success: true });
   });
+});
+
+/* ----------------------------- OpenAI natural speech proxy ----------------------------- */
+const OPENAI_SPEECH_MODEL = process.env.OPENAI_SPEECH_MODEL || "gpt-4o-mini-tts";
+const OPENAI_SPEECH_VOICES = new Set([
+  "alloy",
+  "ash",
+  "ballad",
+  "coral",
+  "echo",
+  "fable",
+  "marin",
+  "nova",
+  "onyx",
+  "sage",
+  "shimmer",
+  "verse",
+  "cedar",
+]);
+
+app.post("/api/audio/speech", llmLimiter, async (req, res) => {
+  try {
+    const apiKey = await resolveOpenAIKeyForRequest(req);
+    if (!apiKey) {
+      return res.status(401).json({
+        error: "An OpenAI API key is required for natural voice. Save one in Settings or configure OPENAI_API_KEY.",
+      });
+    }
+
+    const input = String(req.body?.input || "").trim();
+    if (!input) return res.status(400).json({ error: "Speech input is required." });
+    if (input.length > 8000) {
+      return res.status(400).json({ error: "Speech input is too long." });
+    }
+
+    const requestedVoice = String(req.body?.voice || "").trim().toLowerCase();
+    const voice = OPENAI_SPEECH_VOICES.has(requestedVoice)
+      ? requestedVoice
+      : (process.env.OPENAI_SPEECH_VOICE || "marin");
+    const response = await axios.post(
+      "https://api.openai.com/v1/audio/speech",
+      {
+        model: OPENAI_SPEECH_MODEL,
+        voice,
+        input,
+        instructions: "Speak naturally and warmly, like a thoughtful engineering collaborator. Use conversational pacing, subtle emphasis, and short pauses. Avoid an announcer voice.",
+        response_format: "mp3",
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        responseType: "arraybuffer",
+        timeout: 45_000,
+      },
+    );
+
+    res.set({
+      "Content-Type": response.headers["content-type"] || "audio/mpeg",
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+      "X-AI-Voice-Model": OPENAI_SPEECH_MODEL,
+      "X-AI-Voice": voice,
+    });
+    return res.status(200).send(Buffer.from(response.data));
+  } catch (err) {
+    const normalized = extractProviderErrorMessage(err);
+    logger.error("❌ /api/audio/speech error:", normalized.details || normalized.message);
+    return res.status(normalized.status).json({ error: normalized.message });
+  }
 });
 
 /* ----------------------------- Secure AI chat proxy ----------------------------- */

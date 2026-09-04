@@ -81,9 +81,6 @@ const GROUP = {
   radius: 16,
 };
 
-const GROUP_DRAG_EXPAND_MARGIN = 8;
-const GROUP_DRAG_EXPAND_STEP = 24;
-
 const NODE_LAYOUT = {
   w: THEME.node.w + THEME.node.pad * 2,
   h: THEME.node.h + THEME.node.pad * 2,
@@ -273,25 +270,6 @@ function nearestFreePosition({ x, y }, existing) {
     }
   }
   return base;
-}
-
-/* ================================
- * Nudge node if it overlaps after drag
- * ================================ */
-function nudgeIfOverlapping(movedId, nodes, setNodes) {
-  setNodes((nds) => {
-    const me = nds.find((n) => n.id === movedId);
-    if (!me) return nds;
-    let pos = { ...me.position };
-    const others = nds.filter((n) => n.id !== movedId);
-    let tries = 0;
-    while (others.some((o) => isOverlapping(pos, o.position)) && tries < 60) {
-      pos.x = snap(pos.x + (tries % 2 ? GRID : 0));
-      pos.y = snap(pos.y + (tries % 2 ? 0 : GRID));
-      tries++;
-    }
-    return nds.map((n) => (n.id === movedId ? { ...n, position: pos } : n));
-  });
 }
 
 /* ================================
@@ -2655,6 +2633,7 @@ const DiagramBody = forwardRef(function DiagramBody(
   const canvasCreatedFunctionNodeIdsRef = useRef(new Set());
   const groupDragRef = useRef(null);
   const childDragRef = useRef(null);
+  const groupMembershipSignatureRef = useRef('');
   const persistSoon = useCallback(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => savePositions(storageKey, posRef.current), 120);
@@ -2929,6 +2908,7 @@ const DiagramBody = forwardRef(function DiagramBody(
     builtCountRef.current = 0;
     appliedAutoCategoriesRef.current = null;
     canvasCreatedFunctionNodeIdsRef.current = new Set();
+    groupMembershipSignatureRef.current = '';
     setHydratedStorageKey(storageKey);
   }, [storageKey, setEdges, setNodes, syncDiagramHistoryCounts]);
 
@@ -3221,30 +3201,45 @@ useEffect(() => {
     const currentBox = groupBoxesRef.current.find((box) => box.id === groupId);
     if (!currentBox) return;
 
-    const position = draggedNode.position || { x: GROUP.padX, y: GROUP.padTop };
+    const session = childDragRef.current?.nodeId === draggedNode.id
+      ? childDragRef.current
+      : null;
+    const bounds = diagramHostRef.current?.getBoundingClientRect();
+    const clientX = Number(event?.clientX ?? event?.nativeEvent?.clientX);
+    const clientY = Number(event?.clientY ?? event?.nativeEvent?.clientY);
+    let pointerPosition = null;
+    if (bounds && Number.isFinite(clientX) && Number.isFinite(clientY)) {
+      pointerPosition = project({
+        x: clientX - bounds.left,
+        y: clientY - bounds.top,
+      });
+    }
+
+    const currentNodes = getNodes();
+    const byId = new Map(currentNodes.map((node) => [node.id, node]));
+    const currentAbsolute = draggedNode.positionAbsolute || getNodeAbsolutePosition(draggedNode, byId);
+    const desiredAbsolute = pointerPosition && session?.pointerOffset
+      ? {
+          x: pointerPosition.x - session.pointerOffset.x,
+          y: pointerPosition.y - session.pointerOffset.y,
+        }
+      : currentAbsolute;
     const width = Math.max(currentBox.width || GROUP.w, GROUP.minW);
     const height = Math.max(currentBox.height || GROUP.h, GROUP.minH);
-    const rightLimit = width - NODE_LAYOUT.w - GROUP.padX;
-    const bottomLimit = height - NODE_LAYOUT.h - GROUP.padBottom;
-    const zoom = Math.max(0.1, Number(getViewport()?.zoom) || 1);
-    const movementX = Number(event?.movementX ?? event?.nativeEvent?.movementX ?? 0) / zoom;
-    const movementY = Number(event?.movementY ?? event?.nativeEvent?.movementY ?? 0) / zoom;
-    const lastPosition = childDragRef.current?.nodeId === draggedNode.id
-      ? childDragRef.current.position
-      : null;
-    const deltaX = movementX || (lastPosition ? position.x - lastPosition.x : 0);
-    const deltaY = movementY || (lastPosition ? position.y - lastPosition.y : 0);
-    const stepX = Math.max(GROUP_DRAG_EXPAND_STEP, Math.ceil(Math.abs(deltaX || GROUP_DRAG_EXPAND_STEP)));
-    const stepY = Math.max(GROUP_DRAG_EXPAND_STEP, Math.ceil(Math.abs(deltaY || GROUP_DRAG_EXPAND_STEP)));
+    const nodeWidth = Number(draggedNode.width) || NODE_LAYOUT.w;
+    const nodeHeight = Number(draggedNode.height) || NODE_LAYOUT.h;
+    const innerLeft = currentBox.position.x + GROUP.padX;
+    const innerTop = currentBox.position.y + GROUP.padTop;
+    const innerRight = currentBox.position.x + width - GROUP.padX;
+    const innerBottom = currentBox.position.y + height - GROUP.padBottom;
 
-    const growLeft = position.x <= GROUP.padX + GROUP_DRAG_EXPAND_MARGIN && deltaX < 0 ? stepX : 0;
-    const growRight = position.x >= rightLimit - GROUP_DRAG_EXPAND_MARGIN && deltaX > 0 ? stepX : 0;
-    const growTop = position.y <= GROUP.padTop + GROUP_DRAG_EXPAND_MARGIN && deltaY < 0 ? stepY : 0;
-    const growBottom = position.y >= bottomLimit - GROUP_DRAG_EXPAND_MARGIN && deltaY > 0 ? stepY : 0;
-    if (!growLeft && !growRight && !growTop && !growBottom) {
-      childDragRef.current = { nodeId: draggedNode.id, parentId: groupId, position: { ...position } };
-      return;
-    }
+    // Each side grows by the exact pointer overshoot. This gives left, right,
+    // and top the same continuous behavior as bottom expansion.
+    const growLeft = Math.max(0, innerLeft - desiredAbsolute.x);
+    const growRight = Math.max(0, desiredAbsolute.x + nodeWidth - innerRight);
+    const growTop = Math.max(0, innerTop - desiredAbsolute.y);
+    const growBottom = Math.max(0, desiredAbsolute.y + nodeHeight - innerBottom);
+    if (!growLeft && !growRight && !growTop && !growBottom) return;
 
     const nextBox = {
       ...currentBox,
@@ -3256,46 +3251,52 @@ useEffect(() => {
       height: height + growTop + growBottom,
       userResized: true,
     };
-
     const nextBoxes = groupBoxesRef.current.map((box) => (
       box.id === groupId ? nextBox : box
     ));
     setGroupBoxes(nextBoxes);
     persistGroupsSoon(nextBoxes);
 
-    setNodes((nds) => {
-      const nextNodes = nds.map((node) => {
-        if (node.id === groupId) {
-          return {
-            ...node,
-            position: { ...nextBox.position },
-            style: {
-              ...(node.style || {}),
-              width: nextBox.width,
-              height: nextBox.height,
-            },
-          };
-        }
-        if (node.parentNode !== groupId || node.type === 'groupBox') return node;
-        const currentPosition = node.position || { x: GROUP.padX, y: GROUP.padTop };
-        const nextPosition = node.id === draggedNode.id
-          ? { ...currentPosition }
-          : {
-              x: currentPosition.x + growLeft,
-              y: currentPosition.y + growTop,
-            };
-        posRef.current.set(node.id, { position: nextPosition, parentId: groupId });
+    setNodes((nodesBeforeExpansion) => nodesBeforeExpansion.map((node) => {
+      if (node.id === groupId) {
         return {
           ...node,
-          position: nextPosition,
+          position: { ...nextBox.position },
+          style: {
+            ...(node.style || {}),
+            width: nextBox.width,
+            height: nextBox.height,
+          },
         };
-      });
-      return nextNodes;
-    });
+      }
+      if (node.parentNode !== groupId || node.type === 'groupBox') return node;
 
-    childDragRef.current = { nodeId: draggedNode.id, parentId: groupId, position: { ...position } };
+      const currentPosition = node.position || { x: GROUP.padX, y: GROUP.padTop };
+      // When the left or top edge grows, offset stationary siblings by the same
+      // amount so their absolute canvas positions do not change.
+      const nextPosition = node.id === draggedNode.id
+        ? {
+            x: desiredAbsolute.x - nextBox.position.x,
+            y: desiredAbsolute.y - nextBox.position.y,
+          }
+        : {
+            x: currentPosition.x + growLeft,
+            y: currentPosition.y + growTop,
+          };
+      posRef.current.set(node.id, { position: nextPosition, parentId: groupId });
+      return nextPosition === currentPosition ? node : { ...node, position: nextPosition };
+    }));
+    childDragRef.current = {
+      ...(session || {}),
+      nodeId: draggedNode.id,
+      parentId: groupId,
+      position: {
+        x: desiredAbsolute.x - nextBox.position.x,
+        y: desiredAbsolute.y - nextBox.position.y,
+      },
+    };
     persistSoon();
-  }, [getViewport, persistGroupsSoon, persistSoon, setNodes]);
+  }, [getNodes, persistGroupsSoon, persistSoon, project, setNodes]);
 
   const assignNodesToGroup = useCallback((nodeIds, groupId) => {
     const targetBox = groupBoxes.find((box) => box.id === groupId);
@@ -4119,13 +4120,24 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
 	  useEffect(() => {
 	    if (!storageReady) return;
 	    if (!groupBoxes.length || !nodes.length) return;
-	    if (groupDragRef.current) return;
-	    if (childDragRef.current) return;
+	    if (groupDragRef.current || childDragRef.current) return;
+
+    // Resize an unmanaged group only when its membership changes. Node movement
+    // is presentation-only and must never resize a group or displace siblings.
+    const membershipSignature = JSON.stringify(groupBoxes.map((box) => [
+      box.id,
+      nodes
+        .filter((node) => node.parentNode === box.id && node.type !== 'groupBox')
+        .map((node) => node.id)
+        .sort(),
+    ]));
+    if (membershipSignature === groupMembershipSignatureRef.current) return;
+    groupMembershipSignatureRef.current = membershipSignature;
+
     setGroupBoxes((currentBoxes) => {
       const nextBoxes = currentBoxes.map((box) => {
-        if (box.autoGenerated) return box;
+        if (box.autoGenerated || box.userResized) return box;
         const childNodes = nodes.filter((node) => node.parentNode === box.id && node.type !== 'groupBox');
-        if (box.userResized) return box;
         const nextSize = sizeGroupToFitChildren(box, childNodes);
         if (nextSize.width === (box.width || GROUP.w) && nextSize.height === (box.height || GROUP.h)) {
           return box;
@@ -4135,20 +4147,13 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
 
       const changed = nextBoxes.some((box, index) => (
         box.width !== currentBoxes[index]?.width ||
-        box.height !== currentBoxes[index]?.height ||
-        box.position?.x !== currentBoxes[index]?.position?.x ||
-        box.position?.y !== currentBoxes[index]?.position?.y ||
-        box.userResized !== currentBoxes[index]?.userResized
+        box.height !== currentBoxes[index]?.height
       ));
-
-      if (changed) {
-        persistGroupsSoon(nextBoxes);
-        return nextBoxes;
-      }
-
-      return currentBoxes;
+      if (!changed) return currentBoxes;
+      persistGroupsSoon(nextBoxes);
+      return nextBoxes;
     });
-  }, [autoCategories, groupBoxes, nodes, rows, persistGroupsSoon, storageReady]);
+  }, [groupBoxes, nodes, persistGroupsSoon, storageReady]);
 
 	  useEffect(() => {
 	    if (!storageReady) return;
@@ -4897,7 +4902,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
             posRef.current.set(rfId, { position: newNode.position, parentId: null });
             persistSoon();
           }}
-	          onNodeDragStart={(_, node) => {
+	          onNodeDragStart={(event, node) => {
 	            if (node?.id) captureDiagramHistoryCheckpoint();
 	            if (node?.type === 'groupBox') {
 	              const startBox = groupBoxesRef.current.find((box) => box.id === node.id);
@@ -4909,24 +4914,33 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
 	              return;
 	            }
 	            if (node?.parentNode) {
+	              const bounds = diagramHostRef.current?.getBoundingClientRect();
+	              const clientX = Number(event?.clientX ?? event?.nativeEvent?.clientX);
+	              const clientY = Number(event?.clientY ?? event?.nativeEvent?.clientY);
+	              const pointerPosition = bounds && Number.isFinite(clientX) && Number.isFinite(clientY)
+	                ? project({ x: clientX - bounds.left, y: clientY - bounds.top })
+	                : null;
+	              const currentNodes = getNodes();
+	              const byId = new Map(currentNodes.map((entry) => [entry.id, entry]));
+	              const absolutePosition = node.positionAbsolute || getNodeAbsolutePosition(node, byId);
 	              childDragRef.current = {
 	                nodeId: node.id,
 	                parentId: node.parentNode,
 	                position: { ...(node.position || { x: GROUP.padX, y: GROUP.padTop }) },
+	                pointerOffset: pointerPosition
+	                  ? {
+	                      x: pointerPosition.x - absolutePosition.x,
+	                      y: pointerPosition.y - absolutePosition.y,
+	                    }
+	                  : null,
 	              };
 	            }
 	          }}
 	          onNodeDrag={(event, node) => {
-	            if (node?.type === 'groupBox') {
-	              const drag = groupDragRef.current;
-	              if (!drag || drag.groupId !== node.id) return;
-	              return;
-	            }
-	            expandGroupWhileDraggingChild(event, node);
+	            if (node?.type !== 'groupBox') expandGroupWhileDraggingChild(event, node);
 	          }}
 	          onNodeDragStop={(_, node) => {
 	            if (node?.id && node?.position) {
-              let finalParentId = node.parentNode || null;
               if (node.type === 'groupBox') {
                 const activeGroupDrag = groupDragRef.current?.groupId === node.id
                   ? groupDragRef.current
@@ -4944,58 +4958,16 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                 if (activeGroupDrag) groupDragRef.current = null;
                 setTimeout(() => refreshEdgesFromNodes(getNodes()), 0);
               } else {
-                const currentNodes = getNodes();
-                const byId = new Map(currentNodes.map((n) => [n.id, n]));
-                const dragged = byId.get(node.id) || node;
-                const abs = dragged.positionAbsolute || getNodeAbsolutePosition(dragged, byId);
-                const containingBox = groupBoxes.find((box) => {
-                  const left = box.position.x;
-                  const top = box.position.y;
-                  const right = left + (box.width || GROUP.w);
-                  const bottom = top + (box.height || GROUP.h);
-                  const cx = abs.x + THEME.node.w / 2;
-                  const cy = abs.y + THEME.node.h / 2;
-                  return cx >= left && cx <= right && cy >= top && cy <= bottom;
-                });
-
-                const keepCurrentGroup = dragged.parentNode && containingBox?.id === dragged.parentNode;
-                const targetBox = keepCurrentGroup
-                  ? groupBoxes.find((box) => box.id === dragged.parentNode)
-                  : containingBox;
-
-                if (targetBox) {
-                  const relative = clampToGroup(
-                    { x: abs.x - targetBox.position.x, y: abs.y - targetBox.position.y },
-                    targetBox
-                  );
-                  finalParentId = targetBox.id;
-                  setNodes((nds) => nds.map((n) => (
-                    n.id === node.id ? { ...n, parentNode: targetBox.id, position: relative } : n
-                  )));
-                  posRef.current.set(node.id, { position: relative, parentId: targetBox.id });
-                  updateSubsystemForFunctionNodeIds([node.id], targetBox.label);
-                  if (!targetBox.autoGenerated) {
-                    setTimeout(() => growGroupToFitMembers(targetBox.id, getNodes()), 0);
-                  }
-                } else if (dragged.parentNode) {
-                  const previousGroup = groupBoxes.find((box) => box.id === dragged.parentNode);
-                  finalParentId = null;
-                  setNodes((nds) => nds.map((n) => (
-                    n.id === node.id ? { ...n, parentNode: undefined, position: abs } : n
-                  )));
-                  posRef.current.set(node.id, { position: abs, parentId: null });
-                  if (previousGroup) updateSubsystemForFunctionNodeIds([node.id], '');
-                } else {
-                  finalParentId = null;
-                  posRef.current.set(node.id, { position: { x: abs.x, y: abs.y }, parentId: null });
-                }
+	              // A position drag is presentation-only. Keep ownership, grouping,
+	              // group bounds, and every other node exactly as they were.
+	              posRef.current.set(node.id, {
+	                position: { ...node.position },
+	                parentId: node.parentNode || null,
+	              });
 	              }
 	              persistSoon();
 	              savePositions(storageKey, posRef.current);
 	              childDragRef.current = null;
-	              if (node.type !== 'groupBox' && !finalParentId) {
-	                nudgeIfOverlapping(node.id, nodes.filter((n) => !n.parentNode && n.type !== 'groupBox'), setNodes);
-	              }
               setTimeout(() => {
                 refreshEdgesFromNodes(getNodes());
               }, 0);

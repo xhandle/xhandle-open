@@ -285,3 +285,45 @@ html:not(.dark) h1, html:not(.dark) h2, html:not(.dark) h3, html:not(.dark) h4,
 html:not(.dark) .prose h1, html:not(.dark) .prose h2, html:not(.dark) .prose h3, html:not(.dark) .prose h4 { color: #0f0f12 !important; }
 html.dark h1, html.dark h2, html.dark h3, html.dark h4,
 html.dark .prose h1, html.dark .prose h2, html.dark .prose h3, html.dark .prose h4 { color: var(--text) !important; }
+
+/* Conversational wizard: slow, continuous idle haze around the avatar. */
+.xhandle-avatar-fog {
+  will-change: transform, opacity;
+  transform-origin: center;
+}
+
+.xhandle-avatar-fog-one {
+  animation: xhandle-avatar-fog-one 11s ease-in-out infinite;
+}
+
+.xhandle-avatar-fog-two {
+  animation: xhandle-avatar-fog-two 14s ease-in-out infinite;
+}
+
+.xhandle-avatar-fog-three {
+  animation: xhandle-avatar-fog-three 17s ease-in-out infinite;
+}
+
+@keyframes xhandle-avatar-fog-one {
+  0%, 100% { transform: translate3d(-27%, -20%, 0) scale(0.94); opacity: 0.7; }
+  25% { transform: translate3d(45%, -27%, 0) scale(1.16); opacity: 0.94; }
+  52% { transform: translate3d(52%, 37%, 0) scale(1.04); opacity: 0.8; }
+  78% { transform: translate3d(-34%, 39%, 0) scale(1.2); opacity: 0.9; }
+}
+
+@keyframes xhandle-avatar-fog-two {
+  0%, 100% { transform: translate3d(25%, 27%, 0) scale(1.1); opacity: 0.76; }
+  28% { transform: translate3d(-41%, 34%, 0) scale(0.96); opacity: 0.94; }
+  55% { transform: translate3d(-47%, -32%, 0) scale(1.18); opacity: 0.72; }
+  80% { transform: translate3d(38%, -37%, 0) scale(1.04); opacity: 0.88; }
+}
+
+@keyframes xhandle-avatar-fog-three {
+  0%, 100% { transform: translate3d(-18%, 31%, 0) scale(1.04); opacity: 0.58; }
+  33% { transform: translate3d(-31%, -29%, 0) scale(1.22); opacity: 0.78; }
+  66% { transform: translate3d(40%, -7%, 0) scale(0.94); opacity: 0.7; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .xhandle-avatar-fog { animation: none !important; }
+}
