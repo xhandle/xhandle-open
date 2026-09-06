@@ -4,7 +4,13 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 
-export default function SafetyReportViewer({ reportText, report, functionalDiagramImage }) {
+export default function SafetyReportViewer({
+  reportText,
+  report,
+  functionalDiagramImage,
+  expanded = false,
+  onOpenSourceRow,
+}) {
   // Accept both prop names; coerce to string safely
   let md = (reportText ?? report ?? '').toString();
 
@@ -43,19 +49,40 @@ export default function SafetyReportViewer({ reportText, report, functionalDiagr
       <ul className="ml-6 list-disc space-y-1" {...props} />
     ),
     table: ({ node, ...props }) => (
-      <div className="my-5 overflow-x-auto">
-        <table className="w-full border-collapse border border-gray-300 text-sm" {...props} />
+      <div className="my-5 max-w-full overflow-x-auto rounded-md border border-gray-300 bg-white shadow-sm">
+        <table
+          className={`${expanded ? 'min-w-[1200px]' : 'min-w-[960px]'} w-full table-fixed border-collapse text-sm`}
+          {...props}
+        />
       </div>
     ),
     thead: ({ node, ...props }) => (
       <thead className="bg-gray-50" {...props} />
     ),
     th: ({ node, ...props }) => (
-      <th className="border border-gray-300 px-3 py-2 text-left font-semibold text-gray-900" {...props} />
+      <th className="min-w-40 border border-gray-300 px-4 py-3 text-left align-top font-semibold leading-5 text-gray-900" {...props} />
     ),
     td: ({ node, ...props }) => (
-      <td className="border border-gray-300 px-3 py-2 align-top text-gray-800" {...props} />
+      <td className="min-w-40 break-words border border-gray-300 px-4 py-3 align-top leading-6 text-gray-800" {...props} />
     ),
+    a: ({ node, href, children, ...props }) => {
+      const sourceMatch = String(href || '').match(/^#hazard-source-row-(\d+)$/i);
+      const canOpenSource = Boolean(sourceMatch && typeof onOpenSourceRow === 'function');
+      return (
+        <a
+          href={href}
+          className="font-medium text-[#1c5fde] underline decoration-blue-300 underline-offset-2 hover:text-[#0B3EA8]"
+          onClick={canOpenSource ? (event) => {
+            event.preventDefault();
+            onOpenSourceRow(Number(sourceMatch[1]));
+          } : undefined}
+          title={canOpenSource ? `Open hazard analysis source row ${sourceMatch[1]}` : undefined}
+          {...props}
+        >
+          {children}
+        </a>
+      );
+    },
     li: ({ node, children, ...props }) => {
       const text = children?.[0]?.props?.children?.[0] || '';
       const isFakeSubBullet = typeof text === 'string' && text.trim().startsWith('○');
@@ -86,8 +113,8 @@ export default function SafetyReportViewer({ reportText, report, functionalDiagr
 
   return (
     <div
-      className="prose max-w-4xl mx-auto bg-white p-8 rounded-lg shadow overflow-y-auto text-left leading-7"
-      style={{ maxHeight: '80vh' }}
+      className={`prose w-full bg-white p-8 text-left leading-7 ${expanded ? 'max-w-none' : 'mx-auto max-w-4xl overflow-y-auto rounded-lg shadow'}`}
+      style={expanded ? undefined : { maxHeight: '80vh' }}
     >
       {/* Before diagram */}
       <ReactMarkdown

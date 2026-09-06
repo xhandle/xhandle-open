@@ -56,6 +56,7 @@ const {
   normalizeMultiLevelHierarchy,
   parseCollaboratorReasoningEnvelope,
   recalculateFunctionalDirectionAudit,
+  selectCurrentCollaboratorReasoningStep,
   selectLiveCollaboratorReasoning,
 } = require("./XHandleCopilotView");
 
@@ -85,13 +86,17 @@ describe("subsystem generation prompting", () => {
     expect(parseCollaboratorReasoningEnvelope("A normal short reply").content).toBe("A normal short reply");
   });
 
-  it("replaces app progress with the latest streamed model reasoning and keeps it list-shaped", () => {
+  it("shows only the current reasoning milestone while preserving list formatting", () => {
     const progress = "- Reviewing context\n- Drafting interfaces";
     const latestModelSummary = "- Established the boundary\n- Connected the control loop";
 
-    expect(selectLiveCollaboratorReasoning(progress, "")).toBe(progress);
-    expect(selectLiveCollaboratorReasoning(progress, latestModelSummary)).toBe(latestModelSummary);
-    expect(selectLiveCollaboratorReasoning(progress, latestModelSummary, true)).toBe(progress);
+    expect(selectLiveCollaboratorReasoning(progress, "")).toBe("- Drafting interfaces");
+    expect(selectLiveCollaboratorReasoning(progress, latestModelSummary)).toBe("- Connected the control loop");
+    expect(selectLiveCollaboratorReasoning(progress, latestModelSummary, true)).toBe("- Drafting interfaces");
+    expect(selectCurrentCollaboratorReasoningStep("- First milestone\n- Second milestone"))
+      .toBe("- Second milestone");
+    expect(selectCurrentCollaboratorReasoningStep("- First milestone\n-"))
+      .toBe("- First milestone");
     expect(formatCollaboratorReasoningList("Reviewing context\nDrafting interfaces")).toBe(
       "- Reviewing context\n- Drafting interfaces",
     );

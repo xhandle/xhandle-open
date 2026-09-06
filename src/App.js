@@ -168,6 +168,17 @@ import {
   getSafetyEvidenceCell,
 } from "./features/project-hazard-analysis/safetyIssueOperationalContexts";
 import {
+  assessLLMConsolidationCoverage,
+} from "./features/project-hazard-analysis/safetyIssueConsolidation";
+import {
+  loadSafetyIssueReportRecord,
+  saveSafetyIssueReportRecord,
+} from "./features/project-hazard-analysis/safetyIssueReportStorage";
+import {
+  buildHazardAnalysisRecovery,
+  getProjectHazardSummaryReviewItems,
+} from "./features/project-hazard-analysis/hazardAnalysisRecovery";
+import {
   buildHazardOperationalContextPrompt,
   getEffectiveHazardOperationalContexts,
   getHazardContextRowKey,
@@ -569,27 +580,54 @@ function annotateHazardInterfaceRows(rows = [], headers = []) {
   });
 }
 
-function findExistingHazardRowForFunctionalRow(functionalRow = {}, summary = null, guidePhrase = "", context = null) {
+const hazardSummaryLookupCache = new WeakMap();
+
+function getHazardSummaryLookup(summary = null) {
   if (!Array.isArray(summary) || !Array.isArray(summary[0]) || summary.length < 2) return null;
+  const cached = hazardSummaryLookupCache.get(summary);
+  if (cached) return cached;
   const headers = summary[0];
-  const targetKey = getFunctionalControlActionKey(functionalRow);
   const guideIdx = findSummaryColumn(headers, ["Guide Phrase", "Guide Word", "Guideword", "Guideword Phrase", "STPA Guide Phrase"]);
   const scenarioIdx = findSummaryColumn(headers, ["Operational Scenario", "Scenario", "Operating Scenario"]);
   const modeIdx = findSummaryColumn(headers, ["Operational Mode", "Mode", "System Mode"]);
+  const byControl = new Map();
+  const byControlGuide = new Map();
+  summary.slice(1).forEach((row) => {
+    const controlKey = buildHazardRowControlActionKey(row, headers);
+    if (!controlKey) return;
+    if (!byControl.has(controlKey)) byControl.set(controlKey, row);
+    const guide = guideIdx >= 0 ? normalizeAllocationText(row?.[guideIdx]) : "";
+    const controlGuideKey = `${controlKey}::guide:${guide}`;
+    const bucket = byControlGuide.get(controlGuideKey) || [];
+    bucket.push({
+      row,
+      scenario: scenarioIdx >= 0 ? normalizeAllocationText(row?.[scenarioIdx]) : "",
+      mode: modeIdx >= 0 ? normalizeAllocationText(row?.[modeIdx]) : "",
+    });
+    byControlGuide.set(controlGuideKey, bucket);
+  });
+  const lookup = { byControl, byControlGuide, guideIdx, scenarioIdx, modeIdx };
+  hazardSummaryLookupCache.set(summary, lookup);
+  return lookup;
+}
+
+function findExistingHazardRowForFunctionalRow(functionalRow = {}, summary = null, guidePhrase = "", context = null) {
+  const lookup = getHazardSummaryLookup(summary);
+  if (!lookup) return null;
+  const targetKey = getFunctionalControlActionKey(functionalRow);
   const normalizedGuidePhrase = normalizeAllocationText(guidePhrase);
   const normalizedScenario = normalizeAllocationText(context?.scenario);
   const normalizedMode = normalizeAllocationText(context?.mode);
   const contextIsUnspecified = !context || isUnspecifiedHazardContext(context);
-  return summary.slice(1).find((row) => {
-    if (buildHazardRowControlActionKey(row, headers) !== targetKey) return false;
-    if (!normalizedGuidePhrase) return true;
-    if (guideIdx < 0) return false;
-    if (normalizeAllocationText(row?.[guideIdx]) !== normalizedGuidePhrase) return false;
-    if (!contextIsUnspecified && (scenarioIdx < 0 || modeIdx < 0)) return false;
-    if (normalizedScenario && scenarioIdx >= 0 && normalizeAllocationText(row?.[scenarioIdx]) !== normalizedScenario) return false;
-    if (normalizedMode && modeIdx >= 0 && normalizeAllocationText(row?.[modeIdx]) !== normalizedMode) return false;
-    return true;
-  }) || null;
+  if (!normalizedGuidePhrase) return lookup.byControl.get(targetKey) || null;
+  if (lookup.guideIdx < 0) return null;
+  const candidates = lookup.byControlGuide.get(`${targetKey}::guide:${normalizedGuidePhrase}`) || [];
+  if (contextIsUnspecified) return candidates[0]?.row || null;
+  if (lookup.scenarioIdx < 0 || lookup.modeIdx < 0) return null;
+  return candidates.find((candidate) => (
+    (!normalizedScenario || candidate.scenario === normalizedScenario)
+    && (!normalizedMode || candidate.mode === normalizedMode)
+  ))?.row || null;
 }
 
 function stripProjectRiskProfileColumns(sheets = {}) {
@@ -1521,24 +1559,60 @@ function installLocalStorageBroadcast() {
 }
 
 
+let projectMapCache = null;
+let projectMapSerializedCache = null;
+
 function readProjectMap() {
-  try { return JSON.parse(localStorage.getItem(PROJECT_DATA_KEY) || '{}'); }
-  catch { return {}; }
+  try {
+    const serialized = localStorage.getItem(PROJECT_DATA_KEY) || '{}';
+    if (projectMapCache && serialized === projectMapSerializedCache) return projectMapCache;
+    const parsed = JSON.parse(serialized);
+    projectMapCache = parsed && typeof parsed === "object" ? parsed : {};
+    projectMapSerializedCache = serialized;
+    return projectMapCache;
+  } catch {
+    projectMapCache = {};
+    projectMapSerializedCache = null;
+    return projectMapCache;
+  }
 }
 function writeProjectMap(map) {
-  try { localStorage.setItem(PROJECT_DATA_KEY, JSON.stringify(map)); }
-  catch {}
+  try {
+    const serialized = JSON.stringify(map);
+    localStorage.setItem(PROJECT_DATA_KEY, serialized);
+    projectMapCache = map;
+    projectMapSerializedCache = serialized;
+    return true;
+  } catch (error) {
+    console.error("[project-storage] Unable to persist project data", error);
+    return false;
+  }
 }
 function saveProjectPatch(projectId, patch) {
-  if (!projectId) return;
+  if (!projectId) return false;
   const map = readProjectMap();
   const prev = map[projectId] || {};
   map[projectId] = { ...prev, ...patch, _updatedAt: new Date().toISOString() };
-  writeProjectMap(map);
+  return writeProjectMap(map);
 }
 function loadProjectData(projectId) {
   const map = readProjectMap();
   return map[projectId] || null;
+}
+async function saveProjectSafetyIssueReport(projectId, markdown) {
+  if (!projectId) return false;
+  const saved = await saveSafetyIssueReportRecord(projectId, markdown);
+  if (saved) {
+    saveProjectPatch(projectId, {
+      riskAssessmentReportStorage: "artifact-store",
+      riskAssessmentReportUpdatedAt: new Date().toISOString(),
+      // Remove the legacy inline copy after the durable write. Keeping a large
+      // duplicate here can make every subsequent project save exceed quota.
+      riskAssessmentReportMarkdown: undefined,
+    });
+    notifyBackupDataChanged("safety-issue-report");
+  }
+  return saved;
 }
 function projectExportFileName(projectName) {
   const safeName = String(projectName || "xhandle-project")
@@ -5420,6 +5494,8 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
   async function collectProjectExport(projectId) {
     const project = projects.find((entry) => entry.id === projectId);
     if (!project) throw new Error("Select a project to export.");
+    const projectData = loadProjectData(project.id) || {};
+    const storedSafetyIssueReport = await loadSafetyIssueReportRecord(project.id);
     return {
       type: "xhandle-project",
       version: 1,
@@ -5431,7 +5507,12 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
         createdAt: project.createdAt || null,
         updatedAt: project.updatedAt || null,
       },
-      data: loadProjectData(project.id) || {},
+      data: {
+        ...projectData,
+        riskAssessmentReportMarkdown: storedSafetyIssueReport?.markdown
+          ?? projectData.riskAssessmentReportMarkdown
+          ?? "",
+      },
       localStorageEntries: collectProjectLocalStorageEntries(project.id),
       reviewItems: (resultsReview.reviewItems || []).filter((item) => item.projectId === project.id),
     };
@@ -5495,9 +5576,18 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
       const data = projectData && typeof projectData === "object" && !Array.isArray(projectData)
         ? { ...projectData, _importedAt: now, _updatedAt: now }
         : { importedPayload: projectData, _importedAt: now, _updatedAt: now };
+      const importedSafetyIssueReport = String(data.riskAssessmentReportMarkdown || "");
+      delete data.riskAssessmentReportMarkdown;
+      if (importedSafetyIssueReport) data.riskAssessmentReportStorage = "artifact-store";
       const map = readProjectMap();
       map[importedProject.id] = data;
       writeProjectMap(map);
+      if (importedSafetyIssueReport) {
+        const reportSaved = await saveProjectSafetyIssueReport(importedProject.id, importedSafetyIssueReport);
+        if (!reportSaved) {
+          console.warn("[projects] Imported project report could not be saved to durable report storage.");
+        }
+      }
 
       const localStorageEntries = Array.isArray(parsed?.localStorageEntries)
         ? parsed.localStorageEntries
@@ -6549,7 +6639,11 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
 	  const [riskAssessmentReportMarkdown, setRiskAssessmentReportMarkdown] = useState("");
   const [isGeneratingRiskAssessmentReport, setIsGeneratingRiskAssessmentReport] = useState(false);
   const [isConsolidatingSafetyIssues, setIsConsolidatingSafetyIssues] = useState(false);
+  const [safetyIssueRefreshStatus, setSafetyIssueRefreshStatus] = useState(null);
   const hazardAnalysisAbortControllerRef = useRef(null);
+  const hazardReconciliationHydrationRef = useRef(null);
+  const projectPersistenceHydrationRef = useRef(null);
+  const safetyIssueReportHydrationRef = useRef(null);
   const [generatingSafetyIssueReportIds, setGeneratingSafetyIssueReportIds] = useState(new Set());
   const [selectedRiskPriority, setSelectedRiskPriority] = useState("All");
   const [activeRiskId, setActiveRiskId] = useState(null);
@@ -6686,9 +6780,14 @@ useEffect(() => {
 
   // Load per-project state whenever activeProjectId changes
   useEffect(() => {
+    let safetyReportLoadCancelled = false;
+    hazardReconciliationHydrationRef.current = activeProjectId || null;
+    projectPersistenceHydrationRef.current = activeProjectId || null;
+    safetyIssueReportHydrationRef.current = activeProjectId || null;
     setProjectLoaded(false);
     setLoadedProjectId(null);
     setLoadingProjectId(activeProjectId || null);
+    setHazardReviewRunId(null);
     if (!activeProjectId) {
       setResponseRows([]);
       setCommittedFunctionalDiagramRows([]);
@@ -6707,6 +6806,7 @@ useEffect(() => {
       setProjectRiskProfileGenerationMode('standard');
       setAgentReportResult(null); // NEW: reset when no project
       setRiskAssessmentReportMarkdown("");
+      safetyIssueReportHydrationRef.current = null;
       setGeneratingSafetyIssueReportIds(new Set());
       setActiveRiskId(null);
       setSelectedRiskPriority("All");
@@ -6738,10 +6838,30 @@ useEffect(() => {
     setSelectedHazardContextId("all");
     setShowHazardContextManager(false);
     setExpandedHazardVariantKeys(new Set());
-    setRiskMethod('STPA-Textbook');
+    setRiskMethod(data?.riskMethod || 'STPA-Textbook');
     setProjectRiskProfileGenerationMode(data?.projectRiskProfileGenerationMode || 'standard');
     setAgentReportResult(data?.agentReportResult || null); // NEW: restore report
-    setRiskAssessmentReportMarkdown(data?.riskAssessmentReportMarkdown || "");
+    const legacySafetyIssueReport = String(data?.riskAssessmentReportMarkdown || "");
+    setRiskAssessmentReportMarkdown(legacySafetyIssueReport);
+    loadSafetyIssueReportRecord(projectIdForLoad)
+      .then(async (storedReport) => {
+        let durableMarkdown = storedReport?.markdown;
+        if (!storedReport && legacySafetyIssueReport) {
+          await saveProjectSafetyIssueReport(projectIdForLoad, legacySafetyIssueReport);
+          durableMarkdown = legacySafetyIssueReport;
+        }
+        if (!safetyReportLoadCancelled && durableMarkdown !== undefined) {
+          setRiskAssessmentReportMarkdown(String(durableMarkdown || ""));
+        }
+      })
+      .catch((error) => {
+        console.warn("[safety-issue-reports] Unable to hydrate the saved report", error);
+      })
+      .finally(() => {
+        if (!safetyReportLoadCancelled && safetyIssueReportHydrationRef.current === projectIdForLoad) {
+          safetyIssueReportHydrationRef.current = null;
+        }
+      });
     setGeneratingSafetyIssueReportIds(new Set());
     setActiveRiskId(null);
     setSelectedRiskPriority("All");
@@ -6758,7 +6878,10 @@ useEffect(() => {
       setLoadingProjectId((current) => (current === projectIdForLoad ? null : current));
     }, 0);
 
-    return () => clearTimeout(loadTimer);
+    return () => {
+      safetyReportLoadCancelled = true;
+      clearTimeout(loadTimer);
+    };
   }, [activeProjectId]);
 
   useEffect(() => {
@@ -6839,9 +6962,14 @@ useEffect(() => {
     });
   }, [activeProjectId]);
 
-// Persist per-project state whenever it changes (including the report)
+// Persist compact per-project state whenever it changes. Large report bodies
+// are handled by the dedicated artifact-store effect below.
 useEffect(() => {
   if (!activeProjectId || loadingProjectId || !projectLoaded || loadedProjectId !== activeProjectId) return;
+  if (projectPersistenceHydrationRef.current === activeProjectId) {
+    projectPersistenceHydrationRef.current = null;
+    return;
+  }
   const existingProjectData = loadProjectData(activeProjectId) || {};
   const patch = {
     responseRows,
@@ -6849,7 +6977,6 @@ useEffect(() => {
     riskMethod,
     projectRiskProfileGenerationMode,
 	    agentReportResult,
-    riskAssessmentReportMarkdown,
 	    riskRegister,
     requirements,        // ← add this
     draftHazardRowsByIndex,
@@ -6872,12 +6999,32 @@ useEffect(() => {
   riskMethod,
   projectRiskProfileGenerationMode,
   agentReportResult,
-  riskAssessmentReportMarkdown,
 	  riskRegister, // <-- ensure riskRegister is in the deps
 	  requirements,
   draftHazardRowsByIndex,
 	  hazardOperationalContexts,
 	]);
+
+// Large generated reports live outside the monolithic localStorage project
+// record so they continue to persist for projects with substantial analyses.
+useEffect(() => {
+  if (!activeProjectId || loadingProjectId || !projectLoaded || loadedProjectId !== activeProjectId) return;
+  if (safetyIssueReportHydrationRef.current === activeProjectId) return;
+  const projectIdAtSave = activeProjectId;
+  const timer = setTimeout(() => {
+    saveProjectSafetyIssueReport(projectIdAtSave, riskAssessmentReportMarkdown)
+      .then((saved) => {
+        if (!saved) console.error("[safety-issue-reports] Generated report could not be persisted.");
+      });
+  }, 250);
+  return () => clearTimeout(timer);
+}, [
+  activeProjectId,
+  loadedProjectId,
+  loadingProjectId,
+  projectLoaded,
+  riskAssessmentReportMarkdown,
+]);
 
 const handleProjectDiagramRowsUpdate = useCallback((nextRowsOrUpdater) => {
   const projectIdAtUpdate = activeProjectId;
@@ -6993,11 +7140,12 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
 
   const draftHazardHeaders = useMemo(() => getProjectDraftHazardHeaders(riskMethod), [riskMethod]);
   useEffect(() => {
-    if (!activeProjectId || !Object.keys(draftHazardRowsByIndex || {}).length) return;
+    if (!activeProjectId || loadingProjectId || !projectLoaded || loadedProjectId !== activeProjectId) return;
+    if (!Object.keys(draftHazardRowsByIndex || {}).length) return;
     const savedHeaders = loadProjectData(activeProjectId)?.draftHazardHeaders;
     if (JSON.stringify(savedHeaders || []) === JSON.stringify(draftHazardHeaders)) return;
     saveProjectPatch(activeProjectId, { draftHazardHeaders });
-  }, [activeProjectId, draftHazardHeaders, draftHazardRowsByIndex]);
+  }, [activeProjectId, draftHazardHeaders, draftHazardRowsByIndex, loadedProjectId, loadingProjectId, projectLoaded]);
   const hazardAnalysisRows = useMemo(
     () => getProjectHazardAnalysisRows(responseRows),
     [responseRows]
@@ -7015,6 +7163,49 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     [effectiveHazardOperationalContexts, hazardAnalysisRows, riskMethod]
   );
   useEffect(() => {
+    if (!activeProjectId || loadingProjectId || !projectLoaded || loadedProjectId !== activeProjectId) return;
+    if (hasAnalysisSummary(analysisResult)) return;
+    if (!Object.keys(draftHazardRowsByIndex || {}).length || !draftHazardTargets.length) return;
+
+    const targetHeaders = getProjectDraftHazardHeaders(riskMethod);
+    const recoveredRows = draftHazardTargets
+      .map((target) => {
+        const fallbackRow = buildProjectDraftHazardRow(target.analysisRow, targetHeaders);
+        const savedDraft = draftHazardRowsByIndex[target.rowKey]
+          || (target.legacyRowKey ? draftHazardRowsByIndex[target.legacyRowKey] : null)
+          || (target.legacyRowKey && target.guidePhraseIndex === 0 ? draftHazardRowsByIndex[target.originalIndex] : null);
+        if (!Array.isArray(savedDraft?.row)) return null;
+        const aligned = alignSummaryRowToHeaders(targetHeaders, savedDraft.row, targetHeaders, fallbackRow);
+        return savedDraft.generated && isMeaningfullyGeneratedDraftRow(aligned, fallbackRow) ? aligned : null;
+      })
+      .filter(Boolean);
+    if (!recoveredRows.length) return;
+
+    const recoveredAnalysis = { Summary: [targetHeaders, ...recoveredRows] };
+    setAnalysisResult(recoveredAnalysis);
+    saveProjectPatch(activeProjectId, {
+      analysisResult: recoveredAnalysis,
+      draftHazardHeaders: targetHeaders,
+    });
+  }, [
+    activeProjectId,
+    analysisResult,
+    draftHazardRowsByIndex,
+    draftHazardTargets,
+    loadedProjectId,
+    loadingProjectId,
+    projectLoaded,
+    riskMethod,
+  ]);
+  useEffect(() => {
+    if (!activeProjectId || loadingProjectId || !projectLoaded || loadedProjectId !== activeProjectId) return;
+    // Project hydration and recovery already restore authoritative saved rows.
+    // Reconciliation is for subsequent edits; running it during navigation
+    // needlessly rebuilds large analyses and can delay the functional canvas.
+    if (hazardReconciliationHydrationRef.current === activeProjectId) {
+      if (hasAnalysisSummary(analysisResult)) hazardReconciliationHydrationRef.current = null;
+      return;
+    }
     if (!Array.isArray(analysisResult?.Summary?.[0])) return;
     let cancelled = false;
     const targetHeaders = getProjectDraftHazardHeaders(riskMethod);
@@ -7065,9 +7256,11 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         return alignedCompleted;
       })
       .filter(Boolean);
-    const nextAnalysisResult = nextSummaryRows.length
-      ? { ...(analysisResult || {}), Summary: [targetHeaders, ...nextSummaryRows] }
-      : null;
+    // Never erase a completed analysis because a transient project-load or
+    // reconciliation state produced zero matches. Completed evidence remains
+    // visible until the user explicitly replaces it with another analysis.
+    if (!nextSummaryRows.length) return;
+    const nextAnalysisResult = { ...(analysisResult || {}), Summary: [targetHeaders, ...nextSummaryRows] };
     const currentAnalysisSignature = JSON.stringify(analysisResult?.Summary || null);
     const nextAnalysisSignature = JSON.stringify(nextAnalysisResult?.Summary || null);
     if (currentAnalysisSignature !== nextAnalysisSignature) {
@@ -7120,7 +7313,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     // requestConsolidatedSafetyIssuesFromSummary is intentionally omitted because it is a component-local async helper.
     // Including it would rerun this downstream sync on unrelated renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeProjectId, analysisResult, draftHazardRowsByIndex, draftHazardTargets, hazardAnalysisRows, hazardOperationalContexts, riskMethod, riskRegister]);
+  }, [activeProjectId, analysisResult, draftHazardRowsByIndex, draftHazardTargets, hazardAnalysisRows, hazardOperationalContexts, loadedProjectId, loadingProjectId, projectLoaded, riskMethod, riskRegister]);
   const hazardSummaryHeaders = draftHazardHeaders;
   const visibleDraftHazardColumnCount = draftHazardHeaders.filter((header) => !PROJECT_HAZARD_CONTEXT_HEADERS.has(header)).length;
   const visibleHazardSummaryColumnCount = hazardSummaryHeaders.filter((header) => !PROJECT_HAZARD_CONTEXT_HEADERS.has(header)).length;
@@ -7490,19 +7683,12 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   ]);
 
   const hazardSummaryReviewItems = useMemo(() => {
-    const projectArtifactPrefix = `hazard-summary:${activeProjectId || "default"}:row:`;
-    const filters = {
-      sourceFeature: "AI Hazard Analysis",
-      artifactType: "hazard_summary_table",
-    };
-    if (hazardReviewRunId) filters.sourceRunId = hazardReviewRunId;
-    const filtered = resultsReview.getReviewItems(filters);
-    if (filtered.length || hazardReviewRunId) return filtered;
-    return (resultsReview.reviewItems || []).filter((item) =>
-      item.artifactType === "hazard_summary_table" &&
-      String(item.artifactId || "").startsWith(projectArtifactPrefix)
+    return getProjectHazardSummaryReviewItems(
+      resultsReview.reviewItems,
+      activeProjectId,
+      hazardReviewRunId
     );
-  }, [activeProjectId, hazardReviewRunId, resultsReview]);
+  }, [activeProjectId, hazardReviewRunId, resultsReview.reviewItems]);
 
   const hazardSummaryReviewByRow = useMemo(() => {
     const map = new Map();
@@ -7516,6 +7702,32 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     });
     return map;
   }, [hazardSummaryReviewItems]);
+
+  useEffect(() => {
+    if (!activeProjectId || loadingProjectId || !projectLoaded || loadedProjectId !== activeProjectId) return;
+    if (hasAnalysisSummary(analysisResult) || !hazardSummaryReviewItems.length) return;
+
+    const recovery = buildHazardAnalysisRecovery(hazardSummaryReviewItems);
+    if (!recovery) return;
+    const recoveredAnalysis = recovery.analysisResult;
+    const recoveredMethod = recovery.sourceMethod || riskMethod;
+    setAnalysisResult(recoveredAnalysis);
+    if (recoveredMethod !== riskMethod) setRiskMethod(recoveredMethod);
+    if (recovery.sourceRunId) setHazardReviewRunId(recovery.sourceRunId);
+    saveProjectPatch(activeProjectId, {
+      analysisResult: recoveredAnalysis,
+      riskMethod: recoveredMethod,
+      draftHazardHeaders: recovery.columns,
+    });
+  }, [
+    activeProjectId,
+    analysisResult,
+    hazardSummaryReviewItems,
+    loadedProjectId,
+    loadingProjectId,
+    projectLoaded,
+    riskMethod,
+  ]);
 
   const hazardReviewDrawerOptions = useMemo(() => ({
     sourceFeature: "AI Hazard Analysis",
@@ -9121,8 +9333,15 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         ],
       };
       setIsConsolidatingSafetyIssues(true);
-      const nextRiskRegister = await requestConsolidatedSafetyIssuesFromSummary(finalSheets.Summary, { mergeExisting: true });
-      setIsConsolidatingSafetyIssues(false);
+      let nextRiskRegister = riskRegister;
+      try {
+        nextRiskRegister = await requestConsolidatedSafetyIssuesFromSummary(finalSheets.Summary, { mergeExisting: true });
+      } catch (error) {
+        console.error("[risk-assessment] LLM consolidation failed while preserving completed hazard rows", error);
+        setSafetyIssueRefreshStatus({ kind: "error", message: error?.message || "The LLM could not consolidate the completed hazard rows." });
+      } finally {
+        setIsConsolidatingSafetyIssues(false);
+      }
       setDraftHazardRowsByIndex((prev) => ({ ...prev, ...preservedDraftRows }));
       setAnalysisResult(finalSheets);
       setRiskRegister(nextRiskRegister);
@@ -9243,17 +9462,26 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       Summary: [targetHeaders, ...mergedSummaryRows],
     };
     setIsConsolidatingSafetyIssues(true);
-    const nextRiskRegister = await requestConsolidatedSafetyIssuesFromSummary(finalSheets.Summary, {
-      mergeExisting: Boolean(existingSummary) && !shouldRegenerate,
-      signal: abortController.signal,
-    });
-    setIsConsolidatingSafetyIssues(false);
+    let nextRiskRegister = riskRegister;
+    try {
+      nextRiskRegister = await requestConsolidatedSafetyIssuesFromSummary(finalSheets.Summary, {
+        mergeExisting: Boolean(existingSummary) && !shouldRegenerate,
+        signal: abortController.signal,
+      });
+    } catch (error) {
+      if (abortController.signal.aborted) throw error;
+      console.error("[risk-assessment] LLM consolidation failed while preserving generated hazard rows", error);
+      setSafetyIssueRefreshStatus({ kind: "error", message: error?.message || "The LLM could not consolidate the generated hazard rows." });
+    } finally {
+      setIsConsolidatingSafetyIssues(false);
+    }
 
     setAnalysisResult(finalSheets);
     setDraftHazardRowsByIndex(mergedDraftRows);
     setRiskRegister(nextRiskRegister);
+    let analysisPersisted = true;
     if (activeProjectId) {
-      saveProjectPatch(activeProjectId, {
+      analysisPersisted = saveProjectPatch(activeProjectId, {
         analysisResult: finalSheets,
         riskMethod: selectedMethod,
         draftHazardHeaders: targetHeaders,
@@ -9273,12 +9501,19 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
           sourceRunId,
           artifactType: "hazard_summary_table",
           artifactId: `hazard-summary:${activeProjectId || "default"}`,
+          projectId: activeProjectId || "",
           rows,
           columns,
         }));
       } catch (error) {
         console.warn("[results-review] Failed to register hazard Summary review items", error);
       }
+    }
+    if (!analysisPersisted) {
+      window.alert(
+        "The analysis completed, but the browser project cache is full. "
+        + "xHandle retained the generated review evidence for recovery; consider exporting the project before clearing browser data."
+      );
     }
     setShowDiagram(false);
     setActiveTab('Hazard Analysis');
@@ -9452,6 +9687,9 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         try {
           nextRiskRegister = await requestConsolidatedSafetyIssuesFromSummary(nextAnalysisResult.Summary, { mergeExisting: true });
           setRiskRegister(nextRiskRegister);
+        } catch (error) {
+          console.error("[risk-assessment] LLM consolidation failed after regenerating a hazard row", error);
+          setSafetyIssueRefreshStatus({ kind: "error", message: error?.message || "The LLM could not refresh the consolidated safety issues." });
         } finally {
           setIsConsolidatingSafetyIssues(false);
         }
@@ -9750,7 +9988,15 @@ Rules:
           ].join("\n").trim();
       setRiskAssessmentReportMarkdown(nextMarkdown);
       setRiskReportMode("preview");
-      if (activeProjectId) saveProjectPatch(activeProjectId, { riskAssessmentReportMarkdown: nextMarkdown });
+      if (activeProjectId) {
+        const saved = await saveProjectSafetyIssueReport(activeProjectId, nextMarkdown);
+        if (!saved) {
+          setSafetyIssueRefreshStatus({
+            kind: "error",
+            message: "The report was generated, but browser storage could not persist it. Export the project before leaving this page.",
+          });
+        }
+      }
     } catch (error) {
       console.error("[risk-assessment] Single Safety Issue Report regeneration failed", error);
       window.alert(error?.message || "Unable to regenerate this Safety Issue Report. Check your AI provider settings and try again.");
@@ -10005,12 +10251,20 @@ Rules:
           next.delete(issue.id);
           return next;
         });
-        if (activeProjectId) saveProjectPatch(activeProjectId, { riskAssessmentReportMarkdown: partialMarkdown });
+        if (activeProjectId) await saveProjectSafetyIssueReport(activeProjectId, partialMarkdown);
       }
       const markdown = buildReportsMarkdown(issueReports);
       setRiskAssessmentReportMarkdown(markdown);
       setRiskReportMode("preview");
-      if (activeProjectId) saveProjectPatch(activeProjectId, { riskAssessmentReportMarkdown: markdown });
+      if (activeProjectId) {
+        const saved = await saveProjectSafetyIssueReport(activeProjectId, markdown);
+        if (!saved) {
+          setSafetyIssueRefreshStatus({
+            kind: "error",
+            message: "Reports were generated, but browser storage could not persist them. Export the project before leaving this page.",
+          });
+        }
+      }
       return markdown;
     } catch (error) {
       console.error("[risk-assessment] AI safety issue report generation failed", error);
@@ -10045,7 +10299,10 @@ Rules:
     });
   }
 
-  async function requestConsolidatedSafetyIssuesFromSummary(summary, { mergeExisting = false, signal = null } = {}) {
+  async function requestConsolidatedSafetyIssuesFromSummary(summary, {
+    mergeExisting = false,
+    signal = null,
+  } = {}) {
     if (!Array.isArray(summary) || !Array.isArray(summary[0]) || summary.length < 2) return [];
     const headers = summary[0].map((header) => String(header || ""));
     const safetyRows = summary
@@ -10063,7 +10320,40 @@ Rules:
       });
     if (!safetyRows.length) return [];
 
-    const fallback = buildRiskRegisterFromSummary(summary);
+    const allowedIndexes = new Set(safetyRows.map((item) => item.sourceIndex));
+    const materializeIssues = (proposedIssues = []) => proposedIssues
+      .map((issue, index) => {
+        const sourceIndexes = Array.from(new Set((Array.isArray(issue?.sourceIndexes) ? issue.sourceIndexes : [])
+          .map((value) => Number(value))
+          .filter((value) => allowedIndexes.has(value))))
+          .sort((a, b) => a - b);
+        if (!sourceIndexes.length) return null;
+        const evidence = safetyRows.filter((item) => sourceIndexes.includes(item.sourceIndex));
+        const proposedLikelihood = Math.min(5, Math.max(1, Number(issue?.likelihood) || 3));
+        const proposedSeverity = Math.min(5, Math.max(1, Number(issue?.severity) || 3));
+        const contextVariants = buildSafetyIssueContextVariants({
+          description: issue?.description,
+          likelihood: proposedLikelihood,
+          severity: proposedSeverity,
+          evidence,
+        }, issue?.contextVariants);
+        const boundingContext = getBoundingSafetyIssueContext(contextVariants);
+        return {
+          id: makeId(),
+          title: String(issue?.title || `Consolidated Safety Issue ${index + 1}`).trim(),
+          description: String(issue?.description || "Consolidated from Safety-assessed hazard analysis rows.").trim(),
+          likelihood: boundingContext?.likelihood || proposedLikelihood,
+          severity: boundingContext?.severity || proposedSeverity,
+          status: String(issue?.status || "Open").trim() || "Open",
+          owner: String(issue?.owner || "").trim(),
+          dueDate: String(issue?.dueDate || "").trim(),
+          tags: String(issue?.tags || "").trim(),
+          sourceIndexes,
+          sourceIndex: sourceIndexes[0],
+          contextVariants,
+        };
+      })
+      .filter(Boolean);
     try {
       const prompt = `
 You are consolidating hazard-analysis rows into a concise set of Consolidated Safety Issues.
@@ -10108,105 +10398,122 @@ Return strict JSON only with this schema:
 }
 
 Rules:
-- Consolidate related rows into one issue when they share the same hazard theme, unsafe condition, affected function/subsystem, mitigation need, or verification concern.
+- You—not deterministic application code—must decide the semantic issue boundaries from the supplied engineering evidence.
+- Consolidate aggressively around actionable engineering concerns: rows belong together when an engineering team can address them through the same control strategy, requirement set, design change, or verification campaign.
+- Merge across guide phrases, scenarios, modes, functions, and interfaces when they are manifestations of the same underlying unsafe condition or share the same engineering treatment.
+- Treat guide phrases, scenarios, and modes as evidence or variants, not automatic reasons to create separate issues.
+- Do not mirror the hazard worksheet structure and do not create one issue per row, guide phrase, context, or functional interface.
+- Prefer the smallest defensible set of issues that remains technically coherent and actionable. A review backlog approaching the number of worksheet permutations is not adequately consolidated.
 - Keep unrelated safety hazards as separate issues.
 - Never erase operational differences when consolidating rows. Preserve every represented scenario-mode combination in contextVariants.
 - Use context-specific likelihood and severity values from 1 to 5. The issue-level likelihood and severity must match the context variant with the highest likelihood × severity score.
 - Keep hazards separate when their scenario or mode produces a materially different unsafe state that cannot be explained clearly as a context variant of one issue.
 - Every sourceIndexes value must come from the supplied Safety hazard rows.
+- Every supplied Safety hazard row index must appear in at least one issue's sourceIndexes.
 - Use likelihood and severity integers from 1 to 5. If the rows do not provide enough evidence, choose conservative middle values based on the row severity wording.
 - Do not invent hazards, controls, owners, or dates.
 - Return only strict JSON. No Markdown. No code fences.
       `.trim();
-      const timeoutController = new AbortController();
-      const abortFromCaller = () => timeoutController.abort();
-      let timedOut = false;
-      const timeoutId = setTimeout(() => {
-        timedOut = true;
-        timeoutController.abort();
-      }, 120_000);
-      signal?.addEventListener?.("abort", abortFromCaller, { once: true });
-      let response;
-      try {
-        response = await fetch(`${backendURL}/api/chat`, {
-          method: "POST",
-          ...buildAIAuthOpts({ "Content-Type": "application/json" }),
-          signal: timeoutController.signal,
-          body: JSON.stringify({
-            model: "gpt-4o",
-            messages: [
-              { role: "system", content: "Return only strict JSON. No prose or markdown." },
-              { role: "user", content: prompt },
-            ],
-            temperature: 0.2,
-            max_tokens: 2200,
-          }),
-        });
-      } catch (error) {
-        if (signal?.aborted) throw error;
-        if (timedOut) {
-          console.warn("[risk-assessment] Safety issue consolidation timed out; using deterministic consolidation.");
-          return mergeExisting ? mergeSafetyIssueEdits(fallback, riskRegister) : fallback;
+      let repairInstruction = "";
+      let assessed = null;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const timeoutController = new AbortController();
+        const abortFromCaller = () => timeoutController.abort();
+        let timedOut = false;
+        const timeoutId = setTimeout(() => {
+          timedOut = true;
+          timeoutController.abort();
+        }, 120_000);
+        signal?.addEventListener?.("abort", abortFromCaller, { once: true });
+        let response;
+        try {
+          response = await fetch(`${backendURL}/api/chat`, {
+            method: "POST",
+            ...buildAIAuthOpts({ "Content-Type": "application/json" }),
+            signal: timeoutController.signal,
+            body: JSON.stringify({
+              model: "gpt-4o",
+              messages: [
+                { role: "system", content: "Perform semantic safety-issue consolidation and return only strict JSON. No prose or markdown." },
+                { role: "user", content: `${prompt}${repairInstruction}` },
+              ],
+              temperature: 0.2,
+              max_tokens: Math.min(12000, Math.max(4000, safetyRows.length * 40)),
+            }),
+          });
+        } catch (error) {
+          if (signal?.aborted) throw error;
+          if (timedOut) throw new Error("Safety issue consolidation timed out before the LLM returned a complete result.");
+          throw error;
+        } finally {
+          clearTimeout(timeoutId);
+          signal?.removeEventListener?.("abort", abortFromCaller);
         }
-        throw error;
-      } finally {
-        clearTimeout(timeoutId);
-        signal?.removeEventListener?.("abort", abortFromCaller);
+        if (!response.ok) throw new Error(`Safety issue consolidation AI HTTP ${response.status}`);
+        const parsed = parseJsonObjectFromText(extractAIText(await response.json())) || {};
+        assessed = assessLLMConsolidationCoverage(parsed?.issues, safetyRows);
+        if (assessed.coverageComplete && assessed.issues.length) break;
+        repairInstruction = `\n\nYour prior attempt omitted these source indexes: ${assessed.missingSourceIndexes.join(", ")}. Return a complete revised issues array covering every supplied row. Reconsider the full semantic clustering; do not append one issue per omitted row.`;
       }
-      if (!response.ok) throw new Error(`Safety issue consolidation AI HTTP ${response.status}`);
-      const parsed = parseJsonObjectFromText(extractAIText(await response.json())) || {};
-      const allowedIndexes = new Set(safetyRows.map((item) => item.sourceIndex));
-      const issues = (Array.isArray(parsed?.issues) ? parsed.issues : [])
-        .map((issue, index) => {
-          const sourceIndexes = Array.from(new Set((Array.isArray(issue?.sourceIndexes) ? issue.sourceIndexes : [])
-            .map((value) => Number(value))
-            .filter((value) => allowedIndexes.has(value))))
-            .sort((a, b) => a - b);
-          if (!sourceIndexes.length) return null;
-          const evidence = safetyRows.filter((item) => sourceIndexes.includes(item.sourceIndex));
-          const proposedLikelihood = Math.min(5, Math.max(1, Number(issue?.likelihood) || 3));
-          const proposedSeverity = Math.min(5, Math.max(1, Number(issue?.severity) || 3));
-          const contextVariants = buildSafetyIssueContextVariants({
-            description: issue?.description,
-            likelihood: proposedLikelihood,
-            severity: proposedSeverity,
-            evidence,
-          }, issue?.contextVariants);
-          const boundingContext = getBoundingSafetyIssueContext(contextVariants);
-          return {
-            id: makeId(),
-            title: String(issue?.title || `Consolidated Safety Issue ${index + 1}`).trim(),
-            description: String(issue?.description || "Consolidated from Safety-assessed hazard analysis rows.").trim(),
-            likelihood: boundingContext?.likelihood || proposedLikelihood,
-            severity: boundingContext?.severity || proposedSeverity,
-            status: String(issue?.status || "Open").trim() || "Open",
-            owner: String(issue?.owner || "").trim(),
-            dueDate: String(issue?.dueDate || "").trim(),
-            tags: String(issue?.tags || "").trim(),
-            sourceIndexes,
-            sourceIndex: sourceIndexes[0],
-            contextVariants,
-          };
-        })
-        .filter(Boolean);
-      const nextIssues = issues.length ? issues : fallback;
+      if (!assessed?.coverageComplete || !assessed.issues.length) {
+        throw new Error(`The LLM did not return complete source coverage${assessed?.missingSourceIndexes?.length ? `; missing rows: ${assessed.missingSourceIndexes.join(", ")}` : ""}.`);
+      }
+      const nextIssues = materializeIssues(assessed.issues);
       return mergeExisting ? mergeSafetyIssueEdits(nextIssues, riskRegister) : nextIssues;
     } catch (error) {
       if (signal?.aborted || error?.name === "AbortError") throw error;
       console.error("[risk-assessment] AI safety issue consolidation failed", error);
-      return mergeExisting ? mergeSafetyIssueEdits(fallback, riskRegister) : fallback;
+      throw error;
     }
   }
 
   async function refreshSafetyIssuesFromSummary({ mergeExisting = false } = {}) {
-    if (isConsolidatingSafetyIssues) return;
+    if (isConsolidatingSafetyIssues) {
+      setSafetyIssueRefreshStatus({ kind: "working", message: "Safety issue consolidation is already running." });
+      return;
+    }
+    const summaryHeaders = Array.isArray(currentSafetyIssueSummary?.[0]) ? currentSafetyIssueSummary[0] : [];
+    const eligibleRowCount = (Array.isArray(currentSafetyIssueSummary) ? currentSafetyIssueSummary.slice(1) : [])
+      .filter((row) => shouldUseHazardSummaryRowForSafetyIssue(row, summaryHeaders))
+      .length;
+    if (!eligibleRowCount) {
+      setSafetyIssueRefreshStatus({
+        kind: "error",
+        message: "No completed hazard rows marked Safety are available to consolidate.",
+      });
+      return [];
+    }
     setIsConsolidatingSafetyIssues(true);
-    try {
-      const nextRiskRegister = await requestConsolidatedSafetyIssuesFromSummary(currentSafetyIssueSummary, { mergeExisting });
+    setSafetyIssueRefreshStatus({
+      kind: "working",
+      message: `Consolidating ${eligibleRowCount} Safety-marked hazard row${eligibleRowCount === 1 ? "" : "s"}…`,
+    });
+    const applyIssues = (nextRiskRegister) => {
       setRiskRegister(nextRiskRegister);
-      setActiveRiskId((currentId) => (nextRiskRegister.some((risk) => risk.id === currentId) ? currentId : nextRiskRegister[0]?.id || null));
+      setActiveRiskId((currentId) => (
+        nextRiskRegister.some((risk) => risk.id === currentId)
+          ? currentId
+          : nextRiskRegister[0]?.id || null
+      ));
       if (activeProjectId) saveProjectPatch(activeProjectId, { riskRegister: nextRiskRegister });
+    };
+    try {
+      const nextRiskRegister = await requestConsolidatedSafetyIssuesFromSummary(currentSafetyIssueSummary, {
+        mergeExisting,
+      });
+      applyIssues(nextRiskRegister);
+      setSafetyIssueRefreshStatus({
+        kind: "success",
+        message: `Regenerated ${nextRiskRegister.length} consolidated safety issue${nextRiskRegister.length === 1 ? "" : "s"} from ${eligibleRowCount} hazard row${eligibleRowCount === 1 ? "" : "s"}.`,
+      });
       return nextRiskRegister;
+    } catch (error) {
+      console.error("[risk-assessment] Safety issue regeneration failed", error);
+      setSafetyIssueRefreshStatus({
+        kind: "error",
+        message: error?.message || "Unable to regenerate safety issues.",
+      });
+      return [];
     } finally {
       setIsConsolidatingSafetyIssues(false);
     }
@@ -12245,7 +12552,7 @@ const projectHint = useMemo(() => ({
       </aside>
 
       {/* Main */}
-      <main className="flex-1 min-w-0">
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {/* COPILOT (full-screen) */}
         {section === 'copilot' && !dockOpen && (
   <XHandleCopilotView
@@ -13136,8 +13443,8 @@ const projectHint = useMemo(() => ({
 
         {/* PROJECTS */}
         {section === 'projects' && (
-          <div className="flex flex-col justify-start flex-1 min-h-0 overflow-auto bg-white py-0 px-3 md:px-5 lg:px-7 w-full">
-<div className="flex items-center justify-between mb-6">
+          <div className={`flex min-h-0 w-full flex-1 flex-col justify-start bg-white px-3 py-0 md:px-5 lg:px-7 ${activeProjectId && activeTab === 'Safety Issues & Risk Assessment' ? 'overflow-hidden' : 'overflow-auto'}`}>
+<div className="mb-6 flex shrink-0 items-center justify-between">
   <h1 className="text-2xl font-semibold flex items-center gap-2">
     Projects
     <span
@@ -13397,7 +13704,7 @@ const projectHint = useMemo(() => ({
               <>
 
 {/* Tabs header */}
-<div className="mb-5">
+<div className="mb-5 shrink-0">
   <div className="border-b" role="tablist" aria-label="Project sections">
     <div className="flex items-center gap-2">
     {['Functional Diagramming', 'Hazard Analysis', 'Safety Issues & Risk Assessment'].map((t) => (
@@ -14296,8 +14603,8 @@ const projectHint = useMemo(() => ({
 )}
 
 {activeTab === 'Safety Issues & Risk Assessment' && (
-  <section className="mt-2 flex min-h-0 flex-col space-y-4">
-          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
+  <section className="mt-2 flex min-h-0 flex-1 flex-col space-y-4 overflow-hidden pb-3">
+          <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
             <button
               type="button"
               onClick={() => refreshSafetyIssuesFromSummary({ mergeExisting: true })}
@@ -14337,6 +14644,21 @@ const projectHint = useMemo(() => ({
             >
               Export CSV
             </button>
+            {safetyIssueRefreshStatus?.message && (
+              <div
+                role="status"
+                aria-live="polite"
+                className={`basis-full text-xs ${
+                  safetyIssueRefreshStatus.kind === "error"
+                    ? "text-red-700"
+                    : safetyIssueRefreshStatus.kind === "success"
+                      ? "text-emerald-700"
+                      : "text-blue-700"
+                }`}
+              >
+                {safetyIssueRefreshStatus.message}
+              </div>
+            )}
             <button
               type="button"
               onClick={() => {
@@ -14349,8 +14671,8 @@ const projectHint = useMemo(() => ({
               {showSafetyIssueReportDrawer ? "Hide Reports" : "Show Reports"}
             </button>
           </div>
-          <div className={`relative min-h-0 transition-[padding] duration-300 ${showSafetyIssueReportDrawer && !isSafetyIssueReportFullscreen ? '2xl:pr-[700px]' : ''}`}>
-          <div className="grid h-[calc(100dvh-265px)] min-h-0 grid-cols-1 gap-4 overflow-hidden xl:grid-cols-[360px_minmax(0,1fr)]">
+          <div className={`relative flex min-h-0 flex-1 overflow-hidden transition-[padding] duration-300 ${showSafetyIssueReportDrawer && !isSafetyIssueReportFullscreen ? '2xl:pr-[700px]' : ''}`}>
+          <div className="grid min-h-0 w-full flex-1 grid-cols-1 grid-rows-2 gap-4 overflow-hidden xl:grid-cols-[360px_minmax(0,1fr)] xl:grid-rows-1">
             <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white">
               <div className="border-b border-gray-200 px-4 py-3">
                 <div className="text-sm font-semibold text-gray-900">Consolidated Safety Issues</div>
@@ -14699,7 +15021,16 @@ const projectHint = useMemo(() => ({
                     />
                     ) : (
                     <div className="prose prose-sm max-w-none prose-headings:text-gray-900 prose-table:text-xs">
-                      <SafetyReportViewer reportText={activeSafetyIssueReportMarkdown} />
+                      <SafetyReportViewer
+                        reportText={activeSafetyIssueReportMarkdown}
+                        expanded={isSafetyIssueReportFullscreen}
+                        onOpenSourceRow={(sourceRowNumber) => {
+                          const targetIndex = Number(sourceRowNumber) - 1;
+                          if (!Number.isFinite(targetIndex) || targetIndex < 0) return;
+                          setIsSafetyIssueReportFullscreen(false);
+                          handleOpenHazardSummaryRow(targetIndex);
+                        }}
+                      />
                     </div>
                     )
                   ) : (

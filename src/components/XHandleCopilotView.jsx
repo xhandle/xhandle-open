@@ -159,11 +159,32 @@ export function formatCollaboratorReasoningList(value = "") {
     .join("\n");
 }
 
+export function selectCurrentCollaboratorReasoningStep(value = "") {
+  const steps = [];
+  String(value || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .forEach((line) => {
+      const item = line.match(/^(?:[-*+] |\d+[.)] )(.*)$/)?.[1]?.trim();
+      if (item) {
+        steps.push(item);
+        return;
+      }
+      // Ignore a list marker that has arrived before its streamed text. Treat
+      // other unmarked lines as a continuation of the current milestone.
+      if (/^(?:[-*+]|\d+[.)])$/.test(line)) return;
+      if (steps.length) steps[steps.length - 1] = `${steps[steps.length - 1]} ${line}`;
+      else steps.push(line);
+    });
+  return steps.length ? `- ${steps[steps.length - 1]}` : "";
+}
+
 export function selectLiveCollaboratorReasoning(progressSummary = "", modelSummary = "", preferProgress = false) {
   const selected = preferProgress
     ? (progressSummary || modelSummary)
     : (modelSummary || progressSummary);
-  return formatCollaboratorReasoningList(selected);
+  return selectCurrentCollaboratorReasoningStep(selected);
 }
 
 const WORKSPACE_ARTIFACT_LINK_PREFIX = "#xhandle-artifact=";
@@ -293,9 +314,16 @@ function CollaboratorMarkdownLink({ href = "", children, ...props }) {
 
 function CollaboratorReasoningSummary({ summary, active = false }) {
   if (!summary && !active) return null;
-  const displayedSummary = formatCollaboratorReasoningList(summary);
+  const displayedSummary = active
+    ? selectCurrentCollaboratorReasoningStep(summary)
+    : formatCollaboratorReasoningList(summary);
   return (
-    <details className="mb-3 rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2" open={active}>
+    <details
+      className={`mb-3 rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 ${active ? "xhandle-reasoning-strobe" : ""}`}
+      open={active}
+      aria-live={active ? "polite" : undefined}
+      aria-atomic={active ? "true" : undefined}
+    >
       <summary className="cursor-pointer select-none text-xs font-semibold text-indigo-800">
         <span className="inline-flex items-center gap-2">
           {active && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}

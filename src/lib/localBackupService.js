@@ -24,6 +24,21 @@ const EXCLUDED_BACKUP_KEYS = new Set([
 
 const KNOWN_DB_CONFIGS = [
   {
+    name: "xhandle-project-reports",
+    version: 1,
+    stores: {
+      safetyIssueReports: { keyPath: "projectId" },
+    },
+    open: () =>
+      openDB("xhandle-project-reports", 1, {
+        upgrade(db) {
+          if (!db.objectStoreNames.contains("safetyIssueReports")) {
+            db.createObjectStore("safetyIssueReports", { keyPath: "projectId" });
+          }
+        },
+      }),
+  },
+  {
     name: WORKSPACE_GRAPH_DB_NAME,
     version: WORKSPACE_GRAPH_DB_VERSION,
     stores: Object.fromEntries(
