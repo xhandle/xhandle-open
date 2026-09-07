@@ -40,6 +40,17 @@ import {
   subscribeToLocalBackup,
 } from "../lib/localBackupService";
 import { inspectWorkspaceGraph } from "../features/workspace-graph";
+import { notifyBackupDataChanged } from "../lib/localBackupEvents";
+import {
+  buildEffectiveOrganizationProfileContext,
+  createOrganizationProfileRecord,
+  getOrganizationProfileIdentity,
+  loadOrganizationProfile,
+  ORGANIZATION_PROFILE_MAX_CHARS,
+  parseOrganizationProfile,
+  saveOrganizationProfile,
+  validateOrganizationProfile,
+} from "../features/organization-profile/organizationProfile";
 
 const VSCODE_EXTENSION_VERSION = "0.0.10";
 const VSCODE_EXTENSION_FILENAME = `xhandle-safety-${VSCODE_EXTENSION_VERSION}.vsix`;
@@ -86,7 +97,7 @@ function localStorageCategoryForKey(key = "") {
   if (/^cbaMeta:|^xhandle\.codeArchitecture|^xhandle:code-architecture|^code-architecture-|^architecture-report:|^diagram:github|^xhandle:cba-/i.test(key)) return "codeArchitecture";
   if (/^xhandle\.project|^xhandle\.activeProject|^xhandle:requirements|^xhandle:req-|^xhandle:risk|^functional-|^diagram:positions/i.test(key)) return "projects";
   if (/review|remediation|hazard|safety-case|vnv|traceability/i.test(key)) return "analysis";
-  if (/backup|settings\.|repoOwner|repoName|githubSelectedExtensions|jira|google|copilotDock/i.test(key)) return "settings";
+  if (/backup|settings\.|organizationProfile|repoOwner|repoName|githubSelectedExtensions|jira|google|copilotDock/i.test(key)) return "settings";
   return "other";
 }
 
@@ -196,6 +207,9 @@ export default function SettingsModal({
   connected: githubConnectedProp = false,
   onBaselineRepo,
   onAIProviderSaved,
+  activeProject = null,
+  projectOrganizationProfile = null,
+  onProjectOrganizationProfileChange,
 }) {
   // Quick visibility in console to ensure the app is using the right values
   useEffect(() => {
@@ -213,6 +227,92 @@ export default function SettingsModal({
   useEffect(() => {
     if (typeof window !== "undefined") localStorage.setItem("settings.activeTab", tab);
   }, [tab]);
+
+  // ===== Organization profile =====
+  const [organizationProfile, setOrganizationProfile] = useState(() => loadOrganizationProfile());
+  const [organizationProfileMarkdown, setOrganizationProfileMarkdown] = useState(() => loadOrganizationProfile().markdown);
+  const [organizationProfileEnabled, setOrganizationProfileEnabled] = useState(() => loadOrganizationProfile().enabled);
+  const [organizationProfileView, setOrganizationProfileView] = useState("edit");
+  const [organizationProfileMessage, setOrganizationProfileMessage] = useState("");
+  const [projectProfileMode, setProjectProfileMode] = useState(projectOrganizationProfile?.mode || "inherit");
+  const [projectProfileOverride, setProjectProfileOverride] = useState(projectOrganizationProfile?.overrideMarkdown || "");
+  const organizationProfileFileRef = useRef(null);
+
+  useEffect(() => {
+    setProjectProfileMode(projectOrganizationProfile?.mode || "inherit");
+    setProjectProfileOverride(projectOrganizationProfile?.overrideMarkdown || "");
+  }, [activeProject?.id, projectOrganizationProfile?.mode, projectOrganizationProfile?.overrideMarkdown]);
+
+  const organizationProfileValidation = validateOrganizationProfile(organizationProfileMarkdown);
+  const parsedOrganizationProfile = parseOrganizationProfile(organizationProfileMarkdown);
+  const effectiveOrganizationContext = buildEffectiveOrganizationProfileContext({
+    profile: { ...organizationProfile, enabled: organizationProfileEnabled, markdown: organizationProfileMarkdown },
+    projectProfile: { mode: projectProfileMode, overrideMarkdown: projectProfileOverride },
+  });
+
+  const handleSaveOrganizationProfile = () => {
+    const result = saveOrganizationProfile({
+      ...organizationProfile,
+      enabled: organizationProfileEnabled,
+      markdown: organizationProfileMarkdown,
+    });
+    setOrganizationProfile(result.profile);
+    setOrganizationProfileMarkdown(result.profile.markdown);
+    if (result.saved) notifyBackupDataChanged("organization-profile");
+    setOrganizationProfileMessage(result.saved
+      ? `${result.frontMatterAdded ? "Added profile metadata and saved" : "Saved"} ${getOrganizationProfileIdentity(result.profile)}${result.validation.warnings.length ? ` with ${result.validation.warnings.length} warning${result.validation.warnings.length === 1 ? "" : "s"}` : ""}.`
+      : "Resolve the profile validation errors before saving.");
+  };
+
+  const handleOrganizationProfileFile = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!/\.(md|markdown|txt)$/i.test(file.name)) {
+      setOrganizationProfileMessage("Choose a Markdown (.md or .markdown) file.");
+      return;
+    }
+    const text = await file.text();
+    if (text.length > ORGANIZATION_PROFILE_MAX_CHARS) {
+      setOrganizationProfileMessage(`Profile exceeds the ${ORGANIZATION_PROFILE_MAX_CHARS.toLocaleString()} character limit.`);
+      return;
+    }
+    setOrganizationProfileMarkdown(text);
+    setOrganizationProfileMessage(`Loaded ${file.name}. Review and save the profile to apply it.`);
+  };
+
+  const handleDownloadOrganizationProfile = () => {
+    const blob = new Blob([organizationProfileMarkdown], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const organization = String(parsedOrganizationProfile.metadata.organization || "organization")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "organization";
+    link.href = url;
+    link.download = `${organization}-profile.md`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleResetOrganizationProfileTemplate = () => {
+    if (!window.confirm("Replace the editor contents with a blank organization-profile template? The saved profile will not change until you click Save profile.")) return;
+    const template = createOrganizationProfileRecord();
+    setOrganizationProfileMarkdown(template.markdown);
+    setOrganizationProfileEnabled(false);
+    setOrganizationProfileMessage("Template restored in the editor. Complete it and save when ready.");
+  };
+
+  const handleSaveProjectProfile = () => {
+    onProjectOrganizationProfileChange?.({
+      mode: projectProfileMode,
+      overrideMarkdown: projectProfileOverride,
+      profileId: organizationProfile.id,
+      profileIdentity: getOrganizationProfileIdentity({ ...organizationProfile, markdown: organizationProfileMarkdown }),
+      updatedAt: new Date().toISOString(),
+    });
+    setOrganizationProfileMessage(`Saved organization-profile settings for ${activeProject?.name || "the active project"}.`);
+  };
 
   // ===== GitHub state =====
   const [owner, setOwner] = useState(
@@ -972,7 +1072,7 @@ export default function SettingsModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-[720px] max-w-[94vw] p-5 pb-12">
+      <div className="relative max-h-[92vh] w-[920px] max-w-[94vw] overflow-y-auto rounded-2xl bg-white p-5 pb-12 shadow-2xl">
         <div className="text-lg font-semibold mb-4">Settings</div>
 
         {/* Tabs */}
@@ -980,6 +1080,7 @@ export default function SettingsModal({
           <TabButton label="Jira" active={tab === "jira"} onClick={() => setTab("jira")} />
           <TabButton label="Google" active={tab === "google"} onClick={() => setTab("google")} />
           <TabButton label="AI Provider" active={tab === "openai"} onClick={() => setTab("openai")} />
+          <TabButton label="Organization Profile" active={tab === "organization-profile"} onClick={() => setTab("organization-profile")} />
           <TabButton label="VS Code" active={tab === "vscode"} onClick={() => setTab("vscode")} />
           <TabButton label="Backup" active={tab === "backup"} onClick={() => setTab("backup")} />
           <TabButton label="Storage" active={tab === "storage"} onClick={() => setTab("storage")} />
@@ -987,6 +1088,156 @@ export default function SettingsModal({
         </div>
 
         {/* Panels */}
+        {tab === "organization-profile" && (
+          <section className="space-y-4">
+            <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-950">
+              The organization profile calibrates terminology, safety policy, architecture conventions, risk classification, and assurance expectations. Explicit project facts and user instructions take precedence.
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <label className="inline-flex items-center gap-2 text-sm font-medium text-gray-800">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={organizationProfileEnabled}
+                  onChange={(event) => setOrganizationProfileEnabled(event.target.checked)}
+                />
+                Enable as the organization default
+              </label>
+              <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-1 text-xs">
+                <button
+                  type="button"
+                  className={`rounded px-3 py-1.5 ${organizationProfileView === "edit" ? "bg-white font-medium shadow-sm" : "text-gray-600"}`}
+                  onClick={() => setOrganizationProfileView("edit")}
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  className={`rounded px-3 py-1.5 ${organizationProfileView === "preview" ? "bg-white font-medium shadow-sm" : "text-gray-600"}`}
+                  onClick={() => setOrganizationProfileView("preview")}
+                >
+                  Preview
+                </button>
+              </div>
+            </div>
+
+            {organizationProfileView === "edit" ? (
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-800">Organization profile Markdown</label>
+                <textarea
+                  className="min-h-[360px] w-full rounded-xl border border-gray-300 bg-white px-3 py-3 font-mono text-xs leading-5 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  value={organizationProfileMarkdown}
+                  onChange={(event) => setOrganizationProfileMarkdown(event.target.value)}
+                  spellCheck={false}
+                  aria-label="Organization profile Markdown"
+                />
+                <div className="flex justify-between gap-3 text-xs text-gray-500">
+                  <span>YAML metadata plus governed Markdown sections.</span>
+                  <span className={organizationProfileMarkdown.length > ORGANIZATION_PROFILE_MAX_CHARS ? "text-red-600" : ""}>
+                    {organizationProfileMarkdown.length.toLocaleString()} / {ORGANIZATION_PROFILE_MAX_CHARS.toLocaleString()} characters
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="grid gap-2 rounded-xl border bg-gray-50 p-3 text-sm sm:grid-cols-2">
+                  <div><span className="font-medium">Organization:</span> {String(parsedOrganizationProfile.metadata.organization || "Not defined")}</div>
+                  <div><span className="font-medium">Version:</span> {String(parsedOrganizationProfile.metadata.profile_version || "Not defined")}</div>
+                  <div><span className="font-medium">Status:</span> {String(parsedOrganizationProfile.metadata.status || "Not defined")}</div>
+                  <div><span className="font-medium">Approved by:</span> {String(parsedOrganizationProfile.metadata.approved_by || "Not defined")}</div>
+                  <div><span className="font-medium">Effective date:</span> {String(parsedOrganizationProfile.metadata.effective_date || "Not defined")}</div>
+                  <div><span className="font-medium">Sections:</span> {Object.keys(parsedOrganizationProfile.sections).length}</div>
+                </div>
+                <pre className="max-h-[380px] overflow-auto whitespace-pre-wrap rounded-xl border border-gray-200 bg-white p-4 text-xs leading-5 text-gray-800">
+                  {organizationProfileMarkdown}
+                </pre>
+              </div>
+            )}
+
+            {(organizationProfileValidation.errors.length > 0 || organizationProfileValidation.warnings.length > 0) && (
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className={`rounded-xl border p-3 text-xs ${organizationProfileValidation.errors.length ? "border-red-200 bg-red-50 text-red-800" : "border-green-200 bg-green-50 text-green-800"}`}>
+                  <div className="font-semibold">Validation</div>
+                  {organizationProfileValidation.errors.length
+                    ? organizationProfileValidation.errors.map((message) => <div key={message} className="mt-1">• {message}</div>)
+                    : <div className="mt-1">No blocking errors.</div>}
+                </div>
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                  <div className="font-semibold">Governance warnings</div>
+                  {organizationProfileValidation.warnings.length
+                    ? organizationProfileValidation.warnings.slice(0, 8).map((message) => <div key={message} className="mt-1">• {message}</div>)
+                    : <div className="mt-1">Profile metadata and expected sections are complete.</div>}
+                  {organizationProfileValidation.warnings.length > 8 && <div className="mt-1">• {organizationProfileValidation.warnings.length - 8} more warnings</div>}
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                onClick={handleSaveOrganizationProfile}
+              >
+                Save profile
+              </button>
+              <button type="button" className="rounded-lg border px-3 py-2 text-sm hover:bg-gray-50" onClick={() => organizationProfileFileRef.current?.click()}>
+                Import Markdown
+              </button>
+              <input ref={organizationProfileFileRef} type="file" className="hidden" accept=".md,.markdown,.txt,text/markdown,text/plain" onChange={handleOrganizationProfileFile} />
+              <button type="button" className="rounded-lg border px-3 py-2 text-sm hover:bg-gray-50" onClick={handleDownloadOrganizationProfile}>
+                Download Markdown
+              </button>
+              <button type="button" className="rounded-lg px-3 py-2 text-sm text-gray-600 hover:bg-gray-100" onClick={handleResetOrganizationProfileTemplate}>
+                Reset editor to template
+              </button>
+            </div>
+
+            <div className="rounded-xl border border-gray-200 p-4">
+              <div className="font-semibold text-gray-900">Active project application</div>
+              {activeProject ? (
+                <div className="mt-3 space-y-3">
+                  <div className="text-sm text-gray-600">Configure how <strong>{activeProject.name}</strong> uses the organization baseline.</div>
+                  <label className="block text-sm font-medium text-gray-700">Profile selection</label>
+                  <select
+                    className="w-full rounded-lg border px-3 py-2 text-sm"
+                    value={projectProfileMode}
+                    onChange={(event) => setProjectProfileMode(event.target.value)}
+                  >
+                    <option value="inherit">Use organization default</option>
+                    <option value="disabled">Do not use an organization profile</option>
+                  </select>
+                  <label className="block text-sm font-medium text-gray-700">Project-specific override</label>
+                  <textarea
+                    className="min-h-28 w-full rounded-lg border px-3 py-2 text-sm"
+                    value={projectProfileOverride}
+                    onChange={(event) => setProjectProfileOverride(event.target.value)}
+                    placeholder="Add project-specific terminology, product architecture, operating constraints, risk-policy tailoring, or exceptions. This content overrides conflicting organization guidance for this project only."
+                    disabled={projectProfileMode === "disabled"}
+                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button type="button" className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100" onClick={handleSaveProjectProfile}>
+                      Save project application
+                    </button>
+                    <span className="text-xs text-gray-500">
+                      Effective context: {effectiveOrganizationContext ? `${effectiveOrganizationContext.length.toLocaleString()} characters` : "disabled or invalid"}
+                    </span>
+                  </div>
+                  <details className="rounded-lg border bg-gray-50 p-3">
+                    <summary className="cursor-pointer text-sm font-medium text-gray-700">Preview effective AI context</summary>
+                    <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap text-xs leading-5 text-gray-700">{effectiveOrganizationContext || "No organization profile context will be supplied for this project."}</pre>
+                  </details>
+                </div>
+              ) : (
+                <p className="mt-2 text-sm text-gray-500">Select a project to configure a project override and preview its effective context.</p>
+              )}
+            </div>
+
+            {organizationProfileMessage && <div className="rounded-lg bg-gray-100 px-3 py-2 text-sm text-gray-700" aria-live="polite">{organizationProfileMessage}</div>}
+            <div className="flex justify-end"><button className="px-3 py-2 text-sm" onClick={onClose}>Close</button></div>
+          </section>
+        )}
+
         {false && tab === "github" && (
           <section className="space-y-3">
             <Field label="Repo Owner" placeholder="vercel" value={owner} onChange={setOwner} />
@@ -1757,6 +2008,9 @@ export default function SettingsModal({
             )}
             {tab === "openai" && (
               <IntegrationBadge name="AI Provider" connected={providerConnected} />
+            )}
+            {tab === "organization-profile" && (
+              <IntegrationBadge name="Organization Profile" connected={organizationProfileEnabled && organizationProfileValidation.valid} />
             )}
             {tab === "backup" && (
               <IntegrationBadge

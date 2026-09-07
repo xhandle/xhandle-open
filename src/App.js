@@ -189,6 +189,11 @@ import {
   saveSafetyIssueReportRecord,
 } from "./features/project-hazard-analysis/safetyIssueReportStorage";
 import {
+  buildEffectiveOrganizationProfileContext,
+  getOrganizationProfileIdentity,
+  loadOrganizationProfile,
+} from "./features/organization-profile/organizationProfile";
+import {
   deleteHazardAnalysisResetSnapshot,
   loadHazardAnalysisResetSnapshot,
   saveHazardAnalysisResetSnapshot,
@@ -1659,6 +1664,18 @@ function saveProjectPatch(projectId, patch) {
 function loadProjectData(projectId) {
   const map = readProjectMap();
   return map[projectId] || null;
+}
+function getProjectOrganizationCalibration(projectId, sectionNames = null) {
+  const profile = loadOrganizationProfile();
+  const projectProfile = projectId ? loadProjectData(projectId)?.organizationProfile : null;
+  const context = buildEffectiveOrganizationProfileContext({ profile, projectProfile, sectionNames });
+  return {
+    context,
+    profileId: context ? profile.id : null,
+    profileIdentity: context ? getOrganizationProfileIdentity(profile) : null,
+    profileUpdatedAt: context ? profile.updatedAt : null,
+    projectOverrideUpdatedAt: context ? projectProfile?.updatedAt || null : null,
+  };
 }
 async function saveProjectSafetyIssueReport(projectId, markdown) {
   if (!projectId) return false;
@@ -5955,6 +5972,7 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
     }));
     const designProvider = getActionProvider("requirements");
     const designManagementState = designProvider?.getState?.() || null;
+    const organizationCalibration = getProjectOrganizationCalibration(activeProjectId);
 
     // ---- Compose a single context (prefer live state → persisted → LS blobs) ----
     const ctx = {
@@ -5972,6 +5990,7 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
         },
       },
       projectHint, // you already memoize owner/repo/baselineKey elsewhere
+      organizationCalibration,
 
       workspace: {
         projects: workspaceProjects,
@@ -7662,8 +7681,18 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   };
   const handleGenerateHazardOperationalContexts = (description, existingContexts) => {
     const projectName = projects.find((project) => project.id === activeProjectId)?.name || "Active project";
+    const organizationCalibration = getProjectOrganizationCalibration(activeProjectId, [
+      "Organization and Products",
+      "Safety Philosophy",
+      "Operational Concepts",
+      "Risk Classification",
+      "Glossary",
+      "Known Controls and Evidence",
+    ]);
     return generateHazardOperationalContexts({
-      description,
+      description: organizationCalibration.context
+        ? `${description}\n\n${organizationCalibration.context}`
+        : description,
       projectName,
       functionalRows: responseRows,
       existingContexts,
@@ -8511,13 +8540,26 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   const generateFunctionalRowsFromWizard = async (combinedPrompt, onProgress = () => {}, projectIdAtStart = activeProjectId) => {
     let parsedRows = [];
     const collaboratorRequest = buildPromptWizardCollaboratorRequest(combinedPrompt);
+    const organizationCalibration = getProjectOrganizationCalibration(projectIdAtStart, [
+      "Organization and Products",
+      "Architecture Conventions",
+      "Engineering Rules",
+      "Operational Concepts",
+      "Glossary",
+      "Known Controls and Evidence",
+    ]);
+    const calibratedRequest = organizationCalibration.context
+      ? `${collaboratorRequest.userRequest}\n\n${organizationCalibration.context}`
+      : collaboratorRequest.userRequest;
     onProgress({
       step: 1,
       total: 2,
-      message: "Generating with the Collaborator functional-architecture workflow..."
+      message: organizationCalibration.profileIdentity
+        ? `Generating with the Collaborator workflow · calibrated using ${organizationCalibration.profileIdentity}...`
+        : "Generating with the Collaborator functional-architecture workflow..."
     });
     const generated = await generateFunctionalDecompositionWithCollaborator({
-      userRequest: collaboratorRequest.userRequest,
+      userRequest: calibratedRequest,
       abstractionLevel: collaboratorRequest.abstractionLevel,
       maxTokens: 16000,
       maxContinuations: 2,
@@ -8535,7 +8577,10 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       message: "Classifying functional architecture categories..."
     });
     const categories = parsedRows.length
-      ? await classifyPromptWizardDiagramCategories(parsedRows, combinedPrompt)
+      ? await classifyPromptWizardDiagramCategories(
+          parsedRows,
+          organizationCalibration.context ? `${combinedPrompt}\n\n${organizationCalibration.context}` : combinedPrompt
+        )
       : null;
     if (projectIdAtStart && activeProjectIdRef.current !== projectIdAtStart) {
       return parsedRows;
@@ -8549,6 +8594,16 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setCommittedFunctionalDiagramRows(getProjectDiagramRows(allocatedRows));
     const tableSubsystemCategories = buildTableSubsystemDiagramCategoriesMeta(allocatedRows);
     setDiagramCategories(tableSubsystemCategories.categories.length ? tableSubsystemCategories : null);
+    if (projectIdAtStart && organizationCalibration.context) {
+      saveProjectPatch(projectIdAtStart, {
+        organizationProfileProvenance: {
+          artifact: "functional-decomposition",
+          ...organizationCalibration,
+          context: undefined,
+          appliedAt: new Date().toISOString(),
+        },
+      });
+    }
     return allocatedRows;
   };
 
@@ -9469,6 +9524,16 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const sourceRunId = `hazard-${activeProjectId || "default"}-${Date.now()}`;
     const targetHeaders = getProjectDraftHazardHeaders(selectedMethod);
     const existingSummary = Array.isArray(analysisResult?.Summary) ? analysisResult.Summary : null;
+    const hazardOrganizationCalibration = getProjectOrganizationCalibration(activeProjectId, [
+      "Safety Philosophy",
+      "Hazard and Loss Taxonomy",
+      "Risk Classification",
+      "Engineering Rules",
+      "Operational Concepts",
+      "Standards and Regulatory Context",
+      "Glossary",
+      "Known Controls and Evidence",
+    ]);
     const startingDraftRows = loadProjectData(activeProjectId)?.draftHazardRowsByIndex || draftHazardRowsByIndex || {};
     const sourceFunctionalRows = getProjectHazardAnalysisRows(responseRows);
     const contextsToRun = selectedHazardContextId === "all"
@@ -9603,7 +9668,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const actId = `hazard-${activeProjectId || "default"}`;
     setHazardReviewRunId(sourceRunId);
     setAnalysisActivityId(actId);
-    const workloadMessage = `Preparing ${rowsToGenerate.length} hazard candidate${rowsToGenerate.length === 1 ? "" : "s"} across ${contextsToRun.length} operational context${contextsToRun.length === 1 ? "" : "s"}...`;
+    const workloadMessage = `Preparing ${rowsToGenerate.length} hazard candidate${rowsToGenerate.length === 1 ? "" : "s"} across ${contextsToRun.length} operational context${contextsToRun.length === 1 ? "" : "s"}${hazardOrganizationCalibration.profileIdentity ? ` · calibrated using ${hazardOrganizationCalibration.profileIdentity}` : ""}...`;
     startActivity(actId, {
       title: "Running hazard analysis",
       step: 0,
@@ -9629,6 +9694,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       hazardMethod: selectedMethod,
       omitConsolidatedRequirement: true,
       operationalContext: buildHazardOperationalContextPrompt(contextsToRun),
+      organizationContext: hazardOrganizationCalibration.context,
       signal: abortController.signal,
       ...(usesProjectRiskProfileGenerationMode
         ? { hazardGenerationMode: selectedGenerationMode, fhaGenerationMode: selectedGenerationMode }
@@ -9713,6 +9779,16 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         ...(usesProjectRiskProfileGenerationMode
           ? { projectRiskProfileGenerationMode: selectedGenerationMode }
           : {}),
+        ...(hazardOrganizationCalibration.context ? {
+          organizationProfileProvenance: {
+            artifact: "hazard-analysis",
+            profileId: hazardOrganizationCalibration.profileId,
+            profileIdentity: hazardOrganizationCalibration.profileIdentity,
+            profileUpdatedAt: hazardOrganizationCalibration.profileUpdatedAt,
+            projectOverrideUpdatedAt: hazardOrganizationCalibration.projectOverrideUpdatedAt,
+            appliedAt: new Date().toISOString(),
+          },
+        } : {}),
       });
       analysisPersisted = analysisPersisted && metadataPersisted;
       if (analysisPersisted && hazardResetStatus?.kind === "cleared") {
@@ -9807,6 +9883,16 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const selectedGenerationMode = usesProjectRiskProfileGenerationMode
       ? projectRiskProfileGenerationMode
       : undefined;
+    const organizationCalibration = getProjectOrganizationCalibration(activeProjectId, [
+      "Safety Philosophy",
+      "Hazard and Loss Taxonomy",
+      "Risk Classification",
+      "Engineering Rules",
+      "Operational Concepts",
+      "Standards and Regulatory Context",
+      "Glossary",
+      "Known Controls and Evidence",
+    ]);
     const functionalDecompositionSheet = [
       ["Function (From)", "Control Action", "Function (To)", "Operational Context ID", "Operational Scenario", "Operational Mode", "Operating Conditions", "Context Assumptions", "Guide Phrase", "Guide Phrase Applicable", "Guide Phrase Applicability Rationale"],
       [
@@ -9844,6 +9930,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         hazardMethod: selectedMethod,
         omitConsolidatedRequirement: true,
         operationalContext: buildHazardOperationalContextPrompt([target.context]),
+        organizationContext: organizationCalibration.context,
         ...(usesProjectRiskProfileGenerationMode
           ? { hazardGenerationMode: selectedGenerationMode, fhaGenerationMode: selectedGenerationMode }
           : {}),
@@ -9934,6 +10021,16 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
           draftHazardHeaders: targetHeaders,
           analysisResult: undefined,
           riskRegister: undefined,
+          ...(organizationCalibration.context ? {
+            organizationProfileProvenance: {
+              artifact: "hazard-analysis",
+              profileId: organizationCalibration.profileId,
+              profileIdentity: organizationCalibration.profileIdentity,
+              profileUpdatedAt: organizationCalibration.profileUpdatedAt,
+              projectOverrideUpdatedAt: organizationCalibration.projectOverrideUpdatedAt,
+              appliedAt: new Date().toISOString(),
+            },
+          } : {}),
         });
       }
       const reviewItem = normalizeReviewItem({
@@ -10143,6 +10240,9 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       parsedReport?.operationalContextCoverage || issue.contextVariants
     );
     const boundingContext = getBoundingSafetyIssueContext(contextVariants);
+    const reportCalibrationIdentity = getProjectOrganizationCalibration(activeProjectId).profileIdentity
+      || issue.organizationProfileProvenance?.profileIdentity
+      || "None";
     const defaults = buildSafetyIssueReportDefaults(issue);
     const report = {
       executiveSummary: parsedReport?.executiveSummary || defaults.executiveSummary,
@@ -10195,6 +10295,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       `| Due Date | ${mdCell(issue.dueDate || "Not set")} |`,
       `| Source Rows | ${sourceLinks(issue.sourceIndexes)} |`,
       `| Bounding Context | ${mdCell(boundingContext ? `${boundingContext.scenario} · ${boundingContext.mode}` : "Not established")} |`,
+      `| Calibration Profile | ${mdCell(reportCalibrationIdentity)} |`,
       "",
       "### **Executive Summary**",
       listBlock(report.executiveSummary),
@@ -10249,11 +10350,22 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   };
 
   const requestSafetyIssueReportContent = async (issue) => {
+    const organizationCalibration = getProjectOrganizationCalibration(activeProjectId, [
+      "Safety Philosophy",
+      "Hazard and Loss Taxonomy",
+      "Risk Classification",
+      "Engineering Rules",
+      "Standards and Regulatory Context",
+      "Glossary",
+      "Known Controls and Evidence",
+    ]);
     const prompt = `
 Create an engineering-grade Safety Issue Report narrative suitable for communicating with external customers, assessors, program leadership, and safety reviewers. Return strict JSON only.
 
 Project: ${activeProject?.name || "Untitled project"}
 Hazard method: ${riskMethod}
+
+${organizationCalibration.context || "No organization calibration profile is enabled for this project."}
 
 Safety issue:
 ${JSON.stringify({
@@ -10471,6 +10583,9 @@ Rules:
           ? "Observed Implementation Condition"
           : "Observed System Condition";
         const boundingContext = getBoundingSafetyIssueContext(report.operationalContextCoverage);
+        const reportCalibrationIdentity = getProjectOrganizationCalibration(activeProjectId).profileIdentity
+          || issue.organizationProfileProvenance?.profileIdentity
+          || "None";
         const contextCoverageTable = [
           "| Scenario | Mode | Conditions | Hazard Manifestation | Likelihood | Severity | Source Rows |",
           "| --- | --- | --- | --- | ---: | ---: | --- |",
@@ -10492,6 +10607,7 @@ Rules:
           `| Due Date | ${mdCell(issue.dueDate || "Not set")} |`,
           `| Source Rows | ${sourceLinks(issue.sourceIndexes)} |`,
           `| Bounding Context | ${mdCell(boundingContext ? `${boundingContext.scenario} · ${boundingContext.mode}` : "Not established")} |`,
+          `| Calibration Profile | ${mdCell(reportCalibrationIdentity)} |`,
           "",
           "### **Executive Summary**",
           listBlock(report.executiveSummary),
@@ -10675,6 +10791,14 @@ Rules:
     const safetyRows = extractSafetyIssueEvidenceRows(summary);
     if (!safetyRows.length) return [];
     const consolidationEvidence = buildSafetyIssueConsolidationPayload(safetyRows);
+    const organizationCalibration = getProjectOrganizationCalibration(activeProjectId, [
+      "Safety Philosophy",
+      "Hazard and Loss Taxonomy",
+      "Risk Classification",
+      "Engineering Rules",
+      "Operational Concepts",
+      "Known Controls and Evidence",
+    ]);
 
     const allowedIndexes = new Set(safetyRows.map((item) => item.sourceIndex));
     const materializeIssues = (proposedIssues = []) => proposedIssues
@@ -10771,6 +10895,13 @@ Rules:
               sourceIndexes: (entry?.sourceIndexes || sourceIndexes).map(Number).filter((value) => allowedIndexes.has(value)),
             }))
             .filter((entry) => entry.statement),
+          organizationProfileProvenance: organizationCalibration.context ? {
+            profileId: organizationCalibration.profileId,
+            profileIdentity: organizationCalibration.profileIdentity,
+            profileUpdatedAt: organizationCalibration.profileUpdatedAt,
+            projectOverrideUpdatedAt: organizationCalibration.projectOverrideUpdatedAt,
+            appliedAt: new Date().toISOString(),
+          } : null,
         };
       })
       .filter(Boolean);
@@ -10780,6 +10911,8 @@ You are consolidating hazard-analysis rows into a concise set of Consolidated Sa
 
 Project: ${activeProject?.name || "Untitled project"}
 Hazard method: ${riskMethod}
+
+${organizationCalibration.context || "No organization calibration profile is enabled for this project."}
 
 Only the rows below are eligible because their Proposed Safety Assessment is Safety. Do not use or infer from Mission/Reliability rows.
 
@@ -11018,6 +11151,16 @@ Rules:
     const repoId = repoMeta.repoId || repoMeta.repoName || "repo";
     const reviewRepoId = activeCodeArchitectureRepo?.id || repoId;
     const cbaProjectId = activeCodeArchitectureProjectId || activeProjectId || "";
+    const codeHazardOrganizationCalibration = getProjectOrganizationCalibration(cbaProjectId, [
+      "Safety Philosophy",
+      "Hazard and Loss Taxonomy",
+      "Risk Classification",
+      "Engineering Rules",
+      "Operational Concepts",
+      "Standards and Regulatory Context",
+      "Glossary",
+      "Known Controls and Evidence",
+    ]);
     const actId = `cba-hazard-${cbaProjectId || "default"}-${repoId}`;
     setCodeArchitectureHazardMethod(selectedMethod);
     setCodeArchitectureHazardGenerationMode(selectedHazardGenerationMode);
@@ -11041,6 +11184,14 @@ Rules:
         hazardGenerationMode: selectedHazardGenerationMode,
         repoMeta,
         projectId: cbaProjectId,
+        organizationContext: codeHazardOrganizationCalibration.context,
+        organizationProfileProvenance: codeHazardOrganizationCalibration.context ? {
+          profileId: codeHazardOrganizationCalibration.profileId,
+          profileIdentity: codeHazardOrganizationCalibration.profileIdentity,
+          profileUpdatedAt: codeHazardOrganizationCalibration.profileUpdatedAt,
+          projectOverrideUpdatedAt: codeHazardOrganizationCalibration.projectOverrideUpdatedAt,
+          appliedAt: new Date().toISOString(),
+        } : null,
         onPartialRunUpdate: (partialRun) => {
           setCodeArchitectureHazardRun(partialRun);
         },
@@ -16847,6 +16998,13 @@ const updateRiskInProject = async (projectId, predicate) => {
 {showSettingsModal && (
   <SettingsModal
   connected={repoConnected}
+  activeProject={activeProject}
+  projectOrganizationProfile={activeProjectId ? loadProjectData(activeProjectId)?.organizationProfile : null}
+  onProjectOrganizationProfileChange={(profileSettings) => {
+    if (!activeProjectId) return;
+    saveProjectPatch(activeProjectId, { organizationProfile: profileSettings });
+    notifyBackupDataChanged("organization-profile");
+  }}
   onClose={() => setShowSettingsModal(false)}
   onSynced={() => {
     setRepoConnected(true);      // ✅ switch to "Baseline Repo"

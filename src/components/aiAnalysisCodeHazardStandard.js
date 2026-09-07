@@ -14,6 +14,7 @@ import {
   parameterizeUnsupportedRequirement,
   semanticGuidePhrase,
 } from "../features/project-hazard-analysis/hazardSafetyModel";
+import { formatGovernedHazardPromptContext } from "../features/project-hazard-analysis/hazardPromptContext";
 
 function getCellText(cell) {
   if (cell == null) return "";
@@ -227,39 +228,7 @@ function compactPromptRowsLength(items = []) {
   return JSON.stringify(compactPromptRows(items)).length;
 }
 
-function formatHazardOperationalContext({
-  operationalContext = "",
-  analysisContext = null,
-  contextSources = null,
-} = {}) {
-  const parts = [];
-  const context = sanitizeText(operationalContext).slice(0, 5000);
-  if (context) parts.push(`Derived project / operational context:\n${context}`);
-
-  const userText = sanitizeText(analysisContext?.text).slice(0, 2500);
-  if (userText) parts.push(`User-provided context text:\n${userText}`);
-
-  const fileSummaries = (analysisContext?.files || [])
-    .map((file, index) => {
-      const name = sanitizeText(file?.name || `context-${index + 1}.txt`).slice(0, 120);
-      const content = sanitizeText(file?.content).slice(0, 1200);
-      return content ? `Attached context file ${name}:\n${content}` : "";
-    })
-    .filter(Boolean)
-    .slice(0, 3);
-  parts.push(...fileSummaries);
-
-  if (contextSources) {
-    const sources = [];
-    if (contextSources.readmePath) sources.push(`README: ${sanitizeText(contextSources.readmePath)}`);
-    if (Array.isArray(contextSources.userContextFiles) && contextSources.userContextFiles.length) {
-      sources.push(`User files: ${contextSources.userContextFiles.map((name) => sanitizeText(name)).filter(Boolean).join(", ")}`);
-    }
-    if (sources.length) parts.push(`Context sources:\n${sources.join("\n")}`);
-  }
-
-  return parts.join("\n\n").slice(0, 9000);
-}
+const formatHazardOperationalContext = formatGovernedHazardPromptContext;
 
 function chunkItemsForPrompt(items = [], maxChars = STANDARD_CHUNK_PROMPT_MAX_CHARS) {
   const chunks = [];
@@ -1584,6 +1553,7 @@ export async function generateStandardCodeHazardAnalysisSheets({
   currentFolder,
   method = "STPA",
   operationalContext = "",
+  organizationContext = "",
   analysisContext = null,
   contextSources = null,
   onProgress = () => {},
@@ -1617,6 +1587,7 @@ export async function generateStandardCodeHazardAnalysisSheets({
     try {
       const chunkRows = await requestStandardRowsWithRetries(config, chunk, {
         operationalContext,
+        organizationContext,
         analysisContext,
         contextSources,
         signal,
@@ -1638,6 +1609,7 @@ export async function generateStandardCodeHazardAnalysisSheets({
   let normalizedRows = materializeGeneratedHazardRows(config, generatedRows, items);
   normalizedRows = await repairGenericStandardRows(config, normalizedRows, items, {
     operationalContext,
+    organizationContext,
     analysisContext,
     contextSources,
     signal,
@@ -1649,6 +1621,7 @@ export async function generateStandardCodeHazardAnalysisSheets({
   });
   normalizedRows = await tagSafetySignificanceForStandardRows(config, normalizedRows, items, {
     operationalContext,
+    organizationContext,
     analysisContext,
     contextSources,
     signal,
@@ -1660,6 +1633,7 @@ export async function generateStandardCodeHazardAnalysisSheets({
   });
   normalizedRows = await canonicalizeStpaRiskVocabulary(config, normalizedRows, items, {
     operationalContext,
+    organizationContext,
     analysisContext,
     contextSources,
     signal,

@@ -1383,6 +1383,7 @@ export function normalizeCodeArchitectureHazardRun(raw = {}, context = {}) {
     hazardGenerationMode: raw.hazardGenerationMode || context.hazardGenerationMode || raw.fhaGenerationMode || context.fhaGenerationMode || "",
     fhaGenerationMode: raw.fhaGenerationMode || context.fhaGenerationMode || "",
     operationalContext: raw.operationalContext || context.operationalContext || context.repoMeta?.operationalContext || "",
+    organizationProfileProvenance: raw.organizationProfileProvenance || context.organizationProfileProvenance || null,
     contextSources: raw.contextSources || context.contextSources || context.repoMeta?.contextSources || null,
     generatedSheets: raw.generatedSheets || raw.analysisResult || {},
     summaryRows,

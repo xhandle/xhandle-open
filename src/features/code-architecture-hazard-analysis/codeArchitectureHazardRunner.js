@@ -15,6 +15,8 @@ export async function runCodeArchitectureHazardAnalysis({
   method = "STPA-Textbook",
   repoMeta = {},
   projectId = "",
+  organizationContext = "",
+  organizationProfileProvenance = null,
   fhaGenerationMode = "standard",
   hazardGenerationMode = fhaGenerationMode,
   setProgress = () => {},
@@ -54,6 +56,7 @@ export async function runCodeArchitectureHazardAnalysis({
     hazardGenerationMode: selectedHazardGenerationMode,
     fhaGenerationMode: method === "FHA" ? selectedHazardGenerationMode : undefined,
     operationalContext: input.operationalContext,
+    organizationProfileProvenance,
     contextSources: input.contextSources,
     generatedSheets,
   }, {
@@ -65,6 +68,7 @@ export async function runCodeArchitectureHazardAnalysis({
     hazardGenerationMode: selectedHazardGenerationMode,
     fhaGenerationMode: method === "FHA" ? selectedHazardGenerationMode : undefined,
     operationalContext: input.operationalContext,
+    organizationProfileProvenance,
     contextSources: input.contextSources,
   });
   const setFolders = async (updater) => {
@@ -92,6 +96,7 @@ export async function runCodeArchitectureHazardAnalysis({
     hazardGenerationMode: selectedHazardGenerationMode,
     fhaGenerationMode: selectedHazardGenerationMode,
     operationalContext: input.operationalContext,
+    organizationContext,
     analysisContext: input.analysisContext,
     contextSources: input.contextSources,
   });
@@ -117,6 +122,7 @@ export async function runCodeArchitectureHazardAnalysis({
     hazardGenerationMode: selectedHazardGenerationMode,
     fhaGenerationMode: method === "FHA" ? selectedHazardGenerationMode : undefined,
     operationalContext: input.operationalContext,
+    organizationProfileProvenance,
     contextSources: input.contextSources,
     generatedSheets,
   }, {
@@ -128,6 +134,7 @@ export async function runCodeArchitectureHazardAnalysis({
     hazardGenerationMode: selectedHazardGenerationMode,
     fhaGenerationMode: method === "FHA" ? selectedHazardGenerationMode : undefined,
     operationalContext: input.operationalContext,
+    organizationProfileProvenance,
     contextSources: input.contextSources,
   });
 

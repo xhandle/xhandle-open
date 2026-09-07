@@ -6,6 +6,7 @@ import {
   traceabilityObjectToSummaryFields,
   traceabilityToSheetCells,
 } from "../features/code-architecture-hazard-analysis/codeArchitectureHazardUtils";
+import { formatGovernedHazardPromptContext } from "../features/project-hazard-analysis/hazardPromptContext";
 
 function getCellText(cell) {
   if (cell == null) return "";
@@ -154,39 +155,7 @@ function compactFhaPromptRowsLength(items = []) {
   return JSON.stringify(compactFhaPromptRows(items)).length;
 }
 
-function formatHazardOperationalContext({
-  operationalContext = "",
-  analysisContext = null,
-  contextSources = null,
-} = {}) {
-  const parts = [];
-  const context = sanitizeText(operationalContext).slice(0, 5000);
-  if (context) parts.push(`Derived project / operational context:\n${context}`);
-
-  const userText = sanitizeText(analysisContext?.text).slice(0, 2500);
-  if (userText) parts.push(`User-provided context text:\n${userText}`);
-
-  const fileSummaries = (analysisContext?.files || [])
-    .map((file, index) => {
-      const name = sanitizeText(file?.name || `context-${index + 1}.txt`).slice(0, 120);
-      const content = sanitizeText(file?.content).slice(0, 1200);
-      return content ? `Attached context file ${name}:\n${content}` : "";
-    })
-    .filter(Boolean)
-    .slice(0, 3);
-  parts.push(...fileSummaries);
-
-  if (contextSources) {
-    const sources = [];
-    if (contextSources.readmePath) sources.push(`README: ${sanitizeText(contextSources.readmePath)}`);
-    if (Array.isArray(contextSources.userContextFiles) && contextSources.userContextFiles.length) {
-      sources.push(`User files: ${contextSources.userContextFiles.map((name) => sanitizeText(name)).filter(Boolean).join(", ")}`);
-    }
-    if (sources.length) parts.push(`Context sources:\n${sources.join("\n")}`);
-  }
-
-  return parts.join("\n\n").slice(0, 9000);
-}
+const formatHazardOperationalContext = formatGovernedHazardPromptContext;
 
 function chunkFhaItemsForPrompt(items = [], maxChars = FHA_CHUNK_PROMPT_MAX_CHARS) {
   const chunks = [];
@@ -1371,6 +1340,7 @@ export async function generateHaraAnalysisSheets({
   currentFolder,
   haraGenerationMode = FHA_GENERATION_MODES.STANDARD,
   operationalContext = "",
+  organizationContext = "",
   analysisContext = null,
   contextSources = null,
   onProgress = () => {},
@@ -1379,7 +1349,7 @@ export async function generateHaraAnalysisSheets({
   if (!items.length) return sheets;
 
   const mode = normalizeFhaGenerationMode(haraGenerationMode);
-  const contextOptions = { operationalContext, analysisContext, contextSources };
+  const contextOptions = { operationalContext, organizationContext, analysisContext, contextSources };
 
   if (mode === FHA_GENERATION_MODES.STANDARD) {
     const promptChunks = items.length <= FHA_MAX_ROWS_PER_PROMPT && compactFhaPromptRowsLength(items) <= FHA_SINGLE_PROMPT_MAX_CHARS
@@ -1516,6 +1486,7 @@ export async function generateFhaAnalysisSheets({
   currentFolder,
   fhaGenerationMode = FHA_GENERATION_MODES.STANDARD,
   operationalContext = "",
+  organizationContext = "",
   analysisContext = null,
   contextSources = null,
   onProgress = () => {},
@@ -1524,7 +1495,7 @@ export async function generateFhaAnalysisSheets({
   if (!items.length) return sheets;
 
   const mode = normalizeFhaGenerationMode(fhaGenerationMode);
-  const contextOptions = { operationalContext, analysisContext, contextSources };
+  const contextOptions = { operationalContext, organizationContext, analysisContext, contextSources };
 
   if (mode === FHA_GENERATION_MODES.STANDARD) {
     const promptChunks = items.length <= FHA_MAX_ROWS_PER_PROMPT && compactFhaPromptRowsLength(items) <= FHA_SINGLE_PROMPT_MAX_CHARS

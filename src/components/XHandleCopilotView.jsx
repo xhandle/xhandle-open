@@ -838,6 +838,9 @@ export function renderCopilotContext(ctx) {
       `Use typed artifacts, relationships, runs, reviews, evidence, source files, and citations as the source of truth for local workspace context.`,
       ctx.scope?.projectId ? `Active project id: ${ctx.scope.projectId}` : `No active project boundary is required; reason workspace-wide unless the user names a project or artifact.`,
       `Active view: ${JSON.stringify(ctx.scope?.activeView || {})}`,
+      ctx.organizationCalibration?.context
+        ? `Organization calibration profile (${ctx.organizationCalibration.profileIdentity || "configured profile"}):\n${ctx.organizationCalibration.context}`
+        : null,
       ctx.scope?.activeView?.functionalCanvasSelection?.hasSelection
         ? `Active Functional Diagram canvas selection. Treat this as the likely referent for "this", "that", "it", "selected function", "selected edge", or similar wording: ${boundedJson(ctx.scope.activeView.functionalCanvasSelection, 5000)}`
         : null,
@@ -918,6 +921,9 @@ export function renderCopilotContext(ctx) {
     `You are xHandle Collaborator. Reason across the complete local xHandle workspace by default.`,
     `Do not use an active-project boundary unless the user explicitly names a project or artifact scope.`,
     ctx.project ? `Recently opened project context: ${ctx.project.name} (id: ${ctx.project.id})` : `No project context is required; use workspace-wide context.`,
+    ctx.organizationCalibration?.context
+      ? `Organization calibration profile (${ctx.organizationCalibration.profileIdentity || "configured profile"}):\n${ctx.organizationCalibration.context}`
+      : null,
     `Current screen: ${screen.feature || ctx.focus?.section || "unknown"}${designState?.selectedModule ? `; Design Management module: ${designState.selectedModule}` : ""}`,
     functionalCanvasSelection?.hasSelection
       ? `Active Functional Diagram canvas selection. Treat this as the likely referent for "this", "that", "it", "selected function", "selected edge", or similar wording: ${boundedJson(functionalCanvasSelection, 5000)}`
@@ -4379,6 +4385,9 @@ useEffect(() => {
       }
 
       let scoped = buildScopedContext(graphContext, scope);
+      if (enrichedContext?.organizationCalibration?.context) {
+        scoped.organizationCalibration = enrichedContext.organizationCalibration;
+      }
       scoped = mergeAutoContext(scoped, scope);
       scoped.lastUserPrompt = userText;
       const note = scoped?.__scopeNote
