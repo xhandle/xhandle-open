@@ -39,7 +39,6 @@ import {
   setAutoBackupEnabled,
   subscribeToLocalBackup,
 } from "../lib/localBackupService";
-import { inspectWorkspaceGraph } from "../features/workspace-graph";
 import { notifyBackupDataChanged } from "../lib/localBackupEvents";
 import {
   buildEffectiveOrganizationProfileContext,
@@ -56,9 +55,19 @@ const VSCODE_EXTENSION_VERSION = "0.0.10";
 const VSCODE_EXTENSION_FILENAME = `xhandle-safety-${VSCODE_EXTENSION_VERSION}.vsix`;
 const VSCODE_EXTENSION_DOWNLOAD_URL = `/downloads/${VSCODE_EXTENSION_FILENAME}`;
 const MAX_ANALYSIS_CONTEXT_FILE_CHARS = 60000;
+const SETTINGS_TABS = new Set([
+  "openai",
+  "organization-profile",
+  "vscode",
+  "backup",
+  "storage",
+]);
 const STORAGE_DATABASES = [
   "xhandle",
   "xhandle-workspace-graph",
+  "xhandle-project-hazard-analysis",
+  "xhandle-hazard-analysis-reset",
+  "xhandle-project-reports",
   "xhandle-results-review",
   "xhandle-safety-remediation",
   "xhandle-code-architecture-hazard-analysis",
@@ -68,6 +77,74 @@ const STORAGE_DATABASES = [
   "BaselinesDB",
   "SafetyCaseEvidenceDB",
 ];
+const LOCAL_STORAGE_CATEGORY_DETAILS = {
+  codeArchitecture: {
+    label: "Code architecture workspace",
+    description: "Repository analysis context, architecture metadata, and related diagram state. Removing it clears locally cached code-analysis work but does not change source repositories.",
+  },
+  projects: {
+    label: "Projects, requirements, and diagrams",
+    description: "Locally saved project definitions, functional decompositions, requirements, risk registers, and diagram layouts. Removing it can delete project work from this browser.",
+  },
+  analysis: {
+    label: "Safety analysis and review results",
+    description: "Generated hazard, safety, review, remediation, safety-case, verification, and traceability results. Removing it clears this locally stored analysis evidence.",
+  },
+  settings: {
+    label: "Application preferences",
+    description: "Organization profile, backup preferences, repository selection, collaborator layout, and other non-secret settings. Removing it resets those preferences.",
+  },
+  credentials: {
+    label: "Credentials and API keys",
+    description: "Locally cached access tokens and provider keys. Removing them may disconnect integrations or require credentials to be entered again. Never selected automatically.",
+  },
+  other: {
+    label: "Other xHandle browser data",
+    description: "Additional xHandle records that do not match a known category. Review carefully before deleting them.",
+  },
+};
+const INDEXED_DB_STORE_DETAILS = {
+  "xhandle:copilot_baseline": ["Code architecture analysis", "Generated architecture rows derived from connected source code. Removing them clears cached analysis results, not repository files."],
+  "xhandle:code_index": ["Source-code index", "Indexed source files and symbols used by code analysis and source linking. Removing it requires the repository to be indexed again."],
+  "xhandle:diagram_positions": ["Code diagram layouts", "Manually arranged positions for code-architecture diagrams. Removing them resets those layouts."],
+  "xhandle-results-review:reviewItems": ["Analysis review decisions", "Review statuses, comments, and decisions recorded against generated analysis results."],
+  "xhandle-code-architecture-hazard-analysis:hazardAnalysisRuns": ["Code hazard-analysis runs", "Saved code-architecture hazard analyses and their run history."],
+  "xhandle-code-architecture-assurance:artifactRows": ["Code assurance artifacts", "Generated assurance artifacts, evidence, and traceability rows for analyzed source code."],
+  "xhandle-project-hazard-analysis:analyses": ["Project hazard analyses", "Complete hazard-analysis results saved for each project. Removing them clears results from the Hazard Analysis tab."],
+  "xhandle-hazard-analysis-reset:snapshots": ["Hazard-analysis undo snapshots", "Temporary snapshots used to restore a project after clearing its hazard analysis."],
+  "xhandle-project-reports:safetyIssueReports": ["Safety issue reports", "Generated stakeholder-facing safety issue reports saved for each project."],
+  "xhandle-workspace-graph:workspaces": ["Workspace settings", "Workspace identity and configuration used to organize locally stored engineering work."],
+  "xhandle-workspace-graph:projects": ["Workspace project index", "Project entries used to connect artifacts, analyses, evidence, and source material."],
+  "xhandle-workspace-graph:folders": ["Workspace folders", "Folder structure used to organize projects and engineering artifacts."],
+  "xhandle-workspace-graph:artifacts": ["Engineering artifacts", "Generated and imported engineering artifacts represented in the workspace graph."],
+  "xhandle-workspace-graph:relationships": ["Artifact traceability links", "Links showing how requirements, hazards, evidence, reviews, and other artifacts relate to one another."],
+  "xhandle-workspace-graph:runs": ["Analysis run history", "Records of analysis and generation runs associated with workspace artifacts."],
+  "xhandle-workspace-graph:reviews": ["Workspace reviews", "Review records and decisions associated with engineering artifacts."],
+  "xhandle-workspace-graph:evidence": ["Workspace evidence", "Evidence records linked to requirements, hazards, safety cases, and other artifacts."],
+  "xhandle-workspace-graph:sourceFiles": ["Workspace source files", "Indexed source-file records used for code traceability and evidence links."],
+  "xhandle-workspace-graph:summaries": ["Artifact summaries", "Generated summaries used to make large engineering artifacts easier to navigate."],
+  "xhandle-workspace-graph:changeLog": ["Workspace change history", "Recorded workspace changes used for auditability and synchronization."],
+  "xhandle-safety-remediation:safetyFindings": ["Safety remediation findings", "Safety-relevant findings selected for code or design remediation."],
+  "xhandle-safety-remediation:patchProposals": ["Safety patch proposals", "Proposed source-code changes intended to address safety findings."],
+  "xhandle-safety-remediation:reviewDecisions": ["Remediation review decisions", "Reviewer approvals, rejections, and comments for proposed safety changes."],
+  "xhandle-safety-remediation:summaryArtifacts": ["Remediation summaries", "Generated summaries of safety findings, decisions, and proposed changes."],
+  "xhandle-safety-remediation:verificationRuns": ["Remediation verification runs", "Test and verification results for proposed or applied safety changes."],
+  "xhandle-safety-remediation:safetyRemediationEvidence": ["Remediation evidence", "Evidence demonstrating how safety findings were addressed and verified."],
+  "TraceabilityDB:Folders": ["Project folders", "Top-level folders used to organize projects in the traceability workspace."],
+  "TraceabilityDB:Projects": ["Project records", "Core project definitions and project-level configuration."],
+  "TraceabilityDB:Notes": ["Project notes", "Notes and supporting text saved against projects."],
+  "TraceabilityDB:RequirementFolders": ["Requirement folders", "Folder hierarchy used to organize project requirements."],
+  "TraceabilityDB:Requirements": ["Requirements", "Project requirements and the identifiers used to link them to analyses and evidence."],
+  "TraceabilityDB:SafetyCases": ["Safety cases", "Structured safety-case arguments and their project associations."],
+  "SafetyCaseEvidenceDB:Attachments": ["Safety-case attachments", "Files and supporting evidence attached to safety-case claims and project nodes."],
+  "TraceabilityMeta:shaStore": ["Source revision metadata", "Repository revision identifiers used to detect source-code changes between analyses."],
+  "BaselinesDB:Baselines": ["Analysis baselines", "Saved baseline snapshots used to compare current results with an earlier system state."],
+};
+const INDEXED_DB_DATABASE_DETAILS = {
+  "xhandle-workspace-graph": ["Workspace", "Connected workspace records used for navigation and traceability."],
+  "xhandle-safety-remediation": ["Safety remediation", "Findings, proposed fixes, review decisions, verification runs, and remediation evidence."],
+  TraceabilityDB: ["Project traceability", "Projects, requirements, notes, folders, and safety cases used by the traceability workspace."],
+};
 const CREDENTIAL_STORAGE_KEYS = new Set([
   "githubToken",
   "jiraToken",
@@ -102,14 +179,11 @@ function localStorageCategoryForKey(key = "") {
 }
 
 function localStorageCategoryLabel(id) {
-  return {
-    codeArchitecture: "Code architecture metadata and UI state",
-    projects: "Projects, requirements, diagrams, and risk data",
-    analysis: "Analysis, review, remediation, safety case, and V&V data",
-    settings: "Non-secret settings and preferences",
-    credentials: "Credentials and API keys",
-    other: "Other xHandle localStorage data",
-  }[id] || id;
+  return LOCAL_STORAGE_CATEGORY_DETAILS[id]?.label || id;
+}
+
+function localStorageCategoryDescription(id) {
+  return LOCAL_STORAGE_CATEGORY_DETAILS[id]?.description || LOCAL_STORAGE_CATEGORY_DETAILS.other.description;
 }
 
 function openRawIndexedDb(name) {
@@ -188,17 +262,25 @@ async function clearIndexedDbStore(dbName, storeName) {
 }
 
 function indexedDbStoreLabel(dbName, storeName) {
-  if (dbName === "xhandle" && storeName === "copilot_baseline") return "Code architecture rows";
-  if (dbName === "xhandle" && storeName === "code_index") return "Code source index/cache";
-  if (dbName === "xhandle" && storeName === "diagram_positions") return "Diagram positions";
-  if (dbName === "xhandle-code-architecture-assurance") return "Code architecture assurance artifacts";
-  if (dbName === "xhandle-code-architecture-hazard-analysis") return "Code architecture hazard analysis";
-  if (dbName === "xhandle-safety-remediation") return "Safety remediation";
-  if (dbName === "xhandle-results-review") return "Results review";
-  if (dbName === "xhandle-workspace-graph") return "Workspace graph";
-  if (dbName === "SafetyCaseEvidenceDB") return "Safety case evidence";
-  if (dbName === "TraceabilityDB" || dbName === "TraceabilityMeta" || dbName === "BaselinesDB") return "Traceability and baselines";
-  return `${dbName} / ${storeName}`;
+  const exact = INDEXED_DB_STORE_DETAILS[`${dbName}:${storeName}`];
+  if (exact) return exact[0];
+  const database = INDEXED_DB_DATABASE_DETAILS[dbName];
+  if (database) {
+    const readableStore = String(storeName || "records")
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
+      .replace(/[_-]+/g, " ")
+      .replace(/^./, (letter) => letter.toUpperCase());
+    return `${database[0]} · ${readableStore}`;
+  }
+  return "Application data";
+}
+
+function indexedDbStoreDescription(dbName, storeName) {
+  const exact = INDEXED_DB_STORE_DETAILS[`${dbName}:${storeName}`];
+  if (exact) return exact[1];
+  const database = INDEXED_DB_DATABASE_DETAILS[dbName];
+  if (database) return database[1];
+  return "Application records stored locally by xHandle. Removing them may clear saved work or require the related feature to rebuild its data.";
 }
 
 export default function SettingsModal({
@@ -221,7 +303,7 @@ export default function SettingsModal({
   const [tab, setTab] = useState(
     (() => {
       const saved = typeof window !== "undefined" ? localStorage.getItem("settings.activeTab") : "";
-      return saved && saved !== "github" ? saved : "openai";
+      return SETTINGS_TABS.has(saved) ? saved : "openai";
     })()
   );
   useEffect(() => {
@@ -414,81 +496,6 @@ export default function SettingsModal({
     }
   };
 
-  // ===== Jira placeholders =====
-  const [jiraSite, setJiraSite] = useState(
-    (typeof window !== "undefined" && localStorage.getItem("jiraSite")) || ""
-  );
-  const [jiraEmail, setJiraEmail] = useState(
-    (typeof window !== "undefined" && localStorage.getItem("jiraEmail")) || ""
-  );
-  const [jiraToken, setJiraToken] = useState(
-    (typeof window !== "undefined" && localStorage.getItem("jiraToken")) || ""
-  );
-  const [jiraMsg, setJiraMsg] = useState("");
-  const [jiraConnected, setJiraConnected] = useState(
-    (typeof window !== "undefined" && localStorage.getItem("jiraConnected")) === "true"
-  );
-
-  const saveJiraPrefs = () => {
-    if (typeof window !== "undefined") {
-      localStorage.setItem("jiraSite", jiraSite.trim());
-      localStorage.setItem("jiraEmail", jiraEmail.trim());
-      if (jiraToken.trim()) localStorage.setItem("jiraToken", jiraToken.trim());
-      else localStorage.removeItem("jiraToken");
-    }
-    setJiraMsg("✅ Jira preferences saved (placeholder).");
-    clearJiraMsgSoon();
-  };
-
-  const connectJira = async () => {
-    setJiraConnected(true);
-    if (typeof window !== "undefined") localStorage.setItem("jiraConnected", "true");
-    setJiraMsg("✅ Jira connected (placeholder). Wire your OAuth/API next.");
-    clearJiraMsgSoon();
-  };
-
-  const disconnectJira = () => {
-    setJiraConnected(false);
-    if (typeof window !== "undefined") localStorage.setItem("jiraConnected", "false");
-    setJiraMsg("ℹ️ Jira disconnected.");
-    clearJiraMsgSoon();
-  };
-
-  // ===== Google placeholders =====
-  const [googleDriveEnabled, setGoogleDriveEnabled] = useState(
-    (typeof window !== "undefined" && localStorage.getItem("googleDriveEnabled")) === "true"
-  );
-  const [googleCalendarEnabled, setGoogleCalendarEnabled] = useState(
-    (typeof window !== "undefined" && localStorage.getItem("googleCalendarEnabled")) === "true"
-  );
-  const [googleMsg, setGoogleMsg] = useState("");
-  const [googleConnected, setGoogleConnected] = useState(
-    (typeof window !== "undefined" && localStorage.getItem("googleConnected")) === "true"
-  );
-
-  const saveGooglePrefs = () => {
-    if (typeof window !== "undefined") {
-      localStorage.setItem("googleDriveEnabled", String(googleDriveEnabled));
-      localStorage.setItem("googleCalendarEnabled", String(googleCalendarEnabled));
-    }
-    setGoogleMsg("✅ Google preferences saved (placeholder).");
-    clearGoogleMsgSoon();
-  };
-
-  const connectGoogle = async () => {
-    setGoogleConnected(true);
-    if (typeof window !== "undefined") localStorage.setItem("googleConnected", "true");
-    setGoogleMsg("✅ Google connected (placeholder). Add OAuth next.");
-    clearGoogleMsgSoon();
-  };
-
-  const disconnectGoogle = () => {
-    setGoogleConnected(false);
-    if (typeof window !== "undefined") localStorage.setItem("googleConnected", "false");
-    setGoogleMsg("ℹ️ Google disconnected.");
-    clearGoogleMsgSoon();
-  };
-
   // ===== AI provider integration =====
   const [aiProvider, setAiProvider] = useState("openai");
   const [providerKey, setProviderKey] = useState("");
@@ -504,13 +511,11 @@ export default function SettingsModal({
   const [providerModelsMsg, setProviderModelsMsg] = useState("");
   const [backupState, setBackupState] = useState(getLocalBackupState());
   const [backupMsg, setBackupMsg] = useState("");
-  const [graphInspection, setGraphInspection] = useState(null);
-  const [graphInspectionBusy, setGraphInspectionBusy] = useState(false);
-  const [graphInspectionMsg, setGraphInspectionMsg] = useState("");
   const [storageInventory, setStorageInventory] = useState(null);
   const [storageBusy, setStorageBusy] = useState(false);
   const [storageMsg, setStorageMsg] = useState("");
   const [selectedStorageItems, setSelectedStorageItems] = useState({});
+  const storageTabScanStartedRef = useRef(false);
   const fileInputRef = useRef(null);
   const selectedSavedProvider = providerStatus?.savedProviders?.find(
     (row) => row.provider === normalizeAIProvider(aiProvider)
@@ -614,9 +619,7 @@ export default function SettingsModal({
               kind: "localStorage",
               groupId,
               label: localStorageCategoryLabel(groupId),
-              description: groupId === "credentials"
-                ? "Saved API keys and tokens. This is not selected by default."
-                : "xHandle data stored in localStorage.",
+              description: localStorageCategoryDescription(groupId),
               bytes: 0,
               count: 0,
               keys: [],
@@ -644,7 +647,7 @@ export default function SettingsModal({
             dbName,
             storeName,
             label: indexedDbStoreLabel(dbName, storeName),
-            description: `${dbName} / ${storeName}${inspected.sampleKey ? ` · sample key: ${inspected.sampleKey}` : ""}`,
+            description: indexedDbStoreDescription(dbName, storeName),
             bytes: inspected.bytes || 0,
             count: inspected.count || 0,
             error: inspected.error || "",
@@ -672,6 +675,18 @@ export default function SettingsModal({
       setStorageBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (tab !== "storage") {
+      storageTabScanStartedRef.current = false;
+      return;
+    }
+    if (storageTabScanStartedRef.current) return;
+    storageTabScanStartedRef.current = true;
+    refreshStorageInventory();
+    // The scan intentionally runs once each time the Storage tab is opened.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   useEffect(() => {
     let alive = true;
@@ -864,8 +879,6 @@ export default function SettingsModal({
     };
   }
   function clearMsgSoon() { setTimeout(() => setMsg(""), 2000); }
-  function clearJiraMsgSoon() { setTimeout(() => setJiraMsg(""), 2000); }
-  function clearGoogleMsgSoon() { setTimeout(() => setGoogleMsg(""), 2000); }
   function clearProviderMsgSoon() { setTimeout(() => setProviderMsg(""), 2500); }
   function clearBackupMsgSoon() { setTimeout(() => setBackupMsg(""), 3000); }
 
@@ -1008,20 +1021,6 @@ export default function SettingsModal({
     }
   };
 
-  const handleInspectWorkspaceGraph = async () => {
-    setGraphInspectionBusy(true);
-    setGraphInspectionMsg("");
-    try {
-      const inspection = await inspectWorkspaceGraph({ sampleLimit: 8 });
-      setGraphInspection(inspection);
-      setGraphInspectionMsg(inspection.health === "healthy" ? "Workspace graph looks healthy." : "Workspace graph needs attention.");
-    } catch (e) {
-      setGraphInspectionMsg(`❌ ${e?.message || e}`);
-    } finally {
-      setGraphInspectionBusy(false);
-    }
-  };
-
   const handleDownloadBackup = async () => {
     try {
       await downloadBackupNow();
@@ -1077,14 +1076,11 @@ export default function SettingsModal({
 
         {/* Tabs */}
         <div className="flex gap-2 mb-4 flex-wrap">
-          <TabButton label="Jira" active={tab === "jira"} onClick={() => setTab("jira")} />
-          <TabButton label="Google" active={tab === "google"} onClick={() => setTab("google")} />
           <TabButton label="AI Provider" active={tab === "openai"} onClick={() => setTab("openai")} />
           <TabButton label="Organization Profile" active={tab === "organization-profile"} onClick={() => setTab("organization-profile")} />
           <TabButton label="VS Code" active={tab === "vscode"} onClick={() => setTab("vscode")} />
           <TabButton label="Backup" active={tab === "backup"} onClick={() => setTab("backup")} />
           <TabButton label="Storage" active={tab === "storage"} onClick={() => setTab("storage")} />
-          <TabButton label="Graph" active={tab === "graph"} onClick={() => setTab("graph")} />
         </div>
 
         {/* Panels */}
@@ -1343,123 +1339,6 @@ export default function SettingsModal({
             </div>
 
             {!!msg && <div className="mt-1 text-sm">{msg}</div>}
-          </section>
-        )}
-
-        {tab === "jira" && (
-          <section className="space-y-3">
-            <div className="text-sm text-gray-600">
-              Connect Jira to pull issues/requirements and push findings back as tickets.
-            </div>
-            <Field
-              label="Jira Site"
-              placeholder="your-team.atlassian.net"
-              value={jiraSite}
-              onChange={setJiraSite}
-            />
-            <Field
-              label="Jira Email"
-              placeholder="you@company.com"
-              value={jiraEmail}
-              onChange={setJiraEmail}
-            />
-            <Field
-              label="Jira API Token"
-              placeholder="Paste your Jira API token"
-              type="password"
-              value={jiraToken}
-              onChange={setJiraToken}
-              helper="Stored locally for now. Replace with OAuth in production."
-            />
-
-            <div className="flex items-center gap-2 pt-1">
-              <button
-                className="bg-gray-100 hover:bg-gray-200 rounded px-3 py-2"
-                onClick={saveJiraPrefs}
-              >
-                Save
-              </button>
-              {jiraConnected ? (
-                <button
-                  className="bg-red-600 hover:bg-red-700 text-white rounded px-3 py-2"
-                  onClick={disconnectJira}
-                >
-                  Disconnect
-                </button>
-              ) : (
-                <button
-                  className="bg-purple-600 hover:bg-purple-700 text-white rounded px-3 py-2"
-                  onClick={connectJira}
-                  title="Placeholder — wire OAuth/API"
-                >
-                  Connect (Placeholder)
-                </button>
-              )}
-              <button className="ml-auto px-3 py-2" onClick={onClose}>
-                Close
-              </button>
-            </div>
-
-            {!!jiraMsg && <div className="mt-1 text-sm">{jiraMsg}</div>}
-          </section>
-        )}
-
-        {tab === "google" && (
-          <section className="space-y-3">
-            <div className="text-sm text-gray-600">
-              Connect Google to ingest Drive docs and schedule reviews via Calendar.
-            </div>
-
-            <div className="flex items-center gap-3">
-              <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4"
-                  checked={googleDriveEnabled}
-                  onChange={(e) => setGoogleDriveEnabled(e.target.checked)}
-                />
-                <span className="text-sm">Enable Drive</span>
-              </label>
-              <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4"
-                  checked={googleCalendarEnabled}
-                  onChange={(e) => setGoogleCalendarEnabled(e.target.checked)}
-                />
-                <span className="text-sm">Enable Calendar</span>
-              </label>
-            </div>
-
-            <div className="flex items-center gap-2 pt-1">
-              <button
-                className="bg-gray-100 hover:bg-gray-200 rounded px-3 py-2"
-                onClick={saveGooglePrefs}
-              >
-                Save
-              </button>
-              {googleConnected ? (
-                <button
-                  className="bg-red-600 hover:bg-red-700 text-white rounded px-3 py-2"
-                  onClick={disconnectGoogle}
-                >
-                  Disconnect
-                </button>
-              ) : (
-                <button
-                  className="bg-purple-600 hover:bg-purple-700 text-white rounded px-3 py-2"
-                  onClick={connectGoogle}
-                  title="Placeholder — wire OAuth scopes for Drive/Calendar"
-                >
-                  Connect (Placeholder)
-                </button>
-              )}
-              <button className="ml-auto px-3 py-2" onClick={onClose}>
-                Close
-              </button>
-            </div>
-
-            {!!googleMsg && <div className="mt-1 text-sm">{googleMsg}</div>}
           </section>
         )}
 
@@ -1773,7 +1652,7 @@ export default function SettingsModal({
                 <span className="font-medium">Origin usage:</span>{" "}
                 {storageInventory
                   ? `${formatStorageBytes(storageInventory.usageBytes)}${storageInventory.quotaBytes ? ` of ${formatStorageBytes(storageInventory.quotaBytes)} quota` : ""}`
-                  : "Not scanned yet"}
+                  : storageBusy ? "Calculating…" : "Loading…"}
               </div>
               {storageInventory?.refreshedAt && (
                 <div className="text-xs text-slate-500">
@@ -1788,7 +1667,7 @@ export default function SettingsModal({
                 onClick={refreshStorageInventory}
                 disabled={storageBusy}
               >
-                {storageBusy ? "Scanning..." : "Scan Storage"}
+                {storageBusy ? "Refreshing…" : "Refresh"}
               </button>
               <button
                 className="bg-gray-100 hover:bg-gray-200 rounded px-3 py-2 disabled:opacity-50"
@@ -1853,7 +1732,9 @@ export default function SettingsModal({
               </div>
             ) : (
               <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-sm text-slate-500">
-                {storageInventory ? "No xHandle browser data was found." : "Scan storage to see xHandle localStorage and IndexedDB data."}
+                {storageInventory
+                  ? "No xHandle browser data was found."
+                  : storageBusy ? "Loading browser storage…" : "Browser storage could not be loaded."}
               </div>
             )}
 
@@ -1862,75 +1743,6 @@ export default function SettingsModal({
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
               Deleting browser data may remove projects, generated analyses, review decisions, diagram layouts, and cached source indexes. Use Backup first if you may need this data later.
             </div>
-
-            <div className="flex items-center gap-2 pt-1">
-              <button className="ml-auto px-3 py-2" onClick={onClose}>
-                Close
-              </button>
-            </div>
-          </section>
-        )}
-
-        {tab === "graph" && (
-          <section className="space-y-4">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-2">
-              <div className="text-sm font-medium text-slate-900">Workspace graph diagnostics</div>
-              <p className="text-sm text-slate-600">
-                Inspect the canonical graph used by Collaborator for native LLM context. This reads the graph database and does not modify legacy project data.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                className="bg-slate-900 hover:bg-slate-800 text-white rounded px-3 py-2 disabled:opacity-50"
-                onClick={handleInspectWorkspaceGraph}
-                disabled={graphInspectionBusy}
-              >
-                {graphInspectionBusy ? "Inspecting..." : "Inspect Graph"}
-              </button>
-              {graphInspectionMsg && <span className="text-sm text-slate-600">{graphInspectionMsg}</span>}
-            </div>
-
-            {graphInspection && (
-              <div className="space-y-3 text-sm">
-                <div className="grid gap-3 md:grid-cols-4">
-                  {Object.entries(graphInspection.counts || {}).map(([label, value]) => (
-                    <div key={label} className="rounded-xl border bg-white p-3">
-                      <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
-                      <div className="mt-1 text-lg font-semibold text-slate-900">{value}</div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="rounded-xl border bg-white p-3">
-                  <div className="font-medium text-slate-900">Health</div>
-                  <div className={graphInspection.health === "healthy" ? "text-emerald-700" : "text-amber-700"}>
-                    {graphInspection.health}
-                  </div>
-                  <div className="mt-2 grid gap-1 text-xs text-slate-600 md:grid-cols-2">
-                    <div>Orphan relationships: {graphInspection.validation?.orphanRelationships?.length || 0}</div>
-                    <div>Missing parent contains links: {graphInspection.validation?.missingContainsForParent?.length || 0}</div>
-                    <div>Source files missing artifacts: {graphInspection.validation?.sourceFilesMissingArtifact?.length || 0}</div>
-                    <div>Migration errors: {graphInspection.migrationErrors?.length || 0}</div>
-                  </div>
-                </div>
-
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="rounded-xl border bg-white p-3">
-                    <div className="font-medium text-slate-900">Relationship Types</div>
-                    <pre className="mt-2 max-h-44 overflow-auto rounded bg-slate-50 p-2 text-xs">
-                      {JSON.stringify(graphInspection.relationshipTypeCounts || {}, null, 2)}
-                    </pre>
-                  </div>
-                  <div className="rounded-xl border bg-white p-3">
-                    <div className="font-medium text-slate-900">Citation Samples</div>
-                    <pre className="mt-2 max-h-44 overflow-auto rounded bg-slate-50 p-2 text-xs">
-                      {JSON.stringify(graphInspection.sourceCitationSamples || [], null, 2)}
-                    </pre>
-                  </div>
-                </div>
-              </div>
-            )}
 
             <div className="flex items-center gap-2 pt-1">
               <button className="ml-auto px-3 py-2" onClick={onClose}>
@@ -1999,12 +1811,6 @@ export default function SettingsModal({
           <div className="flex items-center gap-3 text-xs text-gray-600">
             {false && tab === "github" && (
               <IntegrationBadge name="GitHub" connected={githubConnected} spinning={isSyncing} />
-            )}
-            {tab === "jira" && (
-              <IntegrationBadge name="Jira" connected={jiraConnected} />
-            )}
-            {tab === "google" && (
-              <IntegrationBadge name="Google" connected={googleConnected} />
             )}
             {tab === "openai" && (
               <IntegrationBadge name="AI Provider" connected={providerConnected} />
