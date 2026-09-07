@@ -405,7 +405,10 @@ export async function runLiteAIAnalysis({
     })) || updatedSheets;
 
   } else if (hazardMethod === "STPA-Textbook" || hazardMethod === "STPA_TEXTBOOK" || hazardMethod === "STPA_TEXTBOOK_APPROACH") {
-    if (selectedHazardGenerationMode === "standard") {
+    // Both project STPA modes use the normalized generator. The previous
+    // "detailed" branch emitted a legacy schema that placed causal factors in
+    // mitigation columns and bypassed the current context/quality rules.
+    if (selectedHazardGenerationMode === "standard" || selectedHazardGenerationMode === "detailed") {
       step = 1;
       updateProgress();
       updatedSheets = (await generateStandardCodeHazardAnalysisSheets({
@@ -419,6 +422,7 @@ export async function runLiteAIAnalysis({
         signal,
         onProgress: updateGeneratorProgress,
         omitConsolidatedRequirement,
+        generationMode: selectedHazardGenerationMode,
       })) || updatedSheets;
       step = 9;
       updateProgress();

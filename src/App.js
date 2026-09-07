@@ -161,6 +161,8 @@ import {
   resolveProjectHazardArtifactNavigation,
 } from "./features/project-hazard-analysis/projectHazardDiagramSummary";
 import HazardOperationalContextManager from "./features/project-hazard-analysis/HazardOperationalContextManager";
+import HazardSafetyModelView from "./features/project-hazard-analysis/HazardSafetyModelView";
+import HazardAnalysisResetModal from "./features/project-hazard-analysis/HazardAnalysisResetModal";
 import { generateHazardOperationalContexts } from "./features/project-hazard-analysis/hazardOperationalContextAi";
 import {
   buildSafetyIssueContextVariants,
@@ -175,6 +177,16 @@ import {
   saveSafetyIssueReportRecord,
 } from "./features/project-hazard-analysis/safetyIssueReportStorage";
 import {
+  deleteHazardAnalysisResetSnapshot,
+  loadHazardAnalysisResetSnapshot,
+  saveHazardAnalysisResetSnapshot,
+} from "./features/project-hazard-analysis/hazardAnalysisResetStorage";
+import {
+  deleteProjectHazardAnalysisRecord,
+  loadProjectHazardAnalysisRecord,
+  saveProjectHazardAnalysisRecord,
+} from "./features/project-hazard-analysis/projectHazardAnalysisStorage";
+import {
   buildHazardAnalysisRecovery,
   getProjectHazardSummaryReviewItems,
 } from "./features/project-hazard-analysis/hazardAnalysisRecovery";
@@ -187,6 +199,10 @@ import {
   isUnspecifiedHazardContext,
   normalizeHazardOperationalContexts,
 } from "./features/project-hazard-analysis/hazardOperationalContexts";
+import {
+  buildHazardSafetyModel,
+  createSafetyModelId,
+} from "./features/project-hazard-analysis/hazardSafetyModel";
 
 const CODE_ARCHITECTURE_REVIEW_ANALYSIS_OPTIONS = [
   { key: REVIEW_ANALYSIS_SECTIONS.HAZARD, label: "Hazard & Remediation" },
@@ -310,20 +326,42 @@ function getProjectHazardAnalysisRows(functionalRows = []) {
 
 const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
   STPA: [
+    "Raw Analysis Row ID",
+    "Control Action Type",
     "Loss",
     "Hazard",
+    "Raw Loss Candidate",
+    "Raw Hazard Candidate",
+    "Canonical Loss ID",
+    "Canonical Hazard ID",
     "Unsafe Control Action",
+    "Causal Scenario",
+    "Causal Factor",
+    "Causal Factor Category",
     "Mitigation Strategy",
+    "Safety Constraint",
     "System Requirement",
+    "Requirement Parameter Source",
     "Proposed Safety Assessment",
     "Proposed Safety Assessment Rationale",
   ],
   "STPA-Textbook": [
+    "Raw Analysis Row ID",
+    "Control Action Type",
     "Loss",
     "Hazard",
+    "Raw Loss Candidate",
+    "Raw Hazard Candidate",
+    "Canonical Loss ID",
+    "Canonical Hazard ID",
     "Unsafe Control Action",
+    "Causal Scenario",
+    "Causal Factor",
+    "Causal Factor Category",
     "Mitigation Strategy",
+    "Safety Constraint",
     "System Requirement",
+    "Requirement Parameter Source",
     "Proposed Safety Assessment",
     "Proposed Safety Assessment Rationale",
   ],
@@ -426,9 +464,21 @@ const PROJECT_DRAFT_HAZARD_HEADER_ALIASES = {
   "Guide Phrase Applicable": ["Guide Phrase Applicable", "Guide Applicable", "Applicability", "Applicable"],
   "Guide Phrase Applicability Rationale": ["Guide Phrase Applicability Rationale", "Applicability Rationale", "Guide Phrase Rationale"],
   "Unsafe Control Action": ["Unsafe Control Action", "Unsafe Control Actions", "UCA"],
+  "Raw Analysis Row ID": ["Raw Analysis Row ID", "Raw Row ID", "Analysis Row ID"],
+  "Control Action Type": ["Control Action Type", "Action Type", "Interface Type"],
+  "Loss": ["Loss", "Losses"],
+  "Hazard": ["Hazard", "Hazards"],
+  "Raw Loss Candidate": ["Raw Loss Candidate", "Raw Loss", "Loss Candidate"],
+  "Raw Hazard Candidate": ["Raw Hazard Candidate", "Raw Hazard", "Hazard Candidate"],
+  "Canonical Loss ID": ["Canonical Loss ID", "Loss ID"],
+  "Canonical Hazard ID": ["Canonical Hazard ID", "Hazard ID"],
+  "Causal Scenario": ["Causal Scenario", "Causal Scenarios"],
   "Mitigation Strategy": ["Mitigation Strategy", "Controls", "Safeguard", "Recommendation"],
-  "System Requirement": ["System Requirement", "Software Safety Requirement", "Safety Goal", "Design Requirement"],
+  "Safety Constraint": ["Safety Constraint", "Safety Constraints", "Safety Requirements/Constraints"],
+  "System Requirement": ["System Requirement", "Software Safety Requirement", "Safety Requirement", "Safety Goal", "Design Requirement"],
+  "Requirement Parameter Source": ["Requirement Parameter Source", "Parameter Source", "Threshold Source"],
   "Causal Factor": ["Causal Factor", "Causal Factors", "Cause", "Causes"],
+  "Causal Factor Category": ["Causal Factor Category", "Cause Category"],
   "Failure Mode": ["Failure Mode", "Malfunction"],
   "Item / Function": ["Item / Function", "Function"],
   "Function": ["Function", "Item / Function"],
@@ -5496,6 +5546,7 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
     if (!project) throw new Error("Select a project to export.");
     const projectData = loadProjectData(project.id) || {};
     const storedSafetyIssueReport = await loadSafetyIssueReportRecord(project.id);
+    const storedHazardAnalysis = await loadProjectHazardAnalysisRecord(project.id);
     return {
       type: "xhandle-project",
       version: 1,
@@ -5509,6 +5560,9 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
       },
       data: {
         ...projectData,
+        analysisResult: storedHazardAnalysis?.analysisResult ?? projectData.analysisResult ?? null,
+        draftHazardRowsByIndex: storedHazardAnalysis?.draftHazardRowsByIndex ?? projectData.draftHazardRowsByIndex ?? {},
+        riskRegister: storedHazardAnalysis?.riskRegister ?? projectData.riskRegister ?? [],
         riskAssessmentReportMarkdown: storedSafetyIssueReport?.markdown
           ?? projectData.riskAssessmentReportMarkdown
           ?? "",
@@ -5579,6 +5633,15 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
       const importedSafetyIssueReport = String(data.riskAssessmentReportMarkdown || "");
       delete data.riskAssessmentReportMarkdown;
       if (importedSafetyIssueReport) data.riskAssessmentReportStorage = "artifact-store";
+      const importedHazardAnalysis = {
+        analysisResult: data.analysisResult || null,
+        draftHazardRowsByIndex: data.draftHazardRowsByIndex || {},
+        riskRegister: Array.isArray(data.riskRegister) ? data.riskRegister : [],
+      };
+      delete data.analysisResult;
+      delete data.draftHazardRowsByIndex;
+      delete data.riskRegister;
+      data.hazardAnalysisStorage = "artifact-store";
       const map = readProjectMap();
       map[importedProject.id] = data;
       writeProjectMap(map);
@@ -5587,6 +5650,10 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
         if (!reportSaved) {
           console.warn("[projects] Imported project report could not be saved to durable report storage.");
         }
+      }
+      const hazardAnalysisSaved = await saveProjectHazardAnalysisRecord(importedProject.id, importedHazardAnalysis);
+      if (!hazardAnalysisSaved) {
+        console.warn("[projects] Imported hazard analysis could not be saved to durable artifact storage.");
       }
 
       const localStorageEntries = Array.isArray(parsed?.localStorageEntries)
@@ -5681,6 +5748,9 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
       }
     }
     removeProjectData(projectId);
+    deleteProjectHazardAnalysisRecord(projectId).catch((error) => {
+      console.warn("[project-hazard-storage] Failed to remove hazard artifacts for deleted project", error);
+    });
     resultsReview.deleteReviewItemsForProject(projectId).catch((error) => {
       console.warn("[results-review] Failed to remove review items for deleted project", error);
     });
@@ -6616,6 +6686,10 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [expandedHazardVariantKeys, setExpandedHazardVariantKeys] = useState(new Set());
   const [hazardOperationalContexts, setHazardOperationalContexts] = useState([]);
   const [selectedHazardContextId, setSelectedHazardContextId] = useState("all");
+  const [hazardAnalysisView, setHazardAnalysisView] = useState("safety-model");
+  const [showHazardResetModal, setShowHazardResetModal] = useState(false);
+  const [isResettingHazardAnalysis, setIsResettingHazardAnalysis] = useState(false);
+  const [hazardResetStatus, setHazardResetStatus] = useState(null);
   const [showHazardContextManager, setShowHazardContextManager] = useState(false);
   const [pendingReviewSourceJump, setPendingReviewSourceJump] = useState(null);
   const [filterColumnIndex, setFilterColumnIndex] = useState(null);
@@ -6643,6 +6717,7 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const hazardAnalysisAbortControllerRef = useRef(null);
   const hazardReconciliationHydrationRef = useRef(null);
   const projectPersistenceHydrationRef = useRef(null);
+  const hazardAnalysisArtifactHydrationRef = useRef(null);
   const safetyIssueReportHydrationRef = useRef(null);
   const [generatingSafetyIssueReportIds, setGeneratingSafetyIssueReportIds] = useState(new Set());
   const [selectedRiskPriority, setSelectedRiskPriority] = useState("All");
@@ -6781,9 +6856,11 @@ useEffect(() => {
   // Load per-project state whenever activeProjectId changes
   useEffect(() => {
     let safetyReportLoadCancelled = false;
+    let hazardArtifactLoadCancelled = false;
     hazardReconciliationHydrationRef.current = activeProjectId || null;
     projectPersistenceHydrationRef.current = activeProjectId || null;
     safetyIssueReportHydrationRef.current = activeProjectId || null;
+    hazardAnalysisArtifactHydrationRef.current = activeProjectId || null;
     setProjectLoaded(false);
     setLoadedProjectId(null);
     setLoadingProjectId(activeProjectId || null);
@@ -6807,6 +6884,7 @@ useEffect(() => {
       setAgentReportResult(null); // NEW: reset when no project
       setRiskAssessmentReportMarkdown("");
       safetyIssueReportHydrationRef.current = null;
+      hazardAnalysisArtifactHydrationRef.current = null;
       setGeneratingSafetyIssueReportIds(new Set());
       setActiveRiskId(null);
       setSelectedRiskPriority("All");
@@ -6866,7 +6944,35 @@ useEffect(() => {
     setActiveRiskId(null);
     setSelectedRiskPriority("All");
     setRiskReportMode("preview");
-    setRiskRegister(data?.riskRegister || []);
+    setRiskRegister(data?.hazardAnalysisStorage === "artifact-store" ? [] : (data?.riskRegister || []));
+    loadProjectHazardAnalysisRecord(projectIdForLoad)
+      .then(async (storedAnalysis) => {
+        if (hazardArtifactLoadCancelled) return;
+        if (storedAnalysis) {
+          setAnalysisResult(storedAnalysis.analysisResult ? stripProjectRiskProfileColumns(storedAnalysis.analysisResult) : null);
+          setDraftHazardRowsByIndex(storedAnalysis.draftHazardRowsByIndex || {});
+          setRiskRegister(storedAnalysis.riskRegister || []);
+        } else if (data?.analysisResult || Object.keys(data?.draftHazardRowsByIndex || {}).length || data?.riskRegister?.length) {
+          const migrated = await saveProjectHazardAnalysisRecord(projectIdForLoad, {
+            analysisResult: data?.analysisResult || null,
+            draftHazardRowsByIndex: data?.draftHazardRowsByIndex || {},
+            riskRegister: data?.riskRegister || [],
+          });
+          if (migrated) {
+            saveProjectPatch(projectIdForLoad, {
+              hazardAnalysisStorage: "artifact-store",
+              analysisResult: undefined,
+              draftHazardRowsByIndex: undefined,
+              riskRegister: undefined,
+            });
+          }
+        }
+      })
+      .finally(() => {
+        if (!hazardArtifactLoadCancelled && hazardAnalysisArtifactHydrationRef.current === projectIdForLoad) {
+          hazardAnalysisArtifactHydrationRef.current = null;
+        }
+      });
     setShowPromptWizard(!(data?.responseRows && data.responseRows.length > 0));
     setRequirements(data?.requirements || []);   // ← add this
     setFunctionalAuditProposal(null);
@@ -6880,6 +6986,7 @@ useEffect(() => {
 
     return () => {
       safetyReportLoadCancelled = true;
+      hazardArtifactLoadCancelled = true;
       clearTimeout(loadTimer);
     };
   }, [activeProjectId]);
@@ -6950,7 +7057,9 @@ useEffect(() => {
   useEffect(() => {
     if (!activeProjectId) return;
     const pd = loadProjectData(activeProjectId) || {};
-    setRiskRegister(Array.isArray(pd.riskRegister) ? pd.riskRegister : []);
+    if (pd.hazardAnalysisStorage !== "artifact-store") {
+      setRiskRegister(Array.isArray(pd.riskRegister) ? pd.riskRegister : []);
+    }
     setRequirements(Array.isArray(pd.requirements) ? pd.requirements : []);
     setVnvArtifacts(pd.vnvArtifacts || {
       summary: null,
@@ -6970,23 +7079,19 @@ useEffect(() => {
     projectPersistenceHydrationRef.current = null;
     return;
   }
-  const existingProjectData = loadProjectData(activeProjectId) || {};
   const patch = {
     responseRows,
     diagramCategories,
     riskMethod,
     projectRiskProfileGenerationMode,
 	    agentReportResult,
-	    riskRegister,
     requirements,        // ← add this
-    draftHazardRowsByIndex,
 	    hazardOperationalContexts,
+	    hazardAnalysisStorage: "artifact-store",
+	    analysisResult: undefined,
+	    draftHazardRowsByIndex: undefined,
+	    riskRegister: undefined,
 	  };
-  if (analysisResult !== null && analysisResult !== undefined) {
-    patch.analysisResult = analysisResult;
-  } else if (!hasAnalysisSummary(existingProjectData.analysisResult)) {
-    patch.analysisResult = analysisResult;
-  }
   saveProjectPatch(activeProjectId, patch);
 }, [
   activeProjectId,
@@ -7004,6 +7109,24 @@ useEffect(() => {
   draftHazardRowsByIndex,
 	  hazardOperationalContexts,
 	]);
+
+// Hazard analyses can contain thousands of long cells. Persist them in
+// IndexedDB rather than duplicating them in the browser's small project cache.
+useEffect(() => {
+  if (!activeProjectId || loadingProjectId || !projectLoaded || loadedProjectId !== activeProjectId) return;
+  if (hazardAnalysisArtifactHydrationRef.current === activeProjectId) return;
+  const projectIdAtSave = activeProjectId;
+  const timer = setTimeout(() => {
+    saveProjectHazardAnalysisRecord(projectIdAtSave, {
+      analysisResult,
+      draftHazardRowsByIndex,
+      riskRegister,
+    }).then((saved) => {
+      if (!saved) console.error("[project-hazard-storage] Hazard analysis changes could not be persisted.");
+    });
+  }, 300);
+  return () => clearTimeout(timer);
+}, [activeProjectId, analysisResult, draftHazardRowsByIndex, loadedProjectId, loadingProjectId, projectLoaded, riskRegister]);
 
 // Large generated reports live outside the monolithic localStorage project
 // record so they continue to persist for projects with substantial analyses.
@@ -7184,7 +7307,8 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const recoveredAnalysis = { Summary: [targetHeaders, ...recoveredRows] };
     setAnalysisResult(recoveredAnalysis);
     saveProjectPatch(activeProjectId, {
-      analysisResult: recoveredAnalysis,
+      hazardAnalysisStorage: "artifact-store",
+      analysisResult: undefined,
       draftHazardHeaders: targetHeaders,
     });
   }, [
@@ -7280,10 +7404,11 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       setRiskRegister(nextRiskRegister);
       if (activeProjectId) {
         saveProjectPatch(activeProjectId, {
-          analysisResult: nextAnalysisResult,
-          draftHazardRowsByIndex: nextDraftRows,
+          hazardAnalysisStorage: "artifact-store",
+          analysisResult: undefined,
+          draftHazardRowsByIndex: undefined,
           draftHazardHeaders: targetHeaders,
-          riskRegister: nextRiskRegister,
+          riskRegister: undefined,
         });
       }
       setIsConsolidatingSafetyIssues(true);
@@ -7292,7 +7417,10 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
           if (cancelled) return;
           setRiskRegister(consolidatedRiskRegister);
           if (activeProjectId) {
-            saveProjectPatch(activeProjectId, { riskRegister: consolidatedRiskRegister });
+            saveProjectPatch(activeProjectId, {
+              hazardAnalysisStorage: "artifact-store",
+              riskRegister: undefined,
+            });
           }
         })
         .catch((error) => {
@@ -7406,12 +7534,12 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   )), [groupedFilteredHazardSummaryRows]);
 
   useEffect(() => {
-    if (!activeProjectId || activeTab !== 'Hazard Analysis' || hasAnalysisSummary(analysisResult)) return;
+    if (!activeProjectId || activeTab !== 'Hazard Analysis' || isResettingHazardAnalysis || hazardResetStatus?.kind === "cleared" || hasAnalysisSummary(analysisResult)) return;
     const savedAnalysis = loadProjectData(activeProjectId)?.analysisResult;
     if (hasAnalysisSummary(savedAnalysis)) {
       setAnalysisResult(savedAnalysis);
     }
-  }, [activeProjectId, activeTab, analysisResult]);
+  }, [activeProjectId, activeTab, analysisResult, hazardResetStatus?.kind, isResettingHazardAnalysis]);
 
   useEffect(() => {
     setDraftHazardGeneratingIndex(null);
@@ -7671,7 +7799,8 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setDraftHazardRowsByIndex(restored);
     const restoredHeaders = draftHazardReviewItems.find((item) => Array.isArray(item.currentContent?.columns))?.currentContent.columns;
     saveProjectPatch(activeProjectId, {
-      draftHazardRowsByIndex: restored,
+      hazardAnalysisStorage: "artifact-store",
+      draftHazardRowsByIndex: undefined,
       ...(restoredHeaders ? { draftHazardHeaders: restoredHeaders } : {}),
     });
   }, [
@@ -7704,7 +7833,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   }, [hazardSummaryReviewItems]);
 
   useEffect(() => {
-    if (!activeProjectId || loadingProjectId || !projectLoaded || loadedProjectId !== activeProjectId) return;
+    if (!activeProjectId || loadingProjectId || !projectLoaded || loadedProjectId !== activeProjectId || isResettingHazardAnalysis || hazardResetStatus?.kind === "cleared") return;
     if (hasAnalysisSummary(analysisResult) || !hazardSummaryReviewItems.length) return;
 
     const recovery = buildHazardAnalysisRecovery(hazardSummaryReviewItems);
@@ -7715,7 +7844,8 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     if (recoveredMethod !== riskMethod) setRiskMethod(recoveredMethod);
     if (recovery.sourceRunId) setHazardReviewRunId(recovery.sourceRunId);
     saveProjectPatch(activeProjectId, {
-      analysisResult: recoveredAnalysis,
+      hazardAnalysisStorage: "artifact-store",
+      analysisResult: undefined,
       riskMethod: recoveredMethod,
       draftHazardHeaders: recovery.columns,
     });
@@ -7727,6 +7857,8 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     loadingProjectId,
     projectLoaded,
     riskMethod,
+    hazardResetStatus?.kind,
+    isResettingHazardAnalysis,
   ]);
 
   const hazardReviewDrawerOptions = useMemo(() => ({
@@ -7881,6 +8013,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const target = draftHazardTargets[targetIndex];
 
     setActiveTab('Hazard Analysis');
+    setHazardAnalysisView("analysis-detail");
     setShowDiagram(false);
     setColumnFilters({});
     setFilterColumnIndex(null);
@@ -8204,16 +8337,10 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
           }));
           const projectId = getReviewItemProjectId(item) || activeProjectId;
           if (projectId) {
-            const savedDraftRows = {
-              ...(loadProjectData(projectId)?.draftHazardRowsByIndex || {}),
-              [rowIndex]: {
-                row: item.currentContent.row,
-                generated: true,
-              },
-            };
             const reviewedHeaders = item.currentContent?.columns || item.originalContent?.columns;
             saveProjectPatch(projectId, {
-              draftHazardRowsByIndex: savedDraftRows,
+              hazardAnalysisStorage: "artifact-store",
+              draftHazardRowsByIndex: undefined,
               ...(Array.isArray(reviewedHeaders) ? { draftHazardHeaders: reviewedHeaders } : {}),
             });
           }
@@ -9346,15 +9473,22 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       setAnalysisResult(finalSheets);
       setRiskRegister(nextRiskRegister);
       if (activeProjectId) {
-        saveProjectPatch(activeProjectId, {
+        const completedDraftRows = {
+          ...startingDraftRows,
+          ...preservedDraftRows,
+        };
+        await saveProjectHazardAnalysisRecord(activeProjectId, {
           analysisResult: finalSheets,
+          draftHazardRowsByIndex: completedDraftRows,
+          riskRegister: nextRiskRegister,
+        });
+        saveProjectPatch(activeProjectId, {
+          hazardAnalysisStorage: "artifact-store",
+          analysisResult: undefined,
           riskMethod: selectedMethod,
           draftHazardHeaders: targetHeaders,
-          draftHazardRowsByIndex: {
-            ...(loadProjectData(activeProjectId)?.draftHazardRowsByIndex || {}),
-            ...preservedDraftRows,
-          },
-          riskRegister: nextRiskRegister,
+          draftHazardRowsByIndex: undefined,
+          riskRegister: undefined,
           ...(usesProjectRiskProfileGenerationMode
             ? { projectRiskProfileGenerationMode: selectedGenerationMode }
             : {}),
@@ -9481,16 +9615,27 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setRiskRegister(nextRiskRegister);
     let analysisPersisted = true;
     if (activeProjectId) {
-      analysisPersisted = saveProjectPatch(activeProjectId, {
+      analysisPersisted = await saveProjectHazardAnalysisRecord(activeProjectId, {
         analysisResult: finalSheets,
-        riskMethod: selectedMethod,
-        draftHazardHeaders: targetHeaders,
         draftHazardRowsByIndex: mergedDraftRows,
         riskRegister: nextRiskRegister,
+      });
+      const metadataPersisted = saveProjectPatch(activeProjectId, {
+        hazardAnalysisStorage: "artifact-store",
+        analysisResult: undefined,
+        draftHazardRowsByIndex: undefined,
+        riskRegister: undefined,
+        riskMethod: selectedMethod,
+        draftHazardHeaders: targetHeaders,
         ...(usesProjectRiskProfileGenerationMode
           ? { projectRiskProfileGenerationMode: selectedGenerationMode }
           : {}),
       });
+      analysisPersisted = analysisPersisted && metadataPersisted;
+      if (analysisPersisted && hazardResetStatus?.kind === "cleared") {
+        await deleteHazardAnalysisResetSnapshot(activeProjectId);
+        setHazardResetStatus(null);
+      }
     }
     if (Array.isArray(finalSheets?.Summary) && finalSheets.Summary.length > 1) {
       try {
@@ -9511,8 +9656,8 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     }
     if (!analysisPersisted) {
       window.alert(
-        "The analysis completed, but the browser project cache is full. "
-        + "xHandle retained the generated review evidence for recovery; consider exporting the project before clearing browser data."
+        "The analysis completed, but xHandle could not persist the complete hazard artifact. "
+        + "Keep this page open and export the analysis before clearing browser data."
       );
     }
     setShowDiagram(false);
@@ -9695,11 +9840,17 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         }
       }
       if (activeProjectId) {
-        saveProjectPatch(activeProjectId, {
+        await saveProjectHazardAnalysisRecord(activeProjectId, {
+          analysisResult: nextAnalysisResult || analysisResult,
           draftHazardRowsByIndex: nextDraftRows,
+          riskRegister: nextRiskRegister || riskRegister,
+        });
+        saveProjectPatch(activeProjectId, {
+          hazardAnalysisStorage: "artifact-store",
+          draftHazardRowsByIndex: undefined,
           draftHazardHeaders: targetHeaders,
-          ...(nextAnalysisResult ? { analysisResult: nextAnalysisResult } : {}),
-          ...(nextRiskRegister ? { riskRegister: nextRiskRegister } : {}),
+          analysisResult: undefined,
+          riskRegister: undefined,
         });
       }
       const reviewItem = normalizeReviewItem({
@@ -9749,15 +9900,9 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     });
 
     if (activeProjectId && nextRowForReview) {
-      const savedDraftRows = {
-        ...(loadProjectData(activeProjectId)?.draftHazardRowsByIndex || {}),
-        [rowKey]: {
-          row: nextRowForReview,
-          generated: true,
-        },
-      };
       saveProjectPatch(activeProjectId, {
-        draftHazardRowsByIndex: savedDraftRows,
+        hazardAnalysisStorage: "artifact-store",
+        draftHazardRowsByIndex: undefined,
         draftHazardHeaders,
       });
     }
@@ -9778,6 +9923,26 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         console.warn("[results-review] Failed to sync draft hazard cell edit", error);
       });
     }
+  };
+
+  const renderNormalizedSafetyTrace = (issue, sourceLinks) => {
+    const renderRows = (items, labelFor) => (items || []).map((item) => {
+      const sourceIndexes = item?.sourceIndexes?.length ? item.sourceIndexes : issue.sourceIndexes;
+      return `| ${String(labelFor(item) || "").replace(/\|/g, "\\|")} | ${sourceLinks(sourceIndexes)} |`;
+    });
+    return [
+      "### **Normalized Safety Traceability**",
+      "",
+      "| Safety Model Concept | Raw Evidence |",
+      "| --- | --- |",
+      ...renderRows(issue.canonicalLosses, (item) => `${createSafetyModelId("L", item.title)} · Loss: ${item.title}`),
+      ...renderRows(issue.canonicalHazards, (item) => `${createSafetyModelId("H", item.title)} · Hazard: ${item.title}`),
+      ...renderRows(issue.causalScenarios, (item) => `${createSafetyModelId("CS", item.description)} · Causal scenario (${item.category || "Uncategorized"}): ${item.description}`),
+      ...renderRows(issue.safetyConstraints, (item) => `${createSafetyModelId("SC", item.statement)} · Safety constraint: ${item.statement}`),
+      ...(!(issue.canonicalLosses?.length || issue.canonicalHazards?.length || issue.causalScenarios?.length || issue.safetyConstraints?.length)
+        ? [[`| Normalized concepts have not been generated for this legacy issue. Regenerate Safety Issues to populate them. | ${sourceLinks(issue.sourceIndexes)} |`]]
+        : []),
+    ].flat().join("\n");
   };
 
   const renderSafetyIssueReportSection = (issue, parsedReport = {}) => {
@@ -9845,6 +10010,8 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       `| Source Rows | ${sourceLinks(issue.sourceIndexes)} |`,
       `| Bounding Context | ${mdCell(boundingContext ? `${boundingContext.scenario} · ${boundingContext.mode}` : "Not established")} |`,
       "",
+      renderNormalizedSafetyTrace(issue, sourceLinks),
+      "",
       "### **Executive Summary**",
       listBlock(report.executiveSummary),
       "",
@@ -9900,6 +10067,10 @@ ${JSON.stringify({
   tags: issue.tags,
   sourceIndexes: issue.sourceIndexes,
   contextVariants: issue.contextVariants,
+  canonicalLosses: issue.canonicalLosses,
+  canonicalHazards: issue.canonicalHazards,
+  causalScenarios: issue.causalScenarios,
+  safetyConstraints: issue.safetyConstraints,
   hazardEvidence: issue.evidence.map((item) => ({ sourceIndex: item.sourceIndex, cells: item.cells })),
 }, null, 2)}
 
@@ -9948,6 +10119,7 @@ Rules:
 - Include one operationalContextCoverage entry for every supplied context variant. Preserve its contextId, scenario, mode, and sourceIndexes.
 - Explain material differences in hazard manifestation, likelihood, severity, mitigations, and verification across scenarios or modes.
 - Identify the highest-risk supplied context in the executive summary and final assessment. Do not flatten differing contexts into generic wording.
+- Preserve the supplied normalized losses, hazards, causal scenarios, and safety constraints. Explain their relationships; do not invent replacements.
 - Return only strict JSON. No Markdown. No code fences.
     `.trim();
     const response = await fetch(`${backendURL}/api/chat`, {
@@ -10092,6 +10264,8 @@ Rules:
           `| Source Rows | ${sourceLinks(issue.sourceIndexes)} |`,
           `| Bounding Context | ${mdCell(boundingContext ? `${boundingContext.scenario} · ${boundingContext.mode}` : "Not established")} |`,
           "",
+          renderNormalizedSafetyTrace(issue, sourceLinks),
+          "",
           "### **Executive Summary**",
           listBlock(report.executiveSummary),
           "",
@@ -10177,6 +10351,10 @@ ${JSON.stringify({
   tags: issue.tags,
   sourceIndexes: issue.sourceIndexes,
   contextVariants: issue.contextVariants,
+  canonicalLosses: issue.canonicalLosses,
+  canonicalHazards: issue.canonicalHazards,
+  causalScenarios: issue.causalScenarios,
+  safetyConstraints: issue.safetyConstraints,
   hazardEvidence: issue.evidence.map((item) => ({ sourceIndex: item.sourceIndex, cells: item.cells })),
 }, null, 2)}
 
@@ -10225,6 +10403,7 @@ Rules:
 - Include one operationalContextCoverage entry for every supplied context variant. Preserve its contextId, scenario, mode, and sourceIndexes.
 - Explain material differences in hazard manifestation, likelihood, severity, mitigations, and verification across scenarios or modes.
 - Identify the highest-risk supplied context in the executive summary and final assessment. Do not flatten differing contexts into generic wording.
+- Preserve the supplied normalized losses, hazards, causal scenarios, and safety constraints. Explain their relationships; do not invent replacements.
 - Return only strict JSON. No Markdown. No code fences.
         `.trim();
         const response = await fetch(`${backendURL}/api/chat`, {
@@ -10338,8 +10517,25 @@ Rules:
           evidence,
         }, issue?.contextVariants);
         const boundingContext = getBoundingSafetyIssueContext(contextVariants);
+        const firstEvidenceValue = (labels) => {
+          for (const item of evidence) {
+            for (const label of labels) {
+              const value = String(item?.cells?.[label] || "").trim();
+              if (value && !/^not applicable:/i.test(value)) return value;
+            }
+          }
+          return "";
+        };
+        const proposedCanonicalLosses = (Array.isArray(issue?.canonicalLosses) ? issue.canonicalLosses : [])
+          .map((entry) => ({ title: String(entry?.title || "").trim(), description: String(entry?.description || entry?.title || "").trim() }))
+          .filter((entry) => entry.title);
+        const proposedCanonicalHazards = (Array.isArray(issue?.canonicalHazards) ? issue.canonicalHazards : [])
+          .map((entry) => ({ title: String(entry?.title || "").trim(), description: String(entry?.description || entry?.title || "").trim() }))
+          .filter((entry) => entry.title);
+        const fallbackLoss = firstEvidenceValue(["Loss", "Losses"]);
+        const fallbackHazard = firstEvidenceValue(["Hazard", "Hazards"]);
         return {
-          id: makeId(),
+          id: createSafetyModelId("SI", `${issue?.title || index}|${sourceIndexes.join(",")}`),
           title: String(issue?.title || `Consolidated Safety Issue ${index + 1}`).trim(),
           description: String(issue?.description || "Consolidated from Safety-assessed hazard analysis rows.").trim(),
           likelihood: boundingContext?.likelihood || proposedLikelihood,
@@ -10351,6 +10547,27 @@ Rules:
           sourceIndexes,
           sourceIndex: sourceIndexes[0],
           contextVariants,
+          canonicalLosses: proposedCanonicalLosses.length
+            ? proposedCanonicalLosses
+            : (fallbackLoss ? [{ title: fallbackLoss, description: fallbackLoss }] : []),
+          canonicalHazards: proposedCanonicalHazards.length
+            ? proposedCanonicalHazards
+            : (fallbackHazard ? [{ title: fallbackHazard, description: fallbackHazard }] : []),
+          causalScenarios: (Array.isArray(issue?.causalScenarios) ? issue.causalScenarios : [])
+            .map((entry) => ({
+              description: String(entry?.description || "").trim(),
+              category: String(entry?.category || "").trim(),
+              sourceIndexes: (entry?.sourceIndexes || sourceIndexes).map(Number).filter((value) => allowedIndexes.has(value)),
+            }))
+            .filter((entry) => entry.description),
+          safetyConstraints: (Array.isArray(issue?.safetyConstraints) ? issue.safetyConstraints : [])
+            .map((entry) => ({
+              statement: String(entry?.statement || "").trim(),
+              verification: String(entry?.verification || "").trim(),
+              parameterSource: String(entry?.parameterSource || "TBD").trim(),
+              sourceIndexes: (entry?.sourceIndexes || sourceIndexes).map(Number).filter((value) => allowedIndexes.has(value)),
+            }))
+            .filter((entry) => entry.statement),
         };
       })
       .filter(Boolean);
@@ -10378,6 +10595,10 @@ Return strict JSON only with this schema:
       "owner": "",
       "dueDate": "",
       "tags": "comma-separated tags",
+      "canonicalLosses": [{ "title": "L: short controlled-vocabulary loss", "description": "system-level unacceptable outcome" }],
+      "canonicalHazards": [{ "title": "H: short controlled-vocabulary hazard", "description": "system state that can lead to a loss" }],
+      "causalScenarios": [{ "description": "specific causal chain", "category": "Controller logic / process model", "sourceIndexes": [1] }],
+      "safetyConstraints": [{ "statement": "verifiable safety constraint", "verification": "verification approach", "parameterSource": "TBD or supplied source", "sourceIndexes": [1] }],
       "sourceIndexes": [1, 2],
       "contextVariants": [
         {
@@ -10404,6 +10625,13 @@ Rules:
 - Treat guide phrases, scenarios, and modes as evidence or variants, not automatic reasons to create separate issues.
 - Do not mirror the hazard worksheet structure and do not create one issue per row, guide phrase, context, or functional interface.
 - Prefer the smallest defensible set of issues that remains technically coherent and actionable. A review backlog approaching the number of worksheet permutations is not adequately consolidated.
+- Normalize the evidence into a controlled STPA vocabulary. Reuse the exact same canonical loss title and canonical hazard title across issues when they represent the same system-level outcome or hazardous state. A project should normally have a small set of canonical losses and a manageable set of canonical hazards—not one per raw row.
+- A canonical Loss is an unacceptable system-level outcome. A canonical Hazard is a system state or condition that, with worst-case environmental conditions, can lead to a Loss. Do not encode a guide phrase, component failure, operational scenario, or causal mechanism as a new canonical Loss or Hazard.
+- causalScenarios must describe concrete controller/process-model, sensing/feedback, actuation/physical-process, communication/interface, timing/sequencing, power/energy, initialization/lifecycle, mode/state, configuration/calibration, human/procedure, or common-cause mechanisms. Keep them separate from mitigations and constraints.
+- safetyConstraints must be design obligations that constrain the system. They must not merely repeat a failure or causal factor.
+- Never invent numerical thresholds. If evidence does not supply a requirement, standard, calculation, or allocated safety/timing budget, use a named [TBD-parameter] and set parameterSource to TBD.
+- Treat operational assumptions as architecture invariants. Do not require a controller, powered actuator, sensor, or communication channel in a context where the evidence says it is unavailable; account for stated passive or mechanical fallbacks.
+- If a row has a credible physical-harm path such as collision, injury, loss of control, instability, unintended motion, or environmental harm, retain it as Safety even when it also affects mission or reliability.
 - Keep unrelated safety hazards as separate issues.
 - Never erase operational differences when consolidating rows. Preserve every represented scenario-mode combination in contextVariants.
 - Use context-specific likelihood and severity values from 1 to 5. The issue-level likelihood and severity must match the context variant with the highest likelihood × severity score.
@@ -10495,7 +10723,12 @@ Rules:
           ? currentId
           : nextRiskRegister[0]?.id || null
       ));
-      if (activeProjectId) saveProjectPatch(activeProjectId, { riskRegister: nextRiskRegister });
+      if (activeProjectId) {
+        saveProjectPatch(activeProjectId, {
+          hazardAnalysisStorage: "artifact-store",
+          riskRegister: undefined,
+        });
+      }
     };
     try {
       const nextRiskRegister = await requestConsolidatedSafetyIssuesFromSummary(currentSafetyIssueSummary, {
@@ -10531,6 +10764,10 @@ Rules:
       "Owner",
       "Due Date",
       "Tags",
+      "Canonical Losses",
+      "Canonical Hazards",
+      "Causal Scenarios",
+      "Safety Constraints",
       "Operational Contexts",
       "Bounding Context",
       "Source Rows",
@@ -10546,6 +10783,10 @@ Rules:
       risk.owner || "",
       risk.dueDate || "",
       risk.tags || "",
+      (risk.canonicalLosses || []).map((item) => item.title).join("; "),
+      (risk.canonicalHazards || []).map((item) => item.title).join("; "),
+      (risk.causalScenarios || []).map((item) => `${item.category || "Cause"}: ${item.description}`).join("; "),
+      (risk.safetyConstraints || []).map((item) => item.statement).join("; "),
       risk.contextVariants.map((context) => `${context.scenario} · ${context.mode} (L${context.likelihood}/S${context.severity})`).join("; "),
       risk.boundingContext ? `${risk.boundingContext.scenario} · ${risk.boundingContext.mode}` : "",
       getRiskSourceIndexes(risk).join("; "),
@@ -10817,6 +11058,149 @@ const activeProject = useMemo(
   () => projects.find(p => p.id === activeProjectId) || null,
   [projects, activeProjectId]
 );
+
+const hazardSafetyModel = useMemo(
+  () => buildHazardSafetyModel(analysisResult?.Summary || [], riskRegister, activeProject?.name || "Project"),
+  [analysisResult, riskRegister, activeProject?.name]
+);
+
+const projectHazardReviewItems = useMemo(() => (resultsReview.reviewItems || []).filter((item) => {
+  const artifactId = String(item?.artifactId || "");
+  const belongsToProject = item?.projectId === activeProjectId ||
+    artifactId.startsWith(`hazard-summary:${activeProjectId}:`) ||
+    artifactId.startsWith(`hazard-summary-draft:${activeProjectId}:`) ||
+    String(item?.sourceRunId || "").includes(String(activeProjectId || "__no_project__"));
+  return belongsToProject && (
+    item?.sourceFeature === "AI Hazard Analysis" ||
+    item?.artifactType === "hazard_summary_table" ||
+    item?.artifactType === "hazard_summary_draft_table" ||
+    artifactId.startsWith(`hazard-summary:${activeProjectId}:`) ||
+    artifactId.startsWith(`hazard-summary-draft:${activeProjectId}:`)
+  );
+}), [activeProjectId, resultsReview.reviewItems]);
+
+const hazardResetCounts = useMemo(() => ({
+  rawRows: Math.max(0, (analysisResult?.Summary?.length || 1) - 1),
+  draftRows: Object.keys(draftHazardRowsByIndex || {}).length,
+  safetyIssues: riskRegister.length,
+  reports: (riskAssessmentReportMarkdown.match(/SAFETY_ISSUE_REPORT_START/g) || []).length + (agentReportResult ? 1 : 0),
+  reviewItems: projectHazardReviewItems.length,
+  contexts: hazardOperationalContexts.length,
+}), [analysisResult, draftHazardRowsByIndex, riskRegister.length, riskAssessmentReportMarkdown, agentReportResult, projectHazardReviewItems.length, hazardOperationalContexts.length]);
+
+useEffect(() => {
+  let cancelled = false;
+  if (!activeProjectId) {
+    setHazardResetStatus(null);
+    return undefined;
+  }
+  loadHazardAnalysisResetSnapshot(activeProjectId).then((record) => {
+    if (!cancelled) setHazardResetStatus(record ? { kind: "cleared", canUndo: true, createdAt: record.createdAt } : null);
+  });
+  return () => { cancelled = true; };
+}, [activeProjectId]);
+
+const handleClearHazardAnalysis = async (scope = "results") => {
+  if (!activeProjectId || isResettingHazardAnalysis) return;
+  setIsResettingHazardAnalysis(true);
+  try {
+    const snapshot = {
+      analysisResult,
+      draftHazardRowsByIndex,
+      riskRegister,
+      riskAssessmentReportMarkdown,
+      agentReportResult,
+      hazardOperationalContexts,
+      hazardReviewRunId,
+      reviewItems: projectHazardReviewItems,
+    };
+    const snapshotSaved = await saveHazardAnalysisResetSnapshot(activeProjectId, snapshot);
+    if (!snapshotSaved) throw new Error("A recovery snapshot could not be saved, so no data was cleared.");
+
+    const clearedPatch = {
+      hazardAnalysisStorage: "artifact-store",
+      analysisResult: undefined,
+      draftHazardRowsByIndex: undefined,
+      riskRegister: undefined,
+      agentReportResult: null,
+      ...(scope === "results-and-contexts" ? { hazardOperationalContexts: [] } : {}),
+    };
+    const artifactCleared = await saveProjectHazardAnalysisRecord(activeProjectId, {
+      analysisResult: null,
+      draftHazardRowsByIndex: {},
+      riskRegister: [],
+    });
+    if (!artifactCleared || !saveProjectPatch(activeProjectId, clearedPatch)) {
+      throw new Error("The cleared project state could not be persisted, so no data was cleared.");
+    }
+    await resultsReview.deleteReviewItemsByIds(projectHazardReviewItems.map((item) => item.id));
+    setAnalysisResult(null);
+    setDraftHazardRowsByIndex({});
+    setRiskRegister([]);
+    setRiskAssessmentReportMarkdown("");
+    setAgentReportResult(null);
+    setHazardReviewRunId(null);
+    setActiveRiskId(null);
+    setSelectedRiskPriority("All");
+    setColumnFilters({});
+    setDraftHazardColumnFilters({});
+    setHighlightedHazardRowIndex(null);
+    if (scope === "results-and-contexts") {
+      setHazardOperationalContexts([]);
+      setSelectedHazardContextId("all");
+    }
+    await saveProjectSafetyIssueReport(activeProjectId, "");
+    setShowHazardResetModal(false);
+    setHazardAnalysisView("analysis-detail");
+    setHazardResetStatus({ kind: "cleared", canUndo: true, createdAt: new Date().toISOString() });
+  } catch (error) {
+    console.error("[hazard-analysis-reset] Unable to clear analysis", error);
+    setHazardResetStatus({ kind: "error", canUndo: false, message: error?.message || "Unable to clear the hazard analysis." });
+  } finally {
+    setIsResettingHazardAnalysis(false);
+  }
+};
+
+const handleUndoHazardAnalysisReset = async () => {
+  if (!activeProjectId || isResettingHazardAnalysis) return;
+  setIsResettingHazardAnalysis(true);
+  try {
+    const record = await loadHazardAnalysisResetSnapshot(activeProjectId);
+    const snapshot = record?.snapshot;
+    if (!snapshot) throw new Error("The reset snapshot is no longer available.");
+    setAnalysisResult(snapshot.analysisResult || null);
+    setDraftHazardRowsByIndex(snapshot.draftHazardRowsByIndex || {});
+    setRiskRegister(snapshot.riskRegister || []);
+    setRiskAssessmentReportMarkdown(snapshot.riskAssessmentReportMarkdown || "");
+    setAgentReportResult(snapshot.agentReportResult || null);
+    setHazardOperationalContexts(normalizeHazardOperationalContexts(snapshot.hazardOperationalContexts || []));
+    setHazardReviewRunId(snapshot.hazardReviewRunId || null);
+    await resultsReview.createReviewItems(snapshot.reviewItems || []);
+    await saveProjectSafetyIssueReport(activeProjectId, snapshot.riskAssessmentReportMarkdown || "");
+    const artifactRestored = await saveProjectHazardAnalysisRecord(activeProjectId, {
+      analysisResult: snapshot.analysisResult || null,
+      draftHazardRowsByIndex: snapshot.draftHazardRowsByIndex || {},
+      riskRegister: snapshot.riskRegister || [],
+    });
+    if (!artifactRestored) throw new Error("The hazard analysis could not be restored to durable storage.");
+    saveProjectPatch(activeProjectId, {
+      hazardAnalysisStorage: "artifact-store",
+      analysisResult: undefined,
+      draftHazardRowsByIndex: undefined,
+      riskRegister: undefined,
+      agentReportResult: snapshot.agentReportResult || null,
+      hazardOperationalContexts: normalizeHazardOperationalContexts(snapshot.hazardOperationalContexts || []),
+    });
+    await deleteHazardAnalysisResetSnapshot(activeProjectId);
+    setHazardAnalysisView(snapshot.analysisResult?.Summary ? "safety-model" : "analysis-detail");
+    setHazardResetStatus({ kind: "restored", canUndo: false, message: "The cleared hazard analysis was restored." });
+  } catch (error) {
+    console.error("[hazard-analysis-reset] Unable to restore analysis", error);
+    setHazardResetStatus({ kind: "error", canUndo: true, message: error?.message || "Unable to restore the hazard analysis." });
+  } finally {
+    setIsResettingHazardAnalysis(false);
+  }
+};
 
 const activeProjectFolder = useMemo(
   () => projectFolders.find((folder) => folder.id === activeProjectFolderId) || null,
@@ -11541,6 +11925,23 @@ const projectHint = useMemo(() => ({
 
   const hazardAnalysisControls = responseRows.length > 0 ? (
     <div className="mb-4 flex flex-wrap items-center justify-center gap-3">
+      <div className="flex rounded-lg border border-gray-200 bg-gray-50 p-0.5" aria-label="Hazard analysis view">
+        {[
+          ["safety-model", "Safety Model"],
+          ["analysis-detail", "Analysis Detail"],
+        ].map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setHazardAnalysisView(value)}
+            className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+              hazardAnalysisView === value ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       <div className="flex items-center space-x-2">
         <label className="text-sm text-gray-700">Method:</label>
         <select
@@ -11654,6 +12055,33 @@ const projectHint = useMemo(() => ({
       >
         {allVisibleHazardInterfacesCollapsed ? 'Expand all' : 'Collapse all'}
       </button>
+      <button
+        type="button"
+        onClick={() => setShowHazardResetModal(true)}
+        disabled={
+          isAnalyzing || isConsolidatingSafetyIssues || isGeneratingRiskAssessmentReport || isResettingHazardAnalysis ||
+          !(hazardResetCounts.rawRows || hazardResetCounts.draftRows || hazardResetCounts.safetyIssues || hazardResetCounts.reports)
+        }
+        className="rounded-md border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+        title="Clear hazard-analysis results after saving a restorable snapshot"
+      >
+        Clear analysis…
+      </button>
+      {hazardResetStatus?.canUndo && (
+        <button
+          type="button"
+          onClick={handleUndoHazardAnalysisReset}
+          disabled={isResettingHazardAnalysis}
+          className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+        >
+          Undo last clear
+        </button>
+      )}
+      {hazardResetStatus?.message && (
+        <span className={`basis-full text-center text-xs ${hazardResetStatus.kind === "error" ? "text-red-700" : "text-emerald-700"}`} role="status">
+          {hazardResetStatus.message}
+        </span>
+      )}
     </div>
   ) : null;
 
@@ -14086,6 +14514,16 @@ const projectHint = useMemo(() => ({
   onSave={handleSaveHazardOperationalContexts}
   onGenerate={handleGenerateHazardOperationalContexts}
 />
+{showHazardResetModal && (
+  <HazardAnalysisResetModal
+    counts={hazardResetCounts}
+    busy={isResettingHazardAnalysis}
+    onCancel={() => {
+      if (!isResettingHazardAnalysis) setShowHazardResetModal(false);
+    }}
+    onConfirm={handleClearHazardAnalysis}
+  />
+)}
 {activeTab === 'Hazard Analysis' && (
   <section className="mt-2">
     {hazardAnalysisControls}
@@ -14104,7 +14542,18 @@ const projectHint = useMemo(() => ({
         {incompleteHazardAnalysisRowCount} functional relationship row{incompleteHazardAnalysisRowCount === 1 ? '' : 's'} will appear in the diagram but cannot be analyzed for hazards until Control Action is populated.
       </div>
     )}
-    {!analysisResult?.Summary ? (
+    {!analysisResult?.Summary && hazardResetStatus?.kind === "cleared" && Object.keys(draftHazardRowsByIndex || {}).length === 0 ? (
+      <div className="flex h-[calc(100dvh-360px)] min-h-[280px] items-center justify-center rounded-xl border border-dashed border-gray-300 bg-white p-8 text-center">
+        <div className="max-w-md">
+          <div className="text-base font-semibold text-gray-900">No hazard analysis results</div>
+          <p className="mt-2 text-sm text-gray-600">The analysis was cleared. Your functional decomposition, operational contexts, method, and generation settings are still available.</p>
+          <div className="mt-4 flex flex-wrap justify-center gap-2">
+            <button type="button" onClick={() => handleRunAnalysis(riskMethod, { regenerate: true })} className="rounded-md bg-[#2D7DFE] px-3 py-2 text-sm font-semibold text-white hover:bg-[#1E61D6]">Develop new risk profile</button>
+            {hazardResetStatus?.canUndo && <button type="button" onClick={handleUndoHazardAnalysisReset} className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100">Undo last clear</button>}
+          </div>
+        </div>
+      </div>
+    ) : !analysisResult?.Summary ? (
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-white px-4 py-3 text-sm text-gray-600">
           <div>
@@ -14346,6 +14795,11 @@ const projectHint = useMemo(() => ({
           </table>
         </div>
       </div>
+    ) : hazardAnalysisView === "safety-model" ? (
+      <HazardSafetyModelView
+        model={hazardSafetyModel}
+        onOpenSourceRow={(sourceRowNumber) => handleOpenHazardSummaryRow(Number(sourceRowNumber) - 1)}
+      />
     ) : (
       <>
         {/* Risk Profile Diagram OR Table */}
@@ -14868,6 +15322,33 @@ const projectHint = useMemo(() => ({
                     </label>
                   </div>
 
+                  <details className="mt-6 rounded-lg border border-indigo-100 bg-indigo-50/40" open>
+                    <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-indigo-950">
+                      Normalized STPA Traceability
+                    </summary>
+                    <div className="space-y-4 border-t border-indigo-100 p-4 text-xs text-gray-700">
+                      {[
+                        ["Canonical Losses", activeRisk.canonicalLosses, (item) => `${createSafetyModelId("L", item.title)} · ${item.title}`],
+                        ["Canonical Hazards", activeRisk.canonicalHazards, (item) => `${createSafetyModelId("H", item.title)} · ${item.title}`],
+                        ["Causal Scenarios", activeRisk.causalScenarios, (item) => `${createSafetyModelId("CS", item.description)} · ${item.category ? `${item.category}: ` : ""}${item.description}`],
+                        ["Safety Constraints", activeRisk.safetyConstraints, (item) => `${createSafetyModelId("SC", item.statement)} · ${item.statement}`],
+                      ].map(([label, items, getLabel]) => (
+                        <div key={label}>
+                          <div className="mb-1 font-semibold uppercase tracking-wide text-gray-500">{label}</div>
+                          {items?.length ? (
+                            <ul className="space-y-1">
+                              {items.map((item, index) => (
+                                <li key={`${label}-${index}`} className="rounded border border-indigo-100 bg-white px-3 py-2">
+                                  {getLabel(item)}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : <div className="text-gray-500">Regenerate Safety Issues to populate this normalized concept.</div>}
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+
                   <details className="mt-6 rounded-lg border border-blue-100 bg-blue-50/50" open={activeRisk.contextVariants.length > 1}>
                     <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-blue-950">
                       Operational Context Coverage · {activeRisk.contextVariants.length}
@@ -15376,9 +15857,13 @@ const projectHint = useMemo(() => ({
 
         // ------- update handlers (multi-project aware) -------
 // ✅ REPLACE your existing updateRiskInProject with this
-const updateRiskInProject = (projectId, predicate) => {
+const updateRiskInProject = async (projectId, predicate) => {
   const map = readProjectMap() || {};
-  const regs = (Array.isArray(map?.[projectId]?.riskRegister) ? map[projectId].riskRegister : [])
+  const storedAnalysis = await loadProjectHazardAnalysisRecord(projectId);
+  const sourceRiskRegister = projectId === activeProjectId
+    ? riskRegister
+    : (storedAnalysis?.riskRegister || map?.[projectId]?.riskRegister || []);
+  const regs = (Array.isArray(sourceRiskRegister) ? sourceRiskRegister : [])
     .filter(isValidRisk);
 
   const nextRegs = regs.map((r) => {
@@ -15390,7 +15875,15 @@ const updateRiskInProject = (projectId, predicate) => {
   })
   .filter(isValidRisk); // still safe, but we never pass null above
 
-  saveProjectPatch(projectId, { riskRegister: nextRegs });
+  await saveProjectHazardAnalysisRecord(projectId, {
+    analysisResult: projectId === activeProjectId ? analysisResult : storedAnalysis?.analysisResult,
+    draftHazardRowsByIndex: projectId === activeProjectId ? draftHazardRowsByIndex : storedAnalysis?.draftHazardRowsByIndex,
+    riskRegister: nextRegs,
+  });
+  saveProjectPatch(projectId, {
+    hazardAnalysisStorage: "artifact-store",
+    riskRegister: undefined,
+  });
   if (projectId === activeProjectId && typeof setRiskRegister === "function") {
     setRiskRegister(nextRegs);
   }

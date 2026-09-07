@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import ResultsReviewDrawer from "./ResultsReviewDrawer";
 import { loadReviewItems, saveReviewItems } from "./reviewStore";
 import { REVIEW_STATUSES } from "./reviewTypes";
@@ -33,6 +33,8 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerExpanded, setDrawerExpanded] = useState(false);
   const [drawerOptions, setDrawerOptions] = useState({});
+  const reviewItemsRef = useRef([]);
+  const persistenceQueueRef = useRef(Promise.resolve());
 
   useEffect(() => {
     let cancelled = false;
@@ -41,7 +43,11 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
       : loadReviewItems();
     loader
       .then((items) => {
-        if (!cancelled) setReviewItems(Array.isArray(items) ? items : []);
+        if (!cancelled) {
+          const nextItems = Array.isArray(items) ? items : [];
+          reviewItemsRef.current = nextItems;
+          setReviewItems(nextItems);
+        }
       })
       .catch((error) => {
         console.warn("[results-review] failed to initialize", error);
@@ -52,20 +58,22 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
     };
   }, [initialReviewItems]);
 
-  const persist = useCallback((updater) => {
+  const persist = useCallback(async (updater) => {
+    const previousItems = reviewItemsRef.current;
     if (readOnly) {
-      const nextItems = typeof updater === "function" ? updater(reviewItems) : updater;
+      const nextItems = typeof updater === "function" ? updater(previousItems) : updater;
       return Array.isArray(nextItems) ? nextItems : [];
     }
-    let nextItems = [];
-    setReviewItems((prev) => {
-      nextItems = typeof updater === "function" ? updater(prev) : updater;
-      nextItems = Array.isArray(nextItems) ? nextItems : [];
-      saveReviewItems(nextItems);
-      return nextItems;
-    });
+    let nextItems = typeof updater === "function" ? updater(previousItems) : updater;
+    nextItems = Array.isArray(nextItems) ? nextItems : [];
+    reviewItemsRef.current = nextItems;
+    setReviewItems(nextItems);
+    persistenceQueueRef.current = persistenceQueueRef.current
+      .catch(() => {})
+      .then(() => saveReviewItems(nextItems));
+    await persistenceQueueRef.current;
     return nextItems;
-  }, [readOnly, reviewItems]);
+  }, [readOnly]);
 
   const getReviewItems = useCallback((filters = {}) => filterReviewItems(reviewItems, filters), [reviewItems]);
   const getReviewItemById = useCallback((id) => reviewItems.find((item) => item.id === id) || null, [reviewItems]);
@@ -88,7 +96,7 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
   const createReviewItems = useCallback(async (items = []) => {
     if (readOnly) return [];
     const normalized = (Array.isArray(items) ? items : []).map(normalizeReviewItem);
-    persist((prev) => {
+    await persist((prev) => {
       const byId = new Map(prev.map((item) => [item.id, item]));
       normalized.forEach((item) => {
         const existing = byId.get(item.id);
@@ -102,7 +110,7 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
   const updateReviewItem = useCallback(async (id, updates = {}) => {
     if (readOnly) return getReviewItemById(id);
     let updated = null;
-    persist((prev) =>
+    await persist((prev) =>
       prev.map((item) => {
         if (item.id !== id) return item;
         updated = {
@@ -123,7 +131,7 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
     if (readOnly) return [];
     if (!projectId) return [];
     let removed = [];
-    persist((prev) => {
+    await persist((prev) => {
       removed = prev.filter((item) => reviewItemBelongsToProject(item, projectId));
       return prev.filter((item) => !reviewItemBelongsToProject(item, projectId));
     });
@@ -134,10 +142,24 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
     return removed;
   }, [persist, readOnly]);
 
+  const deleteReviewItemsByIds = useCallback(async (ids = []) => {
+    if (readOnly) return [];
+    const idSet = new Set((Array.isArray(ids) ? ids : []).filter(Boolean));
+    if (!idSet.size) return [];
+    let removed = [];
+    await persist((prev) => {
+      removed = prev.filter((item) => idSet.has(item.id));
+      return prev.filter((item) => !idSet.has(item.id));
+    });
+    if (removed.length) dispatchReviewEvent("xhandle:results-review:items-deleted", { reviewItems: removed });
+    setDrawerOpen(false);
+    return removed;
+  }, [persist, readOnly]);
+
   const applyAction = useCallback(async (id, action, updates = {}) => {
     if (readOnly) return getReviewItemById(id);
     let updated = null;
-    persist((prev) =>
+    await persist((prev) =>
       prev.map((item) => {
         if (item.id !== id) return item;
         updated = {
@@ -197,6 +219,7 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
     createReviewItems,
     updateReviewItem,
     deleteReviewItemsForProject,
+    deleteReviewItemsByIds,
     approveAsIs,
     approveWithModifications,
     rejectReviewItem,
@@ -214,6 +237,7 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
     createReviewItems,
     updateReviewItem,
     deleteReviewItemsForProject,
+    deleteReviewItemsByIds,
     approveAsIs,
     approveWithModifications,
     rejectReviewItem,
@@ -272,6 +296,7 @@ export function useResultsReview() {
       createReviewItems: async () => [],
       updateReviewItem: async () => null,
       deleteReviewItemsForProject: async () => [],
+      deleteReviewItemsByIds: async () => [],
       approveAsIs: async () => null,
       approveWithModifications: async () => null,
       rejectReviewItem: async () => null,
