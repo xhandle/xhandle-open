@@ -19,9 +19,19 @@ const path = require("path");
 const rateLimit = require("express-rate-limit");
 const { OpenAI } = require("openai");
 const { logger } = require("./server/logger");
+const {
+  createChatCompletionWithTokenCompatibility,
+  executeProviderRequestWithCompatibility,
+} = require("./server/aiProviderTokenCompatibility");
+const { buildClaudeRequestPayload, buildGeminiRequestPayload } = require("./server/aiProviderPayloads");
 const { spawn, spawnSync } = require("child_process");
 
 const app = express();
+
+const AI_PROVIDER_LONG_REQUEST_TIMEOUT_MS = Math.max(
+  180_000,
+  Number(process.env.AI_PROVIDER_LONG_REQUEST_TIMEOUT_MS) || 300_000,
+);
 
 const CORS_ALLOWED_HEADERS = [
   "Content-Type",
@@ -1103,6 +1113,7 @@ function buildChatCompletionPayload(body, messages) {
   const optionalFields = [
     "temperature",
     "max_tokens",
+    "max_completion_tokens",
     "top_p",
     "frequency_penalty",
     "presence_penalty",
@@ -1412,29 +1423,25 @@ function writeTextAsSse(res, text, finishReason = "stop") {
 
 async function callClaudeChat({ apiKey, body, messages, model }) {
   const { system, conversation } = splitSystemMessages(messages);
-  const payload = {
-    model,
-    max_tokens: Number(body.max_tokens) || 1200,
-    messages: conversation.length ? conversation : [{ role: "user", content: body.prompt || "Continue." }],
-  };
+  const payload = buildClaudeRequestPayload({ body, model, system, conversation });
 
-  if (system) payload.system = system;
-  if (typeof body.temperature === "number") {
-    payload.temperature = body.temperature;
-  } else if (typeof body.top_p === "number") {
-    payload.top_p = body.top_p;
-  }
-  if (typeof body.top_k === "number") payload.top_k = body.top_k;
-  if (Array.isArray(body.stop_sequences)) payload.stop_sequences = body.stop_sequences;
-
-  const resp = await axios.post("https://api.anthropic.com/v1/messages", payload, {
-    headers: {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
+  const resp = await executeProviderRequestWithCompatibility(
+    (compatiblePayload) => axios.post("https://api.anthropic.com/v1/messages", compatiblePayload, {
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      timeout: AI_PROVIDER_LONG_REQUEST_TIMEOUT_MS,
+    }),
+    payload,
+    ({ model: retryModel, attempt, removed, added }) => {
+      logger.info("[ai-provider] Compatibility retry " + attempt
+        + " for " + (retryModel || "Claude model")
+        + "; removed: " + (removed.join(", ") || "none")
+        + "; added: " + (added.join(", ") || "none") + ".");
     },
-    timeout: 180_000,
-  });
+  );
 
   const text = Array.isArray(resp.data?.content)
     ? resp.data.content.filter((part) => part?.type === "text").map((part) => part.text || "").join("")
@@ -1451,25 +1458,7 @@ async function callClaudeChat({ apiKey, body, messages, model }) {
 
 async function callGeminiChat({ apiKey, body, messages, model }) {
   const { system, conversation } = splitSystemMessages(messages);
-  const payload = {
-    contents: (conversation.length ? conversation : [{ role: "user", content: body.prompt || "Continue." }]).map((message) => ({
-      role: message.role === "assistant" ? "model" : "user",
-      parts: [{ text: message.content }],
-    })),
-  };
-
-  if (system) {
-    payload.system_instruction = {
-      parts: [{ text: system }],
-    };
-  }
-
-  const generationConfig = {};
-  if (typeof body.temperature === "number") generationConfig.temperature = body.temperature;
-  if (typeof body.top_p === "number") generationConfig.topP = body.top_p;
-  if (typeof body.max_tokens === "number") generationConfig.maxOutputTokens = body.max_tokens;
-  if (Array.isArray(body.stop_sequences)) generationConfig.stopSequences = body.stop_sequences;
-  if (Object.keys(generationConfig).length) payload.generationConfig = generationConfig;
+  const payload = buildGeminiRequestPayload({ body, system, conversation });
 
   let resolvedModel = GEMINI_MODEL_REPLACEMENTS[model] || model;
   let resp;
@@ -1482,7 +1471,7 @@ async function callGeminiChat({ apiKey, body, messages, model }) {
           "x-goog-api-key": apiKey,
           "content-type": "application/json",
         },
-        timeout: 180_000,
+        timeout: AI_PROVIDER_LONG_REQUEST_TIMEOUT_MS,
       }
     );
   } catch (error) {
@@ -1499,7 +1488,7 @@ async function callGeminiChat({ apiKey, body, messages, model }) {
           "x-goog-api-key": apiKey,
           "content-type": "application/json",
         },
-        timeout: 180_000,
+        timeout: AI_PROVIDER_LONG_REQUEST_TIMEOUT_MS,
       }
     );
   }
@@ -2219,7 +2208,7 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
     const body = req.body || {};
     const provider = resolved.provider;
     const messages = Array.isArray(body.messages)
-      ? normalizeChatMessages(body.messages, { preserveMultimodal: provider === "openai" })
+      ? normalizeChatMessages(body.messages, { preserveMultimodal: true })
       : (typeof body.prompt === "string" ? [{ role: "user", content: body.prompt }] : []);
 
     if (messages.length === 0) {
@@ -2274,7 +2263,9 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
     );
 
     if (!stream) {
-      const resp = await openai.chat.completions.create(payload);
+      const resp = await createChatCompletionWithTokenCompatibility(openai, payload, ({ model: retryModel, attempt, removed, added }) => {
+        logger.info(`[ai-provider] Compatibility retry ${attempt} for ${retryModel || "OpenAI model"}; removed: ${removed.join(", ") || "none"}; added: ${added.join(", ") || "none"}.`);
+      });
       const h = resp?.response?.headers;
       if (h?.get) {
         for (const k of [
@@ -2296,9 +2287,11 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
     res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
 
-    const completion = await openai.chat.completions.create({
+    const completion = await createChatCompletionWithTokenCompatibility(openai, {
       ...payload,
       stream: true,
+    }, ({ model: retryModel, attempt, removed, added }) => {
+      logger.info(`[ai-provider] Compatibility retry ${attempt} for ${retryModel || "OpenAI model"}; removed: ${removed.join(", ") || "none"}; added: ${added.join(", ") || "none"}.`);
     });
 
     let finishReason = "";

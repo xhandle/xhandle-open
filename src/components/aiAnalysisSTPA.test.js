@@ -1,4 +1,7 @@
-import { fetchLLMResponse } from "./aiAnalysisSTPA";
+import {
+  fetchLLMResponse,
+  getHazardAnalysisRequestTimeoutMs,
+} from "./aiAnalysisSTPA";
 
 function pendingFetchThatRejectsOnAbort() {
   return jest.fn((_url, options = {}) => new Promise((_resolve, reject) => {
@@ -18,6 +21,24 @@ describe("hazard analysis LLM request lifecycle", () => {
   afterEach(() => {
     jest.useRealTimers();
     jest.restoreAllMocks();
+  });
+
+  test("uses a long request window for Claude hazard analysis", () => {
+    expect(getHazardAnalysisRequestTimeoutMs({
+      provider: "anthropic",
+      model: "claude-fable-5-1",
+    })).toBe(330_000);
+    expect(getHazardAnalysisRequestTimeoutMs({
+      provider: "claude",
+      model: "claude-sonnet-5",
+    })).toBe(330_000);
+  });
+
+  test("keeps an explicit request timeout for targeted callers", () => {
+    expect(getHazardAnalysisRequestTimeoutMs({
+      provider: "anthropic",
+      timeoutMs: 75,
+    })).toBe(75);
   });
 
   test("rejects a provider request that exceeds its timeout", async () => {

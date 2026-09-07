@@ -15,6 +15,7 @@ import {
   semanticGuidePhrase,
 } from "../features/project-hazard-analysis/hazardSafetyModel";
 import { formatGovernedHazardPromptContext } from "../features/project-hazard-analysis/hazardPromptContext";
+import { getStoredActiveAIProvider } from "../lib/aiProviderConfig";
 
 function getCellText(cell) {
   if (cell == null) return "";
@@ -102,8 +103,15 @@ function extractJsonObject(text) {
   return JSON.parse(candidate);
 }
 
+export function isHazardAnalysisCancellation(error, signal) {
+  return Boolean(signal?.aborted || error?.name === "AbortError");
+}
+
 function rethrowInterruptedRequest(error, signal) {
-  if (signal?.aborted || error?.name === "AbortError" || error?.name === "TimeoutError") {
+  // Caller cancellation stops the run. Provider timeouts are recoverable: the
+  // generator retries the affected batch with fewer rows before using a local
+  // reviewable fallback for only the rows the provider could not return.
+  if (isHazardAnalysisCancellation(error, signal)) {
     throw error;
   }
 }
@@ -230,13 +238,17 @@ function compactPromptRowsLength(items = []) {
 
 const formatHazardOperationalContext = formatGovernedHazardPromptContext;
 
-function chunkItemsForPrompt(items = [], maxChars = STANDARD_CHUNK_PROMPT_MAX_CHARS) {
+function chunkItemsForPrompt(
+  items = [],
+  maxChars = STANDARD_CHUNK_PROMPT_MAX_CHARS,
+  maxRows = STANDARD_MAX_ROWS_PER_PROMPT,
+) {
   const chunks = [];
   let current = [];
 
   items.forEach((item) => {
     const candidate = [...current, item];
-    if (current.length && (candidate.length > STANDARD_MAX_ROWS_PER_PROMPT || compactPromptRowsLength(candidate) > maxChars)) {
+    if (current.length && (candidate.length > maxRows || compactPromptRowsLength(candidate) > maxChars)) {
       chunks.push(current);
       current = [item];
     } else {
@@ -246,6 +258,14 @@ function chunkItemsForPrompt(items = [], maxChars = STANDARD_CHUNK_PROMPT_MAX_CH
 
   if (current.length) chunks.push(current);
   return chunks;
+}
+
+export function getStandardHazardRowsPerPrompt(provider, generationMode = "standard") {
+  const normalizedProvider = String(provider || "openai").trim().toLowerCase();
+  if (generationMode === "detailed" || normalizedProvider === "anthropic" || normalizedProvider === "claude") {
+    return STANDARD_RETRY_ROWS_PER_PROMPT;
+  }
+  return STANDARD_MAX_ROWS_PER_PROMPT;
 }
 
 function chunkItemsByCount(items = [], size = STANDARD_RETRY_ROWS_PER_PROMPT) {
@@ -1098,7 +1118,10 @@ async function requestStandardRowsWithRetries(config, chunk, contextOptions = {}
   for (let attempt = 0; attempt < STANDARD_MISSING_ROW_RETRIES; attempt += 1) {
     const missing = missingFor(chunk);
     if (!missing.length) break;
-    const retryChunks = chunkItemsByCount(missing, attempt === 0 ? STANDARD_RETRY_ROWS_PER_PROMPT : 1);
+    const retrySize = attempt === 0
+      ? Math.max(1, Math.min(STANDARD_RETRY_ROWS_PER_PROMPT, Math.ceil(missing.length / 2)))
+      : 1;
+    const retryChunks = chunkItemsByCount(missing, retrySize);
     for (const retryChunk of retryChunks) {
       contextOptions.onProgress?.({
         message: `Retrying ${config.sheetName} missing rows (${retryChunk.map((item) => item.id).join(", ")})...`,
@@ -1560,6 +1583,7 @@ export async function generateStandardCodeHazardAnalysisSheets({
   omitConsolidatedRequirement = false,
   generationMode = "standard",
   signal = null,
+  provider = getStoredActiveAIProvider(),
 }) {
   const items = flattenDecomposition(sheets);
   if (!items.length) return sheets;
@@ -1567,10 +1591,12 @@ export async function generateStandardCodeHazardAnalysisSheets({
   const config = omitConsolidatedRequirement
     ? omitConsolidatedRequirementFromConfig(getStandardConfig(method))
     : getStandardConfig(method);
-  const maximumRowsPerPrompt = generationMode === "detailed" ? STANDARD_RETRY_ROWS_PER_PROMPT : STANDARD_MAX_ROWS_PER_PROMPT;
+  const maximumRowsPerPrompt = getStandardHazardRowsPerPrompt(provider, generationMode);
   const promptChunks = items.length <= maximumRowsPerPrompt && compactPromptRowsLength(items) <= STANDARD_SINGLE_PROMPT_MAX_CHARS
     ? [items]
-    : (generationMode === "detailed" ? chunkItemsByCount(items, maximumRowsPerPrompt) : chunkItemsForPrompt(items));
+    : (generationMode === "detailed"
+      ? chunkItemsByCount(items, maximumRowsPerPrompt)
+      : chunkItemsForPrompt(items, STANDARD_CHUNK_PROMPT_MAX_CHARS, maximumRowsPerPrompt));
 
   if (promptChunks.length > 1) {
     console.warn(`⚠️ ${config.sheetName} standard input is large; using ${promptChunks.length} bulk prompt chunks instead of one prompt.`);

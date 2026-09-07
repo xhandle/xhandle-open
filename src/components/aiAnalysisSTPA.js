@@ -3,6 +3,10 @@
 import { saveFoldersToDB, loadFoldersFromDB } from './utils/indexedDB'; 
 import { buildAIAuthOpts } from "./backendConfig";
 import {
+  getStoredActiveAIProvider,
+  getStoredAIProviderModelPreference,
+} from "../lib/aiProviderConfig";
+import {
   CODE_ARCHITECTURE_TRACEABILITY_COLUMNS,
   HAZARD_SUMMARY_TRACEABILITY_COLUMNS,
   extractFunctionalDecompositionTrace,
@@ -59,6 +63,30 @@ function traceSummaryCellsFromSheetRow(headers, row) {
     ? traceabilityObjectToSummaryFields(traceObjectFromSheetRow(headers, row))
     : traceabilityObjectToSummaryFields({});
   return HAZARD_SUMMARY_TRACEABILITY_COLUMNS.map((column) => traceFields[column] || "");
+}
+
+const DEFAULT_HAZARD_REQUEST_TIMEOUT_MS = 180_000;
+const LONG_REASONING_HAZARD_REQUEST_TIMEOUT_MS = 330_000;
+
+export function getHazardAnalysisRequestTimeoutMs(requestOptions = {}) {
+  const explicitTimeout = Number(requestOptions.timeoutMs);
+  if (explicitTimeout > 0) return explicitTimeout;
+
+  const provider = String(
+    requestOptions.provider || getStoredActiveAIProvider() || "openai"
+  ).trim().toLowerCase();
+  const normalizedProvider = provider === "claude" ? "anthropic" : provider;
+  const model = String(
+    requestOptions.model
+      || getStoredAIProviderModelPreference(normalizedProvider, { includeDefault: true })
+      || ""
+  ).trim().toLowerCase();
+  const usesLongReasoningWindow = normalizedProvider === "anthropic"
+    || /(?:^|[-_.])(?:pro|opus|fable)(?:[-_.]|$)/i.test(model);
+
+  return usesLongReasoningWindow
+    ? LONG_REASONING_HAZARD_REQUEST_TIMEOUT_MS
+    : DEFAULT_HAZARD_REQUEST_TIMEOUT_MS;
 }
 
 export const fetchLLMResponse = async (
@@ -142,7 +170,7 @@ let response;
 for (let attempt = 1; attempt <= 5; attempt++) {
   const timeoutController = new AbortController();
   const abortFromCaller = () => timeoutController.abort();
-  const timeoutMs = Number(requestOptions.timeoutMs) > 0 ? Number(requestOptions.timeoutMs) : 120_000;
+  const timeoutMs = getHazardAnalysisRequestTimeoutMs(requestOptions);
   let timedOut = false;
   const timeoutId = setTimeout(() => {
     timedOut = true;

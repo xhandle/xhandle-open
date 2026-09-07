@@ -161,6 +161,27 @@ describe("subsystem generation prompting", () => {
     if (priorModel == null) localStorage.removeItem("xhandle.aiProviderModel.openai"); else localStorage.setItem("xhandle.aiProviderModel.openai", priorModel);
   });
 
+  it("forwards Claude provider and model headers without OpenAI remapping", () => {
+    const priorKeys = localStorage.getItem("xhandle.aiProvider.keys");
+    const priorProvider = localStorage.getItem("xhandle.aiProvider.active");
+    const priorModel = localStorage.getItem("xhandle.aiProviderModel.anthropic");
+    localStorage.setItem("xhandle.aiProvider.keys", JSON.stringify({
+      anthropic: { apiKey: "sk-ant-test-active-provider-key" },
+    }));
+    localStorage.setItem("xhandle.aiProvider.active", "anthropic");
+    localStorage.setItem("xhandle.aiProviderModel.anthropic", "claude-sonnet-test");
+
+    const { buildAIAuthOpts } = require("./backendConfig");
+    const request = buildAIAuthOpts({ "Content-Type": "application/json" });
+    expect(request.headers["x-ai-provider"]).toBe("claude");
+    expect(request.headers["x-ai-model"]).toBe("claude-sonnet-test");
+    expect(request.headers["x-ai-api-key"]).toBe("sk-ant-test-active-provider-key");
+
+    if (priorKeys == null) localStorage.removeItem("xhandle.aiProvider.keys"); else localStorage.setItem("xhandle.aiProvider.keys", priorKeys);
+    if (priorProvider == null) localStorage.removeItem("xhandle.aiProvider.active"); else localStorage.setItem("xhandle.aiProvider.active", priorProvider);
+    if (priorModel == null) localStorage.removeItem("xhandle.aiProviderModel.anthropic"); else localStorage.setItem("xhandle.aiProviderModel.anthropic", priorModel);
+  });
+
   it("leaves model selection to the AI Provider configuration", () => {
     const payload = buildCollaboratorChatPayload([{ role: "user", content: "Hello" }], {
       maxTokens: 2400,
@@ -253,6 +274,16 @@ describe("subsystem generation prompting", () => {
 
     const custom = buildCollaboratorModelOptions("openai", "gpt-custom-architecture");
     expect(custom[0]).toEqual({ value: "gpt-custom-architecture", label: "gpt-custom-architecture (custom)" });
+
+    const discovered = buildCollaboratorModelOptions("openai", "gpt-provider-latest", [
+      { id: "gpt-provider-latest", displayName: "GPT Provider Latest" },
+      { value: "gpt-provider-fast", label: "GPT Provider Fast" },
+      { value: "gpt-provider-fast", label: "Duplicate" },
+    ]);
+    expect(discovered).toEqual([
+      { value: "gpt-provider-latest", label: "GPT Provider Latest" },
+      { value: "gpt-provider-fast", label: "GPT Provider Fast" },
+    ]);
   });
   it("blocks generic control actions at the rendered table boundary", () => {
     const genericTable = [

@@ -37,9 +37,10 @@ import {
   togglePin, appendMessage, setMessages
 } from "./copilotThreads";
 import { generateThreadTitle } from "./generateThreadTitle";
-import { buildAIAuthOpts } from "./backendConfig";
+import { ACCOUNT_ID, backendURL, buildAIAuthOpts, getLocalAccessToken } from "./backendConfig";
 import {
   AI_PROVIDER_PREFERENCE_CHANGED_EVENT,
+  fetchProviderModelRecords,
   getAIProviderLabel,
   getProviderModelOptions,
   getStoredActiveAIProvider,
@@ -81,11 +82,17 @@ function buildNewThreadGreeting() {
     : "New thread. How can I help?";
 }
 
-export function buildCollaboratorModelOptions(provider, selectedModel = "") {
-  const options = getProviderModelOptions(provider).map((option) => ({
-    value: option.value,
-    label: option.label || option.value,
-  }));
+export function buildCollaboratorModelOptions(provider, selectedModel = "", providerModels = []) {
+  const sourceModels = Array.isArray(providerModels) && providerModels.length
+    ? providerModels
+    : getProviderModelOptions(provider);
+  const seen = new Set();
+  const options = sourceModels
+    .map((option) => ({
+      value: String(option?.value || option?.id || "").trim(),
+      label: option?.label || option?.displayName || option?.id || option?.value,
+    }))
+    .filter((option) => option.value && !seen.has(option.value) && seen.add(option.value));
   const selected = String(selectedModel || "").trim();
   if (selected && !options.some((option) => option.value === selected)) {
     options.unshift({ value: selected, label: `${selected} (custom)` });
@@ -93,8 +100,8 @@ export function buildCollaboratorModelOptions(provider, selectedModel = "") {
   return options;
 }
 
-function CollaboratorModelSelector({ provider, model, onChange, disabled = false, compact = false }) {
-  const options = buildCollaboratorModelOptions(provider, model);
+function CollaboratorModelSelector({ provider, model, providerModels = [], onChange, disabled = false, loading = false, compact = false }) {
+  const options = buildCollaboratorModelOptions(provider, model, providerModels);
   return (
     <label className={`inline-flex min-w-0 items-center gap-1.5 text-xs text-neutral-600 ${compact ? "max-w-[170px]" : "max-w-[260px]"}`}>
       <span className={compact ? "sr-only" : "shrink-0 font-medium"}>Model</span>
@@ -103,7 +110,7 @@ function CollaboratorModelSelector({ provider, model, onChange, disabled = false
         title={`${getAIProviderLabel(provider)} model for new Collaborator requests`}
         value={model}
         onChange={(event) => onChange?.(event.target.value)}
-        disabled={disabled}
+        disabled={disabled || loading}
         className="min-w-0 w-full rounded-md border border-neutral-200 bg-white px-2 py-1.5 text-xs font-medium text-neutral-800 outline-none hover:border-neutral-300 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {options.map((option) => (
@@ -3646,6 +3653,8 @@ function cancelCtxEditor() {
       model: getStoredAIProviderModelPreference(provider, { includeDefault: true }),
     };
   });
+  const [collaboratorModelsByProvider, setCollaboratorModelsByProvider] = useState({});
+  const [collaboratorModelsBusy, setCollaboratorModelsBusy] = useState(false);
 
   const scrollRef = useRef(null);
   const endRef = useRef(null);
@@ -3666,6 +3675,29 @@ function cancelCtxEditor() {
     window.addEventListener("xhandle:projects-updated", onProjectsUpdated);
     return () => window.removeEventListener("xhandle:projects-updated", onProjectsUpdated);
   }, []);
+
+  useEffect(() => {
+    let alive = true;
+    const provider = collaboratorAI.provider;
+    setCollaboratorModelsBusy(true);
+    fetchProviderModelRecords(provider, {
+      backendURL,
+      accountId: ACCOUNT_ID,
+      accessToken: getLocalAccessToken(),
+    })
+      .then((models) => {
+        if (!alive) return;
+        setCollaboratorModelsByProvider((current) => ({ ...current, [provider]: models }));
+      })
+      .catch(() => {
+        if (!alive) return;
+        setCollaboratorModelsByProvider((current) => ({ ...current, [provider]: [] }));
+      })
+      .finally(() => {
+        if (alive) setCollaboratorModelsBusy(false);
+      });
+    return () => { alive = false; };
+  }, [collaboratorAI.provider]);
 
   useEffect(() => {
     const syncAIProviderPreference = () => {
@@ -4799,8 +4831,10 @@ Runtime context:
                 <CollaboratorModelSelector
                   provider={collaboratorAI.provider}
                   model={collaboratorAI.model}
+                  providerModels={collaboratorModelsByProvider[collaboratorAI.provider]}
                   onChange={changeCollaboratorModel}
                   disabled={busy}
+                  loading={collaboratorModelsBusy}
                 />
                 {docked && !sidebarOpen && (
                   <button
@@ -5072,8 +5106,10 @@ Runtime context:
               <CollaboratorModelSelector
                 provider={collaboratorAI.provider}
                 model={collaboratorAI.model}
+                providerModels={collaboratorModelsByProvider[collaboratorAI.provider]}
                 onChange={changeCollaboratorModel}
                 disabled={busy}
+                loading={collaboratorModelsBusy}
                 compact
               />
               <button

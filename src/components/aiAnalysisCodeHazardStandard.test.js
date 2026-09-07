@@ -4,12 +4,27 @@ import {
   deriveStructuredSafetyAssessment,
   findApplicabilityCalibrationIndexes,
   findConsistencyReconciliationIndexes,
+  getStandardHazardRowsPerPrompt,
+  isHazardAnalysisCancellation,
   materializeGeneratedHazardRows,
   normalizeGenericRequirementOwner,
   validateApplicabilityEvidence,
 } from "./aiAnalysisCodeHazardStandard";
 
 describe("standard hazard row materialization", () => {
+  test("uses smaller initial hazard batches for Claude and detailed generation", () => {
+    expect(getStandardHazardRowsPerPrompt("anthropic", "standard")).toBe(4);
+    expect(getStandardHazardRowsPerPrompt("claude", "standard")).toBe(4);
+    expect(getStandardHazardRowsPerPrompt("openai", "detailed")).toBe(4);
+    expect(getStandardHazardRowsPerPrompt("openai", "standard")).toBe(8);
+  });
+
+  test("recovers provider timeouts while preserving explicit user cancellation", () => {
+    expect(isHazardAnalysisCancellation({ name: "TimeoutError" }, { aborted: false })).toBe(false);
+    expect(isHazardAnalysisCancellation({ name: "AbortError" }, { aborted: false })).toBe(true);
+    expect(isHazardAnalysisCancellation(new Error("request failed"), { aborted: true })).toBe(true);
+  });
+
   test("retains every requested row when an LLM response is incomplete", () => {
     const config = {
       rowIdSuffix: "STPA",
