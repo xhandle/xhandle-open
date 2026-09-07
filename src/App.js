@@ -65,6 +65,8 @@ import {
   AI_PROVIDER_OPTIONS,
   fetchUserAIProviderSettings,
   getAIProviderLabel,
+  getStoredActiveAIProvider,
+  getStoredAIProviderModelPreference,
   getProviderKeyHelpText,
   getProviderKeyPlaceholder,
   normalizeAIProvider,
@@ -161,7 +163,6 @@ import {
   resolveProjectHazardArtifactNavigation,
 } from "./features/project-hazard-analysis/projectHazardDiagramSummary";
 import HazardOperationalContextManager from "./features/project-hazard-analysis/HazardOperationalContextManager";
-import HazardSafetyModelView from "./features/project-hazard-analysis/HazardSafetyModelView";
 import HazardAnalysisResetModal from "./features/project-hazard-analysis/HazardAnalysisResetModal";
 import { generateHazardOperationalContexts } from "./features/project-hazard-analysis/hazardOperationalContextAi";
 import {
@@ -171,7 +172,18 @@ import {
 } from "./features/project-hazard-analysis/safetyIssueOperationalContexts";
 import {
   assessLLMConsolidationCoverage,
+  buildDeterministicConsolidatedSafetyIssues,
+  enforceSafetyIssueFamilyConsolidation,
+  expandLLMSafetyIssueFamilyReferences,
 } from "./features/project-hazard-analysis/safetyIssueConsolidation";
+import {
+  buildSafetyIssueConsolidationPayload,
+  compactSafetyIssueEvidenceRow,
+  extractSafetyIssueEvidenceRows,
+  getEvidenceSourceRowId,
+  isSafetyIssueEvidenceRow,
+  resolveRiskSourceIndexes,
+} from "./features/project-hazard-analysis/safetyIssueEvidence";
 import {
   loadSafetyIssueReportRecord,
   saveSafetyIssueReportRecord,
@@ -200,7 +212,6 @@ import {
   normalizeHazardOperationalContexts,
 } from "./features/project-hazard-analysis/hazardOperationalContexts";
 import {
-  buildHazardSafetyModel,
   createSafetyModelId,
 } from "./features/project-hazard-analysis/hazardSafetyModel";
 
@@ -5223,26 +5234,8 @@ const buildRequirementsFromSummary = (summary) => {
 };
 
 
-function normalizeProposedSafetyAssessmentValue(value) {
-  const text = String(value || "").trim().toLowerCase();
-  if (/^safety\b|safety[-\s]?critical|safety\s*significant/.test(text)) return "Safety";
-  return "Mission/Reliability";
-}
-
 function shouldUseHazardSummaryRowForSafetyIssue(row = [], headers = []) {
-  const guideApplicableIdx = headers.findIndex((header) => /^guide\s+phrase\s+applicable$/i.test(String(header || "").trim()));
-  if (guideApplicableIdx >= 0 && /^no\b|^not applicable\b/i.test(String(row?.[guideApplicableIdx] || "").trim())) {
-    return false;
-  }
-
-  const proposedIdx = headers.findIndex((header) => /^proposed\s+safety\s+assessment$/i.test(String(header || "").trim()));
-  if (proposedIdx >= 0) {
-    return normalizeProposedSafetyAssessmentValue(row?.[proposedIdx]) === "Safety";
-  }
-
-  const safetySignificanceIdx = headers.findIndex((header) => /^safety\s+significant$/i.test(String(header || "").trim()));
-  if (safetySignificanceIdx < 0) return true;
-  return /^yes\b|^safety\b/i.test(String(row?.[safetySignificanceIdx] || "").trim());
+  return isSafetyIssueEvidenceRow(row, headers);
 }
 
 
@@ -5295,6 +5288,49 @@ const buildRiskRegisterFromSummary = (summary) => {
       };
     });
 };
+
+function getConfiguredAIRequestModel() {
+  const provider = getStoredActiveAIProvider();
+  return getStoredAIProviderModelPreference(provider, { includeDefault: true });
+}
+
+function buildRecoverableSafetyIssuesFromSummary(summary) {
+  const safetyRows = extractSafetyIssueEvidenceRows(summary);
+  const allowedRows = new Map(safetyRows.map((item) => [item.sourceIndex, item]));
+  return buildDeterministicConsolidatedSafetyIssues(safetyRows).map((issue, index) => {
+    const sourceIndexes = (issue.sourceIndexes || []).filter((sourceIndex) => allowedRows.has(sourceIndex));
+    const evidence = sourceIndexes.map((sourceIndex) => allowedRows.get(sourceIndex));
+    const firstCell = (...labels) => {
+      for (const item of evidence) {
+        for (const label of labels) {
+          const value = String(item?.cells?.[label] || "").trim();
+          if (value && !/^not applicable:/i.test(value)) return value;
+        }
+      }
+      return "";
+    };
+    const contextVariants = buildSafetyIssueContextVariants({ ...issue, evidence }, issue.contextVariants);
+    const boundingContext = getBoundingSafetyIssueContext(contextVariants);
+    const sourceRowIds = evidence.map(getEvidenceSourceRowId).filter(Boolean);
+    const loss = firstCell("Loss", "Losses");
+    const hazard = firstCell("Hazard", "Hazards");
+    return {
+      ...issue,
+      id: createSafetyModelId("SI", `${issue.title || index}|${(sourceRowIds.length ? sourceRowIds : sourceIndexes).join(",")}`),
+      sourceIndex: sourceIndexes[0],
+      sourceIndexes,
+      sourceRowIds,
+      contextVariants,
+      likelihood: boundingContext?.likelihood || Number(issue.likelihood) || 3,
+      severity: boundingContext?.severity || Number(issue.severity) || 3,
+      canonicalLosses: loss ? [{ title: loss, description: loss }] : [],
+      canonicalHazards: hazard ? [{ title: hazard, description: hazard }] : [],
+      causalScenarios: [],
+      safetyConstraints: [],
+      consolidationStatus: "provisional",
+    };
+  });
+}
 
 function getRiskPriority(score) {
   const numeric = Number(score) || 0;
@@ -5361,13 +5397,27 @@ function buildFallbackSafetyIssueEvidenceRow(item = {}) {
   const cells = item.cells || {};
   const scenario = getSafetyEvidenceCell(cells, [/^Operational Scenario$/i, /^Scenario$/i]) || "Unspecified scenario";
   const mode = getSafetyEvidenceCell(cells, [/^Operational Mode$/i, /^Mode$/i]) || "Unspecified mode";
+  const fromFunction = getSafetyEvidenceCell(cells, [/^Function \(From\)$/i, /^From Function$/i, /^Controller$/i]);
+  const toFunction = getSafetyEvidenceCell(cells, [/^Function \(To\)$/i, /^To Function$/i, /^Controlled Process$/i]);
+  const subsystem = getSafetyEvidenceCell(cells, [/^Subsystem Allocation$/i, /^Subsystem$/i]);
+  const controlAction = getSafetyEvidenceCell(cells, [/^Control Action$/i, /^Action$/i]);
+  const guidePhrase = getSafetyEvidenceCell(cells, [/^Guide Phrase$/i, /^Guide Word$/i, /^Guideword$/i]);
+  const hazard = getSafetyEvidenceCell(cells, [/^Hazards?$/i, /^Unsafe Control Actions?$/i, /^Failure Mode$/i]);
+  const causalScenario = getSafetyEvidenceCell(cells, [/^Causal Scenario$/i, /^Causal Factors?$/i]);
+  const safetyRationale = getSafetyEvidenceCell(cells, [
+    /^Proposed Safety Assessment Rationale$/i,
+    /^Safety Significance Rationale$/i,
+  ]);
+  const affectedPath = [fromFunction, toFunction].filter(Boolean).join(" → ");
   return {
     sourceIndex: item.sourceIndex,
     operationalContext: `${scenario} · ${mode}`,
-    hazardUnsafeCondition: Object.entries(cells).slice(0, 2).map(([label, value]) => `${label}: ${value}`).join("; "),
-    affectedFunctionOrSubsystem: Object.entries(cells).find(([label]) => /function|subsystem|component|allocation/i.test(label))?.[1] || "",
-    controlActionOrFailureMode: Object.entries(cells).find(([label]) => /control|action|failure|unsafe/i.test(label))?.[1] || "",
-    whyThisMatters: "This source row is part of the hazard-analysis evidence consolidated into the safety issue.",
+    hazardUnsafeCondition: hazard || causalScenario || "Linked safety-significant unsafe condition.",
+    affectedFunctionOrSubsystem: subsystem || affectedPath || fromFunction || toFunction,
+    controlActionOrFailureMode: [controlAction, guidePhrase].filter(Boolean).join(" · "),
+    whyThisMatters: safetyRationale
+      || causalScenario
+      || `This evidence links ${affectedPath || subsystem || "the affected system path"} to the identified hazardous condition.`,
   };
 }
 
@@ -6686,7 +6736,6 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [expandedHazardVariantKeys, setExpandedHazardVariantKeys] = useState(new Set());
   const [hazardOperationalContexts, setHazardOperationalContexts] = useState([]);
   const [selectedHazardContextId, setSelectedHazardContextId] = useState("all");
-  const [hazardAnalysisView, setHazardAnalysisView] = useState("safety-model");
   const [showHazardResetModal, setShowHazardResetModal] = useState(false);
   const [isResettingHazardAnalysis, setIsResettingHazardAnalysis] = useState(false);
   const [hazardResetStatus, setHazardResetStatus] = useState(null);
@@ -6713,6 +6762,7 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
 	  const [riskAssessmentReportMarkdown, setRiskAssessmentReportMarkdown] = useState("");
   const [isGeneratingRiskAssessmentReport, setIsGeneratingRiskAssessmentReport] = useState(false);
   const [isConsolidatingSafetyIssues, setIsConsolidatingSafetyIssues] = useState(false);
+  const [isHazardAnalysisArtifactLoading, setIsHazardAnalysisArtifactLoading] = useState(false);
   const [safetyIssueRefreshStatus, setSafetyIssueRefreshStatus] = useState(null);
   const hazardAnalysisAbortControllerRef = useRef(null);
   const hazardReconciliationHydrationRef = useRef(null);
@@ -6861,6 +6911,7 @@ useEffect(() => {
     projectPersistenceHydrationRef.current = activeProjectId || null;
     safetyIssueReportHydrationRef.current = activeProjectId || null;
     hazardAnalysisArtifactHydrationRef.current = activeProjectId || null;
+    setIsHazardAnalysisArtifactLoading(Boolean(activeProjectId));
     setProjectLoaded(false);
     setLoadedProjectId(null);
     setLoadingProjectId(activeProjectId || null);
@@ -6885,6 +6936,7 @@ useEffect(() => {
       setRiskAssessmentReportMarkdown("");
       safetyIssueReportHydrationRef.current = null;
       hazardAnalysisArtifactHydrationRef.current = null;
+      setIsHazardAnalysisArtifactLoading(false);
       setGeneratingSafetyIssueReportIds(new Set());
       setActiveRiskId(null);
       setSelectedRiskPriority("All");
@@ -6949,9 +7001,26 @@ useEffect(() => {
       .then(async (storedAnalysis) => {
         if (hazardArtifactLoadCancelled) return;
         if (storedAnalysis) {
-          setAnalysisResult(storedAnalysis.analysisResult ? stripProjectRiskProfileColumns(storedAnalysis.analysisResult) : null);
+          const restoredAnalysis = storedAnalysis.analysisResult
+            ? stripProjectRiskProfileColumns(storedAnalysis.analysisResult)
+            : null;
+          const restoredRisks = Array.isArray(storedAnalysis.riskRegister) && storedAnalysis.riskRegister.length
+            ? storedAnalysis.riskRegister
+            : buildRecoverableSafetyIssuesFromSummary(restoredAnalysis?.Summary);
+          setAnalysisResult(restoredAnalysis);
           setDraftHazardRowsByIndex(storedAnalysis.draftHazardRowsByIndex || {});
-          setRiskRegister(storedAnalysis.riskRegister || []);
+          setRiskRegister(restoredRisks);
+          if (!storedAnalysis.riskRegister?.length && restoredRisks.length) {
+            setSafetyIssueRefreshStatus({
+              kind: "working",
+              message: `Recovered ${restoredRisks.length} provisional safety issue${restoredRisks.length === 1 ? "" : "s"} from the saved hazard evidence. Use Regenerate Safety Issues for semantic LLM consolidation.`,
+            });
+            await saveProjectHazardAnalysisRecord(projectIdForLoad, {
+              ...storedAnalysis,
+              analysisResult: restoredAnalysis,
+              riskRegister: restoredRisks,
+            });
+          }
         } else if (data?.analysisResult || Object.keys(data?.draftHazardRowsByIndex || {}).length || data?.riskRegister?.length) {
           const migrated = await saveProjectHazardAnalysisRecord(projectIdForLoad, {
             analysisResult: data?.analysisResult || null,
@@ -6971,6 +7040,7 @@ useEffect(() => {
       .finally(() => {
         if (!hazardArtifactLoadCancelled && hazardAnalysisArtifactHydrationRef.current === projectIdForLoad) {
           hazardAnalysisArtifactHydrationRef.current = null;
+          setIsHazardAnalysisArtifactLoading(false);
         }
       });
     setShowPromptWizard(!(data?.responseRows && data.responseRows.length > 0));
@@ -7389,16 +7459,20 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const nextAnalysisSignature = JSON.stringify(nextAnalysisResult?.Summary || null);
     if (currentAnalysisSignature !== nextAnalysisSignature) {
       setAnalysisResult(nextAnalysisResult);
-      const maxSourceIndex = nextSummaryRows.length;
+      const nextEvidenceRows = extractSafetyIssueEvidenceRows(nextAnalysisResult.Summary);
+      const nextEvidenceByIndex = new Map(nextEvidenceRows.map((item) => [item.sourceIndex, item]));
       const nextRiskRegister = (riskRegister || [])
         .map((risk) => {
-          const sourceIndexes = Array.from(new Set(
-            (Array.isArray(risk.sourceIndexes) ? risk.sourceIndexes : [risk.sourceIndex])
-              .map((value) => Number(value))
-              .filter((value) => Number.isFinite(value) && value >= 1 && value <= maxSourceIndex)
-          )).sort((a, b) => a - b);
+          const sourceIndexes = resolveRiskSourceIndexes(risk, nextEvidenceRows);
           if (!sourceIndexes.length) return null;
-          return { ...risk, sourceIndexes, sourceIndex: sourceIndexes[0] };
+          return {
+            ...risk,
+            sourceIndexes,
+            sourceIndex: sourceIndexes[0],
+            sourceRowIds: sourceIndexes
+              .map((sourceIndex) => getEvidenceSourceRowId(nextEvidenceByIndex.get(sourceIndex)))
+              .filter(Boolean),
+          };
         })
         .filter(Boolean);
       setRiskRegister(nextRiskRegister);
@@ -7705,6 +7779,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       });
       map.set(Number(entry.sourceIndex), {
         sourceIndex: Number(entry.sourceIndex),
+        sourceRowId: getEvidenceSourceRowId({ cells }),
         cells,
         values: entry.values || [],
       });
@@ -7712,9 +7787,10 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     return map;
   }, [riskAssessmentSource]);
   const risksWithEvidence = useMemo(() => {
+    const availableEvidenceRows = Array.from(riskAssessmentSourceRowsByIndex.values());
     return (riskRegister || [])
       .map((risk) => {
-        const sourceIndexes = getRiskSourceIndexes(risk);
+        const sourceIndexes = resolveRiskSourceIndexes(risk, availableEvidenceRows);
         const evidence = sourceIndexes
           .map((sourceIndex) => riskAssessmentSourceRowsByIndex.get(sourceIndex))
           .filter(Boolean);
@@ -8013,7 +8089,6 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const target = draftHazardTargets[targetIndex];
 
     setActiveTab('Hazard Analysis');
-    setHazardAnalysisView("analysis-detail");
     setShowDiagram(false);
     setColumnFilters({});
     setFilterColumnIndex(null);
@@ -9465,7 +9540,11 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         nextRiskRegister = await requestConsolidatedSafetyIssuesFromSummary(finalSheets.Summary, { mergeExisting: true });
       } catch (error) {
         console.error("[risk-assessment] LLM consolidation failed while preserving completed hazard rows", error);
-        setSafetyIssueRefreshStatus({ kind: "error", message: error?.message || "The LLM could not consolidate the completed hazard rows." });
+        if (!nextRiskRegister?.length) nextRiskRegister = buildRecoverableSafetyIssuesFromSummary(finalSheets.Summary);
+        setSafetyIssueRefreshStatus({
+          kind: "error",
+          message: `${error?.message || "The LLM could not consolidate the completed hazard rows."}${nextRiskRegister?.length ? " Provisional issues remain available; retry Regenerate Safety Issues." : ""}`,
+        });
       } finally {
         setIsConsolidatingSafetyIssues(false);
       }
@@ -9605,7 +9684,11 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     } catch (error) {
       if (abortController.signal.aborted) throw error;
       console.error("[risk-assessment] LLM consolidation failed while preserving generated hazard rows", error);
-      setSafetyIssueRefreshStatus({ kind: "error", message: error?.message || "The LLM could not consolidate the generated hazard rows." });
+      if (!nextRiskRegister?.length) nextRiskRegister = buildRecoverableSafetyIssuesFromSummary(finalSheets.Summary);
+      setSafetyIssueRefreshStatus({
+        kind: "error",
+        message: `${error?.message || "The LLM could not consolidate the generated hazard rows."}${nextRiskRegister?.length ? " Provisional issues remain available; retry Regenerate Safety Issues." : ""}`,
+      });
     } finally {
       setIsConsolidatingSafetyIssues(false);
     }
@@ -9933,7 +10016,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     return [
       "### **Normalized Safety Traceability**",
       "",
-      "| Safety Model Concept | Raw Evidence |",
+      "| Normalized STPA Concept | Raw Evidence |",
       "| --- | --- |",
       ...renderRows(issue.canonicalLosses, (item) => `${createSafetyModelId("L", item.title)} · Loss: ${item.title}`),
       ...renderRows(issue.canonicalHazards, (item) => `${createSafetyModelId("H", item.title)} · Hazard: ${item.title}`),
@@ -9943,6 +10026,103 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         ? [[`| Normalized concepts have not been generated for this legacy issue. Regenerate Safety Issues to populate them. | ${sourceLinks(issue.sourceIndexes)} |`]]
         : []),
     ].flat().join("\n");
+  };
+
+  const buildSafetyIssueReportDefaults = (issue) => {
+    const evidence = Array.isArray(issue?.evidence) ? issue.evidence : [];
+    const values = (patterns) => Array.from(new Set(evidence
+      .map((item) => getSafetyEvidenceCell(item?.cells || {}, patterns))
+      .map((value) => String(value || "").trim())
+      .filter((value) => value && !/^not applicable:/i.test(value))));
+    const fromFunctions = values([/^Function \(From\)$/i, /^From Function$/i, /^Controller$/i]);
+    const toFunctions = values([/^Function \(To\)$/i, /^To Function$/i, /^Controlled Process$/i]);
+    const controlActions = values([/^Control Action$/i, /^Action$/i]);
+    const mitigations = values([/^Mitigation Strategy$/i, /^Mitigations?$/i]);
+    const assumptions = values([/^Context Assumptions$/i, /^Operational Assumptions$/i]);
+    const rationale = values([/^Proposed Safety Assessment Rationale$/i, /^Safety Significance Rationale$/i]);
+    const constraints = (issue?.safetyConstraints || [])
+      .map((entry) => String(entry?.statement || "").trim())
+      .filter(Boolean);
+    const hazards = (issue?.canonicalHazards || [])
+      .map((entry) => String(entry?.title || entry?.description || "").trim())
+      .filter(Boolean);
+    const losses = (issue?.canonicalLosses || [])
+      .map((entry) => String(entry?.title || entry?.description || "").trim())
+      .filter(Boolean);
+    const causalScenarios = (issue?.causalScenarios || [])
+      .map((entry) => String(entry?.description || "").trim())
+      .filter(Boolean);
+    const contextVariants = buildSafetyIssueContextVariants(issue, issue?.contextVariants);
+    const boundingContext = getBoundingSafetyIssueContext(contextVariants);
+    const paths = Array.from(new Set(evidence.map((item) => {
+      const cells = item?.cells || {};
+      return [
+        getSafetyEvidenceCell(cells, [/^Function \(From\)$/i, /^From Function$/i, /^Controller$/i]),
+        getSafetyEvidenceCell(cells, [/^Control Action$/i, /^Action$/i]),
+        getSafetyEvidenceCell(cells, [/^Function \(To\)$/i, /^To Function$/i, /^Controlled Process$/i]),
+      ].filter(Boolean).join(" → ");
+    }).filter(Boolean)));
+    const scope = `${evidence.length || issue?.sourceIndexes?.length || 0} linked hazard-analysis row${(evidence.length || issue?.sourceIndexes?.length) === 1 ? "" : "s"} across ${contextVariants.length || 1} operational context${contextVariants.length === 1 ? "" : "s"}`;
+    const riskStatement = `The current ${issue?.priority || "unassigned-priority"} rating is likelihood ${issue?.likelihood || "TBD"} and severity ${issue?.severity || "TBD"}${boundingContext ? `, bounded by ${boundingContext.scenario} · ${boundingContext.mode}` : ""}.`;
+    return {
+      executiveSummary: [
+        `${issue?.title || "This safety issue"} is supported by ${scope}.`,
+        hazards.length
+          ? `The consolidated hazardous state is ${hazards.slice(0, 3).join("; ")}.`
+          : "The hazardous state must be confirmed against the linked analysis evidence.",
+        losses.length
+          ? `Credible consequences include ${losses.slice(0, 3).join("; ")}.`
+          : "The externally relevant loss consequence requires stakeholder confirmation.",
+        `${riskStatement} Engineering disposition remains open until controls and verification evidence are accepted.`,
+      ],
+      observedCondition: [issue?.description || "The linked evidence identifies a safety-significant system condition."],
+      architectureControlPath: paths.length
+        ? paths.map((path) => `Affected control path: ${path}.`)
+        : [`Affected sources: ${fromFunctions.join(", ") || "TBD"}; destinations: ${toFunctions.join(", ") || "TBD"}; control actions: ${controlActions.join(", ") || "TBD"}.`],
+      safetySignificance: [
+        ...(rationale.length ? rationale.slice(0, 4) : []),
+        ...(hazards.length && losses.length ? [`Unsafe control can create ${hazards[0]}, with a credible escalation to ${losses[0]}.`] : []),
+        `The issue spans ${scope}; treating each row independently would obscure the shared control and assurance obligation.`,
+      ],
+      existingControlsMitigations: mitigations.length
+        ? mitigations.slice(0, 6).map((item) => `Analysis-identified mitigation: ${item}`)
+        : ["The supplied evidence does not establish a verified implemented control. Proposed safety constraints are requirements, not proof of implementation."],
+      controlGaps: [
+        "Confirm which safety constraints are allocated to implemented preventive, detective, and recovery controls.",
+        "Identify control independence, common-cause dependencies, degraded-mode behavior, and the feedback used to detect unsuccessful actuation.",
+        "Establish measurable acceptance criteria and authoritative parameter sources; retain TBD where evidence does not support a numerical threshold.",
+      ],
+      uncertaintySystemBoundary: [
+        ...(assumptions.length ? assumptions.slice(0, 4).map((item) => `Assumption requiring confirmation: ${item}`) : ["System boundary, operating assumptions, and external dependencies require stakeholder confirmation."]),
+        "Implementation status and effectiveness of the identified controls are not demonstrated by hazard-analysis text alone.",
+        "Risk ratings require confirmation against exposure data, operating history, test evidence, or an approved organizational risk matrix.",
+      ],
+      recommendedEngineeringAction: constraints.length
+        ? constraints.slice(0, 6).map((item) => `Allocate, implement, and trace the constraint: ${item}`)
+        : [
+            "Define preventive interlocks and command gating for the affected control path.",
+            "Define feedback, diagnostics, and a deterministic safe response for rejected, stale, mistimed, or unsuccessful control actions.",
+            "Assign each control and safety requirement to an accountable engineering owner and configuration-controlled artifact.",
+          ],
+      recommendedVerification: [
+        `Demonstrate the affected control path under nominal, boundary, degraded, and recovery conditions${causalScenarios.length ? `, including causal mechanisms such as ${causalScenarios.slice(0, 3).join("; ")}` : ""}.`,
+        "Trace each safety constraint to design evidence and to one or more objective verification results.",
+        "Use negative and fault-injection testing to show unsafe commands are blocked or brought to a safe state and that failures are detected within a justified TBD response-time budget.",
+        "Record acceptance criteria, results, anomalies, residual limitations, and independent review approval in the safety case.",
+      ],
+      stakeholderDecision: [
+        "Approve the proposed control strategy and ownership, request additional analysis, or explicitly accept the documented residual risk through the project governance process.",
+      ],
+      closureCriteria: [
+        "All linked safety constraints are allocated, implemented, bidirectionally traceable, and verified with objective evidence.",
+        "Open assumptions and interface responsibilities are resolved, and residual risk is reviewed and accepted by the authorized stakeholders.",
+      ],
+      residualRisk: "Residual risk is undetermined until the proposed controls, verification results, unresolved assumptions, and operational limitations are reviewed together.",
+      finalAssessment: [
+        `${issue?.priority || "This"} safety issue remains Open; it is not ready for closure based on analysis evidence alone.`,
+        "The next review should disposition control allocation, acceptance criteria, verification ownership, and residual-risk authority.",
+      ],
+    };
   };
 
   const renderSafetyIssueReportSection = (issue, parsedReport = {}) => {
@@ -9963,17 +10143,23 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       parsedReport?.operationalContextCoverage || issue.contextVariants
     );
     const boundingContext = getBoundingSafetyIssueContext(contextVariants);
+    const defaults = buildSafetyIssueReportDefaults(issue);
     const report = {
-      executiveSummary: parsedReport?.executiveSummary || `This ${issue.priority} safety issue consolidates hazard-analysis evidence related to ${issue.title}.`,
+      executiveSummary: parsedReport?.executiveSummary || defaults.executiveSummary,
       observedConditionType: /implementation/i.test(parsedReport?.observedConditionType) ? "Implementation" : "System",
-      observedCondition: parsedReport?.observedCondition || issue.description || "No observed condition was returned.",
+      observedCondition: parsedReport?.observedCondition || defaults.observedCondition,
+      architectureControlPath: parsedReport?.architectureControlPath || defaults.architectureControlPath,
       keyEvidenceRows: Array.isArray(parsedReport?.keyEvidenceRows) ? parsedReport.keyEvidenceRows : [],
-      safetySignificance: parsedReport?.safetySignificance || "Safety significance should be reviewed against the linked hazard-analysis evidence.",
-      existingControlsMitigations: parsedReport?.existingControlsMitigations || "No explicit controls or mitigations were identified in the available evidence.",
-      uncertaintySystemBoundary: parsedReport?.uncertaintySystemBoundary || "Assumptions and boundary conditions should be confirmed during review.",
-      recommendedEngineeringAction: parsedReport?.recommendedEngineeringAction || "Define and assign mitigation actions proportional to the priority of this safety issue.",
-      recommendedVerification: parsedReport?.recommendedVerification || "Verify mitigations with targeted analysis, review, and testing tied to the source evidence.",
-      finalAssessment: parsedReport?.finalAssessment || "Open pending engineering disposition and verification.",
+      safetySignificance: parsedReport?.safetySignificance || defaults.safetySignificance,
+      existingControlsMitigations: parsedReport?.existingControlsMitigations || defaults.existingControlsMitigations,
+      controlGaps: parsedReport?.controlGaps || defaults.controlGaps,
+      uncertaintySystemBoundary: parsedReport?.uncertaintySystemBoundary || defaults.uncertaintySystemBoundary,
+      recommendedEngineeringAction: parsedReport?.recommendedEngineeringAction || defaults.recommendedEngineeringAction,
+      recommendedVerification: parsedReport?.recommendedVerification || defaults.recommendedVerification,
+      stakeholderDecision: parsedReport?.stakeholderDecision || defaults.stakeholderDecision,
+      closureCriteria: parsedReport?.closureCriteria || defaults.closureCriteria,
+      residualRisk: parsedReport?.residualRisk || defaults.residualRisk,
+      finalAssessment: parsedReport?.finalAssessment || defaults.finalAssessment,
       operationalContextCoverage: contextVariants,
     };
     const evidenceRows = completeSafetyIssueEvidenceRows(issue, report.keyEvidenceRows);
@@ -10010,25 +10196,26 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       `| Source Rows | ${sourceLinks(issue.sourceIndexes)} |`,
       `| Bounding Context | ${mdCell(boundingContext ? `${boundingContext.scenario} · ${boundingContext.mode}` : "Not established")} |`,
       "",
-      renderNormalizedSafetyTrace(issue, sourceLinks),
-      "",
       "### **Executive Summary**",
       listBlock(report.executiveSummary),
       "",
       `### **${observedHeading}**`,
       listBlock(report.observedCondition),
       "",
+      "### **Affected Architecture and Control Path**",
+      listBlock(report.architectureControlPath),
+      "",
       "### **Operational Context Coverage**",
       contextCoverageTable,
-      "",
-      "### **Key Evidence**",
-      evidenceTable,
       "",
       "### **Safety Significance**",
       listBlock(report.safetySignificance),
       "",
       "### **Existing Controls / Mitigations**",
       listBlock(report.existingControlsMitigations),
+      "",
+      "### **Control and Assurance Gaps**",
+      listBlock(report.controlGaps),
       "",
       "### **Uncertainty / System Boundary**",
       listBlock(report.uncertaintySystemBoundary),
@@ -10039,15 +10226,31 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       "### **Recommended Verification**",
       listBlock(report.recommendedVerification),
       "",
+      "### **Stakeholder Decision Required**",
+      listBlock(report.stakeholderDecision),
+      "",
+      "### **Closure Criteria**",
+      listBlock(report.closureCriteria),
+      "",
+      "### **Residual Risk**",
+      listBlock(report.residualRisk),
+      "",
       "### **Final Assessment**",
       listBlock(report.finalAssessment),
+      "",
+      "### **Traceability Appendix**",
+      "",
+      renderNormalizedSafetyTrace(issue, sourceLinks),
+      "",
+      "### **Source Evidence**",
+      evidenceTable,
       `<!-- SAFETY_ISSUE_REPORT_END id="${issue.id}" -->`,
     ].join("\n");
   };
 
-  const fetchSafetyIssueReportSection = async (issue) => {
+  const requestSafetyIssueReportContent = async (issue) => {
     const prompt = `
-Create detailed content for one Safety Issue Report. Return strict JSON only.
+Create an engineering-grade Safety Issue Report narrative suitable for communicating with external customers, assessors, program leadership, and safety reviewers. Return strict JSON only.
 
 Project: ${activeProject?.name || "Untitled project"}
 Hazard method: ${riskMethod}
@@ -10071,72 +10274,89 @@ ${JSON.stringify({
   canonicalHazards: issue.canonicalHazards,
   causalScenarios: issue.causalScenarios,
   safetyConstraints: issue.safetyConstraints,
-  hazardEvidence: issue.evidence.map((item) => ({ sourceIndex: item.sourceIndex, cells: item.cells })),
+  hazardEvidence: issue.evidence.map(compactSafetyIssueEvidenceRow),
 }, null, 2)}
 
 Required JSON schema:
 {
-  "executiveSummary": ["2-4 detailed bullets explaining the issue and priority"],
+  "executiveSummary": ["3-5 evidence-grounded bullets stating the unsafe condition, affected system behavior, highest-risk context, credible consequence, and current disposition"],
   "observedConditionType": "System or Implementation",
-  "observedCondition": ["2-4 detailed bullets describing the observed condition using only supplied evidence"],
-  "operationalContextCoverage": [
-    {
-      "contextId": "preserve the supplied context id",
-      "scenario": "operational scenario",
-      "mode": "operational mode",
-      "conditions": "relevant operating conditions",
-      "assumptions": "analysis assumptions",
-      "hazardVariation": "how the hazard manifests in this context",
-      "likelihood": 1,
-      "severity": 1,
-      "riskRationale": "evidence-grounded rationale for this contextual rating",
-      "sourceIndexes": [1]
-    }
-  ],
-  "keyEvidenceRows": [
-    {
-      "sourceIndex": 1,
-      "operationalContext": "scenario · mode",
-      "hazardUnsafeCondition": "specific hazard or unsafe condition",
-      "affectedFunctionOrSubsystem": "affected function, subsystem, component, interface, or allocation",
-      "controlActionOrFailureMode": "unsafe control action, failure mode, control action, or data/control flow",
-      "whyThisMatters": "why this evidence supports the safety issue"
-    }
-  ],
-  "safetySignificance": ["2-4 detailed bullets explaining credible safety impact and escalation path"],
-  "existingControlsMitigations": ["2-4 bullets distinguishing explicit controls from inferred or missing controls"],
-  "uncertaintySystemBoundary": ["2-4 bullets listing assumptions, unknowns, and boundary questions"],
-  "recommendedEngineeringAction": ["3-5 concrete design, process, allocation, interface, or assurance actions"],
-  "recommendedVerification": ["3-5 specific test, analysis, review, traceability, or acceptance evidence actions"],
-  "finalAssessment": ["1-3 decisive bullets summarizing disposition and next review focus"]
+  "observedCondition": ["3-5 precise bullets describing what can happen, where in the control path, and under which triggering or degraded conditions"],
+  "architectureControlPath": ["2-5 bullets identifying affected functions, controllers, controlled processes, interfaces, feedback, dependencies, and system-boundary responsibilities"],
+  "safetySignificance": ["3-5 bullets explaining the causal chain from unsafe behavior through hazardous state to credible loss and stakeholder impact"],
+  "existingControlsMitigations": ["2-5 bullets separating controls explicitly evidenced as implemented from proposed constraints and unverified claims"],
+  "controlGaps": ["3-6 specific preventive, detective, recovery, independence, degraded-mode, interface, or assurance gaps"],
+  "uncertaintySystemBoundary": ["3-6 concrete assumptions, unknowns, evidence limitations, external dependencies, and boundary questions"],
+  "recommendedEngineeringAction": ["4-7 actionable design, process, allocation, interface, governance, or assurance actions with intended safety effect"],
+  "recommendedVerification": ["4-7 verification activities that state method, configuration or condition, expected result, acceptance evidence, and any justified TBD parameter"],
+  "stakeholderDecision": ["1-3 explicit decisions or approvals required and the accountable stakeholder role where supportable"],
+  "closureCriteria": ["3-6 objective conditions that must be satisfied before the issue may be closed"],
+  "residualRisk": ["1-3 bullets explaining what risk remains, what evidence is missing, and who must accept it"],
+  "finalAssessment": ["2-4 decisive bullets stating disposition, immediate priority, blocking evidence, and next review gate"]
 }
 
 Rules:
-- Use the same level of detail for every section.
+- Write for technically sophisticated external stakeholders. Be specific enough to support design review, action assignment, verification planning, and residual-risk disposition.
+- Synthesize the supplied evidence; do not merely restate the title or say that evidence should be reviewed.
 - Do not invent facts not supported by the safety issue or evidence.
-- Preserve sourceIndex values exactly in keyEvidenceRows.
-- Include one keyEvidenceRows entry for every sourceIndex listed on the safety issue.
-- Include one operationalContextCoverage entry for every supplied context variant. Preserve its contextId, scenario, mode, and sourceIndexes.
-- Explain material differences in hazard manifestation, likelihood, severity, mitigations, and verification across scenarios or modes.
-- Identify the highest-risk supplied context in the executive summary and final assessment. Do not flatten differing contexts into generic wording.
-- Preserve the supplied normalized losses, hazards, causal scenarios, and safety constraints. Explain their relationships; do not invent replacements.
+- Distinguish observed or explicitly identified controls from proposed controls, safety constraints, recommendations, and verification evidence. Never claim a control is implemented or effective unless the evidence says so.
+- Explain material differences in hazard manifestation, likelihood, severity, control availability, and verification across scenarios or modes.
+- Identify the highest-risk supplied context in the executive summary and final assessment. Do not flatten materially different contexts into generic wording.
+- Relate normalized losses, hazards, unsafe control behavior, causal scenarios, constraints, actions, and verification into a coherent safety argument.
+- Make recommendations technically concrete without prescribing an unsupported implementation. Use TBD or a named parameter when evidence does not justify a numerical threshold.
+- State the expected safe behavior for omitted, incorrect, early, late, out-of-sequence, over-duration, and under-duration control actions when those behaviors appear in the evidence.
+- Verification recommendations must identify observable pass/fail evidence; avoid vague phrases such as “perform testing” or “review as needed.”
+- Do not cite standards, regulations, numerical limits, owners, dates, implementation status, or mitigations unless supplied.
+- Do not return source-row tables or operational-context objects; xHandle renders complete traceability and context coverage directly from the supplied evidence.
 - Return only strict JSON. No Markdown. No code fences.
     `.trim();
-    const response = await fetch(`${backendURL}/api/chat`, {
-      method: "POST",
-      ...buildAIAuthOpts({ "Content-Type": "application/json" }),
-      body: JSON.stringify({
-        model: "gpt-4o",
-        messages: [
-          { role: "system", content: "Return only strict JSON. No prose or markdown." },
-          { role: "user", content: prompt },
-        ],
-        temperature: 0.2,
-        max_tokens: 2800,
-      }),
-    });
-    if (!response.ok) throw new Error(`Safety issue report AI HTTP ${response.status}`);
-    const parsed = parseJsonObjectFromText(extractAIText(await response.json())) || {};
+    const requiredFields = [
+      "executiveSummary",
+      "observedCondition",
+      "architectureControlPath",
+      "safetySignificance",
+      "existingControlsMitigations",
+      "controlGaps",
+      "uncertaintySystemBoundary",
+      "recommendedEngineeringAction",
+      "recommendedVerification",
+      "stakeholderDecision",
+      "closureCriteria",
+      "residualRisk",
+      "finalAssessment",
+    ];
+    let bestParsed = {};
+    let repairInstruction = "";
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const response = await fetch(`${backendURL}/api/chat`, {
+        method: "POST",
+        ...buildAIAuthOpts({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          provider: getStoredActiveAIProvider(),
+          model: getConfiguredAIRequestModel(),
+          messages: [
+            { role: "system", content: "Produce a rigorous, evidence-grounded safety communication artifact. Return only complete strict JSON; no prose or markdown." },
+            { role: "user", content: `${prompt}${repairInstruction}` },
+          ],
+          temperature: 0.2,
+          max_tokens: 5200,
+        }),
+      });
+      if (!response.ok) throw new Error(`Safety issue report AI HTTP ${response.status}`);
+      const parsed = parseJsonObjectFromText(extractAIText(await response.json())) || {};
+      if (Object.keys(parsed).length > Object.keys(bestParsed).length) bestParsed = parsed;
+      const missingFields = requiredFields.filter((field) => {
+        const value = parsed?.[field];
+        return Array.isArray(value) ? !value.some((item) => String(item || "").trim()) : !String(value || "").trim();
+      });
+      if (!missingFields.length) return parsed;
+      repairInstruction = `\n\nYour prior response was incomplete. Return the entire JSON object again with substantive evidence-grounded content for these missing fields: ${missingFields.join(", ")}. Do not use boilerplate placeholders.`;
+    }
+    return bestParsed;
+  };
+
+  const fetchSafetyIssueReportSection = async (issue) => {
+    const parsed = await requestSafetyIssueReportContent(issue);
     return renderSafetyIssueReportSection(issue, parsed);
   };
 
@@ -10183,9 +10403,10 @@ Rules:
 
   // eslint-disable-next-line no-unused-vars
   const generateSafetyIssueReportsMarkdown = async (rowsForReport = riskRegister) => {
+    const availableEvidenceRows = Array.from(riskAssessmentSourceRowsByIndex.values());
     const risksForReport = (rowsForReport || [])
       .map((risk) => {
-        const sourceIndexes = getRiskSourceIndexes(risk);
+        const sourceIndexes = resolveRiskSourceIndexes(risk, availableEvidenceRows);
         const evidence = sourceIndexes
           .map((sourceIndex) => riskAssessmentSourceRowsByIndex.get(sourceIndex))
           .filter(Boolean);
@@ -10224,19 +10445,27 @@ Rules:
           }),
         ].join("\n");
       };
-      const normalizeIssueReport = (issue, parsed) => ({
-        executiveSummary: parsed?.executiveSummary || `This ${issue.priority} safety issue consolidates hazard-analysis evidence related to ${issue.title}.`,
-        observedConditionType: /implementation/i.test(parsed?.observedConditionType) ? "Implementation" : "System",
-        observedCondition: parsed?.observedCondition || issue.description || "No observed condition was returned.",
-        operationalContextCoverage: buildSafetyIssueContextVariants(issue, parsed?.operationalContextCoverage || issue.contextVariants),
-        keyEvidenceRows: Array.isArray(parsed?.keyEvidenceRows) ? parsed.keyEvidenceRows : [],
-        safetySignificance: parsed?.safetySignificance || "Safety significance should be reviewed against the linked hazard-analysis evidence.",
-        existingControlsMitigations: parsed?.existingControlsMitigations || "No explicit controls or mitigations were identified in the available evidence.",
-        uncertaintySystemBoundary: parsed?.uncertaintySystemBoundary || "Assumptions and boundary conditions should be confirmed during review.",
-        recommendedEngineeringAction: parsed?.recommendedEngineeringAction || "Define and assign mitigation actions proportional to the priority of this safety issue.",
-        recommendedVerification: parsed?.recommendedVerification || "Verify mitigations with targeted analysis, review, and testing tied to the source evidence.",
-        finalAssessment: parsed?.finalAssessment || "Open pending engineering disposition and verification.",
-      });
+      const normalizeIssueReport = (issue, parsed) => {
+        const defaults = buildSafetyIssueReportDefaults(issue);
+        return {
+          executiveSummary: parsed?.executiveSummary || defaults.executiveSummary,
+          observedConditionType: /implementation/i.test(parsed?.observedConditionType) ? "Implementation" : "System",
+          observedCondition: parsed?.observedCondition || defaults.observedCondition,
+          architectureControlPath: parsed?.architectureControlPath || defaults.architectureControlPath,
+          operationalContextCoverage: buildSafetyIssueContextVariants(issue, issue.contextVariants),
+          keyEvidenceRows: [],
+          safetySignificance: parsed?.safetySignificance || defaults.safetySignificance,
+          existingControlsMitigations: parsed?.existingControlsMitigations || defaults.existingControlsMitigations,
+          controlGaps: parsed?.controlGaps || defaults.controlGaps,
+          uncertaintySystemBoundary: parsed?.uncertaintySystemBoundary || defaults.uncertaintySystemBoundary,
+          recommendedEngineeringAction: parsed?.recommendedEngineeringAction || defaults.recommendedEngineeringAction,
+          recommendedVerification: parsed?.recommendedVerification || defaults.recommendedVerification,
+          stakeholderDecision: parsed?.stakeholderDecision || defaults.stakeholderDecision,
+          closureCriteria: parsed?.closureCriteria || defaults.closureCriteria,
+          residualRisk: parsed?.residualRisk || defaults.residualRisk,
+          finalAssessment: parsed?.finalAssessment || defaults.finalAssessment,
+        };
+      };
       const renderIssueReport = (issue, report) => {
         const observedHeading = report.observedConditionType === "Implementation"
           ? "Observed Implementation Condition"
@@ -10264,25 +10493,26 @@ Rules:
           `| Source Rows | ${sourceLinks(issue.sourceIndexes)} |`,
           `| Bounding Context | ${mdCell(boundingContext ? `${boundingContext.scenario} · ${boundingContext.mode}` : "Not established")} |`,
           "",
-          renderNormalizedSafetyTrace(issue, sourceLinks),
-          "",
           "### **Executive Summary**",
           listBlock(report.executiveSummary),
           "",
           `### **${observedHeading}**`,
           listBlock(report.observedCondition),
           "",
+          "### **Affected Architecture and Control Path**",
+          listBlock(report.architectureControlPath),
+          "",
           "### **Operational Context Coverage**",
           contextCoverageTable,
-          "",
-          "### **Key Evidence**",
-          renderEvidenceRows(issue, report),
           "",
           "### **Safety Significance**",
           listBlock(report.safetySignificance),
           "",
           "### **Existing Controls / Mitigations**",
           listBlock(report.existingControlsMitigations),
+          "",
+          "### **Control and Assurance Gaps**",
+          listBlock(report.controlGaps),
           "",
           "### **Uncertainty / System Boundary**",
           listBlock(report.uncertaintySystemBoundary),
@@ -10293,8 +10523,24 @@ Rules:
           "### **Recommended Verification**",
           listBlock(report.recommendedVerification),
           "",
+          "### **Stakeholder Decision Required**",
+          listBlock(report.stakeholderDecision),
+          "",
+          "### **Closure Criteria**",
+          listBlock(report.closureCriteria),
+          "",
+          "### **Residual Risk**",
+          listBlock(report.residualRisk),
+          "",
           "### **Final Assessment**",
           listBlock(report.finalAssessment),
+          "",
+          "### **Traceability Appendix**",
+          "",
+          renderNormalizedSafetyTrace(issue, sourceLinks),
+          "",
+          "### **Source Evidence**",
+          renderEvidenceRows(issue, report),
           `<!-- SAFETY_ISSUE_REPORT_END id="${issue.id}" -->`,
         ].join("\n");
       };
@@ -10328,99 +10574,11 @@ Rules:
         ].join("\n\n").trim();
       };
       const issueReports = [];
+      const reportFailures = [];
       setGeneratingSafetyIssueReportIds(new Set(risksForReport.map((issue) => issue.id)));
       for (const issue of risksForReport) {
-        const prompt = `
-Create detailed content for one Safety Issue Report. Return strict JSON only.
-
-Project: ${activeProject?.name || "Untitled project"}
-Hazard method: ${riskMethod}
-
-Safety issue:
-${JSON.stringify({
-  id: issue.id,
-  title: issue.title,
-  description: issue.description,
-  likelihood: issue.likelihood,
-  severity: issue.severity,
-  score: issue.score,
-  priority: issue.priority,
-  status: issue.status,
-  owner: issue.owner,
-  dueDate: issue.dueDate,
-  tags: issue.tags,
-  sourceIndexes: issue.sourceIndexes,
-  contextVariants: issue.contextVariants,
-  canonicalLosses: issue.canonicalLosses,
-  canonicalHazards: issue.canonicalHazards,
-  causalScenarios: issue.causalScenarios,
-  safetyConstraints: issue.safetyConstraints,
-  hazardEvidence: issue.evidence.map((item) => ({ sourceIndex: item.sourceIndex, cells: item.cells })),
-}, null, 2)}
-
-Required JSON schema:
-{
-  "executiveSummary": ["2-4 detailed bullets explaining the issue and priority"],
-  "observedConditionType": "System or Implementation",
-  "observedCondition": ["2-4 detailed bullets describing the observed condition using only supplied evidence"],
-  "operationalContextCoverage": [
-    {
-      "contextId": "preserve the supplied context id",
-      "scenario": "operational scenario",
-      "mode": "operational mode",
-      "conditions": "relevant operating conditions",
-      "assumptions": "analysis assumptions",
-      "hazardVariation": "how the hazard manifests in this context",
-      "likelihood": 1,
-      "severity": 1,
-      "riskRationale": "evidence-grounded rationale for this contextual rating",
-      "sourceIndexes": [1]
-    }
-  ],
-  "keyEvidenceRows": [
-    {
-      "sourceIndex": 1,
-      "operationalContext": "scenario · mode",
-      "hazardUnsafeCondition": "specific hazard or unsafe condition",
-      "affectedFunctionOrSubsystem": "affected function, subsystem, component, interface, or allocation",
-      "controlActionOrFailureMode": "unsafe control action, failure mode, control action, or data/control flow",
-      "whyThisMatters": "why this evidence supports the safety issue"
-    }
-  ],
-  "safetySignificance": ["2-4 detailed bullets explaining credible safety impact and escalation path"],
-  "existingControlsMitigations": ["2-4 bullets distinguishing explicit controls from inferred or missing controls"],
-  "uncertaintySystemBoundary": ["2-4 bullets listing assumptions, unknowns, and boundary questions"],
-  "recommendedEngineeringAction": ["3-5 concrete design, process, allocation, interface, or assurance actions"],
-  "recommendedVerification": ["3-5 specific test, analysis, review, traceability, or acceptance evidence actions"],
-  "finalAssessment": ["1-3 decisive bullets summarizing disposition and next review focus"]
-}
-
-Rules:
-- Use the same level of detail for every section.
-- Do not invent facts not supported by the safety issue or evidence.
-- Preserve sourceIndex values exactly in keyEvidenceRows.
-- Include one keyEvidenceRows entry for every sourceIndex listed on the safety issue.
-- Include one operationalContextCoverage entry for every supplied context variant. Preserve its contextId, scenario, mode, and sourceIndexes.
-- Explain material differences in hazard manifestation, likelihood, severity, mitigations, and verification across scenarios or modes.
-- Identify the highest-risk supplied context in the executive summary and final assessment. Do not flatten differing contexts into generic wording.
-- Preserve the supplied normalized losses, hazards, causal scenarios, and safety constraints. Explain their relationships; do not invent replacements.
-- Return only strict JSON. No Markdown. No code fences.
-        `.trim();
-        const response = await fetch(`${backendURL}/api/chat`, {
-          method: "POST",
-          ...buildAIAuthOpts({ "Content-Type": "application/json" }),
-          body: JSON.stringify({
-            model: "gpt-4o",
-            messages: [
-              { role: "system", content: "Return only strict JSON. No prose or markdown." },
-              { role: "user", content: prompt },
-            ],
-            temperature: 0.2,
-            max_tokens: 2800,
-          }),
-        });
-        if (!response.ok) throw new Error(`Safety issue report AI HTTP ${response.status}`);
-        const parsed = parseJsonObjectFromText(extractAIText(await response.json())) || {};
+        try {
+        const parsed = await requestSafetyIssueReportContent(issue);
         issueReports.push({ issue, report: normalizeIssueReport(issue, parsed) });
         const partialMarkdown = buildReportsMarkdown(issueReports);
         setRiskAssessmentReportMarkdown(partialMarkdown);
@@ -10431,7 +10589,17 @@ Rules:
           return next;
         });
         if (activeProjectId) await saveProjectSafetyIssueReport(activeProjectId, partialMarkdown);
+        } catch (error) {
+          console.error(`[risk-assessment] Safety Issue Report generation failed for ${issue.id}`, error);
+          reportFailures.push({ issue, error });
+          setGeneratingSafetyIssueReportIds((prev) => {
+            const next = new Set(prev);
+            next.delete(issue.id);
+            return next;
+          });
+        }
       }
+      if (!issueReports.length && reportFailures.length) throw reportFailures[0].error;
       const markdown = buildReportsMarkdown(issueReports);
       setRiskAssessmentReportMarkdown(markdown);
       setRiskReportMode("preview");
@@ -10443,6 +10611,12 @@ Rules:
             message: "Reports were generated, but browser storage could not persist them. Export the project before leaving this page.",
           });
         }
+      }
+      if (reportFailures.length) {
+        setSafetyIssueRefreshStatus({
+          kind: "error",
+          message: `Generated ${issueReports.length} report${issueReports.length === 1 ? "" : "s"}; ${reportFailures.length} failed and can be retried individually.`,
+        });
       }
       return markdown;
     } catch (error) {
@@ -10462,7 +10636,22 @@ Rules:
     ]));
     return (refreshed || []).map((risk) => {
       const key = [risk.title, risk.description].map((value) => String(value || "").trim().toLowerCase()).join("::");
-      const existing = existingByKey.get(key);
+      const refreshedSources = new Set([
+        ...(risk.sourceRowIds || []).map((value) => `id:${String(value).trim()}`),
+        ...getRiskSourceIndexes(risk).map((value) => `index:${value}`),
+      ]);
+      const existing = existingByKey.get(key) || (existingRows || [])
+        .map((candidate) => {
+          const candidateSources = new Set([
+            ...(candidate.sourceRowIds || []).map((value) => `id:${String(value).trim()}`),
+            ...getRiskSourceIndexes(candidate).map((value) => `index:${value}`),
+          ]);
+          const overlap = Array.from(refreshedSources).filter((value) => candidateSources.has(value)).length;
+          const denominator = Math.max(1, Math.min(refreshedSources.size, candidateSources.size));
+          return { candidate, score: overlap / denominator };
+        })
+        .sort((left, right) => right.score - left.score)
+        .find(({ score }) => score >= 0.5)?.candidate;
       return existing
         ? {
             ...risk,
@@ -10483,21 +10672,9 @@ Rules:
     signal = null,
   } = {}) {
     if (!Array.isArray(summary) || !Array.isArray(summary[0]) || summary.length < 2) return [];
-    const headers = summary[0].map((header) => String(header || ""));
-    const safetyRows = summary
-      .slice(1)
-      .map((row, index) => ({ row, sourceIndex: index + 1 }))
-      .filter(({ row }) => shouldUseHazardSummaryRowForSafetyIssue(row, headers))
-      .map(({ row, sourceIndex }) => {
-        const cells = {};
-        headers.forEach((header, index) => {
-          const label = String(header || `Column ${index + 1}`).trim();
-          const value = String(row?.[index] ?? "").trim();
-          if (label && value) cells[label] = value;
-        });
-        return { sourceIndex, cells };
-      });
+    const safetyRows = extractSafetyIssueEvidenceRows(summary);
     if (!safetyRows.length) return [];
+    const consolidationEvidence = buildSafetyIssueConsolidationPayload(safetyRows);
 
     const allowedIndexes = new Set(safetyRows.map((item) => item.sourceIndex));
     const materializeIssues = (proposedIssues = []) => proposedIssues
@@ -10526,6 +10703,21 @@ Rules:
           }
           return "";
         };
+        const collectEvidenceConcepts = (labels, createEntry) => {
+          const concepts = new Map();
+          evidence.forEach((item) => {
+            const value = labels.map((label) => String(item?.cells?.[label] || "").trim()).find(Boolean);
+            if (!value || /^not applicable:/i.test(value)) return;
+            const key = value.toLowerCase().replace(/\s+/g, " ");
+            const existing = concepts.get(key);
+            if (existing) {
+              existing.sourceIndexes = Array.from(new Set([...(existing.sourceIndexes || []), item.sourceIndex])).sort((a, b) => a - b);
+            } else {
+              concepts.set(key, { ...createEntry(value, item), sourceIndexes: [item.sourceIndex] });
+            }
+          });
+          return Array.from(concepts.values());
+        };
         const proposedCanonicalLosses = (Array.isArray(issue?.canonicalLosses) ? issue.canonicalLosses : [])
           .map((entry) => ({ title: String(entry?.title || "").trim(), description: String(entry?.description || entry?.title || "").trim() }))
           .filter((entry) => entry.title);
@@ -10534,8 +10726,18 @@ Rules:
           .filter((entry) => entry.title);
         const fallbackLoss = firstEvidenceValue(["Loss", "Losses"]);
         const fallbackHazard = firstEvidenceValue(["Hazard", "Hazards"]);
+        const evidenceCausalScenarios = collectEvidenceConcepts(["Causal Scenario", "Causal Factor"], (description, item) => ({
+          description,
+          category: String(item?.cells?.["Causal Factor Category"] || "").trim(),
+        }));
+        const evidenceSafetyConstraints = collectEvidenceConcepts(["Safety Constraint", "System Requirement"], (statement, item) => ({
+          statement,
+          verification: "",
+          parameterSource: String(item?.cells?.["Requirement Parameter Source"] || "TBD").trim() || "TBD",
+        }));
+        const sourceRowIds = evidence.map(getEvidenceSourceRowId).filter(Boolean);
         return {
-          id: createSafetyModelId("SI", `${issue?.title || index}|${sourceIndexes.join(",")}`),
+          id: createSafetyModelId("SI", `${issue?.title || index}|${(sourceRowIds.length ? sourceRowIds : sourceIndexes).join(",")}`),
           title: String(issue?.title || `Consolidated Safety Issue ${index + 1}`).trim(),
           description: String(issue?.description || "Consolidated from Safety-assessed hazard analysis rows.").trim(),
           likelihood: boundingContext?.likelihood || proposedLikelihood,
@@ -10546,6 +10748,7 @@ Rules:
           tags: String(issue?.tags || "").trim(),
           sourceIndexes,
           sourceIndex: sourceIndexes[0],
+          sourceRowIds,
           contextVariants,
           canonicalLosses: proposedCanonicalLosses.length
             ? proposedCanonicalLosses
@@ -10553,14 +10756,14 @@ Rules:
           canonicalHazards: proposedCanonicalHazards.length
             ? proposedCanonicalHazards
             : (fallbackHazard ? [{ title: fallbackHazard, description: fallbackHazard }] : []),
-          causalScenarios: (Array.isArray(issue?.causalScenarios) ? issue.causalScenarios : [])
+          causalScenarios: ((Array.isArray(issue?.causalScenarios) && issue.causalScenarios.length) ? issue.causalScenarios : evidenceCausalScenarios)
             .map((entry) => ({
               description: String(entry?.description || "").trim(),
               category: String(entry?.category || "").trim(),
               sourceIndexes: (entry?.sourceIndexes || sourceIndexes).map(Number).filter((value) => allowedIndexes.has(value)),
             }))
             .filter((entry) => entry.description),
-          safetyConstraints: (Array.isArray(issue?.safetyConstraints) ? issue.safetyConstraints : [])
+          safetyConstraints: ((Array.isArray(issue?.safetyConstraints) && issue.safetyConstraints.length) ? issue.safetyConstraints : evidenceSafetyConstraints)
             .map((entry) => ({
               statement: String(entry?.statement || "").trim(),
               verification: String(entry?.verification || "").trim(),
@@ -10580,70 +10783,46 @@ Hazard method: ${riskMethod}
 
 Only the rows below are eligible because their Proposed Safety Assessment is Safety. Do not use or infer from Mission/Reliability rows.
 
-Safety hazard rows:
-${JSON.stringify(safetyRows, null, 2)}
+Safety hazard evidence, grouped only to reduce transport size (the grouping does not decide issue boundaries):
+${JSON.stringify(consolidationEvidence)}
 
 Return strict JSON only with this schema:
 {
   "issues": [
     {
       "title": "short consolidated safety issue title",
-      "description": "specific consolidated issue description grounded in the source rows",
+      "description": "specific actionable engineering concern shared by the referenced evidence families",
       "likelihood": 1,
       "severity": 1,
-      "status": "Open",
-      "owner": "",
-      "dueDate": "",
       "tags": "comma-separated tags",
-      "canonicalLosses": [{ "title": "L: short controlled-vocabulary loss", "description": "system-level unacceptable outcome" }],
-      "canonicalHazards": [{ "title": "H: short controlled-vocabulary hazard", "description": "system state that can lead to a loss" }],
-      "causalScenarios": [{ "description": "specific causal chain", "category": "Controller logic / process model", "sourceIndexes": [1] }],
-      "safetyConstraints": [{ "statement": "verifiable safety constraint", "verification": "verification approach", "parameterSource": "TBD or supplied source", "sourceIndexes": [1] }],
-      "sourceIndexes": [1, 2],
-      "contextVariants": [
-        {
-          "contextId": "context id from source rows",
-          "scenario": "operational scenario from source rows",
-          "mode": "operational mode from source rows",
-          "conditions": "context conditions from source rows",
-          "assumptions": "context assumptions from source rows",
-          "hazardVariation": "how this issue manifests in this context",
-          "likelihood": 1,
-          "severity": 1,
-          "riskRationale": "why this context has these ratings",
-          "sourceIndexes": [1]
-        }
-      ]
+      "sourceFamilyIds": ["family-1", "family-2"]
     }
   ]
 }
 
 Rules:
 - You—not deterministic application code—must decide the semantic issue boundaries from the supplied engineering evidence.
+- Review every row inside every supplied family before deciding the clusters.
+- The familyId grouping is a lossless transport optimization for context and guide-phrase permutations. Merge families when they describe the same actionable unsafe condition, control strategy, design change, requirement set, or verification campaign.
+- Return clustering decisions only. Do not repeat sourceIndexes, context variants, causal scenarios, constraints, losses, or hazards; xHandle materializes those details losslessly from every row in each selected family.
 - Consolidate aggressively around actionable engineering concerns: rows belong together when an engineering team can address them through the same control strategy, requirement set, design change, or verification campaign.
 - Merge across guide phrases, scenarios, modes, functions, and interfaces when they are manifestations of the same underlying unsafe condition or share the same engineering treatment.
 - Treat guide phrases, scenarios, and modes as evidence or variants, not automatic reasons to create separate issues.
 - Do not mirror the hazard worksheet structure and do not create one issue per row, guide phrase, context, or functional interface.
 - Prefer the smallest defensible set of issues that remains technically coherent and actionable. A review backlog approaching the number of worksheet permutations is not adequately consolidated.
-- Normalize the evidence into a controlled STPA vocabulary. Reuse the exact same canonical loss title and canonical hazard title across issues when they represent the same system-level outcome or hazardous state. A project should normally have a small set of canonical losses and a manageable set of canonical hazards—not one per raw row.
-- A canonical Loss is an unacceptable system-level outcome. A canonical Hazard is a system state or condition that, with worst-case environmental conditions, can lead to a Loss. Do not encode a guide phrase, component failure, operational scenario, or causal mechanism as a new canonical Loss or Hazard.
-- causalScenarios must describe concrete controller/process-model, sensing/feedback, actuation/physical-process, communication/interface, timing/sequencing, power/energy, initialization/lifecycle, mode/state, configuration/calibration, human/procedure, or common-cause mechanisms. Keep them separate from mitigations and constraints.
-- safetyConstraints must be design obligations that constrain the system. They must not merely repeat a failure or causal factor.
-- Never invent numerical thresholds. If evidence does not supply a requirement, standard, calculation, or allocated safety/timing budget, use a named [TBD-parameter] and set parameterSource to TBD.
 - Treat operational assumptions as architecture invariants. Do not require a controller, powered actuator, sensor, or communication channel in a context where the evidence says it is unavailable; account for stated passive or mechanical fallbacks.
 - If a row has a credible physical-harm path such as collision, injury, loss of control, instability, unintended motion, or environmental harm, retain it as Safety even when it also affects mission or reliability.
 - Keep unrelated safety hazards as separate issues.
-- Never erase operational differences when consolidating rows. Preserve every represented scenario-mode combination in contextVariants.
-- Use context-specific likelihood and severity values from 1 to 5. The issue-level likelihood and severity must match the context variant with the highest likelihood × severity score.
+- Never erase operational differences when consolidating rows. Use the issue description to call out material scenario or mode differences; xHandle preserves every represented context as linked evidence.
 - Keep hazards separate when their scenario or mode produces a materially different unsafe state that cannot be explained clearly as a context variant of one issue.
-- Every sourceIndexes value must come from the supplied Safety hazard rows.
-- Every supplied Safety hazard row index must appear in at least one issue's sourceIndexes.
+- Include every supplied familyId in exactly one issue's sourceFamilyIds. Do not duplicate or omit family IDs.
 - Use likelihood and severity integers from 1 to 5. If the rows do not provide enough evidence, choose conservative middle values based on the row severity wording.
-- Do not invent hazards, controls, owners, or dates.
+- Do not invent hazards, controls, owners, dates, or numerical thresholds.
 - Return only strict JSON. No Markdown. No code fences.
       `.trim();
       let repairInstruction = "";
       let assessed = null;
+      let bestAssessed = null;
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const timeoutController = new AbortController();
         const abortFromCaller = () => timeoutController.abort();
@@ -10660,13 +10839,14 @@ Rules:
             ...buildAIAuthOpts({ "Content-Type": "application/json" }),
             signal: timeoutController.signal,
             body: JSON.stringify({
-              model: "gpt-4o",
+              provider: getStoredActiveAIProvider(),
+              model: getConfiguredAIRequestModel(),
               messages: [
-                { role: "system", content: "Perform semantic safety-issue consolidation and return only strict JSON. No prose or markdown." },
+                { role: "system", content: "Review all supplied safety evidence and return only the compact semantic clustering JSON requested. No prose or markdown." },
                 { role: "user", content: `${prompt}${repairInstruction}` },
               ],
               temperature: 0.2,
-              max_tokens: Math.min(12000, Math.max(4000, safetyRows.length * 40)),
+              max_tokens: Math.min(8000, Math.max(3000, consolidationEvidence.length * 120)),
             }),
           });
         } catch (error) {
@@ -10679,10 +10859,33 @@ Rules:
         }
         if (!response.ok) throw new Error(`Safety issue consolidation AI HTTP ${response.status}`);
         const parsed = parseJsonObjectFromText(extractAIText(await response.json())) || {};
-        assessed = assessLLMConsolidationCoverage(parsed?.issues, safetyRows);
+        const expandedIssues = expandLLMSafetyIssueFamilyReferences(parsed?.issues, consolidationEvidence);
+        assessed = assessLLMConsolidationCoverage(expandedIssues, safetyRows);
+        if (
+          !bestAssessed
+          || assessed.missingSourceIndexes.length < bestAssessed.missingSourceIndexes.length
+          || (
+            assessed.missingSourceIndexes.length === bestAssessed.missingSourceIndexes.length
+            && assessed.issues.length > bestAssessed.issues.length
+          )
+        ) {
+          bestAssessed = assessed;
+        }
         if (assessed.coverageComplete && assessed.issues.length) break;
-        repairInstruction = `\n\nYour prior attempt omitted these source indexes: ${assessed.missingSourceIndexes.join(", ")}. Return a complete revised issues array covering every supplied row. Reconsider the full semantic clustering; do not append one issue per omitted row.`;
+        const missingSources = new Set(assessed.missingSourceIndexes);
+        const missingFamilyIds = consolidationEvidence
+          .filter((family) => family.sourceIndexes.some((sourceIndex) => missingSources.has(sourceIndex)))
+          .map((family) => family.familyId);
+        repairInstruction = `\n\nYour prior attempt omitted these evidence families: ${missingFamilyIds.join(", ")}. Return a complete revised issues array and include every omitted familyId in an issue's sourceFamilyIds. Reconsider the full semantic clustering; do not append one issue per omitted row.`;
       }
+      // If the model returned useful semantic clusters but missed bookkeeping
+      // references after repair, complete coverage at the evidence-family
+      // boundary. This preserves its issue decisions and prevents valid hazard
+      // evidence from making the entire risk workflow unusable.
+      assessed = assessLLMConsolidationCoverage(
+        enforceSafetyIssueFamilyConsolidation(bestAssessed?.issues || assessed?.issues || [], safetyRows),
+        safetyRows
+      );
       if (!assessed?.coverageComplete || !assessed.issues.length) {
         throw new Error(`The LLM did not return complete source coverage${assessed?.missingSourceIndexes?.length ? `; missing rows: ${assessed.missingSourceIndexes.join(", ")}` : ""}.`);
       }
@@ -11059,11 +11262,6 @@ const activeProject = useMemo(
   [projects, activeProjectId]
 );
 
-const hazardSafetyModel = useMemo(
-  () => buildHazardSafetyModel(analysisResult?.Summary || [], riskRegister, activeProject?.name || "Project"),
-  [analysisResult, riskRegister, activeProject?.name]
-);
-
 const projectHazardReviewItems = useMemo(() => (resultsReview.reviewItems || []).filter((item) => {
   const artifactId = String(item?.artifactId || "");
   const belongsToProject = item?.projectId === activeProjectId ||
@@ -11151,7 +11349,6 @@ const handleClearHazardAnalysis = async (scope = "results") => {
     }
     await saveProjectSafetyIssueReport(activeProjectId, "");
     setShowHazardResetModal(false);
-    setHazardAnalysisView("analysis-detail");
     setHazardResetStatus({ kind: "cleared", canUndo: true, createdAt: new Date().toISOString() });
   } catch (error) {
     console.error("[hazard-analysis-reset] Unable to clear analysis", error);
@@ -11192,7 +11389,6 @@ const handleUndoHazardAnalysisReset = async () => {
       hazardOperationalContexts: normalizeHazardOperationalContexts(snapshot.hazardOperationalContexts || []),
     });
     await deleteHazardAnalysisResetSnapshot(activeProjectId);
-    setHazardAnalysisView(snapshot.analysisResult?.Summary ? "safety-model" : "analysis-detail");
     setHazardResetStatus({ kind: "restored", canUndo: false, message: "The cleared hazard analysis was restored." });
   } catch (error) {
     console.error("[hazard-analysis-reset] Unable to restore analysis", error);
@@ -11925,23 +12121,6 @@ const projectHint = useMemo(() => ({
 
   const hazardAnalysisControls = responseRows.length > 0 ? (
     <div className="mb-4 flex flex-wrap items-center justify-center gap-3">
-      <div className="flex rounded-lg border border-gray-200 bg-gray-50 p-0.5" aria-label="Hazard analysis view">
-        {[
-          ["safety-model", "Safety Model"],
-          ["analysis-detail", "Analysis Detail"],
-        ].map(([value, label]) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => setHazardAnalysisView(value)}
-            className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-              hazardAnalysisView === value ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
       <div className="flex items-center space-x-2">
         <label className="text-sm text-gray-700">Method:</label>
         <select
@@ -14795,11 +14974,6 @@ const projectHint = useMemo(() => ({
           </table>
         </div>
       </div>
-    ) : hazardAnalysisView === "safety-model" ? (
-      <HazardSafetyModelView
-        model={hazardSafetyModel}
-        onOpenSourceRow={(sourceRowNumber) => handleOpenHazardSummaryRow(Number(sourceRowNumber) - 1)}
-      />
     ) : (
       <>
         {/* Risk Profile Diagram OR Table */}
@@ -15062,7 +15236,7 @@ const projectHint = useMemo(() => ({
             <button
               type="button"
               onClick={() => refreshSafetyIssuesFromSummary({ mergeExisting: true })}
-              disabled={isConsolidatingSafetyIssues}
+              disabled={isConsolidatingSafetyIssues || isHazardAnalysisArtifactLoading}
               className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
               title="Use the LLM to consolidate Safety-marked hazard rows while preserving matching issue edits"
             >
@@ -15072,7 +15246,7 @@ const projectHint = useMemo(() => ({
             <button
               type="button"
               onClick={() => refreshSafetyIssuesFromSummary({ mergeExisting: false })}
-              disabled={isConsolidatingSafetyIssues}
+              disabled={isConsolidatingSafetyIssues || isHazardAnalysisArtifactLoading}
               className="inline-flex items-center gap-1.5 rounded-md border border-[#2D7DFE]/30 bg-[#EEF4FF] px-3 py-2 text-sm font-medium text-[#0B3EA8] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
               title="Use the LLM to regenerate consolidated safety issues from rows marked Safety"
             >
@@ -15082,7 +15256,7 @@ const projectHint = useMemo(() => ({
             <button
               type="button"
               onClick={() => generateSafetyIssueReportsMarkdown(riskRegister)}
-              disabled={!riskRegister.length || isGeneratingRiskAssessmentReport || isConsolidatingSafetyIssues}
+              disabled={!riskRegister.length || isGeneratingRiskAssessmentReport || isConsolidatingSafetyIssues || isHazardAnalysisArtifactLoading}
               className="inline-flex items-center gap-1.5 rounded-md border border-[#2D7DFE]/30 bg-white px-3 py-2 text-sm font-medium text-[#1c5fde] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
               title="Generate Safety Issue Reports for consolidated safety issues"
             >
@@ -15092,12 +15266,18 @@ const projectHint = useMemo(() => ({
             <button
               type="button"
               onClick={exportSafetyIssuesCSV}
-              disabled={!riskRegister.length}
+              disabled={!riskRegister.length || isHazardAnalysisArtifactLoading}
               className="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
               title="Export consolidated safety issues as CSV"
             >
               Export CSV
             </button>
+            {isHazardAnalysisArtifactLoading && (
+              <div role="status" className="inline-flex items-center gap-2 text-xs text-blue-700">
+                <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                Loading saved hazard evidence and safety issues…
+              </div>
+            )}
             {safetyIssueRefreshStatus?.message && (
               <div
                 role="status"

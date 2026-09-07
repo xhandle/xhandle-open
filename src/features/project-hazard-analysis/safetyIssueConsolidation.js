@@ -137,6 +137,24 @@ export function assessLLMConsolidationCoverage(proposedIssues = [], safetyRows =
   };
 }
 
+export function expandLLMSafetyIssueFamilyReferences(proposedIssues = [], families = []) {
+  const familySources = new Map((Array.isArray(families) ? families : [])
+    .map((family) => [clean(family?.familyId), Array.isArray(family?.sourceIndexes) ? family.sourceIndexes : []])
+    .filter(([familyId]) => familyId));
+  return (Array.isArray(proposedIssues) ? proposedIssues : []).map((issue) => {
+    const referencedFamilies = Array.isArray(issue?.sourceFamilyIds) ? issue.sourceFamilyIds : [];
+    const expandedSources = referencedFamilies.flatMap((familyId) => familySources.get(clean(familyId)) || []);
+    return {
+      ...issue,
+      sourceIndexes: Array.from(new Set([
+        ...(Array.isArray(issue?.sourceIndexes) ? issue.sourceIndexes : []),
+        ...expandedSources,
+      ].map(Number).filter((sourceIndex) => Number.isFinite(sourceIndex) && sourceIndex > 0)))
+        .sort((left, right) => left - right),
+    };
+  });
+}
+
 export function enforceSafetyIssueFamilyConsolidation(proposedIssues = [], safetyRows = []) {
   const families = buildSafetyIssueSourceFamilies(safetyRows);
   if (!families.length) return [];

@@ -3,6 +3,7 @@ import {
   buildDeterministicConsolidatedSafetyIssues,
   buildSafetyIssueSourceFamilies,
   enforceSafetyIssueFamilyConsolidation,
+  expandLLMSafetyIssueFamilyReferences,
 } from "./safetyIssueConsolidation";
 
 function row(sourceIndex, contextId, hazard) {
@@ -27,6 +28,14 @@ describe("safety issue consolidation", () => {
     row(1, "urban", "Late trajectory causes a pedestrian conflict"),
     row(2, "highway", "Late trajectory causes a merge conflict"),
   ];
+
+  it("expands compact LLM family references into complete source coverage", () => {
+    const families = buildSafetyIssueSourceFamilies(safetyRows);
+    const expanded = expandLLMSafetyIssueFamilyReferences([
+      { title: "Unsafe sensing", sourceFamilyIds: [families[0].familyId], sourceIndexes: [1] },
+    ], families);
+    expect(expanded[0].sourceIndexes).toEqual([1, 2]);
+  });
 
   it("groups context variants of the same functional hazard family", () => {
     expect(buildSafetyIssueSourceFamilies(safetyRows)).toHaveLength(1);
@@ -117,5 +126,19 @@ describe("safety issue consolidation", () => {
 
     expect(assessment.coverageComplete).toBe(false);
     expect(assessment.missingSourceIndexes).toEqual([2]);
+  });
+
+  it("recovers omitted evidence families after the LLM returns a partial result", () => {
+    const unrelated = row(3, "urban", "Unsafe braking request");
+    unrelated.cells["Control Action"] = "Braking Request";
+    unrelated.cells["Function (To)"] = "Brake Controller";
+    const recovered = enforceSafetyIssueFamilyConsolidation([
+      { title: "Trajectory timing", sourceIndexes: [1] },
+    ], [...safetyRows, unrelated]);
+    const assessment = assessLLMConsolidationCoverage(recovered, [...safetyRows, unrelated]);
+
+    expect(assessment.coverageComplete).toBe(true);
+    expect(assessment.missingSourceIndexes).toEqual([]);
+    expect(assessment.issues.flatMap((issue) => issue.sourceIndexes).sort((a, b) => a - b)).toEqual([1, 2, 3]);
   });
 });
