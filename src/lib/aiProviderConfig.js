@@ -48,6 +48,11 @@ export function getAIProviderLabel(provider) {
   return AI_PROVIDER_OPTIONS.find((option) => option.value === normalized)?.label || "OpenAI";
 }
 
+export function supportsConversationalProjectMode(provider) {
+  const value = String(provider || "").trim().toLowerCase();
+  return value === "openai" || value === "chatgpt";
+}
+
 export function getProviderModelOptions(provider) {
   return AI_PROVIDER_MODEL_OPTIONS[normalizeAIProvider(provider)] || AI_PROVIDER_MODEL_OPTIONS.openai;
 }

@@ -4,6 +4,7 @@ import {
   getStoredAIProviderModelPreference,
   normalizeProviderModel,
   storeAIProviderModelPreference,
+  supportsConversationalProjectMode,
 } from "./aiProviderConfig";
 
 describe("AI provider model preferences", () => {
@@ -19,6 +20,15 @@ describe("AI provider model preferences", () => {
 
   it("falls back only when a model id is blank", () => {
     expect(normalizeProviderModel("openai", "")).toBe(getDefaultProviderModel("openai"));
+  });
+
+  it("exposes conversational project mode only for the OpenAI provider", () => {
+    expect(supportsConversationalProjectMode("openai")).toBe(true);
+    expect(supportsConversationalProjectMode("chatgpt")).toBe(true);
+    expect(supportsConversationalProjectMode("anthropic")).toBe(false);
+    expect(supportsConversationalProjectMode("claude")).toBe(false);
+    expect(supportsConversationalProjectMode("gemini")).toBe(false);
+    expect(supportsConversationalProjectMode(null)).toBe(false);
   });
 
   it("stores and reloads custom model ids", () => {

@@ -71,6 +71,7 @@ import {
   getProviderKeyPlaceholder,
   normalizeAIProvider,
   saveUserAIProviderSettings,
+  supportsConversationalProjectMode,
   validateProviderApiKey,
 } from "./lib/aiProviderConfig";
 import { initializeLocalBackupRuntime } from "./lib/localBackupService";
@@ -6801,6 +6802,7 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [showPromptWizard, setShowPromptWizard] = useState(true);
   const [cleanOnceKey, setCleanOnceKey] = useState(null);
   const [promptMode, setPromptMode] = useState('structured');
+  const conversationalProjectModeAvailable = supportsConversationalProjectMode(gate.provider);
   const [loadedProjectId, setLoadedProjectId] = useState(null);
   // Bulk selection + bulk edit for Risk Inbox
 const [inboxSelection, setInboxSelection] = useState(new Set());
@@ -6813,6 +6815,12 @@ const [inboxBulk, setInboxBulk] = useState({
   tags: "",
   tagsMode: "replace", // "replace" | "append" | "clear"
 });
+
+  useEffect(() => {
+    if (!conversationalProjectModeAvailable && promptMode === 'conversational') {
+      setPromptMode('structured');
+    }
+  }, [conversationalProjectModeAvailable, promptMode]);
 
   const { startActivity, updateActivity, finishActivity } = useActivityCenter();
 const [analysisActivityId, setAnalysisActivityId] = useState(null);
@@ -14519,8 +14527,9 @@ const projectHint = useMemo(() => ({
 
                   {showPromptWizard && (
                     <div className="mx-auto w-full max-w-[min(96vw,calc(100vw-9rem))]">
-                      {/* Mode Toggle */}
-                      <div className="flex items-center justify-center mb-4">
+                      {/* Realtime voice discovery is currently provided by OpenAI Realtime. */}
+                      {conversationalProjectModeAvailable && (
+                        <div className="flex items-center justify-center mb-4">
   <div className="inline-flex p-1 bg-gray-100 rounded-xl">
     <button
       className={`px-3 py-1.5 rounded-lg text-sm ${promptMode==='structured' ? 'bg-white shadow' : ''}`}
@@ -14538,10 +14547,11 @@ const projectHint = useMemo(() => ({
     </button>
   </div>
 </div>
+                      )}
 
 
                       {/* Wizard / Realtime */}
-                      {promptMode === 'structured' ? (
+                      {promptMode !== 'conversational' || !conversationalProjectModeAvailable ? (
                         <PromptWizard
                           onSubmit={handlePromptWizardSubmit}
                           onSkip={() => {
