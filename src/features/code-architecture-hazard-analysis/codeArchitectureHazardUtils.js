@@ -308,10 +308,14 @@ export function traceabilityToSheetCells(trace = {}) {
 }
 
 export function extractFunctionalDecompositionTrace(headers = [], row = [], repoMeta = {}) {
-  const valueFor = (name) => {
-    const index = headers.findIndex((header) => normalizeText(header).toLowerCase() === name.toLowerCase());
+  const valueFor = (...names) => {
+    const normalizedNames = names.map((name) => normalizeText(name).toLowerCase());
+    const index = headers.findIndex((header) => normalizedNames.includes(normalizeText(header).toLowerCase()));
     return index >= 0 ? normalizeText(row[index]) : "";
   };
+  const functionFrom = valueFor("Function (From)", "From Function", "Source Function") || normalizeText(row[0]);
+  const functionTo = valueFor("Function (To)", "To Function", "Target Function") || normalizeText(row[2]);
+  const controlAction = valueFor("Control Action", "Action", "Interface") || normalizeText(row[1]);
   const trace = {
     traceId: valueFor("Trace ID"),
     fromNodeId: valueFor("From Node ID"),
@@ -319,9 +323,9 @@ export function extractFunctionalDecompositionTrace(headers = [], row = [], repo
     toNodeId: valueFor("To Node ID"),
     architectureRowRef: valueFor("Architecture Row Ref"),
     architectureElementId: valueFor("Architecture Element ID"),
-    functionFrom: normalizeText(row[0]),
-    controlAction: normalizePrimitiveCallActionText(row[1], row[2]),
-    functionTo: normalizeText(row[2]),
+    functionFrom,
+    controlAction: normalizePrimitiveCallActionText(controlAction, functionTo),
+    functionTo,
     fromFile: valueFor("Function (From) Related File(s)"),
     toFile: valueFor("Function (To) Related File(s)"),
     sourceFiles: splitList(valueFor("Related Source File(s)")),

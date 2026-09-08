@@ -51,8 +51,11 @@ function flattenDecomposition(sheets) {
     return index >= 0 ? index : fallback;
   };
   const fromIdx = findColumn(["Function (From)", "From Function", "Source Function"], 0);
+  const fromDetailsIdx = findColumn(["Function (From) Details", "From Function Details", "Source Function Details"], -1);
   const actionIdx = findColumn(["Control Action", "Unsafe Control Action", "UCA", "Action"], 1);
+  const actionDetailsIdx = findColumn(["Control Action Details", "Action Details", "Interface Details"], -1);
   const toIdx = findColumn(["Function (To)", "To Function", "Target Function"], 2);
+  const toDetailsIdx = findColumn(["Function (To) Details", "To Function Details", "Target Function Details"], -1);
   const guidePhraseIdx = findColumn(["Guide Phrase", "Guide Word", "Guideword", "STPA Guide Phrase"], -1);
   const guideApplicableIdx = findColumn(["Guide Phrase Applicable", "Guide Applicable", "Applicability", "Applicable"], -1);
   const guideRationaleIdx = findColumn(["Guide Phrase Applicability Rationale", "Applicability Rationale", "Guide Phrase Rationale"], -1);
@@ -70,8 +73,11 @@ function flattenDecomposition(sheets) {
       return {
         id: `FD-${index + 1}`,
         from,
+        fromDetails: fromDetailsIdx >= 0 ? sanitizeText(getCellText(row[fromDetailsIdx])) : "",
         controlAction,
+        controlActionDetails: actionDetailsIdx >= 0 ? sanitizeText(getCellText(row[actionDetailsIdx])) : "",
         to,
+        toDetails: toDetailsIdx >= 0 ? sanitizeText(getCellText(row[toDetailsIdx])) : "",
         controlActionType: inferControlActionType(controlAction, from, to),
         guidePhrase: guidePhraseIdx >= 0 ? sanitizeText(getCellText(row[guidePhraseIdx])) : "",
         guidePhraseApplicable: guideApplicableIdx >= 0 ? sanitizeText(getCellText(row[guideApplicableIdx])) : "",
@@ -121,10 +127,13 @@ function compactPromptItem(item = {}, maxChars = 120) {
   return {
     id: truncateForPrompt(item.id, 32),
     functionFrom: truncateForPrompt(item.from, maxChars),
+    functionFromDetails: truncateForPrompt(item.fromDetails, maxChars * 2),
     controlAction: truncateForPrompt(item.controlAction, maxChars),
+    controlActionDetails: truncateForPrompt(item.controlActionDetails, maxChars * 2),
     controlActionType: truncateForPrompt(item.controlActionType, 48),
     semanticDeviation: truncateForPrompt(semanticGuidePhrase(item.controlActionType, item.guidePhrase), maxChars),
     functionTo: truncateForPrompt(item.to, maxChars),
+    functionToDetails: truncateForPrompt(item.toDetails, maxChars * 2),
     guidePhrase: truncateForPrompt(item.guidePhrase, maxChars),
     guidePhraseApplicable: truncateForPrompt(item.guidePhraseApplicable, 24),
     guidePhraseApplicabilityRationale: truncateForPrompt(item.guidePhraseApplicabilityRationale, maxChars),
@@ -159,6 +168,7 @@ const STANDARD_MAX_ROWS_PER_PROMPT = 8;
 const STANDARD_RETRY_ROWS_PER_PROMPT = 4;
 const STANDARD_MISSING_ROW_RETRIES = 2;
 const APPLICABILITY_REVIEW_ROWS_PER_PROMPT = 12;
+const APPLICABILITY_PATTERN_REPAIR_ROWS_PER_PROMPT = 8;
 const CANONICAL_MAPPING_ROWS_PER_PROMPT = 40;
 const HAZARD_LLM_CONCURRENCY = 2;
 const DERIVED_STPA_FIELDS = new Set([
@@ -543,9 +553,13 @@ function normalizeRow(config, row, item, index) {
       normalized[fieldName] = item?.controlActionType || inferControlActionType(item?.controlAction, item?.from, item?.to);
     } else if (fieldName === "causalFactorCategory") {
       const category = sanitizeText(row[fieldName]);
-      normalized[fieldName] = CAUSAL_FACTOR_CATEGORIES.has(category)
+      const proposedCategory = CAUSAL_FACTOR_CATEGORIES.has(category)
         ? category
         : inferCausalFactorCategory(row.causalFactors || row.causalScenario);
+      normalized[fieldName] = reconcileCausalFactorCategory(
+        proposedCategory,
+        [row.causalFactors, row.causalFactor, row.causalScenario].map(sanitizeText).filter(Boolean).join(" "),
+      );
     } else if (fieldName === "systemRequirement" || fieldName === "safetyRequirementsConstraints") {
       const parameterized = parameterizeUnsupportedRequirement(
         sanitizeText(row[fieldName]) || base[fieldName] || "",
@@ -627,10 +641,16 @@ export function deriveStructuredApplicability(tag = {}, fallback = {}) {
 const APPLICABILITY_EVIDENCE_FIELDS = {
   "function from": "from",
   functionfrom: "from",
+  "function from details": "fromDetails",
+  functionfromdetails: "fromDetails",
   "control action": "controlAction",
   controlaction: "controlAction",
+  "control action details": "controlActionDetails",
+  controlactiondetails: "controlActionDetails",
   "function to": "to",
   functionto: "to",
+  "function to details": "toDetails",
+  functiontodetails: "toDetails",
   "operational scenario": "operationalScenario",
   operationalscenario: "operationalScenario",
   "operational mode": "operationalMode",
@@ -681,7 +701,9 @@ function guideSpecificEvidencePattern(guidePhrase = "", actionType = "") {
 const EVIDENCE_RELEVANCE_STOP_WORDS = new Set([
   "acquire", "action", "active", "apply", "autonomy", "available", "control", "data", "environment",
   "function", "generate", "information", "manage", "monitor", "operation", "operating", "provide", "publish",
-  "receive", "report", "request", "service", "system", "vehicle",
+  "receive", "report", "request", "service", "system", "vehicle", "activation", "command", "constraint",
+  "current", "estimate", "execution", "initialization", "measurement", "motion", "planning", "sequence",
+  "state", "status", "timing", "valid", "value",
 ]);
 
 function evidenceRelevanceTokens(value = "") {
@@ -691,10 +713,35 @@ function evidenceRelevanceTokens(value = "") {
 }
 
 function evidenceReferencesInterface(evidence = {}, item = {}) {
-  if (["from", "controlAction", "to"].includes(evidence.itemField)) return true;
-  const evidenceTokens = new Set(evidenceRelevanceTokens(evidence.evidenceQuote));
-  const interfaceTokens = evidenceRelevanceTokens(`${item.from} ${item.controlAction} ${item.to}`);
-  return interfaceTokens.some((token) => evidenceTokens.has(token));
+  if (["from", "fromDetails", "controlAction", "controlActionDetails", "to", "toDetails"].includes(evidence.itemField)) return true;
+  const normalizedQuote = normalizedEvidenceText(evidence.evidenceQuote);
+  const normalizedInterface = normalizedEvidenceText(
+    `${item.from} ${item.fromDetails} ${item.controlAction} ${item.controlActionDetails} ${item.to} ${item.toDetails}`,
+  );
+  const interfaceLabels = [item.from, item.controlAction, item.to]
+    .map(normalizedEvidenceText)
+    .filter((label) => label.length >= 8);
+  if (interfaceLabels.some((label) => normalizedQuote.includes(label))) return true;
+  const domainAnchorFamilies = [
+    /\b(?:state|estimate|pose|velocity|position)\w*\b/i,
+    /\b(?:health|fault|readiness|diagnostic)\w*\b/i,
+    /\b(?:power|energy|battery|voltage|current)\w*\b/i,
+    /\b(?:route|trajectory|path|waypoint)\w*\b/i,
+    /\b(?:mission|goal|authority|directive)\w*\b/i,
+    /\b(?:contact|footstep|gait|foothold|joint)\w*\b/i,
+    /\b(?:configur|parameter|calibrat|threshold)\w*\b/i,
+    /\b(?:sensor|terrain|obstacle|observation)\w*\b/i,
+  ];
+  if (domainAnchorFamilies.some((pattern) => pattern.test(normalizedQuote) && pattern.test(normalizedInterface))) return true;
+  const evidenceTokens = new Set(evidenceRelevanceTokens(normalizedQuote));
+  const interfaceTokens = new Set(evidenceRelevanceTokens(
+    normalizedInterface,
+  ));
+  let overlapCount = 0;
+  evidenceTokens.forEach((token) => {
+    if (interfaceTokens.has(token)) overlapCount += 1;
+  });
+  return overlapCount >= 2;
 }
 
 function guideMechanismPattern(guidePhrase = "") {
@@ -710,14 +757,14 @@ function guideMechanismPattern(guidePhrase = "") {
 }
 
 function actionSupportsOrdering(item = {}, actionType = "") {
-  const value = normalizedEvidenceText(`${item.controlAction} ${item.from} ${item.to}`);
+  const value = normalizedEvidenceText(`${item.controlAction} ${item.controlActionDetails} ${item.from} ${item.fromDetails} ${item.to} ${item.toDetails}`);
   return /mode transition|configuration|authority|command|request|state estimate|information|data|feedback|status/i.test(actionType)
     && /\b(?:align\w*|associat\w*|command\w*|configur\w*|constraint\w*|convert\w*|execut\w*|fus\w*|measurement\w*|mode\w*|plan\w*|predict\w*|reference\w*|route\w*|select\w*|state\w*|target\w*|trajector\w*|transform\w*|update\w*|version\w*)\b/i.test(value);
 }
 
 function actionSupportsDuration(item = {}, actionType = "") {
   const action = normalizedEvidenceText(item.controlAction);
-  const interfaceText = normalizedEvidenceText(`${item.controlAction} ${item.from} ${item.to}`);
+  const interfaceText = normalizedEvidenceText(`${item.controlAction} ${item.controlActionDetails} ${item.from} ${item.fromDetails} ${item.to} ${item.toDetails}`);
   const discreteRequest = /command|request|event/i.test(actionType)
     && /\b(?:request\w*|submit\w*|notify\w*|acknowledg\w*|trigger\w*|alert\w*)\b/i.test(action)
     && !/\b(?:actuat\w*|brak\w*|steer\w*|throttle\w*|hold\w*|maintain\w*|motion\w*)\b/i.test(action);
@@ -728,7 +775,7 @@ function actionSupportsDuration(item = {}, actionType = "") {
 
 function actionSupportsRetention(item = {}, actionType = "") {
   if (/event|external input|disturbance/i.test(actionType)) return false;
-  const value = normalizedEvidenceText(`${item.controlAction} ${item.from} ${item.to}`);
+  const value = normalizedEvidenceText(`${item.controlAction} ${item.controlActionDetails} ${item.from} ${item.fromDetails} ${item.to} ${item.toDetails}`);
   return /configuration|authority|mode transition|state estimate|information|data|feedback|status/i.test(actionType)
     && /\b(?:configur\w*|constraint\w*|estimate\w*|forecast\w*|map\w*|measurement\w*|mode\w*|plan\w*|prediction\w*|reference\w*|state\w*|status|target\w*|trajector\w*|transform\w*|updates?|world model)\b/i.test(value);
 }
@@ -750,6 +797,9 @@ function findGuideSpecificEvidence(item = {}, guidePhrase = "", actionType = "")
     ["Operating Conditions", item.operatingConditions],
     ["Operational Scenario", item.operationalScenario],
     ["Operational Mode", item.operationalMode],
+    ["Control Action Details", item.controlActionDetails],
+    ["Function To Details", item.toDetails],
+    ["Function From Details", item.fromDetails],
     ["Control Action", item.controlAction],
     ["Function From", item.from],
     ["Function To", item.to],
@@ -803,7 +853,7 @@ export function validateApplicabilityEvidence(tag = {}, item = {}) {
     const evidencePattern = guideSpecificEvidencePattern(guidePhrase, actionType);
     const evidenceSemantic = !evidencePattern || evidencePattern.test(evidenceTerms);
     const evidenceRelevant = evidenceReferencesInterface(candidateEvidence, item);
-    const interfaceEvidence = ["from", "controlAction", "to"].includes(candidateEvidence.itemField);
+    const interfaceEvidence = ["from", "fromDetails", "controlAction", "controlActionDetails", "to", "toDetails"].includes(candidateEvidence.itemField);
     let supported = true;
     let reason = "the cited evidence does not establish the guide-phrase-specific mechanism for this interface";
 
@@ -1019,6 +1069,152 @@ export function findConsistencyReconciliationIndexes(rows = [], items = []) {
     if (yesCount === 0 || yesCount >= 6) groupIndexes.forEach((index) => indexes.add(index));
   });
   return Array.from(indexes).sort((left, right) => left - right);
+}
+
+function guidePhraseSupportsPatternChallenge(item = {}) {
+  const guidePhrase = normalizedEvidenceText(item.guidePhrase);
+  const actionType = sanitizeText(item.controlActionType || inferControlActionType(item.controlAction, item.from, item.to));
+  if (/not providing|providing the control action/.test(guidePhrase)) return true;
+  if (/too early/.test(guidePhrase)) {
+    return /command|request|configuration|authority|mode transition|state estimate|information|data|feedback|status|force|resource flow/i.test(actionType)
+      || /initiali|startup|activation|transition|prerequis|validity|ready/i.test(normalizedEvidenceText(`${item.controlActionDetails} ${item.toDetails}`));
+  }
+  if (/too late/.test(guidePhrase)) {
+    return actionSupportsDuration(item, actionType)
+      || contextIsTimeCritical(item)
+      || /command|request|event|state estimate|information|data|feedback|status|force|resource flow/i.test(actionType);
+  }
+  if (/wrong order/.test(guidePhrase)) return actionSupportsOrdering(item, actionType);
+  if (/stopped too soon/.test(guidePhrase)) return actionSupportsDuration(item, actionType);
+  if (/applied too long/.test(guidePhrase)) {
+    return actionSupportsRetention(item, actionType)
+      || /force|resource flow|mode transition/i.test(actionType)
+      || /validity|fresh|expire|withdraw|completion|duration|maintain/i.test(normalizedEvidenceText(item.controlActionDetails));
+  }
+  return false;
+}
+
+function missingSafetyCriticalFeedbackNeedsReview(item = {}) {
+  if (!/not providing/.test(normalizedEvidenceText(item.guidePhrase))) return false;
+  const contract = normalizedEvidenceText(
+    `${item.controlAction} ${item.controlActionDetails} ${item.fromDetails} ${item.to} ${item.toDetails}`,
+  );
+  const safetyRelevantSignal = /\b(?:authority|confidence|constraint|contact|emergency|energy|fault|health|limit|power|protect|readiness|safe|support|validity)\b/.test(contract);
+  const decisionOrGate = /\b(?:accept|assess|authoriz|coordinate|decid|detect|enable|evaluate|inhibit|monitor|plan|protect|recover|reject|select|validate)\w*\b/.test(contract);
+  return safetyRelevantSignal && decisionOrGate;
+}
+
+const CAUSAL_CATEGORY_SIGNAL_PATTERNS = {
+  "Controller logic / process model": /\b(?:algorithm|decision logic|process model|controller logic|state machine|gating|arbitration)\b/gi,
+  "Sensor / feedback": /\b(?:sensor|measurement|feedback|encoder|camera|lidar|radar|imu|observation|detection)\b/gi,
+  "Actuator / physical process": /\b(?:actuator|mechanical|motor|valve|brake|physical process|contact force|joint drive)\b/gi,
+  "Communication / interface": /\b(?:communication|network|message|packet|bus|link|interface|transmission|delivery acknowledgement)\b/gi,
+  "Timing / sequencing": /\b(?:timing|late|early|stale|sequence|sequencing|race|deadline|latency|schedule|before|after)\b/gi,
+  "Power / energy": /\b(?:power|energy|voltage|electrical|battery|supply|undervoltage|overcurrent)\b/gi,
+  "Initialization / lifecycle": /\b(?:startup|shutdown|initialization|initialize|reset|boot|commissioning|lifecycle)\b/gi,
+  "Mode / state management": /\b(?:mode confusion|mode transition|operating mode|state transition|wrong mode|mode manager)\b/gi,
+  "Configuration / calibration": /\b(?:configuration|parameter|calibration|calibrate|threshold|tuning|configured)\b/gi,
+  "Human / procedure": /\b(?:operator|human|maintenance|procedure|technician|supervisor|training)\b/gi,
+  "Common-cause dependency": /\b(?:common cause|shared dependency|shared resource|single point|coupled failure)\b/gi,
+};
+
+function causalCategorySignalCount(category, value = "") {
+  const pattern = CAUSAL_CATEGORY_SIGNAL_PATTERNS[category];
+  if (!pattern) return 0;
+  return (sanitizeText(value).match(pattern) || []).length;
+}
+
+export function reconcileCausalFactorCategory(category = "", causalText = "") {
+  const currentCategory = CAUSAL_FACTOR_CATEGORIES.has(sanitizeText(category))
+    ? sanitizeText(category)
+    : inferCausalFactorCategory(causalText);
+  const scores = Object.keys(CAUSAL_CATEGORY_SIGNAL_PATTERNS)
+    .map((candidate) => [candidate, causalCategorySignalCount(candidate, causalText)])
+    .sort((left, right) => right[1] - left[1]);
+  const [strongestCategory, strongestScore] = scores[0] || [currentCategory, 0];
+  const currentScore = causalCategorySignalCount(currentCategory, causalText);
+  return strongestCategory !== currentCategory && strongestScore >= 2 && currentScore === 0
+    ? strongestCategory
+    : currentCategory;
+}
+
+export function findCausalFactorCategoryReviewIndexes(rows = []) {
+  const indexes = [];
+  rows.forEach((row, index) => {
+    if (normalizeGuidePhraseApplicability(row?.guidePhraseApplicable) !== "Yes") return;
+    const currentCategory = sanitizeText(row?.causalFactorCategory);
+    if (!CAUSAL_FACTOR_CATEGORIES.has(currentCategory)) {
+      indexes.push(index);
+      return;
+    }
+    const causalText = [row?.causalFactors, row?.causalFactor, row?.causalScenario]
+      .map(sanitizeText)
+      .filter(Boolean)
+      .join(" ");
+    if (!causalText) return;
+    if (reconcileCausalFactorCategory(currentCategory, causalText) !== currentCategory) indexes.push(index);
+  });
+  return indexes;
+}
+
+export function findApplicabilityPatternRepairIndexes(rows = [], items = []) {
+  if (rows.length < 6 || rows.length !== items.length) return [];
+  const indexes = new Set([
+    ...findApplicabilityCalibrationIndexes(rows, items),
+    ...findConsistencyReconciliationIndexes(rows, items),
+    ...findCausalFactorCategoryReviewIndexes(rows),
+  ]);
+  const guideGroups = new Map();
+  rows.forEach((row, index) => {
+    const guidePhrase = normalizedEvidenceText(items[index]?.guidePhrase || row?.guidePhrase);
+    if (!guidePhrase) return;
+    if (!guideGroups.has(guidePhrase)) guideGroups.set(guidePhrase, []);
+    guideGroups.get(guidePhrase).push(index);
+    if (
+      normalizeGuidePhraseApplicability(row?.guidePhraseApplicable) === "No"
+      && missingSafetyCriticalFeedbackNeedsReview(items[index])
+    ) indexes.add(index);
+  });
+
+  const collapsedGuideGroups = [];
+  guideGroups.forEach((groupIndexes, guidePhrase) => {
+    const interfaceCount = new Set(groupIndexes.map((index) => hazardInterfaceKey(items[index]))).size;
+    if (interfaceCount < 3) return;
+    const yesCount = groupIndexes.filter((index) => normalizeGuidePhraseApplicability(rows[index]?.guidePhraseApplicable) === "Yes").length;
+    const yesRatio = yesCount / groupIndexes.length;
+    const nearlyUniform = yesCount === 0 || yesCount === groupIndexes.length || yesRatio <= 0.1;
+    if (!nearlyUniform) return;
+    const challengeIndexes = yesCount === groupIndexes.length
+      ? groupIndexes
+      : groupIndexes.filter((index) => (
+        normalizeGuidePhraseApplicability(rows[index]?.guidePhraseApplicable) === "No"
+        && guidePhraseSupportsPatternChallenge(items[index])
+      ));
+    if (challengeIndexes.length < 2) return;
+    collapsedGuideGroups.push({ guidePhrase, indexes: challengeIndexes, yesRatio });
+  });
+  if (collapsedGuideGroups.length >= 2) {
+    collapsedGuideGroups.flatMap((group) => group.indexes).forEach((index) => indexes.add(index));
+  } else {
+    collapsedGuideGroups
+      .filter((group) => /^providing the control action/.test(group.guidePhrase) && group.yesRatio <= 0.1)
+      .flatMap((group) => group.indexes)
+      .forEach((index) => indexes.add(index));
+  }
+
+  return Array.from(indexes).sort((left, right) => left - right);
+}
+
+function applicabilityDistributionSummary(rows = [], items = []) {
+  const groups = new Map();
+  rows.forEach((row, index) => {
+    const guidePhrase = sanitizeText(items[index]?.guidePhrase || row?.guidePhrase) || "Unspecified guide phrase";
+    if (!groups.has(guidePhrase)) groups.set(guidePhrase, { yes: 0, no: 0 });
+    const counts = groups.get(guidePhrase);
+    if (normalizeGuidePhraseApplicability(row?.guidePhraseApplicable) === "Yes") counts.yes += 1;
+    else counts.no += 1;
+  });
+  return Array.from(groups.entries()).map(([guidePhrase, counts]) => ({ guidePhrase, ...counts }));
 }
 
 function isExternalEndpoint(value = "") {
@@ -1262,11 +1458,13 @@ Applicability and safety rules:
 - Mark No when the deviation is semantically inapplicable, precluded by the stated architecture/conditions, cannot affect the receiver in that mode, or lacks a credible adverse consequence. Explain the specific reason in guidePhraseApplicabilityRationale.
 - Treat row.semanticDeviation as the intended meaning of the guide phrase for that action type.
 - For Yes, applicabilityMechanism must name the receiver behavior that makes this exact deviation consequential.
-- applicabilityEvidenceField must be exactly one of: Function From; Control Action; Function To; Operational Scenario; Operational Mode; Operating Conditions; Context Assumptions.
+- applicabilityEvidenceField must be exactly one of: Function From; Function From Details; Control Action; Control Action Details; Function To; Function To Details; Operational Scenario; Operational Mode; Operating Conditions; Context Assumptions.
 - applicabilityEvidenceQuote must be a short exact verbatim excerpt copied from that supplied field. Do not paraphrase, combine fields, or invent evidence. The application verifies the excerpt against the source and rejects ungrounded Yes decisions.
 - Choose the excerpt that establishes the specific semantic discriminator: a prerequisite/window for early, a deadline/latency for late, sequence/version for wrong order, continuity/duration for stopped too soon, or freshness/expiry/revocation for applied too long. A generic statement that the system is operating or safety-relevant is insufficient.
-- Bind evidence to this row. A shared context sentence about another actor, channel, function, or interface is not evidence merely because it contains words such as continuous, active, current, control, update, or monitor. Prefer Function From, Control Action, or Function To when their names establish the relevant interface semantics; otherwise the context excerpt must refer to this interface's artifact, endpoint, dependency, or operating constraint.
-- "Providing causes" requires a context-supported hazardous value, authority, state, or operating condition; the abstract possibility of invalid data is insufficient by itself.
+- Bind evidence to this row. A shared context sentence about another actor, channel, function, or interface is not evidence merely because it shares a generic word such as sequence, state, execution, initialization, continuous, active, current, control, update, or monitor. Prefer the interface contract fields; otherwise the context excerpt must name this interface's artifact, endpoint, or at least two distinctive interface concepts.
+- "Providing causes" asks whether provision under an unsafe system condition, or provision of an incorrect, unauthorized, inconsistent, out-of-range, or unwanted value, can affect the receiver. Do not evaluate only a correct nominal value under safe conditions.
+- A contract carrying a governed goal, authority, bound, constraint, mode, state, estimate, target, command, force, resource, or confidence value may establish consequential variants even when it does not literally say "invalid". Cite the exact contract and explain the unsafe variant and receiver effect.
+- For "not providing", do not assume safe shutdown. Explicitly evaluate missing health, fault, readiness, power, energy, protective, authority, validity, confidence, limit, or constraint feedback used by a receiver to assess, authorize, enable, inhibit, plan, coordinate, or select behavior.
 - "Too early" requires consumption before a named prerequisite, validity boundary, or acceptance window. Safe buffering or early arrival alone is not hazardous.
 - "Wrong order" requires a version, sequence, dependency, or prerequisite whose order affects the receiver. A generic processing pipeline is insufficient.
 - "Stopped too soon" requires an ongoing stream, maintained assertion, multi-part transfer, or action duration that the receiver depends on in this context.
@@ -1336,6 +1534,234 @@ function mergeAuditTag(config, row, item, index, tag = {}, { requireChallengeEvi
   }, item, index);
 }
 
+function hasCompleteStructuredApplicabilityDecision(tag = {}) {
+  return [
+    "semanticMeaningful",
+    "receiverCanBeAffected",
+    "contextSupportsMechanism",
+    "adverseStateSupported",
+  ].every((fieldName) => normalizeAuditBoolean(tag[fieldName]) !== null);
+}
+
+function hasCompleteApplicableRepair(config, repair = {}) {
+  const requiredByMethod = config.rowIdSuffix === "STPA"
+    ? ["losses", "hazards", "unsafeControlActions", "causalScenario", "causalFactors", "mitigationStrategy", "safetyRequirementsConstraints", "systemRequirement"]
+    : config.fields.map(([fieldName]) => fieldName).filter((fieldName) => ![
+      "rawAnalysisRowId",
+      "guidePhrase",
+      "guidePhraseApplicable",
+      "guidePhraseApplicabilityRationale",
+      "controlActionType",
+      "rawLossCandidate",
+      "rawHazardCandidate",
+      "canonicalLossId",
+      "canonicalHazardId",
+      "requirementParameterSource",
+    ].includes(fieldName));
+  return requiredByMethod.every((fieldName) => {
+    const value = sanitizeText(repair[fieldName]);
+    return value && !/^not applicable\b/i.test(value);
+  });
+}
+
+async function requestApplicabilityPatternRepairs(config, repairItems, distribution, contextOptions = {}) {
+  const operationalContextBlock = formatHazardOperationalContext(contextOptions);
+  const fieldNames = [
+    "id",
+    ...config.fields.map(([fieldName]) => fieldName).filter((fieldName) => !DERIVED_STPA_FIELDS.has(fieldName)),
+    ...SAFETY_SIGNIFICANCE_FIELDS.map(([fieldName]) => fieldName),
+    "semanticMeaningful",
+    "receiverCanBeAffected",
+    "contextSupportsMechanism",
+    "adverseStateSupported",
+    "applicabilityMechanism",
+    "applicabilityEvidenceField",
+    "applicabilityEvidenceQuote",
+    "strongestReasonForNo",
+    "safetyExposureCategory",
+    "safetyExposurePath",
+    "safetyEvidenceField",
+    "safetyEvidenceQuote",
+  ];
+  const prompt = `
+You are repairing a completed ${config.analysisName} decision matrix after a deterministic quality check detected a suspiciously uniform guide-phrase pattern or a causal-category mismatch.
+
+This is a focused independent reconsideration, not a request to manufacture diversity. A uniform result may be correct. Preserve it when supported, but reconsider each supplied interface independently and change it when the exact action contract and operational context support a different decision.
+
+Project / operational context:
+${operationalContextBlock || "No explicit project or operational context was available. Infer cautiously from the supplied functional contracts only."}
+
+Completed-run applicability distribution:
+${JSON.stringify(distribution)}
+
+Return ONLY a JSON array with one complete object for every supplied row. Preserve each row id exactly. Each object must include:
+${fieldNames.join(", ")}.
+
+Repair rules:
+- Evaluate the exact semantic deviation for this control-action type. Do not copy the completed-run majority decision and do not force a quota.
+- Use Function From Details, Control Action Details, and Function To Details as authoritative interface contracts when present.
+- Distinguish absence, invalid or unwanted provision, early consumption, late arrival, wrong sequence/version, premature cessation, and stale or overlong retention. Do not collapse all of them into absence.
+- "Providing causes" asks whether provision under an unsafe system condition, or provision of an incorrect, unauthorized, inconsistent, out-of-range, or unwanted command/value, can affect the receiver. Do not interpret it as provision of a correct nominal value under safe conditions.
+- The functional contract does not need to literally contain words such as "invalid" or "unsafe". A contract that carries a governed goal, authority, bound, constraint, mode, state, estimate, target, command, force, resource, or confidence value can establish that consequential variants exist. Cite that exact contract, then explain the unsafe variant and receiver effect without inventing unsupported architecture.
+- For "not providing", explicitly reconsider absent health, fault, readiness, power, energy, protective, authority, validity, confidence, limit, or constraint feedback when the receiver assesses, authorizes, enables, inhibits, plans, coordinates, or selects behavior. Safe shutdown on missing input must be established by supplied evidence; do not assume it.
+- "Too late" may be applicable when a receiver decision, control cycle, freshness boundary, response point, or initialization gate can be missed.
+- "Wrong order" may be applicable when a plan, command, state, version, prerequisite, transition, or feedback item can be consumed in an unsafe sequence.
+- "Stopped too soon" may be applicable to maintained control, physical/resource flow, periodic feedback, multi-part transfer, or a stream that ends before its required availability interval.
+- "Applied too long" may be applicable when a command, constraint, authority, state, sample, plan, physical action, or resource flow persists beyond completion, revocation, replacement, or validity.
+- semanticMeaningful, receiverCanBeAffected, contextSupportsMechanism, and adverseStateSupported must each be Yes or No. guidePhraseApplicable is Yes only when all four are Yes.
+- For a Yes decision, applicabilityEvidenceField must name exactly one supplied field and applicabilityEvidenceQuote must be a short exact excerpt copied from it. Allowed fields: Function From; Function From Details; Control Action; Control Action Details; Function To; Function To Details; Operational Scenario; Operational Mode; Operating Conditions; Context Assumptions.
+- For a No decision, strongestReasonForNo must state the interface-specific reason. Do not use the completed distribution as evidence.
+- If the repaired decision is Yes, regenerate every hazard-bearing field as a complete, concrete row; do not leave Not applicable text in Loss, Hazard, UCA, causal, mitigation, constraint, or requirement fields.
+- If the repaired decision is No, use Mission/Reliability and Needs Review for safety significance. The application will normalize hazard-bearing fields to Not applicable.
+- causalFactorCategory must match the primary initiating mechanism, not a secondary consequence. Use only the allowed category vocabulary from the original analysis instructions.
+- Preserve TBD parameter discipline and allocate requirements to an exact source function, target function, or named subsystem.
+
+Rows to repair:
+${JSON.stringify(repairItems.map(({ item, row }) => ({
+    row: compactPromptItem(item, 220),
+    currentGenerated: row,
+  })))}
+  `.trim();
+
+  const response = await fetchLLMResponse(prompt, {}, undefined, "", {
+    signal: contextOptions.signal,
+    maxTokens: 10_000,
+    workflow: "hazard-applicability-pattern-repair",
+  });
+  return extractJsonArray(response);
+}
+
+async function repairHazardAuditAnomalies(config, rows, items, contextOptions = {}) {
+  if (config.rowIdSuffix !== "STPA" || rows.length < 6) return rows;
+  const repairIndexes = findApplicabilityPatternRepairIndexes(rows, items);
+  if (!repairIndexes.length) return rows;
+
+  const distribution = applicabilityDistributionSummary(rows, items);
+  const repairGroups = new Map();
+  repairIndexes.forEach((index) => {
+    const guidePhrase = sanitizeText(items[index]?.guidePhrase || rows[index]?.guidePhrase) || "Unspecified guide phrase";
+    if (!repairGroups.has(guidePhrase)) repairGroups.set(guidePhrase, []);
+    repairGroups.get(guidePhrase).push({ row: rows[index], item: items[index], index });
+  });
+  const repairChunks = Array.from(repairGroups.values()).flatMap((group) => (
+    chunkItemsByCount(group, APPLICABILITY_PATTERN_REPAIR_ROWS_PER_PROMPT)
+  ));
+  const repairedRows = [...rows];
+  let completedChunks = 0;
+  contextOptions.onProgress?.({
+    message: `Rechecking ${repairIndexes.length} suspicious hazard-audit decisions...`,
+    completed: 0,
+    total: repairChunks.length,
+  });
+
+  await mapWithConcurrency(repairChunks, HAZARD_LLM_CONCURRENCY, async (repairChunk, chunkIndex) => {
+    contextOptions.onProgress?.({
+      message: `Repairing applicability pattern (${chunkIndex + 1}/${repairChunks.length})...`,
+      completed: completedChunks,
+      total: repairChunks.length,
+    });
+    try {
+      const repairs = await requestApplicabilityPatternRepairs(config, repairChunk, distribution, contextOptions);
+      const repairsById = generatedRowsById(repairs);
+      repairChunk.forEach(({ row, item, index }, localIndex) => {
+        const repair = generatedRowForItem(repairsById, repairs, localIndex, item);
+        if (!hasCompleteStructuredApplicabilityDecision(repair)) return;
+        const applicability = validateApplicabilityEvidence(repair, item).guidePhraseApplicable;
+        const wasApplicable = normalizeGuidePhraseApplicability(row.guidePhraseApplicable) === "Yes";
+        if (applicability === "Yes" && !wasApplicable && !hasCompleteApplicableRepair(config, repair)) return;
+        const previousRow = applicability === "Yes" && !wasApplicable
+          ? {
+            ...row,
+            rawLossCandidate: "",
+            rawHazardCandidate: "",
+            canonicalLossId: "",
+            canonicalHazardId: "",
+          }
+          : row;
+        const repairedCandidate = normalizeRow(config, { ...previousRow, ...repair }, item, index);
+        repairedRows[index] = mergeAuditTag(config, repairedCandidate, item, index, repair, { requireChallengeEvidence: true });
+      });
+    } catch (err) {
+      rethrowInterruptedRequest(err, contextOptions.signal);
+      console.warn(`⚠️ ${config.sheetName} applicability pattern repair failed for chunk ${chunkIndex + 1}; retaining independently audited rows.`, err);
+    } finally {
+      completedChunks += 1;
+    }
+  });
+
+  contextOptions.onProgress?.({
+    message: "Applicability pattern repair complete.",
+    completed: repairChunks.length,
+    total: repairChunks.length,
+  });
+  return repairedRows;
+}
+
+const LOSS_CONSEQUENCE_CLASSES = [
+  {
+    key: "people",
+    pattern: /\b(?:injur\w*|fatal\w*|death|loss of life|physical harm|casualt\w*)\b/i,
+    statement: "People suffer injury or loss of life.",
+  },
+  {
+    key: "environment",
+    pattern: /\b(?:environmental harm|environmental damage|contaminat\w*|pollut\w*|toxic release|spill)\b/i,
+    statement: "The environment is harmed or contaminated.",
+  },
+  {
+    key: "asset",
+    pattern: /\b(?:property|equipment|infrastructure|payload|physical asset|asset damage|vehicle damage|machine damage)\b/i,
+    statement: "Property, equipment, infrastructure, or other physical assets are damaged.",
+  },
+  {
+    key: "mission",
+    pattern: /\b(?:loss of mission|mission loss|loss of service|service loss|loss of mobility|immobili\w*|production loss|loss of production|loss of operational (?:control|capability)|operational capability is lost)\b/i,
+    statement: "Mission, service, mobility, production, or operational capability is lost.",
+  },
+  {
+    key: "security",
+    pattern: /\b(?:security compromise|security control|protected information|confidential\w*|privacy|unauthorized disclosure|unauthorized access)\b/i,
+    statement: "Protected information or security controls are compromised.",
+  },
+  {
+    key: "critical-integrity",
+    pattern: /\b(?:critical data integrity|safety-critical data|loss of data integrity|integrity of critical)\b/i,
+    statement: "The integrity of critical information is lost.",
+  },
+];
+
+function lossConsequenceClassKeys(value = "") {
+  const text = sanitizeText(value);
+  return LOSS_CONSEQUENCE_CLASSES
+    .filter(({ pattern }) => pattern.test(text))
+    .map(({ key }) => key);
+}
+
+export function ensureCanonicalLossClassCoverage(catalogInput = {}, applicableItems = []) {
+  const catalog = normalizedCanonicalCatalog(catalogInput);
+  const supportedClasses = new Set();
+  applicableItems.forEach(({ row }) => {
+    lossConsequenceClassKeys(row?.rawLossCandidate || row?.losses || row?.loss)
+      .forEach((key) => supportedClasses.add(key));
+  });
+  const representedClasses = new Set();
+  catalog.losses.forEach(({ statement }) => {
+    lossConsequenceClassKeys(statement).forEach((key) => representedClasses.add(key));
+  });
+  const usedIds = new Set(catalog.losses.map(({ id }) => id.toUpperCase()));
+  let nextId = 1;
+  LOSS_CONSEQUENCE_CLASSES.forEach(({ key, statement }) => {
+    if (!supportedClasses.has(key) || representedClasses.has(key)) return;
+    while (usedIds.has(`L-${nextId}`)) nextId += 1;
+    const id = `L-${nextId}`;
+    catalog.losses.push({ id, statement });
+    usedIds.add(id);
+    representedClasses.add(key);
+    nextId += 1;
+  });
+  return catalog;
+}
+
 function canonicalCandidate(row = {}, item = {}) {
   return {
     id: sanitizeText(item.id || row.id),
@@ -1397,7 +1823,7 @@ async function requestCanonicalRiskMappings(config, catalog, mappingItems, conte
   const prompt = `
 Map each applicable ${config.analysisName} row to exactly one canonical Loss and one canonical Hazard from the supplied catalogs.
 
-Return ONLY a JSON array with one object per row containing id, canonicalLossId, canonicalHazardId. Preserve each row id exactly. Use only catalog ids; do not create or rewrite catalog entries.
+Return ONLY a JSON array with one object per row containing id, canonicalLossIds, canonicalHazardId. Preserve each row id exactly. canonicalLossIds must be an array containing every catalog Loss explicitly supported by that row's raw Loss candidate; canonicalHazardId must contain exactly one Hazard id. Use only catalog ids; do not create or rewrite catalog entries.
 
 Choose by the underlying unacceptable outcome and hazardous system state, not superficial wording, guide phrase, interface name, or causal mechanism. Different UCAs and scenarios should share a canonical mapping when they reach the same system-level state.
 
@@ -1451,17 +1877,27 @@ export function applyCanonicalRiskVocabulary(rows = [], items = [], catalogInput
     const mapping = mappingsById.get(String(items[index]?.id || "").toUpperCase())
       || mappings[index]
       || {};
-    const canonicalLossId = sanitizeText(mapping.canonicalLossId).toUpperCase();
+    const requestedLossIds = (Array.isArray(mapping.canonicalLossIds)
+      ? mapping.canonicalLossIds
+      : sanitizeText(mapping.canonicalLossId).split(/\s*[,;]\s*/))
+      .map((id) => sanitizeText(id).toUpperCase())
+      .filter((id) => lossesById.has(id));
+    const rawLossClasses = new Set(lossConsequenceClassKeys(rawLossCandidate));
+    catalog.losses.forEach((entry) => {
+      const entryClasses = lossConsequenceClassKeys(entry.statement);
+      if (entryClasses.some((key) => rawLossClasses.has(key))) requestedLossIds.push(entry.id.toUpperCase());
+    });
+    const canonicalLossIds = Array.from(new Set(requestedLossIds));
     const canonicalHazardId = sanitizeText(mapping.canonicalHazardId).toUpperCase();
-    const canonicalLoss = lossesById.get(canonicalLossId);
+    const canonicalLosses = canonicalLossIds.map((id) => lossesById.get(id)).filter(Boolean);
     const canonicalHazard = hazardsById.get(canonicalHazardId);
     return {
       ...row,
       rawLossCandidate,
       rawHazardCandidate,
-      losses: canonicalLoss || rawLossCandidate,
+      losses: canonicalLosses.length ? Array.from(new Set(canonicalLosses)).join("; ") : rawLossCandidate,
       hazards: canonicalHazard || rawHazardCandidate,
-      canonicalLossId: canonicalLoss ? canonicalLossId : createSafetyModelId("L", rawLossCandidate),
+      canonicalLossId: canonicalLossIds.length ? canonicalLossIds.join(", ") : createSafetyModelId("L", rawLossCandidate),
       canonicalHazardId: canonicalHazard ? canonicalHazardId : createSafetyModelId("H", rawHazardCandidate),
     };
   });
@@ -1476,7 +1912,10 @@ async function canonicalizeStpaRiskVocabulary(config, rows, items, contextOption
 
   contextOptions.onProgress?.({ message: "Building canonical STPA Loss and Hazard catalogs..." });
   try {
-    const catalog = normalizedCanonicalCatalog(await requestCanonicalRiskCatalog(config, applicableItems, contextOptions));
+    const catalog = ensureCanonicalLossClassCoverage(
+      await requestCanonicalRiskCatalog(config, applicableItems, contextOptions),
+      applicableItems,
+    );
     if (!catalog.losses.length || !catalog.hazards.length) throw new Error("Canonical catalog response was empty.");
     const chunks = chunkItemsByCount(applicableItems, CANONICAL_MAPPING_ROWS_PER_PROMPT);
     let completedMappingChunks = 0;
@@ -1629,10 +2068,11 @@ export async function generateStandardCodeHazardAnalysisSheets({
   }
 
   let completedGenerationChunks = 0;
+  const totalProgressSteps = promptChunks.length + 4;
   const generatedChunks = await mapWithConcurrency(promptChunks, HAZARD_LLM_CONCURRENCY, async (chunk, chunkIndex) => {
     onProgress({
       step: chunkIndex + 1,
-      total: promptChunks.length + 1,
+      total: totalProgressSteps,
       message: `Generating ${config.sheetName} rows (${chunkIndex + 1}/${promptChunks.length})...`,
     });
     try {
@@ -1653,7 +2093,7 @@ export async function generateStandardCodeHazardAnalysisSheets({
       completedGenerationChunks += 1;
       onProgress({
         step: completedGenerationChunks,
-        total: promptChunks.length + 1,
+        total: totalProgressSteps,
         message: `Generated ${completedGenerationChunks}/${promptChunks.length} ${config.sheetName} row batches...`,
       });
     }
@@ -1669,7 +2109,7 @@ export async function generateStandardCodeHazardAnalysisSheets({
     signal,
     onProgress: (patch) => onProgress({
       step: promptChunks.length + 1,
-      total: promptChunks.length + 1,
+      total: totalProgressSteps,
       ...patch,
     }),
   });
@@ -1680,8 +2120,20 @@ export async function generateStandardCodeHazardAnalysisSheets({
     contextSources,
     signal,
     onProgress: (patch) => onProgress({
-      step: promptChunks.length + 1,
-      total: promptChunks.length + 2,
+      step: promptChunks.length + 2,
+      total: totalProgressSteps,
+      ...patch,
+    }),
+  });
+  normalizedRows = await repairHazardAuditAnomalies(config, normalizedRows, items, {
+    operationalContext,
+    organizationContext,
+    analysisContext,
+    contextSources,
+    signal,
+    onProgress: (patch) => onProgress({
+      step: promptChunks.length + 3,
+      total: totalProgressSteps,
       ...patch,
     }),
   });
@@ -1692,8 +2144,8 @@ export async function generateStandardCodeHazardAnalysisSheets({
     contextSources,
     signal,
     onProgress: (patch) => onProgress({
-      step: promptChunks.length + 2,
-      total: promptChunks.length + 3,
+      step: promptChunks.length + 4,
+      total: totalProgressSteps,
       ...patch,
     }),
   });

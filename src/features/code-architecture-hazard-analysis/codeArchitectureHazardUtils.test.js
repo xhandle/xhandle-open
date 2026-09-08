@@ -39,6 +39,33 @@ describe("code architecture hazard evidence review", () => {
     expect(trace.controlAction).toBe("Call torch.clamp");
   });
 
+  it("extracts interface trace fields by header when functional detail columns are present", () => {
+    const trace = extractFunctionalDecompositionTrace(
+      [
+        "Function (From)",
+        "Function (From) Details",
+        "Control Action",
+        "Control Action Details",
+        "Function (To)",
+        "Function (To) Details",
+      ],
+      [
+        "Estimate State",
+        "Produces a confidence-qualified estimate.",
+        "State Estimate Update",
+        "Pose, timestamp, confidence, and validity interval.",
+        "Plan Motion",
+        "Consumes the current valid estimate.",
+      ],
+    );
+
+    expect(trace).toMatchObject({
+      functionFrom: "Estimate State",
+      controlAction: "State Estimate Update",
+      functionTo: "Plan Motion",
+    });
+  });
+
   it("loads per-row indexed source before classifying code relationship direction", async () => {
     const content = [
       "def dxy_theta_to_v(dxy):",

@@ -9652,11 +9652,14 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     }
 
     const functionalDecompositionSheet = [
-      ["Function (From)", "Control Action", "Function (To)", "Operational Context ID", "Operational Scenario", "Operational Mode", "Operating Conditions", "Context Assumptions", "Guide Phrase", "Guide Phrase Applicable", "Guide Phrase Applicability Rationale"],
+      ["Function (From)", "Function (From) Details", "Control Action", "Control Action Details", "Function (To)", "Function (To) Details", "Operational Context ID", "Operational Scenario", "Operational Mode", "Operating Conditions", "Context Assumptions", "Guide Phrase", "Guide Phrase Applicable", "Guide Phrase Applicability Rationale"],
       ...rowsToGenerate.map(({ functionalRow }) => [
         functionalRow.fromFunction || "",
+        functionalRow.fromDetails || functionalRow.fromFunctionDetails || "",
         functionalRow.controlAction || "",
+        functionalRow.controlDetails || functionalRow.controlActionDetails || "",
         functionalRow.toFunction || "",
+        functionalRow.toDetails || functionalRow.toFunctionDetails || "",
         functionalRow.hazardContextId || "context-unspecified",
         functionalRow.operationalScenario || "",
         functionalRow.operationalMode || "",
@@ -9879,11 +9882,14 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       "Known Controls and Evidence",
     ]);
     const functionalDecompositionSheet = [
-      ["Function (From)", "Control Action", "Function (To)", "Operational Context ID", "Operational Scenario", "Operational Mode", "Operating Conditions", "Context Assumptions", "Guide Phrase", "Guide Phrase Applicable", "Guide Phrase Applicability Rationale"],
+      ["Function (From)", "Function (From) Details", "Control Action", "Control Action Details", "Function (To)", "Function (To) Details", "Operational Context ID", "Operational Scenario", "Operational Mode", "Operating Conditions", "Context Assumptions", "Guide Phrase", "Guide Phrase Applicable", "Guide Phrase Applicability Rationale"],
       [
         functionalRow.fromFunction || "",
+        functionalRow.fromDetails || functionalRow.fromFunctionDetails || "",
         functionalRow.controlAction || "",
+        functionalRow.controlDetails || functionalRow.controlActionDetails || "",
         functionalRow.toFunction || "",
+        functionalRow.toDetails || functionalRow.toFunctionDetails || "",
         functionalRow.hazardContextId || "context-unspecified",
         functionalRow.operationalScenario || "",
         functionalRow.operationalMode || "",

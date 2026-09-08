@@ -2,13 +2,17 @@ import {
   applyCanonicalRiskVocabulary,
   deriveStructuredApplicability,
   deriveStructuredSafetyAssessment,
+  ensureCanonicalLossClassCoverage,
   findApplicabilityCalibrationIndexes,
+  findApplicabilityPatternRepairIndexes,
+  findCausalFactorCategoryReviewIndexes,
   findConsistencyReconciliationIndexes,
   getStandardHazardRowsPerPrompt,
   isHazardAnalysisCancellation,
   mapWithConcurrency,
   materializeGeneratedHazardRows,
   normalizeGenericRequirementOwner,
+  reconcileCausalFactorCategory,
   validateApplicabilityEvidence,
 } from "./aiAnalysisCodeHazardStandard";
 
@@ -100,6 +104,128 @@ describe("standard hazard row materialization", () => {
 
     rows[5].guidePhraseApplicable = "No";
     expect(findApplicabilityCalibrationIndexes(rows, items)).toEqual([]);
+  });
+
+  test("selects guide-phrase pattern collapse for focused repair without forcing balanced output", () => {
+    const guides = [
+      "Not providing the control action causes a hazard",
+      "Providing the control action causes a hazard",
+      "The control action is provided too early",
+      "The control action is provided too late",
+      "The control action is provided in the wrong order",
+      "The control action is stopped too soon",
+      "The control action is applied too long",
+    ];
+    const items = [];
+    const collapsedRows = [];
+    for (let interfaceIndex = 0; interfaceIndex < 5; interfaceIndex += 1) {
+      guides.forEach((guidePhrase, guideIndex) => {
+        items.push({
+          id: `FD-${interfaceIndex + 1}-GP-${guideIndex + 1}`,
+          from: `State Producer ${interfaceIndex + 1}`,
+          fromDetails: "Publishes synchronized state throughout active control.",
+          controlAction: `State Estimate Update ${interfaceIndex + 1}`,
+          controlActionDetails: "State, timestamp, validity interval, and revision identifier.",
+          controlActionType: "State estimate / data",
+          to: `Plan Motion ${interfaceIndex + 1}`,
+          toDetails: "Consumes current state before selecting the next motion plan.",
+          guidePhrase,
+          operationalContextId: "context-1",
+          operationalScenario: "The platform moves near workers.",
+          operationalMode: "Active operation",
+        });
+        collapsedRows.push({
+          guidePhraseApplicable: guideIndex === 0 || (guideIndex === 2 && interfaceIndex < 2) ? "Yes" : "No",
+        });
+      });
+    }
+
+    const repairIndexes = findApplicabilityPatternRepairIndexes(collapsedRows, items);
+    expect(repairIndexes).toContain(1); // Providing causes: uniformly rejected.
+    expect(repairIndexes).toContain(3); // Too late: uniformly rejected.
+    expect(repairIndexes).toContain(4); // Wrong order: uniformly rejected.
+    expect(repairIndexes).toContain(5); // Stopped too soon: uniformly rejected.
+    expect(repairIndexes).toContain(6); // Applied too long: uniformly rejected.
+
+    const variedRows = items.map((_, index) => ({
+      guidePhraseApplicable: (Math.floor(index / guides.length) + (index % guides.length)) % 2 === 0 ? "Yes" : "No",
+      causalFactorCategory: "Timing / sequencing",
+      causalFactors: "A timing and sequencing fault delays the current state update.",
+    }));
+    const variedItems = items.map((item) => ({
+      ...item,
+      fromDetails: "Publishes a structured update.",
+      controlActionDetails: "Structured update payload.",
+      to: "Transform Data",
+      toDetails: "Transforms input when available.",
+    }));
+    expect(findApplicabilityPatternRepairIndexes(variedRows, variedItems)).toEqual([]);
+  });
+
+  test("rechecks missing safety-critical feedback used by a decision gate", () => {
+    const items = Array.from({ length: 6 }, (_, index) => ({
+      id: `FD-${index + 1}`,
+      from: "Monitor Component Health",
+      fromDetails: "Detects component faults and measurement validity.",
+      controlAction: "Health and Readiness Status",
+      controlActionDetails: "Fault state, confidence, validity, and readiness indication.",
+      to: "Authorize Operation",
+      toDetails: "Assesses readiness before enabling operation.",
+      guidePhrase: index === 0
+        ? "Not providing the control action causes a hazard"
+        : "The control action is provided too early",
+      operationalContextId: `context-${index + 1}`,
+    }));
+    const rows = items.map(() => ({
+      guidePhraseApplicable: "No",
+      causalFactorCategory: "Not applicable",
+    }));
+
+    expect(findApplicabilityPatternRepairIndexes(rows, items)).toContain(0);
+  });
+
+  test("rechecks an extremely low unsafe-provision rate without requiring another collapsed guide group", () => {
+    const items = Array.from({ length: 10 }, (_, index) => ({
+      id: `FD-${index + 1}`,
+      from: `Select Command ${index + 1}`,
+      fromDetails: "Selects an authorized operating command.",
+      controlAction: `Bounded Command ${index + 1}`,
+      controlActionDetails: "Command target, permitted bounds, authority, and revision.",
+      controlActionType: "Command / request",
+      to: `Execute Command ${index + 1}`,
+      toDetails: "Executes a command that passes authority and bounds checks.",
+      guidePhrase: "Providing the control action causes a hazard",
+      operationalContextId: "context-1",
+    }));
+    const rows = items.map((_, index) => ({
+      guidePhraseApplicable: index === 0 ? "Yes" : "No",
+      causalFactorCategory: index === 0 ? "Controller logic / process model" : "Not applicable",
+      causalFactors: index === 0 ? "Controller logic selects an unsafe command." : "Not applicable",
+    }));
+
+    const repairIndexes = findApplicabilityPatternRepairIndexes(rows, items);
+    expect(repairIndexes).toContain(1);
+    expect(repairIndexes).not.toContain(0);
+  });
+
+  test("selects causal categories that have no support in the generated mechanism", () => {
+    const rows = [{
+      guidePhraseApplicable: "Yes",
+      causalFactorCategory: "Power / energy",
+      causalFactors: "The state publisher runs before sensor calibration and before the initialization gate has completed.",
+      causalScenario: "The receiver consumes an unconverged estimate during startup.",
+    }, {
+      guidePhraseApplicable: "Yes",
+      causalFactorCategory: "Power / energy",
+      causalFactors: "Battery undervoltage removes electrical power from the actuator supply.",
+      causalScenario: "The actuator loses torque authority.",
+    }];
+
+    expect(findCausalFactorCategoryReviewIndexes(rows)).toEqual([0]);
+    expect(reconcileCausalFactorCategory(
+      rows[0].causalFactorCategory,
+      `${rows[0].causalFactors} ${rows[0].causalScenario}`,
+    )).toBe("Timing / sequencing");
   });
 
   test("replaces invented requirement-owner placeholders with a real architectural endpoint", () => {
@@ -288,6 +414,58 @@ describe("standard hazard row materialization", () => {
     expect(wrongOrder.guidePhraseApplicabilityRationale).toContain("timestamps are synchronized");
   });
 
+  test("accepts exact functional contract details as applicability evidence", () => {
+    const result = validateApplicabilityEvidence({
+      semanticMeaningful: "Yes",
+      receiverCanBeAffected: "Yes",
+      contextSupportsMechanism: "Yes",
+      adverseStateSupported: "Yes",
+      applicabilityMechanism: "The receiver can retain a superseded estimate after its validity interval expires.",
+      applicabilityEvidenceField: "Control Action Details",
+      applicabilityEvidenceQuote: "validity interval and revision identifier",
+    }, {
+      from: "Estimate State",
+      fromDetails: "Publishes a confidence-qualified state estimate.",
+      controlAction: "State Estimate Update",
+      controlActionDetails: "State, timestamp, validity interval and revision identifier.",
+      controlActionType: "State estimate / data",
+      to: "Plan Motion",
+      toDetails: "Consumes the current valid estimate when selecting a motion plan.",
+      guidePhrase: "The control action is applied too long",
+    });
+
+    expect(result).toMatchObject({
+      guidePhraseApplicable: "Yes",
+      evidenceGrounded: true,
+    });
+  });
+
+  test("accepts an unsafe-provision mechanism grounded in a governed value contract", () => {
+    const result = validateApplicabilityEvidence({
+      semanticMeaningful: "Yes",
+      receiverCanBeAffected: "Yes",
+      contextSupportsMechanism: "Yes",
+      adverseStateSupported: "Yes",
+      applicabilityMechanism: "An unauthorized goal or operating bound can cause the receiver to plan motion outside the permitted region.",
+      applicabilityEvidenceField: "Control Action Details",
+      applicabilityEvidenceQuote: "Goal, permitted operating region, task priority, and command authority",
+    }, {
+      from: "Operator Interface",
+      controlAction: "Mission Goal and Authority",
+      controlActionDetails: "Goal, permitted operating region, task priority, and command authority.",
+      controlActionType: "Configuration / authority",
+      to: "Accept Mission Goal",
+      toDetails: "Validates the goal and authority before accepting the mission.",
+      guidePhrase: "Providing the control action causes a hazard",
+      operationalMode: "Mission acceptance",
+    });
+
+    expect(result).toMatchObject({
+      guidePhraseApplicable: "Yes",
+      evidenceGrounded: true,
+    });
+  });
+
   test("does not reuse an unrelated shared-context keyword as interface evidence", () => {
     const tag = {
       semanticMeaningful: "Yes",
@@ -308,6 +486,31 @@ describe("standard hazard row materialization", () => {
     });
     expect(result.guidePhraseApplicable).toBe("No");
     expect(result.guidePhraseApplicabilityRationale).toContain("discrete action");
+  });
+
+  test("rejects exact context evidence that only shares generic sequencing words", () => {
+    const result = validateApplicabilityEvidence({
+      semanticMeaningful: "Yes",
+      receiverCanBeAffected: "Yes",
+      contextSupportsMechanism: "Yes",
+      adverseStateSupported: "Yes",
+      applicabilityMechanism: "Footstep feedback can be consumed out of sequence.",
+      applicabilityEvidenceField: "Context Assumptions",
+      applicabilityEvidenceQuote: "cleaning equipment and its activation sequence are not represented",
+    }, {
+      from: "Coordinate Gait",
+      fromDetails: "Evaluates completed foothold feasibility.",
+      controlAction: "Footstep Execution Feedback",
+      controlActionDetails: "Executed contact and tracking result.",
+      to: "Plan Footsteps",
+      toDetails: "Revises footholds using observed results.",
+      controlActionType: "Feedback / status",
+      guidePhrase: "The control action is provided in the wrong order",
+      contextAssumptions: "Cleaning equipment and its activation sequence are not represented.",
+    });
+
+    expect(result.guidePhraseApplicable).toBe("No");
+    expect(result.guidePhraseApplicabilityRationale).toMatch(/does not bind a sequence|does not establish an order-dependent/i);
   });
 
   test("accepts order-dependent architecture evidence that is bound to the interface", () => {
@@ -393,5 +596,40 @@ describe("standard hazard row materialization", () => {
     expect(new Set(result.map((row) => row.hazards))).toEqual(new Set(["The system commands motion without a sufficiently valid state estimate."]));
     expect(result[0].rawHazardCandidate).toBe("Late state at one receiver causes unsafe motion.");
     expect(result[1].rawHazardCandidate).toBe("Missing state at another receiver causes unsafe motion.");
+  });
+
+  test("preserves distinct explicit Loss classes and supports multiple Loss mappings per row", () => {
+    const applicableItems = [{
+      row: {
+        rawLossCandidate: "Injury or loss of life; damage to equipment and infrastructure; loss of mission mobility.",
+      },
+      item: { id: "FD-1-GP-1" },
+    }];
+    const catalog = ensureCanonicalLossClassCoverage({
+      losses: [
+        { id: "L-1", statement: "People suffer injury or loss of life." },
+        { id: "L-2", statement: "Mission or operational capability is lost." },
+      ],
+      hazards: [{ id: "H-1", statement: "The system moves without adequate control." }],
+    }, applicableItems);
+
+    expect(catalog.losses.map((entry) => entry.statement)).toContain(
+      "Property, equipment, infrastructure, or other physical assets are damaged.",
+    );
+
+    const result = applyCanonicalRiskVocabulary([{
+      guidePhraseApplicable: "Yes",
+      rawLossCandidate: applicableItems[0].row.rawLossCandidate,
+      rawHazardCandidate: "The system moves without adequate control.",
+    }], [{ id: "FD-1-GP-1" }], catalog, [{
+      id: "FD-1-GP-1",
+      canonicalLossIds: ["L-1"],
+      canonicalHazardId: "H-1",
+    }]);
+
+    expect(result[0].canonicalLossId.split(/,\s*/)).toHaveLength(3);
+    expect(result[0].losses).toMatch(/injury or loss of life/i);
+    expect(result[0].losses).toMatch(/equipment.*infrastructure/i);
+    expect(result[0].losses).toMatch(/mission or operational capability/i);
   });
 });
