@@ -1,7 +1,9 @@
 import {
   getStoredAIProviderApiKey,
   getStoredActiveAIProvider,
+  getStoredAIProviderEffortPreference,
   getStoredAIProviderModelPreference,
+  supportsAIProviderEffort,
 } from "./aiProviderConfig";
 
 const AI_ENDPOINT_RE = /\/api\/(?:chat|chatgpt|openai)(?:$|[/?#])/;
@@ -30,10 +32,14 @@ function mergeAIHeaders(init = {}) {
   const provider = getStoredActiveAIProvider();
   const apiKey = getStoredAIProviderApiKey(provider);
   const selectedModel = getStoredAIProviderModelPreference(provider, { includeDefault: true });
+  const selectedEffort = supportsAIProviderEffort(provider, selectedModel)
+    ? getStoredAIProviderEffortPreference(provider)
+    : "";
 
   if (provider && !headers.has("x-ai-provider")) headers.set("x-ai-provider", provider);
   if (apiKey && !headers.has("x-ai-api-key")) headers.set("x-ai-api-key", apiKey);
   if (selectedModel && !headers.has("x-ai-model")) headers.set("x-ai-model", selectedModel);
+  if (selectedEffort && !headers.has("x-ai-effort")) headers.set("x-ai-effort", selectedEffort);
 
   return {
     ...init,

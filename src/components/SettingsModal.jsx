@@ -10,6 +10,7 @@ import {
   listRepoFilesViaGitHub,
 } from "./generateFunctionalDecompositionFromGitHub";
 import {
+  AI_PROVIDER_EFFORT_OPTIONS,
   AI_PROVIDER_OPTIONS,
   clearUserAIProviderSettings,
   fetchUserAIProviderSettings,
@@ -20,11 +21,14 @@ import {
   getProviderKeyPlaceholder,
   getProviderModelProfile,
   getProviderModelOptions,
+  getStoredAIProviderEffortPreference,
   getStoredAIProviderModelPreference,
   normalizeAIProvider,
   normalizeProviderModel,
   saveUserAIProviderSettings,
+  storeAIProviderEffortPreference,
   storeAIProviderModelPreference,
+  supportsAIProviderEffort,
   validateProviderApiKey,
 } from "../lib/aiProviderConfig";
 import {
@@ -502,6 +506,9 @@ export default function SettingsModal({
   const [providerModel, setProviderModel] = useState(() =>
     getStoredAIProviderModelPreference("openai", { includeDefault: true })
   );
+  const [providerEffort, setProviderEffort] = useState(() =>
+    getStoredAIProviderEffortPreference("openai")
+  );
   const [providerMsg, setProviderMsg] = useState("");
   const [providerConnected, setProviderConnected] = useState(false);
   const [providerStatus, setProviderStatus] = useState(null);
@@ -521,6 +528,7 @@ export default function SettingsModal({
     (row) => row.provider === normalizeAIProvider(aiProvider)
   );
   const selectedModelProfile = getProviderModelProfile(aiProvider, providerModel);
+  const selectedModelSupportsEffort = supportsAIProviderEffort(aiProvider, providerModel);
   const providerModelOptions = (() => {
     const provider = normalizeAIProvider(aiProvider);
     const records = providerModelsByProvider[provider] || getProviderModelOptions(provider);
@@ -552,6 +560,7 @@ export default function SettingsModal({
         const provider = normalizeAIProvider(data.provider);
         setAiProvider(provider);
         setProviderModel(normalizeProviderModel(provider, data.selectedModel));
+        setProviderEffort(getStoredAIProviderEffortPreference(provider));
         setProviderConnected(!!data.savedProviders?.length);
       } catch (e) {
         if (!alive) return;
@@ -568,6 +577,7 @@ export default function SettingsModal({
       selectedSavedProvider?.selectedModel ||
       getStoredAIProviderModelPreference(provider, { includeDefault: true });
     setProviderModel(normalizeProviderModel(provider, savedModel));
+    setProviderEffort(getStoredAIProviderEffortPreference(provider));
   }, [aiProvider, selectedSavedProvider?.selectedModel]);
 
   const loadProviderModels = async (providerInput = aiProvider, options = {}) => {
@@ -713,9 +723,11 @@ export default function SettingsModal({
   const saveAIProviderPrefs = async () => {
     const provider = normalizeAIProvider(aiProvider);
     const selectedModel = normalizeProviderModel(provider, providerModel);
+    const selectedEffort = providerEffort;
     const usingSavedKey = !providerKey.trim() && !!selectedSavedProvider;
     const isActiveSavedProvider = providerStatus?.provider === provider && !!selectedSavedProvider;
     storeAIProviderModelPreference(provider, selectedModel);
+    storeAIProviderEffortPreference(provider, selectedEffort);
 
     if (usingSavedKey && selectedSavedProvider?.hasApiKey === false) {
       setProviderMsg(`⚠️ Re-enter your ${getAIProviderLabel(provider)} API key to use it locally.`);
@@ -726,12 +738,13 @@ export default function SettingsModal({
     if (isActiveSavedProvider && !providerKey.trim()) {
       setProviderModel(selectedModel);
       const nextSavedProviders = (providerStatus?.savedProviders || []).map((saved) =>
-        saved.provider === provider ? { ...saved, selectedModel } : saved
+        saved.provider === provider ? { ...saved, selectedModel, selectedEffort } : saved
       );
       const nextStatus = {
         ...providerStatus,
         provider,
         selectedModel,
+        selectedEffort,
         savedProviders: nextSavedProviders,
       };
       setProviderStatus(nextStatus);
@@ -756,15 +769,17 @@ export default function SettingsModal({
       const result = await saveUserAIProviderSettings(
         provider,
         providerKey,
-        usingSavedKey ? { activateOnly: true, selectedModel } : { selectedModel }
+        usingSavedKey ? { activateOnly: true, selectedModel, selectedEffort } : { selectedModel, selectedEffort }
       );
       const resultModel = normalizeProviderModel(provider, result?.selectedModel || selectedModel);
       storeAIProviderModelPreference(provider, resultModel);
+      storeAIProviderEffortPreference(provider, result?.selectedEffort || selectedEffort);
       const nextStatus = {
         provider,
         last4: result?.last4 || selectedSavedProvider?.last4 || null,
         verified: !!result?.verified,
         selectedModel: resultModel,
+        selectedEffort: result?.selectedEffort || selectedEffort,
         savedProviders: result?.savedProviders || providerStatus?.savedProviders || [],
       };
       setProviderStatus(nextStatus);
@@ -799,6 +814,7 @@ export default function SettingsModal({
             last4: result.last4,
             verified: !!result.verified,
             selectedModel: normalizeProviderModel(result.provider, result.selectedModel),
+            selectedEffort: result.selectedEffort || getStoredAIProviderEffortPreference(result.provider),
             savedProviders: result.savedProviders,
           }
         : null;
@@ -1069,21 +1085,24 @@ export default function SettingsModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative max-h-[92vh] w-[920px] max-w-[94vw] overflow-y-auto rounded-2xl bg-white p-5 pb-12 shadow-2xl">
-        <div className="text-lg font-semibold mb-4">Settings</div>
+      <div className="relative flex max-h-[calc(100dvh-2rem)] w-[920px] max-w-full flex-col overflow-hidden rounded-2xl bg-white shadow-2xl sm:max-h-[calc(100dvh-3rem)]">
+        <div className="shrink-0 px-5 pt-5">
+          <div className="text-lg font-semibold mb-4">Settings</div>
 
-        {/* Tabs */}
-        <div className="flex gap-2 mb-4 flex-wrap">
-          <TabButton label="AI Provider" active={tab === "openai"} onClick={() => setTab("openai")} />
-          <TabButton label="Organization Profile" active={tab === "organization-profile"} onClick={() => setTab("organization-profile")} />
-          <TabButton label="VS Code" active={tab === "vscode"} onClick={() => setTab("vscode")} />
-          <TabButton label="Backup" active={tab === "backup"} onClick={() => setTab("backup")} />
-          <TabButton label="Storage" active={tab === "storage"} onClick={() => setTab("storage")} />
+          {/* Tabs */}
+          <div className="flex gap-2 mb-4 flex-wrap">
+            <TabButton label="AI Provider" active={tab === "openai"} onClick={() => setTab("openai")} />
+            <TabButton label="Organization Profile" active={tab === "organization-profile"} onClick={() => setTab("organization-profile")} />
+            <TabButton label="VS Code" active={tab === "vscode"} onClick={() => setTab("vscode")} />
+            <TabButton label="Backup" active={tab === "backup"} onClick={() => setTab("backup")} />
+            <TabButton label="Storage" active={tab === "storage"} onClick={() => setTab("storage")} />
+          </div>
         </div>
 
-        {/* Panels */}
+        {/* Panels scroll independently so their action rows cannot fall behind the footer. */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
         {tab === "organization-profile" && (
           <section className="space-y-4">
             <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-950">
@@ -1404,6 +1423,43 @@ export default function SettingsModal({
                   `Defaults to ${getDefaultProviderModel(aiProvider)}.`}
               </p>
             </div>
+            <div className="space-y-1">
+              <label className="block text-sm font-medium text-gray-700" htmlFor="ai-provider-effort">
+                Effort
+              </label>
+              {selectedModelSupportsEffort ? (
+                <>
+                  <select
+                    id="ai-provider-effort"
+                    aria-label="AI provider reasoning effort"
+                    className="w-full rounded border bg-white px-3 py-2 text-sm"
+                    value={providerEffort}
+                    onChange={(event) => {
+                      const effort = event.target.value;
+                      setProviderEffort(effort);
+                      storeAIProviderEffortPreference(aiProvider, effort);
+                    }}
+                    disabled={providerBusy}
+                  >
+                    {AI_PROVIDER_EFFORT_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500">
+                    {AI_PROVIDER_EFFORT_OPTIONS.find((option) => option.value === providerEffort)?.description} This preference applies to Collaborator, hazard analysis, and other AI workflows using this provider.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <select id="ai-provider-effort" className="w-full rounded border bg-gray-50 px-3 py-2 text-sm text-gray-500" disabled value="automatic">
+                    <option value="automatic">Automatic (model default)</option>
+                  </select>
+                  <p className="text-xs text-gray-500">
+                    This model does not expose a configurable reasoning-effort control through its API.
+                  </p>
+                </>
+              )}
+            </div>
             {selectedModelProfile && (
               <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1438,7 +1494,9 @@ export default function SettingsModal({
 
             {providerStatus?.last4 && (
               <div className="text-xs text-gray-500">
-                Active provider: <b>{getAIProviderLabel(providerStatus.provider)}</b> • Model: <b>{normalizeProviderModel(providerStatus.provider, providerStatus.selectedModel)}</b> • Last 4: <b>{providerStatus.last4}</b> • {providerStatus.verified ? "Verified ✓" : "Saved, not yet verified"}
+                Active provider: <b>{getAIProviderLabel(providerStatus.provider)}</b> • Model: <b>{normalizeProviderModel(providerStatus.provider, providerStatus.selectedModel)}</b>
+                {supportsAIProviderEffort(providerStatus.provider, providerStatus.selectedModel) && <> • Effort: <b>{providerStatus.selectedEffort || getStoredAIProviderEffortPreference(providerStatus.provider)}</b></>}
+                {' '}• Last 4: <b>{providerStatus.last4}</b> • {providerStatus.verified ? "Verified ✓" : "Saved, not yet verified"}
               </div>
             )}
 
@@ -1464,7 +1522,9 @@ export default function SettingsModal({
                         disabled={providerBusy}
                         title={`Last 4: ${saved.last4}`}
                       >
-                        {getAIProviderLabel(saved.provider)} • {normalizeProviderModel(saved.provider, saved.selectedModel)} • •••• {saved.last4} {isActive ? "• Active" : ""}
+                        {getAIProviderLabel(saved.provider)} • {normalizeProviderModel(saved.provider, saved.selectedModel)}
+                        {supportsAIProviderEffort(saved.provider, saved.selectedModel) ? ` • ${saved.selectedEffort || getStoredAIProviderEffortPreference(saved.provider)} effort` : ""}
+                        {` • •••• ${saved.last4} ${isActive ? "• Active" : ""}`}
                       </button>
                     );
                   })}
@@ -1802,10 +1862,11 @@ export default function SettingsModal({
             </div>
           </section>
         )}
+        </div>
 
         {/* ----- Tiny status bar (per-tab only) ----- */}
         <div
-          className="absolute left-0 right-0 bottom-0 px-4 py-2 border-t bg-white/95"
+          className="shrink-0 border-t bg-white px-4 py-2"
           aria-live="polite"
         >
           <div className="flex items-center gap-3 text-xs text-gray-600">

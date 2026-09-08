@@ -9,8 +9,10 @@
 import {
   getStoredAIProviderApiKey,
   getStoredActiveAIProvider,
+  getStoredAIProviderEffortPreference,
   getStoredAIProviderModelPreference,
   isPlaceholderProviderApiKey,
+  supportsAIProviderEffort,
 } from "../aiProviderConfig";
 import { logger } from "../utils/logger";
 
@@ -195,8 +197,9 @@ export function buildAuthOpts(extraHeaders = {}) {
 
 export function buildAIAuthOpts(extraHeaders = {}) {
   const status = getLocalAIProviderStatus();
-  const activeProvider = status.activeProvider;
-  const activeRecord = status.savedProviders.find((provider) => provider.provider === activeProvider);
+  // Keep the explicit user selection authoritative even when the API key is
+  // stored by the backend and the browser only has provider preferences.
+  const activeProvider = status.activeProvider || normalizeAIProvider(getStoredActiveAIProvider());
   const providerMap = safeReadProviderMap();
   const apiKey = activeProvider
     ? providerMap[activeProvider]?.apiKey || getStoredAIProviderApiKey(activeProvider) || ""
@@ -204,11 +207,15 @@ export function buildAIAuthOpts(extraHeaders = {}) {
   const selectedModel = activeProvider
     ? getStoredAIProviderModelPreference(activeProvider, { includeDefault: true })
     : "";
+  const selectedEffort = activeProvider && supportsAIProviderEffort(activeProvider, selectedModel)
+    ? getStoredAIProviderEffortPreference(activeProvider)
+    : "";
 
   return buildAuthOpts({
-    ...(activeProvider && activeRecord?.connected ? { "x-ai-provider": activeProvider } : {}),
+    ...(activeProvider ? { "x-ai-provider": activeProvider } : {}),
     ...(apiKey ? { "x-ai-api-key": apiKey } : {}),
     ...(selectedModel ? { "x-ai-model": selectedModel } : {}),
+    ...(selectedEffort ? { "x-ai-effort": selectedEffort } : {}),
     ...extraHeaders,
   });
 }

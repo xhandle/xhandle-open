@@ -128,7 +128,7 @@ async function writeWithBackpressure(res, value) {
   return !(res.destroyed || res.writableEnded);
 }
 
-async function pipeAnthropicSseToClient(providerStream, res) {
+async function pipeAnthropicSseToClient(providerStream, res, { onText } = {}) {
   let buffer = "";
   let finishReason = "stop";
   let providerDone = false;
@@ -138,7 +138,10 @@ async function pipeAnthropicSseToClient(providerStream, res) {
     const value = anthropicStreamEventValue(parseAnthropicSseEvent(block));
     if (value.error) throw value.error;
     if (value.finishReason) finishReason = value.finishReason;
-    if (value.text) await writeWithBackpressure(res, `data: ${JSON.stringify(value.text)}\n\n`);
+    if (value.text) {
+      onText?.(value.text);
+      await writeWithBackpressure(res, `data: ${JSON.stringify(value.text)}\n\n`);
+    }
     if (value.keepAlive) await writeWithBackpressure(res, ": ping\n\n");
     if (value.done) providerDone = true;
   };

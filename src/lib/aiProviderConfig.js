@@ -236,6 +236,7 @@ function buildProviderSettings(rows) {
       updatedAt: row.updated_at || null,
       isActive: !!row.is_active,
       selectedModel: getStoredAIProviderModelPreference(row.provider || "openai"),
+      selectedEffort: getStoredAIProviderEffortPreference(row.provider || "openai"),
     }))
     .sort((a, b) => {
       if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
@@ -251,6 +252,7 @@ function buildProviderSettings(rows) {
     verified: active.verified,
     updatedAt: active.updatedAt,
     selectedModel: active.selectedModel,
+    selectedEffort: active.selectedEffort,
     savedProviders,
   };
 }
@@ -370,6 +372,9 @@ export async function saveUserAIProviderSettings(provider, apiKey, options = {})
   const selectedModel = Object.prototype.hasOwnProperty.call(options, "selectedModel")
     ? normalizeProviderModel(normalizedProvider, options.selectedModel)
     : null;
+  const selectedEffort = Object.prototype.hasOwnProperty.call(options, "selectedEffort")
+    ? normalizeAIProviderEffort(options.selectedEffort)
+    : getStoredAIProviderEffortPreference(normalizedProvider);
   const now = new Date().toISOString();
   const existingRows = readLocalProviderRows();
   const existingSettings = buildProviderSettings(existingRows);
@@ -390,6 +395,7 @@ export async function saveUserAIProviderSettings(provider, apiKey, options = {})
   localStorage.setItem("xhandle.localAIProviderSettings", JSON.stringify(savedProviders));
   localStorage.setItem("xhandle.aiProvider.active", normalizedProvider);
   if (selectedModel) storeAIProviderModelPreference(normalizedProvider, selectedModel);
+  storeAIProviderEffortPreference(normalizedProvider, selectedEffort);
   return {
     ok: true,
     provider: normalizedProvider,
@@ -397,6 +403,7 @@ export async function saveUserAIProviderSettings(provider, apiKey, options = {})
     verified: nextRow.verified,
     updatedAt: now,
     selectedModel,
+    selectedEffort,
     savedProviders: buildProviderSettings(savedProviders)?.savedProviders || [],
   };
 }

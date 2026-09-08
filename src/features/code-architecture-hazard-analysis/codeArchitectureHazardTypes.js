@@ -12,11 +12,4 @@ export const CODE_ARCHITECTURE_HAZARD_METHOD_OPTIONS = [
   { value: "FHA", label: "FHA" },
 ];
 
-export const CODE_ARCHITECTURE_HAZARD_GENERATION_MODE_OPTIONS = [
-  { value: "standard", label: "Standard", description: "Single prompt by default; chunks automatically if needed" },
-  { value: "detailed", label: "Detailed", description: "Multi-step/cell-level analysis, slowest but most detailed" },
-];
-
-export const CODE_ARCHITECTURE_FHA_GENERATION_MODE_OPTIONS = CODE_ARCHITECTURE_HAZARD_GENERATION_MODE_OPTIONS;
-
 export const CODE_ARCHITECTURE_HAZARD_ARTIFACT_TYPE = "code_architecture_hazard_summary_table";

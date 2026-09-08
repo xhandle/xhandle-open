@@ -4698,7 +4698,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
 
   /* Render */
   return (
-    <div ref={diagramHostRef} style={{ width: '100%', height: '100%', minHeight: 560, position: 'relative' }}>
+    <div ref={diagramHostRef} style={{ width: '100%', height: '100%', minHeight: 0, position: 'relative' }}>
       {/* 🧠 Canvas */}
       <div
         style={{

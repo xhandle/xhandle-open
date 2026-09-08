@@ -118,7 +118,6 @@ import {
 import {
   CODE_ARCHITECTURE_HAZARD_ARTIFACT_TYPE,
   CodeArchitectureHazardPanel,
-  CODE_ARCHITECTURE_HAZARD_GENERATION_MODE_OPTIONS,
   deleteCodeArchitectureHazardRuns,
   ensureCodeArchitectureTraceIds,
   getCodeArchitectureHazardRuns,
@@ -3482,7 +3481,6 @@ const [codeArchitectureHazardSummaryOpenKey, setCodeArchitectureHazardSummaryOpe
 const [highlightedCodeArchitectureHazardRowIndex, setHighlightedCodeArchitectureHazardRowIndex] = useState(null);
 const [pendingCodeArchitectureDiagramTarget, setPendingCodeArchitectureDiagramTarget] = useState(null);
 const [codeArchitectureHazardMethod, setCodeArchitectureHazardMethod] = useState("STPA-Textbook");
-const [codeArchitectureHazardGenerationMode, setCodeArchitectureHazardGenerationMode] = useState("standard");
 const [codeArchitectureHazardRun, setCodeArchitectureHazardRun] = useState(null);
 const [isRunningCodeArchitectureHazard, setIsRunningCodeArchitectureHazard] = useState(false);
 const [codeArchitectureHazardProgress, setCodeArchitectureHazardProgress] = useState({
@@ -6791,7 +6789,6 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [functionalAuditFeedback, setFunctionalAuditFeedback] = useState("");
   const [functionalCanvasSelection, setFunctionalCanvasSelection] = useState(null);
   const [riskMethod, setRiskMethod] = useState("STPA-Textbook");
-  const [projectRiskProfileGenerationMode, setProjectRiskProfileGenerationMode] = useState("standard");
 	  const [riskAssessmentReportMarkdown, setRiskAssessmentReportMarkdown] = useState("");
   const [isGeneratingRiskAssessmentReport, setIsGeneratingRiskAssessmentReport] = useState(false);
   const [isConsolidatingSafetyIssues, setIsConsolidatingSafetyIssues] = useState(false);
@@ -6971,7 +6968,6 @@ useEffect(() => {
       setShowHazardContextManager(false);
       setExpandedHazardVariantKeys(new Set());
       setRiskMethod('STPA');
-      setProjectRiskProfileGenerationMode('standard');
       setAgentReportResult(null); // NEW: reset when no project
       setRiskAssessmentReportMarkdown("");
       safetyIssueReportHydrationRef.current = null;
@@ -7009,7 +7005,6 @@ useEffect(() => {
     setShowHazardContextManager(false);
     setExpandedHazardVariantKeys(new Set());
     setRiskMethod(data?.riskMethod || 'STPA-Textbook');
-    setProjectRiskProfileGenerationMode(data?.projectRiskProfileGenerationMode || 'standard');
     setAgentReportResult(data?.agentReportResult || null); // NEW: restore report
     const legacySafetyIssueReport = String(data?.riskAssessmentReportMarkdown || "");
     setRiskAssessmentReportMarkdown(legacySafetyIssueReport);
@@ -7193,7 +7188,6 @@ useEffect(() => {
     responseRows,
     diagramCategories,
     riskMethod,
-    projectRiskProfileGenerationMode,
 	    agentReportResult,
     requirements,        // ← add this
 	    hazardOperationalContexts,
@@ -7212,7 +7206,6 @@ useEffect(() => {
   diagramCategories,
   analysisResult,
   riskMethod,
-  projectRiskProfileGenerationMode,
   agentReportResult,
 	  riskRegister, // <-- ensure riskRegister is in the deps
 	  requirements,
@@ -9538,10 +9531,6 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
 
   const handleRunAnalysis = async (selectedMethod, options = {}) => {
     const shouldRegenerate = Boolean(options.regenerate);
-    const usesProjectRiskProfileGenerationMode = selectedMethod === "STPA-Textbook";
-    const selectedGenerationMode = usesProjectRiskProfileGenerationMode
-      ? projectRiskProfileGenerationMode
-      : undefined;
     const sourceRunId = `hazard-${activeProjectId || "default"}-${Date.now()}`;
     const targetHeaders = getProjectDraftHazardHeaders(selectedMethod);
     const existingSummary = Array.isArray(analysisResult?.Summary) ? analysisResult.Summary : null;
@@ -9654,9 +9643,6 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
           draftHazardHeaders: targetHeaders,
           draftHazardRowsByIndex: undefined,
           riskRegister: undefined,
-          ...(usesProjectRiskProfileGenerationMode
-            ? { projectRiskProfileGenerationMode: selectedGenerationMode }
-            : {}),
         });
       }
       setShowDiagram(false);
@@ -9717,9 +9703,6 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       operationalContext: buildHazardOperationalContextPrompt(contextsToRun),
       organizationContext: hazardOrganizationCalibration.context,
       signal: abortController.signal,
-      ...(usesProjectRiskProfileGenerationMode
-        ? { hazardGenerationMode: selectedGenerationMode, fhaGenerationMode: selectedGenerationMode }
-        : {}),
     });
     const generatedSheets = addSubsystemAllocationsToProjectHazardSummary(
       stripProjectRiskProfileColumns(rawFinalSheets),
@@ -9797,9 +9780,6 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         riskRegister: undefined,
         riskMethod: selectedMethod,
         draftHazardHeaders: targetHeaders,
-        ...(usesProjectRiskProfileGenerationMode
-          ? { projectRiskProfileGenerationMode: selectedGenerationMode }
-          : {}),
         ...(hazardOrganizationCalibration.context ? {
           organizationProfileProvenance: {
             artifact: "hazard-analysis",
@@ -9880,18 +9860,6 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     }
   };
 
-  const handleProjectRiskProfileGenerationModeChange = (nextMode) => {
-    setProjectRiskProfileGenerationMode(nextMode);
-    setDraftHazardColumnFilters({});
-    setDraftHazardColumnSearches({});
-    setDraftHazardFilterColumnIndex(null);
-    if (activeProjectId) {
-      saveProjectPatch(activeProjectId, {
-        projectRiskProfileGenerationMode: nextMode,
-      });
-    }
-  };
-
   const handleGenerateDraftHazardRow = async (hazardTargetIndex) => {
     if (draftHazardGeneratingIndex !== null || isAnalyzing) return;
     const target = draftHazardTargets[hazardTargetIndex];
@@ -9900,10 +9868,6 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const rowKey = target.rowKey;
 
     const selectedMethod = riskMethod;
-    const usesProjectRiskProfileGenerationMode = selectedMethod === "STPA-Textbook";
-    const selectedGenerationMode = usesProjectRiskProfileGenerationMode
-      ? projectRiskProfileGenerationMode
-      : undefined;
     const organizationCalibration = getProjectOrganizationCalibration(activeProjectId, [
       "Safety Philosophy",
       "Hazard and Loss Taxonomy",
@@ -9952,9 +9916,6 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         omitConsolidatedRequirement: true,
         operationalContext: buildHazardOperationalContextPrompt([target.context]),
         organizationContext: organizationCalibration.context,
-        ...(usesProjectRiskProfileGenerationMode
-          ? { hazardGenerationMode: selectedGenerationMode, fhaGenerationMode: selectedGenerationMode }
-          : {}),
       });
       const generatedSheets = addSubsystemAllocationsToProjectHazardSummary(
         stripProjectRiskProfileColumns(rawSheets),
@@ -11163,11 +11124,8 @@ Rules:
   };
 
   const handleRunCodeArchitectureHazardAnalysis = async (
-    selectedMethod = codeArchitectureHazardMethod,
-    options = {}
+    selectedMethod = codeArchitectureHazardMethod
   ) => {
-    const selectedHazardGenerationMode =
-      options.hazardGenerationMode || options.fhaGenerationMode || codeArchitectureHazardGenerationMode;
     const repoMeta = activeCodeArchitectureRepoMeta;
     const repoId = repoMeta.repoId || repoMeta.repoName || "repo";
     const reviewRepoId = activeCodeArchitectureRepo?.id || repoId;
@@ -11184,7 +11142,6 @@ Rules:
     ]);
     const actId = `cba-hazard-${cbaProjectId || "default"}-${repoId}`;
     setCodeArchitectureHazardMethod(selectedMethod);
-    setCodeArchitectureHazardGenerationMode(selectedHazardGenerationMode);
     setIsRunningCodeArchitectureHazard(true);
     setCodeArchitectureHazardProgress({
       step: 0,
@@ -11202,7 +11159,6 @@ Rules:
       const run = await runCodeArchitectureHazardAnalysis({
         cbaRows: cbaTableData,
         method: selectedMethod,
-        hazardGenerationMode: selectedHazardGenerationMode,
         repoMeta,
         projectId: cbaProjectId,
         organizationContext: codeHazardOrganizationCalibration.context,
@@ -12296,7 +12252,7 @@ const projectHint = useMemo(() => ({
       label="Hazard Analysis tools"
       collapsed={hazardTabToolbarCollapsed}
       onCollapsedChange={setHazardTabToolbarCollapsed}
-      className="sticky top-0 h-[calc(100dvh-176px)] min-h-[360px]"
+      className="h-full"
     >
       <ProjectTabToolbarSection title="Analysis setup" collapsed={hazardTabToolbarCollapsed}>
         {hazardTabToolbarCollapsed && (
@@ -12314,26 +12270,9 @@ const projectHint = useMemo(() => ({
           onChange={(e) => handleProjectRiskMethodChange(e.target.value)}
           disabled={isAnalyzing || draftHazardGeneratingIndex !== null}
         >
-          <option value="STPA-Textbook">STPA (standard/detailed)</option>
+          <option value="STPA-Textbook">STPA</option>
         </select>
         </ProjectTabToolbarField>
-      {riskMethod === "STPA-Textbook" && (
-        <ProjectTabToolbarField label="Generation mode" collapsed={hazardTabToolbarCollapsed}>
-        <select
-          className="w-full rounded-md border border-gray-200 bg-white px-2 py-2 text-xs"
-          value={projectRiskProfileGenerationMode}
-          onChange={(e) => handleProjectRiskProfileGenerationModeChange(e.target.value)}
-          disabled={isAnalyzing || draftHazardGeneratingIndex !== null}
-          aria-label="STPA generation mode"
-        >
-          {CODE_ARCHITECTURE_HAZARD_GENERATION_MODE_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label} - {option.description}
-            </option>
-          ))}
-        </select>
-        </ProjectTabToolbarField>
-      )}
         <ProjectTabToolbarField label="Operational context" collapsed={hazardTabToolbarCollapsed}>
         <select
           id="hazard-operational-context"
@@ -14054,8 +13993,6 @@ const projectHint = useMemo(() => ({
                       latestRun={codeArchitectureHazardRun}
                       method={codeArchitectureHazardMethod}
                       onMethodChange={setCodeArchitectureHazardMethod}
-                      hazardGenerationMode={codeArchitectureHazardGenerationMode}
-                      onHazardGenerationModeChange={setCodeArchitectureHazardGenerationMode}
                       onRunAnalysis={handleRunCodeArchitectureHazardAnalysis}
                       onClearContents={handleClearCodeArchitectureHazardContents}
                       isRunning={isRunningCodeArchitectureHazard}
@@ -14243,7 +14180,7 @@ const projectHint = useMemo(() => ({
 
         {/* PROJECTS */}
         {section === 'projects' && (
-          <div className={`flex min-h-0 w-full flex-1 flex-col justify-start bg-white px-3 py-0 md:px-5 lg:px-7 ${activeProjectId && activeTab === 'Safety Issues & Risk Assessment' ? 'overflow-hidden' : 'overflow-auto'}`}>
+          <div className={`flex min-h-0 w-full flex-1 flex-col justify-start bg-white px-3 py-0 md:px-5 lg:px-7 ${activeProjectId && (activeTab === 'Hazard Analysis' || activeTab === 'Safety Issues & Risk Assessment' || (activeTab === 'Functional Diagramming' && showFunctionalDiagram)) ? 'overflow-hidden' : 'overflow-auto'}`}>
 <div className="mb-6 flex shrink-0 items-center justify-between">
   <h1 className="text-2xl font-semibold flex items-center gap-2">
     Projects
@@ -14552,7 +14489,7 @@ const projectHint = useMemo(() => ({
   </section>
 )}
 {activeTab === 'Functional Diagramming' && (
-  <div className="text-center">
+  <div className={`${showFunctionalDiagram ? 'flex min-h-0 flex-1 flex-col overflow-hidden pb-3' : ''} text-center`}>
                   {showPromptWizard && (
                     <>
 
@@ -14644,10 +14581,9 @@ const projectHint = useMemo(() => ({
                       </div>
 
                       {/* Diagram */}
-                      <div className={`${showFunctionalDiagram ? '' : 'hidden'} mb-10 w-full space-y-6`}>
-                        <div className="pt-6">
-                          {/* relative/pb-10/overflow-visible prevents clipping of bottom-right controls */}
-                          <div className="relative h-[calc(100vh-285px)] min-h-[560px] w-full rounded-2xl bg-white overflow-visible">
+                      <div className={`${showFunctionalDiagram ? 'flex min-h-0 flex-1' : 'hidden'} w-full`}>
+                        <div className="min-h-0 flex-1 pt-6">
+                          <div className="relative h-full min-h-0 w-full overflow-hidden rounded-2xl bg-white">
                           {activeProjectDiagramReady ? (
                             <LiteSummaryDiagramReactFlow
   key={activeProjectDiagramKey}
@@ -14676,7 +14612,7 @@ const projectHint = useMemo(() => ({
   }}
 />
                           ) : (
-                            <div className="flex h-full min-h-[560px] items-center justify-center text-sm font-medium text-gray-500">
+                            <div className="flex h-full min-h-0 items-center justify-center text-sm font-medium text-gray-500">
                               Loading project diagram...
                             </div>
                           )}
@@ -14899,9 +14835,9 @@ const projectHint = useMemo(() => ({
   />
 )}
 {activeTab === 'Hazard Analysis' && (
-  <section className="mt-2 flex min-h-0 items-start overflow-visible">
+  <section className="mt-2 flex min-h-0 flex-1 items-stretch overflow-hidden pb-3">
     {hazardAnalysisControls}
-    <div className="min-w-0 flex-1 pl-4">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col pl-4">
     {hazardOperationalContexts.length === 0 && (
       <button
         type="button"
@@ -14918,7 +14854,7 @@ const projectHint = useMemo(() => ({
       </div>
     )}
     {!analysisResult?.Summary && hazardResetStatus?.kind === "cleared" && Object.keys(draftHazardRowsByIndex || {}).length === 0 ? (
-      <div className="flex h-[calc(100dvh-360px)] min-h-[280px] items-center justify-center rounded-xl border border-dashed border-gray-300 bg-white p-8 text-center">
+      <div className="flex min-h-[280px] flex-1 items-center justify-center rounded-xl border border-dashed border-gray-300 bg-white p-8 text-center">
         <div className="max-w-md">
           <div className="text-base font-semibold text-gray-900">No hazard analysis results</div>
           <p className="mt-2 text-sm text-gray-600">The analysis was cleared. Your functional decomposition, operational contexts, method, and generation settings are still available.</p>
@@ -14926,14 +14862,14 @@ const projectHint = useMemo(() => ({
         </div>
       </div>
     ) : !analysisResult?.Summary ? (
-      <div className="space-y-3">
+      <div className="flex min-h-0 flex-1 flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-white px-4 py-3 text-sm text-gray-600">
           <div>
             <p className="font-medium text-gray-900">Incomplete hazard analysis draft</p>
             <p>Known functional decomposition fields are populated. Use the row magic button to generate a hazard row with the selected method.</p>
           </div>
         </div>
-        <div className="relative h-[calc(100dvh-360px)] min-h-[260px] w-full overflow-auto rounded-md shadow-sm">
+        <div className="relative min-h-0 w-full flex-1 overflow-auto rounded-md shadow-sm">
           <table className="min-w-full border-separate border-spacing-0 text-sm text-left">
             <thead>
               <tr className="text-[#4B5563] text-sm font-medium">
@@ -15184,7 +15120,7 @@ const projectHint = useMemo(() => ({
   </div>
 </div>
 ) : (
-          <div className="relative h-[calc(100dvh-360px)] min-h-[260px] w-full overflow-auto rounded-md shadow-sm">
+          <div className="relative min-h-0 w-full flex-1 overflow-auto rounded-md shadow-sm">
             <table className="min-w-full border-separate border-spacing-0 text-sm text-left">
               <thead>
                 <tr className="text-[#4B5563] text-sm font-medium">

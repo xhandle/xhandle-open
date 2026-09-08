@@ -5,6 +5,7 @@ import {
   getStoredAIProviderModelPreference,
   normalizeAIProviderEffort,
   normalizeProviderModel,
+  saveUserAIProviderSettings,
   storeAIProviderEffortPreference,
   storeAIProviderModelPreference,
   supportsAIProviderEffort,
@@ -52,6 +53,22 @@ describe("AI provider model preferences", () => {
     expect(supportsAIProviderEffort("openai", "gpt-4o")).toBe(false);
     expect(supportsAIProviderEffort("gemini", "gemini-3.6-flash")).toBe(true);
     expect(supportsAIProviderEffort("gemini", "gemini-2.0-flash")).toBe(false);
+  });
+
+  it("persists effort with provider settings", async () => {
+    const saved = await saveUserAIProviderSettings(
+      "anthropic",
+      "sk-ant-test-provider-key-1234567890",
+      { selectedModel: "claude-sonnet-5", selectedEffort: "high" },
+    );
+
+    expect(saved.selectedModel).toBe("claude-sonnet-5");
+    expect(saved.selectedEffort).toBe("high");
+    expect(saved.savedProviders[0]).toEqual(expect.objectContaining({
+      selectedModel: "claude-sonnet-5",
+      selectedEffort: "high",
+    }));
+    expect(getStoredAIProviderEffortPreference("anthropic")).toBe("high");
   });
 
   it("notifies same-tab consumers when the active model changes", () => {

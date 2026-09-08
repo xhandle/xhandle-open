@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  CODE_ARCHITECTURE_HAZARD_GENERATION_MODE_OPTIONS,
   CODE_ARCHITECTURE_HAZARD_METHOD_OPTIONS,
 } from "./codeArchitectureHazardTypes";
 import { isCodeArchitectureHazardAnalysisStale } from "./codeArchitectureHazardUtils";
@@ -11,8 +10,6 @@ export default function CodeArchitectureHazardPanel({
   latestRun,
   method,
   onMethodChange,
-  hazardGenerationMode = "standard",
-  onHazardGenerationModeChange,
   onRunAnalysis,
   isRunning = false,
   progress,
@@ -74,25 +71,10 @@ export default function CodeArchitectureHazardPanel({
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
           </select>
-          {["STPA-Textbook", "FMEA-Textbook", "WhatIf-Textbook", "HARA", "FHA"].includes(method) && (
-            <select
-              value={hazardGenerationMode}
-              onChange={(event) => onHazardGenerationModeChange?.(event.target.value)}
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700"
-              disabled={isRunning || reviewMode}
-              aria-label="Hazard analysis generation mode"
-            >
-              {CODE_ARCHITECTURE_HAZARD_GENERATION_MODE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label} - {option.description}
-                </option>
-              ))}
-            </select>
-          )}
           {!reviewMode && (
             <button
               type="button"
-              onClick={() => onRunAnalysis?.(method, { hazardGenerationMode })}
+              onClick={() => onRunAnalysis?.(method)}
               disabled={isRunning || !cbaRows.length}
               className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
             >

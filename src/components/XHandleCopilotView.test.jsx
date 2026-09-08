@@ -278,6 +278,30 @@ describe("subsystem generation prompting", () => {
     if (priorModel == null) localStorage.removeItem("xhandle.aiProviderModel.anthropic"); else localStorage.setItem("xhandle.aiProviderModel.anthropic", priorModel);
   });
 
+  it("forwards the global effort preference for supported provider models", () => {
+    const priorKeys = localStorage.getItem("xhandle.aiProvider.keys");
+    const priorProvider = localStorage.getItem("xhandle.aiProvider.active");
+    const priorModel = localStorage.getItem("xhandle.aiProviderModel.anthropic");
+    const priorEffort = localStorage.getItem("xhandle.aiProviderEffort.anthropic");
+    localStorage.setItem("xhandle.aiProvider.keys", JSON.stringify({
+      anthropic: { apiKey: "sk-ant-test-active-provider-key" },
+    }));
+    localStorage.setItem("xhandle.aiProvider.active", "anthropic");
+    localStorage.setItem("xhandle.aiProviderModel.anthropic", "claude-sonnet-5");
+    localStorage.setItem("xhandle.aiProviderEffort.anthropic", "high");
+
+    const { buildAIAuthOpts } = require("./backendConfig");
+    const request = buildAIAuthOpts({ "Content-Type": "application/json" });
+    expect(request.headers["x-ai-provider"]).toBe("claude");
+    expect(request.headers["x-ai-model"]).toBe("claude-sonnet-5");
+    expect(request.headers["x-ai-effort"]).toBe("high");
+
+    if (priorKeys == null) localStorage.removeItem("xhandle.aiProvider.keys"); else localStorage.setItem("xhandle.aiProvider.keys", priorKeys);
+    if (priorProvider == null) localStorage.removeItem("xhandle.aiProvider.active"); else localStorage.setItem("xhandle.aiProvider.active", priorProvider);
+    if (priorModel == null) localStorage.removeItem("xhandle.aiProviderModel.anthropic"); else localStorage.setItem("xhandle.aiProviderModel.anthropic", priorModel);
+    if (priorEffort == null) localStorage.removeItem("xhandle.aiProviderEffort.anthropic"); else localStorage.setItem("xhandle.aiProviderEffort.anthropic", priorEffort);
+  });
+
   it("leaves model selection to the AI Provider configuration", () => {
     const payload = buildCollaboratorChatPayload([{ role: "user", content: "Hello" }], {
       maxTokens: 2400,

@@ -2,14 +2,12 @@ import {
   generateUnsafeControlActionsSheet,
   populateUCATimingColumnsWithLLM,
   generateCausalFactorsSheet,
-  generateTextbookCausalFactorsSheet,
   generateMitigationStrategiesSheet,
   generateSystemRequirementsSheet,
   generateBatchedRequirementsSheet,
   generateHazardMappingsSheet,
   generateLossMappingsSheet,
   generateSummarySheetFromMappings,
-  generateTextbookSummarySheetFromMappings,
 } from "./aiAnalysisSTPA";
 
 import {
@@ -23,30 +21,6 @@ import {
   generateLossMappingsSheet as generateHRLossMappingsSheet,
   generateSummarySheetFromMappings as generateHRSummarySheet,
 } from "./aiAnalysisWhatIfHR";
-
-import {
-  generateFailureModeSeedSheet,
-  populateFMEAColumnsWithLLM,
-  generateMitigationStrategiesSheet as generateFMEAMitigationStrategiesSheet,
-  generateSystemRequirementsSheet as generateFMEASystemRequirementsSheet,
-  generateBatchedRequirementsSheet as generateFMEABatchedRequirementsSheet,
-  generateHazardMappingsSheet as generateFMEAHazardMappingsSheet,
-  generateLossMappingsSheet as generateFMEALossMappingsSheet,
-  generateSummarySheetFromMappings as generateFMEASummarySheet,
-  generateFMEACausalFactorsSheet,
-} from "./aiAnalysisFMEA";
-
-import {
-  generateWhatIfSeedSheet,
-  populateWhatIfScenariosWithLLM,
-  generateWhatIfCausalFactorsSheet,
-  generateMitigationStrategiesSheet as generateWhatIfMitigationStrategiesSheet,
-  generateSystemRequirementsSheet as generateWhatIfSystemRequirementsSheet,
-  generateBatchedRequirementsSheet as generateWhatIfBatchedRequirementsSheet,
-  generateHazardMappingsSheet as generateWhatIfHazardMappingsSheet,
-  generateLossMappingsSheet as generateWhatIfLossMappingsSheet,
-  generateSummarySheetFromMappings as generateWhatIfSummarySheet,
-} from "./aiAnalysisWhatIf";
 
 import {
   generateHaraAnalysisSheets,
@@ -85,8 +59,6 @@ export async function runLiteAIAnalysis({
   setChatResponse,
   setProgress,
   hazardMethod = "STPA",
-  fhaGenerationMode = "standard",
-  hazardGenerationMode = fhaGenerationMode,
   operationalContext = "",
   organizationContext = "",
   analysisContext = null,
@@ -103,8 +75,6 @@ export async function runLiteAIAnalysis({
     message: patch.message,
     completed: patch.completed,
   });
-  const selectedHazardGenerationMode = hazardGenerationMode || fhaGenerationMode || "standard";
-
   const existingDecomposition = sheets?.["Functional Decomposition"];
   const decompositionSheet = Array.isArray(existingDecomposition) && existingDecomposition.length > 1
     ? existingDecomposition
@@ -139,96 +109,24 @@ export async function runLiteAIAnalysis({
     hazardMethod === "FMEA_TEXTBOOK" ||
     hazardMethod === "FMEA_TEXTBOOK_APPROACH"
   ) {
-    if (selectedHazardGenerationMode === "standard") {
-      step = 1;
-      updateProgress();
-      updatedSheets = (await generateStandardCodeHazardAnalysisSheets({
-        sheets: updatedSheets,
-        setFolders,
-        currentFolder,
-        method: "FMEA",
-        operationalContext,
-        organizationContext,
-        analysisContext,
-        contextSources,
-        signal,
-        onProgress: updateGeneratorProgress,
-        omitConsolidatedRequirement,
-      })) || updatedSheets;
-      step = 9;
-      updateProgress();
-      return updatedSheets;
-    }
-
     step = 1;
     updateProgress();
-    updatedSheets = (await generateFailureModeSeedSheet({ sheets: updatedSheets, setFolders, currentFolder })) || updatedSheets;
-
-    step = 2;
-    updateProgress();
-    updatedSheets = (await populateFMEAColumnsWithLLM({
+    updatedSheets = (await generateStandardCodeHazardAnalysisSheets({
       sheets: updatedSheets,
       setFolders,
       currentFolder,
-      setChatPrompt,
-      setChatResponse,
+      method: "FMEA",
+      operationalContext,
+      organizationContext,
+      analysisContext,
+      contextSources,
+      signal,
+      onProgress: updateGeneratorProgress,
+      omitConsolidatedRequirement,
     })) || updatedSheets;
-
-    step = 3;
-    updateProgress();
-    updatedSheets = (await generateFMEACausalFactorsSheet({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
-    })) || updatedSheets;
-
-    step = 4;
-    updateProgress();
-    updatedSheets = (await generateFMEAMitigationStrategiesSheet({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
-    })) || updatedSheets;
-
-    step = 5;
-    updateProgress();
-    updatedSheets = (await generateFMEASystemRequirementsSheet({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
-    })) || updatedSheets;
-
-    step = 6;
-    updateProgress();
-    updatedSheets = (await generateFMEABatchedRequirementsSheet({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
-    })) || updatedSheets;
-
-    step = 7;
-    updateProgress();
-    updatedSheets = (await generateFMEAHazardMappingsSheet({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
-    })) || updatedSheets;
-
-    step = 8;
-    updateProgress();
-    updatedSheets = (await generateFMEALossMappingsSheet({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
-    })) || updatedSheets;
-
     step = 9;
     updateProgress();
-    updatedSheets = (await generateFMEASummarySheet({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
-    })) || updatedSheets;
+    return updatedSheets;
 
   } else if (hazardMethod === "HRWhatIf") {
     step = 1;
@@ -312,207 +210,44 @@ export async function runLiteAIAnalysis({
     hazardMethod === "WHAT_IF_TEXTBOOK" ||
     hazardMethod === "WHAT_IF_TEXTBOOK_APPROACH"
   ) {
-    if (selectedHazardGenerationMode === "standard") {
-      step = 1;
-      updateProgress();
-      updatedSheets = (await generateStandardCodeHazardAnalysisSheets({
-        sheets: updatedSheets,
-        setFolders,
-        currentFolder,
-        method: "WhatIf",
-        operationalContext,
-        organizationContext,
-        analysisContext,
-        contextSources,
-        signal,
-        onProgress: updateGeneratorProgress,
-        omitConsolidatedRequirement,
-      })) || updatedSheets;
-      step = 9;
-      updateProgress();
-      return updatedSheets;
-    }
-
     step = 1;
     updateProgress();
-    updatedSheets = (await generateWhatIfSeedSheet({
+    updatedSheets = (await generateStandardCodeHazardAnalysisSheets({
       sheets: updatedSheets,
       setFolders,
       currentFolder,
+      method: "WhatIf",
+      operationalContext,
+      organizationContext,
+      analysisContext,
+      contextSources,
+      signal,
+      onProgress: updateGeneratorProgress,
+      omitConsolidatedRequirement,
     })) || updatedSheets;
-
-    step = 2;
-    updateProgress();
-    updatedSheets = (await populateWhatIfScenariosWithLLM({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
-      setChatPrompt,
-      setChatResponse,
-    })) || updatedSheets;
-
-    step = 3;
-    updateProgress();
-    updatedSheets = (await generateWhatIfCausalFactorsSheet({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
-    })) || updatedSheets;
-
-    step = 4;
-    updateProgress();
-    updatedSheets = (await generateWhatIfMitigationStrategiesSheet({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
-    })) || updatedSheets;
-
-    step = 5;
-    updateProgress();
-    updatedSheets = (await generateWhatIfSystemRequirementsSheet({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
-    })) || updatedSheets;
-
-    step = 6;
-    updateProgress();
-    updatedSheets = (await generateWhatIfBatchedRequirementsSheet({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
-    })) || updatedSheets;
-
-    step = 7;
-    updateProgress();
-    updatedSheets = (await generateWhatIfHazardMappingsSheet({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
-    })) || updatedSheets;
-
-    step = 8;
-    updateProgress();
-    updatedSheets = (await generateWhatIfLossMappingsSheet({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
-    })) || updatedSheets;
-
     step = 9;
     updateProgress();
-    updatedSheets = (await generateWhatIfSummarySheet({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
-    })) || updatedSheets;
+    return updatedSheets;
 
   } else if (hazardMethod === "STPA-Textbook" || hazardMethod === "STPA_TEXTBOOK" || hazardMethod === "STPA_TEXTBOOK_APPROACH") {
-    // Both project STPA modes use the normalized generator. The previous
-    // "detailed" branch emitted a legacy schema that placed causal factors in
-    // mitigation columns and bypassed the current context/quality rules.
-    if (selectedHazardGenerationMode === "standard" || selectedHazardGenerationMode === "detailed") {
-      step = 1;
-      updateProgress();
-      updatedSheets = (await generateStandardCodeHazardAnalysisSheets({
-        sheets: updatedSheets,
-        setFolders,
-        currentFolder,
-        method: "STPA",
-        operationalContext,
-        organizationContext,
-        analysisContext,
-        contextSources,
-        signal,
-        onProgress: updateGeneratorProgress,
-        omitConsolidatedRequirement,
-        generationMode: selectedHazardGenerationMode,
-      })) || updatedSheets;
-      step = 9;
-      updateProgress();
-      return updatedSheets;
-    }
-
     step = 1;
     updateProgress();
-    updatedSheets = (await generateUnsafeControlActionsSheet({
+    updatedSheets = (await generateStandardCodeHazardAnalysisSheets({
       sheets: updatedSheets,
       setFolders,
       currentFolder,
-    })) || updatedSheets;
-
-    step = 2;
-    updateProgress();
-    updatedSheets = (await populateUCATimingColumnsWithLLM({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
-      setChatPrompt,
-      setChatResponse,
-    })) || updatedSheets;
-
-    step = 3;
-    updateProgress();
-    updatedSheets = (await generateTextbookCausalFactorsSheet({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
-    })) || updatedSheets;
-
-    step = 4;
-    updateProgress();
-    updatedSheets = (await generateMitigationStrategiesSheet({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
+      method: "STPA",
+      operationalContext,
+      organizationContext,
+      analysisContext,
+      contextSources,
+      signal,
+      onProgress: updateGeneratorProgress,
       omitConsolidatedRequirement,
     })) || updatedSheets;
-
-    step = 5;
-    updateProgress();
-    updatedSheets = (await generateSystemRequirementsSheet({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
-      omitConsolidatedRequirement,
-    })) || updatedSheets;
-
-    if (!omitConsolidatedRequirement) {
-      step = 6;
-      updateProgress();
-      updatedSheets = (await generateBatchedRequirementsSheet({
-        sheets: updatedSheets,
-        setFolders,
-        currentFolder,
-      })) || updatedSheets;
-    }
-
-    step = 7;
-    updateProgress();
-    updatedSheets = (await generateHazardMappingsSheet({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
-      omitConsolidatedRequirement,
-    })) || updatedSheets;
-
-    step = 8;
-    updateProgress();
-    updatedSheets = (await generateLossMappingsSheet({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
-      omitConsolidatedRequirement,
-    })) || updatedSheets;
-
     step = 9;
     updateProgress();
-    updatedSheets = (await generateTextbookSummarySheetFromMappings({
-      sheets: updatedSheets,
-      setFolders,
-      currentFolder,
-      omitConsolidatedRequirement,
-    })) || updatedSheets;
+    return updatedSheets;
 
   } else if (hazardMethod === "HARA") {
     step = 1;
@@ -524,7 +259,7 @@ export async function runLiteAIAnalysis({
       sheets: updatedSheets,
       setFolders,
       currentFolder,
-      haraGenerationMode: selectedHazardGenerationMode,
+      haraGenerationMode: "standard",
       operationalContext,
       organizationContext,
       analysisContext,
@@ -545,7 +280,7 @@ export async function runLiteAIAnalysis({
       sheets: updatedSheets,
       setFolders,
       currentFolder,
-      fhaGenerationMode: selectedHazardGenerationMode,
+      fhaGenerationMode: "standard",
       operationalContext,
       organizationContext,
       analysisContext,

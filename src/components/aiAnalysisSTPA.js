@@ -66,7 +66,9 @@ function traceSummaryCellsFromSheetRow(headers, row) {
 }
 
 const DEFAULT_HAZARD_REQUEST_TIMEOUT_MS = 180_000;
-const LONG_REASONING_HAZARD_REQUEST_TIMEOUT_MS = 330_000;
+// Keep the browser deadline just inside the backend's 300-second absolute
+// provider deadline so callers receive one deterministic timeout owner.
+const LONG_REASONING_HAZARD_REQUEST_TIMEOUT_MS = 290_000;
 
 export function getHazardAnalysisRequestTimeoutMs(requestOptions = {}) {
   const explicitTimeout = Number(requestOptions.timeoutMs);
@@ -191,6 +193,7 @@ for (let attempt = 1; attempt <= 5; attempt++) {
           { role: "user", content: prompt },
         ],
         temperature: 0.3,
+        xhandleWorkflow: requestOptions.workflow || "hazard-analysis",
         ...(Number(requestOptions.maxTokens) > 0
           ? { max_tokens: Number(requestOptions.maxTokens) }
           : {}),
@@ -241,8 +244,7 @@ if (!response.ok) {
   throw new Error(`LLM proxy error (${response.status}): ${errTxt}`);
 }
 
-const json = await response.json();             // ✅ read body exactly once
-console.log("📦 Raw LLM response JSON:", json); // (optional)
+const json = await response.json();
 
 return json?.choices?.[0]?.message?.content?.trim() || "(empty)";
 

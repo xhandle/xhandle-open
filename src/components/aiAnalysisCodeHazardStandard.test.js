@@ -6,6 +6,7 @@ import {
   findConsistencyReconciliationIndexes,
   getStandardHazardRowsPerPrompt,
   isHazardAnalysisCancellation,
+  mapWithConcurrency,
   materializeGeneratedHazardRows,
   normalizeGenericRequirementOwner,
   validateApplicabilityEvidence,
@@ -13,16 +14,30 @@ import {
 
 describe("standard hazard row materialization", () => {
   test("uses smaller initial hazard batches for Claude and detailed generation", () => {
-    expect(getStandardHazardRowsPerPrompt("anthropic", "standard")).toBe(4);
-    expect(getStandardHazardRowsPerPrompt("claude", "standard")).toBe(4);
-    expect(getStandardHazardRowsPerPrompt("openai", "detailed")).toBe(4);
-    expect(getStandardHazardRowsPerPrompt("openai", "standard")).toBe(8);
+    expect(getStandardHazardRowsPerPrompt("anthropic")).toBe(4);
+    expect(getStandardHazardRowsPerPrompt("claude")).toBe(4);
+    expect(getStandardHazardRowsPerPrompt("openai")).toBe(8);
   });
 
   test("recovers provider timeouts while preserving explicit user cancellation", () => {
     expect(isHazardAnalysisCancellation({ name: "TimeoutError" }, { aborted: false })).toBe(false);
     expect(isHazardAnalysisCancellation({ name: "AbortError" }, { aborted: false })).toBe(true);
     expect(isHazardAnalysisCancellation(new Error("request failed"), { aborted: true })).toBe(true);
+  });
+
+  test("runs independent AI batches with bounded concurrency and preserves result order", async () => {
+    let active = 0;
+    let peak = 0;
+    const results = await mapWithConcurrency([1, 2, 3], 2, async (value) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await Promise.resolve();
+      active -= 1;
+      return value * 10;
+    });
+
+    expect(results).toEqual([10, 20, 30]);
+    expect(peak).toBe(2);
   });
 
   test("retains every requested row when an LLM response is incomplete", () => {

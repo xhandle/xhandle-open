@@ -95,6 +95,10 @@ function normalizeEffort(effort = "") {
   return ["low", "medium", "high"].includes(normalized) ? normalized : "";
 }
 
+function resolveAIRequestEffort(body = {}, headerEffort = "") {
+  return normalizeEffort(body?.effort) || normalizeEffort(headerEffort);
+}
+
 function supportsOpenAIEffort(model = "") {
   return /^(?:gpt-(?:5|6)(?:[.-]|$)|o[1-9](?:[.-]|$))/i.test(String(model || ""));
 }
@@ -194,6 +198,7 @@ module.exports = {
   buildClaudeRequestPayload,
   buildGeminiRequestPayload,
   normalizeEffort,
+  resolveAIRequestEffort,
   normalizeClaudeConversation,
   resolveOutputTokenLimit,
   supportsClaudeEffort,

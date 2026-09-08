@@ -36,13 +36,17 @@ test("forwards chunked native Anthropic SSE as incremental xHandle SSE", async (
   let output = "";
   response.on("data", (chunk) => { output += chunk.toString("utf8"); });
 
-  const result = await pipeAnthropicSseToClient(providerStream, response);
+  const textChunks = [];
+  const result = await pipeAnthropicSseToClient(providerStream, response, {
+    onText: (value) => textChunks.push(value),
+  });
   assert.equal(result.finishReason, "stop");
   assert.equal(result.providerDone, true);
   assert.match(output, /data: "first "/);
   assert.match(output, /data: "second"/);
   assert.match(output, /event: metadata\ndata: \{"finish_reason":"stop"\}/);
   assert.match(output, /event: done\ndata: \[DONE\]/);
+  assert.deepEqual(textChunks, ["first ", "second"]);
 });
 
 test("rejects an incomplete provider stream instead of silently returning truncated text", async () => {

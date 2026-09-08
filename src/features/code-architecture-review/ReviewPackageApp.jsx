@@ -501,7 +501,6 @@ function ReviewWorkspace({ reviewPackage }) {
                     cbaRows={cbaRows}
                     latestRun={hazardRun}
                     method={hazardRun?.hazardMethod || "STPA-Textbook"}
-                    hazardGenerationMode={hazardRun?.hazardGenerationMode || "standard"}
 	                    reviewItems={hazardReviewItems}
 	                    forceSummaryOpenKey={hazardSummaryOpenKey}
 	                    highlightedRowIndex={highlightedHazardRowIndex}

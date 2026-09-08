@@ -14,7 +14,6 @@ const MODEL = "gpt-4o";
 const MAX_OUTPUT_TOKENS = 12000;
 const MAX_BLUEPRINT_TOKENS = 4500;
 const MAX_CHARS_PER_CHUNK = 30000;
-const MAX_OPENAI_PROXY_FAILURES_PER_RUN = 1;
 const TRANSIENT_STATUSES = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 const SECTION_FALLBACKS = {
   systemName: ["System Name"],
@@ -1001,31 +1000,13 @@ function fallbackRowsFromPrompt(prompt) {
   return mergeRows(rows, subsystemLookup);
 }
 
-async function fetchChatChunk(systemPrompt, userPrompt, maxTokens = MAX_OUTPUT_TOKENS) {
+async function fetchChatChunk(systemPrompt, userPrompt, maxTokens = MAX_OUTPUT_TOKENS, workflow = "functional-decomposition") {
   return fetch("/api/chat", {
     method: "POST",
     ...buildAIAuthOpts({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       model: MODEL,
-      xhandleModelLocked: true,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      temperature: FUNCTIONAL_DECOMPOSITION_SAMPLING.temperature,
-      top_p: FUNCTIONAL_DECOMPOSITION_SAMPLING.topP,
-      max_tokens: maxTokens,
-    }),
-  });
-}
-
-async function fetchOpenAIChunk(systemPrompt, userPrompt, maxTokens = MAX_OUTPUT_TOKENS) {
-  return fetch("/api/chat", {
-    method: "POST",
-    ...buildAIAuthOpts({ "Content-Type": "application/json" }),
-    body: JSON.stringify({
-      model: "gpt-4o-mini",
-      xhandleModelLocked: true,
+      xhandleWorkflow: workflow,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
@@ -1078,72 +1059,28 @@ async function requestTextWithRetry(fetcher, label, attempts = 3) {
   throw lastError || new Error(`${label} failed.`);
 }
 
-async function requestArchitectureBlueprint(systemPrompt, userPrompt, runState = {}) {
-  try {
-    return await requestTextWithRetry(
-      () => fetchChatChunk(systemPrompt, userPrompt, MAX_BLUEPRINT_TOKENS),
-      "LLM architecture blueprint",
-      2
-    );
-  } catch (chatError) {
-    if ((runState.openAIProxyFailures || 0) >= MAX_OPENAI_PROXY_FAILURES_PER_RUN) throw chatError;
-    try {
-      return await requestTextWithRetry(
-        () => fetchOpenAIChunk(systemPrompt, userPrompt, MAX_BLUEPRINT_TOKENS),
-        "LLM architecture blueprint fallback",
-        1
-      );
-    } catch (openAIError) {
-      runState.openAIProxyFailures = (runState.openAIProxyFailures || 0) + 1;
-      throw new Error(`${chatError.message}; ${openAIError.message}`);
-    }
-  }
+async function requestArchitectureBlueprint(systemPrompt, userPrompt) {
+  return requestTextWithRetry(
+    () => fetchChatChunk(systemPrompt, userPrompt, MAX_BLUEPRINT_TOKENS, "functional-blueprint"),
+    "LLM architecture blueprint",
+    2
+  );
 }
 
-async function requestSemanticReview(systemPrompt, userPrompt, runState = {}) {
-  try {
-    return await requestTextWithRetry(
-      () => fetchChatChunk(systemPrompt, userPrompt),
-      "LLM semantic architecture review",
-      2
-    );
-  } catch (chatError) {
-    if ((runState.openAIProxyFailures || 0) >= MAX_OPENAI_PROXY_FAILURES_PER_RUN) throw chatError;
-    try {
-      return await requestTextWithRetry(
-        () => fetchOpenAIChunk(systemPrompt, userPrompt),
-        "LLM semantic architecture review fallback",
-        1
-      );
-    } catch (openAIError) {
-      runState.openAIProxyFailures = (runState.openAIProxyFailures || 0) + 1;
-      throw new Error(`${chatError.message}; ${openAIError.message}`);
-    }
-  }
+async function requestSemanticReview(systemPrompt, userPrompt) {
+  return requestTextWithRetry(
+    () => fetchChatChunk(systemPrompt, userPrompt, MAX_OUTPUT_TOKENS, "functional-semantic-review"),
+    "LLM semantic architecture review",
+    2
+  );
 }
 
-async function requestChunk(systemPrompt, userPrompt, runState = {}) {
-  try {
-    return await requestRowsWithRetry(
-      () => fetchChatChunk(systemPrompt, userPrompt),
-      "LLM chat proxy",
-      2
-    );
-  } catch (chatError) {
-    if ((runState.openAIProxyFailures || 0) >= MAX_OPENAI_PROXY_FAILURES_PER_RUN) {
-      throw chatError;
-    }
-    try {
-      return await requestRowsWithRetry(
-        () => fetchOpenAIChunk(systemPrompt, userPrompt),
-        "LLM openai proxy",
-        1
-      );
-    } catch (openAIError) {
-      runState.openAIProxyFailures = (runState.openAIProxyFailures || 0) + 1;
-      throw new Error(`${chatError.message}; ${openAIError.message}`);
-    }
-  }
+async function requestChunk(systemPrompt, userPrompt, workflow = "functional-decomposition") {
+  return requestRowsWithRetry(
+    () => fetchChatChunk(systemPrompt, userPrompt, MAX_OUTPUT_TOKENS, workflow),
+    "LLM chat proxy",
+    2
+  );
 }
 
 export const handleLitePromptSubmit = async (prompt, setResponse, setPrompt, context = {}) => {
@@ -1155,15 +1092,13 @@ export const handleLitePromptSubmit = async (prompt, setResponse, setPrompt, con
 
   try {
     const allRows = [];
-    const runState = { openAIProxyFailures: 0 };
     context.onStage?.("Planning the domain-specific functional architecture...");
     const blueprintRequest = buildArchitectureBlueprintRequest(prompt);
     let architectureBlueprint = "";
     try {
       architectureBlueprint = await requestArchitectureBlueprint(
         blueprintRequest.systemPrompt,
-        blueprintRequest.userPrompt,
-        runState
+        blueprintRequest.userPrompt
       );
     } catch (blueprintError) {
       console.warn("Lite architecture blueprint generation failed; continuing with direct decomposition.", blueprintError);
@@ -1173,7 +1108,7 @@ export const handleLitePromptSubmit = async (prompt, setResponse, setPrompt, con
 
     for (const req of requests) {
       try {
-        const rows = await requestChunk(req.systemPrompt, req.userPrompt, runState);
+        const rows = await requestChunk(req.systemPrompt, req.userPrompt);
         allRows.push(...rows);
       } catch (chunkErr) {
         console.warn(`Lite decomposition chunk ${req.index + 1}/${req.total} failed`, chunkErr);
@@ -1203,7 +1138,7 @@ export const handleLitePromptSubmit = async (prompt, setResponse, setPrompt, con
             bestQuality
           );
           const repairedRows = mergeRows(
-            await requestChunk(repairRequest.systemPrompt, repairRequest.userPrompt, runState),
+            await requestChunk(repairRequest.systemPrompt, repairRequest.userPrompt, "functional-structural-repair"),
             requestMeta.subsystemByComponent || new Map()
           );
           const repairedQuality = assessDecompositionQuality(repairedRows, {
@@ -1234,8 +1169,7 @@ export const handleLitePromptSubmit = async (prompt, setResponse, setPrompt, con
           );
           const semanticReview = parseSemanticReview(await requestSemanticReview(
             semanticRequest.systemPrompt,
-            semanticRequest.userPrompt,
-            runState
+            semanticRequest.userPrompt
           ));
           const qualityOptions = {
             abstractionLevel: requestMeta.abstractionLevel,
@@ -1257,8 +1191,7 @@ export const handleLitePromptSubmit = async (prompt, setResponse, setPrompt, con
             );
             const rescuedReview = parseSemanticReview(await requestSemanticReview(
               rescueRequest.systemPrompt,
-              rescueRequest.userPrompt,
-              runState
+              rescueRequest.userPrompt
             ));
             semanticCandidate = evaluateSemanticCandidate(rescuedReview, qualityOptions);
           }

@@ -485,7 +485,6 @@ export default function CrossRepoArchitecturePanel({
   const [lastGeneratedAt, setLastGeneratedAt] = useState("");
   const [activeArtifactTab, setActiveArtifactTab] = useState("architecture");
   const [hazardMethod, setHazardMethod] = useState("STPA-Textbook");
-  const [hazardGenerationMode, setHazardGenerationMode] = useState("standard");
   const [hazardRun, setHazardRun] = useState(null);
   const [isRunningHazard, setIsRunningHazard] = useState(false);
   const [hazardProgress, setHazardProgress] = useState({ step: 0, total: 9, message: "" });
@@ -754,11 +753,9 @@ export default function CrossRepoArchitecturePanel({
     }
   };
 
-  const runHazardAnalysis = async (selectedMethod = hazardMethod, options = {}) => {
-    const selectedHazardGenerationMode = options.hazardGenerationMode || hazardGenerationMode || "standard";
+  const runHazardAnalysis = async (selectedMethod = hazardMethod) => {
     const activityId = `cross-repo-hazard:${folderId}`;
     setHazardMethod(selectedMethod);
-    setHazardGenerationMode(selectedHazardGenerationMode);
     setIsRunningHazard(true);
     setHazardProgress({ step: 0, total: 9, message: "Preparing cross-repo hazard analysis..." });
     startActivity(activityId, {
@@ -773,7 +770,6 @@ export default function CrossRepoArchitecturePanel({
         method: selectedMethod,
         repoMeta: virtualRepo,
         projectId: folderId,
-        hazardGenerationMode: selectedHazardGenerationMode,
         onPartialRunUpdate: setHazardRun,
         setProgress: (step, total, message) => {
           setHazardProgress({ step, total, message });
@@ -1027,8 +1023,6 @@ export default function CrossRepoArchitecturePanel({
               latestRun={hazardRun}
               method={hazardMethod}
               onMethodChange={setHazardMethod}
-              hazardGenerationMode={hazardGenerationMode}
-              onHazardGenerationModeChange={setHazardGenerationMode}
               onRunAnalysis={runHazardAnalysis}
               onClearContents={clearHazardContents}
               onDeleteSummaryRow={deleteHazardSummaryRow}

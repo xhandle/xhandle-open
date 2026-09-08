@@ -27,11 +27,11 @@ describe("hazard analysis LLM request lifecycle", () => {
     expect(getHazardAnalysisRequestTimeoutMs({
       provider: "anthropic",
       model: "claude-fable-5-1",
-    })).toBe(330_000);
+    })).toBe(290_000);
     expect(getHazardAnalysisRequestTimeoutMs({
       provider: "claude",
       model: "claude-sonnet-5",
-    })).toBe(330_000);
+    })).toBe(290_000);
   });
 
   test("keeps an explicit request timeout for targeted callers", () => {

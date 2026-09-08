@@ -160,6 +160,7 @@ const STANDARD_RETRY_ROWS_PER_PROMPT = 4;
 const STANDARD_MISSING_ROW_RETRIES = 2;
 const APPLICABILITY_REVIEW_ROWS_PER_PROMPT = 12;
 const CANONICAL_MAPPING_ROWS_PER_PROMPT = 40;
+const HAZARD_LLM_CONCURRENCY = 2;
 const DERIVED_STPA_FIELDS = new Set([
   "rawLossCandidate",
   "rawHazardCandidate",
@@ -260,9 +261,9 @@ function chunkItemsForPrompt(
   return chunks;
 }
 
-export function getStandardHazardRowsPerPrompt(provider, generationMode = "standard") {
+export function getStandardHazardRowsPerPrompt(provider) {
   const normalizedProvider = String(provider || "openai").trim().toLowerCase();
-  if (generationMode === "detailed" || normalizedProvider === "anthropic" || normalizedProvider === "claude") {
+  if (normalizedProvider === "anthropic" || normalizedProvider === "claude") {
     return STANDARD_RETRY_ROWS_PER_PROMPT;
   }
   return STANDARD_MAX_ROWS_PER_PROMPT;
@@ -274,6 +275,22 @@ function chunkItemsByCount(items = [], size = STANDARD_RETRY_ROWS_PER_PROMPT) {
     chunks.push(items.slice(index, index + size));
   }
   return chunks;
+}
+
+export async function mapWithConcurrency(items = [], concurrency = 1, worker) {
+  const source = Array.isArray(items) ? items : [];
+  const results = new Array(source.length);
+  let cursor = 0;
+  const workerCount = Math.max(1, Math.min(source.length || 1, Math.floor(concurrency) || 1));
+
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (cursor < source.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await worker(source[index], index);
+    }
+  }));
+  return results;
 }
 
 function omitConsolidatedRequirementFromConfig(config) {
@@ -1095,6 +1112,7 @@ ${JSON.stringify(compactPromptRows(items))}
   const response = await fetchLLMResponse(prompt, {}, undefined, "", {
     signal: contextOptions.signal,
     maxTokens: 12_000,
+    workflow: "hazard-row-generation",
   });
   return extractJsonArray(response);
 }
@@ -1172,6 +1190,7 @@ ${JSON.stringify(repairItems.map(({ item, row, fieldsToRepair }) => ({
   const response = await fetchLLMResponse(prompt, {}, undefined, "", {
     signal: contextOptions.signal,
     maxTokens: 5_000,
+    workflow: "hazard-language-repair",
   });
   return extractJsonArray(response);
 }
@@ -1189,11 +1208,11 @@ async function repairGenericStandardRows(config, rows, items, contextOptions = {
 
   const repairedRows = [...rows];
   const repairChunks = chunkItemsByCount(weakRows, STANDARD_RETRY_ROWS_PER_PROMPT);
-  for (let chunkIndex = 0; chunkIndex < repairChunks.length; chunkIndex += 1) {
-    const repairChunk = repairChunks[chunkIndex];
+  let completedRepairChunks = 0;
+  await mapWithConcurrency(repairChunks, HAZARD_LLM_CONCURRENCY, async (repairChunk, chunkIndex) => {
     contextOptions.onProgress?.({
       message: `Repairing generic ${config.sheetName} wording (${chunkIndex + 1}/${repairChunks.length})...`,
-      completed: chunkIndex,
+      completed: completedRepairChunks,
       total: repairChunks.length,
     });
     try {
@@ -1211,8 +1230,10 @@ async function repairGenericStandardRows(config, rows, items, contextOptions = {
     } catch (err) {
       rethrowInterruptedRequest(err, contextOptions.signal);
       console.warn(`⚠️ ${config.sheetName} generic wording repair failed for chunk ${chunkIndex + 1}.`, err);
+    } finally {
+      completedRepairChunks += 1;
     }
-  }
+  });
 
   contextOptions.onProgress?.({
     message: `Generic ${config.sheetName} wording repair complete.`,
@@ -1286,6 +1307,7 @@ ${JSON.stringify(tagItems.map(({ item, row }) => ({
   const response = await fetchLLMResponse(prompt, {}, undefined, "", {
     signal: contextOptions.signal,
     maxTokens: 7_000,
+    workflow: "hazard-safety-audit",
   });
   return extractJsonArray(response);
 }
@@ -1366,6 +1388,7 @@ ${JSON.stringify(candidates)}
   const response = await fetchLLMResponse(prompt, {}, undefined, "", {
     signal: contextOptions.signal,
     maxTokens: 8_000,
+    workflow: "hazard-canonical-catalog",
   });
   return extractJsonObject(response);
 }
@@ -1390,6 +1413,7 @@ ${JSON.stringify(mappingItems.map(({ row, item }) => canonicalCandidate(row, ite
   const response = await fetchLLMResponse(prompt, {}, undefined, "", {
     signal: contextOptions.signal,
     maxTokens: 5_000,
+    workflow: "hazard-canonical-mapping",
   });
   return extractJsonArray(response);
 }
@@ -1454,18 +1478,21 @@ async function canonicalizeStpaRiskVocabulary(config, rows, items, contextOption
   try {
     const catalog = normalizedCanonicalCatalog(await requestCanonicalRiskCatalog(config, applicableItems, contextOptions));
     if (!catalog.losses.length || !catalog.hazards.length) throw new Error("Canonical catalog response was empty.");
-    const mappings = [];
     const chunks = chunkItemsByCount(applicableItems, CANONICAL_MAPPING_ROWS_PER_PROMPT);
-    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
-      const chunk = chunks[chunkIndex];
+    let completedMappingChunks = 0;
+    const mappingChunks = await mapWithConcurrency(chunks, HAZARD_LLM_CONCURRENCY, async (chunk, chunkIndex) => {
       contextOptions.onProgress?.({
         message: `Mapping raw evidence to canonical Losses and Hazards (${chunkIndex + 1}/${chunks.length})...`,
-        completed: chunkIndex,
+        completed: completedMappingChunks,
         total: chunks.length,
       });
-      const chunkMappings = await requestCanonicalRiskMappings(config, catalog, chunk, contextOptions);
-      mappings.push(...chunkMappings);
-    }
+      try {
+        return await requestCanonicalRiskMappings(config, catalog, chunk, contextOptions);
+      } finally {
+        completedMappingChunks += 1;
+      }
+    });
+    const mappings = mappingChunks.flat();
     return applyCanonicalRiskVocabulary(rows, items, catalog, mappings);
   } catch (err) {
     rethrowInterruptedRequest(err, contextOptions.signal);
@@ -1484,11 +1511,11 @@ async function tagSafetySignificanceForStandardRows(config, rows, items, context
   const taggedRows = [...rows];
   const tagItems = rows.map((row, index) => ({ row, item: items[index], index }));
   const tagChunks = chunkItemsByCount(tagItems, APPLICABILITY_REVIEW_ROWS_PER_PROMPT);
-  for (let chunkIndex = 0; chunkIndex < tagChunks.length; chunkIndex += 1) {
-    const tagChunk = tagChunks[chunkIndex];
+  let completedTagChunks = 0;
+  await mapWithConcurrency(tagChunks, HAZARD_LLM_CONCURRENCY, async (tagChunk, chunkIndex) => {
     contextOptions.onProgress?.({
       message: `Auditing guide-phrase applicability and safety significance (${chunkIndex + 1}/${tagChunks.length})...`,
-      completed: chunkIndex,
+      completed: completedTagChunks,
       total: tagChunks.length,
     });
     try {
@@ -1504,8 +1531,10 @@ async function tagSafetySignificanceForStandardRows(config, rows, items, context
       tagChunk.forEach(({ row, item, index }) => {
         taggedRows[index] = normalizeRow(config, row, item, index);
       });
+    } finally {
+      completedTagChunks += 1;
     }
-  }
+  });
 
   contextOptions.onProgress?.({
     message: `${config.sheetName} applicability and safety significance review complete.`,
@@ -1581,7 +1610,6 @@ export async function generateStandardCodeHazardAnalysisSheets({
   contextSources = null,
   onProgress = () => {},
   omitConsolidatedRequirement = false,
-  generationMode = "standard",
   signal = null,
   provider = getStoredActiveAIProvider(),
 }) {
@@ -1591,20 +1619,17 @@ export async function generateStandardCodeHazardAnalysisSheets({
   const config = omitConsolidatedRequirement
     ? omitConsolidatedRequirementFromConfig(getStandardConfig(method))
     : getStandardConfig(method);
-  const maximumRowsPerPrompt = getStandardHazardRowsPerPrompt(provider, generationMode);
+  const maximumRowsPerPrompt = getStandardHazardRowsPerPrompt(provider);
   const promptChunks = items.length <= maximumRowsPerPrompt && compactPromptRowsLength(items) <= STANDARD_SINGLE_PROMPT_MAX_CHARS
     ? [items]
-    : (generationMode === "detailed"
-      ? chunkItemsByCount(items, maximumRowsPerPrompt)
-      : chunkItemsForPrompt(items, STANDARD_CHUNK_PROMPT_MAX_CHARS, maximumRowsPerPrompt));
+    : chunkItemsForPrompt(items, STANDARD_CHUNK_PROMPT_MAX_CHARS, maximumRowsPerPrompt);
 
   if (promptChunks.length > 1) {
     console.warn(`⚠️ ${config.sheetName} standard input is large; using ${promptChunks.length} bulk prompt chunks instead of one prompt.`);
   }
 
-  const generatedRows = [];
-  for (let start = 0, chunkIndex = 0; chunkIndex < promptChunks.length; chunkIndex += 1) {
-    const chunk = promptChunks[chunkIndex];
+  let completedGenerationChunks = 0;
+  const generatedChunks = await mapWithConcurrency(promptChunks, HAZARD_LLM_CONCURRENCY, async (chunk, chunkIndex) => {
     onProgress({
       step: chunkIndex + 1,
       total: promptChunks.length + 1,
@@ -1619,18 +1644,21 @@ export async function generateStandardCodeHazardAnalysisSheets({
         signal,
         onProgress,
       });
-      chunk.forEach((item, index) => {
-        generatedRows[start + index] = chunkRows[index] || {};
-      });
+      return chunkRows;
     } catch (err) {
       rethrowInterruptedRequest(err, signal);
       console.warn(`⚠️ ${config.sheetName} standard generation failed for chunk ${chunkIndex + 1}; using local fallback rows for that chunk.`, err);
-      chunk.forEach((item, index) => {
-        generatedRows[start + index] = fallbackRow(config, item, start + index);
+      return chunk.map((item, index) => fallbackRow(config, item, chunkIndex * maximumRowsPerPrompt + index));
+    } finally {
+      completedGenerationChunks += 1;
+      onProgress({
+        step: completedGenerationChunks,
+        total: promptChunks.length + 1,
+        message: `Generated ${completedGenerationChunks}/${promptChunks.length} ${config.sheetName} row batches...`,
       });
     }
-    start += chunk.length;
-  }
+  });
+  const generatedRows = generatedChunks.flat();
 
   let normalizedRows = materializeGeneratedHazardRows(config, generatedRows, items);
   normalizedRows = await repairGenericStandardRows(config, normalizedRows, items, {

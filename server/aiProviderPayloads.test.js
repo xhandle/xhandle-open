@@ -5,10 +5,17 @@ const {
   buildClaudeRequestPayload,
   buildGeminiRequestPayload,
   normalizeClaudeConversation,
+  resolveAIRequestEffort,
   supportsClaudeEffort,
   supportsGeminiEffort,
   supportsOpenAIEffort,
 } = require("./aiProviderPayloads");
+
+test("uses an explicit request effort before the global settings header", () => {
+  assert.equal(resolveAIRequestEffort({ effort: "high" }, "low"), "high");
+  assert.equal(resolveAIRequestEffort({}, "medium"), "medium");
+  assert.equal(resolveAIRequestEffort({}, "unsupported"), "");
+});
 
 test("OpenAI reasoning models receive native reasoning effort", () => {
   const payload = applyOpenAIReasoningEffort(
