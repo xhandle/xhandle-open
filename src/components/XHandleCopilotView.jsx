@@ -1258,6 +1258,10 @@ export function inferFunctionalAbstractionLevel(promptText = "") {
 }
 
 export function needsFunctionalAbstractionClarification(promptText = "") {
+  // Project-creation commands that reference an existing/pending decomposition
+  // are mutations, not requests to generate another decomposition. Handle them
+  // in the pending-row apply flow instead of reopening the abstraction picker.
+  if (getPendingFunctionalProjectCreateName(promptText)) return false;
   return isSubsystemGenerationRequest(promptText) && !inferFunctionalAbstractionLevel(promptText);
 }
 

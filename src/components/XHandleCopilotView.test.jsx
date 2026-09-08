@@ -588,6 +588,13 @@ describe("subsystem generation prompting", () => {
     expect(inferFunctionalAbstractionLevel("create a lidar system")).toBe("");
   });
 
+  it("does not reinterpret creating a project from pending rows as a new decomposition request", () => {
+    const request = "Create a new project called Autonomous Off-Road Haulage System and add this";
+
+    expect(isSubsystemGenerationRequest(request)).toBe(true);
+    expect(needsFunctionalAbstractionClarification(request)).toBe(false);
+  });
+
   it("builds a structured radio-choice prompt with a multi-level default", () => {
     const message = buildFunctionalAbstractionChoiceMessage();
     expect(message.role).toBe("assistant");
