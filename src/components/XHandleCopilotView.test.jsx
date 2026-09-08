@@ -1,6 +1,8 @@
 jest.mock("react-markdown", () => function ReactMarkdownMock({ children }) {
   return <div>{children}</div>;
 });
+global.TextDecoder = global.TextDecoder || require("node:util").TextDecoder;
+global.IS_REACT_ACT_ENVIRONMENT = true;
 jest.mock("remark-gfm", () => jest.fn());
 jest.mock("rehype-sanitize", () => ({
   __esModule: true,
@@ -20,8 +22,13 @@ jest.mock("./utils/copilotContextBus", () => ({
 jest.mock("../features/workspace-graph", () => ({
   buildWorkspaceLLMContext: jest.fn(),
 }));
+const React = require("react");
+const { act } = React;
+const { createRoot } = require("react-dom/client");
 
 const {
+  CollaboratorComposerMenu,
+  CollaboratorPromptComposer,
   FUNCTIONAL_DECOMPOSITION_GENERATION_INSTRUCTIONS,
   SUBSYSTEM_ARCHITECTURE_REVIEW_SYSTEM_PROMPT,
   buildFunctionalAbstractionChoiceMessage,
@@ -58,9 +65,98 @@ const {
   recalculateFunctionalDirectionAudit,
   selectCurrentCollaboratorReasoningStep,
   selectLiveCollaboratorReasoning,
+  streamChat,
 } = require("./XHandleCopilotView");
 
 describe("subsystem generation prompting", () => {
+  it("keeps the prompt, options, and send action in one unified composer", () => {
+    const onSend = jest.fn();
+    const textareaRef = React.createRef();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    try {
+      act(() => {
+        root.render(
+          <CollaboratorPromptComposer
+            textareaRef={textareaRef}
+            onSend={onSend}
+            canSend
+            menuProps={{
+              provider: "openai",
+              model: "gpt-5.5",
+              effort: "medium",
+            }}
+          />,
+        );
+      });
+
+      const textarea = host.querySelector("textarea");
+      const options = host.querySelector('[aria-label="Open Collaborator options"]');
+      const send = host.querySelector('[aria-label="Send message"]');
+      expect(textarea).not.toBeNull();
+      expect(options?.parentElement?.parentElement).toBe(textarea.parentElement);
+      expect(send?.parentElement).toBe(textarea.parentElement);
+
+      act(() => textarea.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Enter",
+        bubbles: true,
+        cancelable: true,
+      })));
+      expect(onSend).toHaveBeenCalledTimes(1);
+
+      act(() => textarea.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Enter",
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      })));
+      expect(onSend).toHaveBeenCalledTimes(1);
+    } finally {
+      act(() => root.unmount());
+      host.remove();
+    }
+  });
+
+  it("keeps Collaborator accessory controls inside an accessible plus menu", () => {
+    const onAttachFiles = jest.fn();
+    const onSelectRegion = jest.fn();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    try {
+      act(() => {
+        root.render(
+          <CollaboratorComposerMenu
+            provider="openai"
+            model="gpt-5.5"
+            effort="medium"
+            onAttachFiles={onAttachFiles}
+            onSelectRegion={onSelectRegion}
+          />,
+        );
+      });
+
+      const trigger = host.querySelector('[aria-label="Open Collaborator options"]');
+      expect(trigger?.getAttribute("aria-expanded")).toBe("false");
+      expect(host.querySelector('[aria-label="Collaborator options"]')).toBeNull();
+
+      act(() => trigger.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+      expect(trigger.getAttribute("aria-expanded")).toBe("true");
+      expect(host.querySelector('[aria-label="Collaborator model"]')).not.toBeNull();
+      expect(host.querySelector('[aria-label="Collaborator effort"]')).not.toBeNull();
+
+      const attach = Array.from(host.querySelectorAll("button"))
+        .find((button) => button.textContent.includes("Add files or images"));
+      act(() => attach.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+      expect(onAttachFiles).toHaveBeenCalledTimes(1);
+      expect(host.querySelector('[aria-label="Collaborator options"]')).toBeNull();
+    } finally {
+      act(() => root.unmount());
+      host.remove();
+    }
+  });
+
   it("separates a streamed reasoning summary from the final answer", () => {
     const partial = parseCollaboratorReasoningEnvelope("<collaborator_reasoning>\n- Inspecting project context");
     expect(partial).toEqual(expect.objectContaining({
@@ -190,6 +286,92 @@ describe("subsystem generation prompting", () => {
 
     expect(payload).not.toHaveProperty("model");
     expect(payload).toEqual(expect.objectContaining({ max_tokens: 2400, stream: true }));
+  });
+
+  it("adds effort for supported Claude, OpenAI, and Gemini models", () => {
+    const sonnetPayload = buildCollaboratorChatPayload(
+      [{ role: "user", content: "Hello" }],
+      { provider: "anthropic", model: "claude-sonnet-5", effort: "low" },
+    );
+    const haikuPayload = buildCollaboratorChatPayload(
+      [{ role: "user", content: "Hello" }],
+      { provider: "anthropic", model: "claude-haiku-4-5", effort: "low" },
+    );
+    const openAIPayload = buildCollaboratorChatPayload(
+      [{ role: "user", content: "Hello" }],
+      { provider: "openai", model: "gpt-5.5", effort: "low" },
+    );
+    const geminiPayload = buildCollaboratorChatPayload(
+      [{ role: "user", content: "Hello" }],
+      { provider: "gemini", model: "gemini-3.6-flash", effort: "high" },
+    );
+
+    expect(sonnetPayload.effort).toBe("low");
+    expect(haikuPayload).not.toHaveProperty("effort");
+    expect(openAIPayload.effort).toBe("low");
+    expect(geminiPayload.effort).toBe("high");
+  });
+
+  it("consumes incremental provider-neutral SSE and reports stream metadata", async () => {
+    const priorFetch = global.fetch;
+    const chunks = [
+      Buffer.from(': connected\n\ndata: "first "\n\n'),
+      Buffer.from('data: "second"\n\nevent: metadata\ndata: {"finish_reason":"length"}\n\n'),
+      Buffer.from('event: done\ndata: [DONE]\n\n'),
+    ];
+    let index = 0;
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: (name) => name === "x-ai-request-timeout-ms" ? "300000" : null },
+      body: {
+        getReader: () => ({
+          read: async () => index < chunks.length
+            ? { value: chunks[index++], done: false }
+            : { value: undefined, done: true },
+        }),
+      },
+    });
+    const received = [];
+
+    try {
+      const result = await streamChat(
+        [{ role: "user", content: "Hello" }],
+        { onToken: (token) => received.push(token) },
+      );
+      expect(result).toEqual({ text: "first second", finishReason: "length" });
+      expect(received).toEqual(["first ", "second"]);
+      expect(global.fetch.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+    } finally {
+      global.fetch = priorFetch;
+    }
+  });
+
+  it("surfaces an SSE error emitted after response headers", async () => {
+    const priorFetch = global.fetch;
+    let read = false;
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => "300000" },
+      body: {
+        getReader: () => ({
+          read: async () => {
+            if (read) return { value: undefined, done: true };
+            read = true;
+            return {
+              value: Buffer.from('event: error\ndata: {"error":"provider stream failed"}\n\n'),
+              done: false,
+            };
+          },
+        }),
+      },
+    });
+
+    try {
+      await expect(streamChat([{ role: "user", content: "Hello" }]))
+        .rejects.toThrow("assistant_stream_failed: provider stream failed");
+    } finally {
+      global.fetch = priorFetch;
+    }
   });
 
   it("recognizes provider output-limit signals and builds a bounded continuation request", () => {

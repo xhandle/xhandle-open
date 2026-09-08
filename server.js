@@ -23,7 +23,17 @@ const {
   createChatCompletionWithTokenCompatibility,
   executeProviderRequestWithCompatibility,
 } = require("./server/aiProviderTokenCompatibility");
-const { buildClaudeRequestPayload, buildGeminiRequestPayload } = require("./server/aiProviderPayloads");
+const {
+  applyOpenAIReasoningEffort,
+  buildClaudeRequestPayload,
+  buildGeminiRequestPayload,
+  supportsOpenAIEffort,
+} = require("./server/aiProviderPayloads");
+const {
+  createRequestCancellation,
+  pipeAnthropicSseToClient,
+  requestAnthropicMessageStream,
+} = require("./server/anthropicStreaming");
 const { spawn, spawnSync } = require("child_process");
 
 const app = express();
@@ -72,6 +82,7 @@ const corsOptions = {
   credentials: true,
   methods: ["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"],
   allowedHeaders: CORS_ALLOWED_HEADERS,
+  exposedHeaders: ["X-AI-Request-Timeout-Ms"],
 };
 
 // --- CORS (localhost by default, explicit origins in hosted environments) ---
@@ -1105,7 +1116,7 @@ function normalizeChatMessages(messages, options = {}) {
  * @returns the value that the next step in this workflow consumes.
  */
 function buildChatCompletionPayload(body, messages) {
-  const payload = {
+  let payload = {
     model: typeof body.model === "string" ? body.model : "gpt-4o-mini",
     messages,
   };
@@ -1136,7 +1147,7 @@ function buildChatCompletionPayload(body, messages) {
   }
 
   const modelName = String(payload.model || "").toLowerCase();
-  const usesReasoningModelControls = /^(gpt-5(?:[.-]|$)|o[1-9](?:[.-]|$))/.test(modelName);
+  const usesReasoningModelControls = supportsOpenAIEffort(modelName);
   if (usesReasoningModelControls) {
     if (payload.max_tokens != null && payload.max_completion_tokens == null) {
       payload.max_completion_tokens = payload.max_tokens;
@@ -1144,6 +1155,7 @@ function buildChatCompletionPayload(body, messages) {
     delete payload.max_tokens;
     delete payload.temperature;
     delete payload.top_p;
+    payload = applyOpenAIReasoningEffort(payload, body);
   }
 
   return payload;
@@ -1411,17 +1423,29 @@ function toOpenAICompatibleResponse({ provider, model, text, raw, finishReason =
   };
 }
 
-function writeTextAsSse(res, text, finishReason = "stop") {
+function setSseHeaders(res) {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-AI-Request-Timeout-Ms", String(AI_PROVIDER_LONG_REQUEST_TIMEOUT_MS));
+}
+
+function writeTextAsSse(res, text, finishReason = "stop") {
+  setSseHeaders(res);
   if (text) res.write(`data: ${JSON.stringify(text)}\n\n`);
   res.write(`event: metadata\ndata: ${JSON.stringify({ finish_reason: finishReason })}\n\n`);
   res.write("event: done\ndata: [DONE]\n\n");
   res.end();
 }
 
-async function callClaudeChat({ apiKey, body, messages, model }) {
+function logProviderCompatibilityRetry({ model: retryModel, attempt, removed, added }) {
+  logger.info("[ai-provider] Compatibility retry " + attempt
+    + " for " + (retryModel || "Claude model")
+    + "; removed: " + (removed.join(", ") || "none")
+    + "; added: " + (added.join(", ") || "none") + ".");
+}
+
+async function callClaudeChat({ apiKey, body, messages, model, signal }) {
   const { system, conversation } = splitSystemMessages(messages);
   const payload = buildClaudeRequestPayload({ body, model, system, conversation });
 
@@ -1433,14 +1457,10 @@ async function callClaudeChat({ apiKey, body, messages, model }) {
         "content-type": "application/json",
       },
       timeout: AI_PROVIDER_LONG_REQUEST_TIMEOUT_MS,
+      signal,
     }),
     payload,
-    ({ model: retryModel, attempt, removed, added }) => {
-      logger.info("[ai-provider] Compatibility retry " + attempt
-        + " for " + (retryModel || "Claude model")
-        + "; removed: " + (removed.join(", ") || "none")
-        + "; added: " + (added.join(", ") || "none") + ".");
-    },
+    logProviderCompatibilityRetry,
   );
 
   const text = Array.isArray(resp.data?.content)
@@ -1456,9 +1476,28 @@ async function callClaudeChat({ apiKey, body, messages, model }) {
   });
 }
 
-async function callGeminiChat({ apiKey, body, messages, model }) {
+async function streamClaudeChat({ apiKey, body, messages, model, signal, res }) {
   const { system, conversation } = splitSystemMessages(messages);
-  const payload = buildGeminiRequestPayload({ body, system, conversation });
+  const payload = buildClaudeRequestPayload({ body, model, system, conversation });
+  const response = await requestAnthropicMessageStream({
+    axiosClient: axios,
+    apiKey,
+    payload,
+    timeoutMs: AI_PROVIDER_LONG_REQUEST_TIMEOUT_MS,
+    signal,
+    executeWithCompatibility: executeProviderRequestWithCompatibility,
+    onRetry: logProviderCompatibilityRetry,
+  });
+
+  setSseHeaders(res);
+  res.flushHeaders?.();
+  res.write(": connected\n\n");
+  return pipeAnthropicSseToClient(response.data, res);
+}
+
+async function callGeminiChat({ apiKey, body, messages, model, signal }) {
+  const { system, conversation } = splitSystemMessages(messages);
+  const payload = buildGeminiRequestPayload({ body, model, system, conversation });
 
   let resolvedModel = GEMINI_MODEL_REPLACEMENTS[model] || model;
   let resp;
@@ -1472,6 +1511,7 @@ async function callGeminiChat({ apiKey, body, messages, model }) {
           "content-type": "application/json",
         },
         timeout: AI_PROVIDER_LONG_REQUEST_TIMEOUT_MS,
+        signal,
       }
     );
   } catch (error) {
@@ -1489,6 +1529,7 @@ async function callGeminiChat({ apiKey, body, messages, model }) {
           "content-type": "application/json",
         },
         timeout: AI_PROVIDER_LONG_REQUEST_TIMEOUT_MS,
+        signal,
       }
     );
   }
@@ -2197,6 +2238,9 @@ app.post("/api/audio/speech", llmLimiter, async (req, res) => {
 
 /* ----------------------------- Secure AI chat proxy ----------------------------- */
 app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) => {
+  const requestCancellation = createRequestCancellation(req, res, {
+    timeoutMs: AI_PROVIDER_LONG_REQUEST_TIMEOUT_MS,
+  });
   try {
     const resolved = await resolveAIConfigForRequest(req);
     if (!resolved?.apiKey || !resolved?.provider) {
@@ -2219,19 +2263,24 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
     const model = resolved.model || AI_PROVIDERS[provider]?.defaultModel;
 
     if (provider === "claude") {
+      if (stream) {
+        await streamClaudeChat({
+          apiKey: resolved.apiKey,
+          body: { temperature: 0.2, ...body },
+          messages,
+          model,
+          signal: requestCancellation.signal,
+          res,
+        });
+        return;
+      }
       const resp = await callClaudeChat({
         apiKey: resolved.apiKey,
         body: { temperature: 0.2, ...body },
         messages,
         model,
+        signal: requestCancellation.signal,
       });
-      if (stream) {
-        return writeTextAsSse(
-          res,
-          resp.choices?.[0]?.message?.content || "",
-          resp.choices?.[0]?.finish_reason || "stop",
-        );
-      }
       return res.json(resp);
     }
 
@@ -2241,6 +2290,7 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
         body: { temperature: 0.2, ...body },
         messages,
         model,
+        signal: requestCancellation.signal,
       });
       if (stream) {
         return writeTextAsSse(
@@ -2265,6 +2315,9 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
     if (!stream) {
       const resp = await createChatCompletionWithTokenCompatibility(openai, payload, ({ model: retryModel, attempt, removed, added }) => {
         logger.info(`[ai-provider] Compatibility retry ${attempt} for ${retryModel || "OpenAI model"}; removed: ${removed.join(", ") || "none"}; added: ${added.join(", ") || "none"}.`);
+      }, {
+        signal: requestCancellation.signal,
+        timeout: AI_PROVIDER_LONG_REQUEST_TIMEOUT_MS,
       });
       const h = resp?.response?.headers;
       if (h?.get) {
@@ -2283,15 +2336,17 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
       return res.json(resp);
     }
 
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache, no-transform");
-    res.setHeader("Connection", "keep-alive");
+    setSseHeaders(res);
+    res.flushHeaders?.();
 
     const completion = await createChatCompletionWithTokenCompatibility(openai, {
       ...payload,
       stream: true,
     }, ({ model: retryModel, attempt, removed, added }) => {
       logger.info(`[ai-provider] Compatibility retry ${attempt} for ${retryModel || "OpenAI model"}; removed: ${removed.join(", ") || "none"}; added: ${added.join(", ") || "none"}.`);
+    }, {
+      signal: requestCancellation.signal,
+      timeout: AI_PROVIDER_LONG_REQUEST_TIMEOUT_MS,
     });
 
     let finishReason = "";
@@ -2305,14 +2360,29 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
     res.write("event: done\ndata: [DONE]\n\n");
     res.end();
   } catch (err) {
-    const extracted = extractProviderErrorMessage(err);
+    if (requestCancellation.signal.aborted && (res.destroyed || res.writableEnded)) return;
+    const extracted = requestCancellation.timedOut
+      ? {
+          status: 504,
+          message: `AI provider request timed out after ${Math.round(AI_PROVIDER_LONG_REQUEST_TIMEOUT_MS / 1000)} seconds.`,
+          details: "The end-to-end AI request deadline was reached.",
+        }
+      : extractProviderErrorMessage(err);
     logger.error("AI proxy error:", extracted.details || extracted.message);
     if (!res.headersSent) {
       res.status(extracted.status || 500).json({
         error: extracted.message || "LLM request failed",
         provider: normalizeAIProvider(req.header("x-ai-provider")) || req.body?.provider || "unknown",
       });
+      return;
     }
+    if (!res.destroyed && !res.writableEnded) {
+      res.write(`event: error\ndata: ${JSON.stringify({ error: extracted.message || "LLM request failed" })}\n\n`);
+      res.write("event: done\ndata: [DONE]\n\n");
+      res.end();
+    }
+  } finally {
+    requestCancellation.dispose();
   }
 });
 

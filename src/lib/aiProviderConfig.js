@@ -6,6 +6,34 @@ export const AI_PROVIDER_OPTIONS = [
 
 export const AI_PROVIDER_PREFERENCE_CHANGED_EVENT = "xhandle:ai-provider-preference-changed";
 
+export const AI_PROVIDER_EFFORT_OPTIONS = [
+  { value: "low", label: "Low", description: "Fastest responses with lighter reasoning." },
+  { value: "medium", label: "Medium", description: "Balanced reasoning and response time." },
+  { value: "high", label: "High", description: "Deepest reasoning with longer response time." },
+];
+
+export function normalizeAIProviderEffort(effort, fallback = "medium") {
+  const normalized = String(effort || "").trim().toLowerCase();
+  return AI_PROVIDER_EFFORT_OPTIONS.some((option) => option.value === normalized)
+    ? normalized
+    : fallback;
+}
+
+export function supportsAIProviderEffort(provider, model = "") {
+  const normalizedProvider = normalizeAIProvider(provider);
+  const normalizedModel = String(model || "").trim().toLowerCase();
+  if (normalizedProvider === "anthropic") {
+    return /claude-(?:sonnet-5|opus-5|fable-5|mythos-5)/.test(normalizedModel);
+  }
+  if (normalizedProvider === "openai") {
+    return /^(?:gpt-(?:5|6)(?:[.-]|$)|o[1-9](?:[.-]|$))/.test(normalizedModel);
+  }
+  if (normalizedProvider === "gemini") {
+    return /^gemini-3(?:[.-]|$)/.test(normalizedModel);
+  }
+  return false;
+}
+
 export const AI_PROVIDER_MODEL_OPTIONS = {
   openai: [
     { value: "gpt-4o-mini", label: "GPT-4o mini", description: "Current xHandle default for existing OpenAI workflows.", speed: "High", intelligence: "Medium", bestFor: "Fast drafts, routine summaries, lightweight extraction, and lower-cost iterative work." },
@@ -101,6 +129,28 @@ export function getStoredAIProviderModelPreference(provider, options = {}) {
     localStorage.getItem("xhandle.aiProvider.activeModel");
   if (!stored) return options.includeDefault ? getDefaultProviderModel(normalizedProvider) : null;
   return normalizeProviderModel(normalizedProvider, stored);
+}
+
+export function storeAIProviderEffortPreference(provider, effort) {
+  if (typeof localStorage === "undefined") return;
+  const normalizedProvider = normalizeAIProvider(provider);
+  const normalizedEffort = normalizeAIProviderEffort(effort);
+  localStorage.setItem(`xhandle.aiProviderEffort.${normalizedProvider}`, normalizedEffort);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(AI_PROVIDER_PREFERENCE_CHANGED_EVENT, {
+      detail: { provider: normalizedProvider, effort: normalizedEffort },
+    }));
+  }
+}
+
+export function getStoredAIProviderEffortPreference(provider, options = {}) {
+  const normalizedProvider = normalizeAIProvider(provider);
+  const fallback = options.includeDefault === false ? "" : "medium";
+  if (typeof localStorage === "undefined") return fallback;
+  return normalizeAIProviderEffort(
+    localStorage.getItem(`xhandle.aiProviderEffort.${normalizedProvider}`),
+    fallback,
+  );
 }
 
 export function getStoredActiveAIProvider() {

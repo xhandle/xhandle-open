@@ -1,9 +1,13 @@
 import {
   AI_PROVIDER_PREFERENCE_CHANGED_EVENT,
   getDefaultProviderModel,
+  getStoredAIProviderEffortPreference,
   getStoredAIProviderModelPreference,
+  normalizeAIProviderEffort,
   normalizeProviderModel,
+  storeAIProviderEffortPreference,
   storeAIProviderModelPreference,
+  supportsAIProviderEffort,
   supportsConversationalProjectMode,
 } from "./aiProviderConfig";
 
@@ -34,6 +38,20 @@ describe("AI provider model preferences", () => {
   it("stores and reloads custom model ids", () => {
     storeAIProviderModelPreference("gemini", "gemini-next-flash");
     expect(getStoredAIProviderModelPreference("gemini")).toBe("gemini-next-flash");
+  });
+
+  it("stores effort preferences and exposes the control for supported provider models", () => {
+    expect(normalizeAIProviderEffort("HIGH")).toBe("high");
+    expect(getStoredAIProviderEffortPreference("anthropic")).toBe("medium");
+    storeAIProviderEffortPreference("anthropic", "low");
+    expect(getStoredAIProviderEffortPreference("anthropic")).toBe("low");
+    expect(supportsAIProviderEffort("anthropic", "claude-sonnet-5")).toBe(true);
+    expect(supportsAIProviderEffort("anthropic", "claude-fable-5-1")).toBe(true);
+    expect(supportsAIProviderEffort("anthropic", "claude-haiku-4-5")).toBe(false);
+    expect(supportsAIProviderEffort("openai", "gpt-5.5")).toBe(true);
+    expect(supportsAIProviderEffort("openai", "gpt-4o")).toBe(false);
+    expect(supportsAIProviderEffort("gemini", "gemini-3.6-flash")).toBe(true);
+    expect(supportsAIProviderEffort("gemini", "gemini-2.0-flash")).toBe(false);
   });
 
   it("notifies same-tab consumers when the active model changes", () => {

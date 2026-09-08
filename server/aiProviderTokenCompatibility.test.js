@@ -127,3 +127,28 @@ test("does not retry unrelated provider failures", async () => {
   );
   assert.equal(calls, 1);
 });
+
+test("forwards cancellation and timeout options through compatibility retries", async () => {
+  const calls = [];
+  const controller = new AbortController();
+  const openai = {
+    chat: {
+      completions: {
+        create: async (payload, options) => {
+          calls.push({ payload, options });
+          return { ok: true };
+        },
+      },
+    },
+  };
+
+  await createChatCompletionWithTokenCompatibility(
+    openai,
+    { model: "test-model", messages: [{ role: "user", content: "Hello" }] },
+    undefined,
+    { signal: controller.signal, timeout: 300_000 },
+  );
+
+  assert.equal(calls[0].options.signal, controller.signal);
+  assert.equal(calls[0].options.timeout, 300_000);
+});

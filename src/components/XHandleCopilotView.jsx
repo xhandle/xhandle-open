@@ -17,20 +17,9 @@ import {
   PinOff,
   Pencil,
   Copy,
-  Bold,
-  Italic,
-  Underline,
-  List as ListIcon,
-  ListOrdered,
-  Heading2,
-  Heading3,
-  CheckSquare,
-  Code2,
-  Table as TableIcon,
   PanelLeftOpen,
   PanelLeftClose,
   Crosshair,
-  ClipboardCheck,
 } from "lucide-react";
 import {
   loadThreads, saveThreads, newThread, renameThread, deleteThread,
@@ -39,17 +28,19 @@ import {
 import { generateThreadTitle } from "./generateThreadTitle";
 import { ACCOUNT_ID, backendURL, buildAIAuthOpts, getLocalAccessToken } from "./backendConfig";
 import {
+  AI_PROVIDER_EFFORT_OPTIONS,
   AI_PROVIDER_PREFERENCE_CHANGED_EVENT,
   fetchProviderModelRecords,
   getAIProviderLabel,
   getProviderModelOptions,
   getStoredActiveAIProvider,
+  getStoredAIProviderEffortPreference,
   getStoredAIProviderModelPreference,
+  storeAIProviderEffortPreference,
   storeAIProviderModelPreference,
+  supportsAIProviderEffort,
 } from "../lib/aiProviderConfig";
-import {
-  Rocket, Link2, GitCommit, Network, FilePlus2, ShieldCheck, FolderGit2
-} from "lucide-react";
+import { FilePlus2 } from "lucide-react";
 import { FUNCTIONAL_DECOMPOSITION_CORE_INSTRUCTIONS } from "./functionalDecompositionGeneration";
 
 /* === NEW: region selection imports === */
@@ -118,6 +109,202 @@ function CollaboratorModelSelector({ provider, model, providerModels = [], onCha
         ))}
       </select>
     </label>
+  );
+}
+
+function CollaboratorEffortSelector({ provider, model, effort, onChange, disabled = false, compact = false }) {
+  if (!supportsAIProviderEffort(provider, model)) return null;
+  const providerLabel = getAIProviderLabel(provider);
+  return (
+    <label className={`inline-flex min-w-0 items-center gap-1.5 text-xs text-neutral-600 ${compact ? "max-w-[105px]" : "max-w-[170px]"}`}>
+      <span className={compact ? "sr-only" : "shrink-0 font-medium"}>Effort</span>
+      <select
+        aria-label="Collaborator effort"
+        title={`${providerLabel} reasoning effort for new Collaborator requests`}
+        value={effort}
+        onChange={(event) => onChange?.(event.target.value)}
+        disabled={disabled}
+        className="min-w-0 w-full rounded-md border border-neutral-200 bg-white px-2 py-1.5 text-xs font-medium text-neutral-800 outline-none hover:border-neutral-300 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {AI_PROVIDER_EFFORT_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+export function CollaboratorComposerMenu({
+  provider,
+  model,
+  effort,
+  providerModels = [],
+  onModelChange,
+  onEffortChange,
+  onSelectRegion,
+  onAttachFiles,
+  disabled = false,
+  loadingModels = false,
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const triggerRef = useRef(null);
+  const firstActionRef = useRef(null);
+  const menuId = React.useId();
+
+  useEffect(() => {
+    if (!open) return undefined;
+    firstActionRef.current?.focus();
+    const handlePointerDown = (event) => {
+      if (!rootRef.current?.contains(event.target)) setOpen(false);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  const runAndClose = (action) => {
+    setOpen(false);
+    action?.();
+  };
+
+  return (
+    <div ref={rootRef} className="relative shrink-0">
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label="Open Collaborator options"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        onClick={() => setOpen((current) => !current)}
+        className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border transition-colors ${open ? "border-indigo-300 bg-indigo-50 text-indigo-700" : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50"}`}
+        title="Attachments, screen selection, model, and effort"
+      >
+        <Plus className={`h-5 w-5 transition-transform ${open ? "rotate-45" : ""}`} />
+      </button>
+      {open && (
+        <div
+          id={menuId}
+          role="dialog"
+          aria-label="Collaborator options"
+          className="absolute bottom-full left-0 z-[80] mb-2 w-[300px] max-w-[calc(100vw-2rem)] rounded-xl border border-neutral-200 bg-white p-2 shadow-xl"
+        >
+          <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+            Add context
+          </div>
+          <button
+            ref={firstActionRef}
+            type="button"
+            onClick={() => runAndClose(onAttachFiles)}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-neutral-800 hover:bg-neutral-100 focus:bg-neutral-100 focus:outline-none"
+          >
+            <FilePlus2 className="h-4 w-4 text-neutral-600" />
+            Add files or images
+          </button>
+          <button
+            type="button"
+            onClick={() => runAndClose(onSelectRegion)}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-neutral-800 hover:bg-neutral-100 focus:bg-neutral-100 focus:outline-none"
+          >
+            <Crosshair className="h-4 w-4 text-neutral-600" />
+            Select screen region
+          </button>
+          <div className="my-2 border-t border-neutral-200" />
+          <div className="space-y-2 px-2 pb-1">
+            <CollaboratorModelSelector
+              provider={provider}
+              model={model}
+              providerModels={providerModels}
+              onChange={onModelChange}
+              disabled={disabled}
+              loading={loadingModels}
+            />
+            <CollaboratorEffortSelector
+              provider={provider}
+              model={model}
+              effort={effort}
+              onChange={onEffortChange}
+              disabled={disabled}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function resizeCollaboratorTextarea(element) {
+  if (!element) return;
+  const maximumHeight = 192;
+  element.style.height = "auto";
+  const nextHeight = Math.min(Math.max(element.scrollHeight, 36), maximumHeight);
+  element.style.height = `${nextHeight}px`;
+  element.style.overflowY = element.scrollHeight > maximumHeight ? "auto" : "hidden";
+}
+
+export function CollaboratorPromptComposer({
+  textareaRef,
+  defaultValue = "",
+  placeholder = "Ask Collaborator...",
+  onDraftChange,
+  onSend,
+  canSend = false,
+  pendingContext = null,
+  menuProps,
+}) {
+  useEffect(() => {
+    resizeCollaboratorTextarea(textareaRef?.current);
+  }, [textareaRef]);
+
+  const handleChange = (event) => {
+    resizeCollaboratorTextarea(event.currentTarget);
+    onDraftChange?.(event.currentTarget.value);
+  };
+
+  return (
+    <div>
+      <div className="rounded-[26px] border border-neutral-200 bg-white p-2 shadow-sm transition focus-within:border-neutral-300 focus-within:shadow-md">
+        {pendingContext && <div className="px-1 pt-1">{pendingContext}</div>}
+        <div className="flex items-end gap-1.5">
+          <CollaboratorComposerMenu {...menuProps} />
+          <textarea
+            ref={textareaRef}
+            rows={1}
+            className="block min-h-9 max-h-48 min-w-0 flex-1 resize-none border-0 bg-transparent px-2 py-1.5 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:outline-none focus:ring-0"
+            placeholder={placeholder}
+            defaultValue={defaultValue}
+            onChange={handleChange}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || event.shiftKey || event.nativeEvent?.isComposing) return;
+              event.preventDefault();
+              onSend?.();
+            }}
+          />
+          <button
+            type="button"
+            onClick={onSend}
+            disabled={!canSend}
+            aria-label="Send message"
+            title="Send message"
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-neutral-200 disabled:text-neutral-400"
+          >
+            <SendHorizonal className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      <div className="mt-1.5 text-center text-[10px] text-neutral-400">
+        Enter to send · Shift+Enter for a new line
+      </div>
+    </div>
   );
 }
 
@@ -347,108 +534,6 @@ function CollaboratorReasoningSummary({ summary, active = false }) {
         )}
       </div>
     </details>
-  );
-}
-
-function QuickSuggestions({ onPick }) {
-  const items = [
-    {
-      label: "Visualize Functional Architecture",
-      prompt: "Visualize the functional architecture from the current project data. If a functional decomposition table exists, use it to build the diagram and call out the most connected nodes.",
-      icon: Network,
-      tone: "primary",
-    },
-    {
-      label: "Audit Functional Decomposition",
-      prompt: "Audit the current project functional decomposition for completeness. Propose missing functional rows, control actions, interfaces, and subsystem allocations for me to review before applying.",
-      icon: ClipboardCheck,
-      tone: "primary",
-    },
-    {
-      label: "Generate Risk Profile (FMEA)",
-      prompt: "Run the FMEA pipeline from the functional decomposition (Failure Mode | Effect | Cause), then generate mitigations, system requirements, consolidation, and the summary sheet.",
-      icon: ShieldCheck,
-      tone: "indigo",
-    },
-    {
-      label: "Link Requirements to Functions",
-      prompt: "Propose traceability links between existing requirements and functions/control actions. Return a concise list of suggested links with confidence scores.",
-      icon: Link2,
-      tone: "neutral",
-    },
-    {
-      label: "Summarize Latest GitHub Commits",
-      prompt: "Summarize the most recent commits for the connected repo and identify any changes that could affect risk or requirements.",
-      icon: GitCommit,
-      tone: "neutral",
-    },
-    {
-      label: "Find Most Connected Function",
-      prompt: "From the current architecture graph, identify the function with the highest degree (incoming + outgoing) and explain why it’s critical.",
-      icon: Rocket,
-      tone: "indigo",
-    },
-    {
-      label: "Create System Requirement Template",
-      prompt: "Draft a system requirement template tailored to this project with fields for ID, Module, Rationale, Verification Method, and Acceptance Criteria.",
-      icon: FilePlus2,
-      tone: "neutral",
-    },
-    {
-      label: "Sync Repository & Parse Code",
-      prompt: "Sync the configured GitHub repository and extract a functional decomposition from source files (JS/TS/PY/C++). List the top 10 functions by connectivity.",
-      icon: FolderGit2,
-      tone: "neutral",
-    },
-  ];
-
-  const toneClasses = {
-    primary:
-      "bg-gradient-to-r from-[#2D7DFE] to-[#7A37FF] text-white border-transparent hover:shadow-[0_6px_18px_rgba(45,125,254,0.35)]",
-    indigo:
-      "bg-[#ECEEFF] text-[#0F0F12] border border-[#7A37FF]/50 hover:border-[#7A37FF] hover:shadow-[0_6px_18px_rgba(122,55,255,0.25)]",
-    neutral:
-      "bg-white text-[#0F0F12] border border-neutral-200 hover:border-neutral-300 hover:shadow-sm",
-  };
-
-  return (
-    <div className="mt-3">
-      <div className="text-[11px] uppercase tracking-wide text-neutral-500 mb-2">
-        Quick actions
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {items.map(({ label, prompt, icon: Icon, tone }, i) => (
-          <button
-            key={i}
-            onClick={() => onPick(prompt)}
-            className={[
-              "group inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs transition",
-              "focus:outline-none focus:ring-2 focus:ring-offset-0 focus:ring-[#7A37FF]/60",
-              "active:scale-[0.99]",
-              toneClasses[tone],
-            ].join(" ")}
-            title={label}
-          >
-            <span
-              className={[
-                "inline-flex items-center justify-center rounded-full",
-                tone === "primary"
-                  ? "bg-white/15"
-                  : tone === "indigo"
-                  ? "bg-[#7A37FF]/10"
-                  : "bg-neutral-100",
-                "w-5 h-5"
-              ].join(" ")}
-            >
-              <Icon className={tone === "primary" ? "w-3.5 h-3.5 text-white" : "w-3.5 h-3.5 text-[#7A37FF]"} />
-            </span>
-            <span className={tone === "primary" ? "text-white" : "text-[#0F0F12]"}>
-              {label}
-            </span>
-          </button>
-        ))}
-      </div>
-    </div>
   );
 }
 
@@ -978,14 +1063,22 @@ async function captureSelectionAsImage(viewRect /* {x,y,width,height} */) {
   return shot.toDataURL("image/png");
 }
 
-export function buildCollaboratorChatPayload(messages, { maxTokens = 1800, stream = false } = {}) {
-  return {
+export function buildCollaboratorChatPayload(messages, {
+  maxTokens = 1800,
+  stream = false,
+  provider = getStoredActiveAIProvider(),
+  model = getStoredAIProviderModelPreference(provider, { includeDefault: true }),
+  effort = getStoredAIProviderEffortPreference(provider),
+} = {}) {
+  const payload = {
     temperature: 0,
     top_p: 0.1,
     max_tokens: maxTokens,
     messages,
     stream,
   };
+  if (supportsAIProviderEffort(provider, model)) payload.effort = effort;
+  return payload;
 }
 
 async function callChat(messages, signal, { maxTokens = 1800 } = {}) {
@@ -1897,85 +1990,124 @@ function extractStreamToken(parsed) {
   );
 }
 
-async function streamChat(messages, { signal, onToken, maxTokens = 1800 } = {}) {
+const COLLABORATOR_PROVIDER_TIMEOUT_MS = 300_000;
+const COLLABORATOR_STREAM_TIMEOUT_GRACE_MS = 10_000;
+
+export async function streamChat(messages, { signal, onToken, maxTokens = 1800 } = {}) {
   const timeoutController = new AbortController();
-  const timeoutId = setTimeout(() => timeoutController.abort(), 180_000);
+  const requestStartedAt = Date.now();
+  let requestTimeoutMs = COLLABORATOR_PROVIDER_TIMEOUT_MS + COLLABORATOR_STREAM_TIMEOUT_GRACE_MS;
+  let timeoutId;
+  let timedOut = false;
+  const armRequestDeadline = () => {
+    clearTimeout(timeoutId);
+    const remainingMs = Math.max(1, requestTimeoutMs - (Date.now() - requestStartedAt));
+    timeoutId = setTimeout(() => {
+      timedOut = true;
+      timeoutController.abort();
+    }, remainingMs);
+  };
   const abortFromCaller = () => timeoutController.abort();
-  signal?.addEventListener?.("abort", abortFromCaller, { once: true });
-  let resp;
+  if (signal?.aborted) abortFromCaller();
+  else signal?.addEventListener?.("abort", abortFromCaller, { once: true });
+
   try {
-    resp = await fetch("/api/chat", {
+    armRequestDeadline();
+    const resp = await fetch("/api/chat", {
       method: "POST",
       ...buildAIAuthOpts({ "Content-Type": "application/json" }),
       signal: timeoutController.signal,
       body: JSON.stringify(buildCollaboratorChatPayload(messages, { maxTokens, stream: true })),
     });
+
+    const advertisedTimeout = Number(resp.headers.get("x-ai-request-timeout-ms"));
+    if (Number.isFinite(advertisedTimeout) && advertisedTimeout >= 60_000) {
+      requestTimeoutMs = advertisedTimeout + COLLABORATOR_STREAM_TIMEOUT_GRACE_MS;
+    }
+    armRequestDeadline();
+
+    if (!resp.ok) {
+      if (resp.status === 400) {
+        return {
+          text: await callChat(messages, timeoutController.signal, { maxTokens }),
+          finishReason: "stop",
+        };
+      }
+      let detail = "";
+      try {
+        const payload = await resp.clone().json();
+        detail = payload?.error ? `: ${payload.error}` : "";
+      } catch {}
+      throw new Error(`assistant_failed_${resp.status}${detail}`);
+    }
+    if (!resp.body) {
+      return {
+        text: await callChat(messages, timeoutController.signal, { maxTokens }),
+        finishReason: "stop",
+      };
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let fullText = "";
+    let finishReason = "";
+    let streamError = "";
+
+    const processEvent = (eventText) => {
+      const eventName = eventText
+        .split(/\r?\n/)
+        .find((line) => line.trim().startsWith("event:"))
+        ?.trim().slice(6).trim();
+      const dataLines = eventText
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim());
+
+      for (const data of dataLines) {
+        if (!data || data === "[DONE]") continue;
+        try {
+          const parsed = JSON.parse(data);
+          if (eventName === "error") {
+            streamError = String(parsed?.error || parsed?.message || "LLM stream failed");
+            continue;
+          }
+          if (parsed && typeof parsed === "object" && parsed.finish_reason) {
+            finishReason = String(parsed.finish_reason);
+          }
+          const token = extractStreamToken(parsed);
+          if (token) {
+            fullText += token;
+            onToken?.(token, fullText);
+          }
+        } catch {
+          // Ignore malformed partial SSE frames; the next chunk usually completes them.
+        }
+      }
+    };
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split(/\r?\n\r?\n/);
+      buffer = events.pop() || "";
+      for (const eventText of events) processEvent(eventText);
+      if (streamError) throw new Error(`assistant_stream_failed: ${streamError}`);
+    }
+
+    buffer += decoder.decode();
+    if (buffer.trim()) processEvent(buffer);
+    if (streamError) throw new Error(`assistant_stream_failed: ${streamError}`);
+    return { text: fullText.trim(), finishReason: finishReason || "stop" };
   } catch (error) {
-    if (timeoutController.signal.aborted && !signal?.aborted) throw new Error("assistant_stream_timed_out");
+    if (timedOut && !signal?.aborted) throw new Error("assistant_stream_timed_out");
     throw error;
   } finally {
     clearTimeout(timeoutId);
     signal?.removeEventListener?.("abort", abortFromCaller);
   }
-
-  if (!resp.ok) {
-    if (resp.status === 400) {
-      return { text: await callChat(messages, signal, { maxTokens }), finishReason: "stop" };
-    }
-    let detail = "";
-    try {
-      const payload = await resp.clone().json();
-      detail = payload?.error ? `: ${payload.error}` : "";
-    } catch {}
-    throw new Error(`assistant_failed_${resp.status}${detail}`);
-  }
-  if (!resp.body) {
-    return { text: await callChat(messages, signal, { maxTokens }), finishReason: "stop" };
-  }
-
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let fullText = "";
-  let finishReason = "";
-
-  const processEvent = (eventText) => {
-    const dataLines = eventText
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).trim());
-
-    for (const data of dataLines) {
-      if (!data || data === "[DONE]") continue;
-      try {
-        const parsed = JSON.parse(data);
-        if (parsed && typeof parsed === "object" && parsed.finish_reason) {
-          finishReason = String(parsed.finish_reason);
-        }
-        const token = extractStreamToken(parsed);
-        if (token) {
-          fullText += token;
-          onToken?.(token, fullText);
-        }
-      } catch {
-        // Ignore malformed partial SSE frames; the next chunk usually completes them.
-      }
-    }
-  };
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const events = buffer.split(/\n\n/);
-    buffer = events.pop() || "";
-    for (const eventText of events) processEvent(eventText);
-  }
-
-  buffer += decoder.decode();
-  if (buffer.trim()) processEvent(buffer);
-  return { text: fullText.trim(), finishReason: finishReason || "stop" };
 }
 
 export function isCollaboratorLengthFinishReason(value = "") {
@@ -2534,75 +2666,6 @@ function getContextChipLabel(c) {
   if (c.file) return `${c.file.name || "attached file"} (${formatFileSize(c.file.size || 0)})`;
   if (c.text) return c.text.slice(0, 60) + (c.text.length > 60 ? "…" : "");
   return "screenshot";
-}
-
-/* ------------------------------ Toolbar stuff ----------------------------- */
-
-function applyWrap(textarea, before, after = before) {
-  const el = textarea;
-  const start = el.selectionStart ?? 0;
-  const end = el.selectionEnd ?? 0;
-  const sel = el.value.slice(start, end) || "";
-  const next = el.value.slice(0, start) + before + sel + after + el.value.slice(end);
-  const caret = start + before.length + sel.length + after.length;
-  el.value = next;
-  el.focus();
-  el.setSelectionRange(caret, caret);
-  return next;
-}
-
-function insertAtLineStart(textarea, prefix) {
-  const el = textarea;
-  const start = el.selectionStart ?? 0;
-  const end = el.selectionEnd ?? 0;
-  const value = el.value;
-  const lineStart = value.lastIndexOf("\n", start - 1) + 1;
-  const lineEnd = value.indexOf("\n", end);
-  const endPos = lineEnd === -1 ? value.length : lineEnd;
-  const chunk = value.slice(lineStart, endPos);
-  const withPrefix = chunk
-    .split("\n")
-    .map(l => (l.startsWith(prefix) ? l : `${prefix}${l || ""}`))
-    .join("\n");
-  const next = value.slice(0, lineStart) + withPrefix + value.slice(endPos);
-  el.value = next;
-  el.focus();
-  const caret = lineStart + withPrefix.length;
-  el.setSelectionRange(caret, caret);
-  return next;
-}
-
-function MarkdownToolbar({ onChange, textareaRef }) {
-  const click = (fn) => (e) => {
-    e.preventDefault();
-    if (!textareaRef.current) return;
-    const next = fn(textareaRef.current);
-    onChange(next);
-  };
-  return (
-    <div className="flex flex-wrap items-center gap-1 border rounded-md p-1 bg-white">
-      <button className="p-2 rounded hover:bg-neutral-100" title="Bold" onClick={click(el => applyWrap(el, "**"))}><Bold className="w-4 h-4" /></button>
-      <button className="p-2 rounded hover:bg-neutral-100" title="Italic" onClick={click(el => applyWrap(el, "*"))}><Italic className="w-4 h-4" /></button>
-      <button className="p-2 rounded hover:bg-neutral-100" title="Underline" onClick={click(el => applyWrap(el, "<u>", "</u>"))}><Underline className="w-4 h-4" /></button>
-      <span className="w-px h-5 bg-neutral-200 mx-1" />
-      <button className="p-2 rounded hover:bg-neutral-100" title="H2" onClick={click(el => insertAtLineStart(el, "## "))}><Heading2 className="w-4 h-4" /></button>
-      <button className="p-2 rounded hover:bg-neutral-100" title="H3" onClick={click(el => insertAtLineStart(el, "### "))}><Heading3 className="w-4 h-4" /></button>
-      <span className="w-px h-5 bg-neutral-200 mx-1" />
-      <button className="p-2 rounded hover:bg-neutral-100" title="Bulleted list" onClick={click(el => insertAtLineStart(el, "- "))}><ListIcon className="w-4 h-4" /></button>
-      <button className="p-2 rounded hover:bg-neutral-100" title="Numbered list" onClick={click(el => insertAtLineStart(el, "1. "))}><ListOrdered className="w-4 h-4" /></button>
-      <button className="p-2 rounded hover:bg-neutral-100" title="Checklist" onClick={click(el => insertAtLineStart(el, "- [ ] "))}><CheckSquare className="w-4 h-4" /></button>
-      <span className="w-px h-5 bg-neutral-200 mx-1" />
-      <button className="p-2 rounded hover:bg-neutral-100" title="Inline code" onClick={click(el => applyWrap(el, "`"))}><Code2 className="w-4 h-4" /></button>
-      <button className="p-2 rounded hover:bg-neutral-100" title="Table template" onClick={click(el => {
-        const tpl = "\n| Col A | Col B |\n| --- | --- |\n|  |  |\n";
-        el.setRangeText(tpl, el.selectionStart, el.selectionEnd, "end");
-        const next = el.value;
-        el.focus();
-        onChange(next);
-        return next;
-      })}><TableIcon className="w-4 h-4" /></button>
-    </div>
-  );
 }
 
 /* ----------------------- Turn grouping (inline layout) --------------------- */
@@ -3651,6 +3714,7 @@ function cancelCtxEditor() {
     return {
       provider,
       model: getStoredAIProviderModelPreference(provider, { includeDefault: true }),
+      effort: getStoredAIProviderEffortPreference(provider),
     };
   });
   const [collaboratorModelsByProvider, setCollaboratorModelsByProvider] = useState({});
@@ -3705,6 +3769,7 @@ function cancelCtxEditor() {
       setCollaboratorAI({
         provider,
         model: getStoredAIProviderModelPreference(provider, { includeDefault: true }),
+        effort: getStoredAIProviderEffortPreference(provider),
       });
     };
     window.addEventListener(AI_PROVIDER_PREFERENCE_CHANGED_EVENT, syncAIProviderPreference);
@@ -3718,6 +3783,11 @@ function cancelCtxEditor() {
   const changeCollaboratorModel = (model) => {
     storeAIProviderModelPreference(collaboratorAI.provider, model);
     setCollaboratorAI((current) => ({ ...current, model }));
+  };
+
+  const changeCollaboratorEffort = (effort) => {
+    storeAIProviderEffortPreference(collaboratorAI.provider, effort);
+    setCollaboratorAI((current) => ({ ...current, effort }));
   };
 
   // Hotkey: Cmd/Ctrl + Shift + C requests (un)dock
@@ -3896,12 +3966,28 @@ useEffect(() => {
     ]);
   }
 
+  function handleSelectRegion() {
+    openRegionSelector({
+      onDone: async (payload) => {
+        const { bbox } = payload || {};
+        if (!(bbox && bbox.width > 0 && bbox.height > 0)) return;
+        try {
+          const dataUrl = await captureSelectionAsImage(bbox);
+          pushRegionContext({ imageDataUrl: dataUrl });
+        } catch {
+          // The selection overlay owns cancellation; a failed capture adds no context.
+        }
+      },
+    });
+  }
+
   function updateInputDraft(value) {
     const next = String(value || "");
     inputDraftRef.current = next;
     if (textareaRef.current && textareaRef.current.value !== next) {
       textareaRef.current.value = next;
     }
+    resizeCollaboratorTextarea(textareaRef.current);
     const nextHasInput = Boolean(next.trim());
     setHasInput((current) => current === nextHasInput ? current : nextHasInput);
   }
@@ -3917,7 +4003,10 @@ useEffect(() => {
 
     const userMsg = { role: "user", content: historyContent };
     inputDraftRef.current = "";
-    if (textareaRef.current) textareaRef.current.value = "";
+    if (textareaRef.current) {
+      textareaRef.current.value = "";
+      resizeCollaboratorTextarea(textareaRef.current);
+    }
     setHasInput(false);
     setRegionContexts([]);        // clear chips after send
 
@@ -4828,14 +4917,6 @@ Runtime context:
                 <span className="text-neutral-600">{active ? active.title : "No thread selected"}</span>
               </div>
               <div className="flex items-center gap-2">
-                <CollaboratorModelSelector
-                  provider={collaboratorAI.provider}
-                  model={collaboratorAI.model}
-                  providerModels={collaboratorModelsByProvider[collaboratorAI.provider]}
-                  onChange={changeCollaboratorModel}
-                  disabled={busy}
-                  loading={collaboratorModelsBusy}
-                />
                 {docked && !sidebarOpen && (
                   <button
                     onClick={() => makeThread("New topic")}
@@ -5024,55 +5105,29 @@ Runtime context:
               )}
             </div>
 
-            {/* Compose Area with Markdown Toolbar */}
-            <div className="p-4 border-t bg-white">
-              <div className="mb-2">
-                <MarkdownToolbar onChange={updateInputDraft} textareaRef={textareaRef} />
-              </div>
-              {renderPendingContextChips()}
-              <div className="flex items-end gap-2">
-                <div className="flex-1">
-                  <textarea
-                    ref={textareaRef}
-                    className="w-full border rounded-lg px-3 py-2 text-sm h-24 resize-y focus:outline-none focus:ring focus:ring-indigo-200"
-                    placeholder="Ask anything about your project..."
-                    defaultValue={inputDraftRef.current}
-                    onChange={(e) => updateInputDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        handleSend();
-                      }
-                    }}
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={() => attachFileInputRef.current?.click()}
-                  className="inline-flex items-center gap-2 px-3 py-2 text-sm border rounded-lg hover:bg-neutral-50"
-                  title="Attach local files as Collaborator context"
-                >
-                  <FilePlus2 className="w-4 h-4" />
-                  Attach
-                </button>
-                <button
-                  onClick={() => handleSend()}
-                  disabled={!canSend}
-                  className="inline-flex items-center gap-2 px-3 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-                >
-                  <SendHorizonal className="w-4 h-4" />
-                  Send
-                </button>
-              </div>
-              <QuickSuggestions
-                onPick={(text) => {
-                  updateInputDraft(text);
-                  try { textareaRef.current?.focus(); } catch {}
+            {/* Unified prompt composer */}
+            <div className="border-t bg-white p-4">
+              <CollaboratorPromptComposer
+                textareaRef={textareaRef}
+                defaultValue={inputDraftRef.current}
+                placeholder="Ask Collaborator"
+                onDraftChange={updateInputDraft}
+                onSend={() => handleSend()}
+                canSend={canSend}
+                pendingContext={renderPendingContextChips()}
+                menuProps={{
+                  provider: collaboratorAI.provider,
+                  model: collaboratorAI.model,
+                  effort: collaboratorAI.effort,
+                  providerModels: collaboratorModelsByProvider[collaboratorAI.provider],
+                  onModelChange: changeCollaboratorModel,
+                  onEffortChange: changeCollaboratorEffort,
+                  onSelectRegion: handleSelectRegion,
+                  onAttachFiles: () => attachFileInputRef.current?.click(),
+                  disabled: busy,
+                  loadingModels: collaboratorModelsBusy,
                 }}
               />
-              <div className="text-[11px] text-neutral-500 mt-1">
-                Tip: Enter to send, Shift+Enter for a new line
-              </div>
             </div>
             <div className="h-4 md:h-6" aria-hidden="true" />
           </div>
@@ -5103,15 +5158,6 @@ Runtime context:
               </select>
             </div>
             <div className="shrink-0 flex items-center gap-1.5">
-              <CollaboratorModelSelector
-                provider={collaboratorAI.provider}
-                model={collaboratorAI.model}
-                providerModels={collaboratorModelsByProvider[collaboratorAI.provider]}
-                onChange={changeCollaboratorModel}
-                disabled={busy}
-                loading={collaboratorModelsBusy}
-                compact
-              />
               <button
                 type="button"
                 onClick={() => active?.id && doRename(active.id)}
@@ -5267,79 +5313,28 @@ Runtime context:
           </div>
 
           <div className="border-t bg-white p-2">
-    <div className="flex flex-col gap-2">
-    {/* Pending context chips */}
-	{renderPendingContextChips()}
-
-    {/* Row 1: textarea gets the full width */}
-    <div>
-      <textarea
-        ref={textareaRef}
-        className="w-full border rounded-lg px-3 py-2 text-sm min-h-[84px] max-h-48 resize-y focus:outline-none focus:ring focus:ring-indigo-200"
-        placeholder="Ask Collaborator..."
-        defaultValue={inputDraftRef.current}
-        onChange={(e) => updateInputDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            handleSend();
-          }
-        }}
-      />
-    </div>
-
-    {/* Row 2: controls split left/right */}
-    <div className="flex items-center justify-between gap-2">
-      <div className="flex items-center gap-2">
-        {/* Select Region */}
-        <button
-          type="button"
-          onClick={() => {
-            openRegionSelector({
-              onDone: async (payload) => {
-                const { bbox } = payload || {};
-                if (bbox && bbox.width > 0 && bbox.height > 0) {
-                  try {
-                    const dataUrl = await captureSelectionAsImage(bbox);
-                    pushRegionContext({ imageDataUrl: dataUrl }); // stash only; text is appended by the event listener
-                  } catch {/* ignore */}
-                }
-              }
-            });
-          }}
-          className="inline-flex items-center gap-2 px-2.5 py-1.5 text-sm border rounded-lg hover:bg-neutral-50"
-          title="Select on-screen region to use as Collaborator context"
-	        >
-	          <Crosshair className="w-4 h-4" />
-	          Select
-	        </button>
-	        <button
-	          type="button"
-	          onClick={() => attachFileInputRef.current?.click()}
-	          className="inline-flex items-center gap-2 px-2.5 py-1.5 text-sm border rounded-lg hover:bg-neutral-50"
-	          title="Attach local files as Collaborator context"
-	        >
-	          <FilePlus2 className="w-4 h-4" />
-	          Attach
-	        </button>
-	
-	      </div>
-
-      {/* Right: primary action */}
-	      <button
-	        onClick={() => handleSend()}
-	        disabled={!canSend}
-	        className="inline-flex items-center gap-2 px-3 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-	      >
-        <SendHorizonal className="w-4 h-4" />
-        Send
-      </button>
-    </div>
-
-    {/* Row 3: tiny helper text */}
-    <div className="text-[10px] text-neutral-500">Tip: Enter to send, Shift+Enter for a new line</div>
-  </div>
-</div>
+            <CollaboratorPromptComposer
+              textareaRef={textareaRef}
+              defaultValue={inputDraftRef.current}
+              placeholder="Ask Collaborator"
+              onDraftChange={updateInputDraft}
+              onSend={() => handleSend()}
+              canSend={canSend}
+              pendingContext={renderPendingContextChips()}
+              menuProps={{
+                provider: collaboratorAI.provider,
+                model: collaboratorAI.model,
+                effort: collaboratorAI.effort,
+                providerModels: collaboratorModelsByProvider[collaboratorAI.provider],
+                onModelChange: changeCollaboratorModel,
+                onEffortChange: changeCollaboratorEffort,
+                onSelectRegion: handleSelectRegion,
+                onAttachFiles: () => attachFileInputRef.current?.click(),
+                disabled: busy,
+                loadingModels: collaboratorModelsBusy,
+              }}
+            />
+          </div>
 
 
         </div>

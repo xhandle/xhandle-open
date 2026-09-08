@@ -20,12 +20,17 @@ import {
   Download,
   PanelLeftClose,
   PanelRightClose,
+  PanelRightOpen,
   Maximize2,
   Minimize2,
   Loader2,
   ShieldCheck,
   ClipboardCheck,
   Sparkles,
+  RefreshCw,
+  RotateCcw,
+  ChevronsUp,
+  ChevronsDown,
 } from 'lucide-react';
 import XHandleCopilotView, { generateFunctionalDecompositionWithCollaborator } from "./components/XHandleCopilotView";
 import { runLiteAIAnalysis } from './components/aiAnalysisLite';
@@ -36,6 +41,12 @@ import ConversationalWizard from './components/ConversationalWizard';
 import LiteSummaryDiagramReactFlow from './components/LiteSummaryDiagramReactFlow';
 import { generateAgenticRiskReport } from './components/generateAgenticReport';
 import SafetyReportViewer from './components/SafetyReportViewer';
+import ProjectTabSideToolbar, {
+  ProjectTabToolbarButton,
+  ProjectTabToolbarField,
+  ProjectTabToolbarSection,
+  ProjectTabToolbarStatus,
+} from './components/ProjectTabSideToolbar';
 import { exportReport } from "./components/utils/exportUtils";
 import {
   PieChart, Pie, Cell, Legend, Tooltip,
@@ -5083,6 +5094,8 @@ function guardNewProjectIntent() {
 
 // --- Tabs ---
 const [activeTab, setActiveTab] = useState('Functional Diagramming'); // 'Analysis' | 'Risk Assessment'
+const [hazardTabToolbarCollapsed, setHazardTabToolbarCollapsed] = useState(false);
+const [safetyTabToolbarCollapsed, setSafetyTabToolbarCollapsed] = useState(false);
 
 useEffect(() => {
   if (activeTab === 'Reporting') {
@@ -12278,22 +12291,36 @@ const projectHint = useMemo(() => ({
       );
     }
 
-  const hazardAnalysisControls = responseRows.length > 0 ? (
-    <div className="mb-4 flex flex-wrap items-center justify-center gap-3">
-      <div className="flex items-center space-x-2">
-        <label className="text-sm text-gray-700">Method:</label>
+  const hazardAnalysisControls = (
+    <ProjectTabSideToolbar
+      label="Hazard Analysis tools"
+      collapsed={hazardTabToolbarCollapsed}
+      onCollapsedChange={setHazardTabToolbarCollapsed}
+      className="sticky top-0 h-[calc(100dvh-176px)] min-h-[360px]"
+    >
+      <ProjectTabToolbarSection title="Analysis setup" collapsed={hazardTabToolbarCollapsed}>
+        {hazardTabToolbarCollapsed && (
+          <ProjectTabToolbarButton
+            icon={<SettingsIcon size={17} />}
+            label="Show analysis setup"
+            collapsed
+            onClick={() => setHazardTabToolbarCollapsed(false)}
+          />
+        )}
+        <ProjectTabToolbarField label="Method" collapsed={hazardTabToolbarCollapsed}>
         <select
-          className="text-sm border rounded px-2 py-1"
+          className="w-full rounded-md border border-gray-200 bg-white px-2 py-2 text-xs"
           value={riskMethod}
           onChange={(e) => handleProjectRiskMethodChange(e.target.value)}
           disabled={isAnalyzing || draftHazardGeneratingIndex !== null}
         >
           <option value="STPA-Textbook">STPA (standard/detailed)</option>
         </select>
-      </div>
+        </ProjectTabToolbarField>
       {riskMethod === "STPA-Textbook" && (
+        <ProjectTabToolbarField label="Generation mode" collapsed={hazardTabToolbarCollapsed}>
         <select
-          className="max-w-full text-sm border rounded px-2 py-1"
+          className="w-full rounded-md border border-gray-200 bg-white px-2 py-2 text-xs"
           value={projectRiskProfileGenerationMode}
           onChange={(e) => handleProjectRiskProfileGenerationModeChange(e.target.value)}
           disabled={isAnalyzing || draftHazardGeneratingIndex !== null}
@@ -12305,12 +12332,12 @@ const projectHint = useMemo(() => ({
             </option>
           ))}
         </select>
+        </ProjectTabToolbarField>
       )}
-      <div className="flex items-center gap-2">
-        <label htmlFor="hazard-operational-context" className="text-sm text-gray-700">Context:</label>
+        <ProjectTabToolbarField label="Operational context" collapsed={hazardTabToolbarCollapsed}>
         <select
           id="hazard-operational-context"
-          className="max-w-72 text-sm border rounded px-2 py-1"
+          className="w-full rounded-md border border-gray-200 bg-white px-2 py-2 text-xs"
           value={selectedHazardContextId}
           onChange={(event) => setSelectedHazardContextId(event.target.value)}
           disabled={isAnalyzing || draftHazardGeneratingIndex !== null}
@@ -12323,19 +12350,24 @@ const projectHint = useMemo(() => ({
             </option>
           ))}
         </select>
-        <button
-          type="button"
+        </ProjectTabToolbarField>
+        <ProjectTabToolbarButton
+          icon={<SettingsIcon size={16} />}
+          label="Manage contexts"
+          collapsed={hazardTabToolbarCollapsed}
           onClick={() => setShowHazardContextManager(true)}
           disabled={isAnalyzing || draftHazardGeneratingIndex !== null}
-          className="rounded border border-gray-200 bg-white px-2.5 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60"
-        >
-          Manage
-        </button>
-      </div>
-      <button
-        type="button"
+        />
+      </ProjectTabToolbarSection>
+      <ProjectTabToolbarSection title="Actions" collapsed={hazardTabToolbarCollapsed}>
+      <ProjectTabToolbarButton
+        icon={isAnalyzing ? <Loader2 size={17} className="animate-spin" /> : <Sparkles size={17} />}
+        label={isAnalyzing
+          ? (isRegeneratingRiskProfile ? 'Regenerating risk profile…' : 'Developing risk profile…')
+          : (shouldRegenerateRiskProfileFromToolbar ? 'Regenerate risk profile' : 'Develop risk profile')}
+        collapsed={hazardTabToolbarCollapsed}
+        tone="primary"
         onClick={() => handleRunAnalysis(riskMethod, { regenerate: shouldRegenerateRiskProfileFromToolbar })}
-        className="px-3 py-2 text-white rounded bg-[#2D7DFE] hover:bg-[#1E61D6] disabled:cursor-not-allowed disabled:opacity-60"
         disabled={isAnalyzing || draftHazardGeneratingIndex !== null || hazardAnalysisRows.length === 0}
         title={
           hazardAnalysisRows.length === 0
@@ -12345,83 +12377,85 @@ const projectHint = useMemo(() => ({
             ? "Regenerate hazard analysis for all functional rows"
             : "Generate hazard analysis for the functional decomposition"
         }
-      >
-        {isAnalyzing
-          ? (isRegeneratingRiskProfile ? 'Regenerating risk profile...' : 'Developing risk profile...')
-          : (shouldRegenerateRiskProfileFromToolbar ? 'Regenerate risk profile' : 'Develop risk profile')}
-      </button>
+      />
       {isAnalyzing && (
-        <button
-          type="button"
+        <ProjectTabToolbarButton
+          icon={<X size={17} />}
+          label="Stop analysis"
+          collapsed={hazardTabToolbarCollapsed}
+          tone="danger"
           onClick={handleCancelHazardAnalysis}
-          className="inline-flex items-center gap-1.5 rounded border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
           title="Stop the current hazard analysis run"
-        >
-          <X size={15} aria-hidden="true" />
-          Stop
-        </button>
+        />
       )}
       {isAnalyzing && (
-        <div className="flex min-w-0 max-w-xl items-center gap-2 text-sm text-gray-600" role="status" aria-live="polite">
-          <Loader2 size={15} className="shrink-0 animate-spin text-[#2D7DFE]" aria-hidden="true" />
-          <span className="truncate">
+        <ProjectTabToolbarStatus
+          collapsed={hazardTabToolbarCollapsed}
+          tone="info"
+          icon={<Loader2 size={15} className="animate-spin" />}
+          title={progress.message || stepDescriptionsMap[riskMethod]?.steps[progress.step] || "Working…"}
+        >
             {progress.message || stepDescriptionsMap[riskMethod]?.steps[progress.step] || "Working…"}
-          </span>
-        </div>
+        </ProjectTabToolbarStatus>
       )}
-      <button
-        type="button"
+      <ProjectTabToolbarButton
+        icon={<Download size={17} />}
+        label="Export CSV"
+        collapsed={hazardTabToolbarCollapsed}
+        tone="success"
         onClick={exportHazardAnalysisCSV}
-        className="px-3 py-2 text-white rounded bg-[#10B981] hover:bg-[#059669] disabled:cursor-not-allowed disabled:opacity-60"
         disabled={
           (Array.isArray(analysisResult?.Summary?.[0])
             ? filteredHazardSummaryRows.length
             : filteredDraftHazardSummaryRows.length) === 0
         }
         title="Export the visible hazard analysis table rows as CSV"
-      >
-        Export CSV
-      </button>
-      <button
-        type="button"
+      />
+      <ProjectTabToolbarButton
+        icon={allVisibleHazardInterfacesCollapsed ? <ChevronsDown size={17} /> : <ChevronsUp size={17} />}
+        label={allVisibleHazardInterfacesCollapsed ? 'Expand all groups' : 'Collapse all groups'}
+        collapsed={hazardTabToolbarCollapsed}
         onClick={toggleAllHazardInterfacesCollapsed}
-        className="px-3 py-2 text-[#374151] rounded border border-gray-200 bg-white hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
         disabled={!visibleHazardInterfaceKeys.length}
         title={allVisibleHazardInterfacesCollapsed
           ? "Expand all visible interface guide-phrase groups"
           : "Collapse all visible interface guide-phrase groups"}
-      >
-        {allVisibleHazardInterfacesCollapsed ? 'Expand all' : 'Collapse all'}
-      </button>
-      <button
-        type="button"
+      />
+      <ProjectTabToolbarButton
+        icon={<Trash2 size={17} />}
+        label="Clear analysis…"
+        collapsed={hazardTabToolbarCollapsed}
+        tone="danger"
         onClick={() => setShowHazardResetModal(true)}
         disabled={
           isAnalyzing || isConsolidatingSafetyIssues || isGeneratingRiskAssessmentReport || isResettingHazardAnalysis ||
           !(hazardResetCounts.rawRows || hazardResetCounts.draftRows || hazardResetCounts.safetyIssues || hazardResetCounts.reports)
         }
-        className="rounded-md border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
         title="Clear hazard-analysis results after saving a restorable snapshot"
-      >
-        Clear analysis…
-      </button>
+      />
       {hazardResetStatus?.canUndo && (
-        <button
-          type="button"
+        <ProjectTabToolbarButton
+          icon={<RotateCcw size={17} />}
+          label="Undo last clear"
+          collapsed={hazardTabToolbarCollapsed}
+          tone="warning"
           onClick={handleUndoHazardAnalysisReset}
           disabled={isResettingHazardAnalysis}
-          className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
-        >
-          Undo last clear
-        </button>
+        />
       )}
       {hazardResetStatus?.message && (
-        <span className={`basis-full text-center text-xs ${hazardResetStatus.kind === "error" ? "text-red-700" : "text-emerald-700"}`} role="status">
+        <ProjectTabToolbarStatus
+          collapsed={hazardTabToolbarCollapsed}
+          tone={hazardResetStatus.kind === "error" ? "error" : "success"}
+          icon={hazardTabToolbarCollapsed ? <span className="h-2 w-2 rounded-full bg-current" /> : null}
+          title={hazardResetStatus.message}
+        >
           {hazardResetStatus.message}
-        </span>
+        </ProjectTabToolbarStatus>
       )}
-    </div>
-  ) : null;
+      </ProjectTabToolbarSection>
+    </ProjectTabSideToolbar>
+  );
 
   return (
 <>
@@ -14865,8 +14899,9 @@ const projectHint = useMemo(() => ({
   />
 )}
 {activeTab === 'Hazard Analysis' && (
-  <section className="mt-2">
+  <section className="mt-2 flex min-h-0 items-start overflow-visible">
     {hazardAnalysisControls}
+    <div className="min-w-0 flex-1 pl-4">
     {hazardOperationalContexts.length === 0 && (
       <button
         type="button"
@@ -14887,10 +14922,7 @@ const projectHint = useMemo(() => ({
         <div className="max-w-md">
           <div className="text-base font-semibold text-gray-900">No hazard analysis results</div>
           <p className="mt-2 text-sm text-gray-600">The analysis was cleared. Your functional decomposition, operational contexts, method, and generation settings are still available.</p>
-          <div className="mt-4 flex flex-wrap justify-center gap-2">
-            <button type="button" onClick={() => handleRunAnalysis(riskMethod, { regenerate: true })} className="rounded-md bg-[#2D7DFE] px-3 py-2 text-sm font-semibold text-white hover:bg-[#1E61D6]">Develop new risk profile</button>
-            {hazardResetStatus?.canUndo && <button type="button" onClick={handleUndoHazardAnalysisReset} className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100">Undo last clear</button>}
-          </div>
+          <p className="mt-4 text-xs text-gray-500">Use the Hazard Analysis toolbar to develop a new risk profile or restore the last cleared analysis.</p>
         </div>
       </div>
     ) : !analysisResult?.Summary ? (
@@ -15388,84 +15420,92 @@ const projectHint = useMemo(() => ({
         )}
       </>
     )}
+    </div>
   </section>
 )}
 
 {activeTab === 'Safety Issues & Risk Assessment' && (
-  <section className="mt-2 flex min-h-0 flex-1 flex-col space-y-4 overflow-hidden pb-3">
-          <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
-            <button
-              type="button"
+  <section className="mt-2 flex min-h-0 flex-1 items-stretch overflow-hidden pb-3">
+    <ProjectTabSideToolbar
+      label="Safety Issues and Risk Assessment tools"
+      collapsed={safetyTabToolbarCollapsed}
+      onCollapsedChange={setSafetyTabToolbarCollapsed}
+    >
+      <ProjectTabToolbarSection title="Safety issues" collapsed={safetyTabToolbarCollapsed}>
+            <ProjectTabToolbarButton
+              icon={isConsolidatingSafetyIssues ? <Loader2 size={17} className="animate-spin" /> : <RefreshCw size={17} />}
+              label="Merge & Refresh"
+              collapsed={safetyTabToolbarCollapsed}
               onClick={() => refreshSafetyIssuesFromSummary({ mergeExisting: true })}
               disabled={isConsolidatingSafetyIssues || isHazardAnalysisArtifactLoading}
-              className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
               title="Use the LLM to consolidate Safety-marked hazard rows while preserving matching issue edits"
-            >
-              {isConsolidatingSafetyIssues && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
-              Merge & Refresh
-            </button>
-            <button
-              type="button"
+            />
+            <ProjectTabToolbarButton
+              icon={isConsolidatingSafetyIssues ? <Loader2 size={17} className="animate-spin" /> : <Sparkles size={17} />}
+              label="Regenerate Safety Issues"
+              collapsed={safetyTabToolbarCollapsed}
+              tone="primary"
               onClick={() => refreshSafetyIssuesFromSummary({ mergeExisting: false })}
               disabled={isConsolidatingSafetyIssues || isHazardAnalysisArtifactLoading}
-              className="inline-flex items-center gap-1.5 rounded-md border border-[#2D7DFE]/30 bg-[#EEF4FF] px-3 py-2 text-sm font-medium text-[#0B3EA8] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
               title="Use the LLM to regenerate consolidated safety issues from rows marked Safety"
-            >
-              {isConsolidatingSafetyIssues && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
-              Regenerate Safety Issues
-            </button>
-            <button
-              type="button"
+            />
+      </ProjectTabToolbarSection>
+      <ProjectTabToolbarSection title="Reports and export" collapsed={safetyTabToolbarCollapsed}>
+            <ProjectTabToolbarButton
+              icon={isGeneratingRiskAssessmentReport ? <Loader2 size={17} className="animate-spin" /> : <FileText size={17} />}
+              label={isGeneratingRiskAssessmentReport ? "Generating Reports…" : "Generate Reports"}
+              collapsed={safetyTabToolbarCollapsed}
+              tone="primary"
               onClick={() => generateSafetyIssueReportsMarkdown(riskRegister)}
               disabled={!riskRegister.length || isGeneratingRiskAssessmentReport || isConsolidatingSafetyIssues || isHazardAnalysisArtifactLoading}
-              className="inline-flex items-center gap-1.5 rounded-md border border-[#2D7DFE]/30 bg-white px-3 py-2 text-sm font-medium text-[#1c5fde] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
               title="Generate Safety Issue Reports for consolidated safety issues"
-            >
-              {isGeneratingRiskAssessmentReport && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
-              {isGeneratingRiskAssessmentReport ? "Generating Reports..." : "Generate Reports"}
-            </button>
-            <button
-              type="button"
+            />
+            <ProjectTabToolbarButton
+              icon={<Download size={17} />}
+              label="Export CSV"
+              collapsed={safetyTabToolbarCollapsed}
+              tone="success"
               onClick={exportSafetyIssuesCSV}
               disabled={!riskRegister.length || isHazardAnalysisArtifactLoading}
-              className="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
               title="Export consolidated safety issues as CSV"
-            >
-              Export CSV
-            </button>
-            {isHazardAnalysisArtifactLoading && (
-              <div role="status" className="inline-flex items-center gap-2 text-xs text-blue-700">
-                <Loader2 size={14} className="animate-spin" aria-hidden="true" />
-                Loading saved hazard evidence and safety issues…
-              </div>
-            )}
-            {safetyIssueRefreshStatus?.message && (
-              <div
-                role="status"
-                aria-live="polite"
-                className={`basis-full text-xs ${
-                  safetyIssueRefreshStatus.kind === "error"
-                    ? "text-red-700"
-                    : safetyIssueRefreshStatus.kind === "success"
-                      ? "text-emerald-700"
-                      : "text-blue-700"
-                }`}
-              >
-                {safetyIssueRefreshStatus.message}
-              </div>
-            )}
-            <button
-              type="button"
+            />
+            <ProjectTabToolbarButton
+              icon={showSafetyIssueReportDrawer ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}
+              label={showSafetyIssueReportDrawer ? "Hide Reports" : "Show Reports"}
+              collapsed={safetyTabToolbarCollapsed}
               onClick={() => {
                 setShowSafetyIssueReportDrawer((visible) => !visible);
                 if (showSafetyIssueReportDrawer) setIsSafetyIssueReportFullscreen(false);
               }}
-              className="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
               title={showSafetyIssueReportDrawer ? "Hide Safety Issue Reports" : "Show Safety Issue Reports"}
-            >
-              {showSafetyIssueReportDrawer ? "Hide Reports" : "Show Reports"}
-            </button>
-          </div>
+            />
+      </ProjectTabToolbarSection>
+      {(isHazardAnalysisArtifactLoading || safetyIssueRefreshStatus?.message) && (
+        <ProjectTabToolbarSection title="Status" collapsed={safetyTabToolbarCollapsed}>
+            {isHazardAnalysisArtifactLoading && (
+              <ProjectTabToolbarStatus
+                collapsed={safetyTabToolbarCollapsed}
+                tone="info"
+                icon={<Loader2 size={14} className="animate-spin" />}
+                title="Loading saved hazard evidence and safety issues…"
+              >
+                Loading saved hazard evidence and safety issues…
+              </ProjectTabToolbarStatus>
+            )}
+            {safetyIssueRefreshStatus?.message && (
+              <ProjectTabToolbarStatus
+                collapsed={safetyTabToolbarCollapsed}
+                tone={safetyIssueRefreshStatus.kind === "error" ? "error" : safetyIssueRefreshStatus.kind === "success" ? "success" : "info"}
+                icon={safetyTabToolbarCollapsed ? <span className="h-2 w-2 rounded-full bg-current" /> : null}
+                title={safetyIssueRefreshStatus.message}
+              >
+                {safetyIssueRefreshStatus.message}
+              </ProjectTabToolbarStatus>
+            )}
+        </ProjectTabToolbarSection>
+      )}
+    </ProjectTabSideToolbar>
+    <div className="ml-4 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <div className={`relative flex min-h-0 flex-1 overflow-hidden transition-[padding] duration-300 ${showSafetyIssueReportDrawer && !isSafetyIssueReportFullscreen ? '2xl:pr-[700px]' : ''}`}>
           <div className="grid min-h-0 w-full flex-1 grid-cols-1 grid-rows-2 gap-4 overflow-hidden xl:grid-cols-[360px_minmax(0,1fr)] xl:grid-rows-1">
             <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white">
@@ -15743,21 +15783,6 @@ const projectHint = useMemo(() => ({
               )}
             </div>
 
-            {!showSafetyIssueReportDrawer && (
-              <button
-                type="button"
-                onClick={() => {
-                  setShowSafetyIssueReportDrawer(true);
-                  setIsSafetyIssueReportFullscreen(false);
-                }}
-                className="fixed right-0 top-1/2 z-30 flex -translate-y-1/2 items-center gap-2 rounded-l-lg border border-r-0 border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-lg hover:bg-gray-50"
-                title="Show Safety Issue Report drawer"
-              >
-                <FileText size={16} aria-hidden="true" />
-                <span className="[writing-mode:vertical-rl] rotate-180">Reports</span>
-              </button>
-            )}
-
             <div className={`fixed z-30 rounded-lg border border-gray-200 bg-white shadow-2xl transition-all duration-300 ease-out ${
               isSafetyIssueReportFullscreen
                 ? 'left-4 right-4 bottom-4 top-24 w-auto'
@@ -15876,6 +15901,7 @@ const projectHint = useMemo(() => ({
             </div>
           </div>
           </div>
+    </div>
   </section>
 )}
 

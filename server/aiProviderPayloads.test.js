@@ -1,10 +1,25 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  applyOpenAIReasoningEffort,
   buildClaudeRequestPayload,
   buildGeminiRequestPayload,
   normalizeClaudeConversation,
+  supportsClaudeEffort,
+  supportsGeminiEffort,
+  supportsOpenAIEffort,
 } = require("./aiProviderPayloads");
+
+test("OpenAI reasoning models receive native reasoning effort", () => {
+  const payload = applyOpenAIReasoningEffort(
+    { model: "gpt-5.5", messages: [{ role: "user", content: "Hello" }] },
+    { effort: "high" },
+  );
+
+  assert.equal(payload.reasoning_effort, "high");
+  assert.equal(supportsOpenAIEffort("gpt-5.5"), true);
+  assert.equal(supportsOpenAIEffort("gpt-4o"), false);
+});
 
 test("Claude retains Anthropic max_tokens and provider-compatible sampling controls", () => {
   const payload = buildClaudeRequestPayload({
@@ -32,6 +47,21 @@ test("Claude converts a cross-provider completion limit back to max_tokens", () 
 
   assert.equal(payload.max_tokens, 1800);
   assert.equal(payload.max_completion_tokens, undefined);
+});
+
+test("Claude Sonnet 5 receives native effort and omits deprecated sampling controls", () => {
+  const payload = buildClaudeRequestPayload({
+    body: { max_tokens: 16000, effort: "medium", temperature: 0, top_p: 0.1, top_k: 5 },
+    model: "claude-sonnet-5",
+    conversation: [{ role: "user", content: "Create a decomposition" }],
+  });
+
+  assert.deepEqual(payload.output_config, { effort: "medium" });
+  assert.equal(payload.temperature, undefined);
+  assert.equal(payload.top_p, undefined);
+  assert.equal(payload.top_k, undefined);
+  assert.equal(supportsClaudeEffort("claude-sonnet-5"), true);
+  assert.equal(supportsClaudeEffort("claude-haiku-4-5"), false);
 });
 
 test("Claude conversations never use an assistant-message prefill", () => {
@@ -82,7 +112,8 @@ test("Claude converts OpenAI-compatible image parts to Anthropic image blocks", 
 
 test("Gemini maps shared request controls to Gemini field names", () => {
   const payload = buildGeminiRequestPayload({
-    body: { max_tokens: 1600, temperature: 0.2, top_p: 0.8 },
+    body: { max_tokens: 1600, temperature: 0.2, top_p: 0.8, effort: "low" },
+    model: "gemini-3.6-flash",
     system: "Be precise.",
     conversation: [
       { role: "user", content: "Question" },
@@ -91,13 +122,23 @@ test("Gemini maps shared request controls to Gemini field names", () => {
   });
 
   assert.deepEqual(payload.generationConfig, {
-    temperature: 0.2,
-    topP: 0.8,
     maxOutputTokens: 1600,
+    thinkingConfig: { thinkingLevel: "low" },
   });
+  assert.equal(supportsGeminiEffort("gemini-3.6-flash"), true);
+  assert.equal(supportsGeminiEffort("gemini-2.0-flash"), false);
   assert.equal(payload.contents[0].role, "user");
   assert.equal(payload.contents[1].role, "model");
   assert.equal(payload.system_instruction.parts[0].text, "Be precise.");
+});
+
+test("Gemini keeps sampling controls for models without thinking-level support", () => {
+  const payload = buildGeminiRequestPayload({
+    body: { temperature: 0.3, top_p: 0.7, effort: "high" },
+    model: "gemini-2.0-flash",
+  });
+
+  assert.deepEqual(payload.generationConfig, { temperature: 0.3, topP: 0.7 });
 });
 
 test("Gemini converts image attachments to native inline data", () => {

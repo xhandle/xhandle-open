@@ -86,6 +86,29 @@ function normalizeClaudeConversation(conversation = [], fallbackPrompt = "Contin
   return normalized;
 }
 
+function supportsClaudeEffort(model = "") {
+  return /claude-(?:sonnet-5|opus-5|fable-5|mythos-5)/i.test(String(model || ""));
+}
+
+function normalizeEffort(effort = "") {
+  const normalized = String(effort || "").trim().toLowerCase();
+  return ["low", "medium", "high"].includes(normalized) ? normalized : "";
+}
+
+function supportsOpenAIEffort(model = "") {
+  return /^(?:gpt-(?:5|6)(?:[.-]|$)|o[1-9](?:[.-]|$))/i.test(String(model || ""));
+}
+
+function applyOpenAIReasoningEffort(payload = {}, body = {}) {
+  if (!supportsOpenAIEffort(payload.model)) return payload;
+  const effort = normalizeEffort(body.effort);
+  return effort ? { ...payload, reasoning_effort: effort } : payload;
+}
+
+function supportsGeminiEffort(model = "") {
+  return /^gemini-3(?:[.-]|$)/i.test(String(model || ""));
+}
+
 function buildClaudeRequestPayload({ body = {}, model, system = "", conversation = [] }) {
   const payload = {
     model,
@@ -94,12 +117,17 @@ function buildClaudeRequestPayload({ body = {}, model, system = "", conversation
   };
 
   if (system) payload.system = system;
-  if (typeof body.temperature === "number") {
+  if (supportsClaudeEffort(model)) {
+    const effort = normalizeEffort(body.effort);
+    if (effort) {
+      payload.output_config = { effort };
+    }
+  } else if (typeof body.temperature === "number") {
     payload.temperature = body.temperature;
   } else if (typeof body.top_p === "number") {
     payload.top_p = body.top_p;
   }
-  if (typeof body.top_k === "number") payload.top_k = body.top_k;
+  if (!supportsClaudeEffort(model) && typeof body.top_k === "number") payload.top_k = body.top_k;
   if (Array.isArray(body.stop_sequences)) payload.stop_sequences = body.stop_sequences;
   return payload;
 }
@@ -126,7 +154,7 @@ function toGeminiParts(content) {
   ));
 }
 
-function buildGeminiRequestPayload({ body = {}, system = "", conversation = [] }) {
+function buildGeminiRequestPayload({ body = {}, model = "", system = "", conversation = [] }) {
   const payload = {
     contents: (conversation.length
       ? conversation
@@ -144,8 +172,14 @@ function buildGeminiRequestPayload({ body = {}, system = "", conversation = [] }
   }
 
   const generationConfig = {};
-  if (typeof body.temperature === "number") generationConfig.temperature = body.temperature;
-  if (typeof body.top_p === "number") generationConfig.topP = body.top_p;
+  const effort = normalizeEffort(body.effort);
+  const usesThinkingLevel = supportsGeminiEffort(model);
+  if (usesThinkingLevel) {
+    if (effort) generationConfig.thinkingConfig = { thinkingLevel: effort };
+  } else {
+    if (typeof body.temperature === "number") generationConfig.temperature = body.temperature;
+    if (typeof body.top_p === "number") generationConfig.topP = body.top_p;
+  }
   const maxOutputTokens = Number(body.max_tokens ?? body.max_completion_tokens);
   if (Number.isFinite(maxOutputTokens) && maxOutputTokens > 0) {
     generationConfig.maxOutputTokens = maxOutputTokens;
@@ -156,10 +190,15 @@ function buildGeminiRequestPayload({ body = {}, system = "", conversation = [] }
 }
 
 module.exports = {
+  applyOpenAIReasoningEffort,
   buildClaudeRequestPayload,
   buildGeminiRequestPayload,
+  normalizeEffort,
   normalizeClaudeConversation,
   resolveOutputTokenLimit,
+  supportsClaudeEffort,
+  supportsGeminiEffort,
+  supportsOpenAIEffort,
   toClaudeContent,
   toGeminiParts,
 };

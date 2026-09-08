@@ -79,9 +79,9 @@ async function executeProviderRequestWithCompatibility(create, payload, onRetry 
   throw new Error("Chat completion compatibility retries exhausted.");
 }
 
-async function createChatCompletionWithTokenCompatibility(openai, payload, onRetry = () => {}) {
+async function createChatCompletionWithTokenCompatibility(openai, payload, onRetry = () => {}, requestOptions = {}) {
   return executeProviderRequestWithCompatibility(
-    (compatiblePayload) => openai.chat.completions.create(compatiblePayload),
+    (compatiblePayload) => openai.chat.completions.create(compatiblePayload, requestOptions),
     payload,
     onRetry,
   );
