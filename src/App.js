@@ -177,6 +177,10 @@ import HazardOperationalContextManager from "./features/project-hazard-analysis/
 import HazardAnalysisResetModal from "./features/project-hazard-analysis/HazardAnalysisResetModal";
 import { generateHazardOperationalContexts } from "./features/project-hazard-analysis/hazardOperationalContextAi";
 import {
+  buildHazardDiagramFocusTarget,
+  getHazardDiagramLinkLabel,
+} from "./features/project-hazard-analysis/hazardDiagramLinks";
+import {
   buildSafetyIssueContextVariants,
   getBoundingSafetyIssueContext,
   getSafetyEvidenceCell,
@@ -6697,6 +6701,7 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   // ────────────────────────────────────────────────────────────────────────────────
 
   const diagramRef = useRef();
+  const pendingFunctionalDiagramFocusRef = useRef(null);
   const stepDescriptionsMap = {
     HRWhatIf: {
       total: 9,
@@ -7273,6 +7278,15 @@ const handleProjectDiagramRowsUpdate = useCallback((nextRowsOrUpdater) => {
 const commitFunctionalRowsToDiagram = useCallback(() => {
   setCommittedFunctionalDiagramRows(getProjectDiagramRows(responseRows));
 }, [responseRows]);
+
+const handleOpenHazardDiagramTarget = useCallback((target) => {
+  if (!target) return;
+  pendingFunctionalDiagramFocusRef.current = target;
+  commitFunctionalRowsToDiagram();
+  setShowPromptWizard(false);
+  setShowFunctionalDiagram(true);
+  setActiveTab('Functional Diagramming');
+}, [commitFunctionalRowsToDiagram]);
 
    // Accept an optional prompt override so we don't rely on async state
 // Accept an optional prompt override for Custom Report
@@ -9528,6 +9542,21 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     projectLoaded &&
     !loadingProjectId
   );
+
+  useEffect(() => {
+    if (activeTab !== 'Functional Diagramming' || !showFunctionalDiagram || !activeProjectDiagramReady) return undefined;
+    if (!pendingFunctionalDiagramFocusRef.current) return undefined;
+
+    const retryDelays = [0, 100, 300, 700];
+    const timers = retryDelays.map((delay) => window.setTimeout(() => {
+      const target = pendingFunctionalDiagramFocusRef.current;
+      if (!target) return;
+      const focused = diagramRef.current?.focusArchitectureTarget?.(target);
+      if (focused) pendingFunctionalDiagramFocusRef.current = null;
+    }, delay));
+
+    return () => timers.forEach((timer) => window.clearTimeout(timer));
+  }, [activeProjectDiagramReady, activeProjectDiagramKey, activeTab, showFunctionalDiagram]);
 
   const handleRunAnalysis = async (selectedMethod, options = {}) => {
     const shouldRegenerate = Boolean(options.regenerate);
@@ -14823,14 +14852,14 @@ const projectHint = useMemo(() => ({
               )}
               </>
             )}
-<HazardOperationalContextManager
+{activeProjectId && <HazardOperationalContextManager
   open={showHazardContextManager}
   contexts={hazardOperationalContexts}
   onClose={() => setShowHazardContextManager(false)}
   onSave={handleSaveHazardOperationalContexts}
   onGenerate={handleGenerateHazardOperationalContexts}
-/>
-{showHazardResetModal && (
+/>}
+{activeProjectId && showHazardResetModal && (
   <HazardAnalysisResetModal
     counts={hazardResetCounts}
     busy={isResettingHazardAnalysis}
@@ -14840,7 +14869,7 @@ const projectHint = useMemo(() => ({
     onConfirm={handleClearHazardAnalysis}
   />
 )}
-{activeTab === 'Hazard Analysis' && (
+{activeProjectId && activeTab === 'Hazard Analysis' && (
   <section className="mt-2 flex min-h-0 flex-1 items-stretch overflow-hidden pb-3">
     {hazardAnalysisControls}
     <div className="flex min-h-0 min-w-0 flex-1 flex-col pl-4">
@@ -15076,16 +15105,29 @@ const projectHint = useMemo(() => ({
                             )}
                           </div>
                         </td>
-                        {row.map((cell, colIdx) => (
-                          <td key={colIdx} className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(draftHazardHeaders[colIdx]) ? 'hidden ' : ''}px-6 py-4 align-top whitespace-pre-wrap border-b border-gray-100`}>
-                            <textarea
-                              className="min-h-[44px] w-full resize-none overflow-hidden break-words bg-transparent text-sm leading-5 text-gray-900 [overflow-wrap:anywhere] focus:outline-none"
-                              value={cell}
-                              onChange={(event) => handleDraftHazardCellChange(originalIndex, colIdx, event.target.value)}
-                              rows={getDraftHazardCellRows(cell)}
-                            />
-                          </td>
-                        ))}
+                        {row.map((cell, colIdx) => {
+                          const diagramTarget = buildHazardDiagramFocusTarget(draftHazardHeaders, row, colIdx);
+                          return (
+                            <td key={colIdx} className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(draftHazardHeaders[colIdx]) ? 'hidden ' : ''}px-6 py-4 align-top whitespace-pre-wrap border-b border-gray-100`}>
+                              <textarea
+                                className="min-h-[44px] w-full resize-none overflow-hidden break-words bg-transparent text-sm leading-5 text-gray-900 [overflow-wrap:anywhere] focus:outline-none"
+                                value={cell}
+                                onChange={(event) => handleDraftHazardCellChange(originalIndex, colIdx, event.target.value)}
+                                rows={getDraftHazardCellRows(cell)}
+                              />
+                              {diagramTarget && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenHazardDiagramTarget(diagramTarget)}
+                                  className="mt-1 inline-flex text-xs font-medium text-[#1C5FDE] underline decoration-blue-300 underline-offset-2 hover:text-[#0B3EA8]"
+                                  title={getHazardDiagramLinkLabel(diagramTarget)}
+                                >
+                                  {getHazardDiagramLinkLabel(diagramTarget)}
+                                </button>
+                              )}
+                            </td>
+                          );
+                        })}
                       </tr>
                     )}
                   </React.Fragment>
@@ -15339,11 +15381,23 @@ const projectHint = useMemo(() => ({
                                 )}
                               </div>
                             </td>
-                            {row.map((cell, colIdx) => (
-                              <td key={colIdx} className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(hazardSummaryHeaders[colIdx]) ? 'hidden ' : ''}min-w-56 max-w-xl break-words px-6 py-4 align-top whitespace-pre-wrap [overflow-wrap:anywhere] border-b border-gray-100 ${rejected ? 'text-rose-900 line-through decoration-rose-400' : ''}`}>
-                                {cell}
-                              </td>
-                            ))}
+                            {row.map((cell, colIdx) => {
+                              const diagramTarget = buildHazardDiagramFocusTarget(hazardSummaryHeaders, row, colIdx);
+                              return (
+                                <td key={colIdx} className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(hazardSummaryHeaders[colIdx]) ? 'hidden ' : ''}min-w-56 max-w-xl break-words px-6 py-4 align-top whitespace-pre-wrap [overflow-wrap:anywhere] border-b border-gray-100 ${rejected ? 'text-rose-900 line-through decoration-rose-400' : ''}`}>
+                                  {diagramTarget ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenHazardDiagramTarget(diagramTarget)}
+                                      className="text-left font-medium text-[#1C5FDE] underline decoration-blue-300 underline-offset-2 hover:text-[#0B3EA8]"
+                                      title={getHazardDiagramLinkLabel(diagramTarget)}
+                                    >
+                                      {cell}
+                                    </button>
+                                  ) : cell}
+                                </td>
+                              );
+                            })}
                           </tr>
                         )}
                       </React.Fragment>
@@ -15366,7 +15420,7 @@ const projectHint = useMemo(() => ({
   </section>
 )}
 
-{activeTab === 'Safety Issues & Risk Assessment' && (
+{activeProjectId && activeTab === 'Safety Issues & Risk Assessment' && (
   <section className="mt-2 flex min-h-0 flex-1 items-stretch overflow-hidden pb-3">
     <ProjectTabSideToolbar
       label="Safety Issues and Risk Assessment tools"

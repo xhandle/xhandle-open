@@ -160,6 +160,35 @@ describe("hazard safety model", () => {
     expect(findings.some((finding) => finding.message.includes("use a generic owner"))).toBe(true);
   });
 
+  test("flags near-universal interface safety without requiring every row to be Safety", () => {
+    const headers = [
+      "Function (From)", "Control Action", "Function (To)", "Guide Phrase",
+      "Guide Phrase Applicable", "Proposed Safety Assessment",
+    ];
+    const summary = [headers];
+    for (let interfaceIndex = 0; interfaceIndex < 10; interfaceIndex += 1) {
+      summary.push([
+        `Source ${interfaceIndex}`,
+        `Action ${interfaceIndex}`,
+        `Receiver ${interfaceIndex}`,
+        "Not providing the control action causes a hazard",
+        "Yes",
+        interfaceIndex < 9 ? "Safety" : "Mission/Reliability",
+      ]);
+      summary.push([
+        `Source ${interfaceIndex}`,
+        `Action ${interfaceIndex}`,
+        `Receiver ${interfaceIndex}`,
+        "The control action is provided too early",
+        "No",
+        "Mission/Reliability",
+      ]);
+    }
+
+    const findings = buildHazardAnalysisPatternFindings(summary);
+    expect(findings.some((finding) => finding.message.includes("interfaces have at least one Safety result"))).toBe(true);
+  });
+
   test("builds a canonical trace while preserving links to every raw row", () => {
     const summary = [
       ["Function (From)", "Control Action", "Function (To)", "Guide Phrase", "Guide Phrase Applicable", "Unsafe Control Actions", "Context Assumptions"],

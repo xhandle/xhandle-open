@@ -34,6 +34,7 @@ import { SmartBezierEdge } from '@tisoap/react-flow-smart-edge';
 import ELK from 'elkjs/lib/elk.bundled.js';
 import { downloadDrawioXml } from './utils/exportDrawio';
 import { buildAIAuthOpts } from './backendConfig';
+import { buildFunctionalNodeDetails, getFunctionalNodeDetails } from './functionalNodeDetails';
 
 /* ================================
  * Brand & Theme
@@ -3787,6 +3788,77 @@ useEffect(() => {
     fitViewToDiagram() {
       try { fitView({ padding: 0.2, duration: 400, includeHiddenNodes: true }); } catch {}
     },
+    focusArchitectureTarget(target = {}) {
+      const normalizeLookup = (value) => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+      const normalizeSubsystemLookup = (value) => normalizeLookup(cleanCategoryTitle(value))
+        .replace(/\s*\(external\)\s*$/i, '');
+      const currentNodes = getNodes();
+      const currentEdges = getEdges();
+      const targetKind = String(target?.kind || '').trim().toLowerCase();
+      const targetLabel = normalizeLookup(target?.label);
+      if (!targetKind || !targetLabel) return false;
+
+      const focusNodes = (targetNodes, selectedId = null) => {
+        if (!targetNodes.length) return false;
+        setHighlightedEdgeId(null);
+        setSelectedNodeIds(selectedId ? [selectedId] : []);
+        setNodes((allNodes) => allNodes.map((node) => ({ ...node, selected: selectedId === node.id })));
+        setEdges((allEdges) => allEdges.map((edge) => ({ ...edge, selected: false })));
+        try {
+          fitView({ nodes: targetNodes, padding: 0.45, duration: 550, maxZoom: 1.15, includeHiddenNodes: true });
+        } catch {}
+        return true;
+      };
+
+      if (targetKind === 'function') {
+        const functionNode = currentNodes.find((node) => (
+          node.type !== 'groupBox' &&
+          normalizeLookup(node?.data?.label || String(node?.id || '').replace(/^n:/, '')) === targetLabel
+        ));
+        return functionNode ? focusNodes([functionNode], functionNode.id) : false;
+      }
+
+      if (targetKind === 'subsystem') {
+        const subsystemLabel = normalizeSubsystemLookup(target?.label);
+        const groupNode = currentNodes.find((node) => (
+          node.type === 'groupBox' && normalizeSubsystemLookup(node?.data?.label) === subsystemLabel
+        ));
+        return groupNode ? focusNodes([groupNode], groupNode.id) : false;
+      }
+
+      if (targetKind === 'edge') {
+        const fromLabel = normalizeLookup(target?.fromFunction);
+        const toLabel = normalizeLookup(target?.toFunction);
+        const actionLabel = normalizeLookup(target?.controlAction || target?.label);
+        const rowIndex = rows.findIndex((row) => (
+          normalizeLookup(row?.fromFunction) === fromLabel &&
+          normalizeLookup(row?.toFunction) === toLabel &&
+          normalizeLookup(row?.controlAction) === actionLabel
+        ));
+        const rawEdgeId = rowIndex >= 0 ? edgeIdForRow(rows[rowIndex], rowIndex) : null;
+        const edge = currentEdges.find((candidate) => (
+          candidate.id === rawEdgeId ||
+          candidate.data?.edgeIds?.includes?.(rawEdgeId) ||
+          (
+            normalizeLookup(currentNodes.find((node) => node.id === candidate.source)?.data?.label) === fromLabel &&
+            normalizeLookup(currentNodes.find((node) => node.id === candidate.target)?.data?.label) === toLabel &&
+            normalizeLookup(candidate.label).includes(actionLabel)
+          )
+        ));
+        if (!edge) return false;
+        const connectedNodes = currentNodes.filter((node) => node.id === edge.source || node.id === edge.target);
+        setSelectedNodeIds([]);
+        setNodes((allNodes) => allNodes.map((node) => ({ ...node, selected: false })));
+        setEdges((allEdges) => allEdges.map((candidate) => ({ ...candidate, selected: candidate.id === edge.id })));
+        setHighlightedEdgeId(edge.id);
+        try {
+          fitView({ nodes: connectedNodes, padding: 0.55, duration: 550, maxZoom: 1.1, includeHiddenNodes: true });
+        } catch {}
+        return true;
+      }
+
+      return false;
+    },
     exportJson() {
       exportDiagramJson();
     },
@@ -3917,6 +3989,7 @@ useEffect(() => {
 
 // Convert to array and sort for consistent indexing
 const sortedNodeIds = Array.from(wantedNodeIds).sort();
+const functionalNodeDetails = buildFunctionalNodeDetails(rows);
 const plannedTopLevelPositions = new Map();
 const plannedGroupPositions = new Map();
 const groupByLabel = new Map(groupBoxes.map((box) => [cleanCategoryTitle(box.label || '').toLowerCase(), box]));
@@ -4006,6 +4079,8 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
   }
   
   const existing = nodes.find((n) => n.id === id && n.type !== 'groupBox');
+  const functionName = normalizeFunctionName(id.replace(/^n:/, ''));
+  const rowDetails = getFunctionalNodeDetails(functionalNodeDetails, functionName);
   if (existing) {
     return {
       ...existing,
@@ -4017,10 +4092,17 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
         ...(existing.style || {}),
         ...nodeShellStyle,
       },
+      data: rowDetails
+        ? {
+          ...(existing.data || {}),
+          label: rowDetails.label || functionName,
+          description: rowDetails.description,
+        }
+        : existing.data,
     };
   }
   
-  const name = id.replace(/^n:/, '');
+  const name = functionName;
   return {
     id,
     type: 'bidirectional',
@@ -4030,8 +4112,8 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
     extent: parentId ? 'parent' : undefined,
     style: nodeShellStyle,
     data: {
-      label: name,
-      description: '',
+      label: rowDetails?.label || name,
+      description: rowDetails?.description || '',
       brandColor: BRAND.blue,
       brandTint: rgba(BRAND.blue, 0.08),
     },
@@ -4179,24 +4261,24 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
     if (!storageReady) return;
     if (!builtOnceRef.current) return;
 
-    const nodeDetails = new Map();
+    const nodeDetails = buildFunctionalNodeDetails(rows);
     const edgeDetails = new Map();
 
     rows.forEach((r, idx) => {
-      const fromLabel = normalizeFunctionName(r.fromFunction);
       const toLabel = normalizeFunctionName(r.toFunction);
-      const fromId = nodeIdForFunction(fromLabel);
       const toId = nodeIdForFunction(toLabel);
-      if (fromId) nodeDetails.set(fromId, { label: fromLabel, description: r.fromDetails || '' });
       if (toId) {
-        nodeDetails.set(toId, { label: toLabel, description: r.toDetails || '' });
         const edgeId = edgeIdForRow(r, idx);
         if (edgeId) edgeDetails.set(edgeId, { label: r.controlAction || '', description: r.controlDetails || '' });
       }
     });
 
     setNodes((nds) =>
-      nds.map((n) => (nodeDetails.has(n.id) ? { ...n, data: { ...n.data, ...nodeDetails.get(n.id) } } : n))
+      nds.map((n) => {
+        if (n.type === 'groupBox' || n.type === 'note') return n;
+        const details = getFunctionalNodeDetails(nodeDetails, n.data?.label || n.id.replace(/^n:/, ''));
+        return details ? { ...n, data: { ...n.data, label: details.label, description: details.description } } : n;
+      })
     );
     setEdges((eds) =>
       eds.map((e) =>
@@ -4852,12 +4934,18 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
             event.preventDefault();
             event.stopPropagation();
             clearBrowserTextSelection();
+            const rowDetails = node.type === 'groupBox' || node.type === 'note'
+              ? null
+              : getFunctionalNodeDetails(
+                buildFunctionalNodeDetails(rows),
+                node.data?.label || node.id.replace(/^n:/, '')
+              );
             setEditModal({
               type: 'node',
               id: node.id,
               nodeType: node.type || 'bidirectional',
               label: node.data.label || '',
-              description: node.data.description || '',
+              description: node.data.description || rowDetails?.description || '',
               color: node.data.brandColor || (node.type === 'groupBox' ? BRAND.purple : node.type === 'note' ? BRAND.yellow : BRAND.blue),
             });
             requestAnimationFrame(clearBrowserTextSelection);

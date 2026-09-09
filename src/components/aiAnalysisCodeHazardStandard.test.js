@@ -278,6 +278,10 @@ describe("standard hazard row materialization", () => {
       safetyExposurePath: "Incorrect physical motion can strike an exposed person.",
       safetyEvidenceField: "Operational Scenario",
       safetyEvidenceQuote: "workers are nearby",
+      safetyContributionType: "Direct safety control",
+      causalNecessitySupported: "Yes",
+      additionalFailureRequired: "No",
+      safeguardPrecludesPath: "No",
     }, {}, {
       applicable: true,
       requireEvidence: true,
@@ -336,7 +340,7 @@ describe("standard hazard row materialization", () => {
       ...supportedTag,
       applicabilityEvidenceQuote: "the system requires fresh certified data",
     }, stateItem)).toMatchObject({
-      guidePhraseApplicable: "No",
+      guidePhraseApplicable: "Needs Review",
       evidenceGrounded: false,
     });
 
@@ -535,7 +539,7 @@ describe("standard hazard row materialization", () => {
     });
   });
 
-  test("keeps explicit physical-harm chains in the Safety classification", () => {
+  test("does not promote physical-harm wording without grounded causal necessity", () => {
     expect(deriveStructuredSafetyAssessment({
       proposedSafetyAssessment: "Mission/Reliability",
       safetyExposureCategory: "People",
@@ -549,8 +553,85 @@ describe("standard hazard row materialization", () => {
       requireEvidence: true,
       item: { operationalScenario: "Passenger trip through dense urban streets with pedestrians." },
     })).toMatchObject({
+      proposedSafetyAssessment: "Mission/Reliability",
+      safetySignificant: "Needs Review",
+    });
+  });
+
+  test("requires a grounded proof before accepting a non-applicable decision", () => {
+    const item = {
+      from: "Command Source",
+      fromDetails: "Selects an authorized bounded motion command.",
+      controlAction: "Bounded Motion Command",
+      controlActionDetails: "Target, permitted bounds, authority, and revision.",
+      controlActionType: "Command / request",
+      to: "Execute Motion",
+      toDetails: "Executes commands that pass authority and bounds checks.",
+      guidePhrase: "Providing the control action causes a hazard",
+      operationalMode: "Mission execution",
+    };
+
+    expect(validateApplicabilityEvidence({
+      semanticMeaningful: "No",
+      receiverCanBeAffected: "No",
+      contextSupportsMechanism: "No",
+      adverseStateSupported: "No",
+      strongestReasonForNo: "the supplied evidence does not establish an invalid command",
+    }, item)).toMatchObject({
+      guidePhraseApplicable: "Needs Review",
+      negativeProofValid: false,
+    });
+
+    expect(validateApplicabilityEvidence({
+      semanticMeaningful: "No",
+      receiverCanBeAffected: "No",
+      contextSupportsMechanism: "No",
+      adverseStateSupported: "No",
+      strongestReasonForNo: "This atomic request has no maintained duration that could end prematurely.",
+      notApplicableReasonCode: "Semantic mismatch",
+      notApplicableEvidenceField: "Control Action",
+      notApplicableEvidenceQuote: "Bounded Motion Command",
+    }, {
+      ...item,
+      guidePhrase: "The control action is stopped too soon",
+    })).toMatchObject({
+      guidePhraseApplicable: "No",
+      negativeProofValid: true,
+    });
+  });
+
+  test("does not classify an indirect or contained contribution as Safety", () => {
+    const baseTag = {
       proposedSafetyAssessment: "Safety",
-      safetySignificant: "Yes",
+      safetyExposureCategory: "People",
+      safetyExposurePath: "A stale advisory can contribute to a collision with a worker.",
+      safetyEvidenceField: "Operational Scenario",
+      safetyEvidenceQuote: "workers are nearby",
+      causalNecessitySupported: "Yes",
+      additionalFailureRequired: "No",
+      safeguardPrecludesPath: "No",
+    };
+    const options = {
+      applicable: true,
+      requireEvidence: true,
+      item: { operationalScenario: "The vehicle operates while workers are nearby." },
+    };
+
+    expect(deriveStructuredSafetyAssessment({
+      ...baseTag,
+      safetyContributionType: "Indirect safety contributor",
+    }, {}, options)).toMatchObject({
+      proposedSafetyAssessment: "Mission/Reliability",
+      safetySignificant: "Needs Review",
+    });
+
+    expect(deriveStructuredSafetyAssessment({
+      ...baseTag,
+      safetyContributionType: "Safety-critical feedback / constraint",
+      safeguardPrecludesPath: "Yes",
+    }, {}, options)).toMatchObject({
+      proposedSafetyAssessment: "Mission/Reliability",
+      safetySignificant: "Needs Review",
     });
   });
 

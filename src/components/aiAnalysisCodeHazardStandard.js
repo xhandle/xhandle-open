@@ -585,6 +585,7 @@ function normalizeGuidePhraseApplicability(value) {
   const text = sanitizeText(value).toLowerCase();
   if (/^yes\b|^applicable\b|^true\b/.test(text)) return "Yes";
   if (/^no\b|^not applicable\b|^false\b/.test(text)) return "No";
+  if (/^needs review\b|^uncertain\b|^indeterminate\b/.test(text)) return "Needs Review";
   return "Yes";
 }
 
@@ -679,6 +680,49 @@ function groundedEvidence(fieldValue = "", quoteValue = "", item = {}) {
       && normalizedQuote.length >= 8
       && normalizedEvidenceText(sourceValue).includes(normalizedQuote)
     ),
+  };
+}
+
+const NOT_APPLICABLE_REASON_CODES = new Set([
+  "Semantic mismatch",
+  "Receiver unaffected",
+  "Architecture precludes deviation",
+  "No adverse state in context",
+]);
+
+function validateNotApplicableProof(tag = {}, item = {}, structured = {}) {
+  const reasonCode = sanitizeText(tag.notApplicableReasonCode);
+  const strongestReason = sanitizeText(tag.strongestReasonForNo || tag.reasonNotApplicable);
+  const evidence = groundedEvidence(
+    tag.notApplicableEvidenceField,
+    tag.notApplicableEvidenceQuote,
+    item,
+  );
+  const unsupportedAbsenceClaim = /\b(?:no|insufficient|supplied|proposed) evidence\b|\bdoes not establish\b|\bnot (?:an )?exact excerpt\b|\boutside (?:the )?scope\b/i.test(strongestReason);
+  const providingDeviation = /providing the control action/.test(normalizedEvidenceText(item.guidePhrase));
+
+  if (
+    !NOT_APPLICABLE_REASON_CODES.has(reasonCode)
+    || !strongestReason
+    || !evidence.grounded
+    || unsupportedAbsenceClaim
+    || (providingDeviation && reasonCode === "Semantic mismatch")
+  ) {
+    return {
+      guidePhraseApplicable: "Needs Review",
+      guidePhraseApplicabilityRationale: "Needs review: the proposed non-applicable decision did not include a valid, grounded proof that the deviation is impossible, contained, or unable to create an adverse receiver state.",
+      hasCompleteDecision: structured.hasCompleteDecision,
+      evidenceGrounded: evidence.grounded,
+      negativeProofValid: false,
+    };
+  }
+
+  return {
+    guidePhraseApplicable: "No",
+    guidePhraseApplicabilityRationale: `Not applicable (${reasonCode}): ${strongestReason.replace(/^not applicable because\s*/i, "")}`,
+    hasCompleteDecision: structured.hasCompleteDecision,
+    evidenceGrounded: true,
+    negativeProofValid: true,
   };
 }
 
@@ -821,7 +865,9 @@ function findGuideSpecificEvidence(item = {}, guidePhrase = "", actionType = "")
 
 export function validateApplicabilityEvidence(tag = {}, item = {}) {
   const structured = deriveStructuredApplicability(tag, item);
-  if (structured.guidePhraseApplicable === "No") return structured;
+  if (structured.guidePhraseApplicable === "No") {
+    return validateNotApplicableProof(tag, item, structured);
+  }
 
   let evidence = groundedEvidence(
     tag.applicabilityEvidenceField || tag.evidenceField,
@@ -830,8 +876,8 @@ export function validateApplicabilityEvidence(tag = {}, item = {}) {
   );
   if (!evidence.grounded) {
     return {
-      guidePhraseApplicable: "No",
-      guidePhraseApplicabilityRationale: "Not applicable because the proposed supporting evidence was not an exact excerpt from the supplied interface or operational context.",
+      guidePhraseApplicable: "Needs Review",
+      guidePhraseApplicabilityRationale: "Needs review: the proposed applicable decision cited evidence that was not an exact excerpt from the supplied interface or operational context.",
       hasCompleteDecision: structured.hasCompleteDecision,
       evidenceGrounded: false,
     };
@@ -957,6 +1003,22 @@ export function deriveStructuredSafetyAssessment(tag = {}, fallback = {}, { appl
   const exposureUnsupported = /^none\b|unsupported/i.test(exposureCategory) || /^none\b|unsupported/i.test(exposurePath);
   const safetyEvidence = groundedEvidence(tag.safetyEvidenceField, tag.safetyEvidenceQuote, item);
   const exposureSupported = Boolean(exposureCategory && exposurePath && !exposureUnsupported && (!requireEvidence || safetyEvidence.grounded));
+  const contributionType = sanitizeText(tag.safetyContributionType);
+  const principalSafetyContribution = /^(?:Direct safety control|Safety-critical feedback \/ constraint)$/i.test(contributionType);
+  const causalNecessitySupported = normalizeAuditBoolean(tag.causalNecessitySupported);
+  const additionalFailureRequired = normalizeAuditBoolean(tag.additionalFailureRequired);
+  const safeguardPrecludesPath = normalizeAuditBoolean(tag.safeguardPrecludesPath);
+  const completeCausalDecision = Boolean(
+    contributionType
+    && causalNecessitySupported !== null
+    && additionalFailureRequired !== null
+    && safeguardPrecludesPath !== null
+  );
+  const directSupportedPath = completeCausalDecision
+    && principalSafetyContribution
+    && causalNecessitySupported
+    && !additionalFailureRequired
+    && !safeguardPrecludesPath;
   const generatedSafetyChain = [
     exposurePath,
     tag.proposedSafetyAssessmentRationale,
@@ -971,13 +1033,11 @@ export function deriveStructuredSafetyAssessment(tag = {}, fallback = {}, { appl
     fallback.proposedSafetyAssessmentRationale,
   ].map(sanitizeText).join(" ");
   const explicitPhysicalHarmPath = /\b(?:collision|crash|injur\w*|fatal\w*|death|physical harm|strik(?:e|ing)|crush\w*|burn\w*|electrocut\w*|toxic release|environmental harm|loss of (?:vehicle|machine|motion|physical) control|unintended (?:physical )?(?:motion|movement|actuation)|vehicle instability|rollover|hazardous energy|damage to (?:a )?safety[- ]critical asset)\b/i.test(generatedSafetyChain);
-  if (requireEvidence && exposureUnsupported) assessment = "Mission/Reliability";
-  if (requireEvidence && !safetyEvidence.grounded) assessment = "Mission/Reliability";
-  if (requireEvidence && exposureSupported) assessment = "Safety";
-  // A generated causal chain that explicitly reaches physical harm is itself
-  // safety-significant. Do not create a contradictory Mission/Reliability row
-  // merely because the auditor cited the wrong context field for that exposure.
-  if (explicitPhysicalHarmPath) assessment = "Safety";
+  if (requireEvidence) {
+    assessment = exposureSupported && directSupportedPath ? "Safety" : "Mission/Reliability";
+  } else if (explicitPhysicalHarmPath) {
+    assessment = "Safety";
+  }
   const harmRationale = [
     exposurePath && !exposureUnsupported ? exposurePath : "",
     tag.proposedSafetyAssessmentRationale,
@@ -987,14 +1047,20 @@ export function deriveStructuredSafetyAssessment(tag = {}, fallback = {}, { appl
     fallback.losses,
     fallback.loss,
   ].map(sanitizeText).find((value) => value && /\b(?:collision|crash|injur\w*|fatal\w*|death|physical harm|strik(?:e|ing)|crush\w*|burn\w*|electrocut\w*|toxic release|environmental harm|loss of (?:vehicle|machine|motion|physical) control|unintended (?:physical )?(?:motion|movement|actuation)|vehicle instability|rollover|hazardous energy|safety[- ]critical asset)\b/i.test(value));
-  const rationale = requireEvidence && assessment === "Safety" && explicitPhysicalHarmPath
+  const causalReviewRationale = requireEvidence && !completeCausalDecision
+    ? "Needs review: the audit did not return a complete causal-necessity decision."
+    : requireEvidence && exposureSupported && !directSupportedPath
+      ? `Mission/Reliability: ${contributionType || "Indirect safety contributor"} does not establish a direct safety-control or safety-critical feedback path without an additional failure or despite an architectural safeguard.`
+      : "";
+  const rationale = causalReviewRationale
+    || (requireEvidence && assessment === "Safety" && explicitPhysicalHarmPath
     ? `Safety: ${(harmRationale || "The generated causal chain reaches a credible physical-harm state.").replace(/^(?:safety|mission\/reliability):\s*/i, "")}`
     : requireEvidence && exposurePath
       ? `${assessment}: ${exposurePath.replace(/^(?:safety|mission\/reliability):\s*/i, "")}`
     : sanitizeText(tag.proposedSafetyAssessmentRationale)
       || sanitizeText(tag.safetySignificanceRationale)
       || sanitizeText(fallback.proposedSafetyAssessmentRationale)
-      || "Needs review: proposed safety assessment rationale was not generated.";
+      || "Needs review: proposed safety assessment rationale was not generated.");
   return {
     proposedSafetyAssessment: assessment,
     proposedSafetyAssessmentRationale: rationale,
@@ -1187,7 +1253,7 @@ export function findApplicabilityPatternRepairIndexes(rows = [], items = []) {
     const challengeIndexes = yesCount === groupIndexes.length
       ? groupIndexes
       : groupIndexes.filter((index) => (
-        normalizeGuidePhraseApplicability(rows[index]?.guidePhraseApplicable) === "No"
+        normalizeGuidePhraseApplicability(rows[index]?.guidePhraseApplicable) !== "Yes"
         && guidePhraseSupportsPatternChallenge(items[index])
       ));
     if (challengeIndexes.length < 2) return;
@@ -1448,7 +1514,7 @@ Project / operational context:
 ${operationalContextBlock || "No explicit project or operational context was available. Infer cautiously from row evidence only."}
 
 Return ONLY a JSON array. Each object must include:
-id, semanticMeaningful, receiverCanBeAffected, contextSupportsMechanism, adverseStateSupported, guidePhraseApplicable, guidePhraseApplicabilityRationale, applicabilityMechanism, applicabilityEvidenceField, applicabilityEvidenceQuote, strongestReasonForNo, proposedSafetyAssessment, proposedSafetyAssessmentRationale, safetyExposureCategory, safetyExposurePath, safetyEvidenceField, safetyEvidenceQuote, safetySignificant, safetySignificanceRationale.
+id, semanticMeaningful, receiverCanBeAffected, contextSupportsMechanism, adverseStateSupported, guidePhraseApplicable, guidePhraseApplicabilityRationale, applicabilityMechanism, applicabilityEvidenceField, applicabilityEvidenceQuote, strongestReasonForNo, notApplicableReasonCode, notApplicableEvidenceField, notApplicableEvidenceQuote, proposedSafetyAssessment, proposedSafetyAssessmentRationale, safetyExposureCategory, safetyExposurePath, safetyEvidenceField, safetyEvidenceQuote, safetyContributionType, causalNecessitySupported, additionalFailureRequired, safeguardPrecludesPath, safetySignificant, safetySignificanceRationale.
 
 Applicability and safety rules:
 - Re-decide applicability independently; do not defer to generated.guidePhraseApplicable or let the candidate Hazard/Loss create facts that are absent from the functional row and operational context. Decide applicability from row semantics and context first, then use generated text only to classify a supported adverse path.
@@ -1456,6 +1522,8 @@ Applicability and safety rules:
 - guidePhraseApplicable must be exactly Yes or No.
 - Mark Yes only if the exact guide-phrase deviation is semantically meaningful for the action type in the exact scenario/mode and a concrete causal path connects it to an adverse system state. A merely conceivable deviation or generic restatement is insufficient.
 - Mark No when the deviation is semantically inapplicable, precluded by the stated architecture/conditions, cannot affect the receiver in that mode, or lacks a credible adverse consequence. Explain the specific reason in guidePhraseApplicabilityRationale.
+- Every No decision has a proof obligation. notApplicableReasonCode must be exactly one of: Semantic mismatch; Receiver unaffected; Architecture precludes deviation; No adverse state in context. strongestReasonForNo must state the concrete interface-specific proof. notApplicableEvidenceField and notApplicableEvidenceQuote must identify a short exact excerpt from an allowed supplied field that supports that proof.
+- Lack of explicit failure language is not proof of non-applicability. Never use “no evidence establishes an invalid value”, “the contract does not say incorrect”, a malformed citation, or absence of a literal failure adjective as the reason for No. If the proof cannot be established, reconsider the decision rather than defaulting to No.
 - Treat row.semanticDeviation as the intended meaning of the guide phrase for that action type.
 - For Yes, applicabilityMechanism must name the receiver behavior that makes this exact deviation consequential.
 - applicabilityEvidenceField must be exactly one of: Function From; Function From Details; Control Action; Control Action Details; Function To; Function To Details; Operational Scenario; Operational Mode; Operating Conditions; Context Assumptions.
@@ -1483,6 +1551,10 @@ Applicability and safety rules:
 - proposedSafetyAssessmentRationale must briefly explain why the row belongs in Safety or Mission/Reliability, using the generated row text and supplied project/code context.
 - safetyExposureCategory must be exactly one of: People; Environment; Physical asset; Safety or security control; Critical data integrity; None / unsupported.
 - safetyExposurePath must name the concrete exposed entity/control/integrity property and the context-supported path from the adverse state. Use "None / unsupported" when the candidate stops at an internal error, degraded accuracy, mission loss, or generic downstream impact.
+- safetyContributionType must be exactly one of: Direct safety control; Safety-critical feedback / constraint; Indirect safety contributor; Mission / reliability.
+- causalNecessitySupported, additionalFailureRequired, and safeguardPrecludesPath must each be exactly Yes or No. Test the exact interface deviation: whether it can create the hazardous state through the named receiver, whether an additional undocumented failure is required, and whether a stated architectural safeguard contains the path.
+- Classify Safety only when the interface is a Direct safety control or Safety-critical feedback / constraint, causalNecessitySupported is Yes, additionalFailureRequired is No, safeguardPrecludesPath is No, and the exposure evidence is grounded. Nearby people or hazardous operating conditions alone do not turn an indirect mission failure into a Safety result.
+- When the system is explicitly required to remain safe without an external report, dispatch update, remote service, or advisory input, treat loss of that interface as contained unless the supplied architecture establishes failure of the local safeguard.
 - For Safety, safetyEvidenceField must use the same allowed field names as applicabilityEvidenceField, and safetyEvidenceQuote must be an exact verbatim excerpt establishing the exposed entity, safety-critical operation, or harm-relevant operating condition. Without an exact supporting excerpt, classify Mission/Reliability.
 - Mark Safety when the row describes a credible path to harm involving people, operators, bystanders, environment, physical assets, security/safety controls, critical data integrity, loss of control, or another safety-relevant hazardous state in the stated project context.
 - If the generated Loss, Hazard, UCA, causal scenario, or exposure path explicitly reaches collision, injury, fatality, physical harm, hazardous energy, unintended physical motion, or loss of physical control, classify Safety. Do not label such a row Mission/Reliability merely because mission or availability effects also exist.
@@ -1517,11 +1589,17 @@ function mergeAuditTag(config, row, item, index, tag = {}, { requireChallengeEvi
   const auditedApplicability = structuredDecision.guidePhraseApplicable;
   const auditedRationale = structuredDecision.guidePhraseApplicabilityRationale;
 
-  const safetyAssessment = deriveStructuredSafetyAssessment(tag, row, {
-    applicable: auditedApplicability === "Yes",
-    requireEvidence: requireChallengeEvidence,
-    item,
-  });
+  const safetyAssessment = auditedApplicability === "Needs Review"
+    ? {
+      proposedSafetyAssessment: "Mission/Reliability",
+      proposedSafetyAssessmentRationale: "Needs review: guide-phrase applicability could not be validated without a grounded positive decision or a valid non-applicability proof.",
+      safetySignificant: "Needs Review",
+    }
+    : deriveStructuredSafetyAssessment(tag, row, {
+      applicable: auditedApplicability === "Yes",
+      requireEvidence: requireChallengeEvidence,
+      item,
+    });
 
   return normalizeRow(config, {
     ...row,
@@ -1578,10 +1656,17 @@ async function requestApplicabilityPatternRepairs(config, repairItems, distribut
     "applicabilityEvidenceField",
     "applicabilityEvidenceQuote",
     "strongestReasonForNo",
+    "notApplicableReasonCode",
+    "notApplicableEvidenceField",
+    "notApplicableEvidenceQuote",
     "safetyExposureCategory",
     "safetyExposurePath",
     "safetyEvidenceField",
     "safetyEvidenceQuote",
+    "safetyContributionType",
+    "causalNecessitySupported",
+    "additionalFailureRequired",
+    "safeguardPrecludesPath",
   ];
   const prompt = `
 You are repairing a completed ${config.analysisName} decision matrix after a deterministic quality check detected a suspiciously uniform guide-phrase pattern or a causal-category mismatch.
@@ -1611,6 +1696,9 @@ Repair rules:
 - semanticMeaningful, receiverCanBeAffected, contextSupportsMechanism, and adverseStateSupported must each be Yes or No. guidePhraseApplicable is Yes only when all four are Yes.
 - For a Yes decision, applicabilityEvidenceField must name exactly one supplied field and applicabilityEvidenceQuote must be a short exact excerpt copied from it. Allowed fields: Function From; Function From Details; Control Action; Control Action Details; Function To; Function To Details; Operational Scenario; Operational Mode; Operating Conditions; Context Assumptions.
 - For a No decision, strongestReasonForNo must state the interface-specific reason. Do not use the completed distribution as evidence.
+- Every No decision must satisfy the same proof obligation as the independent audit. Set notApplicableReasonCode to exactly one of: Semantic mismatch; Receiver unaffected; Architecture precludes deviation; No adverse state in context. Cite a short exact supporting excerpt in notApplicableEvidenceField and notApplicableEvidenceQuote. Lack of literal failure wording is not proof.
+- Set safetyContributionType to exactly one of: Direct safety control; Safety-critical feedback / constraint; Indirect safety contributor; Mission / reliability. Set causalNecessitySupported, additionalFailureRequired, and safeguardPrecludesPath to Yes or No after testing the exact receiver path and stated safeguards.
+- Do not classify an indirect contributor as Safety merely because people or physical assets are present in the shared operational context. Safety requires a grounded direct control or safety-critical feedback/constraint path that does not depend on an additional undocumented failure.
 - If the repaired decision is Yes, regenerate every hazard-bearing field as a complete, concrete row; do not leave Not applicable text in Loss, Hazard, UCA, causal, mitigation, constraint, or requirement fields.
 - If the repaired decision is No, use Mission/Reliability and Needs Review for safety significance. The application will normalize hazard-bearing fields to Not applicable.
 - causalFactorCategory must match the primary initiating mechanism, not a secondary consequence. Use only the allowed category vocabulary from the original analysis instructions.
@@ -1668,6 +1756,13 @@ async function repairHazardAuditAnomalies(config, rows, items, contextOptions = 
         if (!hasCompleteStructuredApplicabilityDecision(repair)) return;
         const applicability = validateApplicabilityEvidence(repair, item).guidePhraseApplicable;
         const wasApplicable = normalizeGuidePhraseApplicability(row.guidePhraseApplicable) === "Yes";
+        if (applicability === "Needs Review") {
+          // Preserve the pre-repair candidate evidence. A failed adjudication
+          // must not overwrite it with the repair response's Not applicable
+          // placeholders merely because the negative proof was insufficient.
+          repairedRows[index] = mergeAuditTag(config, row, item, index, repair, { requireChallengeEvidence: true });
+          return;
+        }
         if (applicability === "Yes" && !wasApplicable && !hasCompleteApplicableRepair(config, repair)) return;
         const previousRow = applicability === "Yes" && !wasApplicable
           ? {

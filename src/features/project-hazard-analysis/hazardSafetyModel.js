@@ -253,6 +253,16 @@ export function buildHazardAnalysisPatternFindings(summary = []) {
     if (!interfaceGroups.has(key)) interfaceGroups.set(key, []);
     interfaceGroups.get(key).push({ cells, sourceIndex });
   });
+  const safetyInterfaces = Array.from(interfaceGroups.values()).filter((entries) => (
+    entries.some(({ cells }) => /^safety\b/i.test(text(cells["Proposed Safety Assessment"])))
+  ));
+  if (interfaceGroups.size >= 10 && safetyInterfaces.length / interfaceGroups.size >= 0.85) {
+    findings.push({
+      id: createSafetyModelId("QF", "near-universal-interface-safety"),
+      message: `${safetyInterfaces.length} of ${interfaceGroups.size} interfaces have at least one Safety result. Recheck whether indirect mission failures were promoted by shared exposure context instead of a direct, necessary safety-control or safety-critical feedback path.`,
+      sourceIndexes: safetyInterfaces.flatMap((entries) => entries.map(({ sourceIndex }) => sourceIndex)),
+    });
+  }
   const signatures = Array.from(interfaceGroups.values()).map((entries) => entries
     .map(({ cells }) => `${normalized(cells["Guide Phrase"])}:${applicableValue({ cells }) ? "yes" : "no"}`)
     .sort()
