@@ -16,20 +16,65 @@ export function createSafetyModelId(prefix, value) {
   return `${prefix}-${hashText(value)}`;
 }
 
-export function inferControlActionType(controlAction = "", functionFrom = "", functionTo = "") {
-  const value = normalized(`${controlAction} ${functionFrom} ${functionTo}`);
-  if (/\b(mode|state)\s*(change|transition|selection|set)|enter\s+(?:\w+\s+){0,3}mode\b|switch\s+(?:\w+\s+){0,2}mode\b/.test(value)) return "Mode transition";
-  if (/\b(requests?|commands?|demands?|submits?|submission|issues?|invokes?|authoriz(?:e|es|ation)|enabl(?:e|es)|disabl(?:e|es)|activat(?:e|es|ion)|deactivat(?:e|es|ion)|setpoints?|instructions?)\b/.test(value)) return "Command / request";
-  if (/\b(events?|triggers?|notif(?:y|ies|ications?)|alerts?|interrupts?|signals?)\b/.test(value)) return "Event";
-  if (/\b(configuration|calibration|parameter|constraint|permission|authority|policy|profile)\b/.test(value)) return "Configuration / authority";
+export const INTERFACE_SEMANTIC_TYPES = Object.freeze({
+  COMMAND: "Command / request",
+  FEEDBACK: "Feedback / status",
+  STATE: "State estimate / data",
+  INFORMATION: "Information / data",
+  MODE: "Mode transition",
+  MODE_AUTHORITY: "Configuration / authority",
+  EVENT: "Event",
+  RESOURCE: "Force / resource flow",
+  EXTERNAL: "External input / disturbance",
+});
+
+// Canonical interface typing is based on the whole directed interface. In
+// particular, measured/current/estimated state, execution response, and
+// health/fault status describe observations flowing back into a consumer; they
+// are not commands merely because that consumer subsequently takes action.
+export function inferControlActionType(controlAction = "", functionFrom = "", functionTo = "", evidence = {}) {
+  const action = normalized(`${controlAction} ${evidence.controlActionDetails || evidence.actionDetails || ""}`);
+  const source = normalized(`${functionFrom} ${evidence.fromDetails || ""}`);
+  const target = normalized(`${functionTo} ${evidence.toDetails || ""}`);
   if (
     /\b(environment|external|surroundings|weather|terrain|infrastructure)\b/.test(normalized(functionFrom))
     && /\b(condition|disturbance|exposure|opportunity|availability|observation|input)\b/.test(normalized(controlAction))
-  ) return "External input / disturbance";
-  if (/\b(status|feedback|health|acknowledg|report|response|diagnostic)\b/.test(value)) return "Feedback / status";
-  if (/\b(force|torque|pressure|voltage|current|power|energy|flow|brake|throttle|steering)\b/.test(value)) return "Force / resource flow";
-  if (/\b(estimate|position|pose|velocity|trajectory|measurement|image|point cloud|map data)\b/.test(value)) return "State estimate / data";
-  return "Information / data";
+  ) return INTERFACE_SEMANTIC_TYPES.EXTERNAL;
+  const endpointFeedbackFlow = /\b(?:sensor|estimat|monitor|observer|actuator|plant|process)\b/.test(source)
+    && /\b(?:controller|control|decision|planner|supervisor|monitor)\b/.test(target)
+    && /\b(?:state|data|output|result|response|reading|indication)\b/.test(action);
+  const observational = /\b(?:current|actual|measured|observed|estimated|computed|sensed|reported|executed)\b[^.;]{0,60}\b(?:state|status|position|pose|velocity|response|result|trajectory|output)|\b(?:feedback|status|health|fault|diagnostic|acknowledg|telemetry|measurement|estimate|observation)\b/.test(action)
+    || endpointFeedbackFlow;
+  const stateData = /\b(?:state estimate|estimated state|current state|world model|position|pose|velocity|trajectory|measurement|sensor data|image|point cloud|map data)\b/.test(action);
+  if (observational) return stateData && !/\b(?:feedback|status|health|fault|response|executed|acknowledg)\b/.test(action)
+    ? INTERFACE_SEMANTIC_TYPES.STATE : INTERFACE_SEMANTIC_TYPES.FEEDBACK;
+  if (/\b(mode|state)\s*(?:change|transition|selection|set)|enter\s+(?:\w+\s+){0,3}mode\b|switch\s+(?:\w+\s+){0,2}mode\b/.test(action)) return INTERFACE_SEMANTIC_TYPES.MODE;
+  if (/\b(?:configuration|calibration|parameter|constraint|permission|policy|profile)\b/.test(action)) return INTERFACE_SEMANTIC_TYPES.MODE_AUTHORITY;
+  if (/\b(events?|triggers?|notif(?:y|ies|ications?)|alerts?|interrupts?)\b/.test(action)) return INTERFACE_SEMANTIC_TYPES.EVENT;
+  if (/\b(force|torque|pressure|voltage|electrical current|power|energy|fluid flow|material flow)\b/.test(action)) return INTERFACE_SEMANTIC_TYPES.RESOURCE;
+  if (/\b(requests?|commands?|demands?|submits?|submission|issues?|invokes?|authoriz(?:e|es|ation)|enabl(?:e|es)|disabl(?:e|es)|activat(?:e|es|ion)|deactivat(?:e|es|ion)|setpoints?|instructions?)\b/.test(action)) return INTERFACE_SEMANTIC_TYPES.COMMAND;
+  if (stateData) return INTERFACE_SEMANTIC_TYPES.STATE;
+  return INTERFACE_SEMANTIC_TYPES.INFORMATION;
+}
+
+export function normalizeControlActionType(modelType = "", interfaceEvidence = {}) {
+  const inferred = inferControlActionType(
+    interfaceEvidence.controlAction,
+    interfaceEvidence.from || interfaceEvidence.functionFrom,
+    interfaceEvidence.to || interfaceEvidence.functionTo,
+    interfaceEvidence,
+  );
+  const candidate = normalized(modelType);
+  const canonical = Object.values(INTERFACE_SEMANTIC_TYPES).find((type) => normalized(type) === candidate)
+    || "";
+  if (!canonical) return inferred;
+  // Strong observational evidence overrides command-like model output. Other
+  // recognized model choices survive when the interface evidence is compatible.
+  if ([INTERFACE_SEMANTIC_TYPES.FEEDBACK, INTERFACE_SEMANTIC_TYPES.STATE].includes(inferred)
+    && canonical === INTERFACE_SEMANTIC_TYPES.COMMAND) return inferred;
+  if (inferred === INTERFACE_SEMANTIC_TYPES.COMMAND
+    && [INTERFACE_SEMANTIC_TYPES.FEEDBACK, INTERFACE_SEMANTIC_TYPES.STATE].includes(canonical)) return inferred;
+  return canonical;
 }
 
 export function semanticGuidePhrase(controlActionType = "Information / data", guidePhrase = "") {
@@ -84,7 +129,15 @@ export function normalizeNonApplicableHazardRecord(record = {}, rationale = "") 
   const reason = text(rationale)
     || text(record.guidePhraseApplicabilityRationale)
     || "The guide phrase is not applicable to this interface in the stated operational context.";
-  const notApplicable = `Not applicable: ${reason.replace(/^not applicable:\s*/i, "")}`;
+  const notApplicable = "Not applicable";
+  const guidePhrase = normalized(record.guidePhrase);
+  const classificationRule = /too early|too late/.test(guidePhrase)
+    ? "N1"
+    : /wrong order/.test(guidePhrase)
+      ? "N2"
+      : /stopped too soon|applied too long/.test(guidePhrase)
+        ? "N3"
+        : "N4";
   const next = {
     ...record,
     guidePhraseApplicable: "No",
@@ -93,7 +146,19 @@ export function normalizeNonApplicableHazardRecord(record = {}, rationale = "") 
     requirementParameterSource: "Not applicable",
     proposedSafetyAssessment: "Mission/Reliability",
     proposedSafetyAssessmentRationale: reason.replace(/^not applicable:\s*/i, ""),
-    safetySignificant: "Needs Review",
+    safetyClassification: "Not Applicable",
+    safetyClassificationRule: classificationRule,
+    causalPathType: "None",
+    causalEffect: "Not applicable",
+    resultingSystemState: "Not applicable",
+    intermediateSafetyFunction: "Not applicable",
+    intermediateSafetyEffect: "Not applicable",
+    protectionAssessment: "Not applicable",
+    protectionStatus: "Absent",
+    physicalHarmChainTermination: "The guide-phrase deviation is not meaningful in this operational context.",
+    classificationEvidence: reason.replace(/^not applicable:\s*/i, ""),
+    classificationConfidence: "High",
+    safetySignificant: "No",
     safetySignificanceRationale: "The guide phrase is not applicable to this interface in the stated operational context.",
   };
   NON_APPLICABLE_HAZARD_FIELDS.forEach((fieldName) => {
@@ -104,6 +169,7 @@ export function normalizeNonApplicableHazardRecord(record = {}, rationale = "") 
 
 export function inferCausalFactorCategory(value = "") {
   const cause = normalized(value);
+  if (/\b(?:machine learning|ml model|learned model|training data|distribution shift|out.of.distribution|uncertainty estimate)\b/.test(cause)) return "ML model / uncertainty";
   if (/power|voltage|current|energy|supply/.test(cause)) return "Power / energy";
   if (/sensor|measurement|feedback|detect|observe/.test(cause)) return "Sensor / feedback";
   if (/actuator|mechanical|valve|motor|brake|physical/.test(cause)) return "Actuator / physical process";

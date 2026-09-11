@@ -10,6 +10,47 @@ const cleanPromptText = (value) => String(value ?? "")
   .replace(/\r\n?/g, "\n")
   .trim();
 
+const HAZARD_PRIORITY_ORGANIZATION_SECTIONS = [
+  "Safety Significance Classification",
+  "Hazard and Loss Taxonomy",
+  "Safety Philosophy",
+  "Architecture Conventions",
+  "Operational Concepts",
+  "Known Controls and Evidence",
+];
+
+function extractTopLevelMarkdownSection(markdown = "", heading = "") {
+  const source = cleanPromptText(markdown);
+  const escaped = String(heading).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = source.match(new RegExp(`^#\\s+${escaped}\\s*\\n([\\s\\S]*?)(?=^#\\s+|(?![\\s\\S]))`, "im"));
+  return match ? `# ${heading}\n${match[1]}`.trim() : "";
+}
+
+/**
+ * Long organization profiles must not lose the classification policy in a
+ * generic head/tail truncation. Assemble the hazard-relevant governed sections
+ * first, then use the ordinary bounded-context behavior. The project override
+ * remains last so it retains precedence in the prompt.
+ */
+export function prioritizeHazardOrganizationContext(value, maxChars = HAZARD_ORGANIZATION_CONTEXT_CHAR_BUDGET) {
+  const source = cleanPromptText(value);
+  if (!source || source.length <= maxChars) return source;
+
+  const sections = HAZARD_PRIORITY_ORGANIZATION_SECTIONS
+    .map((heading) => extractTopLevelMarkdownSection(source, heading))
+    .filter(Boolean);
+  const projectOverride = extractTopLevelMarkdownSection(source, "Project Profile Override");
+  if (!sections.length) return boundHazardPromptContext(source, maxChars, "organization calibration");
+
+  const identityPreamble = source.slice(0, Math.min(source.length, 1800)).trim();
+  const prioritized = [
+    identityPreamble,
+    ...sections,
+    projectOverride,
+  ].filter(Boolean).join("\n\n");
+  return boundHazardPromptContext(prioritized, maxChars, "hazard-relevant organization calibration");
+}
+
 export function boundHazardPromptContext(value, maxChars, label = "context") {
   const text = cleanPromptText(value);
   const budget = Math.max(0, Number(maxChars) || 0);
@@ -29,10 +70,9 @@ export function formatGovernedHazardPromptContext({
   contextSources = null,
 } = {}) {
   const parts = [];
-  const organization = boundHazardPromptContext(
+  const organization = prioritizeHazardOrganizationContext(
     organizationContext,
     HAZARD_ORGANIZATION_CONTEXT_CHAR_BUDGET,
-    "organization calibration",
   );
   if (organization) {
     parts.push([

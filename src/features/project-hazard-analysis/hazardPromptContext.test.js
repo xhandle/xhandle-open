@@ -3,6 +3,7 @@ import {
   HAZARD_ORGANIZATION_CONTEXT_CHAR_BUDGET,
   boundHazardPromptContext,
   formatGovernedHazardPromptContext,
+  prioritizeHazardOrganizationContext,
 } from "./hazardPromptContext";
 
 test("keeps organization calibration separate and ahead of long operational context", () => {
@@ -37,4 +38,28 @@ test("bounded context retains both governance preamble and trailing project over
   expect(bounded).toHaveLength(180);
   expect(bounded).toContain("PREAMBLE");
   expect(bounded).toContain("OVERRIDE");
+});
+
+test("prioritizes the complete safety-classification section in a long organization profile", () => {
+  const profile = [
+    "# Organization and Products",
+    "organization preamble",
+    "x".repeat(20000),
+    "# Safety Significance Classification",
+    "DIRECT-RULE-D1",
+    "RELATED-RULE-R1",
+    "# Hazard and Loss Taxonomy",
+    "CANONICAL-LOSS-L1",
+    "# Engineering Rules",
+    "y".repeat(10000),
+    "# Project Profile Override",
+    "PROJECT-SAFETY-OVERRIDE",
+  ].join("\n");
+  const prioritized = prioritizeHazardOrganizationContext(profile);
+
+  expect(prioritized).toContain("DIRECT-RULE-D1");
+  expect(prioritized).toContain("RELATED-RULE-R1");
+  expect(prioritized).toContain("CANONICAL-LOSS-L1");
+  expect(prioritized).toContain("PROJECT-SAFETY-OVERRIDE");
+  expect(prioritized.length).toBeLessThanOrEqual(HAZARD_ORGANIZATION_CONTEXT_CHAR_BUDGET);
 });

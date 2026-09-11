@@ -57,6 +57,7 @@ const {
   renderSubsystemArchitectureReview,
   sanitizeSubsystemArchitectureReview,
   shouldHandlePendingRowsApply,
+  isFunctionalDecompositionRevisionFeedbackRequest,
   shouldReviewGeneratedFunctionalDecomposition,
   validateSubsystemArchitectureReview,
   validateMultiLevelHierarchy,
@@ -653,6 +654,41 @@ describe("subsystem generation prompting", () => {
     const resumed = "create a functional decomposition for an autonomy stack\n\nUse multi-level abstraction";
     expect(shouldHandlePendingRowsApply(resumed)).toBe(true);
     expect(shouldHandlePendingRowsApply(resumed, { abstractionResolved: true })).toBe(false);
+  });
+
+  it("recognizes engineering feedback that should revise the active decomposition", () => {
+    const focus = { section: "projects", activeTab: "Functional Diagramming" };
+    const revisionPrompt = "Revise the current functional decomposition based on this feedback: every Function (To) value is a subsystem/container name. Replace those endpoints with the actual receiving leaf functions embedded in Function (To) Details. Also add the missing perception-to-planning health path. Preserve unrelated rows.";
+    expect(isFunctionalDecompositionRevisionFeedbackRequest(
+      revisionPrompt,
+      focus,
+    )).toBe(true);
+    expect(needsFunctionalAbstractionClarification(revisionPrompt)).toBe(false);
+    expect(shouldHandlePendingRowsApply(revisionPrompt)).toBe(false);
+    expect(isFunctionalDecompositionRevisionFeedbackRequest(
+      "Function (To) should use the receiving leaf function rather than a subsystem, and the missing feedback interface must be added.",
+      focus,
+    )).toBe(true);
+    expect(isFunctionalDecompositionRevisionFeedbackRequest(
+      "The main defect is systemic: every Function (To) value in the current table is a subsystem/container name. The receiving leaf function is embedded in Function (To) Details.",
+      focus,
+    )).toBe(true);
+  });
+
+  it("does not confuse generation, additive audits, or questions with revision feedback", () => {
+    const focus = { section: "projects", activeTab: "Functional Diagramming" };
+    expect(isFunctionalDecompositionRevisionFeedbackRequest(
+      "Create a functional decomposition for a robotaxi autonomy stack.",
+      focus,
+    )).toBe(false);
+    expect(isFunctionalDecompositionRevisionFeedbackRequest(
+      "Audit the functional decomposition for missing interfaces.",
+      focus,
+    )).toBe(false);
+    expect(isFunctionalDecompositionRevisionFeedbackRequest(
+      "Why is Function (To) blank?",
+      focus,
+    )).toBe(false);
   });
 
   it("reviews depth, boundaries, and reverse interfaces without example-domain bias", () => {

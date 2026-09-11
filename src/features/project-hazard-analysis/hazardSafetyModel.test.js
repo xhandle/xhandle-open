@@ -4,6 +4,7 @@ import {
   buildHazardQualityFindings,
   createSafetyModelId,
   inferControlActionType,
+  normalizeControlActionType,
   normalizeNonApplicableHazardRecord,
   parameterizeUnsupportedRequirement,
   semanticGuidePhrase,
@@ -26,6 +27,21 @@ describe("hazard safety model", () => {
       .toContain("freshness deadline");
     expect(semanticGuidePhrase("State estimate / data", "The control action is provided in the wrong order"))
       .toContain("invalid version");
+  });
+
+  test("corrects command-shaped model output when full interface evidence is observational", () => {
+    const interfaces = [
+      { controlAction: "Publish measured response", controlActionDetails: "Reports the actual actuator output after execution." },
+      { controlAction: "Channel health indication", controlActionDetails: "Conveys detected faults and availability." },
+      { controlAction: "Estimated process state", controlActionDetails: "Current inferred position and rate." },
+    ];
+    interfaces.forEach((item) => {
+      expect(normalizeControlActionType("Command / request", {
+        ...item,
+        from: "Observation Function",
+        to: "Decision Function",
+      })).not.toBe("Command / request");
+    });
   });
 
   test("classifies configuration authority and external disturbances without domain-specific rules", () => {
@@ -73,8 +89,8 @@ describe("hazard safety model", () => {
       requirementParameterSource: "TBD",
     }, "The receiver does not consume this input in the stated mode.");
     expect(normalizedRow.guidePhraseApplicable).toBe("No");
-    expect(normalizedRow.hazard).toMatch(/^Not applicable:/);
-    expect(normalizedRow.causalFactor).toMatch(/^Not applicable:/);
+    expect(normalizedRow.hazard).toBe("Not applicable");
+    expect(normalizedRow.causalFactor).toBe("Not applicable");
     expect(normalizedRow.causalFactorCategory).toBe("Not applicable");
     expect(normalizedRow.requirementParameterSource).toBe("Not applicable");
     expect(normalizedRow.proposedSafetyAssessment).toBe("Mission/Reliability");

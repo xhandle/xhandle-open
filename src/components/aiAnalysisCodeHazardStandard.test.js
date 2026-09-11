@@ -3,6 +3,7 @@ import {
   deriveStructuredApplicability,
   deriveStructuredSafetyAssessment,
   ensureCanonicalLossClassCoverage,
+  findCanonicalVocabularyReviewIndexes,
   findApplicabilityCalibrationIndexes,
   findApplicabilityPatternRepairIndexes,
   findCausalFactorCategoryReviewIndexes,
@@ -79,6 +80,27 @@ describe("standard hazard row materialization", () => {
     expect(rows[0].hazards).toContain("uncontrolled state");
     expect(rows[1].id).toBe("FD-2-STPA");
     expect(rows[1].hazards).toMatch(/^Needs review:/);
+  });
+
+  test("separates legacy embedded verification text into structured fields", () => {
+    const config = {
+      rowIdSuffix: "STPA",
+      fields: [
+        ["systemRequirement", "System Requirement"],
+        ["requirementParameterSource", "Requirement Parameter Source"],
+        ["verificationMethod", "Verification Method"],
+        ["acceptanceCriteria", "Acceptance Criteria"],
+      ],
+    };
+    const [row] = materializeGeneratedHazardRows(config, [{
+      systemRequirement: "The Input Validator shall reject invalid records, verified by interface fault-injection testing.",
+      requirementParameterSource: "TBD — interface owner",
+      acceptanceCriteria: "Every injected invalid record is rejected and reported.",
+    }], [{ id: "FD-1", from: "Input Source", controlAction: "Input record", to: "Input Validator" }]);
+    expect(row.systemRequirement).toBe("The Input Validator shall reject invalid records.");
+    expect(row.verificationMethod).toBe("interface fault-injection testing");
+    expect(row.acceptanceCriteria).toBe("Every injected invalid record is rejected and reported.");
+    expect(row.requirementParameterSource).toBe("TBD — interface owner");
   });
 
   test("selects nearly-all-applicable interface sets for a final calibration review", () => {
@@ -278,6 +300,13 @@ describe("standard hazard row materialization", () => {
       safetyExposurePath: "Incorrect physical motion can strike an exposed person.",
       safetyEvidenceField: "Operational Scenario",
       safetyEvidenceQuote: "workers are nearby",
+      safetyClassification: "Safety — Direct",
+      safetyClassificationRule: "D1",
+      causalPathType: "Direct",
+      causalEffect: "The receiver commands incorrect physical motion.",
+      resultingSystemState: "The machine moves without adequate separation from workers.",
+      protectionAssessment: "No independent protection is identified in this context.",
+      classificationConfidence: "High",
       safetyContributionType: "Direct safety control",
       causalNecessitySupported: "Yes",
       additionalFailureRequired: "No",
@@ -288,6 +317,7 @@ describe("standard hazard row materialization", () => {
       item: { operationalScenario: "The machine operates while workers are nearby." },
     })).toMatchObject({
       proposedSafetyAssessment: "Safety",
+      safetyClassification: "Safety — Direct",
       safetySignificant: "Yes",
     });
     expect(deriveStructuredSafetyAssessment({
@@ -311,6 +341,32 @@ describe("standard hazard row materialization", () => {
     })).toMatchObject({
       proposedSafetyAssessment: "Mission/Reliability",
       safetySignificant: "Needs Review",
+    });
+
+    expect(deriveStructuredSafetyAssessment({
+      proposedSafetyAssessment: "Safety",
+      safetyClassification: "Safety — Related",
+      safetyClassificationRule: "R2",
+      causalPathType: "Contributory",
+      causalEffect: "The safety status is stale.",
+      resultingSystemState: "The controller retains an invalid readiness state.",
+      intermediateSafetyFunction: "Protective shutdown",
+      intermediateSafetyEffect: "Shutdown is not initiated when demanded.",
+      protectionAssessment: "A secondary shutdown path is assumed but not confirmed.",
+      safetyExposureCategory: "People",
+      safetyExposurePath: "Hazardous machine motion can injure an exposed worker.",
+      safetyEvidenceField: "Operational Scenario",
+      safetyEvidenceQuote: "workers are nearby",
+      safeguardPrecludesPath: "No",
+    }, { losses: "L1 — Injury or loss of life." }, {
+      applicable: true,
+      requireEvidence: true,
+      item: { operationalScenario: "The machine operates while workers are nearby." },
+    })).toMatchObject({
+      safetyClassification: "Safety — Related",
+      safetyClassificationRule: "R2",
+      causalPathType: "Contributory",
+      safetySignificant: "Yes",
     });
   });
 
@@ -513,8 +569,8 @@ describe("standard hazard row materialization", () => {
       contextAssumptions: "Cleaning equipment and its activation sequence are not represented.",
     });
 
-    expect(result.guidePhraseApplicable).toBe("No");
-    expect(result.guidePhraseApplicabilityRationale).toMatch(/does not bind a sequence|does not establish an order-dependent/i);
+    expect(result.guidePhraseApplicable).toBe("Needs Review");
+    expect(result.guidePhraseApplicabilityRationale).toMatch(/does not bind a sequence|do not invent/i);
   });
 
   test("accepts order-dependent architecture evidence that is bound to the interface", () => {
@@ -533,10 +589,7 @@ describe("standard hazard row materialization", () => {
       controlActionType: "State estimate / data",
       guidePhrase: "The control action is provided in the wrong order",
     });
-    expect(result).toMatchObject({
-      guidePhraseApplicable: "Yes",
-      evidenceGrounded: true,
-    });
+    expect(result).toMatchObject({ guidePhraseApplicable: "Needs Review", evidenceGrounded: true });
   });
 
   test("does not promote physical-harm wording without grounded causal necessity", () => {
@@ -712,5 +765,26 @@ describe("standard hazard row materialization", () => {
     expect(result[0].losses).toMatch(/injury or loss of life/i);
     expect(result[0].losses).toMatch(/equipment.*infrastructure/i);
     expect(result[0].losses).toMatch(/mission or operational capability/i);
+  });
+
+  test("uses stable governed Loss IDs when mappings are incomplete", () => {
+    const result = applyCanonicalRiskVocabulary([{
+      guidePhraseApplicable: "Yes",
+      losses: "L1; L2; L4",
+      hazards: "A manipulator can strike a worker and damage nearby equipment.",
+    }], [{ id: "MED-1" }], {}, []);
+    expect(result[0].canonicalLossId).toBe("L1, L2, L4");
+    expect(result[0].canonicalHazardId).toBe("H-UNSAFE_MOTION");
+  });
+
+  test("flags and converges a suspicious near-row-unique canonical hazard catalog", () => {
+    const rows = Array.from({ length: 24 }, (_, index) => ({
+      guidePhraseApplicable: "Yes",
+      canonicalHazardId: `H-${index + 1}`,
+      rawHazardCandidate: index % 2
+        ? "The industrial arm has uncontrolled motion near personnel."
+        : "The mobile platform can collide with exposed property.",
+    }));
+    expect(findCanonicalVocabularyReviewIndexes(rows)).toHaveLength(24);
   });
 });

@@ -39,6 +39,7 @@ import PromptWizard from './components/PromptWizard';
 import { buildPromptWizardCollaboratorRequest } from './components/functionalDecompositionGeneration';
 import ConversationalWizard from './components/ConversationalWizard';
 import LiteSummaryDiagramReactFlow from './components/LiteSummaryDiagramReactFlow';
+import FunctionalDiagramWorkspace from './components/FunctionalDiagramWorkspace';
 import { generateAgenticRiskReport } from './components/generateAgenticReport';
 import SafetyReportViewer from './components/SafetyReportViewer';
 import ProjectTabSideToolbar, {
@@ -175,6 +176,14 @@ import {
 } from "./features/project-hazard-analysis/projectHazardDiagramSummary";
 import HazardOperationalContextManager from "./features/project-hazard-analysis/HazardOperationalContextManager";
 import HazardAnalysisResetModal from "./features/project-hazard-analysis/HazardAnalysisResetModal";
+import NeedsReviewResolverModal from "./features/project-hazard-analysis/NeedsReviewResolverModal";
+import {
+  applyNeedsReviewResolutionUpdates,
+  buildNeedsReviewResolutionGroups,
+  draftNeedsReviewAnswerWithAI,
+  extractNeedsReviewRows,
+  resolveNeedsReviewGroupWithAI,
+} from "./features/project-hazard-analysis/needsReviewResolver";
 import { generateHazardOperationalContexts } from "./features/project-hazard-analysis/hazardOperationalContextAi";
 import {
   buildHazardDiagramFocusTarget,
@@ -373,8 +382,24 @@ const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
     "Safety Constraint",
     "System Requirement",
     "Requirement Parameter Source",
+    "Verification Method",
+    "Acceptance Criteria",
     "Proposed Safety Assessment",
     "Proposed Safety Assessment Rationale",
+    "Safety Classification",
+    "Safety Classification Rule",
+    "Causal Path Type",
+    "Causal Effect",
+    "Resulting System State",
+    "Intermediate Safety Function",
+    "Intermediate Safety Effect",
+    "Protection Assessment",
+    "Protection Status",
+    "Physical-Harm Chain Termination",
+    "Classification Evidence",
+    "Classification Confidence",
+    "Safety Significant",
+    "Safety Significance Rationale",
   ],
   "STPA-Textbook": [
     "Raw Analysis Row ID",
@@ -393,8 +418,24 @@ const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
     "Safety Constraint",
     "System Requirement",
     "Requirement Parameter Source",
+    "Verification Method",
+    "Acceptance Criteria",
     "Proposed Safety Assessment",
     "Proposed Safety Assessment Rationale",
+    "Safety Classification",
+    "Safety Classification Rule",
+    "Causal Path Type",
+    "Causal Effect",
+    "Resulting System State",
+    "Intermediate Safety Function",
+    "Intermediate Safety Effect",
+    "Protection Assessment",
+    "Protection Status",
+    "Physical-Harm Chain Termination",
+    "Classification Evidence",
+    "Classification Confidence",
+    "Safety Significant",
+    "Safety Significance Rationale",
   ],
   "FMEA-Textbook": [
     "Loss",
@@ -508,6 +549,8 @@ const PROJECT_DRAFT_HAZARD_HEADER_ALIASES = {
   "Safety Constraint": ["Safety Constraint", "Safety Constraints", "Safety Requirements/Constraints"],
   "System Requirement": ["System Requirement", "Software Safety Requirement", "Safety Requirement", "Safety Goal", "Design Requirement"],
   "Requirement Parameter Source": ["Requirement Parameter Source", "Parameter Source", "Threshold Source"],
+  "Verification Method": ["Verification Method", "Verification", "Verification Approach"],
+  "Acceptance Criteria": ["Acceptance Criteria", "Acceptance", "Pass/Fail Criteria"],
   "Causal Factor": ["Causal Factor", "Causal Factors", "Cause", "Causes"],
   "Causal Factor Category": ["Causal Factor Category", "Cause Category"],
   "Failure Mode": ["Failure Mode", "Malfunction"],
@@ -2233,8 +2276,114 @@ JSON schema:
 	}`;
 }
 
+function buildFunctionalRevisionPrompt({ project, rows, diagramCategories, userText }) {
+  const compactRows = (rows || []).map((row, index) => ({
+    rowNumber: index + 1,
+    subsystem: normalizeFunctionalAuditString(row?.subsystem, 220),
+    fromFunction: normalizeFunctionalAuditString(row?.fromFunction, 220),
+    fromDetails: normalizeFunctionalAuditString(row?.fromDetails, 900),
+    controlAction: normalizeFunctionalAuditString(row?.controlAction, 260),
+    controlDetails: normalizeFunctionalAuditString(row?.controlDetails, 900),
+    toFunction: normalizeFunctionalAuditString(row?.toFunction, 220),
+    toDetails: normalizeFunctionalAuditString(row?.toDetails, 900),
+  }));
+  const compactCategories = (diagramCategories?.categories || []).map((category) => ({
+    subsystem: normalizeFunctionalAuditString(category?.name, 220),
+    functions: (category?.functions || [])
+      .map((fn) => normalizeFunctionalAuditString(fn, 220))
+      .filter(Boolean)
+      .slice(0, 80),
+  }));
+
+  return `You are revising an existing functional decomposition from engineering review feedback.
+
+Project:
+${JSON.stringify({ id: project?.id || null, name: project?.name || "Active project" }, null, 2)}
+
+Existing rows (rowNumber is the stable review reference):
+${JSON.stringify(compactRows, null, 2)}
+
+Known subsystem/function groupings:
+${JSON.stringify(compactCategories, null, 2)}
+
+Engineering review feedback:
+${userText}
+
+Revision rules:
+1. Treat the existing rows as the baseline. Translate the feedback into the smallest complete set of targeted row operations that resolves the identified systemic and row-specific defects.
+2. Preserve every unrelated row, its order, and its existing wording. Do not generate a replacement decomposition.
+3. Use updateRows for incorrect cells, addRows only for genuinely missing interfaces/functions identified by the feedback, removeRows only for duplicates or invalid rows that should not remain, and renameFunctions only for an intentional global function rename.
+4. Every update or removal must identify a stable existing rowNumber. Include match fields as a cross-check when useful.
+5. Function (From) and Function (To) are functional behaviors/capabilities, normally concise verb-noun labels. They must not be subsystem names, physical components, actors, data products, commands, reports, or interface concepts unless the feedback explicitly establishes that item as a function.
+6. Subsystem is the owner/allocation of Function (From). It is not inferred from the receiver, and an external source may use an explicit external allocation.
+7. Function (To) must name the actual receiving behavior. If an existing detail clearly embeds the receiver function, promote that function into Function (To) and revise Function (To) Details so it describes what that receiver does.
+8. Control Action names the directional command, information, material, energy, state, status, or feedback crossing the interface. Avoid generic values such as send, data, message, output, input, or command when a specific interface concept is available.
+9. Maintain global consistency: repeated function labels keep compatible responsibility descriptions and one source-owner subsystem; interface identity remains Function (From) + Control Action + Function (To).
+10. Close only feedback-supported connectivity gaps. When adding a missing path, connect it to plausible existing leaf functions whenever possible and populate every table cell.
+11. Do not invent numerical thresholds, timing values, standards, sensors, safeguards, or architectural behavior that the project and feedback do not support. Use qualitative or TBD language where necessary.
+12. Keep the method domain-neutral. Infer architecture from the supplied project and rows; do not import assumptions from unrelated example systems.
+13. If feedback cannot safely determine a change, leave the row unchanged and put the uncertainty in questions. Never silently guess a consequential architecture decision.
+14. Return strict JSON only, with no markdown or explanatory text outside the schema.
+
+JSON schema:
+{
+  "summary": "concise summary of the proposed revision",
+  "updateRows": [
+    {
+      "rowNumber": 1,
+      "match": {
+        "subsystem": "optional current subsystem",
+        "fromFunction": "optional current Function (From)",
+        "controlAction": "optional current Control Action",
+        "toFunction": "optional current Function (To)"
+      },
+      "changes": {
+        "subsystem": "changed value only when needed",
+        "fromFunction": "changed value only when needed",
+        "fromDetails": "changed value only when needed",
+        "controlAction": "changed value only when needed",
+        "controlDetails": "changed value only when needed",
+        "toFunction": "changed value only when needed",
+        "toDetails": "changed value only when needed"
+      },
+      "reason": "which feedback issue this resolves",
+      "confidence": "High | Medium | Low"
+    }
+  ],
+  "addRows": [
+    {
+      "subsystem": "source function owner",
+      "fromFunction": "source leaf function",
+      "fromDetails": "source function responsibility",
+      "controlAction": "specific interface",
+      "controlDetails": "payload, purpose, and relevant conditions",
+      "toFunction": "receiving leaf function",
+      "toDetails": "receiver responsibility",
+      "rationale": "which feedback gap this closes",
+      "confidence": "High | Medium | Low"
+    }
+  ],
+  "removeRows": [
+    {
+      "rowNumber": 1,
+      "reason": "why removal is required",
+      "confidence": "High | Medium | Low"
+    }
+  ],
+  "renameFunctions": [
+    {
+      "oldLabel": "current function label",
+      "newLabel": "new function label",
+      "reason": "why a global rename is required",
+      "confidence": "High | Medium | Low"
+    }
+  ],
+  "questions": ["only unresolved decisions that prevent a safe proposed change"]
+}`;
+}
+
 function normalizeFunctionalMutationPlan(plan, existingRows = []) {
-  const addRows = normalizeFunctionalAuditProposalRows(plan?.addRows || [], []).map((row) => ({
+  const addRows = normalizeFunctionalAuditProposalRows(plan?.addRows || plan?.proposedRows || plan?.additions || [], []).map((row) => ({
     subsystem: row.subsystem,
     fromFunction: row.fromFunction,
     fromDetails: row.fromDetails,
@@ -2244,9 +2393,11 @@ function normalizeFunctionalMutationPlan(plan, existingRows = []) {
     toDetails: row.toDetails,
     _source: "collaborator-functional-command",
     _proposalRationale: row.rationale,
+    _proposalConfidence: row.confidence,
     _createdAt: new Date().toISOString(),
   }));
-  const updateRows = (Array.isArray(plan?.updateRows) ? plan.updateRows : [])
+  const rawUpdateRows = plan?.updateRows || plan?.updates || [];
+  const updateRows = (Array.isArray(rawUpdateRows) ? rawUpdateRows : [])
     .map((row) => {
       const rawChanges = row?.changes && typeof row.changes === "object" ? row.changes : row;
       const allowedFields = ["subsystem", "fromFunction", "fromDetails", "controlAction", "controlDetails", "toFunction", "toDetails"];
@@ -2266,10 +2417,12 @@ function normalizeFunctionalMutationPlan(plan, existingRows = []) {
         },
         changes,
         reason: normalizeFunctionalAuditString(row?.reason || row?.rationale, 900),
+        confidence: normalizeFunctionalAuditString(row?.confidence || "Medium", 30) || "Medium",
       };
     })
     .filter((row) => Object.keys(row.changes).length > 0);
-  const removeRows = (Array.isArray(plan?.removeRows) ? plan.removeRows : [])
+  const rawRemoveRows = plan?.removeRows || plan?.removals || [];
+  const removeRows = (Array.isArray(rawRemoveRows) ? rawRemoveRows : [])
     .map((row) => ({
       rowNumber: Number(row?.rowNumber),
       subsystem: normalizeFunctionalAuditString(row?.subsystem, 220),
@@ -2277,13 +2430,16 @@ function normalizeFunctionalMutationPlan(plan, existingRows = []) {
       controlAction: normalizeFunctionalAuditString(row?.controlAction || row?.action, 260),
       toFunction: normalizeFunctionalAuditString(row?.toFunction || row?.to, 220),
       reason: normalizeFunctionalAuditString(row?.reason || row?.rationale, 900),
+      confidence: normalizeFunctionalAuditString(row?.confidence || "Medium", 30) || "Medium",
     }))
     .filter((row) => Number.isFinite(row.rowNumber) || row.subsystem || row.fromFunction || row.controlAction || row.toFunction);
-  const renameFunctions = (Array.isArray(plan?.renameFunctions) ? plan.renameFunctions : [])
+  const rawRenameFunctions = plan?.renameFunctions || plan?.renames || [];
+  const renameFunctions = (Array.isArray(rawRenameFunctions) ? rawRenameFunctions : [])
     .map((rename) => ({
       oldLabel: normalizeFunctionalAuditString(rename?.oldLabel || rename?.from || rename?.currentLabel || rename?.current, 220),
       newLabel: normalizeFunctionalAuditString(rename?.newLabel || rename?.to || rename?.proposedLabel || rename?.replacement, 220),
       reason: normalizeFunctionalAuditString(rename?.reason || rename?.rationale, 900),
+      confidence: normalizeFunctionalAuditString(rename?.confidence || "Medium", 30) || "Medium",
     }))
     .filter((rename) => rename.oldLabel && rename.newLabel && functionalLabelKey(rename.oldLabel) !== functionalLabelKey(rename.newLabel));
 
@@ -2295,6 +2451,9 @@ function normalizeFunctionalMutationPlan(plan, existingRows = []) {
     updateRows,
     removeRows,
     renameFunctions,
+    questions: (Array.isArray(plan?.questions) ? plan.questions : [])
+      .map((question) => normalizeFunctionalAuditString(question, 900))
+      .filter(Boolean),
   };
 }
 
@@ -2634,6 +2793,111 @@ function findFunctionalRowsToUpdate(rows = [], updateRequests = []) {
   });
 
   return { updateMap, skipped };
+}
+
+function pickFunctionalRevisionRow(row = {}) {
+  return {
+    subsystem: normalizeFunctionalAuditString(row?.subsystem, 220),
+    fromFunction: normalizeFunctionalAuditString(row?.fromFunction, 220),
+    fromDetails: normalizeFunctionalAuditString(row?.fromDetails, 1200),
+    controlAction: normalizeFunctionalAuditString(row?.controlAction, 260),
+    controlDetails: normalizeFunctionalAuditString(row?.controlDetails, 1200),
+    toFunction: normalizeFunctionalAuditString(row?.toFunction, 220),
+    toDetails: normalizeFunctionalAuditString(row?.toDetails, 1200),
+  };
+}
+
+function buildFunctionalRevisionProposalRows(plan, existingRows = []) {
+  const baselineRows = Array.isArray(existingRows) ? existingRows : [];
+  const expandedUpdates = [...(plan?.updateRows || [])];
+
+  (plan?.renameFunctions || []).forEach((rename) => {
+    const oldKey = functionalLabelKey(rename?.oldLabel);
+    if (!oldKey || !rename?.newLabel) return;
+    baselineRows.forEach((row, rowIndex) => {
+      const changes = {};
+      if (functionalLabelKey(row?.fromFunction) === oldKey) changes.fromFunction = rename.newLabel;
+      if (functionalLabelKey(row?.toFunction) === oldKey) changes.toFunction = rename.newLabel;
+      if (!Object.keys(changes).length) return;
+      expandedUpdates.push({
+        rowNumber: rowIndex + 1,
+        match: {},
+        changes,
+        reason: rename.reason || `Rename ${rename.oldLabel} consistently across the functional architecture.`,
+        confidence: rename.confidence || "Medium",
+      });
+    });
+  });
+
+  const { updateMap, skipped: skippedUpdates } = findFunctionalRowsToUpdate(baselineRows, expandedUpdates);
+  const { removeIndexes, skipped: skippedRemovals } = findFunctionalRowsToRemove(baselineRows, plan?.removeRows || []);
+  const metadataByUpdateIndex = new Map();
+  expandedUpdates.forEach((request) => {
+    const rowIndex = Number(request?.rowNumber) - 1;
+    if (!Number.isInteger(rowIndex) || rowIndex < 0 || rowIndex >= baselineRows.length) return;
+    metadataByUpdateIndex.set(rowIndex, {
+      rationale: request.reason || "Revise this row to address the supplied engineering feedback.",
+      confidence: request.confidence || "Medium",
+    });
+  });
+  const metadataByRemovalIndex = new Map();
+  (plan?.removeRows || []).forEach((request) => {
+    const rowIndex = Number(request?.rowNumber) - 1;
+    if (!Number.isInteger(rowIndex) || rowIndex < 0 || rowIndex >= baselineRows.length) return;
+    metadataByRemovalIndex.set(rowIndex, {
+      rationale: request.reason || "Remove this row to address the supplied engineering feedback.",
+      confidence: request.confidence || "Medium",
+    });
+  });
+
+  const revisionRows = [];
+  Array.from(updateMap.entries())
+    .sort(([left], [right]) => left - right)
+    .forEach(([rowIndex, changes]) => {
+      if (removeIndexes.has(rowIndex)) return;
+      const currentRow = pickFunctionalRevisionRow(baselineRows[rowIndex]);
+      const proposedRow = pickFunctionalRevisionRow({ ...baselineRows[rowIndex], ...changes });
+      if (JSON.stringify(currentRow) === JSON.stringify(proposedRow)) return;
+      const metadata = metadataByUpdateIndex.get(rowIndex) || {};
+      revisionRows.push({
+        operation: "update",
+        rowIndex,
+        rowNumber: rowIndex + 1,
+        currentRow,
+        proposedRow,
+        rationale: metadata.rationale || "Revise this row to address the supplied engineering feedback.",
+        confidence: metadata.confidence || "Medium",
+      });
+    });
+
+  Array.from(removeIndexes)
+    .sort((left, right) => left - right)
+    .forEach((rowIndex) => {
+      const metadata = metadataByRemovalIndex.get(rowIndex) || {};
+      revisionRows.push({
+        operation: "remove",
+        rowIndex,
+        rowNumber: rowIndex + 1,
+        currentRow: pickFunctionalRevisionRow(baselineRows[rowIndex]),
+        proposedRow: null,
+        rationale: metadata.rationale || "Remove this row to address the supplied engineering feedback.",
+        confidence: metadata.confidence || "Medium",
+      });
+    });
+
+  (plan?.addRows || []).forEach((row) => {
+    revisionRows.push({
+      operation: "add",
+      rowIndex: null,
+      rowNumber: null,
+      currentRow: null,
+      proposedRow: pickFunctionalRevisionRow(row),
+      rationale: normalizeFunctionalAuditString(row?._proposalRationale || row?.rationale, 1400) || "Add this interface to close a feedback-supported architecture gap.",
+      confidence: normalizeFunctionalAuditString(row?._proposalConfidence || row?.confidence || "Medium", 30) || "Medium",
+    });
+  });
+
+  return { revisionRows, skippedUpdates, skippedRemovals };
 }
 
 function parseJsonObjectFromText(text) {
@@ -6775,6 +7039,12 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [showHazardResetModal, setShowHazardResetModal] = useState(false);
   const [isResettingHazardAnalysis, setIsResettingHazardAnalysis] = useState(false);
   const [hazardResetStatus, setHazardResetStatus] = useState(null);
+  const [showNeedsReviewResolver, setShowNeedsReviewResolver] = useState(false);
+  const [hazardNeedsReviewResolutions, setHazardNeedsReviewResolutions] = useState({});
+  const [needsReviewResolverBusyGroupId, setNeedsReviewResolverBusyGroupId] = useState("");
+  const [needsReviewDraftingGroupId, setNeedsReviewDraftingGroupId] = useState("");
+  const [needsReviewResolverStatus, setNeedsReviewResolverStatus] = useState(null);
+  const needsReviewResolverAbortRef = useRef(null);
   const [showHazardContextManager, setShowHazardContextManager] = useState(false);
   const [pendingReviewSourceJump, setPendingReviewSourceJump] = useState(null);
   const [filterColumnIndex, setFilterColumnIndex] = useState(null);
@@ -6787,7 +7057,7 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [functionalColumnFilters, setFunctionalColumnFilters] = useState({});
   const [functionalColumnSearches, setFunctionalColumnSearches] = useState({});
   const [isGeneratingDecomposition, setIsGeneratingDecomposition] = useState(false);
-  const [showFunctionalDiagram, setShowFunctionalDiagram] = useState(true);
+  const [functionalViewMode, setFunctionalViewMode] = useState('diagram');
   const [functionalAuditProposal, setFunctionalAuditProposal] = useState(null);
   const [isFunctionalAuditRunning, setIsFunctionalAuditRunning] = useState(false);
   const [functionalAuditSelectedRows, setFunctionalAuditSelectedRows] = useState({});
@@ -6971,6 +7241,11 @@ useEffect(() => {
       setHazardOperationalContexts([]);
       setSelectedHazardContextId("all");
       setShowHazardContextManager(false);
+      setShowNeedsReviewResolver(false);
+      setHazardNeedsReviewResolutions({});
+      setNeedsReviewResolverBusyGroupId("");
+      setNeedsReviewDraftingGroupId("");
+      setNeedsReviewResolverStatus(null);
       setExpandedHazardVariantKeys(new Set());
       setRiskMethod('STPA');
       setAgentReportResult(null); // NEW: reset when no project
@@ -7008,6 +7283,11 @@ useEffect(() => {
     setHazardOperationalContexts(normalizeHazardOperationalContexts(data?.hazardOperationalContexts || []));
     setSelectedHazardContextId("all");
     setShowHazardContextManager(false);
+    setShowNeedsReviewResolver(false);
+    setHazardNeedsReviewResolutions(data?.hazardNeedsReviewResolutions || {});
+    setNeedsReviewResolverBusyGroupId("");
+    setNeedsReviewDraftingGroupId("");
+    setNeedsReviewResolverStatus(null);
     setExpandedHazardVariantKeys(new Set());
     setRiskMethod(data?.riskMethod || 'STPA-Textbook');
     setAgentReportResult(data?.agentReportResult || null); // NEW: restore report
@@ -7196,6 +7476,7 @@ useEffect(() => {
 	    agentReportResult,
     requirements,        // ← add this
 	    hazardOperationalContexts,
+	    hazardNeedsReviewResolutions,
 	    hazardAnalysisStorage: "artifact-store",
 	    analysisResult: undefined,
 	    draftHazardRowsByIndex: undefined,
@@ -7216,6 +7497,7 @@ useEffect(() => {
 	  requirements,
   draftHazardRowsByIndex,
 	  hazardOperationalContexts,
+	  hazardNeedsReviewResolutions,
 	]);
 
 // Hazard analyses can contain thousands of long cells. Persist them in
@@ -7279,12 +7561,16 @@ const commitFunctionalRowsToDiagram = useCallback(() => {
   setCommittedFunctionalDiagramRows(getProjectDiagramRows(responseRows));
 }, [responseRows]);
 
+const handleFunctionalDiagramResize = useCallback(() => {
+  window.dispatchEvent(new Event('resize'));
+}, []);
+
 const handleOpenHazardDiagramTarget = useCallback((target) => {
   if (!target) return;
   pendingFunctionalDiagramFocusRef.current = target;
   commitFunctionalRowsToDiagram();
   setShowPromptWizard(false);
-  setShowFunctionalDiagram(true);
+  setFunctionalViewMode('diagram');
   setActiveTab('Functional Diagramming');
 }, [commitFunctionalRowsToDiagram]);
 
@@ -7360,7 +7646,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   // Capture diagram image after analysis completes
   useEffect(() => {
     if (!analysisResult) return;
-    if (!showFunctionalDiagram) return;
+    if (functionalViewMode === 'table') return;
     if (!responseRows?.length) return;
     const waitForDiagram = async (maxRetries = 10, delay = 200) => {
       for (let i = 0; i < maxRetries; i++) {
@@ -7376,7 +7662,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       setFunctionalDiagramImage(image);
     };
     exportDiagram();
-  }, [analysisResult, showFunctionalDiagram, responseRows?.length]);
+  }, [analysisResult, functionalViewMode, responseRows?.length]);
 
   const draftHazardHeaders = useMemo(() => getProjectDraftHazardHeaders(riskMethod), [riskMethod]);
   useEffect(() => {
@@ -7564,6 +7850,14 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProjectId, analysisResult, draftHazardRowsByIndex, draftHazardTargets, hazardAnalysisRows, hazardOperationalContexts, loadedProjectId, loadingProjectId, projectLoaded, riskMethod, riskRegister]);
   const hazardSummaryHeaders = draftHazardHeaders;
+  const needsReviewResolutionGroups = useMemo(
+    () => buildNeedsReviewResolutionGroups(analysisResult?.Summary, hazardNeedsReviewResolutions),
+    [analysisResult, hazardNeedsReviewResolutions]
+  );
+  const needsReviewRowCount = useMemo(
+    () => extractNeedsReviewRows(analysisResult?.Summary).length,
+    [analysisResult]
+  );
   const visibleDraftHazardColumnCount = draftHazardHeaders.filter((header) => !PROJECT_HAZARD_CONTEXT_HEADERS.has(header)).length;
   const visibleHazardSummaryColumnCount = hazardSummaryHeaders.filter((header) => !PROJECT_HAZARD_CONTEXT_HEADERS.has(header)).length;
   const hazardSummaryDisplayRows = useMemo(() => {
@@ -8178,7 +8472,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     if (!Number.isFinite(targetIndex)) return;
 
     setActiveTab('Functional Diagramming');
-    setShowFunctionalDiagram(false);
+    setFunctionalViewMode('table');
     setFunctionalColumnFilters({});
     setFunctionalFilterColumn(null);
     setHighlightedFunctionalRowIndex(targetIndex);
@@ -8673,7 +8967,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       }
       finishActivity(activityId, "success", `${parsedRows.length} functions ready`);
       setShowPromptWizard(false);
-      setShowFunctionalDiagram(true);
+      setFunctionalViewMode('diagram');
       setCleanOnceKey(`wizard-${Date.now()}`);
     } catch (error) {
       console.error("Prompt wizard decomposition failed:", error);
@@ -8844,6 +9138,18 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     });
   }, []);
 
+  const updateFunctionalRevisionProposalRow = useCallback((proposalIndex, field, value) => {
+    setFunctionalAuditProposal((prev) => {
+      if (prev?.kind !== "revision" || !prev?.revisionRows?.[proposalIndex]?.proposedRow) return prev;
+      const revisionRows = prev.revisionRows.map((revision, index) => (
+        index === proposalIndex
+          ? { ...revision, proposedRow: { ...revision.proposedRow, [field]: value } }
+          : revision
+      ));
+      return { ...prev, revisionRows };
+    });
+  }, []);
+
   const applyFunctionalAuditSelectedRows = useCallback(async () => {
     if (!functionalAuditProposal?.proposedRows?.length) return { appliedCount: 0 };
     const acceptedRows = functionalAuditProposal.proposedRows
@@ -9000,6 +9306,193 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setFunctionalAuditSelectedRows({});
     setFunctionalAuditFeedback("");
     return { appliedCount };
+  }, [functionalAuditProposal, functionalAuditSelectedRows, responseRows]);
+
+  const runFunctionalRevisionFromFeedback = useCallback(async ({ userText = "" } = {}) => {
+    if (!activeProjectId) throw new Error("Select a project before revising its functional decomposition.");
+    if (!Array.isArray(responseRows) || responseRows.length === 0) {
+      throw new Error("Add or generate functional decomposition rows before submitting revision feedback.");
+    }
+    if (!String(userText || "").trim()) throw new Error("Provide the engineering feedback to apply.");
+
+    const project = projects.find((entry) => entry.id === activeProjectId) || { id: activeProjectId, name: "Active project" };
+    const activityId = `functional-feedback-revision-${activeProjectId}`;
+    startActivity(activityId, {
+      title: "Preparing functional decomposition revisions",
+      step: 0,
+      total: 2,
+      message: "Comparing the engineering feedback with the current functional rows...",
+    });
+    setIsFunctionalAuditRunning(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000);
+    try {
+      updateActivity(activityId, {
+        step: 1,
+        total: 2,
+        message: "Translating feedback into targeted, reviewable row changes...",
+      });
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        ...buildAIAuthOpts({ "Content-Type": "application/json" }),
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: "gpt-4o",
+          temperature: 0.15,
+          max_tokens: 14000,
+          messages: [
+            {
+              role: "system",
+              content: "Translate engineering review feedback into a minimal, internally consistent revision plan for the supplied functional decomposition. Preserve unaffected rows. Return strict JSON only.",
+            },
+            {
+              role: "user",
+              content: buildFunctionalRevisionPrompt({
+                project,
+                rows: responseRows,
+                diagramCategories,
+                userText,
+              }),
+            },
+          ],
+        }),
+      });
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        throw new Error(response.status === 401
+          ? "No AI provider key is configured. Add your API key in Settings and try again."
+          : `Functional decomposition revision failed (${response.status}). ${detail}`.trim());
+      }
+      const parsed = parseJsonObjectFromText(extractAIText(await response.json()));
+      if (!parsed) throw new Error("The selected model did not return a usable functional revision plan.");
+      const plan = normalizeFunctionalMutationPlan(parsed, responseRows);
+      const { revisionRows, skippedUpdates, skippedRemovals } = buildFunctionalRevisionProposalRows(plan, responseRows);
+      const proposal = {
+        id: `functional-revision-${activeProjectId}-${Date.now()}`,
+        kind: "revision",
+        projectId: activeProjectId,
+        projectName: project.name || "Active project",
+        summary: plan.summary || "Functional decomposition revision ready for review.",
+        revisionRows,
+        proposedRows: [],
+        allocationRows: [],
+        coverageGaps: [],
+        questions: plan.questions || [],
+        skippedUpdates,
+        skippedRemovals,
+        userText,
+        createdAt: new Date().toISOString(),
+      };
+      setFunctionalAuditProposal(proposal);
+      setFunctionalAuditSelectedRows(Object.fromEntries(revisionRows.map((_, index) => [index, true])));
+      setFunctionalAuditFeedback("");
+      setSection("projects");
+      setActiveTab("Functional Diagramming");
+      finishActivity(activityId, "success", `${revisionRows.length} proposed functional change${revisionRows.length === 1 ? "" : "s"} ready for review`);
+      return {
+        ok: true,
+        proposalCount: revisionRows.length,
+        updateCount: revisionRows.filter((row) => row.operation === "update").length,
+        addCount: revisionRows.filter((row) => row.operation === "add").length,
+        removeCount: revisionRows.filter((row) => row.operation === "remove").length,
+        questionCount: proposal.questions.length,
+      };
+    } catch (error) {
+      const message = error?.name === "AbortError"
+        ? "Functional decomposition revision timed out. Try splitting very large feedback into two focused revision requests."
+        : error?.message || "Functional decomposition revision failed";
+      finishActivity(activityId, "error", message);
+      throw new Error(message);
+    } finally {
+      clearTimeout(timeoutId);
+      setIsFunctionalAuditRunning(false);
+    }
+  }, [activeProjectId, responseRows, projects, diagramCategories, startActivity, updateActivity, finishActivity]);
+
+  const applyFunctionalRevisionSelectedRows = useCallback(async () => {
+    const revisionRows = functionalAuditProposal?.kind === "revision"
+      ? functionalAuditProposal.revisionRows || []
+      : [];
+    const selected = revisionRows.filter((_, index) => functionalAuditSelectedRows[index]);
+    if (!selected.length) return { appliedCount: 0, updatedCount: 0, addedCount: 0, removedCount: 0 };
+
+    const currentRows = Array.isArray(responseRows) ? responseRows : [];
+    const stale = [];
+    const incomplete = [];
+    const removals = new Set();
+    const updates = new Map();
+    const additions = [];
+    selected.forEach((revision) => {
+      if (revision.operation === "add") {
+        additions.push(revision.proposedRow);
+        return;
+      }
+      const rowIndex = Number(revision.rowIndex);
+      const currentSignature = JSON.stringify(pickFunctionalRevisionRow(currentRows[rowIndex]));
+      const reviewedSignature = JSON.stringify(pickFunctionalRevisionRow(revision.currentRow));
+      if (!Number.isInteger(rowIndex) || !currentRows[rowIndex] || currentSignature !== reviewedSignature) {
+        stale.push(revision);
+        return;
+      }
+      if (revision.operation === "remove") removals.add(rowIndex);
+      if (revision.operation === "update" && revision.proposedRow) {
+        const proposedRow = pickFunctionalRevisionRow(revision.proposedRow);
+        if (Object.values(proposedRow).some((value) => !value)) {
+          incomplete.push(revision);
+          return;
+        }
+        updates.set(rowIndex, proposedRow);
+      }
+    });
+
+    let updatedCount = 0;
+    const candidateRows = currentRows.map((row, rowIndex) => {
+      const proposed = updates.get(rowIndex);
+      if (!proposed) return row;
+      updatedCount += 1;
+      return {
+        ...row,
+        ...proposed,
+        _revisionSource: "collaborator-engineering-feedback",
+        _revisedAt: new Date().toISOString(),
+      };
+    });
+    const conflictedUpdateIndexes = new Set();
+    updates.forEach((_, rowIndex) => {
+      const conflict = ["subsystem", "fromFunction", "controlAction", "toFunction"]
+        .map((field) => getFunctionalLabelConflictForEdit(candidateRows, rowIndex, field, candidateRows[rowIndex]?.[field]))
+        .find(Boolean);
+      if (conflict) conflictedUpdateIndexes.add(rowIndex);
+    });
+    if (conflictedUpdateIndexes.size) {
+      updatedCount -= conflictedUpdateIndexes.size;
+      conflictedUpdateIndexes.forEach((rowIndex) => { candidateRows[rowIndex] = currentRows[rowIndex]; });
+    }
+
+    const keptRows = candidateRows.filter((_, rowIndex) => !removals.has(rowIndex));
+    const normalizedAdds = normalizeFunctionalAuditProposalRows(additions, keptRows).map((row) => ({
+      ...pickFunctionalRevisionRow(row),
+      _source: "collaborator-engineering-feedback",
+      _createdAt: new Date().toISOString(),
+    }));
+    const { accepted: safeAdds, skipped: skippedAdds } = filterFunctionalRowsForLabelConflicts(normalizedAdds, keptRows);
+    const nextRows = [...safeAdds, ...keptRows];
+    setResponseRows(nextRows);
+    setCommittedFunctionalDiagramRows(getProjectDiagramRows(nextRows));
+    setDiagramCategories((current) => mergeSubsystemDiagramCategories(current, nextRows));
+    setFunctionalFilterColumn(null);
+    setFunctionalColumnFilters({});
+    setFunctionalColumnSearches({});
+    setFunctionalAuditProposal(null);
+    setFunctionalAuditSelectedRows({});
+    setFunctionalAuditFeedback("");
+    return {
+      appliedCount: updatedCount + removals.size + safeAdds.length,
+      updatedCount,
+      removedCount: removals.size,
+      addedCount: safeAdds.length,
+      skippedCount: stale.length + incomplete.length + conflictedUpdateIndexes.size + skippedAdds.length,
+    };
   }, [functionalAuditProposal, functionalAuditSelectedRows, responseRows]);
 
   const addFunctionalDecompositionRowsFromCollaborator = useCallback(async ({ rows = [], source = "collaborator-proposal" } = {}) => {
@@ -9423,8 +9916,10 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       }),
       auditFunctionalDecompositionCompleteness: runFunctionalCompletenessAudit,
       reevaluateFunctionalSubsystemAllocations: runFunctionalAllocationReevaluation,
+      reviewFunctionalDecompositionFeedback: runFunctionalRevisionFromFeedback,
       applyFunctionalDecompositionProposal: applyFunctionalAuditSelectedRows,
       applyFunctionalAllocationProposal: applyFunctionalAllocationSelectedRows,
+      applyFunctionalRevisionProposal: applyFunctionalRevisionSelectedRows,
       addFunctionalDecompositionRowsFromCollaborator,
       createProjectFromFunctionalDecompositionRows,
       mutateFunctionalDecompositionFromPrompt,
@@ -9437,8 +9932,10 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     diagramCategories,
     runFunctionalCompletenessAudit,
     runFunctionalAllocationReevaluation,
+    runFunctionalRevisionFromFeedback,
     applyFunctionalAuditSelectedRows,
     applyFunctionalAllocationSelectedRows,
+    applyFunctionalRevisionSelectedRows,
     addFunctionalDecompositionRowsFromCollaborator,
     createProjectFromFunctionalDecompositionRows,
     mutateFunctionalDecompositionFromPrompt,
@@ -9544,7 +10041,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   );
 
   useEffect(() => {
-    if (activeTab !== 'Functional Diagramming' || !showFunctionalDiagram || !activeProjectDiagramReady) return undefined;
+    if (activeTab !== 'Functional Diagramming' || functionalViewMode === 'table' || !activeProjectDiagramReady) return undefined;
     if (!pendingFunctionalDiagramFocusRef.current) return undefined;
 
     const retryDelays = [0, 100, 300, 700];
@@ -9556,7 +10053,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     }, delay));
 
     return () => timers.forEach((timer) => window.clearTimeout(timer));
-  }, [activeProjectDiagramReady, activeProjectDiagramKey, activeTab, showFunctionalDiagram]);
+  }, [activeProjectDiagramReady, activeProjectDiagramKey, activeTab, functionalViewMode]);
 
   const handleRunAnalysis = async (selectedMethod, options = {}) => {
     const shouldRegenerate = Boolean(options.regenerate);
@@ -10121,6 +10618,240 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       });
     }
   };
+
+  const handleNeedsReviewAnswerChange = (groupId, answer, scopeSignature) => {
+    setHazardNeedsReviewResolutions((current) => ({
+      ...current,
+      [groupId]: {
+        ...(current?.[groupId] || {}),
+        answer,
+        scopeSignature,
+        updatedAt: new Date().toISOString(),
+      },
+    }));
+    setNeedsReviewResolverStatus(null);
+  };
+
+  const handleDraftNeedsReviewAnswer = async (groupId) => {
+    if (needsReviewDraftingGroupId || needsReviewResolverBusyGroupId) return;
+    const group = needsReviewResolutionGroups.find((candidate) => candidate.id === groupId);
+    if (!group) return;
+    setNeedsReviewDraftingGroupId(groupId);
+    setNeedsReviewResolverStatus({ kind: "working", message: `Reviewing available evidence for ${group.title.toLowerCase()}…` });
+    const activityId = `hazard-needs-review-draft-${activeProjectId || "default"}`;
+    startActivity(activityId, {
+      title: "Reviewing unresolved architecture evidence",
+      step: 0,
+      total: 1,
+      message: `Drafting an answer for ${group.title}…`,
+    });
+    const organizationCalibration = getProjectOrganizationCalibration(activeProjectId, [
+      "Safety Philosophy",
+      "Hazard and Loss Taxonomy",
+      "Risk Classification",
+      "Engineering Rules",
+      "Operational Concepts",
+      "Standards and Regulatory Context",
+      "Glossary",
+      "Known Controls and Evidence",
+    ]);
+    try {
+      const draft = await draftNeedsReviewAnswerWithAI({
+        group,
+        projectName: activeProject?.name || "Untitled project",
+        organizationContext: organizationCalibration.context,
+        functionalDecomposition: responseRows,
+      });
+      const updatedAt = new Date().toISOString();
+      setHazardNeedsReviewResolutions((current) => ({
+        ...current,
+        [groupId]: {
+          ...(current?.[groupId] || {}),
+          answer: draft.answer,
+          evidenceGaps: draft.evidenceGaps,
+          draftFallback: Boolean(draft.fallback),
+          scopeSignature: group.scopeSignature,
+          source: "ai-draft",
+          updatedAt,
+        },
+      }));
+      const message = draft.fallback
+        ? `The AI did not identify confirmed ${group.title.toLowerCase()} evidence. xHandle drafted the missing-evidence statement for you to review and complete.`
+        : `The selected AI model drafted an answer for ${group.title.toLowerCase()}. Review and edit it before resolving the linked rows.`;
+      setNeedsReviewResolverStatus({ kind: draft.fallback ? "working" : "success", message });
+      finishActivity(activityId, "success", message);
+    } catch (error) {
+      console.error("[hazard-needs-review] AI evidence review failed", error);
+      const message = error?.message || "The AI could not draft an answer from the available project evidence.";
+      setNeedsReviewResolverStatus({ kind: "error", message });
+      finishActivity(activityId, "error", message);
+    } finally {
+      setNeedsReviewDraftingGroupId("");
+    }
+  };
+
+  const handleResolveNeedsReviewGroups = async (requestedGroupIds = []) => {
+    if (needsReviewResolverBusyGroupId || needsReviewDraftingGroupId || !Array.isArray(analysisResult?.Summary?.[0])) return;
+    const groupIds = Array.from(new Set(requestedGroupIds)).filter(Boolean);
+    if (!groupIds.length) return;
+    const resolveAll = groupIds.length > 1;
+    const requestedGroups = needsReviewResolutionGroups.filter((group) => groupIds.includes(group.id));
+    const totalRequestedRows = requestedGroups.reduce((total, group) => total + group.affectedRowIndexes.length, 0);
+    setNeedsReviewResolverBusyGroupId(resolveAll ? "all" : groupIds[0]);
+    setNeedsReviewResolverStatus({ kind: "working", message: "Re-evaluating affected rows with the selected AI provider and model…" });
+    const activityId = `hazard-needs-review-${activeProjectId || "default"}`;
+    startActivity(activityId, {
+      title: "Resolving hazard-analysis review questions",
+      step: 0,
+      total: totalRequestedRows || groupIds.length,
+      message: `Preparing ${totalRequestedRows} affected row${totalRequestedRows === 1 ? "" : "s"} across ${groupIds.length} architecture question${groupIds.length === 1 ? "" : "s"}…`,
+    });
+    const organizationCalibration = getProjectOrganizationCalibration(activeProjectId, [
+      "Safety Philosophy",
+      "Hazard and Loss Taxonomy",
+      "Risk Classification",
+      "Engineering Rules",
+      "Operational Concepts",
+      "Standards and Regulatory Context",
+      "Glossary",
+      "Known Controls and Evidence",
+    ]);
+    let workingSummary = analysisResult.Summary;
+    let nextResolutions = { ...hazardNeedsReviewResolutions };
+    let rowsEvaluatedCount = 0;
+    let resolvedCount = 0;
+    let omittedCount = 0;
+    let guidePhraseResolvedCount = 0;
+    let completedGroupRows = 0;
+    try {
+      const abortController = new AbortController();
+      needsReviewResolverAbortRef.current = abortController;
+      for (let index = 0; index < groupIds.length; index += 1) {
+        const groupId = groupIds[index];
+        const group = buildNeedsReviewResolutionGroups(workingSummary, nextResolutions)
+          .find((candidate) => candidate.id === groupId);
+        if (!group) continue;
+        const answer = String(nextResolutions?.[groupId]?.answer || "").trim();
+        if (!answer) continue;
+        updateActivity(activityId, {
+          step: completedGroupRows,
+          total: totalRequestedRows || group.affectedRowIndexes.length,
+          message: `${group.title}: starting ${group.affectedRowIndexes.length} row${group.affectedRowIndexes.length === 1 ? "" : "s"}…`,
+        });
+        const groupStartRow = completedGroupRows;
+        const resolution = await resolveNeedsReviewGroupWithAI({
+          group,
+          answer,
+          projectName: activeProject?.name || "Untitled project",
+          organizationContext: organizationCalibration.context,
+          concurrency: 1,
+          signal: abortController.signal,
+          // The callback intentionally advances and persists the running batch after each chunk.
+          // eslint-disable-next-line no-loop-func
+          onChunk: async ({ updates, rowIds }) => {
+            rowsEvaluatedCount += rowIds.length;
+            guidePhraseResolvedCount += updates.filter((update) => /^(?:yes|no)$/i.test(String(update["Guide Phrase Applicable"] || ""))).length;
+            const appliedChunk = applyNeedsReviewResolutionUpdates(workingSummary, updates, rowIds);
+            workingSummary = appliedChunk.summary;
+            resolvedCount += appliedChunk.resolvedRowIndexes.length;
+            omittedCount += appliedChunk.rejectedUpdates.length;
+            const partialAnalysisResult = { ...(analysisResult || {}), Summary: workingSummary };
+            setAnalysisResult(partialAnalysisResult);
+            if (activeProjectId) {
+              const persisted = await saveProjectHazardAnalysisRecord(activeProjectId, {
+                analysisResult: partialAnalysisResult,
+                draftHazardRowsByIndex,
+                riskRegister,
+              });
+              if (!persisted) throw new Error("A completed resolution chunk could not be persisted to browser artifact storage.");
+            }
+          },
+          onProgress: ({ completedRows, totalRows, activeRows }) => {
+            updateActivity(activityId, {
+              step: groupStartRow + completedRows,
+              total: totalRequestedRows || totalRows,
+              message: `${group.title}: ${completedRows} of ${totalRows} rows completed${activeRows ? `; evaluating the next ${activeRows}` : ""}…`,
+            });
+          },
+        });
+        omittedCount += resolution.missingRowIds.length;
+        completedGroupRows += group.affectedRowIndexes.length;
+        nextResolutions = {
+          ...nextResolutions,
+          [groupId]: {
+            ...(nextResolutions[groupId] || {}),
+            answer,
+            scopeSignature: group.scopeSignature,
+            updatedAt: nextResolutions[groupId]?.updatedAt || new Date().toISOString(),
+            lastAppliedAt: new Date().toISOString(),
+            lastUpdatedRowIds: resolution.updates.map((update) => update.sourceRowId).filter(Boolean),
+          },
+        };
+      }
+
+      const nextAnalysisResult = { ...(analysisResult || {}), Summary: workingSummary };
+      const targetHeaders = getProjectDraftHazardHeaders(riskMethod);
+      const nextDraftRows = { ...(draftHazardRowsByIndex || {}) };
+      draftHazardTargets.forEach((target) => {
+        const matched = findExistingHazardRowForFunctionalRow(
+          target.analysisRow,
+          workingSummary,
+          target.guidePhrase,
+          target.context
+        );
+        if (!matched) return;
+        const fallbackRow = buildProjectDraftHazardRow(target.analysisRow, targetHeaders);
+        const aligned = alignSummaryRowToHeaders(workingSummary[0] || [], matched, targetHeaders, fallbackRow);
+        if (!isMeaningfullyGeneratedDraftRow(aligned, fallbackRow)) return;
+        nextDraftRows[target.rowKey] = { row: aligned, generated: true };
+      });
+
+      setAnalysisResult(nextAnalysisResult);
+      setDraftHazardRowsByIndex(nextDraftRows);
+      setHazardNeedsReviewResolutions(nextResolutions);
+      const remainingCount = extractNeedsReviewRows(workingSummary).length;
+      const remainingRows = extractNeedsReviewRows(workingSummary);
+      const gapNames = Array.from(new Set(remainingRows.map((entry) => entry.rationale.match(/Needs review:\s*([^.;]+)/i)?.[1]).filter(Boolean))).slice(0, 5);
+      const message = `Rows evaluated: ${rowsEvaluatedCount}. Definitively resolved by classification: ${resolvedCount}. Guide-phrase applicability resolutions: ${guidePhraseResolvedCount}. Rows still needing review: ${remainingCount}.${gapNames.length ? ` Remaining evidence gaps: ${gapNames.join("; ")}.` : ""}${omittedCount ? ` Rejected or omitted updates: ${omittedCount}; those rows were left unchanged.` : ""}`;
+      setNeedsReviewResolverStatus({ kind: resolvedCount > 0 && remainingCount === 0 ? "success" : "working", message });
+      if (resolvedCount > 0) {
+        setSafetyIssueRefreshStatus({ kind: "working", message: "Hazard classifications changed. Regenerate Safety Issues to refresh the consolidated issue set." });
+      }
+      if (activeProjectId) {
+        const persisted = await saveProjectHazardAnalysisRecord(activeProjectId, {
+          analysisResult: nextAnalysisResult,
+          draftHazardRowsByIndex: nextDraftRows,
+          riskRegister,
+        });
+        saveProjectPatch(activeProjectId, {
+          hazardAnalysisStorage: "artifact-store",
+          hazardNeedsReviewResolutions: nextResolutions,
+          analysisResult: undefined,
+          draftHazardRowsByIndex: undefined,
+          riskRegister: undefined,
+        });
+        if (!persisted) throw new Error("The resolved hazard rows could not be persisted to browser artifact storage.");
+      }
+      finishActivity(activityId, "success", message);
+    } catch (error) {
+      console.error("[hazard-needs-review] Resolution failed", error);
+      const remainingCount = extractNeedsReviewRows(workingSummary).length;
+      const detail = error?.message || "Unable to resolve the selected review questions.";
+      const message = `${detail} Partial completion: ${rowsEvaluatedCount} rows evaluated, ${resolvedCount} definitively resolved, ${remainingCount} still need review. Completed chunks remain saved.`;
+      setNeedsReviewResolverStatus({ kind: "error", message });
+      finishActivity(activityId, "error", message);
+    } finally {
+      needsReviewResolverAbortRef.current = null;
+      setNeedsReviewResolverBusyGroupId("");
+    }
+  };
+
+  const handleResolveNeedsReviewGroup = (groupId) => handleResolveNeedsReviewGroups([groupId]);
+  const handleResolveAnsweredNeedsReviewGroups = () => handleResolveNeedsReviewGroups(
+    needsReviewResolutionGroups
+      .filter((group) => String(hazardNeedsReviewResolutions?.[group.id]?.answer || "").trim())
+      .map((group) => group.id)
+  );
 
   const renderNormalizedSafetyTrace = (issue, sourceLinks) => {
     const renderRows = (items, labelFor) => (items || []).map((item) => {
@@ -12373,6 +13104,20 @@ const projectHint = useMemo(() => ({
         </ProjectTabToolbarStatus>
       )}
       <ProjectTabToolbarButton
+        icon={<ClipboardCheck size={17} />}
+        label={`Resolve Needs Review${needsReviewRowCount ? ` (${needsReviewRowCount})` : ""}`}
+        collapsed={hazardTabToolbarCollapsed}
+        tone={needsReviewRowCount ? "warning" : undefined}
+        onClick={() => {
+          setNeedsReviewResolverStatus(null);
+          setShowNeedsReviewResolver(true);
+        }}
+        disabled={isAnalyzing || draftHazardGeneratingIndex !== null || !analysisResult?.Summary}
+        title={needsReviewRowCount
+          ? `Answer grouped architecture questions and re-evaluate ${needsReviewRowCount} unresolved hazard row${needsReviewRowCount === 1 ? "" : "s"}`
+          : "Open the Needs Review resolver"}
+      />
+      <ProjectTabToolbarButton
         icon={<Download size={17} />}
         label="Export CSV"
         collapsed={hazardTabToolbarCollapsed}
@@ -14215,7 +14960,7 @@ const projectHint = useMemo(() => ({
 
         {/* PROJECTS */}
         {section === 'projects' && (
-          <div className={`flex min-h-0 w-full flex-1 flex-col justify-start bg-white px-3 py-0 md:px-5 lg:px-7 ${activeProjectId && (activeTab === 'Hazard Analysis' || activeTab === 'Safety Issues & Risk Assessment' || (activeTab === 'Functional Diagramming' && showFunctionalDiagram)) ? 'overflow-hidden' : 'overflow-auto'}`}>
+          <div className={`flex min-h-0 w-full flex-1 flex-col justify-start bg-white px-3 py-0 md:px-5 lg:px-7 ${activeProjectId && (activeTab === 'Hazard Analysis' || activeTab === 'Safety Issues & Risk Assessment' || activeTab === 'Functional Diagramming') ? 'overflow-hidden' : 'overflow-auto'}`}>
 <div className="mb-6 flex shrink-0 items-center justify-between">
   <h1 className="text-2xl font-semibold flex items-center gap-2">
     Projects
@@ -14524,7 +15269,7 @@ const projectHint = useMemo(() => ({
   </section>
 )}
 {activeTab === 'Functional Diagramming' && (
-  <div className={`${showFunctionalDiagram ? 'flex min-h-0 flex-1 flex-col overflow-hidden pb-3' : ''} text-center`}>
+  <div className="flex min-h-0 flex-1 flex-col overflow-hidden pb-3 text-center">
                   {showPromptWizard && (
                     <>
 
@@ -14592,31 +15337,20 @@ const projectHint = useMemo(() => ({
 
                   {responseRows.length > 0 && (
                     <>
-                      <div className="mb-4 flex justify-center gap-3">
-                        {!showFunctionalDiagram && responseRows.length > 0 && (
+                      <FunctionalDiagramWorkspace
+                        viewMode={functionalViewMode}
+                        onViewModeChange={(mode) => {
+                          if (mode !== 'table' && functionalViewMode === 'table') commitFunctionalRowsToDiagram();
+                          setFunctionalViewMode(mode);
+                        }}
+                        onDiagramResize={handleFunctionalDiagramResize}
+                        tableActions={(
                           <button onClick={exportDecompositionCSV} className="px-3 py-2 text-white rounded bg-[#10B981] hover:bg-[#059669]" title="Export the functional decomposition table as CSV">
                             Export CSV
                           </button>
                         )}
-
-                        <button
-                          onClick={() => {
-                            setShowFunctionalDiagram((v) => {
-                              const nv = !v;
-                              if (nv) commitFunctionalRowsToDiagram();
-                              // 🔧 nudge React Flow to recompute bounds after the view becomes visible
-                              setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
-                              return nv;
-                            });
-                          }}
-                          className="px-3 py-2 text-white rounded bg-[#7A37FF] hover:bg-[#5E2AD1]"
-                        >
-                          {showFunctionalDiagram ? 'Show Functional Table' : 'Visualize Functional Architecture'}
-                        </button>
-                      </div>
-
-                      {/* Diagram */}
-                      <div className={`${showFunctionalDiagram ? 'flex min-h-0 flex-1' : 'hidden'} w-full`}>
+                        diagram={(
+                      <div className="flex min-h-0 w-full flex-1">
                         <div className="min-h-0 flex-1 pt-6">
                           <div className="relative h-full min-h-0 w-full overflow-hidden rounded-2xl bg-white">
                           {activeProjectDiagramReady ? (
@@ -14656,9 +15390,10 @@ const projectHint = useMemo(() => ({
                           </div>
                         </div>
                       </div>
+                        )}
 
-                      {/* Table */}
-                      <div className={`${showFunctionalDiagram ? 'hidden' : ''} relative mb-10 h-[calc(100vh-260px)] min-h-[420px] w-full overflow-auto rounded-md shadow-sm`}>
+                        table={(
+                      <div className="relative min-h-0 w-full flex-1 overflow-auto rounded-md shadow-sm">
                         <div className="flex justify-end border-b border-gray-200 bg-white px-4 py-3">
                           <button onClick={handleAddRow} className="px-4 py-2 text-sm border rounded bg-[#ECEEFF] hover:bg-[#D7DAFF] text-[#0F0F12]">+ Add Row</button>
                         </div>
@@ -14846,6 +15581,8 @@ const projectHint = useMemo(() => ({
                           </tbody>
                         </table>
                       </div>
+                        )}
+                      />
                     </>
                   )}
                        </div>
@@ -14867,6 +15604,24 @@ const projectHint = useMemo(() => ({
       if (!isResettingHazardAnalysis) setShowHazardResetModal(false);
     }}
     onConfirm={handleClearHazardAnalysis}
+  />
+)}
+{activeProjectId && (
+  <NeedsReviewResolverModal
+    open={showNeedsReviewResolver}
+    groups={needsReviewResolutionGroups}
+    answers={hazardNeedsReviewResolutions}
+    busyGroupId={needsReviewResolverBusyGroupId}
+    draftingGroupId={needsReviewDraftingGroupId}
+    status={needsReviewResolverStatus}
+    onAnswerChange={handleNeedsReviewAnswerChange}
+    onDraftAnswer={handleDraftNeedsReviewAnswer}
+    onResolveGroup={handleResolveNeedsReviewGroup}
+    onResolveAnswered={handleResolveAnsweredNeedsReviewGroups}
+    onCancel={() => needsReviewResolverAbortRef.current?.abort()}
+    onClose={() => {
+      if (!needsReviewResolverBusyGroupId && !needsReviewDraftingGroupId) setShowNeedsReviewResolver(false);
+    }}
   />
 )}
 {activeProjectId && activeTab === 'Hazard Analysis' && (
@@ -17313,10 +18068,14 @@ const updateRiskInProject = async (projectId, predicate) => {
     <div className="flex max-h-[92vh] w-[min(1180px,96vw)] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
       <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
         <div>
-          <h2 className="text-lg font-semibold text-gray-900">Functional Decomposition Audit</h2>
+          <h2 className="text-lg font-semibold text-gray-900">
+            {functionalAuditProposal.kind === "revision" ? "Functional Decomposition Revision" : "Functional Decomposition Audit"}
+          </h2>
           <p className="mt-1 text-sm text-gray-600">
             {functionalAuditProposal.kind === "allocation"
               ? `Collaborator proposed subsystem allocations for ${functionalAuditProposal.projectName || "this project"}. Review, edit, or regenerate before applying changes.`
+              : functionalAuditProposal.kind === "revision"
+                ? `Collaborator translated your feedback into targeted changes for ${functionalAuditProposal.projectName || "this project"}. Review and select them before updating the table.`
               : `Collaborator proposed additions for ${functionalAuditProposal.projectName || "this project"}. Review, edit, or regenerate before adding anything to the table.`}
           </p>
         </div>
@@ -17440,6 +18199,105 @@ const updateRiskInProject = async (projectId, predicate) => {
             </div>
           )}
         </div>
+        ) : functionalAuditProposal.kind === "revision" ? (
+        <div className="mt-5">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold text-gray-900">
+              Proposed changes ({functionalAuditProposal.revisionRows?.length || 0})
+            </h3>
+            {functionalAuditProposal.revisionRows?.length > 0 && (
+              <div className="flex items-center gap-2 text-xs">
+                <button
+                  type="button"
+                  className="rounded border px-2 py-1 hover:bg-gray-50"
+                  onClick={() => setFunctionalAuditSelectedRows(Object.fromEntries(functionalAuditProposal.revisionRows.map((_, index) => [index, true])))}
+                >
+                  Select all
+                </button>
+                <button
+                  type="button"
+                  className="rounded border px-2 py-1 hover:bg-gray-50"
+                  onClick={() => setFunctionalAuditSelectedRows({})}
+                >
+                  Select none
+                </button>
+              </div>
+            )}
+          </div>
+          {functionalAuditProposal.revisionRows?.length ? (
+            <div className="space-y-3">
+              {functionalAuditProposal.revisionRows.map((revision, index) => (
+                <div key={`revision-proposal-${index}`} className="rounded-xl border border-gray-200 bg-white p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <label className="flex min-w-0 items-start gap-3">
+                      <input
+                        className="mt-1"
+                        type="checkbox"
+                        checked={Boolean(functionalAuditSelectedRows[index])}
+                        onChange={(event) => {
+                          const checked = event.target.checked;
+                          setFunctionalAuditSelectedRows((prev) => ({ ...prev, [index]: checked }));
+                        }}
+                      />
+                      <span>
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${
+                          revision.operation === "remove"
+                            ? "bg-red-50 text-red-700"
+                            : revision.operation === "add"
+                              ? "bg-green-50 text-green-700"
+                              : "bg-blue-50 text-blue-700"
+                        }`}>
+                          {revision.operation}
+                        </span>
+                        {revision.rowNumber && <span className="ml-2 text-xs text-gray-500">Existing row {revision.rowNumber}</span>}
+                      </span>
+                    </label>
+                    <span className="text-xs text-gray-500">Confidence: {revision.confidence || "Medium"}</span>
+                  </div>
+                  <p className="mt-2 text-sm text-gray-700">{revision.rationale}</p>
+
+                  {revision.currentRow && (
+                    <div className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                      <span className="font-semibold">Current:</span>{" "}
+                      {revision.currentRow.subsystem} · {revision.currentRow.fromFunction} → {revision.currentRow.controlAction} → {revision.currentRow.toFunction}
+                    </div>
+                  )}
+
+                  {revision.proposedRow && (
+                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      {functionalTableColumns.map((column) => {
+                        const isDetails = column.key.toLowerCase().includes("details");
+                        return (
+                          <label key={column.key} className={isDetails ? "md:col-span-2" : ""}>
+                            <span className="mb-1 block text-xs font-medium text-gray-600">{column.label}</span>
+                            {isDetails ? (
+                              <textarea
+                                rows={2}
+                                className="w-full resize-y rounded border border-gray-200 px-2 py-1.5 text-xs leading-5 focus:border-[#2D7DFE] focus:outline-none focus:ring-1 focus:ring-[#2D7DFE]"
+                                value={revision.proposedRow[column.key] || ""}
+                                onChange={(event) => updateFunctionalRevisionProposalRow(index, column.key, event.target.value)}
+                              />
+                            ) : (
+                              <input
+                                className="w-full rounded border border-gray-200 px-2 py-1.5 text-xs focus:border-[#2D7DFE] focus:outline-none focus:ring-1 focus:ring-[#2D7DFE]"
+                                value={revision.proposedRow[column.key] || ""}
+                                onChange={(event) => updateFunctionalRevisionProposalRow(index, column.key, event.target.value)}
+                              />
+                            )}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
+              No safe row changes could be derived from the feedback. Review any questions below or add more specific direction and regenerate.
+            </div>
+          )}
+        </div>
         ) : (
         <div className="mt-5">
           <div className="mb-2 flex items-center justify-between gap-3">
@@ -17553,6 +18411,8 @@ const updateRiskInProject = async (projectId, predicate) => {
         <div className="text-xs text-gray-500">
           {functionalAuditProposal.kind === "allocation"
             ? "Nothing changes until you select proposals and click “Apply selected allocations.”"
+            : functionalAuditProposal.kind === "revision"
+              ? "Nothing changes until you select proposals and click “Apply selected changes.”"
             : "Nothing is added until you select rows and click “Add selected rows.”"}
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -17573,6 +18433,13 @@ const updateRiskInProject = async (projectId, predicate) => {
                     userText: functionalAuditProposal.userText,
                     feedback: functionalAuditFeedback,
                   })
+                : functionalAuditProposal.kind === "revision"
+                  ? runFunctionalRevisionFromFeedback({
+                      userText: [
+                        functionalAuditProposal.userText,
+                        functionalAuditFeedback ? `Additional reviewer feedback:\n${functionalAuditFeedback}` : "",
+                      ].filter(Boolean).join("\n\n"),
+                    })
                 : runFunctionalCompletenessAudit({
                     userText: functionalAuditProposal.userText,
                     feedback: functionalAuditFeedback,
@@ -17586,14 +18453,22 @@ const updateRiskInProject = async (projectId, predicate) => {
             className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6] disabled:cursor-not-allowed disabled:opacity-60"
             disabled={functionalAuditProposal.kind === "allocation"
               ? !functionalAuditProposal.allocationRows?.some((_, index) => functionalAuditSelectedRows[index])
+              : functionalAuditProposal.kind === "revision"
+                ? !functionalAuditProposal.revisionRows?.some((_, index) => functionalAuditSelectedRows[index])
               : !functionalAuditProposal.proposedRows?.some((_, index) => functionalAuditSelectedRows[index])}
             onClick={() => (
               functionalAuditProposal.kind === "allocation"
                 ? applyFunctionalAllocationSelectedRows()
+                : functionalAuditProposal.kind === "revision"
+                  ? applyFunctionalRevisionSelectedRows()
                 : applyFunctionalAuditSelectedRows()
             )}
           >
-            {functionalAuditProposal.kind === "allocation" ? "Apply selected allocations" : "Add selected rows"}
+            {functionalAuditProposal.kind === "allocation"
+              ? "Apply selected allocations"
+              : functionalAuditProposal.kind === "revision"
+                ? "Apply selected changes"
+                : "Add selected rows"}
           </button>
         </div>
       </div>

@@ -10,11 +10,30 @@ import {
   createSafetyModelId,
   inferCausalFactorCategory,
   inferControlActionType,
+  normalizeControlActionType,
   normalizeNonApplicableHazardRecord,
   parameterizeUnsupportedRequirement,
   semanticGuidePhrase,
 } from "../features/project-hazard-analysis/hazardSafetyModel";
 import { formatGovernedHazardPromptContext } from "../features/project-hazard-analysis/hazardPromptContext";
+import {
+  authorityPermitsSafety,
+  classifyReceiverAuthority,
+} from "../features/project-hazard-analysis/interfaceSafetyAuthority";
+import {
+  PROTECTION_STATUS,
+  SAFETY_CLASSIFICATION,
+  auditSafetyClassificationRecord,
+  containsAffirmativeHarmPath,
+  normalizeClassificationConfidence,
+  normalizeProtectionStatus,
+  normalizeSafetyClassification,
+  normalizeSafetyClassificationRule,
+  normalizeSafetyPathType,
+  safetyClassificationRollup,
+  safetySignificanceValue,
+  validateSafetyClassificationRecord,
+} from "../features/project-hazard-analysis/safetySignificancePolicy";
 import { getStoredActiveAIProvider } from "../lib/aiProviderConfig";
 
 function getCellText(cell) {
@@ -78,7 +97,7 @@ function flattenDecomposition(sheets) {
         controlActionDetails: actionDetailsIdx >= 0 ? sanitizeText(getCellText(row[actionDetailsIdx])) : "",
         to,
         toDetails: toDetailsIdx >= 0 ? sanitizeText(getCellText(row[toDetailsIdx])) : "",
-        controlActionType: inferControlActionType(controlAction, from, to),
+        controlActionType: normalizeControlActionType("", { controlAction, controlActionDetails: actionDetailsIdx >= 0 ? getCellText(row[actionDetailsIdx]) : "", from, fromDetails: fromDetailsIdx >= 0 ? getCellText(row[fromDetailsIdx]) : "", to, toDetails: toDetailsIdx >= 0 ? getCellText(row[toDetailsIdx]) : "" }),
         guidePhrase: guidePhraseIdx >= 0 ? sanitizeText(getCellText(row[guidePhraseIdx])) : "",
         guidePhraseApplicable: guideApplicableIdx >= 0 ? sanitizeText(getCellText(row[guideApplicableIdx])) : "",
         guidePhraseApplicabilityRationale: guideRationaleIdx >= 0 ? sanitizeText(getCellText(row[guideRationaleIdx])) : "",
@@ -189,10 +208,23 @@ const CAUSAL_FACTOR_CATEGORIES = new Set([
   "Configuration / calibration",
   "Human / procedure",
   "Common-cause dependency",
+  "ML model / uncertainty",
 ]);
-const SAFETY_SIGNIFICANCE_FIELDS = [
+export const SAFETY_SIGNIFICANCE_FIELDS = [
   ["proposedSafetyAssessment", "Proposed Safety Assessment"],
   ["proposedSafetyAssessmentRationale", "Proposed Safety Assessment Rationale"],
+  ["safetyClassification", "Safety Classification"],
+  ["safetyClassificationRule", "Safety Classification Rule"],
+  ["causalPathType", "Causal Path Type"],
+  ["causalEffect", "Causal Effect"],
+  ["resultingSystemState", "Resulting System State"],
+  ["intermediateSafetyFunction", "Intermediate Safety Function"],
+  ["intermediateSafetyEffect", "Intermediate Safety Effect"],
+  ["protectionAssessment", "Protection Assessment"],
+  ["protectionStatus", "Protection Status"],
+  ["physicalHarmChainTermination", "Physical-Harm Chain Termination"],
+  ["classificationEvidence", "Classification Evidence"],
+  ["classificationConfidence", "Classification Confidence"],
   ["safetySignificant", "Safety Significant"],
   ["safetySignificanceRationale", "Safety Significance Rationale"],
 ];
@@ -317,7 +349,7 @@ function omitConsolidatedRequirementFromConfig(config) {
   };
 }
 
-function getStandardConfig(method) {
+export function getStandardConfig(method) {
   if (method === "FMEA") {
     return {
       sheetName: "FMEA",
@@ -395,12 +427,14 @@ For each functional decomposition row, identify one credible unsafe control acti
 - Unsafe control action must name whether the control action is missing, provided when hazardous, too early, too late, in the wrong order, stopped too soon, or applied too long.
 - Causal factors must name concrete technical, data, timing, interface, human, or environmental contributors.
 - Keep causalScenario, causalFactors, mitigationStrategy, safetyRequirementsConstraints, and systemRequirement distinct. A failure, error, delay, stale state, or loss belongs in causalScenario/causalFactors—not mitigationStrategy.
-- causalFactorCategory must be one of: Controller logic / process model; Sensor / feedback; Actuator / physical process; Communication / interface; Timing / sequencing; Power / energy; Initialization / lifecycle; Mode / state management; Configuration / calibration; Human / procedure; Common-cause dependency.
+- Consider controller/process-model error, algorithm/model inadequacy, sensor/feedback, actuator/physical process, communication/interface, timing/sequencing, mode/state confusion, initialization/lifecycle, configuration/calibration, power/resource exhaustion, environmental disturbance, human/procedure, common-cause/dependency, and ML uncertainty when relevant. Select only the best evidence-grounded mechanism; correctly delivered information processed by a wrong controller/model is not a communication failure.
+- causalFactorCategory must be one of: Controller logic / process model; Sensor / feedback; Actuator / physical process; Communication / interface; Timing / sequencing; Power / energy; Initialization / lifecycle; Mode / state management; Configuration / calibration; Human / procedure; Common-cause dependency; ML model / uncertainty.
 - For a non-applicable row only, causalFactorCategory and requirementParameterSource must be exactly Not applicable.
 - mitigationStrategy must describe a design measure, detection mechanism, independence provision, fallback, constraint, or verification activity that reduces the cause or consequence.
 - mitigationStrategy must name the responsible function or subsystem and the concrete mechanism it adds. Avoid generic imperatives such as "implement redundancy" or "add validation" without naming what is compared, detected, rejected, inhibited, isolated, or placed into a safe/degraded state.
 - Safety requirement or constraint must be tailored and verifiable. systemRequirement should state the implementable obligation and safetyRequirementsConstraints should state the safety invariant it enforces.
-- Write systemRequirement as: "The [allocated system element] shall [observable behavior] when or while [condition], verified by [observable evidence or verification approach]." Do not return a bare design suggestion beginning only with Implement, Ensure, or Optimize.
+- Write systemRequirement only as the normative obligation: "The [allocated system element] shall [observable behavior] when or while [condition]." Put the verification approach in verificationMethod and the observable pass/fail condition in acceptanceCriteria; never append "verified by" to the shall statement.
+- verificationMethod must name an appropriate inspection, analysis, demonstration, or test approach. acceptanceCriteria must state the observable evidence that passes. Do not invent thresholds in either field; use named TBD parameters and identify their source/owner in requirementParameterSource.
 - The allocated system element must be an exact functionFrom, functionTo, or subsystem name from the supplied row. Never invent placeholders such as "Application Subsystem", "System Component", or "Relevant Module". Prefer the receiver for validation/consumption behavior and the sender for publication/delivery behavior.
 - Allocate requirements to an element that can control the required behavior. When the source is an external input or disturbance, require detection, validation, degraded operation, inhibition, fallback, or safe response rather than guaranteeing the external condition.
 - Do not invent numerical thresholds. Use a named parameter such as [TBD-response-time] unless the supplied evidence includes a requirement, specification, calculation, standard, or allocated safety/timing budget. Record that basis in requirementParameterSource; otherwise write TBD.
@@ -429,6 +463,8 @@ ${SPECIFICITY_SELF_CHECK_GUIDANCE}
       ["safetyRequirementsConstraints", "Safety Requirements/Constraints"],
       ["systemRequirement", "System Requirement"],
       ["requirementParameterSource", "Requirement Parameter Source"],
+      ["verificationMethod", "Verification Method"],
+      ["acceptanceCriteria", "Acceptance Criteria"],
     ],
   };
 }
@@ -482,7 +518,9 @@ function fallbackRow(config, item, index) {
     consolidatedRequirement: `Needs review: consolidated requirement was not generated for ${item.id || `FD-${index + 1}`}.`,
     safetyRequirementsConstraints: `Needs review: safety constraint was not generated for ${item.id || `FD-${index + 1}`}.`,
     requirementParameterSource: "TBD",
-    controlActionType: item.controlActionType || inferControlActionType(item.controlAction, item.from, item.to),
+    verificationMethod: "Needs review: verification method was not generated.",
+    acceptanceCriteria: "Needs review: acceptance criteria were not generated.",
+    controlActionType: normalizeControlActionType(item.controlActionType, item),
     failureMode: `Needs review: failure mode was not generated for ${item.id || `FD-${index + 1}`}.`,
     whatIfScenario: `Needs review: what-if scenario was not generated for ${item.id || `FD-${index + 1}`}.`,
     unsafeControlActions: `Needs review: unsafe control action was not generated for ${item.id || `FD-${index + 1}`}.`,
@@ -524,14 +562,49 @@ function buildGuidePhraseUnsafeControlAction(item = {}, generatedValue = "", gui
 
 function normalizeRow(config, row, item, index) {
   const base = fallbackRow(config, item, index);
+  const guidePhraseApplicable = normalizeGuidePhraseApplicability(
+    row.guidePhraseApplicable || row["Guide Phrase Applicable"] || item?.guidePhraseApplicable,
+  );
+  const requestedSafetyClassification = normalizeSafetyClassification(
+    row.safetyClassification || row["Safety Classification"],
+    {
+      applicable: guidePhraseApplicable !== "No",
+      proposedAssessment: row.proposedSafetyAssessment || row["Proposed Safety Assessment"],
+      contributionType: row.safetyContributionType,
+      causalPathType: row.causalPathType || row["Causal Path Type"],
+    },
+  );
+  const protectionAssessment = sanitizeText(row.protectionAssessment || row["Protection Assessment"]);
+  const protectionStatus = normalizeProtectionStatus(
+    row.protectionStatus || row["Protection Status"],
+    protectionAssessment,
+  );
+  const safetyClassification = requestedSafetyClassification;
+  const safetyClassificationRule = normalizeSafetyClassificationRule(
+    row.safetyClassificationRule || row["Safety Classification Rule"] || row.classificationRule,
+    safetyClassification,
+    {
+      guidePhrase: item?.guidePhrase || row.guidePhrase,
+      evidence: `${row.classificationEvidence || row["Classification Evidence"] || ""} ${protectionAssessment}`,
+    },
+  );
   const normalized = {
     id: sanitizeText(row.id) || base.id,
-    proposedSafetyAssessment: normalizeProposedSafetyAssessment(
-      row.proposedSafetyAssessment || row["Proposed Safety Assessment"] || row.safetyAssessment || row["Safety Assessment"],
-      row.safetySignificant || row["Safety Significant"],
-    ),
+    proposedSafetyAssessment: safetyClassificationRollup(safetyClassification),
     proposedSafetyAssessmentRationale: sanitizeText(row.proposedSafetyAssessmentRationale || row["Proposed Safety Assessment Rationale"]),
-    safetySignificant: normalizeSafetySignificance(row.safetySignificant || row["Safety Significant"]),
+    safetyClassification,
+    safetyClassificationRule,
+    causalPathType: normalizeSafetyPathType(row.causalPathType || row["Causal Path Type"], safetyClassification),
+    causalEffect: sanitizeText(row.causalEffect || row["Causal Effect"]),
+    resultingSystemState: sanitizeText(row.resultingSystemState || row["Resulting System State"]),
+    intermediateSafetyFunction: sanitizeText(row.intermediateSafetyFunction || row["Intermediate Safety Function"]),
+    intermediateSafetyEffect: sanitizeText(row.intermediateSafetyEffect || row["Intermediate Safety Effect"]),
+    protectionAssessment,
+    protectionStatus,
+    physicalHarmChainTermination: sanitizeText(row.physicalHarmChainTermination || row["Physical-Harm Chain Termination"]),
+    classificationEvidence: sanitizeText(row.classificationEvidence || row["Classification Evidence"]),
+    classificationConfidence: normalizeClassificationConfidence(row.classificationConfidence || row["Classification Confidence"]),
+    safetySignificant: safetySignificanceValue(safetyClassification),
     safetySignificanceRationale: sanitizeText(row.safetySignificanceRationale || row["Safety Significance Rationale"]),
   };
   config.fields.forEach(([fieldName]) => {
@@ -540,7 +613,7 @@ function normalizeRow(config, row, item, index) {
     } else if (fieldName === "guidePhrase") {
       normalized[fieldName] = sanitizeText(item?.guidePhrase) || sanitizeText(row[fieldName] || row["Guide Phrase"]) || base[fieldName] || "";
     } else if (fieldName === "guidePhraseApplicable") {
-      normalized[fieldName] = normalizeGuidePhraseApplicability(row[fieldName] || row["Guide Phrase Applicable"] || item?.guidePhraseApplicable);
+      normalized[fieldName] = guidePhraseApplicable;
     } else if (fieldName === "guidePhraseApplicabilityRationale") {
       normalized[fieldName] = sanitizeText(row[fieldName] || row["Guide Phrase Applicability Rationale"] || item?.guidePhraseApplicabilityRationale) || base[fieldName] || "";
     } else if (fieldName === "unsafeControlActions") {
@@ -550,7 +623,10 @@ function normalizeRow(config, row, item, index) {
         normalized.guidePhraseApplicable || row.guidePhraseApplicable || row["Guide Phrase Applicable"],
       );
     } else if (fieldName === "controlActionType") {
-      normalized[fieldName] = item?.controlActionType || inferControlActionType(item?.controlAction, item?.from, item?.to);
+      normalized[fieldName] = normalizeControlActionType(
+        row[fieldName] || row["Control Action Type"] || item?.controlActionType,
+        item,
+      );
     } else if (fieldName === "causalFactorCategory") {
       const category = sanitizeText(row[fieldName]);
       const proposedCategory = CAUSAL_FACTOR_CATEGORIES.has(category)
@@ -572,6 +648,17 @@ function normalizeRow(config, row, item, index) {
       normalized[fieldName] = sanitizeText(row[fieldName]) || base[fieldName] || "";
     }
   });
+  if (Object.prototype.hasOwnProperty.call(normalized, "systemRequirement")) {
+    const legacyVerification = normalized.systemRequirement.match(/[,;]\s*verified by\s+(.+?)(?:\.|$)/i);
+    if (legacyVerification) {
+      normalized.systemRequirement = normalized.systemRequirement
+        .replace(/[,;]\s*verified by\s+(.+?)(?:\.|$)/i, ".")
+        .replace(/\.\.+$/, ".");
+      if (!sanitizeText(row.verificationMethod || row["Verification Method"])) {
+        normalized.verificationMethod = legacyVerification[1];
+      }
+    }
+  }
   return normalized.guidePhraseApplicable === "No"
     ? normalizeNonApplicableHazardRecord(normalized, normalized.guidePhraseApplicabilityRationale)
     : normalized;
@@ -589,9 +676,15 @@ function normalizeGuidePhraseApplicability(value) {
   return "Yes";
 }
 
+// "Needs Review" used to carry two different meanings — "not significant" and
+// "could not decide" — which made the two indistinguishable downstream. "No" is
+// now reserved for a determination the architecture supports: the receiving
+// function holds no real-time authority, so this interface has no path to an
+// exposed entity.
 function normalizeSafetySignificance(value) {
   const text = sanitizeText(value).toLowerCase();
   if (/^yes\b|^safety\b|^safety\s*significant\b|^significant\b/i.test(text)) return "Yes";
+  if (/^no\b|^not\s*safety\b|^non-?safety\b/i.test(text)) return "No";
   return "Needs Review";
 }
 
@@ -910,31 +1003,31 @@ export function validateApplicabilityEvidence(tag = {}, item = {}) {
       supported = mechanismSpecific && evidenceRelevant && (evidenceSemantic || interfaceEvidence);
       reason = "the supplied evidence does not establish a hazardous value, command, authority, or external condition for this interface";
     } else if (/too early/.test(guidePhrase)) {
-      const explicitEarlyBoundary = evidenceSemantic || /\b(?:before|prerequis|not ready|window|premature|startup|activation|transition)\b/.test(mechanismTerms);
+      const explicitEarlyBoundary = evidenceSemantic;
       const receiverNormallyAbsorbsEarlyArrival = /\b(?:align|buffer|queue|store|synchron|validate|filter)\b/.test(normalizedEvidenceText(item.to));
       supported = mechanismSpecific && evidenceRelevant && explicitEarlyBoundary
-        && (!receiverNormallyAbsorbsEarlyArrival || /\b(?:before|prerequis|not ready|window|startup|activation)\b/.test(mechanismTerms));
+        && (!receiverNormallyAbsorbsEarlyArrival || /\b(?:before|prerequis|not ready|window|startup|activation)\b/.test(normalizedEvidenceText(candidateEvidence.evidenceQuote)));
       reason = receiverNormallyAbsorbsEarlyArrival
         ? "the receiver can align, buffer, store, validate, or filter early input and no unsafe precondition or acceptance window is established"
         : "the supplied evidence does not establish an unsafe prerequisite or acceptance window for early provision";
     } else if (/too late/.test(guidePhrase)) {
-      supported = mechanismSpecific && (evidenceRelevant || contextIsTimeCritical(item)) && (evidenceSemantic || interfaceEvidence || contextIsTimeCritical(item));
+      supported = mechanismSpecific && evidenceRelevant && evidenceSemantic;
       reason = "the supplied evidence does not establish a deadline, freshness boundary, decision point, or time-sensitive receiver dependency";
     } else if (/wrong order/.test(guidePhrase)) {
       supported = mechanismSpecific && actionSupportsOrdering(item, actionType) && evidenceRelevant
-        && (evidenceSemantic || interfaceEvidence);
+        && evidenceSemantic;
       reason = actionSupportsOrdering(item, actionType)
         ? "the supplied evidence does not bind a sequence, version, dependency, or prerequisite to this interface"
         : "this action and receiver do not establish an order-dependent interaction";
     } else if (/stopped too soon/.test(guidePhrase)) {
       supported = mechanismSpecific && actionSupportsDuration(item, actionType) && evidenceRelevant
-        && (evidenceSemantic || interfaceEvidence);
+        && evidenceSemantic;
       reason = actionSupportsDuration(item, actionType)
         ? "the supplied evidence does not bind an ongoing stream, maintained assertion, transfer, or duration to this interface"
         : "this discrete action has no maintained duration or multi-part transfer that can stop too soon";
     } else if (/applied too long/.test(guidePhrase)) {
       supported = mechanismSpecific && actionSupportsRetention(item, actionType) && evidenceRelevant
-        && (evidenceSemantic || interfaceEvidence);
+        && evidenceSemantic;
       reason = actionSupportsRetention(item, actionType)
         ? "the supplied evidence does not bind a freshness, validity, revocation, timeout, or completion boundary to this interface"
         : "this action does not establish a retained value, state, authority, mode, or duration that can remain active too long";
@@ -963,18 +1056,33 @@ export function validateApplicabilityEvidence(tag = {}, item = {}) {
       }
     }
   }
+  let architecturePrecludesDeviation = false;
   if (/configuration|authority/i.test(actionType)) {
     const steadyValidConfiguration = /\b(?:active|approved|valid|current)\b/.test(operationalContextText);
     const explicitConfigurationChange = /\b(?:expire|revok|timeout|revision|new version|required update|transition|supersed|change request|activation request)\b/.test(operationalContextText);
     if (steadyValidConfiguration && !explicitConfigurationChange && /providing the control action|too late|wrong order|stopped too soon|applied too long/i.test(guidePhrase)) {
       semanticSupport = false;
+      architecturePrecludesDeviation = true;
       unsupportedReason = "the supplied context describes a valid active configuration and does not establish a change, replacement, revocation, or transition for this deviation";
     }
   }
   if (!semanticSupport) {
+    const receiverAbsorbsEarlyArrival = /\b(?:align|buffer|queue|store|synchron|validate|filter)\b/.test(normalizedEvidenceText(item.to));
+    const potentiallyContractual = (
+      (/too early/.test(guidePhrase)
+        && !receiverAbsorbsEarlyArrival
+        && /command|request|configuration|authority|mode transition|state estimate|information|data|feedback|status|force|resource flow/i.test(actionType))
+      || (/too late/.test(guidePhrase)
+        && /command|request|configuration|authority|mode transition|state estimate|information|data|feedback|status|force|resource flow/i.test(actionType))
+      || (/wrong order/.test(guidePhrase) && actionSupportsOrdering(item, actionType))
+      || (/stopped too soon/.test(guidePhrase) && actionSupportsDuration(item, actionType))
+      || (/applied too long/.test(guidePhrase) && actionSupportsRetention(item, actionType))
+    );
     return {
-      guidePhraseApplicable: "No",
-      guidePhraseApplicabilityRationale: `Not applicable because ${unsupportedReason}.`,
+      guidePhraseApplicable: potentiallyContractual && !architecturePrecludesDeviation ? "Needs Review" : "No",
+      guidePhraseApplicabilityRationale: potentiallyContractual && !architecturePrecludesDeviation
+        ? `Needs review: ${unsupportedReason}; do not invent the missing interface contract.`
+        : `Not applicable because ${unsupportedReason}.`,
       hasCompleteDecision: structured.hasCompleteDecision,
       evidenceGrounded: true,
     };
@@ -994,77 +1102,177 @@ export function deriveStructuredSafetyAssessment(tag = {}, fallback = {}, { appl
     return {
       proposedSafetyAssessment: "Mission/Reliability",
       proposedSafetyAssessmentRationale: "The guide phrase is not applicable in the stated operational context.",
-      safetySignificant: "Needs Review",
+      safetyClassification: SAFETY_CLASSIFICATION.NOT_APPLICABLE,
+      safetyClassificationRule: normalizeSafetyClassificationRule(
+        tag.safetyClassificationRule || tag.classificationRule,
+        SAFETY_CLASSIFICATION.NOT_APPLICABLE,
+        { guidePhrase: item.guidePhrase },
+      ),
+      causalPathType: "None",
+      causalEffect: "Not applicable",
+      resultingSystemState: "Not applicable",
+      intermediateSafetyFunction: "Not applicable",
+      intermediateSafetyEffect: "Not applicable",
+      protectionAssessment: "Not applicable",
+      protectionStatus: PROTECTION_STATUS.ABSENT,
+      physicalHarmChainTermination: "The guide-phrase deviation is not meaningful in this operational context.",
+      classificationEvidence: sanitizeText(tag.classificationEvidence || tag.notApplicableEvidenceQuote),
+      classificationConfidence: normalizeClassificationConfidence(tag.classificationConfidence),
+      safetySignificant: "No",
     };
   }
-  let assessment = normalizeProposedSafetyAssessment(tag.proposedSafetyAssessment, tag.safetySignificant);
+
   const exposureCategory = sanitizeText(tag.safetyExposureCategory);
   const exposurePath = sanitizeText(tag.safetyExposurePath);
   const exposureUnsupported = /^none\b|unsupported/i.test(exposureCategory) || /^none\b|unsupported/i.test(exposurePath);
   const safetyEvidence = groundedEvidence(tag.safetyEvidenceField, tag.safetyEvidenceQuote, item);
   const exposureSupported = Boolean(exposureCategory && exposurePath && !exposureUnsupported && (!requireEvidence || safetyEvidence.grounded));
   const contributionType = sanitizeText(tag.safetyContributionType);
-  const principalSafetyContribution = /^(?:Direct safety control|Safety-critical feedback \/ constraint)$/i.test(contributionType);
   const causalNecessitySupported = normalizeAuditBoolean(tag.causalNecessitySupported);
   const additionalFailureRequired = normalizeAuditBoolean(tag.additionalFailureRequired);
   const safeguardPrecludesPath = normalizeAuditBoolean(tag.safeguardPrecludesPath);
-  const completeCausalDecision = Boolean(
-    contributionType
-    && causalNecessitySupported !== null
-    && additionalFailureRequired !== null
-    && safeguardPrecludesPath !== null
-  );
-  const directSupportedPath = completeCausalDecision
-    && principalSafetyContribution
-    && causalNecessitySupported
-    && !additionalFailureRequired
-    && !safeguardPrecludesPath;
-  const generatedSafetyChain = [
-    exposurePath,
-    tag.proposedSafetyAssessmentRationale,
-    tag.safetySignificanceRationale,
-    fallback.loss,
-    fallback.losses,
-    fallback.hazard,
-    fallback.hazards,
-    fallback.unsafeControlAction,
-    fallback.unsafeControlActions,
-    fallback.causalScenario,
-    fallback.proposedSafetyAssessmentRationale,
-  ].map(sanitizeText).join(" ");
-  const explicitPhysicalHarmPath = /\b(?:collision|crash|injur\w*|fatal\w*|death|physical harm|strik(?:e|ing)|crush\w*|burn\w*|electrocut\w*|toxic release|environmental harm|loss of (?:vehicle|machine|motion|physical) control|unintended (?:physical )?(?:motion|movement|actuation)|vehicle instability|rollover|hazardous energy|damage to (?:a )?safety[- ]critical asset)\b/i.test(generatedSafetyChain);
-  if (requireEvidence) {
-    assessment = exposureSupported && directSupportedPath ? "Safety" : "Mission/Reliability";
-  } else if (explicitPhysicalHarmPath) {
-    assessment = "Safety";
+  const causalEffect = sanitizeText(tag.causalEffect);
+  const resultingSystemState = sanitizeText(tag.resultingSystemState);
+  const intermediateSafetyFunction = sanitizeText(tag.intermediateSafetyFunction);
+  const intermediateSafetyEffect = sanitizeText(tag.intermediateSafetyEffect);
+  const protectionAssessment = sanitizeText(tag.protectionAssessment);
+  const protectionStatus = normalizeProtectionStatus(tag.protectionStatus, protectionAssessment);
+  const physicalHarmChainTermination = sanitizeText(tag.physicalHarmChainTermination);
+  const requestedSafetyClassificationRule = sanitizeText(tag.safetyClassificationRule || tag.classificationRule);
+  const requestedClassification = normalizeSafetyClassification(tag.safetyClassification, {
+    applicable,
+    proposedAssessment: tag.proposedSafetyAssessment,
+    contributionType,
+    causalPathType: tag.causalPathType,
+  });
+  const causalPathType = normalizeSafetyPathType(tag.causalPathType, requestedClassification);
+  const explicitPhysicalHarmPath = containsAffirmativeHarmPath({
+    ...fallback,
+    ...tag,
+    safetyExposurePath: exposurePath,
+    causalEffect,
+    resultingSystemState,
+    intermediateSafetyEffect,
+  });
+  const receiverAuthority = classifyReceiverAuthority(item);
+  const directSupportedPath = requestedClassification === SAFETY_CLASSIFICATION.DIRECT
+    && causalPathType === "Direct"
+    && Boolean(causalEffect && resultingSystemState)
+    && exposureSupported
+    && explicitPhysicalHarmPath
+    && causalNecessitySupported === true
+    && additionalFailureRequired === false
+    && safeguardPrecludesPath === false
+    && authorityPermitsSafety(receiverAuthority.authority);
+  const relatedSupportedPath = requestedClassification === SAFETY_CLASSIFICATION.RELATED
+    && causalPathType === "Contributory"
+    && Boolean(causalEffect && resultingSystemState && intermediateSafetyFunction && intermediateSafetyEffect)
+    && exposureSupported
+    && explicitPhysicalHarmPath
+    && safeguardPrecludesPath === false;
+  const missionSupported = requestedClassification === SAFETY_CLASSIFICATION.MISSION
+    && Boolean(physicalHarmChainTermination)
+    && !explicitPhysicalHarmPath;
+
+  let safetyClassification = SAFETY_CLASSIFICATION.REVIEW;
+  if (!requireEvidence) {
+    safetyClassification = requestedClassification;
+  } else if (directSupportedPath) {
+    safetyClassification = SAFETY_CLASSIFICATION.DIRECT;
+  } else if (relatedSupportedPath) {
+    safetyClassification = SAFETY_CLASSIFICATION.RELATED;
+  } else if (missionSupported) {
+    safetyClassification = SAFETY_CLASSIFICATION.MISSION;
   }
-  const harmRationale = [
-    exposurePath && !exposureUnsupported ? exposurePath : "",
-    tag.proposedSafetyAssessmentRationale,
-    fallback.proposedSafetyAssessmentRationale,
-    fallback.hazards,
-    fallback.hazard,
-    fallback.losses,
-    fallback.loss,
-  ].map(sanitizeText).find((value) => value && /\b(?:collision|crash|injur\w*|fatal\w*|death|physical harm|strik(?:e|ing)|crush\w*|burn\w*|electrocut\w*|toxic release|environmental harm|loss of (?:vehicle|machine|motion|physical) control|unintended (?:physical )?(?:motion|movement|actuation)|vehicle instability|rollover|hazardous energy|safety[- ]critical asset)\b/i.test(value));
-  const causalReviewRationale = requireEvidence && !completeCausalDecision
-    ? "Needs review: the audit did not return a complete causal-necessity decision."
-    : requireEvidence && exposureSupported && !directSupportedPath
-      ? `Mission/Reliability: ${contributionType || "Indirect safety contributor"} does not establish a direct safety-control or safety-critical feedback path without an additional failure or despite an architectural safeguard.`
-      : "";
-  const rationale = causalReviewRationale
-    || (requireEvidence && assessment === "Safety" && explicitPhysicalHarmPath
-    ? `Safety: ${(harmRationale || "The generated causal chain reaches a credible physical-harm state.").replace(/^(?:safety|mission\/reliability):\s*/i, "")}`
-    : requireEvidence && exposurePath
-      ? `${assessment}: ${exposurePath.replace(/^(?:safety|mission\/reliability):\s*/i, "")}`
+
+  const classificationEvidence = sanitizeText(tag.classificationEvidence)
+    || (safetyEvidence.grounded ? `${tag.safetyEvidenceField}: “${safetyEvidence.evidenceQuote}”` : "")
+    || sanitizeText(tag.safetyEvidenceQuote);
+  const candidate = {
+    ...fallback,
+    ...tag,
+    guidePhraseApplicable: "Yes",
+    safetyClassification,
+    safetyClassificationRule: requestedSafetyClassificationRule,
+    causalPathType,
+    causalEffect,
+    resultingSystemState,
+    intermediateSafetyFunction,
+    intermediateSafetyEffect,
+    protectionAssessment,
+    protectionStatus,
+    physicalHarmChainTermination,
+    classificationEvidence,
+  };
+  const validation = validateSafetyClassificationRecord(candidate, item);
+  const validationFindings = [...validation.findings];
+  if (requireEvidence && requestedClassification === SAFETY_CLASSIFICATION.DIRECT && !directSupportedPath) {
+    if (!causalEffect) validationFindings.push("the causal effect on the receiver or controlled process is missing");
+    if (!resultingSystemState) validationFindings.push("the resulting hazardous system state is missing");
+    if (!exposureSupported) validationFindings.push("the exposure path is not grounded in supplied evidence");
+    if (!explicitPhysicalHarmPath) validationFindings.push("a complete path to an L1-L3 mishap or physical harm is not established");
+    if (!protectionAssessment) validationFindings.push("credited independent protections were not assessed");
+    if (additionalFailureRequired !== false) validationFindings.push("the proposed direct path depends on another failure or did not resolve that question");
+    if (safeguardPrecludesPath !== false) validationFindings.push("the effect of credited safeguards is unresolved or breaks the proposed path");
+  }
+  if (requireEvidence && requestedClassification === SAFETY_CLASSIFICATION.RELATED && !relatedSupportedPath) {
+    if (!intermediateSafetyFunction) validationFindings.push("the intermediate safety function, control, barrier, or response is missing");
+    if (!intermediateSafetyEffect) validationFindings.push("the contributory effect on the intermediate safety function is missing");
+    if (!exposureSupported) validationFindings.push("the exposure path is not grounded in supplied evidence");
+    if (!explicitPhysicalHarmPath) validationFindings.push("a complete contributory path to an L1-L3 mishap or physical harm is not established");
+    if (!protectionAssessment) validationFindings.push("credited independent protections were not assessed");
+    if (safeguardPrecludesPath !== false) validationFindings.push("the effect of credited safeguards is unresolved or breaks the proposed path");
+  }
+  if (requireEvidence && requestedClassification === SAFETY_CLASSIFICATION.MISSION && !missionSupported) {
+    if (!physicalHarmChainTermination) validationFindings.push("the point where the physical-harm chain terminates is missing");
+    if (explicitPhysicalHarmPath) validationFindings.push("the Mission/Reliability decision contradicts an asserted L1-L3 or physical-harm path");
+  }
+  if (requestedClassification === SAFETY_CLASSIFICATION.DIRECT && !authorityPermitsSafety(receiverAuthority.authority)) {
+    validationFindings.push(`${receiverAuthority.basis} A direct safety path through this receiver is not established.`);
+  }
+  if (validationFindings.length && safetyClassification !== SAFETY_CLASSIFICATION.REVIEW) {
+    safetyClassification = SAFETY_CLASSIFICATION.REVIEW;
+  }
+
+  const resolvedClassificationRule = normalizeSafetyClassificationRule(
+    safetyClassification === SAFETY_CLASSIFICATION.REVIEW && protectionStatus === PROTECTION_STATUS.UNKNOWN
+      ? "U2"
+      : requestedSafetyClassificationRule,
+    safetyClassification,
+    {
+      guidePhrase: item.guidePhrase,
+      evidence: `${classificationEvidence} ${protectionAssessment} ${validationFindings.join(" ")}`,
+    },
+  );
+
+  const assessment = safetyClassificationRollup(safetyClassification);
+  const resolvedCausalPathType = normalizeSafetyPathType(causalPathType, safetyClassification);
+  const primaryValidationFinding = validationFindings.find((finding) => !/^Needs Review requires/i.test(finding))
+    || validationFindings[0];
+  const rationale = safetyClassification === SAFETY_CLASSIFICATION.REVIEW
+    ? `Needs review: ${primaryValidationFinding || "the audit did not establish a complete, internally consistent causal-path classification."}`
     : sanitizeText(tag.proposedSafetyAssessmentRationale)
       || sanitizeText(tag.safetySignificanceRationale)
-      || sanitizeText(fallback.proposedSafetyAssessmentRationale)
-      || "Needs review: proposed safety assessment rationale was not generated.");
+      || (safetyClassification === SAFETY_CLASSIFICATION.MISSION
+        ? `Mission/Reliability: the supported physical-harm chain terminates at ${physicalHarmChainTermination}.`
+        : `${safetyClassification}: ${exposurePath}`);
   return {
     proposedSafetyAssessment: assessment,
     proposedSafetyAssessmentRationale: rationale,
-    safetySignificant: assessment === "Safety" ? "Yes" : "Needs Review",
+    safetyClassification,
+    safetyClassificationRule: resolvedClassificationRule,
+    causalPathType: resolvedCausalPathType,
+    causalEffect,
+    resultingSystemState,
+    intermediateSafetyFunction,
+    intermediateSafetyEffect,
+    protectionAssessment,
+    protectionStatus,
+    physicalHarmChainTermination,
+    classificationEvidence,
+    classificationConfidence: normalizeClassificationConfidence(tag.classificationConfidence),
+    safetySignificant: safetySignificanceValue(safetyClassification),
+    receiverAuthority: receiverAuthority.authority,
   };
 }
 
@@ -1105,7 +1313,7 @@ function rationaleClaimsAdverseMechanism(value = "") {
 }
 
 function hasExplicitSafetyExposure(row = {}) {
-  return /\b(?:collision|injur|fatal|physical harm|loss of control|unintended (?:motion|movement)|instability|environmental harm|safety[- ]critical asset|security control|critical data integrity|bystander|occupant|resident)\b/i.test([
+  return /\b(?:L[1-3]|collision|injur|fatal|physical harm|physical (?:asset|property|equipment|infrastructure) damage|hazardous energy|loss of control|unintended (?:motion|movement)|instability|environmental harm|safety[- ]critical asset|security control|critical data integrity|bystander|occupant|resident)\b/i.test([
     row.losses,
     row.loss,
     row.hazards,
@@ -1127,6 +1335,7 @@ export function findConsistencyReconciliationIndexes(rows = [], items = []) {
     if (applicable && /\b(?:does not|no meaningful|not applicable|unsupported|precluded)\b/i.test(rationale)) indexes.add(index);
     if (applicable && normalizeProposedSafetyAssessment(row.proposedSafetyAssessment, row.safetySignificant) === "Mission/Reliability" && hasExplicitSafetyExposure(row)) indexes.add(index);
     if (!applicable && /applied too long/i.test(sanitizeText(items[index]?.guidePhrase)) && /\b(?:stale|outdated|expired|beyond (?:its )?validity|revoked)\b/i.test(rationale)) indexes.add(index);
+    if (validateSafetyClassificationRecord(row, items[index]).findings.length) indexes.add(index);
   });
   groups.forEach((groupIndexes) => {
     const guideCount = new Set(groupIndexes.map((index) => sanitizeText(items[index]?.guidePhrase).toLowerCase()).filter(Boolean)).size;
@@ -1363,9 +1572,13 @@ Quality rules:
 - Use semanticDeviation as the action-type-specific meaning of the guide phrase. For continuous information, distinguish fresh updates from the same stale value remaining active or consumed beyond its validity interval.
 - Distinguish hazards whose mechanism, system state, exposure, or consequence changes across operational contexts. Do not collapse contextual variants into generic wording.
 - A hazard must name the resulting system state and exposure or consequence; do not stop at "navigation error", "processing error", "degraded performance", "incorrect behavior", "system failure", or "unsafe state".
-- proposedSafetyAssessment must be exactly Safety or Mission/Reliability, with a concise proposedSafetyAssessmentRationale grounded in the generated hazard and operational context.
-- If the generated chain includes a credible path to injury, collision, loss of control, instability, unintended physical motion, environmental harm, or damage to safety-critical assets, classify it as Safety even if reliability or mission effects also exist.
-- safetySignificant must be exactly Yes when proposedSafetyAssessment is Safety, otherwise Needs Review, with a concise safetySignificanceRationale.
+- safetyClassification must be exactly Safety — Direct, Safety — Related, Mission/Reliability, Needs Review, or Not Applicable and must apply the supplied organization policy when present.
+- Safety — Direct requires a complete path from causalEffect through resultingSystemState to an L1-L3 mishap/loss without another undocumented failure. Safety — Related requires a named intermediateSafetyFunction and intermediateSafetyEffect on the supported path to L1-L3.
+- proposedSafetyAssessment remains the compatibility rollup: Safety for either Safety classification and Mission/Reliability otherwise.
+- For Mission/Reliability, physicalHarmChainTermination must identify where the physical-harm path ends. If required evidence is missing, use Needs Review rather than inventing a path.
+- safetyClassificationRule must use a matching governed D1-D3, R1-R4, M1-M4, N1-N4, or U1-U4 rule. causalPathType must be Direct, Contributory, None, or Uncertain.
+- protectionAssessment must identify credited protections. protectionStatus must be exactly Effective, Ineffective/Unavailable, Absent, or Unknown for this context. An assumed, unconfirmed, unevidenced, or TBD protection is Unknown, not Effective. classificationEvidence must cite supplied evidence or an explicitly labeled assumption; classificationConfidence must be High, Medium, or Low.
+- safetySignificant must be Yes for Safety — Direct or Safety — Related, No for Mission/Reliability or Not Applicable, and Needs Review for Needs Review.
 
 Rows:
 ${JSON.stringify(compactPromptRows(items))}
@@ -1514,7 +1727,7 @@ Project / operational context:
 ${operationalContextBlock || "No explicit project or operational context was available. Infer cautiously from row evidence only."}
 
 Return ONLY a JSON array. Each object must include:
-id, semanticMeaningful, receiverCanBeAffected, contextSupportsMechanism, adverseStateSupported, guidePhraseApplicable, guidePhraseApplicabilityRationale, applicabilityMechanism, applicabilityEvidenceField, applicabilityEvidenceQuote, strongestReasonForNo, notApplicableReasonCode, notApplicableEvidenceField, notApplicableEvidenceQuote, proposedSafetyAssessment, proposedSafetyAssessmentRationale, safetyExposureCategory, safetyExposurePath, safetyEvidenceField, safetyEvidenceQuote, safetyContributionType, causalNecessitySupported, additionalFailureRequired, safeguardPrecludesPath, safetySignificant, safetySignificanceRationale.
+id, semanticMeaningful, receiverCanBeAffected, contextSupportsMechanism, adverseStateSupported, guidePhraseApplicable, guidePhraseApplicabilityRationale, applicabilityMechanism, applicabilityEvidenceField, applicabilityEvidenceQuote, strongestReasonForNo, notApplicableReasonCode, notApplicableEvidenceField, notApplicableEvidenceQuote, proposedSafetyAssessment, proposedSafetyAssessmentRationale, safetyClassification, safetyClassificationRule, causalPathType, causalEffect, resultingSystemState, intermediateSafetyFunction, intermediateSafetyEffect, protectionAssessment, protectionStatus, physicalHarmChainTermination, classificationEvidence, classificationConfidence, safetyExposureCategory, safetyExposurePath, safetyEvidenceField, safetyEvidenceQuote, safetyContributionType, causalNecessitySupported, additionalFailureRequired, safeguardPrecludesPath, safetySignificant, safetySignificanceRationale.
 
 Applicability and safety rules:
 - Re-decide applicability independently; do not defer to generated.guidePhraseApplicable or let the candidate Hazard/Loss create facts that are absent from the functional row and operational context. Decide applicability from row semantics and context first, then use generated text only to classify a supported adverse path.
@@ -1545,24 +1758,36 @@ Applicability and safety rules:
 - If a valid configuration, map, authority, mode, or other state is already active in a steady-state scenario, do not assume that a new update is required unless the supplied row/context says so.
 - When the action type is External input / disturbance, assess the system's ability to detect and respond; do not assume the system controls the external condition.
 - Assess each context independently. Do not assume all guide phrases apply, and do not manufacture balance or satisfy a quota.
-- If guidePhraseApplicable is No, proposedSafetyAssessment must be Mission/Reliability and safetySignificant must be Needs Review.
+- If guidePhraseApplicable is No, safetyClassification must be Not Applicable, proposedSafetyAssessment must be Mission/Reliability, and safetySignificant must be No.
 - Keep each rationale to one concrete sentence of no more than 30 words so every supplied row fits in the response.
 - proposedSafetyAssessment must be exactly one of: Safety or Mission/Reliability.
 - proposedSafetyAssessmentRationale must briefly explain why the row belongs in Safety or Mission/Reliability, using the generated row text and supplied project/code context.
+- safetyClassification must be exactly one of: Safety — Direct; Safety — Related; Mission/Reliability; Needs Review; Not Applicable. Both Safety classifications roll up to proposedSafetyAssessment Safety; every other classification rolls up to Mission/Reliability.
+- causalPathType must be exactly Direct, Contributory, None, or Uncertain.
+- Safety — Direct means the causal effect itself creates a hazardous system state that can directly result in a supported L1-L3 mishap/loss in this context, without another undocumented failure.
+- Safety — Related means the causal effect credibly contributes to, enables, masks, delays detection of, or prevents mitigation of a named causal condition that can directly result in a supported L1-L3 mishap/loss. Name the intermediate safety function/control/barrier/response and the effect on it.
+- Mission/Reliability means the supported chain ends at mission, availability, performance, quality, maintenance, financial, or operational effects. physicalHarmChainTermination must identify exactly where and why the path to L1-L3 terminates.
+- Use Needs Review when architecture, authority, timing, exposure, downstream effect, fallback, or protection evidence required for classification is missing. State the missing evidence rather than inventing it.
+- safetyClassificationRule must contain the applicable organization-profile rule id when supplied. Otherwise use the generic compatible ids D1-D3, R1-R4, M1-M4, N1-N4, or U1-U4 described by the classification policy.
+- causalEffect must state the effect on the receiver or controlled process. resultingSystemState must state the system-level condition that follows.
+- For Safety — Related, intermediateSafetyFunction and intermediateSafetyEffect are mandatory. For other outcomes use an empty string when no intermediate path exists.
+- protectionAssessment must explain each credited protection. protectionStatus must be exactly Effective, Ineffective/Unavailable, Absent, or Unknown in this exact context. Assumed, unconfirmed, not evidenced, TBD, or pending-confirmation protection is Unknown and requires Needs Review rather than a definitive Safety classification.
+- classificationEvidence must cite the project/interface/context evidence or explicitly labeled assumption supporting the classification. classificationConfidence must be High, Medium, or Low.
 - safetyExposureCategory must be exactly one of: People; Environment; Physical asset; Safety or security control; Critical data integrity; None / unsupported.
 - safetyExposurePath must name the concrete exposed entity/control/integrity property and the context-supported path from the adverse state. Use "None / unsupported" when the candidate stops at an internal error, degraded accuracy, mission loss, or generic downstream impact.
 - safetyContributionType must be exactly one of: Direct safety control; Safety-critical feedback / constraint; Indirect safety contributor; Mission / reliability.
 - causalNecessitySupported, additionalFailureRequired, and safeguardPrecludesPath must each be exactly Yes or No. Test the exact interface deviation: whether it can create the hazardous state through the named receiver, whether an additional undocumented failure is required, and whether a stated architectural safeguard contains the path.
-- Classify Safety only when the interface is a Direct safety control or Safety-critical feedback / constraint, causalNecessitySupported is Yes, additionalFailureRequired is No, safeguardPrecludesPath is No, and the exposure evidence is grounded. Nearby people or hazardous operating conditions alone do not turn an indirect mission failure into a Safety result.
+- Classify Safety — Direct only when the interface directly creates the hazardous state, causalNecessitySupported is Yes, additionalFailureRequired is No, safeguardPrecludesPath is No, and exposure evidence is grounded.
+- Classify Safety — Related when the interface has a grounded, architecture-supported contributory path through a named intermediate safety function or causal condition to the mishap. An additional causal step is allowed only when that step is explicitly identified and supported; a theoretical downstream possibility is insufficient.
 - When the system is explicitly required to remain safe without an external report, dispatch update, remote service, or advisory input, treat loss of that interface as contained unless the supplied architecture establishes failure of the local safeguard.
 - For Safety, safetyEvidenceField must use the same allowed field names as applicabilityEvidenceField, and safetyEvidenceQuote must be an exact verbatim excerpt establishing the exposed entity, safety-critical operation, or harm-relevant operating condition. Without an exact supporting excerpt, classify Mission/Reliability.
-- Mark Safety when the row describes a credible path to harm involving people, operators, bystanders, environment, physical assets, security/safety controls, critical data integrity, loss of control, or another safety-relevant hazardous state in the stated project context.
+- Mark Safety only when the row describes a complete Direct or Related path to harm involving people, operators, bystanders, environment, physical assets, loss of control, or another safety-relevant hazardous state in the stated project context.
 - If the generated Loss, Hazard, UCA, causal scenario, or exposure path explicitly reaches collision, injury, fatality, physical harm, hazardous energy, unintended physical motion, or loss of physical control, classify Safety. Do not label such a row Mission/Reliability merely because mission or availability effects also exist.
 - Mark Mission/Reliability when the row is mainly about routine reliability, mission availability/performance, developer experience, formatting, logging, non-critical latency, internal cleanup, recoverable behavior, ambiguity, insufficient support, or assumptions not present in the row/context.
 - Applicable does not imply Safety. Require a credible safety-relevant system state and exposure or harm path; otherwise use Mission/Reliability.
-- safetySignificant must be exactly one of: Yes or Needs Review. Never output No.
-- Set safetySignificant to Yes when proposedSafetyAssessment is Safety.
-- Set safetySignificant to Needs Review when proposedSafetyAssessment is Mission/Reliability.
+- safetySignificant must be exactly one of: Yes, No, or Needs Review. Use Yes for Safety — Direct or Safety — Related, No for Mission/Reliability or Not Applicable, and Needs Review only for Needs Review.
+- A reporting-only receiver normally supports M3 Mission/Reliability. It may be Safety — Related only when the architecture establishes a named protective response, the report is necessary to initiate or sustain it, and the response can occur within time-to-harm.
+- Do not assume a remote operator, fleet service, status consumer, or external stakeholder has protective authority. Missing authority evidence requires Needs Review, not a fabricated Safety or Mission conclusion.
 - Do not change the hazard text or requirements. Only classify the row.
 - Do not hardcode or assume any specific domain when context is absent.
 - Base the rationale on the generated hazard/requirement text, functional decomposition row, traceability/source symbols/files, and project/operational context.
@@ -1576,7 +1801,7 @@ ${JSON.stringify(tagItems.map(({ item, row }) => ({
 
   const response = await fetchLLMResponse(prompt, {}, undefined, "", {
     signal: contextOptions.signal,
-    maxTokens: 7_000,
+    maxTokens: 10_000,
     workflow: "hazard-safety-audit",
   });
   return extractJsonArray(response);
@@ -1593,6 +1818,18 @@ function mergeAuditTag(config, row, item, index, tag = {}, { requireChallengeEvi
     ? {
       proposedSafetyAssessment: "Mission/Reliability",
       proposedSafetyAssessmentRationale: "Needs review: guide-phrase applicability could not be validated without a grounded positive decision or a valid non-applicability proof.",
+      safetyClassification: SAFETY_CLASSIFICATION.REVIEW,
+      safetyClassificationRule: "U4",
+      causalPathType: "Uncertain",
+      causalEffect: sanitizeText(tag.causalEffect),
+      resultingSystemState: sanitizeText(tag.resultingSystemState),
+      intermediateSafetyFunction: sanitizeText(tag.intermediateSafetyFunction),
+      intermediateSafetyEffect: sanitizeText(tag.intermediateSafetyEffect),
+      protectionAssessment: sanitizeText(tag.protectionAssessment) || "Unknown",
+      protectionStatus: PROTECTION_STATUS.UNKNOWN,
+      physicalHarmChainTermination: sanitizeText(tag.physicalHarmChainTermination),
+      classificationEvidence: sanitizeText(tag.classificationEvidence),
+      classificationConfidence: normalizeClassificationConfidence(tag.classificationConfidence),
       safetySignificant: "Needs Review",
     }
     : deriveStructuredSafetyAssessment(tag, row, {
@@ -1607,6 +1844,18 @@ function mergeAuditTag(config, row, item, index, tag = {}, { requireChallengeEvi
     guidePhraseApplicabilityRationale: auditedRationale,
     proposedSafetyAssessment: safetyAssessment.proposedSafetyAssessment,
     proposedSafetyAssessmentRationale: safetyAssessment.proposedSafetyAssessmentRationale,
+    safetyClassification: safetyAssessment.safetyClassification,
+    safetyClassificationRule: safetyAssessment.safetyClassificationRule,
+    causalPathType: safetyAssessment.causalPathType,
+    causalEffect: safetyAssessment.causalEffect,
+    resultingSystemState: safetyAssessment.resultingSystemState,
+    intermediateSafetyFunction: safetyAssessment.intermediateSafetyFunction,
+    intermediateSafetyEffect: safetyAssessment.intermediateSafetyEffect,
+    protectionAssessment: safetyAssessment.protectionAssessment,
+    protectionStatus: safetyAssessment.protectionStatus,
+    physicalHarmChainTermination: safetyAssessment.physicalHarmChainTermination,
+    classificationEvidence: safetyAssessment.classificationEvidence,
+    classificationConfidence: safetyAssessment.classificationConfidence,
     safetySignificant: safetyAssessment.safetySignificant,
     safetySignificanceRationale: safetyAssessment.proposedSafetyAssessmentRationale,
   }, item, index);
@@ -1698,9 +1947,15 @@ Repair rules:
 - For a No decision, strongestReasonForNo must state the interface-specific reason. Do not use the completed distribution as evidence.
 - Every No decision must satisfy the same proof obligation as the independent audit. Set notApplicableReasonCode to exactly one of: Semantic mismatch; Receiver unaffected; Architecture precludes deviation; No adverse state in context. Cite a short exact supporting excerpt in notApplicableEvidenceField and notApplicableEvidenceQuote. Lack of literal failure wording is not proof.
 - Set safetyContributionType to exactly one of: Direct safety control; Safety-critical feedback / constraint; Indirect safety contributor; Mission / reliability. Set causalNecessitySupported, additionalFailureRequired, and safeguardPrecludesPath to Yes or No after testing the exact receiver path and stated safeguards.
-- Do not classify an indirect contributor as Safety merely because people or physical assets are present in the shared operational context. Safety requires a grounded direct control or safety-critical feedback/constraint path that does not depend on an additional undocumented failure.
+- Set safetyClassification to exactly one of: Safety — Direct; Safety — Related; Mission/Reliability; Needs Review; Not Applicable. Set causalPathType to Direct, Contributory, None, or Uncertain and supply the matching D1-D3, R1-R4, M1-M4, N1-N4, or U1-U4 rule id.
+- Safety — Direct requires causalEffect, resultingSystemState, a grounded exposure and L1-L3 path, and no additional undocumented failure or effective independent protection.
+- Safety — Related requires causalEffect, resultingSystemState, intermediateSafetyFunction, intermediateSafetyEffect, a grounded contributory path to L1-L3, and no effective independent protection that breaks the path.
+- Mission/Reliability requires physicalHarmChainTermination. Do not retain L1-L3 or physical-harm wording while classifying Mission/Reliability unless the rationale explicitly identifies why that proposed chain is unsupported and removes it from the repaired Hazard/Loss.
+- Use Needs Review when required architecture, authority, exposure, timing, downstream-effect, or protection evidence is unavailable. Do not force a definitive classification.
+- A reporting-only receiver may be Safety — Related only when a named, evidenced protective response depends on that interface within time-to-harm. Otherwise use Mission/Reliability or Needs Review.
+- Do not classify an indirect contributor as Safety merely because people or physical assets are present in the shared operational context. A theoretical downstream possibility without a named, supported intermediate mechanism is insufficient.
 - If the repaired decision is Yes, regenerate every hazard-bearing field as a complete, concrete row; do not leave Not applicable text in Loss, Hazard, UCA, causal, mitigation, constraint, or requirement fields.
-- If the repaired decision is No, use Mission/Reliability and Needs Review for safety significance. The application will normalize hazard-bearing fields to Not applicable.
+- If the repaired applicability decision is No, use Not Applicable and No for safety significance. The application will normalize hazard-bearing fields to Not applicable.
 - causalFactorCategory must match the primary initiating mechanism, not a secondary consequence. Use only the allowed category vocabulary from the original analysis instructions.
 - Preserve TBD parameter discipline and allocate requirements to an exact source function, target function, or named subsystem.
 
@@ -1795,33 +2050,39 @@ async function repairHazardAuditAnomalies(config, rows, items, contextOptions = 
 const LOSS_CONSEQUENCE_CLASSES = [
   {
     key: "people",
-    pattern: /\b(?:injur\w*|fatal\w*|death|loss of life|physical harm|casualt\w*)\b/i,
+    preferredId: "L1",
+    pattern: /\b(?:L1|injur\w*|fatal\w*|death|loss of life|physical harm|casualt\w*)\b/i,
     statement: "People suffer injury or loss of life.",
   },
   {
-    key: "environment",
-    pattern: /\b(?:environmental harm|environmental damage|contaminat\w*|pollut\w*|toxic release|spill)\b/i,
-    statement: "The environment is harmed or contaminated.",
-  },
-  {
     key: "asset",
-    pattern: /\b(?:property|equipment|infrastructure|payload|physical asset|asset damage|vehicle damage|machine damage)\b/i,
+    preferredId: "L2",
+    pattern: /\b(?:L2|property|equipment|infrastructure|payload|physical asset|asset damage|vehicle damage|machine damage)\b/i,
     statement: "Property, equipment, infrastructure, or other physical assets are damaged.",
   },
   {
+    key: "environment",
+    preferredId: "L3",
+    pattern: /\b(?:L3|environmental harm|environmental damage|contaminat\w*|pollut\w*|toxic release|spill)\b/i,
+    statement: "The environment is harmed or contaminated.",
+  },
+  {
     key: "mission",
-    pattern: /\b(?:loss of mission|mission loss|loss of service|service loss|loss of mobility|immobili\w*|production loss|loss of production|loss of operational (?:control|capability)|operational capability is lost)\b/i,
+    preferredId: "L4",
+    pattern: /\b(?:L4|loss of mission|mission loss|loss of service|service loss|loss of mobility|immobili\w*|production loss|loss of production|loss of operational (?:control|capability)|operational capability is lost)\b/i,
     statement: "Mission, service, mobility, production, or operational capability is lost.",
   },
   {
     key: "security",
-    pattern: /\b(?:security compromise|security control|protected information|confidential\w*|privacy|unauthorized disclosure|unauthorized access)\b/i,
-    statement: "Protected information or security controls are compromised.",
+    preferredId: "L5",
+    pattern: /\b(?:L5|security compromise|security control|protected information|confidential\w*|privacy|unauthorized disclosure|unauthorized access|critical data integrity|safety-critical data|loss of data integrity|integrity of critical)\b/i,
+    statement: "Protected information, security controls, or critical information integrity is compromised.",
   },
   {
-    key: "critical-integrity",
-    pattern: /\b(?:critical data integrity|safety-critical data|loss of data integrity|integrity of critical)\b/i,
-    statement: "The integrity of critical information is lost.",
+    key: "business",
+    preferredId: "L6",
+    pattern: /\b(?:L6|trust|reputation|commercial harm|business loss)\b/i,
+    statement: "Trust, reputation, or commercial value is harmed.",
   },
 ];
 
@@ -1835,26 +2096,116 @@ function lossConsequenceClassKeys(value = "") {
 export function ensureCanonicalLossClassCoverage(catalogInput = {}, applicableItems = []) {
   const catalog = normalizedCanonicalCatalog(catalogInput);
   const supportedClasses = new Set();
+  const explicitlyGovernedClasses = new Set();
   applicableItems.forEach(({ row }) => {
-    lossConsequenceClassKeys(row?.rawLossCandidate || row?.losses || row?.loss)
+    const rawLoss = row?.rawLossCandidate || row?.losses || row?.loss;
+    lossConsequenceClassKeys(rawLoss)
       .forEach((key) => supportedClasses.add(key));
+    LOSS_CONSEQUENCE_CLASSES.forEach(({ key, preferredId }) => {
+      if (new RegExp(`\\b${preferredId}\\b`, "i").test(sanitizeText(rawLoss))) explicitlyGovernedClasses.add(key);
+    });
   });
-  const representedClasses = new Set();
   catalog.losses.forEach(({ statement }) => {
-    lossConsequenceClassKeys(statement).forEach((key) => representedClasses.add(key));
+    lossConsequenceClassKeys(statement).forEach((key) => supportedClasses.add(key));
   });
-  const usedIds = new Set(catalog.losses.map(({ id }) => id.toUpperCase()));
-  let nextId = 1;
-  LOSS_CONSEQUENCE_CLASSES.forEach(({ key, statement }) => {
-    if (!supportedClasses.has(key) || representedClasses.has(key)) return;
-    while (usedIds.has(`L-${nextId}`)) nextId += 1;
-    const id = `L-${nextId}`;
-    catalog.losses.push({ id, statement });
-    usedIds.add(id);
-    representedClasses.add(key);
-    nextId += 1;
+  const entriesByClass = new Map();
+  catalog.losses.forEach((entry) => {
+    const keys = lossConsequenceClassKeys(entry.statement);
+    if (keys.length === 1 && !entriesByClass.has(keys[0])) entriesByClass.set(keys[0], entry);
   });
+  const governedLosses = LOSS_CONSEQUENCE_CLASSES
+    .filter(({ key }) => supportedClasses.has(key))
+    .map(({ key, preferredId, statement }) => ({
+      id: explicitlyGovernedClasses.has(key) ? preferredId : (entriesByClass.get(key)?.id || preferredId),
+      statement: entriesByClass.get(key)?.statement || statement,
+    }));
+  const unclassifiedLosses = catalog.losses
+    .filter((entry) => lossConsequenceClassKeys(entry.statement).length === 0)
+    .slice(0, 4)
+    .map((entry, index) => ({ ...entry, id: `L${LOSS_CONSEQUENCE_CLASSES.length + index + 1}` }));
+  catalog.losses = [...governedLosses, ...unclassifiedLosses];
   return catalog;
+}
+
+const CANONICAL_HAZARD_FAMILIES = [
+  { key: "UNSAFE_MOTION", pattern: /\b(?:collision|crash|strike|rollover|instability|unsafe motion|uncontrolled motion|loss of (?:vehicle|machine|motion|physical) control|trajectory deviation)\b/i, statement: "The controlled system has unsafe or uncontrolled motion while people, property, or the environment are exposed." },
+  { key: "UNINTENDED_ACTUATION", pattern: /\b(?:unintended|unexpected|spurious|unauthorized|incorrect)\b.{0,50}\b(?:actuat|command|force|torque|brak|steer|throttle|movement)\w*/i, statement: "The controlled system applies an unintended or incorrect physical action." },
+  { key: "CONTROL_UNAVAILABLE", pattern: /\b(?:unable|unavailable|insufficient|missing|loss of)\b.{0,55}\b(?:control|actuat|brak|steer|stop|response|command|maneuver)\w*/i, statement: "The controlled system cannot provide a required control or protective response when needed." },
+  { key: "INVALID_STATE", pattern: /\b(?:invalid|incorrect|stale|inconsistent|corrupt|uncertain|unconfirmed|misaligned)\b.{0,60}\b(?:state|estimate|position|pose|map|perception|status|data|information|model)\w*/i, statement: "The system operates using an invalid, inconsistent, or stale representation of its state or environment." },
+  { key: "UNSAFE_PLAN", pattern: /\b(?:invalid|incorrect|unsafe|stale|unconfirmed|unauthorized)\b.{0,60}\b(?:plan|route|trajectory|goal|decision|behavior|task|mission)\w*/i, statement: "The system selects or executes behavior that is inconsistent with the current mission, constraints, or environment." },
+  { key: "PROTECTION_DEGRADED", pattern: /\b(?:protect|barrier|safeguard|monitor|fault detection|warning|recovery|minimum.?risk|safe.?state)\w*.{0,60}\b(?:unavailable|degraded|disabled|masked|bypassed|late|ineffective|fails?)\b/i, statement: "A required protective, monitoring, containment, or recovery function is unavailable or ineffective when demanded." },
+  { key: "UNSAFE_MODE_AUTHORITY", pattern: /\b(?:mode|authority|authorization|responsibility|control transition|configuration)\b.{0,65}\b(?:invalid|incorrect|unsafe|ambiguous|conflict|stale|unauthorized)\w*/i, statement: "The system operates with an unsafe or ambiguous mode, authority, responsibility, or configuration state." },
+  { key: "HAZARDOUS_ENERGY_RELEASE", pattern: /\b(?:hazardous energy|toxic release|loss of containment|spill|overpressure|overheat|fire|electrical hazard|uncontrolled release)\b/i, statement: "People, property, or the environment are exposed to uncontrolled hazardous energy or material." },
+  { key: "UNSAFE_EXPOSURE", pattern: /\b(?:expos|separation|clearance|occupied|conflict point|obstruction|blocked|travel lane|work envelope)\w*/i, statement: "The system or an exposed entity occupies an unsafe location or lacks required separation or clearance." },
+  { key: "SECURITY_INTEGRITY", pattern: /\b(?:security|cyber|unauthorized access|protected information|critical data integrity)\b/i, statement: "Security or critical information integrity is compromised in a way that can affect system operation." },
+  { key: "MISSION_AVAILABILITY", pattern: /\b(?:mission|service|production|availability|dispatch|tracking|reporting|operational capability)\b/i, statement: "Required mission or operational capability is unavailable, degraded, or incorrectly coordinated." },
+];
+
+function hazardFamily(value = "") {
+  const source = sanitizeText(value);
+  return CANONICAL_HAZARD_FAMILIES.find(({ pattern }) => pattern.test(source))
+    || { key: "OTHER", statement: "The system enters a hazardous or operationally unacceptable state." };
+}
+
+const CANONICAL_TOKEN_STOP_WORDS = new Set(["about", "after", "before", "because", "being", "causes", "causing", "control", "during", "function", "hazard", "resulting", "system", "through", "while", "with", "without"]);
+
+function canonicalTokens(value = "") {
+  return new Set(normalizedEvidenceText(value).split(" ").filter((token) => token.length >= 4 && !CANONICAL_TOKEN_STOP_WORDS.has(token)));
+}
+
+function lexicalCanonicalScore(left = "", right = "") {
+  const leftTokens = canonicalTokens(left);
+  const rightTokens = canonicalTokens(right);
+  let overlap = 0;
+  leftTokens.forEach((token) => { if (rightTokens.has(token)) overlap += 1; });
+  return overlap / Math.max(1, Math.min(leftTokens.size, rightTokens.size));
+}
+
+function fallbackCanonicalHazard(rawHazardCandidate = "", catalogHazards = []) {
+  const family = hazardFamily(rawHazardCandidate);
+  const sameFamily = catalogHazards.filter((entry) => hazardFamily(entry.statement).key === family.key);
+  const candidates = sameFamily.length ? sameFamily : catalogHazards;
+  const best = [...candidates]
+    .sort((left, right) => lexicalCanonicalScore(rawHazardCandidate, right.statement) - lexicalCanonicalScore(rawHazardCandidate, left.statement))[0];
+  return best || { id: `H-${family.key}`, statement: family.statement };
+}
+
+export function findCanonicalVocabularyReviewIndexes(rows = []) {
+  const applicable = rows
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => normalizeGuidePhraseApplicability(row.guidePhraseApplicable) === "Yes");
+  if (applicable.length < 20) return [];
+  const hazardGroups = new Map();
+  applicable.forEach(({ row, index }) => {
+    const id = sanitizeText(row.canonicalHazardId);
+    if (!hazardGroups.has(id)) hazardGroups.set(id, []);
+    hazardGroups.get(id).push(index);
+  });
+  const suspiciousCatalogSize = hazardGroups.size > Math.max(15, Math.ceil(applicable.length * 0.5));
+  if (!suspiciousCatalogSize) return [];
+  return Array.from(hazardGroups.values())
+    .filter((indexes) => indexes.length <= 2)
+    .flat()
+    .sort((left, right) => left - right);
+}
+
+export function reconcileCanonicalVocabulary(rows = []) {
+  const reviewIndexes = new Set(findCanonicalVocabularyReviewIndexes(rows));
+  if (!reviewIndexes.size) return rows;
+  return rows.map((row, index) => {
+    if (!reviewIndexes.has(index)) return row;
+    const rawHazardCandidate = sanitizeText(row.rawHazardCandidate || row.hazards || row.hazard);
+    const family = hazardFamily(rawHazardCandidate);
+    const rawLossClasses = lossConsequenceClassKeys(row.rawLossCandidate || row.losses || row.loss);
+    const canonicalLosses = LOSS_CONSEQUENCE_CLASSES.filter(({ key }) => rawLossClasses.includes(key));
+    return {
+      ...row,
+      hazards: family.statement,
+      canonicalHazardId: `H-${family.key}`,
+      losses: canonicalLosses.length ? canonicalLosses.map(({ statement }) => statement).join("; ") : row.losses,
+      canonicalLossId: canonicalLosses.length ? canonicalLosses.map(({ preferredId }) => preferredId).join(", ") : "L-UNCLASSIFIED",
+    };
+  });
 }
 
 function canonicalCandidate(row = {}, item = {}) {
@@ -1953,7 +2304,10 @@ function normalizedCanonicalCatalog(catalog = {}) {
 }
 
 export function applyCanonicalRiskVocabulary(rows = [], items = [], catalogInput = {}, mappings = []) {
-  const catalog = normalizedCanonicalCatalog(catalogInput);
+  const applicableItems = rows
+    .map((row, index) => ({ row, item: items[index] }))
+    .filter(({ row }) => normalizeGuidePhraseApplicability(row.guidePhraseApplicable) === "Yes");
+  const catalog = ensureCanonicalLossClassCoverage(catalogInput, applicableItems);
   const lossesById = new Map(catalog.losses.map((entry) => [entry.id.toUpperCase(), entry.statement]));
   const hazardsById = new Map(catalog.hazards.map((entry) => [entry.id.toUpperCase(), entry.statement]));
   const mappingsById = generatedRowsById(mappings);
@@ -1975,7 +2329,11 @@ export function applyCanonicalRiskVocabulary(rows = [], items = [], catalogInput
     const requestedLossIds = (Array.isArray(mapping.canonicalLossIds)
       ? mapping.canonicalLossIds
       : sanitizeText(mapping.canonicalLossId).split(/\s*[,;]\s*/))
-      .map((id) => sanitizeText(id).toUpperCase())
+      .map((id) => {
+        const requestedId = sanitizeText(id).toUpperCase();
+        if (lossesById.has(requestedId)) return requestedId;
+        return requestedId.replace(/^L-(\d+)$/, "L$1");
+      })
       .filter((id) => lossesById.has(id));
     const rawLossClasses = new Set(lossConsequenceClassKeys(rawLossCandidate));
     catalog.losses.forEach((entry) => {
@@ -1983,17 +2341,23 @@ export function applyCanonicalRiskVocabulary(rows = [], items = [], catalogInput
       if (entryClasses.some((key) => rawLossClasses.has(key))) requestedLossIds.push(entry.id.toUpperCase());
     });
     const canonicalLossIds = Array.from(new Set(requestedLossIds));
-    const canonicalHazardId = sanitizeText(mapping.canonicalHazardId).toUpperCase();
+    const requestedCanonicalHazardId = sanitizeText(mapping.canonicalHazardId).toUpperCase();
     const canonicalLosses = canonicalLossIds.map((id) => lossesById.get(id)).filter(Boolean);
-    const canonicalHazard = hazardsById.get(canonicalHazardId);
+    const requestedCanonicalHazard = hazardsById.get(requestedCanonicalHazardId);
+    const rawFamily = hazardFamily(rawHazardCandidate).key;
+    const requestedFamily = hazardFamily(requestedCanonicalHazard).key;
+    const canonicalHazardEntry = requestedCanonicalHazard
+      && (rawFamily === "OTHER" || requestedFamily === rawFamily)
+      ? { id: requestedCanonicalHazardId, statement: requestedCanonicalHazard }
+      : fallbackCanonicalHazard(rawHazardCandidate, catalog.hazards);
     return {
       ...row,
       rawLossCandidate,
       rawHazardCandidate,
       losses: canonicalLosses.length ? Array.from(new Set(canonicalLosses)).join("; ") : rawLossCandidate,
-      hazards: canonicalHazard || rawHazardCandidate,
-      canonicalLossId: canonicalLossIds.length ? canonicalLossIds.join(", ") : createSafetyModelId("L", rawLossCandidate),
-      canonicalHazardId: canonicalHazard ? canonicalHazardId : createSafetyModelId("H", rawHazardCandidate),
+      hazards: canonicalHazardEntry.statement,
+      canonicalLossId: canonicalLossIds.length ? canonicalLossIds.join(", ") : "L-UNCLASSIFIED",
+      canonicalHazardId: canonicalHazardEntry.id,
     };
   });
 }
@@ -2027,11 +2391,18 @@ async function canonicalizeStpaRiskVocabulary(config, rows, items, contextOption
       }
     });
     const mappings = mappingChunks.flat();
-    return applyCanonicalRiskVocabulary(rows, items, catalog, mappings);
+    const canonicalRows = applyCanonicalRiskVocabulary(rows, items, catalog, mappings);
+    const reviewIndexes = findCanonicalVocabularyReviewIndexes(canonicalRows);
+    if (reviewIndexes.length) {
+      contextOptions.onProgress?.({
+        message: `Reconciling ${reviewIndexes.length} near-unique canonical mappings...`,
+      });
+    }
+    return reconcileCanonicalVocabulary(canonicalRows);
   } catch (err) {
     rethrowInterruptedRequest(err, contextOptions.signal);
     console.warn(`⚠️ ${config.sheetName} canonical vocabulary generation failed; retaining raw Loss and Hazard candidates.`, err);
-    return applyCanonicalRiskVocabulary(rows, items);
+    return reconcileCanonicalVocabulary(applyCanonicalRiskVocabulary(rows, items));
   }
 }
 
@@ -2133,26 +2504,40 @@ function buildStandardSheets(config, rows, items) {
   };
 }
 
-export async function generateStandardCodeHazardAnalysisSheets({
-  sheets,
-  setFolders,
-  currentFolder,
-  method = "STPA",
+// The repair stages that run after generation, in order. Each has the same
+// (config, rows, items, contextOptions) shape and returns the next rows, so the
+// sequence is data rather than four hand-written awaits.
+export const HAZARD_ANALYSIS_REPAIR_STAGES = [
+  ["language-repair", repairGenericStandardRows],
+  ["safety-audit", tagSafetySignificanceForStandardRows],
+  ["audit-anomaly-repair", repairHazardAuditAnomalies],
+  ["canonicalization", canonicalizeStpaRiskVocabulary],
+];
+
+export const HAZARD_ANALYSIS_STAGE_KEYS = [
+  "generation",
+  ...HAZARD_ANALYSIS_REPAIR_STAGES.map(([stage]) => stage),
+];
+
+/**
+ * Runs generation followed by every repair stage and returns the final rows.
+ *
+ * `onStageComplete({ stage, rows })` fires after each stage with that stage's
+ * output, which lets a caller attribute a change in quality to the stage that
+ * caused it instead of only seeing the end of the pipeline.
+ */
+export async function runStandardHazardAnalysisStages({
+  config,
+  items,
   operationalContext = "",
   organizationContext = "",
   analysisContext = null,
   contextSources = null,
   onProgress = () => {},
-  omitConsolidatedRequirement = false,
+  onStageComplete = () => {},
   signal = null,
   provider = getStoredActiveAIProvider(),
 }) {
-  const items = flattenDecomposition(sheets);
-  if (!items.length) return sheets;
-
-  const config = omitConsolidatedRequirement
-    ? omitConsolidatedRequirementFromConfig(getStandardConfig(method))
-    : getStandardConfig(method);
   const maximumRowsPerPrompt = getStandardHazardRowsPerPrompt(provider);
   const promptChunks = items.length <= maximumRowsPerPrompt && compactPromptRowsLength(items) <= STANDARD_SINGLE_PROMPT_MAX_CHARS
     ? [items]
@@ -2162,8 +2547,16 @@ export async function generateStandardCodeHazardAnalysisSheets({
     console.warn(`⚠️ ${config.sheetName} standard input is large; using ${promptChunks.length} bulk prompt chunks instead of one prompt.`);
   }
 
+  const contextOptions = {
+    operationalContext,
+    organizationContext,
+    analysisContext,
+    contextSources,
+    signal,
+  };
+
   let completedGenerationChunks = 0;
-  const totalProgressSteps = promptChunks.length + 4;
+  const totalProgressSteps = promptChunks.length + HAZARD_ANALYSIS_REPAIR_STAGES.length;
   const generatedChunks = await mapWithConcurrency(promptChunks, HAZARD_LLM_CONCURRENCY, async (chunk, chunkIndex) => {
     onProgress({
       step: chunkIndex + 1,
@@ -2172,11 +2565,7 @@ export async function generateStandardCodeHazardAnalysisSheets({
     });
     try {
       const chunkRows = await requestStandardRowsWithRetries(config, chunk, {
-        operationalContext,
-        organizationContext,
-        analysisContext,
-        contextSources,
-        signal,
+        ...contextOptions,
         onProgress,
       });
       return chunkRows;
@@ -2193,57 +2582,77 @@ export async function generateStandardCodeHazardAnalysisSheets({
       });
     }
   });
-  const generatedRows = generatedChunks.flat();
 
-  let normalizedRows = materializeGeneratedHazardRows(config, generatedRows, items);
-  normalizedRows = await repairGenericStandardRows(config, normalizedRows, items, {
+  let normalizedRows = materializeGeneratedHazardRows(config, generatedChunks.flat(), items);
+  await onStageComplete({ stage: "generation", rows: normalizedRows });
+
+  for (let index = 0; index < HAZARD_ANALYSIS_REPAIR_STAGES.length; index += 1) {
+    const [stage, runStage] = HAZARD_ANALYSIS_REPAIR_STAGES[index];
+    normalizedRows = await runStage(config, normalizedRows, items, {
+      ...contextOptions,
+      onProgress: (patch) => onProgress({
+        step: promptChunks.length + index + 1,
+        total: totalProgressSteps,
+        ...patch,
+      }),
+    });
+    await onStageComplete({ stage, rows: normalizedRows });
+  }
+
+  // Enforce the governed classification contract on the final output, after
+  // every LLM repair/canonicalization stage has had an opportunity to modify a
+  // row. This is intentionally last so inconsistent dependent fields cannot be
+  // persisted merely because a later stage reintroduced them.
+  normalizedRows = normalizedRows.map((row, index) => {
+    const audited = auditSafetyClassificationRecord(row, items[index]);
+    const { validationFindings, ...auditedRow } = audited;
+    if (!validationFindings.length) return auditedRow;
+    const finding = validationFindings[0];
+    return {
+      ...auditedRow,
+      proposedSafetyAssessmentRationale: `Needs review: ${finding}`,
+      safetySignificanceRationale: `Needs review: ${finding}`,
+    };
+  });
+
+  return normalizedRows;
+}
+
+export async function generateStandardCodeHazardAnalysisSheets({
+  sheets,
+  setFolders,
+  currentFolder,
+  method = "STPA",
+  operationalContext = "",
+  organizationContext = "",
+  analysisContext = null,
+  contextSources = null,
+  onProgress = () => {},
+  onStageComplete = () => {},
+  omitConsolidatedRequirement = false,
+  signal = null,
+  provider = getStoredActiveAIProvider(),
+}) {
+  const items = flattenDecomposition(sheets);
+  if (!items.length) return sheets;
+
+  const config = omitConsolidatedRequirement
+    ? omitConsolidatedRequirementFromConfig(getStandardConfig(method))
+    : getStandardConfig(method);
+
+  const normalizedRows = await runStandardHazardAnalysisStages({
+    config,
+    items,
     operationalContext,
     organizationContext,
     analysisContext,
     contextSources,
+    onProgress,
+    onStageComplete,
     signal,
-    onProgress: (patch) => onProgress({
-      step: promptChunks.length + 1,
-      total: totalProgressSteps,
-      ...patch,
-    }),
+    provider,
   });
-  normalizedRows = await tagSafetySignificanceForStandardRows(config, normalizedRows, items, {
-    operationalContext,
-    organizationContext,
-    analysisContext,
-    contextSources,
-    signal,
-    onProgress: (patch) => onProgress({
-      step: promptChunks.length + 2,
-      total: totalProgressSteps,
-      ...patch,
-    }),
-  });
-  normalizedRows = await repairHazardAuditAnomalies(config, normalizedRows, items, {
-    operationalContext,
-    organizationContext,
-    analysisContext,
-    contextSources,
-    signal,
-    onProgress: (patch) => onProgress({
-      step: promptChunks.length + 3,
-      total: totalProgressSteps,
-      ...patch,
-    }),
-  });
-  normalizedRows = await canonicalizeStpaRiskVocabulary(config, normalizedRows, items, {
-    operationalContext,
-    organizationContext,
-    analysisContext,
-    contextSources,
-    signal,
-    onProgress: (patch) => onProgress({
-      step: promptChunks.length + 4,
-      total: totalProgressSteps,
-      ...patch,
-    }),
-  });
+
   return saveSheets({
     sheets,
     setFolders,

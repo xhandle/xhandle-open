@@ -1262,6 +1262,10 @@ export function needsFunctionalAbstractionClarification(promptText = "") {
   // are mutations, not requests to generate another decomposition. Handle them
   // in the pending-row apply flow instead of reopening the abstraction picker.
   if (getPendingFunctionalProjectCreateName(promptText)) return false;
+  // Engineering feedback revises the abstraction already represented by the
+  // active table. Asking for a new abstraction level would incorrectly route
+  // the request back through generation instead of the review/apply workflow.
+  if (isFunctionalDecompositionRevisionFeedbackRequest(promptText)) return false;
   return isSubsystemGenerationRequest(promptText) && !inferFunctionalAbstractionLevel(promptText);
 }
 
@@ -2995,6 +2999,29 @@ function isFunctionalDecompositionAuditRequest(text = "") {
   return asksForAudit && (functionalTarget || subsystemAuditTarget) && proposalIntent;
 }
 
+export function isFunctionalDecompositionRevisionFeedbackRequest(text = "", focus = {}) {
+  const q = String(text || "").toLowerCase();
+  const focusIsFunctionalTable =
+    String(focus?.section || "").toLowerCase() === "projects" &&
+    String(focus?.activeTab || "").toLowerCase() === "functional diagramming";
+  const explicitTarget = /functional\s+(decomposition|diagram|architecture|table|rows?)|decomposition\s+(table|rows?)/.test(q);
+  const structuralFeedback = /\b(function\s*\(?from\)?|function\s*\(?to\)?|control action|subsystem allocation|receiver|source|endpoint|leaf function|container|interface|row|rows)\b/.test(q);
+  const revisionIntent = /\b(revise|repair|fix|correct|rewrite|replace|change|update|incorporate|apply|address|resolve)\b/.test(q);
+  const directiveFeedback = /\b(should|must|needs? to|rather than|instead of)\b/.test(q) &&
+    /\b(incorrect|wrong|invalid|missing|duplicate|generic|disconnected|inconsistent|container|leaf|receiver|endpoint|interface)\b/.test(q);
+  const feedbackFraming = /\b(based on|using|incorporate|apply|address)\s+(this|that|the|these|those|following|above)\s+(feedback|review|finding|findings|issue|issues|recommendation|recommendations)\b/.test(q);
+  const diagnosticFeedback = (
+    /\b(defect|issue|problem|gap|regression|inconsistent|incorrect|wrong|invalid|duplicate|misallocated|container instead|systemic)\b/.test(q) ||
+    /\b(all|every)\b[^.\n]*\bfunction\s*\(?to\)?\b[^.\n]*\b(subsystem|container)\b/.test(q)
+  ) && /\b(current|existing|every|all|row|rows|table|decomposition|systemic|remaining)\b/.test(q);
+  const auditOnly = /^\s*(audit|review|assess|evaluate|inspect|check)\b/.test(q) &&
+    !revisionIntent && !directiveFeedback && !feedbackFraming;
+  const readOnlyOnly = /^\s*(can|could|would|will|do|does|is|are|why|how|what)\b/.test(q) &&
+    !revisionIntent && !directiveFeedback && !feedbackFraming;
+  if (readOnlyOnly || auditOnly) return false;
+  return (explicitTarget || focusIsFunctionalTable) && structuralFeedback && (revisionIntent || directiveFeedback || feedbackFraming || diagnosticFeedback);
+}
+
 function isFunctionalSubsystemAllocationReviewRequest(text = "") {
   const q = String(text || "").toLowerCase();
   const reviewIntent = /\b(reevaluate|re-evaluate|review|audit|reassess|assess|evaluate|check|reallocate|reclassify)\b/.test(q);
@@ -3134,6 +3161,7 @@ function isFunctionalDecompositionMutationRequest(text = "", focus = {}) {
 }
 
 function isApplyPendingFunctionalRowsRequest(text = "") {
+  if (isFunctionalDecompositionRevisionFeedbackRequest(text)) return false;
   const q = String(text || "").toLowerCase();
   const approval = /\b(yes|yep|yeah|ok|okay|sure|that works|looks good|go ahead|do it|proceed|apply|add|insert|use|update|incorporate|confirm|confirmed)\b/.test(q);
   const target = /\b(it|them|those|that|this|rows?|entries|proposal|proposed|table|functional decomposition|decomposition)\b/.test(q);
@@ -4076,6 +4104,23 @@ useEffect(() => {
     reportProgress("Reviewing the request and selected workspace context.");
     try {
       if (pendingFunctionalAbstractionRequest && !options?.abstractionResolved) {
+        if (isFunctionalDecompositionRevisionFeedbackRequest(userText, appFocus || enrichedContext?.focus || {})) {
+          setPendingFunctionalAbstractionRequest(null);
+          const currentThread = loadThreads().find((entry) => entry.id === activeId);
+          if (currentThread) {
+            const nextMessages = (currentThread.messages || []).map((message) => (
+              message?.choicePrompt?.type === "functional-abstraction" && !message.choicePrompt.completed
+                ? {
+                    ...message,
+                    content: "Abstraction selection is not required when revising the active functional decomposition.",
+                    choicePrompt: undefined,
+                  }
+                : message
+            ));
+            setMessages(activeId, nextMessages);
+            setThreads(loadThreads());
+          }
+        } else {
         const selectedLevel = inferFunctionalAbstractionLevel(userText);
         if (!selectedLevel) {
           appendMessage(activeId, buildFunctionalAbstractionChoiceMessage());
@@ -4105,6 +4150,7 @@ useEffect(() => {
           },
         );
         return;
+        }
       }
       if (!options?.abstractionResolved && needsFunctionalAbstractionClarification(userText)) {
         setPendingFunctionalAbstractionRequest({ userText, options });
@@ -4407,6 +4453,34 @@ useEffect(() => {
             appendMessage(activeId, {
               role: "assistant",
               content: `I couldn’t reevaluate subsystem allocations: ${error?.message || "unknown error"}`,
+            });
+          }
+          setThreads(loadThreads());
+          return;
+        }
+      }
+      if (isFunctionalDecompositionRevisionFeedbackRequest(userText, focusContext)) {
+        const provider = await waitForActionProvider("project-functional-diagram", 1800);
+        if (provider?.reviewFunctionalDecompositionFeedback) {
+          appendMessage(activeId, {
+            role: "assistant",
+            content: "I’ll compare that feedback with the active functional decomposition and prepare targeted row changes for your review. I won’t modify the table until you approve selected changes.",
+          });
+          setThreads(loadThreads());
+          try {
+            const result = await provider.reviewFunctionalDecompositionFeedback({ userText, activeProjectId });
+            appendMessage(activeId, {
+              role: "assistant",
+              content: [
+                `Revision review complete. I prepared ${result?.proposalCount ?? 0} proposed change${result?.proposalCount === 1 ? "" : "s"}:`,
+                `${result?.updateCount ?? 0} update${result?.updateCount === 1 ? "" : "s"}, ${result?.addCount ?? 0} addition${result?.addCount === 1 ? "" : "s"}, and ${result?.removeCount ?? 0} removal${result?.removeCount === 1 ? "" : "s"}.`,
+                "Review the proposal in Functional Diagramming, edit or deselect any change you do not want, then apply the selected changes.",
+              ].join(" "),
+            });
+          } catch (error) {
+            appendMessage(activeId, {
+              role: "assistant",
+              content: `I couldn’t prepare the functional decomposition revision: ${error?.message || "unknown error"}`,
             });
           }
           setThreads(loadThreads());

@@ -32,6 +32,15 @@ import 'reactflow/dist/style.css';
 import { toPng } from 'html-to-image';
 import { SmartBezierEdge } from '@tisoap/react-flow-smart-edge';
 import ELK from 'elkjs/lib/elk.bundled.js';
+import {
+  buildFunctionSubsystemOwnershipMap,
+  DIAGRAM_NODE_PROVENANCE,
+  getDiagramNodeProvenance,
+  isLegacyGeneratedContainerArtifact,
+  reconcileStoredManualNodes,
+  resolveGeneratedNodePlacement,
+  withDiagramNodeProvenance,
+} from './functionalDiagramNodeReconciliation';
 import { downloadDrawioXml } from './utils/exportDrawio';
 import { buildAIAuthOpts } from './backendConfig';
 import { buildFunctionalNodeDetails, getFunctionalNodeDetails } from './functionalNodeDetails';
@@ -1389,27 +1398,6 @@ function localSeedPositionForNode(nodeId, rows = [], positionById = new Map(), f
   }
 
   return findNearestOpenDiagramPosition(seedPosition(fallbackIndex), occupied);
-}
-
-function buildFunctionSubsystemMap(rows = []) {
-  const countsByFunction = new Map();
-  (rows || []).forEach((row) => {
-    const subsystem = cleanCategoryTitle(row?.subsystem || '');
-    const fromFunction = normalizeFunctionName(row?.fromFunction || '');
-    if (!subsystem || !fromFunction || /\b(unallocated|unassigned|uncategorized)\b/i.test(subsystem)) return;
-    const functionKey = fromFunction.toLowerCase();
-    const counts = countsByFunction.get(functionKey) || new Map();
-    counts.set(subsystem, (counts.get(subsystem) || 0) + 1);
-    countsByFunction.set(functionKey, counts);
-  });
-
-  const map = new Map();
-  countsByFunction.forEach((counts, functionKey) => {
-    const ranked = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
-    if (ranked[0]?.[0]) map.set(functionKey, ranked[0][0]);
-  });
-
-  return map;
 }
 
 function findOpenPositionInGroup(box, occupied = []) {
@@ -3325,7 +3313,7 @@ useEffect(() => {
           { x: abs.x - targetBox.position.x, y: abs.y - targetBox.position.y },
           targetBox
         );
-        posRef.current.set(node.id, { position: relative, parentId: groupId });
+        posRef.current.set(node.id, { position: relative, parentId: groupId, groupingIntent: 'explicit' });
         return { ...node, parentNode: groupId, position: relative };
       });
       nextNodesSnapshot = nextNodes;
@@ -3657,12 +3645,12 @@ useEffect(() => {
     const label = makeUniqueNewLabel(existing);
     const id = nodeIdForFunction(label);
     const position = nearestFreePosition(canvasSpawnPosition(), getNodes());
-    const newNode = {
+    const newNode = withDiagramNodeProvenance({
       id,
       type: 'bidirectional',
       position,
       data: { label, description: '', brandColor: BRAND.purple, brandTint: rgba(BRAND.purple, 0.08) },
-    };
+    }, DIAGRAM_NODE_PROVENANCE.MANUAL);
     setNodes((nds) => [...nds, newNode]);
     canvasCreatedFunctionNodeIdsRef.current.add(id);
     posRef.current.set(id, { position, parentId: null });
@@ -3674,7 +3662,7 @@ useEffect(() => {
     const existingNotes = getNodes().filter((node) => node.type === 'note').length;
     const id = `note:${cryptoId()}`;
     const position = nearestFreePosition(canvasSpawnPosition({ x: 128, y: 128 }), getNodes());
-    const noteNode = {
+    const noteNode = withDiagramNodeProvenance({
       id,
       type: 'note',
       position,
@@ -3684,7 +3672,7 @@ useEffect(() => {
         brandColor: BRAND.yellow,
         brandTint: rgba(BRAND.yellow, 0.2),
       },
-    };
+    }, DIAGRAM_NODE_PROVENANCE.NOTE);
     setNodes((nds) => [...nds, noteNode]);
     posRef.current.set(id, { position, parentId: null });
     persistSoon();
@@ -3747,7 +3735,7 @@ useEffect(() => {
         if (!selectedNodeIds.includes(node.id) || node.type === 'groupBox') return node;
         const abs = getNodeAbsolutePosition(node, byId);
         const relative = clampToGroup({ x: abs.x - position.x, y: abs.y - position.y }, newBox);
-        posRef.current.set(node.id, { position: relative, parentId: groupId });
+        posRef.current.set(node.id, { position: relative, parentId: groupId, groupingIntent: 'explicit' });
         return { ...node, parentNode: groupId, extent: 'parent', position: relative };
       }));
       persistSoon();
@@ -3993,7 +3981,16 @@ const functionalNodeDetails = buildFunctionalNodeDetails(rows);
 const plannedTopLevelPositions = new Map();
 const plannedGroupPositions = new Map();
 const groupByLabel = new Map(groupBoxes.map((box) => [cleanCategoryTitle(box.label || '').toLowerCase(), box]));
-const functionSubsystemMap = buildFunctionSubsystemMap(rows);
+const groupById = new Map(groupBoxes.map((box) => [box.id, box]));
+const functionSubsystemMap = buildFunctionSubsystemOwnershipMap(rows, cleanCategoryTitle);
+const automaticGroupByFunction = new Map();
+normalizeCategories(autoCategories, rows).forEach((category) => {
+  const group = groupByLabel.get(cleanCategoryTitle(category.name || '').toLowerCase());
+  if (!group) return;
+  (category.functions || []).forEach((functionName) => {
+    automaticGroupByFunction.set(normalizeFunctionName(functionName).toLowerCase(), group);
+  });
+});
 nodes.forEach((node) => {
   if (node.type === 'groupBox') return;
   if (node.parentNode) {
@@ -4054,38 +4051,50 @@ const nodeShellStyle = {
 };
 
 const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
-  // Check if we have a saved position
   const saved = posRef.current.get(id);
-  let pos = saved?.position;
-  let parentId = saved?.parentId && groupBoxes.some((box) => box.id === saved.parentId) ? saved.parentId : null;
+  const existing = nodes.find((n) => n.id === id && n.type !== 'groupBox');
+  const functionName = normalizeFunctionName(id.replace(/^n:/, ''));
+  const allocatedSubsystem = functionSubsystemMap.get(functionName.toLowerCase());
+  const expectedGroup = automaticGroupByFunction.get(functionName.toLowerCase()) || (
+    allocatedSubsystem
+      ? groupByLabel.get(cleanCategoryTitle(allocatedSubsystem).toLowerCase())
+      : null
+  );
+  const resolved = resolveGeneratedNodePlacement({
+    saved,
+    existing,
+    expectedGroup,
+    groupById,
+    explicitlyUngrouped: ungroupedAutoNodeIds.has(id),
+  });
+  let pos = resolved.position;
+  let parentId = resolved.parentId;
   
   // If no saved position, place only the new node without refactoring the existing canvas.
   if (!pos) {
-    const functionName = normalizeFunctionName(id.replace(/^n:/, ''));
-    const allocatedSubsystem = functionSubsystemMap.get(functionName.toLowerCase());
-    const targetGroup = allocatedSubsystem ? groupByLabel.get(cleanCategoryTitle(allocatedSubsystem).toLowerCase()) : null;
-    if (targetGroup && !ungroupedAutoNodeIds.has(id)) {
-      parentId = targetGroup.id;
+    if (expectedGroup && !ungroupedAutoNodeIds.has(id)) {
+      parentId = expectedGroup.id;
       const occupied = plannedGroupPositions.get(parentId) || [];
-      pos = findOpenPositionInGroup(targetGroup, occupied);
+      pos = findOpenPositionInGroup(expectedGroup, occupied);
       occupied.push({ ...pos });
       plannedGroupPositions.set(parentId, occupied);
     } else {
       pos = localSeedPositionForNode(id, rows, plannedTopLevelPositions, index);
       plannedTopLevelPositions.set(id, { ...pos });
     }
-    posRef.current.set(id, { position: pos, parentId });
+  }
+  const boundedPosition = parentId ? clampToGroup(pos, groupById.get(parentId)) : pos;
+  if (!saved || saved.parentId !== parentId || saved.position?.x !== boundedPosition?.x || saved.position?.y !== boundedPosition?.y) {
+    posRef.current.set(id, { position: boundedPosition, parentId, groupingIntent: resolved.groupingIntent });
     persistSoon();
   }
   
-  const existing = nodes.find((n) => n.id === id && n.type !== 'groupBox');
-  const functionName = normalizeFunctionName(id.replace(/^n:/, ''));
   const rowDetails = getFunctionalNodeDetails(functionalNodeDetails, functionName);
   if (existing) {
-    return {
+    return withDiagramNodeProvenance({
       ...existing,
       zIndex: 2,
-      position: parentId ? clampToGroup(pos, groupBoxes.find((box) => box.id === parentId)) : pos,
+      position: boundedPosition,
       parentNode: parentId || undefined,
       extent: parentId ? 'parent' : undefined,
       style: {
@@ -4099,15 +4108,15 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
           description: rowDetails.description,
         }
         : existing.data,
-    };
+    }, DIAGRAM_NODE_PROVENANCE.GENERATED);
   }
   
   const name = functionName;
-  return {
+  return withDiagramNodeProvenance({
     id,
     type: 'bidirectional',
     zIndex: 2,
-    position: parentId ? clampToGroup(pos, groupBoxes.find((box) => box.id === parentId)) : pos,
+    position: boundedPosition,
     parentNode: parentId || undefined,
     extent: parentId ? 'parent' : undefined,
     style: nodeShellStyle,
@@ -4117,11 +4126,18 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
       brandColor: BRAND.blue,
       brandTint: rgba(BRAND.blue, 0.08),
     },
-  };
+  }, DIAGRAM_NODE_PROVENANCE.GENERATED);
 });
 
-    const scopedManualNodes = manualNodesStore.filter((node) => !isNodeRepresentedByFunctionalRows(node, wantedNodeIds));
+    const reconciledManual = reconcileStoredManualNodes({
+      manualNodes: manualNodesStore,
+      wantedNodeIds,
+      autoGroupBoxes: groupBoxes,
+    });
+    const scopedManualNodes = reconciledManual.manualNodes.filter((node) => !isNodeRepresentedByFunctionalRows(node, wantedNodeIds));
     if (scopedManualNodes.length !== manualNodesStore.length) {
+      reconciledManual.prunedIds.forEach((nodeId) => posRef.current.delete(nodeId));
+      if (reconciledManual.prunedIds.size) persistSoon();
       setManualNodesStore(scopedManualNodes);
       persistManualSoon(scopedManualNodes);
     }
@@ -4169,7 +4185,10 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
       
     }
     return () => { cancelled = true; };
-  }, [rows, persistSoon, nodes, setNodes, setEdges, runCleanAndSpread, groupBoxes, startGroupResize, queueGroupResizeUpdate, endGroupResize, storageReady]);
+  // autoCategories changes are applied by the category-layout effect, which
+  // updates groupBoxes and deliberately invalidates this structure build.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, persistSoon, persistManualSoon, manualNodesStore, nodes, setNodes, setEdges, runCleanAndSpread, groupBoxes, startGroupResize, queueGroupResizeUpdate, endGroupResize, storageReady, ungroupedAutoNodeIds]);
 
 	  useEffect(() => {
 	    if (!storageReady) return;
@@ -4244,8 +4263,24 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
 	    if (childDragRef.current) return;
 	    if (resizeFrameRef.current) return;
 	    const wantedNodeIds = buildWantedNodeIdSet(rows);
+    const obsoleteGeneratedIds = nodes
+      .filter((node) => (
+        node.type !== 'groupBox' &&
+        getDiagramNodeProvenance(node) === DIAGRAM_NODE_PROVENANCE.GENERATED &&
+        !isNodeRepresentedByFunctionalRows(node, wantedNodeIds)
+      ))
+      .map((node) => node.id);
+    if (obsoleteGeneratedIds.length) {
+      obsoleteGeneratedIds.forEach((id) => posRef.current.delete(id));
+      persistSoon();
+    }
     const nextManualNodes = nodes
-      .filter((node) => node.type !== 'groupBox' && !isNodeRepresentedByFunctionalRows(node, wantedNodeIds))
+      .filter((node) => {
+        if (node.type === 'groupBox' || isNodeRepresentedByFunctionalRows(node, wantedNodeIds)) return false;
+        const provenance = getDiagramNodeProvenance(node);
+        if (provenance === DIAGRAM_NODE_PROVENANCE.GENERATED) return false;
+        return !isLegacyGeneratedContainerArtifact(node, groupBoxes);
+      })
       .map((node) => serializeManualNode(node));
 
     const prevSig = JSON.stringify(manualNodesStore);
@@ -4254,7 +4289,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
 
     setManualNodesStore(nextManualNodes);
     persistManualSoon(nextManualNodes);
-  }, [nodes, rows, manualNodesStore, persistManualSoon, storageReady]);
+  }, [nodes, rows, groupBoxes, manualNodesStore, persistManualSoon, persistSoon, storageReady]);
 
   // Sync labels/details without moving nodes
   useEffect(() => {
