@@ -529,6 +529,50 @@ app.post("/api/rt/session", llmLimiter, async (req, res) => {
       ? requestedVoice
       : (OPENAI_REALTIME_VOICES.has(OPENAI_REALTIME_VOICE) ? OPENAI_REALTIME_VOICE : "marin");
     const abstractionLabel = String(req.body?.abstractionLabel || "Multi-level").trim();
+    const sessionMode = String(req.body?.mode || "wizard").trim().toLowerCase();
+    const collaboratorTranscription = sessionMode === "collaborator";
+    const sessionInstructions = collaboratorTranscription
+      ? [
+          "You are the speech-input transport for xHandle Collaborator.",
+          "Transcribe the user's spoken turns accurately, but do not answer them in this Realtime session.",
+          "The xHandle Collaborator request pipeline will execute the user's prompt, project tools, and governed actions.",
+        ].join(" ")
+      : buildConversationalWizardRealtimeInstructions(abstractionLabel);
+    const wizardTools = [
+      {
+        type: "function",
+        name: "capture_architecture_brief",
+        description: "Record the complete grounded discovery brief before replying to the user.",
+        parameters: {
+          type: "object",
+          properties: {
+            userName: { type: "string", description: "User name only when explicitly supplied, otherwise empty." },
+            systemName: { type: "string", description: "System name or boundary grounded in the conversation, otherwise empty." },
+            purpose: { type: "string", description: "Mission and system boundary grounded in the conversation, otherwise empty." },
+            components: { type: "string", description: "Concise newline-separated known functions or components, otherwise empty." },
+            interactions: { type: "string", description: "Concise newline-separated known interfaces and interactions, otherwise empty." },
+            operationalScenarios: { type: "string", description: "Concise newline-separated operational scenarios and modes, otherwise empty." },
+            assumptions: {
+              type: "array",
+              items: { type: "string" },
+              description: "Consequential assumptions that must remain visible to the user.",
+            },
+            ready: { type: "boolean", description: "Whether the grounded brief is ready for functional-decomposition generation." },
+          },
+          required: [
+            "userName",
+            "systemName",
+            "purpose",
+            "components",
+            "interactions",
+            "operationalScenarios",
+            "assumptions",
+            "ready",
+          ],
+          additionalProperties: false,
+        },
+      },
+    ];
     const r = await axios.post(
       "https://api.openai.com/v1/realtime/client_secrets",
       {
@@ -536,58 +580,37 @@ app.post("/api/rt/session", llmLimiter, async (req, res) => {
           type: "realtime",
           model: OPENAI_REALTIME_MODEL,
           output_modalities: ["audio"],
-          instructions: buildConversationalWizardRealtimeInstructions(abstractionLabel),
+          instructions: sessionInstructions,
           audio: {
             input: {
+              noise_reduction: {
+                // Prompt Wizard conversations normally use a laptop or room
+                // microphone rather than a close-talking headset.
+                type: "far_field",
+              },
               transcription: {
                 model: "gpt-4o-mini-transcribe",
                 language: "en",
               },
               turn_detection: {
-                type: "semantic_vad",
-                eagerness: "medium",
-                create_response: true,
-                interrupt_response: true,
+                type: "server_vad",
+                threshold: 0.7,
+                prefix_padding_ms: 300,
+                silence_duration_ms: 850,
+                // Collaborator deliberately sends completed transcripts through
+                // the same text/tool router as typed cookbook prompts. Realtime
+                // must not answer independently or bypass governed app actions.
+                create_response: !collaboratorTranscription,
+                // The client explicitly gates the microphone during playback
+                // and provides a manual interruption control. Ambient noise or
+                // speaker echo must never cancel an in-progress answer.
+                interrupt_response: false,
               },
             },
             output: { voice },
           },
-          tools: [
-            {
-              type: "function",
-              name: "capture_architecture_brief",
-              description: "Record the complete grounded discovery brief before replying to the user.",
-              parameters: {
-                type: "object",
-                properties: {
-                  userName: { type: "string", description: "User name only when explicitly supplied, otherwise empty." },
-                  systemName: { type: "string", description: "System name or boundary grounded in the conversation, otherwise empty." },
-                  purpose: { type: "string", description: "Mission and system boundary grounded in the conversation, otherwise empty." },
-                  components: { type: "string", description: "Concise newline-separated known functions or components, otherwise empty." },
-                  interactions: { type: "string", description: "Concise newline-separated known interfaces and interactions, otherwise empty." },
-                  operationalScenarios: { type: "string", description: "Concise newline-separated operational scenarios and modes, otherwise empty." },
-                  assumptions: {
-                    type: "array",
-                    items: { type: "string" },
-                    description: "Consequential assumptions that must remain visible to the user.",
-                  },
-                  ready: { type: "boolean", description: "Whether the grounded brief is ready for functional-decomposition generation." },
-                },
-                required: [
-                  "userName",
-                  "systemName",
-                  "purpose",
-                  "components",
-                  "interactions",
-                  "operationalScenarios",
-                  "assumptions",
-                  "ready",
-                ],
-                additionalProperties: false,
-              },
-            },
-          ],
-          tool_choice: "required",
+          tools: collaboratorTranscription ? [] : wizardTools,
+          tool_choice: collaboratorTranscription ? "none" : "required",
         },
       },
       {
@@ -830,7 +853,19 @@ function maskAIKey(key) {
 
 function extractProviderErrorMessage(err) {
   const status = err?.status || err?.response?.status || err?.cause?.status || 500;
-  const payload = err?.response?.data || err?.error || err?.cause || null;
+  let payload = err?.response?.data || err?.error || err?.cause || null;
+
+  // Binary-response routes (notably /api/audio/speech) still return JSON when
+  // the provider rejects a request. Axios exposes that error JSON as a Buffer,
+  // so decode it before normalizing the provider message for the browser.
+  if (Buffer.isBuffer(payload) || payload instanceof ArrayBuffer) {
+    const decoded = Buffer.from(payload).toString("utf8").trim();
+    try {
+      payload = decoded ? JSON.parse(decoded) : null;
+    } catch {
+      payload = decoded || null;
+    }
+  }
 
   if (payload && typeof payload === "object") {
     const directMessage =
@@ -846,6 +881,14 @@ function extractProviderErrorMessage(err) {
         details: payload,
       };
     }
+  }
+
+  if (typeof payload === "string" && payload.trim()) {
+    return {
+      status,
+      message: payload.trim(),
+      details: payload,
+    };
   }
 
   if (typeof err?.message === "string" && err.message.trim()) {
@@ -2204,8 +2247,10 @@ app.post("/api/audio/speech", llmLimiter, async (req, res) => {
 
     const input = String(req.body?.input || "").trim();
     if (!input) return res.status(400).json({ error: "Speech input is required." });
-    if (input.length > 8000) {
-      return res.status(400).json({ error: "Speech input is too long." });
+    if (input.length > 4096) {
+      return res.status(400).json({
+        error: "Speech input exceeds OpenAI's 4,096-character limit. Shorten or segment the spoken response.",
+      });
     }
 
     const requestedVoice = String(req.body?.voice || "").trim().toLowerCase();
@@ -2218,7 +2263,7 @@ app.post("/api/audio/speech", llmLimiter, async (req, res) => {
         model: OPENAI_SPEECH_MODEL,
         voice,
         input,
-        instructions: "Speak naturally and warmly, like a thoughtful engineering collaborator. Use conversational pacing, subtle emphasis, and short pauses. Avoid an announcer voice.",
+        instructions: "Speak like a trusted design and work partner in a natural one-to-one conversation. Use warm, fluid pacing, varied cadence, subtle emphasis, and brief thinking pauses where they feel human. Sound engaged and present, never like an announcer, narrator, or automated status system.",
         response_format: "mp3",
       },
       {

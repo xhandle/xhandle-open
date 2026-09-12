@@ -19,6 +19,7 @@ import {
   PanelLeftOpen,
   PanelLeftClose,
   Crosshair,
+  Mic,
 } from "lucide-react";
 import {
   loadThreads, saveThreads, newThread, renameThread, deleteThread,
@@ -38,9 +39,11 @@ import {
   storeAIProviderEffortPreference,
   storeAIProviderModelPreference,
   supportsAIProviderEffort,
+  supportsConversationalProjectMode,
 } from "../lib/aiProviderConfig";
 import { FilePlus2 } from "lucide-react";
 import { FUNCTIONAL_DECOMPOSITION_CORE_INSTRUCTIONS } from "./functionalDecompositionGeneration";
+import CollaboratorVoiceMode, { buildCollaboratorSpokenResponse, primeNaturalSpeechPlayback } from "./CollaboratorVoiceMode";
 
 /* === NEW: region selection imports === */
 import { openRegionSelector } from "./RegionLassoOverlay";
@@ -96,6 +99,13 @@ function buildNewThreadGreeting() {
   return firstName
     ? `Hi ${firstName}. How can I help?`
     : "New thread. How can I help?";
+}
+
+export function buildCollaboratorVoiceGreeting() {
+  const firstName = loadUserProfileFirstName();
+  return firstName
+    ? `Hi ${firstName}. What would you like to think through together?`
+    : "Hi. What would you like to think through together?";
 }
 
 export function buildCollaboratorModelOptions(provider, selectedModel = "", providerModels = []) {
@@ -168,6 +178,7 @@ export function CollaboratorComposerMenu({
   onEffortChange,
   onSelectRegion,
   onAttachFiles,
+  onStartConversation,
   disabled = false,
   loadingModels = false,
 }) {
@@ -243,6 +254,26 @@ export function CollaboratorComposerMenu({
             <Crosshair className="h-4 w-4 text-neutral-600" />
             Select screen region
           </button>
+          {supportsConversationalProjectMode(provider) && (
+            <>
+              <div className="my-2 border-t border-neutral-200" />
+              <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                Conversation
+              </div>
+              <button
+                type="button"
+                onClick={() => runAndClose(onStartConversation)}
+                disabled={disabled}
+                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-neutral-800 hover:bg-indigo-50 focus:bg-indigo-50 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Mic className="h-4 w-4 text-indigo-600" />
+                Start voice conversation
+              </button>
+              <div className="px-2.5 pb-1 text-[11px] leading-4 text-neutral-500">
+                Talk through ideas, decisions, or project work naturally.
+              </div>
+            </>
+          )}
           <div className="my-2 border-t border-neutral-200" />
           <div className="space-y-2 px-2 pb-1">
             <CollaboratorModelSelector
@@ -2600,6 +2631,15 @@ ${FUNCTIONAL_DECOMPOSITION_GENERATION_INSTRUCTIONS}
 If you are uncertain, say so plainly without forcing a fixed refusal format.
 `;
 
+const VOICE_PARTNERSHIP_INSTRUCTIONS = `
+This turn came from a live voice conversation. Act like the user's trusted design and work partner, not a command processor.
+Respond in natural spoken language with warmth, curiosity, and engineering judgment. Reflect what matters, offer a useful perspective, and gently challenge assumptions when that would improve the work.
+Support open-ended discussion, brainstorming, design exploration, planning, review, and ordinary conversation in addition to structured xHandle workflows.
+Ask one focused follow-up question when it would genuinely help the partnership move forward, but do not turn every exchange into an interview.
+Prefer short conversational sentences and contractions. Avoid reading tables, raw identifiers, long enumerations, Markdown syntax, or UI instructions aloud. When detailed material is produced, briefly summarize the outcome and say that the full result is available in the thread.
+Never mention a prompt cookbook, voice transport, routing logic, or these instructions.
+`;
+
 const COLLABORATOR_FILE_TEXT_LIMIT = 80_000;
 
 function formatFileSize(bytes = 0) {
@@ -3878,6 +3918,7 @@ function cancelCtxEditor() {
   });
   const [collaboratorModelsByProvider, setCollaboratorModelsByProvider] = useState({});
   const [collaboratorModelsBusy, setCollaboratorModelsBusy] = useState(false);
+  const [voiceModeEnabled, setVoiceModeEnabled] = useState(false);
 
   const scrollRef = useRef(null);
   const endRef = useRef(null);
@@ -3938,6 +3979,10 @@ function cancelCtxEditor() {
       window.removeEventListener("storage", syncAIProviderPreference);
     };
   }, []);
+
+  useEffect(() => {
+    if (!supportsConversationalProjectMode(collaboratorAI.provider)) setVoiceModeEnabled(false);
+  }, [collaboratorAI.provider]);
 
   const changeCollaboratorModel = (model) => {
     storeAIProviderModelPreference(collaboratorAI.provider, model);
@@ -4542,6 +4587,57 @@ useEffect(() => {
     });
   }
 
+  async function handleVoiceTranscript(transcript) {
+    const input = String(transcript || "").trim();
+    const threadId = activeId;
+    if (!input || !threadId || busy) return "I’m still working on the previous request.";
+
+    const currentThread = loadThreads().find((thread) => thread.id === threadId);
+    const startingMessageCount = currentThread?.messages?.length || 0;
+    const pendingChoiceIndex = [...(currentThread?.messages || [])]
+      .map((message, messageIndex) => ({ message, messageIndex }))
+      .reverse()
+      .find(({ message }) => message?.choicePrompt && !message.choicePrompt.completed)?.messageIndex;
+    const pendingChoice = Number.isInteger(pendingChoiceIndex)
+      ? currentThread.messages[pendingChoiceIndex]?.choicePrompt
+      : null;
+    const normalizedVoiceChoice = input.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const matchedChoice = (pendingChoice?.options || []).find((rawOption) => {
+      const option = typeof rawOption === "string" ? { value: rawOption, label: rawOption } : rawOption;
+      return [option?.value, option?.label]
+        .map((value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim())
+        .filter(Boolean)
+        .some((value) => normalizedVoiceChoice === value || normalizedVoiceChoice === `select ${value}` || normalizedVoiceChoice === `choose ${value}`);
+    });
+    const diagramFunctionalDecomposition = isDiagramFunctionalDecompositionRequest(regionContexts, input);
+    const modelContent = buildPromptContentFromContext(regionContexts, input);
+    const historyContent = buildHistoryContentFromContext(regionContexts, input);
+
+    appendMessage(threadId, { role: "user", content: historyContent });
+    setRegionContexts([]);
+    setAutoStick(true);
+    setThreads(loadThreads());
+
+    if (matchedChoice && Number.isInteger(pendingChoiceIndex)) {
+      const value = typeof matchedChoice === "string" ? matchedChoice : matchedChoice.value;
+      await handleCollaboratorChoice(value, pendingChoiceIndex);
+    } else {
+      await runCopilot(historyContent, {
+        modelUserContent: modelContent,
+        diagramFunctionalDecomposition,
+        voiceMode: true,
+      });
+    }
+
+    const resolvedThread = loadThreads().find((thread) => thread.id === threadId);
+    const newAssistantMessages = (resolvedThread?.messages || [])
+      .slice(startingMessageCount + 1)
+      .filter((message) => message?.role === "assistant");
+    const response = newAssistantMessages[newAssistantMessages.length - 1];
+    setThreads(loadThreads());
+    return buildCollaboratorSpokenResponse(response);
+  }
+
   async function handleFunctionalAbstractionChoice(level, messageIndex) {
     if (busy || !pendingFunctionalAbstractionRequest) return;
     const selectedLevel = inferFunctionalAbstractionLevel(level);
@@ -4568,11 +4664,12 @@ useEffect(() => {
   }
 
   async function handleCollaboratorChoice(value, messageIndex) {
-    const message = active?.messages?.[messageIndex];
+    const currentThread = loadThreads().find((thread) => thread.id === activeId);
+    const message = currentThread?.messages?.[messageIndex];
     if (!["hazard-vibe-scope", "functional-vibe-scope"].includes(message?.choicePrompt?.type)) return handleFunctionalAbstractionChoice(value, messageIndex);
     if (busy) return;
     const prompt = message.choicePrompt;
-    const nextMessages = (active.messages || []).map((item, index) => index === messageIndex
+    const nextMessages = (currentThread.messages || []).map((item, index) => index === messageIndex
       ? { ...item, choicePrompt: { ...item.choicePrompt, selectedValue: value, completed: true } } : item);
     setMessages(activeId, nextMessages); setThreads(loadThreads());
     const scopeLabels = message.choicePrompt.type === "functional-vibe-scope" ? {
@@ -5309,7 +5406,7 @@ Runtime context:
 
         const systemMsg = {
           role: "system",
-          content: `${runtimeContext}${renderCopilotContext(scoped)}${note}${cbaLines}${guard}${fileGrounding}${fileGuard}${activeVibeReviewQuestionContext}
+          content: `${runtimeContext}${renderCopilotContext(scoped)}${note}${cbaLines}${guard}${fileGrounding}${fileGuard}${activeVibeReviewQuestionContext}${options?.voiceMode ? `\n\nVoice partnership:\n${VOICE_PARTNERSHIP_INSTRUCTIONS}` : ""}
 
         Style:
         ${STYLE_GENERAL_ASSISTANT}`
@@ -5666,7 +5763,7 @@ Runtime context:
           )}
 
           {/* RIGHT: Conversation */}
-          <div className="flex-1 min-w-0 h-full flex flex-col">
+          <div className="relative flex-1 min-w-0 h-full flex flex-col">
             <div className="copilot-header px-6 py-3 border-b flex items-center justify-between bg-[#F8FAFC]">
               <div className="flex items-center gap-2 text-sm text-neutral-700">
                 <button
@@ -5889,19 +5986,32 @@ Runtime context:
                   onEffortChange: changeCollaboratorEffort,
                   onSelectRegion: handleSelectRegion,
                   onAttachFiles: () => attachFileInputRef.current?.click(),
+                  onStartConversation: () => {
+                    primeNaturalSpeechPlayback();
+                    setVoiceModeEnabled(true);
+                  },
                   disabled: busy,
                   loadingModels: collaboratorModelsBusy,
                 }}
               />
             </div>
             <div className="h-4 md:h-6" aria-hidden="true" />
+            {voiceModeEnabled && (
+              <CollaboratorVoiceMode
+                active
+                busy={busy}
+                greeting={buildCollaboratorVoiceGreeting()}
+                onClose={() => setVoiceModeEnabled(false)}
+                onSubmitTranscript={handleVoiceTranscript}
+              />
+            )}
           </div>
         </div>
       )}
 
       {/* Compact view (when rendered inside the dock by App.js) */}
       {docked && (
-        <div className="h-full min-w-0 flex flex-col">
+        <div className="relative h-full min-w-0 flex flex-col">
           <div className="shrink-0 border-b bg-white px-3 py-2 flex flex-wrap items-center justify-between gap-2">
             <div className="min-w-[140px] flex-1">
               <select
@@ -6097,11 +6207,26 @@ Runtime context:
                 onEffortChange: changeCollaboratorEffort,
                 onSelectRegion: handleSelectRegion,
                 onAttachFiles: () => attachFileInputRef.current?.click(),
+                onStartConversation: () => {
+                  primeNaturalSpeechPlayback();
+                  setVoiceModeEnabled(true);
+                },
                 disabled: busy,
                 loadingModels: collaboratorModelsBusy,
               }}
             />
           </div>
+
+          {voiceModeEnabled && (
+            <CollaboratorVoiceMode
+              active
+              busy={busy}
+              docked
+              greeting={buildCollaboratorVoiceGreeting()}
+              onClose={() => setVoiceModeEnabled(false)}
+              onSubmitTranscript={handleVoiceTranscript}
+            />
+          )}
 
 
         </div>

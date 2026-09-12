@@ -33,6 +33,7 @@ const {
   SUBSYSTEM_ARCHITECTURE_REVIEW_SYSTEM_PROMPT,
   buildFunctionalAbstractionChoiceMessage,
   buildCollaboratorChatPayload,
+  buildCollaboratorVoiceGreeting,
   buildCollaboratorContinuationMessages,
   buildCollaboratorModelOptions,
   buildResolvedAbstractionRequest,
@@ -70,6 +71,14 @@ const {
 } = require("./XHandleCopilotView");
 
 describe("subsystem generation prompting", () => {
+  it("personalizes the natural voice greeting when the user has supplied a name", () => {
+    const priorProfile = localStorage.getItem("xhandle.userProfile");
+    localStorage.setItem("xhandle.userProfile", JSON.stringify({ name: "Nick Peilan" }));
+    expect(buildCollaboratorVoiceGreeting()).toBe("Hi Nick. What would you like to think through together?");
+    if (priorProfile == null) localStorage.removeItem("xhandle.userProfile");
+    else localStorage.setItem("xhandle.userProfile", priorProfile);
+  });
+
   it("keeps the prompt, options, and send action in one unified composer", () => {
     const onSend = jest.fn();
     const textareaRef = React.createRef();
@@ -122,6 +131,7 @@ describe("subsystem generation prompting", () => {
   it("keeps Collaborator accessory controls inside an accessible plus menu", () => {
     const onAttachFiles = jest.fn();
     const onSelectRegion = jest.fn();
+    const onStartConversation = jest.fn();
     const host = document.createElement("div");
     document.body.appendChild(host);
     const root = createRoot(host);
@@ -134,6 +144,7 @@ describe("subsystem generation prompting", () => {
             effort="medium"
             onAttachFiles={onAttachFiles}
             onSelectRegion={onSelectRegion}
+            onStartConversation={onStartConversation}
           />,
         );
       });
@@ -147,11 +158,46 @@ describe("subsystem generation prompting", () => {
       expect(host.querySelector('[aria-label="Collaborator model"]')).not.toBeNull();
       expect(host.querySelector('[aria-label="Collaborator effort"]')).not.toBeNull();
 
+      const conversation = Array.from(host.querySelectorAll("button"))
+        .find((button) => button.textContent.includes("Start voice conversation"));
+      expect(conversation).not.toBeNull();
+      act(() => conversation.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+      expect(onStartConversation).toHaveBeenCalledTimes(1);
+      expect(host.querySelector('[aria-label="Collaborator options"]')).toBeNull();
+
+      act(() => trigger.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
       const attach = Array.from(host.querySelectorAll("button"))
         .find((button) => button.textContent.includes("Add files or images"));
       act(() => attach.dispatchEvent(new MouseEvent("click", { bubbles: true })));
       expect(onAttachFiles).toHaveBeenCalledTimes(1);
       expect(host.querySelector('[aria-label="Collaborator options"]')).toBeNull();
+    } finally {
+      act(() => root.unmount());
+      host.remove();
+    }
+  });
+
+  it("does not offer voice conversation for non-OpenAI providers", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    try {
+      act(() => {
+        root.render(
+          <CollaboratorComposerMenu
+            provider="anthropic"
+            model="claude-sonnet-5"
+            effort="medium"
+            onStartConversation={() => {}}
+          />,
+        );
+      });
+      const trigger = host.querySelector('[aria-label="Open Collaborator options"]');
+      act(() => trigger.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+      const conversation = Array.from(host.querySelectorAll("button"))
+        .find((button) => button.textContent.includes("Start voice conversation"));
+      expect(conversation).toBeUndefined();
     } finally {
       act(() => root.unmount());
       host.remove();

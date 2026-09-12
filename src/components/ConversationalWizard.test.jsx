@@ -17,6 +17,7 @@ const {
   parseRealtimeArchitectureBrief,
   parseConversationalWizardTurn,
   personalizeConversationalWizardTurn,
+  shouldEnableRealtimeMicrophone,
   shouldAutomaticallyGenerateConversationalDraft,
 } = conversationalWizardModule;
 
@@ -110,6 +111,16 @@ describe('ConversationalWizard', () => {
     expect(getConversationalAvatarState({ isThinking: true, isListening: true })).toBe('thinking');
     expect(getConversationalAvatarState({ isSpeaking: true, isThinking: true })).toBe('speaking');
     expect(getConversationalAvatarState({ isGenerating: true, isSpeaking: true })).toBe('generating');
+  });
+
+  test('gates Realtime microphone input while assistant audio is active', () => {
+    expect(shouldEnableRealtimeMicrophone()).toBe(true);
+    expect(shouldEnableRealtimeMicrophone({ inputMuted: true })).toBe(false);
+    expect(shouldEnableRealtimeMicrophone({ assistantOutputActive: true })).toBe(false);
+    expect(shouldEnableRealtimeMicrophone({
+      inputMuted: true,
+      assistantOutputActive: true,
+    })).toBe(false);
   });
 
   test('automatically hands off only after the model marks a grounded brief ready', () => {

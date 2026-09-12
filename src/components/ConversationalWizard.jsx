@@ -34,6 +34,10 @@ function cleanText(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+export function shouldEnableRealtimeMicrophone({ inputMuted = false, assistantOutputActive = false } = {}) {
+  return !inputMuted && !assistantOutputActive;
+}
+
 function cleanUserName(value) {
   return cleanText(value).replace(/\s+/g, ' ').slice(0, 80);
 }
@@ -256,7 +260,73 @@ async function requestNaturalSpeechAudio(text, signal) {
   return response.blob();
 }
 
-function useSpeech({ onInterim, onFinal }) {
+let preparedNaturalSpeechContext = null;
+let preparedNaturalSpeechElement = null;
+const SILENT_AUDIO_DATA_URL = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+
+function getNaturalSpeechAudioContext() {
+  if (preparedNaturalSpeechContext?.state !== 'closed') return preparedNaturalSpeechContext;
+  if (typeof window === 'undefined') return null;
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return null;
+  preparedNaturalSpeechContext = new AudioContext();
+  return preparedNaturalSpeechContext;
+}
+
+/**
+ * Unlock Safari/WebKit audio while a trusted user gesture is still active.
+ * The same context is reused after the asynchronous OpenAI speech request.
+ */
+export function primeNaturalSpeechPlayback() {
+  const context = getNaturalSpeechAudioContext();
+  if (context) {
+    try {
+      const resumeResult = context.resume?.();
+      resumeResult?.catch?.(() => {});
+      const buffer = context.createBuffer?.(1, 1, context.sampleRate || 22050);
+      const source = context.createBufferSource?.();
+      if (buffer && source) {
+        source.buffer = buffer;
+        source.connect(context.destination);
+        source.start(0);
+      }
+      return true;
+    } catch {
+      // Some Safari configurations expose AudioContext but do not permit it.
+      // Continue to the HTMLAudioElement compatibility path below.
+    }
+  }
+
+  if (typeof window === 'undefined' || typeof window.Audio !== 'function') return false;
+  try {
+    const audio = preparedNaturalSpeechElement || new window.Audio();
+    preparedNaturalSpeechElement = audio;
+    audio.src = SILENT_AUDIO_DATA_URL;
+    audio.preload = 'auto';
+    audio.volume = 0;
+    const playResult = audio.play?.();
+    playResult?.then?.(() => {
+      audio.pause?.();
+      try { audio.currentTime = 0; } catch {}
+      audio.volume = 1;
+    }).catch?.(() => {
+      audio.volume = 1;
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function getNaturalSpeechFailureMessage(voiceError) {
+  const detail = cleanText(voiceError?.message);
+  if (voiceError?.name === 'NotAllowedError' || /notallowed|user gesture|playback.*blocked/i.test(detail)) {
+    return 'The browser blocked voice playback. Close and reopen the voice conversation, then allow audio when prompted.';
+  }
+  return detail || 'Natural OpenAI voice could not play this response. Check the OpenAI voice error and try again.';
+}
+
+export function useSpeech({ onInterim, onFinal, allowDeviceFallback = true } = {}) {
   const synth = typeof window !== 'undefined' ? window.speechSynthesis : null;
   const SpeechRecognition = typeof window !== 'undefined'
     ? (window.SpeechRecognition || window.webkitSpeechRecognition)
@@ -336,16 +406,16 @@ function useSpeech({ onInterim, onFinal }) {
     if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
     animationFrameRef.current = null;
     if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.removeAttribute('src');
-      audioRef.current.load?.();
+      try { audioRef.current.onended = null; } catch {}
+      try { audioRef.current.stop?.(); } catch {}
+      try { audioRef.current.pause?.(); } catch {}
+      try { audioRef.current.disconnect?.(); } catch {}
+      try { audioRef.current.removeAttribute?.('src'); } catch {}
+      try { audioRef.current.load?.(); } catch {}
     }
     audioRef.current = null;
     if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
     audioUrlRef.current = '';
-    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-      audioContextRef.current.close?.().catch?.(() => {});
-    }
     audioContextRef.current = null;
   }, []);
 
@@ -359,6 +429,8 @@ function useSpeech({ onInterim, onFinal }) {
     speechResolveRef.current?.();
     try { synth?.cancel(); } catch {}
     releaseAudioResources();
+    setError('');
+    setVoiceNotice('');
     let finished = false;
     const finish = () => {
       if (finished) return;
@@ -372,7 +444,14 @@ function useSpeech({ onInterim, onFinal }) {
     };
     speechResolveRef.current = finish;
 
-    const speakWithDeviceVoice = () => {
+    const speakWithDeviceVoice = (voiceError) => {
+      if (!allowDeviceFallback) {
+        setVoiceMode('natural');
+        setVoiceNotice('Natural OpenAI voice could not play this response.');
+        setError(getNaturalSpeechFailureMessage(voiceError));
+        finish();
+        return;
+      }
       if (!synth || typeof SpeechSynthesisUtterance === 'undefined') {
         setVoiceNotice('Natural voice is unavailable. Add an OpenAI API key in Settings.');
         finish();
@@ -395,8 +474,11 @@ function useSpeech({ onInterim, onFinal }) {
     };
 
     (async () => {
-      if (typeof window === 'undefined' || typeof window.Audio === 'undefined') {
-        speakWithDeviceVoice();
+      if (
+        typeof window === 'undefined'
+        || (!(window.AudioContext || window.webkitAudioContext) && typeof window.Audio !== 'function')
+      ) {
+        speakWithDeviceVoice(new Error('This browser does not support audio playback.'));
         return;
       }
       const controller = new AbortController();
@@ -405,29 +487,22 @@ function useSpeech({ onInterim, onFinal }) {
         const blob = await requestNaturalSpeechAudio(spokenText, controller.signal);
         if (finished || controller.signal.aborted) return;
         speechRequestRef.current = null;
-        const objectUrl = URL.createObjectURL(blob);
-        const audio = new window.Audio(objectUrl);
-        audioRef.current = audio;
-        audioUrlRef.current = objectUrl;
-        audio.preload = 'auto';
-        audio.onplay = () => {
-          setVoiceMode('natural');
-          setVoiceNotice('');
-          setIsSpeaking(true);
-        };
-        audio.onended = finish;
-        audio.onerror = finish;
-
-        const AudioContext = window.AudioContext || window.webkitAudioContext;
-        if (AudioContext) {
-          const context = new AudioContext();
+        const context = getNaturalSpeechAudioContext();
+        if (context) {
+          await context.resume();
+          const audioBuffer = await context.decodeAudioData(await blob.arrayBuffer());
+          if (finished || controller.signal.aborted) return;
           const analyser = context.createAnalyser();
           analyser.fftSize = 256;
           analyser.smoothingTimeConstant = 0.88;
-          const source = context.createMediaElementSource(audio);
+          const source = context.createBufferSource();
+          source.buffer = audioBuffer;
           source.connect(analyser);
           analyser.connect(context.destination);
+          source.onended = finish;
+          audioRef.current = source;
           audioContextRef.current = context;
+
           const levels = new Uint8Array(analyser.fftSize);
           let smoothedEnergy = 0;
           let lastVisualUpdate = 0;
@@ -447,17 +522,47 @@ function useSpeech({ onInterim, onFinal }) {
             }
             animationFrameRef.current = requestAnimationFrame(updateSpeechPulse);
           };
-          await context.resume();
+          setVoiceMode('natural');
+          setVoiceNotice('');
+          setIsSpeaking(true);
+          source.start(0);
           updateSpeechPulse();
+          return;
         }
+
+        const objectUrl = URL.createObjectURL(blob);
+        const audio = preparedNaturalSpeechElement || new window.Audio();
+        preparedNaturalSpeechElement = audio;
+        audioRef.current = audio;
+        audioUrlRef.current = objectUrl;
+        audio.src = objectUrl;
+        audio.volume = 1;
+        audio.preload = 'auto';
+        audio.onended = finish;
+        audio.onerror = () => {
+          setError('Safari could not decode the OpenAI voice response.');
+          finish();
+        };
+        let pulseStartedAt = 0;
+        const updateFallbackPulse = (timestamp = 0) => {
+          if (finished) return;
+          if (!pulseStartedAt) pulseStartedAt = timestamp;
+          const elapsed = (timestamp - pulseStartedAt) / 1000;
+          setSpeechBurst(Number((0.46 + (Math.sin(elapsed * 8.2) * 0.18)).toFixed(3)));
+          animationFrameRef.current = requestAnimationFrame(updateFallbackPulse);
+        };
         await audio.play();
+        setVoiceMode('natural');
+        setVoiceNotice('');
+        setIsSpeaking(true);
+        updateFallbackPulse();
       } catch (voiceError) {
         if (finished || voiceError?.name === 'AbortError') return;
         releaseAudioResources();
-        speakWithDeviceVoice();
+        speakWithDeviceVoice(voiceError);
       }
     })();
-  }), [releaseAudioResources, synth]);
+  }), [allowDeviceFallback, releaseAudioResources, synth]);
 
   const stopSpeaking = useCallback(() => {
     try { synth?.cancel(); } catch {}
@@ -471,7 +576,14 @@ function useSpeech({ onInterim, onFinal }) {
 
   return {
     supported: Boolean(SpeechRecognition),
-    speakingSupported: Boolean(synth || (typeof window !== 'undefined' && window.Audio)),
+    speakingSupported: Boolean(
+      synth
+      || (typeof window !== 'undefined' && (
+        window.AudioContext
+        || window.webkitAudioContext
+        || typeof window.Audio === 'function'
+      )),
+    ),
     isListening,
     isSpeaking,
     speechBurst,
@@ -513,6 +625,8 @@ function useRealtimeVoice({
   const assistantTranscriptRef = useRef('');
   const userTranscriptRef = useRef('');
   const inputMutedRef = useRef(false);
+  const assistantOutputActiveRef = useRef(false);
+  const outputReleaseTimerRef = useRef(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [isListening, setIsListening] = useState(false);
@@ -553,6 +667,9 @@ function useRealtimeVoice({
   const releaseResources = useCallback(() => {
     if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
     animationFrameRef.current = null;
+    if (outputReleaseTimerRef.current) clearTimeout(outputReleaseTimerRef.current);
+    outputReleaseTimerRef.current = null;
+    assistantOutputActiveRef.current = false;
     try { dataChannelRef.current?.close(); } catch {}
     dataChannelRef.current = null;
     try { peerConnectionRef.current?.close(); } catch {}
@@ -593,14 +710,41 @@ function useRealtimeVoice({
     return true;
   }, []);
 
+  const applyMicrophoneTrackState = useCallback(() => {
+    const enabled = shouldEnableRealtimeMicrophone({
+      inputMuted: inputMutedRef.current,
+      assistantOutputActive: assistantOutputActiveRef.current,
+    });
+    microphoneStreamRef.current?.getAudioTracks?.().forEach((track) => {
+      track.enabled = enabled;
+    });
+    setIsListening(enabled);
+    return enabled;
+  }, []);
+
   const setMicrophoneMuted = useCallback((muted) => {
     inputMutedRef.current = muted;
-    microphoneStreamRef.current?.getAudioTracks?.().forEach((track) => {
-      track.enabled = !muted;
-    });
     setInputMuted(muted);
-    setIsListening(!muted);
-  }, []);
+    applyMicrophoneTrackState();
+  }, [applyMicrophoneTrackState]);
+
+  const suppressMicrophoneForAssistantOutput = useCallback(() => {
+    if (outputReleaseTimerRef.current) clearTimeout(outputReleaseTimerRef.current);
+    outputReleaseTimerRef.current = null;
+    assistantOutputActiveRef.current = true;
+    applyMicrophoneTrackState();
+  }, [applyMicrophoneTrackState]);
+
+  const releaseMicrophoneAfterAssistantOutput = useCallback((immediate = false) => {
+    if (outputReleaseTimerRef.current) clearTimeout(outputReleaseTimerRef.current);
+    const release = () => {
+      outputReleaseTimerRef.current = null;
+      assistantOutputActiveRef.current = false;
+      applyMicrophoneTrackState();
+    };
+    if (immediate) release();
+    else outputReleaseTimerRef.current = setTimeout(release, 550);
+  }, [applyMicrophoneTrackState]);
 
   const startAudioMeter = useCallback((stream) => {
     const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -722,14 +866,14 @@ function useRealtimeVoice({
         break;
       }
       case 'output_audio_buffer.started':
+        suppressMicrophoneForAssistantOutput();
         setIsThinking(false);
-        setIsListening(false);
         setIsSpeaking(true);
         break;
       case 'output_audio_buffer.stopped': {
         setIsSpeaking(false);
         setSpeechBurst(0);
-        setIsListening(!inputMutedRef.current);
+        releaseMicrophoneAfterAssistantOutput();
         if (readyAfterPlaybackRef.current) {
           readyAfterPlaybackRef.current = false;
           callbackRef.current.onReady?.();
@@ -753,7 +897,7 @@ function useRealtimeVoice({
       default:
         break;
     }
-  }, [completeToolCall]);
+  }, [completeToolCall, releaseMicrophoneAfterAssistantOutput, suppressMicrophoneForAssistantOutput]);
 
   const connect = useCallback(async ({ abstractionLabel } = {}) => {
     if (!supported) throw new Error('Realtime voice is not supported in this browser.');
@@ -765,7 +909,10 @@ function useRealtimeVoice({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
-          autoGainControl: true,
+          // Automatic gain can amplify room noise and speaker leakage enough to
+          // look like a new user turn to server-side VAD.
+          autoGainControl: false,
+          channelCount: 1,
         },
       });
       microphoneStreamRef.current = microphoneStream;
@@ -884,10 +1031,12 @@ function useRealtimeVoice({
   const interruptAndListen = useCallback(() => {
     sendEvent({ type: 'response.cancel' });
     sendEvent({ type: 'output_audio_buffer.clear' });
+    releaseMicrophoneAfterAssistantOutput(true);
     setMicrophoneMuted(false);
     setIsSpeaking(false);
+    setIsThinking(false);
     setSpeechBurst(0);
-  }, [sendEvent, setMicrophoneMuted]);
+  }, [releaseMicrophoneAfterAssistantOutput, sendEvent, setMicrophoneMuted]);
 
   useEffect(() => () => releaseResources(), [releaseResources]);
 
@@ -1023,14 +1172,17 @@ const AVATAR_STATE_LABELS = {
   generating: 'Creating the functional decomposition…',
 };
 
-function HeadSilhouette({ state, speechBurst }) {
+export function HeadSilhouette({ state, speechBurst, className = '' }) {
   const speaking = state === 'speaking';
   const energy = typeof speechBurst === 'number'
     ? Math.max(0, Math.min(1, speechBurst))
     : speechBurst ? 0.7 : 0;
   const visualEnergy = speaking ? energy : 0;
   return (
-    <div className="relative flex h-[min(48vh,390px)] w-[min(78vw,390px)] items-center justify-center" aria-hidden="true">
+    <div
+      className={`relative flex items-center justify-center ${className || 'h-[min(48vh,390px)] w-[min(78vw,390px)]'}`}
+      aria-hidden="true"
+    >
       {!speaking && (
         <div className="pointer-events-none absolute -inset-[5%] overflow-visible opacity-100 saturate-150">
           <div className="xhandle-avatar-fog xhandle-avatar-fog-one absolute left-[10%] top-[12%] h-[50%] w-[62%] rounded-full bg-blue-400/40 blur-[42px]" />
