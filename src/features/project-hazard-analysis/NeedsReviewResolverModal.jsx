@@ -21,7 +21,7 @@ export default function NeedsReviewResolverModal({
   const busy = Boolean(busyGroupId || draftingGroupId);
 
   return (
-    <div className="fixed inset-0 z-[1500] flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="needs-review-title">
+    <div className="xhandle-modal-viewport fixed inset-0 z-[1500] flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="needs-review-title">
       <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
         <div className="flex shrink-0 items-start justify-between gap-4 border-b px-6 py-5">
           <div>

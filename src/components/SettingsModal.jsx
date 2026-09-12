@@ -1085,7 +1085,7 @@ export default function SettingsModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+    <div className="xhandle-modal-viewport fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
       <div className="relative flex max-h-[calc(100dvh-2rem)] w-[920px] max-w-full flex-col overflow-hidden rounded-2xl bg-white shadow-2xl sm:max-h-[calc(100dvh-3rem)]">
         <div className="shrink-0 px-5 pt-5">

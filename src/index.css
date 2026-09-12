@@ -17,6 +17,36 @@ html, body, #root { width: 100vw; height: 100vh; overflow: auto; background: var
   --results-review-drawer-width: min(520px, 100vw);
   --results-review-drawer-expanded-width: min(920px, 100vw);
   --safety-remediation-drawer-width: min(560px, 100vw);
+  --xhandle-collaborator-reserved-width: 0px;
+}
+:root[data-xhandle-collaborator-dock="open"] {
+  --xhandle-collaborator-reserved-width: 380px;
+}
+:root[data-xhandle-collaborator-dock="expanded"] {
+  --xhandle-collaborator-reserved-width: min(760px, 100vw);
+}
+@media (min-width: 768px) {
+  :root[data-xhandle-collaborator-dock="open"] {
+    --xhandle-collaborator-reserved-width: 420px;
+  }
+}
+
+/* Keep viewport-level dialogs inside the workspace that remains when the
+   Collaborator is docked. Modal panels can continue to use their existing
+   percentage/max-width rules; their containing viewport now represents the
+   actual available application area instead of the obscured full screen. */
+.xhandle-modal-viewport {
+  right: var(--xhandle-collaborator-reserved-width) !important;
+  width: auto !important;
+  max-width: calc(100vw - var(--xhandle-collaborator-reserved-width));
+  min-width: 0;
+  transition-property: right, width, max-width;
+  transition-duration: 200ms;
+  transition-timing-function: ease-out;
+}
+
+.xhandle-modal-viewport > * {
+  min-width: 0;
 }
 .results-review-app-frame {
   min-height: 100vh;
@@ -25,17 +55,17 @@ html, body, #root { width: 100vw; height: 100vh; overflow: auto; background: var
 }
 @media (min-width: 1024px) {
   .results-review-app-frame--drawer-open {
-    width: calc(100vw - var(--results-review-drawer-width));
+    width: max(0px, calc(100vw - var(--results-review-drawer-width) - var(--xhandle-collaborator-reserved-width)));
     overflow: hidden;
   }
   .results-review-app-frame--drawer-open.results-review-app-frame--drawer-expanded {
-    width: calc(100vw - var(--results-review-drawer-expanded-width));
+    width: max(0px, calc(100vw - var(--results-review-drawer-expanded-width) - var(--xhandle-collaborator-reserved-width)));
   }
-  .results-review-app-frame--drawer-open .fixed.inset-x-0.top-14 {
-    right: var(--results-review-drawer-width) !important;
+  .results-review-app-frame--drawer-open .xhandle-app-viewport {
+    right: calc(var(--results-review-drawer-width) + var(--xhandle-collaborator-reserved-width)) !important;
   }
-  .results-review-app-frame--drawer-open.results-review-app-frame--drawer-expanded .fixed.inset-x-0.top-14 {
-    right: var(--results-review-drawer-expanded-width) !important;
+  .results-review-app-frame--drawer-open.results-review-app-frame--drawer-expanded .xhandle-app-viewport {
+    right: calc(var(--results-review-drawer-expanded-width) + var(--xhandle-collaborator-reserved-width)) !important;
   }
   .safety-remediation-workspace--drawer-open {
     right: var(--safety-remediation-drawer-width) !important;
@@ -329,6 +359,12 @@ html.dark .prose h1, html.dark .prose h2, html.dark .prose h3, html.dark .prose 
 }
 
 /* Collaborator: signal active reasoning while replacing each milestone in place. */
+.xhandle-collaborator-dock {
+  /* Keep docked application chrome above work surfaces, but below the modal
+     layer (which starts at z-index 50) so dialogs always remain unobstructed. */
+  z-index: 45;
+}
+
 .xhandle-reasoning-strobe {
   animation: xhandle-reasoning-strobe 1.35s ease-in-out infinite;
   transform-origin: center;
@@ -350,4 +386,43 @@ html.dark .prose h1, html.dark .prose h2, html.dark .prose h3, html.dark .prose 
 
 @media (prefers-reduced-motion: reduce) {
   .xhandle-reasoning-strobe { animation: none !important; }
+}
+
+/* Collaborator: animate the xHandle mark as the active-work indicator. */
+.xhandle-working-mark {
+  animation: xhandle-working-mark 1.8s cubic-bezier(0.45, 0, 0.2, 1) infinite;
+  filter: drop-shadow(0 0 4px rgba(45, 125, 254, 0.38));
+  transform-origin: center;
+  will-change: transform, opacity, filter;
+}
+
+@keyframes xhandle-working-mark {
+  0% {
+    opacity: 0.68;
+    filter: drop-shadow(0 0 2px rgba(45, 125, 254, 0.22));
+    transform: rotate(0deg) scale(0.88);
+  }
+  38% {
+    opacity: 1;
+    filter: drop-shadow(0 0 7px rgba(111, 61, 255, 0.58));
+    transform: rotate(150deg) scale(1.14);
+  }
+  68% {
+    opacity: 0.86;
+    filter: drop-shadow(0 0 5px rgba(45, 125, 254, 0.42));
+    transform: rotate(258deg) scale(0.97);
+  }
+  100% {
+    opacity: 0.68;
+    filter: drop-shadow(0 0 2px rgba(45, 125, 254, 0.22));
+    transform: rotate(360deg) scale(0.88);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .xhandle-working-mark {
+    animation: none !important;
+    opacity: 0.9;
+    transform: none;
+  }
 }

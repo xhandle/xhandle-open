@@ -105,7 +105,8 @@ describe("Needs Review resolver", () => {
     expect(result.summary[1][9]).toBe("Contributory");
     expect(result.summary[1][11]).toBe("Yes");
     expect(result.summary[1][12]).toBe("Safety");
-    expect(result.summary[2]).toEqual(summary[2]);
+    expect(result.summary[2].slice(0, summary[2].length)).toEqual(summary[2]);
+    expect(result.summary[0].at(-1)).toBe("Classification Resolution Status");
   });
 
   test("ignores updates outside the selected question scope", () => {
@@ -166,6 +167,70 @@ describe("Needs Review resolver", () => {
     expect(result.resolvedRowIndexes).toEqual([1]);
   });
 
+  test("applies an explicit human disposition while retaining incomplete-evidence validation notes", () => {
+    const completeHeaders = [
+      ...headers,
+      "Guide Phrase Applicable", "Guide Phrase Applicability Rationale",
+      "Causal Effect", "Resulting System State", "Intermediate Safety Function", "Intermediate Safety Effect",
+      "Protection Assessment", "Physical-Harm Chain Termination", "Classification Confidence",
+      "Safety Significance Rationale", "Proposed Safety Assessment Rationale", "Hazard", "Loss",
+    ];
+    const base = row();
+    const summary = [completeHeaders, [
+      ...base,
+      "Yes", "The timing deviation is meaningful.",
+      "The receiver uses an unsettled estimate.", "The approach path is offset.", "", "",
+      "Protection effectiveness is unknown.", "", "Medium",
+      "Safety — Related requires more architecture evidence.", "Safety — Related requires more architecture evidence.",
+      "The robot may enter unsafe proximity to a person.", "Physical injury.",
+    ]];
+    const result = applyNeedsReviewResolutionUpdates(summary, [{
+      sourceRowId: "ROW-1",
+      normalizedDecision: "Safety — Related",
+      humanAdjudication: true,
+      "Safety Classification": "Safety — Related",
+      "Safety Significant": "Yes",
+      "Safety Classification Rule": "R1",
+      "Causal Path Type": "Contributory",
+      "Causal Effect": "The receiver uses an unsettled estimate.",
+      "Resulting System State": "The approach path is offset.",
+      "Classification Evidence": "Human reviewer disposition: Yes.",
+      "Safety Significance Rationale": "Human-directed Vibe Review decision: the reviewer marked Safety Significant = Yes.",
+      "Classification Confidence": "Low",
+    }], ["ROW-1"], { allowHumanAdjudication: true });
+    expect(result.rejectedUpdates).toEqual([]);
+    expect(result.resolvedRowIndexes).toEqual([1]);
+    const fields = Object.fromEntries(completeHeaders.map((header, index) => [header, result.summary[1][index]]));
+    expect(fields["Safety Classification"]).toBe("Safety — Related");
+    expect(fields["Safety Significant"]).toBe("Yes");
+    expect(fields["Classification Confidence"]).toBe("Low");
+    expect(fields["Classification Evidence"]).toMatch(/Human adjudication validation note/i);
+    expect(fields["Classification Evidence"]).toMatch(/intermediate safety function/i);
+    expect(result.summary[1][result.summary[0].indexOf("Classification Resolution Status")])
+      .toBe("Human Disposition — Evidence Gap");
+  });
+
+  test("continues to reject an incomplete provider decision without human adjudication", () => {
+    const result = applyNeedsReviewResolutionUpdates([headers, row()], [{
+      sourceRowId: "ROW-1",
+      normalizedDecision: "Safety — Related",
+      "Classification Evidence": "Possible contribution.",
+    }], ["ROW-1"]);
+    expect(result.rejectedUpdates).toHaveLength(1);
+    expect(result.resolvedRowIndexes).toEqual([]);
+  });
+
+  test("does not let an untrusted provider self-assert human adjudication", () => {
+    const result = applyNeedsReviewResolutionUpdates([headers, row()], [{
+      sourceRowId: "ROW-1",
+      normalizedDecision: "Safety — Related",
+      humanAdjudication: true,
+      "Classification Evidence": "Possible contribution.",
+    }], ["ROW-1"]);
+    expect(result.rejectedUpdates).toHaveLength(1);
+    expect(result.resolvedRowIndexes).toEqual([]);
+  });
+
   test("turns a provider content-block response with evidence gaps into an editable fallback draft", async () => {
     const originalFetch = global.fetch;
     global.fetch = jest.fn().mockResolvedValue({
@@ -195,6 +260,15 @@ describe("Needs Review resolver", () => {
       expect(result.fallback).toBe(true);
       expect(result.answer).toContain("Not established in the available project evidence");
       expect(result.answer).toContain("No independent fallback behavior is documented.");
+      const requestBody = JSON.parse(global.fetch.mock.calls[0][1].body);
+      expect(requestBody).toEqual(expect.objectContaining({
+        provider: expect.any(String),
+        model: expect.any(String),
+        effort: expect.any(String),
+        reasoning_effort: expect.any(String),
+        xhandleWorkflow: "hazard-needs-review-evidence-draft",
+      }));
+      expect(requestBody.reasoning_effort).toBe(requestBody.effort);
     } finally {
       global.fetch = originalFetch;
     }

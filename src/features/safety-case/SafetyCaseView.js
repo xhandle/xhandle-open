@@ -26,7 +26,7 @@ import { generateSafetyCaseFromProject, improveClaimWording, suggestEvidence } f
 
 function Modal({ title, children, onClose }) {
   return (
-    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/30 p-4">
+    <div className="xhandle-modal-viewport fixed inset-0 z-[1000] flex items-center justify-center bg-black/30 p-4">
       <div className="max-h-[80vh] w-full max-w-3xl overflow-auto rounded-lg bg-white shadow-xl">
         <div className="flex items-center justify-between border-b px-4 py-3">
           <h3 className="text-sm font-semibold">{title}</h3>

@@ -715,7 +715,7 @@ export default function ArchitectureReportViewer({
       </div>
 
       {imagePreview && (
-        <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/70 p-6" onClick={() => setImagePreview(null)}>
+        <div className="xhandle-modal-viewport fixed inset-0 z-[2000] flex items-center justify-center bg-black/70 p-6" onClick={() => setImagePreview(null)}>
           <div className="max-h-full max-w-6xl overflow-auto rounded-xl bg-white p-3 shadow-2xl" onClick={(event) => event.stopPropagation()}>
             <div className="mb-2 flex justify-end">
               <button onClick={() => setImagePreview(null)} className="rounded border px-2 py-1 text-sm text-slate-700">Close</button>

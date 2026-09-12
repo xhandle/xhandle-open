@@ -53,6 +53,22 @@ describe("safety significance policy", () => {
     expect(result).toMatchObject({ classification: SAFETY_CLASSIFICATION.DIRECT, findings: [] });
   });
 
+  test("recognizes unsafe proximity and loss of separation as physical-harm exposure", () => {
+    const result = validateSafetyClassificationRecord({
+      guidePhraseApplicable: "Yes",
+      safetyClassification: "Safety — Related",
+      safetyClassificationRule: "R1",
+      causalPathType: "Contributory",
+      causalEffect: "An unsettled pose estimate offsets the commanded approach trajectory.",
+      resultingSystemState: "The robot enters unsafe proximity to people or property.",
+      intermediateSafetyFunction: "Obstacle and pedestrian avoidance",
+      intermediateSafetyEffect: "The avoidance function receives an inconsistent pose-relative clearance estimate.",
+      protectionAssessment: "Protection effectiveness for this pose-offset condition is unknown.",
+    }, { to: "Maintain Local World Model" });
+
+    expect(result.findings).toEqual([]);
+  });
+
   test("requires a named intermediate mechanism for Safety — Related", () => {
     const incomplete = validateSafetyClassificationRecord({
       guidePhraseApplicable: "Yes",
@@ -83,6 +99,28 @@ describe("safety significance policy", () => {
       protectionAssessment: "No independent protection is identified.",
     });
     expect(complete.findings).toEqual([]);
+  });
+
+  test("does not accept placeholder text as required classification evidence", () => {
+    const result = validateSafetyClassificationRecord({
+      guidePhraseApplicable: "Yes",
+      safetyClassification: "Safety — Related",
+      safetyClassificationRule: "R1",
+      causalPathType: "Contributory",
+      causalEffect: "The target estimate is unavailable.",
+      resultingSystemState: "The approach cannot be completed.",
+      intermediateSafetyFunction: "Not applicable",
+      intermediateSafetyEffect: "N/A",
+      hazards: "The robot may collide with a nearby person.",
+      losses: "L1 — Injury or loss of life.",
+      protectionAssessment: "Protection effectiveness is unknown.",
+    });
+    expect(result.findings).toContain(
+      "Safety — Related requires a named intermediate safety function, control, barrier, or response.",
+    );
+    expect(result.findings).toContain(
+      "Safety — Related requires the effect on the intermediate safety function.",
+    );
   });
 
   test("flags Mission/Reliability when the row still asserts a physical-harm path", () => {

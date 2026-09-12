@@ -28,8 +28,15 @@ const RELATED_RULE = /^R[1-4]$/i;
 const MISSION_RULE = /^M[1-4]$/i;
 const REVIEW_RULE = /^U[1-4]$/i;
 const NOT_APPLICABLE_RULE = /^N[1-4]$/i;
-const HARM_PATH = /\b(?:L[1-3]\b|collision|crash|injur\w*|fatal\w*|death|physical harm|strik(?:e|ing)|crush\w*|burn\w*|electrocut\w*|toxic release|environmental harm|hazardous energy|unintended (?:physical )?(?:motion|movement|actuation)|loss of (?:vehicle|machine|motion|physical) control|vehicle instability|rollover|physical (?:asset|property|equipment|infrastructure) damage)\b/i;
+const HARM_PATH = /\b(?:L[1-3]\b|collision|crash|injur\w*|fatal\w*|death|physical harm|strik(?:e|ing)|crush\w*|burn\w*|electrocut\w*|toxic release|environmental harm|hazardous energy|unsafe (?:proximity|separation|clearance)|loss of (?:safe )?separation|unintended (?:physical )?(?:motion|movement|actuation)|loss of (?:vehicle|machine|motion|physical) control|vehicle instability|rollover|physical (?:asset|property|equipment|infrastructure) damage)\b/i;
 const NEGATED_HARM_ASSERTION = /\b(?:no|not|without|cannot|does not|do not|fails? to|did not)\b[^.;\n]{0,100}\b(?:L[1-3]|physical harm|harm path|mishap|collision|crash|injur\w*|fatal\w*|death|hazardous state|hazardous outcome|physical damage|environmental harm)\b/gi;
+
+function isSubstantiveClassificationEvidence(value = "") {
+  const candidate = normalized(value);
+  if (!candidate) return false;
+  if (/^not applicable\b/.test(candidate)) return false;
+  return !/^(?:n\/?a|none|unknown|tbd|to be determined|not established|not documented|not defined|unconfirmed)[.!]?$/.test(candidate);
+}
 
 export function normalizeProtectionStatus(value = "", assessment = "") {
   const candidate = normalized(`${value} ${assessment}`);
@@ -64,6 +71,9 @@ export function containsAffirmativeHarmPath(record = {}) {
     record.causalEffect,
     record.resultingSystemState,
     record.intermediateSafetyEffect,
+    record.classificationEvidence,
+    record.safetySignificanceRationale,
+    record.proposedSafetyAssessmentRationale,
   ];
   return affirmativeFields.some((value) => {
     const source = text(value);
@@ -212,23 +222,23 @@ export function validateSafetyClassificationRecord(record = {}, item = {}) {
 
   if (classification === SAFETY_CLASSIFICATION.DIRECT) {
     if (pathType !== SAFETY_PATH_TYPE.DIRECT) findings.push("Safety — Direct requires a Direct causal path.");
-    if (!causalEffect) findings.push("Safety — Direct requires the causal effect on the receiver or controlled process.");
-    if (!resultingSystemState) findings.push("Safety — Direct requires the resulting hazardous system state.");
+    if (!isSubstantiveClassificationEvidence(causalEffect)) findings.push("Safety — Direct requires the causal effect on the receiver or controlled process.");
+    if (!isSubstantiveClassificationEvidence(resultingSystemState)) findings.push("Safety — Direct requires the resulting hazardous system state.");
     if (!hasHarmPath) findings.push("Safety — Direct requires a traceable L1-L3 mishap or physical-harm path.");
     if (!protectionAssessment) findings.push("Safety — Direct requires an assessment of credited independent protections.");
     if (!DIRECT_RULE.test(classificationRule)) findings.push("Safety — Direct requires a D1-D3 classification rule.");
   } else if (classification === SAFETY_CLASSIFICATION.RELATED) {
     if (pathType !== SAFETY_PATH_TYPE.CONTRIBUTORY) findings.push("Safety — Related requires a Contributory causal path.");
-    if (!causalEffect) findings.push("Safety — Related requires the causal effect on the receiver or controlled process.");
-    if (!resultingSystemState) findings.push("Safety — Related requires the resulting system state.");
-    if (!intermediateSafetyFunction) findings.push("Safety — Related requires a named intermediate safety function, control, barrier, or response.");
-    if (!intermediateSafetyEffect) findings.push("Safety — Related requires the effect on the intermediate safety function.");
+    if (!isSubstantiveClassificationEvidence(causalEffect)) findings.push("Safety — Related requires the causal effect on the receiver or controlled process.");
+    if (!isSubstantiveClassificationEvidence(resultingSystemState)) findings.push("Safety — Related requires the resulting system state.");
+    if (!isSubstantiveClassificationEvidence(intermediateSafetyFunction)) findings.push("Safety — Related requires a named intermediate safety function, control, barrier, or response.");
+    if (!isSubstantiveClassificationEvidence(intermediateSafetyEffect)) findings.push("Safety — Related requires the effect on the intermediate safety function.");
     if (!hasHarmPath) findings.push("Safety — Related requires a traceable contributory path to an L1-L3 mishap or physical harm.");
     if (!protectionAssessment) findings.push("Safety — Related requires an assessment of credited independent protections.");
     if (!RELATED_RULE.test(classificationRule)) findings.push("Safety — Related requires an R1-R4 classification rule.");
   } else if (classification === SAFETY_CLASSIFICATION.MISSION) {
     if (hasHarmPath) findings.push("Mission/Reliability contradicts an asserted L1-L3 or physical-harm path.");
-    if (!physicalHarmChainTermination) findings.push("Mission/Reliability requires the point where the physical-harm chain terminates.");
+    if (!isSubstantiveClassificationEvidence(physicalHarmChainTermination)) findings.push("Mission/Reliability requires the point where the physical-harm chain terminates.");
     if (classificationRule && !MISSION_RULE.test(classificationRule)) findings.push("Mission/Reliability requires an M1-M4 classification rule.");
   } else if (classification === SAFETY_CLASSIFICATION.REVIEW) {
     if (classificationRule && !REVIEW_RULE.test(classificationRule)) findings.push("Needs Review requires a U1-U4 classification rule.");

@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Bot,
   ClipboardCheck,
@@ -6,6 +6,8 @@ import {
   Download,
   GitBranch,
   Network,
+  PanelLeftClose,
+  PanelLeftOpen,
   Rocket,
   ShieldAlert,
   Workflow,
@@ -14,9 +16,22 @@ import {
 
 const logoSrc = `${process.env.PUBLIC_URL || ""}/xHandle_Logo.PNG`;
 
-function Section({ icon: Icon, title, eyebrow, children }) {
+const guideSections = [
+  { id: "guide-quick-start", label: "Quick Start", icon: Rocket },
+  { id: "guide-code-architecture", label: "Code-Based Architecture", icon: GitBranch },
+  { id: "guide-review-app", label: "Generate Review App", icon: Download },
+  { id: "guide-assurance", label: "Assurance and Results Review", icon: ClipboardCheck },
+  { id: "guide-hazard-analysis", label: "Hazard Analysis and Safety Remediation", icon: ShieldAlert },
+  { id: "guide-traceability", label: "Traceability, Requirements, and V&V", icon: Network },
+  { id: "guide-workspaces", label: "Project and Cross-Repo Workspaces", icon: Workflow },
+  { id: "guide-collaborator", label: "Collaborator", icon: Bot },
+  { id: "guide-prompt-cookbook", label: "Prompt Cookbook", icon: Bot },
+  { id: "guide-local-data", label: "Local-First Data Model", icon: Database },
+];
+
+function Section({ id, icon: Icon, title, eyebrow, children }) {
   return (
-    <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+    <section id={id} className="scroll-mt-6 rounded-lg border border-slate-200 bg-white shadow-sm">
       <div className="flex items-start gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-blue-700 ring-1 ring-slate-200">
           <Icon className="h-4 w-4" />
@@ -86,7 +101,21 @@ function FeatureGrid({ features }) {
   );
 }
 
+function PromptExample({ title, description, prompt }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+      <div className="text-sm font-semibold text-slate-950">{title}</div>
+      {description && <p className="mt-1 text-xs leading-5 text-slate-600">{description}</p>}
+      <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-md border border-slate-200 bg-white px-3 py-2.5 text-xs leading-5 text-slate-800">
+        <code>{prompt}</code>
+      </pre>
+    </div>
+  );
+}
+
 export default function ReadmeModal({ open, onClose }) {
+  const [navigationCollapsed, setNavigationCollapsed] = useState(false);
+
   useEffect(() => {
     if (!open) return;
 
@@ -106,7 +135,7 @@ export default function ReadmeModal({ open, onClose }) {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[1200] flex items-center justify-center">
+    <div className="xhandle-modal-viewport fixed inset-0 z-[1200] flex items-center justify-center">
       <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-[2px]" onClick={onClose} />
 
       <div className="relative z-10 flex h-[92vh] w-[96vw] max-w-6xl flex-col overflow-hidden rounded-xl border border-slate-300 bg-slate-100 shadow-2xl">
@@ -145,7 +174,47 @@ export default function ReadmeModal({ open, onClose }) {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-6">
+        <div className="flex min-h-0 flex-1">
+          <aside
+            className={`${navigationCollapsed ? "w-14" : "w-64"} flex shrink-0 flex-col border-r border-slate-300 bg-white transition-[width] duration-200 ease-out`}
+          >
+            <div className={`flex h-12 shrink-0 items-center border-b border-slate-200 ${navigationCollapsed ? "justify-center" : "justify-between px-3"}`}>
+              {!navigationCollapsed && (
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Guide sections</span>
+              )}
+              <button
+                type="button"
+                onClick={() => setNavigationCollapsed((collapsed) => !collapsed)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-600 transition hover:bg-slate-100 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                aria-label={navigationCollapsed ? "Expand guide navigation" : "Collapse guide navigation"}
+                aria-expanded={!navigationCollapsed}
+                title={navigationCollapsed ? "Expand guide navigation" : "Collapse guide navigation"}
+              >
+                {navigationCollapsed
+                  ? <PanelLeftOpen className="h-4 w-4" />
+                  : <PanelLeftClose className="h-4 w-4" />}
+              </button>
+            </div>
+
+            <nav className="min-h-0 flex-1 overflow-y-auto px-2 py-3" aria-label="Guide sections">
+              <ul className="space-y-1">
+                {guideSections.map(({ id, label, icon: Icon }) => (
+                  <li key={id}>
+                    <a
+                      href={`#${id}`}
+                      title={navigationCollapsed ? label : undefined}
+                      className={`${navigationCollapsed ? "justify-center px-0" : "px-2.5"} flex min-h-9 items-center gap-2 rounded-md text-xs font-medium text-slate-700 transition hover:bg-blue-50 hover:text-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-600`}
+                    >
+                      <Icon className="h-4 w-4 shrink-0" />
+                      {!navigationCollapsed && <span>{label}</span>}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          </aside>
+
+          <div className="min-w-0 flex-1 overflow-y-auto px-4 py-6 md:px-6">
           <div className="mx-auto max-w-5xl space-y-6">
             <div className="rounded-lg border border-slate-300 bg-white px-6 py-7 shadow-sm">
               <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
@@ -163,7 +232,7 @@ export default function ReadmeModal({ open, onClose }) {
               </div>
             </div>
 
-            <Section icon={Rocket} title="Quick Start" eyebrow="First path">
+            <Section id="guide-quick-start" icon={Rocket} title="Quick Start" eyebrow="First path">
               <StepList
                 steps={[
                   "Open Settings, add your AI provider key, and choose OpenAI, Claude, or Gemini as the active provider.",
@@ -174,7 +243,7 @@ export default function ReadmeModal({ open, onClose }) {
               />
             </Section>
 
-            <Section icon={GitBranch} title="Code-Based Architecture" eyebrow="Repository analysis">
+            <Section id="guide-code-architecture" icon={GitBranch} title="Code-Based Architecture" eyebrow="Repository analysis">
               <p className="mb-4">
                 The code architecture workflow turns selected GitHub files into a functional decomposition table and
                 interactive architecture diagram.
@@ -190,7 +259,7 @@ export default function ReadmeModal({ open, onClose }) {
               />
             </Section>
 
-            <Section icon={Download} title="Generate Review App" eyebrow="Portable review artifact">
+            <Section id="guide-review-app" icon={Download} title="Generate Review App" eyebrow="Portable review artifact">
               <p className="mb-4">
                 After a code-based architecture table exists, use Generate Review App to create a downloadable,
                 read-only Electron app for architecture review.
@@ -217,7 +286,7 @@ export default function ReadmeModal({ open, onClose }) {
               />
             </Section>
 
-            <Section icon={ClipboardCheck} title="Assurance and Results Review" eyebrow="Review workspace">
+            <Section id="guide-assurance" icon={ClipboardCheck} title="Assurance and Results Review" eyebrow="Review workspace">
               <BulletList
                 items={[
                   "Use the assurance workspace after architecture generation to create and review engineering artifacts.",
@@ -228,7 +297,7 @@ export default function ReadmeModal({ open, onClose }) {
               />
             </Section>
 
-            <Section icon={ShieldAlert} title="Hazard Analysis and Safety Remediation" eyebrow="Safety workflow">
+            <Section id="guide-hazard-analysis" icon={ShieldAlert} title="Hazard Analysis and Safety Remediation" eyebrow="Safety workflow">
               <div className="mb-4">
                 <Pill>STPA</Pill>
                 <Pill>FMEA</Pill>
@@ -247,7 +316,7 @@ export default function ReadmeModal({ open, onClose }) {
               />
             </Section>
 
-            <Section icon={Network} title="Traceability, Requirements, and V&V" eyebrow="Connected artifacts">
+            <Section id="guide-traceability" icon={Network} title="Traceability, Requirements, and V&V" eyebrow="Connected artifacts">
               <FeatureGrid
                 features={[
                   {
@@ -270,7 +339,7 @@ export default function ReadmeModal({ open, onClose }) {
               />
             </Section>
 
-            <Section icon={Workflow} title="Project and Cross-Repo Workspaces" eyebrow="Larger systems">
+            <Section id="guide-workspaces" icon={Workflow} title="Project and Cross-Repo Workspaces" eyebrow="Larger systems">
               <BulletList
                 items={[
                   "Organize architecture projects and folders in the left sidebar.",
@@ -281,10 +350,13 @@ export default function ReadmeModal({ open, onClose }) {
               />
             </Section>
 
-            <Section icon={Bot} title="Copilot / Collaborator" eyebrow="AI assistance">
+            <Section id="guide-collaborator" icon={Bot} title="Collaborator" eyebrow="AI assistance">
               <BulletList
                 items={[
                   "Ask questions about the current workspace, selected artifacts, architecture rows, hazards, risks, requirements, and remediation context.",
+                  "Generate new functional architectures or review, revise, and edit the functional decomposition in the active project.",
+                  "Vibe review a functional decomposition one interface at a time, accepting a Keep, Revise, or Remove proposal or deferring the row.",
+                  "Start a governed hazard Vibe Review to examine a stable queue one row at a time and apply explicit reviewer decisions.",
                   "Use your own provider keys through the local API server; supported providers are OpenAI, Claude, and Gemini.",
                   "Provider errors, quotas, and billing come from the provider account you configure. xHandle does not include hosted billing or paid gates.",
                   "For sensitive work, review prompts and generated outputs before treating them as engineering evidence.",
@@ -292,7 +364,115 @@ export default function ReadmeModal({ open, onClose }) {
               />
             </Section>
 
-            <Section icon={Database} title="Local-First Data Model" eyebrow="Open-source behavior">
+            <Section id="guide-prompt-cookbook" icon={Bot} title="Collaborator Prompt Cookbook" eyebrow="Example prompts">
+              <p className="mb-4">
+                Open the relevant project and tab before using project-specific prompts. Replace names and bracketed
+                instructions with your own engineering context. Proposed architecture changes remain reviewable before
+                they are applied.
+              </p>
+
+              <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Create and understand functional architecture
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <PromptExample
+                  title="Generate a new decomposition"
+                  description="Naming the abstraction level avoids an additional selection step."
+                  prompt="Create a multi-level functional decomposition for an autonomous warehouse robot that retrieves totes in shared pedestrian aisles."
+                />
+                <PromptExample
+                  title="Inspect one subsystem"
+                  description="Returns the functions and interfaces already present in the active project."
+                  prompt="Show the functions and interfaces allocated to the Perception subsystem in the current project."
+                />
+                <PromptExample
+                  title="Check graph connectivity"
+                  description="Inspects the existing decomposition without changing it."
+                  prompt="Check the current functional decomposition for orphan node pairs, isolated functions, and disconnected graph islands."
+                />
+                <PromptExample
+                  title="Propose connections for orphan pairs"
+                  description="Creates reviewable bridging rows; say “add them” only after checking the proposal."
+                  prompt="Find orphan node pairs in the current functional decomposition and propose interface rows that connect them to the main functional graph."
+                />
+              </div>
+
+              <div className="mb-3 mt-6 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Review and revise the active decomposition
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <PromptExample
+                  title="Run an additive completeness audit"
+                  description="Looks for missing coverage while preserving every existing row."
+                  prompt="Audit the current functional decomposition for missing operational, feedback, health, mode, and fault-management interfaces. Preserve every existing row and propose additions only."
+                />
+                <PromptExample
+                  title="Revise from engineering feedback"
+                  description="Produces targeted additions, updates, and removals for review."
+                  prompt="Revise the current functional decomposition based on this feedback: [describe the specific problem and desired correction]. Preserve sound unrelated rows and prepare targeted changes for review."
+                />
+                <PromptExample
+                  title="Reevaluate subsystem ownership"
+                  description="Reviews allocation without rewriting the interfaces."
+                  prompt="Reevaluate the subsystem allocation for every existing functional decomposition row. Do not add, remove, or rewrite interfaces."
+                />
+                <PromptExample
+                  title="Request an explicit table edit"
+                  description="Use exact function and payload names whenever possible."
+                  prompt="Add a feedback interface from Monitor Brake Status to Determine Braking Availability carrying Secondary Brake Health Status. Preserve unrelated rows."
+                />
+                <PromptExample
+                  title="Vibe review each interface"
+                  description="Walks a stable queue one row at a time and proposes Keep, Revise, Remove, or Needs Input."
+                  prompt="Vibe review the current functional decomposition one interface at a time. Check leaf-function endpoints, subsystem ownership, direction, interface semantics, and details."
+                />
+                <PromptExample
+                  title="Vibe review one subsystem"
+                  description="Limits the queue to an exact subsystem name."
+                  prompt="Vibe review functional-decomposition rows in subsystem Perception & World Modeling one interface at a time."
+                />
+              </div>
+
+              <div className="mb-3 mt-6 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Review hazard-analysis results
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <PromptExample
+                  title="Vibe Review Needs Review rows"
+                  description="Creates a stable queue and presents one governed Yes/No proposal at a time."
+                  prompt="Vibe review the current project’s hazard-analysis rows where Safety Significance is marked Needs Review. Review them one at a time, briefly explain each row, and propose Yes or No."
+                />
+                <PromptExample
+                  title="Resolve shared evidence gaps in batch"
+                  description="Opens the grouped architecture-question workflow when many unresolved rows depend on the same missing evidence."
+                  prompt="Help me resolve the remaining Needs Review hazard rows in batch using grouped architecture evidence questions."
+                />
+                <PromptExample
+                  title="Challenge existing Yes classifications"
+                  description="Useful for finding false positives after the initial analysis."
+                  prompt="Vibe review the current project’s hazard-analysis rows where Safety Significance is marked Yes. Review them one at a time. Propose retaining Yes or changing it to No using only the documented causal path and physical-harm chain."
+                />
+                <PromptExample
+                  title="Ask an evidence-grounded question"
+                  description="Collaborator can explain the analysis without changing it."
+                  prompt="Summarize the current project’s highest-priority safety-significant hazard-analysis results and include links to the supporting source rows."
+                />
+                <PromptExample
+                  title="Review a narrower hazard scope"
+                  description="Name an exact table field and value to avoid an ambiguous review queue."
+                  prompt="Vibe review hazard-analysis rows where Subsystem Allocation is Perception & World Modeling. Review exactly one row at a time and propose Yes or No."
+                />
+              </div>
+
+              <div className="mt-5 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-950">
+                <span className="font-semibold">Prompted reviews and analysis buttons have different roles.</span>{" "}
+                Use Collaborator prompts to inspect, revise, or Vibe Review functional architecture, answer workspace questions, and
+                conduct row-by-row hazard Vibe Review, or open grouped Needs Review evidence resolution. Use the controls in Hazard Analysis and Safety Issues &amp; Risk
+                Assessment to run the full analysis, regenerate consolidated safety issues, and generate reports.
+              </div>
+            </Section>
+
+            <Section id="guide-local-data" icon={Database} title="Local-First Data Model" eyebrow="Open-source behavior">
               <BulletList
                 items={[
                   "Workspace state is stored locally in browser storage and local IndexedDB-backed stores.",
@@ -309,6 +489,7 @@ export default function ReadmeModal({ open, onClose }) {
               remediation plans, and verification artifacts as review candidates until a qualified engineer
               has checked the evidence, assumptions, and safety impact.
             </div>
+          </div>
           </div>
         </div>
       </div>

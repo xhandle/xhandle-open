@@ -5,9 +5,10 @@ import SafetyRemediationPanel from "./SafetyRemediationPanel";
 export default function SafetyRemediationDrawer({ isOpen, onClose, ...panelProps }) {
   return (
     <div
-      className={`fixed bottom-0 right-0 top-14 z-[79] flex pointer-events-none transition-transform duration-200 ease-out ${
+      className={`fixed bottom-0 top-14 z-[79] flex pointer-events-none transition-[right,transform] duration-200 ease-out ${
         isOpen ? "translate-x-0" : "translate-x-full"
       }`}
+      style={{ right: "var(--xhandle-collaborator-reserved-width)" }}
       aria-hidden={!isOpen}
     >
       <div

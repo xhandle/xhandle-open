@@ -863,7 +863,7 @@ export default function SafetyRemediationPanel({
         </main>
       </div>
       {reviewPopoutOpen && (
-        <div className="fixed inset-0 z-[90] flex justify-end bg-slate-950/20" role="dialog" aria-modal="true" aria-label="Review safety finding">
+        <div className="xhandle-modal-viewport fixed inset-0 z-[90] flex justify-end bg-slate-950/20" role="dialog" aria-modal="true" aria-label="Review safety finding">
           <button
             type="button"
             className="min-h-full flex-1 cursor-default"

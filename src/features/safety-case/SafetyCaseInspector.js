@@ -21,7 +21,7 @@ function InspectorButton({ icon: Icon, children, danger, ...props }) {
 function EvidencePreviewModal({ artifact, onClose }) {
   if (!artifact) return null;
   return (
-    <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/30 p-4">
+    <div className="xhandle-modal-viewport fixed inset-0 z-[1200] flex items-center justify-center bg-black/30 p-4">
       <div className="max-h-[82vh] w-full max-w-3xl overflow-hidden rounded-lg bg-white shadow-xl">
         <div className="flex items-start justify-between gap-4 border-b px-4 py-3">
           <div className="min-w-0">
@@ -76,7 +76,7 @@ function LinkedEvidenceModal({ open, artifacts, unresolvedIds, loading, onClose,
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[1080] flex items-center justify-center bg-black/30 p-4">
+    <div className="xhandle-modal-viewport fixed inset-0 z-[1080] flex items-center justify-center bg-black/30 p-4">
       <div className="flex max-h-[82vh] w-full max-w-4xl flex-col rounded-lg bg-white shadow-xl">
         <div className="flex items-start justify-between gap-4 border-b px-4 py-3">
           <div>
@@ -259,7 +259,7 @@ function EvidenceLinkModal({ open, groups, loading, diagnostics, safetyCase, sel
   };
 
   return (
-    <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/30 p-4">
+    <div className="xhandle-modal-viewport fixed inset-0 z-[1100] flex items-center justify-center bg-black/30 p-4">
       <div className="flex max-h-[84vh] w-full max-w-5xl flex-col rounded-lg bg-white shadow-xl">
         <div className="flex items-center justify-between border-b px-4 py-3">
           <div>

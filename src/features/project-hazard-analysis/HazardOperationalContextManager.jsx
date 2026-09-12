@@ -66,7 +66,11 @@ export default function HazardOperationalContextManager({ open, contexts = [], o
   };
 
   return (
-    <div className="fixed inset-0 z-[90] flex justify-end bg-slate-950/30" role="presentation" onMouseDown={onClose}>
+    <div
+      className="xhandle-modal-viewport fixed inset-0 z-[90] flex justify-end bg-slate-950/30"
+      role="presentation"
+      onMouseDown={onClose}
+    >
       <section
         role="dialog"
         aria-modal="true"

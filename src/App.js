@@ -184,6 +184,16 @@ import {
   extractNeedsReviewRows,
   resolveNeedsReviewGroupWithAI,
 } from "./features/project-hazard-analysis/needsReviewResolver";
+import {
+  CLASSIFICATION_RESOLUTION_STATUS,
+  CLASSIFICATION_RESOLUTION_STATUS_HEADER,
+  normalizeHazardAnalysisResolutionStatus,
+} from "./features/project-hazard-analysis/classificationResolutionStatus";
+import { indexVibeReviewHeaders } from "./features/project-hazard-analysis/vibeReviewScope";
+import {
+  ensureFunctionalVibeReviewRowIds,
+  FUNCTIONAL_VIBE_REVIEW_ID_FIELD,
+} from "./features/functional-vibe-review/functionalVibeReview";
 import { generateHazardOperationalContexts } from "./features/project-hazard-analysis/hazardOperationalContextAi";
 import {
   buildHazardDiagramFocusTarget,
@@ -200,6 +210,7 @@ import {
   enforceSafetyIssueFamilyConsolidation,
   expandLLMSafetyIssueFamilyReferences,
 } from "./features/project-hazard-analysis/safetyIssueConsolidation";
+import { createSafetyIssueConsolidationCoordinator } from "./features/project-hazard-analysis/safetyIssueConsolidationRun";
 import {
   buildSafetyIssueConsolidationPayload,
   compactSafetyIssueEvidenceRow,
@@ -400,6 +411,7 @@ const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
     "Classification Confidence",
     "Safety Significant",
     "Safety Significance Rationale",
+    CLASSIFICATION_RESOLUTION_STATUS_HEADER,
   ],
   "STPA-Textbook": [
     "Raw Analysis Row ID",
@@ -436,6 +448,7 @@ const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
     "Classification Confidence",
     "Safety Significant",
     "Safety Significance Rationale",
+    CLASSIFICATION_RESOLUTION_STATUS_HEADER,
   ],
   "FMEA-Textbook": [
     "Loss",
@@ -560,6 +573,7 @@ const PROJECT_DRAFT_HAZARD_HEADER_ALIASES = {
   "Proposed Safety Assessment Rationale": ["Proposed Safety Assessment Rationale", "Safety Assessment Rationale", "Safety Significance Rationale", "Assumptions"],
   "Safety Significant": ["Safety Significant"],
   "Safety Significance Rationale": ["Safety Significance Rationale"],
+  [CLASSIFICATION_RESOLUTION_STATUS_HEADER]: [CLASSIFICATION_RESOLUTION_STATUS_HEADER, "Resolution Status"],
 };
 
 function alignSummaryRowToHeaders(sourceHeaders = [], row = [], targetHeaders = [], fallbackRow = []) {
@@ -756,7 +770,7 @@ function findExistingHazardRowForFunctionalRow(functionalRow = {}, summary = nul
 
 function stripProjectRiskProfileColumns(sheets = {}) {
   if (!sheets || typeof sheets !== "object") return sheets;
-  return Object.fromEntries(Object.entries(sheets).map(([sheetName, sheetRows]) => {
+  const strippedSheets = Object.fromEntries(Object.entries(sheets).map(([sheetName, sheetRows]) => {
     if (!Array.isArray(sheetRows) || !Array.isArray(sheetRows[0])) return [sheetName, sheetRows];
     const keepIndexes = sheetRows[0]
       .map((header, index) => ({ header: String(header || "").trim(), index }))
@@ -765,6 +779,7 @@ function stripProjectRiskProfileColumns(sheets = {}) {
     if (keepIndexes.length === sheetRows[0].length) return [sheetName, sheetRows];
     return [sheetName, sheetRows.map((row) => keepIndexes.map((index) => row?.[index] ?? ""))];
   }));
+  return normalizeHazardAnalysisResolutionStatus(strippedSheets);
 }
 
 function normalizeAllocationText(value) {
@@ -885,7 +900,7 @@ function CodeArchitectureWorkbookExportModal({
   const selectedSet = new Set(selectedSheets);
   const scopeLabel = scope === "analysis" ? (repoName || "current analysis") : (projectName || "project");
   return createPortal(
-    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/40 p-4">
+    <div className="xhandle-modal-viewport fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/40 p-4">
       <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl ring-1 ring-slate-200">
         <div className="shrink-0 border-b border-slate-200 px-5 py-4">
           <h2 className="text-base font-semibold text-slate-950">Export Workbook</h2>
@@ -966,7 +981,7 @@ function ProjectExportModal({
   onConfirm,
 }) {
   return createPortal(
-    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/40 p-4">
+    <div className="xhandle-modal-viewport fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/40 p-4">
       <div className="w-full max-w-md overflow-hidden rounded-xl bg-white shadow-2xl ring-1 ring-slate-200">
         <div className="border-b border-slate-200 px-5 py-4">
           <h2 className="text-base font-semibold text-slate-950">Export Project</h2>
@@ -1032,7 +1047,7 @@ function CodeArchitectureReviewAnalysisModal({
   const availableCount = options.filter((option) => option.available).length;
   const selectedCount = options.filter((option) => option.available && selectedSet.has(option.key)).length;
   return createPortal(
-    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/40 p-4">
+    <div className="xhandle-modal-viewport fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/40 p-4">
       <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl ring-1 ring-slate-200">
         <div className="shrink-0 border-b border-slate-200 px-5 py-4">
           <h2 className="text-base font-semibold text-slate-950">Generate Review App</h2>
@@ -3661,14 +3676,10 @@ const [section, setSection] = useState(DEFAULT_START_SECTION); // 'projects' | '
 
   // Docked Copilot (persistent)
   const [dockOpen, setDockOpen] = useState(() => localStorage.getItem('xhandle.copilotDockOpen') === 'true');
-  const [dockCollapsed, setDockCollapsed] = useState(false);
+  const [dockCollapsed, setDockCollapsed] = useState(
+    () => localStorage.getItem('xhandle.copilotDockCollapsed') === 'true'
+  );
   const [dockExpanded, setDockExpanded] = useState(false);
-  // Reserve space for the right dock so it doesn't overlay content
-  const dockPaddingClass = dockOpen && !dockCollapsed
-    ? dockExpanded
-      ? 'pr-[min(760px,100vw)]'
-      : 'pr-[380px] md:pr-[420px]'
-    : '';
 const [codeArchitectureProjects, setCodeArchitectureProjects] = useState(() => migrateLegacyCodeArchitectureProjects());
 const [codeArchitectureFolders, setCodeArchitectureFolders] = useState(() => {
   try { return normalizeProjectFolders(JSON.parse(localStorage.getItem(CBA_FOLDERS_KEY) || "[]")); }
@@ -5115,7 +5126,8 @@ const [lastNonCopilotSection, setLastNonCopilotSection] = useState(
           e.preventDefault();
           if (dockOpen) {
             // If dock is open, don't navigate to the Copilot page.
-            setDockCollapsed(false); // optional: uncollapse the dock instead
+            setDockCollapsed(false);
+            try { localStorage.setItem('xhandle.copilotDockCollapsed', 'false'); } catch {}
             return;
           }
           setSection('copilot');
@@ -5129,7 +5141,9 @@ const [lastNonCopilotSection, setLastNonCopilotSection] = useState(
 useEffect(() => {
   const dock = () => {
     setDockOpen(true);
+    setDockCollapsed(false);
     try { localStorage.setItem('xhandle.copilotDockOpen','true'); } catch {}
+    try { localStorage.setItem('xhandle.copilotDockCollapsed','false'); } catch {}
   };
   const undock = () => {
     setDockOpen(false);
@@ -5151,6 +5165,19 @@ useEffect(() => {
     setSection(lastNonCopilotSection || DEFAULT_START_SECTION);
   }
 }, [dockOpen, section, lastNonCopilotSection]);
+
+// Viewport-fixed work surfaces cannot inherit layout padding. Publish the exact
+// width reserved by the dock so every dock-aware surface shifts left together.
+useEffect(() => {
+  const root = document.documentElement;
+  const state = dockOpen && !dockCollapsed
+    ? (dockExpanded ? 'expanded' : 'open')
+    : 'none';
+  root.dataset.xhandleCollaboratorDock = state;
+  return () => {
+    delete root.dataset.xhandleCollaboratorDock;
+  };
+}, [dockOpen, dockCollapsed, dockExpanded]);
 
 // Initialize IDB stores early so “object store not found” can’t occur later
 useEffect(() => {
@@ -6542,7 +6569,7 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
       patch.analysisResult = nextAnalysis;
       patch.riskRegister = buildRiskRegisterFromSummary(summaryRows);
       if (projectId === activeProjectId) {
-        setAnalysisResult((prev) => ({ ...(prev || {}), Summary: summaryRows }));
+        setAnalysisResult((prev) => normalizeHazardAnalysisResolutionStatus({ ...(prev || {}), Summary: summaryRows }));
         setRiskRegister(patch.riskRegister);
       }
       applied.push({ artifact: "riskSummaryRows", count: Math.max(summaryRows.length - 1, 0), mode: "replace" });
@@ -7069,6 +7096,10 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [isConsolidatingSafetyIssues, setIsConsolidatingSafetyIssues] = useState(false);
   const [isHazardAnalysisArtifactLoading, setIsHazardAnalysisArtifactLoading] = useState(false);
   const [safetyIssueRefreshStatus, setSafetyIssueRefreshStatus] = useState(null);
+  const safetyIssueConsolidationCoordinatorRef = useRef(null);
+  if (!safetyIssueConsolidationCoordinatorRef.current) {
+    safetyIssueConsolidationCoordinatorRef.current = createSafetyIssueConsolidationCoordinator();
+  }
   const hazardAnalysisAbortControllerRef = useRef(null);
   const hazardReconciliationHydrationRef = useRef(null);
   const projectPersistenceHydrationRef = useRef(null);
@@ -7333,7 +7364,7 @@ useEffect(() => {
           if (!storedAnalysis.riskRegister?.length && restoredRisks.length) {
             setSafetyIssueRefreshStatus({
               kind: "working",
-              message: `Recovered ${restoredRisks.length} provisional safety issue${restoredRisks.length === 1 ? "" : "s"} from the saved hazard evidence. Use Regenerate Safety Issues for semantic LLM consolidation.`,
+              message: `Recovered ${restoredRisks.length} provisional safety issue${restoredRisks.length === 1 ? "" : "s"} from the saved hazard evidence. Use Regenerate with AI for semantic consolidation.`,
             });
             await saveProjectHazardAnalysisRecord(projectIdForLoad, {
               ...storedAnalysis,
@@ -7688,6 +7719,11 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     () => buildProjectDraftHazardTargets(hazardAnalysisRows, riskMethod, effectiveHazardOperationalContexts),
     [effectiveHazardOperationalContexts, hazardAnalysisRows, riskMethod]
   );
+  useEffect(() => () => {
+    safetyIssueConsolidationCoordinatorRef.current?.cancel(
+      "Safety issue consolidation canceled because the active project changed or closed."
+    );
+  }, [activeProjectId]);
   useEffect(() => {
     if (!activeProjectId || loadingProjectId || !projectLoaded || loadedProjectId !== activeProjectId) return;
     if (hasAnalysisSummary(analysisResult)) return;
@@ -7734,7 +7770,6 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       return;
     }
     if (!Array.isArray(analysisResult?.Summary?.[0])) return;
-    let cancelled = false;
     const targetHeaders = getProjectDraftHazardHeaders(riskMethod);
     const existingSummary = analysisResult.Summary;
     const nextDraftRows = hazardOperationalContexts.length
@@ -7818,36 +7853,16 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
           riskRegister: undefined,
         });
       }
-      setIsConsolidatingSafetyIssues(true);
-      requestConsolidatedSafetyIssuesFromSummary(nextAnalysisResult?.Summary, { mergeExisting: true })
-        .then((consolidatedRiskRegister) => {
-          if (cancelled) return;
-          setRiskRegister(consolidatedRiskRegister);
-          if (activeProjectId) {
-            saveProjectPatch(activeProjectId, {
-              hazardAnalysisStorage: "artifact-store",
-              riskRegister: undefined,
-            });
-          }
-        })
-        .catch((error) => {
-          console.error("[risk-assessment] Failed to refresh safety issues after functional decomposition changed", error);
-        })
-        .finally(() => {
-          if (!cancelled) setIsConsolidatingSafetyIssues(false);
-        });
+      setSafetyIssueRefreshStatus({
+        kind: "working",
+        message: "Hazard evidence changed. Use Regenerate with AI when you are ready to update the consolidated issue set.",
+      });
     }
     const currentDraftSignature = JSON.stringify(draftHazardRowsByIndex || {});
     const nextDraftSignature = JSON.stringify(nextDraftRows);
     if (currentDraftSignature !== nextDraftSignature) {
       setDraftHazardRowsByIndex(nextDraftRows);
     }
-    return () => {
-      cancelled = true;
-    };
-    // requestConsolidatedSafetyIssuesFromSummary is intentionally omitted because it is a component-local async helper.
-    // Including it would rerun this downstream sync on unrelated renders.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProjectId, analysisResult, draftHazardRowsByIndex, draftHazardTargets, hazardAnalysisRows, hazardOperationalContexts, loadedProjectId, loadingProjectId, projectLoaded, riskMethod, riskRegister]);
   const hazardSummaryHeaders = draftHazardHeaders;
   const needsReviewResolutionGroups = useMemo(
@@ -7858,6 +7873,31 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     () => extractNeedsReviewRows(analysisResult?.Summary).length,
     [analysisResult]
   );
+  const openNeedsReviewResolverFromCollaborator = useCallback(() => {
+    if (!activeProjectId) throw new Error("Open a project before resolving Needs Review hazard rows.");
+    if (!Array.isArray(analysisResult?.Summary?.[0]) || analysisResult.Summary.length < 2) {
+      throw new Error("Generate the active project’s hazard analysis before resolving Needs Review rows.");
+    }
+    if (!needsReviewRowCount) {
+      return { activeProjectId, rowCount: 0, groups: [] };
+    }
+    setSection("projects");
+    setActiveTab("Hazard Analysis");
+    setNeedsReviewResolverStatus(null);
+    setShowNeedsReviewResolver(true);
+    return {
+      activeProjectId,
+      rowCount: needsReviewRowCount,
+      groups: needsReviewResolutionGroups.map((group) => ({
+        id: group.id,
+        title: group.title,
+        rowCount: group.affectedRowIndexes.length,
+        interfaceCount: group.interfaces.length,
+        contextCount: group.contexts.length || 1,
+        answered: Boolean(String(hazardNeedsReviewResolutions?.[group.id]?.answer || "").trim()),
+      })),
+    };
+  }, [activeProjectId, analysisResult, hazardNeedsReviewResolutions, needsReviewResolutionGroups, needsReviewRowCount, setSection]);
   const visibleDraftHazardColumnCount = draftHazardHeaders.filter((header) => !PROJECT_HAZARD_CONTEXT_HEADERS.has(header)).length;
   const visibleHazardSummaryColumnCount = hazardSummaryHeaders.filter((header) => !PROJECT_HAZARD_CONTEXT_HEADERS.has(header)).length;
   const hazardSummaryDisplayRows = useMemo(() => {
@@ -7888,9 +7928,21 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         alignedCompleted && isMeaningfullyGeneratedDraftRow(alignedCompleted, fallbackRow)
       );
       const generated = generatedDraft || generatedCompleted;
+      let displayRow = generatedDraft ? alignedDraft : (generatedCompleted ? alignedCompleted : fallbackRow);
+      const resolutionStatusIndex = hazardSummaryHeaders.indexOf(CLASSIFICATION_RESOLUTION_STATUS_HEADER);
+      if (
+        generatedDraft
+        && alignedCompleted
+        && resolutionStatusIndex >= 0
+        && !String(displayRow?.[resolutionStatusIndex] || "").trim()
+        && String(alignedCompleted?.[resolutionStatusIndex] || "").trim()
+      ) {
+        displayRow = [...displayRow];
+        displayRow[resolutionStatusIndex] = alignedCompleted[resolutionStatusIndex];
+      }
 
       return {
-        row: generatedDraft ? alignedDraft : (generatedCompleted ? alignedCompleted : fallbackRow),
+        row: displayRow,
         originalIndex: targetIndex,
         interfaceIndex: originalIndex,
         guidePhraseIndex: target.guidePhraseIndex,
@@ -7902,6 +7954,13 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       };
     });
   }, [analysisResult, draftHazardHeaders, draftHazardRowsByIndex, draftHazardTargets, hazardSummaryHeaders]);
+  const classificationResolutionStatusIndex = hazardSummaryHeaders.indexOf(CLASSIFICATION_RESOLUTION_STATUS_HEADER);
+  const classificationResolutionGapCount = useMemo(() => (
+    classificationResolutionStatusIndex < 0 ? 0 : hazardSummaryDisplayRows.filter(({ row }) => (
+      row[classificationResolutionStatusIndex] === CLASSIFICATION_RESOLUTION_STATUS.HUMAN_EVIDENCE_GAP
+      || row[classificationResolutionStatusIndex] === CLASSIFICATION_RESOLUTION_STATUS.POLICY_GAP
+    )).length
+  ), [classificationResolutionStatusIndex, hazardSummaryDisplayRows]);
   const diagramHazardData = useMemo(
     () => buildProjectHazardDiagramSummary(hazardSummaryHeaders, hazardSummaryDisplayRows),
     [hazardSummaryDisplayRows, hazardSummaryHeaders]
@@ -7952,7 +8011,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     if (!activeProjectId || activeTab !== 'Hazard Analysis' || isResettingHazardAnalysis || hazardResetStatus?.kind === "cleared" || hasAnalysisSummary(analysisResult)) return;
     const savedAnalysis = loadProjectData(activeProjectId)?.analysisResult;
     if (hasAnalysisSummary(savedAnalysis)) {
-      setAnalysisResult(savedAnalysis);
+      setAnalysisResult(normalizeHazardAnalysisResolutionStatus(savedAnalysis));
     }
   }, [activeProjectId, activeTab, analysisResult, hazardResetStatus?.kind, isResettingHazardAnalysis]);
 
@@ -9906,6 +9965,213 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     return { ok: true, artifactId, destination: "project" };
   }, []);
 
+  const buildFunctionalVibeReviewState = useCallback((sourceRows = responseRows) => ({
+    activeProjectId,
+    projectName: projects.find((entry) => entry.id === activeProjectId)?.name || "Untitled project",
+    rows: (Array.isArray(sourceRows) ? sourceRows : []).map((row, rowIndex) => ({
+      rowId: String(row?.[FUNCTIONAL_VIBE_REVIEW_ID_FIELD] || ""),
+      rowIndex,
+      row,
+    })),
+    organizationContext: getProjectOrganizationCalibration(activeProjectId, [
+      "Organization and Products", "Architecture Conventions", "Engineering Rules",
+      "Operational Concepts", "Glossary", "Known Controls and Evidence",
+    ]).context,
+  }), [activeProjectId, projects, responseRows]);
+
+  const beginFunctionalVibeReview = useCallback(() => {
+    const ensured = ensureFunctionalVibeReviewRowIds(responseRows);
+    if (ensured.changed) {
+      setResponseRows(ensured.rows);
+      saveProjectPatch(activeProjectId, { responseRows: ensured.rows });
+    }
+    return buildFunctionalVibeReviewState(ensured.rows);
+  }, [activeProjectId, buildFunctionalVibeReviewState, responseRows]);
+
+  const getFunctionalVibeReviewState = useCallback(
+    () => buildFunctionalVibeReviewState(responseRows),
+    [buildFunctionalVibeReviewState, responseRows],
+  );
+
+  const applyFunctionalVibeReviewDecision = useCallback(async ({
+    projectId,
+    rowId,
+    decision,
+    proposedRow,
+    rationale = "",
+    reviewMeta = {},
+  }) => {
+    if (!activeProjectId || String(projectId) !== String(activeProjectId)) {
+      throw new Error("This review belongs to another project. Return to the original project before applying a decision.");
+    }
+    const currentRows = Array.isArray(responseRows) ? responseRows : [];
+    const rowIndex = currentRows.findIndex((row) => String(row?.[FUNCTIONAL_VIBE_REVIEW_ID_FIELD] || "") === String(rowId || ""));
+    if (rowIndex < 0) throw new Error("The functional-decomposition row is no longer available.");
+    const previousRow = { ...currentRows[rowIndex] };
+    const normalizedDecision = ["Keep", "Revise", "Remove"].includes(decision) ? decision : "";
+    if (!normalizedDecision) throw new Error("Choose Keep, Revise, or Remove before applying this review item.");
+
+    let nextRows;
+    if (normalizedDecision === "Remove") {
+      nextRows = currentRows.filter((_, index) => index !== rowIndex);
+    } else {
+      let nextRow = previousRow;
+      if (normalizedDecision === "Revise") {
+        const revision = pickFunctionalRevisionRow(proposedRow || {});
+        const missing = Object.entries(revision).filter(([, value]) => !String(value || "").trim()).map(([field]) => field);
+        if (missing.length) throw new Error(`The proposed revision is incomplete: ${missing.join(", ")}.`);
+        nextRow = { ...previousRow, ...revision };
+        const candidateRows = currentRows.map((row, index) => index === rowIndex ? nextRow : row);
+        const conflict = ["subsystem", "fromFunction", "controlAction", "toFunction"]
+          .map((field) => getFunctionalLabelConflictForEdit(candidateRows, rowIndex, field, nextRow[field]))
+          .find(Boolean);
+        if (conflict) throw new Error(conflict);
+      }
+      nextRow = {
+        ...nextRow,
+        [FUNCTIONAL_VIBE_REVIEW_ID_FIELD]: rowId,
+        _functionalVibeReview: {
+          decision: normalizedDecision,
+          rationale: String(rationale || "").trim(),
+          reviewedAt: new Date().toISOString(),
+          ...reviewMeta,
+        },
+      };
+      nextRows = currentRows.map((row, index) => index === rowIndex ? nextRow : row);
+    }
+
+    setResponseRows(nextRows);
+    setCommittedFunctionalDiagramRows(getProjectDiagramRows(nextRows));
+    setDiagramCategories((current) => mergeSubsystemDiagramCategories(current, nextRows));
+    saveProjectPatch(activeProjectId, { responseRows: nextRows });
+    return {
+      rowId,
+      rowIndex,
+      decision: normalizedDecision,
+      previousRow,
+      nextRows,
+      state: buildFunctionalVibeReviewState(nextRows),
+    };
+  }, [activeProjectId, buildFunctionalVibeReviewState, responseRows]);
+
+  const undoFunctionalVibeReviewDecision = useCallback(async ({ projectId, record }) => {
+    if (!activeProjectId || String(projectId) !== String(activeProjectId)) {
+      throw new Error("Return to the reviewed project before undoing this decision.");
+    }
+    if (!record?.previousRow || !record?.rowId) throw new Error("The original functional row is unavailable for undo.");
+    const currentRows = Array.isArray(responseRows) ? responseRows : [];
+    let nextRows;
+    if (record.decision === "Remove") {
+      const insertionIndex = Math.max(0, Math.min(Number(record.rowIndex) || 0, currentRows.length));
+      nextRows = [...currentRows];
+      nextRows.splice(insertionIndex, 0, record.previousRow);
+    } else {
+      const rowIndex = currentRows.findIndex((row) => String(row?.[FUNCTIONAL_VIBE_REVIEW_ID_FIELD] || "") === String(record.rowId));
+      if (rowIndex < 0) throw new Error("The reviewed functional row is no longer available for undo.");
+      nextRows = currentRows.map((row, index) => index === rowIndex ? record.previousRow : row);
+    }
+    setResponseRows(nextRows);
+    setCommittedFunctionalDiagramRows(getProjectDiagramRows(nextRows));
+    setDiagramCategories((current) => mergeSubsystemDiagramCategories(current, nextRows));
+    saveProjectPatch(activeProjectId, { responseRows: nextRows });
+    return { rowId: record.rowId, nextRows, state: buildFunctionalVibeReviewState(nextRows) };
+  }, [activeProjectId, buildFunctionalVibeReviewState, responseRows]);
+
+  const openFunctionalVibeReviewRow = useCallback(({ projectId, rowId }) => {
+    if (String(projectId) !== String(activeProjectId)) return false;
+    const rowIndex = responseRows.findIndex((row) => String(row?.[FUNCTIONAL_VIBE_REVIEW_ID_FIELD] || "") === String(rowId || ""));
+    if (rowIndex < 0) return false;
+    setSection("projects");
+    handleOpenFunctionalRow(rowIndex);
+    return true;
+  }, [activeProjectId, handleOpenFunctionalRow, responseRows]);
+
+  const getHazardVibeReviewState = useCallback(() => ({
+    activeProjectId,
+    projectName: projects.find((entry) => entry.id === activeProjectId)?.name || "Untitled project",
+    summary: analysisResult?.Summary || null,
+    riskMethod,
+    organizationContext: getProjectOrganizationCalibration(activeProjectId, [
+      "Safety Philosophy", "Hazard and Loss Taxonomy", "Risk Classification", "Engineering Rules",
+      "Operational Concepts", "Known Controls and Evidence",
+    ]).context,
+  }), [activeProjectId, analysisResult, projects, riskMethod]);
+
+  const applyHazardVibeReviewDecision = useCallback(async ({ projectId, sourceRowId, update, reviewerDisposition = false }) => {
+    if (!activeProjectId || String(projectId) !== String(activeProjectId)) {
+      throw new Error("This review belongs to another project. Return to the original project before applying a decision.");
+    }
+    const summary = analysisResult?.Summary;
+    if (!Array.isArray(summary?.[0])) throw new Error("Generate the hazard-analysis Summary before applying review decisions.");
+    const indexes = indexVibeReviewHeaders(summary[0]);
+    const rowIndex = summary.slice(1).findIndex((row) => String(row?.[indexes.rawRowId] || "").trim() === String(sourceRowId || "").trim()) + 1;
+    if (rowIndex <= 0) return { missing: true, sourceRowId };
+    const previousRow = [...summary[rowIndex]];
+    const applied = applyNeedsReviewResolutionUpdates(
+      summary,
+      [{ ...update, sourceRowId }],
+      [sourceRowId],
+      { allowHumanAdjudication: reviewerDisposition === true },
+    );
+    if (applied.rejectedUpdates.length || !applied.changedRowIndexes.length) {
+      throw new Error(applied.rejectedUpdates[0]?.error || "The governed decision was invalid or did not change the row.");
+    }
+    const nextAnalysisResult = { ...(analysisResult || {}), Summary: applied.summary };
+    const nextDraftRows = Object.fromEntries(Object.entries(draftHazardRowsByIndex || {}).map(([key, entry]) => {
+      if (!Array.isArray(entry?.row)) return [key, entry];
+      const draftIdIndex = findSummaryColumn(draftHazardHeaders, ["Raw Analysis Row ID", "Raw Row ID", "Analysis Row ID"]);
+      if (String(entry.row[draftIdIndex] || "").trim() !== String(sourceRowId || "").trim()) return [key, entry];
+      return [key, { ...entry, row: alignSummaryRowToHeaders(applied.summary[0], applied.summary[rowIndex], draftHazardHeaders, entry.row) }];
+    }));
+    setAnalysisResult(nextAnalysisResult);
+    setDraftHazardRowsByIndex(nextDraftRows);
+    setSafetyIssueRefreshStatus({ kind: "working", message: "Hazard classifications changed. Use Regenerate with AI to refresh the consolidated issue set." });
+    const persisted = await saveProjectHazardAnalysisRecord(activeProjectId, { analysisResult: nextAnalysisResult, draftHazardRowsByIndex: nextDraftRows, riskRegister });
+    if (!persisted) { setAnalysisResult(analysisResult); setDraftHazardRowsByIndex(draftHazardRowsByIndex); throw new Error("The review decision could not be persisted; the row was restored."); }
+    return { sourceRowId, rowIndex, previousRow, nextRow: [...applied.summary[rowIndex]], headers: [...applied.summary[0]], safetyIssuesStale: true };
+  }, [activeProjectId, analysisResult, draftHazardHeaders, draftHazardRowsByIndex, riskRegister]);
+
+  const undoHazardVibeReviewDecision = useCallback(async ({ projectId, sourceRowId, previousGovernedFields }) => {
+    if (!activeProjectId || String(projectId) !== String(activeProjectId)) throw new Error("Return to the reviewed project before undoing this decision.");
+    const summary = analysisResult?.Summary;
+    const indexes = indexVibeReviewHeaders(summary?.[0] || []);
+    const rowIndex = summary?.slice(1).findIndex((row) => String(row?.[indexes.rawRowId] || "").trim() === String(sourceRowId || "").trim()) + 1;
+    if (!previousGovernedFields || rowIndex <= 0) throw new Error("The original governed fields are no longer available for a safe undo.");
+    const restoredSummaryDraft = summary.map((row, index) => index === rowIndex
+      ? row.map((value, columnIndex) => Object.prototype.hasOwnProperty.call(previousGovernedFields, summary[0][columnIndex]) ? previousGovernedFields[summary[0][columnIndex]] : value)
+      : row);
+    const nextAnalysisResult = normalizeHazardAnalysisResolutionStatus({ ...(analysisResult || {}), Summary: restoredSummaryDraft });
+    const restoredSummary = nextAnalysisResult.Summary;
+    const nextDraftRows = Object.fromEntries(Object.entries(draftHazardRowsByIndex || {}).map(([key, entry]) => {
+      if (!Array.isArray(entry?.row)) return [key, entry];
+      const idIndex = findSummaryColumn(draftHazardHeaders, ["Raw Analysis Row ID", "Raw Row ID", "Analysis Row ID"]);
+      if (String(entry.row[idIndex] || "").trim() !== String(sourceRowId || "").trim()) return [key, entry];
+      return [key, { ...entry, row: alignSummaryRowToHeaders(summary[0], restoredSummary[rowIndex], draftHazardHeaders, entry.row) }];
+    }));
+    const persisted = await saveProjectHazardAnalysisRecord(activeProjectId, { analysisResult: nextAnalysisResult, draftHazardRowsByIndex: nextDraftRows, riskRegister });
+    if (!persisted) throw new Error("The restored row could not be persisted.");
+    setAnalysisResult(nextAnalysisResult);
+    setDraftHazardRowsByIndex(nextDraftRows);
+    setSafetyIssueRefreshStatus({ kind: "working", message: "A hazard review decision was undone. Use Regenerate with AI to refresh the consolidated issue set." });
+    return { sourceRowId, rowIndex };
+  }, [activeProjectId, analysisResult, draftHazardHeaders, draftHazardRowsByIndex, riskRegister]);
+
+  const openHazardVibeReviewRow = useCallback(({ projectId, sourceRowId }) => {
+    if (String(projectId) !== String(activeProjectId)) return false;
+    const summary = analysisResult?.Summary;
+    const indexes = indexVibeReviewHeaders(summary?.[0] || []);
+    const rowIndex = summary?.slice(1).findIndex((row) => String(row?.[indexes.rawRowId] || "").trim() === String(sourceRowId || "").trim()) + 1;
+    if (rowIndex <= 0) return false;
+    const displayIdIndex = indexVibeReviewHeaders(hazardSummaryHeaders).rawRowId;
+    const displayIndex = hazardSummaryDisplayRows.findIndex(({ row }) => (
+      String(row?.[displayIdIndex] || "").trim() === String(sourceRowId || "").trim()
+    ));
+    setSection("projects");
+    setActiveTab("Hazard Analysis");
+    handleOpenHazardSummaryRow(displayIndex >= 0 ? displayIndex : rowIndex - 1);
+    return true;
+  }, [activeProjectId, analysisResult, handleOpenHazardSummaryRow, hazardSummaryDisplayRows, hazardSummaryHeaders]);
+
   useEffect(() => {
     return registerActionProvider("project-functional-diagram", {
       getState: () => ({
@@ -9924,6 +10190,16 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       createProjectFromFunctionalDecompositionRows,
       mutateFunctionalDecompositionFromPrompt,
       openWorkspaceArtifact,
+      beginFunctionalVibeReview,
+      getFunctionalVibeReviewState,
+      applyFunctionalVibeReviewDecision,
+      undoFunctionalVibeReviewDecision,
+      openFunctionalVibeReviewRow,
+      openNeedsReviewResolverFromCollaborator,
+      getHazardVibeReviewState,
+      applyHazardVibeReviewDecision,
+      undoHazardVibeReviewDecision,
+      openHazardVibeReviewRow,
     });
   }, [
     activeProjectId,
@@ -9940,6 +10216,16 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     createProjectFromFunctionalDecompositionRows,
     mutateFunctionalDecompositionFromPrompt,
     openWorkspaceArtifact,
+    beginFunctionalVibeReview,
+    getFunctionalVibeReviewState,
+    applyFunctionalVibeReviewDecision,
+    undoFunctionalVibeReviewDecision,
+    openFunctionalVibeReviewRow,
+    openNeedsReviewResolverFromCollaborator,
+    getHazardVibeReviewState,
+    applyHazardVibeReviewDecision,
+    undoHazardVibeReviewDecision,
+    openHazardVibeReviewRow,
   ]);
 
   const handleRowChange = (index, field, value) => {
@@ -10135,20 +10421,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
             .filter((row, index) => isMeaningfullyGeneratedDraftRow(row, buildProjectDraftHazardRow(allHazardTargets[index].analysisRow, targetHeaders))),
         ],
       };
-      setIsConsolidatingSafetyIssues(true);
-      let nextRiskRegister = riskRegister;
-      try {
-        nextRiskRegister = await requestConsolidatedSafetyIssuesFromSummary(finalSheets.Summary, { mergeExisting: true });
-      } catch (error) {
-        console.error("[risk-assessment] LLM consolidation failed while preserving completed hazard rows", error);
-        if (!nextRiskRegister?.length) nextRiskRegister = buildRecoverableSafetyIssuesFromSummary(finalSheets.Summary);
-        setSafetyIssueRefreshStatus({
-          kind: "error",
-          message: `${error?.message || "The LLM could not consolidate the completed hazard rows."}${nextRiskRegister?.length ? " Provisional issues remain available; retry Regenerate Safety Issues." : ""}`,
-        });
-      } finally {
-        setIsConsolidatingSafetyIssues(false);
-      }
+      const nextRiskRegister = riskRegister;
       setDraftHazardRowsByIndex((prev) => ({ ...prev, ...preservedDraftRows }));
       setAnalysisResult(finalSheets);
       setRiskRegister(nextRiskRegister);
@@ -10273,7 +10546,6 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       ...generatedSheets,
       Summary: [targetHeaders, ...mergedSummaryRows],
     };
-    setIsConsolidatingSafetyIssues(true);
     let nextRiskRegister = riskRegister;
     try {
       nextRiskRegister = await requestConsolidatedSafetyIssuesFromSummary(finalSheets.Summary, {
@@ -10282,14 +10554,16 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       });
     } catch (error) {
       if (abortController.signal.aborted) throw error;
+      if (error?.name === "AbortError") {
+        setSafetyIssueRefreshStatus({ kind: "info", message: "Safety issue consolidation was canceled. Existing safety issues were left unchanged." });
+      } else {
       console.error("[risk-assessment] LLM consolidation failed while preserving generated hazard rows", error);
       if (!nextRiskRegister?.length) nextRiskRegister = buildRecoverableSafetyIssuesFromSummary(finalSheets.Summary);
       setSafetyIssueRefreshStatus({
         kind: "error",
-        message: `${error?.message || "The LLM could not consolidate the generated hazard rows."}${nextRiskRegister?.length ? " Provisional issues remain available; retry Regenerate Safety Issues." : ""}`,
+        message: `${error?.message || "The LLM could not consolidate the generated hazard rows."}${nextRiskRegister?.length ? " Provisional issues remain available; retry Regenerate with AI." : ""}`,
       });
-    } finally {
-      setIsConsolidatingSafetyIssues(false);
+      }
     }
 
     setAnalysisResult(finalSheets);
@@ -10368,7 +10642,6 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       }
       setIsAnalyzing(false);
       setIsRegeneratingRiskProfile(false);
-      setIsConsolidatingSafetyIssues(false);
       setAnalysisActivityId(null);
     }
   };
@@ -10512,16 +10785,11 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
           Summary: [targetHeaders, ...mergedSummaryRows],
         };
         setAnalysisResult(nextAnalysisResult);
-        setIsConsolidatingSafetyIssues(true);
-        try {
-          nextRiskRegister = await requestConsolidatedSafetyIssuesFromSummary(nextAnalysisResult.Summary, { mergeExisting: true });
-          setRiskRegister(nextRiskRegister);
-        } catch (error) {
-          console.error("[risk-assessment] LLM consolidation failed after regenerating a hazard row", error);
-          setSafetyIssueRefreshStatus({ kind: "error", message: error?.message || "The LLM could not refresh the consolidated safety issues." });
-        } finally {
-          setIsConsolidatingSafetyIssues(false);
-        }
+        nextRiskRegister = riskRegister;
+        setSafetyIssueRefreshStatus({
+          kind: "working",
+          message: "A hazard row changed. Use Regenerate with AI when you are ready to update the consolidated issue set.",
+        });
       }
       if (activeProjectId) {
         await saveProjectHazardAnalysisRecord(activeProjectId, {
@@ -10815,7 +11083,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       const message = `Rows evaluated: ${rowsEvaluatedCount}. Definitively resolved by classification: ${resolvedCount}. Guide-phrase applicability resolutions: ${guidePhraseResolvedCount}. Rows still needing review: ${remainingCount}.${gapNames.length ? ` Remaining evidence gaps: ${gapNames.join("; ")}.` : ""}${omittedCount ? ` Rejected or omitted updates: ${omittedCount}; those rows were left unchanged.` : ""}`;
       setNeedsReviewResolverStatus({ kind: resolvedCount > 0 && remainingCount === 0 ? "success" : "working", message });
       if (resolvedCount > 0) {
-        setSafetyIssueRefreshStatus({ kind: "working", message: "Hazard classifications changed. Regenerate Safety Issues to refresh the consolidated issue set." });
+        setSafetyIssueRefreshStatus({ kind: "working", message: "Hazard classifications changed. Use Regenerate with AI to refresh the consolidated issue set." });
       }
       if (activeProjectId) {
         const persisted = await saveProjectHazardAnalysisRecord(activeProjectId, {
@@ -10868,7 +11136,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       ...renderRows(issue.causalScenarios, (item) => `${createSafetyModelId("CS", item.description)} · Causal scenario (${item.category || "Uncategorized"}): ${item.description}`),
       ...renderRows(issue.safetyConstraints, (item) => `${createSafetyModelId("SC", item.statement)} · Safety constraint: ${item.statement}`),
       ...(!(issue.canonicalLosses?.length || issue.canonicalHazards?.length || issue.causalScenarios?.length || issue.safetyConstraints?.length)
-        ? [[`| Normalized concepts have not been generated for this legacy issue. Regenerate Safety Issues to populate them. | ${sourceLinks(issue.sourceIndexes)} |`]]
+        ? [[`| Normalized concepts have not been generated for this legacy issue. Use Regenerate with AI to populate them. | ${sourceLinks(issue.sourceIndexes)} |`]]
         : []),
     ].flat().join("\n");
   };
@@ -11547,6 +11815,33 @@ Rules:
       "Operational Concepts",
       "Known Controls and Evidence",
     ]);
+    const coordinator = safetyIssueConsolidationCoordinatorRef.current;
+    const consolidationRun = coordinator.start();
+    if (!consolidationRun) {
+      throw new Error("Safety issue consolidation is already running. Stop the current run before starting another.");
+    }
+    const selectedProvider = getStoredActiveAIProvider();
+    const selectedModel = getConfiguredAIRequestModel();
+    const requestAuthOptions = buildAIAuthOpts({ "Content-Type": "application/json" });
+    const activityId = `safety-issue-consolidation-${activeProjectId || "default"}`;
+    const abortFromCaller = () => consolidationRun.controller.abort(signal?.reason);
+    if (signal?.aborted) abortFromCaller();
+    else signal?.addEventListener?.("abort", abortFromCaller, { once: true });
+    setIsConsolidatingSafetyIssues(true);
+    startActivity(activityId, {
+      title: "Consolidating safety issues",
+      step: 0,
+      total: 2,
+      message: `Starting with ${getAIProviderLabel(selectedProvider)} · ${selectedModel}…`,
+    });
+    const updateRunStatus = (message, step = 0) => {
+      if (!coordinator.isCurrent(consolidationRun.id)) return;
+      setSafetyIssueRefreshStatus({ kind: "working", message });
+      updateActivity(activityId, { step, total: 2, message });
+    };
+    updateRunStatus(
+      `Starting safety issue consolidation with ${getAIProviderLabel(selectedProvider)} · ${selectedModel}…`
+    );
 
     const allowedIndexes = new Set(safetyRows.map((item) => item.sourceIndex));
     const materializeIssues = (proposedIssues = []) => proposedIssues
@@ -11701,86 +11996,85 @@ Rules:
 - Do not invent hazards, controls, owners, dates, or numerical thresholds.
 - Return only strict JSON. No Markdown. No code fences.
       `.trim();
-      let repairInstruction = "";
       let assessed = null;
-      let bestAssessed = null;
-      for (let attempt = 0; attempt < 2; attempt += 1) {
+      {
+        updateRunStatus(`AI consolidation · reviewing ${safetyRows.length} Safety-marked rows…`, 1);
         const timeoutController = new AbortController();
-        const abortFromCaller = () => timeoutController.abort();
+        const abortAttempt = () => timeoutController.abort(consolidationRun.controller.signal.reason);
         let timedOut = false;
         const timeoutId = setTimeout(() => {
           timedOut = true;
           timeoutController.abort();
         }, 120_000);
-        signal?.addEventListener?.("abort", abortFromCaller, { once: true });
+        if (consolidationRun.controller.signal.aborted) abortAttempt();
+        else consolidationRun.controller.signal.addEventListener("abort", abortAttempt, { once: true });
         let response;
         try {
           response = await fetch(`${backendURL}/api/chat`, {
             method: "POST",
-            ...buildAIAuthOpts({ "Content-Type": "application/json" }),
+            ...requestAuthOptions,
             signal: timeoutController.signal,
             body: JSON.stringify({
-              provider: getStoredActiveAIProvider(),
-              model: getConfiguredAIRequestModel(),
+              xhandleWorkflow: "safety-issue-consolidation",
+              provider: selectedProvider,
+              model: selectedModel,
               messages: [
                 { role: "system", content: "Review all supplied safety evidence and return only the compact semantic clustering JSON requested. No prose or markdown." },
-                { role: "user", content: `${prompt}${repairInstruction}` },
+                { role: "user", content: prompt },
               ],
               temperature: 0.2,
               max_tokens: Math.min(8000, Math.max(3000, consolidationEvidence.length * 120)),
             }),
           });
         } catch (error) {
-          if (signal?.aborted) throw error;
+          if (consolidationRun.controller.signal.aborted) throw error;
           if (timedOut) throw new Error("Safety issue consolidation timed out before the LLM returned a complete result.");
           throw error;
         } finally {
           clearTimeout(timeoutId);
-          signal?.removeEventListener?.("abort", abortFromCaller);
+          consolidationRun.controller.signal.removeEventListener("abort", abortAttempt);
         }
         if (!response.ok) throw new Error(`Safety issue consolidation AI HTTP ${response.status}`);
         const parsed = parseJsonObjectFromText(extractAIText(await response.json())) || {};
         const expandedIssues = expandLLMSafetyIssueFamilyReferences(parsed?.issues, consolidationEvidence);
         assessed = assessLLMConsolidationCoverage(expandedIssues, safetyRows);
-        if (
-          !bestAssessed
-          || assessed.missingSourceIndexes.length < bestAssessed.missingSourceIndexes.length
-          || (
-            assessed.missingSourceIndexes.length === bestAssessed.missingSourceIndexes.length
-            && assessed.issues.length > bestAssessed.issues.length
-          )
-        ) {
-          bestAssessed = assessed;
-        }
-        if (assessed.coverageComplete && assessed.issues.length) break;
-        const missingSources = new Set(assessed.missingSourceIndexes);
-        const missingFamilyIds = consolidationEvidence
-          .filter((family) => family.sourceIndexes.some((sourceIndex) => missingSources.has(sourceIndex)))
-          .map((family) => family.familyId);
-        repairInstruction = `\n\nYour prior attempt omitted these evidence families: ${missingFamilyIds.join(", ")}. Return a complete revised issues array and include every omitted familyId in an issue's sourceFamilyIds. Reconsider the full semantic clustering; do not append one issue per omitted row.`;
       }
-      // If the model returned useful semantic clusters but missed bookkeeping
-      // references after repair, complete coverage at the evidence-family
-      // boundary. This preserves its issue decisions and prevents valid hazard
-      // evidence from making the entire risk workflow unusable.
+      // Preserve the model's semantic clusters, then complete any omitted
+      // bookkeeping references deterministically at the evidence-family boundary.
+      // A second full LLM request would repeat a large prompt without adding
+      // engineering judgment, increasing latency and provider cost.
       assessed = assessLLMConsolidationCoverage(
-        enforceSafetyIssueFamilyConsolidation(bestAssessed?.issues || assessed?.issues || [], safetyRows),
+        enforceSafetyIssueFamilyConsolidation(assessed?.issues || [], safetyRows),
         safetyRows
       );
       if (!assessed?.coverageComplete || !assessed.issues.length) {
         throw new Error(`The LLM did not return complete source coverage${assessed?.missingSourceIndexes?.length ? `; missing rows: ${assessed.missingSourceIndexes.join(", ")}` : ""}.`);
       }
+      updateRunStatus("Source coverage validated · applying consolidated safety issues…", 2);
       const nextIssues = materializeIssues(assessed.issues);
-      return mergeExisting ? mergeSafetyIssueEdits(nextIssues, riskRegister) : nextIssues;
+      const resolvedIssues = mergeExisting ? mergeSafetyIssueEdits(nextIssues, riskRegister) : nextIssues;
+      finishActivity(activityId, "success", `Consolidated ${safetyRows.length} Safety-marked rows into ${nextIssues.length} safety issues.`);
+      return resolvedIssues;
     } catch (error) {
-      if (signal?.aborted || error?.name === "AbortError") throw error;
+      if (consolidationRun.controller.signal.aborted || error?.name === "AbortError") {
+        const canceledError = new Error("Safety issue consolidation was canceled.");
+        canceledError.name = "AbortError";
+        finishActivity(activityId, "canceled", canceledError.message);
+        throw canceledError;
+      }
       console.error("[risk-assessment] AI safety issue consolidation failed", error);
+      finishActivity(activityId, "error", error?.message || "Safety issue consolidation failed.");
       throw error;
+    } finally {
+      signal?.removeEventListener?.("abort", abortFromCaller);
+      if (coordinator.finish(consolidationRun.id)) {
+        setIsConsolidatingSafetyIssues(false);
+      }
     }
   }
 
   async function refreshSafetyIssuesFromSummary({ mergeExisting = false } = {}) {
-    if (isConsolidatingSafetyIssues) {
+    if (isConsolidatingSafetyIssues || safetyIssueConsolidationCoordinatorRef.current?.getActiveRun()) {
       setSafetyIssueRefreshStatus({ kind: "working", message: "Safety issue consolidation is already running." });
       return;
     }
@@ -11795,7 +12089,6 @@ Rules:
       });
       return [];
     }
-    setIsConsolidatingSafetyIssues(true);
     setSafetyIssueRefreshStatus({
       kind: "working",
       message: `Consolidating ${eligibleRowCount} Safety-marked hazard row${eligibleRowCount === 1 ? "" : "s"}…`,
@@ -11827,13 +12120,24 @@ Rules:
     } catch (error) {
       console.error("[risk-assessment] Safety issue regeneration failed", error);
       setSafetyIssueRefreshStatus({
-        kind: "error",
-        message: error?.message || "Unable to regenerate safety issues.",
+        kind: error?.name === "AbortError" ? "info" : "error",
+        message: error?.name === "AbortError"
+          ? "Safety issue consolidation was canceled. Existing safety issues were left unchanged."
+          : (error?.message || "Unable to regenerate safety issues."),
       });
       return [];
-    } finally {
-      setIsConsolidatingSafetyIssues(false);
     }
+  }
+
+  function handleCancelSafetyIssueConsolidation() {
+    const canceled = safetyIssueConsolidationCoordinatorRef.current?.cancel();
+    if (canceled) {
+      setSafetyIssueRefreshStatus({ kind: "info", message: "Canceling safety issue consolidation…" });
+      return;
+    }
+    // Recover from stale UI state left by an older build or a hot reload.
+    setIsConsolidatingSafetyIssues(false);
+    setSafetyIssueRefreshStatus({ kind: "info", message: "No active safety issue consolidation request was found." });
   }
 
   const exportSafetyIssuesCSV = () => {
@@ -12259,7 +12563,7 @@ const handleUndoHazardAnalysisReset = async () => {
     const record = await loadHazardAnalysisResetSnapshot(activeProjectId);
     const snapshot = record?.snapshot;
     if (!snapshot) throw new Error("The reset snapshot is no longer available.");
-    setAnalysisResult(snapshot.analysisResult || null);
+    setAnalysisResult(normalizeHazardAnalysisResolutionStatus(snapshot.analysisResult || null));
     setDraftHazardRowsByIndex(snapshot.draftHazardRowsByIndex || {});
     setRiskRegister(snapshot.riskRegister || []);
     setRiskAssessmentReportMarkdown(snapshot.riskAssessmentReportMarkdown || "");
@@ -13104,20 +13408,6 @@ const projectHint = useMemo(() => ({
         </ProjectTabToolbarStatus>
       )}
       <ProjectTabToolbarButton
-        icon={<ClipboardCheck size={17} />}
-        label={`Resolve Needs Review${needsReviewRowCount ? ` (${needsReviewRowCount})` : ""}`}
-        collapsed={hazardTabToolbarCollapsed}
-        tone={needsReviewRowCount ? "warning" : undefined}
-        onClick={() => {
-          setNeedsReviewResolverStatus(null);
-          setShowNeedsReviewResolver(true);
-        }}
-        disabled={isAnalyzing || draftHazardGeneratingIndex !== null || !analysisResult?.Summary}
-        title={needsReviewRowCount
-          ? `Answer grouped architecture questions and re-evaluate ${needsReviewRowCount} unresolved hazard row${needsReviewRowCount === 1 ? "" : "s"}`
-          : "Open the Needs Review resolver"}
-      />
-      <ProjectTabToolbarButton
         icon={<Download size={17} />}
         label="Export CSV"
         collapsed={hazardTabToolbarCollapsed}
@@ -13211,6 +13501,8 @@ const projectHint = useMemo(() => ({
   }
 />
 
+      </div>
+
 <ReadmeModal
   open={showReadmeModal}
   onClose={() => setShowReadmeModal(false)}
@@ -13223,13 +13515,33 @@ const projectHint = useMemo(() => ({
 
 {createPortal(
       dockOpen ? (
-        <div className={`fixed top-14 right-0 bottom-0 z-[1000] border-l bg-white shadow-2xl flex flex-col transition-[width] duration-200 ease-out ${
-          dockExpanded ? "w-[min(760px,100vw)]" : "w-[380px] md:w-[420px]"
+        <div className={`xhandle-collaborator-dock fixed flex flex-col bg-white transition-all duration-200 ease-out ${
+          dockCollapsed
+            ? "right-3 top-16 w-12 rounded-xl border border-gray-200 shadow-lg"
+            : dockExpanded
+              ? "right-0 top-14 bottom-0 w-[min(760px,100vw)] border-l shadow-2xl"
+              : "right-0 top-14 bottom-0 w-[380px] border-l shadow-2xl md:w-[420px]"
         }`}>
           {/* Dock header */}
-          <div className="h-10 border-b flex items-center justify-between px-2 text-xs">
-            <div className="font-semibold">Collaborator</div>
-            <div className="flex items-center gap-1">
+          <div className={`${dockCollapsed ? "flex-col gap-1 p-1.5" : "h-10 justify-between border-b px-2"} flex items-center text-xs`}>
+            {!dockCollapsed && <div className="font-semibold">Collaborator</div>}
+            <div className={`flex items-center gap-1 ${dockCollapsed ? "flex-col" : ""}`}>
+  <button
+    className="inline-flex h-8 w-8 items-center justify-center rounded hover:bg-gray-100"
+    title={dockCollapsed ? "Restore Collaborator" : "Collapse Collaborator to the right"}
+    aria-label={dockCollapsed ? "Restore docked Collaborator" : "Collapse docked Collaborator"}
+    aria-expanded={!dockCollapsed}
+    onClick={() => {
+      const nextCollapsed = !dockCollapsed;
+      setDockCollapsed(nextCollapsed);
+      if (nextCollapsed) setDockExpanded(false);
+      try { localStorage.setItem('xhandle.copilotDockCollapsed', String(nextCollapsed)); } catch {}
+    }}
+  >
+    {dockCollapsed ? <PanelRightOpen className="w-4 h-4" /> : <PanelRightClose className="w-4 h-4" />}
+  </button>
+  {!dockCollapsed && (
+    <>
   <button
     className="px-2 py-1 rounded hover:bg-gray-100"
     title={dockExpanded ? "Collapse Collaborator" : "Expand Collaborator"}
@@ -13264,13 +13576,18 @@ const projectHint = useMemo(() => ({
   <X className="w-4 h-4" />
 </button>
 
+    </>
+  )}
+
 </div>
 
           </div>
 
           {/* Copilot body */}
-          {!dockCollapsed ? (
-            <div className="flex-1 min-h-0">
+          <div
+            className={dockCollapsed ? "hidden" : "flex-1 min-h-0"}
+            aria-hidden={dockCollapsed}
+          >
               <XHandleCopilotView
                 projectHint={projectHint}
                 copilotContext={getActiveProjectContext()}
@@ -13286,22 +13603,19 @@ const projectHint = useMemo(() => ({
                   try { localStorage.setItem('xhandle.copilotDockOpen','false'); } catch {}
                 }}
               />
-            </div>
-          ) : (
-            <div className="flex-1 min-h-0 grid place-items-center text-xs text-gray-500">
-            Collaborator docked (collapsed)
-            </div>
-          )}
+          </div>
         </div>
       ) : null,
       document.body
     )}
 
 {/* tiny signed-in indicator (optional) */}
-      </div>
 
       {/* Push page content below the header */}
-      <div className={`${dockPaddingClass} fixed inset-x-0 top-14 bottom-0`}>
+      <div
+        className="xhandle-app-viewport fixed bottom-0 left-0 top-14 transition-[right] duration-200 ease-out"
+        style={{ right: 'var(--xhandle-collaborator-reserved-width)' }}
+      >
   <div className="flex h-full bg-white overflow-hidden">
     {/* Sidebar */}
     <aside
@@ -13687,6 +14001,7 @@ const projectHint = useMemo(() => ({
       setDockOpen(true);
       setDockCollapsed(false);
       try { localStorage.setItem('xhandle.copilotDockOpen','true'); } catch {}
+      try { localStorage.setItem('xhandle.copilotDockCollapsed','false'); } catch {}
     }}
   />
 </div>
@@ -15643,6 +15958,26 @@ const projectHint = useMemo(() => ({
         {incompleteHazardAnalysisRowCount} functional relationship row{incompleteHazardAnalysisRowCount === 1 ? '' : 's'} will appear in the diagram but cannot be analyzed for hazards until Control Action is populated.
       </div>
     )}
+    {classificationResolutionGapCount > 0 && (
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <span>
+          <strong>{classificationResolutionGapCount} classified row{classificationResolutionGapCount === 1 ? " has" : "s have"} unresolved policy or evidence gaps.</strong>{" "}
+          Human Yes/No dispositions are retained, but they are not presented as policy-validated engineering evidence.
+        </span>
+        {classificationResolutionStatusIndex >= 0 && (
+          <button
+            type="button"
+            onClick={() => setColumnFilterValues(classificationResolutionStatusIndex, [
+              CLASSIFICATION_RESOLUTION_STATUS.HUMAN_EVIDENCE_GAP,
+              CLASSIFICATION_RESOLUTION_STATUS.POLICY_GAP,
+            ])}
+            className="shrink-0 font-semibold text-amber-900 underline decoration-amber-400 underline-offset-2 hover:text-amber-700"
+          >
+            Show affected rows
+          </button>
+        )}
+      </div>
+    )}
     {!analysisResult?.Summary && hazardResetStatus?.kind === "cleared" && Object.keys(draftHazardRowsByIndex || {}).length === 0 ? (
       <div className="flex min-h-[280px] flex-1 items-center justify-center rounded-xl border border-dashed border-gray-300 bg-white p-8 text-center">
         <div className="max-w-md">
@@ -16138,8 +16473,19 @@ const projectHint = useMemo(() => ({
                             </td>
                             {row.map((cell, colIdx) => {
                               const diagramTarget = buildHazardDiagramFocusTarget(hazardSummaryHeaders, row, colIdx);
+                              const columnHeader = hazardSummaryHeaders[colIdx];
+                              const isResolutionStatus = columnHeader === CLASSIFICATION_RESOLUTION_STATUS_HEADER;
+                              const resolutionStatusClass = cell === CLASSIFICATION_RESOLUTION_STATUS.HUMAN_EVIDENCE_GAP
+                                || cell === CLASSIFICATION_RESOLUTION_STATUS.POLICY_GAP
+                                ? "border-amber-200 bg-amber-50 text-amber-800"
+                                : cell === CLASSIFICATION_RESOLUTION_STATUS.NEEDS_REVIEW
+                                  || cell === CLASSIFICATION_RESOLUTION_STATUS.NOT_EVALUATED
+                                  ? "border-slate-200 bg-slate-100 text-slate-700"
+                                  : cell === CLASSIFICATION_RESOLUTION_STATUS.HUMAN_POLICY_VALIDATED
+                                    ? "border-blue-200 bg-blue-50 text-blue-800"
+                                    : "border-emerald-200 bg-emerald-50 text-emerald-800";
                               return (
-                                <td key={colIdx} className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(hazardSummaryHeaders[colIdx]) ? 'hidden ' : ''}min-w-56 max-w-xl break-words px-6 py-4 align-top whitespace-pre-wrap [overflow-wrap:anywhere] border-b border-gray-100 ${rejected ? 'text-rose-900 line-through decoration-rose-400' : ''}`}>
+                                <td key={colIdx} className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(columnHeader) ? 'hidden ' : ''}min-w-56 max-w-xl break-words px-6 py-4 align-top whitespace-pre-wrap [overflow-wrap:anywhere] border-b border-gray-100 ${rejected ? 'text-rose-900 line-through decoration-rose-400' : ''}`}>
                                   {diagramTarget ? (
                                     <button
                                       type="button"
@@ -16149,6 +16495,13 @@ const projectHint = useMemo(() => ({
                                     >
                                       {cell}
                                     </button>
+                                  ) : isResolutionStatus && cell ? (
+                                    <span
+                                      className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${resolutionStatusClass}`}
+                                      title="Policy validation checks record structure and internal classification consistency; it does not independently verify the engineering evidence."
+                                    >
+                                      {cell}
+                                    </span>
                                   ) : cell}
                                 </td>
                               );
@@ -16184,22 +16537,32 @@ const projectHint = useMemo(() => ({
     >
       <ProjectTabToolbarSection title="Safety issues" collapsed={safetyTabToolbarCollapsed}>
             <ProjectTabToolbarButton
-              icon={isConsolidatingSafetyIssues ? <Loader2 size={17} className="animate-spin" /> : <RefreshCw size={17} />}
-              label="Merge & Refresh"
+              icon={<RefreshCw size={17} />}
+              label="Refresh with AI · Keep Edits"
               collapsed={safetyTabToolbarCollapsed}
               onClick={() => refreshSafetyIssuesFromSummary({ mergeExisting: true })}
               disabled={isConsolidatingSafetyIssues || isHazardAnalysisArtifactLoading}
-              title="Use the LLM to consolidate Safety-marked hazard rows while preserving matching issue edits"
+              title="Make one AI consolidation request for Safety-marked hazard rows while preserving matching issue edits"
             />
             <ProjectTabToolbarButton
-              icon={isConsolidatingSafetyIssues ? <Loader2 size={17} className="animate-spin" /> : <Sparkles size={17} />}
-              label="Regenerate Safety Issues"
+              icon={<Sparkles size={17} />}
+              label="Regenerate with AI"
               collapsed={safetyTabToolbarCollapsed}
               tone="primary"
               onClick={() => refreshSafetyIssuesFromSummary({ mergeExisting: false })}
               disabled={isConsolidatingSafetyIssues || isHazardAnalysisArtifactLoading}
-              title="Use the LLM to regenerate consolidated safety issues from rows marked Safety"
+              title="Make one AI consolidation request and replace the consolidated issue set"
             />
+            {isConsolidatingSafetyIssues && (
+              <ProjectTabToolbarButton
+                icon={<Loader2 size={17} className="animate-spin" />}
+                label="Stop AI consolidation"
+                collapsed={safetyTabToolbarCollapsed}
+                tone="danger"
+                onClick={handleCancelSafetyIssueConsolidation}
+                title="Cancel the active provider request and leave the existing safety issues unchanged"
+              />
+            )}
       </ProjectTabToolbarSection>
       <ProjectTabToolbarSection title="Reports and export" collapsed={safetyTabToolbarCollapsed}>
             <ProjectTabToolbarButton
@@ -16330,7 +16693,7 @@ const projectHint = useMemo(() => ({
                   <div className="px-3 py-8 text-center text-sm text-gray-500">
                     {riskRegister.length
                       ? "No safety issues in this priority group."
-                      : "No consolidated safety issues yet. Run hazard analysis, then use Regenerate Safety Issues to consolidate rows marked Safety."}
+                      : "No consolidated safety issues yet. Run hazard analysis, then use Regenerate with AI to consolidate rows marked Safety."}
                   </div>
                 )}
               </div>
@@ -16475,7 +16838,7 @@ const projectHint = useMemo(() => ({
                                 </li>
                               ))}
                             </ul>
-                          ) : <div className="text-gray-500">Regenerate Safety Issues to populate this normalized concept.</div>}
+                          ) : <div className="text-gray-500">Use Regenerate with AI to populate this normalized concept.</div>}
                         </div>
                       ))}
                     </div>
@@ -16534,13 +16897,16 @@ const projectHint = useMemo(() => ({
               )}
             </div>
 
-            <div className={`fixed z-30 rounded-lg border border-gray-200 bg-white shadow-2xl transition-all duration-300 ease-out ${
+            <div
+              className={`fixed z-30 rounded-lg border border-gray-200 bg-white shadow-2xl transition-all duration-300 ease-out ${
               isSafetyIssueReportFullscreen
-                ? 'left-4 right-4 bottom-4 top-24 w-auto'
-                : 'bottom-4 right-4 top-24 w-[min(92vw,680px)]'
+                ? 'left-4 bottom-4 top-24 w-auto'
+                : 'bottom-4 top-24 w-[min(92vw,680px)]'
             } ${
               showSafetyIssueReportDrawer ? 'translate-x-0 opacity-100' : 'translate-x-[calc(100%+2rem)] opacity-0 pointer-events-none'
-            }`}>
+            }`}
+              style={{ right: 'calc(1rem + var(--xhandle-collaborator-reserved-width))' }}
+            >
               <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-4 py-3">
                 <div>
                   <div className="text-sm font-semibold text-gray-900">Safety Issue Report</div>
@@ -17803,7 +18169,7 @@ const updateRiskInProject = async (projectId, predicate) => {
 
 {/* Custom Report Wizard Modal */}
 {showCustomPromptModal && (
-  <div className="fixed inset-0 z-[999]">
+  <div className="xhandle-modal-viewport fixed inset-0 z-[999]">
     <div
       className="absolute inset-0 bg-black/40"
       onClick={() => setShowCustomPromptModal(false)}
@@ -18064,7 +18430,7 @@ const updateRiskInProject = async (projectId, predicate) => {
 )}
 
 {functionalAuditProposal && (
-  <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/40 p-4">
+  <div className="xhandle-modal-viewport fixed inset-0 z-[1200] flex items-center justify-center bg-black/40 p-4">
     <div className="flex max-h-[92vh] w-[min(1180px,96vw)] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
       <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
         <div>
@@ -18510,7 +18876,7 @@ const updateRiskInProject = async (projectId, predicate) => {
         )}
 
         {showCodeArchitectureProjectExport && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center">
+          <div className="xhandle-modal-viewport fixed inset-0 z-[100] flex items-center justify-center">
             <div className="absolute inset-0 bg-black/40" onClick={() => {
               if (!isExportingCodeArchitectureProject) setShowCodeArchitectureProjectExport(false);
             }} />
@@ -18579,7 +18945,7 @@ const updateRiskInProject = async (projectId, predicate) => {
         )}
 
         {showNewCodeArchitectureProject && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center">
+          <div className="xhandle-modal-viewport fixed inset-0 z-[100] flex items-center justify-center">
             <div className="absolute inset-0 bg-black/40" onClick={() => {
               setShowNewCodeArchitectureProject(false);
               setNewCodeArchitectureProjectName('');
@@ -18636,7 +19002,7 @@ const updateRiskInProject = async (projectId, predicate) => {
         )}
 
         {showNewCodeArchitectureFolder && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center">
+          <div className="xhandle-modal-viewport fixed inset-0 z-[100] flex items-center justify-center">
             <div className="absolute inset-0 bg-black/40" onClick={() => {
               setShowNewCodeArchitectureFolder(false);
               setNewCodeArchitectureFolderName('');
@@ -18693,7 +19059,7 @@ const updateRiskInProject = async (projectId, predicate) => {
         )}
 
         {showCodeArchitectureRepoConfig && (
-          <div className="fixed inset-0 z-[120] flex items-center justify-center">
+          <div className="xhandle-modal-viewport fixed inset-0 z-[120] flex items-center justify-center">
             <div className="absolute inset-0 bg-black/40" onClick={() => setShowCodeArchitectureRepoConfig(false)} />
             <div className="relative z-[121] w-full max-w-2xl rounded-2xl border bg-white shadow-xl">
               <div className="px-5 py-4 border-b flex items-center justify-between">
@@ -18831,7 +19197,7 @@ const updateRiskInProject = async (projectId, predicate) => {
 
         {/* New Project Modal */}
         {showNewProject && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center">
+          <div className="xhandle-modal-viewport fixed inset-0 z-[100] flex items-center justify-center">
             {/* Backdrop */}
             <div
               className="absolute inset-0 bg-black/40"
@@ -18909,7 +19275,7 @@ const updateRiskInProject = async (projectId, predicate) => {
         )}
         {/* New Project Folder Modal */}
         {showNewProjectFolder && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center">
+          <div className="xhandle-modal-viewport fixed inset-0 z-[100] flex items-center justify-center">
             <div
               className="absolute inset-0 bg-black/40"
               onClick={() => {

@@ -69,7 +69,7 @@ function ProfileModal({ open, profile, onEdit, onSignOut, onClose }) {
 
   return (
     <div
-      className="fixed z-[70] flex justify-center w-full"
+      className="xhandle-modal-viewport fixed z-[70] flex justify-center w-full"
       style={{ top: "6rem", left: 0 }}
       aria-modal="true"
       role="dialog"
@@ -223,7 +223,7 @@ function ProfileEditor({ initial, onSave, onClose }) {
 
   return (
     <div
-      className="fixed z-[80] flex justify-center w-full"
+      className="xhandle-modal-viewport fixed z-[80] flex justify-center w-full"
       style={{ top: "6rem", left: 0 }}
       aria-modal="true"
       role="dialog"

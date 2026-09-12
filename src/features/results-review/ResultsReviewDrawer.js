@@ -52,7 +52,11 @@ export default function ResultsReviewDrawer({
   const positionLabel = queue.length ? `${activeIndex + 1} of ${queue.length}` : "0 of 0";
 
   return (
-    <div className={`fixed bottom-0 right-0 top-14 z-[80] flex pointer-events-none ${isOpen ? "" : "translate-x-full"}`} aria-hidden={!isOpen}>
+    <div
+      className={`fixed bottom-0 top-14 z-[80] flex pointer-events-none transition-[right,transform] duration-200 ease-out ${isOpen ? "" : "translate-x-full"}`}
+      style={{ right: "var(--xhandle-collaborator-reserved-width)" }}
+      aria-hidden={!isOpen}
+    >
       <div
         className={`pointer-events-auto flex h-full transform flex-col border-l border-gray-200 bg-white shadow-2xl transition-[width,transform] duration-200 ease-out ${
           isOpen ? "translate-x-0" : "translate-x-full"

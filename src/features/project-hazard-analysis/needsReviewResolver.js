@@ -1,9 +1,11 @@
 import { backendURL, buildAIAuthOpts } from "../../components/backendConfig";
 import {
   getStoredActiveAIProvider,
+  getStoredAIProviderEffortPreference,
   getStoredAIProviderModelPreference,
 } from "../../lib/aiProviderConfig";
 import { normalizeControlActionType } from "./hazardSafetyModel";
+import { ensureClassificationResolutionStatus } from "./classificationResolutionStatus";
 import {
   auditSafetyClassificationRecord,
   normalizeClassificationConfidence,
@@ -127,6 +129,8 @@ function policyRecordFromRow(headers, row) {
     protectionStatus: fields["Protection Status"],
     physicalHarmChainTermination: fields["Physical-Harm Chain Termination"],
     classificationEvidence: fields["Classification Evidence"],
+    safetySignificanceRationale: fields["Safety Significance Rationale"],
+    proposedSafetyAssessmentRationale: fields["Proposed Safety Assessment Rationale"],
     proposedSafetyAssessment: fields["Proposed Safety Assessment"],
     safetySignificant: fields["Safety Significant"],
     losses: fields.Losses || fields.Loss,
@@ -245,7 +249,8 @@ function namedEvidenceGap(update) {
   return clean(update?.remainingEvidenceGap || update?.evidenceGap || update?.materialEvidenceGap);
 }
 
-export function normalizeNeedsReviewClassificationDecision(update = {}, currentFields = {}, originalRule = "U4") {
+export function normalizeNeedsReviewClassificationDecision(update = {}, currentFields = {}, originalRule = "U4", options = {}) {
+  const humanAdjudication = options?.allowHumanAdjudication === true && update?.humanAdjudication === true;
   const resolvedField = (field) => {
     const supplied = fieldValue(update, field);
     return supplied === undefined || supplied === null ? currentFields[field] : supplied;
@@ -266,7 +271,7 @@ export function normalizeNeedsReviewClassificationDecision(update = {}, currentF
   const classificationEvidence = clean(resolvedField("Classification Evidence"));
   const evidenceGap = namedEvidenceGap(update);
   let downgradeReason = "";
-  if (!clean(update?.normalizedDecision)) downgradeReason = "Provider update omitted the required normalizedDecision";
+  if (!clean(update?.normalizedDecision)) downgradeReason = `${humanAdjudication ? "Reviewer" : "Provider"} update omitted the required normalizedDecision`;
   else if (classification === "Safety — Direct" && (!causalEffect || !resultingSystemState)) {
     downgradeReason = "the direct causal effect and resulting hazardous state are not both established";
   } else if (classification === "Safety — Related" && (!causalEffect || !resultingSystemState || !intermediateSafetyFunction || !intermediateSafetyEffect)) {
@@ -276,7 +281,7 @@ export function normalizeNeedsReviewClassificationDecision(update = {}, currentF
   } else if (classification === "Needs Review" && !evidenceGap) {
     downgradeReason = "Needs Review requires a concise, named material evidence gap";
   }
-  if (downgradeReason && classification !== "Needs Review") classification = "Needs Review";
+  if (downgradeReason && classification !== "Needs Review" && !humanAdjudication) classification = "Needs Review";
   if (!classificationEvidence) downgradeReason ||= "Classification Evidence is required";
   const suppliedRule = clean(fieldValue(update, "Safety Classification Rule")).toUpperCase();
   const defaults = {
@@ -329,10 +334,16 @@ export function normalizeNeedsReviewClassificationDecision(update = {}, currentF
       "Physical-Harm Chain Termination": "The deviation is not applicable to this interface and context.",
     });
   }
-  return { decision, errors: downgradeReason ? [downgradeReason] : [], evidenceGap };
+  return {
+    decision,
+    errors: downgradeReason && !humanAdjudication ? [downgradeReason] : [],
+    evidenceGap,
+    validationWarnings: downgradeReason && humanAdjudication ? [downgradeReason] : [],
+    humanAdjudication,
+  };
 }
 
-export function applyNeedsReviewResolutionUpdates(summary = [], updates = [], allowedRowIds = []) {
+export function applyNeedsReviewResolutionUpdates(summary = [], updates = [], allowedRowIds = [], options = {}) {
   const headers = Array.isArray(summary?.[0]) ? summary[0] : [];
   if (!headers.length) {
     return {
@@ -376,7 +387,7 @@ export function applyNeedsReviewResolutionUpdates(summary = [], updates = [], al
     const beforeClassification = normalizeSafetyClassification(readCell(headers, row, HEADER_ALIASES.classification));
     const originalRule = readCell(headers, row, HEADER_ALIASES.rule).toUpperCase();
     const currentFields = Object.fromEntries(headers.map((header, index) => [header, row[index]]));
-    const normalizedResult = normalizeNeedsReviewClassificationDecision(update, currentFields, originalRule);
+    const normalizedResult = normalizeNeedsReviewClassificationDecision(update, currentFields, originalRule, options);
     const governed = normalizedResult.decision;
     if (normalizedResult.errors.length) {
       rejectedUpdates.push({ sourceRowId, error: normalizedResult.errors.join("; ") });
@@ -410,15 +421,25 @@ export function applyNeedsReviewResolutionUpdates(summary = [], updates = [], al
         to: currentFields["Function (To)"],
         guidePhrase: currentFields["Guide Phrase"],
       });
-      writeCell(headers, row, "Safety Classification", audited.safetyClassification);
-      writeCell(headers, row, "Safety Classification Rule", audited.safetyClassificationRule);
-      writeCell(headers, row, "Causal Path Type", audited.causalPathType);
-      writeCell(headers, row, "Proposed Safety Assessment", audited.proposedSafetyAssessment);
-      writeCell(headers, row, "Safety Significant", audited.safetySignificant);
       if (audited.validationFindings.length) {
-        beforeRow.forEach((value, index) => { row[index] = value; });
-        rejectedUpdates.push({ sourceRowId, error: audited.validationFindings.join("; ") });
-        return;
+        if (!normalizedResult.humanAdjudication) {
+          beforeRow.forEach((value, index) => { row[index] = value; });
+          rejectedUpdates.push({ sourceRowId, error: audited.validationFindings.join("; ") });
+          return;
+        }
+        const validationNote = `Human adjudication validation note: ${audited.validationFindings.join("; ")}`;
+        const evidence = readCell(headers, row, ["Classification Evidence"]);
+        const rationale = readCell(headers, row, ["Safety Significance Rationale"]);
+        writeCell(headers, row, "Classification Evidence", `${evidence} ${validationNote}`.trim());
+        writeCell(headers, row, "Safety Significance Rationale", `${rationale} ${validationNote}`.trim());
+        writeCell(headers, row, "Proposed Safety Assessment Rationale", `${rationale} ${validationNote}`.trim());
+        writeCell(headers, row, "Classification Confidence", "Low");
+      } else {
+        writeCell(headers, row, "Safety Classification", audited.safetyClassification);
+        writeCell(headers, row, "Safety Classification Rule", audited.safetyClassificationRule);
+        writeCell(headers, row, "Causal Path Type", audited.causalPathType);
+        writeCell(headers, row, "Proposed Safety Assessment", audited.proposedSafetyAssessment);
+        writeCell(headers, row, "Safety Significant", audited.safetySignificant);
       }
     }
     updatedRowIndexes.push(sourceRowIndex);
@@ -429,8 +450,11 @@ export function applyNeedsReviewResolutionUpdates(summary = [], updates = [], al
     }
   });
 
+  const updatedSummary = [headers, ...nextRows];
   return {
-    summary: [headers, ...nextRows],
+    summary: updatedRowIndexes.length
+      ? ensureClassificationResolutionStatus(updatedSummary)
+      : updatedSummary,
     updatedRowIndexes: Array.from(new Set(updatedRowIndexes)).sort((a, b) => a - b),
     changedRowIndexes: Array.from(new Set(changedRowIndexes)).sort((a, b) => a - b),
     resolvedRowIndexes: Array.from(new Set(resolvedRowIndexes)).sort((a, b) => a - b),
@@ -647,6 +671,7 @@ Rules:
   `.trim();
   const provider = getStoredActiveAIProvider();
   const model = getStoredAIProviderModelPreference(provider, { includeDefault: true });
+  const effort = getStoredAIProviderEffortPreference(provider);
   const timeoutController = new AbortController();
   let timedOut = false;
   const forwardAbort = () => timeoutController.abort();
@@ -664,6 +689,9 @@ Rules:
       body: JSON.stringify({
         provider,
         model,
+        effort,
+        reasoning_effort: effort,
+        xhandleWorkflow: "hazard-needs-review-resolution",
         messages: [
           { role: "system", content: "Perform an evidence-disciplined safety-classification re-evaluation. Return complete strict JSON only." },
           { role: "user", content: prompt },
@@ -844,6 +872,7 @@ Rules:
   `.trim();
   const provider = getStoredActiveAIProvider();
   const model = getStoredAIProviderModelPreference(provider, { includeDefault: true });
+  const effort = getStoredAIProviderEffortPreference(provider);
   const timeoutController = new AbortController();
   let timedOut = false;
   const forwardAbort = () => timeoutController.abort();
@@ -861,6 +890,9 @@ Rules:
       body: JSON.stringify({
         provider,
         model,
+        effort,
+        reasoning_effort: effort,
+        xhandleWorkflow: "hazard-needs-review-evidence-draft",
         messages: [
           { role: "system", content: "Draft an evidence-grounded architecture answer for human review. Return complete strict JSON only." },
           { role: "user", content: prompt },

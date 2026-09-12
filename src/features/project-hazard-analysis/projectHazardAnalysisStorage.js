@@ -1,4 +1,5 @@
 import { openDB } from "idb";
+import { normalizeHazardAnalysisResolutionStatus } from "./classificationResolutionStatus";
 
 const DB_NAME = "xhandle-project-hazard-analysis";
 const DB_VERSION = 1;
@@ -18,7 +19,12 @@ export async function loadProjectHazardAnalysisRecord(projectId) {
   try {
     const db = await openHazardDatabase();
     if (!db) return null;
-    return (await db.get(STORE_NAME, id)) || null;
+    const record = (await db.get(STORE_NAME, id)) || null;
+    if (!record) return null;
+    return {
+      ...record,
+      analysisResult: normalizeHazardAnalysisResolutionStatus(record.analysisResult),
+    };
   } catch (error) {
     console.warn("[project-hazard-storage] Unable to load hazard analysis artifact", error);
     return null;
@@ -33,7 +39,7 @@ export async function saveProjectHazardAnalysisRecord(projectId, data = {}) {
     if (!db) return false;
     await db.put(STORE_NAME, {
       projectId: id,
-      analysisResult: data.analysisResult ?? null,
+      analysisResult: normalizeHazardAnalysisResolutionStatus(data.analysisResult ?? null),
       draftHazardRowsByIndex: data.draftHazardRowsByIndex || {},
       riskRegister: Array.isArray(data.riskRegister) ? data.riskRegister : [],
       updatedAt: new Date().toISOString(),

@@ -204,7 +204,7 @@ function topKRiskRowsForModules(parentReqs, childReqs, riskRows, k) {
 
 function ModalFrame({ title, onClose, children }) {
   return (
-    <div className="fixed inset-0 z-[999]">
+    <div className="xhandle-modal-viewport fixed inset-0 z-[999]">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden />
       <div className="absolute inset-0 flex items-center justify-center p-4">
         <div className="w-full max-w-3xl rounded-2xl bg-white shadow-xl flex flex-col max-h-[80vh]">

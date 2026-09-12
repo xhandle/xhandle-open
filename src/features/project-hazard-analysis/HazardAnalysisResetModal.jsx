@@ -5,7 +5,7 @@ export default function HazardAnalysisResetModal({ counts, busy = false, onCance
   const [scope, setScope] = useState("results");
   const [confirmed, setConfirmed] = useState(false);
   return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="hazard-reset-title">
+    <div className="xhandle-modal-viewport fixed inset-0 z-[120] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="hazard-reset-title">
       <button type="button" className="absolute inset-0 bg-black/45" onClick={busy ? undefined : onCancel} aria-label="Cancel reset" />
       <div className="relative z-[121] w-full max-w-lg rounded-2xl border border-red-200 bg-white shadow-2xl">
         <div className="flex items-start gap-3 border-b border-gray-200 px-5 py-4">

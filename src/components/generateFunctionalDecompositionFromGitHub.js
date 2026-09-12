@@ -593,7 +593,7 @@ export function FileTypeSelectorModal({ open, files, onCancel, onConfirm }) {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40">
+    <div className="xhandle-modal-viewport fixed inset-0 z-[1000] flex items-center justify-center bg-black/40">
       <div className="w-[680px] max-h-[80vh] overflow-hidden rounded-2xl bg-white shadow-xl border">
         <div className="px-5 py-4 border-b flex items-center justify-between">
           <h3 className="text-lg font-semibold">Choose file types to include</h3>

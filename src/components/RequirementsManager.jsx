@@ -5541,7 +5541,7 @@ setHeaderName(prev => (opts.includes(prev) ? prev : (opts[0] || "")));
 // ----------------------------- Modal (shared) --------------------------------
 function Modal({ title, onClose, children }) {
     return (
-      <div className="fixed inset-0 z-[999]">
+      <div className="xhandle-modal-viewport fixed inset-0 z-[999]">
         <div
           className="absolute inset-0 bg-black/40"
           onClick={onClose}
@@ -5565,4 +5565,3 @@ function Modal({ title, onClose, children }) {
       </div>
     );
   }
-

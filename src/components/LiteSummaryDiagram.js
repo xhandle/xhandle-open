@@ -1683,7 +1683,7 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
 
       {/* Add Node modal */}
       {addOpen && view === VIEW.DIAGRAM && hasData && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center" style={{ background: "rgba(0,0,0,0.35)" }}>
+        <div className="xhandle-modal-viewport fixed inset-0 z-[9999] flex items-center justify-center" style={{ background: "rgba(0,0,0,0.35)" }}>
           <div
             role="dialog"
             aria-modal="true"
@@ -1723,7 +1723,7 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
 
       {/* Edit Node modal */}
       {editorOpen && view === VIEW.DIAGRAM && hasData && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center" style={{ background: "rgba(0,0,0,0.35)" }}>
+        <div className="xhandle-modal-viewport fixed inset-0 z-[9999] flex items-center justify-center" style={{ background: "rgba(0,0,0,0.35)" }}>
           <div
             role="dialog"
             aria-modal="true"
@@ -1766,7 +1766,7 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
 
       {/* Config modal */}
       {cfgOpen && view === VIEW.LIST && hasData && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center" style={{ background: "rgba(0,0,0,0.35)" }}>
+        <div className="xhandle-modal-viewport fixed inset-0 z-[9999] flex items-center justify-center" style={{ background: "rgba(0,0,0,0.35)" }}>
           <div
             role="dialog"
             aria-modal="true"
@@ -1845,7 +1845,7 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
       {/* Hazard Details modal (list) */}
       {details.open && view === VIEW.LIST && hasData && (
         <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center"
+          className="xhandle-modal-viewport fixed inset-0 z-[9999] flex items-center justify-center"
           style={{ background: "rgba(0,0,0,0.35)" }}
           onClick={() => setDetails({ open: false, key: null })}
           aria-label="Close hazard details"
@@ -2159,7 +2159,7 @@ const interactiveCols = new Set(
       {/* Add Trace modal (pick losses/UCAs/etc to link to the hazard) */}
       {addTrace.open && view === VIEW.LIST && hasData && (
         <div
-          className="fixed inset-0 z-[10000] flex items-center justify-center"
+          className="xhandle-modal-viewport fixed inset-0 z-[10000] flex items-center justify-center"
           style={{ background: "rgba(0,0,0,0.35)" }}
           onClick={() => setAddTrace((s) => ({ ...s, open: false }))}
         >
