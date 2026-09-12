@@ -48,8 +48,18 @@ import CollaboratorVoiceMode, { buildCollaboratorSpokenResponse, primeNaturalSpe
 /* === NEW: region selection imports === */
 import { openRegionSelector } from "./RegionLassoOverlay";
 import { pushRegionContext, popAllRegionContext } from "./utils/copilotContextBus";
-import { buildWorkspaceLLMContext } from "../features/workspace-graph";
+import { buildWorkspaceLLMContext, getArtifact as getWorkspaceArtifact } from "../features/workspace-graph";
 import { waitForActionProvider } from "../features/app/actionRegistry";
+import {
+  buildWorkspaceActionPlannerMessages,
+  extractWorkspaceActionJson,
+  isWorkspaceMutationIntent,
+  isWorkspaceUndoIntent,
+  normalizeWorkspaceActionPlan,
+  summarizeWorkspaceAction,
+  validateWorkspaceActionPlan,
+} from "../features/collaborator-workspace";
+import { describeActiveSelection } from "../features/collaborator-selection/activeSelectionContext";
 import { describeScopeResolution, isHazardVibeReviewIntent, resolveHazardVibeReviewScope } from "../features/project-hazard-analysis/vibeReviewScope";
 import { isBatchNeedsReviewResolverIntent } from "../features/project-hazard-analysis/needsReviewCollaboratorIntent";
 import { buildHumanVibeReviewDecision, compactVibeReviewRow, requestVibeReviewProposal } from "../features/project-hazard-analysis/vibeReviewProposal";
@@ -1020,6 +1030,9 @@ export function renderCopilotContext(ctx) {
       ctx.scope?.activeView?.functionalCanvasSelection?.hasSelection
         ? `Active Functional Diagram canvas selection. Treat this as the likely referent for "this", "that", "it", "selected function", "selected edge", or similar wording: ${boundedJson(ctx.scope.activeView.functionalCanvasSelection, 5000)}`
         : null,
+	      ctx.scope?.activeView?.activeSelections?.length
+	        ? `Active user selections. These are the primary referents for words such as "this", "that", "it", "this row", "this cell", "this function", "this edge", or "the selected item". Prefer them over general workspace matches unless the user names another target: ${boundedJson(ctx.scope.activeView.activeSelections, 10000)}`
+	        : null,
 	      `Workspace graph counts => Projects: ${summary.projectCount || projects.length || 0}, Artifacts: ${summary.artifactCount || artifacts.length || 0}, Relationships: ${summary.relationshipCount || relationships.length || 0}, Relevant artifacts: ${summary.relevantArtifactCount || artifacts.length || 0}`,
 	      functionalConnectivity
 	        ? `Functional decomposition connectivity diagnostics. Use this for questions about orphan node pairs, isolated functions, disconnected graph islands, or missing diagram connections: ${boundedJson(functionalConnectivity, 5000)}`
@@ -1044,6 +1057,7 @@ export function renderCopilotContext(ctx) {
   const screen = ctx.focus?.screen || {};
   const designState = screen.designManagement || {};
   const functionalCanvasSelection = ctx.focus?.functionalCanvasSelection || null;
+  const activeSelections = Array.isArray(ctx.focus?.activeSelections) ? ctx.focus.activeSelections : [];
 
 	  const sample = {
     requirements: (ctx.requirements || []).slice(0, 5).map(r => ({
@@ -1075,6 +1089,7 @@ export function renderCopilotContext(ctx) {
         feature: screen.feature || ctx.focus?.section || null,
         view: screen.view || ctx.focus?.activeTab || null,
         functionalCanvasSelection,
+        activeSelections,
         designManagement: designState ? {
         activeFolderId: designState.activeFolderId,
         activeFolderName: designState.activeFolderName,
@@ -1103,6 +1118,9 @@ export function renderCopilotContext(ctx) {
     `Current screen: ${screen.feature || ctx.focus?.section || "unknown"}${designState?.selectedModule ? `; Design Management module: ${designState.selectedModule}` : ""}`,
     functionalCanvasSelection?.hasSelection
       ? `Active Functional Diagram canvas selection. Treat this as the likely referent for "this", "that", "it", "selected function", "selected edge", or similar wording: ${boundedJson(functionalCanvasSelection, 5000)}`
+      : null,
+    activeSelections.length
+      ? `Active user selections. These are the primary referents for words such as "this", "that", "it", "this row", "this cell", "this function", "this edge", or "the selected item". Prefer them over general workspace samples unless the user names another target: ${boundedJson(activeSelections, 10000)}`
       : null,
     `Workspace counts ⇒ Projects: ${workspaceProjectCount}, SysML models: ${workspaceSysMLCount}, Workspace CodeArch rows: ${(workspace.codeArchitecture || []).length || cbaCount}`,
     `Artifact counts ⇒ Requirements: ${reqCount}, Decomposition links: ${linkCount}, Risks: ${riskCount}, RiskSummary rows: ${sumRows}, CodeArch rows: ${cbaCount}`,
@@ -2505,6 +2523,56 @@ export function FunctionalVibeReviewCard({ message, disabled = false, onAction, 
           <button key={action} type="button" disabled={disabled || actionDisabled} onClick={() => onAction?.(action, card)} className="rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 font-medium text-neutral-800 hover:bg-neutral-50 focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:cursor-not-allowed disabled:opacity-50" aria-label={`${label} for functional row ${card.rowId}`}>{disabled && action === "accept" ? "Applying…" : label}</button>
         ))}
       </div>}
+    </section>
+  );
+}
+
+function WorkspaceActionPlanCard({ message, disabled = false, onApply, onCancel, onOpenSource }) {
+  const plan = message?.workspaceActionPlan;
+  const [deleteConfirmed, setDeleteConfirmed] = useState(false);
+  if (!plan) return null;
+  const destructive = (plan.actions || []).some((action) => action.operation === "delete");
+  const complete = Boolean(plan.completed);
+  return (
+    <section className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50/60 p-3 text-sm" aria-label="Proposed workspace changes">
+      <div className="font-semibold text-indigo-950">Proposed workspace change{plan.actions?.length === 1 ? "" : "s"}</div>
+      {plan.summary && <p className="mt-1 text-xs leading-relaxed text-indigo-900">{plan.summary}</p>}
+      <ol className="mt-2 space-y-2">
+        {(plan.actions || []).map((action, index) => (
+          <li key={action.id || index} className="rounded-md border border-indigo-100 bg-white p-2">
+            <div className="font-medium text-neutral-900">{index + 1}. {summarizeWorkspaceAction(action)}</div>
+            {action.reason && <div className="mt-1 text-xs text-neutral-600">{action.reason}</div>}
+            {action.operation === "update" && action.field && (
+              <div className="mt-1 break-words text-xs text-neutral-700"><span className="font-medium">New value:</span> {typeof action.value === "string" ? action.value : JSON.stringify(action.value ?? action.record)}</div>
+            )}
+            {action.record && (
+              <div className="mt-1 break-words text-xs text-neutral-700"><span className="font-medium">Proposed fields:</span> {JSON.stringify(action.record)}</div>
+            )}
+            {action.relationship && (
+              <div className="mt-1 break-words text-xs text-neutral-700"><span className="font-medium">Relationship:</span> {JSON.stringify(action.relationship)}</div>
+            )}
+            {action.target?.artifactId && (
+              <button type="button" onClick={() => onOpenSource?.(action.target)} className="mt-1 text-xs font-medium text-indigo-700 underline underline-offset-2">Open source</button>
+            )}
+          </li>
+        ))}
+      </ol>
+      {destructive && !complete && (
+        <label className="mt-3 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-900">
+          <input type="checkbox" className="mt-0.5" checked={deleteConfirmed} onChange={(event) => setDeleteConfirmed(event.target.checked)} />
+          <span>I understand that this plan deletes stored engineering data. An undo snapshot will be retained.</span>
+        </label>
+      )}
+      {complete ? (
+        <div className={`mt-3 text-xs font-semibold ${plan.outcome === "applied" ? "text-emerald-700" : "text-neutral-600"}`}>
+          {plan.outcome === "applied" ? "Applied and verified in the workspace." : "Proposal cancelled; no data changed."}
+        </div>
+      ) : (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button type="button" disabled={disabled || (destructive && !deleteConfirmed)} onClick={() => onApply?.(plan, message.messageIndex)} className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">Apply changes</button>
+          <button type="button" disabled={disabled} onClick={() => onCancel?.(plan, message.messageIndex)} className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-50">Cancel</button>
+        </div>
+      )}
     </section>
   );
 }
@@ -4703,6 +4771,102 @@ useEffect(() => {
     provider?.openHazardVibeReviewRow?.(card);
   }
 
+  function completeWorkspacePlanCard(messageIndex, outcome, detail = "") {
+    const thread = loadThreads().find((entry) => entry.id === activeId);
+    if (!thread) return;
+    const nextMessages = (thread.messages || []).map((message, index) => index === messageIndex
+      ? {
+          ...message,
+          workspaceActionPlan: {
+            ...message.workspaceActionPlan,
+            completed: true,
+            outcome,
+            outcomeDetail: detail,
+          },
+        }
+      : message);
+    setMessages(activeId, nextMessages);
+    setThreads(loadThreads());
+  }
+
+  async function applyWorkspacePlan(plan, messageIndex, { appendResult = true } = {}) {
+    const provider = await waitForActionProvider("collaborator-workspace", 1800);
+    if (!provider?.executeWorkspaceActionPlan) throw new Error("The governed workspace action provider is unavailable.");
+    const result = await provider.executeWorkspaceActionPlan({ plan, threadId: activeId });
+    completeWorkspacePlanCard(messageIndex, "applied", result?.summary || "Applied");
+    if (appendResult) {
+      const sources = (plan.actions || [])
+        .filter((action) => action.target?.artifactId)
+        .map((action) => `[${action.target.title || action.target.type || "Open source"}](#xhandle-artifact=${encodeURIComponent(action.target.artifactId)})`);
+      appendMessage(activeId, {
+        role: "assistant",
+        content: `${result?.summary || `Applied ${result?.actionCount || plan.actions.length} workspace change${plan.actions.length === 1 ? "" : "s"}.`} The saved source was refreshed and read back successfully.${sources.length ? ` Sources: ${sources.join(", ")}.` : ""} You can say “undo that” to restore the saved snapshot.`,
+      });
+      setThreads(loadThreads());
+    }
+    return result;
+  }
+
+  async function handleWorkspacePlanApply(plan, messageIndex) {
+    if (busy || !plan || !Number.isInteger(messageIndex)) return;
+    setBusy(true);
+    try {
+      await applyWorkspacePlan(plan, messageIndex);
+    } catch (error) {
+      appendMessage(activeId, { role: "assistant", content: `I couldn’t apply the proposed workspace change: ${error?.message || "unknown error"}. No unverified success was recorded.` });
+      setThreads(loadThreads());
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function handleWorkspacePlanCancel(_plan, messageIndex) {
+    if (busy || !Number.isInteger(messageIndex)) return;
+    completeWorkspacePlanCard(messageIndex, "cancelled", "Cancelled by user");
+  }
+
+  async function handleOpenWorkspacePlanSource(target) {
+    const provider = await waitForActionProvider("collaborator-workspace", 1800);
+    await provider?.openWorkspaceArtifact?.(target);
+  }
+
+  async function prepareWorkspaceActionPlan(userText, activeProjectId, history = []) {
+    const context = await buildWorkspaceLLMContext({
+      projectId: activeProjectId || null,
+      activeView: appFocus || enrichedContext?.focus || {},
+      query: userText,
+      tokenBudget: 10000,
+    });
+    const compactCandidates = Array.isArray(context?.relevantArtifacts) ? context.relevantArtifacts : [];
+    const candidates = (await Promise.all(compactCandidates.map(async (candidate) => (
+      (candidate?.id && await getWorkspaceArtifact(candidate.id)) || candidate
+    )))).filter(Boolean);
+    const plannerMessages = buildWorkspaceActionPlannerMessages({
+      userText,
+      candidates,
+      projects: context?.projects || [],
+      relationships: context?.relationships || [],
+      activeView: context?.scope?.activeView || appFocus || {},
+      history,
+    });
+    let rawText = await callChat(plannerMessages, undefined, { maxTokens: 2400 });
+    let parsed = extractWorkspaceActionJson(rawText);
+    let plan = normalizeWorkspaceActionPlan(parsed, candidates);
+    let errors = validateWorkspaceActionPlan(plan, candidates);
+    if (errors.length) {
+      rawText = await callChat([
+        ...plannerMessages,
+        { role: "assistant", content: rawText },
+        { role: "user", content: `Repair the plan and return complete JSON only. Validation errors:\n- ${errors.join("\n- ")}` },
+      ], undefined, { maxTokens: 2400 });
+      parsed = extractWorkspaceActionJson(rawText);
+      plan = normalizeWorkspaceActionPlan(parsed, candidates);
+      errors = validateWorkspaceActionPlan(plan, candidates);
+    }
+    if (errors.length) throw new Error(`The selected model did not return a safe, source-grounded action plan: ${errors.join(" ")}`);
+    return plan;
+  }
+
 
   async function runCopilot(userText, options = {}) {
     let replacePendingAssistant = null;
@@ -4734,6 +4898,11 @@ useEffect(() => {
       const focusedProjectId = appFocus?.activeProjectId || enrichedContext?.project?.id || enrichedContext?.workspace?.activeProjectId || "";
       const activeReview = focusedProjectId ? loadVibeReviewSession(focusedProjectId, activeId) : null;
       const activeFunctionalReview = focusedProjectId ? loadFunctionalVibeReviewSession(focusedProjectId, activeId) : null;
+      const threadAtActionStart = loadThreads().find((thread) => thread.id === activeId);
+      const pendingWorkspacePlanEntry = [...(threadAtActionStart?.messages || [])]
+        .map((message, messageIndex) => ({ message, messageIndex }))
+        .reverse()
+        .find(({ message }) => message?.workspaceActionPlan && !message.workspaceActionPlan.completed);
       const reviewAction = activeReview && [VIBE_REVIEW_STATES.AWAITING, VIBE_REVIEW_STATES.PROPOSING, VIBE_REVIEW_STATES.PAUSED].includes(activeReview.state)
         ? parseVibeReviewAction(userText) : null;
       const functionalReviewAction = activeFunctionalReview && [FUNCTIONAL_VIBE_REVIEW_STATES.AWAITING, FUNCTIONAL_VIBE_REVIEW_STATES.PROPOSING, FUNCTIONAL_VIBE_REVIEW_STATES.PAUSED].includes(activeFunctionalReview.state)
@@ -4744,6 +4913,28 @@ useEffect(() => {
       const actionProvider = (reviewAction || functionalReviewAction || vibeReviewIntent || functionalVibeReviewIntent || batchNeedsReviewIntent || activeReview || activeFunctionalReview)
         ? await waitForActionProvider("project-functional-diagram", 1800)
         : null;
+      if (pendingWorkspacePlanEntry && /^(?:apply|apply changes|confirm|yes|go ahead|do it)[.!]?$/i.test(String(userText || "").trim())) {
+        try {
+          await applyWorkspacePlan(pendingWorkspacePlanEntry.message.workspaceActionPlan, pendingWorkspacePlanEntry.messageIndex);
+        } catch (error) {
+          appendMessage(activeId, { role: "assistant", content: `I couldn’t apply the proposed workspace change: ${error?.message || "unknown error"}.` });
+          setThreads(loadThreads());
+        }
+        return;
+      }
+      if (pendingWorkspacePlanEntry && /^(?:cancel|no|do not apply|don't apply|never mind|nevermind|discard)[.!]?$/i.test(String(userText || "").trim())) {
+        completeWorkspacePlanCard(pendingWorkspacePlanEntry.messageIndex, "cancelled", "Cancelled by user");
+        appendMessage(activeId, { role: "assistant", content: "Cancelled. I did not change the workspace." });
+        setThreads(loadThreads());
+        return;
+      }
+      if (!activeReview && !activeFunctionalReview && isWorkspaceUndoIntent(userText)) {
+        const provider = await waitForActionProvider("collaborator-workspace", 1800);
+        const result = await provider?.undoLastWorkspaceAction?.();
+        appendMessage(activeId, { role: "assistant", content: result?.summary || result?.message || "There is no Collaborator workspace change to undo." });
+        setThreads(loadThreads());
+        return;
+      }
       if (batchNeedsReviewIntent) {
         try {
           if (activeReview && ![VIBE_REVIEW_STATES.COMPLETED, VIBE_REVIEW_STATES.CANCELLED].includes(activeReview.state)) {
@@ -4949,15 +5140,17 @@ useEffect(() => {
 	      if (requestedFunctionalProjectName) {
 	        setPendingFunctionalProjectName(requestedFunctionalProjectName);
 	      }
-		      const activeProjectId =
-	        scope?.project?.id ||
-	        appFocus?.activeProjectId ||
-	        enrichedContext?.project?.id ||
-	        enrichedContext?.workspace?.activeProjectId ||
-	        null;
-		      const focusContext = appFocus || enrichedContext?.focus || {};
-		      const activeThreadAtStart = loadThreads().find((thread) => thread.id === activeId);
-		      const previousAssistantContent = [...(activeThreadAtStart?.messages || [])]
+      const workspaceWideRequest = /\b(?:across\s+(?:the\s+)?(?:entire\s+)?workspace|across\s+all\s+projects|all\s+projects|workspace[- ]wide|any\s+project)\b/i.test(String(userText || ""));
+      const activeProjectId = workspaceWideRequest
+        ? null
+        : (scope?.project?.id ||
+          appFocus?.activeProjectId ||
+          enrichedContext?.project?.id ||
+          enrichedContext?.workspace?.activeProjectId ||
+          null);
+      const focusContext = appFocus || enrichedContext?.focus || {};
+      const activeThreadAtStart = loadThreads().find((thread) => thread.id === activeId);
+      const previousAssistantContent = [...(activeThreadAtStart?.messages || [])]
 		        .reverse()
 		        .find((message) => message?.role === "assistant" && String(message?.content || "").trim())?.content || "";
 		      const continuationOfPendingFunctionalMutation =
@@ -5345,6 +5538,28 @@ useEffect(() => {
           return;
         }
       }
+      if (isWorkspaceMutationIntent(userText)) {
+        reportProgress("Resolving the requested edit to authoritative workspace sources.");
+        const currentThread = loadThreads().find((thread) => thread.id === activeId);
+        const plan = await prepareWorkspaceActionPlan(userText, activeProjectId, currentThread?.messages || []);
+        if (plan.intent === "clarify") {
+          appendMessage(activeId, { role: "assistant", content: plan.clarification });
+        } else if (plan.intent === "mutate") {
+          appendMessage(activeId, {
+            role: "assistant",
+            content: "I resolved that request to the saved workspace sources. Review the proposed change below before I apply it.",
+            workspaceActionPlan: {
+              ...plan,
+              completed: false,
+              requiresConfirmation: true,
+            },
+          });
+        } else {
+          appendMessage(activeId, { role: "assistant", content: plan.summary || "I did not identify a workspace change to apply." });
+        }
+        setThreads(loadThreads());
+        return;
+      }
       let graphContext = enrichedContext;
       try {
         reportProgress("Retrieving the most relevant project and architecture context.");
@@ -5640,13 +5855,24 @@ Runtime context:
   const userH2 = docked ? "text-sm"  : "text-base";
   const userP  = docked ? "text-[13px]" : "text-[13px]";
   const canSend = Boolean(active && !busy && (hasInput || regionContexts.length));
+  const activeReferenceSelections = Array.isArray(appFocus?.activeSelections) ? appFocus.activeSelections : [];
   const renderPendingContextChips = () => (
-    regionContexts.length > 0 && (
+    (regionContexts.length > 0 || activeReferenceSelections.length > 0) && (
       <div className="mb-2">
         <div className="text-[11px] text-neutral-600 mb-1">
-          Context to send ({regionContexts.length})
+          Context for Collaborator ({regionContexts.length + activeReferenceSelections.length})
         </div>
         <div className="flex flex-wrap gap-1.5">
+          {activeReferenceSelections.map((selection, index) => (
+            <span
+              key={`${selection.kind || selection.source || "selection"}-${selection.id || selection.tableId || index}`}
+              className="inline-flex max-w-[300px] items-center gap-2 truncate rounded-full border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs text-indigo-800"
+              title="This active workspace selection is included automatically in typed and voice requests. Change or clear the selection in the workspace view."
+            >
+              <span className="uppercase tracking-wide text-[10px] font-semibold text-indigo-500">Selected</span>
+              <span className="truncate">{describeActiveSelection(selection)}</span>
+            </span>
+          ))}
           {regionContexts.map(c => (
             <button
               type="button"
@@ -5683,13 +5909,15 @@ Runtime context:
               </span>
             </button>
           ))}
-          <button
-            className="ml-1 text-[11px] px-2 py-1 border rounded hover:bg-neutral-50"
-            onClick={() => setRegionContexts([])}
-            title="Clear all"
-          >
-            Clear all
-          </button>
+          {regionContexts.length > 0 && (
+            <button
+              className="ml-1 text-[11px] px-2 py-1 border rounded hover:bg-neutral-50"
+              onClick={() => setRegionContexts([])}
+              title="Clear attached context"
+            >
+              Clear attachments
+            </button>
+          )}
         </div>
       </div>
     )
@@ -5936,8 +6164,9 @@ Runtime context:
                           disabled={busy || (am?.choicePrompt?.type === "functional-abstraction" && !pendingFunctionalAbstractionRequest)}
                           onContinue={handleCollaboratorChoice}
                         />
-                        <HazardVibeReviewCard message={am} disabled={busy} onAction={handleVibeReviewAction} onOpenSource={handleOpenVibeReviewSource} />
-                        <FunctionalVibeReviewCard message={am} disabled={busy} onAction={handleFunctionalVibeReviewAction} onOpenSource={handleOpenFunctionalVibeReviewSource} />
+                      <HazardVibeReviewCard message={am} disabled={busy} onAction={handleVibeReviewAction} onOpenSource={handleOpenVibeReviewSource} />
+                      <FunctionalVibeReviewCard message={am} disabled={busy} onAction={handleFunctionalVibeReviewAction} onOpenSource={handleOpenFunctionalVibeReviewSource} />
+                      <WorkspaceActionPlanCard message={am} disabled={busy} onApply={handleWorkspacePlanApply} onCancel={handleWorkspacePlanCancel} onOpenSource={handleOpenWorkspacePlanSource} />
                       </div>
                     ))}
                   </div>
@@ -6001,6 +6230,7 @@ Runtime context:
                 active
                 busy={busy}
                 greeting={buildCollaboratorVoiceGreeting()}
+                activeReferences={activeReferenceSelections.map(describeActiveSelection).filter(Boolean)}
                 onClose={() => setVoiceModeEnabled(false)}
                 onSubmitTranscript={handleVoiceTranscript}
               />
@@ -6170,8 +6400,9 @@ Runtime context:
                         disabled={busy || (am?.choicePrompt?.type === "functional-abstraction" && !pendingFunctionalAbstractionRequest)}
                         onContinue={handleCollaboratorChoice}
                       />
-                      <HazardVibeReviewCard message={am} disabled={busy} onAction={handleVibeReviewAction} onOpenSource={handleOpenVibeReviewSource} />
-                      <FunctionalVibeReviewCard message={am} disabled={busy} onAction={handleFunctionalVibeReviewAction} onOpenSource={handleOpenFunctionalVibeReviewSource} />
+                        <HazardVibeReviewCard message={am} disabled={busy} onAction={handleVibeReviewAction} onOpenSource={handleOpenVibeReviewSource} />
+                        <FunctionalVibeReviewCard message={am} disabled={busy} onAction={handleFunctionalVibeReviewAction} onOpenSource={handleOpenFunctionalVibeReviewSource} />
+                        <WorkspaceActionPlanCard message={am} disabled={busy} onApply={handleWorkspacePlanApply} onCancel={handleWorkspacePlanCancel} onOpenSource={handleOpenWorkspacePlanSource} />
                     </div>
                   ))}
                 </div>
@@ -6223,6 +6454,7 @@ Runtime context:
               busy={busy}
               docked
               greeting={buildCollaboratorVoiceGreeting()}
+              activeReferences={activeReferenceSelections.map(describeActiveSelection).filter(Boolean)}
               onClose={() => setVoiceModeEnabled(false)}
               onSubmitTranscript={handleVoiceTranscript}
             />

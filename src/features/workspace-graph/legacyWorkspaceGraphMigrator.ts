@@ -18,7 +18,7 @@ import {
 type MigrationOptions = { mode?: "incremental" | "full" };
 type MigrationCacheOptions = MigrationOptions & { force?: boolean; maxAgeMs?: number };
 
-const MIGRATION_VERSION = 1;
+const MIGRATION_VERSION = 2;
 export const WORKSPACE_GRAPH_MIGRATION_DIAGNOSTICS_KEY = "xhandle.workspaceGraph.lastMigration";
 const DEFAULT_MIGRATION_CACHE_AGE_MS = 15000;
 const nowISO = () => new Date().toISOString();
@@ -477,6 +477,85 @@ function migrateProjectData(artifacts: WorkspaceArtifact[], relationships: Works
         relationships.push(relationship({ type: "contains", projectId, fromArtifactId: parent, toArtifactId: id, sourceStore: "localStorage:xhandle.projectData" }));
       });
     }
+  });
+}
+
+async function migrateDurableProjectAnalysis(artifacts: WorkspaceArtifact[], relationships: WorkspaceRelationship[]) {
+  const analyses = await readStoreRows("xhandle-project-hazard-analysis", "analyses");
+  for (const record of analyses) {
+    const projectId = text(record?.projectId || "");
+    if (!projectId) continue;
+    const parent = projectArtifactId(projectId);
+    const summary = record?.analysisResult?.Summary;
+    if (Array.isArray(summary) && summary.length > 1) {
+      const headers = summary[0] || [];
+      summary.slice(1).forEach((row: any[], rowIndex: number) => {
+        const rowObject = Object.fromEntries(headers.map((header: string, index: number) => [header, row[index]]));
+        const id = stableId("artifact", "hazard-summary", projectId, rowIndex);
+        artifacts.push(artifactFromLegacy({
+          id,
+          type: "hazard_analysis_row",
+          projectId,
+          parentId: parent,
+          sourceFeature: "Hazard Analysis",
+          sourceStore: "indexedDB:xhandle-project-hazard-analysis/analyses",
+          sourceKey: projectId,
+          sourceId: `${projectId}:analysisResult:Summary:${rowIndex}`,
+          title: titleFromRow(rowObject, `Hazard row ${rowIndex + 1}`),
+          summary: compact(rowObject, 900),
+          structuredData: { rowIndex, columns: headers, row },
+          updatedAt: record?.updatedAt,
+          tags: ["hazard", "analysis", "durable"],
+        }));
+        relationships.push(relationship({ type: "contains", projectId, fromArtifactId: parent, toArtifactId: id, sourceStore: "indexedDB:xhandle-project-hazard-analysis/analyses" }));
+      });
+    }
+
+    (Array.isArray(record?.riskRegister) ? record.riskRegister : []).forEach((risk: any, index: number) => {
+      const sourceId = text(risk?.id || `${projectId}:riskRegister:${index}`);
+      const id = stableId("artifact", "risk", sourceId);
+      artifacts.push(artifactFromLegacy({
+        id,
+        type: "risk",
+        projectId,
+        parentId: parent,
+        sourceFeature: "Safety Issues & Risk Assessment",
+        sourceStore: "indexedDB:xhandle-project-hazard-analysis/analyses",
+        sourceKey: projectId,
+        sourceId,
+        title: titleFromRow(risk, `Safety issue ${index + 1}`),
+        summary: risk?.description || compact(risk, 900),
+        structuredData: risk,
+        status: risk?.status,
+        updatedAt: record?.updatedAt,
+        tags: ["risk", "safety-issue", "durable"],
+      }));
+      relationships.push(relationship({ type: "contains", projectId, fromArtifactId: parent, toArtifactId: id, sourceStore: "indexedDB:xhandle-project-hazard-analysis/analyses" }));
+    });
+  }
+
+  const reports = await readStoreRows("xhandle-project-reports", "safetyIssueReports");
+  reports.forEach((report) => {
+    const projectId = text(report?.projectId || "");
+    if (!projectId || !String(report?.markdown || "").trim()) return;
+    const id = stableId("artifact", "safety-issue-report", projectId);
+    artifacts.push(artifactFromLegacy({
+      id,
+      type: "safety_issue_report",
+      projectId,
+      parentId: projectArtifactId(projectId),
+      sourceFeature: "Safety Issues & Risk Assessment",
+      sourceStore: "indexedDB:xhandle-project-reports/safetyIssueReports",
+      sourceKey: projectId,
+      sourceId: projectId,
+      title: "Safety Issue Report",
+      summary: compact(report.markdown, 900),
+      content: report.markdown,
+      structuredData: { projectId, updatedAt: report.updatedAt },
+      updatedAt: report.updatedAt,
+      tags: ["report", "safety-issue", "durable"],
+    }));
+    relationships.push(relationship({ type: "contains", projectId, fromArtifactId: projectArtifactId(projectId), toArtifactId: id, sourceStore: "indexedDB:xhandle-project-reports/safetyIssueReports" }));
   });
 }
 
@@ -1139,6 +1218,7 @@ export async function migrateLegacyStorageToWorkspaceGraph(_options: MigrationOp
 
   await runStep("projects", () => migrateProjects(artifacts, relationships));
   await runStep("projectData", () => migrateProjectData(artifacts, relationships));
+  await runStep("durableProjectAnalysis", () => migrateDurableProjectAnalysis(artifacts, relationships));
   await runStep("requirements", () => migrateRequirements(artifacts, relationships));
   await runStep("codeArchitecture", () => migrateCodeArchitecture(artifacts, relationships));
   await runStep("codeIndex", () => migrateCodeIndex(artifacts));

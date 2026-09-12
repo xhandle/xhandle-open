@@ -94,7 +94,22 @@ import {
   loadRequirements,
   populateRequirementModule,
 } from "./features/requirements/actions";
-import { getActionProvider, registerActionProvider } from "./features/app/actionRegistry";
+import {
+  ACTION_REGISTRY_CHANGE_EVENT,
+  getActionProvider,
+  registerActionProvider,
+} from "./features/app/actionRegistry";
+import {
+  executeWorkspaceActionPlan,
+  getWorkspaceUndoDepth,
+  undoLastWorkspaceAction,
+} from "./features/collaborator-workspace";
+import {
+  createTableCellSelection,
+  describeActiveSelection,
+  isSelectedTableCell,
+  isSelectedTableRow,
+} from "./features/collaborator-selection/activeSelectionContext";
 import {
   getArtifact as getWorkspaceArtifact,
   listArtifacts as listWorkspaceArtifacts,
@@ -6368,6 +6383,42 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
   }
 
   function getCollaboratorAppFocus() {
+    const activeSelections = [];
+    if (functionalCanvasSelection?.hasSelection) {
+      activeSelections.push({
+        kind: "functional-canvas",
+        source: "functional-diagram",
+        projectId: activeProjectId || "",
+        ...functionalCanvasSelection,
+      });
+    }
+    if (activeTableSelection && (!activeTableSelection.projectId || activeTableSelection.projectId === activeProjectId)) {
+      activeSelections.push(activeTableSelection);
+    }
+    const selectedSafetyIssue = activeRiskId
+      ? riskRegister.find((risk) => String(risk?.id) === String(activeRiskId))
+      : null;
+    if (selectedSafetyIssue) {
+      activeSelections.push({
+        kind: "safety-issue",
+        source: "safety-issues-risk-assessment",
+        projectId: activeProjectId || "",
+        id: selectedSafetyIssue.id,
+        title: selectedSafetyIssue.title || selectedSafetyIssue.name || "Selected safety issue",
+        values: selectedSafetyIssue,
+      });
+    }
+    const requirementsState = getActionProvider("requirements")?.getState?.();
+    if (requirementsState?.selectedRow) {
+      activeSelections.push({
+        kind: "requirement",
+        source: "requirements",
+        projectId: requirementsState.activeFolderId || "",
+        id: requirementsState.selectedRowId || requirementsState.selectedRow.id || "",
+        title: requirementsState.selectedRow.title || requirementsState.selectedRow.name || "Selected requirement",
+        values: requirementsState.selectedRow,
+      });
+    }
     return {
       section,
       activeTab,
@@ -6383,6 +6434,7 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
         branch: activeCodeArchitectureRepo.branch || "main",
       } : null,
       functionalCanvasSelection: functionalCanvasSelection?.hasSelection ? functionalCanvasSelection : null,
+      activeSelections,
     };
   }
 
@@ -7090,6 +7142,8 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [functionalAuditSelectedRows, setFunctionalAuditSelectedRows] = useState({});
   const [functionalAuditFeedback, setFunctionalAuditFeedback] = useState("");
   const [functionalCanvasSelection, setFunctionalCanvasSelection] = useState(null);
+  const [activeTableSelection, setActiveTableSelection] = useState(null);
+  const [, setActionProviderRevision] = useState(0);
   const [riskMethod, setRiskMethod] = useState("STPA-Textbook");
 	  const [riskAssessmentReportMarkdown, setRiskAssessmentReportMarkdown] = useState("");
   const [isGeneratingRiskAssessmentReport, setIsGeneratingRiskAssessmentReport] = useState(false);
@@ -7108,6 +7162,18 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [generatingSafetyIssueReportIds, setGeneratingSafetyIssueReportIds] = useState(new Set());
   const [selectedRiskPriority, setSelectedRiskPriority] = useState("All");
   const [activeRiskId, setActiveRiskId] = useState(null);
+  const selectTableCellForCollaborator = useCallback((selection) => {
+    setActiveTableSelection(createTableCellSelection(selection));
+  }, []);
+
+  useEffect(() => {
+    setActiveTableSelection(null);
+  }, [activeProjectId, activeTab]);
+  useEffect(() => {
+    const refreshProviderSelection = () => setActionProviderRevision((revision) => revision + 1);
+    window.addEventListener(ACTION_REGISTRY_CHANGE_EVENT, refreshProviderSelection);
+    return () => window.removeEventListener(ACTION_REGISTRY_CHANGE_EVENT, refreshProviderSelection);
+  }, []);
   const [riskReportMode, setRiskReportMode] = useState("preview");
   const [showSafetyIssueReportDrawer, setShowSafetyIssueReportDrawer] = useState(true);
   const [isSafetyIssueReportFullscreen, setIsSafetyIssueReportFullscreen] = useState(false);
@@ -7865,6 +7931,8 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     }
   }, [activeProjectId, analysisResult, draftHazardRowsByIndex, draftHazardTargets, hazardAnalysisRows, hazardOperationalContexts, loadedProjectId, loadingProjectId, projectLoaded, riskMethod, riskRegister]);
   const hazardSummaryHeaders = draftHazardHeaders;
+  const draftHazardRawRowIdIndex = indexVibeReviewHeaders(draftHazardHeaders).rawRowId;
+  const hazardRawRowIdIndex = indexVibeReviewHeaders(hazardSummaryHeaders).rawRowId;
   const needsReviewResolutionGroups = useMemo(
     () => buildNeedsReviewResolutionGroups(analysisResult?.Summary, hazardNeedsReviewResolutions),
     [analysisResult, hazardNeedsReviewResolutions]
@@ -10171,6 +10239,60 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     handleOpenHazardSummaryRow(displayIndex >= 0 ? displayIndex : rowIndex - 1);
     return true;
   }, [activeProjectId, analysisResult, handleOpenHazardSummaryRow, hazardSummaryDisplayRows, hazardSummaryHeaders]);
+
+  const refreshCollaboratorWorkspaceState = useCallback(async (projectIds = []) => {
+    const touched = new Set((projectIds || []).map(String));
+    const shouldRefreshActive = activeProjectId && (!touched.size || touched.has(String(activeProjectId)));
+    try {
+      const nextProjects = repairDuplicateProjectIds(JSON.parse(localStorage.getItem(PROJECTS_KEY) || "[]"));
+      setProjects(nextProjects);
+    } catch {}
+    if (!shouldRefreshActive) return;
+    const data = loadProjectData(activeProjectId) || {};
+    setResponseRows(Array.isArray(data.responseRows) ? data.responseRows : []);
+    setCommittedFunctionalDiagramRows(getProjectDiagramRows(Array.isArray(data.responseRows) ? data.responseRows : []));
+    setDiagramCategories(data.diagramCategories || null);
+    setRequirements(Array.isArray(data.requirements) ? data.requirements : []);
+    const storedAnalysis = await loadProjectHazardAnalysisRecord(activeProjectId);
+    if (storedAnalysis) {
+      setAnalysisResult(storedAnalysis.analysisResult ? stripProjectRiskProfileColumns(storedAnalysis.analysisResult) : null);
+      setDraftHazardRowsByIndex(storedAnalysis.draftHazardRowsByIndex || {});
+      setRiskRegister(Array.isArray(storedAnalysis.riskRegister) ? storedAnalysis.riskRegister : []);
+    }
+    const storedReport = await loadSafetyIssueReportRecord(activeProjectId);
+    if (storedReport) setRiskAssessmentReportMarkdown(String(storedReport.markdown || ""));
+  }, [activeProjectId]);
+
+  const executeCollaboratorWorkspacePlan = useCallback(async ({ plan } = {}) => {
+    const result = await executeWorkspaceActionPlan(plan);
+    await refreshCollaboratorWorkspaceState(result?.projectIds || plan?.actions?.map((action) => action?.target?.projectId).filter(Boolean));
+    notifyBackupDataChanged("collaborator-workspace-action");
+    return { ...result, undoDepth: getWorkspaceUndoDepth() };
+  }, [refreshCollaboratorWorkspaceState]);
+
+  const undoCollaboratorWorkspacePlan = useCallback(async () => {
+    const result = await undoLastWorkspaceAction();
+    await refreshCollaboratorWorkspaceState([]);
+    if (result?.ok) notifyBackupDataChanged("collaborator-workspace-undo");
+    return { ...result, undoDepth: getWorkspaceUndoDepth() };
+  }, [refreshCollaboratorWorkspaceState]);
+
+  useEffect(() => registerActionProvider("collaborator-workspace", {
+    getState: () => ({
+      activeProjectId,
+      projectName: projects.find((entry) => entry.id === activeProjectId)?.name || null,
+      undoDepth: getWorkspaceUndoDepth(),
+    }),
+    executeWorkspaceActionPlan: executeCollaboratorWorkspacePlan,
+    undoLastWorkspaceAction: undoCollaboratorWorkspacePlan,
+    openWorkspaceArtifact,
+  }), [
+    activeProjectId,
+    projects,
+    executeCollaboratorWorkspacePlan,
+    undoCollaboratorWorkspacePlan,
+    openWorkspaceArtifact,
+  ]);
 
   useEffect(() => {
     return registerActionProvider("project-functional-diagram", {
@@ -15709,7 +15831,13 @@ const projectHint = useMemo(() => ({
 
                         table={(
                       <div className="relative min-h-0 w-full flex-1 overflow-auto rounded-md shadow-sm">
-                        <div className="flex justify-end border-b border-gray-200 bg-white px-4 py-3">
+                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-white px-4 py-3">
+                          {activeTableSelection?.tableId === "functional-decomposition" ? (
+                            <div className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs text-indigo-800">
+                              <span><strong>Collaborator reference:</strong> {describeActiveSelection(activeTableSelection)} · included automatically in typed and voice requests</span>
+                              <button type="button" onClick={() => setActiveTableSelection(null)} className="font-semibold hover:text-indigo-950" aria-label="Clear selected functional table context">×</button>
+                            </div>
+                          ) : <span />}
                           <button onClick={handleAddRow} className="px-4 py-2 text-sm border rounded bg-[#ECEEFF] hover:bg-[#D7DAFF] text-[#0F0F12]">+ Add Row</button>
                         </div>
                         <table className="min-w-full border-separate border-spacing-0 text-sm text-left">
@@ -15844,6 +15972,8 @@ const projectHint = useMemo(() => ({
                               const reviewItem = functionalReviewByRow.get(originalIndex);
                               const rejected = reviewItem?.status === REVIEW_STATUSES.REJECTED;
                               const highlighted = highlightedFunctionalRowIndex === originalIndex;
+                              const selectionRowId = String(row?.id || `functional:${activeProjectId}:${originalIndex}`);
+                              const selectedForCollaborator = isSelectedTableRow(activeTableSelection, "functional-decomposition", selectionRowId);
                               return (
                                 <tr
                                   key={originalIndex}
@@ -15851,9 +15981,12 @@ const projectHint = useMemo(() => ({
                                     if (el) functionalRowRefs.current[originalIndex] = el;
                                     else delete functionalRowRefs.current[originalIndex];
                                   }}
+                                  aria-selected={selectedForCollaborator}
                                   className={`transition-colors ${
                                     highlighted
                                       ? 'bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset'
+                                      : selectedForCollaborator
+                                        ? 'bg-indigo-50 ring-2 ring-indigo-400 ring-inset'
                                       : rejected
                                         ? 'bg-rose-50/60'
                                         : idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]"
@@ -15870,16 +16003,35 @@ const projectHint = useMemo(() => ({
                                       />
                                     </td>
                                   )}
-                                  {functionalTableColumns.map(({ key: field }) => (
-                                    <td key={field} className={`px-6 py-4 align-top whitespace-pre-wrap border-b border-gray-100 ${rejected ? 'text-rose-900' : ''}`}>
+                                  {functionalTableColumns.map(({ key: field }, columnIndex) => {
+                                    const selectedCell = isSelectedTableCell(activeTableSelection, "functional-decomposition", selectionRowId, columnIndex);
+                                    const selectCell = () => selectTableCellForCollaborator({
+                                      tableId: "functional-decomposition",
+                                      tableLabel: "Functional Decomposition",
+                                      projectId: activeProjectId,
+                                      rowId: selectionRowId,
+                                      rowIndex: originalIndex,
+                                      headers: functionalTableColumns.map((column) => column.label),
+                                      row: functionalTableColumns.map((column) => row[column.key]),
+                                      columnIndex,
+                                    });
+                                    return (
+                                    <td
+                                      key={field}
+                                      onClick={selectCell}
+                                      className={`px-6 py-4 align-top whitespace-pre-wrap border-b border-gray-100 ${selectedCell ? 'bg-indigo-100 ring-2 ring-indigo-500 ring-inset' : ''} ${rejected ? 'text-rose-900' : ''}`}
+                                    >
                                       <textarea
                                         className={`w-full resize-none overflow-hidden break-words bg-transparent text-sm leading-5 [overflow-wrap:anywhere] focus:outline-none ${rejected ? 'line-through decoration-rose-400' : ''}`}
                                         value={row[field]}
                                         onChange={(e) => handleRowChange(originalIndex, field, e.target.value)}
+                                        onFocus={selectCell}
                                         rows={getFunctionalCellRows(row[field])}
+                                        aria-label={`${functionalTableColumns[columnIndex].label}, row ${originalIndex + 1}`}
                                       />
                                     </td>
-                                  ))}
+                                    );
+                                  })}
                                   <td className="px-6 py-4 text-center text-red-500 font-bold cursor-pointer align-middle border-b border-gray-100">
                                     <button onClick={() => handleRemoveRow(originalIndex)}>×</button>
                                   </td>
@@ -15943,6 +16095,12 @@ const projectHint = useMemo(() => ({
   <section className="mt-2 flex min-h-0 flex-1 items-stretch overflow-hidden pb-3">
     {hazardAnalysisControls}
     <div className="flex min-h-0 min-w-0 flex-1 flex-col pl-4">
+    {activeTableSelection?.tableId === "hazard-analysis" && (
+      <div className="mb-3 flex shrink-0 items-center justify-between gap-3 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
+        <span><strong>Collaborator reference:</strong> {describeActiveSelection(activeTableSelection)}. This row and cell will be included automatically in typed and voice requests.</span>
+        <button type="button" onClick={() => setActiveTableSelection(null)} className="shrink-0 font-semibold hover:text-indigo-950" aria-label="Clear selected hazard table context">Clear</button>
+      </div>
+    )}
     {hazardOperationalContexts.length === 0 && (
       <button
         type="button"
@@ -16127,6 +16285,8 @@ const projectHint = useMemo(() => ({
                 const groupCollapsed = collapsedHazardInterfaceKeys.has(groupMeta.key);
                 const highlighted = highlightedHazardRowIndex === originalIndex;
                 const variantCollapsed = variantCount > 1 && !expandedHazardVariantKeys.has(variantMeta.key);
+                const selectionRowId = String(row?.[draftHazardRawRowIdIndex] || rowKey || `hazard-draft:${activeProjectId}:${originalIndex}`);
+                const selectedForCollaborator = isSelectedTableRow(activeTableSelection, "hazard-analysis", selectionRowId);
                 return (
                   <React.Fragment key={rowKey || originalIndex}>
                     {isFirstInGroup && (
@@ -16164,7 +16324,8 @@ const projectHint = useMemo(() => ({
                           if (el) hazardRowRefs.current[originalIndex] = el;
                           else delete hazardRowRefs.current[originalIndex];
                         }}
-                        className={`${highlighted ? "bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset" : (idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]")} transition-colors`}
+                        aria-selected={selectedForCollaborator}
+                        className={`${highlighted ? "bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset" : selectedForCollaborator ? "bg-indigo-50 ring-2 ring-indigo-400 ring-inset" : (idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]")} transition-colors`}
                       >
                         <td className="px-6 py-4 align-top border-b border-gray-100">
                           <div className="flex flex-col items-start gap-2">
@@ -16197,13 +16358,26 @@ const projectHint = useMemo(() => ({
                         </td>
                         {row.map((cell, colIdx) => {
                           const diagramTarget = buildHazardDiagramFocusTarget(draftHazardHeaders, row, colIdx);
+                          const selectedCell = isSelectedTableCell(activeTableSelection, "hazard-analysis", selectionRowId, colIdx);
+                          const selectCell = () => selectTableCellForCollaborator({
+                            tableId: "hazard-analysis",
+                            tableLabel: "Hazard Analysis",
+                            projectId: activeProjectId,
+                            rowId: selectionRowId,
+                            rowIndex: originalIndex,
+                            headers: draftHazardHeaders,
+                            row,
+                            columnIndex: colIdx,
+                          });
                           return (
-                            <td key={colIdx} className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(draftHazardHeaders[colIdx]) ? 'hidden ' : ''}px-6 py-4 align-top whitespace-pre-wrap border-b border-gray-100`}>
+                            <td key={colIdx} onClick={selectCell} className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(draftHazardHeaders[colIdx]) ? 'hidden ' : ''}px-6 py-4 align-top whitespace-pre-wrap border-b border-gray-100 ${selectedCell ? 'bg-indigo-100 ring-2 ring-indigo-500 ring-inset' : ''}`}>
                               <textarea
                                 className="min-h-[44px] w-full resize-none overflow-hidden break-words bg-transparent text-sm leading-5 text-gray-900 [overflow-wrap:anywhere] focus:outline-none"
                                 value={cell}
                                 onChange={(event) => handleDraftHazardCellChange(originalIndex, colIdx, event.target.value)}
+                                onFocus={selectCell}
                                 rows={getDraftHazardCellRows(cell)}
+                                aria-label={`${draftHazardHeaders[colIdx]}, row ${originalIndex + 1}`}
                               />
                               {diagramTarget && (
                                 <button
@@ -16393,6 +16567,8 @@ const projectHint = useMemo(() => ({
                     const highlighted = highlightedHazardRowIndex === originalIndex;
                     const groupCollapsed = collapsedHazardInterfaceKeys.has(groupMeta.key);
                     const variantCollapsed = variantCount > 1 && !expandedHazardVariantKeys.has(variantMeta.key);
+                    const selectionRowId = String(row?.[hazardRawRowIdIndex] || `hazard:${activeProjectId}:${originalIndex}`);
+                    const selectedForCollaborator = isSelectedTableRow(activeTableSelection, "hazard-analysis", selectionRowId);
                     return (
                       <React.Fragment key={`${originalIndex}-${groupMeta.key}`}>
                         {isFirstInGroup && (
@@ -16430,9 +16606,12 @@ const projectHint = useMemo(() => ({
                               if (el) hazardRowRefs.current[originalIndex] = el;
                               else delete hazardRowRefs.current[originalIndex];
                             }}
+                            aria-selected={selectedForCollaborator}
                             className={`transition-colors ${
                               highlighted
                                 ? 'bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset'
+                                : selectedForCollaborator
+                                  ? 'bg-indigo-50 ring-2 ring-indigo-400 ring-inset'
                                 : rejected
                                   ? 'bg-rose-50/60'
                                   : idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]"
@@ -16474,6 +16653,17 @@ const projectHint = useMemo(() => ({
                             {row.map((cell, colIdx) => {
                               const diagramTarget = buildHazardDiagramFocusTarget(hazardSummaryHeaders, row, colIdx);
                               const columnHeader = hazardSummaryHeaders[colIdx];
+                              const selectedCell = isSelectedTableCell(activeTableSelection, "hazard-analysis", selectionRowId, colIdx);
+                              const selectCell = () => selectTableCellForCollaborator({
+                                tableId: "hazard-analysis",
+                                tableLabel: "Hazard Analysis",
+                                projectId: activeProjectId,
+                                rowId: selectionRowId,
+                                rowIndex: originalIndex,
+                                headers: hazardSummaryHeaders,
+                                row,
+                                columnIndex: colIdx,
+                              });
                               const isResolutionStatus = columnHeader === CLASSIFICATION_RESOLUTION_STATUS_HEADER;
                               const resolutionStatusClass = cell === CLASSIFICATION_RESOLUTION_STATUS.HUMAN_EVIDENCE_GAP
                                 || cell === CLASSIFICATION_RESOLUTION_STATUS.POLICY_GAP
@@ -16485,7 +16675,7 @@ const projectHint = useMemo(() => ({
                                     ? "border-blue-200 bg-blue-50 text-blue-800"
                                     : "border-emerald-200 bg-emerald-50 text-emerald-800";
                               return (
-                                <td key={colIdx} className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(columnHeader) ? 'hidden ' : ''}min-w-56 max-w-xl break-words px-6 py-4 align-top whitespace-pre-wrap [overflow-wrap:anywhere] border-b border-gray-100 ${rejected ? 'text-rose-900 line-through decoration-rose-400' : ''}`}>
+                                <td key={colIdx} onClick={selectCell} className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(columnHeader) ? 'hidden ' : ''}min-w-56 max-w-xl break-words px-6 py-4 align-top whitespace-pre-wrap [overflow-wrap:anywhere] border-b border-gray-100 ${selectedCell ? 'bg-indigo-100 ring-2 ring-indigo-500 ring-inset' : ''} ${rejected ? 'text-rose-900 line-through decoration-rose-400' : ''}`}>
                                   {diagramTarget ? (
                                     <button
                                       type="button"

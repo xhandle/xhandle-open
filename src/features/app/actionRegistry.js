@@ -1,5 +1,5 @@
 const REGISTRY_KEY = "__xhandle_action_registry__";
-const CHANGE_EVENT = "xhandle:action-registry-changed";
+export const ACTION_REGISTRY_CHANGE_EVENT = "xhandle:action-registry-changed";
 
 function getRegistry() {
   if (typeof window === "undefined") return new Map();
@@ -13,7 +13,7 @@ export function registerActionProvider(scope, provider) {
   const registry = getRegistry();
   registry.set(scope, provider);
   if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent(CHANGE_EVENT, { detail: { scope } }));
+    window.dispatchEvent(new CustomEvent(ACTION_REGISTRY_CHANGE_EVENT, { detail: { scope } }));
   }
   return () => unregisterActionProvider(scope, provider);
 }
@@ -24,7 +24,7 @@ export function unregisterActionProvider(scope, provider) {
   if (!provider || current === provider) {
     registry.delete(scope);
     if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent(CHANGE_EVENT, { detail: { scope } }));
+      window.dispatchEvent(new CustomEvent(ACTION_REGISTRY_CHANGE_EVENT, { detail: { scope } }));
     }
   }
 }
@@ -44,7 +44,7 @@ export function waitForActionProvider(scope, timeoutMs = 1500) {
     const finish = (provider) => {
       if (done) return;
       done = true;
-      window.removeEventListener(CHANGE_EVENT, onChange);
+      window.removeEventListener(ACTION_REGISTRY_CHANGE_EVENT, onChange);
       clearTimeout(timer);
       resolve(provider || null);
     };
@@ -53,6 +53,6 @@ export function waitForActionProvider(scope, timeoutMs = 1500) {
       finish(getActionProvider(scope));
     };
     const timer = setTimeout(() => finish(getActionProvider(scope)), timeoutMs);
-    window.addEventListener(CHANGE_EVENT, onChange);
+    window.addEventListener(ACTION_REGISTRY_CHANGE_EVENT, onChange);
   });
 }

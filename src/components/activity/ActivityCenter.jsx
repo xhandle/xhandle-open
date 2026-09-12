@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useMemo, useState, useCallback } from "react";
+import React, { createContext, useContext, useMemo, useState, useCallback, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown, Loader2 } from "lucide-react";
 
 const ActivityContext = createContext(null);
@@ -81,10 +82,91 @@ export function ActivitiesButton() {
   const { activities } = useActivityCenter();
   const running = Array.from(activities.values()).some(a => a.status === "running");
   const [open, setOpen] = useState(false);
+  const [dropdownPosition, setDropdownPosition] = useState({ top: 0, right: 8 });
+  const buttonRef = useRef(null);
+  const dropdownRef = useRef(null);
+
+  const positionDropdown = useCallback(() => {
+    const rect = buttonRef.current?.getBoundingClientRect?.();
+    if (!rect || typeof window === "undefined") return;
+    setDropdownPosition({
+      top: Math.round(rect.bottom + 8),
+      right: Math.max(8, Math.round(window.innerWidth - rect.right)),
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!open || typeof window === "undefined") return undefined;
+    positionDropdown();
+    const handlePointerDown = (event) => {
+      if (buttonRef.current?.contains(event.target) || dropdownRef.current?.contains(event.target)) return;
+      setOpen(false);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        buttonRef.current?.focus?.();
+      }
+    };
+    window.addEventListener("resize", positionDropdown);
+    window.addEventListener("scroll", positionDropdown, true);
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("resize", positionDropdown);
+      window.removeEventListener("scroll", positionDropdown, true);
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open, positionDropdown]);
+
+  const dropdown = open && typeof document !== "undefined" ? createPortal(
+    <div
+      ref={dropdownRef}
+      id="activities-dropdown"
+      className="fixed z-[2147483000] w-96 max-w-[90vw] rounded-xl border bg-white p-2 shadow-xl"
+      style={dropdownPosition}
+      role="status"
+      aria-live="polite"
+    >
+      {activities.size === 0 ? (
+        <div className="p-3 text-sm text-neutral-500">No active activities.</div>
+      ) : (
+        Array.from(activities.entries())
+          .sort((a, b) => b[1].createdAt - a[1].createdAt)
+          .map(([id, a]) => {
+            const pct = a.status === "running" && a.total > 0
+              ? Math.min(100, Math.round((a.step / a.total) * 100))
+              : null;
+            return (
+              <div key={id} className="p-3 rounded-lg hover:bg-neutral-50">
+                <div className="flex items-center gap-2">
+                  {a.status === "running" && <Loader2 className="w-4 h-4 animate-spin text-neutral-500" />}
+                  <div className="font-medium text-sm min-w-0 break-words [overflow-wrap:anywhere]">{a.title}</div>
+                  <div className="ml-auto text-xs text-neutral-500 capitalize">
+                    {a.status}{pct != null ? ` · ${pct}%` : ""}
+                  </div>
+                </div>
+                {a.message && (
+                  <div className="mt-1 whitespace-normal break-words text-xs text-neutral-600 [overflow-wrap:anywhere]">
+                    {a.message}
+                  </div>
+                )}
+                {a.status === "running" && (
+                  <div className="mt-2"><ProgressBar step={a.step} total={a.total} /></div>
+                )}
+              </div>
+            );
+          })
+      )}
+    </div>,
+    document.body,
+  ) : null;
 
   return (
     <div className="relative">
       <button
+        ref={buttonRef}
         onClick={() => setOpen(o => !o)}
         className="relative inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border bg-white hover:bg-neutral-50"
         title="Activities"
@@ -106,45 +188,7 @@ export function ActivitiesButton() {
         <ChevronDown className={`w-4 h-4 transition ${open ? "rotate-180" : ""}`} />
       </button>
 
-      {open && (
-        <div
-          id="activities-dropdown"
-          className="absolute right-0 mt-2 w-96 max-w-[90vw] rounded-xl border bg-white shadow-xl p-2 z-50"
-          role="status"
-          aria-live="polite"
-        >
-          {activities.size === 0 ? (
-            <div className="p-3 text-sm text-neutral-500">No active activities.</div>
-          ) : (
-            Array.from(activities.entries())
-              .sort((a, b) => b[1].createdAt - a[1].createdAt)
-              .map(([id, a]) => {
-                const pct = a.status === "running" && a.total > 0
-                  ? Math.min(100, Math.round((a.step / a.total) * 100))
-                  : null;
-                return (
-                  <div key={id} className="p-3 rounded-lg hover:bg-neutral-50">
-                    <div className="flex items-center gap-2">
-                      {a.status === "running" && <Loader2 className="w-4 h-4 animate-spin text-neutral-500" />}
-                      <div className="font-medium text-sm min-w-0 break-words [overflow-wrap:anywhere]">{a.title}</div>
-                      <div className="ml-auto text-xs text-neutral-500 capitalize">
-                        {a.status}{pct != null ? ` · ${pct}%` : ""}
-                      </div>
-                    </div>
-                    {a.message && (
-                      <div className="mt-1 whitespace-normal break-words text-xs text-neutral-600 [overflow-wrap:anywhere]">
-                        {a.message}
-                      </div>
-                    )}
-                    {a.status === "running" && (
-                      <div className="mt-2"><ProgressBar step={a.step} total={a.total} /></div>
-                    )}
-                  </div>
-                );
-              })
-          )}
-        </div>
-      )}
+      {dropdown}
     </div>
   );
 }

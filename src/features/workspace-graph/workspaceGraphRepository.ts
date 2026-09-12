@@ -211,6 +211,27 @@ export async function getArtifact(id: string) {
   return row || null;
 }
 
+export async function deleteArtifacts(filters: ArtifactFilters = {}) {
+  const rows = await listArtifacts(filters);
+  if (!rows.length) return 0;
+  const ids = new Set(rows.map((row) => row.id));
+  const db = await openWorkspaceGraphDB();
+  const tx = db.transaction(
+    [WORKSPACE_GRAPH_STORES.artifacts, WORKSPACE_GRAPH_STORES.relationships],
+    "readwrite"
+  );
+  const relationships = await tx.objectStore(WORKSPACE_GRAPH_STORES.relationships).getAll();
+  await Promise.all([
+    ...rows.map((row) => tx.objectStore(WORKSPACE_GRAPH_STORES.artifacts).delete(row.id)),
+    ...relationships
+      .filter((relationship) => ids.has(relationship.fromArtifactId) || ids.has(relationship.toArtifactId))
+      .map((relationship) => tx.objectStore(WORKSPACE_GRAPH_STORES.relationships).delete(relationship.id)),
+  ]);
+  await tx.done;
+  db.close();
+  return rows.length;
+}
+
 export async function getNeighborhood(artifactId: string, { depth = 1 } = {}) {
   const seen = new Set<string>([artifactId]);
   const artifacts = new Map<string, WorkspaceArtifact>();

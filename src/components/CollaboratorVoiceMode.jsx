@@ -240,6 +240,7 @@ export default function CollaboratorVoiceMode({
   busy = false,
   docked = false,
   greeting = 'Hi. What would you like to think through together?',
+  activeReferences = [],
   onClose,
   onSubmitTranscript,
 }) {
@@ -339,6 +340,18 @@ export default function CollaboratorVoiceMode({
           <X className="h-4 w-4" />
         </button>
       </header>
+
+      {activeReferences.length > 0 && (
+        <div className="relative z-10 flex shrink-0 flex-wrap items-center justify-center gap-1.5 border-b border-indigo-100 bg-indigo-50/75 px-3 py-2 text-xs text-indigo-800 backdrop-blur-xl">
+          <span className="font-semibold uppercase tracking-wide text-[10px] text-indigo-500">Using selection</span>
+          {activeReferences.slice(0, 3).map((reference, index) => (
+            <span key={`${reference}-${index}`} className="max-w-[280px] truncate rounded-full border border-indigo-200 bg-white/90 px-2 py-1" title={reference}>
+              {reference}
+            </span>
+          ))}
+          {activeReferences.length > 3 && <span>+{activeReferences.length - 3} more</span>}
+        </div>
+      )}
 
       <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-auto px-5 py-4 text-center">
         <button

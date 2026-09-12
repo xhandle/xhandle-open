@@ -354,6 +354,9 @@ export default function ReadmeModal({ open, onClose }) {
               <BulletList
                 items={[
                   "Ask questions about the current workspace, selected artifacts, architecture rows, hazards, risks, requirements, and remediation context.",
+                  "Select a table cell or row, functional-diagram node or edge, safety issue, or requirement before speaking or typing. The Selected chip confirms that Collaborator will treat phrases such as ‘this row,’ ‘this function,’ and ‘that edge’ as references to the selected item.",
+                  "Ask across projects and artifact families—including functional and code architecture, reports, safety cases, requirements, reviews, and source evidence—and follow the supplied source links.",
+                  "Request direct engineering-data edits in ordinary language. Collaborator resolves the authoritative source, shows a reviewable action plan, asks for confirmation, persists the approved change, and keeps an undo snapshot.",
                   "Generate new functional architectures or review, revise, and edit the functional decomposition in the active project.",
                   "Vibe review a functional decomposition one interface at a time, accepting a Keep, Revise, or Remove proposal or deferring the row.",
                   "Start a governed hazard Vibe Review to examine a stable queue one row at a time and apply explicit reviewer decisions.",
@@ -469,6 +472,32 @@ export default function ReadmeModal({ open, onClose }) {
                 Use Collaborator prompts to inspect, revise, or Vibe Review functional architecture, answer workspace questions, and
                 conduct row-by-row hazard Vibe Review, or open grouped Needs Review evidence resolution. Use the controls in Hazard Analysis and Safety Issues &amp; Risk
                 Assessment to run the full analysis, regenerate consolidated safety issues, and generate reports.
+              </div>
+
+              <div className="mb-3 mt-6 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Work across the saved xHandle workspace
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <PromptExample
+                  title="Ask across artifact families"
+                  description="Searches the workspace graph and links the answer to saved sources."
+                  prompt="Across all projects, which requirements, hazard rows, safety issues, reports, and safety-case claims address unintended vehicle motion? Cite the saved sources."
+                />
+                <PromptExample
+                  title="Update a saved field"
+                  description="Shows the resolved source and exact proposed edit before anything changes."
+                  prompt="Set the owner of the Secondary Brake Availability safety issue to Alex Chen and explain which saved record you found."
+                />
+                <PromptExample
+                  title="Add a record"
+                  description="Creates a governed proposal against the active project or named destination."
+                  prompt="Add a proposed system requirement that the secondary brake health status be reported before autonomous motion is authorized."
+                />
+                <PromptExample
+                  title="Delete or undo"
+                  description="Deletes require an additional confirmation; approved Collaborator changes retain an undo snapshot."
+                  prompt={'Delete the duplicate hazard row titled "Stale localization state" from the current project. After applying it, say “undo that” if you want it restored.'}
+                />
               </div>
             </Section>
 

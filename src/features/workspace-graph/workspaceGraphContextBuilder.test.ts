@@ -294,4 +294,80 @@ describe("buildWorkspaceLLMContext", () => {
       hazardEvidenceCount: 1,
     }));
   });
+
+  it("preserves active cell context and prioritizes its authoritative table row", async () => {
+    const selectedRowArtifact = {
+      id: "artifact:function-row-4",
+      type: "functional_decomposition_row",
+      projectId: "p1",
+      title: "Issue trajectory",
+      sourceStore: "localStorage:xhandle:projects",
+      sourceId: "project:p1:responseRows:3",
+      structuredData: {
+        rowIndex: 3,
+        row: ["Plan Motion", "Trajectory Command", "Control Motion"],
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      version: 1,
+    };
+    repository.listArtifacts.mockResolvedValue([
+      {
+        id: "artifact:req-1",
+        type: "requirement",
+        projectId: "p1",
+        title: "Brake requirement",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        version: 1,
+      },
+      selectedRowArtifact,
+    ]);
+    search.searchArtifacts.mockResolvedValue([]);
+
+    const context = await buildWorkspaceLLMContext({
+      projectId: "p1",
+      query: "Explain why this control action exists",
+      activeView: {
+        section: "projects",
+        activeTab: "functional",
+        activeSelections: [{
+          kind: "table-cell",
+          source: "table",
+          tableId: "functional-decomposition",
+          tableLabel: "Functional Decomposition",
+          projectId: "p1",
+          primary: {
+            rowId: "functional:p1:3",
+            rowIndex: 3,
+            rowNumber: 4,
+            columnIndex: 1,
+            columnLabel: "Control Action",
+            value: "Trajectory Command",
+          },
+          selectedRows: [{
+            rowId: "functional:p1:3",
+            rowIndex: 3,
+            rowNumber: 4,
+            values: {
+              "Function (From)": "Plan Motion",
+              "Control Action": "Trajectory Command",
+              "Function (To)": "Control Motion",
+            },
+          }],
+        }],
+      },
+      tokenBudget: 6000,
+    });
+
+    expect(context.scope.activeView.activeSelections[0]).toEqual(expect.objectContaining({
+      kind: "table-cell",
+      tableId: "functional-decomposition",
+      primary: expect.objectContaining({ columnLabel: "Control Action", value: "Trajectory Command" }),
+    }));
+    expect(context.relevantArtifacts[0]).toEqual(expect.objectContaining({
+      id: "artifact:function-row-4",
+    }));
+    expect(context.diagnostics.selection.activeSelectionArtifactCount).toBe(1);
+  });
 });

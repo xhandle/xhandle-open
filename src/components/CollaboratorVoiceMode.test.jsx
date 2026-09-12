@@ -46,6 +46,19 @@ describe('CollaboratorVoiceMode', () => {
     expect(markup).not.toContain('prompt cookbook');
   });
 
+  test('shows the workspace references being used by voice requests', () => {
+    const markup = renderToStaticMarkup(
+      <CollaboratorVoiceMode
+        active={false}
+        activeReferences={['Hazard Analysis, row 4, Control Action']}
+        onClose={() => {}}
+        onSubmitTranscript={() => {}}
+      />,
+    );
+    expect(markup).toContain('Using selection');
+    expect(markup).toContain('Hazard Analysis, row 4, Control Action');
+  });
+
   test('surfaces the real OpenAI speech error instead of assuming the key is invalid', () => {
     expect(getNaturalSpeechFailureMessage(new Error('You exceeded your current quota.')))
       .toBe('You exceeded your current quota.');

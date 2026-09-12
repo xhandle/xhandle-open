@@ -96,6 +96,40 @@ function compactFunctionalCanvasSelection(selection: any) {
   };
 }
 
+function compactActiveSelection(selection: any) {
+  if (!selection || typeof selection !== "object") return null;
+  if (selection.kind === "functional-canvas" || selection.source === "functional-diagram") {
+    const compacted = compactFunctionalCanvasSelection({ ...selection, hasSelection: true });
+    return compacted ? { kind: "functional-canvas", source: "functional-diagram", projectId: selection.projectId || "", ...compacted } : null;
+  }
+  return {
+    kind: compactValue(selection.kind || "workspace-item", 80),
+    source: compactValue(selection.source || "", 120),
+    projectId: compactValue(selection.projectId || "", 180),
+    id: compactValue(selection.id || "", 220),
+    title: compactValue(selection.title || selection.label || "", 320),
+    tableId: compactValue(selection.tableId || "", 120),
+    tableLabel: compactValue(selection.tableLabel || "", 180),
+    primary: compactValue(selection.primary || null, 1800),
+    selectedRows: clamp(Array.isArray(selection.selectedRows) ? selection.selectedRows : [], 8).map((row: any) => ({
+      rowId: compactValue(row?.rowId || "", 220),
+      rowIndex: Number(row?.rowIndex || 0),
+      rowNumber: Number(row?.rowNumber || 0),
+      values: compactValue(row?.values || null, 5000),
+    })),
+    selectedCells: clamp(Array.isArray(selection.selectedCells) ? selection.selectedCells : [], 16).map((cell: any) => ({
+      rowId: compactValue(cell?.rowId || "", 220),
+      rowIndex: Number(cell?.rowIndex || 0),
+      rowNumber: Number(cell?.rowNumber || 0),
+      columnIndex: Number(cell?.columnIndex || 0),
+      columnLabel: compactValue(cell?.columnLabel || "", 220),
+      value: compactValue(cell?.value, 1800),
+    })),
+    values: compactValue(selection.values || null, 5000),
+    updatedAt: selection.updatedAt || null,
+  };
+}
+
 function compactArtifact(artifact: WorkspaceArtifact): WorkspaceArtifact {
   return {
     ...artifact,
@@ -131,7 +165,45 @@ function compactActiveView(activeView: any) {
         }
       : null,
     functionalCanvasSelection: compactFunctionalCanvasSelection(activeView.functionalCanvasSelection),
+    activeSelections: clamp(Array.isArray(activeView.activeSelections) ? activeView.activeSelections : [], 8)
+      .map(compactActiveSelection)
+      .filter(Boolean),
   };
+}
+
+function artifactsForActiveSelections(artifacts: WorkspaceArtifact[], activeView: any) {
+  const selections = Array.isArray(activeView?.activeSelections) ? activeView.activeSelections : [];
+  if (!selections.length) return [];
+  const exactIds = new Set<string>();
+  const functionalIndexes = new Set<number>();
+  const hazardIndexes = new Set<number>();
+  selections.forEach((selection: any) => {
+    [selection?.id, selection?.primary?.rowId]
+      .filter(Boolean)
+      .forEach((value) => exactIds.add(String(value)));
+    (selection?.selectedRows || []).forEach((row: any) => {
+      if (row?.rowId) exactIds.add(String(row.rowId));
+      const index = Number(row?.rowIndex);
+      if (!Number.isInteger(index) || index < 0) return;
+      if (selection?.tableId === "functional-decomposition") functionalIndexes.add(index);
+      if (selection?.tableId === "hazard-analysis") hazardIndexes.add(index);
+    });
+  });
+  return artifacts.filter((artifact) => {
+    if (exactIds.has(String(artifact.id)) || exactIds.has(String(artifact.sourceId || ""))) return true;
+    if (Array.from(exactIds).some((id) => id && String(artifact.sourceId || "").includes(id))) return true;
+    if (artifact.type === "functional_decomposition_row") {
+      const match = String(artifact.sourceId || "").match(/responseRows:(\d+)$/i);
+      if (match && functionalIndexes.has(Number(match[1]))) return true;
+    }
+    if (artifact.type === "hazard_analysis_row") {
+      const rowIndex = Number(artifact.structuredData?.rowIndex);
+      if (Number.isInteger(rowIndex) && hazardIndexes.has(rowIndex)) return true;
+      const match = String(artifact.sourceId || "").match(/Summary:(\d+)$/i);
+      if (match && hazardIndexes.has(Number(match[1]))) return true;
+    }
+    return false;
+  });
 }
 
 function citationForArtifact(artifact: WorkspaceArtifact) {
@@ -253,6 +325,7 @@ export async function buildWorkspaceLLMContext({
   const seedArtifacts = searched.length
     ? searched
     : clamp(totalArtifacts, limits.artifacts);
+  const activeSelectionArtifacts = artifactsForActiveSelections(totalArtifacts, focusedActiveView);
   const hazardFocused = isHazardAnalysisQuery(query);
   const hazardEvidence = hazardFocused
     ? clamp(
@@ -260,13 +333,17 @@ export async function buildWorkspaceLLMContext({
         limits.artifacts
       )
     : [];
-  const prioritizedSeeds = hazardFocused
+  const contentPrioritizedSeeds = hazardFocused
     ? clamp(uniqueById([
         ...searched.filter((artifact) => HAZARD_CONTEXT_ARTIFACT_TYPES.has(String(artifact?.type || ""))),
         ...hazardEvidence,
         ...searched,
       ]), limits.artifacts)
     : seedArtifacts;
+  const prioritizedSeeds = clamp(uniqueById([
+    ...activeSelectionArtifacts,
+    ...contentPrioritizedSeeds,
+  ]), limits.artifacts);
   const activeProjectArtifacts = projectId
     ? clamp(totalArtifacts.filter((artifact) => artifact.projectId === projectId), Math.max(8, Math.round(limits.artifacts * 0.25)))
     : [];
@@ -306,6 +383,7 @@ export async function buildWorkspaceLLMContext({
     queryMatchedArtifactCount: searched.length,
     neighborhoodArtifactCount: uniqueById(neighborhoodArtifacts).length,
     activeProjectArtifactCount: activeProjectArtifacts.length,
+    activeSelectionArtifactCount: activeSelectionArtifacts.length,
     hazardFocused,
     hazardEvidenceCount: hazardEvidence.length,
   };
