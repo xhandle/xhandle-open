@@ -238,6 +238,7 @@ export default function ReadmeModal({ open, onClose }) {
                   "Open Settings, add your AI provider key, and choose OpenAI, Claude, or Gemini as the active provider.",
                   "Start with a GitHub repository for code-based architecture, or create a project manually or with AI-assisted prompts.",
                   "Generate or edit the functional decomposition table, then use the diagram and table views to inspect relationships.",
+                  "Add review comments to a functional-diagram node or edge by right-clicking it, or by selecting one item and using Comment in the canvas Tools bar under Create.",
                   "Use the review workspace, assurance artifacts, hazard analysis, remediation, requirements, traceability, and V&V views to deepen the engineering record.",
                 ]}
               />
@@ -354,7 +355,7 @@ export default function ReadmeModal({ open, onClose }) {
               <BulletList
                 items={[
                   "Ask questions about the current workspace, selected artifacts, architecture rows, hazards, risks, requirements, and remediation context.",
-                  "Select a table cell or row, functional-diagram node or edge, safety issue, or requirement before speaking or typing. The Selected chip confirms that Collaborator will treat phrases such as ‘this row,’ ‘this function,’ and ‘that edge’ as references to the selected item.",
+                  "Select a table cell or row, functional-diagram node or edge, safety issue, or requirement before speaking or typing. The Selected chip confirms that Collaborator will treat phrases such as ‘this row,’ ‘this function,’ and ‘that edge’ as references to the selected item. Click a Selected chip to remove that context and unselect the item in the workspace.",
                   "Ask across projects and artifact families—including functional and code architecture, reports, safety cases, requirements, reviews, and source evidence—and follow the supplied source links.",
                   "Request direct engineering-data edits in ordinary language. Collaborator resolves the authoritative source, shows a reviewable action plan, asks for confirmation, persists the approved change, and keeps an undo snapshot.",
                   "Generate new functional architectures or review, revise, and edit the functional decomposition in the active project.",

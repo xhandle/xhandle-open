@@ -241,6 +241,7 @@ export default function CollaboratorVoiceMode({
   docked = false,
   greeting = 'Hi. What would you like to think through together?',
   activeReferences = [],
+  onRemoveActiveReference,
   onClose,
   onSubmitTranscript,
 }) {
@@ -344,11 +345,22 @@ export default function CollaboratorVoiceMode({
       {activeReferences.length > 0 && (
         <div className="relative z-10 flex shrink-0 flex-wrap items-center justify-center gap-1.5 border-b border-indigo-100 bg-indigo-50/75 px-3 py-2 text-xs text-indigo-800 backdrop-blur-xl">
           <span className="font-semibold uppercase tracking-wide text-[10px] text-indigo-500">Using selection</span>
-          {activeReferences.slice(0, 3).map((reference, index) => (
-            <span key={`${reference}-${index}`} className="max-w-[280px] truncate rounded-full border border-indigo-200 bg-white/90 px-2 py-1" title={reference}>
-              {reference}
-            </span>
-          ))}
+          {activeReferences.slice(0, 3).map((reference, index) => {
+            const referenceClassName = "max-w-[280px] truncate rounded-full border border-indigo-200 bg-white/90 px-2 py-1";
+            return onRemoveActiveReference ? (
+              <button
+                type="button"
+                key={`${reference}-${index}`}
+                className={`${referenceClassName} hover:bg-white`}
+                title={`Remove ${reference} from this conversation context`}
+                onClick={() => onRemoveActiveReference(index)}
+              >
+                {reference} ×
+              </button>
+            ) : (
+              <span key={`${reference}-${index}`} className={referenceClassName} title={reference}>{reference}</span>
+            );
+          })}
           {activeReferences.length > 3 && <span>+{activeReferences.length - 3} more</span>}
         </div>
       )}

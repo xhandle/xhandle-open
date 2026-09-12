@@ -70,6 +70,11 @@ function compactFunctionalCanvasSelection(selection: any) {
       description: compactValue(node?.description || "", 700),
       subsystem: compactValue(node?.subsystem || "", 220),
       memberFunctions: clamp(Array.isArray(node?.memberFunctions) ? node.memberFunctions : [], 30).map((label: any) => compactValue(label, 220)),
+      comments: clamp(Array.isArray(node?.comments) ? node.comments : [], 12).map((comment: any) => ({
+        id: compactValue(comment?.id || "", 180),
+        text: compactValue(comment?.text || "", 700),
+        createdAt: comment?.createdAt || null,
+      })),
     })),
     selectedEdge: selection.selectedEdge ? {
       id: compactValue(selection.selectedEdge.id || "", 180),
@@ -81,6 +86,11 @@ function compactFunctionalCanvasSelection(selection: any) {
       count: Number(selection.selectedEdge.count || 1),
       rowNumbers: clamp(Array.isArray(selection.selectedEdge.rowNumbers) ? selection.selectedEdge.rowNumbers : [], 40),
       summary: compactValue(selection.selectedEdge.summary || "", 800),
+      comments: clamp(Array.isArray(selection.selectedEdge.comments) ? selection.selectedEdge.comments : [], 12).map((comment: any) => ({
+        id: compactValue(comment?.id || "", 180),
+        text: compactValue(comment?.text || "", 700),
+        createdAt: comment?.createdAt || null,
+      })),
     } : null,
     selectedRows: clamp(Array.isArray(selection.selectedRows) ? selection.selectedRows : [], 40).map((row: any) => ({
       rowNumber: Number(row?.rowNumber || 0),
@@ -151,6 +161,11 @@ function compactActiveView(activeView: any) {
   return {
     section: activeView.section || null,
     activeTab: activeView.activeTab || null,
+    viewedProjectId: activeView.viewedProjectId || null,
+    viewedProjectName: activeView.viewedProjectName || "",
+    viewedProjectType: activeView.viewedProjectType || null,
+    selectedFunctionalProjectId: activeView.selectedFunctionalProjectId || null,
+    selectedCodeArchitectureProjectId: activeView.selectedCodeArchitectureProjectId || null,
     activeProjectId: activeView.activeProjectId || null,
     activeCodeArchitectureProjectId: activeView.activeCodeArchitectureProjectId || null,
     activeCodeArchitectureRepoId: activeView.activeCodeArchitectureRepoId || null,

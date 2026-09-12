@@ -4,6 +4,8 @@ jest.mock('lucide-react', () => {
 });
 
 const React = require('react');
+const { act } = React;
+const { createRoot } = require('react-dom/client');
 const { renderToStaticMarkup } = require('react-dom/server');
 
 const {
@@ -13,6 +15,8 @@ const {
 } = require('./CollaboratorVoiceMode');
 const { getNaturalSpeechFailureMessage } = require('./ConversationalWizard');
 const CollaboratorVoiceMode = require('./CollaboratorVoiceMode').default;
+
+global.IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('CollaboratorVoiceMode', () => {
   test('turns a normal Collaborator answer into natural spoken text', () => {
@@ -57,6 +61,34 @@ describe('CollaboratorVoiceMode', () => {
     );
     expect(markup).toContain('Using selection');
     expect(markup).toContain('Hazard Analysis, row 4, Control Action');
+  });
+
+  test('lets a user remove selected workspace context from voice mode', () => {
+    const onRemoveActiveReference = jest.fn();
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    try {
+      act(() => root.render(
+        <CollaboratorVoiceMode
+          active={false}
+          activeReferences={['Functional diagram node: Plan Motion']}
+          onRemoveActiveReference={onRemoveActiveReference}
+          onClose={() => {}}
+          onSubmitTranscript={() => {}}
+        />,
+      ));
+      const referenceButton = Array.from(host.querySelectorAll('button'))
+        .find((button) => button.textContent.includes('Functional diagram node: Plan Motion'));
+
+      expect(referenceButton).not.toBeNull();
+      act(() => referenceButton.click());
+      expect(onRemoveActiveReference).toHaveBeenCalledWith(0);
+    } finally {
+      act(() => root.unmount());
+      host.remove();
+    }
   });
 
   test('surfaces the real OpenAI speech error instead of assuming the key is invalid', () => {

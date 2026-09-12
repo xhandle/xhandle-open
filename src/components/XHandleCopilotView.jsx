@@ -20,6 +20,7 @@ import {
   PanelLeftClose,
   Crosshair,
   Mic,
+  Square,
 } from "lucide-react";
 import {
   loadThreads, saveThreads, newThread, renameThread, deleteThread,
@@ -323,7 +324,11 @@ export function CollaboratorPromptComposer({
   placeholder = "Ask Collaborator...",
   onDraftChange,
   onSend,
+  onStop,
+  onQueue,
   canSend = false,
+  isGenerating = false,
+  queuedCount = 0,
   pendingContext = null,
   menuProps,
 }) {
@@ -352,23 +357,28 @@ export function CollaboratorPromptComposer({
             onKeyDown={(event) => {
               if (event.key !== "Enter" || event.shiftKey || event.nativeEvent?.isComposing) return;
               event.preventDefault();
-              onSend?.();
+              if (isGenerating) onQueue?.();
+              else onSend?.();
             }}
           />
           <button
             type="button"
-            onClick={onSend}
-            disabled={!canSend}
-            aria-label="Send message"
-            title="Send message"
-            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-neutral-200 disabled:text-neutral-400"
+            onClick={isGenerating ? onStop : onSend}
+            disabled={isGenerating ? false : !canSend}
+            aria-label={isGenerating ? "Stop generating" : "Send message"}
+            title={isGenerating ? "Stop generating" : "Send message"}
+            className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white transition-colors disabled:cursor-not-allowed disabled:bg-neutral-200 disabled:text-neutral-400 ${isGenerating ? "bg-neutral-900 hover:bg-neutral-700" : "bg-indigo-600 hover:bg-indigo-700"}`}
           >
-            <SendHorizonal className="h-4 w-4" />
+            {isGenerating
+              ? <Square className="h-3.5 w-3.5 fill-current" />
+              : <SendHorizonal className="h-4 w-4" />}
           </button>
         </div>
       </div>
       <div className="mt-1.5 text-center text-[10px] text-neutral-400">
-        Enter to send · Shift+Enter for a new line
+        {isGenerating
+          ? `Enter to queue a follow-up · Shift+Enter for a new line${queuedCount ? ` · ${queuedCount} queued` : ""}`
+          : "Enter to send · Shift+Enter for a new line"}
       </div>
     </div>
   );
@@ -1024,6 +1034,9 @@ export function renderCopilotContext(ctx) {
       `Use typed artifacts, relationships, runs, reviews, evidence, source files, and citations as the source of truth for local workspace context.`,
       ctx.scope?.projectId ? `Active project id: ${ctx.scope.projectId}` : `No active project boundary is required; reason workspace-wide unless the user names a project or artifact.`,
       `Active view: ${JSON.stringify(ctx.scope?.activeView || {})}`,
+      ctx.scope?.activeView?.viewedProjectType
+        ? `Visible-workspace rule: the user is currently viewing ${ctx.scope.activeView.viewedProjectType}${ctx.scope.activeView.viewedProjectName ? ` “${ctx.scope.activeView.viewedProjectName}”` : ""}. For an unqualified request, answer from this visible project. A project merely selected in another workspace area is secondary context and must not replace the visible project unless the user names it.`
+        : null,
       ctx.organizationCalibration?.context
         ? `Organization calibration profile (${ctx.organizationCalibration.profileIdentity || "configured profile"}):\n${ctx.organizationCalibration.context}`
         : null,
@@ -1246,11 +1259,11 @@ Validation before returning JSON:
 - Account for every visible box and every visible arrowhead/connector branch.
 `;
 
-async function extractDiagramTopology(modelUserContent) {
+async function extractDiagramTopology(modelUserContent, signal) {
   return callChat([
     { role: "system", content: DIAGRAM_TOPOLOGY_EXTRACTION_SYSTEM_PROMPT.trim() },
     { role: "user", content: modelUserContent },
-  ], undefined, { maxTokens: 4200 });
+  ], signal, { maxTokens: 4200 });
 }
 
 export const SUBSYSTEM_ARCHITECTURE_REVIEW_SYSTEM_PROMPT = `
@@ -1343,9 +1356,12 @@ export function isSubsystemGenerationRequest(promptText = "") {
   const query = String(promptText || "").toLowerCase();
   const generationIntent = /\b(generate|create|design|draft|propose|develop|build|add|expand|decompose)\b/.test(query);
   const architectureTarget = /\b(subsystem|system|architecture|stack)\b|functional\s+(decomposition|architecture|diagram|table|rows?)/.test(query);
+  const documentTarget = /\b(document|doc|report|specification|spec|description|summary|overview|narrative|markdown)\b/.test(query);
+  const explicitFunctionalDecomposition = /functional\s+(decomposition|architecture|diagram|table|rows?)/.test(query);
   const requirementsOnly = /\b(system\s+requirements?|requirements?\s+(set|table|document))\b/.test(query) &&
-    !/functional\s+(decomposition|architecture|diagram|table|rows?)/.test(query);
-  return generationIntent && architectureTarget && !requirementsOnly;
+    !explicitFunctionalDecomposition;
+  const designDocumentOnly = documentTarget && !explicitFunctionalDecomposition;
+  return generationIntent && architectureTarget && !requirementsOnly && !designDocumentOnly;
 }
 
 export function inferFunctionalAbstractionLevel(promptText = "") {
@@ -3020,8 +3036,32 @@ function HoverActionButton({ title, onClick, children, className = "" }) {
 
 // ---------- Prompt → Scope parsing ----------
 function readProjectsFromLS() {
-  try { return JSON.parse(localStorage.getItem("xhandle.projects") || "[]"); }
-  catch { return []; }
+  try {
+    const functionalProjects = JSON.parse(localStorage.getItem("xhandle.projects") || "[]");
+    const codeArchitectureProjects = JSON.parse(localStorage.getItem("xhandle.codeArchitectureProjects") || "[]");
+    return [
+      ...(Array.isArray(functionalProjects) ? functionalProjects : []).map((project) => ({ ...project, projectType: "functional-project" })),
+      ...(Array.isArray(codeArchitectureProjects) ? codeArchitectureProjects : []).map((project) => ({ ...project, projectType: "code-based-architecture" })),
+    ];
+  } catch { return []; }
+}
+
+export function resolveCollaboratorProjectBoundary({
+  workspaceWide = false,
+  explicitProjectId = null,
+  activeView = null,
+  fallbackProjectId = null,
+} = {}) {
+  if (workspaceWide) return null;
+  if (explicitProjectId) return explicitProjectId;
+  const view = activeView && typeof activeView === "object" ? activeView : {};
+  if (Object.prototype.hasOwnProperty.call(view, "viewedProjectId")) {
+    return view.viewedProjectId || null;
+  }
+  if (String(view.section || "").toLowerCase() === "code-architecture") {
+    return view.activeCodeArchitectureProjectId || null;
+  }
+  return view.activeProjectId || fallbackProjectId || null;
 }
 
 function parseScopeFromPrompt(text = "") {
@@ -3050,7 +3090,8 @@ function parseScopeFromPrompt(text = "") {
     }
   }
   if (projectName) {
-    project = projects.find(p => (p.name || "").toLowerCase() === projectName.toLowerCase()) || null;
+    const matches = projects.filter(p => (p.name || "").toLowerCase() === projectName.toLowerCase());
+    project = ((areas.has("cba") && matches.find((candidate) => candidate.projectType === "code-based-architecture")) || matches[0]) || null;
   }
 
   return { areas: Array.from(areas), project, filePath };
@@ -3822,7 +3863,7 @@ Prefer one row per missing leaf; use a second only when necessary to express a r
 This is additive reconciliation, not an architecture gate. Do not critique, reject, or reproduce the original response.
 `;
 
-async function reconcileMultiLevelFunctionalResponse(userRequest, responseText) {
+async function reconcileMultiLevelFunctionalResponse(userRequest, responseText, signal) {
   const leafInventory = extractMultiLevelLeafInventory(responseText);
   const existingRows = extractFunctionalRowsFromAssistantText(responseText);
   if (!leafInventory.length || !existingRows.length) {
@@ -3850,12 +3891,13 @@ async function reconcileMultiLevelFunctionalResponse(userRequest, responseText) 
             `Existing interfaces:\n${JSON.stringify(compactRows)}`,
           ].join("\n\n"),
         },
-      ], undefined, { maxTokens: 6000 });
+      ], signal, { maxTokens: 6000 });
       const parsed = parseSubsystemArchitectureReview(raw);
       const supplementalRows = normalizeSupplementalFunctionalRows(parsed, leafInventory, existingRows)
         .filter((row) => missingLeaves.some((leaf) => leaf.name === row.fromFunction || leaf.name === row.toFunction));
       reconciled = insertSupplementalFunctionalRows(reconciled, supplementalRows);
     } catch (error) {
+      if (signal?.aborted || error?.name === "AbortError") throw error;
       console.warn("[collaborator] Multi-level hierarchy reconciliation was skipped; preserving the generated response.", error);
     }
   }
@@ -3870,6 +3912,7 @@ export async function generateFunctionalDecompositionWithCollaborator({
   maxContinuations = 2,
   onToken,
   onStage,
+  signal,
 } = {}) {
   const requestText = String(userRequest || "").trim();
   if (!requestText) throw new Error("A functional-decomposition request is required.");
@@ -3886,6 +3929,7 @@ export async function generateFunctionalDecompositionWithCollaborator({
 
   onStage?.("Generating with the Collaborator functional-architecture workflow...", "");
   const completion = await streamChatWithContinuation(requestMessages, {
+    signal,
     onToken,
     maxTokens,
     maxContinuations,
@@ -3893,7 +3937,7 @@ export async function generateFunctionalDecompositionWithCollaborator({
   let answer = completion.text;
   if (selectedLevel === "multi-level" && answer) {
     onStage?.("Reconciling hierarchy leaf coverage and interface rows...", answer);
-    answer = await reconcileMultiLevelFunctionalResponse(requestText, answer);
+    answer = await reconcileMultiLevelFunctionalResponse(requestText, answer, signal);
   }
   const rows = extractFunctionalRowsFromAssistantText(answer);
   if (!rows.length) {
@@ -3913,6 +3957,7 @@ export default function XHandleCopilotView({
   projectHint,
   copilotContext,
   appFocus,
+  onRemoveActiveSelection,
   docked = false,
   onRequestDock,
   onRequestUndock,
@@ -3973,6 +4018,8 @@ function cancelCtxEditor() {
   const [hasInput, setHasInput] = useState(false);
   const [editingMessage, setEditingMessage] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [promptRunning, setPromptRunning] = useState(false);
+  const [queuedFollowUpCount, setQueuedFollowUpCount] = useState(0);
   const [streamingAssistant, setStreamingAssistant] = useState(null);
   const [workProgress, setWorkProgress] = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(defaultSidebarOpen && !docked);
@@ -4001,6 +4048,14 @@ function cancelCtxEditor() {
 
   const titlingRef = useRef(false);
   const textareaRef = useRef(null);
+  const activePromptAbortRef = useRef(null);
+  const queuedFollowUpsRef = useRef([]);
+
+  useEffect(() => () => {
+    activePromptAbortRef.current?.abort();
+    activePromptAbortRef.current = null;
+    queuedFollowUpsRef.current = [];
+  }, []);
 
   useEffect(() => {
     const onProjectsUpdated = () => {};
@@ -4290,7 +4345,7 @@ useEffect(() => {
     };
   };
 
-  const appendVibeReviewProposal = async (session, providerApi) => {
+  const appendVibeReviewProposal = async (session, providerApi, signal) => {
     let working = session;
     let state = providerApi.getHazardVibeReviewState();
     while (currentVibeReviewRowId(working)) {
@@ -4303,7 +4358,7 @@ useEffect(() => {
         saveVibeReviewSession(working); continue;
       }
       const normalized = await requestVibeReviewProposal({ headers, row, projectName: state.projectName, organizationContext: state.organizationContext,
-        provider: working.ai.provider, model: working.ai.model, effort: working.ai.effort });
+        provider: working.ai.provider, model: working.ai.model, effort: working.ai.effort, signal });
       working = transitionVibeReviewSession(working, { type: "proposal", proposal: normalized.proposal });
       saveVibeReviewSession(working);
       const card = buildVibeReviewCard(working, state, rowId, normalized);
@@ -4341,7 +4396,7 @@ useEffect(() => {
     setThreads(loadThreads());
   };
 
-  const handleVibeReviewAction = async (action, card, userFeedback = "", fromRunCopilot = false) => {
+  const handleVibeReviewAction = async (action, card, userFeedback = "", fromRunCopilot = false, signal) => {
     if (busy && !fromRunCopilot) return;
     setBusy(true);
     try {
@@ -4362,7 +4417,7 @@ useEffect(() => {
         closeVibeReviewCard(card, "superseded-by-undo");
         appendMessage(activeId, { role: "assistant", content: `Undid the last applied review decision for ${last.sourceRowId}. I’ll return to that row now.` });
         setThreads(loadThreads());
-        await appendVibeReviewProposal(session, providerApi);
+        await appendVibeReviewProposal(session, providerApi, signal);
         return;
       }
       if (action === "stop") {
@@ -4372,7 +4427,7 @@ useEffect(() => {
       }
       if (action === "skip") {
         session = transitionVibeReviewSession(session, { type: "skip", record: { sourceRowId: card.sourceRowId, reason: userFeedback || card.evidenceGap || "Deferred by user." } });
-        saveVibeReviewSession(session); closeVibeReviewCard(card, "skipped"); await appendVibeReviewProposal(session, providerApi); return;
+        saveVibeReviewSession(session); closeVibeReviewCard(card, "skipped"); await appendVibeReviewProposal(session, providerApi, signal); return;
       }
       if (action === "resume") {
         if (session.state === VIBE_REVIEW_STATES.AWAITING) {
@@ -4382,7 +4437,7 @@ useEffect(() => {
         }
         session = transitionVibeReviewSession(session, { type: "resume" });
         saveVibeReviewSession(session);
-        await appendVibeReviewProposal(session, providerApi);
+        await appendVibeReviewProposal(session, providerApi, signal);
         return;
       }
       let proposal = session.proposal;
@@ -4411,8 +4466,9 @@ useEffect(() => {
       appendVibeReviewAudit({ ...record, sessionId: session.id, projectId: session.projectId, threadId: session.threadId, provider: session.ai.provider, model: session.ai.model, effort: session.ai.effort, validationOutcome: "applied", newGovernedFields: proposal.governedDecision });
       session = transitionVibeReviewSession(session, { type: "decision", record }); saveVibeReviewSession(session);
       closeVibeReviewCard(card, action === "accept" ? "accepted" : `marked-${action}`);
-      await appendVibeReviewProposal(session, providerApi);
+      await appendVibeReviewProposal(session, providerApi, signal);
     } catch (error) {
+      if ((signal?.aborted || error?.name === "AbortError") && fromRunCopilot) throw error;
       const decisionHelp = action === "yes" || action === "no"
         ? " Your explicit reviewer selection was not applied; the row remains unchanged."
         : "";
@@ -4462,7 +4518,7 @@ useEffect(() => {
     };
   };
 
-  const appendFunctionalVibeReviewProposal = async (session, providerApi, stateOverride = null) => {
+  const appendFunctionalVibeReviewProposal = async (session, providerApi, stateOverride = null, signal) => {
     let working = session;
     const state = stateOverride || providerApi.getFunctionalVibeReviewState?.();
     while (currentFunctionalVibeReviewRowId(working)) {
@@ -4485,6 +4541,7 @@ useEffect(() => {
         provider: working.ai.provider,
         model: working.ai.model,
         effort: working.ai.effort,
+        signal,
       });
       working = transitionFunctionalVibeReviewSession(working, { type: "proposal", proposal: normalized.proposal });
       saveFunctionalVibeReviewSession(working);
@@ -4530,7 +4587,7 @@ useEffect(() => {
     setThreads(loadThreads());
   };
 
-  const handleFunctionalVibeReviewAction = async (action, card, userFeedback = "", fromRunCopilot = false) => {
+  const handleFunctionalVibeReviewAction = async (action, card, userFeedback = "", fromRunCopilot = false, signal) => {
     if (busy && !fromRunCopilot) return;
     setBusy(true);
     try {
@@ -4551,7 +4608,7 @@ useEffect(() => {
         closeFunctionalVibeReviewCard(card, "superseded-by-undo");
         appendMessage(activeId, { role: "assistant", content: `Undid the last functional review decision for ${last.label || last.rowId}. I’ll return to that row now.` });
         setThreads(loadThreads());
-        await appendFunctionalVibeReviewProposal(session, providerApi, result.state);
+        await appendFunctionalVibeReviewProposal(session, providerApi, result.state, signal);
         return;
       }
       if (action === "stop") {
@@ -4566,7 +4623,7 @@ useEffect(() => {
         session = transitionFunctionalVibeReviewSession(session, { type: "skip", record: { rowId: card.rowId, label: card.label, reason: userFeedback || card.remainingQuestion || "Deferred by user." } });
         saveFunctionalVibeReviewSession(session);
         closeFunctionalVibeReviewCard(card, "skipped");
-        await appendFunctionalVibeReviewProposal(session, providerApi, state);
+        await appendFunctionalVibeReviewProposal(session, providerApi, state, signal);
         return;
       }
       if (action === "resume") {
@@ -4577,7 +4634,7 @@ useEffect(() => {
         }
         session = transitionFunctionalVibeReviewSession(session, { type: "resume" });
         saveFunctionalVibeReviewSession(session);
-        await appendFunctionalVibeReviewProposal(session, providerApi, state);
+        await appendFunctionalVibeReviewProposal(session, providerApi, state, signal);
         return;
       }
 
@@ -4614,8 +4671,9 @@ useEffect(() => {
       session = transitionFunctionalVibeReviewSession(session, { type: "decision", record });
       saveFunctionalVibeReviewSession(session);
       closeFunctionalVibeReviewCard(card, action === "accept" ? "accepted" : decision.toLowerCase());
-      await appendFunctionalVibeReviewProposal(session, providerApi, result.state);
+      await appendFunctionalVibeReviewProposal(session, providerApi, result.state, signal);
     } catch (error) {
+      if ((signal?.aborted || error?.name === "AbortError") && fromRunCopilot) throw error;
       appendMessage(activeId, { role: "assistant", content: `I couldn’t apply that functional review action: ${error.message} The row remains unchanged.` });
       setThreads(loadThreads());
     } finally {
@@ -4628,30 +4686,63 @@ useEffect(() => {
     provider?.openFunctionalVibeReviewRow?.(card);
   }
 
-  async function handleSend() {
-    const input = inputDraftRef.current;
-    if ((!input.trim() && regionContexts.length === 0) || !active) return;
-
-    setAutoStick(true);
-    const diagramFunctionalDecomposition = isDiagramFunctionalDecompositionRequest(regionContexts, input);
-    const modelContent = buildPromptContentFromContext(regionContexts, input);
-    const historyContent = buildHistoryContentFromContext(regionContexts, input);
-
-    const userMsg = { role: "user", content: historyContent };
+  function clearPromptComposer() {
     inputDraftRef.current = "";
     if (textareaRef.current) {
       textareaRef.current.value = "";
       resizeCollaboratorTextarea(textareaRef.current);
     }
     setHasInput(false);
-    setRegionContexts([]);        // clear chips after send
+    setRegionContexts([]);
+  }
+
+  function buildPendingPrompt(input, contexts = regionContexts) {
+    return {
+      threadId: active?.id,
+      historyContent: buildHistoryContentFromContext(contexts, input),
+      modelUserContent: buildPromptContentFromContext(contexts, input),
+      diagramFunctionalDecomposition: isDiagramFunctionalDecompositionRequest(contexts, input),
+    };
+  }
+
+  function handleQueueFollowUp() {
+    const input = inputDraftRef.current;
+    if (!promptRunning || ((!input.trim() && regionContexts.length === 0) || !active)) return;
+    queuedFollowUpsRef.current.push(buildPendingPrompt(input));
+    setQueuedFollowUpCount(queuedFollowUpsRef.current.length);
+    clearPromptComposer();
+  }
+
+  async function sendNextQueuedFollowUp() {
+    const pending = queuedFollowUpsRef.current.shift();
+    setQueuedFollowUpCount(queuedFollowUpsRef.current.length);
+    if (!pending?.threadId || !pending.historyContent) return;
+
+    setAutoStick(true);
+    appendMessage(pending.threadId, { role: "user", content: pending.historyContent });
+    setThreads(loadThreads());
+    await runCopilot(pending.historyContent, {
+      modelUserContent: pending.modelUserContent,
+      diagramFunctionalDecomposition: pending.diagramFunctionalDecomposition,
+    });
+  }
+
+  async function handleSend() {
+    const input = inputDraftRef.current;
+    if ((!input.trim() && regionContexts.length === 0) || !active) return;
+
+    setAutoStick(true);
+    const pending = buildPendingPrompt(input);
+
+    const userMsg = { role: "user", content: pending.historyContent };
+    clearPromptComposer();
 
     appendMessage(active.id, userMsg);
     setThreads(loadThreads());
 
-    await runCopilot(historyContent, {
-      modelUserContent: modelContent,
-      diagramFunctionalDecomposition,
+    await runCopilot(pending.historyContent, {
+      modelUserContent: pending.modelUserContent,
+      diagramFunctionalDecomposition: pending.diagramFunctionalDecomposition,
     });
   }
 
@@ -4830,7 +4921,7 @@ useEffect(() => {
     await provider?.openWorkspaceArtifact?.(target);
   }
 
-  async function prepareWorkspaceActionPlan(userText, activeProjectId, history = []) {
+  async function prepareWorkspaceActionPlan(userText, activeProjectId, history = [], signal) {
     const context = await buildWorkspaceLLMContext({
       projectId: activeProjectId || null,
       activeView: appFocus || enrichedContext?.focus || {},
@@ -4849,7 +4940,7 @@ useEffect(() => {
       activeView: context?.scope?.activeView || appFocus || {},
       history,
     });
-    let rawText = await callChat(plannerMessages, undefined, { maxTokens: 2400 });
+    let rawText = await callChat(plannerMessages, signal, { maxTokens: 2400 });
     let parsed = extractWorkspaceActionJson(rawText);
     let plan = normalizeWorkspaceActionPlan(parsed, candidates);
     let errors = validateWorkspaceActionPlan(plan, candidates);
@@ -4858,7 +4949,7 @@ useEffect(() => {
         ...plannerMessages,
         { role: "assistant", content: rawText },
         { role: "user", content: `Repair the plan and return complete JSON only. Validation errors:\n- ${errors.join("\n- ")}` },
-      ], undefined, { maxTokens: 2400 });
+      ], signal, { maxTokens: 2400 });
       parsed = extractWorkspaceActionJson(rawText);
       plan = normalizeWorkspaceActionPlan(parsed, candidates);
       errors = validateWorkspaceActionPlan(plan, candidates);
@@ -4869,7 +4960,15 @@ useEffect(() => {
 
 
   async function runCopilot(userText, options = {}) {
+    const ownsPromptAbortController = !options?.promptAbortController;
+    const promptAbortController = options?.promptAbortController || new AbortController();
+    const promptSignal = promptAbortController.signal;
+    if (ownsPromptAbortController) {
+      activePromptAbortRef.current = promptAbortController;
+      setPromptRunning(true);
+    }
     let replacePendingAssistant = null;
+    let latestAssistantContent = "";
     let activeVibeReviewQuestionContext = "";
     const progressSteps = [];
     const reportProgress = (message) => {
@@ -4892,10 +4991,19 @@ useEffect(() => {
         reasoningActive: true,
       });
     };
+    const throwIfPromptStopped = () => {
+      if (!promptSignal.aborted) return;
+      const error = new Error("Collaborator response stopped by user.");
+      error.name = "AbortError";
+      throw error;
+    };
     setBusy(true);
     reportProgress("Reviewing the request and selected workspace context.");
     try {
-      const focusedProjectId = appFocus?.activeProjectId || enrichedContext?.project?.id || enrichedContext?.workspace?.activeProjectId || "";
+      const focusedProjectId = resolveCollaboratorProjectBoundary({
+        activeView: appFocus || enrichedContext?.focus || {},
+        fallbackProjectId: enrichedContext?.project?.id || enrichedContext?.workspace?.activeProjectId || null,
+      }) || "";
       const activeReview = focusedProjectId ? loadVibeReviewSession(focusedProjectId, activeId) : null;
       const activeFunctionalReview = focusedProjectId ? loadFunctionalVibeReviewSession(focusedProjectId, activeId) : null;
       const threadAtActionStart = loadThreads().find((thread) => thread.id === activeId);
@@ -4913,6 +5021,7 @@ useEffect(() => {
       const actionProvider = (reviewAction || functionalReviewAction || vibeReviewIntent || functionalVibeReviewIntent || batchNeedsReviewIntent || activeReview || activeFunctionalReview)
         ? await waitForActionProvider("project-functional-diagram", 1800)
         : null;
+      throwIfPromptStopped();
       if (pendingWorkspacePlanEntry && /^(?:apply|apply changes|confirm|yes|go ahead|do it)[.!]?$/i.test(String(userText || "").trim())) {
         try {
           await applyWorkspacePlan(pendingWorkspacePlanEntry.message.workspaceActionPlan, pendingWorkspacePlanEntry.messageIndex);
@@ -4969,7 +5078,7 @@ useEffect(() => {
         const normalizedCommand = String(userText || "").trim().toLowerCase().replace(/[.!]+$/g, "");
         const userFeedback = ["accept", "agree", "keep", "keep as is", "revise", "apply revision", "remove", "remove row", "skip", "stop", "undo"].includes(normalizedCommand)
           ? "" : String(userText || "").trim();
-        await handleFunctionalVibeReviewAction(functionalReviewAction, latestCard, userFeedback, true);
+        await handleFunctionalVibeReviewAction(functionalReviewAction, latestCard, userFeedback, true, promptSignal);
         return;
       }
       if (functionalVibeReviewIntent) {
@@ -5009,7 +5118,7 @@ useEffect(() => {
         saveFunctionalVibeReviewSession(session);
         appendMessage(activeId, { role: "assistant", content: `${describeFunctionalVibeReviewScope(scopeResult)} I snapshotted stable row IDs and will review exactly one interface at a time.` });
         setThreads(loadThreads());
-        await appendFunctionalVibeReviewProposal(session, actionProvider, state);
+        await appendFunctionalVibeReviewProposal(session, actionProvider, state, promptSignal);
         return;
       }
       if (reviewAction) {
@@ -5017,7 +5126,7 @@ useEffect(() => {
         const normalizedCommand = String(userText || "").trim().toLowerCase().replace(/[.!]+$/g, "");
         const userFeedback = ["yes", "mark yes", "mark it yes", "no", "mark no", "mark it no"].includes(normalizedCommand)
           ? "" : String(userText || "").trim();
-        await handleVibeReviewAction(reviewAction, latestCard, userFeedback, true); return;
+        await handleVibeReviewAction(reviewAction, latestCard, userFeedback, true, promptSignal); return;
       }
       if (vibeReviewIntent) {
         const state = actionProvider?.getHazardVibeReviewState?.();
@@ -5038,7 +5147,7 @@ useEffect(() => {
         const session = createVibeReviewSession({ projectId: state.activeProjectId, threadId: activeId, queue: scopeResult.queue, scopeLabel: scopeResult.scopeLabel, ai: collaboratorAI });
         saveVibeReviewSession(session);
         appendMessage(activeId, { role: "assistant", content: `${describeScopeResolution(scopeResult)} I snapshotted the queue by Raw Analysis Row ID and will review exactly one row at a time.` }); setThreads(loadThreads());
-        await appendVibeReviewProposal(session, actionProvider); return;
+        await appendVibeReviewProposal(session, actionProvider, promptSignal); return;
       }
       if (activeReview && activeReview.state === VIBE_REVIEW_STATES.AWAITING) {
         const state = actionProvider?.getHazardVibeReviewState?.();
@@ -5120,6 +5229,7 @@ useEffect(() => {
             modelUserContent: resolvedRequest.modelUserContent,
             abstractionResolved: true,
             abstractionLevel: selectedLevel,
+            promptAbortController,
           },
         );
         return;
@@ -5141,14 +5251,13 @@ useEffect(() => {
 	        setPendingFunctionalProjectName(requestedFunctionalProjectName);
 	      }
       const workspaceWideRequest = /\b(?:across\s+(?:the\s+)?(?:entire\s+)?workspace|across\s+all\s+projects|all\s+projects|workspace[- ]wide|any\s+project)\b/i.test(String(userText || ""));
-      const activeProjectId = workspaceWideRequest
-        ? null
-        : (scope?.project?.id ||
-          appFocus?.activeProjectId ||
-          enrichedContext?.project?.id ||
-          enrichedContext?.workspace?.activeProjectId ||
-          null);
       const focusContext = appFocus || enrichedContext?.focus || {};
+      const activeProjectId = resolveCollaboratorProjectBoundary({
+        workspaceWide: workspaceWideRequest,
+        explicitProjectId: scope?.project?.id || null,
+        activeView: focusContext,
+        fallbackProjectId: enrichedContext?.project?.id || enrichedContext?.workspace?.activeProjectId || null,
+      });
       const activeThreadAtStart = loadThreads().find((thread) => thread.id === activeId);
       const previousAssistantContent = [...(activeThreadAtStart?.messages || [])]
 		        .reverse()
@@ -5541,7 +5650,8 @@ useEffect(() => {
       if (isWorkspaceMutationIntent(userText)) {
         reportProgress("Resolving the requested edit to authoritative workspace sources.");
         const currentThread = loadThreads().find((thread) => thread.id === activeId);
-        const plan = await prepareWorkspaceActionPlan(userText, activeProjectId, currentThread?.messages || []);
+        const plan = await prepareWorkspaceActionPlan(userText, activeProjectId, currentThread?.messages || [], promptSignal);
+        throwIfPromptStopped();
         if (plan.intent === "clarify") {
           appendMessage(activeId, { role: "assistant", content: plan.clarification });
         } else if (plan.intent === "mutate") {
@@ -5569,6 +5679,7 @@ useEffect(() => {
           query: userText,
           tokenBudget: isHazardAnalysisQuestion(userText) ? 9000 : 5000,
         });
+        throwIfPromptStopped();
         graphContext.projectHint = projectHint || enrichedContext?.projectHint;
       } catch (error) {
         graphContext = {
@@ -5633,7 +5744,7 @@ Runtime context:
       if (options?.diagramFunctionalDecomposition && Array.isArray(options?.modelUserContent)) {
         try {
           reportProgress("Inspecting the attached diagram and tracing its visible topology.");
-          const topologyInventory = await extractDiagramTopology(options.modelUserContent);
+          const topologyInventory = await extractDiagramTopology(options.modelUserContent, promptSignal);
           effectiveModelUserContent = [
             ...options.modelUserContent,
             {
@@ -5646,6 +5757,7 @@ Runtime context:
             },
           ];
         } catch (error) {
+          if (promptSignal.aborted || error?.name === "AbortError") throw error;
           console.warn("[collaborator] Diagram topology preflight failed; continuing with direct visual analysis.", error);
         }
       }
@@ -5681,6 +5793,7 @@ Runtime context:
           parsedResponse.content,
           scoped?.citations || [],
         );
+        latestAssistantContent = displayedContent;
         if (!force) {
           setStreamingAssistant({
             threadId: activeId,
@@ -5722,6 +5835,7 @@ Runtime context:
           messages,
           maxTokens: options?.diagramFunctionalDecomposition ? 12000 : 16000,
           maxContinuations: 2,
+          signal: promptSignal,
           onToken: (_token, fullText) => updateAssistant(fullText),
           onStage: (message, currentAnswer) => {
             reportProgress(message);
@@ -5731,6 +5845,7 @@ Runtime context:
         answer = generation.answer;
       } else {
         const completion = await streamChatWithContinuation(messages, {
+          signal: promptSignal,
           onToken: (_token, fullText) => updateAssistant(fullText),
           maxTokens: 3200,
           maxContinuations: 1,
@@ -5744,15 +5859,32 @@ Runtime context:
         if (requestedFunctionalProjectName) setPendingFunctionalProjectName(requestedFunctionalProjectName);
       }
     } catch (error) {
+      if (promptSignal.aborted || error?.name === "AbortError") {
+        const stoppedMessage = latestAssistantContent.trim()
+          ? `${latestAssistantContent.trimEnd()}\n\n_Response stopped by user._`
+          : "Response stopped by user.";
+        if (replacePendingAssistant) replacePendingAssistant(stoppedMessage, true);
+        else appendMessage(activeId, { role: "assistant", content: stoppedMessage });
+        setThreads(loadThreads());
+        return;
+      }
       const detail = String(error?.message || "unknown error").replace(/^assistant_failed_\d+:?\s*/i, "");
       const failureMessage = `Sorry — I hit an issue generating a reply: ${detail}. Check the selected AI provider/model and try again.`;
       if (replacePendingAssistant) replacePendingAssistant(failureMessage, true);
       else appendMessage(activeId, { role: "assistant", content: failureMessage });
       setThreads(loadThreads());
     } finally {
+      const shouldSendQueuedFollowUp = ownsPromptAbortController && queuedFollowUpsRef.current.length > 0;
+      if (ownsPromptAbortController && activePromptAbortRef.current === promptAbortController) {
+        activePromptAbortRef.current = null;
+        setPromptRunning(false);
+      }
       setStreamingAssistant(null);
       setWorkProgress([]);
       setBusy(false);
+      if (shouldSendQueuedFollowUp) {
+        setTimeout(() => { void sendNextQueuedFollowUp(); }, 0);
+      }
     }
   }
 
@@ -5855,6 +5987,10 @@ Runtime context:
   const userH2 = docked ? "text-sm"  : "text-base";
   const userP  = docked ? "text-[13px]" : "text-[13px]";
   const canSend = Boolean(active && !busy && (hasInput || regionContexts.length));
+  const stopActivePrompt = () => {
+    const controller = activePromptAbortRef.current;
+    if (controller && !controller.signal.aborted) controller.abort();
+  };
   const activeReferenceSelections = Array.isArray(appFocus?.activeSelections) ? appFocus.activeSelections : [];
   const renderPendingContextChips = () => (
     (regionContexts.length > 0 || activeReferenceSelections.length > 0) && (
@@ -5864,14 +6000,17 @@ Runtime context:
         </div>
         <div className="flex flex-wrap gap-1.5">
           {activeReferenceSelections.map((selection, index) => (
-            <span
+            <button
+              type="button"
               key={`${selection.kind || selection.source || "selection"}-${selection.id || selection.tableId || index}`}
               className="inline-flex max-w-[300px] items-center gap-2 truncate rounded-full border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs text-indigo-800"
-              title="This active workspace selection is included automatically in typed and voice requests. Change or clear the selection in the workspace view."
+              title="Remove this selected context and unselect it in the workspace"
+              onClick={() => onRemoveActiveSelection?.(selection)}
             >
               <span className="uppercase tracking-wide text-[10px] font-semibold text-indigo-500">Selected</span>
               <span className="truncate">{describeActiveSelection(selection)}</span>
-            </span>
+              <span aria-hidden="true" className="font-semibold text-indigo-500">×</span>
+            </button>
           ))}
           {regionContexts.map(c => (
             <button
@@ -6204,7 +6343,11 @@ Runtime context:
                 placeholder="Ask Collaborator"
                 onDraftChange={updateInputDraft}
                 onSend={() => handleSend()}
+                onStop={stopActivePrompt}
+                onQueue={handleQueueFollowUp}
                 canSend={canSend}
+                isGenerating={promptRunning}
+                queuedCount={queuedFollowUpCount}
                 pendingContext={renderPendingContextChips()}
                 menuProps={{
                   provider: collaboratorAI.provider,
@@ -6231,6 +6374,7 @@ Runtime context:
                 busy={busy}
                 greeting={buildCollaboratorVoiceGreeting()}
                 activeReferences={activeReferenceSelections.map(describeActiveSelection).filter(Boolean)}
+                onRemoveActiveReference={(index) => onRemoveActiveSelection?.(activeReferenceSelections[index])}
                 onClose={() => setVoiceModeEnabled(false)}
                 onSubmitTranscript={handleVoiceTranscript}
               />
@@ -6427,7 +6571,11 @@ Runtime context:
               placeholder="Ask Collaborator"
               onDraftChange={updateInputDraft}
               onSend={() => handleSend()}
+              onStop={stopActivePrompt}
+              onQueue={handleQueueFollowUp}
               canSend={canSend}
+              isGenerating={promptRunning}
+              queuedCount={queuedFollowUpCount}
               pendingContext={renderPendingContextChips()}
               menuProps={{
                 provider: collaboratorAI.provider,
@@ -6455,6 +6603,7 @@ Runtime context:
               docked
               greeting={buildCollaboratorVoiceGreeting()}
               activeReferences={activeReferenceSelections.map(describeActiveSelection).filter(Boolean)}
+              onRemoveActiveReference={(index) => onRemoveActiveSelection?.(activeReferenceSelections[index])}
               onClose={() => setVoiceModeEnabled(false)}
               onSubmitTranscript={handleVoiceTranscript}
             />

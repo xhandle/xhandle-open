@@ -2424,6 +2424,7 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
         visibleModuleRows: moduleRows.slice(0, 80),
         lastAgentSnapshot: readAgentSnapshots()[0] || null,
       }),
+      clearSelection,
     };
 
     return registerActionProvider("requirements", provider);

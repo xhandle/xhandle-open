@@ -6383,6 +6383,14 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
   }
 
   function getCollaboratorAppFocus() {
+    const viewingCodeArchitecture = section === "code-architecture";
+    const viewingFunctionalProject = section === "projects";
+    const viewedProjectId = viewingCodeArchitecture
+      ? (activeCodeArchitectureProjectId || null)
+      : (viewingFunctionalProject ? (activeProjectId || null) : null);
+    const viewedProjectName = viewingCodeArchitecture
+      ? (activeCodeArchitectureProject?.name || "")
+      : (viewingFunctionalProject ? (projects.find((project) => project.id === activeProjectId)?.name || "") : "");
     const activeSelections = [];
     if (functionalCanvasSelection?.hasSelection) {
       activeSelections.push({
@@ -6422,6 +6430,13 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
     return {
       section,
       activeTab,
+      viewedProjectId,
+      viewedProjectName,
+      viewedProjectType: viewingCodeArchitecture
+        ? "code-based-architecture"
+        : (viewingFunctionalProject ? "functional-project" : "workspace-area"),
+      selectedFunctionalProjectId: activeProjectId || null,
+      selectedCodeArchitectureProjectId: activeCodeArchitectureProjectId || null,
       activeProjectId: activeProjectId || null,
       activeCodeArchitectureProjectId: activeCodeArchitectureProjectId || null,
       activeCodeArchitectureRepoId: activeCodeArchitectureRepo?.id || null,
@@ -7164,6 +7179,24 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [activeRiskId, setActiveRiskId] = useState(null);
   const selectTableCellForCollaborator = useCallback((selection) => {
     setActiveTableSelection(createTableCellSelection(selection));
+  }, []);
+  const clearCollaboratorActiveSelection = useCallback((selection) => {
+    if (selection?.kind === 'functional-canvas' || selection?.source === 'functional-diagram') {
+      diagramRef.current?.clearSelection?.();
+      setFunctionalCanvasSelection(null);
+      return;
+    }
+    if (selection?.kind === 'table-cell' || selection?.source === 'table') {
+      setActiveTableSelection(null);
+      return;
+    }
+    if (selection?.kind === 'safety-issue') {
+      setActiveRiskId(null);
+      return;
+    }
+    if (selection?.kind === 'requirement') {
+      getActionProvider('requirements')?.clearSelection?.();
+    }
   }, []);
 
   useEffect(() => {
@@ -13372,10 +13405,10 @@ const renderFolderDashboardPanel = (panel, index) => {
 
 // Hint the Copilot about repo/baseline context (optional keys)
 const projectHint = useMemo(() => ({
-  owner: localStorage.getItem("repoOwner") || undefined,
-  repo: localStorage.getItem("repoName") || undefined,
+  owner: activeCodeArchitectureRepo?.owner || localStorage.getItem("repoOwner") || undefined,
+  repo: activeCodeArchitectureRepo?.repo || activeCodeArchitectureRepo?.repoName || localStorage.getItem("repoName") || undefined,
   baselineKey: localStorage.getItem("activeBaselineKey") || undefined,
-}), [activeProjectId]);
+}), [activeCodeArchitectureRepo, activeProjectId]);
 
     // Gate the whole app
     if (gate.phase === 'checking') return null;
@@ -13714,6 +13747,7 @@ const projectHint = useMemo(() => ({
                 projectHint={projectHint}
                 copilotContext={getActiveProjectContext()}
                 appFocus={getCollaboratorAppFocus()}
+                onRemoveActiveSelection={clearCollaboratorActiveSelection}
                 onRequestDock={() => {
                   setDockOpen(true);
                   try { localStorage.setItem('xhandle.copilotDockOpen','true'); } catch {}
@@ -14515,6 +14549,7 @@ const projectHint = useMemo(() => ({
     projectHint={projectHint}
     copilotContext={getActiveProjectContext()}
     appFocus={getCollaboratorAppFocus()}
+    onRemoveActiveSelection={clearCollaboratorActiveSelection}
   />
 )}
 

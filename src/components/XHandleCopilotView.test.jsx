@@ -65,6 +65,7 @@ const {
   normalizeMultiLevelHierarchy,
   parseCollaboratorReasoningEnvelope,
   recalculateFunctionalDirectionAudit,
+  resolveCollaboratorProjectBoundary,
   selectCurrentCollaboratorReasoningStep,
   selectLiveCollaboratorReasoning,
   streamChat,
@@ -122,6 +123,75 @@ describe("subsystem generation prompting", () => {
         cancelable: true,
       })));
       expect(onSend).toHaveBeenCalledTimes(1);
+    } finally {
+      act(() => root.unmount());
+      host.remove();
+    }
+  });
+
+  it("replaces the send control with an enabled stop control while generating", () => {
+    const onSend = jest.fn();
+    const onStop = jest.fn();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    try {
+      act(() => {
+        root.render(
+          <CollaboratorPromptComposer
+            textareaRef={React.createRef()}
+            onSend={onSend}
+            onStop={onStop}
+            canSend={false}
+            isGenerating
+            menuProps={{ provider: "openai", model: "gpt-5.5", effort: "medium" }}
+          />,
+        );
+      });
+
+      const stop = host.querySelector('[aria-label="Stop generating"]');
+      expect(stop).not.toBeNull();
+      expect(stop.disabled).toBe(false);
+      expect(host.querySelector('[aria-label="Send message"]')).toBeNull();
+      act(() => stop.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+      expect(onStop).toHaveBeenCalledTimes(1);
+      expect(onSend).not.toHaveBeenCalled();
+    } finally {
+      act(() => root.unmount());
+      host.remove();
+    }
+  });
+
+  it("queues Enter as a follow-up while generation continues", () => {
+    const onSend = jest.fn();
+    const onQueue = jest.fn();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    try {
+      act(() => {
+        root.render(
+          <CollaboratorPromptComposer
+            textareaRef={React.createRef()}
+            onSend={onSend}
+            onStop={() => {}}
+            onQueue={onQueue}
+            isGenerating
+            queuedCount={1}
+            menuProps={{ provider: "openai", model: "gpt-5.5", effort: "medium" }}
+          />,
+        );
+      });
+
+      const textarea = host.querySelector("textarea");
+      act(() => textarea.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Enter",
+        bubbles: true,
+        cancelable: true,
+      })));
+      expect(onQueue).toHaveBeenCalledTimes(1);
+      expect(onSend).not.toHaveBeenCalled();
+      expect(host.textContent).toContain("1 queued");
     } finally {
       act(() => root.unmount());
       host.remove();
@@ -445,6 +515,29 @@ describe("subsystem generation prompting", () => {
     }
   });
 
+  it("aborts the active provider stream when the caller stops generation", async () => {
+    const priorFetch = global.fetch;
+    global.fetch = jest.fn((_url, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener("abort", () => {
+        const error = new Error("The operation was aborted.");
+        error.name = "AbortError";
+        reject(error);
+      }, { once: true });
+    }));
+    const controller = new AbortController();
+
+    try {
+      const request = streamChat([{ role: "user", content: "A long request" }], {
+        signal: controller.signal,
+      });
+      controller.abort();
+      await expect(request).rejects.toMatchObject({ name: "AbortError" });
+      expect(global.fetch.mock.calls[0][1].signal.aborted).toBe(true);
+    } finally {
+      global.fetch = priorFetch;
+    }
+  });
+
   it("recognizes provider output-limit signals and builds a bounded continuation request", () => {
     expect(isCollaboratorLengthFinishReason("length")).toBe(true);
     expect(isCollaboratorLengthFinishReason("MAX_TOKENS")).toBe(true);
@@ -609,6 +702,15 @@ describe("subsystem generation prompting", () => {
       "Create system requirements for LiDAR",
     )).toBe(false);
     expect(isSubsystemGenerationRequest(
+      "Create a system design description",
+    )).toBe(false);
+    expect(isSubsystemGenerationRequest(
+      "Draft an architecture document for the autonomy stack",
+    )).toBe(false);
+    expect(isSubsystemGenerationRequest(
+      "Create a functional decomposition document for LiDAR",
+    )).toBe(true);
+    expect(isSubsystemGenerationRequest(
       "What functions are currently in the Localization subsystem?",
     )).toBe(false);
   });
@@ -628,11 +730,44 @@ describe("subsystem generation prompting", () => {
     expect(needsFunctionalAbstractionClarification(
       "create a detailed functional decomposition for an autonomy stack",
     )).toBe(false);
+    expect(needsFunctionalAbstractionClarification(
+      "create a system design description",
+    )).toBe(false);
     expect(inferFunctionalAbstractionLevel("Use system-level abstraction")).toBe("system");
     expect(inferFunctionalAbstractionLevel("subsystem level")).toBe("subsystem");
     expect(inferFunctionalAbstractionLevel("3")).toBe("detailed-functional");
     expect(inferFunctionalAbstractionLevel("multi-level please")).toBe("multi-level");
     expect(inferFunctionalAbstractionLevel("create a lidar system")).toBe("");
+  });
+
+  it("uses the project currently visible in Collaborator instead of a selection from another area", () => {
+    expect(resolveCollaboratorProjectBoundary({
+      activeView: {
+        section: "code-architecture",
+        viewedProjectId: "cba-project-7",
+        activeProjectId: "functional-project-2",
+        activeCodeArchitectureProjectId: "cba-project-7",
+      },
+      fallbackProjectId: "functional-project-2",
+    })).toBe("cba-project-7");
+
+    expect(resolveCollaboratorProjectBoundary({
+      activeView: {
+        section: "projects",
+        viewedProjectId: "functional-project-2",
+        activeProjectId: "functional-project-2",
+        activeCodeArchitectureProjectId: "cba-project-7",
+      },
+    })).toBe("functional-project-2");
+
+    expect(resolveCollaboratorProjectBoundary({
+      explicitProjectId: "named-project",
+      activeView: { viewedProjectId: "visible-project" },
+    })).toBe("named-project");
+    expect(resolveCollaboratorProjectBoundary({
+      workspaceWide: true,
+      activeView: { viewedProjectId: "visible-project" },
+    })).toBeNull();
   });
 
   it("does not reinterpret creating a project from pending rows as a new decomposition request", () => {
