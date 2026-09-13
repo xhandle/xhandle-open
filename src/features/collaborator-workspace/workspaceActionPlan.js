@@ -1,5 +1,6 @@
 const MUTATION_VERBS = "add|append|assign|create|change|correct|delete|edit|link|make|mark|move|remove|rename|replace|set|unlink|update";
 const WORKSPACE_NOUNS = "artifact|cell|code architecture|decomposition|edge|finding|function|hazard|issue|model|node|note|project|report|requirement|risk|row|safety case|table|traceability|it|that|this";
+const ADVISORY_LANGUAGE = "alternatives?|brainstorm|ideas?|options?|recommend(?:ation|ations|ed|ing)?|suggest(?:ion|ions|ed|ing)?";
 
 export const WORKSPACE_ACTION_OPERATIONS = new Set([
   "create",
@@ -9,9 +10,28 @@ export const WORKSPACE_ACTION_OPERATIONS = new Set([
   "unlink",
 ]);
 
+export function isWorkspaceAdvisoryIntent(value = "") {
+  const text = String(value || "").trim();
+  if (!text) return false;
+  const asksForAdvice = new RegExp(`\\b(?:${ADVISORY_LANGUAGE})\\b`, "i").test(text)
+    || /\bwhat\s+(?:should|could|would)\s+(?:i|we)\b/i.test(text)
+    || /\bhelp\s+me\s+(?:choose|decide|think)\b/i.test(text);
+  if (!asksForAdvice) return false;
+
+  // Explicit execution language still wins when a user asks Collaborator to both
+  // choose and perform a change. Merely saying "I want to create ..." describes
+  // a goal and should not bypass the normal assistant response.
+  const directMutationRequest = new RegExp(
+    `^(?:please\\s+)?(?:${MUTATION_VERBS})\\b|^(?:can|could|would|will)\\s+you\\s+(?:please\\s+)?(?:${MUTATION_VERBS})\\b|\\bi\\s+want\\s+you\\s+to\\s+(?:${MUTATION_VERBS})\\b|\\bgo\\s+ahead(?:\\s+and)?\\s+(?:${MUTATION_VERBS})\\b`,
+    "i",
+  ).test(text);
+  return !directMutationRequest;
+}
+
 export function isWorkspaceMutationIntent(value = "") {
   const text = String(value || "").trim();
   if (!text) return false;
+  if (isWorkspaceAdvisoryIntent(text)) return false;
   const hasVerb = new RegExp(`\\b(?:${MUTATION_VERBS})\\b`, "i").test(text);
   const hasWorkspaceNoun = new RegExp(`\\b(?:${WORKSPACE_NOUNS})s?\\b`, "i").test(text);
   const hypothetical = /^(?:what\s+if|what\s+would|how\s+would|why\s+would|would\s+(?:it|this|that)|could\s+(?:it|this|that)|should\s+(?:we|i))\b/i.test(text);
@@ -138,6 +158,8 @@ export function buildWorkspaceActionPlannerMessages({ userText, candidates = [],
       artifactId: artifact.id,
       type: artifact.type,
       projectId: artifact.projectId || "",
+      sourceStore: artifact.sourceStore || "",
+      sourceKey: artifact.sourceKey || "",
       sourceId: artifact.sourceId || "",
       title: artifact.title || "",
       summary: bounded(artifact.summary || "", Math.min(1800, remainingSourceBudget)),
@@ -162,7 +184,9 @@ export function buildWorkspaceActionPlannerMessages({ userText, candidates = [],
         "If the target, field, intended value, project, or delete scope is ambiguous, return intent=clarify with one concise question and no actions.",
         "Preserve unrelated fields and records. Prefer the smallest change that fulfills the request.",
         "Supported operations: create, update, delete, link, unlink.",
-        "Create/update/delete adapters cover projects; functional-decomposition rows; hazard-analysis rows; risks and consolidated safety issues; requirements; safety-issue reports; code-architecture edges; SysML models/elements; review items; and safety cases/nodes. Existing notes, evidence, findings, remediation, and verification records can be updated or deleted through their durable IndexedDB source. Requirement trace links support link/unlink. Repository source files themselves are read-only and must be edited in the repository.",
+        "Create/update/delete adapters cover functional and code-architecture projects; functional-decomposition rows; project and code-architecture hazard-analysis rows; risks and consolidated safety issues; requirements; safety-issue reports; code-architecture edges; code-architecture software/system/subsystem requirements and design elements; SysML models/elements; review items; and safety cases/nodes. Existing notes, evidence, findings, remediation, and verification records can be updated or deleted through their durable IndexedDB source. Requirement trace links support link/unlink. Repository source files themselves are read-only and must be edited in the repository.",
+        "The active visible project in activeView is authoritative for phrases such as this project or current project. If it is a code-based-architecture project, never redirect the action to selectedFunctionalProjectId.",
+        "For a create inside an existing code-architecture table or hazard run, use an existing retrieved row from that same table/run as target.artifactId so the governed adapter can resolve the exact durable source. The existing row is only a source anchor and is not modified.",
         "For update, provide either field plus value, or record containing a shallow patch. For create, provide target.type, target.projectId when known, and record.",
         "For link/unlink, target must be an existing requirement and relationship must include the exact toArtifactId plus a relationship type. These operations edit the requirement's durable links collection.",
         "Return JSON only using this schema:",

@@ -337,11 +337,8 @@ export default function ReviewCenter({
 
   return (
     <div className="flex h-full flex-col overflow-auto bg-white px-3 py-1 md:px-5 lg:px-7">
-      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Review Center</h1>
-          <p className="text-sm text-gray-500">High-level review status across all projects, grouped by project and review material type. Perform detailed review from the drawer or source tables.</p>
-        </div>
+      <h1 className="sr-only">Review Center</h1>
+      <div className="mb-3 flex flex-wrap items-center justify-end gap-3">
         <div className="flex flex-wrap items-center gap-2">
           {onExportCodeArchitectureReviewPackage && (
             <button

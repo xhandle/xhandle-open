@@ -27,7 +27,24 @@ jest.mock("../features/code-architecture-assurance/codeArchitectureMetrics", () 
 const {
   buildSourceFileIndexRecord,
   groundFunctionalDecompositionRow,
+  updateCodeArchitectureFunctionalCell,
 } = require("./generateFunctionalDecompositionFromGitHub");
+
+describe("code architecture functional table cell editing", () => {
+  it("updates interface fields without replacing stable traceability", () => {
+    const rows = [{ traceId: "FD-1", from: "Old source", architecture: { csci: "Runtime", csu: "Old unit" } }];
+    const updated = updateCodeArchitectureFunctionalCell(rows, 0, "from", "New source");
+    expect(updated[0]).toMatchObject({ traceId: "FD-1", from: "New source" });
+    expect(updated[0].architecture).toEqual({ csci: "Runtime", csu: "Old unit" });
+    expect(rows[0].from).toBe("Old source");
+  });
+
+  it("updates hierarchy cells without dropping sibling allocation fields", () => {
+    const rows = [{ traceId: "FD-1", architecture: { subsystem: "Planning", csci: "Runtime", csc: "Routing", csu: "Old unit" } }];
+    const updated = updateCodeArchitectureFunctionalCell(rows, 0, "csu", "Route Tracker");
+    expect(updated[0].architecture).toEqual({ subsystem: "Planning", csci: "Runtime", csc: "Routing", csu: "Route Tracker" });
+  });
+});
 
 function makeStats() {
   return {

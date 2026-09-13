@@ -406,6 +406,16 @@ export default function ReadmeModal({ open, onClose }) {
               </div>
               <div className="grid gap-3 md:grid-cols-2">
                 <PromptExample
+                  title="Score decomposition quality"
+                  description="Applies the same weighted engineering rubric to the complete active table and returns row-referenced findings."
+                  prompt="Review and score the current project’s functional decomposition for hazard-analysis readiness."
+                />
+                <PromptExample
+                  title="Revise from the quality review"
+                  description="Uses the exact scored findings from this thread to prepare changes that remain subject to your approval."
+                  prompt="Revise the current functional decomposition using this quality review."
+                />
+                <PromptExample
                   title="Run an additive completeness audit"
                   description="Looks for missing coverage while preserving every existing row."
                   prompt="Audit the current functional decomposition for missing operational, feedback, health, mode, and fault-management interfaces. Preserve every existing row and propose additions only."

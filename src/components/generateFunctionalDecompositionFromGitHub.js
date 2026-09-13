@@ -19,6 +19,11 @@ import {
   recordFunctionalDecompositionAiCall,
   saveFunctionalDecompositionMetricsRun,
 } from "../features/code-architecture-assurance/codeArchitectureMetrics";
+import {
+  createTableCellSelection,
+  isSelectedTableCell,
+  isSelectedTableRow,
+} from "../features/collaborator-selection/activeSelectionContext";
 
 // --- IndexedDB helpers (xHandle durable storage, unified schema) ---
 const IDB_DB_NAME = "xhandle";
@@ -3885,6 +3890,46 @@ export function GitHubDecomposeLauncher({ setTableData, setLoading, buttonClassN
 }
 
 // ===================== table/diagram component =====================
+export function updateCodeArchitectureFunctionalCell(rows = [], rowIndex, columnId, value) {
+  const index = Number(rowIndex);
+  if (!Number.isInteger(index) || index < 0 || index >= rows.length) return rows;
+  const architectureFields = new Set(["subsystem", "csci", "csc", "csu"]);
+  const rowFields = {
+    from: "from",
+    fromFile: "fromFile",
+    fromDetails: "fromDetails",
+    action: "action",
+    controlDetails: "controlActionDetails",
+    to: "to",
+    toFile: "toFile",
+    toDetails: "toDetails",
+  };
+  if (!architectureFields.has(columnId) && !rowFields[columnId]) return rows;
+  return rows.map((row, currentIndex) => {
+    if (currentIndex !== index) return row;
+    if (architectureFields.has(columnId)) {
+      return {
+        ...row,
+        architecture: {
+          ...(row?.architecture || {}),
+          [columnId]: value,
+        },
+      };
+    }
+    return { ...row, [rowFields[columnId]]: value };
+  });
+}
+
+function codeArchitectureFunctionalCellRows(value, columnId) {
+  const text = String(value ?? "");
+  if (!text.trim()) return 2;
+  const charsPerLine = columnId.toLowerCase().includes("details") ? 48 : 28;
+  const estimated = text.split(/\r?\n/).reduce((total, line) => (
+    total + Math.max(1, Math.ceil(String(line || "").length / charsPerLine))
+  ), 0);
+  return Math.min(28, Math.max(2, estimated + 1));
+}
+
 export const FunctionalDecompositionTable = ({
   data,
   repoId = "repo",
@@ -3909,6 +3954,10 @@ export const FunctionalDecompositionTable = ({
   architectureRefreshKey = null,
   colorSystemElements = false,
   reviewMode = false,
+  projectId = "",
+  onDataChange,
+  collaboratorSelection = null,
+  onCollaboratorSelectionChange,
 }) => {
   const [manualData, setManualData] = useState(null);
   const [collapsed, setCollapsed] = useState(false);
@@ -4289,7 +4338,7 @@ React.useEffect(() => {
   const thBase =
     "sticky top-0 z-10 bg-indigo-50 text-slate-700 font-semibold text-[13px] uppercase tracking-wide border-b border-slate-200 px-3 py-2";
   const tdBase = "border-b border-slate-100 px-3 py-2 align-top text-[13px] text-slate-800";
-  const traceLinkClass = "text-left font-semibold text-[#2D7DFE] underline decoration-[#2D7DFE]/30 underline-offset-2 hover:text-[#1E61D6]";
+  const traceLinkClass = "shrink-0 rounded p-1 text-[#2D7DFE] hover:bg-blue-100 hover:text-[#1E61D6]";
   const tableColumns = useMemo(() => [
     { id: "from", label: "Function (From)", defaultWidth: 220, minWidth: 150, getValue: (row) => row.from },
     { id: "fromFile", label: "Function (From) Related File(s)", defaultWidth: 300, minWidth: 180, getValue: (row) => row.fromFile },
@@ -4353,6 +4402,31 @@ React.useEffect(() => {
     () => tableColumns.reduce((sum, column) => sum + (columnWidths[column.id] || column.defaultWidth), reviewItems.length > 0 ? 110 : 0),
     [columnWidths, reviewItems.length, tableColumns]
   );
+
+  const updateTableCell = React.useCallback((sourceIndex, columnId, value) => {
+    if (reviewMode) return;
+    const sourceRows = manualData || data || [];
+    const nextRows = updateCodeArchitectureFunctionalCell(sourceRows, sourceIndex, columnId, value);
+    if (onDataChange) onDataChange(nextRows);
+    else setManualData(nextRows);
+  }, [data, manualData, onDataChange, reviewMode]);
+
+	const selectTableCell = React.useCallback((row, sourceIndex, columnIndex) => {
+    if (!onCollaboratorSelectionChange) return;
+    const rowId = String(row?.traceId || row?.rowRef || `CBA-FD-${sourceIndex + 1}`);
+    const headers = tableColumns.map((column) => column.label);
+    const values = tableColumns.map((column) => column.getValue(row));
+    onCollaboratorSelectionChange(createTableCellSelection({
+      tableId: "code-architecture-functional-decomposition",
+      tableLabel: "Code-Based Architecture Functional Decomposition",
+      projectId,
+      rowId,
+      rowIndex: sourceIndex,
+      headers,
+      row: values,
+      columnIndex,
+    }));
+  }, [onCollaboratorSelectionChange, projectId, tableColumns]);
 	  const sourceTableRows = useMemo(() => tableRowsWithTraceIds, [tableRowsWithTraceIds]);
   const getTableFilterCell = React.useCallback((item, columnIndex) => {
     const column = tableColumns[columnIndex];
@@ -4652,7 +4726,8 @@ React.useEffect(() => {
               edgeId: r.edgeId,
               toNodeId: r.toNodeId,
             }));
-            if (manualData) setManualData(backMapped);
+            if (onDataChange) onDataChange(backMapped);
+            else setManualData(backMapped);
           }}
           repoName={repoName}
           storageKey={storageKey}
@@ -4722,6 +4797,12 @@ React.useEffect(() => {
                   const rejected = reviewItem?.status === REVIEW_STATUSES.REJECTED;
                   const hasHighlightedRow = highlightedRowIndex !== null && highlightedRowIndex !== undefined && highlightedRowIndex !== "";
                   const highlighted = hasHighlightedRow && Number(highlightedRowIndex) === i;
+                  const collaboratorRowId = String(row?.traceId || row?.rowRef || `CBA-FD-${i + 1}`);
+                  const selectedForCollaborator = isSelectedTableRow(
+                    collaboratorSelection,
+                    "code-architecture-functional-decomposition",
+                    collaboratorRowId,
+                  );
                   return (
                   <tr
                     key={i}
@@ -4730,11 +4811,14 @@ React.useEffect(() => {
                       else delete tableRowRefs.current[i];
                     }}
                     onClick={() => handleSelectArchitectureRow(row, i)}
+                    aria-selected={selectedForCollaborator}
                     className={`cursor-pointer ${
                       highlighted
                         ? "bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset"
                         : rejected
                           ? "bg-rose-50/60"
+                          : selectedForCollaborator
+                            ? "bg-indigo-50 ring-2 ring-indigo-400 ring-inset"
                           : selected
                             ? "bg-blue-50 ring-1 ring-inset ring-blue-300"
                             : i % 2 ? "bg-slate-50/60 hover:bg-slate-100" : "bg-white hover:bg-slate-50"
@@ -4751,51 +4835,50 @@ React.useEffect(() => {
                         />
                       </td>
                     )}
-                    <td className={`${tdBase} ${rejected ? "text-rose-900 line-through decoration-rose-400" : ""}`}>
-                      {row.from ? (
-                        <button
-                          type="button"
-                          className={traceLinkClass}
-                          title="Open this function in the CSU diagram view"
-                          onClick={(event) => openCsuDiagramTarget(event, buildCsuDiagramTarget(row, i, "from"))}
+                    {tableColumns.map((column, columnIndex) => {
+                      const value = column.getValue(row) ?? "";
+                      const selectedCell = isSelectedTableCell(
+                        collaboratorSelection,
+                        "code-architecture-functional-decomposition",
+                        collaboratorRowId,
+                        columnIndex,
+                      );
+                      const traceType = column.id === "from" ? "from" : column.id === "action" ? "action" : column.id === "to" ? "to" : "";
+                      return (
+                        <td
+                          key={column.id}
+                          className={`${tdBase} ${selectedCell ? "bg-indigo-100 ring-2 ring-indigo-500 ring-inset" : ""} ${rejected ? "text-rose-900" : ""}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            selectTableCell(row, i, columnIndex);
+                          }}
                         >
-                          {row.from}
-                        </button>
-                      ) : ""}
-                    </td>
-                    <td className={`${tdBase} ${rejected ? "text-rose-900 line-through decoration-rose-400" : ""}`}>{row.fromFile}</td>
-                    <td className={`${tdBase} ${rejected ? "text-rose-900 line-through decoration-rose-400" : ""}`}>{row.fromDetails}</td>
-                    <td className={`${tdBase} ${rejected ? "text-rose-900 line-through decoration-rose-400" : ""}`}>
-                      {row.action ? (
-                        <button
-                          type="button"
-                          className={traceLinkClass}
-                          title="Open this control action edge in the CSU diagram view"
-                          onClick={(event) => openCsuDiagramTarget(event, buildCsuDiagramTarget(row, i, "action"))}
-                        >
-                          {row.action}
-                        </button>
-                      ) : ""}
-                    </td>
-                    <td className={`${tdBase} ${rejected ? "text-rose-900 line-through decoration-rose-400" : ""}`}>{row.controlActionDetails}</td>
-                    <td className={`${tdBase} ${rejected ? "text-rose-900 line-through decoration-rose-400" : ""}`}>
-                      {row.to ? (
-                        <button
-                          type="button"
-                          className={traceLinkClass}
-                          title="Open this function in the CSU diagram view"
-                          onClick={(event) => openCsuDiagramTarget(event, buildCsuDiagramTarget(row, i, "to"))}
-                        >
-                          {row.to}
-                        </button>
-                      ) : ""}
-                    </td>
-                    <td className={`${tdBase} ${rejected ? "text-rose-900 line-through decoration-rose-400" : ""}`}>{row.toFile}</td>
-                    <td className={`${tdBase} ${rejected ? "text-rose-900 line-through decoration-rose-400" : ""}`}>{row.toDetails}</td>
-                    <td className={`${tdBase} ${rejected ? "text-rose-900 line-through decoration-rose-400" : ""}`}>{row.architecture?.subsystem || "Application Subsystem"}</td>
-                    <td className={`${tdBase} ${rejected ? "text-rose-900 line-through decoration-rose-400" : ""}`}>{row.architecture?.csci || ""}</td>
-                    <td className={`${tdBase} ${rejected ? "text-rose-900 line-through decoration-rose-400" : ""}`}>{row.architecture?.csc || ""}</td>
-                    <td className={`${tdBase} ${rejected ? "text-rose-900 line-through decoration-rose-400" : ""}`}>{row.architecture?.csu || ""}</td>
+                          <div className="flex items-start gap-1">
+                            <textarea
+                              className={`min-h-[2.5rem] w-full resize-none overflow-hidden break-words bg-transparent text-[13px] leading-5 [overflow-wrap:anywhere] focus:outline-none ${rejected ? "line-through decoration-rose-400" : ""}`}
+                              value={value}
+                              onChange={(event) => updateTableCell(i, column.id, event.target.value)}
+                              onFocus={() => selectTableCell(row, i, columnIndex)}
+                              onClick={(event) => event.stopPropagation()}
+                              rows={codeArchitectureFunctionalCellRows(value, column.id)}
+                              readOnly={reviewMode}
+                              aria-label={`${column.label}, row ${i + 1}`}
+                            />
+                            {traceType && value ? (
+                              <button
+                                type="button"
+                                className={traceLinkClass}
+                                title={traceType === "action" ? "Open this control action edge in the CSU diagram view" : "Open this function in the CSU diagram view"}
+                                onClick={(event) => openCsuDiagramTarget(event, buildCsuDiagramTarget(row, i, traceType))}
+                                aria-label={`Open ${column.label} in the CSU diagram`}
+                              >
+                                ↗
+                              </button>
+                            ) : null}
+                          </div>
+                        </td>
+                      );
+                    })}
                   </tr>
                 )})}
                 {tableFilterState.filteredRows.length === 0 && (

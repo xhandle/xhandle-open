@@ -407,11 +407,8 @@ export default function SafetyCaseView({ activeProjectId }) {
 
   if (!safetyCase) {
     return (
-      <div className="flex h-full flex-col overflow-auto bg-white px-6 py-5">
-        <div className="mb-5">
-          <h1 className="text-2xl font-semibold">Safety Case</h1>
-          <p className="text-sm text-gray-500">Create, edit, and maintain structured safety arguments.</p>
-        </div>
+      <div className="flex h-full flex-col overflow-auto bg-white px-6 py-2">
+        <h1 className="sr-only">Safety Case</h1>
         <div className="flex min-h-[520px] items-center justify-center rounded-lg border bg-gray-50 p-8 text-center">
           <div className="max-w-2xl">
             <ShieldCheck className="mx-auto mb-4 text-[#2D7DFE]" size={44} />
@@ -440,11 +437,8 @@ export default function SafetyCaseView({ activeProjectId }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
-      <div className="border-b px-4 py-2">
-        <h1 className="text-xl font-semibold">Safety Case</h1>
-        <p className="text-xs text-gray-500">Top-down assurance argument with traceable claims, evidence, and project links.</p>
-        {message && <div className="mt-2 text-xs text-gray-500">{message}</div>}
-      </div>
+      <h1 className="sr-only">Safety Case</h1>
+      {message && <div className="border-b px-4 py-1.5 text-xs text-gray-500">{message}</div>}
       <SafetyCaseToolbar
         disabled={!safetyCase}
         onNew={createBlank}

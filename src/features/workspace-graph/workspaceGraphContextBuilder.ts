@@ -25,6 +25,7 @@ import {
 const DEFAULT_TOKEN_BUDGET = 6000;
 const HAZARD_CONTEXT_ARTIFACT_TYPES = new Set([
   "hazard_analysis_row",
+  "code_architecture_hazard_row",
   "risk",
   "safety_finding",
   "safety_case",
@@ -170,6 +171,7 @@ function compactActiveView(activeView: any) {
     activeCodeArchitectureProjectId: activeView.activeCodeArchitectureProjectId || null,
     activeCodeArchitectureRepoId: activeView.activeCodeArchitectureRepoId || null,
     activeCodeArchitectureRepoKey: activeView.activeCodeArchitectureRepoKey || null,
+    activeCodeArchitectureWorkspaceTab: activeView.activeCodeArchitectureWorkspaceTab || null,
     activeCodeArchitectureRepo: activeView.activeCodeArchitectureRepo
       ? {
           id: activeView.activeCodeArchitectureRepo.id || null,
@@ -192,6 +194,8 @@ function artifactsForActiveSelections(artifacts: WorkspaceArtifact[], activeView
   const exactIds = new Set<string>();
   const functionalIndexes = new Set<number>();
   const hazardIndexes = new Set<number>();
+  const codeArchitectureIndexes = new Set<number>();
+  const codeArchitectureHazardIndexes = new Set<number>();
   selections.forEach((selection: any) => {
     [selection?.id, selection?.primary?.rowId]
       .filter(Boolean)
@@ -202,10 +206,17 @@ function artifactsForActiveSelections(artifacts: WorkspaceArtifact[], activeView
       if (!Number.isInteger(index) || index < 0) return;
       if (selection?.tableId === "functional-decomposition") functionalIndexes.add(index);
       if (selection?.tableId === "hazard-analysis") hazardIndexes.add(index);
+      if (selection?.tableId === "code-architecture-functional-decomposition") codeArchitectureIndexes.add(index);
+      if (selection?.tableId === "code-architecture-hazard-analysis") codeArchitectureHazardIndexes.add(index);
     });
   });
   return artifacts.filter((artifact) => {
     if (exactIds.has(String(artifact.id)) || exactIds.has(String(artifact.sourceId || ""))) return true;
+    if (
+      exactIds.has(String(artifact.structuredData?.id || "")) ||
+      exactIds.has(String(artifact.structuredData?.internalId || "")) ||
+      exactIds.has(String(artifact.structuredData?.traceId || ""))
+    ) return true;
     if (Array.from(exactIds).some((id) => id && String(artifact.sourceId || "").includes(id))) return true;
     if (artifact.type === "functional_decomposition_row") {
       const match = String(artifact.sourceId || "").match(/responseRows:(\d+)$/i);
@@ -216,6 +227,14 @@ function artifactsForActiveSelections(artifacts: WorkspaceArtifact[], activeView
       if (Number.isInteger(rowIndex) && hazardIndexes.has(rowIndex)) return true;
       const match = String(artifact.sourceId || "").match(/Summary:(\d+)$/i);
       if (match && hazardIndexes.has(Number(match[1]))) return true;
+    }
+    if (artifact.type === "code_architecture_edge") {
+      const rowIndex = Number(artifact.structuredData?._rowIndex ?? artifact.structuredData?.rowIndex);
+      if (Number.isInteger(rowIndex) && codeArchitectureIndexes.has(rowIndex)) return true;
+    }
+    if (artifact.type === "code_architecture_hazard_row") {
+      const rowIndex = Number(artifact.structuredData?.rowIndex);
+      if (Number.isInteger(rowIndex) && codeArchitectureHazardIndexes.has(rowIndex)) return true;
     }
     return false;
   });

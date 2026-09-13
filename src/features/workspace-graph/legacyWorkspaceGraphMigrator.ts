@@ -18,7 +18,7 @@ import {
 type MigrationOptions = { mode?: "incremental" | "full" };
 type MigrationCacheOptions = MigrationOptions & { force?: boolean; maxAgeMs?: number };
 
-const MIGRATION_VERSION = 2;
+const MIGRATION_VERSION = 3;
 export const WORKSPACE_GRAPH_MIGRATION_DIAGNOSTICS_KEY = "xhandle.workspaceGraph.lastMigration";
 const DEFAULT_MIGRATION_CACHE_AGE_MS = 15000;
 const nowISO = () => new Date().toISOString();
@@ -621,8 +621,38 @@ function migrateRequirements(artifacts: WorkspaceArtifact[], relationships: Work
 
 async function migrateCodeArchitecture(artifacts: WorkspaceArtifact[], relationships: WorkspaceRelationship[]) {
   const cbaProjects = readLS<any[]>("xhandle.codeArchitectureProjects", []);
-  cbaProjects.forEach((project) => {
+  for (const project of cbaProjects) {
     const projectId = text(project?.id || "");
+    if (!projectId) continue;
+    await upsertProject({
+      id: projectId,
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      projectId,
+      name: text(project?.name, "Code-Based Architecture Project"),
+      folderId: project?.folderId || null,
+      projectType: "code-based-architecture",
+      sourceStore: "localStorage:xhandle.codeArchitectureProjects",
+      sourceKey: "xhandle.codeArchitectureProjects",
+      sourceId: projectId,
+      sourceData: project,
+      createdAt: project?.createdAt || nowISO(),
+      updatedAt: project?.updatedAt || project?.createdAt || nowISO(),
+      version: 1,
+    });
+    artifacts.push(artifactFromLegacy({
+      id: projectArtifactId(projectId),
+      type: "project",
+      projectId,
+      sourceFeature: "Code-Based Architecture",
+      sourceStore: "localStorage:xhandle.codeArchitectureProjects",
+      sourceKey: "xhandle.codeArchitectureProjects",
+      sourceId: projectId,
+      title: text(project?.name, "Code-Based Architecture Project"),
+      structuredData: { ...project, projectType: "code-based-architecture" },
+      tags: ["project", "code-architecture-project"],
+      createdAt: project?.createdAt,
+      updatedAt: project?.updatedAt,
+    }));
     (Array.isArray(project?.repos) ? project.repos : []).forEach((repo: any) => {
       const repoArtifactId = stableId("artifact", "repository", projectId, repo?.id || repo?.repoId);
       artifacts.push(artifactFromLegacy({
@@ -642,7 +672,7 @@ async function migrateCodeArchitecture(artifacts: WorkspaceArtifact[], relations
       }));
       if (projectId) relationships.push(relationship({ type: "contains", projectId, fromArtifactId: projectArtifactId(projectId), toArtifactId: repoArtifactId, sourceStore: "localStorage:xhandle.codeArchitectureProjects" }));
     });
-  });
+  }
 
   localStorageKeys()
     .filter((key) => key.startsWith("cbaMeta:"))
@@ -701,7 +731,7 @@ async function migrateCodeArchitecture(artifacts: WorkspaceArtifact[], relations
         sourceId: `${key}:${row?.traceId || row?.edgeId || index}`,
         title: `${text(row.from || row.fromFunction || "Source")} -> ${text(row.to || row.toFunction || "Target")}`,
         summary: compact(row, 700),
-        structuredData: row,
+        structuredData: { ...row, _rowIndex: index, _repoId: repoId },
         tags: ["code-architecture", "edge"],
         updatedAt: row?.updatedAt,
       }));
@@ -726,6 +756,65 @@ async function migrateCodeArchitecture(artifacts: WorkspaceArtifact[], relations
       });
     });
   });
+}
+
+async function migrateCodeArchitectureAssurance(artifacts: WorkspaceArtifact[], relationships: WorkspaceRelationship[]) {
+  const records = await readStoreRows("xhandle-code-architecture-assurance", "artifactRows");
+  const recordsByKey = new Map(records.map((record) => [text(record?.key), record]));
+  const definitions: Record<string, { type: string; label: string }> = {
+    "software-requirements": { type: "code_architecture_software_requirement", label: "Software requirement" },
+    "system-requirements": { type: "code_architecture_system_requirement", label: "System requirement" },
+    "subsystem-requirements": { type: "code_architecture_subsystem_requirement", label: "Subsystem requirement" },
+    "design-elements": { type: "code_architecture_design_element", label: "Design element" },
+  };
+  const parentRecords = records.filter((record) => {
+    const key = text(record?.key);
+    return key.startsWith("xhandle:cba-") && !key.includes(":chunk:") && (Array.isArray(record?.rows) || record?.chunked);
+  });
+
+  for (const record of parentRecords) {
+    const key = text(record?.key);
+    const match = key.match(/^xhandle:cba-(software-requirements|system-requirements|subsystem-requirements|design-elements):([^:]+):(.+)$/);
+    if (!match) continue;
+    const [, kind, projectId, repoId] = match;
+    const definition = definitions[kind];
+    const rows = record?.chunked && Array.isArray(record?.chunkKeys)
+      ? record.chunkKeys.flatMap((chunkKey: string) => {
+          const chunkRows = recordsByKey.get(chunkKey)?.rows;
+          return Array.isArray(chunkRows) ? chunkRows : [];
+        })
+      : (Array.isArray(record?.rows) ? record.rows : []);
+    const repoArtifactId = stableId("artifact", "repository", projectId, repoId);
+    rows.forEach((row: any, index: number) => {
+      const sourceRowId = text(row?.id || row?.internalId || index);
+      const id = stableId("artifact", definition.type, key, sourceRowId);
+      artifacts.push(artifactFromLegacy({
+        id,
+        type: definition.type,
+        projectId,
+        parentId: repoArtifactId,
+        sourceFeature: "Code-Based Architecture Assurance",
+        sourceStore: "indexedDB:xhandle-code-architecture-assurance/artifactRows",
+        sourceKey: key,
+        sourceId: `${key}:${sourceRowId}`,
+        title: titleFromRow(row, `${definition.label} ${index + 1}`),
+        summary: row?.requirementText || row?.description || row?.designRationale || row?.rationale || compact(row, 700),
+        structuredData: { ...row, _rowIndex: index, _artifactKind: kind, _repoId: repoId },
+        status: row?.status || row?.reviewStatus,
+        tags: ["code-architecture", "assurance", kind],
+        updatedAt: row?.updatedAt || record?.updatedAt,
+        createdAt: row?.createdAt,
+      }));
+      relationships.push(relationship({
+        type: "contains",
+        projectId,
+        fromArtifactId: repoArtifactId,
+        toArtifactId: id,
+        sourceStore: "indexedDB:xhandle-code-architecture-assurance/artifactRows",
+        sourceId: sourceRowId,
+      }));
+    });
+  }
 }
 
 async function migrateCodeIndex(artifacts: WorkspaceArtifact[]) {
@@ -882,7 +971,7 @@ async function migrateSimpleIndexedStores(artifacts: WorkspaceArtifact[], relati
         const id = stableId("artifact", "cba-hazard-row", run?.id, index);
         artifacts.push(artifactFromLegacy({
           id,
-          type: "hazard_analysis_row",
+          type: "code_architecture_hazard_row",
           projectId,
           sourceFeature: "Code Architecture Hazard Analysis",
           sourceStore: "indexedDB:xhandle-code-architecture-hazard-analysis/hazardAnalysisRuns",
@@ -1221,6 +1310,7 @@ export async function migrateLegacyStorageToWorkspaceGraph(_options: MigrationOp
   await runStep("durableProjectAnalysis", () => migrateDurableProjectAnalysis(artifacts, relationships));
   await runStep("requirements", () => migrateRequirements(artifacts, relationships));
   await runStep("codeArchitecture", () => migrateCodeArchitecture(artifacts, relationships));
+  await runStep("codeArchitectureAssurance", () => migrateCodeArchitectureAssurance(artifacts, relationships));
   await runStep("codeIndex", () => migrateCodeIndex(artifacts));
   await runStep("sysml", () => migrateSysML(artifacts, relationships));
   await runStep("traceability", () => migrateTraceabilityDB(artifacts, relationships));

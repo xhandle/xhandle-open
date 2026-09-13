@@ -1,5 +1,28 @@
 const clean = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
 const key = (value) => clean(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+const CUSTOM_SCOPE_MARKER = /user(?:\s+|-)specified scope\s*:?\s*(.+)$/i;
+const SCOPE_STOP_WORDS = new Set([
+  "all", "analysis", "any", "column", "current", "decomposition", "for", "from", "function",
+  "hazard", "in", "is", "item", "items", "matching", "of", "or", "related", "review", "row",
+  "rows", "scope", "specified", "that", "the", "these", "this", "through", "to", "user", "value",
+  "values", "where", "with", "within", "safety", "significant", "significance", "classification", "guide",
+  "phrase", "applicable", "applicability", "subsystem", "allocation", "control", "action", "operational",
+  "scenario", "mode", "raw", "id",
+  "scenarios", "modes", "functions", "subsystems", "actions", "phrases", "classifications", "marked",
+]);
+
+function customScopeDetails(prompt = "") {
+  const raw = clean(String(prompt || "").match(CUSTOM_SCOPE_MARKER)?.[1] || "");
+  const normalized = key(raw);
+  const rangeMatch = raw.toLowerCase().match(/\brows?\s+(\d+)\s*(?:through|to|-)\s*(\d+)\b/);
+  const range = rangeMatch
+    ? [Math.min(Number(rangeMatch[1]), Number(rangeMatch[2])), Math.max(Number(rangeMatch[1]), Number(rangeMatch[2]))]
+    : null;
+  const tokens = Array.from(new Set(normalized.split(" ").filter((token) => (
+    token.length >= 2 && !SCOPE_STOP_WORDS.has(token) && !/^\d+$/.test(token)
+  ))));
+  return { raw, range, tokens };
+}
 
 export const VIBE_REVIEW_COLUMNS = Object.freeze({
   safetySignificant: ["Safety Significant", "Safety Significance"],
@@ -62,6 +85,7 @@ export function resolveHazardVibeReviewScope(prompt = "", summary = []) {
   const headers = summary[0];
   const indexes = indexVibeReviewHeaders(headers);
   const promptKey = key(prompt);
+  const customScope = customScopeDetails(prompt);
   const filters = [];
   const ambiguous = [];
   const unmatched = [];
@@ -109,12 +133,18 @@ export function resolveHazardVibeReviewScope(prompt = "", summary = []) {
     indexes, scopeLabel: `the requested ${unmatched.map((item) => item.field).join(" and ")} value` };
   const explicitlyAllRows = /\b(?:all|every)\b.*\b(?:hazard(?: analysis)?|results?|rows?|line items?)\b/.test(promptKey)
     || /\b(?:hazard(?: analysis)?|results?|rows?|line items?)\b.*\b(?:all|every)\b/.test(promptKey);
-  if (!filters.length && !explicitlyAllRows) {
+  if (!filters.length && !explicitlyAllRows && !customScope.raw) {
     return { status: "needs_scope", filters, rows: [], queue: [], nearbyValues, indexes };
   }
-  const matchedRows = summary.slice(1).map((row, offset) => ({ row, rowIndex: offset + 1 })).filter(({ row }) => (
-    filters.every((filter) => key(row?.[indexes[filter.field]]) === key(filter.value))
-  ));
+  const matchedRows = summary.slice(1).map((row, offset) => ({ row, rowIndex: offset + 1 })).filter(({ row, rowIndex }) => {
+    if (!filters.every((filter) => key(row?.[indexes[filter.field]]) === key(filter.value))) return false;
+    if (customScope.range && (rowIndex < customScope.range[0] || rowIndex > customScope.range[1])) return false;
+    if (customScope.tokens.length) {
+      const rowText = key(row.join(" "));
+      if (!customScope.tokens.every((token) => rowText.includes(token))) return false;
+    }
+    return true;
+  });
   const seen = new Set();
   const rows = matchedRows.filter(({ row }) => {
     const id = clean(row?.[indexes.rawRowId]);
@@ -129,7 +159,7 @@ export function resolveHazardVibeReviewScope(prompt = "", summary = []) {
     queue: rows.map(({ row }) => clean(row[indexes.rawRowId])),
     nearbyValues,
     indexes,
-    scopeLabel: filters.length ? filters.map((filter) => `${filter.header} = ${filter.value}`).join("; ") : "all hazard-analysis rows",
+    scopeLabel: customScope.raw || (filters.length ? filters.map((filter) => `${filter.header} = ${filter.value}`).join("; ") : "all hazard-analysis rows"),
   };
 }
 

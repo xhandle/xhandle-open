@@ -115,6 +115,7 @@ export default function EngineeringArtifactTable({
   showReview = true,
   readOnly = false,
   tableContext = {},
+  onCollaboratorSelectionChange,
 }) {
   const rowRefs = useRef({});
   const highlightedSet = useMemo(
@@ -228,6 +229,7 @@ export default function EngineeringArtifactTable({
   );
   const visibleRows = filterState.filteredRows;
   const [editingCellKey, setEditingCellKey] = useState("");
+  const [selectedCellKey, setSelectedCellKey] = useState("");
   useEffect(() => {
     if (!highlightedSet.size || !filterState.activeFilterCount) return;
     const visibleMatch = visibleRows.some(({ row, rowIndex }) => rowMatchesFocus(row, rowIndex, highlightedSet));
@@ -313,6 +315,28 @@ export default function EngineeringArtifactTable({
             const reviewItem = reviewByRow?.get?.(rowId) || reviewByRow?.get?.(rowIndex) || null;
             const rejected = reviewItem?.status === REVIEW_STATUSES.REJECTED;
             const highlighted = rowMatchesFocus(row, rowIndex, highlightedSet);
+            const selectForCollaborator = (column = null) => {
+              const nextKey = column ? `${rowId}:${column.key}` : rowId;
+              setSelectedCellKey((current) => current === nextKey ? "" : nextKey);
+              onCollaboratorSelectionChange?.(selectedCellKey === nextKey ? null : {
+                kind: column ? "table-cell" : "table-row",
+                source: "code-architecture-assurance",
+                tableId: `code-architecture-${tableContext.kind || "assurance"}`,
+                id: String(row.id || rowId),
+                title: row.requirementText || row.designElementName || String(row.id || rowId),
+                primary: {
+                  rowId: String(row.id || rowId),
+                  rowIndex,
+                  rowNumber: rowIndex + 1,
+                  ...(column ? {
+                    columnIndex: column.originalIndex,
+                    columnLabel: column.label,
+                    value: valueForColumn(row, column, tableContext) ?? "",
+                  } : {}),
+                },
+                selectedRows: [{ rowId: String(row.id || rowId), rowIndex, rowNumber: rowIndex + 1, values: row }],
+              });
+            };
             return (
               <tr
                 key={rowId}
@@ -323,8 +347,9 @@ export default function EngineeringArtifactTable({
                     });
                   }
                 }}
-                className={`align-top transition-colors ${
-                  highlighted ? "bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset" : rejected ? "bg-rose-50/60" : ""
+                onClick={() => selectForCollaborator()}
+                className={`cursor-pointer align-top transition-colors ${
+                  highlighted ? "bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset" : selectedCellKey === rowId || selectedCellKey.startsWith(`${rowId}:`) ? "bg-blue-50 ring-1 ring-inset ring-blue-300" : rejected ? "bg-rose-50/60" : ""
                 }`}
               >
                 {showActions && (
@@ -359,7 +384,14 @@ export default function EngineeringArtifactTable({
                   const cellKey = `${rowId}:${column.key}`;
                   const isEditing = editable && editingCellKey === cellKey;
                   return (
-                    <td key={`${rowId}-${column.key}`} className={`${tdBase} ${rejected ? "text-rose-900" : ""}`}>
+                    <td
+                      key={`${rowId}-${column.key}`}
+                      className={`${tdBase} ${selectedCellKey === `${rowId}:${column.key}` ? "bg-blue-100 ring-1 ring-inset ring-blue-400" : ""} ${rejected ? "text-rose-900" : ""}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        selectForCollaborator(column);
+                      }}
+                    >
                       {canLink ? (
                         <div className="flex flex-wrap gap-1">
                           {tokens.map((token, tokenIndex) => (

@@ -19,6 +19,7 @@ import {
   MoreVertical,
   Download,
   PanelLeftClose,
+  PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
   Maximize2,
@@ -136,6 +137,7 @@ import {
   CodeArchitectureHazardPanel,
   deleteCodeArchitectureHazardRuns,
   ensureCodeArchitectureTraceIds,
+  getCodeArchitectureHazardRunById,
   getCodeArchitectureHazardRuns,
   getLatestCodeArchitectureHazardRun,
   isCodeArchitectureHazardAnalysisStale,
@@ -206,8 +208,10 @@ import {
 } from "./features/project-hazard-analysis/classificationResolutionStatus";
 import { indexVibeReviewHeaders } from "./features/project-hazard-analysis/vibeReviewScope";
 import {
+  applyFunctionalReviewToCodeArchitectureRow,
   ensureFunctionalVibeReviewRowIds,
   FUNCTIONAL_VIBE_REVIEW_ID_FIELD,
+  normalizeCodeArchitectureFunctionalReviewRow,
 } from "./features/functional-vibe-review/functionalVibeReview";
 import { generateHazardOperationalContexts } from "./features/project-hazard-analysis/hazardOperationalContextAi";
 import {
@@ -3764,6 +3768,7 @@ const [codeArchitectureFileSelectorOpen, setCodeArchitectureFileSelectorOpen] = 
 const codeArchitectureFileSelectorResolver = useRef(null);
 const [cbaTableData, setCbaTableData] = useState([]);
 const [selectedCbaElement, setSelectedCbaElement] = useState(null);
+const [activeCodeArchitectureSelection, setActiveCodeArchitectureSelection] = useState(null);
 const [codeArchitectureWorkspaceTab, setCodeArchitectureWorkspaceTab] = useState("architecture");
 const [codeArchitectureFolderView, setCodeArchitectureFolderView] = useState("projects");
 const [codeArchitectureArtifactFocus, setCodeArchitectureArtifactFocus] = useState(null);
@@ -3943,6 +3948,7 @@ useEffect(() => {
     setCbaLoading(false);
     setCbaTableData([]);
     setSelectedCbaElement(null);
+    setActiveCodeArchitectureSelection(null);
     setCodeArchitectureHazardRun(null);
     return;
   }
@@ -3985,6 +3991,7 @@ useEffect(() => {
         }
       }
       setSelectedCbaElement(null);
+      setActiveCodeArchitectureSelection(null);
       setCodeArchitectureHazardRun(null);
     })
     .finally(() => {
@@ -5228,6 +5235,14 @@ useEffect(() => {
   // ────────────────────────────────────────────────────────────────────────────────
   // Sidebar + nav
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isSidebarFullyCollapsed, setIsSidebarFullyCollapsed] = useState(() => {
+    try { return localStorage.getItem('xhandle.sidebarFullyCollapsed') === 'true'; }
+    catch { return false; }
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem('xhandle.sidebarFullyCollapsed', String(isSidebarFullyCollapsed)); } catch {}
+  }, [isSidebarFullyCollapsed]);
 
   useEffect(() => {
     if (section && section !== 'copilot') {
@@ -6392,7 +6407,7 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
       ? (activeCodeArchitectureProject?.name || "")
       : (viewingFunctionalProject ? (projects.find((project) => project.id === activeProjectId)?.name || "") : "");
     const activeSelections = [];
-    if (functionalCanvasSelection?.hasSelection) {
+    if (viewingFunctionalProject && functionalCanvasSelection?.hasSelection) {
       activeSelections.push({
         kind: "functional-canvas",
         source: "functional-diagram",
@@ -6400,13 +6415,13 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
         ...functionalCanvasSelection,
       });
     }
-    if (activeTableSelection && (!activeTableSelection.projectId || activeTableSelection.projectId === activeProjectId)) {
+    if (viewingFunctionalProject && activeTableSelection && (!activeTableSelection.projectId || activeTableSelection.projectId === activeProjectId)) {
       activeSelections.push(activeTableSelection);
     }
     const selectedSafetyIssue = activeRiskId
       ? riskRegister.find((risk) => String(risk?.id) === String(activeRiskId))
       : null;
-    if (selectedSafetyIssue) {
+    if (viewingFunctionalProject && selectedSafetyIssue) {
       activeSelections.push({
         kind: "safety-issue",
         source: "safety-issues-risk-assessment",
@@ -6417,7 +6432,7 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
       });
     }
     const requirementsState = getActionProvider("requirements")?.getState?.();
-    if (requirementsState?.selectedRow) {
+    if (section === "requirements" && requirementsState?.selectedRow) {
       activeSelections.push({
         kind: "requirement",
         source: "requirements",
@@ -6425,6 +6440,25 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
         id: requirementsState.selectedRowId || requirementsState.selectedRow.id || "",
         title: requirementsState.selectedRow.title || requirementsState.selectedRow.name || "Selected requirement",
         values: requirementsState.selectedRow,
+      });
+    }
+    if (viewingCodeArchitecture && activeCodeArchitectureSelection) {
+      activeSelections.push({
+        ...activeCodeArchitectureSelection,
+        projectId: activeCodeArchitectureProjectId || "",
+        repoId: activeCodeArchitectureRepo?.id || "",
+        repoName: activeCodeArchitectureRepo?.repoName || activeCodeArchitectureRepo?.repoId || "",
+      });
+    } else if (viewingCodeArchitecture && selectedCbaElement) {
+      activeSelections.push({
+        kind: "code-architecture-row",
+        source: "code-based-architecture",
+        tableId: "code-architecture-functional-decomposition",
+        projectId: activeCodeArchitectureProjectId || "",
+        repoId: activeCodeArchitectureRepo?.id || "",
+        id: selectedCbaElement.row?.traceId || selectedCbaElement.id || "",
+        title: selectedCbaElement.label || "Selected code architecture row",
+        values: selectedCbaElement.row || selectedCbaElement,
       });
     }
     return {
@@ -6441,6 +6475,7 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
       activeCodeArchitectureProjectId: activeCodeArchitectureProjectId || null,
       activeCodeArchitectureRepoId: activeCodeArchitectureRepo?.id || null,
       activeCodeArchitectureRepoKey: activeCodeArchitectureRowsKey || null,
+      activeCodeArchitectureWorkspaceTab: viewingCodeArchitecture ? codeArchitectureWorkspaceTab : null,
       activeCodeArchitectureRepo: activeCodeArchitectureRepo ? {
         id: activeCodeArchitectureRepo.id,
         owner: activeCodeArchitectureRepo.owner || "",
@@ -7181,6 +7216,10 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
     setActiveTableSelection(createTableCellSelection(selection));
   }, []);
   const clearCollaboratorActiveSelection = useCallback((selection) => {
+    if (selection?.tableId === 'code-architecture-functional-decomposition' || selection?.source === 'code-based-architecture') {
+      setActiveCodeArchitectureSelection(null);
+      return;
+    }
     if (selection?.kind === 'functional-canvas' || selection?.source === 'functional-diagram') {
       diagramRef.current?.clearSelection?.();
       setFunctionalCanvasSelection(null);
@@ -9497,7 +9536,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         ...buildAIAuthOpts({ "Content-Type": "application/json" }),
         signal: controller.signal,
         body: JSON.stringify({
-          model: "gpt-4o",
+          model: getConfiguredAIRequestModel(),
           temperature: 0.15,
           max_tokens: 14000,
           messages: [
@@ -10022,6 +10061,88 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const sourceId = String(artifact.sourceId || "");
     const rowMatch = sourceId.match(/(?:responseRows|summary|row|rows):(?<index>\d+)$/i);
     const rowIndex = rowMatch?.groups?.index == null ? null : Number(rowMatch.groups.index);
+    const artifactType = String(artifact.type || type || "");
+    const sourceStore = String(artifact.sourceStore || "");
+    const sourceFeature = String(artifact.sourceFeature || "");
+    const artifactTags = Array.isArray(artifact.tags) ? artifact.tags.map(String) : [];
+    const isCodeArchitectureArtifact = (
+      /^code_architecture_/i.test(artifactType) ||
+      sourceStore.includes("code-architecture") ||
+      sourceStore.includes("xhandle/copilot_baseline") ||
+      sourceStore.includes("xhandle-safety-remediation") ||
+      sourceStore === "localStorage:xhandle.codeArchitectureProjects" ||
+      /code architecture|safety remediation/i.test(sourceFeature) ||
+      artifactTags.some((tag) => /code-architecture/i.test(tag)) ||
+      artifact?.structuredData?.projectType === "code-based-architecture"
+    );
+
+    if (isCodeArchitectureArtifact) {
+      setSection("code-architecture");
+      setActiveCodeArchitectureFolderId(null);
+      if (projectId) setActiveCodeArchitectureProjectId(projectId);
+
+      let repoId = String(
+        artifact?.structuredData?._repoId ||
+        artifact?.structuredData?.repoId ||
+        artifact?.structuredData?.repositoryId ||
+        ""
+      );
+      if (!repoId && artifact.sourceKey) {
+        const assuranceKey = String(artifact.sourceKey).match(/^xhandle:cba-(?:software-requirements|system-requirements|subsystem-requirements|design-elements):[^:]+:(.+)$/);
+        const architectureKey = String(artifact.sourceKey).match(/^cba:[^:]+:(.+)$/);
+        repoId = assuranceKey?.[1] || architectureKey?.[1] || "";
+      }
+      if (!repoId && artifactType === "code_architecture_hazard_row") {
+        const runId = sourceId.match(/^(.*):summary:\d+$/)?.[1] || "";
+        if (runId) {
+          const run = await getCodeArchitectureHazardRunById(runId).catch(() => null);
+          repoId = String(run?.repoId || "");
+        }
+      }
+      if (projectId && repoId) {
+        const targetProject = codeArchitectureProjects.find((project) => String(project.id) === String(projectId));
+        const targetRepo = (targetProject?.repos || []).find((repo) => (
+          [repo.id, repo.repoId, repo.repoName, repo.owner && repo.repo ? `${repo.owner}/${repo.repo}` : ""]
+            .some((candidate) => String(candidate || "") === repoId)
+        ));
+        if (targetRepo?.id) updateCodeArchitectureProject(projectId, { activeRepoId: targetRepo.id });
+      }
+
+      const assuranceTabsByType = {
+        code_architecture_software_requirement: ARTIFACT_KINDS.SOFTWARE,
+        code_architecture_system_requirement: ARTIFACT_KINDS.SYSTEM,
+        code_architecture_subsystem_requirement: ARTIFACT_KINDS.SUBSYSTEM,
+        code_architecture_design_element: ARTIFACT_KINDS.DESIGN,
+      };
+      if (assuranceTabsByType[artifactType]) {
+        setCodeArchitectureWorkspaceTab(assuranceTabsByType[artifactType]);
+        const rowId = artifact?.structuredData?.id || artifact?.structuredData?.internalId || sourceId.split(":").pop();
+        if (rowId) setCodeArchitectureArtifactFocus({ tab: assuranceTabsByType[artifactType], rowIds: [String(rowId)], key: Date.now() });
+        return { ok: true, artifactId, destination: "code-architecture-assurance" };
+      }
+      if (artifactType === "code_architecture_hazard_row" || artifactType === "code_architecture_hazard_analysis") {
+        setCodeArchitectureWorkspaceTab("safety");
+        setHazardRemediationTab("hazard-analysis");
+        if (Number.isFinite(rowIndex)) {
+          setCodeArchitectureHazardSummaryOpenKey(`open-${Date.now()}`);
+          setHighlightedCodeArchitectureHazardRowIndex(rowIndex);
+        }
+        return { ok: true, artifactId, destination: "code-architecture-hazard-analysis" };
+      }
+      if (sourceStore.includes("xhandle-safety-remediation") || artifactTags.includes("safety-remediation")) {
+        setCodeArchitectureWorkspaceTab("safety");
+        setHazardRemediationTab("remediation");
+        return { ok: true, artifactId, destination: "code-architecture-safety-remediation" };
+      }
+      setCodeArchitectureWorkspaceTab("architecture");
+      const architectureRowIndex = Number(artifact?.structuredData?._rowIndex ?? rowIndex);
+      if (artifactType === "code_architecture_edge" && Number.isFinite(architectureRowIndex)) {
+        setCodeArchitectureFunctionalTableOpenKey(`open-${Date.now()}`);
+        setHighlightedCodeArchitectureFunctionalRowIndex(architectureRowIndex);
+      }
+      return { ok: true, artifactId, destination: "code-architecture" };
+    }
+
     const hazardNavigation = resolveProjectHazardArtifactNavigation(
       artifact,
       artifact.projectId ? loadProjectData(artifact.projectId)?.riskMethod : ""
@@ -10064,34 +10185,56 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
 
     setSection("projects");
     return { ok: true, artifactId, destination: "project" };
-  }, []);
+  }, [codeArchitectureProjects]);
 
-  const buildFunctionalVibeReviewState = useCallback((sourceRows = responseRows) => ({
-    activeProjectId,
-    projectName: projects.find((entry) => entry.id === activeProjectId)?.name || "Untitled project",
-    rows: (Array.isArray(sourceRows) ? sourceRows : []).map((row, rowIndex) => ({
-      rowId: String(row?.[FUNCTIONAL_VIBE_REVIEW_ID_FIELD] || ""),
-      rowIndex,
-      row,
-    })),
-    organizationContext: getProjectOrganizationCalibration(activeProjectId, [
+  const buildFunctionalVibeReviewState = useCallback((sourceRows) => {
+    const organizationSections = [
       "Organization and Products", "Architecture Conventions", "Engineering Rules",
       "Operational Concepts", "Glossary", "Known Controls and Evidence",
-    ]).context,
-  }), [activeProjectId, projects, responseRows]);
+    ];
+    if (section === "code-architecture") {
+      const cbaRows = Array.isArray(sourceRows) ? sourceRows : cbaTableData;
+      return {
+        activeProjectId: activeCodeArchitectureProjectId,
+        projectName: activeCodeArchitectureProject?.name || "Untitled code architecture project",
+        rows: cbaRows.map((sourceRow, rowIndex) => ({
+          rowId: String(sourceRow?.traceId || sourceRow?.rowRef || `CBA-FD-${rowIndex + 1}`),
+          rowIndex,
+          row: normalizeCodeArchitectureFunctionalReviewRow(sourceRow),
+        })),
+        organizationContext: getProjectOrganizationCalibration(activeCodeArchitectureProjectId, organizationSections).context,
+        workspaceType: "code-based-architecture",
+        repoId: activeCodeArchitectureRepo?.id || "",
+      };
+    }
+    const functionalRows = Array.isArray(sourceRows) ? sourceRows : responseRows;
+    return {
+      activeProjectId,
+      projectName: projects.find((entry) => entry.id === activeProjectId)?.name || "Untitled project",
+      rows: functionalRows.map((row, rowIndex) => ({
+        rowId: String(row?.[FUNCTIONAL_VIBE_REVIEW_ID_FIELD] || ""),
+        rowIndex,
+        row,
+      })),
+      organizationContext: getProjectOrganizationCalibration(activeProjectId, organizationSections).context,
+      workspaceType: "functional-project",
+      repoId: "",
+    };
+  }, [activeCodeArchitectureProject, activeCodeArchitectureProjectId, activeCodeArchitectureRepo, activeProjectId, cbaTableData, projects, responseRows, section]);
 
   const beginFunctionalVibeReview = useCallback(() => {
+    if (section === "code-architecture") return buildFunctionalVibeReviewState(cbaTableData);
     const ensured = ensureFunctionalVibeReviewRowIds(responseRows);
     if (ensured.changed) {
       setResponseRows(ensured.rows);
       saveProjectPatch(activeProjectId, { responseRows: ensured.rows });
     }
     return buildFunctionalVibeReviewState(ensured.rows);
-  }, [activeProjectId, buildFunctionalVibeReviewState, responseRows]);
+  }, [activeProjectId, buildFunctionalVibeReviewState, cbaTableData, responseRows, section]);
 
   const getFunctionalVibeReviewState = useCallback(
-    () => buildFunctionalVibeReviewState(responseRows),
-    [buildFunctionalVibeReviewState, responseRows],
+    () => buildFunctionalVibeReviewState(section === "code-architecture" ? cbaTableData : responseRows),
+    [buildFunctionalVibeReviewState, cbaTableData, responseRows, section],
   );
 
   const applyFunctionalVibeReviewDecision = useCallback(async ({
@@ -10101,7 +10244,62 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     proposedRow,
     rationale = "",
     reviewMeta = {},
+    workspaceType = "functional-project",
+    repoId = "",
   }) => {
+    if (workspaceType === "code-based-architecture") {
+      if (!activeCodeArchitectureProjectId || String(projectId) !== String(activeCodeArchitectureProjectId)) {
+        throw new Error("This review belongs to another Code-Based Architecture project. Return to it before applying a decision.");
+      }
+      if (repoId && String(repoId) !== String(activeCodeArchitectureRepo?.id || "")) {
+        throw new Error("This review belongs to another repository analysis. Return to it before applying a decision.");
+      }
+      const currentRows = Array.isArray(cbaTableData) ? cbaTableData : [];
+      const rowIndex = currentRows.findIndex((row, index) => String(row?.traceId || row?.rowRef || `CBA-FD-${index + 1}`) === String(rowId || ""));
+      if (rowIndex < 0) throw new Error("The code-based functional-decomposition row is no longer available.");
+      const normalizedDecision = ["Keep", "Revise", "Remove"].includes(decision) ? decision : "";
+      if (!normalizedDecision) throw new Error("Choose Keep, Revise, or Remove before applying this review item.");
+      const previousRow = { ...currentRows[rowIndex], architecture: { ...(currentRows[rowIndex].architecture || {}) } };
+      let nextRows;
+      if (normalizedDecision === "Remove") {
+        nextRows = currentRows.filter((_, index) => index !== rowIndex);
+      } else {
+        let nextRow = previousRow;
+        if (normalizedDecision === "Revise") {
+          const required = ["subsystem", "fromFunction", "fromDetails", "controlAction", "controlDetails", "toFunction", "toDetails"];
+          const missing = required.filter((field) => !String(proposedRow?.[field] || "").trim());
+          if (missing.length) throw new Error(`The proposed revision is incomplete: ${missing.join(", ")}.`);
+          nextRow = applyFunctionalReviewToCodeArchitectureRow(previousRow, proposedRow);
+          const signature = [nextRow.from, nextRow.action, nextRow.to].map((value) => String(value || "").trim().toLowerCase()).join("::");
+          const duplicate = currentRows.some((row, index) => index !== rowIndex && [row.from, row.action, row.to]
+            .map((value) => String(value || "").trim().toLowerCase()).join("::") === signature);
+          if (duplicate) throw new Error("That revision would duplicate another code-based functional interface.");
+        }
+        nextRow = {
+          ...nextRow,
+          _functionalVibeReview: {
+            decision: normalizedDecision,
+            rationale: String(rationale || "").trim(),
+            reviewedAt: new Date().toISOString(),
+            ...reviewMeta,
+          },
+        };
+        nextRows = currentRows.map((row, index) => index === rowIndex ? nextRow : row);
+      }
+      if (!activeCodeArchitectureRowsKey) throw new Error("The active repository does not have a functional-decomposition storage target.");
+      const rowsPersisted = await writeCbaRowsToIndexedDB(activeCodeArchitectureRowsKey, nextRows);
+      if (!rowsPersisted) throw new Error("The functional-decomposition revision could not be saved to browser storage.");
+      setCbaTableData(nextRows);
+      notifyBackupDataChanged("code-architecture-functional-vibe-review");
+      return {
+        rowId,
+        rowIndex,
+        decision: normalizedDecision,
+        previousRow,
+        nextRows,
+        state: buildFunctionalVibeReviewState(nextRows),
+      };
+    }
     if (!activeProjectId || String(projectId) !== String(activeProjectId)) {
       throw new Error("This review belongs to another project. Return to the original project before applying a decision.");
     }
@@ -10153,9 +10351,35 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       nextRows,
       state: buildFunctionalVibeReviewState(nextRows),
     };
-  }, [activeProjectId, buildFunctionalVibeReviewState, responseRows]);
+  }, [activeCodeArchitectureProjectId, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey, activeProjectId, buildFunctionalVibeReviewState, cbaTableData, responseRows]);
 
-  const undoFunctionalVibeReviewDecision = useCallback(async ({ projectId, record }) => {
+  const undoFunctionalVibeReviewDecision = useCallback(async ({ projectId, record, workspaceType = "functional-project", repoId = "" }) => {
+    if (workspaceType === "code-based-architecture") {
+      if (!activeCodeArchitectureProjectId || String(projectId) !== String(activeCodeArchitectureProjectId)) {
+        throw new Error("Return to the reviewed Code-Based Architecture project before undoing this decision.");
+      }
+      if (repoId && String(repoId) !== String(activeCodeArchitectureRepo?.id || "")) {
+        throw new Error("Return to the reviewed repository analysis before undoing this decision.");
+      }
+      if (!record?.previousRow || !record?.rowId) throw new Error("The original code-based functional row is unavailable for undo.");
+      const currentRows = Array.isArray(cbaTableData) ? cbaTableData : [];
+      let nextRows;
+      if (record.decision === "Remove") {
+        const insertionIndex = Math.max(0, Math.min(Number(record.rowIndex) || 0, currentRows.length));
+        nextRows = [...currentRows];
+        nextRows.splice(insertionIndex, 0, record.previousRow);
+      } else {
+        const rowIndex = currentRows.findIndex((row, index) => String(row?.traceId || row?.rowRef || `CBA-FD-${index + 1}`) === String(record.rowId));
+        if (rowIndex < 0) throw new Error("The reviewed code-based functional row is no longer available for undo.");
+        nextRows = currentRows.map((row, index) => index === rowIndex ? record.previousRow : row);
+      }
+      if (!activeCodeArchitectureRowsKey) throw new Error("The active repository does not have a functional-decomposition storage target.");
+      const rowsPersisted = await writeCbaRowsToIndexedDB(activeCodeArchitectureRowsKey, nextRows);
+      if (!rowsPersisted) throw new Error("The functional-decomposition undo could not be saved to browser storage.");
+      setCbaTableData(nextRows);
+      notifyBackupDataChanged("code-architecture-functional-vibe-review-undo");
+      return { rowId: record.rowId, nextRows, state: buildFunctionalVibeReviewState(nextRows) };
+    }
     if (!activeProjectId || String(projectId) !== String(activeProjectId)) {
       throw new Error("Return to the reviewed project before undoing this decision.");
     }
@@ -10176,29 +10400,98 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setDiagramCategories((current) => mergeSubsystemDiagramCategories(current, nextRows));
     saveProjectPatch(activeProjectId, { responseRows: nextRows });
     return { rowId: record.rowId, nextRows, state: buildFunctionalVibeReviewState(nextRows) };
-  }, [activeProjectId, buildFunctionalVibeReviewState, responseRows]);
+  }, [activeCodeArchitectureProjectId, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey, activeProjectId, buildFunctionalVibeReviewState, cbaTableData, responseRows]);
 
-  const openFunctionalVibeReviewRow = useCallback(({ projectId, rowId }) => {
+  const openFunctionalVibeReviewRow = useCallback(({ projectId, rowId, workspaceType = "functional-project", repoId = "" }) => {
+    if (workspaceType === "code-based-architecture") {
+      if (String(projectId) !== String(activeCodeArchitectureProjectId)) return false;
+      if (repoId && String(repoId) !== String(activeCodeArchitectureRepo?.id || "")) return false;
+      const rowIndex = cbaTableData.findIndex((row, index) => String(row?.traceId || row?.rowRef || `CBA-FD-${index + 1}`) === String(rowId || ""));
+      if (rowIndex < 0) return false;
+      handleOpenCodeArchitectureFunctionalRow(rowIndex);
+      return true;
+    }
     if (String(projectId) !== String(activeProjectId)) return false;
     const rowIndex = responseRows.findIndex((row) => String(row?.[FUNCTIONAL_VIBE_REVIEW_ID_FIELD] || "") === String(rowId || ""));
     if (rowIndex < 0) return false;
     setSection("projects");
     handleOpenFunctionalRow(rowIndex);
     return true;
-  }, [activeProjectId, handleOpenFunctionalRow, responseRows]);
+  }, [activeCodeArchitectureProjectId, activeCodeArchitectureRepo, activeProjectId, cbaTableData, handleOpenCodeArchitectureFunctionalRow, handleOpenFunctionalRow, responseRows]);
 
-  const getHazardVibeReviewState = useCallback(() => ({
-    activeProjectId,
-    projectName: projects.find((entry) => entry.id === activeProjectId)?.name || "Untitled project",
-    summary: analysisResult?.Summary || null,
-    riskMethod,
-    organizationContext: getProjectOrganizationCalibration(activeProjectId, [
+  const getHazardVibeReviewState = useCallback(() => {
+    const organizationSections = [
       "Safety Philosophy", "Hazard and Loss Taxonomy", "Risk Classification", "Engineering Rules",
       "Operational Concepts", "Known Controls and Evidence",
-    ]).context,
-  }), [activeProjectId, analysisResult, projects, riskMethod]);
+    ];
+    if (section === "code-architecture") {
+      return {
+        activeProjectId: activeCodeArchitectureProjectId,
+        projectName: activeCodeArchitectureProject?.name || "Untitled code architecture project",
+        summary: codeArchitectureHazardRun?.generatedSheets?.Summary || null,
+        riskMethod: codeArchitectureHazardRun?.hazardMethod || codeArchitectureHazardMethod,
+        organizationContext: getProjectOrganizationCalibration(activeCodeArchitectureProjectId, organizationSections).context,
+        workspaceType: "code-based-architecture",
+        sourceRunId: codeArchitectureHazardRun?.id || "",
+        repoId: codeArchitectureHazardRun?.repoId || activeCodeArchitectureRepoMeta?.repoId || activeCodeArchitectureRepoMeta?.repoName || "",
+      };
+    }
+    return {
+      activeProjectId,
+      projectName: projects.find((entry) => entry.id === activeProjectId)?.name || "Untitled project",
+      summary: analysisResult?.Summary || null,
+      riskMethod,
+      organizationContext: getProjectOrganizationCalibration(activeProjectId, organizationSections).context,
+      workspaceType: "functional-project",
+      sourceRunId: "",
+      repoId: "",
+    };
+  }, [
+    activeCodeArchitectureProject,
+    activeCodeArchitectureProjectId,
+    activeCodeArchitectureRepoMeta,
+    activeProjectId,
+    analysisResult,
+    codeArchitectureHazardMethod,
+    codeArchitectureHazardRun,
+    projects,
+    riskMethod,
+    section,
+  ]);
 
-  const applyHazardVibeReviewDecision = useCallback(async ({ projectId, sourceRowId, update, reviewerDisposition = false }) => {
+  const applyHazardVibeReviewDecision = useCallback(async ({ projectId, sourceRowId, update, reviewerDisposition = false, workspaceType = "functional-project", sourceRunId = "" }) => {
+    if (workspaceType === "code-based-architecture") {
+      if (!activeCodeArchitectureProjectId || String(projectId) !== String(activeCodeArchitectureProjectId)) {
+        throw new Error("This review belongs to another Code-Based Architecture project. Return to the original project before applying a decision.");
+      }
+      const run = String(codeArchitectureHazardRun?.id || "") === String(sourceRunId || "")
+        ? codeArchitectureHazardRun
+        : await getCodeArchitectureHazardRunById(sourceRunId);
+      if (!run) throw new Error("The reviewed Code-Based Architecture hazard run is no longer available.");
+      const summary = run?.generatedSheets?.Summary;
+      if (!Array.isArray(summary?.[0])) throw new Error("Generate the Code-Based Architecture hazard-analysis Summary before applying review decisions.");
+      const indexes = indexVibeReviewHeaders(summary[0]);
+      const rowIndex = summary.slice(1).findIndex((row) => String(row?.[indexes.rawRowId] || "").trim() === String(sourceRowId || "").trim()) + 1;
+      if (rowIndex <= 0) return { missing: true, sourceRowId };
+      const previousRow = [...summary[rowIndex]];
+      const applied = applyNeedsReviewResolutionUpdates(
+        summary,
+        [{ ...update, sourceRowId }],
+        [sourceRowId],
+        { allowHumanAdjudication: reviewerDisposition === true },
+      );
+      if (applied.rejectedUpdates.length || !applied.changedRowIndexes.length) {
+        throw new Error(applied.rejectedUpdates[0]?.error || "The governed decision was invalid or did not change the row.");
+      }
+      const nextRun = {
+        ...run,
+        generatedSheets: { ...(run.generatedSheets || {}), Summary: applied.summary },
+        updatedAt: new Date().toISOString(),
+      };
+      await saveCodeArchitectureHazardRun(nextRun);
+      setCodeArchitectureHazardRun(nextRun);
+      return { sourceRowId, rowIndex, previousRow, nextRow: [...applied.summary[rowIndex]], headers: [...applied.summary[0]], safetyIssuesStale: false };
+    }
     if (!activeProjectId || String(projectId) !== String(activeProjectId)) {
       throw new Error("This review belongs to another project. Return to the original project before applying a decision.");
     }
@@ -10230,9 +10523,33 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const persisted = await saveProjectHazardAnalysisRecord(activeProjectId, { analysisResult: nextAnalysisResult, draftHazardRowsByIndex: nextDraftRows, riskRegister });
     if (!persisted) { setAnalysisResult(analysisResult); setDraftHazardRowsByIndex(draftHazardRowsByIndex); throw new Error("The review decision could not be persisted; the row was restored."); }
     return { sourceRowId, rowIndex, previousRow, nextRow: [...applied.summary[rowIndex]], headers: [...applied.summary[0]], safetyIssuesStale: true };
-  }, [activeProjectId, analysisResult, draftHazardHeaders, draftHazardRowsByIndex, riskRegister]);
+  }, [activeCodeArchitectureProjectId, activeProjectId, analysisResult, codeArchitectureHazardRun, draftHazardHeaders, draftHazardRowsByIndex, riskRegister]);
 
-  const undoHazardVibeReviewDecision = useCallback(async ({ projectId, sourceRowId, previousGovernedFields }) => {
+  const undoHazardVibeReviewDecision = useCallback(async ({ projectId, sourceRowId, previousGovernedFields, workspaceType = "functional-project", sourceRunId = "" }) => {
+    if (workspaceType === "code-based-architecture") {
+      if (!activeCodeArchitectureProjectId || String(projectId) !== String(activeCodeArchitectureProjectId)) {
+        throw new Error("Return to the reviewed Code-Based Architecture project before undoing this decision.");
+      }
+      const run = String(codeArchitectureHazardRun?.id || "") === String(sourceRunId || "")
+        ? codeArchitectureHazardRun
+        : await getCodeArchitectureHazardRunById(sourceRunId);
+      const summary = run?.generatedSheets?.Summary;
+      const indexes = indexVibeReviewHeaders(summary?.[0] || []);
+      const rowIndex = summary?.slice(1).findIndex((row) => String(row?.[indexes.rawRowId] || "").trim() === String(sourceRowId || "").trim()) + 1;
+      if (!run || !previousGovernedFields || rowIndex <= 0) throw new Error("The original governed Code-Based Architecture hazard fields are no longer available for undo.");
+      const restoredDraft = summary.map((row, index) => index === rowIndex
+        ? row.map((value, columnIndex) => Object.prototype.hasOwnProperty.call(previousGovernedFields, summary[0][columnIndex]) ? previousGovernedFields[summary[0][columnIndex]] : value)
+        : row);
+      const restoredSummary = normalizeHazardAnalysisResolutionStatus({ Summary: restoredDraft })?.Summary || restoredDraft;
+      const nextRun = {
+        ...run,
+        generatedSheets: { ...(run.generatedSheets || {}), Summary: restoredSummary },
+        updatedAt: new Date().toISOString(),
+      };
+      await saveCodeArchitectureHazardRun(nextRun);
+      setCodeArchitectureHazardRun(nextRun);
+      return { sourceRowId, rowIndex };
+    }
     if (!activeProjectId || String(projectId) !== String(activeProjectId)) throw new Error("Return to the reviewed project before undoing this decision.");
     const summary = analysisResult?.Summary;
     const indexes = indexVibeReviewHeaders(summary?.[0] || []);
@@ -10255,9 +10572,21 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setDraftHazardRowsByIndex(nextDraftRows);
     setSafetyIssueRefreshStatus({ kind: "working", message: "A hazard review decision was undone. Use Regenerate with AI to refresh the consolidated issue set." });
     return { sourceRowId, rowIndex };
-  }, [activeProjectId, analysisResult, draftHazardHeaders, draftHazardRowsByIndex, riskRegister]);
+  }, [activeCodeArchitectureProjectId, activeProjectId, analysisResult, codeArchitectureHazardRun, draftHazardHeaders, draftHazardRowsByIndex, riskRegister]);
 
-  const openHazardVibeReviewRow = useCallback(({ projectId, sourceRowId }) => {
+  const openHazardVibeReviewRow = useCallback(({ projectId, sourceRowId, workspaceType = "functional-project" }) => {
+    if (workspaceType === "code-based-architecture") {
+      if (String(projectId) !== String(activeCodeArchitectureProjectId)) return false;
+      const summary = codeArchitectureHazardRun?.generatedSheets?.Summary;
+      const indexes = indexVibeReviewHeaders(summary?.[0] || []);
+      const rowIndex = summary?.slice(1).findIndex((row) => String(row?.[indexes.rawRowId] || "").trim() === String(sourceRowId || "").trim()) + 1;
+      if (rowIndex <= 0) return false;
+      setSection("code-architecture");
+      setCodeArchitectureWorkspaceTab("safety");
+      setHazardRemediationTab("hazard-analysis");
+      handleOpenCodeArchitectureHazardSummaryRow(rowIndex - 1);
+      return true;
+    }
     if (String(projectId) !== String(activeProjectId)) return false;
     const summary = analysisResult?.Summary;
     const indexes = indexVibeReviewHeaders(summary?.[0] || []);
@@ -10271,30 +10600,53 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setActiveTab("Hazard Analysis");
     handleOpenHazardSummaryRow(displayIndex >= 0 ? displayIndex : rowIndex - 1);
     return true;
-  }, [activeProjectId, analysisResult, handleOpenHazardSummaryRow, hazardSummaryDisplayRows, hazardSummaryHeaders]);
+  }, [activeCodeArchitectureProjectId, activeProjectId, analysisResult, codeArchitectureHazardRun, handleOpenCodeArchitectureHazardSummaryRow, handleOpenHazardSummaryRow, hazardSummaryDisplayRows, hazardSummaryHeaders]);
 
   const refreshCollaboratorWorkspaceState = useCallback(async (projectIds = []) => {
     const touched = new Set((projectIds || []).map(String));
     const shouldRefreshActive = activeProjectId && (!touched.size || touched.has(String(activeProjectId)));
+    const shouldRefreshActiveCodeArchitecture = activeCodeArchitectureProjectId && (
+      !touched.size || touched.has(String(activeCodeArchitectureProjectId))
+    );
     try {
       const nextProjects = repairDuplicateProjectIds(JSON.parse(localStorage.getItem(PROJECTS_KEY) || "[]"));
       setProjects(nextProjects);
     } catch {}
-    if (!shouldRefreshActive) return;
-    const data = loadProjectData(activeProjectId) || {};
-    setResponseRows(Array.isArray(data.responseRows) ? data.responseRows : []);
-    setCommittedFunctionalDiagramRows(getProjectDiagramRows(Array.isArray(data.responseRows) ? data.responseRows : []));
-    setDiagramCategories(data.diagramCategories || null);
-    setRequirements(Array.isArray(data.requirements) ? data.requirements : []);
-    const storedAnalysis = await loadProjectHazardAnalysisRecord(activeProjectId);
-    if (storedAnalysis) {
-      setAnalysisResult(storedAnalysis.analysisResult ? stripProjectRiskProfileColumns(storedAnalysis.analysisResult) : null);
-      setDraftHazardRowsByIndex(storedAnalysis.draftHazardRowsByIndex || {});
-      setRiskRegister(Array.isArray(storedAnalysis.riskRegister) ? storedAnalysis.riskRegister : []);
+    let nextCodeArchitectureProjects = codeArchitectureProjects;
+    try {
+      nextCodeArchitectureProjects = normalizeCodeArchitectureProjects(JSON.parse(localStorage.getItem(CBA_PROJECTS_KEY) || "[]"));
+      setCodeArchitectureProjects(nextCodeArchitectureProjects);
+    } catch {}
+
+    if (shouldRefreshActive) {
+      const data = loadProjectData(activeProjectId) || {};
+      setResponseRows(Array.isArray(data.responseRows) ? data.responseRows : []);
+      setCommittedFunctionalDiagramRows(getProjectDiagramRows(Array.isArray(data.responseRows) ? data.responseRows : []));
+      setDiagramCategories(data.diagramCategories || null);
+      setRequirements(Array.isArray(data.requirements) ? data.requirements : []);
+      const storedAnalysis = await loadProjectHazardAnalysisRecord(activeProjectId);
+      if (storedAnalysis) {
+        setAnalysisResult(storedAnalysis.analysisResult ? stripProjectRiskProfileColumns(storedAnalysis.analysisResult) : null);
+        setDraftHazardRowsByIndex(storedAnalysis.draftHazardRowsByIndex || {});
+        setRiskRegister(Array.isArray(storedAnalysis.riskRegister) ? storedAnalysis.riskRegister : []);
+      }
+      const storedReport = await loadSafetyIssueReportRecord(activeProjectId);
+      if (storedReport) setRiskAssessmentReportMarkdown(String(storedReport.markdown || ""));
     }
-    const storedReport = await loadSafetyIssueReportRecord(activeProjectId);
-    if (storedReport) setRiskAssessmentReportMarkdown(String(storedReport.markdown || ""));
-  }, [activeProjectId]);
+
+    if (shouldRefreshActiveCodeArchitecture) {
+      const project = nextCodeArchitectureProjects.find((entry) => String(entry.id) === String(activeCodeArchitectureProjectId));
+      const repo = (project?.repos || []).find((entry) => entry.id === project?.activeRepoId) || project?.repos?.[0] || null;
+      if (project && repo) {
+        const rows = ensureCodeArchitectureTraceIds(await readCbaRowsFromIndexedDB(codeArchitectureRowsKey(project.id, repo.id)));
+        setCbaTableData(rows);
+        const repoId = repo.repoId || repo.repoName || normalizeRepoIdentity(repo);
+        let latestRun = await getLatestCodeArchitectureHazardRun({ projectId: project.id, repoId });
+        if (!latestRun) latestRun = await getLatestCodeArchitectureHazardRun({ repoId });
+        setCodeArchitectureHazardRun(latestRun || null);
+      }
+    }
+  }, [activeCodeArchitectureProjectId, activeProjectId, codeArchitectureProjects]);
 
   const executeCollaboratorWorkspacePlan = useCallback(async ({ plan } = {}) => {
     const result = await executeWorkspaceActionPlan(plan);
@@ -10414,6 +10766,24 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     { key: 'toFunction', label: 'Function (To)' },
     { key: 'toDetails', label: 'Function (To) Details' },
   ];
+  const buildFunctionalTableDiagramTarget = (row, field) => {
+    if (field === 'fromFunction' && String(row?.fromFunction || '').trim()) {
+      return { kind: 'function', label: row.fromFunction };
+    }
+    if (field === 'controlAction' && String(row?.controlAction || '').trim()) {
+      return {
+        kind: 'edge',
+        label: row.controlAction,
+        fromFunction: row.fromFunction,
+        controlAction: row.controlAction,
+        toFunction: row.toFunction,
+      };
+    }
+    if (field === 'toFunction' && String(row?.toFunction || '').trim()) {
+      return { kind: 'function', label: row.toFunction };
+    }
+    return null;
+  };
   const getFunctionalCellValue = (row, field) => String(row?.[field] ?? '').trim();
   const estimateWrappedTextareaRows = (value, charsPerLine = 20, maxRows = 28) => {
     const text = String(value ?? '');
@@ -13772,18 +14142,49 @@ const projectHint = useMemo(() => ({
         className="xhandle-app-viewport fixed bottom-0 left-0 top-14 transition-[right] duration-200 ease-out"
         style={{ right: 'var(--xhandle-collaborator-reserved-width)' }}
       >
-  <div className="flex h-full bg-white overflow-hidden">
+  <div className="relative flex h-full bg-white overflow-hidden">
     {/* Sidebar */}
+    {isSidebarFullyCollapsed && (
+      <button
+        type="button"
+        className="absolute left-3 top-3 z-40 hidden h-10 w-10 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-700 shadow-lg transition-colors hover:bg-gray-50 md:inline-flex"
+        title="Restore navigation sidebar"
+        aria-label="Restore navigation sidebar"
+        aria-controls="xhandle-primary-sidebar"
+        aria-expanded="false"
+        onClick={() => {
+          setIsSidebarFullyCollapsed(false);
+          setIsSidebarOpen(true);
+        }}
+      >
+        <PanelLeftOpen className="h-4 w-4" />
+      </button>
+    )}
+    {!isSidebarFullyCollapsed && (
     <aside
+      id="xhandle-primary-sidebar"
       onMouseEnter={() => setIsSidebarOpen(true)}
       onMouseLeave={() => setIsSidebarOpen(false)}
       className={`sticky top-0 h-full border-r bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80 z-30 transition-[width] duration-300 ease-in-out overflow-hidden
         ${isSidebarOpen ? 'w-64' : 'w-[68px]'} hidden md:flex flex-col`}
     >
-          <div className="flex items-center justify-between px-3 py-4">
-          <div className="flex items-center gap-2">
-            {isSidebarOpen && <span className="text-sm font-semibold"></span>}
-          </div>
+        <div className="flex min-h-14 items-center px-3 py-3">
+          {isSidebarOpen && (
+            <button
+              type="button"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+              title="Fully collapse navigation sidebar"
+              aria-label="Fully collapse navigation sidebar"
+              aria-controls="xhandle-primary-sidebar"
+              aria-expanded="true"
+              onClick={() => {
+                setIsSidebarOpen(false);
+                setIsSidebarFullyCollapsed(true);
+              }}
+            >
+              <PanelLeftClose className="h-4 w-4" />
+            </button>
+          )}
         </div>
 
         <div className="px-3 py-2 flex flex-col gap-1">
@@ -14540,6 +14941,7 @@ const projectHint = useMemo(() => ({
           <div className={`text-[11px] text-gray-400 ${isSidebarOpen ? '' : 'text-center'}`}></div>
         </div>
       </aside>
+    )}
 
       {/* Main */}
       <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -14566,20 +14968,7 @@ const projectHint = useMemo(() => ({
 
 {section === 'reports' && (
   <div className="flex h-full min-h-0 w-full flex-col overflow-auto bg-white px-3 py-1 md:px-5 lg:px-7">
-    <div className="mb-4 flex shrink-0 items-center justify-between">
-      <div>
-        <h1 className="text-2xl font-semibold text-gray-900">Reports</h1>
-        <p className="text-sm text-gray-500">
-          Generate and export project reports from the active project workspace.
-        </p>
-      </div>
-      {activeProject && (
-        <div className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-medium text-gray-600">
-          {activeProject.name}
-        </div>
-      )}
-    </div>
-
+    <h1 className="sr-only">Reports</h1>
     {!activeProjectId ? (
       <div className="rounded-xl border bg-white p-6 text-sm text-gray-600">
         Select a project from the Projects sidebar to generate reports.
@@ -14703,15 +15092,7 @@ const projectHint = useMemo(() => ({
     {/* CODE BASED ANALYSIS */}
 {section === 'code-architecture' && (
   <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-white px-3 py-1 md:px-5 lg:px-7">
-    <div className="mb-2 flex shrink-0 items-center justify-between">
-      <h1 className="flex items-center gap-2 text-xl font-semibold">
-        Code-Based Architecture
-        <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-700 border" title="Code architecture projects">
-          {codeArchitectureProjects.length}
-        </span>
-      </h1>
-    </div>
-
+    <h1 className="sr-only">Code-Based Architecture</h1>
     {!activeCodeArchitectureProject && !activeCodeArchitectureFolder && (
       <section className="flex min-h-0 flex-1 flex-col overflow-hidden pb-3">
         <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
@@ -15113,7 +15494,11 @@ const projectHint = useMemo(() => ({
               <div className="min-h-0 flex-1 overflow-hidden rounded-xl border bg-white p-3">
                 <FunctionalDecompositionTable
                   data={cbaTableData}
+                  projectId={activeCodeArchitectureProject.id}
                   repoMeta={activeCodeArchitectureRepoMeta}
+                  onDataChange={setCbaTableData}
+                  collaboratorSelection={activeCodeArchitectureSelection}
+                  onCollaboratorSelectionChange={setActiveCodeArchitectureSelection}
                   onRequestCreateProject={handleCreateProjectFromSelection}
                   reviewItems={codeArchitectureFunctionalReviewItems}
                   reviewByRow={codeArchitectureFunctionalReviewByRow}
@@ -15137,6 +15522,24 @@ const projectHint = useMemo(() => ({
                   onFocusTargetHandled={() => setPendingCodeArchitectureDiagramTarget(null)}
                   onSelectArchitectureElement={(element) => {
                     setSelectedCbaElement(element);
+                    setActiveCodeArchitectureSelection(element ? {
+                      kind: "code-architecture-row",
+                      source: "code-based-architecture",
+                      tableId: "code-architecture-functional-decomposition",
+                      id: element.row?.traceId || element.id || "",
+                      title: element.label || "Selected code architecture row",
+                      primary: {
+                        rowId: element.row?.traceId || element.id || "",
+                        rowIndex: Math.max(0, Number(element.rowRef || 1) - 1),
+                        rowNumber: Number(element.rowRef || 1),
+                      },
+                      selectedRows: [{
+                        rowId: element.row?.traceId || element.id || "",
+                        rowIndex: Math.max(0, Number(element.rowRef || 1) - 1),
+                        rowNumber: Number(element.rowRef || 1),
+                        values: element.row || {},
+                      }],
+                    } : null);
                     setCodeArchitectureWorkspaceTab("safety");
                     setHazardRemediationTab("remediation");
                   }}
@@ -15155,6 +15558,7 @@ const projectHint = useMemo(() => ({
                   onFocusResolved={handleCodeArchitectureArtifactFocusResolved}
                   onOpenTrace={handleOpenCodeArchitectureAssuranceTrace}
                   hazardAnalysis={codeArchitectureHazardRun}
+                  onCollaboratorSelectionChange={setActiveCodeArchitectureSelection}
                   reviewMode={false}
                 />
               </div>
@@ -15170,6 +15574,7 @@ const projectHint = useMemo(() => ({
                   focusTarget={codeArchitectureArtifactFocus}
                   onFocusResolved={handleCodeArchitectureArtifactFocusResolved}
                   onOpenTrace={handleOpenCodeArchitectureAssuranceTrace}
+                  onCollaboratorSelectionChange={setActiveCodeArchitectureSelection}
                   reviewMode={false}
                 />
               </div>
@@ -15185,6 +15590,7 @@ const projectHint = useMemo(() => ({
                   focusTarget={codeArchitectureArtifactFocus}
                   onFocusResolved={handleCodeArchitectureArtifactFocusResolved}
                   onOpenTrace={handleOpenCodeArchitectureAssuranceTrace}
+                  onCollaboratorSelectionChange={setActiveCodeArchitectureSelection}
                   reviewMode={false}
                 />
               </div>
@@ -15200,6 +15606,7 @@ const projectHint = useMemo(() => ({
                   focusTarget={codeArchitectureArtifactFocus}
                   onFocusResolved={handleCodeArchitectureArtifactFocusResolved}
                   onOpenTrace={handleOpenCodeArchitectureAssuranceTrace}
+                  onCollaboratorSelectionChange={setActiveCodeArchitectureSelection}
                   reviewMode={false}
                 />
               </div>
@@ -15255,6 +15662,7 @@ const projectHint = useMemo(() => ({
                       forceSummaryOpenKey={codeArchitectureHazardSummaryOpenKey}
                       highlightedRowIndex={highlightedCodeArchitectureHazardRowIndex}
                       onDeleteSummaryRow={handleDeleteCodeArchitectureHazardSummaryRow}
+                      onCollaboratorSelectionChange={setActiveCodeArchitectureSelection}
                       onOpenArchitectureTarget={(target) => {
                         setPendingCodeArchitectureDiagramTarget(target);
                         setCodeArchitectureWorkspaceTab("architecture");
@@ -15315,13 +15723,9 @@ const projectHint = useMemo(() => ({
 
 {section === 'console' && (
   <div className="flex flex-col flex-1 min-h-0 overflow-auto bg-white py-1 px-3 md:px-5 lg:px-7 w-full">
-    <div className="mb-8">
-      <h1 className="text-2xl md:text-2xl font-semibold">Console</h1>
-      <p className="text-gray-500 text-sm">At-a-glance project summary</p>
-    </div>
-
+    <h1 className="sr-only">Console</h1>
     {/* Dashboard panels */}
-    <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
       {/* Status overview (donut) */}
       <Panel title="Risk status overview" subtitle={consoleSubtitle}>
         {consoleRiskRegister.length === 0 ? (
@@ -15433,18 +15837,7 @@ const projectHint = useMemo(() => ({
         {/* PROJECTS */}
         {section === 'projects' && (
           <div className={`flex min-h-0 w-full flex-1 flex-col justify-start bg-white px-3 py-0 md:px-5 lg:px-7 ${activeProjectId && (activeTab === 'Hazard Analysis' || activeTab === 'Safety Issues & Risk Assessment' || activeTab === 'Functional Diagramming') ? 'overflow-hidden' : 'overflow-auto'}`}>
-<div className="mb-6 flex shrink-0 items-center justify-between">
-  <h1 className="text-2xl font-semibold flex items-center gap-2">
-    Projects
-    <span
-      className="text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-700 border"
-      title="Active projects"
-    >
-      {projects.length}
-    </span>
-  </h1>
-</div>
-
+<h1 className="sr-only">Projects</h1>
 {!activeProjectId && !activeProjectFolder && (
   <section className="mb-8">
     <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -16040,6 +16433,7 @@ const projectHint = useMemo(() => ({
                                   )}
                                   {functionalTableColumns.map(({ key: field }, columnIndex) => {
                                     const selectedCell = isSelectedTableCell(activeTableSelection, "functional-decomposition", selectionRowId, columnIndex);
+                                    const diagramTarget = buildFunctionalTableDiagramTarget(row, field);
                                     const selectCell = () => selectTableCellForCollaborator({
                                       tableId: "functional-decomposition",
                                       tableLabel: "Functional Decomposition",
@@ -16056,14 +16450,30 @@ const projectHint = useMemo(() => ({
                                       onClick={selectCell}
                                       className={`px-6 py-4 align-top whitespace-pre-wrap border-b border-gray-100 ${selectedCell ? 'bg-indigo-100 ring-2 ring-indigo-500 ring-inset' : ''} ${rejected ? 'text-rose-900' : ''}`}
                                     >
-                                      <textarea
-                                        className={`w-full resize-none overflow-hidden break-words bg-transparent text-sm leading-5 [overflow-wrap:anywhere] focus:outline-none ${rejected ? 'line-through decoration-rose-400' : ''}`}
-                                        value={row[field]}
-                                        onChange={(e) => handleRowChange(originalIndex, field, e.target.value)}
-                                        onFocus={selectCell}
-                                        rows={getFunctionalCellRows(row[field])}
-                                        aria-label={`${functionalTableColumns[columnIndex].label}, row ${originalIndex + 1}`}
-                                      />
+                                      <div className="flex items-start gap-1">
+                                        <textarea
+                                          className={`w-full resize-none overflow-hidden break-words bg-transparent text-sm leading-5 [overflow-wrap:anywhere] focus:outline-none ${rejected ? 'line-through decoration-rose-400' : ''}`}
+                                          value={row[field]}
+                                          onChange={(e) => handleRowChange(originalIndex, field, e.target.value)}
+                                          onFocus={selectCell}
+                                          rows={getFunctionalCellRows(row[field])}
+                                          aria-label={`${functionalTableColumns[columnIndex].label}, row ${originalIndex + 1}`}
+                                        />
+                                        {diagramTarget ? (
+                                          <button
+                                            type="button"
+                                            className="shrink-0 rounded p-1 text-[#2D7DFE] hover:bg-blue-100 hover:text-[#1E61D6]"
+                                            onClick={(event) => {
+                                              event.stopPropagation();
+                                              handleOpenHazardDiagramTarget(diagramTarget);
+                                            }}
+                                            title={`Open ${functionalTableColumns[columnIndex].label} in the functional diagram`}
+                                            aria-label={`Open ${functionalTableColumns[columnIndex].label} for row ${originalIndex + 1} in the functional diagram`}
+                                          >
+                                            ↗
+                                          </button>
+                                        ) : null}
+                                      </div>
                                     </td>
                                     );
                                   })}
@@ -16406,24 +16816,30 @@ const projectHint = useMemo(() => ({
                           });
                           return (
                             <td key={colIdx} onClick={selectCell} className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(draftHazardHeaders[colIdx]) ? 'hidden ' : ''}px-6 py-4 align-top whitespace-pre-wrap border-b border-gray-100 ${selectedCell ? 'bg-indigo-100 ring-2 ring-indigo-500 ring-inset' : ''}`}>
-                              <textarea
-                                className="min-h-[44px] w-full resize-none overflow-hidden break-words bg-transparent text-sm leading-5 text-gray-900 [overflow-wrap:anywhere] focus:outline-none"
-                                value={cell}
-                                onChange={(event) => handleDraftHazardCellChange(originalIndex, colIdx, event.target.value)}
-                                onFocus={selectCell}
-                                rows={getDraftHazardCellRows(cell)}
-                                aria-label={`${draftHazardHeaders[colIdx]}, row ${originalIndex + 1}`}
-                              />
-                              {diagramTarget && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenHazardDiagramTarget(diagramTarget)}
-                                  className="mt-1 inline-flex text-xs font-medium text-[#1C5FDE] underline decoration-blue-300 underline-offset-2 hover:text-[#0B3EA8]"
-                                  title={getHazardDiagramLinkLabel(diagramTarget)}
-                                >
-                                  {getHazardDiagramLinkLabel(diagramTarget)}
-                                </button>
-                              )}
+                              <div className="flex items-start gap-1">
+                                <textarea
+                                  className="min-h-[44px] w-full resize-none overflow-hidden break-words bg-transparent text-sm leading-5 text-gray-900 [overflow-wrap:anywhere] focus:outline-none"
+                                  value={cell}
+                                  onChange={(event) => handleDraftHazardCellChange(originalIndex, colIdx, event.target.value)}
+                                  onFocus={selectCell}
+                                  rows={getDraftHazardCellRows(cell)}
+                                  aria-label={`${draftHazardHeaders[colIdx]}, row ${originalIndex + 1}`}
+                                />
+                                {diagramTarget ? (
+                                  <button
+                                    type="button"
+                                    className="shrink-0 rounded p-1 text-[#2D7DFE] hover:bg-blue-100 hover:text-[#1E61D6]"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      handleOpenHazardDiagramTarget(diagramTarget);
+                                    }}
+                                    title={getHazardDiagramLinkLabel(diagramTarget)}
+                                    aria-label={`${getHazardDiagramLinkLabel(diagramTarget)} for row ${originalIndex + 1}`}
+                                  >
+                                    ↗
+                                  </button>
+                                ) : null}
+                              </div>
                             </td>
                           );
                         })}
@@ -16712,14 +17128,21 @@ const projectHint = useMemo(() => ({
                               return (
                                 <td key={colIdx} onClick={selectCell} className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(columnHeader) ? 'hidden ' : ''}min-w-56 max-w-xl break-words px-6 py-4 align-top whitespace-pre-wrap [overflow-wrap:anywhere] border-b border-gray-100 ${selectedCell ? 'bg-indigo-100 ring-2 ring-indigo-500 ring-inset' : ''} ${rejected ? 'text-rose-900 line-through decoration-rose-400' : ''}`}>
                                   {diagramTarget ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleOpenHazardDiagramTarget(diagramTarget)}
-                                      className="text-left font-medium text-[#1C5FDE] underline decoration-blue-300 underline-offset-2 hover:text-[#0B3EA8]"
-                                      title={getHazardDiagramLinkLabel(diagramTarget)}
-                                    >
-                                      {cell}
-                                    </button>
+                                    <div className="flex items-start gap-1">
+                                      <span className="min-w-0 flex-1">{cell}</span>
+                                      <button
+                                        type="button"
+                                        className="shrink-0 rounded p-1 text-[#2D7DFE] hover:bg-blue-100 hover:text-[#1E61D6]"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          handleOpenHazardDiagramTarget(diagramTarget);
+                                        }}
+                                        title={getHazardDiagramLinkLabel(diagramTarget)}
+                                        aria-label={`${getHazardDiagramLinkLabel(diagramTarget)} for row ${originalIndex + 1}`}
+                                      >
+                                        ↗
+                                      </button>
+                                    </div>
                                   ) : isResolutionStatus && cell ? (
                                     <span
                                       className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${resolutionStatusClass}`}
@@ -17384,23 +17807,13 @@ const projectHint = useMemo(() => ({
     feature="ai_pm"
     loadingFallback={
       <div className="flex flex-col flex-1 min-h-0 overflow-auto bg-white py-0 px-3 md:px-5 lg:px-7 w-full">
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold">Project Manager</h1>
-          <p className="text-gray-500 text-sm">Loading local workspace…</p>
-        </div>
         <div className="rounded-xl border bg-white p-6 text-gray-600 text-sm animate-pulse">
-          Checking your access…
+          Loading local workspace…
         </div>
       </div>
     }
     fallback={
       <div className="flex flex-col flex-1 min-h-0 overflow-auto bg-white py-0 px-3 md:px-5 lg:px-7 w-full">
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold">Project Manager</h1>
-          <p className="text-gray-500 text-sm">
-            Project-wide monitoring and triage are available in the local workspace.
-          </p>
-        </div>
         <div className="rounded-2xl border bg-white p-6 text-gray-700 text-sm">
           This feature is enabled for local open-source use.
         </div>
@@ -17408,13 +17821,7 @@ const projectHint = useMemo(() => ({
     }
   >
     <div className="flex flex-col flex-1 min-h-0 overflow-auto bg-white py-1 px-3 md:px-5 lg:px-7 w-full">
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold">Project Manager</h1>
-        <p className="text-gray-500 text-sm">
-          Monitor due dates & owners across selected projects. Triage risks quickly. No fluff.
-        </p>
-      </div>
-
+      <h1 className="sr-only">Project Manager</h1>
       {(() => {
         // ------- helpers -------
         const rpnOf = (r) => (Number(r?.likelihood) || 0) * (Number(r?.severity) || 0);
@@ -17875,25 +18282,13 @@ const updateRiskInProject = async (projectId, predicate) => {
     feature="risk_register"
     loadingFallback={
       <div className="flex flex-col min-h-screen bg-white py-2 px-3 md:px-5 lg:px-7 w-full overflow-hidden">
-        <div className="mb-6 flex items-center justify-between">
-          <div>
-            <h1 className="mt-0 text-2xl font-semibold">Risk Register</h1>
-            <p className="text-gray-500 text-sm">Loading local workspace…</p>
-          </div>
-        </div>
         <div className="rounded-xl border bg-white p-6 text-gray-600 text-sm animate-pulse">
-          Checking your access…
+          Loading local workspace…
         </div>
       </div>
     }
     fallback={
       <div className="flex flex-col min-h-screen bg-white py-2 px-3 md:px-5 lg:px-7 w-full overflow-hidden">
-        <div className="mb-6">
-          <h1 className="mt-0 text-2xl font-semibold">Risk Register</h1>
-          <p className="text-gray-500 text-sm">
-            Aggregated risk management is available in the local workspace.
-          </p>
-        </div>
         <div className="rounded-xl border bg-white p-6 text-gray-700 text-sm">
           This feature is enabled for local open-source use.
         </div>
@@ -18020,12 +18415,8 @@ const updateRiskInProject = async (projectId, predicate) => {
 
       return (
         <div className="flex flex-col min-h-screen bg-white py-1 px-3 md:px-5 lg:px-7 w-full overflow-hidden">
-          {/* Header */}
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <h1 className="mt-0 text-2xl font-semibold">Risk Register</h1>
-              <p className="text-gray-500 text-sm">Aggregated across selected projects</p>
-            </div>
+          <h1 className="sr-only">Risk Register</h1>
+          <div className="mb-2 flex items-center justify-end">
             <div className="flex gap-2">
               <button
                 onClick={() =>
@@ -18323,23 +18714,13 @@ const updateRiskInProject = async (projectId, predicate) => {
     feature="requirements_manager"
     loadingFallback={
       <div className="flex flex-col flex-1 min-h-0 overflow-auto bg-white py-0 px-3 md:px-5 lg:px-7 w-full">
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold">Design Management</h1>
-          <p className="text-gray-500 text-sm">Loading local workspace…</p>
-        </div>
         <div className="rounded-xl border bg-white p-6 text-gray-600 text-sm animate-pulse">
-          Checking your access…
+          Loading local workspace…
         </div>
       </div>
     }
     fallback={
       <div className="flex flex-col flex-1 min-h-0 overflow-auto bg-white py-1 px-3 md:px-5 lg:px-7 w-full">
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold">Design Management</h1>
-          <p className="text-gray-500 text-sm">
-            Object-oriented design artifacts, custom attributes, and bi-directional links are available locally.
-          </p>
-        </div>
         <div className="rounded-xl border bg-white p-6 text-gray-700 text-sm">
           This feature is enabled for local open-source use.
         </div>

@@ -1,11 +1,11 @@
 import { backendURL, buildAIAuthOpts } from "../../components/backendConfig";
 import { extractVibeReviewProviderText, parseVibeReviewProposal } from "../project-hazard-analysis/vibeReviewProposal";
-import { FUNCTIONAL_ROW_FIELDS, normalizeFunctionalVibeReviewProposal } from "./functionalVibeReview";
+import { FUNCTIONAL_ARCHITECTURE_FIELDS, FUNCTIONAL_REVIEW_FIELDS, normalizeFunctionalVibeReviewProposal } from "./functionalVibeReview";
 
 const clean = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
 
 function compactRow(row = {}) {
-  return Object.fromEntries(FUNCTIONAL_ROW_FIELDS.map((field) => [field, clean(row?.[field])]));
+  return Object.fromEntries(FUNCTIONAL_REVIEW_FIELDS.map((field) => [field, clean(row?.[field])]).filter(([, value]) => value));
 }
 
 export async function requestFunctionalVibeReviewProposal({
@@ -13,6 +13,7 @@ export async function requestFunctionalVibeReviewProposal({
   rowNumber,
   projectName,
   organizationContext = "",
+  reviewFocus = "",
   surroundingRows = [],
   provider,
   model,
@@ -25,6 +26,7 @@ export async function requestFunctionalVibeReviewProposal({
 Project: ${projectName || "Untitled project"}
 Row number: ${rowNumber}
 ${organizationContext || "No applicable organization profile text is available."}
+Review focus: ${reviewFocus || "Complete functional-interface row"}
 
 Current row:
 ${JSON.stringify(currentRow, null, 2)}
@@ -34,6 +36,8 @@ ${JSON.stringify((surroundingRows || []).map(compactRow), null, 2)}
 
 Assess whether the row expresses a necessary, non-duplicative interface between implementable leaf functions with correct subsystem ownership, direction, interface semantics, and technically useful details. Check that Function From is the actual source behavior, Function To is the actual receiving behavior, and Control Action names the exchanged command, data, state, feedback, event, configuration, authority, force, resource, or energy flow. Do not invent unsupported architecture.
 
+When CSCI, CSC, CSU, or Architecture Rationale fields are present, also assess their allocation hierarchy and rationale. If the review focus names one of those columns, prioritize whether that value is correct for the evidenced source behavior while preserving sound interface fields.
+
 Return strict JSON only with:
 - decision: exactly Keep, Revise, Remove, or Needs Input
 - explanation: a brief plain-language explanation for the engineer
@@ -41,6 +45,7 @@ Return strict JSON only with:
 - confidence: High, Medium, or Low
 - issues: a short array of specific issues
 - proposedRow: required only for Revise and containing all seven fields: subsystem, fromFunction, fromDetails, controlAction, controlDetails, toFunction, toDetails
+- proposedRow must also preserve and may revise these architecture fields when they are present: ${FUNCTIONAL_ARCHITECTURE_FIELDS.join(", ")}
 - remainingQuestion: one material question when decision is Needs Input
 
 Use Keep when the row is sound. Use Revise only when a complete corrected row can be grounded in the supplied project evidence. Use Remove only for a clear duplicate, ceremonial acknowledgement, invalid container-to-container relationship, or unjustified interface. Use Needs Input when a material architectural fact is missing. Preserve the row's intent and avoid stylistic churn.`;
@@ -79,4 +84,3 @@ Use Keep when the row is sound. Use Revise only when a complete corrected row ca
   normalized = normalizeFunctionalVibeReviewProposal(parseVibeReviewProposal(repairedText), currentRow);
   return normalized;
 }
-

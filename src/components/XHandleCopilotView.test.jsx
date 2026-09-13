@@ -34,15 +34,20 @@ const {
   buildFunctionalAbstractionChoiceMessage,
   buildCollaboratorChatPayload,
   buildCollaboratorVoiceGreeting,
+  buildContextualVibeReviewOptions,
+  buildContextualVibeReviewQueuePrompt,
   buildCollaboratorContinuationMessages,
   buildCollaboratorModelOptions,
   buildResolvedAbstractionRequest,
   buildPromptContentFromContext,
   isDiagramFunctionalDecompositionRequest,
+  isContextualVibeReviewIntent,
   isFunctionalDecompositionTableResponse,
   isHazardAnalysisQuestion,
   hasGenericControlActionsInFunctionalTable,
   inferFunctionalAbstractionLevel,
+  isFunctionalDraftDecisionFollowUp,
+  resolvePendingFunctionalAbstractionLevel,
   extractFunctionalRowsFromAssistantText,
   extractMultiLevelLeafInventory,
   formatCollaboratorReasoningList,
@@ -70,6 +75,116 @@ const {
   selectLiveCollaboratorReasoning,
   streamChat,
 } = require("./XHandleCopilotView");
+
+describe("contextual vibe review", () => {
+  it("recognizes a deictic vibe-review request without hijacking explicit scopes", () => {
+    expect(isContextualVibeReviewIntent("Let's vibe review this")).toBe(true);
+    expect(isContextualVibeReviewIntent("Can we vibe review it?")).toBe(true);
+    expect(isContextualVibeReviewIntent("Vibe review the hazard rows marked Needs Review")).toBe(false);
+    expect(isContextualVibeReviewIntent("Vibe review the current functional decomposition")).toBe(false);
+    expect(isContextualVibeReviewIntent("Let's vibe review the CSU column items")).toBe(false);
+  });
+
+  it("offers the selected hazard row, unresolved rows, and all rows in hazard context", () => {
+    const headers = ["Raw Analysis Row ID", "Safety Significant", "Function (From)"];
+    const options = buildContextualVibeReviewOptions({
+      focus: {
+        viewedProjectType: "code-based-architecture",
+        activeCodeArchitectureWorkspaceTab: "safety",
+        activeSelections: [{
+          source: "code-architecture-hazard-analysis",
+          tableId: "code-architecture-hazard-analysis",
+          id: "RAW-2",
+          primary: { rowId: "RAW-2", rowNumber: 2 },
+        }],
+      },
+      hazardState: {
+        summary: [headers, ["RAW-1", "Needs Review", "A"], ["RAW-2", "Yes", "B"]],
+      },
+    });
+
+    expect(options.map((option) => option.value)).toEqual([
+      "selected-hazard-row",
+      "hazard-needs-review",
+      "all-hazard-rows",
+      "custom-hazard-scope",
+    ]);
+    expect(options[0]).toMatchObject({ recommended: true });
+    expect(options[0].prompt).toContain("RAW-2");
+    expect(options[3]).toMatchObject({ label: "Specify another scope", custom: true });
+  });
+
+  it("offers the selected interface and decomposition in functional context", () => {
+    const options = buildContextualVibeReviewOptions({
+      focus: {
+        viewedProjectType: "functional-project",
+        activeTab: "Functional Diagramming",
+        activeSelections: [{
+          source: "table",
+          tableId: "functional-decomposition",
+          primary: { rowNumber: 2 },
+        }],
+      },
+      functionalState: {
+        rows: [{ rowId: "F-1", row: {} }, { rowId: "F-2", row: {} }],
+      },
+    });
+
+    expect(options.map((option) => option.value)).toEqual([
+      "selected-functional-row",
+      "all-functional-rows",
+      "custom-functional-scope",
+    ]);
+    expect(options[0].prompt).toContain("row 2");
+    expect(options[2]).toMatchObject({ label: "Specify another scope", custom: true });
+  });
+
+  it("offers functional-decomposition review targets in a Code-Based Architecture architecture view", () => {
+    const options = buildContextualVibeReviewOptions({
+      focus: {
+        viewedProjectType: "code-based-architecture",
+        activeCodeArchitectureWorkspaceTab: "architecture",
+      },
+      functionalState: {
+        rows: [{ rowId: "CBA-1", row: { csu: "Configuration" } }],
+      },
+    });
+
+    expect(options.map((option) => option.value)).toEqual([
+      "all-functional-rows",
+      "custom-functional-scope",
+    ]);
+  });
+
+  it("prioritizes a selected Code-Based Architecture functional cell for contextual review", () => {
+    const options = buildContextualVibeReviewOptions({
+      focus: {
+        viewedProjectType: "code-based-architecture",
+        activeCodeArchitectureWorkspaceTab: "architecture",
+        activeSelections: [{
+          source: "table",
+          tableId: "code-architecture-functional-decomposition",
+          primary: { rowNumber: 1, columnLabel: "CSU", value: "Route Tracker" },
+        }],
+      },
+      functionalState: {
+        rows: [{ rowId: "CBA-1", row: { csu: "Route Tracker" } }],
+      },
+    });
+
+    expect(options[0]).toMatchObject({ value: "selected-functional-row", recommended: true });
+    expect(options[0].prompt).toContain("row 1");
+  });
+
+  it("turns a custom target into the governed one-row-at-a-time review queue", () => {
+    expect(buildContextualVibeReviewQueuePrompt("Guide Phrase Applicability", "hazard"))
+      .toBe("Vibe review hazard-analysis rows where Guide Phrase Applicable is Needs Review.");
+    expect(buildContextualVibeReviewQueuePrompt("trajectory decoding during startup", "hazard"))
+      .toContain("user-specified scope: trajectory decoding during startup");
+    expect(buildContextualVibeReviewQueuePrompt("rows 4 through 8", "functional"))
+      .toContain("one row at a time");
+  });
+});
 
 describe("subsystem generation prompting", () => {
   it("personalizes the natural voice greeting when the user has supplied a name", () => {
@@ -738,6 +853,16 @@ describe("subsystem generation prompting", () => {
     expect(inferFunctionalAbstractionLevel("3")).toBe("detailed-functional");
     expect(inferFunctionalAbstractionLevel("multi-level please")).toBe("multi-level");
     expect(inferFunctionalAbstractionLevel("create a lidar system")).toBe("");
+    expect(resolvePendingFunctionalAbstractionLevel("can you decide this for me?")).toBe("multi-level");
+    expect(resolvePendingFunctionalAbstractionLevel("use your judgment")).toBe("multi-level");
+    expect(resolvePendingFunctionalAbstractionLevel("I need more information first")).toBe("");
+    const reviewDraft = [
+      "Subsystem | Function From | Function From Details | Control Action | Control Action Details | Function To | Function To Details",
+      "Important review decisions",
+      "Confirm coupling ownership and recovery authority.",
+    ].join("\n");
+    expect(isFunctionalDraftDecisionFollowUp("can you decide this for me?", reviewDraft)).toBe(true);
+    expect(isFunctionalDraftDecisionFollowUp("can you decide this for me?", "Which abstraction level?")).toBe(false);
   });
 
   it("uses the project currently visible in Collaborator instead of a selection from another area", () => {
@@ -848,6 +973,10 @@ describe("subsystem generation prompting", () => {
     expect(shouldHandlePendingRowsApply(revisionPrompt)).toBe(false);
     expect(isFunctionalDecompositionRevisionFeedbackRequest(
       "Function (To) should use the receiving leaf function rather than a subsystem, and the missing feedback interface must be added.",
+      focus,
+    )).toBe(true);
+    expect(isFunctionalDecompositionRevisionFeedbackRequest(
+      "Revise the current functional decomposition using this quality review.",
       focus,
     )).toBe(true);
     expect(isFunctionalDecompositionRevisionFeedbackRequest(

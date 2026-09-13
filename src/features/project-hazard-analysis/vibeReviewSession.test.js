@@ -1,4 +1,4 @@
-import { createVibeReviewSession, currentVibeReviewRowId, loadVibeReviewSession, parseVibeReviewAction, saveVibeReviewSession, summarizeVibeReviewSession, transitionVibeReviewSession, VIBE_REVIEW_STATES } from "./vibeReviewSession";
+import { appendVibeReviewAudit, createVibeReviewSession, currentVibeReviewRowId, loadVibeReviewAudit, loadVibeReviewSession, parseVibeReviewAction, saveVibeReviewSession, summarizeVibeReviewSession, transitionVibeReviewSession, VIBE_REVIEW_STATES } from "./vibeReviewSession";
 
 test("deduplicates stable IDs and advances exactly one row per decision or skip", () => {
   let session = createVibeReviewSession({ projectId: "p", threadId: "t", queue: ["b", "a", "b"] });
@@ -32,4 +32,48 @@ test("persists compact sessions across remount without full row payloads", () =>
   saveVibeReviewSession(session, storage);
   expect(loadVibeReviewSession("p", "t", storage).queue).toEqual(["row-1"]);
   expect(JSON.stringify(loadVibeReviewSession("p", "t", storage))).not.toContain("Function (From)");
+});
+
+test("preserves Code-Based Architecture run identity across a review session", () => {
+  const storage = { data: {}, getItem(k) { return this.data[k] || null; }, setItem(k, v) { this.data[k] = v; } };
+  const session = createVibeReviewSession({
+    projectId: "cba-project",
+    threadId: "thread",
+    queue: ["RAW-CBA-1"],
+    workspaceType: "code-based-architecture",
+    sourceRunId: "hazard-run-7",
+    repoId: "repo-3",
+  });
+
+  saveVibeReviewSession(session, storage);
+
+  expect(loadVibeReviewSession("cba-project", "thread", storage)).toMatchObject({
+    workspaceType: "code-based-architecture",
+    sourceRunId: "hazard-run-7",
+    repoId: "repo-3",
+  });
+});
+
+test("keeps an active review usable when browser storage quota is exhausted", () => {
+  const quotaLimitedStorage = {
+    getItem() { return null; },
+    setItem() { throw Object.assign(new Error("The quota has been exceeded."), { name: "QuotaExceededError" }); },
+  };
+  const session = createVibeReviewSession({
+    projectId: "quota-project",
+    threadId: "quota-thread",
+    queue: ["RAW-QUOTA-1"],
+    workspaceType: "code-based-architecture",
+  });
+
+  expect(() => saveVibeReviewSession(session, quotaLimitedStorage)).not.toThrow();
+  expect(loadVibeReviewSession("quota-project", "quota-thread", quotaLimitedStorage)).toMatchObject({
+    queue: ["RAW-QUOTA-1"],
+    workspaceType: "code-based-architecture",
+  });
+
+  expect(() => appendVibeReviewAudit({ projectId: "quota-project", sourceRowId: "RAW-QUOTA-1" }, quotaLimitedStorage)).not.toThrow();
+  expect(loadVibeReviewAudit("quota-project", quotaLimitedStorage)).toEqual([
+    expect.objectContaining({ sourceRowId: "RAW-QUOTA-1" }),
+  ]);
 });

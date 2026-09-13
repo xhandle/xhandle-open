@@ -41,10 +41,12 @@ export default function CodeArchitectureHazardSummaryTable({
   storageKey = "code-architecture-hazard-summary:latest",
   onOpenArchitectureTarget,
   onDeleteRow,
+  onCollaboratorSelectionChange,
   readOnly = false,
 }) {
   const rowRefs = useRef({});
   const [focusedRowIndex, setFocusedRowIndex] = useState(null);
+  const [selectedCellKey, setSelectedCellKey] = useState("");
 
   useEffect(() => {
     if (highlightedRowIndex === null || highlightedRowIndex === undefined || highlightedRowIndex === "") return;
@@ -299,6 +301,34 @@ export default function CodeArchitectureHazardSummaryTable({
             const reviewItem = reviewByRow?.get?.(rowIndex) || null;
             const rejected = reviewItem?.status === REVIEW_STATUSES.REJECTED;
             const highlighted = highlightedRowIndex === rowIndex;
+            const rowId = getCellByHeader(row, "Raw Analysis Row ID") || getCellByHeader(row, "Trace ID") || `cba-hazard-row-${rowIndex + 1}`;
+            const selectForCollaborator = (column = null) => {
+              const cellKey = column ? `${rowId}:${column.index}` : rowId;
+              setSelectedCellKey((current) => current === cellKey ? "" : cellKey);
+              onCollaboratorSelectionChange?.(selectedCellKey === cellKey ? null : {
+                kind: column ? "table-cell" : "table-row",
+                source: "code-architecture-hazard-analysis",
+                tableId: "code-architecture-hazard-analysis",
+                id: rowId,
+                title: `Code architecture hazard row ${rowIndex + 1}`,
+                primary: {
+                  rowId,
+                  rowIndex,
+                  rowNumber: rowIndex + 1,
+                  ...(column ? {
+                    columnIndex: column.index,
+                    columnLabel: column.label,
+                    value: row?.[column.index] ?? "",
+                  } : {}),
+                },
+                selectedRows: [{
+                  rowId,
+                  rowIndex,
+                  rowNumber: rowIndex + 1,
+                  values: Object.fromEntries(headers.map((header, index) => [header, row?.[index] ?? ""])),
+                }],
+              });
+            };
             return (
               <tr
                 key={rowIndex}
@@ -306,9 +336,12 @@ export default function CodeArchitectureHazardSummaryTable({
                   if (el) rowRefs.current[rowIndex] = el;
                   else delete rowRefs.current[rowIndex];
                 }}
-                className={`align-top transition-colors ${
+                onClick={() => selectForCollaborator()}
+                className={`cursor-pointer align-top transition-colors ${
                   highlighted
                     ? "bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset"
+                    : selectedCellKey === rowId || selectedCellKey.startsWith(`${rowId}:`)
+                      ? "bg-blue-50 ring-1 ring-inset ring-blue-300"
                     : rejected
                       ? "bg-rose-50/60"
                       : ""
@@ -340,7 +373,14 @@ export default function CodeArchitectureHazardSummaryTable({
                   const traceType = traceColumnType(header);
                   const value = String(row?.[colIndex] ?? "");
                   return (
-                  <td key={`${rowIndex}-${colIndex}`} className={`whitespace-pre-wrap break-words px-3 py-2 text-slate-700 ${rejected ? "text-rose-900 line-through decoration-rose-400" : ""}`}>
+                  <td
+                    key={`${rowIndex}-${colIndex}`}
+                    className={`whitespace-pre-wrap break-words px-3 py-2 text-slate-700 ${selectedCellKey === `${rowId}:${colIndex}` ? "bg-blue-100 ring-1 ring-inset ring-blue-400" : ""} ${rejected ? "text-rose-900 line-through decoration-rose-400" : ""}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      selectForCollaborator({ index: colIndex, label: header || `Column ${colIndex + 1}` });
+                    }}
+                  >
                     {traceType && value ? (
                       <button
                         type="button"

@@ -370,4 +370,59 @@ describe("buildWorkspaceLLMContext", () => {
     }));
     expect(context.diagnostics.selection.activeSelectionArtifactCount).toBe(1);
   });
+
+  it("prioritizes a selected code-architecture assurance cell in the visible CBA project", async () => {
+    const selectedRequirement = {
+      id: "artifact:cba-system-requirement-1",
+      type: "code_architecture_system_requirement",
+      projectId: "cba-p1",
+      title: "Controlled stop requirement",
+      sourceStore: "indexedDB:xhandle-code-architecture-assurance/artifactRows",
+      sourceId: "xhandle:cba-system-requirements:cba-p1:repo-1:SYS-1",
+      structuredData: { id: "SYS-1", requirementText: "The system shall enter a controlled stop." },
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      version: 1,
+    };
+    repository.listProjects.mockResolvedValue([{
+      id: "cba-p1",
+      projectId: "cba-p1",
+      name: "Controller Architecture",
+      projectType: "code-based-architecture",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      version: 1,
+    }]);
+    repository.listArtifacts.mockResolvedValue([selectedRequirement]);
+    search.searchArtifacts.mockResolvedValue([]);
+
+    const context = await buildWorkspaceLLMContext({
+      projectId: "cba-p1",
+      query: "Tighten this requirement",
+      activeView: {
+        section: "code-architecture",
+        viewedProjectId: "cba-p1",
+        viewedProjectType: "code-based-architecture",
+        activeCodeArchitectureWorkspaceTab: "system-requirements",
+        activeSelections: [{
+          kind: "table-cell",
+          source: "code-architecture-assurance",
+          tableId: "code-architecture-system-requirements",
+          id: "SYS-1",
+          primary: { rowId: "SYS-1", rowIndex: 0, columnLabel: "Requirement Text" },
+        }],
+      },
+      tokenBudget: 6000,
+    });
+
+    expect(context.scope.activeView).toEqual(expect.objectContaining({
+      section: "code-architecture",
+      activeCodeArchitectureWorkspaceTab: "system-requirements",
+    }));
+    expect(context.relevantArtifacts[0]).toEqual(expect.objectContaining({
+      id: "artifact:cba-system-requirement-1",
+      type: "code_architecture_system_requirement",
+    }));
+    expect(context.diagnostics.selection.activeSelectionArtifactCount).toBe(1);
+  });
 });

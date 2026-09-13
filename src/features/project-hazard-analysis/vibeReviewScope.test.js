@@ -85,3 +85,22 @@ test("returns actual nearby values for an unmatched explicit scope", () => {
   expect(result.status).toBe("zero");
   expect(result.nearbyValues.subsystem).toContain("Braking");
 });
+
+test("supports a free-form contextual scope using row content and exact filters", () => {
+  const result = resolveHazardVibeReviewScope(
+    "Vibe review hazard-analysis rows matching this user-specified scope: brake request in wet road scenarios where Safety Significance is Needs Review",
+    summary,
+  );
+  expect(result.status).toBe("matched");
+  expect(result.queue).toEqual(["row-2"]);
+  expect(result.scopeLabel).toContain("brake request");
+});
+
+test("supports an explicit contextual row range", () => {
+  const result = resolveHazardVibeReviewScope(
+    "Vibe review hazard-analysis rows matching this user-specified scope: rows 2 through 3",
+    summary,
+  );
+  expect(result.status).toBe("matched");
+  expect(result.queue).toEqual(["row-1", "row-2"]);
+});

@@ -61,7 +61,7 @@ import {
   validateWorkspaceActionPlan,
 } from "../features/collaborator-workspace";
 import { describeActiveSelection } from "../features/collaborator-selection/activeSelectionContext";
-import { describeScopeResolution, isHazardVibeReviewIntent, resolveHazardVibeReviewScope } from "../features/project-hazard-analysis/vibeReviewScope";
+import { describeScopeResolution, indexVibeReviewHeaders, isHazardVibeReviewIntent, resolveHazardVibeReviewScope } from "../features/project-hazard-analysis/vibeReviewScope";
 import { isBatchNeedsReviewResolverIntent } from "../features/project-hazard-analysis/needsReviewCollaboratorIntent";
 import { buildHumanVibeReviewDecision, compactVibeReviewRow, requestVibeReviewProposal } from "../features/project-hazard-analysis/vibeReviewProposal";
 import {
@@ -76,6 +76,13 @@ import {
   resolveFunctionalVibeReviewScope,
 } from "../features/functional-vibe-review/functionalVibeReview";
 import { requestFunctionalVibeReviewProposal } from "../features/functional-vibe-review/functionalVibeReviewProposal";
+import {
+  buildFunctionalQualityReviewMessages,
+  formatFunctionalQualityReview,
+  isFunctionalQualityReviewIntent,
+  isFunctionalQualityReviewRevisionIntent,
+  normalizeFunctionalQualityReview,
+} from "../features/functional-quality-review/functionalQualityReview";
 import {
   appendFunctionalVibeReviewAudit,
   createFunctionalVibeReviewSession,
@@ -464,6 +471,12 @@ function readableWorkspaceArtifactType(value = "") {
   const labels = {
     functional_decomposition_row: "Functional Decomposition",
     hazard_analysis_row: "Hazard Analysis",
+    code_architecture_hazard_row: "Code Architecture Hazard Analysis",
+    code_architecture_edge: "Code Architecture",
+    code_architecture_software_requirement: "Code Architecture Software Requirements",
+    code_architecture_system_requirement: "Code Architecture System Requirements",
+    code_architecture_subsystem_requirement: "Code Architecture Subsystem Requirements",
+    code_architecture_design_element: "Code Architecture Design",
     hazard_summary_row: "Hazard Summary",
     requirement: "Requirements",
     system_requirement: "System Requirements",
@@ -554,13 +567,24 @@ function CollaboratorMarkdownLink({ href = "", children, ...props }) {
     if (isFunctionalReviewRow) {
       const [encodedRowId, query = ""] = String(href).slice("xhandle://functional-row/".length).split("?");
       const provider = await waitForActionProvider("project-functional-diagram", 1800);
-      provider?.openFunctionalVibeReviewRow?.({ rowId: decodeURIComponent(encodedRowId), projectId: new URLSearchParams(query).get("projectId") || "" });
+      const metadata = new URLSearchParams(query);
+      provider?.openFunctionalVibeReviewRow?.({
+        rowId: decodeURIComponent(encodedRowId),
+        projectId: metadata.get("projectId") || "",
+        workspaceType: metadata.get("workspaceType") || "functional-project",
+        repoId: metadata.get("repoId") || "",
+      });
       return;
     }
     if (isHazardReviewRow) {
       const [encodedRowId, query = ""] = String(href).slice("xhandle://hazard-row/".length).split("?");
       const provider = await waitForActionProvider("project-functional-diagram", 1800);
-      provider?.openHazardVibeReviewRow?.({ sourceRowId: decodeURIComponent(encodedRowId), projectId: new URLSearchParams(query).get("projectId") || "" });
+      const metadata = new URLSearchParams(query);
+      provider?.openHazardVibeReviewRow?.({
+        sourceRowId: decodeURIComponent(encodedRowId),
+        projectId: metadata.get("projectId") || "",
+        workspaceType: metadata.get("workspaceType") || "functional-project",
+      });
       return;
     }
     const [encodedArtifactId, ...metadataParts] = String(href)
@@ -1035,7 +1059,7 @@ export function renderCopilotContext(ctx) {
       ctx.scope?.projectId ? `Active project id: ${ctx.scope.projectId}` : `No active project boundary is required; reason workspace-wide unless the user names a project or artifact.`,
       `Active view: ${JSON.stringify(ctx.scope?.activeView || {})}`,
       ctx.scope?.activeView?.viewedProjectType
-        ? `Visible-workspace rule: the user is currently viewing ${ctx.scope.activeView.viewedProjectType}${ctx.scope.activeView.viewedProjectName ? ` “${ctx.scope.activeView.viewedProjectName}”` : ""}. For an unqualified request, answer from this visible project. A project merely selected in another workspace area is secondary context and must not replace the visible project unless the user names it.`
+        ? `Visible-workspace rule: the user is currently viewing ${ctx.scope.activeView.viewedProjectType}${ctx.scope.activeView.viewedProjectName ? ` “${ctx.scope.activeView.viewedProjectName}”` : ""}. Use this visible project to resolve references such as "this project", "the current project", or requests about the content on screen. Do not constrain a general brainstorming, recommendation, comparison, or product-usage question to this project unless the user refers to it. A project merely selected in another workspace area is secondary context and must not replace the visible project unless the user names it.`
         : null,
       ctx.organizationCalibration?.context
         ? `Organization calibration profile (${ctx.organizationCalibration.profileIdentity || "configured profile"}):\n${ctx.organizationCalibration.context}`
@@ -1373,6 +1397,23 @@ export function inferFunctionalAbstractionLevel(promptText = "") {
   if (/\b(subsystem[- ]level|internal capabilities|level\s*2)\b/.test(query) || /^\s*2\s*$/.test(query)) return "subsystem";
   if (/\b(system[- ]level|top[- ]level|major subsystems|context[- ]level|level\s*1)\b/.test(query) || /^\s*1\s*$/.test(query)) return "system";
   return "";
+}
+
+export function resolvePendingFunctionalAbstractionLevel(promptText = "") {
+  const explicitLevel = inferFunctionalAbstractionLevel(promptText);
+  if (explicitLevel) return explicitLevel;
+  const query = String(promptText || "").toLowerCase().trim();
+  const delegatesChoice = /\b(?:you\s+decide|can\s+you\s+decide|choose\s+for\s+me|pick\s+for\s+me|use\s+your\s+(?:judgment|judgement)|use\s+the\s+recommended|whatever\s+you\s+recommend|best\s+(?:choice|option))\b/.test(query);
+  return delegatesChoice ? "multi-level" : "";
+}
+
+export function isFunctionalDraftDecisionFollowUp(promptText = "", previousAssistantText = "") {
+  const delegatesDecision = Boolean(resolvePendingFunctionalAbstractionLevel(promptText))
+    && !inferFunctionalAbstractionLevel(promptText);
+  const previous = String(previousAssistantText || "");
+  const hasDraft = isFunctionalDecompositionTableResponse(previous);
+  const hasOpenDecisions = /\b(?:important review decisions?|review decisions?|before treating this as|requires? confirmation|confirm:)\b/i.test(previous);
+  return delegatesDecision && hasDraft && hasOpenDecisions;
 }
 
 export function needsFunctionalAbstractionClarification(promptText = "") {
@@ -2428,42 +2469,67 @@ function EditableMarkdownTable({ node, children, source, onSourceChange, onCopy 
 function CollaboratorChoicePrompt({ message, disabled = false, onContinue }) {
   const prompt = message?.choicePrompt;
   const [selected, setSelected] = useState(prompt?.selectedValue || prompt?.defaultValue || "");
-  if (!prompt || !["functional-abstraction", "hazard-vibe-scope", "functional-vibe-scope"].includes(prompt.type)) return null;
+  const [customScope, setCustomScope] = useState(prompt?.customValue || "");
+  if (!prompt || !["functional-abstraction", "hazard-vibe-scope", "functional-vibe-scope", "contextual-vibe-review-target"].includes(prompt.type)) return null;
   const completed = Boolean(prompt.completed);
   const effectiveSelected = completed ? (prompt.selectedValue || selected) : selected;
+  const selectedOption = (prompt.options || []).find((rawOption) => (
+    String(typeof rawOption === "string" ? rawOption : rawOption?.value) === String(effectiveSelected)
+  ));
+  const customScopeRequired = Boolean(selectedOption && typeof selectedOption !== "string" && selectedOption.custom);
+  const legend = prompt.type === "hazard-vibe-scope"
+    ? "Hazard review scope"
+    : prompt.type === "functional-vibe-scope"
+      ? "Functional decomposition review scope"
+      : prompt.type === "contextual-vibe-review-target"
+        ? "Vibe review target"
+        : "Functional decomposition abstraction level";
   return (
     <fieldset className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50/60 p-3" disabled={disabled || completed}>
-      <legend className="sr-only">{prompt.type === "hazard-vibe-scope" ? "Hazard review scope" : prompt.type === "functional-vibe-scope" ? "Functional decomposition review scope" : "Functional decomposition abstraction level"}</legend>
+      <legend className="sr-only">{legend}</legend>
       <div className="space-y-2">
         {(prompt.options || []).map((rawOption) => {
           const option = typeof rawOption === "string" ? { value: rawOption, label: rawOption, description: "Review rows matching this value." } : rawOption;
           return (
-          <label
-            key={option.value}
-            className={`flex cursor-pointer items-start gap-2 rounded-md border bg-white px-3 py-2 transition ${effectiveSelected === option.value ? "border-indigo-500 ring-2 ring-indigo-100" : "border-neutral-200 hover:border-indigo-300"} ${completed ? "cursor-default opacity-75" : ""}`}
-          >
-            <input
-              type="radio"
-              name={`collaborator-choice-${message.messageIndex}`}
-              value={option.value}
-              checked={effectiveSelected === option.value}
-              onChange={() => setSelected(option.value)}
-              className="mt-1 h-4 w-4 accent-indigo-600"
-            />
-            <span className="min-w-0">
-              <span className="block text-sm font-semibold text-neutral-900">
-                {option.label}{option.recommended ? " (Recommended)" : ""}
-              </span>
-              <span className="block text-xs text-neutral-600">{option.description}</span>
-            </span>
-          </label>
+            <div key={option.value}>
+              <label
+                className={`flex cursor-pointer items-start gap-2 rounded-md border bg-white px-3 py-2 transition ${effectiveSelected === option.value ? "border-indigo-500 ring-2 ring-indigo-100" : "border-neutral-200 hover:border-indigo-300"} ${completed ? "cursor-default opacity-75" : ""}`}
+              >
+                <input
+                  type="radio"
+                  name={`collaborator-choice-${message.messageIndex}`}
+                  value={option.value}
+                  checked={effectiveSelected === option.value}
+                  onChange={() => setSelected(option.value)}
+                  className="mt-1 h-4 w-4 accent-indigo-600"
+                />
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold text-neutral-900">
+                    {option.label}{option.recommended ? " (Recommended)" : ""}
+                  </span>
+                  <span className="block text-xs text-neutral-600">{option.description}</span>
+                </span>
+              </label>
+              {option.custom && effectiveSelected === option.value && (
+                <textarea
+                  value={completed ? (prompt.customValue || customScope) : customScope}
+                  onChange={(event) => setCustomScope(event.target.value)}
+                  disabled={disabled || completed}
+                  rows={3}
+                  autoFocus={!completed}
+                  placeholder={option.placeholder || "Describe the exact review scope."}
+                  aria-label="Custom vibe review scope"
+                  className="mt-2 w-full resize-y rounded-md border border-indigo-200 bg-white px-3 py-2 text-sm text-neutral-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:opacity-75"
+                />
+              )}
+            </div>
           );
         })}
       </div>
       <button
         type="button"
-        disabled={disabled || completed || !selected}
-        onClick={() => onContinue?.(selected, message.messageIndex)}
+        disabled={disabled || completed || !selected || (customScopeRequired && !customScope.trim())}
+        onClick={() => onContinue?.(selected, message.messageIndex, customScope.trim())}
         className="mt-3 inline-flex items-center justify-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {completed ? "Selection applied" : "Continue"}
@@ -2704,6 +2770,10 @@ Then provide the complete answer.
 </collaborator_answer>
 For a trivial conversational reply, the envelope may be omitted.
 Answer normal questions directly and naturally, including everyday questions that do not require project context.
+Match the user's current decision stage. For brainstorming, recommendations, or requests for suggestions, provide useful options and a clear recommendation before asking whether to create or modify anything. Do not convert an advisory question into a workspace action or a premature binary choice.
+Treat wording such as "I want to create...", "I'm considering...", or "I'm thinking about..." as goal context when the user is asking for ideas; it is not permission to create or modify workspace data.
+Resolve short follow-ups such as "can you decide this for me?", "what do you recommend?", or "use your judgment" against the immediately preceding assistant response and its unresolved choices. Make the requested recommendation directly. Do not restart an earlier wizard, repeat a choice that was already completed, or ask an unrelated setup question.
+When asked to create, draft, or generate a functional decomposition for review, produce the reviewable draft before asking where it should be saved. A draft does not require a destination project. Ask about applying or saving only after the user has reviewed the result, unless the user explicitly requested immediate creation in a named project.
 Use the available xHandle workspace context when the user asks about their project, requirements, architecture, safety analysis, files, or traceability.
 When the current user message includes attached image context, inspect it and use visible diagram/text/layout evidence from the image in your answer.
 If current workspace data is missing for a project-specific request, briefly say what is missing and offer a practical next step.
@@ -3154,7 +3224,16 @@ function formatCBAEdges(rows, max = 25) {
 function cbaGuardNote(ctx, scope) {
   const askedForCBA = (scope?.areas || []).includes("cba");
   const canonicalCbaCount = (ctx.relevantArtifacts || []).filter(
-    artifact => ["code_architecture_edge", "repository", "source_file"].includes(artifact?.type)
+    artifact => [
+      "code_architecture_edge",
+      "code_architecture_hazard_row",
+      "code_architecture_software_requirement",
+      "code_architecture_system_requirement",
+      "code_architecture_subsystem_requirement",
+      "code_architecture_design_element",
+      "repository",
+      "source_file",
+    ].includes(artifact?.type)
   ).length;
   if (askedForCBA && canonicalCbaCount === 0 && (!ctx.codeArchitecture || ctx.codeArchitecture.length === 0)) {
     return "\nImportant: User asked about Code-Based Architecture, but no CBA rows were found in scope. If you cannot locate CBA data, say so explicitly instead of speculating.";
@@ -3192,7 +3271,21 @@ function makeFileGrounding(fileRec, maxBytes = 3500) {
 const SCOPE_ARTIFACT_TYPES = {
   requirements: new Set(["requirement", "sysml_requirement"]),
   risk: new Set(["risk", "hazard_analysis_row", "safety_finding", "safety_case", "safety_case_node"]),
-  cba: new Set(["code_architecture_edge", "repository", "source_file"]),
+  cba: new Set([
+    "code_architecture_edge",
+    "code_architecture_hazard_row",
+    "code_architecture_software_requirement",
+    "code_architecture_system_requirement",
+    "code_architecture_subsystem_requirement",
+    "code_architecture_design_element",
+    "safety_finding",
+    "patch_proposal",
+    "review_decision",
+    "verification_run",
+    "implementation_evidence",
+    "repository",
+    "source_file",
+  ]),
   functional: new Set(["functional_decomposition_row", "sysml_element"]),
   review: new Set(["review_item", "patch_proposal"]),
 };
@@ -3268,6 +3361,7 @@ function buildScopedContext(base, scope) {
 
 function isFunctionalDecompositionAuditRequest(text = "") {
   const q = String(text || "").toLowerCase();
+  if (isFunctionalQualityReviewIntent(q)) return false;
   const asksForAudit = /\b(audit|review|assess|evaluate|inspect|check|gap|missing|complete|completeness|improve)\b/.test(q);
   const functionalTarget = /functional\s+(decomposition|diagram|architecture|table|rows?)|function\s+(table|rows?)|decomposition\s+(table|rows?)|\bsubsystem\s+functions?\b|\bsubsystem\s+interfaces?\b|\binterfaces?\s+between\b/.test(q);
   const subsystemAuditTarget = /\bsubsystems?\b/.test(q);
@@ -3286,6 +3380,7 @@ export function isFunctionalDecompositionRevisionFeedbackRequest(text = "", focu
   const directiveFeedback = /\b(should|must|needs? to|rather than|instead of)\b/.test(q) &&
     /\b(incorrect|wrong|invalid|missing|duplicate|generic|disconnected|inconsistent|container|leaf|receiver|endpoint|interface)\b/.test(q);
   const feedbackFraming = /\b(based on|using|incorporate|apply|address)\s+(this|that|the|these|those|following|above)\s+(feedback|review|finding|findings|issue|issues|recommendation|recommendations)\b/.test(q);
+  const priorQualityReviewReference = isFunctionalQualityReviewRevisionIntent(q);
   const diagnosticFeedback = (
     /\b(defect|issue|problem|gap|regression|inconsistent|incorrect|wrong|invalid|duplicate|misallocated|container instead|systemic)\b/.test(q) ||
     /\b(all|every)\b[^.\n]*\bfunction\s*\(?to\)?\b[^.\n]*\b(subsystem|container)\b/.test(q)
@@ -3295,7 +3390,7 @@ export function isFunctionalDecompositionRevisionFeedbackRequest(text = "", focu
   const readOnlyOnly = /^\s*(can|could|would|will|do|does|is|are|why|how|what)\b/.test(q) &&
     !revisionIntent && !directiveFeedback && !feedbackFraming;
   if (readOnlyOnly || auditOnly) return false;
-  return (explicitTarget || focusIsFunctionalTable) && structuralFeedback && (revisionIntent || directiveFeedback || feedbackFraming || diagnosticFeedback);
+  return (explicitTarget || focusIsFunctionalTable) && (structuralFeedback || priorQualityReviewReference) && (revisionIntent || directiveFeedback || feedbackFraming || diagnosticFeedback || priorQualityReviewReference);
 }
 
 function isFunctionalSubsystemAllocationReviewRequest(text = "") {
@@ -3951,6 +4046,182 @@ export async function generateFunctionalDecompositionWithCollaborator({
   };
 }
 
+export async function requestFunctionalQualityReview({
+  projectId = "",
+  projectName = "Active project",
+  rows = [],
+  organizationContext = "",
+  signal,
+} = {}) {
+  const messages = buildFunctionalQualityReviewMessages({ projectName, rows, organizationContext });
+  let raw = await callChat(messages, signal, { maxTokens: 6000 });
+  let parsed;
+  try {
+    parsed = extractWorkspaceActionJson(raw);
+  } catch {
+    parsed = {};
+  }
+  let normalized = normalizeFunctionalQualityReview(parsed, {
+    projectId,
+    projectName,
+    rowCount: rows.length,
+  });
+  if (!normalized.valid) {
+    raw = await callChat([
+      ...messages,
+      { role: "assistant", content: raw },
+      {
+        role: "user",
+        content: `Repair the quality review and return one complete JSON object only. Preserve evidence-backed findings and fix every validation error:\n- ${normalized.errors.join("\n- ")}`,
+      },
+    ], signal, { maxTokens: 6000 });
+    try {
+      parsed = extractWorkspaceActionJson(raw);
+    } catch {
+      parsed = {};
+    }
+    normalized = normalizeFunctionalQualityReview(parsed, {
+      projectId,
+      projectName,
+      rowCount: rows.length,
+    });
+  }
+  if (!normalized.valid) {
+    throw new Error(`The selected model did not return a complete functional quality review: ${normalized.errors.join(" ")}`);
+  }
+  return normalized.review;
+}
+
+export function isContextualVibeReviewIntent(value = "") {
+  const text = String(value || "").toLowerCase().replace(/[’']/g, "'").replace(/[^a-z0-9']+/g, " ").trim();
+  if (!/\bvi(?:b|v)e review\b/.test(text)) return false;
+  // Explicit artifact/scope language belongs to the existing deterministic
+  // functional or hazard intent routes. This route handles deictic requests
+  // whose meaning must come from the visible/selected workspace context.
+  return !/\b(?:functional|decomposition|interface|hazard|safety|classification|significance|needs review|control action|operational scenario|subsystem|csci|csc|csu)\b/.test(text);
+}
+
+function contextualSelection(focus = {}, predicate = () => false) {
+  return (Array.isArray(focus?.activeSelections) ? focus.activeSelections : []).find(predicate) || null;
+}
+
+export function buildContextualVibeReviewOptions({ focus = {}, hazardState = null, functionalState = null } = {}) {
+  const options = [];
+  const viewedProjectType = String(focus?.viewedProjectType || "");
+  const activeTab = String(focus?.activeTab || "").toLowerCase();
+  const codeWorkspaceTab = String(focus?.activeCodeArchitectureWorkspaceTab || "").toLowerCase();
+  const isCodeArchitecture = viewedProjectType === "code-based-architecture";
+  const isFunctionalProject = viewedProjectType === "functional-project";
+  const isHazardView = isCodeArchitecture
+    ? codeWorkspaceTab === "safety"
+    : isFunctionalProject && /hazard analysis|safety issues/.test(activeTab);
+  const isFunctionalView = (isFunctionalProject && /functional diagram/.test(activeTab))
+    || (isCodeArchitecture && codeWorkspaceTab !== "safety");
+
+  const summary = hazardState?.summary;
+  const hasHazards = Array.isArray(summary?.[0]) && summary.length > 1;
+  const functionalRows = Array.isArray(functionalState?.rows) ? functionalState.rows : [];
+  const hasFunctionalRows = functionalRows.length > 0;
+
+  if (hasHazards && (isHazardView || !isFunctionalView)) {
+    const indexes = indexVibeReviewHeaders(summary[0]);
+    const selectedHazard = contextualSelection(focus, (selection) => (
+      String(selection?.tableId || "").includes("hazard-analysis")
+      || String(selection?.source || "").includes("hazard-analysis")
+    ));
+    const selectedRowId = String(selectedHazard?.primary?.rowId || selectedHazard?.id || "").trim();
+    const selectedExists = indexes.rawRowId >= 0 && summary.slice(1).some((row) => (
+      String(row?.[indexes.rawRowId] || "").trim() === selectedRowId
+    ));
+    if (selectedExists) {
+      options.push({
+        value: "selected-hazard-row",
+        label: "Selected hazard row",
+        description: `Review only ${selectedRowId}, which is selected in the visible hazard table.`,
+        prompt: `Vibe review hazard-analysis rows where Raw Analysis Row ID is ${selectedRowId}.`,
+        recommended: true,
+      });
+    }
+    const needsReviewCount = indexes.safetySignificant < 0 ? 0 : summary.slice(1).filter((row) => (
+      String(row?.[indexes.safetySignificant] || "").trim().toLowerCase() === "needs review"
+    )).length;
+    if (needsReviewCount) {
+      options.push({
+        value: "hazard-needs-review",
+        label: "Needs Review rows",
+        description: `Review the ${needsReviewCount} unresolved safety-significance row${needsReviewCount === 1 ? "" : "s"} one at a time.`,
+        prompt: "Vibe review hazard-analysis rows where Safety Significance is marked Needs Review.",
+        recommended: !selectedExists,
+      });
+    }
+    options.push({
+      value: "all-hazard-rows",
+      label: "All hazard rows",
+      description: `Review all ${summary.length - 1} rows in the visible project's hazard-analysis Summary.`,
+      prompt: "Vibe review all hazard-analysis rows.",
+    });
+    options.push({
+      value: "custom-hazard-scope",
+      label: "Specify another scope",
+      description: "Describe any row, function, subsystem, control action, guide phrase, scenario, mode, classification, or combination to review one at a time.",
+      placeholder: "For example: Guide Phrase Applicability, or trajectory decoding during startup mode",
+      reviewType: "hazard",
+      custom: true,
+    });
+  }
+
+  if (hasFunctionalRows && (isFunctionalView || !isHazardView)) {
+    const selectedFunctional = contextualSelection(focus, (selection) => (
+      String(selection?.tableId || "") === "functional-decomposition"
+      || String(selection?.tableId || "") === "code-architecture-functional-decomposition"
+      || String(selection?.source || "") === "functional-diagram"
+    ));
+    const selectedRowNumber = Number(selectedFunctional?.primary?.rowNumber || selectedFunctional?.selectedRows?.[0]?.rowNumber || 0);
+    if (Number.isInteger(selectedRowNumber) && selectedRowNumber > 0 && selectedRowNumber <= functionalRows.length) {
+      options.push({
+        value: "selected-functional-row",
+        label: "Selected interface",
+        description: `Review functional-decomposition row ${selectedRowNumber}, which is selected in the current workspace.`,
+        prompt: `Vibe review functional-decomposition row ${selectedRowNumber}.`,
+        recommended: true,
+      });
+    }
+    options.push({
+      value: "all-functional-rows",
+      label: "Functional decomposition",
+      description: `Review all ${functionalRows.length} interfaces one at a time for engineering quality and hazard-analysis readiness.`,
+      prompt: "Vibe review the current functional decomposition one row at a time.",
+      recommended: !options.some((option) => option.recommended),
+    });
+    options.push({
+      value: "custom-functional-scope",
+      label: "Specify another scope",
+      description: "Describe any row, function, subsystem, interface, control action, or combination to review one at a time.",
+      placeholder: "For example: interfaces from Motion Planning, or rows 4 through 8",
+      reviewType: "functional",
+      custom: true,
+    });
+  }
+
+  return options.slice(0, 4);
+}
+
+export function buildContextualVibeReviewQueuePrompt(scope = "", reviewType = "hazard") {
+  const requestedScope = String(scope || "").replace(/\s+/g, " ").trim();
+  if (!requestedScope) return "";
+  if (reviewType === "functional") {
+    return `Vibe review the current functional decomposition one row at a time. Limit the review to this user-specified scope: ${requestedScope}`;
+  }
+  const normalized = requestedScope.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  if (/^(?:guide phrase applicable|guide phrase applicability|applicability)$/.test(normalized)) {
+    return "Vibe review hazard-analysis rows where Guide Phrase Applicable is Needs Review.";
+  }
+  if (/^(?:safety significant|safety significance|safety classification)$/.test(normalized)) {
+    return "Vibe review hazard-analysis rows where Safety Significance is marked Needs Review.";
+  }
+  return `Vibe review hazard-analysis rows matching this user-specified scope: ${requestedScope}`;
+}
+
 /* ------------------------------ Main Component ---------------------------- */
 
 export default function XHandleCopilotView({
@@ -4329,6 +4600,8 @@ useEffect(() => {
     const counts = summarizeVibeReviewSession(session);
     return {
       sessionId: session.id, projectId: session.projectId, sourceRowId: rowId, rowIndex,
+      workspaceType: session.workspaceType || "functional-project",
+      sourceRunId: session.sourceRunId || "",
       progress: `Item ${session.cursor + 1} of ${session.queue.length} · ${counts.reviewed} decided · ${counts.skipped} skipped · ${counts.remaining} remaining`,
       from: fields["Function (From)"], controlAction: fields["Control Action"], to: fields["Function (To)"],
       subsystem: fields["Subsystem Allocation"], guidePhrase: fields["Guide Phrase"],
@@ -4376,9 +4649,12 @@ useEffect(() => {
   };
 
   const formatVibeReviewSummary = (session, counts = summarizeVibeReviewSession(session)) => {
-    const changed = session.decisions.map((item) => `- [${item.label || item.sourceRowId}](xhandle://hazard-row/${encodeURIComponent(item.sourceRowId)}?projectId=${encodeURIComponent(session.projectId)}) — ${item.newSafetySignificant}`).join("\n");
+    const changed = session.decisions.map((item) => `- [${item.label || item.sourceRowId}](xhandle://hazard-row/${encodeURIComponent(item.sourceRowId)}?projectId=${encodeURIComponent(session.projectId)}&workspaceType=${encodeURIComponent(session.workspaceType || "functional-project")}) — ${item.newSafetySignificant}`).join("\n");
     const unresolved = [...session.skips, ...session.missingRows, ...session.failures].map((item) => `- ${item.sourceRowId}: ${item.reason || item.evidenceGap || "deferred"}`).join("\n");
-    return `Hazard vibe review ${session.state === VIBE_REVIEW_STATES.CANCELLED ? "stopped" : "complete"}. Scope: ${session.scopeLabel}; ${counts.total} total. Reviewed ${counts.reviewed}; accepted ${counts.accepted}; overridden to Yes ${counts.overriddenToYes}; overridden to No ${counts.overriddenToNo}; skipped ${counts.skipped}; failed ${counts.failed}; remaining ${counts.remaining}. Changed to Yes: ${counts.changedToYes}; changed to No: ${counts.changedToNo}.${changed ? `\n\nChanged rows:\n${changed}` : ""}${unresolved ? `\n\nSkipped or unresolved:\n${unresolved}` : ""}${session.decisions.length ? "\n\nRegenerate Safety Issues because governed hazard classifications changed." : ""}`;
+    const downstreamMessage = session.workspaceType === "code-based-architecture"
+      ? "\n\nReview any linked remediation and assurance artifacts because governed code-architecture hazard classifications changed."
+      : "\n\nRegenerate Safety Issues because governed hazard classifications changed.";
+    return `Hazard vibe review ${session.state === VIBE_REVIEW_STATES.CANCELLED ? "stopped" : "complete"}. Scope: ${session.scopeLabel}; ${counts.total} total. Reviewed ${counts.reviewed}; accepted ${counts.accepted}; overridden to Yes ${counts.overriddenToYes}; overridden to No ${counts.overriddenToNo}; skipped ${counts.skipped}; failed ${counts.failed}; remaining ${counts.remaining}. Changed to Yes: ${counts.changedToYes}; changed to No: ${counts.changedToNo}.${changed ? `\n\nChanged rows:\n${changed}` : ""}${unresolved ? `\n\nSkipped or unresolved:\n${unresolved}` : ""}${session.decisions.length ? downstreamMessage : ""}`;
   };
 
   const closeVibeReviewCard = (card, outcome) => {
@@ -4405,11 +4681,14 @@ useEffect(() => {
       if (!session || session.id !== card.sessionId) throw new Error("This review session is no longer active.");
       if (currentVibeReviewRowId(session) !== card.sourceRowId) throw new Error("That item is no longer current; use the controls on the latest review card.");
       const state = providerApi?.getHazardVibeReviewState?.();
-      if (String(state?.activeProjectId || "") !== String(session.projectId)) throw new Error("This review is paused. Return to its original project before applying a decision.");
+      if (
+        String(state?.activeProjectId || "") !== String(session.projectId) ||
+        String(state?.workspaceType || "functional-project") !== String(session.workspaceType || "functional-project")
+      ) throw new Error("This review is paused. Return to its original project and workspace before applying a decision.");
       if (action === "undo") {
         const last = session.decisions[session.decisions.length - 1];
         if (!last) throw new Error("There is no applied review decision to undo.");
-        await providerApi.undoHazardVibeReviewDecision({ projectId: session.projectId, sourceRowId: last.sourceRowId, previousGovernedFields: last.previousGovernedFields });
+        await providerApi.undoHazardVibeReviewDecision({ projectId: session.projectId, sourceRowId: last.sourceRowId, previousGovernedFields: last.previousGovernedFields, workspaceType: session.workspaceType, sourceRunId: session.sourceRunId });
         session = transitionVibeReviewSession(session, { type: "undo" }); saveVibeReviewSession(session);
         appendVibeReviewAudit({ sessionId: session.id, projectId: session.projectId, threadId: session.threadId,
           sourceRowId: last.sourceRowId, action: "undo", provider: session.ai.provider, model: session.ai.model,
@@ -4456,6 +4735,7 @@ useEffect(() => {
       if (!proposal?.governedDecision) throw new Error(`A definitive proposal is unavailable. Skip this row or provide the missing evidence: ${card.evidenceGap || "classification basis"}.`);
       session = transitionVibeReviewSession(session, { type: "applying" }); saveVibeReviewSession(session);
       const result = await providerApi.applyHazardVibeReviewDecision({ projectId: session.projectId, sourceRowId: card.sourceRowId,
+        workspaceType: session.workspaceType, sourceRunId: session.sourceRunId,
         reviewerDisposition: action === "yes" || action === "no",
         update: { ...proposal, ...proposal.governedDecision,
         "Classification Evidence": `${proposal.governedDecision["Classification Evidence"] || proposal["Classification Evidence"] || ""}${userFeedback ? ` User-supplied feedback: ${userFeedback}` : ""}`.trim() } });
@@ -4489,10 +4769,16 @@ useEffect(() => {
       controlDetails: "Control Action Details",
       toFunction: "Function (To)",
       toDetails: "Function (To) Details",
+      csci: "CSCI",
+      csc: "CSC",
+      csu: "CSU",
+      architectureRationale: "Architecture Rationale",
     };
     return {
       sessionId: session.id,
       projectId: session.projectId,
+      workspaceType: session.workspaceType || state.workspaceType || "functional-project",
+      repoId: session.repoId || state.repoId || "",
       rowId,
       rowIndex: entry.rowIndex,
       progress: `Item ${session.cursor + 1} of ${session.queue.length} · ${counts.reviewed} decided · ${counts.skipped} skipped · ${counts.remaining} remaining`,
@@ -4537,6 +4823,7 @@ useEffect(() => {
         rowNumber: entry.rowIndex + 1,
         projectName: state.projectName,
         organizationContext: state.organizationContext,
+        reviewFocus: working.scopeLabel,
         surroundingRows,
         provider: working.ai.provider,
         model: working.ai.model,
@@ -4565,7 +4852,7 @@ useEffect(() => {
     const counts = summarizeFunctionalVibeReviewSession(session);
     const changed = session.decisions.map((item) => item.decision === "Remove"
       ? `- ${item.label || item.rowId} — Removed`
-      : `- [${item.label || item.rowId}](xhandle://functional-row/${encodeURIComponent(item.rowId)}?projectId=${encodeURIComponent(session.projectId)}) — ${item.decision}`
+      : `- [${item.label || item.rowId}](xhandle://functional-row/${encodeURIComponent(item.rowId)}?projectId=${encodeURIComponent(session.projectId)}&workspaceType=${encodeURIComponent(session.workspaceType || "functional-project")}&repoId=${encodeURIComponent(session.repoId || "")}) — ${item.decision}`
     ).join("\n");
     const unresolved = [...session.skips, ...session.missingRows, ...session.failures]
       .map((item) => `- ${item.label || item.rowId}: ${item.reason || "deferred"}`).join("\n");
@@ -4597,11 +4884,22 @@ useEffect(() => {
       if (currentFunctionalVibeReviewRowId(session) !== card.rowId) throw new Error("That item is no longer current; use the controls on the latest review card.");
       const state = providerApi?.getFunctionalVibeReviewState?.();
       if (String(state?.activeProjectId || "") !== String(session.projectId)) throw new Error("This review is paused. Return to its original project before applying a decision.");
+      if (String(state?.workspaceType || "functional-project") !== String(session.workspaceType || "functional-project")) {
+        throw new Error("This review is paused. Return to its original workspace before applying a decision.");
+      }
+      if (session.repoId && String(state?.repoId || "") !== String(session.repoId)) {
+        throw new Error("This review is paused. Return to its original repository analysis before applying a decision.");
+      }
 
       if (action === "undo") {
         const last = session.decisions[session.decisions.length - 1];
         if (!last) throw new Error("There is no applied functional review decision to undo.");
-        const result = await providerApi.undoFunctionalVibeReviewDecision({ projectId: session.projectId, record: last });
+        const result = await providerApi.undoFunctionalVibeReviewDecision({
+          projectId: session.projectId,
+          record: last,
+          workspaceType: session.workspaceType,
+          repoId: session.repoId,
+        });
         session = transitionFunctionalVibeReviewSession(session, { type: "undo" });
         saveFunctionalVibeReviewSession(session);
         appendFunctionalVibeReviewAudit({ ...last, action: "undo", sessionId: session.id, projectId: session.projectId, threadId: session.threadId, timestamp: new Date().toISOString() });
@@ -4655,6 +4953,8 @@ useEffect(() => {
         proposedRow: proposal.proposedRow,
         rationale: userFeedback || proposal.rationale || proposal.explanation,
         reviewMeta: { provider: session.ai.provider, model: session.ai.model, effort: session.ai.effort, source: action === "accept" ? "accepted-ai-proposal" : "human-override" },
+        workspaceType: session.workspaceType,
+        repoId: session.repoId,
       });
       const record = {
         rowId: card.rowId,
@@ -4822,12 +5122,32 @@ useEffect(() => {
     await runCopilot(selectedLevel);
   }
 
-  async function handleCollaboratorChoice(value, messageIndex) {
+  async function handleCollaboratorChoice(value, messageIndex, customValue = "") {
     const currentThread = loadThreads().find((thread) => thread.id === activeId);
     const message = currentThread?.messages?.[messageIndex];
-    if (!["hazard-vibe-scope", "functional-vibe-scope"].includes(message?.choicePrompt?.type)) return handleFunctionalAbstractionChoice(value, messageIndex);
+    if (!["hazard-vibe-scope", "functional-vibe-scope", "contextual-vibe-review-target"].includes(message?.choicePrompt?.type)) return handleFunctionalAbstractionChoice(value, messageIndex);
     if (busy) return;
     const prompt = message.choicePrompt;
+    if (prompt.type === "contextual-vibe-review-target") {
+      const option = (prompt.options || []).find((candidate) => (
+        String(typeof candidate === "string" ? candidate : candidate?.value) === String(value)
+      ));
+      const customScope = String(customValue || "").trim();
+      if (!option || typeof option === "string" || (option.custom && !customScope) || (!option.custom && !option.prompt)) {
+        appendMessage(activeId, { role: "assistant", content: "That review target is no longer available in the current context." });
+        setThreads(loadThreads());
+        return;
+      }
+      const nextMessages = (currentThread.messages || []).map((item, index) => index === messageIndex
+        ? { ...item, choicePrompt: { ...item.choicePrompt, selectedValue: value, customValue: customScope, completed: true } } : item);
+      setMessages(activeId, nextMessages); setThreads(loadThreads());
+      if (option.custom) {
+        await runCopilot(buildContextualVibeReviewQueuePrompt(customScope, option.reviewType));
+      } else {
+        await runCopilot(option.prompt);
+      }
+      return;
+    }
     const nextMessages = (currentThread.messages || []).map((item, index) => index === messageIndex
       ? { ...item, choicePrompt: { ...item.choicePrompt, selectedValue: value, completed: true } } : item);
     setMessages(activeId, nextMessages); setThreads(loadThreads());
@@ -4836,6 +5156,9 @@ useEffect(() => {
       fromFunction: "Function From",
       toFunction: "Function To",
       controlAction: "Control Action",
+      csci: "CSCI",
+      csc: "CSC",
+      csu: "CSU",
     } : {
       safetySignificant: "Safety Significant",
       safetyClassification: "Safety Classification",
@@ -5011,14 +5334,45 @@ useEffect(() => {
         .map((message, messageIndex) => ({ message, messageIndex }))
         .reverse()
         .find(({ message }) => message?.workspaceActionPlan && !message.workspaceActionPlan.completed);
+      const pendingContextualReviewEntry = [...(threadAtActionStart?.messages || [])]
+        .map((message, messageIndex) => ({ message, messageIndex }))
+        .reverse()
+        .find(({ message }) => message?.choicePrompt?.type === "contextual-vibe-review-target" && !message.choicePrompt.completed);
+      if (pendingContextualReviewEntry && !isContextualVibeReviewIntent(userText)) {
+        const requestedReviewScope = String(userText || "").trim();
+        if (requestedReviewScope) {
+          const customReviewOption = (pendingContextualReviewEntry.message.choicePrompt.options || []).find((option) => (
+            typeof option !== "string" && option?.custom
+          ));
+          const nextMessages = (threadAtActionStart?.messages || []).map((message, messageIndex) => messageIndex === pendingContextualReviewEntry.messageIndex
+            ? {
+                ...message,
+                choicePrompt: {
+                  ...message.choicePrompt,
+                  selectedValue: customReviewOption?.value || "custom-contextual-review",
+                  customValue: requestedReviewScope,
+                  completed: true,
+                },
+              }
+            : message);
+          setMessages(activeId, nextMessages);
+          setThreads(loadThreads());
+          await runCopilot(buildContextualVibeReviewQueuePrompt(
+            requestedReviewScope,
+            customReviewOption?.reviewType || "hazard",
+          ), { promptAbortController });
+          return;
+        }
+      }
       const reviewAction = activeReview && [VIBE_REVIEW_STATES.AWAITING, VIBE_REVIEW_STATES.PROPOSING, VIBE_REVIEW_STATES.PAUSED].includes(activeReview.state)
         ? parseVibeReviewAction(userText) : null;
       const functionalReviewAction = activeFunctionalReview && [FUNCTIONAL_VIBE_REVIEW_STATES.AWAITING, FUNCTIONAL_VIBE_REVIEW_STATES.PROPOSING, FUNCTIONAL_VIBE_REVIEW_STATES.PAUSED].includes(activeFunctionalReview.state)
         ? parseFunctionalVibeReviewAction(userText) : null;
-      const vibeReviewIntent = isHazardVibeReviewIntent(userText);
-      const functionalVibeReviewIntent = isFunctionalVibeReviewIntent(userText);
+      const contextualVibeReviewIntent = isContextualVibeReviewIntent(userText);
+      const vibeReviewIntent = !contextualVibeReviewIntent && isHazardVibeReviewIntent(userText);
+      const functionalVibeReviewIntent = !contextualVibeReviewIntent && isFunctionalVibeReviewIntent(userText);
       const batchNeedsReviewIntent = isBatchNeedsReviewResolverIntent(userText);
-      const actionProvider = (reviewAction || functionalReviewAction || vibeReviewIntent || functionalVibeReviewIntent || batchNeedsReviewIntent || activeReview || activeFunctionalReview)
+      const actionProvider = (reviewAction || functionalReviewAction || contextualVibeReviewIntent || vibeReviewIntent || functionalVibeReviewIntent || batchNeedsReviewIntent || activeReview || activeFunctionalReview)
         ? await waitForActionProvider("project-functional-diagram", 1800)
         : null;
       throwIfPromptStopped();
@@ -5073,6 +5427,33 @@ useEffect(() => {
           return;
         }
       }
+      if (contextualVibeReviewIntent) {
+        const focus = appFocus || enrichedContext?.focus || {};
+        const hazardState = actionProvider?.getHazardVibeReviewState?.();
+        const functionalState = ["functional-project", "code-based-architecture"].includes(focus.viewedProjectType)
+          ? actionProvider?.getFunctionalVibeReviewState?.()
+          : null;
+        const options = buildContextualVibeReviewOptions({ focus, hazardState, functionalState });
+        if (!options.length) {
+          appendMessage(activeId, {
+            role: "assistant",
+            content: "I can start a guided vibe review when the visible project contains a functional decomposition or a generated hazard-analysis Summary. Open the material you want to review, then say “Let’s vibe review this” again.",
+          });
+          setThreads(loadThreads());
+          return;
+        }
+        appendMessage(activeId, {
+          role: "assistant",
+          content: "What would you like to vibe review in the current workspace?",
+          choicePrompt: {
+            type: "contextual-vibe-review-target",
+            options,
+            defaultValue: options.find((option) => option.recommended)?.value || options[0]?.value || "",
+          },
+        });
+        setThreads(loadThreads());
+        return;
+      }
       if (functionalReviewAction) {
         const latestCard = [...(loadThreads().find((thread) => thread.id === activeId)?.messages || [])].reverse().find((message) => message?.functionalVibeReview)?.functionalVibeReview;
         const normalizedCommand = String(userText || "").trim().toLowerCase().replace(/[.!]+$/g, "");
@@ -5114,7 +5495,15 @@ useEffect(() => {
           const priorCard = [...(loadThreads().find((thread) => thread.id === activeId)?.messages || [])].reverse().find((message) => message?.functionalVibeReview)?.functionalVibeReview;
           closeFunctionalVibeReviewCard(priorCard, "replaced-by-new-review");
         }
-        const session = createFunctionalVibeReviewSession({ projectId: state.activeProjectId, threadId: activeId, queue: scopeResult.queue, scopeLabel: scopeResult.scopeLabel, ai: collaboratorAI });
+        const session = createFunctionalVibeReviewSession({
+          projectId: state.activeProjectId,
+          threadId: activeId,
+          queue: scopeResult.queue,
+          scopeLabel: scopeResult.scopeLabel,
+          ai: collaboratorAI,
+          workspaceType: state.workspaceType || "functional-project",
+          repoId: state.repoId || "",
+        });
         saveFunctionalVibeReviewSession(session);
         appendMessage(activeId, { role: "assistant", content: `${describeFunctionalVibeReviewScope(scopeResult)} I snapshotted stable row IDs and will review exactly one interface at a time.` });
         setThreads(loadThreads());
@@ -5131,7 +5520,14 @@ useEffect(() => {
       if (vibeReviewIntent) {
         const state = actionProvider?.getHazardVibeReviewState?.();
         if (!state?.activeProjectId) { appendMessage(activeId, { role: "assistant", content: "Open a project first, then ask me to vibe review its hazard analysis." }); setThreads(loadThreads()); return; }
-        if (!Array.isArray(state.summary?.[0]) || state.summary.length < 2) { appendMessage(activeId, { role: "assistant", content: "Generate the active project’s hazard-analysis Summary first, then I can create a stable review queue." }); setThreads(loadThreads()); return; }
+        if (!Array.isArray(state.summary?.[0]) || state.summary.length < 2) {
+          const missingSummaryMessage = state.workspaceType === "code-based-architecture"
+            ? "The visible Code-Based Architecture project does not have a saved hazard-analysis Summary for its active repository. Run Code Architecture Hazard Analysis there first, then I can create a stable review queue."
+            : "Generate the active project’s hazard-analysis Summary first, then I can create a stable review queue.";
+          appendMessage(activeId, { role: "assistant", content: missingSummaryMessage });
+          setThreads(loadThreads());
+          return;
+        }
         const scopeResult = resolveHazardVibeReviewScope(userText, state.summary);
         if (scopeResult.status !== "matched") { const ambiguity = scopeResult.ambiguous?.[0]; appendMessage(activeId, { role: "assistant", content: describeScopeResolution(scopeResult), choicePrompt: scopeResult.status === "ambiguous" ? { type: "hazard-vibe-scope", field: ambiguity?.field, originalPrompt: userText, options: ambiguity?.values || [] } : undefined }); setThreads(loadThreads()); return; }
         if (activeReview && ![VIBE_REVIEW_STATES.COMPLETED, VIBE_REVIEW_STATES.CANCELLED].includes(activeReview.state)) {
@@ -5144,7 +5540,16 @@ useEffect(() => {
           const functionalCard = [...(loadThreads().find((thread) => thread.id === activeId)?.messages || [])].reverse().find((message) => message?.functionalVibeReview)?.functionalVibeReview;
           closeFunctionalVibeReviewCard(functionalCard, "replaced-by-hazard-review");
         }
-        const session = createVibeReviewSession({ projectId: state.activeProjectId, threadId: activeId, queue: scopeResult.queue, scopeLabel: scopeResult.scopeLabel, ai: collaboratorAI });
+        const session = createVibeReviewSession({
+          projectId: state.activeProjectId,
+          threadId: activeId,
+          queue: scopeResult.queue,
+          scopeLabel: scopeResult.scopeLabel,
+          ai: collaboratorAI,
+          workspaceType: state.workspaceType || "functional-project",
+          sourceRunId: state.sourceRunId || "",
+          repoId: state.repoId || "",
+        });
         saveVibeReviewSession(session);
         appendMessage(activeId, { role: "assistant", content: `${describeScopeResolution(scopeResult)} I snapshotted the queue by Raw Analysis Row ID and will review exactly one row at a time.` }); setThreads(loadThreads());
         await appendVibeReviewProposal(session, actionProvider, promptSignal); return;
@@ -5202,37 +5607,46 @@ useEffect(() => {
             setMessages(activeId, nextMessages);
             setThreads(loadThreads());
           }
+        } else if (isFunctionalDraftDecisionFollowUp(
+          userText,
+          [...(loadThreads().find((entry) => entry.id === activeId)?.messages || [])]
+            .reverse()
+            .find((message) => message?.role === "assistant" && String(message?.content || "").trim())?.content || "",
+        )) {
+          // A completed draft is already on screen, so a stale abstraction prompt
+          // must not capture a request to resolve that draft's open decisions.
+          setPendingFunctionalAbstractionRequest(null);
         } else {
-        const selectedLevel = inferFunctionalAbstractionLevel(userText);
-        if (!selectedLevel) {
-          appendMessage(activeId, buildFunctionalAbstractionChoiceMessage());
-          setThreads(loadThreads());
+          const selectedLevel = resolvePendingFunctionalAbstractionLevel(userText);
+          if (!selectedLevel) {
+            appendMessage(activeId, buildFunctionalAbstractionChoiceMessage());
+            setThreads(loadThreads());
+            return;
+          }
+          const pendingRequest = pendingFunctionalAbstractionRequest;
+          setPendingFunctionalAbstractionRequest(null);
+          const currentThread = loadThreads().find((entry) => entry.id === activeId);
+          if (currentThread) {
+            const nextMessages = (currentThread.messages || []).map((message) => (
+              message?.choicePrompt?.type === "functional-abstraction" && !message.choicePrompt.completed
+                ? { ...message, choicePrompt: { ...message.choicePrompt, selectedValue: selectedLevel, completed: true } }
+                : message
+            ));
+            setMessages(activeId, nextMessages);
+            setThreads(loadThreads());
+          }
+          const resolvedRequest = buildResolvedAbstractionRequest(pendingRequest, selectedLevel);
+          await runCopilot(
+            resolvedRequest.userText,
+            {
+              ...pendingRequest.options,
+              modelUserContent: resolvedRequest.modelUserContent,
+              abstractionResolved: true,
+              abstractionLevel: selectedLevel,
+              promptAbortController,
+            },
+          );
           return;
-        }
-        const pendingRequest = pendingFunctionalAbstractionRequest;
-        setPendingFunctionalAbstractionRequest(null);
-        const currentThread = loadThreads().find((entry) => entry.id === activeId);
-        if (currentThread) {
-          const nextMessages = (currentThread.messages || []).map((message) => (
-            message?.choicePrompt?.type === "functional-abstraction" && !message.choicePrompt.completed
-              ? { ...message, choicePrompt: { ...message.choicePrompt, selectedValue: selectedLevel, completed: true } }
-              : message
-          ));
-          setMessages(activeId, nextMessages);
-          setThreads(loadThreads());
-        }
-        const resolvedRequest = buildResolvedAbstractionRequest(pendingRequest, selectedLevel);
-        await runCopilot(
-          resolvedRequest.userText,
-          {
-            ...pendingRequest.options,
-            modelUserContent: resolvedRequest.modelUserContent,
-            abstractionResolved: true,
-            abstractionLevel: selectedLevel,
-            promptAbortController,
-          },
-        );
-        return;
         }
       }
       if (!options?.abstractionResolved && needsFunctionalAbstractionClarification(userText)) {
@@ -5260,13 +5674,52 @@ useEffect(() => {
       });
       const activeThreadAtStart = loadThreads().find((thread) => thread.id === activeId);
       const previousAssistantContent = [...(activeThreadAtStart?.messages || [])]
-		        .reverse()
-		        .find((message) => message?.role === "assistant" && String(message?.content || "").trim())?.content || "";
-		      const continuationOfPendingFunctionalMutation =
-		        pendingFunctionalMutationRequest &&
-		        isFunctionalMutationContinuationRequest(userText);
+        .reverse()
+        .find((message) => message?.role === "assistant" && String(message?.content || "").trim())?.content || "";
+      const priorFunctionalQualityReview = [...(activeThreadAtStart?.messages || [])]
+        .reverse()
+        .find((message) => message?.functionalQualityReview
+          && (!activeProjectId || String(message.functionalQualityReview.projectId || "") === String(activeProjectId)))
+        ?.functionalQualityReview || null;
+      const functionalDraftDecisionContext = isFunctionalDraftDecisionFollowUp(userText, previousAssistantContent)
+        ? "\n\nFunctional-draft decision follow-up: the user delegated the unresolved engineering choices listed in the immediately preceding draft. Recommend and state a defensible assumption for each listed decision, identify what remains to be verified, and do not reopen the abstraction or project-destination questions."
+        : "";
+      const continuationOfPendingFunctionalMutation =
+        pendingFunctionalMutationRequest &&
+        isFunctionalMutationContinuationRequest(userText);
+      if (isFunctionalQualityReviewIntent(userText)) {
+        const provider = await waitForActionProvider("project-functional-diagram", 1800);
+        const state = provider?.getFunctionalVibeReviewState?.();
+        if (!state?.activeProjectId || (activeProjectId && String(state.activeProjectId) !== String(activeProjectId))) {
+          appendMessage(activeId, { role: "assistant", content: "Open the functional project you want scored, then ask me to review its functional decomposition." });
+          setThreads(loadThreads());
+          return;
+        }
+        if (!Array.isArray(state.rows) || !state.rows.length) {
+          appendMessage(activeId, { role: "assistant", content: "The active project does not yet contain functional-decomposition rows to score." });
+          setThreads(loadThreads());
+          return;
+        }
+        reportProgress(`Scoring all ${state.rows.length} functional-decomposition rows against the engineering quality rubric.`);
+        reportProgress("Checking boundary discipline, interface semantics, feedback loops, degraded behavior, recovery, and evidence quality.");
+        const review = await requestFunctionalQualityReview({
+          projectId: state.activeProjectId,
+          projectName: state.projectName,
+          rows: state.rows,
+          organizationContext: state.organizationContext,
+          signal: promptSignal,
+        });
+        throwIfPromptStopped();
+        appendMessage(activeId, {
+          role: "assistant",
+          content: formatFunctionalQualityReview(review),
+          functionalQualityReview: review,
+        });
+        setThreads(loadThreads());
+        return;
+      }
       const subsystemLookupRequest = extractSubsystemFunctionLookupRequest(userText);
-	      if (subsystemLookupRequest) {
+      if (subsystemLookupRequest) {
 	        const answer = buildSubsystemFunctionLookupAnswer({
 	          rows: enrichedContext?.functionalDecomposition || [],
           requestedSubsystem: subsystemLookupRequest.subsystem,
@@ -5544,6 +5997,14 @@ useEffect(() => {
         }
       }
       if (isFunctionalDecompositionRevisionFeedbackRequest(userText, focusContext)) {
+        if (isFunctionalQualityReviewRevisionIntent(userText) && !priorFunctionalQualityReview) {
+          appendMessage(activeId, {
+            role: "assistant",
+            content: "I don’t have a completed functional-decomposition quality review for the active project in this thread. First ask: **“Review and score the current project’s functional decomposition for hazard-analysis readiness.”**",
+          });
+          setThreads(loadThreads());
+          return;
+        }
         const provider = await waitForActionProvider("project-functional-diagram", 1800);
         if (provider?.reviewFunctionalDecompositionFeedback) {
           appendMessage(activeId, {
@@ -5552,7 +6013,14 @@ useEffect(() => {
           });
           setThreads(loadThreads());
           try {
-            const result = await provider.reviewFunctionalDecompositionFeedback({ userText, activeProjectId });
+            const revisionUserText = isFunctionalQualityReviewRevisionIntent(userText) && priorFunctionalQualityReview
+              ? [
+                  userText,
+                  "The user is referring to this completed functional-decomposition quality review. Treat its row-referenced findings and recommendations as the engineering review feedback to implement:",
+                  JSON.stringify(priorFunctionalQualityReview),
+                ].join("\n\n")
+              : userText;
+            const result = await provider.reviewFunctionalDecompositionFeedback({ userText: revisionUserText, activeProjectId });
             appendMessage(activeId, {
               role: "assistant",
               content: [
@@ -5732,7 +6200,7 @@ Runtime context:
 
         const systemMsg = {
           role: "system",
-          content: `${runtimeContext}${renderCopilotContext(scoped)}${note}${cbaLines}${guard}${fileGrounding}${fileGuard}${activeVibeReviewQuestionContext}${options?.voiceMode ? `\n\nVoice partnership:\n${VOICE_PARTNERSHIP_INSTRUCTIONS}` : ""}
+          content: `${runtimeContext}${renderCopilotContext(scoped)}${note}${cbaLines}${guard}${fileGrounding}${fileGuard}${activeVibeReviewQuestionContext}${functionalDraftDecisionContext}${options?.voiceMode ? `\n\nVoice partnership:\n${VOICE_PARTNERSHIP_INSTRUCTIONS}` : ""}
 
         Style:
         ${STYLE_GENERAL_ASSISTANT}`

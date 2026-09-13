@@ -2,7 +2,7 @@ import {
   migrateLegacyStorageToWorkspaceGraph,
   migrateLegacyStorageToWorkspaceGraphIfStale,
 } from "./legacyWorkspaceGraphMigrator";
-import { upsertArtifacts, upsertRelationships } from "./workspaceGraphRepository";
+import { upsertArtifacts, upsertProject, upsertRelationships } from "./workspaceGraphRepository";
 
 jest.mock("./workspaceGraphRepository", () => ({
   upsertArtifacts: jest.fn(async (rows) => rows),
@@ -185,6 +185,78 @@ describe("migrateLegacyStorageToWorkspaceGraph", () => {
       expect.objectContaining({
         type: "source_file",
         title: "src/controller.ts",
+      }),
+    ]));
+  });
+
+  it("indexes code-architecture projects and chunked assurance rows as governed CBA artifacts", async () => {
+    localStorage.setItem("xhandle.codeArchitectureProjects", JSON.stringify([{
+      id: "cba-p1",
+      name: "Vehicle Controller",
+      activeRepoId: "repo-1",
+      repos: [{ id: "repo-1", repoId: "org/controller", repoName: "org/controller" }],
+    }]));
+    installIndexedDbMock({
+      "xhandle-code-architecture-assurance": {
+        artifactRows: [
+          {
+            key: "xhandle:cba-system-requirements:cba-p1:repo-1",
+            chunked: true,
+            chunkKeys: ["xhandle:cba-system-requirements:cba-p1:repo-1:chunk:0"],
+            rows: [],
+          },
+          {
+            key: "xhandle:cba-system-requirements:cba-p1:repo-1:chunk:0",
+            rows: [{ id: "SYS-1", requirementText: "The controller shall inhibit unsafe torque." }],
+          },
+        ],
+      },
+    });
+
+    await migrateLegacyStorageToWorkspaceGraph();
+
+    expect(upsertProject).toHaveBeenCalledWith(expect.objectContaining({
+      id: "cba-p1",
+      name: "Vehicle Controller",
+      projectType: "code-based-architecture",
+      sourceStore: "localStorage:xhandle.codeArchitectureProjects",
+    }));
+    const artifacts = (upsertArtifacts as jest.Mock).mock.calls[0][0];
+    expect(artifacts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "project",
+        projectId: "cba-p1",
+        tags: expect.arrayContaining(["code-architecture-project"]),
+      }),
+      expect.objectContaining({
+        type: "code_architecture_system_requirement",
+        projectId: "cba-p1",
+        sourceKey: "xhandle:cba-system-requirements:cba-p1:repo-1",
+        structuredData: expect.objectContaining({ id: "SYS-1", _repoId: "repo-1" }),
+      }),
+    ]));
+  });
+
+  it("keeps code-architecture hazard rows distinct from Project-area hazard rows", async () => {
+    installIndexedDbMock({
+      "xhandle-code-architecture-hazard-analysis": {
+        hazardAnalysisRuns: [{
+          id: "cba-run-1",
+          projectId: "cba-p1",
+          repoId: "repo-1",
+          generatedSheets: { Summary: [["Hazard"], ["Unexpected motion"]] },
+        }],
+      },
+    });
+
+    await migrateLegacyStorageToWorkspaceGraph();
+
+    const artifacts = (upsertArtifacts as jest.Mock).mock.calls[0][0];
+    expect(artifacts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "code_architecture_hazard_row",
+        projectId: "cba-p1",
+        sourceId: "cba-run-1:summary:0",
       }),
     ]));
   });

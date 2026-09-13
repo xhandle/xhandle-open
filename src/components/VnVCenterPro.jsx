@@ -699,11 +699,8 @@ export default function VnVCenterPro({
 
   if (!document) {
     return (
-      <div className="flex h-full flex-col overflow-auto bg-white px-6 py-5">
-        <div className="mb-5">
-          <h1 className="text-2xl font-semibold">V&V Center</h1>
-          <p className="text-sm text-gray-500">Generate and manage test case documents from project requirements and safety goals.</p>
-        </div>
+      <div className="flex h-full flex-col overflow-auto bg-white px-6 py-2">
+        <h1 className="sr-only">V&amp;V Center</h1>
         <div className="flex min-h-[520px] items-center justify-center rounded-lg border bg-gray-50 p-8 text-center">
           <div className="max-w-2xl">
             <ClipboardCheck className="mx-auto mb-4 text-[#2D7DFE]" size={44} />
@@ -734,11 +731,8 @@ export default function VnVCenterPro({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
-      <div className="border-b px-4 py-2">
-        <h1 className="text-xl font-semibold">V&V Center</h1>
-        <p className="text-xs text-gray-500">Requirement and safety-goal-driven test case documents with project-style management.</p>
-        {message && <div className="mt-2 text-xs text-gray-500">{message}</div>}
-      </div>
+      <h1 className="sr-only">V&amp;V Center</h1>
+      {message && <div className="border-b px-4 py-1.5 text-xs text-gray-500">{message}</div>}
 
       <div className="flex items-center gap-1.5 overflow-x-auto border-b bg-gray-50 px-2 py-1.5">
         <ToolbarButton icon={FilePlus2} onClick={createBlank}>New Document</ToolbarButton>

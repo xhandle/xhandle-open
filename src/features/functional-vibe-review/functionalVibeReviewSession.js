@@ -17,11 +17,12 @@ function loadMap(storage, storageKey) {
   try { return JSON.parse(storage?.getItem(storageKey) || "{}") || {}; } catch { return {}; }
 }
 
-export function createFunctionalVibeReviewSession({ projectId, threadId, queue = [], scopeLabel = "", ai = {} }) {
+export function createFunctionalVibeReviewSession({ projectId, threadId, queue = [], scopeLabel = "", ai = {}, workspaceType = "functional-project", repoId = "" }) {
   const stableQueue = Array.from(new Set(queue.map(String).filter(Boolean)));
   return {
     id: uid(), projectId: String(projectId), threadId: String(threadId), queue: stableQueue,
     scopeLabel, cursor: 0, state: FUNCTIONAL_VIBE_REVIEW_STATES.PROPOSING, proposal: null,
+    workspaceType, repoId,
     decisions: [], skips: [], failures: [], missingRows: [], ai: { ...ai }, createdAt: now(), updatedAt: now(),
   };
 }

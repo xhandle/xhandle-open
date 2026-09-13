@@ -37,3 +37,13 @@ test("undo rewinds and sessions persist without embedding project rows", () => {
   expect(loadFunctionalVibeReviewSession("p", "t", storage).queue).toEqual(["a"]);
 });
 
+test("persists the reviewed workspace and repository boundary", () => {
+  const session = createFunctionalVibeReviewSession({
+    projectId: "p",
+    threadId: "t",
+    queue: ["a"],
+    workspaceType: "code-based-architecture",
+    repoId: "repo-1",
+  });
+  expect(session).toMatchObject({ workspaceType: "code-based-architecture", repoId: "repo-1" });
+});

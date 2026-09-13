@@ -1,6 +1,7 @@
 import {
   buildWorkspaceActionPlannerMessages,
   extractWorkspaceActionJson,
+  isWorkspaceAdvisoryIntent,
   isWorkspaceMutationIntent,
   isWorkspaceUndoIntent,
   normalizeWorkspaceActionPlan,
@@ -13,6 +14,15 @@ describe("Collaborator workspace action planning", () => {
     expect(isWorkspaceMutationIntent("Can you update the owner cell on the braking risk to Nick?")).toBe(true);
     expect(isWorkspaceMutationIntent("Delete that hazard row")).toBe(true);
     expect(isWorkspaceMutationIntent("Should we update the hazard table?")).toBe(false);
+  });
+
+  test("keeps project ideation and recommendations out of the mutation planner", () => {
+    const showcasePrompt = "I want to create a project that really showcases xHandle's hazard analysis capabilities. Do you have any suggestions?";
+    expect(isWorkspaceAdvisoryIntent(showcasePrompt)).toBe(true);
+    expect(isWorkspaceMutationIntent(showcasePrompt)).toBe(false);
+    expect(isWorkspaceMutationIntent("What project would you recommend I create?")).toBe(false);
+    expect(isWorkspaceMutationIntent("Please create a project using your recommended option.")).toBe(true);
+    expect(isWorkspaceMutationIntent("Can you create a project and suggest a concise name?")).toBe(true);
   });
 
   test("recognizes a narrow undo request", () => {

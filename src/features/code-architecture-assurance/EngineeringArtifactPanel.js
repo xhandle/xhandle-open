@@ -179,6 +179,7 @@ export default function EngineeringArtifactPanel({
   reviewMode = false,
   initialRows = null,
   initialArtifactCollections = null,
+  onCollaboratorSelectionChange,
 }) {
   const definition = ARTIFACT_DEFINITIONS[kind];
   const projectId = project?.id || "no-project";
@@ -209,6 +210,7 @@ export default function EngineeringArtifactPanel({
     const subsystemRows = kind === ARTIFACT_KINDS.SUBSYSTEM ? rows : artifactCollections.subsystemRows;
     const designRows = kind === ARTIFACT_KINDS.DESIGN ? rows : artifactCollections.designRows;
     return {
+      kind,
       softwareRows,
       systemRows,
       subsystemRows,
@@ -518,6 +520,7 @@ export default function EngineeringArtifactPanel({
         noMatchMessage={definition.noMatchMessage}
         tableContext={artifactContext}
         readOnly={reviewMode}
+        onCollaboratorSelectionChange={onCollaboratorSelectionChange}
       />
     </div>
   );

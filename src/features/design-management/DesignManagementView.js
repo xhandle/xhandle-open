@@ -32,13 +32,8 @@ export default function DesignManagementView({
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-auto bg-white py-0 px-3 md:px-5 lg:px-7 w-full">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Design Management</h1>
-          <p className="text-gray-500 text-sm">
-            Manage natural-language design artifacts and formal SysML v2-style MBSE models in one local-first workspace.
-          </p>
-        </div>
+      <h1 className="sr-only">Design Management</h1>
+      <div className="mb-2 flex flex-wrap items-center justify-end gap-3">
         {segmented}
       </div>
 

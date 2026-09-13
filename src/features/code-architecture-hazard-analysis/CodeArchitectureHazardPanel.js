@@ -21,6 +21,7 @@ export default function CodeArchitectureHazardPanel({
   onOpenArchitectureTarget,
   onClearContents,
   onDeleteSummaryRow,
+  onCollaboratorSelectionChange,
   reviewMode = false,
 }) {
   const summarySheet = latestRun?.generatedSheets?.Summary;
@@ -121,6 +122,7 @@ export default function CodeArchitectureHazardPanel({
               storageKey={`code-architecture-hazard-summary:${latestRun?.repoId || "repo"}:${latestRun?.id || "latest"}`}
               onOpenArchitectureTarget={onOpenArchitectureTarget}
               onDeleteRow={reviewMode ? undefined : onDeleteSummaryRow}
+              onCollaboratorSelectionChange={onCollaboratorSelectionChange}
               readOnly={reviewMode}
             />
           )}

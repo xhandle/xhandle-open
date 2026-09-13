@@ -3,11 +3,14 @@ import { loadProjectHazardAnalysisRecord, saveProjectHazardAnalysisRecord } from
 import { loadSafetyIssueReportRecord, saveSafetyIssueReportRecord } from "../project-hazard-analysis/safetyIssueReportStorage";
 import { loadRequirements, saveRequirementRecord, saveRequirements } from "../requirements/actions/requirementsState";
 import { readCbaRowsFromIndexedDB, writeCbaRowsToIndexedDB } from "../code-architecture-assurance/codeArchitectureStorage";
+import { loadArtifactRowsAsync, saveArtifactRowsAsync } from "../code-architecture-assurance/artifactUtils";
+import { getCodeArchitectureHazardRunById, saveCodeArchitectureHazardRun } from "../code-architecture-hazard-analysis/codeArchitectureHazardStore";
 import { loadReviewItems, saveReviewItems } from "../results-review/reviewStore";
 import { createSafetyCase, deleteSafetyCase, loadSafetyCase, saveSafetyCase } from "../safety-case/safetyCaseStore";
 
 const PROJECT_DATA_KEY = "xhandle.projectData";
 const PROJECTS_KEY = "xhandle.projects";
+const CBA_PROJECTS_KEY = "xhandle.codeArchitectureProjects";
 const SYSML_KEY = "xhandle.designManagement.sysmlV2.models";
 const UNDO_KEY = "xhandle:collaborator-workspace:undo";
 const MAX_UNDO = 25;
@@ -197,7 +200,13 @@ async function applyCodeArchitectureAction(action, artifact) {
   else {
     const sourceToken = String(artifact?.sourceId || "").split(":").pop();
     let index = rows.findIndex((row) => [row?.traceId, row?.edgeId].some((id) => String(id || "") === sourceToken));
-    if (index < 0) index = rows.findIndex((row) => JSON.stringify(row) === JSON.stringify(artifact?.structuredData));
+    if (index < 0) {
+      const snapshot = { ...(artifact?.structuredData || {}) };
+      delete snapshot._rowIndex;
+      delete snapshot._repoId;
+      index = rows.findIndex((row) => JSON.stringify(row) === JSON.stringify(snapshot));
+    }
+    if (index < 0) index = Number(artifact?.structuredData?._rowIndex);
     if (index < 0) throw new Error("The code-architecture edge no longer exists. Refresh and try again.");
     if (action.operation === "delete") rows.splice(index, 1);
     else if (action.operation === "update") rows[index] = applyPatch(rows[index], action);
@@ -206,6 +215,64 @@ async function applyCodeArchitectureAction(action, artifact) {
   const saved = await writeCbaRowsToIndexedDB(key, rows);
   if (!saved) throw new Error("The code-architecture change could not be persisted.");
   return { domain: "code-architecture", projectId: artifact?.projectId, sourceKey: key, before, after: clone(rows) };
+}
+
+function parseCodeArchitectureAssuranceKey(sourceKey = "") {
+  const match = String(sourceKey || "").match(/^xhandle:cba-(software-requirements|system-requirements|subsystem-requirements|design-elements):([^:]+):(.+)$/);
+  return match ? { kind: match[1], projectId: match[2], repoId: match[3] } : null;
+}
+
+async function applyCodeArchitectureAssuranceAction(action, artifact) {
+  const source = parseCodeArchitectureAssuranceKey(artifact?.sourceKey || action.target.sourceKey);
+  if (!source) throw new Error("The code-architecture assurance source could not be resolved.");
+  const rows = [...await loadArtifactRowsAsync(source.kind, source.projectId, source.repoId)];
+  const before = clone(rows);
+  if (action.operation === "create") {
+    rows.push(clone(action.record));
+  } else {
+    const sourceToken = String(artifact?.sourceId || "").slice(String(artifact?.sourceKey || "").length + 1);
+    let index = rows.findIndex((row) => [row?.id, row?.internalId].some((id) => String(id || "") === sourceToken));
+    if (index < 0) index = Number(artifact?.structuredData?._rowIndex);
+    if (!Number.isInteger(index) || index < 0 || index >= rows.length) throw new Error("The code-architecture assurance row no longer exists. Refresh and try again.");
+    if (action.operation === "delete") rows.splice(index, 1);
+    else if (action.operation === "update") rows[index] = applyPatch(rows[index], action);
+    else throw new Error(`Operation ${action.operation} is not supported for code-architecture assurance rows.`);
+  }
+  await saveArtifactRowsAsync(source.kind, source.projectId, source.repoId, rows);
+  return { domain: "code-architecture-assurance", projectId: source.projectId, source, before, after: clone(rows) };
+}
+
+async function applyCodeArchitectureHazardAction(action, artifact) {
+  const sourceId = String(artifact?.sourceId || action.target.sourceId || "");
+  const match = sourceId.match(/^(.*):summary:(\d+)$/);
+  const runId = match?.[1] || String(action.record?.runId || "");
+  if (!runId) throw new Error("The code-architecture hazard-analysis run could not be resolved.");
+  const run = await getCodeArchitectureHazardRunById(runId);
+  if (!run) throw new Error("The code-architecture hazard-analysis run no longer exists. Refresh and try again.");
+  const summary = clone(run?.generatedSheets?.Summary || []);
+  if (!Array.isArray(summary?.[0])) throw new Error("The code-architecture hazard Summary is unavailable.");
+  const before = clone(run);
+  if (action.operation === "create") {
+    const record = action.record || {};
+    summary.push(summary[0].map((header) => record[header] ?? record[normalizeFieldKey(record, header)] ?? ""));
+  } else {
+    const rowIndex = Number(match?.[2] ?? artifact?.structuredData?.rowIndex);
+    const dataIndex = rowIndex + 1;
+    if (!Number.isInteger(dataIndex) || dataIndex <= 0 || dataIndex >= summary.length) throw new Error("The code-architecture hazard row no longer exists. Refresh and try again.");
+    if (action.operation === "delete") summary.splice(dataIndex, 1);
+    else if (action.operation === "update") {
+      const rowObject = Object.fromEntries(summary[0].map((header, index) => [header, summary[dataIndex][index]]));
+      const updated = applyPatch(rowObject, action);
+      summary[dataIndex] = summary[0].map((header) => updated[header] ?? "");
+    } else throw new Error(`Operation ${action.operation} is not supported for code-architecture hazard rows.`);
+  }
+  const after = {
+    ...run,
+    generatedSheets: { ...(run.generatedSheets || {}), Summary: summary },
+    updatedAt: new Date().toISOString(),
+  };
+  await saveCodeArchitectureHazardRun(after);
+  return { domain: "code-architecture-hazard", projectId: run.projectId || artifact?.projectId, runId, before, after: clone(after) };
 }
 
 async function applySafetyReportAction(action, artifact) {
@@ -308,6 +375,23 @@ async function applyProjectAction(action, artifact) {
   return { domain: "projects", projectId: artifact?.projectId, before, after: clone(projects) };
 }
 
+async function applyCodeArchitectureProjectAction(action, artifact) {
+  const projects = parseJson(localStorage.getItem(CBA_PROJECTS_KEY), []);
+  const before = clone(projects);
+  if (action.operation === "create") {
+    projects.push({ ...action.record, id: action.record?.id || `cba-project-${Date.now()}`, name: action.record?.name || "Untitled code architecture project", projectType: "code-based-architecture" });
+  } else {
+    const id = artifact?.sourceId || artifact?.projectId;
+    const index = projects.findIndex((project) => String(project?.id) === String(id));
+    if (index < 0) throw new Error("The code-architecture project no longer exists.");
+    if (action.operation === "delete") throw new Error("Code-architecture project deletion must be completed from its project menu so connected repositories can be reviewed.");
+    if (action.operation === "update") projects[index] = applyPatch(projects[index], action);
+    else throw new Error(`Operation ${action.operation} is not supported for code-architecture projects.`);
+  }
+  localStorage.setItem(CBA_PROJECTS_KEY, JSON.stringify(projects));
+  return { domain: "code-architecture-projects", projectId: artifact?.projectId || action.target.projectId, before, after: clone(projects) };
+}
+
 function parseIndexedSource(sourceStore = "") {
   const match = String(sourceStore || "").match(/^indexedDB:([^/]+)\/(.+)$/i);
   return match ? { dbName: match[1], storeName: match[2] } : null;
@@ -383,6 +467,10 @@ async function applyOne(action) {
   const artifact = action.target.artifactId ? await getArtifact(action.target.artifactId) : null;
   const type = action.operation === "create" ? (action.target.type || artifact?.type) : (artifact?.type || action.target.type);
   if (!artifact && action.operation !== "create") throw new Error("The selected source artifact is no longer available. Refresh and try again.");
+  if (artifact?.sourceStore === "localStorage:xhandle.codeArchitectureProjects" || (action.operation === "create" && action.record?.projectType === "code-based-architecture")) return applyCodeArchitectureProjectAction(action, artifact);
+  if (type === "code_architecture_hazard_row" || artifact?.sourceStore === "indexedDB:xhandle-code-architecture-hazard-analysis/hazardAnalysisRuns") return applyCodeArchitectureHazardAction(action, artifact);
+  if (/^code_architecture_(?:software_requirement|system_requirement|subsystem_requirement|design_element)$/.test(String(type || ""))) return applyCodeArchitectureAssuranceAction(action, artifact);
+  if (artifact?.sourceStore?.startsWith("indexedDB:xhandle-safety-remediation/")) return applyGenericIndexedAction(action, artifact);
   if (type === "functional_decomposition_row") return applyFunctionalAction(action, artifact);
   if (type === "hazard_analysis_row") return applyHazardAction(action, artifact);
   if (["risk", "safety_issue", "safety_finding"].includes(type)) return applyRiskAction(action, artifact);
@@ -435,11 +523,14 @@ export async function executeWorkspaceActionPlan(plan) {
       "risk-register": "indexedDB:xhandle-project-hazard-analysis/analyses",
       requirements: "localStorage:xhandle:requirements",
       "code-architecture": "indexedDB:xhandle/copilot_baseline",
+      "code-architecture-assurance": "indexedDB:xhandle-code-architecture-assurance/artifactRows",
+      "code-architecture-hazard": "indexedDB:xhandle-code-architecture-hazard-analysis/hazardAnalysisRuns",
       "safety-report": "indexedDB:xhandle-project-reports/safetyIssueReports",
       sysml: "localStorage:xhandle.designManagement.sysmlV2.models",
       review: "indexedDB:xhandle-results-review/reviewItems",
       "safety-case": "indexedDB:TraceabilityDB/SafetyCases",
       projects: "localStorage:xhandle.projects",
+      "code-architecture-projects": "localStorage:xhandle.codeArchitectureProjects",
       "generic-indexed-artifact": item.snapshot.sourceStore,
     };
     const sourceStore = sourceStoreByDomain[item.snapshot.domain];
@@ -465,6 +556,8 @@ async function restoreSnapshot(snapshot) {
     await saveProjectHazardAnalysisRecord(projectId, before || {});
   } else if (domain === "requirements") saveRequirements(before || [], { source: "collaborator-undo" });
   else if (domain === "code-architecture") await writeCbaRowsToIndexedDB(sourceKey, before || []);
+  else if (domain === "code-architecture-assurance") await saveArtifactRowsAsync(snapshot.source.kind, snapshot.source.projectId, snapshot.source.repoId, before || []);
+  else if (domain === "code-architecture-hazard") await saveCodeArchitectureHazardRun(before);
   else if (domain === "safety-report") await saveSafetyIssueReportRecord(projectId, before?.markdown || "");
   else if (domain === "sysml") localStorage.setItem(SYSML_KEY, JSON.stringify(before || []));
   else if (domain === "review") await saveReviewItems(before || []);
@@ -473,6 +566,7 @@ async function restoreSnapshot(snapshot) {
     else if (snapshot.after?.id) await deleteSafetyCase(snapshot.after.id, projectId);
   }
   else if (domain === "projects") localStorage.setItem(PROJECTS_KEY, JSON.stringify(before || []));
+  else if (domain === "code-architecture-projects") localStorage.setItem(CBA_PROJECTS_KEY, JSON.stringify(before || []));
   else if (domain === "generic-indexed-artifact") await restoreGenericIndexedSnapshot(snapshot);
 }
 
@@ -487,11 +581,14 @@ export async function undoLastWorkspaceAction() {
       "risk-register": "indexedDB:xhandle-project-hazard-analysis/analyses",
       requirements: "localStorage:xhandle:requirements",
       "code-architecture": "indexedDB:xhandle/copilot_baseline",
+      "code-architecture-assurance": "indexedDB:xhandle-code-architecture-assurance/artifactRows",
+      "code-architecture-hazard": "indexedDB:xhandle-code-architecture-hazard-analysis/hazardAnalysisRuns",
       "safety-report": "indexedDB:xhandle-project-reports/safetyIssueReports",
       sysml: "localStorage:xhandle.designManagement.sysmlV2.models",
       review: "indexedDB:xhandle-results-review/reviewItems",
       "safety-case": "indexedDB:TraceabilityDB/SafetyCases",
       projects: "localStorage:xhandle.projects",
+      "code-architecture-projects": "localStorage:xhandle.codeArchitectureProjects",
       "generic-indexed-artifact": item.snapshot.sourceStore,
     };
     const sourceStore = sourceStoreByDomain[item.snapshot.domain];

@@ -3,6 +3,53 @@ const AUDIT_KEY = "xhandle.hazardVibeReview.audit.v1";
 const now = () => new Date().toISOString();
 const uid = () => (typeof crypto !== "undefined" && crypto.randomUUID?.()) || `vr-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const defaultStorage = () => typeof localStorage !== "undefined" ? localStorage : null;
+const volatileMapsByStorage = new WeakMap();
+const nullStorageMaps = {};
+
+function volatileMaps(storage) {
+  if (!storage || (typeof storage !== "object" && typeof storage !== "function")) return nullStorageMaps;
+  if (!volatileMapsByStorage.has(storage)) volatileMapsByStorage.set(storage, {});
+  return volatileMapsByStorage.get(storage);
+}
+
+function browserSessionStorage(storage) {
+  try {
+    return typeof localStorage !== "undefined" && storage === localStorage && typeof sessionStorage !== "undefined"
+      ? sessionStorage
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseMap(storage, storageKey) {
+  try { return JSON.parse(storage?.getItem(storageKey) || "{}") || {}; } catch { return {}; }
+}
+
+function loadMap(storage, storageKey) {
+  const persistent = parseMap(storage, storageKey);
+  const tabFallback = parseMap(browserSessionStorage(storage), storageKey);
+  return { ...persistent, ...tabFallback, ...(volatileMaps(storage)[storageKey] || {}) };
+}
+
+function persistMap(storage, storageKey, map) {
+  volatileMaps(storage)[storageKey] = map;
+  try {
+    storage?.setItem(storageKey, JSON.stringify(map));
+    try { browserSessionStorage(storage)?.removeItem(storageKey); } catch {}
+    return "persistent";
+  } catch {
+    try {
+      browserSessionStorage(storage)?.setItem(storageKey, JSON.stringify(map));
+      return "session";
+    } catch {
+      // The volatile copy keeps the active review usable even when both browser
+      // storage areas are full or unavailable. Review decisions themselves are
+      // persisted independently in the owning hazard-analysis store.
+      return "memory";
+    }
+  }
+}
 
 export const VIBE_REVIEW_STATES = Object.freeze({
   IDLE: "idle", DEFINING_SCOPE: "defining_scope", PROPOSING: "proposing",
@@ -10,11 +57,14 @@ export const VIBE_REVIEW_STATES = Object.freeze({
   COMPLETED: "completed", CANCELLED: "cancelled", PAUSED: "paused",
 });
 
-export function createVibeReviewSession({ projectId, threadId, queue = [], scopeLabel = "", ai = {} }) {
+export function createVibeReviewSession({ projectId, threadId, queue = [], scopeLabel = "", ai = {}, workspaceType = "functional-project", sourceRunId = "", repoId = "" }) {
   const stableQueue = Array.from(new Set(queue.map(String).filter(Boolean)));
   return {
     id: uid(), projectId: String(projectId), threadId: String(threadId), queue: stableQueue,
     scopeLabel, cursor: 0, state: VIBE_REVIEW_STATES.PROPOSING, proposal: null,
+    workspaceType: String(workspaceType || "functional-project"),
+    sourceRunId: String(sourceRunId || ""),
+    repoId: String(repoId || ""),
     decisions: [], skips: [], failures: [], missingRows: [], ai: { ...ai }, createdAt: now(), updatedAt: now(),
   };
 }
@@ -54,16 +104,23 @@ export function transitionVibeReviewSession(session, event = {}) {
   return session;
 }
 
-function loadMap(storage, storageKey) { try { return JSON.parse(storage?.getItem(storageKey) || "{}") || {}; } catch { return {}; } }
 export function saveVibeReviewSession(session, storage = defaultStorage()) {
-  const map = loadMap(storage, KEY); map[`${session.projectId}:${session.threadId}`] = session; storage?.setItem(KEY, JSON.stringify(map)); return session;
+  const map = loadMap(storage, KEY);
+  map[`${session.projectId}:${session.threadId}`] = session;
+  const retained = Object.fromEntries(Object.entries(map)
+    .sort(([, a], [, b]) => Date.parse(b?.updatedAt || 0) - Date.parse(a?.updatedAt || 0))
+    .slice(0, 16));
+  persistMap(storage, KEY, retained);
+  return session;
 }
 export function loadVibeReviewSession(projectId, threadId, storage = defaultStorage()) {
   return loadMap(storage, KEY)[`${projectId}:${threadId}`] || null;
 }
 export function appendVibeReviewAudit(record, storage = defaultStorage()) {
   const map = loadMap(storage, AUDIT_KEY); const projectId = String(record.projectId || "");
-  map[projectId] = [...(map[projectId] || []), record].slice(-1000); storage?.setItem(AUDIT_KEY, JSON.stringify(map)); return record;
+  map[projectId] = [...(map[projectId] || []), record].slice(-250);
+  persistMap(storage, AUDIT_KEY, map);
+  return record;
 }
 export function loadVibeReviewAudit(projectId, storage = defaultStorage()) { return loadMap(storage, AUDIT_KEY)[String(projectId)] || []; }
 
