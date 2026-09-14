@@ -2,6 +2,33 @@ import {
   CODE_ARCHITECTURE_HAZARD_REVIEW_STATUSES,
   CODE_ARCHITECTURE_HAZARD_SOURCE_TYPE,
 } from "./codeArchitectureHazardTypes";
+import {
+  buildHazardOperationalContextPrompt,
+  getEffectiveHazardOperationalContexts,
+  normalizeHazardOperationalContexts,
+} from "../project-hazard-analysis/hazardOperationalContexts";
+import {
+  ensureCodeArchitectureHazardEligibility,
+  isCodeArchitectureHazardEligible,
+  summarizeCodeArchitectureHazardEligibility,
+} from "./codeArchitectureHazardEligibility";
+
+export const CODE_ARCHITECTURE_STPA_GUIDE_PHRASES = Object.freeze([
+  "Not providing the control action causes a hazard",
+  "Providing the control action causes a hazard",
+  "The control action is provided too early",
+  "The control action is provided too late",
+  "The control action is provided in the wrong order",
+  "The control action is stopped too soon",
+  "The control action is applied too long",
+]);
+
+export function getCodeArchitectureHazardGuidePhrases(method = "STPA-Textbook") {
+  const normalized = String(method || "").trim().toUpperCase();
+  return normalized === "STPA" || normalized === "STPA-TEXTBOOK" || normalized === "STPA_TEXTBOOK"
+    ? CODE_ARCHITECTURE_STPA_GUIDE_PHRASES
+    : [""];
+}
 
 export function makeCodeArchitectureHazardId(prefix = "cba-hazard") {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return `${prefix}-${crypto.randomUUID()}`;
@@ -37,7 +64,7 @@ export function ensureCodeArchitectureTraceIds(rows = []) {
     if (row.toNodeId) nodeIdsByIdentity.set(functionIdentityKey(row, "to"), row.toNodeId);
   });
 
-  return (Array.isArray(rows) ? rows : []).map((row = {}, index) => {
+  const rowsWithTraceIds = (Array.isArray(rows) ? rows : []).map((row = {}, index) => {
     const fromKey = functionIdentityKey(row, "from");
     const toKey = functionIdentityKey(row, "to");
     const fromNodeId = row.fromNodeId || nodeIdsByIdentity.get(fromKey) || makeCodeArchitectureTraceId("cba-node");
@@ -55,6 +82,7 @@ export function ensureCodeArchitectureTraceIds(rows = []) {
       edgeId: row.edgeId || makeCodeArchitectureTraceId("cba-edge"),
     };
   });
+  return ensureCodeArchitectureHazardEligibility(rowsWithTraceIds);
 }
 
 export function normalizeRepoId(repoMeta = {}) {
@@ -77,6 +105,11 @@ export const CODE_ARCHITECTURE_TRACEABILITY_COLUMNS = [
   "CSCI",
   "CSC",
   "CSU",
+  "Lifecycle Phase",
+  "Interface Type",
+  "Hazard Analysis Eligibility",
+  "Eligibility Rationale",
+  "Eligibility Source",
 ];
 
 function normalizeText(value) {
@@ -135,7 +168,7 @@ function stableValue(value) {
 }
 
 export function computeArchitectureSnapshotHash(cbaRows = []) {
-  const compactRows = (Array.isArray(cbaRows) ? cbaRows : []).map((row, index) => ({
+  const compactRows = ensureCodeArchitectureHazardEligibility(cbaRows).map((row, index) => ({
     rowRef: row?.rowRef || index + 1,
     from: row?.from || "",
     action: row?.action || "",
@@ -145,6 +178,11 @@ export function computeArchitectureSnapshotHash(cbaRows = []) {
     architecture: row?.architecture || null,
     codeEvidence: row?.codeEvidence || null,
     sourceEvidence: row?.sourceEvidence || null,
+    lifecyclePhase: row?.lifecyclePhase || "",
+    interfaceType: row?.interfaceType || "",
+    hazardAnalysisEligibility: row?.hazardAnalysisEligibility || "",
+    hazardAnalysisEligibilityRationale: row?.hazardAnalysisEligibilityRationale || "",
+    hazardAnalysisEligibilitySource: row?.hazardAnalysisEligibilitySource || "",
   }));
   const text = JSON.stringify(stableValue(compactRows));
   let hash = 0;
@@ -278,6 +316,11 @@ export function buildTraceabilityForArchitectureRow(row = {}, index = 0, repoMet
     csci: row?.architecture?.csci || "",
     csc: row?.architecture?.csc || "",
     csu: row?.architecture?.csu || "",
+    lifecyclePhase: row?.lifecyclePhase || "",
+    interfaceType: row?.interfaceType || "",
+    hazardAnalysisEligibility: row?.hazardAnalysisEligibility || "",
+    hazardAnalysisEligibilityRationale: row?.hazardAnalysisEligibilityRationale || "",
+    hazardAnalysisEligibilitySource: row?.hazardAnalysisEligibilitySource || "",
     repoId: normalizeRepoId(repoMeta),
     branch: repoMeta.branch || "",
   };
@@ -304,6 +347,11 @@ export function traceabilityToSheetCells(trace = {}) {
     trace.csci || "",
     trace.csc || "",
     trace.csu || "",
+    trace.lifecyclePhase || "",
+    trace.interfaceType || "",
+    trace.hazardAnalysisEligibility || "",
+    trace.hazardAnalysisEligibilityRationale || "",
+    trace.hazardAnalysisEligibilitySource || "",
   ];
 }
 
@@ -335,6 +383,11 @@ export function extractFunctionalDecompositionTrace(headers = [], row = [], repo
     csci: valueFor("CSCI"),
     csc: valueFor("CSC"),
     csu: valueFor("CSU"),
+    lifecyclePhase: valueFor("Lifecycle Phase"),
+    interfaceType: valueFor("Interface Type"),
+    hazardAnalysisEligibility: valueFor("Hazard Analysis Eligibility"),
+    hazardAnalysisEligibilityRationale: valueFor("Eligibility Rationale"),
+    hazardAnalysisEligibilitySource: valueFor("Eligibility Source"),
     repoId: normalizeRepoId(repoMeta),
     branch: repoMeta.branch || "",
   };
@@ -372,6 +425,11 @@ export function traceabilityObjectToSummaryFields(trace = {}) {
     CSCI: trace.csci || "",
     CSC: trace.csc || "",
     CSU: trace.csu || "",
+    "Lifecycle Phase": trace.lifecyclePhase || "",
+    "Interface Type": trace.interfaceType || "",
+    "Hazard Analysis Eligibility": trace.hazardAnalysisEligibility || "",
+    "Eligibility Rationale": trace.hazardAnalysisEligibilityRationale || "",
+    "Eligibility Source": trace.hazardAnalysisEligibilitySource || "",
   };
 }
 
@@ -392,6 +450,11 @@ export const HAZARD_SUMMARY_TRACEABILITY_COLUMNS = [
   "CSCI",
   "CSC",
   "CSU",
+  "Lifecycle Phase",
+  "Interface Type",
+  "Hazard Analysis Eligibility",
+  "Eligibility Rationale",
+  "Eligibility Source",
 ];
 
 export const HAZARD_SUMMARY_EVIDENCE_COLUMNS = [
@@ -435,9 +498,14 @@ export function filterMarkdownRowsForHazardAnalysis(cbaRows = []) {
   return (Array.isArray(cbaRows) ? cbaRows : []).filter(shouldIncludeArchitectureRowForHazardAnalysis);
 }
 
+export function filterEligibleCodeArchitectureRowsForHazardAnalysis(cbaRows = []) {
+  return ensureCodeArchitectureHazardEligibility(filterMarkdownRowsForHazardAnalysis(cbaRows))
+    .filter(isCodeArchitectureHazardEligible);
+}
+
 export function codeArchitectureRowsToHazardTableRows(cbaRows = [], repoMeta = {}) {
   const repoId = normalizeRepoId(repoMeta);
-  return ensureCodeArchitectureTraceIds(filterMarkdownRowsForHazardAnalysis(cbaRows)).map((row, index) => {
+  return ensureCodeArchitectureTraceIds(filterEligibleCodeArchitectureRowsForHazardAnalysis(cbaRows)).map((row, index) => {
     const rowRef = row?.rowRef || index + 1;
     const sourceFiles = [row?.fromFile, row?.toFile]
       .filter(Boolean)
@@ -467,6 +535,11 @@ export function codeArchitectureRowsToHazardTableRows(cbaRows = [], repoMeta = {
       architecture: row?.architecture || null,
       codeEvidence: row?.codeEvidence || null,
       sourceEvidence: row?.sourceEvidence || null,
+      lifecyclePhase: row?.lifecyclePhase || "",
+      interfaceType: row?.interfaceType || "",
+      hazardAnalysisEligibility: row?.hazardAnalysisEligibility || "",
+      hazardAnalysisEligibilityRationale: row?.hazardAnalysisEligibilityRationale || "",
+      hazardAnalysisEligibilitySource: row?.hazardAnalysisEligibilitySource || "",
       traceability,
       affectedCodeRefs: traceability.affectedCodeRefs || [],
       originalArchitectureRow: row,
@@ -489,31 +562,102 @@ export function buildCodeArchitectureTraceabilityMap(cbaRows = []) {
     codeEvidence: row.codeEvidence || null,
     sourceEvidence: row.sourceEvidence || null,
     subsystem: row.traceability?.subsystem || row.originalArchitectureRow?.architecture?.subsystem || "Application Subsystem",
+    lifecyclePhase: row.lifecyclePhase || "",
+    interfaceType: row.interfaceType || "",
+    hazardAnalysisEligibility: row.hazardAnalysisEligibility || "",
+    hazardAnalysisEligibilityRationale: row.hazardAnalysisEligibilityRationale || "",
+    hazardAnalysisEligibilitySource: row.hazardAnalysisEligibilitySource || "",
   }));
 }
 
-export function buildCodeArchitectureHazardInput({ cbaRows = [], repoMeta = {}, projectId = "" } = {}) {
-  const tableRows = codeArchitectureRowsToHazardTableRows(cbaRows, repoMeta);
+export function buildCodeArchitectureHazardInput({
+  cbaRows = [],
+  repoMeta = {},
+  projectId = "",
+  method = "STPA-Textbook",
+  operationalContexts = [],
+  selectedOperationalContextId = "all",
+} = {}) {
+  const normalizedArchitectureRows = ensureCodeArchitectureTraceIds(cbaRows);
+  const eligibilitySummary = summarizeCodeArchitectureHazardEligibility(normalizedArchitectureRows);
+  const sourceTableRows = codeArchitectureRowsToHazardTableRows(cbaRows, repoMeta);
+  const configuredOperationalContexts = normalizeHazardOperationalContexts(operationalContexts);
+  const effectiveOperationalContexts = getEffectiveHazardOperationalContexts(configuredOperationalContexts);
+  const analysisOperationalContexts = selectedOperationalContextId === "all"
+    ? effectiveOperationalContexts
+    : effectiveOperationalContexts.filter((context) => context.id === selectedOperationalContextId);
+  const contextsToAnalyze = analysisOperationalContexts.length
+    ? analysisOperationalContexts
+    : effectiveOperationalContexts;
+  const guidePhrases = getCodeArchitectureHazardGuidePhrases(method);
+  const tableRows = sourceTableRows.flatMap((row) => (
+    guidePhrases.flatMap((guidePhrase) => contextsToAnalyze.map((context) => ({
+      ...row,
+      guidePhrase,
+      guidePhraseApplicable: "",
+      guidePhraseApplicabilityRationale: "",
+      operationalContextId: context.id,
+      operationalScenario: context.scenario,
+      operationalMode: context.mode,
+      operatingConditions: context.conditions,
+      contextAssumptions: context.assumptions,
+    })))
+  ));
   const functionalDecompositionSheet = [
-    ["Function (From)", "Control Action", "Function (To)", ...CODE_ARCHITECTURE_TRACEABILITY_COLUMNS],
+    [
+      "Function (From)",
+      "Control Action",
+      "Function (To)",
+      "Function (From) Details",
+      "Control Action Details",
+      "Function (To) Details",
+      "Operational Context ID",
+      "Operational Scenario",
+      "Operational Mode",
+      "Operating Conditions",
+      "Context Assumptions",
+      "Guide Phrase",
+      "Guide Phrase Applicable",
+      "Guide Phrase Applicability Rationale",
+      ...CODE_ARCHITECTURE_TRACEABILITY_COLUMNS,
+    ],
     ...tableRows.map((row) => [
       row.fromFunction || "",
       row.controlAction || "",
       row.toFunction || "",
+      row.fromDetails || "",
+      row.controlDetails || "",
+      row.toDetails || "",
+      row.operationalContextId || "",
+      row.operationalScenario || "",
+      row.operationalMode || "",
+      row.operatingConditions || "",
+      row.contextAssumptions || "",
+      row.guidePhrase || "",
+      row.guidePhraseApplicable || "",
+      row.guidePhraseApplicabilityRationale || "",
       ...traceabilityToSheetCells(row.traceability || {}),
     ]),
   ];
-  const architectureRowsForHazardAnalysis = filterMarkdownRowsForHazardAnalysis(cbaRows);
-  const architectureSnapshotHash = computeArchitectureSnapshotHash(architectureRowsForHazardAnalysis);
+  const architectureSnapshotHash = computeArchitectureSnapshotHash(normalizedArchitectureRows);
+  const explicitOperationalContext = buildHazardOperationalContextPrompt(contextsToAnalyze);
+  const repositoryOperationalContext = String(repoMeta.operationalContext || "").trim();
   return {
     projectId,
     repoId: normalizeRepoId(repoMeta),
     tableRows,
+    sourceTableRows,
     sheets: { "Functional Decomposition": functionalDecompositionSheet },
     architectureSnapshotHash,
-    architectureRowsSnapshot: tableRows,
+    architectureRowsSnapshot: sourceTableRows,
     traceabilityMap: buildCodeArchitectureTraceabilityMap(cbaRows),
-    operationalContext: String(repoMeta.operationalContext || "").trim(),
+    eligibilitySummary,
+    excludedArchitectureRows: normalizedArchitectureRows.filter((row) => row.hazardAnalysisEligibility === "Exclude"),
+    needsReviewArchitectureRows: normalizedArchitectureRows.filter((row) => row.hazardAnalysisEligibility === "Needs Review"),
+    operationalContext: [repositoryOperationalContext, explicitOperationalContext].filter(Boolean).join("\n\n"),
+    configuredOperationalContexts,
+    analysisOperationalContexts: contextsToAnalyze,
+    selectedOperationalContextId,
     analysisContext: repoMeta.analysisContext || { text: "", files: [] },
     contextSources: repoMeta.contextSources || null,
   };
@@ -1383,10 +1527,20 @@ export function normalizeCodeArchitectureHazardRun(raw = {}, context = {}) {
     architectureSnapshotHash: raw.architectureSnapshotHash || context.architectureSnapshotHash || "",
     architectureRowsSnapshot: Array.isArray(raw.architectureRowsSnapshot) ? raw.architectureRowsSnapshot : [],
     traceabilityMap: Array.isArray(raw.traceabilityMap) ? raw.traceabilityMap : [],
+    hazardEligibilitySummary: raw.hazardEligibilitySummary || context.hazardEligibilitySummary || null,
+    excludedArchitectureRows: Array.isArray(raw.excludedArchitectureRows) ? raw.excludedArchitectureRows : [],
+    needsReviewArchitectureRows: Array.isArray(raw.needsReviewArchitectureRows) ? raw.needsReviewArchitectureRows : [],
     hazardMethod: raw.hazardMethod || context.hazardMethod || "STPA-Textbook",
     hazardGenerationMode: raw.hazardGenerationMode || context.hazardGenerationMode || raw.fhaGenerationMode || context.fhaGenerationMode || "",
     fhaGenerationMode: raw.fhaGenerationMode || context.fhaGenerationMode || "",
     operationalContext: raw.operationalContext || context.operationalContext || context.repoMeta?.operationalContext || "",
+    operationalContexts: normalizeHazardOperationalContexts(
+      raw.operationalContexts || context.operationalContexts || [],
+    ),
+    analysisOperationalContexts: normalizeHazardOperationalContexts(
+      raw.analysisOperationalContexts || context.analysisOperationalContexts || raw.operationalContexts || context.operationalContexts || [],
+    ),
+    selectedOperationalContextId: raw.selectedOperationalContextId || context.selectedOperationalContextId || "all",
     organizationProfileProvenance: raw.organizationProfileProvenance || context.organizationProfileProvenance || null,
     contextSources: raw.contextSources || context.contextSources || context.repoMeta?.contextSources || null,
     generatedSheets: raw.generatedSheets || raw.analysisResult || {},
@@ -1397,7 +1551,28 @@ export function normalizeCodeArchitectureHazardRun(raw = {}, context = {}) {
   };
 }
 
-export function isCodeArchitectureHazardAnalysisStale({ run, cbaRows }) {
-  if (!run?.architectureSnapshotHash) return false;
-  return run.architectureSnapshotHash !== computeArchitectureSnapshotHash(cbaRows || []);
+export function isCodeArchitectureHazardAnalysisStale({
+  run,
+  cbaRows,
+  operationalContexts,
+  selectedOperationalContextId,
+}) {
+  if (!run) return false;
+  if (
+    run.architectureSnapshotHash
+    && run.architectureSnapshotHash !== computeArchitectureSnapshotHash(cbaRows || [])
+  ) return true;
+
+  if (operationalContexts !== undefined) {
+    const runContexts = normalizeHazardOperationalContexts(run.operationalContexts || []);
+    const currentContexts = normalizeHazardOperationalContexts(operationalContexts || []);
+    if (JSON.stringify(stableValue(runContexts)) !== JSON.stringify(stableValue(currentContexts))) return true;
+  }
+
+  if (selectedOperationalContextId !== undefined) {
+    const priorSelection = run.selectedOperationalContextId || "all";
+    const currentSelection = selectedOperationalContextId || "all";
+    if (priorSelection !== "all" && priorSelection !== currentSelection) return true;
+  }
+  return false;
 }

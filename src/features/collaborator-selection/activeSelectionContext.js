@@ -75,6 +75,11 @@ export function isSelectedTableCell(selection, tableId, rowId, columnIndex) {
   );
 }
 
+export function isCodeArchitectureSelection(selection) {
+  return String(selection?.tableId || "").startsWith("code-architecture-")
+    || String(selection?.source || "").startsWith("code-architecture");
+}
+
 export function describeActiveSelection(selection) {
   if (!selection) return "";
   if (selection.kind === "functional-canvas") {
@@ -88,4 +93,3 @@ export function describeActiveSelection(selection) {
   }
   return selection.label || selection.title || "Selected workspace item";
 }
-

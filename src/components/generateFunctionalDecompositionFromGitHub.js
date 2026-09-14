@@ -14,6 +14,11 @@ import {
   makeCodeArchitectureTraceId,
 } from "../features/code-architecture-hazard-analysis/codeArchitectureHazardUtils";
 import {
+  CODE_ARCHITECTURE_HAZARD_ELIGIBILITY,
+  CODE_ARCHITECTURE_INTERFACE_TYPES,
+  CODE_ARCHITECTURE_LIFECYCLE_PHASES,
+} from "../features/code-architecture-hazard-analysis/codeArchitectureHazardEligibility";
+import {
   createFunctionalDecompositionMetricsRun,
   finishFunctionalDecompositionMetricsRun,
   recordFunctionalDecompositionAiCall,
@@ -3754,13 +3759,14 @@ ${chunkedContent}`;
       metricsRun,
     }));
 
-    setTableData(architectureRows);
+    const classifiedArchitectureRows = ensureCodeArchitectureTraceIds(architectureRows);
+    setTableData(classifiedArchitectureRows);
 
     // NEW: make rows available to Copilot (read via cba:owner/repo)
     let storageSaved = false;
     let storageError = "";
     try {
-      await idbPut(IDB_STORES.cba, outputStorageKey, architectureRows);
+      await idbPut(IDB_STORES.cba, outputStorageKey, classifiedArchitectureRows);
       storageSaved = true;
       if (failedFiles.length === 0) {
         await idbDelete(IDB_STORES.cba, checkpointKey).catch(() => {});
@@ -3903,6 +3909,10 @@ export function updateCodeArchitectureFunctionalCell(rows = [], rowIndex, column
     to: "to",
     toFile: "toFile",
     toDetails: "toDetails",
+    lifecyclePhase: "lifecyclePhase",
+    interfaceType: "interfaceType",
+    hazardAnalysisEligibility: "hazardAnalysisEligibility",
+    hazardAnalysisEligibilityRationale: "hazardAnalysisEligibilityRationale",
   };
   if (!architectureFields.has(columnId) && !rowFields[columnId]) return rows;
   return rows.map((row, currentIndex) => {
@@ -3916,7 +3926,17 @@ export function updateCodeArchitectureFunctionalCell(rows = [], rowIndex, column
         },
       };
     }
-    return { ...row, [rowFields[columnId]]: value };
+    const eligibilityField = [
+      "lifecyclePhase",
+      "interfaceType",
+      "hazardAnalysisEligibility",
+      "hazardAnalysisEligibilityRationale",
+    ].includes(columnId);
+    return {
+      ...row,
+      [rowFields[columnId]]: value,
+      ...(eligibilityField ? { hazardAnalysisEligibilitySource: "analyst-override" } : {}),
+    };
   });
 }
 
@@ -4096,6 +4116,11 @@ const repoName = useMemo(() => {
       fromNodeId: r.fromNodeId,
       edgeId: r.edgeId,
       toNodeId: r.toNodeId,
+      lifecyclePhase: r.lifecyclePhase,
+      interfaceType: r.interfaceType,
+      hazardAnalysisEligibility: r.hazardAnalysisEligibility,
+      hazardAnalysisEligibilityRationale: r.hazardAnalysisEligibilityRationale,
+      hazardAnalysisEligibilitySource: r.hazardAnalysisEligibilitySource,
     }));
   }, [rowsWithTraceIds]);
 
@@ -4352,6 +4377,10 @@ React.useEffect(() => {
     { id: "csci", label: "CSCI", defaultWidth: 220, minWidth: 150, getValue: (row) => row.architecture?.csci || "" },
     { id: "csc", label: "CSC", defaultWidth: 220, minWidth: 150, getValue: (row) => row.architecture?.csc || "" },
     { id: "csu", label: "CSU", defaultWidth: 220, minWidth: 150, getValue: (row) => row.architecture?.csu || "" },
+    { id: "lifecyclePhase", label: "Lifecycle Phase", defaultWidth: 190, minWidth: 160, getValue: (row) => row.lifecyclePhase || "Needs Review", options: CODE_ARCHITECTURE_LIFECYCLE_PHASES },
+    { id: "interfaceType", label: "Interface Type", defaultWidth: 200, minWidth: 170, getValue: (row) => row.interfaceType || "Needs Review", options: CODE_ARCHITECTURE_INTERFACE_TYPES },
+    { id: "hazardAnalysisEligibility", label: "Hazard Analysis Eligibility", defaultWidth: 210, minWidth: 180, getValue: (row) => row.hazardAnalysisEligibility || "Needs Review", options: Object.values(CODE_ARCHITECTURE_HAZARD_ELIGIBILITY) },
+    { id: "hazardAnalysisEligibilityRationale", label: "Eligibility Rationale", defaultWidth: 440, minWidth: 260, getValue: (row) => row.hazardAnalysisEligibilityRationale || "" },
   ], []);
   const defaultColumnWidths = useMemo(() => Object.fromEntries(tableColumns.map((column) => [column.id, column.defaultWidth])), [tableColumns]);
   const [columnWidths, setColumnWidths] = useState(() => {
@@ -4405,11 +4434,11 @@ React.useEffect(() => {
 
   const updateTableCell = React.useCallback((sourceIndex, columnId, value) => {
     if (reviewMode) return;
-    const sourceRows = manualData || data || [];
+    const sourceRows = rowsWithTraceIds;
     const nextRows = updateCodeArchitectureFunctionalCell(sourceRows, sourceIndex, columnId, value);
     if (onDataChange) onDataChange(nextRows);
     else setManualData(nextRows);
-  }, [data, manualData, onDataChange, reviewMode]);
+  }, [onDataChange, reviewMode, rowsWithTraceIds]);
 
 	const selectTableCell = React.useCallback((row, sourceIndex, columnIndex) => {
     if (!onCollaboratorSelectionChange) return;
@@ -4725,6 +4754,11 @@ React.useEffect(() => {
               fromNodeId: r.fromNodeId,
               edgeId: r.edgeId,
               toNodeId: r.toNodeId,
+              lifecyclePhase: r.lifecyclePhase,
+              interfaceType: r.interfaceType,
+              hazardAnalysisEligibility: r.hazardAnalysisEligibility,
+              hazardAnalysisEligibilityRationale: r.hazardAnalysisEligibilityRationale,
+              hazardAnalysisEligibilitySource: r.hazardAnalysisEligibilitySource,
             }));
             if (onDataChange) onDataChange(backMapped);
             else setManualData(backMapped);
@@ -4854,7 +4888,19 @@ React.useEffect(() => {
                           }}
                         >
                           <div className="flex items-start gap-1">
-                            <textarea
+                            {column.options ? (
+                              <select
+                                className="w-full rounded border border-slate-200 bg-white px-2 py-1.5 text-[13px] leading-5 focus:border-indigo-400 focus:outline-none"
+                                value={value}
+                                onChange={(event) => updateTableCell(i, column.id, event.target.value)}
+                                onFocus={() => selectTableCell(row, i, columnIndex)}
+                                onClick={(event) => event.stopPropagation()}
+                                disabled={reviewMode}
+                                aria-label={`${column.label}, row ${i + 1}`}
+                              >
+                                {column.options.map((option) => <option key={option} value={option}>{option}</option>)}
+                              </select>
+                            ) : <textarea
                               className={`min-h-[2.5rem] w-full resize-none overflow-hidden break-words bg-transparent text-[13px] leading-5 [overflow-wrap:anywhere] focus:outline-none ${rejected ? "line-through decoration-rose-400" : ""}`}
                               value={value}
                               onChange={(event) => updateTableCell(i, column.id, event.target.value)}
@@ -4863,7 +4909,7 @@ React.useEffect(() => {
                               rows={codeArchitectureFunctionalCellRows(value, column.id)}
                               readOnly={reviewMode}
                               aria-label={`${column.label}, row ${i + 1}`}
-                            />
+                            />}
                             {traceType && value ? (
                               <button
                                 type="button"

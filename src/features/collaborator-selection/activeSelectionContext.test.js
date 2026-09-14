@@ -3,6 +3,7 @@ import {
   describeActiveSelection,
   isSelectedTableCell,
   isSelectedTableRow,
+  isCodeArchitectureSelection,
 } from "./activeSelectionContext";
 
 describe("Collaborator active selection context", () => {
@@ -23,5 +24,11 @@ describe("Collaborator active selection context", () => {
     expect(isSelectedTableRow(selection, "functional-decomposition", "fd-4")).toBe(true);
     expect(isSelectedTableCell(selection, "functional-decomposition", "fd-4", 1)).toBe(true);
     expect(describeActiveSelection(selection)).toContain("row 4");
+  });
+
+  test("recognizes every Code-Based Architecture selection source", () => {
+    expect(isCodeArchitectureSelection({ tableId: "code-architecture-functional-decomposition", source: "table" })).toBe(true);
+    expect(isCodeArchitectureSelection({ tableId: "code-architecture-hazard-analysis", source: "code-architecture-hazard-analysis" })).toBe(true);
+    expect(isCodeArchitectureSelection({ tableId: "functional-decomposition", source: "table" })).toBe(false);
   });
 });

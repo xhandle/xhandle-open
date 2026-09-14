@@ -16,12 +16,30 @@ export {
 } from "./codeArchitectureHazardStore";
 export { runCodeArchitectureHazardAnalysis } from "./codeArchitectureHazardRunner";
 export {
+  classifyCodeArchitectureHazardEligibility,
+  CODE_ARCHITECTURE_HAZARD_ELIGIBILITY,
+  CODE_ARCHITECTURE_INTERFACE_TYPES,
+  CODE_ARCHITECTURE_LIFECYCLE_PHASES,
+  ensureCodeArchitectureHazardEligibility,
+  isCodeArchitectureHazardEligible,
+  summarizeCodeArchitectureHazardEligibility,
+} from "./codeArchitectureHazardEligibility";
+export {
+  clearCodeArchitectureHazardContexts,
+  codeArchitectureHazardContextStorageKey,
+  loadCodeArchitectureHazardContexts,
+  saveCodeArchitectureHazardContexts,
+} from "./codeArchitectureHazardContextStore";
+export {
   buildCodeArchitectureHazardInput,
+  CODE_ARCHITECTURE_STPA_GUIDE_PHRASES,
   codeArchitectureRowsToHazardTableRows,
   computeArchitectureSnapshotHash,
   ensureHazardSummaryEvidenceColumns,
   ensureHazardSummaryTraceColumns,
   ensureCodeArchitectureTraceIds,
+  filterEligibleCodeArchitectureRowsForHazardAnalysis,
+  getCodeArchitectureHazardGuidePhrases,
   isCodeArchitectureHazardAnalysisStale,
   normalizeCodeArchitectureHazardRun,
   summarySheetToHazardSummaryRows,

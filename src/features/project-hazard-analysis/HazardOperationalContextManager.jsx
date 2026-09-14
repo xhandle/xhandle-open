@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Loader2, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { normalizeHazardOperationalContexts } from "./hazardOperationalContexts";
 
@@ -12,7 +13,14 @@ function newContext() {
   };
 }
 
-export default function HazardOperationalContextManager({ open, contexts = [], onClose, onSave, onGenerate }) {
+export default function HazardOperationalContextManager({
+  open,
+  contexts = [],
+  scopeLabel = "project",
+  onClose,
+  onSave,
+  onGenerate,
+}) {
   const [drafts, setDrafts] = useState([]);
   const [description, setDescription] = useState("");
   const [generating, setGenerating] = useState(false);
@@ -65,9 +73,9 @@ export default function HazardOperationalContextManager({ open, contexts = [], o
     }
   };
 
-  return (
+  return createPortal(
     <div
-      className="xhandle-modal-viewport fixed inset-0 z-[90] flex justify-end bg-slate-950/30"
+      className="xhandle-modal-viewport fixed inset-0 z-[1200] flex justify-end bg-slate-950/30"
       role="presentation"
       onMouseDown={onClose}
     >
@@ -83,6 +91,9 @@ export default function HazardOperationalContextManager({ open, contexts = [], o
             <h2 id="hazard-context-title" className="text-lg font-semibold text-gray-950">Operational contexts</h2>
             <p className="mt-1 text-sm text-gray-600">
               Define only applicable scenario–mode combinations. Each combination is analyzed independently.
+            </p>
+            <p className="mt-1 text-xs font-medium text-blue-700">
+              Saved to the current {scopeLabel}.
             </p>
           </div>
           <button type="button" onClick={onClose} className="rounded-md p-2 text-gray-500 hover:bg-gray-100" aria-label="Close operational contexts">
@@ -106,7 +117,7 @@ export default function HazardOperationalContextManager({ open, contexts = [], o
               className="mt-3 w-full resize-y rounded-md border border-blue-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-400 focus:outline-none"
             />
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-              <span className="text-xs text-blue-900/70">Uses the configured AI provider and the project’s functional architecture.</span>
+              <span className="text-xs text-blue-900/70">Uses the configured AI provider and the current {scopeLabel} architecture.</span>
               <button
                 type="button"
                 onClick={generate}
@@ -167,6 +178,7 @@ export default function HazardOperationalContextManager({ open, contexts = [], o
           <button type="button" onClick={save} disabled={generating} className="rounded-md bg-[#2D7DFE] px-4 py-2 text-sm font-medium text-white hover:bg-[#1E61D6] disabled:opacity-60">Save contexts</button>
         </footer>
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }

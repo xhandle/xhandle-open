@@ -1,7 +1,9 @@
 import {
+  appendFunctionalVibeReviewAudit,
   createFunctionalVibeReviewSession,
   currentFunctionalVibeReviewRowId,
   FUNCTIONAL_VIBE_REVIEW_STATES,
+  loadFunctionalVibeReviewAudit,
   loadFunctionalVibeReviewSession,
   parseFunctionalVibeReviewAction,
   saveFunctionalVibeReviewSession,
@@ -24,7 +26,30 @@ test("reviews a stable functional queue exactly once", () => {
 test("parses functional actions but leaves engineering questions alone", () => {
   expect(parseFunctionalVibeReviewAction("keep as is")).toBe("keep");
   expect(parseFunctionalVibeReviewAction("apply the revision")).toBe("revise");
+  expect(parseFunctionalVibeReviewAction("Continue review")).toBe("resume");
   expect(parseFunctionalVibeReviewAction("Why is this interface directed toward planning?")).toBeNull();
+});
+
+test("retains explicitly targeted review columns in the session", () => {
+  const session = createFunctionalVibeReviewSession({
+    projectId: "p",
+    threadId: "t",
+    queue: ["a"],
+    scopeLabel: "Lifecycle Phase = Needs Review",
+    reviewFields: ["lifecyclePhase"],
+  });
+  expect(session.reviewFields).toEqual(["lifecyclePhase"]);
+});
+
+test("retains the original reviewer instructions after resolving a scope choice", () => {
+  const session = createFunctionalVibeReviewSession({
+    projectId: "p",
+    threadId: "t",
+    queue: ["a"],
+    scopeLabel: "Hazard Analysis Eligibility = Include",
+    reviewInstructions: "Consolidate low-level tensor and helper calls into operational transformations.",
+  });
+  expect(session.reviewInstructions).toContain("Consolidate low-level tensor");
 });
 
 test("undo rewinds and sessions persist without embedding project rows", () => {
@@ -46,4 +71,19 @@ test("persists the reviewed workspace and repository boundary", () => {
     repoId: "repo-1",
   });
   expect(session).toMatchObject({ workspaceType: "code-based-architecture", repoId: "repo-1" });
+});
+
+test("keeps a functional review usable when browser storage quota is exceeded", () => {
+  const quotaError = Object.assign(new Error("The quota has been exceeded."), { name: "QuotaExceededError" });
+  const storage = {
+    getItem() { return null; },
+    setItem() { throw quotaError; },
+  };
+  const session = createFunctionalVibeReviewSession({ projectId: "quota-project", threadId: "quota-thread", queue: ["row-1"] });
+
+  expect(() => saveFunctionalVibeReviewSession(session, storage)).not.toThrow();
+  expect(loadFunctionalVibeReviewSession("quota-project", "quota-thread", storage)?.queue).toEqual(["row-1"]);
+
+  expect(() => appendFunctionalVibeReviewAudit({ projectId: "quota-project", rowId: "row-1" }, storage)).not.toThrow();
+  expect(loadFunctionalVibeReviewAudit("quota-project", storage)).toHaveLength(1);
 });

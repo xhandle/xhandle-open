@@ -53,15 +53,15 @@ export default function ResultsReviewDrawer({
 
   return (
     <div
-      className={`fixed bottom-0 top-14 z-[80] flex pointer-events-none transition-[right,transform] duration-200 ease-out ${isOpen ? "" : "translate-x-full"}`}
-      style={{ right: "var(--xhandle-collaborator-reserved-width)" }}
+      className={`fixed bottom-0 left-0 right-[var(--xhandle-collaborator-reserved-width)] top-14 z-[80] flex min-w-0 justify-end pointer-events-none transition-[right,transform] duration-200 ease-out ${isOpen ? "" : "translate-x-full"}`}
       aria-hidden={!isOpen}
     >
       <div
-        className={`pointer-events-auto flex h-full transform flex-col border-l border-gray-200 bg-white shadow-2xl transition-[width,transform] duration-200 ease-out ${
+        className={`pointer-events-auto flex h-full min-w-0 max-w-full transform flex-col border-l border-gray-200 bg-white shadow-2xl transition-[width,transform] duration-200 ease-out ${
+          isExpanded ? "w-[var(--results-review-drawer-expanded-width)]" : "w-[var(--results-review-drawer-width)]"
+        } ${
           isOpen ? "translate-x-0" : "translate-x-full"
         }`}
-        style={{ width: isExpanded ? "var(--results-review-drawer-expanded-width)" : "var(--results-review-drawer-width)" }}
         aria-label="Review AI-Generated Results"
       >
         <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-5 py-4">

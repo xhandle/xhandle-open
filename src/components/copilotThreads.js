@@ -6,15 +6,8 @@ const MAX_MESSAGES_PER_THREAD = 80;
 // recent responses and let the thread-level quota perform the eventual trim.
 const MAX_MESSAGE_CONTENT_CHARS = 64000;
 const MAX_STORAGE_CHARS = 3_500_000;
-
-function isQuotaExceededError(error) {
-  return (
-    error?.name === "QuotaExceededError" ||
-    error?.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
-    error?.code === 22 ||
-    error?.code === 1014
-  );
-}
+const SESSION_FALLBACK_KEY = `${KEY}.sessionFallback`;
+let volatileThreads = null;
 
 function truncateText(value, maxChars = MAX_MESSAGE_CONTENT_CHARS) {
   const text = String(value || "");
@@ -98,38 +91,56 @@ function serializeThreadsForStorage(threads = [], aggressive = false) {
 }
 
 export function loadThreads() {
-  try {
-    const raw = localStorage.getItem(KEY);
-    const parsed = JSON.parse(raw) || [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+  const read = (storage, key) => {
+    try {
+      const raw = storage?.getItem(key);
+      if (raw == null) return null;
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
+  // Each fallback is a complete snapshot, not a partial overlay. Prefer the
+  // newest in-process snapshot, then this tab's session snapshot, then the
+  // durable origin snapshot. This also preserves thread deletions.
+  if (Array.isArray(volatileThreads)) return sortThreadsForRetention(volatileThreads);
+  const tabSnapshot = read(typeof sessionStorage !== "undefined" ? sessionStorage : null, SESSION_FALLBACK_KEY);
+  if (tabSnapshot) return sortThreadsForRetention(tabSnapshot);
+  return sortThreadsForRetention(read(typeof localStorage !== "undefined" ? localStorage : null, KEY) || []);
 }
 export function saveThreads(threads) {
   if (typeof localStorage === "undefined") return compactThreadsForStorage(threads);
   let prepared = serializeThreadsForStorage(threads);
   try {
     localStorage.setItem(KEY, prepared.serialized);
+    try { sessionStorage?.removeItem(SESSION_FALLBACK_KEY); } catch {}
+    volatileThreads = null;
     return prepared.compacted;
-  } catch (error) {
-    if (!isQuotaExceededError(error)) return prepared.compacted;
-  }
+  } catch (error) {}
 
   prepared = serializeThreadsForStorage(threads, true);
   try {
     localStorage.setItem(KEY, prepared.serialized);
+    try { sessionStorage?.removeItem(SESSION_FALLBACK_KEY); } catch {}
+    volatileThreads = null;
     return prepared.compacted;
   } catch {
-    // Last-resort recovery: keep only a tiny, useful recent snapshot instead of
-    // throwing and interrupting the collaborator UI.
-    const fallback = compactThreadsForStorage(threads, true).slice(0, 3).map((thread) => ({
-      ...thread,
-      messages: (thread.messages || []).slice(-10),
-    }));
-    try { localStorage.setItem(KEY, JSON.stringify(fallback)); } catch {}
-    return fallback;
+    try {
+      sessionStorage?.setItem(SESSION_FALLBACK_KEY, prepared.serialized);
+      volatileThreads = null;
+      return prepared.compacted;
+    } catch {}
   }
+
+  // Last-resort recovery keeps the active queue and its newest card available
+  // for this tab even when the origin has exhausted both browser stores.
+  const fallback = compactThreadsForStorage(threads, true).slice(0, 3).map((thread) => ({
+    ...thread,
+    messages: (thread.messages || []).slice(-10),
+  }));
+  volatileThreads = fallback;
+  return fallback;
 }
 export function newThread(title = "New topic", options = {}) {
   const greeting = String(options?.greeting || "").trim() || "New thread. How can I help?";

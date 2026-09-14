@@ -2,6 +2,8 @@ const {
   buildCodeArchitectureHazardInput,
   ensureHazardSummaryEvidenceColumns,
   extractFunctionalDecompositionTrace,
+  isCodeArchitectureHazardAnalysisStale,
+  normalizeCodeArchitectureHazardRun,
 } = require("./codeArchitectureHazardUtils");
 const {
   enrichHazardTableRowsWithSourceContent,
@@ -14,6 +16,109 @@ function rowObject(summary, rowIndex = 1) {
 }
 
 describe("code architecture hazard evidence review", () => {
+  it("expands STPA interfaces across every guide phrase and selected operational context", () => {
+    const contexts = [
+      { id: "normal", scenario: "Nominal route", mode: "Automatic", conditions: "Dry road", assumptions: "Sensors healthy" },
+      { id: "degraded", scenario: "Degraded localization", mode: "Minimum risk", conditions: "GNSS unavailable", assumptions: "Odometry available" },
+    ];
+    const input = buildCodeArchitectureHazardInput({
+      cbaRows: [{ from: "Estimate Pose", action: "Pose Estimate", to: "Plan Motion" }],
+      method: "STPA-Textbook",
+      operationalContexts: contexts,
+      selectedOperationalContextId: "all",
+    });
+
+    expect(input.sourceTableRows).toHaveLength(1);
+    expect(input.tableRows).toHaveLength(14);
+    expect(new Set(input.tableRows.map((row) => row.guidePhrase)).size).toBe(7);
+    expect(new Set(input.tableRows.map((row) => row.operationalContextId))).toEqual(new Set(["normal", "degraded"]));
+
+    const sheet = input.sheets["Functional Decomposition"];
+    const contextIdIndex = sheet[0].indexOf("Operational Context ID");
+    const guidePhraseIndex = sheet[0].indexOf("Guide Phrase");
+    expect(contextIdIndex).toBeGreaterThan(-1);
+    expect(guidePhraseIndex).toBeGreaterThan(-1);
+    expect(sheet.slice(1).every((row) => row[contextIdIndex] && row[guidePhraseIndex])).toBe(true);
+  });
+
+  it("scopes the next analysis to one operational context without losing configured contexts", () => {
+    const contexts = [
+      { id: "normal", scenario: "Nominal route", mode: "Automatic" },
+      { id: "degraded", scenario: "Sensor fault", mode: "Degraded" },
+    ];
+    const input = buildCodeArchitectureHazardInput({
+      cbaRows: [{ from: "Monitor", action: "Health Status", to: "Fallback" }],
+      method: "STPA-Textbook",
+      operationalContexts: contexts,
+      selectedOperationalContextId: "degraded",
+    });
+
+    expect(input.configuredOperationalContexts).toHaveLength(2);
+    expect(input.analysisOperationalContexts).toEqual([expect.objectContaining({ id: "degraded" })]);
+    expect(input.tableRows).toHaveLength(7);
+    expect(input.tableRows.every((row) => row.operationalContextId === "degraded")).toBe(true);
+  });
+
+  it("uses one analysis row per context for non-STPA methods", () => {
+    const input = buildCodeArchitectureHazardInput({
+      cbaRows: [{ from: "Monitor", action: "Health Status", to: "Fallback" }],
+      method: "FHA",
+      operationalContexts: [
+        { id: "one", scenario: "Scenario one", mode: "Automatic" },
+        { id: "two", scenario: "Scenario two", mode: "Manual" },
+      ],
+    });
+
+    expect(input.tableRows).toHaveLength(2);
+    expect(input.tableRows.every((row) => row.guidePhrase === "")).toBe(true);
+  });
+
+  it("analyzes only eligible CBA rows while preserving explicit gate counts", () => {
+    const input = buildCodeArchitectureHazardInput({
+      cbaRows: [
+        { from: "Estimate Pose", action: "Pose Estimate", to: "Plan Motion" },
+        { from: "ModelConfig", action: "Define __init__", to: "__init__" },
+        { from: "helper_a", action: "Call helper_b", to: "helper_b", fromFile: "src/utils.py" },
+      ],
+      method: "STPA-Textbook",
+    });
+
+    expect(input.eligibilitySummary).toEqual({ total: 3, include: 1, exclude: 1, needsReview: 1 });
+    expect(input.sourceTableRows).toHaveLength(1);
+    expect(input.tableRows).toHaveLength(7);
+    expect(input.excludedArchitectureRows).toHaveLength(1);
+    expect(input.needsReviewArchitectureRows).toHaveLength(1);
+    expect(input.sheets["Functional Decomposition"][0]).toEqual(expect.arrayContaining([
+      "Lifecycle Phase",
+      "Interface Type",
+      "Hazard Analysis Eligibility",
+      "Eligibility Rationale",
+    ]));
+  });
+
+  it("preserves operational-context provenance and detects context changes", () => {
+    const contexts = [{ id: "normal", scenario: "Nominal route", mode: "Automatic" }];
+    const run = normalizeCodeArchitectureHazardRun({
+      architectureSnapshotHash: "snapshot",
+      operationalContexts: contexts,
+      analysisOperationalContexts: contexts,
+      selectedOperationalContextId: "normal",
+    });
+
+    expect(run.operationalContexts).toEqual(contexts.map((context) => ({ ...context, conditions: "", assumptions: "" })));
+    expect(run.selectedOperationalContextId).toBe("normal");
+    expect(isCodeArchitectureHazardAnalysisStale({
+      run: { ...run, architectureSnapshotHash: "" },
+      cbaRows: [],
+      operationalContexts: contexts,
+    })).toBe(false);
+    expect(isCodeArchitectureHazardAnalysisStale({
+      run: { ...run, architectureSnapshotHash: "" },
+      cbaRows: [],
+      operationalContexts: [{ id: "degraded", scenario: "Sensor fault", mode: "Degraded" }],
+    })).toBe(true);
+  });
+
   it("aligns primitive call actions when building hazard input from architecture rows", () => {
     const input = buildCodeArchitectureHazardInput({
       cbaRows: [{

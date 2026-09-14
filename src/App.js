@@ -67,9 +67,11 @@ import {
   filterSelectableRepoFiles,
   generateFunctionalDecompositionFromGitHub,
   FunctionalDecompositionTable,
+  fetchRepositoryContext,
   getDefaultBranch,
   listRepoFilesViaGitHub,
 } from './components/generateFunctionalDecompositionFromGitHub';
+import { generateRepositoryAnalysisContext } from './features/code-architecture-context/repositoryAnalysisContextAi';
 import { backendURL, buildAIAuthOpts } from './components/backendConfig';
 import { Sun, Moon } from 'lucide-react';
 import { useDarkMode } from './hooks/useDarkMode';
@@ -110,6 +112,7 @@ import {
   describeActiveSelection,
   isSelectedTableCell,
   isSelectedTableRow,
+  isCodeArchitectureSelection,
 } from "./features/collaborator-selection/activeSelectionContext";
 import {
   getArtifact as getWorkspaceArtifact,
@@ -141,7 +144,9 @@ import {
   getCodeArchitectureHazardRuns,
   getLatestCodeArchitectureHazardRun,
   isCodeArchitectureHazardAnalysisStale,
+  loadCodeArchitectureHazardContexts,
   runCodeArchitectureHazardAnalysis,
+  saveCodeArchitectureHazardContexts,
   saveCodeArchitectureHazardRun,
 } from "./features/code-architecture-hazard-analysis";
 import {
@@ -3763,6 +3768,7 @@ const [codeArchitectureRepoDraft, setCodeArchitectureRepoDraft] = useState({
 const [codeArchitectureRepoConfigMessage, setCodeArchitectureRepoConfigMessage] = useState("");
 const [isCodeArchitectureRepoVerifying, setIsCodeArchitectureRepoVerifying] = useState(false);
 const [isCodeArchitectureRepoAnalyzing, setIsCodeArchitectureRepoAnalyzing] = useState(false);
+const [isCodeArchitectureContextGenerating, setIsCodeArchitectureContextGenerating] = useState(false);
 const [codeArchitectureRepoFilesForModal, setCodeArchitectureRepoFilesForModal] = useState([]);
 const [codeArchitectureFileSelectorOpen, setCodeArchitectureFileSelectorOpen] = useState(false);
 const codeArchitectureFileSelectorResolver = useRef(null);
@@ -3782,6 +3788,13 @@ const [pendingCodeArchitectureDiagramTarget, setPendingCodeArchitectureDiagramTa
 const [codeArchitectureHazardMethod, setCodeArchitectureHazardMethod] = useState("STPA-Textbook");
 const [codeArchitectureHazardRun, setCodeArchitectureHazardRun] = useState(null);
 const [isRunningCodeArchitectureHazard, setIsRunningCodeArchitectureHazard] = useState(false);
+const [codeArchitectureHazardContexts, setCodeArchitectureHazardContexts] = useState([]);
+const [selectedCodeArchitectureHazardContextId, setSelectedCodeArchitectureHazardContextId] = useState("all");
+const [showCodeArchitectureHazardContextManager, setShowCodeArchitectureHazardContextManager] = useState(false);
+const [codeArchitectureHazardToolbarCollapsed, setCodeArchitectureHazardToolbarCollapsed] = useState(
+  () => localStorage.getItem("xhandle.codeArchitectureHazardToolbarCollapsed") === "true",
+);
+const codeArchitectureHazardAbortRef = useRef(null);
 const [codeArchitectureHazardProgress, setCodeArchitectureHazardProgress] = useState({
   step: 0,
   total: 9,
@@ -4094,6 +4107,53 @@ async function verifyCodeArchitectureRepo({ silent = false } = {}) {
   }
 }
 
+async function generateCodeArchitectureRepoContext() {
+  const parsedRepoUrl = parseGitHubRepoUrl(codeArchitectureRepoDraft.repoUrl);
+  const owner = (codeArchitectureRepoDraft.owner.trim() || parsedRepoUrl?.owner || "").trim();
+  const repo = (codeArchitectureRepoDraft.repo.trim() || parsedRepoUrl?.repo || "").trim();
+  const token = codeArchitectureRepoDraft.token.trim();
+  if (!owner || !repo) {
+    setCodeArchitectureRepoConfigMessage("Paste a GitHub repo URL or enter owner and repo before generating context.");
+    return;
+  }
+
+  setIsCodeArchitectureContextGenerating(true);
+  setCodeArchitectureRepoConfigMessage("Reading repository README and structure...");
+  try {
+    const branch = await getDefaultBranch(owner, repo, token || undefined);
+    const repoFiles = filterSelectableRepoFiles(
+      await listRepoFilesViaGitHub(owner, repo, token || undefined, branch),
+    );
+    if (!repoFiles.length) throw new Error("No readable repository files were found.");
+    setCodeArchitectureRepoFilesForModal(repoFiles);
+    const repositoryContext = await fetchRepositoryContext({
+      owner,
+      repo,
+      token: token || undefined,
+      ref: branch,
+      allFiles: repoFiles,
+    });
+    setCodeArchitectureRepoConfigMessage("Generating editable analysis context with the selected AI provider and model...");
+    const generated = await generateRepositoryAnalysisContext({
+      repositoryUrl: parsedRepoUrl?.repoUrl || `https://github.com/${owner}/${repo}`,
+      repositoryContext,
+      existingContext: codeArchitectureRepoDraft.analysisContextText,
+    });
+    setCodeArchitectureRepoDraft((draft) => ({
+      ...draft,
+      repoUrl: parsedRepoUrl?.repoUrl || draft.repoUrl || `https://github.com/${owner}/${repo}`,
+      owner,
+      repo,
+      analysisContextText: generated,
+    }));
+    setCodeArchitectureRepoConfigMessage("Analysis context generated. Review or edit it before saving or analyzing.");
+  } catch (error) {
+    setCodeArchitectureRepoConfigMessage(error?.message || "Unable to generate repository analysis context.");
+  } finally {
+    setIsCodeArchitectureContextGenerating(false);
+  }
+}
+
 function awaitCodeArchitectureFileTypes(files) {
   setCodeArchitectureRepoFilesForModal(files || []);
   setCodeArchitectureFileSelectorOpen(true);
@@ -4173,6 +4233,11 @@ function normalizeImportedCodeArchitectureRows(value) {
     },
     codeEvidence: row.codeEvidence || null,
     sourceEvidence: row.sourceEvidence || null,
+    lifecyclePhase: row.lifecyclePhase || row["Lifecycle Phase"] || "",
+    interfaceType: row.interfaceType || row["Interface Type"] || "",
+    hazardAnalysisEligibility: row.hazardAnalysisEligibility || row["Hazard Analysis Eligibility"] || "",
+    hazardAnalysisEligibilityRationale: row.hazardAnalysisEligibilityRationale || row["Eligibility Rationale"] || "",
+    hazardAnalysisEligibilitySource: row.hazardAnalysisEligibilitySource || row["Eligibility Source"] || "",
     rowRef: row.rowRef || null,
     traceId: row.traceId || null,
     fromNodeId: row.fromNodeId || null,
@@ -6449,17 +6514,6 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
         repoId: activeCodeArchitectureRepo?.id || "",
         repoName: activeCodeArchitectureRepo?.repoName || activeCodeArchitectureRepo?.repoId || "",
       });
-    } else if (viewingCodeArchitecture && selectedCbaElement) {
-      activeSelections.push({
-        kind: "code-architecture-row",
-        source: "code-based-architecture",
-        tableId: "code-architecture-functional-decomposition",
-        projectId: activeCodeArchitectureProjectId || "",
-        repoId: activeCodeArchitectureRepo?.id || "",
-        id: selectedCbaElement.row?.traceId || selectedCbaElement.id || "",
-        title: selectedCbaElement.label || "Selected code architecture row",
-        values: selectedCbaElement.row || selectedCbaElement,
-      });
     }
     return {
       section,
@@ -7216,7 +7270,7 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
     setActiveTableSelection(createTableCellSelection(selection));
   }, []);
   const clearCollaboratorActiveSelection = useCallback((selection) => {
-    if (selection?.tableId === 'code-architecture-functional-decomposition' || selection?.source === 'code-based-architecture') {
+    if (isCodeArchitectureSelection(selection)) {
       setActiveCodeArchitectureSelection(null);
       return;
     }
@@ -7331,6 +7385,36 @@ useEffect(() => {
       window.removeEventListener("xhandle:code-architecture-hazard-analysis:changed", onChanged);
     };
   }, [activeCodeArchitectureProjectId, activeCodeArchitectureRepoMeta, cbaTableData]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      "xhandle.codeArchitectureHazardToolbarCollapsed",
+      codeArchitectureHazardToolbarCollapsed ? "true" : "false",
+    );
+  }, [codeArchitectureHazardToolbarCollapsed]);
+
+  useEffect(() => {
+    if (section !== "code-architecture") {
+      setShowCodeArchitectureHazardContextManager(false);
+    }
+  }, [section]);
+
+  useEffect(() => {
+    const projectId = activeCodeArchitectureProject?.id || "";
+    const repoId = activeCodeArchitectureRepo?.id
+      || activeCodeArchitectureRepoMeta?.repoId
+      || activeCodeArchitectureRepoMeta?.repoName
+      || "";
+    if (!projectId || !repoId) {
+      setCodeArchitectureHazardContexts([]);
+      setSelectedCodeArchitectureHazardContextId("all");
+      setShowCodeArchitectureHazardContextManager(false);
+      return;
+    }
+    setCodeArchitectureHazardContexts(loadCodeArchitectureHazardContexts({ projectId, repoId }));
+    setSelectedCodeArchitectureHazardContextId("all");
+    setShowCodeArchitectureHazardContextManager(false);
+  }, [activeCodeArchitectureProject?.id, activeCodeArchitectureRepo?.id, activeCodeArchitectureRepoMeta?.repoId, activeCodeArchitectureRepoMeta?.repoName]);
 
   useEffect(() => {
     if (!activeCodeArchitectureProject || !activeCodeArchitectureRepo) return;
@@ -12718,6 +12802,55 @@ Rules:
     URL.revokeObjectURL(url);
   };
 
+  const handleSaveCodeArchitectureHazardContexts = (contexts) => {
+    const projectId = activeCodeArchitectureProject?.id || "";
+    const repoId = activeCodeArchitectureRepo?.id
+      || activeCodeArchitectureRepoMeta?.repoId
+      || activeCodeArchitectureRepoMeta?.repoName
+      || "";
+    const normalized = normalizeHazardOperationalContexts(contexts);
+    setCodeArchitectureHazardContexts(normalized);
+    setSelectedCodeArchitectureHazardContextId((current) => (
+      current === "all" || normalized.some((context) => context.id === current) ? current : "all"
+    ));
+    if (projectId && repoId) {
+      saveCodeArchitectureHazardContexts({ projectId, repoId, contexts: normalized });
+    }
+  };
+
+  const handleGenerateCodeArchitectureHazardContexts = (description, existingContexts) => {
+    const projectId = activeCodeArchitectureProject?.id || activeCodeArchitectureProjectId || "";
+    const organizationCalibration = getProjectOrganizationCalibration(projectId, [
+      "Organization and Products",
+      "Safety Philosophy",
+      "Operational Concepts",
+      "Risk Classification",
+      "Glossary",
+      "Known Controls and Evidence",
+    ]);
+    return generateHazardOperationalContexts({
+      description: organizationCalibration.context
+        ? `${description}\n\n${organizationCalibration.context}`
+        : description,
+      projectName: activeCodeArchitectureProject?.name || "Active Code-Based Architecture project",
+      functionalRows: cbaTableData.map((row) => ({
+        subsystem: row?.architecture?.subsystem || row?.subsystem || "",
+        fromFunction: row?.from || row?.fromFunction || "",
+        controlAction: row?.action || row?.controlAction || "",
+        toFunction: row?.to || row?.toFunction || "",
+      })),
+      existingContexts,
+    });
+  };
+
+  const handleCancelCodeArchitectureHazardAnalysis = () => {
+    codeArchitectureHazardAbortRef.current?.abort();
+    setCodeArchitectureHazardProgress((current) => ({
+      ...current,
+      message: "Stopping code architecture hazard analysis…",
+    }));
+  };
+
   const handleRunCodeArchitectureHazardAnalysis = async (
     selectedMethod = codeArchitectureHazardMethod
   ) => {
@@ -12736,6 +12869,9 @@ Rules:
       "Known Controls and Evidence",
     ]);
     const actId = `cba-hazard-${cbaProjectId || "default"}-${repoId}`;
+    codeArchitectureHazardAbortRef.current?.abort();
+    const abortController = new AbortController();
+    codeArchitectureHazardAbortRef.current = abortController;
     setCodeArchitectureHazardMethod(selectedMethod);
     setIsRunningCodeArchitectureHazard(true);
     setCodeArchitectureHazardProgress({
@@ -12756,6 +12892,8 @@ Rules:
         method: selectedMethod,
         repoMeta,
         projectId: cbaProjectId,
+        operationalContexts: codeArchitectureHazardContexts,
+        selectedOperationalContextId: selectedCodeArchitectureHazardContextId,
         organizationContext: codeHazardOrganizationCalibration.context,
         organizationProfileProvenance: codeHazardOrganizationCalibration.context ? {
           profileId: codeHazardOrganizationCalibration.profileId,
@@ -12764,6 +12902,7 @@ Rules:
           projectOverrideUpdatedAt: codeHazardOrganizationCalibration.projectOverrideUpdatedAt,
           appliedAt: new Date().toISOString(),
         } : null,
+        signal: abortController.signal,
         onPartialRunUpdate: (partialRun) => {
           setCodeArchitectureHazardRun(partialRun);
         },
@@ -12814,13 +12953,21 @@ Rules:
       }
       finishActivity(actId, "success", "Code architecture hazard analysis complete");
     } catch (error) {
+      const canceled = abortController.signal.aborted || error?.name === "AbortError";
       console.error("[code-architecture-hazard-analysis] Run failed", error);
       setCodeArchitectureHazardProgress((prev) => ({
         ...prev,
-        message: error?.message || "Code architecture hazard analysis failed.",
+        message: canceled ? "Code architecture hazard analysis stopped." : (error?.message || "Code architecture hazard analysis failed."),
       }));
-      finishActivity(actId, "error", error?.message || "Code architecture hazard analysis failed");
+      finishActivity(
+        actId,
+        canceled ? "canceled" : "error",
+        canceled ? "Code architecture hazard analysis stopped" : (error?.message || "Code architecture hazard analysis failed"),
+      );
     } finally {
+      if (codeArchitectureHazardAbortRef.current === abortController) {
+        codeArchitectureHazardAbortRef.current = null;
+      }
       setIsRunningCodeArchitectureHazard(false);
     }
   };
@@ -15653,9 +15800,16 @@ const projectHint = useMemo(() => ({
                       method={codeArchitectureHazardMethod}
                       onMethodChange={setCodeArchitectureHazardMethod}
                       onRunAnalysis={handleRunCodeArchitectureHazardAnalysis}
+                      onCancelAnalysis={handleCancelCodeArchitectureHazardAnalysis}
                       onClearContents={handleClearCodeArchitectureHazardContents}
                       isRunning={isRunningCodeArchitectureHazard}
                       progress={codeArchitectureHazardProgress}
+                      operationalContexts={codeArchitectureHazardContexts}
+                      selectedOperationalContextId={selectedCodeArchitectureHazardContextId}
+                      onSelectedOperationalContextChange={setSelectedCodeArchitectureHazardContextId}
+                      onManageOperationalContexts={() => setShowCodeArchitectureHazardContextManager(true)}
+                      toolbarCollapsed={codeArchitectureHazardToolbarCollapsed}
+                      onToolbarCollapsedChange={setCodeArchitectureHazardToolbarCollapsed}
                       reviewItems={codeArchitectureHazardReviewItems}
                       reviewByRow={codeArchitectureHazardReviewByRow}
                       reviewDrawerOptions={codeArchitectureHazardReviewDrawerOptions}
@@ -15714,6 +15868,17 @@ const projectHint = useMemo(() => ({
       </div>
     )}
   </div>
+)}
+
+{section === 'code-architecture' && activeCodeArchitectureProject && activeCodeArchitectureRepo && (
+  <HazardOperationalContextManager
+    open={showCodeArchitectureHazardContextManager}
+    contexts={codeArchitectureHazardContexts}
+    scopeLabel="code-based architecture project and repository"
+    onClose={() => setShowCodeArchitectureHazardContextManager(false)}
+    onSave={handleSaveCodeArchitectureHazardContexts}
+    onGenerate={handleGenerateCodeArchitectureHazardContexts}
+  />
 )}
 
 {section === 'safety-case' && (
@@ -19722,8 +19887,27 @@ const updateRiskInProject = async (projectId, predicate) => {
                   <input type="password" className="w-full border rounded px-3 py-2 text-sm" value={codeArchitectureRepoDraft.token} onChange={(e) => setCodeArchitectureRepoDraft((draft) => ({ ...draft, token: e.target.value }))} placeholder="Optional for public repos" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-1">Analysis context</label>
+                  <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                    <label className="block text-sm font-medium">Analysis context</label>
+                    <button
+                      type="button"
+                      onClick={generateCodeArchitectureRepoContext}
+                      disabled={
+                        isCodeArchitectureContextGenerating
+                        || isCodeArchitectureRepoVerifying
+                        || isCodeArchitectureRepoAnalyzing
+                        || (!parseGitHubRepoUrl(codeArchitectureRepoDraft.repoUrl)
+                          && !(codeArchitectureRepoDraft.owner.trim() && codeArchitectureRepoDraft.repo.trim()))
+                      }
+                      className="inline-flex items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      title="Generate editable analysis context from the repository README and structure using the selected AI provider and model"
+                    >
+                      {isCodeArchitectureContextGenerating ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Sparkles size={14} aria-hidden="true" />}
+                      {isCodeArchitectureContextGenerating ? "Generating..." : "Generate from repo"}
+                    </button>
+                  </div>
                   <textarea className="min-h-24 w-full border rounded px-3 py-2 text-sm" value={codeArchitectureRepoDraft.analysisContextText} onChange={(e) => setCodeArchitectureRepoDraft((draft) => ({ ...draft, analysisContextText: e.target.value }))} placeholder="Optional context about the product, repo boundaries, terminology, or safety focus." />
+                  <p className="mt-1 text-xs text-slate-500">Uses the repository README and file structure. The generated text remains editable and is not saved until you verify or analyze.</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1">Context files</label>
@@ -19760,10 +19944,10 @@ const updateRiskInProject = async (projectId, predicate) => {
               </div>
               <div className="px-5 py-4 border-t flex flex-wrap items-center justify-end gap-2">
                 <button onClick={() => setShowCodeArchitectureRepoConfig(false)} className="px-3 py-2 rounded border text-sm hover:bg-gray-50">Cancel</button>
-                <button onClick={() => saveCodeArchitectureRepoConfig({ analyze: false })} disabled={isCodeArchitectureRepoVerifying || isCodeArchitectureRepoAnalyzing} className="px-3 py-2 rounded border text-sm hover:bg-gray-50 disabled:opacity-60">
+                <button onClick={() => saveCodeArchitectureRepoConfig({ analyze: false })} disabled={isCodeArchitectureContextGenerating || isCodeArchitectureRepoVerifying || isCodeArchitectureRepoAnalyzing} className="px-3 py-2 rounded border text-sm hover:bg-gray-50 disabled:opacity-60">
                   {isCodeArchitectureRepoVerifying ? "Verifying..." : "Verify & save"}
                 </button>
-                <button onClick={() => saveCodeArchitectureRepoConfig({ analyze: true })} disabled={isCodeArchitectureRepoVerifying || isCodeArchitectureRepoAnalyzing} className="px-3 py-2 rounded text-sm bg-[#2D7DFE] text-white hover:bg-[#1E61D6] disabled:opacity-60">
+                <button onClick={() => saveCodeArchitectureRepoConfig({ analyze: true })} disabled={isCodeArchitectureContextGenerating || isCodeArchitectureRepoVerifying || isCodeArchitectureRepoAnalyzing} className="px-3 py-2 rounded text-sm bg-[#2D7DFE] text-white hover:bg-[#1E61D6] disabled:opacity-60">
                   {isCodeArchitectureRepoAnalyzing ? "Starting..." : "Analyze"}
                 </button>
               </div>

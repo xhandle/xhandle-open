@@ -88,6 +88,7 @@ export function ProjectTabToolbarStatus({ children, collapsed = false, tone = "d
     default: "text-gray-600",
     info: "text-blue-700",
     success: "text-emerald-700",
+    warning: "text-amber-800",
     error: "text-red-700",
   };
   if (collapsed) {

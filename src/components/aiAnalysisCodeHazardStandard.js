@@ -83,6 +83,10 @@ function flattenDecomposition(sheets) {
   const modeIdx = findColumn(["Operational Mode", "Mode", "System Mode"], -1);
   const conditionsIdx = findColumn(["Operating Conditions", "Conditions", "Environmental Conditions"], -1);
   const assumptionsIdx = findColumn(["Context Assumptions", "Operational Assumptions", "Assumptions"], -1);
+  const lifecyclePhaseIdx = findColumn(["Lifecycle Phase"], -1);
+  const interfaceTypeIdx = findColumn(["Interface Type"], -1);
+  const hazardEligibilityIdx = findColumn(["Hazard Analysis Eligibility"], -1);
+  const eligibilityRationaleIdx = findColumn(["Eligibility Rationale"], -1);
   return decomposition
     .slice(1)
     .map((row, index) => {
@@ -106,6 +110,10 @@ function flattenDecomposition(sheets) {
         operationalMode: modeIdx >= 0 ? sanitizeText(getCellText(row[modeIdx])) : "",
         operatingConditions: conditionsIdx >= 0 ? sanitizeText(getCellText(row[conditionsIdx])) : "",
         contextAssumptions: assumptionsIdx >= 0 ? sanitizeText(getCellText(row[assumptionsIdx])) : "",
+        lifecyclePhase: lifecyclePhaseIdx >= 0 ? sanitizeText(getCellText(row[lifecyclePhaseIdx])) : "",
+        interfaceType: interfaceTypeIdx >= 0 ? sanitizeText(getCellText(row[interfaceTypeIdx])) : "",
+        hazardAnalysisEligibility: hazardEligibilityIdx >= 0 ? sanitizeText(getCellText(row[hazardEligibilityIdx])) : "",
+        hazardAnalysisEligibilityRationale: eligibilityRationaleIdx >= 0 ? sanitizeText(getCellText(row[eligibilityRationaleIdx])) : "",
         traceability: extractFunctionalDecompositionTrace(headers, row),
       };
     })
@@ -161,6 +169,8 @@ function compactPromptItem(item = {}, maxChars = 120) {
     operationalMode: truncateForPrompt(item.operationalMode, maxChars),
     operatingConditions: truncateForPrompt(item.operatingConditions, maxChars),
     contextAssumptions: truncateForPrompt(item.contextAssumptions, maxChars),
+    lifecyclePhase: truncateForPrompt(item.lifecyclePhase, 48),
+    interfaceType: truncateForPrompt(item.interfaceType, 64),
     fromFile: truncateForPrompt(trace.fromFile, maxChars),
     toFile: truncateForPrompt(trace.toFile, maxChars),
     sourceFiles: truncateForPrompt(trace.sourceFiles, maxChars),
@@ -2467,15 +2477,24 @@ async function saveSheets({ sheets, setFolders, currentFolder, additions }) {
 }
 
 function buildStandardSheets(config, rows, items) {
+  const operationalContextFields = [
+    ["operationalContextId", "Operational Context ID"],
+    ["operationalScenario", "Operational Scenario"],
+    ["operationalMode", "Operational Mode"],
+    ["operatingConditions", "Operating Conditions"],
+    ["contextAssumptions", "Context Assumptions"],
+  ];
   const methodSheet = [
     [
       `${config.sheetName} ID`,
+      ...operationalContextFields.map(([, label]) => label),
       ...config.fields.map(([, label]) => label),
       ...SAFETY_SIGNIFICANCE_FIELDS.map(([, label]) => label),
       ...CODE_ARCHITECTURE_TRACEABILITY_COLUMNS,
     ],
     ...rows.map((row, index) => [
       row.id,
+      ...operationalContextFields.map(([fieldName]) => items[index]?.[fieldName] || ""),
       ...config.fields.map(([fieldName]) => row[fieldName] || ""),
       ...SAFETY_SIGNIFICANCE_FIELDS.map(([fieldName]) => row[fieldName] || ""),
       ...traceabilityToSheetCells(items[index]?.traceability || {}),
@@ -2485,6 +2504,7 @@ function buildStandardSheets(config, rows, items) {
   const summary = [
     [
       ...HAZARD_SUMMARY_TRACEABILITY_COLUMNS,
+      ...operationalContextFields.map(([, label]) => label),
       ...config.fields.map(([, label]) => label),
       ...SAFETY_SIGNIFICANCE_FIELDS.map(([, label]) => label),
     ],
@@ -2492,6 +2512,7 @@ function buildStandardSheets(config, rows, items) {
       const traceFields = traceabilityObjectToSummaryFields(items[index]?.traceability || {});
       return [
         ...HAZARD_SUMMARY_TRACEABILITY_COLUMNS.map((column) => traceFields[column] || ""),
+        ...operationalContextFields.map(([fieldName]) => items[index]?.[fieldName] || ""),
         ...config.fields.map(([fieldName]) => row[fieldName] || ""),
         ...SAFETY_SIGNIFICANCE_FIELDS.map(([fieldName]) => row[fieldName] || ""),
       ];

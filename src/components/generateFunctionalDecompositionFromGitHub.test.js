@@ -44,6 +44,20 @@ describe("code architecture functional table cell editing", () => {
     const updated = updateCodeArchitectureFunctionalCell(rows, 0, "csu", "Route Tracker");
     expect(updated[0].architecture).toEqual({ subsystem: "Planning", csci: "Runtime", csc: "Routing", csu: "Route Tracker" });
   });
+
+  it("records eligibility edits as analyst overrides", () => {
+    const rows = [{
+      traceId: "FD-1",
+      hazardAnalysisEligibility: "Needs Review",
+      hazardAnalysisEligibilitySource: "deterministic",
+    }];
+    const updated = updateCodeArchitectureFunctionalCell(rows, 0, "hazardAnalysisEligibility", "Include");
+    expect(updated[0]).toMatchObject({
+      traceId: "FD-1",
+      hazardAnalysisEligibility: "Include",
+      hazardAnalysisEligibilitySource: "analyst-override",
+    });
+  });
 });
 
 function makeStats() {

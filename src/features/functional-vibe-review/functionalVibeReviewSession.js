@@ -3,6 +3,24 @@ const AUDIT_KEY = "xhandle.functionalVibeReview.audit.v1";
 const now = () => new Date().toISOString();
 const uid = () => (typeof crypto !== "undefined" && crypto.randomUUID?.()) || `fvr-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const defaultStorage = () => typeof localStorage !== "undefined" ? localStorage : null;
+const volatileMapsByStorage = new WeakMap();
+const nullStorageMaps = {};
+
+function volatileMaps(storage) {
+  if (!storage || (typeof storage !== "object" && typeof storage !== "function")) return nullStorageMaps;
+  if (!volatileMapsByStorage.has(storage)) volatileMapsByStorage.set(storage, {});
+  return volatileMapsByStorage.get(storage);
+}
+
+function browserSessionStorage(storage) {
+  try {
+    return typeof localStorage !== "undefined" && storage === localStorage && typeof sessionStorage !== "undefined"
+      ? sessionStorage
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 export const FUNCTIONAL_VIBE_REVIEW_STATES = Object.freeze({
   PROPOSING: "proposing",
@@ -13,15 +31,41 @@ export const FUNCTIONAL_VIBE_REVIEW_STATES = Object.freeze({
   PAUSED: "paused",
 });
 
-function loadMap(storage, storageKey) {
+function parseMap(storage, storageKey) {
   try { return JSON.parse(storage?.getItem(storageKey) || "{}") || {}; } catch { return {}; }
 }
 
-export function createFunctionalVibeReviewSession({ projectId, threadId, queue = [], scopeLabel = "", ai = {}, workspaceType = "functional-project", repoId = "" }) {
+function loadMap(storage, storageKey) {
+  const persistent = parseMap(storage, storageKey);
+  const tabFallback = parseMap(browserSessionStorage(storage), storageKey);
+  return { ...persistent, ...tabFallback, ...(volatileMaps(storage)[storageKey] || {}) };
+}
+
+function persistMap(storage, storageKey, map) {
+  volatileMaps(storage)[storageKey] = map;
+  try {
+    storage?.setItem(storageKey, JSON.stringify(map));
+    try { browserSessionStorage(storage)?.removeItem(storageKey); } catch {}
+    return "persistent";
+  } catch {
+    try {
+      browserSessionStorage(storage)?.setItem(storageKey, JSON.stringify(map));
+      return "session";
+    } catch {
+      // The volatile copy keeps the active review usable when browser storage is
+      // full or unavailable. Applied row decisions persist in the project store.
+      return "memory";
+    }
+  }
+}
+
+export function createFunctionalVibeReviewSession({ projectId, threadId, queue = [], scopeLabel = "", reviewFields = [], reviewInstructions = "", ai = {}, workspaceType = "functional-project", repoId = "" }) {
   const stableQueue = Array.from(new Set(queue.map(String).filter(Boolean)));
   return {
     id: uid(), projectId: String(projectId), threadId: String(threadId), queue: stableQueue,
     scopeLabel, cursor: 0, state: FUNCTIONAL_VIBE_REVIEW_STATES.PROPOSING, proposal: null,
+    reviewFields: Array.from(new Set((reviewFields || []).map(String).filter(Boolean))),
+    reviewInstructions: String(reviewInstructions || "").trim(),
     workspaceType, repoId,
     decisions: [], skips: [], failures: [], missingRows: [], ai: { ...ai }, createdAt: now(), updatedAt: now(),
   };
@@ -63,7 +107,10 @@ export function transitionFunctionalVibeReviewSession(session, event = {}) {
 export function saveFunctionalVibeReviewSession(session, storage = defaultStorage()) {
   const map = loadMap(storage, KEY);
   map[`${session.projectId}:${session.threadId}`] = session;
-  storage?.setItem(KEY, JSON.stringify(map));
+  const retained = Object.fromEntries(Object.entries(map)
+    .sort(([, a], [, b]) => Date.parse(b?.updatedAt || 0) - Date.parse(a?.updatedAt || 0))
+    .slice(0, 16));
+  persistMap(storage, KEY, retained);
   return session;
 }
 
@@ -74,9 +121,13 @@ export function loadFunctionalVibeReviewSession(projectId, threadId, storage = d
 export function appendFunctionalVibeReviewAudit(record, storage = defaultStorage()) {
   const map = loadMap(storage, AUDIT_KEY);
   const projectId = String(record.projectId || "");
-  map[projectId] = [...(map[projectId] || []), record].slice(-1000);
-  storage?.setItem(AUDIT_KEY, JSON.stringify(map));
+  map[projectId] = [...(map[projectId] || []), record].slice(-250);
+  persistMap(storage, AUDIT_KEY, map);
   return record;
+}
+
+export function loadFunctionalVibeReviewAudit(projectId, storage = defaultStorage()) {
+  return loadMap(storage, AUDIT_KEY)[String(projectId)] || [];
 }
 
 export function summarizeFunctionalVibeReviewSession(session) {

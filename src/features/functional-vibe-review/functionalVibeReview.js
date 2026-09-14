@@ -40,9 +40,17 @@ export const FUNCTIONAL_ARCHITECTURE_FIELDS = Object.freeze([
   "architectureRationale",
 ]);
 
+export const FUNCTIONAL_HAZARD_ANALYSIS_FIELDS = Object.freeze([
+  "lifecyclePhase",
+  "interfaceType",
+  "hazardAnalysisEligibility",
+  "hazardAnalysisEligibilityRationale",
+]);
+
 export const FUNCTIONAL_REVIEW_FIELDS = Object.freeze([
   ...FUNCTIONAL_ROW_FIELDS,
   ...FUNCTIONAL_ARCHITECTURE_FIELDS,
+  ...FUNCTIONAL_HAZARD_ANALYSIS_FIELDS,
 ]);
 
 const FIELD_LABELS = Object.freeze({
@@ -57,6 +65,10 @@ const FIELD_LABELS = Object.freeze({
   csc: "CSC",
   csu: "CSU",
   architectureRationale: "Architecture Rationale",
+  lifecyclePhase: "Lifecycle Phase",
+  interfaceType: "Interface Type",
+  hazardAnalysisEligibility: "Hazard Analysis Eligibility",
+  hazardAnalysisEligibilityRationale: "Eligibility Rationale",
 });
 
 const aliases = Object.freeze({
@@ -71,6 +83,10 @@ const aliases = Object.freeze({
   csc: ["csc", "computer software component"],
   csu: ["csu", "computer software unit"],
   architectureRationale: ["architecture rationale", "allocation rationale"],
+  lifecyclePhase: ["lifecycle phase", "lifecycle", "execution phase"],
+  interfaceType: ["interface type", "interface semantics", "interface classification"],
+  hazardAnalysisEligibility: ["hazard analysis eligibility", "analysis eligibility", "eligibility"],
+  hazardAnalysisEligibilityRationale: ["hazard analysis eligibility rationale", "eligibility rationale"],
 });
 
 function createRowId() {
@@ -101,18 +117,81 @@ export function isFunctionalVibeReviewIntent(value = "") {
 }
 
 function uniqueValues(rows, field) {
-  return Array.from(new Set(rows.map((entry) => clean(entry?.row?.[field])).filter(Boolean)))
+  return Array.from(new Set(rows.map((entry) => effectiveFieldValue(entry?.row, field)).filter(Boolean)))
     .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }));
+}
+
+const TABLE_DEFAULT_VALUES = Object.freeze({
+  lifecyclePhase: "Needs Review",
+  interfaceType: "Needs Review",
+  hazardAnalysisEligibility: "Needs Review",
+});
+
+const CANONICAL_SCOPE_VALUES = Object.freeze({
+  lifecyclePhase: [
+    "Runtime", "Initialization", "Configuration", "Mode Transition", "Shutdown",
+    "Deployment/Update", "Test/Verification", "Static Structure", "Needs Review",
+  ],
+  interfaceType: [
+    "Command", "Data", "State Estimate", "Feedback/Status", "Event",
+    "Configuration/Authority", "Resource/Energy", "Function Call",
+    "Structural Relationship", "Needs Review",
+  ],
+  hazardAnalysisEligibility: ["Include", "Exclude", "Needs Review"],
+});
+
+function effectiveFieldValue(row, field) {
+  return clean(row?.[field]) || TABLE_DEFAULT_VALUES[field] || "";
 }
 
 function mentioned(promptKey, value) {
   const candidate = key(value);
-  return candidate && (promptKey.includes(candidate) || candidate.split(" ").every((part) => promptKey.includes(part)));
+  if (!candidate) return false;
+  const promptWords = new Set(key(promptKey).split(" ").filter(Boolean));
+  return ` ${key(promptKey)} `.includes(` ${candidate} `)
+    || candidate.split(" ").every((part) => promptWords.has(part));
 }
 
 function exactlyMentioned(promptKey, value) {
   const candidate = key(value);
   return Boolean(candidate && ` ${promptKey} `.includes(` ${candidate} `));
+}
+
+function regexWords(value) {
+  return key(value).split(" ").filter(Boolean).join("\\s+");
+}
+
+function explicitlyScopedValue(promptKey, field, value) {
+  const scopedPromptKey = key(promptKey);
+  const valuePattern = regexWords(value);
+  if (!valuePattern) return false;
+  const fieldPatterns = [FIELD_LABELS[field], ...(aliases[field] || [])]
+    .map(regexWords)
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  return fieldPatterns.some((fieldPattern) => (
+    new RegExp(String.raw`\b${fieldPattern}(?:\s+column)?(?:\s+(?:is|equals?|equal\s+to|marked(?:\s+as)?|set\s+to))?\s+${valuePattern}\b`).test(scopedPromptKey)
+    || new RegExp(String.raw`\b(?:rows?\s+)?marked\s+${valuePattern}\s+(?:for|in|under)\s+(?:the\s+)?${fieldPattern}(?:\s+column)?\b`).test(scopedPromptKey)
+    || new RegExp(String.raw`\b${valuePattern}(?:\s+(?:items?|rows?))?\s+(?:for|in|under)\s+(?:the\s+)?${fieldPattern}(?:\s+column)?\b`).test(scopedPromptKey)
+  ));
+}
+
+const FUNCTIONAL_SCOPE_LABELS = Object.freeze({
+  subsystem: "Subsystem",
+  fromFunction: "Function From",
+  toFunction: "Function To",
+  controlAction: "Control Action",
+  csci: "CSCI",
+  csc: "CSC",
+  csu: "CSU",
+  lifecyclePhase: "Lifecycle Phase",
+  interfaceType: "Interface Type",
+  hazardAnalysisEligibility: "Hazard Analysis Eligibility",
+  hazardAnalysisEligibilityRationale: "Eligibility Rationale",
+});
+
+export function buildFunctionalVibeReviewChoicePrompt(field, value) {
+  return `Vibe review functional-decomposition rows where ${FUNCTIONAL_SCOPE_LABELS[field] || field} is ${clean(value)}.`;
 }
 
 export function resolveFunctionalVibeReviewScope(prompt = "", functionalRows = []) {
@@ -126,17 +205,50 @@ export function resolveFunctionalVibeReviewScope(prompt = "", functionalRows = [
     ["subsystem", /\bsubsystem\b/],
     ["fromFunction", /\b(?:function from|from function|source function)\b/],
     ["toFunction", /\b(?:function to|to function|receiving function|destination function)\b/],
-    ["controlAction", /\b(?:control action|interface|exchange|flow)\b/],
+    // Generic review language frequently contains "interface", "flow", or
+    // "call" without intending to filter the Control Action column. Only the
+    // explicit column name establishes this structured filter.
+    ["controlAction", /\bcontrol action\b/],
     ["csci", /\b(?:csci|computer software configuration item)\b/],
     ["csc", /\b(?:csc|computer software component)\b/],
     ["csu", /\b(?:csu|computer software unit)\b/],
+    ["lifecyclePhase", /\b(?:lifecycle phase|execution phase)\b/],
+    ["interfaceType", /\b(?:interface type|interface semantics|interface classification)\b/],
+    ["hazardAnalysisEligibility", /\b(?:(?:hazard analysis|analysis) )?eligibility\b/],
   ];
-  const requestedColumn = candidates.find(([, marker]) => marker.test(promptKey))?.[0] || "";
+  const columnTargetCandidates = [
+    ["subsystem", /\bsubsystem(?: allocation)?\b/],
+    ["fromFunction", /\b(?:function from|from function|source function)\b/],
+    ["toFunction", /\b(?:function to|to function|receiving function|destination function)\b/],
+    ["controlAction", /\bcontrol action\b/],
+    ["csci", /\bcsci\b/],
+    ["csc", /\bcsc\b/],
+    ["csu", /\bcsu\b/],
+    ["lifecyclePhase", /\b(?:lifecycle phase|execution phase)\b/],
+    ["interfaceType", /\b(?:interface type|interface semantics|interface classification)\b/],
+    ["hazardAnalysisEligibilityRationale", /\b(?:hazard analysis )?eligibility rationale\b/],
+    ["hazardAnalysisEligibility", /\b(?:(?:hazard analysis|analysis) )?eligibility\b/],
+  ];
+  const requestedColumns = columnTargetCandidates
+    .filter(([, marker]) => marker.test(promptKey))
+    .map(([field]) => field);
+  const reviewFields = requestedColumns.length && /\bcolumns?\b/.test(promptKey)
+    ? requestedColumns
+    : [];
 
   candidates.forEach(([field, marker]) => {
     if (!marker.test(promptKey)) return;
-    const values = uniqueValues(rows, field);
-    const exactMatches = values.filter((value) => exactlyMentioned(promptKey, value));
+    // Include the table's canonical select values while resolving the request.
+    // This lets an explicit scope such as `Lifecycle Phase=NEEDS REVIEW` remain
+    // authoritative even when only a subset of those values occurs in the rows.
+    const values = Array.from(new Set([
+      ...uniqueValues(rows, field),
+      ...(CANONICAL_SCOPE_VALUES[field] || []),
+    ]));
+    const scopedMatches = values.filter((value) => explicitlyScopedValue(promptKey, field, value));
+    const exactMatches = scopedMatches.length
+      ? scopedMatches
+      : values.filter((value) => exactlyMentioned(promptKey, value));
     const matches = exactMatches.length ? exactMatches : values.filter((value) => mentioned(promptKey, value));
     if (matches.length === 1) filters.push({ field, label: FIELD_LABELS[field], value: matches[0] });
     else if (matches.length > 1) ambiguous.push({ field, label: FIELD_LABELS[field], values: matches });
@@ -165,9 +277,9 @@ export function resolveFunctionalVibeReviewScope(prompt = "", functionalRows = [
       : { status: "zero", rows: [], queue: [], filters: [], scopeLabel: `Row ${explicitRowNumber}` };
   }
 
-  if (ambiguous.length) return { status: "ambiguous", rows: [], queue: [], filters, ambiguous };
+  if (ambiguous.length) return { status: "ambiguous", rows: [], queue: [], filters, ambiguous, reviewFields };
   const matchedRows = rows.filter((entry) => {
-    if (!filters.every((filter) => key(entry.row?.[filter.field]) === key(filter.value))) return false;
+    if (!filters.every((filter) => key(effectiveFieldValue(entry.row, filter.field)) === key(filter.value))) return false;
     if (customScope.tokens.length) {
       const rowText = key(FUNCTIONAL_REVIEW_FIELDS.map((field) => entry.row?.[field] || "").join(" "));
       if (!customScope.tokens.every((token) => rowText.includes(token))) return false;
@@ -179,9 +291,12 @@ export function resolveFunctionalVibeReviewScope(prompt = "", functionalRows = [
     rows: matchedRows,
     queue: matchedRows.map((entry) => entry.rowId),
     filters,
+    reviewFields,
     scopeLabel: customScope.raw || (filters.length
       ? filters.map((filter) => `${filter.label} = ${filter.value}`).join("; ")
-      : requestedColumn ? `${FIELD_LABELS[requestedColumn]} column items` : "all functional-decomposition rows"),
+      : requestedColumns.length
+        ? `${requestedColumns.map((field) => FIELD_LABELS[field]).join(" and ")} column items`
+        : "all functional-decomposition rows"),
   };
 }
 
@@ -217,10 +332,20 @@ export function normalizeCodeArchitectureFunctionalReviewRow(row = {}) {
     csc: clean(architecture.csc || row.csc),
     csu: clean(architecture.csu || row.csu),
     architectureRationale: clean(architecture.rationale || row.architectureRationale),
+    lifecyclePhase: clean(row.lifecyclePhase),
+    interfaceType: clean(row.interfaceType),
+    hazardAnalysisEligibility: clean(row.hazardAnalysisEligibility),
+    hazardAnalysisEligibilityRationale: clean(row.hazardAnalysisEligibilityRationale),
   };
 }
 
 export function applyFunctionalReviewToCodeArchitectureRow(row = {}, proposedRow = {}) {
+  const eligibilityChanged = [
+    "lifecyclePhase",
+    "interfaceType",
+    "hazardAnalysisEligibility",
+    "hazardAnalysisEligibilityRationale",
+  ].some((field) => proposedRow[field] !== undefined && clean(proposedRow[field]) !== clean(row[field]));
   return {
     ...row,
     from: clean(proposedRow.fromFunction),
@@ -237,6 +362,13 @@ export function applyFunctionalReviewToCodeArchitectureRow(row = {}, proposedRow
       csu: clean(proposedRow.csu ?? row.architecture?.csu ?? row.csu),
       rationale: clean(proposedRow.architectureRationale ?? row.architecture?.rationale ?? row.architectureRationale),
     },
+    lifecyclePhase: clean(proposedRow.lifecyclePhase ?? row.lifecyclePhase),
+    interfaceType: clean(proposedRow.interfaceType ?? row.interfaceType),
+    hazardAnalysisEligibility: clean(proposedRow.hazardAnalysisEligibility ?? row.hazardAnalysisEligibility),
+    hazardAnalysisEligibilityRationale: clean(proposedRow.hazardAnalysisEligibilityRationale ?? row.hazardAnalysisEligibilityRationale),
+    hazardAnalysisEligibilitySource: eligibilityChanged
+      ? "analyst-override"
+      : clean(row.hazardAnalysisEligibilitySource),
   };
 }
 
@@ -256,7 +388,7 @@ export function normalizeFunctionalVibeReviewProposal(raw = {}, currentRow = {})
   const proposedSource = source.proposedRow || source.revisedRow || source.revision || source.row || {};
   const proposedRow = Object.fromEntries(FUNCTIONAL_REVIEW_FIELDS.map((field) => [
     field,
-    readAlias(proposedSource, field) || (FUNCTIONAL_ARCHITECTURE_FIELDS.includes(field) ? clean(currentRow?.[field]) : ""),
+    readAlias(proposedSource, field) || (!FUNCTIONAL_ROW_FIELDS.includes(field) ? clean(currentRow?.[field]) : ""),
   ]));
   const changedFields = decision === "Revise"
     ? FUNCTIONAL_REVIEW_FIELDS.filter((field) => clean(currentRow?.[field]) !== proposedRow[field])
@@ -265,6 +397,10 @@ export function normalizeFunctionalVibeReviewProposal(raw = {}, currentRow = {})
   if (decision === "Revise") {
     const missing = FUNCTIONAL_ROW_FIELDS.filter((field) => !proposedRow[field]);
     if (missing.length) errors.push(`The proposed revision omitted: ${missing.map((field) => FIELD_LABELS[field]).join(", ")}.`);
+    if ((clean(currentRow?.hazardAnalysisEligibility) || proposedRow.hazardAnalysisEligibility)
+      && !["Include", "Exclude", "Needs Review"].includes(proposedRow.hazardAnalysisEligibility)) {
+      errors.push("Hazard Analysis Eligibility must be Include, Exclude, or Needs Review.");
+    }
     if (!changedFields.length) errors.push("The proposed revision does not change the row.");
   }
   if (decision === "Needs Input") errors.push("The proposal did not contain a supported Keep, Revise, or Remove decision.");

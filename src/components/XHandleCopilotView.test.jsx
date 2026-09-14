@@ -29,6 +29,7 @@ const { createRoot } = require("react-dom/client");
 const {
   CollaboratorComposerMenu,
   CollaboratorPromptComposer,
+  FunctionalVibeReviewRecoveryCard,
   FUNCTIONAL_DECOMPOSITION_GENERATION_INSTRUCTIONS,
   SUBSYSTEM_ARCHITECTURE_REVIEW_SYSTEM_PROMPT,
   buildFunctionalAbstractionChoiceMessage,
@@ -75,6 +76,33 @@ const {
   selectLiveCollaboratorReasoning,
   streamChat,
 } = require("./XHandleCopilotView");
+
+describe("functional vibe review recovery", () => {
+  it("offers an explicit resume action when the next proposal could not load", () => {
+    const onAction = jest.fn();
+    const card = {
+      sessionId: "session-1",
+      projectId: "project-1",
+      rowId: "row-5",
+      remaining: 8,
+    };
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    try {
+      act(() => {
+        root.render(<FunctionalVibeReviewRecoveryCard message={{ functionalVibeReviewRecovery: card }} onAction={onAction} />);
+      });
+      const button = [...host.querySelectorAll("button")].find((candidate) => candidate.textContent === "Continue review");
+      expect(button).toBeTruthy();
+      act(() => button.click());
+      expect(onAction).toHaveBeenCalledWith("resume", card);
+    } finally {
+      act(() => root.unmount());
+      host.remove();
+    }
+  });
+});
 
 describe("contextual vibe review", () => {
   it("recognizes a deictic vibe-review request without hijacking explicit scopes", () => {

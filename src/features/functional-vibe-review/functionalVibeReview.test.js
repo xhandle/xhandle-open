@@ -1,5 +1,6 @@
 import {
   applyFunctionalReviewToCodeArchitectureRow,
+  buildFunctionalVibeReviewChoicePrompt,
   ensureFunctionalVibeReviewRowIds,
   isFunctionalVibeReviewIntent,
   normalizeCodeArchitectureFunctionalReviewRow,
@@ -46,6 +47,92 @@ test("prefers an exact CSU allocation over a shorter name contained within it", 
   expect(result.scopeLabel).toBe("CSU = Alpamayo2SuperConfig");
 });
 
+test("scopes a Code-Based Architecture functional review to eligibility items marked Needs Review", () => {
+  const cbaRows = [
+    { rowId: "include", rowIndex: 0, row: { ...rows[0].row, hazardAnalysisEligibility: "Include" } },
+    { rowId: "review", rowIndex: 1, row: { ...rows[1].row, hazardAnalysisEligibility: "Needs Review" } },
+    { rowId: "exclude", rowIndex: 2, row: { ...rows[0].row, hazardAnalysisEligibility: "Exclude" } },
+  ];
+  const result = resolveFunctionalVibeReviewScope(
+    "Vibe review the functional decomposition Eligibility items marked Needs Review.",
+    cbaRows,
+  );
+  expect(result.status).toBe("matched");
+  expect(result.queue).toEqual(["review"]);
+  expect(result.scopeLabel).toBe("Hazard Analysis Eligibility = Needs Review");
+});
+
+test("treats Include as the eligibility scope even when the review instructions use exclude as a verb", () => {
+  const cbaRows = [
+    { rowId: "include-a", rowIndex: 0, row: { ...rows[0].row, controlAction: "Call", hazardAnalysisEligibility: "Include" } },
+    { rowId: "exclude", rowIndex: 1, row: { ...rows[1].row, hazardAnalysisEligibility: "Exclude" } },
+    { rowId: "include-b", rowIndex: 2, row: { ...rows[1].row, controlAction: "Trajectory Output", hazardAnalysisEligibility: "Include" } },
+  ];
+  const prompt = "Vibe review all functional-decomposition rows marked Include for Hazard Analysis Eligibility. Determine whether each row represents a consequential operational interface suitable for STPA rather than an internal library call or implementation detail. Consolidate low-level tensor, geometry, token, and helper calls into their parent operational transformations where appropriate. Verify interface direction, remove semantic duplicates, exclude test/training-only behavior unless explicitly in scope.";
+  const result = resolveFunctionalVibeReviewScope(
+    prompt,
+    cbaRows,
+  );
+  expect(result.status).toBe("matched");
+  expect(result.queue).toEqual(["include-a", "include-b"]);
+  expect(result.scopeLabel).toBe("Hazard Analysis Eligibility = Include");
+});
+
+test("replays a functional scope choice with a user-facing field label", () => {
+  const prompt = buildFunctionalVibeReviewChoicePrompt("hazardAnalysisEligibility", "Include");
+  expect(prompt).toBe("Vibe review functional-decomposition rows where Hazard Analysis Eligibility is Include.");
+  const result = resolveFunctionalVibeReviewScope(prompt, [
+    { rowId: "include", rowIndex: 0, row: { ...rows[0].row, hazardAnalysisEligibility: "Include" } },
+    { rowId: "exclude", rowIndex: 1, row: { ...rows[1].row, hazardAnalysisEligibility: "Exclude" } },
+  ]);
+  expect(result.queue).toEqual(["include"]);
+});
+
+test("scopes a quoted Lifecycle Phase column request to Needs Review only", () => {
+  const cbaRows = [
+    { rowId: "configuration", rowIndex: 0, row: { ...rows[0].row, lifecyclePhase: "Configuration" } },
+    { rowId: "review-a", rowIndex: 1, row: { ...rows[1].row, lifecyclePhase: "Needs Review" } },
+    { rowId: "runtime", rowIndex: 2, row: { ...rows[0].row, lifecyclePhase: "Runtime" } },
+    { rowId: "review-b", rowIndex: 3, row: { ...rows[1].row, lifecyclePhase: "Needs Review" } },
+  ];
+  const result = resolveFunctionalVibeReviewScope(
+    'Vibe review the functional decomposition table column "Lifecycle Phase=NEEDS REVIEW"',
+    cbaRows,
+  );
+  expect(result.status).toBe("matched");
+  expect(result.queue).toEqual(["review-a", "review-b"]);
+  expect(result.scopeLabel).toBe("Lifecycle Phase = Needs Review");
+  expect(result.reviewFields).toEqual(["lifecyclePhase"]);
+});
+
+test("uses the table's Needs Review default when lifecycle classification is blank", () => {
+  const cbaRows = [
+    { rowId: "unclassified", rowIndex: 0, row: { ...rows[0].row, lifecyclePhase: "" } },
+    { rowId: "runtime", rowIndex: 1, row: { ...rows[1].row, lifecyclePhase: "Runtime" } },
+  ];
+  const result = resolveFunctionalVibeReviewScope(
+    'Vibe review the functional decomposition table column "Lifecycle Phase=NEEDS REVIEW"',
+    cbaRows,
+  );
+  expect(result.status).toBe("matched");
+  expect(result.queue).toEqual(["unclassified"]);
+  expect(result.scopeLabel).toBe("Lifecycle Phase = Needs Review");
+});
+
+test("carries multiple explicitly requested review columns", () => {
+  const cbaRows = [
+    { rowId: "both", rowIndex: 0, row: { ...rows[0].row, lifecyclePhase: "Needs Review", interfaceType: "Needs Review" } },
+    { rowId: "lifecycle-only", rowIndex: 1, row: { ...rows[1].row, lifecyclePhase: "Needs Review", interfaceType: "Data" } },
+  ];
+  const result = resolveFunctionalVibeReviewScope(
+    "Vibe review the Lifecycle Phase and Interface Type columns where both are Needs Review",
+    cbaRows,
+  );
+  expect(result.status).toBe("matched");
+  expect(result.queue).toEqual(["both"]);
+  expect(result.reviewFields).toEqual(["lifecyclePhase", "interfaceType"]);
+});
+
 test("normalizes and reapplies Code-Based Architecture functional rows without losing hierarchy", () => {
   const source = {
     from: "Encode Input",
@@ -55,13 +142,36 @@ test("normalizes and reapplies Code-Based Architecture functional rows without l
     to: "Run Inference",
     toDetails: "Consumes the embedding.",
     architecture: { subsystem: "Inference", csci: "Runtime", csc: "Encoding", csu: "Old CSU", rationale: "Initial allocation." },
+    lifecyclePhase: "Needs Review",
+    interfaceType: "Function Call",
+    hazardAnalysisEligibility: "Needs Review",
+    hazardAnalysisEligibilityRationale: "Operational consequence is unclear.",
+    hazardAnalysisEligibilitySource: "deterministic",
     traceId: "FD-CBA-1",
   };
   const normalized = normalizeCodeArchitectureFunctionalReviewRow(source);
-  expect(normalized).toMatchObject({ fromFunction: "Encode Input", csu: "Old CSU", csci: "Runtime" });
+  expect(normalized).toMatchObject({
+    fromFunction: "Encode Input",
+    csu: "Old CSU",
+    csci: "Runtime",
+    hazardAnalysisEligibility: "Needs Review",
+  });
 
-  const updated = applyFunctionalReviewToCodeArchitectureRow(source, { ...normalized, csu: "MLP Encoder", architectureRationale: "Owns feature projection." });
+  const updated = applyFunctionalReviewToCodeArchitectureRow(source, {
+    ...normalized,
+    csu: "MLP Encoder",
+    architectureRationale: "Owns feature projection.",
+    lifecyclePhase: "Runtime",
+    hazardAnalysisEligibility: "Include",
+    hazardAnalysisEligibilityRationale: "Runtime feature projection affects inference outputs.",
+  });
   expect(updated.architecture).toMatchObject({ csci: "Runtime", csc: "Encoding", csu: "MLP Encoder", rationale: "Owns feature projection." });
+  expect(updated).toMatchObject({
+    lifecyclePhase: "Runtime",
+    interfaceType: "Function Call",
+    hazardAnalysisEligibility: "Include",
+    hazardAnalysisEligibilitySource: "analyst-override",
+  });
   expect(updated.traceId).toBe("FD-CBA-1");
 });
 
@@ -118,6 +228,32 @@ test("accepts a grounded CSU-only revision while preserving the seven interface 
   }, current);
   expect(result.valid).toBe(true);
   expect(result.proposal.changedFields).toEqual(["csu"]);
+});
+
+test("accepts an eligibility-only revision while preserving the functional interface", () => {
+  const current = {
+    ...rows[0].row,
+    lifecyclePhase: "Needs Review",
+    interfaceType: "Function Call",
+    hazardAnalysisEligibility: "Needs Review",
+    hazardAnalysisEligibilityRationale: "Operational consequence is unclear.",
+  };
+  const result = normalizeFunctionalVibeReviewProposal({
+    decision: "Revise",
+    rationale: "The runtime call affects route validation.",
+    proposedRow: {
+      ...current,
+      lifecyclePhase: "Runtime",
+      hazardAnalysisEligibility: "Include",
+      hazardAnalysisEligibilityRationale: "Runtime validation can affect the route consumed by control.",
+    },
+  }, current);
+  expect(result.valid).toBe(true);
+  expect(result.proposal.changedFields).toEqual([
+    "lifecyclePhase",
+    "hazardAnalysisEligibility",
+    "hazardAnalysisEligibilityRationale",
+  ]);
 });
 
 test("normalizes Keep and Remove decisions without fabricating revisions", () => {

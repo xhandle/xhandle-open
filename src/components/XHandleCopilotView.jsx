@@ -70,6 +70,7 @@ import {
   VIBE_REVIEW_STATES,
 } from "../features/project-hazard-analysis/vibeReviewSession";
 import {
+  buildFunctionalVibeReviewChoicePrompt,
   describeFunctionalVibeReviewScope,
   functionalRowLabel,
   isFunctionalVibeReviewIntent,
@@ -2609,6 +2610,26 @@ export function FunctionalVibeReviewCard({ message, disabled = false, onAction, 
   );
 }
 
+export function FunctionalVibeReviewRecoveryCard({ message, disabled = false, onAction }) {
+  const card = message?.functionalVibeReviewRecovery;
+  if (!card || card.completed) return null;
+  return (
+    <section className="mt-2 rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-xs" aria-label="Resume functional decomposition review">
+      <p className="leading-relaxed text-neutral-700">
+        The review queue is preserved with {card.remaining || 0} item{card.remaining === 1 ? "" : "s"} remaining.
+      </p>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => onAction?.("resume", card)}
+        className="mt-2 rounded-md bg-indigo-600 px-3 py-1.5 font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {disabled ? "Continuing…" : "Continue review"}
+      </button>
+    </section>
+  );
+}
+
 function WorkspaceActionPlanCard({ message, disabled = false, onApply, onCancel, onOpenSource }) {
   const plan = message?.workspaceActionPlan;
   const [deleteConfirmed, setDeleteConfirmed] = useState(false);
@@ -4674,6 +4695,10 @@ useEffect(() => {
 
   const handleVibeReviewAction = async (action, card, userFeedback = "", fromRunCopilot = false, signal) => {
     if (busy && !fromRunCopilot) return;
+    setAutoStick(true);
+    setWorkProgress(action === "stop"
+      ? ["Closing the hazard review."]
+      : ["Applying the review decision.", "Preparing the next hazard review item."]);
     setBusy(true);
     try {
       const providerApi = await waitForActionProvider("project-functional-diagram", 1800);
@@ -4753,7 +4778,10 @@ useEffect(() => {
         ? " Your explicit reviewer selection was not applied; the row remains unchanged."
         : "";
       appendMessage(activeId, { role: "assistant", content: `I couldn’t apply that review action: ${error.message}${decisionHelp}` }); setThreads(loadThreads());
-    } finally { setBusy(false); }
+    } finally {
+      setBusy(false);
+      setWorkProgress([]);
+    }
   };
 
   const buildFunctionalVibeReviewCard = (session, state, rowId, normalized) => {
@@ -4773,6 +4801,10 @@ useEffect(() => {
       csc: "CSC",
       csu: "CSU",
       architectureRationale: "Architecture Rationale",
+      lifecyclePhase: "Lifecycle Phase",
+      interfaceType: "Interface Type",
+      hazardAnalysisEligibility: "Hazard Analysis Eligibility",
+      hazardAnalysisEligibilityRationale: "Eligibility Rationale",
     };
     return {
       sessionId: session.id,
@@ -4824,6 +4856,8 @@ useEffect(() => {
         projectName: state.projectName,
         organizationContext: state.organizationContext,
         reviewFocus: working.scopeLabel,
+        reviewFields: working.reviewFields || [],
+        reviewInstructions: working.reviewInstructions || "",
         surroundingRows,
         provider: working.ai.provider,
         model: working.ai.model,
@@ -4859,6 +4893,36 @@ useEffect(() => {
     return `Functional-decomposition vibe review ${session.state === FUNCTIONAL_VIBE_REVIEW_STATES.CANCELLED ? "stopped" : "complete"}. Scope: ${session.scopeLabel}; ${counts.total} total. Reviewed ${counts.reviewed}; kept ${counts.kept}; revised ${counts.revised}; removed ${counts.removed}; skipped ${counts.skipped}; failed ${counts.failed}; remaining ${counts.remaining}.${changed ? `\n\nDecisions applied:\n${changed}` : ""}${unresolved ? `\n\nSkipped or unresolved:\n${unresolved}` : ""}`;
   };
 
+  const appendFunctionalVibeReviewRecovery = (session, content) => {
+    const counts = summarizeFunctionalVibeReviewSession(session);
+    appendMessage(activeId, {
+      role: "assistant",
+      content,
+      functionalVibeReviewRecovery: {
+        sessionId: session.id,
+        projectId: session.projectId,
+        workspaceType: session.workspaceType,
+        repoId: session.repoId,
+        rowId: currentFunctionalVibeReviewRowId(session),
+        remaining: counts.remaining,
+      },
+    });
+    setThreads(loadThreads());
+  };
+
+  const closeFunctionalVibeReviewRecoveryCards = (sessionId) => {
+    const thread = loadThreads().find((entry) => entry.id === activeId);
+    if (!thread) return;
+    const messages = (thread.messages || []).map((message) => (
+      message?.functionalVibeReviewRecovery?.sessionId === sessionId
+        && !message.functionalVibeReviewRecovery.completed
+        ? { ...message, functionalVibeReviewRecovery: { ...message.functionalVibeReviewRecovery, completed: true } }
+        : message
+    ));
+    setMessages(activeId, messages);
+    setThreads(loadThreads());
+  };
+
   const closeFunctionalVibeReviewCard = (card, outcome) => {
     if (!card?.sessionId || !card?.rowId) return;
     const thread = loadThreads().find((entry) => entry.id === activeId);
@@ -4876,12 +4940,15 @@ useEffect(() => {
 
   const handleFunctionalVibeReviewAction = async (action, card, userFeedback = "", fromRunCopilot = false, signal) => {
     if (busy && !fromRunCopilot) return;
+    setAutoStick(true);
+    setWorkProgress(action === "stop"
+      ? ["Closing the functional-decomposition review."]
+      : ["Applying the review decision.", "Preparing the next functional-decomposition review item."]);
     setBusy(true);
     try {
       const providerApi = await waitForActionProvider("project-functional-diagram", 1800);
       let session = loadFunctionalVibeReviewSession(card.projectId, activeId);
       if (!session || session.id !== card.sessionId) throw new Error("This functional review session is no longer active.");
-      if (currentFunctionalVibeReviewRowId(session) !== card.rowId) throw new Error("That item is no longer current; use the controls on the latest review card.");
       const state = providerApi?.getFunctionalVibeReviewState?.();
       if (String(state?.activeProjectId || "") !== String(session.projectId)) throw new Error("This review is paused. Return to its original project before applying a decision.");
       if (String(state?.workspaceType || "functional-project") !== String(session.workspaceType || "functional-project")) {
@@ -4890,6 +4957,26 @@ useEffect(() => {
       if (session.repoId && String(state?.repoId || "") !== String(session.repoId)) {
         throw new Error("This review is paused. Return to its original repository analysis before applying a decision.");
       }
+
+      if (action === "resume") {
+        if (session.state === FUNCTIONAL_VIBE_REVIEW_STATES.AWAITING) {
+          appendMessage(activeId, { role: "assistant", content: "The current functional row is already waiting for your decision. Use Accept proposal, Keep as is, Apply revision, Remove row, Skip for later, or Stop review." });
+          setThreads(loadThreads());
+          return;
+        }
+        session = transitionFunctionalVibeReviewSession(session, { type: "resume" });
+        saveFunctionalVibeReviewSession(session);
+        closeFunctionalVibeReviewRecoveryCards(session.id);
+        try {
+          await appendFunctionalVibeReviewProposal(session, providerApi, state, signal);
+        } catch (resumeError) {
+          appendFunctionalVibeReviewRecovery(session,
+            `I couldn’t load the next functional review item: ${resumeError?.message || "the AI request did not complete"} The review queue is preserved.`);
+        }
+        return;
+      }
+
+      if (currentFunctionalVibeReviewRowId(session) !== card.rowId) throw new Error("That item is no longer current; use the controls on the latest review card.");
 
       if (action === "undo") {
         const last = session.decisions[session.decisions.length - 1];
@@ -4906,7 +4993,12 @@ useEffect(() => {
         closeFunctionalVibeReviewCard(card, "superseded-by-undo");
         appendMessage(activeId, { role: "assistant", content: `Undid the last functional review decision for ${last.label || last.rowId}. I’ll return to that row now.` });
         setThreads(loadThreads());
-        await appendFunctionalVibeReviewProposal(session, providerApi, result.state, signal);
+        try {
+          await appendFunctionalVibeReviewProposal(session, providerApi, result.state, signal);
+        } catch (nextProposalError) {
+          appendFunctionalVibeReviewRecovery(session,
+            `The undo was saved, but I couldn’t reload the review item: ${nextProposalError?.message || "the AI request did not complete"}`);
+        }
         return;
       }
       if (action === "stop") {
@@ -4921,21 +5013,15 @@ useEffect(() => {
         session = transitionFunctionalVibeReviewSession(session, { type: "skip", record: { rowId: card.rowId, label: card.label, reason: userFeedback || card.remainingQuestion || "Deferred by user." } });
         saveFunctionalVibeReviewSession(session);
         closeFunctionalVibeReviewCard(card, "skipped");
-        await appendFunctionalVibeReviewProposal(session, providerApi, state, signal);
-        return;
-      }
-      if (action === "resume") {
-        if (session.state === FUNCTIONAL_VIBE_REVIEW_STATES.AWAITING) {
-          appendMessage(activeId, { role: "assistant", content: "The current functional row is already waiting for your decision. Use Accept proposal, Keep as is, Apply revision, Remove row, Skip for later, or Stop review." });
-          setThreads(loadThreads());
-          return;
+        try {
+          await appendFunctionalVibeReviewProposal(session, providerApi, state, signal);
+        } catch (nextProposalError) {
+          const counts = summarizeFunctionalVibeReviewSession(session);
+          appendFunctionalVibeReviewRecovery(session,
+            `The item was skipped, but I couldn’t load the next review item: ${nextProposalError?.message || "the AI request did not complete"} ${counts.remaining} item${counts.remaining === 1 ? " remains" : "s remain"}.`);
         }
-        session = transitionFunctionalVibeReviewSession(session, { type: "resume" });
-        saveFunctionalVibeReviewSession(session);
-        await appendFunctionalVibeReviewProposal(session, providerApi, state, signal);
         return;
       }
-
       const proposal = session.proposal || {};
       const decision = action === "accept" ? proposal.decision
         : action === "keep" ? "Keep"
@@ -4971,13 +5057,20 @@ useEffect(() => {
       session = transitionFunctionalVibeReviewSession(session, { type: "decision", record });
       saveFunctionalVibeReviewSession(session);
       closeFunctionalVibeReviewCard(card, action === "accept" ? "accepted" : decision.toLowerCase());
-      await appendFunctionalVibeReviewProposal(session, providerApi, result.state, signal);
+      try {
+        await appendFunctionalVibeReviewProposal(session, providerApi, result.state, signal);
+      } catch (nextProposalError) {
+        const counts = summarizeFunctionalVibeReviewSession(session);
+        appendFunctionalVibeReviewRecovery(session,
+          `The ${decision.toLowerCase()} decision for ${card.label} was saved, but I couldn’t load the next review item: ${nextProposalError?.message || "the AI request did not complete"} ${counts.remaining} item${counts.remaining === 1 ? " remains" : "s remain"}.`);
+      }
     } catch (error) {
       if ((signal?.aborted || error?.name === "AbortError") && fromRunCopilot) throw error;
       appendMessage(activeId, { role: "assistant", content: `I couldn’t apply that functional review action: ${error.message} The row remains unchanged.` });
       setThreads(loadThreads());
     } finally {
       setBusy(false);
+      setWorkProgress([]);
     }
   };
 
@@ -5151,15 +5244,7 @@ useEffect(() => {
     const nextMessages = (currentThread.messages || []).map((item, index) => index === messageIndex
       ? { ...item, choicePrompt: { ...item.choicePrompt, selectedValue: value, completed: true } } : item);
     setMessages(activeId, nextMessages); setThreads(loadThreads());
-    const scopeLabels = message.choicePrompt.type === "functional-vibe-scope" ? {
-      subsystem: "Subsystem",
-      fromFunction: "Function From",
-      toFunction: "Function To",
-      controlAction: "Control Action",
-      csci: "CSCI",
-      csc: "CSC",
-      csu: "CSU",
-    } : {
+    const scopeLabels = {
       safetySignificant: "Safety Significant",
       safetyClassification: "Safety Classification",
       guidePhraseApplicable: "Guide Phrase Applicable",
@@ -5175,9 +5260,14 @@ useEffect(() => {
     // Replay only the chosen scope. The original prompt may contain interaction
     // instructions such as "propose Yes or No", which resemble other field
     // values and would otherwise recreate the same ambiguity indefinitely.
-    await runCopilot(message.choicePrompt.type === "functional-vibe-scope"
-      ? `Vibe review functional-decomposition rows where ${scopeLabels[prompt.field] || prompt.field} is ${value}.`
-      : `Vibe review hazard-analysis rows where ${scopeLabels[prompt.field] || prompt.field} is ${value}.`);
+    await runCopilot(
+      message.choicePrompt.type === "functional-vibe-scope"
+        ? buildFunctionalVibeReviewChoicePrompt(prompt.field, value)
+        : `Vibe review hazard-analysis rows where ${scopeLabels[prompt.field] || prompt.field} is ${value}.`,
+      message.choicePrompt.type === "functional-vibe-scope"
+        ? { functionalReviewInstructions: prompt.originalPrompt || "" }
+        : {},
+    );
   }
 
   async function handleOpenVibeReviewSource(card) {
@@ -5455,11 +5545,24 @@ useEffect(() => {
         return;
       }
       if (functionalReviewAction) {
-        const latestCard = [...(loadThreads().find((thread) => thread.id === activeId)?.messages || [])].reverse().find((message) => message?.functionalVibeReview)?.functionalVibeReview;
+        const reviewMessages = [...(loadThreads().find((thread) => thread.id === activeId)?.messages || [])].reverse();
+        const latestCard = reviewMessages.find((message) => message?.functionalVibeReview)?.functionalVibeReview;
+        const recoveryCard = reviewMessages.find((message) => (
+          message?.functionalVibeReviewRecovery && !message.functionalVibeReviewRecovery.completed
+        ))?.functionalVibeReviewRecovery;
+        const actionCard = functionalReviewAction === "resume"
+          ? recoveryCard || latestCard || {
+              sessionId: activeFunctionalReview.id,
+              projectId: activeFunctionalReview.projectId,
+              workspaceType: activeFunctionalReview.workspaceType,
+              repoId: activeFunctionalReview.repoId,
+              rowId: currentFunctionalVibeReviewRowId(activeFunctionalReview),
+            }
+          : latestCard;
         const normalizedCommand = String(userText || "").trim().toLowerCase().replace(/[.!]+$/g, "");
         const userFeedback = ["accept", "agree", "keep", "keep as is", "revise", "apply revision", "remove", "remove row", "skip", "stop", "undo"].includes(normalizedCommand)
           ? "" : String(userText || "").trim();
-        await handleFunctionalVibeReviewAction(functionalReviewAction, latestCard, userFeedback, true, promptSignal);
+        await handleFunctionalVibeReviewAction(functionalReviewAction, actionCard, userFeedback, true, promptSignal);
         return;
       }
       if (functionalVibeReviewIntent) {
@@ -5500,6 +5603,8 @@ useEffect(() => {
           threadId: activeId,
           queue: scopeResult.queue,
           scopeLabel: scopeResult.scopeLabel,
+          reviewFields: scopeResult.reviewFields || [],
+          reviewInstructions: options.functionalReviewInstructions || userText,
           ai: collaboratorAI,
           workspaceType: state.workspaceType || "functional-project",
           repoId: state.repoId || "",
@@ -6773,6 +6878,7 @@ Runtime context:
                         />
                       <HazardVibeReviewCard message={am} disabled={busy} onAction={handleVibeReviewAction} onOpenSource={handleOpenVibeReviewSource} />
                       <FunctionalVibeReviewCard message={am} disabled={busy} onAction={handleFunctionalVibeReviewAction} onOpenSource={handleOpenFunctionalVibeReviewSource} />
+                      <FunctionalVibeReviewRecoveryCard message={am} disabled={busy} onAction={handleFunctionalVibeReviewAction} />
                       <WorkspaceActionPlanCard message={am} disabled={busy} onApply={handleWorkspacePlanApply} onCancel={handleWorkspacePlanCancel} onOpenSource={handleOpenWorkspacePlanSource} />
                       </div>
                     ))}
@@ -7014,6 +7120,7 @@ Runtime context:
                       />
                         <HazardVibeReviewCard message={am} disabled={busy} onAction={handleVibeReviewAction} onOpenSource={handleOpenVibeReviewSource} />
                         <FunctionalVibeReviewCard message={am} disabled={busy} onAction={handleFunctionalVibeReviewAction} onOpenSource={handleOpenFunctionalVibeReviewSource} />
+                        <FunctionalVibeReviewRecoveryCard message={am} disabled={busy} onAction={handleFunctionalVibeReviewAction} />
                         <WorkspaceActionPlanCard message={am} disabled={busy} onApply={handleWorkspacePlanApply} onCancel={handleWorkspacePlanCancel} onOpenSource={handleOpenWorkspacePlanSource} />
                     </div>
                   ))}
@@ -7031,6 +7138,22 @@ Runtime context:
 
             <div ref={endRef} />
           </div>
+
+          {!autoStick && (
+            <button
+              type="button"
+              onClick={() => {
+                setAutoStick(true);
+                const el = scrollRef.current;
+                if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+              }}
+              className="absolute bottom-24 right-4 z-10 rounded-full bg-indigo-600 p-2 text-white shadow-lg hover:bg-indigo-700"
+              title="Jump to latest response"
+              aria-label="Jump to latest Collaborator response"
+            >
+              <ArrowDown className="h-4 w-4" />
+            </button>
+          )}
 
           <div className="border-t bg-white p-2">
             <CollaboratorPromptComposer
