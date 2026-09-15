@@ -152,6 +152,9 @@ export function resolveHazardVibeReviewScope(prompt = "", summary = []) {
     seen.add(id);
     return true;
   });
+  const reviewTarget = filters.some((filter) => filter.field === "guidePhraseApplicable")
+    ? "guidePhraseApplicable"
+    : "safetySignificant";
   return {
     status: rows.length ? "matched" : "zero",
     filters,
@@ -159,6 +162,7 @@ export function resolveHazardVibeReviewScope(prompt = "", summary = []) {
     queue: rows.map(({ row }) => clean(row[indexes.rawRowId])),
     nearbyValues,
     indexes,
+    reviewTarget,
     scopeLabel: customScope.raw || (filters.length ? filters.map((filter) => `${filter.header} = ${filter.value}`).join("; ") : "all hazard-analysis rows"),
   };
 }

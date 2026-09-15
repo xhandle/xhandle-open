@@ -12,6 +12,16 @@ test("deduplicates stable IDs and advances exactly one row per decision or skip"
   expect(summarizeVibeReviewSession(session)).toMatchObject({ total: 2, reviewed: 1, skipped: 1, changedToYes: 1 });
 });
 
+test("retains the reviewed hazard column so actions cannot mutate a different field", () => {
+  const session = createVibeReviewSession({
+    projectId: "p",
+    threadId: "t",
+    queue: ["row-1"],
+    reviewTarget: "guidePhraseApplicable",
+  });
+  expect(session.reviewTarget).toBe("guidePhraseApplicable");
+});
+
 test("bare no explicitly maps to Mark No while questions do not advance", () => {
   expect(parseVibeReviewAction("no")).toBe("no");
   expect(parseVibeReviewAction("Do we know whether the interlock exists?")).toBeNull();

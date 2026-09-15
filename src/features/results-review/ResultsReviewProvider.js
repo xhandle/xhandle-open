@@ -1,8 +1,12 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import ResultsReviewDrawer from "./ResultsReviewDrawer";
 import { loadReviewItems, saveReviewItems } from "./reviewStore";
-import { REVIEW_STATUSES } from "./reviewTypes";
-import { createHistoryEntry, filterReviewItems, normalizeReviewItem } from "./reviewUtils";
+import {
+  REVIEW_LIFECYCLE_STATES,
+  REVIEW_STATUSES,
+  reviewLifecycleStateForItem,
+} from "./reviewTypes";
+import { createHistoryEntry, filterReviewItems, mergeVibeReviewEvidenceItems, normalizeReviewItem } from "./reviewUtils";
 
 const ResultsReviewContext = createContext(null);
 
@@ -107,6 +111,18 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
     return normalized;
   }, [persist, readOnly]);
 
+  const recordVibeReviewEvidence = useCallback(async (incomingItem) => {
+    if (readOnly || !incomingItem?.id) return null;
+    let recorded = null;
+    await persist((prev) => {
+      const merged = mergeVibeReviewEvidenceItems(prev, incomingItem);
+      recorded = merged.recorded;
+      return merged.items;
+    });
+    if (recorded) dispatchReviewEvent("xhandle:results-review:item-updated", { reviewItem: recorded, action: "collaborator_vibe_review" });
+    return recorded;
+  }, [persist, readOnly]);
+
   const updateReviewItem = useCallback(async (id, updates = {}) => {
     if (readOnly) return getReviewItemById(id);
     let updated = null;
@@ -162,15 +178,21 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
     await persist((prev) =>
       prev.map((item) => {
         if (item.id !== id) return item;
+        const { historyDetails = {}, ...itemUpdates } = updates;
         updated = {
           ...item,
-          ...updates,
+          ...itemUpdates,
           originalContent: item.originalContent,
-          reviewerFeedback: updates.reviewerFeedback ?? item.reviewerFeedback,
+          reviewerFeedback: itemUpdates.reviewerFeedback ?? item.reviewerFeedback,
           reviewedAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           version: (Number(item.version) || 1) + 1,
-          history: [...(item.history || []), createHistoryEntry(action, { status: updates.status, feedback: updates.reviewerFeedback })],
+          history: [...(item.history || []), createHistoryEntry(action, {
+            status: itemUpdates.status,
+            reviewState: itemUpdates.reviewState,
+            feedback: itemUpdates.reviewerFeedback,
+            ...historyDetails,
+          })],
         };
         return updated;
       })
@@ -179,24 +201,57 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
     return updated;
   }, [persist, readOnly, getReviewItemById]);
 
+  const setReviewItemsState = useCallback(async (ids = [], reviewState) => {
+    if (readOnly) return [];
+    if (!Object.values(REVIEW_LIFECYCLE_STATES).includes(reviewState)) return [];
+    const idSet = new Set((Array.isArray(ids) ? ids : [ids]).filter(Boolean));
+    if (!idSet.size) return [];
+    const changed = [];
+    const changedAt = new Date().toISOString();
+    await persist((prev) => prev.map((item) => {
+      if (!idSet.has(item.id)) return item;
+      const previousReviewState = reviewLifecycleStateForItem(item);
+      if (previousReviewState === reviewState) return item;
+      const updated = {
+        ...item,
+        reviewState,
+        reviewedAt: changedAt,
+        updatedAt: changedAt,
+        version: (Number(item.version) || 1) + 1,
+        history: [...(item.history || []), createHistoryEntry("review_state_changed", {
+          previousReviewState,
+          reviewState,
+          source: "Review Center",
+        })],
+      };
+      changed.push(updated);
+      return updated;
+    }));
+    changed.forEach((reviewItem) => {
+      dispatchReviewEvent("xhandle:results-review:item-updated", { reviewItem, action: "review_state_changed" });
+    });
+    return changed;
+  }, [persist, readOnly]);
+
   const approveAsIs = useCallback((id) =>
-    applyAction(id, "approve_as_is", { status: REVIEW_STATUSES.APPROVED_AS_IS }), [applyAction]);
+    applyAction(id, "approve_as_is", { status: REVIEW_STATUSES.APPROVED_AS_IS, reviewState: REVIEW_LIFECYCLE_STATES.CLOSED }), [applyAction]);
 
   const approveWithModifications = useCallback((id, updatedContent, feedback = "") =>
     applyAction(id, "approve_with_modifications", {
       status: REVIEW_STATUSES.APPROVED_WITH_MODIFICATIONS,
+      reviewState: REVIEW_LIFECYCLE_STATES.CLOSED,
       currentContent: updatedContent,
       reviewerFeedback: feedback,
     }), [applyAction]);
 
   const rejectReviewItem = useCallback((id, feedback = "") =>
-    applyAction(id, "reject", { status: REVIEW_STATUSES.REJECTED, reviewerFeedback: feedback }), [applyAction]);
+    applyAction(id, "reject", { status: REVIEW_STATUSES.REJECTED, reviewState: REVIEW_LIFECYCLE_STATES.CLOSED, reviewerFeedback: feedback }), [applyAction]);
 
   const markNeedsRegeneration = useCallback((id, feedback = "") =>
-    applyAction(id, "needs_regeneration", { status: REVIEW_STATUSES.NEEDS_REGENERATION, reviewerFeedback: feedback }), [applyAction]);
+    applyAction(id, "needs_regeneration", { status: REVIEW_STATUSES.NEEDS_REGENERATION, reviewState: REVIEW_LIFECYCLE_STATES.IN_PROGRESS, reviewerFeedback: feedback }), [applyAction]);
 
   const requestReviewItemRegeneration = useCallback(async (id) => {
-    const updated = await applyAction(id, "regenerate_requested", { status: REVIEW_STATUSES.NEEDS_REGENERATION });
+    const updated = await applyAction(id, "regenerate_requested", { status: REVIEW_STATUSES.NEEDS_REGENERATION, reviewState: REVIEW_LIFECYCLE_STATES.IN_PROGRESS });
     if (updated) {
       dispatchReviewEvent("xhandle:results-review:regenerate-requested", { reviewItem: updated });
     }
@@ -204,10 +259,10 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
   }, [applyAction]);
 
   const markNeedsMoreContext = useCallback((id, feedback = "") =>
-    applyAction(id, "needs_more_context", { status: REVIEW_STATUSES.NEEDS_MORE_CONTEXT, reviewerFeedback: feedback }), [applyAction]);
+    applyAction(id, "needs_more_context", { status: REVIEW_STATUSES.NEEDS_MORE_CONTEXT, reviewState: REVIEW_LIFECYCLE_STATES.IN_PROGRESS, reviewerFeedback: feedback }), [applyAction]);
 
   const supersedeReviewItem = useCallback((id, replacementItemId) =>
-    applyAction(id, "supersede", { status: REVIEW_STATUSES.SUPERSEDED, replacementItemId }), [applyAction]);
+    applyAction(id, "supersede", { status: REVIEW_STATUSES.SUPERSEDED, reviewState: REVIEW_LIFECYCLE_STATES.CLOSED, replacementItemId }), [applyAction]);
 
   const value = useMemo(() => ({
     reviewItems,
@@ -217,9 +272,11 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
     getReviewItems,
     getReviewItemById,
     createReviewItems,
+    recordVibeReviewEvidence,
     updateReviewItem,
     deleteReviewItemsForProject,
     deleteReviewItemsByIds,
+    setReviewItemsState,
     approveAsIs,
     approveWithModifications,
     rejectReviewItem,
@@ -235,9 +292,11 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
     getReviewItems,
     getReviewItemById,
     createReviewItems,
+    recordVibeReviewEvidence,
     updateReviewItem,
     deleteReviewItemsForProject,
     deleteReviewItemsByIds,
+    setReviewItemsState,
     approveAsIs,
     approveWithModifications,
     rejectReviewItem,
@@ -294,9 +353,11 @@ export function useResultsReview() {
       getReviewItems: () => [],
       getReviewItemById: () => null,
       createReviewItems: async () => [],
+      recordVibeReviewEvidence: async () => null,
       updateReviewItem: async () => null,
       deleteReviewItemsForProject: async () => [],
       deleteReviewItemsByIds: async () => [],
+      setReviewItemsState: async () => [],
       approveAsIs: async () => null,
       approveWithModifications: async () => null,
       rejectReviewItem: async () => null,

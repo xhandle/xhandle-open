@@ -1,10 +1,66 @@
 import {
+  buildHumanGuidePhraseApplicabilityDecision,
   buildHumanVibeReviewDecision,
   coerceVibeReviewProposal,
   extractVibeReviewProviderText,
   normalizeVibeReviewProposal,
+  normalizeGuidePhraseApplicabilityProposal,
   requestVibeReviewProposal,
 } from "./vibeReviewProposal";
+
+const applicabilityRow = {
+  "Raw Analysis Row ID": "RAW-APP-1",
+  "Function (From)": "Classify Objects",
+  "Function (From) Details": "Produces classified detections from current sensor observations.",
+  "Control Action": "Classified Object Detections",
+  "Control Action Details": "Provides classified objects and confidence to sensor fusion.",
+  "Function (To)": "Fuse Sensor Detections",
+  "Function (To) Details": "Uses classifications to maintain fused tracks.",
+  "Guide Phrase": "The control action is provided too early",
+  "Guide Phrase Applicable": "Needs Review",
+  "Operational Scenario": "Dense urban traffic with pedestrians crossing unpredictably.",
+};
+
+test("accepts a Guide Phrase Applicable Yes while retaining a missing contract as a downstream evidence gap", () => {
+  const result = normalizeGuidePhraseApplicabilityProposal({
+    applicabilityDecision: "Yes",
+    explanation: "A provisional classification can reach fusion before validation completes.",
+    applicabilityMechanism: "Sensor fusion can incorporate a provisional class into a fused track before validation completes.",
+    "Guide Phrase Applicability Rationale": "Early provisional classified detections can affect the receiver's fused track state.",
+    "Classification Confidence": "Medium",
+    remainingEvidenceGap: "The exact classification acceptance and validity contract is not documented.",
+  }, applicabilityRow);
+  expect(result.valid).toBe(true);
+  expect(result.proposal.governedDecision).toEqual({
+    "Guide Phrase Applicable": "Yes",
+    "Guide Phrase Applicability Rationale": "Early provisional classified detections can affect the receiver's fused track state.",
+  });
+  expect(result.evidenceGap).toMatch(/acceptance and validity contract/i);
+});
+
+test("rejects a Guide Phrase Applicable No that only cites missing contract evidence", () => {
+  const result = normalizeGuidePhraseApplicabilityProposal({
+    applicabilityDecision: "No",
+    explanation: "No contract was supplied.",
+    "Guide Phrase Applicability Rationale": "The timing contract is unknown.",
+  }, applicabilityRow);
+  expect(result.valid).toBe(false);
+  expect(result.errors.join(" ")).toMatch(/grounded non-applicability proof/i);
+});
+
+test("requires a human No applicability override to explain why the deviation cannot affect the receiver", () => {
+  expect(() => buildHumanGuidePhraseApplicabilityDecision({
+    rowFields: applicabilityRow,
+    proposal: {},
+    applicable: "No",
+  })).toThrow(/no — because/i);
+  expect(buildHumanGuidePhraseApplicabilityDecision({
+    rowFields: applicabilityRow,
+    proposal: {},
+    applicable: "No",
+    userFeedback: "The receiver accepts only finalized snapshots and cannot observe provisional classifications.",
+  })["Guide Phrase Applicable"]).toBe("No");
+});
 
 test("turns an explicit reviewer Yes into an auditable Related disposition without inventing evidence", () => {
   const decision = buildHumanVibeReviewDecision({

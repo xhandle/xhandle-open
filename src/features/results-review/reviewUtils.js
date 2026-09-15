@@ -1,4 +1,8 @@
-import { REVIEW_STATUSES, REVIEW_UNIT_TYPES } from "./reviewTypes";
+import {
+  REVIEW_STATUSES,
+  REVIEW_UNIT_TYPES,
+  reviewLifecycleStateForStatus,
+} from "./reviewTypes";
 
 const nowISO = () => new Date().toISOString();
 
@@ -11,6 +15,7 @@ export const createReviewId = (...parts) =>
 export function normalizeReviewItem(item = {}) {
   const now = nowISO();
   const id = item.id || createReviewId("review", item.sourceRunId, item.artifactType, item.artifactId, item.reviewUnitType, Date.now());
+  const status = item.status || REVIEW_STATUSES.DRAFT_AI_GENERATED;
   return {
     id,
     artifactType: item.artifactType || "unknown_artifact",
@@ -22,7 +27,8 @@ export function normalizeReviewItem(item = {}) {
     sourceRunId: item.sourceRunId || "",
     originalContent: item.originalContent ?? null,
     currentContent: item.currentContent ?? item.originalContent ?? null,
-    status: item.status || REVIEW_STATUSES.DRAFT_AI_GENERATED,
+    status,
+    reviewState: item.reviewState || reviewLifecycleStateForStatus(status),
     reviewerFeedback: item.reviewerFeedback || "",
     reviewerId: item.reviewerId || "",
     reviewedAt: item.reviewedAt || null,
@@ -79,6 +85,248 @@ export function createHistoryEntry(action, details = {}) {
     at: nowISO(),
     ...details,
   };
+}
+
+const FUNCTIONAL_VIBE_REVIEW_COLUMNS = [
+  "subsystem",
+  "fromFunction",
+  "fromDetails",
+  "controlAction",
+  "controlDetails",
+  "toFunction",
+  "toDetails",
+  "csci",
+  "csc",
+  "csu",
+  "architectureRationale",
+  "lifecyclePhase",
+  "interfaceType",
+  "hazardAnalysisEligibility",
+  "hazardAnalysisEligibilityRationale",
+];
+
+function vibeReviewArtifactConfig(domain, workspaceType, projectId, repoId) {
+  const codeArchitecture = workspaceType === "code-based-architecture";
+  if (domain === "hazard-analysis") {
+    return codeArchitecture
+      ? {
+          artifactType: "code_architecture_hazard_summary_table",
+          artifactRoot: `code-architecture-hazard-summary:${projectId}:${repoId || "repo"}`,
+          sourceFeature: "Code-Based Architecture Hazard Analysis",
+          sourceMethod: "Collaborator hazard vibe review",
+        }
+      : {
+          artifactType: "hazard_summary_table",
+          artifactRoot: `hazard-summary:${projectId}`,
+          sourceFeature: "AI Hazard Analysis",
+          sourceMethod: "Collaborator hazard vibe review",
+        };
+  }
+  return codeArchitecture
+    ? {
+        artifactType: "code_architecture_functional_decomposition_table",
+        artifactRoot: `code-architecture-functional-decomposition:${projectId}:${repoId || "repo"}`,
+        sourceFeature: "Code-Based Architecture Functional Decomposition",
+        sourceMethod: "Collaborator functional-decomposition vibe review",
+      }
+    : {
+        artifactType: "functional_decomposition_table",
+        artifactRoot: `functional-decomposition:${projectId}`,
+        sourceFeature: "Prompt Wizard",
+        sourceMethod: "Collaborator functional-decomposition vibe review",
+      };
+}
+
+function reviewStatusForVibeDecision(domain, decision, action) {
+  if (action === "undo") return REVIEW_STATUSES.DRAFT_AI_GENERATED;
+  if (domain === "functional-decomposition" && decision === "Keep") return REVIEW_STATUSES.APPROVED_AS_IS;
+  if (domain === "functional-decomposition" && decision === "Remove") return REVIEW_STATUSES.REJECTED;
+  return REVIEW_STATUSES.APPROVED_WITH_MODIFICATIONS;
+}
+
+function safeReviewValue(value) {
+  if (value === undefined) return null;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return String(value);
+  }
+}
+
+export function createVibeReviewDecisionEvidence({
+  domain,
+  projectId,
+  workspaceType = "functional-project",
+  repoId = "",
+  sourceRunId = "",
+  sessionId,
+  threadId = "",
+  scopeLabel = "",
+  reviewTarget = "",
+  rowId,
+  rowIndex,
+  label = "",
+  action,
+  decision,
+  beforeRow,
+  afterRow,
+  columns,
+  rationale = "",
+  userFeedback = "",
+  ai = {},
+  timestamp,
+} = {}) {
+  const reviewedAt = timestamp || nowISO();
+  const config = vibeReviewArtifactConfig(domain, workspaceType, projectId, repoId);
+  const normalizedRowIndex = Number.isFinite(Number(rowIndex)) ? Number(rowIndex) : null;
+  const reviewColumns = Array.isArray(columns) && columns.length
+    ? columns
+    : FUNCTIONAL_VIBE_REVIEW_COLUMNS.filter((column) => (
+        beforeRow?.[column] !== undefined || afterRow?.[column] !== undefined
+      ));
+  const originalRow = safeReviewValue(beforeRow);
+  const currentRow = safeReviewValue(afterRow === undefined ? beforeRow : afterRow);
+  const traceUri = domain === "hazard-analysis"
+    ? `xhandle://hazard-row/${encodeURIComponent(String(rowId || ""))}?projectId=${encodeURIComponent(String(projectId || ""))}&workspaceType=${encodeURIComponent(workspaceType)}`
+    : `xhandle://functional-row/${encodeURIComponent(String(rowId || ""))}?projectId=${encodeURIComponent(String(projectId || ""))}&workspaceType=${encodeURIComponent(workspaceType)}&repoId=${encodeURIComponent(String(repoId || ""))}`;
+  const history = createHistoryEntry("collaborator_vibe_review_decision", {
+    sessionId,
+    threadId,
+    scopeLabel,
+    reviewTarget,
+    domain,
+    rowId,
+    rowIndex: normalizedRowIndex,
+    label,
+    reviewAction: action,
+    decision,
+    rationale,
+    userFeedback,
+    provider: ai?.provider || "",
+    model: ai?.model || "",
+    effort: ai?.effort || "",
+    before: originalRow,
+    after: currentRow,
+    traceUri,
+    at: reviewedAt,
+  });
+  return normalizeReviewItem({
+    id: createReviewId("collaborator-vibe-review", config.artifactRoot, rowId || normalizedRowIndex),
+    artifactType: config.artifactType,
+    artifactId: `${config.artifactRoot}:row:${rowId || normalizedRowIndex || "unknown"}`,
+    projectId: String(projectId || ""),
+    reviewUnitType: REVIEW_UNIT_TYPES.TABLE_ROW,
+    sourceFeature: config.sourceFeature,
+    sourceMethod: config.sourceMethod,
+    sourceRunId: sourceRunId || "",
+    originalContent: { rowIndex: normalizedRowIndex, rowId, columns: reviewColumns, row: originalRow },
+    currentContent: { rowIndex: normalizedRowIndex, rowId, columns: reviewColumns, row: currentRow, removed: decision === "Remove" },
+    status: reviewStatusForVibeDecision(domain, decision, action),
+    reviewerFeedback: userFeedback || rationale || "",
+    reviewedAt,
+    confidence: ai?.confidence ?? null,
+    traceLinks: [
+      { type: "table_row", rowIndex: normalizedRowIndex, rowId, artifactId: config.artifactRoot },
+      { type: "collaborator_thread", threadId, sessionId },
+      { type: "source_uri", uri: traceUri },
+    ],
+    history: [history],
+    vibeReview: { domain, sessionId, threadId, scopeLabel, reviewTarget, workspaceType, repoId, rowId, label, action, decision, ai: { ...ai } },
+    createdAt: reviewedAt,
+    updatedAt: reviewedAt,
+  });
+}
+
+export function createVibeReviewSessionEvidence({ domain, session, outcome = "in_progress", summary = {} } = {}) {
+  const timestamp = session?.updatedAt || nowISO();
+  const projectId = String(session?.projectId || "");
+  const sessionId = String(session?.id || createReviewId("session", Date.now()));
+  const completed = outcome === "completed";
+  const stopped = outcome === "stopped" || outcome === "cancelled";
+  const currentContent = {
+    sessionId,
+    domain,
+    outcome,
+    scope: session?.scopeLabel || "",
+    reviewTarget: session?.reviewTarget || "",
+    workspaceType: session?.workspaceType || "functional-project",
+    repoId: session?.repoId || "",
+    sourceRunId: session?.sourceRunId || "",
+    queueSize: session?.queue?.length || 0,
+    cursor: session?.cursor || 0,
+    summary: safeReviewValue(summary),
+    decisions: safeReviewValue(session?.decisions || []),
+    skipped: safeReviewValue(session?.skips || []),
+    failures: safeReviewValue([...(session?.failures || []), ...(session?.missingRows || [])]),
+    ai: safeReviewValue(session?.ai || {}),
+    startedAt: session?.createdAt || timestamp,
+    updatedAt: timestamp,
+  };
+  return normalizeReviewItem({
+    id: createReviewId("collaborator-vibe-review-session", sessionId),
+    artifactType: "collaborator_vibe_review_session",
+    artifactId: `collaborator-vibe-review-session:${projectId}:${domain}:row:${sessionId}`,
+    projectId,
+    reviewUnitType: REVIEW_UNIT_TYPES.REVIEW_SESSION,
+    sourceFeature: "Collaborator Vibe Review",
+    sourceMethod: domain === "hazard-analysis" ? "Hazard-analysis guided review" : "Functional-decomposition guided review",
+    sourceRunId: session?.sourceRunId || sessionId,
+    originalContent: currentContent,
+    currentContent,
+    status: completed
+      ? REVIEW_STATUSES.APPROVED_WITH_MODIFICATIONS
+      : stopped
+        ? REVIEW_STATUSES.SUPERSEDED
+        : REVIEW_STATUSES.DRAFT_AI_GENERATED,
+    reviewerFeedback: `${session?.scopeLabel || "Vibe review"} — ${outcome}`,
+    reviewedAt: completed || stopped ? timestamp : null,
+    traceLinks: [
+      { type: "reviewed_artifact", domain, projectId, workspaceType: session?.workspaceType || "functional-project", repoId: session?.repoId || "", sourceRunId: session?.sourceRunId || "" },
+      { type: "collaborator_thread", threadId: session?.threadId || "", sessionId },
+    ],
+    history: [createHistoryEntry("collaborator_vibe_review_session", { outcome, summary: safeReviewValue(summary), at: timestamp })],
+    vibeReview: { domain, sessionId, threadId: session?.threadId || "", scopeLabel: session?.scopeLabel || "", reviewTarget: session?.reviewTarget || "", outcome },
+    createdAt: session?.createdAt || timestamp,
+    updatedAt: timestamp,
+  });
+}
+
+export function mergeVibeReviewEvidenceItems(items = [], incomingItem) {
+  const previous = Array.isArray(items) ? items : [];
+  if (!incomingItem?.id) return { items: previous, recorded: null };
+  const incomingRoot = String(incomingItem.artifactId || "").split(":row:")[0];
+  const incomingRowIndex = incomingItem.currentContent?.rowIndex ?? incomingItem.originalContent?.rowIndex;
+  const incomingRowId = incomingItem.currentContent?.rowId ?? incomingItem.originalContent?.rowId;
+  const matchIndex = previous.findIndex((item) => {
+    if (item.id === incomingItem.id) return true;
+    if (String(item.artifactId || "").split(":row:")[0] !== incomingRoot) return false;
+    const itemRowId = item.currentContent?.rowId ?? item.originalContent?.rowId;
+    if (incomingRowId && itemRowId) return String(itemRowId) === String(incomingRowId);
+    const itemRowIndex = item.currentContent?.rowIndex ?? item.originalContent?.rowIndex;
+    return Number.isFinite(Number(incomingRowIndex)) && Number(itemRowIndex) === Number(incomingRowIndex);
+  });
+  if (matchIndex < 0) return { items: [...previous, incomingItem], recorded: incomingItem };
+
+  const existing = previous[matchIndex];
+  const historyById = new Map((existing.history || []).map((entry) => [entry.id, entry]));
+  (incomingItem.history || []).forEach((entry) => historyById.set(entry.id, entry));
+  const recorded = {
+    ...existing,
+    ...incomingItem,
+    id: existing.id,
+    artifactId: existing.artifactId || incomingItem.artifactId,
+    sourceFeature: existing.sourceFeature || incomingItem.sourceFeature,
+    originalContent: existing.originalContent ?? incomingItem.originalContent,
+    sourceRunId: existing.sourceRunId || incomingItem.sourceRunId,
+    traceLinks: Array.from(new Map([...(existing.traceLinks || []), ...(incomingItem.traceLinks || [])]
+      .map((link) => [JSON.stringify(link), link])).values()),
+    history: Array.from(historyById.values()).sort((a, b) => String(a.at || "").localeCompare(String(b.at || ""))),
+    version: Math.max(Number(existing.version) || 1, Number(incomingItem.version) || 1) + 1,
+    updatedAt: incomingItem.updatedAt || nowISO(),
+  };
+  const next = [...previous];
+  next[matchIndex] = recorded;
+  return { items: next, recorded };
 }
 
 export function createReviewItemsFromGeneratedTable({

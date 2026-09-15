@@ -1,4 +1,5 @@
 import {
+  applyFunctionalSubsystemReallocation,
   applyFunctionalReviewToCodeArchitectureRow,
   buildFunctionalVibeReviewChoicePrompt,
   ensureFunctionalVibeReviewRowIds,
@@ -202,6 +203,60 @@ test("adds stable internal review IDs without replacing existing IDs", () => {
   expect(result.changed).toBe(true);
   expect(result.rows[0]._functionalVibeReviewId).toBe("existing");
   expect(result.rows[1]._functionalVibeReviewId).toMatch(/^FDR-/);
+});
+
+test("atomically reallocates every row owned by the same source function", () => {
+  const sourceRows = [
+    {
+      ...rows[0].row,
+      _functionalVibeReviewId: "health-a",
+      subsystem: "Health & Fault Management",
+      fromFunction: "Monitor Vehicle Health",
+      controlAction: "Vehicle Health Status",
+      toFunction: "Coordinate Vehicle Operation",
+    },
+    {
+      ...rows[0].row,
+      _functionalVibeReviewId: "health-b",
+      subsystem: "Health & Fault Management",
+      fromFunction: "Monitor Vehicle Health",
+      controlAction: "Fault Alert",
+      toFunction: "Enter Minimum Risk State",
+    },
+    {
+      ...rows[1].row,
+      _functionalVibeReviewId: "unrelated",
+      subsystem: "Motion Control",
+    },
+  ];
+  const nextRow = { ...sourceRows[0], subsystem: "Vehicle Control & Safety" };
+  const result = applyFunctionalSubsystemReallocation(sourceRows, { rowIndex: 0, nextRow });
+
+  expect(result.propagated).toBe(true);
+  expect(result.rows.map((row) => row.subsystem)).toEqual([
+    "Vehicle Control & Safety",
+    "Vehicle Control & Safety",
+    "Motion Control",
+  ]);
+  expect(result.rows[1].controlAction).toBe("Fault Alert");
+  expect(result.affectedRows).toHaveLength(2);
+  expect(result.affectedRows[0].propagated).toBe(false);
+  expect(result.affectedRows[1]).toMatchObject({ rowId: "health-b", propagated: true });
+  expect(result.affectedRows[1].previousRow.subsystem).toBe("Health & Fault Management");
+});
+
+test("does not propagate a subsystem edit when the proposed function label also changes", () => {
+  const sourceRows = [
+    { ...rows[0].row, _functionalVibeReviewId: "one", subsystem: "Planning" },
+    { ...rows[0].row, _functionalVibeReviewId: "two", subsystem: "Planning", controlAction: "Alternate Route" },
+  ];
+  const nextRow = { ...sourceRows[0], subsystem: "Vehicle Control", fromFunction: "Command Vehicle Motion" };
+  const result = applyFunctionalSubsystemReallocation(sourceRows, { rowIndex: 0, nextRow });
+
+  expect(result.propagated).toBe(false);
+  expect(result.rows[0]).toEqual(nextRow);
+  expect(result.rows[1].subsystem).toBe("Planning");
+  expect(result.affectedRows).toHaveLength(1);
 });
 
 test("requires a complete changed row for a Revise proposal", () => {

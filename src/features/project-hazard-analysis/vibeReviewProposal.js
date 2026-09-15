@@ -61,6 +61,155 @@ export function coerceVibeReviewProposal(value) {
   return normalizedDecision ? { ...proposal, normalizedDecision } : proposal;
 }
 
+const APPLICABILITY_NO_REASONS = new Set([
+  "Semantic mismatch",
+  "Receiver unaffected",
+  "Architecture precludes deviation",
+  "No adverse state in context",
+]);
+
+function canonicalApplicabilityDecision(value) {
+  const candidate = clean(value);
+  if (/^yes$/i.test(candidate)) return "Yes";
+  if (/^no$/i.test(candidate)) return "No";
+  if (/^needs review$/i.test(candidate)) return "Needs Review";
+  return "";
+}
+
+function proposalObject(value) {
+  const root = parseVibeReviewProposal(value);
+  if (!root || typeof root !== "object" || Array.isArray(root)) return {};
+  return root.proposal || root.assessment || root.review || root.result || root.data?.proposal || root.data || root;
+}
+
+function normalizedEvidence(value) {
+  return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function groundedApplicabilityEvidence(proposal = {}, rowFields = {}) {
+  const field = clean(proposal.notApplicableEvidenceField || proposal.evidenceField);
+  const quote = clean(proposal.notApplicableEvidenceQuote || proposal.evidenceQuote);
+  const matchingHeader = Object.keys(rowFields).find((header) => normalizedEvidence(header) === normalizedEvidence(field));
+  return Boolean(
+    matchingHeader
+    && normalizedEvidence(quote).length >= 8
+    && normalizedEvidence(rowFields[matchingHeader]).includes(normalizedEvidence(quote))
+  );
+}
+
+export function normalizeGuidePhraseApplicabilityProposal(raw = {}, rowFields = {}) {
+  const proposal = proposalObject(raw);
+  const decision = canonicalApplicabilityDecision(
+    proposal.applicabilityDecision
+    || proposal.guidePhraseApplicable
+    || proposal["Guide Phrase Applicable"]
+    || proposal.normalizedDecision
+    || proposal.decision,
+  );
+  const rationale = clean(
+    proposal["Guide Phrase Applicability Rationale"]
+    || proposal.guidePhraseApplicabilityRationale
+    || proposal.rationale
+    || proposal.explanation,
+  );
+  const mechanism = clean(proposal.applicabilityMechanism || proposal.mechanism || proposal.explanation);
+  const evidenceGap = clean(proposal.remainingEvidenceGap || proposal.evidenceGap);
+  const errors = [];
+  if (!decision) errors.push("Provider update omitted the required applicabilityDecision");
+  if (decision === "Yes" && (!rationale || !mechanism)) {
+    errors.push("An applicable decision must explain how the exact guide-phrase deviation can affect the receiving function");
+  }
+  if (decision === "No") {
+    const reasonCode = clean(proposal.notApplicableReasonCode);
+    const strongestReason = clean(proposal.strongestReasonForNo || proposal.reasonNotApplicable);
+    if (!APPLICABILITY_NO_REASONS.has(reasonCode) || !strongestReason || !groundedApplicabilityEvidence(proposal, rowFields)) {
+      errors.push("A No decision requires a grounded non-applicability proof, reason code, source field, and exact source excerpt");
+    }
+  }
+  if (decision === "Needs Review" && !evidenceGap) {
+    errors.push("Needs Review requires one concise material applicability evidence gap");
+  }
+  const governedDecision = decision && !errors.length ? {
+    "Guide Phrase Applicable": decision,
+    "Guide Phrase Applicability Rationale": rationale || `Needs review: ${evidenceGap}.`,
+  } : null;
+  return {
+    valid: Boolean(governedDecision && decision !== "Needs Review"),
+    errors,
+    evidenceGap: evidenceGap || errors[0] || "A definitive guide-phrase applicability decision was not supported.",
+    proposal: {
+      ...proposal,
+      sourceRowId: proposal.sourceRowId || rowFields["Raw Analysis Row ID"],
+      applicabilityDecision: decision || "Needs Review",
+      normalizedDecision: decision || "Needs Review",
+      applicabilityConfidence: clean(proposal["Classification Confidence"] || proposal.classificationConfidence || proposal.confidence || (decision === "Needs Review" ? "Low" : "Medium")),
+      governedDecision,
+    },
+  };
+}
+
+export function buildHumanGuidePhraseApplicabilityDecision({ rowFields = {}, proposal = {}, applicable, userFeedback = "" } = {}) {
+  const decision = /^yes$/i.test(clean(applicable)) ? "Yes" : "No";
+  const reviewerBasis = clean(userFeedback);
+  const proposed = proposal?.governedDecision || {};
+  if (decision === "No" && proposed["Guide Phrase Applicable"] !== "No" && !reviewerBasis) {
+    throw new Error("Mark No requires a row-specific explanation of why this guide-phrase deviation cannot affect the receiving function. Reply “no — because …” or skip it.");
+  }
+  const existingGap = firstValue(proposal.remainingEvidenceGap, proposal.evidenceGap);
+  const baseRationale = firstValue(
+    reviewerBasis,
+    proposed["Guide Phrase Applicability Rationale"],
+    rowFields["Guide Phrase Applicability Rationale"],
+  );
+  const rationale = [
+    `Human-directed Vibe Review decision: Guide Phrase Applicable = ${decision}.`,
+    baseRationale || (decision === "Yes"
+      ? "The reviewer determined that the stated deviation is meaningful for this interface and can affect the receiving function."
+      : "The reviewer determined that the stated deviation cannot affect the receiving function in this context."),
+    existingGap ? `Remaining contract or downstream-classification evidence gap: ${existingGap}` : "",
+    "This applicability disposition does not independently resolve Safety Significance.",
+  ].filter(Boolean).join(" ");
+  return {
+    sourceRowId: rowFields["Raw Analysis Row ID"],
+    reviewTarget: "guidePhraseApplicable",
+    humanAdjudication: true,
+    applicabilityDecision: decision,
+    normalizedDecision: decision,
+    "Guide Phrase Applicable": decision,
+    "Guide Phrase Applicability Rationale": rationale,
+    applicabilityConfidence: reviewerBasis ? "Medium" : "Low",
+    remainingEvidenceGap: existingGap,
+    governedDecision: {
+      "Guide Phrase Applicable": decision,
+      "Guide Phrase Applicability Rationale": rationale,
+    },
+  };
+}
+
+export async function requestGuidePhraseApplicabilityProposal({ headers, row, projectName, organizationContext = "", provider, model, effort, signal }) {
+  const rowFields = compactVibeReviewRow(headers, row);
+  const prompt = `Review exactly one hazard-analysis row for Guide Phrase Applicable only. This is an applicability decision, not a Safety Significance classification.\n\nProject: ${projectName || "Untitled project"}\n${organizationContext || "No applicable organization profile text is available."}\n\nRow evidence:\n${JSON.stringify(rowFields, null, 2)}\n\nReturn strict JSON with: sourceRowId, explanation, applicabilityDecision, Guide Phrase Applicable, Guide Phrase Applicability Rationale, applicabilityMechanism, notApplicableReasonCode, strongestReasonForNo, notApplicableEvidenceField, notApplicableEvidenceQuote, Classification Confidence, remainingEvidenceGap.\nRules: applicabilityDecision and Guide Phrase Applicable must be exactly Yes, No, or Needs Review. Decide whether the named guide-phrase deviation is semantically meaningful for this interface and can affect the receiving function in the stated context. Do not decide whether the resulting effect is Safety Significant. Missing numeric thresholds, validity windows, protections, or downstream physical-harm evidence may lower confidence or remain as an evidence gap, but they are not by themselves proof that a semantically possible deviation is inapplicable. For Yes, name the interface-specific receiver effect in applicabilityMechanism. For No, satisfy a strict proof obligation: notApplicableReasonCode is exactly Semantic mismatch, Receiver unaffected, Architecture precludes deviation, or No adverse state in context; strongestReasonForNo states why the deviation cannot matter; and notApplicableEvidenceField plus notApplicableEvidenceQuote cite an exact excerpt from the supplied row. Use Needs Review only when the supplied interface semantics truly cannot establish whether the deviation can occur or affect the receiver.`;
+  const callProvider = async (messages) => {
+    const response = await fetch(`${backendURL}/api/chat`, { method: "POST", ...buildAIAuthOpts({ "Content-Type": "application/json" }), signal,
+      body: JSON.stringify({ provider, model, effort, reasoning_effort: effort, xhandleWorkflow: "hazard-applicability-vibe-review", messages, temperature: 0.1, max_tokens: 1500 }) });
+    if (!response.ok) throw new Error(`Guide-phrase applicability review failed (${response.status}). ${await response.text().catch(() => "")}`.trim());
+    return extractVibeReviewProviderText(await response.json());
+  };
+  const messages = [
+    { role: "system", content: "Assess only guide-phrase applicability for one interface. Keep applicability separate from downstream safety classification. Return strict JSON only." },
+    { role: "user", content: prompt },
+  ];
+  const rawText = await callProvider(messages);
+  let normalized = normalizeGuidePhraseApplicabilityProposal(rawText, rowFields);
+  if (normalized.valid) return normalized;
+  const repairedText = await callProvider([
+    { role: "system", content: "Repair one guide-phrase applicability proposal. Use only supplied evidence, keep applicability separate from safety significance, and return strict JSON only." },
+    { role: "user", content: `The proposal failed: ${normalized.errors.join("; ") || normalized.evidenceGap}. Reissue the complete object. A missing interface contract is not proof of non-applicability when the deviation is semantically meaningful.\n\nOriginal task:\n${prompt}\n\nProvider response:\n${rawText || "(empty response)"}` },
+  ]);
+  normalized = normalizeGuidePhraseApplicabilityProposal(repairedText, rowFields);
+  return normalized;
+}
+
 export function normalizeVibeReviewProposal(raw = {}, rowFields = {}, requestedSignificance = "") {
   const proposal = coerceVibeReviewProposal(raw);
   const desired = requestedSignificance === "Yes" ? /Safety/.test(proposal.normalizedDecision || "")
@@ -227,7 +376,10 @@ export function compactVibeReviewRow(headers = [], row = []) {
   return Object.fromEntries(headers.map((header, index) => [header, clean(row[index])]).filter(([header, value]) => allowed.has(header) && value));
 }
 
-export async function requestVibeReviewProposal({ headers, row, projectName, organizationContext = "", provider, model, effort, requestedSignificance = "", userFeedback = "", signal }) {
+export async function requestVibeReviewProposal({ headers, row, projectName, organizationContext = "", provider, model, effort, requestedSignificance = "", userFeedback = "", reviewTarget = "safetySignificant", signal }) {
+  if (reviewTarget === "guidePhraseApplicable") {
+    return requestGuidePhraseApplicabilityProposal({ headers, row, projectName, organizationContext, provider, model, effort, signal });
+  }
   const rowFields = compactVibeReviewRow(headers, row);
   const reviewerDecisionInstruction = requestedSignificance
     ? ` The human reviewer selected Safety Significant ${requestedSignificance}. Treat that Yes/No selection as the requested adjudication outcome and translate it into the most defensible grounded subtype and rationale. Clearly label it as a human-directed decision. Unknown protection effectiveness may remain Unknown and must be disclosed, but it does not by itself erase an otherwise documented causal path.`
