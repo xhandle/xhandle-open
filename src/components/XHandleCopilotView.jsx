@@ -869,6 +869,7 @@ function resolveFunctionalRowsFromContext(ctx = {}, activeProjectId = null) {
 }
 
 function isFunctionalGraphConnectivityQuestion(text = "") {
+  if (isFunctionalDecompositionRevisionFeedbackRequest(text)) return false;
   const q = String(text || "").toLowerCase();
   return (
     /\b(orphan|isolated|disconnected|unconnected|standalone|stranded|island|floating)\b/.test(q) &&
@@ -3472,8 +3473,9 @@ function normalizeFunctionalLookupText(value = "") {
     .replace(/\s+/g, " ");
 }
 
-function extractSubsystemFunctionLookupRequest(text = "") {
+export function extractSubsystemFunctionLookupRequest(text = "") {
   const raw = String(text || "").trim();
+  if (isFunctionalDecompositionRevisionFeedbackRequest(raw)) return null;
   const q = normalizeFunctionalLookupText(raw);
   const asksForReadOnlyReview = /\b(review|show|list|tell|what|which|see|find|summarize|display)\b/.test(q);
   const asksForFunctions = /\b(function|functions|functional decomposition|function decomposition|associated functions)\b/.test(q);
@@ -6385,8 +6387,11 @@ useEffect(() => {
               content: [
                 `Revision review complete. I prepared ${result?.proposalCount ?? 0} proposed change${result?.proposalCount === 1 ? "" : "s"}:`,
                 `${result?.updateCount ?? 0} update${result?.updateCount === 1 ? "" : "s"}, ${result?.addCount ?? 0} addition${result?.addCount === 1 ? "" : "s"}, and ${result?.removeCount ?? 0} removal${result?.removeCount === 1 ? "" : "s"}.`,
+                result?.failedBatchCount
+                  ? `${result.failedBatchCount} bounded revision batch${result.failedBatchCount === 1 ? "" : "es"} could not be completed; those gaps are listed as unresolved questions in the proposal.`
+                  : "",
                 "Review the proposal in Functional Diagramming, edit or deselect any change you do not want, then apply the selected changes.",
-              ].join(" "),
+              ].filter(Boolean).join(" "),
             });
           } catch (error) {
             appendMessage(activeId, {

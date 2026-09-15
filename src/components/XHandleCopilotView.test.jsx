@@ -51,6 +51,7 @@ const {
   isFunctionalDraftDecisionFollowUp,
   resolvePendingFunctionalAbstractionLevel,
   extractFunctionalRowsFromAssistantText,
+  extractSubsystemFunctionLookupRequest,
   extractMultiLevelLeafInventory,
   formatCollaboratorReasoningList,
   formatCollaboratorSourceCitations,
@@ -1048,6 +1049,12 @@ describe("subsystem generation prompting", () => {
       "The main defect is systemic: every Function (To) value in the current table is a subsystem/container name. The receiving leaf function is embedded in Function (To) Details.",
       focus,
     )).toBe(true);
+  });
+
+  it("does not route systemic revision feedback through subsystem lookup", () => {
+    const request = "Revise the current functional decomposition based on this feedback: complete the same child-function decomposition for every remaining internal subsystem, replace superseded umbrella rows, and prepare targeted changes for review.";
+    expect(isFunctionalDecompositionRevisionFeedbackRequest(request)).toBe(true);
+    expect(extractSubsystemFunctionLookupRequest(request)).toBeNull();
   });
 
   it("does not confuse generation, additive audits, or questions with revision feedback", () => {

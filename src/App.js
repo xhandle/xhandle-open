@@ -115,6 +115,11 @@ import {
   isCodeArchitectureSelection,
 } from "./features/collaborator-selection/activeSelectionContext";
 import {
+  buildFunctionalRevisionBatches,
+  isSystemicFunctionalRevisionRequest,
+  mergeFunctionalRevisionPlans,
+} from "./features/functional-revision/functionalRevisionBatching";
+import {
   getArtifact as getWorkspaceArtifact,
   listArtifacts as listWorkspaceArtifacts,
 } from "./features/workspace-graph";
@@ -2319,7 +2324,7 @@ JSON schema:
 
 function buildFunctionalRevisionPrompt({ project, rows, diagramCategories, userText }) {
   const compactRows = (rows || []).map((row, index) => ({
-    rowNumber: index + 1,
+    rowNumber: Number(row?._revisionRowNumber) || index + 1,
     subsystem: normalizeFunctionalAuditString(row?.subsystem, 220),
     fromFunction: normalizeFunctionalAuditString(row?.fromFunction, 220),
     fromDetails: normalizeFunctionalAuditString(row?.fromDetails, 900),
@@ -2352,7 +2357,7 @@ ${userText}
 
 Revision rules:
 1. Treat the existing rows as the baseline. Translate the feedback into the smallest complete set of targeted row operations that resolves the identified systemic and row-specific defects.
-2. Preserve every unrelated row, its order, and its existing wording. Do not generate a replacement decomposition.
+2. Preserve every unrelated row, its order, and its existing wording. Revise every row in this bounded slice that is affected by systemic feedback; do not reproduce unchanged rows in the response.
 3. Use updateRows for incorrect cells, addRows only for genuinely missing interfaces/functions identified by the feedback, removeRows only for duplicates or invalid rows that should not remain, and renameFunctions only for an intentional global function rename.
 4. Every update or removal must identify a stable existing rowNumber. Include match fields as a cross-check when useful.
 5. Function (From) and Function (To) are functional behaviors/capabilities, normally concise verb-noun labels. They must not be subsystem names, physical components, actors, data products, commands, reports, or interface concepts unless the feedback explicitly establishes that item as a function.
@@ -9621,47 +9626,90 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       message: "Comparing the engineering feedback with the current functional rows...",
     });
     setIsFunctionalAuditRunning(true);
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 120000);
     try {
+      const systemicRevision = isSystemicFunctionalRevisionRequest(userText);
+      const batches = systemicRevision
+        ? buildFunctionalRevisionBatches(responseRows)
+        : [responseRows.map((row, index) => ({ ...row, _revisionRowNumber: index + 1 }))];
       updateActivity(activityId, {
         step: 1,
-        total: 2,
-        message: "Translating feedback into targeted, reviewable row changes...",
+        total: Math.max(2, batches.length + 1),
+        message: systemicRevision
+          ? `Preparing ${batches.length} bounded revision batches while preserving original row references...`
+          : "Translating feedback into targeted, reviewable row changes...",
       });
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        ...buildAIAuthOpts({ "Content-Type": "application/json" }),
-        signal: controller.signal,
-        body: JSON.stringify({
-          model: getConfiguredAIRequestModel(),
-          temperature: 0.15,
-          max_tokens: 14000,
-          messages: [
-            {
-              role: "system",
-              content: "Translate engineering review feedback into a minimal, internally consistent revision plan for the supplied functional decomposition. Preserve unaffected rows. Return strict JSON only.",
-            },
-            {
-              role: "user",
-              content: buildFunctionalRevisionPrompt({
-                project,
-                rows: responseRows,
-                diagramCategories,
-                userText,
-              }),
-            },
-          ],
-        }),
-      });
-      if (!response.ok) {
-        const detail = await response.text().catch(() => "");
-        throw new Error(response.status === 401
-          ? "No AI provider key is configured. Add your API key in Settings and try again."
-          : `Functional decomposition revision failed (${response.status}). ${detail}`.trim());
+
+      const requestBatch = async (batchRows, batchIndex) => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 120000);
+        try {
+          const response = await fetch("/api/chat", {
+            method: "POST",
+            ...buildAIAuthOpts({ "Content-Type": "application/json" }),
+            signal: controller.signal,
+            body: JSON.stringify({
+              model: getConfiguredAIRequestModel(),
+              temperature: 0.15,
+              max_tokens: systemicRevision ? 7000 : 14000,
+              messages: [
+                {
+                  role: "system",
+                  content: systemicRevision
+                    ? "Translate systemic engineering feedback into a complete revision plan for this bounded slice of a larger functional decomposition. Preserve stable rowNumber references. Return strict JSON only."
+                    : "Translate engineering review feedback into a minimal, internally consistent revision plan for the supplied functional decomposition. Preserve unaffected rows. Return strict JSON only.",
+                },
+                {
+                  role: "user",
+                  content: buildFunctionalRevisionPrompt({ project, rows: batchRows, diagramCategories, userText }),
+                },
+              ],
+            }),
+          });
+          if (!response.ok) {
+            const detail = await response.text().catch(() => "");
+            throw new Error(response.status === 401
+              ? "No AI provider key is configured. Add your API key in Settings and try again."
+              : `Functional decomposition revision failed (${response.status}). ${detail}`.trim());
+          }
+          const parsed = parseJsonObjectFromText(extractAIText(await response.json()));
+          if (!parsed) throw new Error("The selected model did not return a usable functional revision plan.");
+          return parsed;
+        } catch (error) {
+          if (error?.name === "AbortError") {
+            throw new Error(`Batch ${batchIndex + 1} timed out after 120 seconds.`);
+          }
+          throw error;
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      };
+
+      const parsedPlans = [];
+      const batchFailures = [];
+      let nextBatchIndex = 0;
+      const worker = async () => {
+        while (nextBatchIndex < batches.length) {
+          const batchIndex = nextBatchIndex;
+          nextBatchIndex += 1;
+          try {
+            parsedPlans[batchIndex] = await requestBatch(batches[batchIndex], batchIndex);
+            updateActivity(activityId, {
+              step: Math.min(batchIndex + 2, batches.length + 1),
+              total: Math.max(2, batches.length + 1),
+              message: `Completed revision batch ${batchIndex + 1} of ${batches.length}.`,
+            });
+          } catch (error) {
+            batchFailures.push({ batchNumber: batchIndex + 1, message: error?.message || "Unknown batch failure" });
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(2, batches.length) }, () => worker()));
+      if (!parsedPlans.filter(Boolean).length) {
+        throw new Error(batchFailures[0]?.message || "The selected model did not return a usable functional revision plan.");
       }
-      const parsed = parseJsonObjectFromText(extractAIText(await response.json()));
-      if (!parsed) throw new Error("The selected model did not return a usable functional revision plan.");
+      const parsed = systemicRevision
+        ? mergeFunctionalRevisionPlans(parsedPlans, batchFailures)
+        : parsedPlans[0];
       const plan = normalizeFunctionalMutationPlan(parsed, responseRows);
       const { revisionRows, skippedUpdates, skippedRemovals } = buildFunctionalRevisionProposalRows(plan, responseRows);
       const proposal = {
@@ -9677,6 +9725,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         questions: plan.questions || [],
         skippedUpdates,
         skippedRemovals,
+        batchFailures,
         userText,
         createdAt: new Date().toISOString(),
       };
@@ -9693,6 +9742,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         addCount: revisionRows.filter((row) => row.operation === "add").length,
         removeCount: revisionRows.filter((row) => row.operation === "remove").length,
         questionCount: proposal.questions.length,
+        failedBatchCount: batchFailures.length,
       };
     } catch (error) {
       const message = error?.name === "AbortError"
@@ -9701,7 +9751,6 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       finishActivity(activityId, "error", message);
       throw new Error(message);
     } finally {
-      clearTimeout(timeoutId);
       setIsFunctionalAuditRunning(false);
     }
   }, [activeProjectId, responseRows, projects, diagramCategories, startActivity, updateActivity, finishActivity]);
