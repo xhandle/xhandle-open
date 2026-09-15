@@ -59,10 +59,24 @@ function persistMap(storage, storageKey, map) {
   }
 }
 
-export function createFunctionalVibeReviewSession({ projectId, threadId, queue = [], scopeLabel = "", reviewFields = [], reviewInstructions = "", ai = {}, workspaceType = "functional-project", repoId = "" }) {
+function normalizeRowSnapshot(rows = []) {
+  return (Array.isArray(rows) ? rows : []).map((entry, index) => {
+    const row = entry?.row && typeof entry.row === "object" ? entry.row : entry;
+    const rowId = String(entry?.rowId || row?._functionalVibeReviewId || "").trim();
+    if (!rowId || !row || typeof row !== "object") return null;
+    return {
+      rowId,
+      rowIndex: Number.isInteger(entry?.rowIndex) ? entry.rowIndex : index,
+      row: { ...row, _functionalVibeReviewId: rowId },
+    };
+  }).filter(Boolean);
+}
+
+export function createFunctionalVibeReviewSession({ projectId, threadId, queue = [], rowSnapshot = [], scopeLabel = "", reviewFields = [], reviewInstructions = "", ai = {}, workspaceType = "functional-project", repoId = "" }) {
   const stableQueue = Array.from(new Set(queue.map(String).filter(Boolean)));
   return {
     id: uid(), projectId: String(projectId), threadId: String(threadId), queue: stableQueue,
+    rowSnapshot: normalizeRowSnapshot(rowSnapshot),
     scopeLabel, cursor: 0, state: FUNCTIONAL_VIBE_REVIEW_STATES.PROPOSING, proposal: null,
     reviewFields: Array.from(new Set((reviewFields || []).map(String).filter(Boolean))),
     reviewInstructions: String(reviewInstructions || "").trim(),
@@ -83,6 +97,7 @@ export function transitionFunctionalVibeReviewSession(session, event = {}) {
   if (event.type === "decision") {
     const cursor = session.cursor + 1;
     return { ...next, decisions: [...session.decisions, event.record], cursor, proposal: null,
+      rowSnapshot: event.rowSnapshot ? normalizeRowSnapshot(event.rowSnapshot) : session.rowSnapshot,
       state: cursor >= session.queue.length ? FUNCTIONAL_VIBE_REVIEW_STATES.COMPLETED : FUNCTIONAL_VIBE_REVIEW_STATES.PROPOSING };
   }
   if (event.type === "skip" || event.type === "missing") {
@@ -99,9 +114,53 @@ export function transitionFunctionalVibeReviewSession(session, event = {}) {
     const last = session.decisions[session.decisions.length - 1];
     const rowIndex = last ? session.queue.indexOf(last.rowId) : -1;
     return { ...next, decisions: session.decisions.slice(0, -1), cursor: rowIndex >= 0 ? rowIndex : Math.max(0, session.cursor - 1),
+      rowSnapshot: event.rowSnapshot ? normalizeRowSnapshot(event.rowSnapshot) : session.rowSnapshot,
       proposal: null, state: FUNCTIONAL_VIBE_REVIEW_STATES.PROPOSING };
   }
   return session;
+}
+
+/**
+ * Rebuild the last known decomposition if the project view is transiently
+ * rehydrated without its rows. New sessions carry a complete snapshot. For
+ * sessions created before that safeguard existed, callers may provide rows
+ * parsed from the earlier Collaborator proposal; recorded decisions are then
+ * replayed by stable row ID.
+ */
+export function recoverFunctionalVibeReviewRows(session, fallbackRows = []) {
+  if (!session?.queue?.length) return [];
+  let snapshot = normalizeRowSnapshot(session.rowSnapshot);
+  if (!snapshot.length && Array.isArray(fallbackRows) && fallbackRows.length === session.queue.length) {
+    snapshot = fallbackRows.map((row, index) => ({
+      rowId: session.queue[index],
+      rowIndex: index,
+      row: { ...row, _functionalVibeReviewId: session.queue[index] },
+    }));
+  }
+  if (!snapshot.length) return [];
+
+  let rows = snapshot
+    .slice()
+    .sort((a, b) => a.rowIndex - b.rowIndex)
+    .map((entry) => ({ ...entry.row, _functionalVibeReviewId: entry.rowId }));
+  (session.decisions || []).forEach((decision) => {
+    if (decision?.decision === "Remove") {
+      rows = rows.filter((row) => String(row?._functionalVibeReviewId || "") !== String(decision.rowId || ""));
+      return;
+    }
+    const updates = Array.isArray(decision?.affectedRows) && decision.affectedRows.length
+      ? decision.affectedRows
+      : [{ rowId: decision?.rowId, nextRow: decision?.nextRow || decision?.proposedRow }];
+    const byId = new Map(updates
+      .filter((entry) => entry?.rowId && entry?.nextRow)
+      .map((entry) => [String(entry.rowId), entry.nextRow]));
+    rows = rows.map((row) => {
+      const rowId = String(row?._functionalVibeReviewId || "");
+      const updated = byId.get(rowId);
+      return updated ? { ...updated, _functionalVibeReviewId: rowId } : row;
+    });
+  });
+  return rows;
 }
 
 export function saveFunctionalVibeReviewSession(session, storage = defaultStorage()) {
@@ -115,7 +174,13 @@ export function saveFunctionalVibeReviewSession(session, storage = defaultStorag
 }
 
 export function loadFunctionalVibeReviewSession(projectId, threadId, storage = defaultStorage()) {
-  return loadMap(storage, KEY)[`${projectId}:${threadId}`] || null;
+  const session = loadMap(storage, KEY)[`${projectId}:${threadId}`] || null;
+  // APPLYING represents a foreground UI request, not a durable background job.
+  // If the component reloads or the request fails mid-transition, make the
+  // existing proposal retryable instead of stranding the review indefinitely.
+  return session?.state === FUNCTIONAL_VIBE_REVIEW_STATES.APPLYING
+    ? { ...session, state: FUNCTIONAL_VIBE_REVIEW_STATES.AWAITING }
+    : session;
 }
 
 export function appendFunctionalVibeReviewAudit(record, storage = defaultStorage()) {

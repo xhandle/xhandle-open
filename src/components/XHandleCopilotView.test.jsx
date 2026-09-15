@@ -41,6 +41,7 @@ const {
   buildCollaboratorModelOptions,
   buildResolvedAbstractionRequest,
   buildPromptContentFromContext,
+  compactPromptHistory,
   isDiagramFunctionalDecompositionRequest,
   isContextualVibeReviewIntent,
   isFunctionalDecompositionTableResponse,
@@ -71,6 +72,7 @@ const {
   normalizeMultiLevelHierarchy,
   parseCollaboratorReasoningEnvelope,
   recalculateFunctionalDirectionAudit,
+  recoverCompletedFunctionalAbstractionLevel,
   resolveCollaboratorProjectBoundary,
   selectCurrentCollaboratorReasoningStep,
   selectLiveCollaboratorReasoning,
@@ -982,6 +984,41 @@ describe("subsystem generation prompting", () => {
     expect(resolved.userText).toBe("Create a functional decomposition from this diagram");
     expect(resolved.modelUserContent[0]).toBe(imagePart);
     expect(resolved.modelUserContent.at(-1).text).toContain("DETAILED FUNCTIONAL abstraction");
+  });
+
+  it("removes the UI-only abstraction question before generating the resolved request", () => {
+    const history = compactPromptHistory([
+      { role: "user", content: "Create a functional decomposition for an Autonomous Air Taxi." },
+      {
+        role: "assistant",
+        content: "What level of abstraction should I use for this functional decomposition?",
+        choicePrompt: { type: "functional-abstraction", selectedValue: "multi-level", completed: true },
+      },
+      { role: "assistant", content: "Earlier engineering context that should remain." },
+    ], { excludeChoicePromptTypes: ["functional-abstraction"] });
+
+    expect(history).toHaveLength(2);
+    expect(history.some((message) => message.choicePrompt?.type === "functional-abstraction")).toBe(false);
+    expect(history.map((message) => message.content)).toContain("Create a functional decomposition for an Autonomous Air Taxi.");
+    expect(history.map((message) => message.content)).toContain("Earlier engineering context that should remain.");
+  });
+
+  it("recovers a completed abstraction choice instead of asking the same question again", () => {
+    const request = "Create a functional decomposition for an automatic door.";
+    const messages = [
+      { role: "user", content: request },
+      {
+        role: "assistant",
+        content: "What level of abstraction should I use for this functional decomposition?",
+        choicePrompt: { type: "functional-abstraction", selectedValue: "multi-level", completed: true },
+      },
+    ];
+
+    expect(recoverCompletedFunctionalAbstractionLevel(request, messages)).toBe("multi-level");
+    expect(recoverCompletedFunctionalAbstractionLevel(
+      "Create a functional decomposition for a different system.",
+      messages,
+    )).toBe("");
   });
 
   it("does not reinterpret a resumed abstraction choice as approval to apply rows", () => {

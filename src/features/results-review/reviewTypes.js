@@ -18,6 +18,46 @@ export const REVIEW_STATUS_LABELS = {
   [REVIEW_STATUSES.SUPERSEDED]: "Superseded",
 };
 
+// The workflow state is intentionally separate from the engineering disposition
+// above. A reviewer can reopen an approved/rejected item without erasing the
+// decision that was made, or close a record whose disposition is still retained.
+export const REVIEW_LIFECYCLE_STATES = {
+  OPEN: "open",
+  IN_PROGRESS: "in_progress",
+  CLOSED: "closed",
+  ARCHIVED: "archived",
+};
+
+export const REVIEW_LIFECYCLE_LABELS = {
+  [REVIEW_LIFECYCLE_STATES.OPEN]: "Open",
+  [REVIEW_LIFECYCLE_STATES.IN_PROGRESS]: "In progress",
+  [REVIEW_LIFECYCLE_STATES.CLOSED]: "Closed",
+  [REVIEW_LIFECYCLE_STATES.ARCHIVED]: "Archived",
+};
+
+const IN_PROGRESS_REVIEW_STATUSES = new Set([
+  REVIEW_STATUSES.NEEDS_REGENERATION,
+  REVIEW_STATUSES.NEEDS_MORE_CONTEXT,
+]);
+
+const CLOSED_REVIEW_STATUSES = new Set([
+  REVIEW_STATUSES.APPROVED_AS_IS,
+  REVIEW_STATUSES.APPROVED_WITH_MODIFICATIONS,
+  REVIEW_STATUSES.REJECTED,
+  REVIEW_STATUSES.SUPERSEDED,
+]);
+
+export function reviewLifecycleStateForStatus(status) {
+  if (IN_PROGRESS_REVIEW_STATUSES.has(status)) return REVIEW_LIFECYCLE_STATES.IN_PROGRESS;
+  if (CLOSED_REVIEW_STATUSES.has(status)) return REVIEW_LIFECYCLE_STATES.CLOSED;
+  return REVIEW_LIFECYCLE_STATES.OPEN;
+}
+
+export function reviewLifecycleStateForItem(item = {}) {
+  if (Object.values(REVIEW_LIFECYCLE_STATES).includes(item.reviewState)) return item.reviewState;
+  return reviewLifecycleStateForStatus(item.status);
+}
+
 export const REVIEW_UNIT_TYPES = {
   TABLE_ROW: "table_row",
   TABLE_CELL: "table_cell",
@@ -30,6 +70,7 @@ export const REVIEW_UNIT_TYPES = {
   SAFETY_CASE_ARGUMENT: "safety_case_argument",
   SAFETY_CASE_EVIDENCE_LINK: "safety_case_evidence_link",
   TRACEABILITY_LINK: "traceability_link",
+  REVIEW_SESSION: "review_session",
 };
 
 export const RISK_IMPACT_LABELS = {

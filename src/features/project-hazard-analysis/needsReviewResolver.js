@@ -463,6 +463,78 @@ export function applyNeedsReviewResolutionUpdates(summary = [], updates = [], al
   };
 }
 
+export function applyGuidePhraseApplicabilityUpdates(summary = [], updates = [], allowedRowIds = []) {
+  const headers = Array.isArray(summary?.[0]) ? summary[0] : [];
+  if (!headers.length) return { summary, updatedRowIndexes: [], changedRowIndexes: [], rejectedUpdates: [] };
+  const idIndex = headerIndex(headers, HEADER_ALIASES.sourceRowId);
+  const allowed = new Set((allowedRowIds || []).map(clean).filter(Boolean));
+  const nextRows = summary.slice(1).map((row) => [...row]);
+  const rowsById = new Map();
+  nextRows.forEach((row, index) => {
+    const id = clean(row?.[idIndex]);
+    if (!id) return;
+    rowsById.set(id, rowsById.has(id) ? -1 : index);
+  });
+  const updatedRowIndexes = [];
+  const changedRowIndexes = [];
+  const rejectedUpdates = [];
+
+  (Array.isArray(updates) ? updates : []).forEach((update) => {
+    const sourceRowId = clean(update?.sourceRowId || update?.["Raw Analysis Row ID"] || update?.rawAnalysisRowId);
+    const rowOffset = rowsById.get(sourceRowId);
+    if (!sourceRowId || !Number.isInteger(rowOffset) || rowOffset < 0 || (allowed.size && !allowed.has(sourceRowId))) {
+      rejectedUpdates.push({ sourceRowId, error: !sourceRowId
+        ? "Applicability update omitted the required sourceRowId."
+        : rowOffset === -1 ? `Raw Analysis Row ID ${sourceRowId} is duplicated.` : `Raw Analysis Row ID ${sourceRowId} is outside the requested scope or does not exist.` });
+      return;
+    }
+    const decision = clean(update?.applicabilityDecision || fieldValue(update, "Guide Phrase Applicable"));
+    const rationale = clean(fieldValue(update, "Guide Phrase Applicability Rationale"));
+    if (!/^(?:Yes|No)$/i.test(decision) || !rationale) {
+      rejectedUpdates.push({ sourceRowId, error: "Guide Phrase Applicable must be Yes or No and include an applicability rationale." });
+      return;
+    }
+    const canonical = /^yes$/i.test(decision) ? "Yes" : "No";
+    const row = nextRows[rowOffset];
+    const before = [...row];
+    writeCell(headers, row, "Guide Phrase Applicable", canonical);
+    writeCell(headers, row, "Guide Phrase Applicability Rationale", rationale);
+    if (canonical === "No") {
+      writeCell(headers, row, "Safety Classification", "Not Applicable");
+      writeCell(headers, row, "Safety Classification Rule", "N1");
+      writeCell(headers, row, "Causal Path Type", "None");
+      writeCell(headers, row, "Safety Significant", "No");
+      writeCell(headers, row, "Proposed Safety Assessment", "Mission/Reliability");
+      writeCell(headers, row, "Proposed Safety Assessment Rationale", rationale);
+      writeCell(headers, row, "Safety Significance Rationale", "Not safety significant because the guide-phrase deviation is not applicable to this interface and context.");
+      writeCell(headers, row, "Classification Evidence", rationale);
+      writeCell(headers, row, "Causal Effect", "");
+      writeCell(headers, row, "Resulting System State", "");
+      writeCell(headers, row, "Intermediate Safety Function", "");
+      writeCell(headers, row, "Intermediate Safety Effect", "");
+      writeCell(headers, row, "Protection Assessment", "Not applicable because the guide phrase cannot affect this interface in the stated context.");
+      writeCell(headers, row, "Protection Status", "Absent");
+      writeCell(headers, row, "Physical-Harm Chain Termination", "The deviation is not applicable to this interface and context.");
+    } else if (/^not applicable$/i.test(readCell(headers, row, HEADER_ALIASES.classification))) {
+      writeCell(headers, row, "Safety Classification", "Needs Review");
+      writeCell(headers, row, "Safety Classification Rule", "U4");
+      writeCell(headers, row, "Causal Path Type", "Uncertain");
+      writeCell(headers, row, "Safety Significant", "Needs Review");
+      writeCell(headers, row, "Safety Significance Rationale", "Needs review: applicability is established, but downstream safety significance requires a separate causal-path assessment.");
+    }
+    updatedRowIndexes.push(rowOffset + 1);
+    if (row.some((value, index) => value !== before[index])) changedRowIndexes.push(rowOffset + 1);
+  });
+
+  const updatedSummary = [headers, ...nextRows];
+  return {
+    summary: updatedRowIndexes.length ? ensureClassificationResolutionStatus(updatedSummary) : updatedSummary,
+    updatedRowIndexes,
+    changedRowIndexes,
+    rejectedUpdates,
+  };
+}
+
 function parseJsonObject(text) {
   const raw = String(text || "").trim();
   const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] || raw;

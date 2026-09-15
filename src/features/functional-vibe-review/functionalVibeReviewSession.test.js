@@ -6,6 +6,7 @@ import {
   loadFunctionalVibeReviewAudit,
   loadFunctionalVibeReviewSession,
   parseFunctionalVibeReviewAction,
+  recoverFunctionalVibeReviewRows,
   saveFunctionalVibeReviewSession,
   summarizeFunctionalVibeReviewSession,
   transitionFunctionalVibeReviewSession,
@@ -52,14 +53,38 @@ test("retains the original reviewer instructions after resolving a scope choice"
   expect(session.reviewInstructions).toContain("Consolidate low-level tensor");
 });
 
-test("undo rewinds and sessions persist without embedding project rows", () => {
+test("undo rewinds and sessions persist with a recoverable project-row snapshot", () => {
   const storage = { data: {}, getItem(k) { return this.data[k] || null; }, setItem(k, value) { this.data[k] = value; } };
-  let session = createFunctionalVibeReviewSession({ projectId: "p", threadId: "t", queue: ["a"] });
+  let session = createFunctionalVibeReviewSession({
+    projectId: "p",
+    threadId: "t",
+    queue: ["a"],
+    rowSnapshot: [{ rowId: "a", rowIndex: 0, row: { fromFunction: "A", controlAction: "sends", toFunction: "B" } }],
+  });
   session = transitionFunctionalVibeReviewSession(session, { type: "decision", record: { rowId: "a", decision: "Remove", previousRow: { fromFunction: "A" } } });
   session = transitionFunctionalVibeReviewSession(session, { type: "undo" });
   expect(currentFunctionalVibeReviewRowId(session)).toBe("a");
   saveFunctionalVibeReviewSession(session, storage);
   expect(loadFunctionalVibeReviewSession("p", "t", storage).queue).toEqual(["a"]);
+  expect(recoverFunctionalVibeReviewRows(loadFunctionalVibeReviewSession("p", "t", storage))[0].fromFunction).toBe("A");
+});
+
+test("recovers a legacy session from proposed rows and replays accepted decisions", () => {
+  const session = {
+    queue: ["a", "b"],
+    decisions: [{
+      rowId: "a",
+      decision: "Revise",
+      nextRow: { fromFunction: "A", controlAction: "sends", toFunction: "B", subsystem: "Merged" },
+    }],
+  };
+  const recovered = recoverFunctionalVibeReviewRows(session, [
+    { fromFunction: "A", controlAction: "sends", toFunction: "B", subsystem: "Original" },
+    { fromFunction: "B", controlAction: "returns", toFunction: "A", subsystem: "Original" },
+  ]);
+  expect(recovered).toHaveLength(2);
+  expect(recovered[0]).toMatchObject({ _functionalVibeReviewId: "a", subsystem: "Merged" });
+  expect(recovered[1]).toMatchObject({ _functionalVibeReviewId: "b", fromFunction: "B" });
 });
 
 test("persists the reviewed workspace and repository boundary", () => {
@@ -86,4 +111,13 @@ test("keeps a functional review usable when browser storage quota is exceeded", 
 
   expect(() => appendFunctionalVibeReviewAudit({ projectId: "quota-project", rowId: "row-1" }, storage)).not.toThrow();
   expect(loadFunctionalVibeReviewAudit("quota-project", storage)).toHaveLength(1);
+});
+
+test("makes an interrupted applying state retryable after reload", () => {
+  const storage = { data: {}, getItem(k) { return this.data[k] || null; }, setItem(k, value) { this.data[k] = value; } };
+  let session = createFunctionalVibeReviewSession({ projectId: "p", threadId: "t", queue: ["a"] });
+  session = transitionFunctionalVibeReviewSession(session, { type: "proposal", proposal: { decision: "Keep" } });
+  session = transitionFunctionalVibeReviewSession(session, { type: "applying" });
+  saveFunctionalVibeReviewSession(session, storage);
+  expect(loadFunctionalVibeReviewSession("p", "t", storage).state).toBe(FUNCTIONAL_VIBE_REVIEW_STATES.AWAITING);
 });
