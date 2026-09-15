@@ -3984,12 +3984,14 @@ export const FunctionalDecompositionTable = ({
   const [fullscreen, setFullscreen] = useState(false);
 
   const [view, setView] = useState("architecture"); // professional hierarchy first when available
+  const [splitDiagramPercent, setSplitDiagramPercent] = useState(50);
   const [architectureAbstraction, setArchitectureAbstraction] = useState("subsystem");
   const [cleanOnceKey, setCleanOnceKey] = useState(() => `clean-${Date.now()}`); // one-time arrange on first open
   const [architectureReport, setArchitectureReport] = useState(null);
   const [selectedArchitectureRowId, setSelectedArchitectureRowId] = useState("");
   const [queuedCsuFocusTarget, setQueuedCsuFocusTarget] = useState(null);
   const diagramRef = useRef(null);
+  const splitWorkspaceRef = useRef(null);
   const tableRowRefs = useRef({});
   const levelLabels = {
     architecture: "Architecture",
@@ -4050,6 +4052,33 @@ const repoName = useMemo(() => {
     if (!forceTableOpenKey) return;
     setView("table");
   }, [forceTableOpenKey]);
+
+  const startSplitResize = React.useCallback((event) => {
+    if (view !== "split" || event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    const workspace = splitWorkspaceRef.current;
+    if (!workspace) return;
+
+    const update = (clientX) => {
+      const bounds = workspace.getBoundingClientRect();
+      if (!bounds.width) return;
+      const nextPercent = ((clientX - bounds.left) / bounds.width) * 100;
+      setSplitDiagramPercent(Math.min(75, Math.max(25, nextPercent)));
+    };
+    const handleMove = (moveEvent) => update(moveEvent.clientX);
+    const handleUp = () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      window.requestAnimationFrame(() => {
+        try {
+          diagramRef.current?.fitViewToDiagram?.();
+        } catch {}
+      });
+    };
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp, { once: true });
+  }, [view]);
 
   React.useEffect(() => {
     if (!architectureRefreshKey) return;
@@ -4349,7 +4378,7 @@ const filteredTreeFileCount = useMemo(() => {
 const diagramHeight = "100%";
 
 React.useEffect(() => {
-  if (view !== "architecture") return;
+	  if (view !== "architecture" && view !== "split") return;
   const timers = [80, 260].map((delay) =>
     setTimeout(() => {
       try {
@@ -4590,6 +4619,16 @@ React.useEffect(() => {
           </button>
 	          <button
 	            type="button"
+	            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm ${
+	              view === "split" ? "bg-[#2D7DFE] text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+	            }`}
+	            onClick={() => setView("split")}
+	            disabled={!hasArchitecture}
+	          >
+	            Split view
+	          </button>
+	          <button
+	            type="button"
 	            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 text-sm disabled:opacity-50"
 	            onClick={exportRowsToCsv}
 	            disabled={!rowsWithTraceIds.length}
@@ -4637,9 +4676,19 @@ React.useEffect(() => {
             }}
           />
         </div>
-      ) : view === "architecture" ? (
-  <div className="flex min-h-0 flex-1 flex-col p-0">
-    {view === "architecture" && (
+      ) : (
+        <div
+          ref={splitWorkspaceRef}
+          className={`flex min-h-0 flex-1 ${view === "split" ? "flex-col md:flex-row" : "flex-col"}`}
+          data-testid="code-architecture-functional-workspace"
+        >
+      {view !== "table" && (
+  <section
+    aria-label="Code architecture diagram"
+    className="flex min-h-0 min-w-0 flex-col p-0"
+    style={{ flexBasis: view === "split" ? `${splitDiagramPercent}%` : "100%" }}
+  >
+    {(view === "architecture" || view === "split") && (
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2">
         <span className="text-xs font-semibold uppercase text-slate-500">Abstraction</span>
         {abstractionLevels.map(([level, fallbackLabel]) => {
@@ -4771,7 +4820,7 @@ React.useEffect(() => {
           onRequestCreateProject={onRequestCreateProject}
           reviewMode={reviewMode}
           includeFiles={includedFiles}   // ← pass selection to diagram
-          architectureMode={view === "architecture"}
+          architectureMode={view === "architecture" || view === "split"}
           architectureAbstraction={architectureAbstraction}
           colorSystemElements={colorSystemElements}
           hazardSummary={hazardSummary}
@@ -4782,10 +4831,42 @@ React.useEffect(() => {
         />
       </div>
     </div>
-  </div>
-) : (
+  </section>
+      )}
 
-          <div className="min-h-0 flex-1 overflow-auto">
+      {view === "split" && (
+        <div
+          role="separator"
+          aria-label="Resize code architecture diagram and functional table panes"
+          aria-orientation="vertical"
+          aria-valuemin={25}
+          aria-valuemax={75}
+          aria-valuenow={Math.round(splitDiagramPercent)}
+          tabIndex={0}
+          onPointerDown={startSplitResize}
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+            event.preventDefault();
+            setSplitDiagramPercent((value) => Math.min(75, Math.max(25, value + (event.key === "ArrowRight" ? 5 : -5))));
+            window.requestAnimationFrame(() => {
+              try {
+                diagramRef.current?.fitViewToDiagram?.();
+              } catch {}
+            });
+          }}
+          className="group hidden w-3 shrink-0 cursor-col-resize items-stretch justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2D7DFE] md:flex"
+        >
+          <span className="w-px bg-slate-200 transition-colors group-hover:bg-[#2D7DFE]" />
+        </div>
+      )}
+
+      {view !== "architecture" && (
+
+          <section
+            aria-label="Code architecture functional decomposition table"
+            className="min-h-0 min-w-0 flex-1 overflow-auto"
+            style={{ flexBasis: view === "split" ? `${100 - splitDiagramPercent}%` : "100%" }}
+          >
             <table className="table-fixed" style={{ minWidth: tablePixelWidth }}>
               <colgroup>
                 {reviewItems.length > 0 && <col style={{ width: 110, minWidth: 110 }} />}
@@ -4936,8 +5017,10 @@ React.useEffect(() => {
                 )}
               </tbody>
             </table>
-          </div>
+          </section>
         )}
+        </div>
+      )}
       </div>
     </div>
   );

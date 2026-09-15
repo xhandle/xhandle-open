@@ -10,7 +10,7 @@ const hiddenHandleStyle = {
 };
 
 export default function GroupBoxNode({ data }) {
-  const { label, groupKind, traceActive, systemElementColor } = data || {};
+  const { label, groupKind, traceActive, systemElementColor, commentCount = 0, onOpenComments } = data || {};
   const isFunctionGroup = groupKind === 'function';
   const palette = {
     csci: {
@@ -69,6 +69,38 @@ export default function GroupBoxNode({ data }) {
       <Handle type="source" position={Position.Top} id="top-source-0" style={hiddenHandleStyle} />
       <Handle type="target" position={Position.Bottom} id="bottom-target-0" style={hiddenHandleStyle} />
       <Handle type="source" position={Position.Bottom} id="bottom-source-0" style={hiddenHandleStyle} />
+      {commentCount > 0 && (
+        <button
+          type="button"
+          className="nodrag nopan"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onOpenComments?.();
+          }}
+          title={`View ${commentCount} comment${commentCount === 1 ? '' : 's'}`}
+          aria-label={`View ${commentCount} comment${commentCount === 1 ? '' : 's'}`}
+          style={{
+            position: 'absolute',
+            top: 6,
+            right: 8,
+            zIndex: 6,
+            minWidth: 24,
+            height: 22,
+            padding: '0 6px',
+            borderRadius: 999,
+            border: '1px solid rgba(122,55,255,0.35)',
+            background: '#fff',
+            color: '#7A37FF',
+            fontSize: 11,
+            fontWeight: 800,
+            cursor: 'pointer',
+            pointerEvents: 'auto',
+          }}
+        >
+          💬 {commentCount}
+        </button>
+      )}
       <div
         style={{
           position: 'absolute',

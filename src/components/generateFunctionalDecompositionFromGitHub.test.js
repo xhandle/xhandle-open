@@ -1,5 +1,9 @@
-jest.mock("./LiteSummaryDiagramReactFlowGitHub", () => function MockDiagram() {
-  return null;
+jest.mock("./LiteSummaryDiagramReactFlowGitHub", () => {
+  const React = require("react");
+  return React.forwardRef(function MockDiagram(props, ref) {
+    React.useImperativeHandle(ref, () => ({ fitViewToDiagram: jest.fn() }), []);
+    return <div data-testid="code-architecture-diagram">diagram</div>;
+  });
 });
 jest.mock("./ArchitectureReportViewer", () => function MockArchitectureReportViewer() {
   return null;
@@ -25,10 +29,58 @@ jest.mock("../features/code-architecture-assurance/codeArchitectureMetrics", () 
 }));
 
 const {
+  FunctionalDecompositionTable,
   buildSourceFileIndexRecord,
   groundFunctionalDecompositionRow,
   updateCodeArchitectureFunctionalCell,
 } = require("./generateFunctionalDecompositionFromGitHub");
+
+describe("code architecture functional split view", () => {
+  let host;
+  let root;
+
+  beforeEach(() => {
+    const React = require("react");
+    const { createRoot } = require("react-dom/client");
+    global.IS_REACT_ACT_ENVIRONMENT = true;
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const { act } = React;
+    act(() => root.render(
+      <FunctionalDecompositionTable
+        data={[{
+          from: "Select sensor input",
+          action: "Selected sensor data",
+          to: "Construct model input",
+          architecture: { subsystem: "Inference", csci: "Runtime", csc: "Input", csu: "Input Builder" },
+        }]}
+        repoId="repo"
+        branch="main"
+      />,
+    ));
+  });
+
+  afterEach(() => {
+    const { act } = require("react");
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  it("shows the architecture diagram and functional table together", () => {
+    const { act } = require("react");
+    const splitButton = [...host.querySelectorAll("button")]
+      .find((button) => button.textContent.trim() === "Split view");
+    expect(splitButton).toBeTruthy();
+
+    act(() => splitButton.click());
+
+    expect(host.querySelector('[aria-label="Code architecture diagram"]')).toBeTruthy();
+    expect(host.querySelector('[aria-label="Code architecture functional decomposition table"]')).toBeTruthy();
+    expect(host.querySelector('[aria-label="Resize code architecture diagram and functional table panes"]')).toBeTruthy();
+    expect(host.querySelector('[data-testid="code-architecture-diagram"]')).toBeTruthy();
+  });
+});
 
 describe("code architecture functional table cell editing", () => {
   it("updates interface fields without replacing stable traceability", () => {

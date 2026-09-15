@@ -21,6 +21,7 @@ import ReactFlow, {
   useEdgesState,
   ConnectionMode,
   BaseEdge,
+  StepEdge,
   updateEdge,
   useReactFlow,
 } from 'reactflow';
@@ -29,6 +30,17 @@ import { toPng } from 'html-to-image';
 import { SmartBezierEdge } from '@tisoap/react-flow-smart-edge';
 import { downloadDrawioXml } from './utils/exportDrawio';
 import { notifyBackupDataChanged } from '../lib/localBackupEvents';
+import {
+  commentsForDiagramTarget,
+  createDiagramComment,
+  loadDiagramComments,
+  saveDiagramComments,
+} from './diagramComments';
+import {
+  loadDiagramNotes,
+  normalizeDiagramNote,
+  saveDiagramNotes,
+} from './diagramNotes';
 
 // Import layout management functions
 import {
@@ -154,9 +166,80 @@ function saveSystemElementColorOverrides(storageKey, overrides) {
 const BRAND = {
   blue: '#2D7DFE',
   purple: '#7A37FF',
+  yellow: '#F3B63F',
   light: '#ECEEFF',
   dark: '#0F0F12',
 };
+
+const EDGE_ROUTING_STYLES = {
+  BEZIER: 'bezier',
+  RECTANGULAR: 'rectangular',
+};
+
+function directionalEdgeKey(edge) {
+  return `${edge?.source || ''}->${edge?.target || ''}`;
+}
+
+function bidirectionalEdgeKey(edge) {
+  return [edge?.source || '', edge?.target || ''].sort().join('<->');
+}
+
+function summarizeEdgeBundle(edges = []) {
+  const labels = Array.from(new Set(edges.map((edge) => String(edge.data?.baseLabel || edge.label || '').trim()).filter(Boolean)));
+  const preview = labels.slice(0, 3).join(', ');
+  return labels.length > 3 ? `${preview} +${labels.length - 3}` : preview;
+}
+
+function bundleCodeArchitectureEdges(edges = [], aggregation = {}) {
+  const bundleGroups = (sourceEdges, keyForEdge, kind) => {
+    const groups = new Map();
+    sourceEdges.forEach((edge) => {
+      const key = keyForEdge(edge);
+      const group = groups.get(key) || [];
+      group.push(edge);
+      groups.set(key, group);
+    });
+    const allEnabled = kind === 'bidirectional'
+      ? Boolean(aggregation.bidirectionalAll)
+      : Boolean(aggregation.directionalAll);
+    const exceptions = kind === 'bidirectional'
+      ? aggregation.bidirectionalExceptions || new Set()
+      : aggregation.directionalExceptions || new Set();
+
+    return Array.from(groups.entries()).flatMap(([key, group]) => {
+      const shouldBundle = group.length > 1 && (allEnabled !== exceptions.has(key));
+      if (!shouldBundle) return group;
+      const first = group[0];
+      const bidirectional = kind === 'bidirectional';
+      const summary = summarizeEdgeBundle(group);
+      return [{
+        ...first,
+        id: `e:cba-aggregate:${kind}:${key}`,
+        label: `${group.length} ${bidirectional ? 'bidirectional ' : ''}edges${summary ? `: ${summary}` : ''}`,
+        sourceHandle: null,
+        targetHandle: null,
+        updatable: false,
+        data: {
+          ...(first.data || {}),
+          aggregated: true,
+          bidirectionalAggregated: bidirectional,
+          directionalKey: directionalEdgeKey(first),
+          bidirectionalKey: bidirectionalEdgeKey(first),
+          edgeIds: group.flatMap((edge) => edge.data?.edgeIds || [edge.id]),
+          rowRefs: group.flatMap((edge) => edge.data?.rowRefs || []).filter(Boolean),
+          count: group.length,
+          summary,
+        },
+        markerStart: bidirectional
+          ? { type: MarkerType.ArrowClosed, color: BRAND.purple, width: ARROW_SIZE, height: ARROW_SIZE }
+          : undefined,
+      }];
+    });
+  };
+
+  const bidirectional = bundleGroups(edges, bidirectionalEdgeKey, 'bidirectional');
+  return bundleGroups(bidirectional, directionalEdgeKey, 'directional');
+}
 
 const SYSTEM_ELEMENT_COLORS = [
   '#2D7DFE',
@@ -1020,6 +1103,43 @@ const portBase = {
 const TOP_BOTTOM_PCTS = [10, 30, 50, 70, 90]; // 5 handles
 const LEFT_RIGHT_PCTS = [20, 50, 80];
 
+const CommentBadge = ({ count = 0, onClick }) => {
+  if (!count) return null;
+  return (
+    <button
+      type="button"
+      className="nodrag nopan"
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onClick?.();
+      }}
+      title={`View ${count} comment${count === 1 ? '' : 's'}`}
+      aria-label={`View ${count} comment${count === 1 ? '' : 's'}`}
+      style={{
+        position: 'absolute',
+        right: 7,
+        top: 7,
+        zIndex: 6,
+        minWidth: 24,
+        height: 22,
+        padding: '0 6px',
+        borderRadius: 999,
+        border: `1px solid ${rgba(BRAND.purple, 0.35)}`,
+        background: '#fff',
+        color: BRAND.purple,
+        fontSize: 11,
+        fontWeight: 800,
+        cursor: 'pointer',
+        boxShadow: '0 2px 8px rgba(15,15,18,0.12)',
+        pointerEvents: 'auto',
+      }}
+    >
+      💬 {count}
+    </button>
+  );
+};
+
 const BidirectionalNode = ({ data, selected }) => {
   const brandColor = data.brandColor || BRAND.blue;
   const tint = data.brandTint || rgba(brandColor, 0.08);
@@ -1044,6 +1164,7 @@ const BidirectionalNode = ({ data, selected }) => {
       onMouseEnter={(e) => e.currentTarget.querySelectorAll('.x-port').forEach((h) => (h.style.opacity = 1))}
       onMouseLeave={(e) => e.currentTarget.querySelectorAll('.x-port').forEach((h) => (h.style.opacity = 0))}
     >
+      <CommentBadge count={data.commentCount} onClick={data.onOpenComments} />
       {/* TOP (5) */}
       {TOP_BOTTOM_PCTS.map((p, i) => (
         <React.Fragment key={`top-${i}`}>
@@ -1113,6 +1234,37 @@ const BidirectionalNode = ({ data, selected }) => {
           {data.csu || data.file}
         </div>
       )}
+    </div>
+  );
+};
+
+const NoteNode = ({ data, selected }) => {
+  const brandColor = data.brandColor || BRAND.yellow;
+  return (
+    <div
+      style={{
+        width: 240,
+        minHeight: 160,
+        padding: 14,
+        border: `1px solid ${rgba(brandColor, 0.45)}`,
+        borderRadius: 8,
+        background: data.brandTint || rgba(brandColor, 0.2),
+        boxShadow: selected
+          ? `0 0 0 5px ${rgba(brandColor, 0.18)}, ${THEME.node.shadow}`
+          : THEME.node.shadow,
+        color: BRAND.dark,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        position: 'relative',
+      }}
+    >
+      <div style={{ fontSize: 14, fontWeight: 700, lineHeight: 1.2, wordBreak: 'break-word' }}>
+        {data.label || 'Note'}
+      </div>
+      <div style={{ fontSize: 13, lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+        {data.description || 'Add a note'}
+      </div>
     </div>
   );
 };
@@ -1872,6 +2024,7 @@ const DiagramBody = forwardRef(function DiagramBody(
     () => ({
       bidirectional: BidirectionalNode,
       groupBox: GroupBoxNode,
+      note: NoteNode,
     }),
     []
   );
@@ -1883,7 +2036,7 @@ const DiagramBody = forwardRef(function DiagramBody(
 
   const edgeTypes = useMemo(() => {
     const Smart = !hasBoxes && typeof SmartBezierEdge === "function" && SmartBezierEdge;
-    return { smartBezier: Smart };
+    return { smartBezier: Smart, smartStep: StepEdge };
   }, [hasBoxes]);
   
   
@@ -1895,6 +2048,23 @@ const DiagramBody = forwardRef(function DiagramBody(
   const [architectureFocus, setArchitectureFocus] = useState(null);
   const [architectureNodePositions, setArchitectureNodePositions] = useState(() => new Map());
   const [systemElementColorOverrides, setSystemElementColorOverrides] = useState(() => new Map());
+  const [canvasNotes, setCanvasNotes] = useState(() => loadDiagramNotes(storageKey));
+  const [comments, setComments] = useState(() => loadDiagramComments(storageKey));
+  const [selectedNodeIds, setSelectedNodeIds] = useState([]);
+  const [contextMenu, setContextMenu] = useState(null);
+  const [commentModal, setCommentModal] = useState(null);
+  const [canvasToolbarCollapsed, setCanvasToolbarCollapsed] = useState(false);
+  const [annotationStorageKey, setAnnotationStorageKey] = useState(storageKey);
+  const [edgeAggregation, setEdgeAggregation] = useState({
+    directionalAll: false,
+    directionalExceptions: new Set(),
+    bidirectionalAll: false,
+    bidirectionalExceptions: new Set(),
+  });
+  const [edgeRouting, setEdgeRouting] = useState({
+    defaultStyle: EDGE_ROUTING_STYLES.RECTANGULAR,
+    overrides: {},
+  });
 
   // -------------------- Include files normalization ---------
   // showAll: null/undefined => true; empty array => false (show none)
@@ -1914,6 +2084,8 @@ const DiagramBody = forwardRef(function DiagramBody(
     nodes.forEach((n) => {
       if (n.type === "groupBox" || String(n.id).startsWith("box:")) {
         vis.set(n.id, false); // compute after child pass
+      } else if (n.type === 'note') {
+        vis.set(n.id, true);
       } else {
         const file = n?.data?.file || "Unfiled";
         vis.set(n.id, (showAll || includeSet.has(file)) && nodeMatchesArchitectureFocus(n, architectureFocus));
@@ -1951,12 +2123,20 @@ const DiagramBody = forwardRef(function DiagramBody(
     const active = edges.find((e) => e.id === highlightedEdgeId);
     const actSet = active ? new Set([active.source, active.target]) : null;
     const baseNodes = activeArchitectureAbstraction !== "detailed"
-      ? buildCompactArchitectureViewNodes({
+      ? [
+          ...buildCompactArchitectureViewNodes({
           nodes,
           nodeVisibility,
           level: activeArchitectureAbstraction,
           positionOverrides: architectureNodePositions,
-        })
+          }),
+          ...nodes
+            .filter((node) => node.type === 'note' && nodeVisibility.get(node.id))
+            .map((node) => ({
+              ...node,
+              position: architectureNodePositions.get(`${activeArchitectureAbstraction}:${node.id}`) || node.position,
+            })),
+        ]
       : nodes.filter((n) => nodeVisibility.get(n.id));
 
     return baseNodes
@@ -1985,6 +2165,15 @@ const DiagramBody = forwardRef(function DiagramBody(
             ...(n.data || {}),
             traceActive: isTraceNode || isTraceBox,
             traceFocus: isTraceNode,
+            commentCount: commentsForDiagramTarget(comments, 'node', n.id).length,
+            onOpenComments: commentsForDiagramTarget(comments, 'node', n.id).length
+              ? () => setCommentModal({
+                  targetType: 'node',
+                  targetId: n.id,
+                  targetLabel: String(n.data?.label || n.id),
+                  draft: '',
+                })
+              : null,
           },
           style:
             isEdgeNode || isTraceNode || isTraceBox
@@ -1996,12 +2185,12 @@ const DiagramBody = forwardRef(function DiagramBody(
               : n.style,
         };
       });
-  }, [nodes, edges, highlightedEdgeId, nodeVisibility, traceSets, activeArchitectureAbstraction, architectureNodePositions]);
+  }, [nodes, edges, highlightedEdgeId, nodeVisibility, traceSets, activeArchitectureAbstraction, architectureNodePositions, comments]);
 
   const viewEdges = useMemo(() => {
     if (activeArchitectureAbstraction !== "detailed") {
       const visibleIds = new Set(viewNodes.map((node) => node.id));
-      return buildArchitectureAggregateEdges({
+      const architectureEdges = buildArchitectureAggregateEdges({
         rows,
         nodes,
         nodeVisibility,
@@ -2010,6 +2199,20 @@ const DiagramBody = forwardRef(function DiagramBody(
         level: activeArchitectureAbstraction,
         highlightedEdgeId,
       });
+      return bundleCodeArchitectureEdges(architectureEdges, edgeAggregation).map((edge) => {
+        const commentCount = commentsForDiagramTarget(comments, 'edge', edge.id).length;
+        const baseLabel = String(edge.data?.baseLabel || edge.label || '');
+        const routingStyle = edgeRouting.overrides?.[edge.id] || edgeRouting.defaultStyle;
+        const stroke = edge.data?.aggregated ? BRAND.purple : (edge.style?.stroke || BRAND.blue);
+        return {
+          ...edge,
+          type: routingStyle === EDGE_ROUTING_STYLES.RECTANGULAR ? 'smartStep' : 'smartBezier',
+          label: commentCount ? `${baseLabel} · 💬 ${commentCount}` : baseLabel,
+          data: { ...(edge.data || {}), baseLabel, commentCount, routingStyle },
+          style: { ...(edge.style || {}), stroke, strokeWidth: edge.data?.aggregated ? 5 : edge.style?.strokeWidth },
+          markerEnd: { ...(edge.markerEnd || {}), type: MarkerType.ArrowClosed, color: stroke, width: ARROW_SIZE, height: ARROW_SIZE },
+        };
+      });
     }
 
     // hide edges connected to hidden nodes
@@ -2017,30 +2220,31 @@ const DiagramBody = forwardRef(function DiagramBody(
       (e) => nodeVisibility.get(e.source) && nodeVisibility.get(e.target)
     );
 
-    return filtered.map((e) => {
+    return bundleCodeArchitectureEdges(filtered, edgeAggregation).map((e) => {
       const isOn =
         e.id === highlightedEdgeId ||
         (traceSets.nodeIds.has(e.source) && traceSets.nodeIds.has(e.target));
+      const commentCount = commentsForDiagramTarget(comments, 'edge', e.id).length;
+      const baseLabel = String(e.data?.baseLabel || e.label || '');
+      const routingStyle = edgeRouting.overrides?.[e.id] || edgeRouting.defaultStyle;
+      const baseStroke = e.data?.aggregated ? BRAND.purple : BRAND.blue;
       return {
         ...e,
+        type: routingStyle === EDGE_ROUTING_STYLES.RECTANGULAR ? 'smartStep' : 'smartBezier',
+        label: commentCount ? `${baseLabel} · 💬 ${commentCount}` : baseLabel,
+        data: { ...(e.data || {}), baseLabel, commentCount, routingStyle },
         animated: isOn,
         style: {
           ...(e.style || {}),
-          stroke: isOn && e.id !== highlightedEdgeId ? '#14B8A6' : BRAND.blue,
-          strokeWidth: isOn ? 4.5 : THEME.edge.width,
+          stroke: isOn && e.id !== highlightedEdgeId ? '#14B8A6' : baseStroke,
+          strokeWidth: isOn ? 4.5 : (e.data?.aggregated ? 5 : THEME.edge.width),
           opacity: isOn ? 1 : THEME.edge.opacity,
           filter: isOn ? "drop-shadow(0 0 6px rgba(45,125,254,0.45))" : undefined,
         },
-        markerEnd:
-          e.markerEnd ?? {
-            type: MarkerType.ArrowClosed,
-            color: BRAND.blue,
-            width: ARROW_SIZE,
-            height: ARROW_SIZE,
-          },
+        markerEnd: { ...(e.markerEnd || {}), type: MarkerType.ArrowClosed, color: baseStroke, width: ARROW_SIZE, height: ARROW_SIZE },
       };
     });
-  }, [edges, highlightedEdgeId, nodeVisibility, traceSets, activeArchitectureAbstraction, nodes, viewNodes, rows]);
+  }, [edges, highlightedEdgeId, nodeVisibility, traceSets, activeArchitectureAbstraction, nodes, viewNodes, rows, comments, edgeAggregation, edgeRouting]);
 
   // -------------------- refs / misc you already had ---------
   const diagramHostRef = useRef(null);
@@ -2647,6 +2851,7 @@ const DiagramBody = forwardRef(function DiagramBody(
     const saveTimer = useRef(null);
     useEffect(() => {
       let cancelled = false;
+      setPosLoaded(false);
       (async () => {
         try {
           const loaded = await idbPositionsLoad(storageKey);
@@ -2660,6 +2865,28 @@ const DiagramBody = forwardRef(function DiagramBody(
       })();
       return () => { cancelled = true; };
     }, [storageKey]);
+
+    useEffect(() => {
+      setCanvasNotes(loadDiagramNotes(storageKey));
+      setComments(loadDiagramComments(storageKey));
+      setSelectedNodeIds([]);
+      setHighlightedEdgeId(null);
+      setContextMenu(null);
+      setCommentModal(null);
+      builtOnceRef.current = false;
+      structureRef.current = '';
+      setAnnotationStorageKey(storageKey);
+    }, [storageKey]);
+
+    useEffect(() => {
+      if (annotationStorageKey !== storageKey || reviewMode) return;
+      saveDiagramNotes(storageKey, canvasNotes);
+    }, [annotationStorageKey, canvasNotes, reviewMode, storageKey]);
+
+    useEffect(() => {
+      if (annotationStorageKey !== storageKey || reviewMode) return;
+      saveDiagramComments(storageKey, comments);
+    }, [annotationStorageKey, comments, reviewMode, storageKey]);
     
     const persistSoon = useCallback(() => {
       if (reviewMode) return;
@@ -2745,7 +2972,8 @@ const DiagramBody = forwardRef(function DiagramBody(
 
   const runCleanAndSpread = useCallback(async () => {
     // 1) Layout only real nodes (ignore boxes)
-    const realNodes = nodes.filter((n) => !isGroupBox(n));
+    const noteNodes = nodes.filter((node) => node.type === 'note');
+    const realNodes = nodes.filter((node) => !isGroupBox(node) && node.type !== 'note');
     const elkNodes = await runElkLayoutOnce({
       nodes: realNodes,
       edges,
@@ -2785,7 +3013,7 @@ const DiagramBody = forwardRef(function DiagramBody(
     }
 
     // 4) Render outer boxes first, then inner boxes, then nodes
-    setNodes(groupedNodes);
+    setNodes([...groupedNodes, ...noteNodes]);
 
     // 5) Persist absolute positions
     positionedNodes.forEach((n) => posRef.current.set(n.id, { ...n.position }));
@@ -3031,6 +3259,10 @@ useEffect(() => {
       const deletions = changes.filter((cc) => cc.type === 'remove');
       if (deletions.length > 0) {
         const deletedIds = new Set(deletions.map((cc) => cc.id));
+        setCanvasNotes((current) => current.filter((note) => !deletedIds.has(note.id)));
+        setComments((current) => current.filter((comment) => (
+          comment.targetType !== 'node' || !deletedIds.has(comment.targetId)
+        )));
         const updatedRows = rows.filter(
           (r) => !deletedIds.has(r.fromNodeId || `n:${r.fromFunction}`) && !deletedIds.has(r.toNodeId || `n:${r.toFunction}`)
         );
@@ -3052,6 +3284,9 @@ useEffect(() => {
       const removals = changes.filter((c) => c.type === 'remove').map((c) => c.id);
       if (removals.length) {
         const removalSet = new Set(removals);
+        setComments((current) => current.filter((comment) => (
+          comment.targetType !== 'edge' || !removalSet.has(comment.targetId)
+        )));
         const updatedRows = rows.filter((r, i) => !removalSet.has(r.edgeId || `e:${r.fromNodeId || `n:${r.fromFunction}`}->${r.toNodeId || `n:${r.toFunction}`}-${i}`));
         onUpdateRows?.(updatedRows);
       }
@@ -3106,7 +3341,7 @@ useEffect(() => {
     }
   });
 
-  const nextNodes = Array.from(wantedNodeIds).map((id) => {
+  const generatedNodes = Array.from(wantedNodeIds).map((id) => {
     const pos = posRef.current.get(id) ?? seedPosition(builtCountRef.current++);
     if (!posRef.current.has(id)) {
       posRef.current.set(id, pos);
@@ -3180,6 +3415,22 @@ useEffect(() => {
     };
   });
 
+  const noteNodes = canvasNotes.map((note) => ({
+    id: note.id,
+    type: 'note',
+    position: posRef.current.get(note.id) || note.position,
+    data: {
+      label: note.label,
+      description: note.description,
+      brandColor: BRAND.yellow,
+      brandTint: rgba(BRAND.yellow, 0.2),
+    },
+  }));
+  noteNodes.forEach((note) => {
+    if (!posRef.current.has(note.id)) posRef.current.set(note.id, note.position);
+  });
+  const nextNodes = [...generatedNodes, ...noteNodes];
+
   const rawEdges = rowsToRawEdges(rows);
   const nextEdges = buildEdgesFromRaw(rawEdges, posRef.current);
 
@@ -3190,7 +3441,7 @@ useEffect(() => {
     structureRef.current = sig;
   }
   return () => { cancelled = true; };
-}, [rows, posLoaded, persistSoon, nodes, setNodes, setEdges, architectureMode]);
+}, [rows, posLoaded, persistSoon, nodes, setNodes, setEdges, architectureMode, canvasNotes]);
 
 
   // Sync labels/details without moving nodes
@@ -3347,6 +3598,257 @@ useEffect(() => {
     [setEdges, reviewMode]
   );
 
+  const canvasSpawnPosition = useCallback((offset = { x: 156, y: 116 }) => {
+    try {
+      return project(offset);
+    } catch {
+      return offset;
+    }
+  }, [project]);
+
+  const addCanvasNote = useCallback(() => {
+    if (reviewMode) return;
+    const createdAt = new Date().toISOString();
+    const existingNotes = canvasNotes.length;
+    const id = `note:${cryptoId('cba-note')}`;
+    const position = nearestFreePosition(canvasSpawnPosition(), getNodes());
+    const note = normalizeDiagramNote({
+      id,
+      label: `Note ${existingNotes + 1}`,
+      description: '',
+      position,
+      createdAt,
+      updatedAt: createdAt,
+    });
+    if (!note) return;
+    const noteNode = {
+      id: note.id,
+      type: 'note',
+      position: note.position,
+      data: {
+        label: note.label,
+        description: note.description,
+        brandColor: BRAND.yellow,
+        brandTint: rgba(BRAND.yellow, 0.2),
+      },
+    };
+    setCanvasNotes((current) => [...current, note]);
+    setNodes((current) => [...current, noteNode]);
+    posRef.current.set(note.id, note.position);
+    persistSoon();
+    setEditModal({
+      type: 'node',
+      nodeType: 'note',
+      id: note.id,
+      label: note.label,
+      description: note.description,
+    });
+  }, [canvasNotes.length, canvasSpawnPosition, getNodes, persistSoon, reviewMode, setNodes]);
+
+  const openCommentComposer = useCallback((target = {}) => {
+    if (!target.targetId || reviewMode) return;
+    setContextMenu(null);
+    setCommentModal({
+      targetType: target.targetType === 'edge' ? 'edge' : 'node',
+      targetId: String(target.targetId),
+      targetLabel: String(target.targetLabel || target.targetId),
+      draft: '',
+    });
+  }, [reviewMode]);
+
+  const selectedCommentTarget = useMemo(() => {
+    if (highlightedEdgeId) {
+      const edge = viewEdges.find((candidate) => candidate.id === highlightedEdgeId);
+      if (edge) {
+        return {
+          targetType: 'edge',
+          targetId: edge.id,
+          targetLabel: String(edge.data?.baseLabel || edge.label || 'Selected edge'),
+        };
+      }
+    }
+    if (selectedNodeIds.length !== 1) return null;
+    const node = nodes.find((candidate) => candidate.id === selectedNodeIds[0]);
+    if (!node || node.type === 'note') return null;
+    return {
+      targetType: 'node',
+      targetId: node.id,
+      targetLabel: String(node.data?.label || node.id),
+    };
+  }, [highlightedEdgeId, nodes, selectedNodeIds, viewEdges]);
+
+  const saveCommentDraft = useCallback(() => {
+    if (!commentModal) return;
+    const comment = createDiagramComment({
+      targetType: commentModal.targetType,
+      targetId: commentModal.targetId,
+      targetLabel: commentModal.targetLabel,
+      text: commentModal.draft,
+    });
+    if (!comment) return;
+    setComments((current) => [...current, comment]);
+    setCommentModal((current) => current ? { ...current, draft: '' } : null);
+  }, [commentModal]);
+
+  const deleteDiagramComment = useCallback((commentId) => {
+    if (!commentId || reviewMode) return;
+    setComments((current) => current.filter((comment) => comment.id !== commentId));
+  }, [reviewMode]);
+
+  const highlightedToolbarEdge = useMemo(
+    () => viewEdges.find((edge) => edge.id === highlightedEdgeId) || null,
+    [highlightedEdgeId, viewEdges]
+  );
+  const highlightedDirectionalKey = highlightedToolbarEdge
+    ? highlightedToolbarEdge.data?.directionalKey || directionalEdgeKey(highlightedToolbarEdge)
+    : '';
+  const highlightedBidirectionalKey = highlightedToolbarEdge
+    ? highlightedToolbarEdge.data?.bidirectionalKey || bidirectionalEdgeKey(highlightedToolbarEdge)
+    : '';
+  const directionalPairSize = highlightedDirectionalKey
+    ? edges.filter((edge) => directionalEdgeKey(edge) === highlightedDirectionalKey).length
+    : 0;
+  const bidirectionalPairSize = highlightedBidirectionalKey
+    ? edges.filter((edge) => bidirectionalEdgeKey(edge) === highlightedBidirectionalKey).length
+    : 0;
+  const canToggleDirectionalPair = directionalPairSize > 1;
+  const canToggleBidirectionalPair = bidirectionalPairSize > 1;
+  const directionalPairAggregated = canToggleDirectionalPair && (
+    edgeAggregation.directionalAll !== edgeAggregation.directionalExceptions.has(highlightedDirectionalKey)
+  );
+  const bidirectionalPairAggregated = canToggleBidirectionalPair && (
+    edgeAggregation.bidirectionalAll !== edgeAggregation.bidirectionalExceptions.has(highlightedBidirectionalKey)
+  );
+  const highlightedRoutingStyle = highlightedToolbarEdge
+    ? edgeRouting.overrides?.[highlightedToolbarEdge.id] || edgeRouting.defaultStyle
+    : edgeRouting.defaultStyle;
+
+  const toggleAggregationPair = useCallback((kind, key) => {
+    if (!key) return;
+    setEdgeAggregation((current) => {
+      const exceptionKey = kind === 'bidirectional' ? 'bidirectionalExceptions' : 'directionalExceptions';
+      const nextExceptions = new Set(current[exceptionKey] || []);
+      if (nextExceptions.has(key)) nextExceptions.delete(key);
+      else nextExceptions.add(key);
+      return { ...current, [exceptionKey]: nextExceptions };
+    });
+    setHighlightedEdgeId(null);
+  }, []);
+
+  const fitDiagramToView = useCallback(() => {
+    if (shouldSuppressAutoFit()) return;
+    fitCurrentView({ duration: 400 });
+  }, [fitCurrentView, shouldSuppressAutoFit]);
+
+  const refreshDiagramRoutes = useCallback(() => {
+    const positions = positionsAbsMapFromRF(getNodes());
+    setEdges(buildEdgesFromRaw(rowsToRawEdges(rows), positions));
+  }, [getNodes, rows, setEdges]);
+
+  const selectAllFunctionNodes = useCallback(() => {
+    const ids = getNodes()
+      .filter((node) => node.type !== 'groupBox' && node.type !== 'note')
+      .map((node) => node.id);
+    setSelectedNodeIds(ids);
+    setHighlightedEdgeId(null);
+    setNodes((current) => current.map((node) => ({ ...node, selected: ids.includes(node.id) })));
+    setEdges((current) => current.map((edge) => edge.selected ? { ...edge, selected: false } : edge));
+  }, [getNodes, setEdges, setNodes]);
+
+  const clearDiagramSelection = useCallback(() => {
+    setSelectedNodeIds([]);
+    setHighlightedEdgeId(null);
+    setContextMenu(null);
+    setNodes((current) => current.map((node) => node.selected ? { ...node, selected: false } : node));
+    setEdges((current) => current.map((edge) => edge.selected ? { ...edge, selected: false } : edge));
+  }, [setEdges, setNodes]);
+
+  const setAllEdgeRoutingStyle = useCallback((style) => {
+    setEdgeRouting({ defaultStyle: style, overrides: {} });
+  }, []);
+
+  const toggleHighlightedEdgeRoutingStyle = useCallback(() => {
+    if (!highlightedToolbarEdge) return;
+    const nextStyle = highlightedRoutingStyle === EDGE_ROUTING_STYLES.RECTANGULAR
+      ? EDGE_ROUTING_STYLES.BEZIER
+      : EDGE_ROUTING_STYLES.RECTANGULAR;
+    setEdgeRouting((current) => ({
+      ...current,
+      overrides: { ...(current.overrides || {}), [highlightedToolbarEdge.id]: nextStyle },
+    }));
+  }, [highlightedRoutingStyle, highlightedToolbarEdge]);
+
+  const exportDiagramXml = useCallback(() => {
+    downloadDrawioXml(getNodes(), viewEdges, 'xHandle-code-architecture-diagram.drawio.xml', {
+      pageWidth: 1920,
+      pageHeight: 1080,
+      nodeSize: { width: 240, height: 96 },
+      nodeStyle: 'rounded=1;whiteSpace=wrap;html=1;strokeColor=#334155;fillColor=#EEF2FF;fontColor=#0F0F12;shadow=0;arcSize=12;spacing=8;',
+      edgeStyle: 'edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#94A3B8;strokeWidth=2;',
+    });
+  }, [getNodes, viewEdges]);
+
+  const exportDiagramJson = useCallback(() => {
+    const payload = {
+      schema: 'xhandle.code-architecture-diagram.v1',
+      exportedAt: new Date().toISOString(),
+      storageKey,
+      repository: repoName,
+      viewport: typeof getViewport === 'function' ? getViewport() : null,
+      functionalDecomposition: rows,
+      nodes: getNodes().map((node) => ({
+        id: node.id,
+        type: node.type,
+        position: node.positionAbsolute || node.position,
+        parentNode: node.parentNode,
+        data: {
+          label: node.data?.label,
+          description: node.data?.description,
+          file: node.data?.file,
+          subsystem: node.data?.subsystem,
+          csci: node.data?.csci,
+          csc: node.data?.csc,
+          csu: node.data?.csu,
+        },
+      })),
+      edges: viewEdges.map((edge) => ({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        label: edge.data?.baseLabel || edge.label,
+        data: edge.data,
+      })),
+      notes: canvasNotes,
+      comments,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `xHandle-code-architecture-diagram-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }, [canvasNotes, comments, getNodes, getViewport, repoName, rows, storageKey, viewEdges]);
+
+  const toolButtonStyle = ({ active = false, disabled = false, tone = BRAND.blue } = {}) => ({
+    width: 32,
+    height: 32,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 6,
+    border: `1px solid ${disabled ? 'rgba(15,15,18,0.12)' : rgba(tone, active ? 0.8 : 0.32)}`,
+    background: disabled ? '#F8FAFC' : active ? tone : 'white',
+    color: disabled ? 'rgba(15,15,18,0.34)' : active ? 'white' : tone,
+    fontWeight: 800,
+    fontSize: 13,
+    lineHeight: 1,
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    opacity: disabled ? 0.62 : 1,
+  });
+
   /* Render */
   return (
     <div ref={diagramHostRef} style={{ width: '100%', height, minHeight: height === '100%' ? 0 : undefined, position: 'relative' }}>
@@ -3374,7 +3876,7 @@ useEffect(() => {
         <div
           style={{
             position: 'absolute',
-            left: 10,
+            left: reviewMode ? 10 : (canvasToolbarCollapsed ? 58 : 150),
             top: 54,
             zIndex: 10,
             display: 'flex',
@@ -3490,6 +3992,132 @@ useEffect(() => {
             Arranging diagram...
           </div>
         )}
+        {!reviewMode && (
+          <div
+            aria-label="Code architecture canvas tools"
+            style={{
+              position: 'absolute',
+              top: 12,
+              bottom: 12,
+              left: 12,
+              zIndex: 25,
+              width: canvasToolbarCollapsed ? 36 : 128,
+              pointerEvents: 'auto',
+              transition: 'width 160ms ease',
+            }}
+          >
+            <div
+              style={{
+                height: '100%',
+                border: '1px solid rgba(15,15,18,0.12)',
+                borderRadius: 10,
+                background: 'rgba(255,255,255,0.96)',
+                boxShadow: '0 12px 28px rgba(15,15,18,0.16)',
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setCanvasToolbarCollapsed((value) => !value)}
+                title={canvasToolbarCollapsed ? 'Show canvas tools' : 'Hide canvas tools'}
+                aria-label={canvasToolbarCollapsed ? 'Show canvas tools' : 'Hide canvas tools'}
+                style={{
+                  height: 34,
+                  border: 0,
+                  borderBottom: canvasToolbarCollapsed ? 0 : '1px solid rgba(15,15,18,0.08)',
+                  background: canvasToolbarCollapsed ? BRAND.blue : '#F8FAFC',
+                  color: canvasToolbarCollapsed ? 'white' : BRAND.dark,
+                  fontWeight: 900,
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                {canvasToolbarCollapsed ? '›' : '‹ Tools'}
+              </button>
+              {!canvasToolbarCollapsed && (
+                <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', padding: 8 }}>
+                  <div style={{ margin: '6px 2px 6px', color: 'rgba(15,15,18,0.52)', fontSize: 10, fontWeight: 800, textTransform: 'uppercase' }}>
+                    Create
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 32px)', gap: 6 }}>
+                    <button
+                      type="button"
+                      onClick={addCanvasNote}
+                      title="Drop a note on the canvas"
+                      aria-label="Add canvas note"
+                      style={toolButtonStyle({ tone: BRAND.yellow })}
+                    >
+                      📝
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openCommentComposer(selectedCommentTarget)}
+                      disabled={!selectedCommentTarget}
+                      title={selectedCommentTarget ? `Add comment to ${selectedCommentTarget.targetLabel}` : 'Select one node or edge to add a comment'}
+                      aria-label="Add comment to selected node or edge"
+                      style={toolButtonStyle({ active: Boolean(selectedCommentTarget), disabled: !selectedCommentTarget, tone: BRAND.purple })}
+                    >
+                      💬
+                    </button>
+                  </div>
+                  <div style={{ height: 1, background: 'rgba(15,15,18,0.08)', margin: '8px 0 2px' }} />
+                  <div style={{ margin: '6px 2px 6px', color: 'rgba(15,15,18,0.52)', fontSize: 10, fontWeight: 800, textTransform: 'uppercase' }}>View</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 32px)', gap: 6 }}>
+                    <button type="button" onClick={fitDiagramToView} title="Fit entire diagram to view" aria-label="Fit entire diagram to view" style={toolButtonStyle({ active: true })}>□</button>
+                    <button type="button" onClick={refreshDiagramRoutes} title="Refresh edge routes from current node positions" aria-label="Refresh edge routes" style={toolButtonStyle({ tone: BRAND.purple })}>⟳</button>
+                  </div>
+                  <div style={{ height: 1, background: 'rgba(15,15,18,0.08)', margin: '8px 0 2px' }} />
+                  <div style={{ margin: '6px 2px 6px', color: 'rgba(15,15,18,0.52)', fontSize: 10, fontWeight: 800, textTransform: 'uppercase' }}>Select</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 32px)', gap: 6 }}>
+                    <button type="button" onClick={selectAllFunctionNodes} title="Select all function nodes" aria-label="Select all function nodes" disabled={!nodes.some((node) => node.type !== 'groupBox' && node.type !== 'note')} style={toolButtonStyle({ disabled: !nodes.some((node) => node.type !== 'groupBox' && node.type !== 'note') })}>◎</button>
+                    <button type="button" onClick={clearDiagramSelection} title="Clear node selection and edge highlight" aria-label="Clear diagram selection" disabled={!selectedNodeIds.length && !highlightedEdgeId} style={toolButtonStyle({ disabled: !selectedNodeIds.length && !highlightedEdgeId, tone: BRAND.purple })}>×</button>
+                  </div>
+                  <div style={{ height: 1, background: 'rgba(15,15,18,0.08)', margin: '8px 0 2px' }} />
+                  <div style={{ margin: '6px 2px 6px', color: 'rgba(15,15,18,0.52)', fontSize: 10, fontWeight: 800, textTransform: 'uppercase' }}>Aggregate</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 32px)', gap: 6 }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEdgeAggregation((current) => ({ ...current, directionalAll: !current.directionalAll, directionalExceptions: new Set() }));
+                        setHighlightedEdgeId(null);
+                      }}
+                      title={edgeAggregation.directionalAll ? 'Expand directional edge bundles' : 'Aggregate repeated directional edges'}
+                      aria-label="Toggle all directional edge bundles"
+                      style={toolButtonStyle({ active: edgeAggregation.directionalAll, tone: BRAND.purple })}
+                    >→</button>
+                    <button type="button" onClick={() => toggleAggregationPair('directional', highlightedDirectionalKey)} title="Aggregate or expand the selected directional pair" aria-label="Toggle selected directional pair" disabled={!canToggleDirectionalPair} style={toolButtonStyle({ active: directionalPairAggregated, disabled: !canToggleDirectionalPair })}>⇄</button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEdgeAggregation((current) => ({ ...current, bidirectionalAll: !current.bidirectionalAll, bidirectionalExceptions: new Set() }));
+                        setHighlightedEdgeId(null);
+                      }}
+                      title={edgeAggregation.bidirectionalAll ? 'Expand all bidirectional bundles' : 'Aggregate all traffic between node pairs regardless of direction'}
+                      aria-label="Toggle all bidirectional edge bundles"
+                      style={toolButtonStyle({ active: edgeAggregation.bidirectionalAll, tone: BRAND.purple })}
+                    >↔</button>
+                    <button type="button" onClick={() => toggleAggregationPair('bidirectional', highlightedBidirectionalKey)} title="Aggregate or expand the selected bidirectional node pair" aria-label="Toggle selected bidirectional pair" disabled={!canToggleBidirectionalPair} style={toolButtonStyle({ active: bidirectionalPairAggregated, disabled: !canToggleBidirectionalPair, tone: BRAND.purple })}>⟷</button>
+                  </div>
+                  <div style={{ height: 1, background: 'rgba(15,15,18,0.08)', margin: '8px 0 2px' }} />
+                  <div style={{ margin: '6px 2px 6px', color: 'rgba(15,15,18,0.52)', fontSize: 10, fontWeight: 800, textTransform: 'uppercase' }}>Route</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 32px)', gap: 6 }}>
+                    <button type="button" onClick={() => setAllEdgeRoutingStyle(EDGE_ROUTING_STYLES.BEZIER)} title="Set all edges to Bezier routing" aria-label="Use Bezier routing for all edges" style={toolButtonStyle({ active: edgeRouting.defaultStyle === EDGE_ROUTING_STYLES.BEZIER && !Object.keys(edgeRouting.overrides || {}).length })}>B</button>
+                    <button type="button" onClick={() => setAllEdgeRoutingStyle(EDGE_ROUTING_STYLES.RECTANGULAR)} title="Set all edges to rectangular routing" aria-label="Use rectangular routing for all edges" style={toolButtonStyle({ active: edgeRouting.defaultStyle === EDGE_ROUTING_STYLES.RECTANGULAR && !Object.keys(edgeRouting.overrides || {}).length })}>R</button>
+                    <button type="button" onClick={toggleHighlightedEdgeRoutingStyle} title="Toggle routing for selected edge or bundle" aria-label="Toggle selected edge routing" disabled={!highlightedToolbarEdge} style={toolButtonStyle({ active: Boolean(highlightedToolbarEdge), disabled: !highlightedToolbarEdge, tone: BRAND.purple })}>{highlightedRoutingStyle === EDGE_ROUTING_STYLES.RECTANGULAR ? 'B' : 'R'}</button>
+                  </div>
+                  <div style={{ height: 1, background: 'rgba(15,15,18,0.08)', margin: '8px 0 2px' }} />
+                  <div style={{ margin: '6px 2px 6px', color: 'rgba(15,15,18,0.52)', fontSize: 10, fontWeight: 800, textTransform: 'uppercase' }}>Export</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 32px)', gap: 6 }}>
+                    <button type="button" onClick={exportDiagramXml} title="Export XML" aria-label="Export diagram XML" style={toolButtonStyle({ active: true })}>X</button>
+                    <button type="button" onClick={exportDiagramJson} title="Export JSON" aria-label="Export diagram JSON" style={toolButtonStyle({ active: true })}>J</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         <ReactFlow
           nodes={initialLayoutPending ? [] : viewNodes}
           edges={initialLayoutPending ? [] : viewEdges}
@@ -3513,9 +4141,55 @@ useEffect(() => {
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           onEdgeUpdate={onEdgeUpdate}
-          onEdgeClick={(evt, edge) => setHighlightedEdgeId(edge.id)}
-          onPaneClick={() => setHighlightedEdgeId(null)}
-          onNodeClick={() => setHighlightedEdgeId(null)}
+          onEdgeClick={(evt, edge) => {
+            setHighlightedEdgeId(edge.id);
+            setContextMenu(null);
+          }}
+          onPaneClick={() => {
+            setHighlightedEdgeId(null);
+            setContextMenu(null);
+          }}
+          onNodeClick={() => {
+            setHighlightedEdgeId(null);
+            setContextMenu(null);
+          }}
+          onNodeContextMenu={(event, node) => {
+            if (reviewMode || node.type === 'note') return;
+            event.preventDefault();
+            event.stopPropagation();
+            setHighlightedEdgeId(null);
+            setSelectedNodeIds([node.id]);
+            setNodes((current) => current.map((candidate) => ({
+              ...candidate,
+              selected: candidate.id === node.id,
+            })));
+            const bounds = diagramHostRef.current?.getBoundingClientRect();
+            setContextMenu({
+              x: event.clientX - (bounds?.left || 0),
+              y: event.clientY - (bounds?.top || 0),
+              targetType: 'node',
+              targetId: node.id,
+              targetLabel: String(node.data?.label || node.id),
+            });
+          }}
+          onEdgeContextMenu={(event, edge) => {
+            if (reviewMode) return;
+            event.preventDefault();
+            event.stopPropagation();
+            setHighlightedEdgeId(edge.id);
+            setSelectedNodeIds([]);
+            const bounds = diagramHostRef.current?.getBoundingClientRect();
+            setContextMenu({
+              x: event.clientX - (bounds?.left || 0),
+              y: event.clientY - (bounds?.top || 0),
+              targetType: 'edge',
+              targetId: edge.id,
+              targetLabel: String(edge.data?.baseLabel || edge.label || 'Selected edge'),
+            });
+          }}
+          onSelectionChange={({ nodes: selectedNodes }) => {
+            setSelectedNodeIds((selectedNodes || []).map((node) => node.id));
+          }}
           nodesDraggable={!reviewMode}
           nodesConnectable={!reviewMode}
           edgesUpdatable={!reviewMode}
@@ -3530,6 +4204,18 @@ useEffect(() => {
           zoomOnDoubleClick={false}
           proOptions={{ hideAttribution: true }}
           onNodeDoubleClick={(event, node) => {
+            if (node?.type === 'note') {
+              event.preventDefault();
+              event.stopPropagation();
+              setEditModal({
+                type: 'node',
+                nodeType: 'note',
+                id: node.id,
+                label: node.data?.label || 'Note',
+                description: node.data?.description || '',
+              });
+              return;
+            }
             const groupKind = node?.data?.groupKind;
             if (node?.type === 'groupBox' || groupKind) {
               event.preventDefault();
@@ -3568,7 +4254,7 @@ useEffect(() => {
             setEditModal({
               type: 'edge',
               id: edge.id,
-              label: edge.label || '',
+              label: edge.data?.baseLabel || edge.label || '',
               description: edge.data?.description || '',
               rowRef: edge.data?.rowRef || '',
               rowRefs: edge.data?.rowRefs || [],
@@ -3594,7 +4280,7 @@ useEffect(() => {
               setEditModal({
                 type: 'edge',
                 id: edge.id,
-                label: edge.label || '',
+                label: edge.data?.baseLabel || edge.label || '',
                 description: edge.data?.description || '',
                 rowRef: edge.data?.rowRef || '',
                 rowRefs: edge.data?.rowRefs || [],
@@ -3642,6 +4328,24 @@ useEffect(() => {
           }}           
           onNodeDragStop={(_, node) => {
             if (reviewMode) return;
+            if (node?.type === 'note') {
+              const notePosition = node.positionAbsolute || node.position;
+              if (notePosition) {
+                posRef.current.set(node.id, { x: notePosition.x, y: notePosition.y });
+                setNodes((current) => current.map((candidate) => (
+                  candidate.id === node.id
+                    ? { ...candidate, position: { x: notePosition.x, y: notePosition.y } }
+                    : candidate
+                )));
+                setCanvasNotes((current) => current.map((note) => (
+                  note.id === node.id
+                    ? { ...note, position: { x: notePosition.x, y: notePosition.y }, updatedAt: new Date().toISOString() }
+                    : note
+                )));
+                persistSoon();
+              }
+              return;
+            }
             // If a box moved, update all its children in the position cache
             if (node?.id?.startsWith('box:')) {
               const rfNodes = getNodes();
@@ -3686,6 +4390,102 @@ useEffect(() => {
           <Controls showInteractive={false} position="bottom-right" />
         </ReactFlow>
       </div>
+
+      {contextMenu && !reviewMode && (
+        <div
+          style={{
+            position: 'absolute',
+            left: contextMenu.x,
+            top: contextMenu.y,
+            zIndex: 35,
+            minWidth: 190,
+            overflow: 'hidden',
+            border: '1px solid rgba(15,15,18,0.12)',
+            borderRadius: 10,
+            background: '#fff',
+            boxShadow: '0 10px 28px rgba(15,15,18,0.18)',
+          }}
+          onMouseLeave={() => setContextMenu(null)}
+        >
+          <button
+            type="button"
+            onClick={() => openCommentComposer(contextMenu)}
+            style={{ display: 'block', width: '100%', padding: '10px 12px', border: 'none', background: '#fff', color: BRAND.purple, textAlign: 'left', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+          >
+            💬 Add comment
+          </button>
+        </div>
+      )}
+
+      {commentModal && !reviewMode && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 90,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20,
+            background: 'rgba(15,15,18,0.34)',
+          }}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setCommentModal(null);
+          }}
+        >
+          <div style={{ width: 'min(560px, 94%)', maxHeight: '82%', display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRadius: 14, border: '1px solid rgba(15,15,18,0.12)', background: '#fff', boxShadow: '0 22px 60px rgba(15,15,18,0.24)' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, padding: '16px 18px', borderBottom: '1px solid rgba(15,15,18,0.1)' }}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: BRAND.dark }}>Comments</div>
+                <div style={{ marginTop: 3, fontSize: 12, color: '#64748B' }}>
+                  {commentModal.targetType === 'edge' ? 'Edge' : 'Node'} · {commentModal.targetLabel}
+                </div>
+              </div>
+              <button type="button" onClick={() => setCommentModal(null)} aria-label="Close comments" style={{ border: 'none', background: 'transparent', fontSize: 22, lineHeight: 1, color: '#64748B', cursor: 'pointer' }}>×</button>
+            </div>
+            <div style={{ minHeight: 0, overflowY: 'auto', padding: '14px 18px' }}>
+              {commentsForDiagramTarget(comments, commentModal.targetType, commentModal.targetId).length > 0 ? (
+                <div style={{ display: 'grid', gap: 8, marginBottom: 14 }}>
+                  {commentsForDiagramTarget(comments, commentModal.targetType, commentModal.targetId).map((comment) => (
+                    <div key={comment.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: 10, borderRadius: 9, border: '1px solid #E2E8F0', background: '#F8FAFC' }}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13, lineHeight: 1.45, color: '#1E293B' }}>{comment.text}</div>
+                        <div style={{ marginTop: 5, fontSize: 10, color: '#94A3B8' }}>{new Date(comment.createdAt).toLocaleString()}</div>
+                      </div>
+                      <button type="button" onClick={() => deleteDiagramComment(comment.id)} title="Delete comment" aria-label="Delete comment" style={{ border: 'none', background: 'transparent', color: '#DC2626', cursor: 'pointer', fontSize: 16 }}>×</button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ marginBottom: 12, fontSize: 13, color: '#64748B' }}>No comments yet.</div>
+              )}
+              <label htmlFor="code-architecture-diagram-comment" style={{ display: 'block', marginBottom: 6, fontSize: 12, fontWeight: 700, color: '#334155' }}>Add a comment</label>
+              <textarea
+                id="code-architecture-diagram-comment"
+                autoFocus
+                value={commentModal.draft}
+                onChange={(event) => setCommentModal((current) => current ? { ...current, draft: event.target.value } : current)}
+                onKeyDown={(event) => {
+                  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') saveCommentDraft();
+                }}
+                placeholder="Enter review feedback, a question, or an engineering note…"
+                style={{ width: '100%', minHeight: 110, resize: 'vertical', borderRadius: 9, border: '1px solid #CBD5E1', padding: 10, fontSize: 13, lineHeight: 1.45, outline: 'none' }}
+              />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '12px 18px', borderTop: '1px solid rgba(15,15,18,0.1)' }}>
+              <button type="button" onClick={() => setCommentModal(null)} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #CBD5E1', background: '#fff', color: '#334155', cursor: 'pointer' }}>Close</button>
+              <button
+                type="button"
+                onClick={saveCommentDraft}
+                disabled={!String(commentModal.draft || '').trim()}
+                style={{ padding: '8px 13px', borderRadius: 8, border: 'none', background: BRAND.purple, color: '#fff', fontWeight: 700, cursor: String(commentModal.draft || '').trim() ? 'pointer' : 'not-allowed', opacity: String(commentModal.draft || '').trim() ? 1 : 0.5 }}
+              >
+                Add comment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Edit Modal */}
       {editModal && (
@@ -4315,6 +5115,20 @@ useEffect(() => {
                         : n
                     )
                   );
+                } else if (editModal.type === 'node' && editModal.nodeType === 'note') {
+                  const updatedAt = new Date().toISOString();
+                  setNodes((nds) =>
+                    nds.map((node) =>
+                      node.id === editModal.id
+                        ? { ...node, data: { ...node.data, label: editModal.label, description: editModal.description } }
+                        : node
+                    )
+                  );
+                  setCanvasNotes((current) => current.map((note) => (
+                    note.id === editModal.id
+                      ? { ...note, label: editModal.label, description: editModal.description, updatedAt }
+                      : note
+                  )));
                 } else if (editModal.type === 'node') {
                   setNodes((nds) =>
                     nds.map((n) =>
