@@ -105,57 +105,6 @@ export function ensureFunctionalVibeReviewRowIds(rows = []) {
   return { rows: nextRows, changed };
 }
 
-/**
- * A Function (From) has one owning subsystem even when it appears on several
- * interface rows.  A row-by-row review therefore cannot safely move only one
- * occurrence: doing so creates a transient split-owner architecture that the
- * table's consistency guard correctly rejects.  Plan the edit as one atomic
- * reallocation while retaining the full proposed revision on the reviewed row.
- */
-export function applyFunctionalSubsystemReallocation(rows = [], {
-  rowIndex,
-  nextRow,
-  idField = FUNCTIONAL_VIBE_REVIEW_ID_FIELD,
-} = {}) {
-  const currentRows = Array.isArray(rows) ? rows : [];
-  const index = Number(rowIndex);
-  const previousRow = currentRows[index];
-  if (!previousRow || !nextRow) return { rows: currentRows, affectedRows: [] };
-
-  const allocationKey = (value) => clean(value).toLowerCase();
-  const previousFunction = allocationKey(previousRow.fromFunction);
-  const nextFunction = allocationKey(nextRow.fromFunction);
-  const previousSubsystem = allocationKey(previousRow.subsystem);
-  const nextSubsystem = allocationKey(nextRow.subsystem);
-  const shouldPropagate = Boolean(
-    previousFunction
-    && previousFunction === nextFunction
-    && nextSubsystem
-    && previousSubsystem !== nextSubsystem
-  );
-
-  const affectedRows = [];
-  const plannedRows = currentRows.map((row, candidateIndex) => {
-    const isReviewedRow = candidateIndex === index;
-    const isMatchingFunction = shouldPropagate && allocationKey(row?.fromFunction) === previousFunction;
-    if (!isReviewedRow && !isMatchingFunction) return row;
-
-    const revisedRow = isReviewedRow
-      ? { ...nextRow }
-      : { ...row, subsystem: nextRow.subsystem };
-    affectedRows.push({
-      rowId: clean(row?.[idField]) || `row-${candidateIndex}`,
-      rowIndex: candidateIndex,
-      previousRow: { ...row },
-      nextRow: revisedRow,
-      propagated: !isReviewedRow,
-    });
-    return revisedRow;
-  });
-
-  return { rows: plannedRows, affectedRows, propagated: shouldPropagate };
-}
-
 export function isFunctionalVibeReviewIntent(value = "") {
   const text = key(value);
   const functional = /\bfunctional (?:decomposition|architecture|interfaces?|rows?)\b/.test(text)

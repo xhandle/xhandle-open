@@ -57,12 +57,11 @@ export const VIBE_REVIEW_STATES = Object.freeze({
   COMPLETED: "completed", CANCELLED: "cancelled", PAUSED: "paused",
 });
 
-export function createVibeReviewSession({ projectId, threadId, queue = [], scopeLabel = "", reviewTarget = "safetySignificant", ai = {}, workspaceType = "functional-project", sourceRunId = "", repoId = "" }) {
+export function createVibeReviewSession({ projectId, threadId, queue = [], scopeLabel = "", ai = {}, workspaceType = "functional-project", sourceRunId = "", repoId = "" }) {
   const stableQueue = Array.from(new Set(queue.map(String).filter(Boolean)));
   return {
     id: uid(), projectId: String(projectId), threadId: String(threadId), queue: stableQueue,
-    scopeLabel, reviewTarget: reviewTarget === "guidePhraseApplicable" ? reviewTarget : "safetySignificant",
-    cursor: 0, state: VIBE_REVIEW_STATES.PROPOSING, proposal: null,
+    scopeLabel, cursor: 0, state: VIBE_REVIEW_STATES.PROPOSING, proposal: null,
     workspaceType: String(workspaceType || "functional-project"),
     sourceRunId: String(sourceRunId || ""),
     repoId: String(repoId || ""),
@@ -127,9 +126,8 @@ export function loadVibeReviewAudit(projectId, storage = defaultStorage()) { ret
 
 export function summarizeVibeReviewSession(session) {
   const accepted = session.decisions.filter((item) => item.action === "accept").length;
-  const decisionValue = (item) => item.newReviewValue || item.newSafetySignificant;
-  const yes = session.decisions.filter((item) => decisionValue(item) === "Yes").length;
-  const no = session.decisions.filter((item) => decisionValue(item) === "No").length;
+  const yes = session.decisions.filter((item) => item.newSafetySignificant === "Yes").length;
+  const no = session.decisions.filter((item) => item.newSafetySignificant === "No").length;
   return { total: session.queue.length, reviewed: session.decisions.length, accepted,
     overriddenToYes: session.decisions.filter((item) => item.action === "yes").length,
     overriddenToNo: session.decisions.filter((item) => item.action === "no").length,

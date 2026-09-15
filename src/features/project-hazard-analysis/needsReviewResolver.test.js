@@ -1,5 +1,4 @@
 import {
-  applyGuidePhraseApplicabilityUpdates,
   applyNeedsReviewResolutionUpdates,
   buildNeedsReviewResolutionGroups,
   draftNeedsReviewAnswerWithAI,
@@ -392,50 +391,5 @@ describe("Needs Review resolver", () => {
     } finally {
       global.fetch = originalFetch;
     }
-  });
-
-  test("applies Guide Phrase Applicable Yes without pretending downstream safety significance is resolved", () => {
-    const applicabilityHeaders = [
-      ...headers,
-      "Guide Phrase Applicable",
-      "Guide Phrase Applicability Rationale",
-      "Safety Significance Rationale",
-    ];
-    const source = [...row(), "Needs Review", "Contract is not documented.", "Safety classification still needs review."];
-    const result = applyGuidePhraseApplicabilityUpdates([applicabilityHeaders, source], [{
-      sourceRowId: "ROW-1",
-      applicabilityDecision: "Yes",
-      "Guide Phrase Applicability Rationale": "The timing deviation can affect the receiving controller.",
-    }], ["ROW-1"]);
-    const fields = Object.fromEntries(applicabilityHeaders.map((header, index) => [header, result.summary[1][index]]));
-    expect(fields["Guide Phrase Applicable"]).toBe("Yes");
-    expect(fields["Safety Classification"]).toBe("Needs Review");
-    expect(fields["Safety Significant"]).toBe("Needs Review");
-  });
-
-  test("normalizes a grounded Guide Phrase Applicable No to Not Applicable", () => {
-    const applicabilityHeaders = [
-      ...headers,
-      "Guide Phrase Applicable",
-      "Guide Phrase Applicability Rationale",
-      "Safety Significance Rationale",
-      "Causal Effect",
-      "Resulting System State",
-      "Intermediate Safety Function",
-      "Intermediate Safety Effect",
-      "Protection Assessment",
-      "Physical-Harm Chain Termination",
-    ];
-    const source = [...row(), "Needs Review", "Contract is not documented.", "Needs review.", "Effect", "State", "Function", "Effect", "Unknown", ""];
-    const result = applyGuidePhraseApplicabilityUpdates([applicabilityHeaders, source], [{
-      sourceRowId: "ROW-1",
-      applicabilityDecision: "No",
-      "Guide Phrase Applicability Rationale": "The interface is an atomic event with no duration semantics.",
-    }], ["ROW-1"]);
-    const fields = Object.fromEntries(applicabilityHeaders.map((header, index) => [header, result.summary[1][index]]));
-    expect(fields["Guide Phrase Applicable"]).toBe("No");
-    expect(fields["Safety Classification"]).toBe("Not Applicable");
-    expect(fields["Safety Significant"]).toBe("No");
-    expect(fields["Causal Effect"]).toBe("");
   });
 });

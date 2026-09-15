@@ -200,7 +200,6 @@ import HazardOperationalContextManager from "./features/project-hazard-analysis/
 import HazardAnalysisResetModal from "./features/project-hazard-analysis/HazardAnalysisResetModal";
 import NeedsReviewResolverModal from "./features/project-hazard-analysis/NeedsReviewResolverModal";
 import {
-  applyGuidePhraseApplicabilityUpdates,
   applyNeedsReviewResolutionUpdates,
   buildNeedsReviewResolutionGroups,
   draftNeedsReviewAnswerWithAI,
@@ -214,7 +213,6 @@ import {
 } from "./features/project-hazard-analysis/classificationResolutionStatus";
 import { indexVibeReviewHeaders } from "./features/project-hazard-analysis/vibeReviewScope";
 import {
-  applyFunctionalSubsystemReallocation,
   applyFunctionalReviewToCodeArchitectureRow,
   ensureFunctionalVibeReviewRowIds,
   FUNCTIONAL_VIBE_REVIEW_ID_FIELD,
@@ -7263,7 +7261,6 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const hazardAnalysisAbortControllerRef = useRef(null);
   const hazardReconciliationHydrationRef = useRef(null);
   const projectPersistenceHydrationRef = useRef(null);
-  const lastKnownFunctionalRowsRef = useRef(new Map());
   const hazardAnalysisArtifactHydrationRef = useRef(null);
   const safetyIssueReportHydrationRef = useRef(null);
   const [generatingSafetyIssueReportIds, setGeneratingSafetyIssueReportIds] = useState(new Set());
@@ -7471,12 +7468,6 @@ useEffect(() => {
     return () => { document.removeEventListener('mousedown', handleClickOutside); };
   }, [draftHazardFilterColumnIndex]);
 
-  useEffect(() => {
-    if (!activeProjectId || !projectLoaded || loadedProjectId !== activeProjectId) return;
-    if (responseRows.length) lastKnownFunctionalRowsRef.current.set(String(activeProjectId), responseRows);
-    else lastKnownFunctionalRowsRef.current.delete(String(activeProjectId));
-  }, [activeProjectId, loadedProjectId, projectLoaded, responseRows]);
-
   // Load per-project state whenever activeProjectId changes
   useEffect(() => {
     let safetyReportLoadCancelled = false;
@@ -7532,12 +7523,7 @@ useEffect(() => {
     }
     const data = loadProjectData(activeProjectId);
     const projectIdForLoad = activeProjectId;
-    const persistedResponseRows = Array.isArray(data?.responseRows) ? data.responseRows : [];
-    const checkpointRows = lastKnownFunctionalRowsRef.current.get(String(projectIdForLoad)) || [];
-    const loadedResponseRows = persistedResponseRows.length ? persistedResponseRows : checkpointRows;
-    if (!persistedResponseRows.length && checkpointRows.length) {
-      saveProjectPatch(projectIdForLoad, { responseRows: checkpointRows });
-    }
+    const loadedResponseRows = data?.responseRows || [];
     setResponseRows(loadedResponseRows);
     setCommittedFunctionalDiagramRows(getProjectDiagramRows(loadedResponseRows));
     setDiagramCategories(data?.diagramCategories || null);
@@ -7630,7 +7616,7 @@ useEffect(() => {
           setIsHazardAnalysisArtifactLoading(false);
         }
       });
-    setShowPromptWizard(loadedResponseRows.length === 0);
+    setShowPromptWizard(!(data?.responseRows && data.responseRows.length > 0));
     setRequirements(data?.requirements || []);   // ← add this
     setFunctionalAuditProposal(null);
     setFunctionalAuditSelectedRows({});
@@ -9862,7 +9848,8 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const proj = { id, name: finalName, folderId: null, createdAt: now };
     const diagramMeta = buildTableSubsystemDiagramCategoriesMeta(functionalRows);
 
-    const projectPersisted = saveProjectPatch(id, {
+    setProjects((prev) => [proj, ...prev]);
+    saveProjectPatch(id, {
       responseRows: functionalRows,
       diagramCategories: diagramMeta,
       analysisResult: null,
@@ -9880,11 +9867,6 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         datasets: [],
       },
     });
-    if (!projectPersisted) {
-      throw new Error("The new project could not be saved in browser storage. Free browser storage or export an existing project, then try again.");
-    }
-    lastKnownFunctionalRowsRef.current.set(String(id), functionalRows);
-    setProjects((prev) => [proj, ...prev]);
     setActiveProjectId(id);
     setActiveProjectFolderId(null);
     setResponseRows(functionalRows);
@@ -10329,11 +10311,8 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const ensured = ensureFunctionalVibeReviewRowIds(responseRows);
     if (ensured.changed) {
       setResponseRows(ensured.rows);
-      if (!saveProjectPatch(activeProjectId, { responseRows: ensured.rows })) {
-        throw new Error("The functional-decomposition review checkpoint could not be saved.");
-      }
+      saveProjectPatch(activeProjectId, { responseRows: ensured.rows });
     }
-    if (activeProjectId && ensured.rows.length) lastKnownFunctionalRowsRef.current.set(String(activeProjectId), ensured.rows);
     return buildFunctionalVibeReviewState(ensured.rows);
   }, [activeProjectId, buildFunctionalVibeReviewState, cbaTableData, responseRows, section]);
 
@@ -10345,7 +10324,6 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   const applyFunctionalVibeReviewDecision = useCallback(async ({
     projectId,
     rowId,
-    recoveryRows = [],
     decision,
     proposedRow,
     rationale = "",
@@ -10409,11 +10387,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     if (!activeProjectId || String(projectId) !== String(activeProjectId)) {
       throw new Error("This review belongs to another project. Return to the original project before applying a decision.");
     }
-    const liveRows = Array.isArray(responseRows) ? responseRows : [];
-    const checkpointRows = Array.isArray(recoveryRows) ? recoveryRows : [];
-    const currentRows = liveRows.some((row) => String(row?.[FUNCTIONAL_VIBE_REVIEW_ID_FIELD] || "") === String(rowId || ""))
-      ? liveRows
-      : checkpointRows;
+    const currentRows = Array.isArray(responseRows) ? responseRows : [];
     const rowIndex = currentRows.findIndex((row) => String(row?.[FUNCTIONAL_VIBE_REVIEW_ID_FIELD] || "") === String(rowId || ""));
     if (rowIndex < 0) throw new Error("The functional-decomposition row is no longer available.");
     const previousRow = { ...currentRows[rowIndex] };
@@ -10421,105 +10395,47 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     if (!normalizedDecision) throw new Error("Choose Keep, Revise, or Remove before applying this review item.");
 
     let nextRows;
-    let affectedRows = [];
     if (normalizedDecision === "Remove") {
-      affectedRows = [{
-        rowId,
-        rowIndex,
-        previousRow,
-        nextRow: null,
-        propagated: false,
-      }];
       nextRows = currentRows.filter((_, index) => index !== rowIndex);
     } else {
       let nextRow = previousRow;
-      let plannedRows = currentRows;
       if (normalizedDecision === "Revise") {
         const revision = pickFunctionalRevisionRow(proposedRow || {});
         const missing = Object.entries(revision).filter(([, value]) => !String(value || "").trim()).map(([field]) => field);
         if (missing.length) throw new Error(`The proposed revision is incomplete: ${missing.join(", ")}.`);
         nextRow = { ...previousRow, ...revision };
-        const reallocation = applyFunctionalSubsystemReallocation(currentRows, { rowIndex, nextRow });
-        const candidateRows = reallocation.rows;
+        const candidateRows = currentRows.map((row, index) => index === rowIndex ? nextRow : row);
         const conflict = ["subsystem", "fromFunction", "controlAction", "toFunction"]
           .map((field) => getFunctionalLabelConflictForEdit(candidateRows, rowIndex, field, nextRow[field]))
           .find(Boolean);
         if (conflict) throw new Error(conflict);
-        plannedRows = candidateRows;
-        affectedRows = reallocation.affectedRows;
       }
-      if (!affectedRows.length) {
-        affectedRows = [{
-          rowId,
-          rowIndex,
-          previousRow,
-          nextRow,
-          propagated: false,
-        }];
-      }
-      const reviewedAt = new Date().toISOString();
-      const affectedIndexes = new Map(affectedRows.map((entry) => [entry.rowIndex, entry]));
-      nextRows = plannedRows.map((row, index) => {
-        const affected = affectedIndexes.get(index);
-        if (!affected) return row;
-        return {
-          ...row,
-          [FUNCTIONAL_VIBE_REVIEW_ID_FIELD]: affected.rowId,
-          _functionalVibeReview: {
-            decision: normalizedDecision,
-            rationale: String(rationale || "").trim(),
-            reviewedAt,
-            ...(affected.propagated ? {
-              propagatedFromRowId: rowId,
-              batchReason: "function-subsystem-reallocation",
-            } : {}),
-            ...reviewMeta,
-          },
-        };
-      });
-      affectedRows = affectedRows.map((entry) => ({
-        ...entry,
-        nextRow: { ...nextRows[entry.rowIndex] },
-      }));
+      nextRow = {
+        ...nextRow,
+        [FUNCTIONAL_VIBE_REVIEW_ID_FIELD]: rowId,
+        _functionalVibeReview: {
+          decision: normalizedDecision,
+          rationale: String(rationale || "").trim(),
+          reviewedAt: new Date().toISOString(),
+          ...reviewMeta,
+        },
+      };
+      nextRows = currentRows.map((row, index) => index === rowIndex ? nextRow : row);
     }
 
-    if (!saveProjectPatch(activeProjectId, { responseRows: nextRows })) {
-      throw new Error("The functional-decomposition review decision could not be saved in browser storage.");
-    }
-    lastKnownFunctionalRowsRef.current.set(String(activeProjectId), nextRows);
     setResponseRows(nextRows);
     setCommittedFunctionalDiagramRows(getProjectDiagramRows(nextRows));
     setDiagramCategories((current) => mergeSubsystemDiagramCategories(current, nextRows));
+    saveProjectPatch(activeProjectId, { responseRows: nextRows });
     return {
       rowId,
       rowIndex,
       decision: normalizedDecision,
       previousRow,
-      affectedRows,
       nextRows,
       state: buildFunctionalVibeReviewState(nextRows),
     };
   }, [activeCodeArchitectureProjectId, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey, activeProjectId, buildFunctionalVibeReviewState, cbaTableData, responseRows]);
-
-  const restoreFunctionalVibeReviewRows = useCallback(async ({ projectId, rows = [], workspaceType = "functional-project" }) => {
-    if (workspaceType === "code-based-architecture") {
-      throw new Error("Code-Based Architecture rows use their repository artifact store and cannot be restored through the project checkpoint.");
-    }
-    if (!activeProjectId || String(projectId) !== String(activeProjectId)) {
-      throw new Error("Return to the reviewed project before restoring its functional decomposition.");
-    }
-    const ensured = ensureFunctionalVibeReviewRowIds(rows);
-    if (!ensured.rows.length) throw new Error("The functional review checkpoint contains no rows to restore.");
-    if (!saveProjectPatch(activeProjectId, { responseRows: ensured.rows })) {
-      throw new Error("The functional decomposition was recovered, but browser storage could not save it.");
-    }
-    lastKnownFunctionalRowsRef.current.set(String(activeProjectId), ensured.rows);
-    setResponseRows(ensured.rows);
-    setCommittedFunctionalDiagramRows(getProjectDiagramRows(ensured.rows));
-    setDiagramCategories((current) => mergeSubsystemDiagramCategories(current, ensured.rows));
-    setShowPromptWizard(false);
-    return { nextRows: ensured.rows, state: buildFunctionalVibeReviewState(ensured.rows) };
-  }, [activeProjectId, buildFunctionalVibeReviewState]);
 
   const undoFunctionalVibeReviewDecision = useCallback(async ({ projectId, record, workspaceType = "functional-project", repoId = "" }) => {
     if (workspaceType === "code-based-architecture") {
@@ -10558,23 +10474,15 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       const insertionIndex = Math.max(0, Math.min(Number(record.rowIndex) || 0, currentRows.length));
       nextRows = [...currentRows];
       nextRows.splice(insertionIndex, 0, record.previousRow);
-    } else if (Array.isArray(record.affectedRows) && record.affectedRows.length > 1) {
-      const originalsById = new Map(record.affectedRows.map((entry) => [String(entry.rowId || ""), entry.previousRow]));
-      const primaryExists = currentRows.some((row) => String(row?.[FUNCTIONAL_VIBE_REVIEW_ID_FIELD] || "") === String(record.rowId));
-      if (!primaryExists) throw new Error("The reviewed functional row is no longer available for undo.");
-      nextRows = currentRows.map((row) => originalsById.get(String(row?.[FUNCTIONAL_VIBE_REVIEW_ID_FIELD] || "")) || row);
     } else {
       const rowIndex = currentRows.findIndex((row) => String(row?.[FUNCTIONAL_VIBE_REVIEW_ID_FIELD] || "") === String(record.rowId));
       if (rowIndex < 0) throw new Error("The reviewed functional row is no longer available for undo.");
       nextRows = currentRows.map((row, index) => index === rowIndex ? record.previousRow : row);
     }
-    if (!saveProjectPatch(activeProjectId, { responseRows: nextRows })) {
-      throw new Error("The functional-decomposition undo could not be saved in browser storage.");
-    }
-    lastKnownFunctionalRowsRef.current.set(String(activeProjectId), nextRows);
     setResponseRows(nextRows);
     setCommittedFunctionalDiagramRows(getProjectDiagramRows(nextRows));
     setDiagramCategories((current) => mergeSubsystemDiagramCategories(current, nextRows));
+    saveProjectPatch(activeProjectId, { responseRows: nextRows });
     return { rowId: record.rowId, nextRows, state: buildFunctionalVibeReviewState(nextRows) };
   }, [activeCodeArchitectureProjectId, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey, activeProjectId, buildFunctionalVibeReviewState, cbaTableData, responseRows]);
 
@@ -10635,7 +10543,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     section,
   ]);
 
-  const applyHazardVibeReviewDecision = useCallback(async ({ projectId, sourceRowId, update, reviewerDisposition = false, reviewTarget = "safetySignificant", workspaceType = "functional-project", sourceRunId = "" }) => {
+  const applyHazardVibeReviewDecision = useCallback(async ({ projectId, sourceRowId, update, reviewerDisposition = false, workspaceType = "functional-project", sourceRunId = "" }) => {
     if (workspaceType === "code-based-architecture") {
       if (!activeCodeArchitectureProjectId || String(projectId) !== String(activeCodeArchitectureProjectId)) {
         throw new Error("This review belongs to another Code-Based Architecture project. Return to the original project before applying a decision.");
@@ -10650,14 +10558,12 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       const rowIndex = summary.slice(1).findIndex((row) => String(row?.[indexes.rawRowId] || "").trim() === String(sourceRowId || "").trim()) + 1;
       if (rowIndex <= 0) return { missing: true, sourceRowId };
       const previousRow = [...summary[rowIndex]];
-      const applied = reviewTarget === "guidePhraseApplicable"
-        ? applyGuidePhraseApplicabilityUpdates(summary, [{ ...update, sourceRowId }], [sourceRowId])
-        : applyNeedsReviewResolutionUpdates(
-          summary,
-          [{ ...update, sourceRowId }],
-          [sourceRowId],
-          { allowHumanAdjudication: reviewerDisposition === true },
-        );
+      const applied = applyNeedsReviewResolutionUpdates(
+        summary,
+        [{ ...update, sourceRowId }],
+        [sourceRowId],
+        { allowHumanAdjudication: reviewerDisposition === true },
+      );
       if (applied.rejectedUpdates.length || !applied.changedRowIndexes.length) {
         throw new Error(applied.rejectedUpdates[0]?.error || "The governed decision was invalid or did not change the row.");
       }
@@ -10679,14 +10585,12 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const rowIndex = summary.slice(1).findIndex((row) => String(row?.[indexes.rawRowId] || "").trim() === String(sourceRowId || "").trim()) + 1;
     if (rowIndex <= 0) return { missing: true, sourceRowId };
     const previousRow = [...summary[rowIndex]];
-    const applied = reviewTarget === "guidePhraseApplicable"
-      ? applyGuidePhraseApplicabilityUpdates(summary, [{ ...update, sourceRowId }], [sourceRowId])
-      : applyNeedsReviewResolutionUpdates(
-        summary,
-        [{ ...update, sourceRowId }],
-        [sourceRowId],
-        { allowHumanAdjudication: reviewerDisposition === true },
-      );
+    const applied = applyNeedsReviewResolutionUpdates(
+      summary,
+      [{ ...update, sourceRowId }],
+      [sourceRowId],
+      { allowHumanAdjudication: reviewerDisposition === true },
+    );
     if (applied.rejectedUpdates.length || !applied.changedRowIndexes.length) {
       throw new Error(applied.rejectedUpdates[0]?.error || "The governed decision was invalid or did not change the row.");
     }
@@ -10728,7 +10632,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       };
       await saveCodeArchitectureHazardRun(nextRun);
       setCodeArchitectureHazardRun(nextRun);
-      return { sourceRowId, rowIndex, previousRow: [...summary[rowIndex]], nextRow: [...restoredSummary[rowIndex]], headers: [...restoredSummary[0]] };
+      return { sourceRowId, rowIndex };
     }
     if (!activeProjectId || String(projectId) !== String(activeProjectId)) throw new Error("Return to the reviewed project before undoing this decision.");
     const summary = analysisResult?.Summary;
@@ -10751,7 +10655,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setAnalysisResult(nextAnalysisResult);
     setDraftHazardRowsByIndex(nextDraftRows);
     setSafetyIssueRefreshStatus({ kind: "working", message: "A hazard review decision was undone. Use Regenerate with AI to refresh the consolidated issue set." });
-    return { sourceRowId, rowIndex, previousRow: [...summary[rowIndex]], nextRow: [...restoredSummary[rowIndex]], headers: [...restoredSummary[0]] };
+    return { sourceRowId, rowIndex };
   }, [activeCodeArchitectureProjectId, activeProjectId, analysisResult, codeArchitectureHazardRun, draftHazardHeaders, draftHazardRowsByIndex, riskRegister]);
 
   const openHazardVibeReviewRow = useCallback(({ projectId, sourceRowId, workspaceType = "functional-project" }) => {
@@ -10879,7 +10783,6 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       openWorkspaceArtifact,
       beginFunctionalVibeReview,
       getFunctionalVibeReviewState,
-      restoreFunctionalVibeReviewRows,
       applyFunctionalVibeReviewDecision,
       undoFunctionalVibeReviewDecision,
       openFunctionalVibeReviewRow,
@@ -10906,7 +10809,6 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     openWorkspaceArtifact,
     beginFunctionalVibeReview,
     getFunctionalVibeReviewState,
-    restoreFunctionalVibeReviewRows,
     applyFunctionalVibeReviewDecision,
     undoFunctionalVibeReviewDecision,
     openFunctionalVibeReviewRow,
@@ -13456,6 +13358,11 @@ const projectsDashboardRows = useMemo(() => {
     .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
 }, [projects, projectFolders, activeProjectId, riskRegister]);
 
+const projectsDashboardOpenRisks = useMemo(
+  () => consoleRiskRegister.filter((risk) => (risk?.status || "Open") !== "Closed").length,
+  [consoleRiskRegister]
+);
+
 const codeArchitectureDashboardRows = useMemo(() => {
   return (codeArchitectureProjects || [])
     .map((project) => {
@@ -15399,8 +15306,47 @@ const projectHint = useMemo(() => ({
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-hidden">
-          <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white p-4">
+        <div className="mb-4 grid shrink-0 grid-cols-2 gap-3 md:grid-cols-4">
+          <div className="rounded-xl border border-gray-200 bg-white p-4">
+            <div className="text-2xl font-semibold">{codeArchitectureProjects.length}</div>
+            <div className="text-xs text-gray-500">Projects</div>
+          </div>
+          <div className="rounded-xl border border-gray-200 bg-white p-4">
+            <div className="text-2xl font-semibold">{codeArchitectureFolders.length}</div>
+            <div className="text-xs text-gray-500">Folders</div>
+          </div>
+          <div className="rounded-xl border border-gray-200 bg-white p-4">
+            <div className="text-2xl font-semibold">{codeArchitectureProjects.reduce((sum, project) => sum + (project.repos?.length || 0), 0)}</div>
+            <div className="text-xs text-gray-500">Repositories</div>
+          </div>
+          <div className="rounded-xl border border-gray-200 bg-white p-4">
+            <div className="text-2xl font-semibold">{codeArchitectureDashboardRows.reduce((sum, project) => sum + (project.rowCount ? 1 : 0), 0)}</div>
+            <div className="text-xs text-gray-500">Analyzed repos</div>
+          </div>
+        </div>
+
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden lg:grid-cols-2 lg:grid-rows-[minmax(0,0.35fr)_minmax(0,0.65fr)]">
+          <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white p-4">
+            <h3 className="mb-3 shrink-0 text-sm font-semibold text-gray-900">Hazard status</h3>
+            <div className="min-h-0 overflow-auto text-sm text-gray-500">Run code architecture hazard analysis inside a connected repo project.</div>
+          </section>
+          <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white p-4">
+            <h3 className="mb-3 shrink-0 text-sm font-semibold text-gray-900">Recent activity</h3>
+            {codeArchitectureDashboardRows.length === 0 ? (
+              <div className="min-h-0 overflow-auto text-sm text-gray-500">Nothing to show yet.</div>
+            ) : (
+              <div className="min-h-0 space-y-3 overflow-auto pr-1">
+                {codeArchitectureDashboardRows.map((project) => (
+                  <div key={project.id} className="text-sm text-gray-800">
+                    <span className="font-medium">{project.name}</span>
+                    <span className="text-gray-500"> · {project.activeRepoName}</span>
+                    {project.updatedAt && <div className="text-[11px] text-gray-400">{new Date(project.updatedAt).toLocaleString()}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+          <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white p-4 lg:col-span-2">
             <h3 className="mb-3 shrink-0 text-sm font-semibold text-gray-900">Code architecture projects</h3>
             {codeArchitectureDashboardRows.length === 0 ? (
               <div className="min-h-0 overflow-auto text-sm text-gray-500">Create a Code-Based Architecture project and connect a GitHub repo to begin.</div>
@@ -16124,8 +16070,65 @@ const projectHint = useMemo(() => ({
       </div>
     </div>
 
-    <div>
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-4 mb-4">
+      <div className="rounded-xl border border-gray-200 bg-white p-4">
+        <div className="text-2xl font-semibold">{projects.length}</div>
+        <div className="text-xs text-gray-500">Projects</div>
+      </div>
+      <div className="rounded-xl border border-gray-200 bg-white p-4">
+        <div className="text-2xl font-semibold">{projectFolders.length}</div>
+        <div className="text-xs text-gray-500">Folders</div>
+      </div>
+      <div className="rounded-xl border border-gray-200 bg-white p-4">
+        <div className="text-2xl font-semibold">{consoleRiskRegister.length}</div>
+        <div className="text-xs text-gray-500">Total risks</div>
+      </div>
+      <div className="rounded-xl border border-gray-200 bg-white p-4">
+        <div className="text-2xl font-semibold">{projectsDashboardOpenRisks}</div>
+        <div className="text-xs text-gray-500">Open risks</div>
+      </div>
+    </div>
+
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <section className="rounded-xl border border-gray-200 bg-white p-4">
+        <h3 className="mb-3 text-sm font-semibold text-gray-900">Risk status</h3>
+        {consoleRiskRegister.length === 0 ? (
+          <div className="text-sm text-gray-500">No risks across projects yet.</div>
+        ) : (
+          <div className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={consoleRiskStatusData} layout="vertical">
+                <XAxis type="number" hide />
+                <YAxis type="category" dataKey="name" width={110} />
+                <Tooltip />
+                <Bar dataKey="value">
+                  {consoleRiskStatusData.map((_, i) => (
+                    <Cell key={i} fill={['#2D7DFE', '#F59E0B', '#10B981', '#7A37FF', '#EF4444'][i % 5]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-xl border border-gray-200 bg-white p-4">
+        <h3 className="mb-3 text-sm font-semibold text-gray-900">Recent activity</h3>
+        <div className="space-y-3">
+          {consoleRecentActivity.length === 0 ? (
+            <div className="text-sm text-gray-500">Nothing to show yet.</div>
+          ) : consoleRecentActivity.slice(0, 6).map((act, i) => (
+            <div key={i} className="text-sm text-gray-800">
+              <span className="font-medium">{act.user}</span> updated{" "}
+              <span className="text-[#2D7DFE]">{act.item}</span>
+              {act.status && <span className="text-gray-500"> · {act.status}</span>}
+              {act.when && <div className="text-[11px] text-gray-400">{act.when}</div>}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-gray-200 bg-white p-4 lg:col-span-2">
         <h3 className="mb-3 text-sm font-semibold text-gray-900">Projects</h3>
         {projectsDashboardRows.length === 0 ? (
           <div className="text-sm text-gray-500">Create a project to start building your workspace.</div>
@@ -16297,13 +16300,13 @@ const projectHint = useMemo(() => ({
 )}
 {activeTab === 'Functional Diagramming' && (
   <div className="flex min-h-0 flex-1 flex-col overflow-hidden pb-3 text-center">
-                  {showPromptWizard && responseRows.length === 0 && (
+                  {showPromptWizard && (
                     <>
 
                     </>
                   )}
 
-                  {showPromptWizard && responseRows.length === 0 && (
+                  {showPromptWizard && (
                     <div className="mx-auto w-full max-w-[min(96vw,calc(100vw-9rem))]">
                       {/* Realtime voice discovery is currently provided by OpenAI Realtime. */}
                       {conversationalProjectModeAvailable && (

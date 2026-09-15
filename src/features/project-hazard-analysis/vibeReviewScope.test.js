@@ -61,7 +61,6 @@ test("does not confuse Guide Phrase Applicable with the Guide Phrase column", ()
   expect(result.status).toBe("matched");
   expect(result.queue).toEqual(["row-2"]);
   expect(result.filters.map((filter) => filter.field)).toEqual(["guidePhraseApplicable"]);
-  expect(result.reviewTarget).toBe("guidePhraseApplicable");
 });
 
 test("does not confuse functional decomposition creation with hazard review", () => {

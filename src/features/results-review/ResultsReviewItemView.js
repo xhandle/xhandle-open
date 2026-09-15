@@ -30,42 +30,6 @@ function fieldLabel(column) {
     .replace(/^./, (char) => char.toUpperCase());
 }
 
-function ReviewHistory({ history = [] }) {
-  if (!history.length) return null;
-  return (
-    <div>
-      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">Review History</div>
-      <div className="space-y-2">
-        {[...history].reverse().map((entry, index) => (
-          <details key={entry.id || `${entry.action}-${index}`} className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
-            <summary className="cursor-pointer text-xs font-semibold text-gray-800">
-              {fieldLabel(entry.decision || entry.action || "Review update")}
-              {entry.at ? ` · ${new Date(entry.at).toLocaleString()}` : ""}
-            </summary>
-            <div className="mt-2 space-y-1 text-xs leading-5 text-gray-700">
-              {entry.label && <div><span className="font-semibold">Item:</span> {entry.label}</div>}
-              {entry.scopeLabel && <div><span className="font-semibold">Scope:</span> {entry.scopeLabel}</div>}
-              {entry.rationale && <div><span className="font-semibold">Rationale:</span> {entry.rationale}</div>}
-              {entry.userFeedback && <div><span className="font-semibold">Reviewer feedback:</span> {entry.userFeedback}</div>}
-              {(entry.provider || entry.model || entry.effort) && (
-                <div><span className="font-semibold">AI:</span> {[entry.provider, entry.model, entry.effort].filter(Boolean).join(" · ")}</div>
-              )}
-              {entry.sessionId && <div><span className="font-semibold">Session:</span> {entry.sessionId}</div>}
-              {entry.traceUri && <div className="break-all"><span className="font-semibold">Source trace:</span> {entry.traceUri}</div>}
-              {(entry.before !== undefined || entry.after !== undefined) && (
-                <details className="mt-2 rounded border border-gray-200 bg-white p-2">
-                  <summary className="cursor-pointer font-semibold">Before / after evidence</summary>
-                  <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap text-[11px] leading-4">{contentToText({ before: entry.before, after: entry.after })}</pre>
-                </details>
-              )}
-            </div>
-          </details>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function StructuredRowReviewEditor({ originalContent, currentContent, values, setValues, readOnly = false }) {
   const columns = currentContent.columns || originalContent.columns || [];
   return (
@@ -210,7 +174,6 @@ export default function ResultsReviewItemView({
             disabled={readOnly}
           />
         </div>
-        <ReviewHistory history={item.history || []} />
       </div>
 
       {!readOnly && (
