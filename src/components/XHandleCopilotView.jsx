@@ -2510,8 +2510,37 @@ function CollaboratorChoicePrompt({ message, disabled = false, onContinue }) {
   const prompt = message?.choicePrompt;
   const [selected, setSelected] = useState(prompt?.selectedValue || prompt?.defaultValue || "");
   const [customScope, setCustomScope] = useState(prompt?.customValue || "");
-  if (!prompt || !["functional-abstraction", "hazard-vibe-scope", "functional-vibe-scope", "contextual-vibe-review-target"].includes(prompt.type)) return null;
+  const [reviewName, setReviewName] = useState(prompt?.reviewName || prompt?.defaultName || "");
+  if (!prompt || !["functional-abstraction", "hazard-vibe-scope", "functional-vibe-scope", "contextual-vibe-review-target", "vibe-review-name"].includes(prompt.type)) return null;
   const completed = Boolean(prompt.completed);
+  if (prompt.type === "vibe-review-name") {
+    const displayedName = completed ? (prompt.reviewName || reviewName) : reviewName;
+    return (
+      <fieldset className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50/60 p-3" disabled={disabled || completed}>
+        <legend className="text-sm font-semibold text-neutral-900">Name this vibe review</legend>
+        <p className="mt-1 text-xs text-neutral-600">This name will identify the review in the Review Center.</p>
+        <input
+          type="text"
+          value={displayedName}
+          onChange={(event) => setReviewName(event.target.value)}
+          disabled={disabled || completed}
+          maxLength={120}
+          autoFocus={!completed}
+          placeholder="Enter a review name"
+          aria-label="Vibe review name"
+          className="mt-3 w-full rounded-md border border-indigo-200 bg-white px-3 py-2 text-sm text-neutral-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:opacity-75"
+        />
+        <button
+          type="button"
+          disabled={disabled || completed || !reviewName.trim()}
+          onClick={() => onContinue?.(reviewName.trim(), message.messageIndex)}
+          className="mt-3 inline-flex items-center justify-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {completed ? "Review started" : "Start review"}
+        </button>
+      </fieldset>
+    );
+  }
   const effectiveSelected = completed ? (prompt.selectedValue || selected) : selected;
   const selectedOption = (prompt.options || []).find((rawOption) => (
     String(typeof rawOption === "string" ? rawOption : rawOption?.value) === String(effectiveSelected)
@@ -5448,9 +5477,21 @@ useEffect(() => {
   async function handleCollaboratorChoice(value, messageIndex, customValue = "") {
     const currentThread = loadThreads().find((thread) => thread.id === activeId);
     const message = currentThread?.messages?.[messageIndex];
-    if (!["hazard-vibe-scope", "functional-vibe-scope", "contextual-vibe-review-target"].includes(message?.choicePrompt?.type)) return handleFunctionalAbstractionChoice(value, messageIndex);
+    if (!["hazard-vibe-scope", "functional-vibe-scope", "contextual-vibe-review-target", "vibe-review-name"].includes(message?.choicePrompt?.type)) return handleFunctionalAbstractionChoice(value, messageIndex);
     if (busy) return;
     const prompt = message.choicePrompt;
+    if (prompt.type === "vibe-review-name") {
+      const reviewName = String(value || "").trim().slice(0, 120);
+      if (!reviewName || !prompt.originalPrompt) return;
+      const nextMessages = (currentThread.messages || []).map((item, index) => index === messageIndex
+        ? { ...item, choicePrompt: { ...item.choicePrompt, reviewName, completed: true } } : item);
+      setMessages(activeId, nextMessages); setThreads(loadThreads());
+      await runCopilot(prompt.originalPrompt, {
+        vibeReviewName: reviewName,
+        ...(prompt.domain === "functional" ? { functionalReviewInstructions: prompt.reviewInstructions || prompt.originalPrompt } : {}),
+      });
+      return;
+    }
     if (prompt.type === "contextual-vibe-review-target") {
       const option = (prompt.options || []).find((candidate) => (
         String(typeof candidate === "string" ? candidate : candidate?.value) === String(value)
@@ -5831,6 +5872,22 @@ useEffect(() => {
           setThreads(loadThreads());
           return;
         }
+        const reviewName = String(options.vibeReviewName || "").trim();
+        if (!reviewName) {
+          appendMessage(activeId, {
+            role: "assistant",
+            content: `${describeFunctionalVibeReviewScope(scopeResult)} Give this review a name before I start it.`,
+            choicePrompt: {
+              type: "vibe-review-name",
+              domain: "functional",
+              originalPrompt: userText,
+              reviewInstructions: options.functionalReviewInstructions || userText,
+              defaultName: `Functional Review — ${scopeResult.scopeLabel}`.slice(0, 120),
+            },
+          });
+          setThreads(loadThreads());
+          return;
+        }
         if (activeReview && ![VIBE_REVIEW_STATES.COMPLETED, VIBE_REVIEW_STATES.CANCELLED].includes(activeReview.state)) {
           const stoppedReview = transitionVibeReviewSession(activeReview, { type: "stop" });
           saveVibeReviewSession(stoppedReview);
@@ -5850,6 +5907,7 @@ useEffect(() => {
           threadId: activeId,
           queue: scopeResult.queue,
           rowSnapshot: state.workspaceType === "code-based-architecture" ? [] : state.rows,
+          reviewName,
           scopeLabel: scopeResult.scopeLabel,
           reviewFields: scopeResult.reviewFields || [],
           reviewInstructions: options.functionalReviewInstructions || userText,
@@ -5884,6 +5942,21 @@ useEffect(() => {
         }
         const scopeResult = resolveHazardVibeReviewScope(userText, state.summary);
         if (scopeResult.status !== "matched") { const ambiguity = scopeResult.ambiguous?.[0]; appendMessage(activeId, { role: "assistant", content: describeScopeResolution(scopeResult), choicePrompt: scopeResult.status === "ambiguous" ? { type: "hazard-vibe-scope", field: ambiguity?.field, originalPrompt: userText, options: ambiguity?.values || [] } : undefined }); setThreads(loadThreads()); return; }
+        const reviewName = String(options.vibeReviewName || "").trim();
+        if (!reviewName) {
+          appendMessage(activeId, {
+            role: "assistant",
+            content: `${describeScopeResolution(scopeResult)} Give this review a name before I start it.`,
+            choicePrompt: {
+              type: "vibe-review-name",
+              domain: "hazard",
+              originalPrompt: userText,
+              defaultName: `Hazard Review — ${scopeResult.scopeLabel}`.slice(0, 120),
+            },
+          });
+          setThreads(loadThreads());
+          return;
+        }
         if (activeReview && ![VIBE_REVIEW_STATES.COMPLETED, VIBE_REVIEW_STATES.CANCELLED].includes(activeReview.state)) {
           const stoppedReview = transitionVibeReviewSession(activeReview, { type: "stop" });
           saveVibeReviewSession(stoppedReview);
@@ -5902,6 +5975,7 @@ useEffect(() => {
           projectId: state.activeProjectId,
           threadId: activeId,
           queue: scopeResult.queue,
+          reviewName,
           scopeLabel: scopeResult.scopeLabel,
           reviewTarget: scopeResult.reviewTarget || "safetySignificant",
           ai: collaboratorAI,

@@ -57,11 +57,11 @@ export const VIBE_REVIEW_STATES = Object.freeze({
   COMPLETED: "completed", CANCELLED: "cancelled", PAUSED: "paused",
 });
 
-export function createVibeReviewSession({ projectId, threadId, queue = [], scopeLabel = "", reviewTarget = "safetySignificant", ai = {}, workspaceType = "functional-project", sourceRunId = "", repoId = "" }) {
+export function createVibeReviewSession({ projectId, threadId, queue = [], reviewName = "", scopeLabel = "", reviewTarget = "safetySignificant", ai = {}, workspaceType = "functional-project", sourceRunId = "", repoId = "" }) {
   const stableQueue = Array.from(new Set(queue.map(String).filter(Boolean)));
   return {
     id: uid(), projectId: String(projectId), threadId: String(threadId), queue: stableQueue,
-    scopeLabel, reviewTarget: reviewTarget === "guidePhraseApplicable" ? reviewTarget : "safetySignificant",
+    reviewName: String(reviewName || "").trim(), scopeLabel, reviewTarget: reviewTarget === "guidePhraseApplicable" ? reviewTarget : "safetySignificant",
     cursor: 0, state: VIBE_REVIEW_STATES.PROPOSING, proposal: null,
     workspaceType: String(workspaceType || "functional-project"),
     sourceRunId: String(sourceRunId || ""),

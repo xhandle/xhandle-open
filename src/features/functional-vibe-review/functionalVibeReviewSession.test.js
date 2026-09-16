@@ -42,6 +42,16 @@ test("retains explicitly targeted review columns in the session", () => {
   expect(session.reviewFields).toEqual(["lifecyclePhase"]);
 });
 
+test("persists the user-supplied review name", () => {
+  const session = createFunctionalVibeReviewSession({
+    projectId: "p",
+    threadId: "t",
+    queue: ["a"],
+    reviewName: "Localization interface review",
+  });
+  expect(session.reviewName).toBe("Localization interface review");
+});
+
 test("retains the original reviewer instructions after resolving a scope choice", () => {
   const session = createFunctionalVibeReviewSession({
     projectId: "p",

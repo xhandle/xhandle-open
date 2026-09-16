@@ -178,6 +178,8 @@ function newestReviewItem(group = {}) {
 function reviewRecordName(group = {}) {
   const item = newestReviewItem(group) || {};
   const isVibeReview = group.artifactType === "collaborator_vibe_review_session";
+  const suppliedReviewName = String(item.currentContent?.reviewName || item.vibeReview?.reviewName || "").trim();
+  if (isVibeReview && suppliedReviewName) return suppliedReviewName;
   const base = isVibeReview ? "Vibe Review" : group.materialType || "Review Record";
   const scope = item.currentContent?.scope || item.vibeReview?.scopeLabel || group.sourceMethod || "";
   const stableId = compactReviewIdentifier(item.currentContent?.sessionId || item.sourceRunId || group.sourceRunId || group.artifactRoot || group.key);

@@ -22,6 +22,16 @@ test("retains the reviewed hazard column so actions cannot mutate a different fi
   expect(session.reviewTarget).toBe("guidePhraseApplicable");
 });
 
+test("persists the user-supplied review name", () => {
+  const session = createVibeReviewSession({
+    projectId: "p",
+    threadId: "t",
+    queue: ["row-1"],
+    reviewName: "Intersection guide-phrase review",
+  });
+  expect(session.reviewName).toBe("Intersection guide-phrase review");
+});
+
 test("bare no explicitly maps to Mark No while questions do not advance", () => {
   expect(parseVibeReviewAction("no")).toBe("no");
   expect(parseVibeReviewAction("Do we know whether the interlock exists?")).toBeNull();

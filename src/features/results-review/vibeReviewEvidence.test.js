@@ -86,6 +86,7 @@ test("captures a traceable Collaborator session summary", () => {
       id: "session-2",
       projectId: "project-2",
       threadId: "thread-2",
+      reviewName: "Lifecycle readiness review",
       scopeLabel: "Lifecycle Phase = Needs Review",
       workspaceType: "code-based-architecture",
       repoId: "repo-7",
@@ -106,6 +107,7 @@ test("captures a traceable Collaborator session summary", () => {
   expect(evidence.status).toBe(REVIEW_STATUSES.APPROVED_WITH_MODIFICATIONS);
   expect(evidence.reviewState).toBe(REVIEW_LIFECYCLE_STATES.CLOSED);
   expect(evidence.currentContent).toEqual(expect.objectContaining({
+    reviewName: "Lifecycle readiness review",
     outcome: "completed",
     repoId: "repo-7",
     queueSize: 2,

@@ -72,12 +72,12 @@ function normalizeRowSnapshot(rows = []) {
   }).filter(Boolean);
 }
 
-export function createFunctionalVibeReviewSession({ projectId, threadId, queue = [], rowSnapshot = [], scopeLabel = "", reviewFields = [], reviewInstructions = "", ai = {}, workspaceType = "functional-project", repoId = "" }) {
+export function createFunctionalVibeReviewSession({ projectId, threadId, queue = [], rowSnapshot = [], reviewName = "", scopeLabel = "", reviewFields = [], reviewInstructions = "", ai = {}, workspaceType = "functional-project", repoId = "" }) {
   const stableQueue = Array.from(new Set(queue.map(String).filter(Boolean)));
   return {
     id: uid(), projectId: String(projectId), threadId: String(threadId), queue: stableQueue,
     rowSnapshot: normalizeRowSnapshot(rowSnapshot),
-    scopeLabel, cursor: 0, state: FUNCTIONAL_VIBE_REVIEW_STATES.PROPOSING, proposal: null,
+    reviewName: String(reviewName || "").trim(), scopeLabel, cursor: 0, state: FUNCTIONAL_VIBE_REVIEW_STATES.PROPOSING, proposal: null,
     reviewFields: Array.from(new Set((reviewFields || []).map(String).filter(Boolean))),
     reviewInstructions: String(reviewInstructions || "").trim(),
     workspaceType, repoId,

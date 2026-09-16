@@ -219,6 +219,10 @@ import {
 } from "./features/project-hazard-analysis/classificationResolutionStatus";
 import { indexVibeReviewHeaders } from "./features/project-hazard-analysis/vibeReviewScope";
 import {
+  normalizeProjectHazardMethod,
+  shouldApplyHazardReconciliation,
+} from "./features/project-hazard-analysis/hazardReconciliation";
+import {
   applyFunctionalSubsystemReallocation,
   applyFunctionalReviewToCodeArchitectureRow,
   ensureFunctionalVibeReviewRowIds,
@@ -335,7 +339,7 @@ const STPA_CONTROL_ACTION_GUIDE_PHRASES = [
 ];
 
 function getProjectHazardGuidePhrases(method = "STPA-Textbook") {
-  return method === "STPA-Textbook" || method === "STPA"
+  return normalizeProjectHazardMethod(method) === "STPA-Textbook"
     ? STPA_CONTROL_ACTION_GUIDE_PHRASES
     : [""];
 }
@@ -541,7 +545,8 @@ const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
 };
 
 function getProjectDraftHazardHeaders(method = "STPA") {
-  const methodHeaders = PROJECT_DRAFT_HAZARD_METHOD_HEADERS[method] || PROJECT_DRAFT_HAZARD_METHOD_HEADERS.STPA;
+  const normalizedMethod = normalizeProjectHazardMethod(method);
+  const methodHeaders = PROJECT_DRAFT_HAZARD_METHOD_HEADERS[normalizedMethod] || PROJECT_DRAFT_HAZARD_METHOD_HEADERS.STPA;
   return Array.from(new Set([...PROJECT_DRAFT_HAZARD_BASE_HEADERS, ...methodHeaders, ...PROJECT_HAZARD_CONTEXT_HEADER_LIST]));
 }
 
@@ -7561,7 +7566,7 @@ useEffect(() => {
     setNeedsReviewDraftingGroupId("");
     setNeedsReviewResolverStatus(null);
     setExpandedHazardVariantKeys(new Set());
-    setRiskMethod(data?.riskMethod || 'STPA-Textbook');
+    setRiskMethod(normalizeProjectHazardMethod(data?.riskMethod));
     setAgentReportResult(data?.agentReportResult || null); // NEW: restore report
     const legacySafetyIssueReport = String(data?.riskAssessmentReportMarkdown || "");
     setRiskAssessmentReportMarkdown(legacySafetyIssueReport);
@@ -8059,10 +8064,9 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         return alignedCompleted;
       })
       .filter(Boolean);
-    // Never erase a completed analysis because a transient project-load or
-    // reconciliation state produced zero matches. Completed evidence remains
-    // visible until the user explicitly replaces it with another analysis.
-    if (!nextSummaryRows.length) return;
+    // Reconciliation is additive/non-destructive. A partial match must never
+    // replace a completed analysis with a smaller subset of its rows.
+    if (!shouldApplyHazardReconciliation(existingSummary, nextSummaryRows)) return;
     const nextAnalysisResult = { ...(analysisResult || {}), Summary: [targetHeaders, ...nextSummaryRows] };
     const currentAnalysisSignature = JSON.stringify(analysisResult?.Summary || null);
     const nextAnalysisSignature = JSON.stringify(nextAnalysisResult?.Summary || null);
@@ -8568,7 +8572,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const recovery = buildHazardAnalysisRecovery(hazardSummaryReviewItems);
     if (!recovery) return;
     const recoveredAnalysis = recovery.analysisResult;
-    const recoveredMethod = recovery.sourceMethod || riskMethod;
+    const recoveredMethod = normalizeProjectHazardMethod(recovery.sourceMethod || riskMethod);
     setAnalysisResult(recoveredAnalysis);
     if (recoveredMethod !== riskMethod) setRiskMethod(recoveredMethod);
     if (recovery.sourceRunId) setHazardReviewRunId(recovery.sourceRunId);
@@ -11407,13 +11411,14 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   };
 
   const handleProjectRiskMethodChange = (nextMethod) => {
-    setRiskMethod(nextMethod);
+    const normalizedMethod = normalizeProjectHazardMethod(nextMethod);
+    setRiskMethod(normalizedMethod);
     setDraftHazardColumnFilters({});
     setDraftHazardColumnSearches({});
     setDraftHazardFilterColumnIndex(null);
     if (activeProjectId) {
       saveProjectPatch(activeProjectId, {
-        riskMethod: nextMethod,
+        riskMethod: normalizedMethod,
       });
     }
   };
