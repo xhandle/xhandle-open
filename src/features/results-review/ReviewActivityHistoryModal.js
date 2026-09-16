@@ -89,6 +89,8 @@ export function buildReviewActivityHistory(items = []) {
       outcome: entry.outcome || "",
       rationale: entry.rationale || "",
       userFeedback: entry.userFeedback || entry.feedback || "",
+      reviewerName: entry.reviewerName || item.currentContent?.reviewerName || item.vibeReview?.reviewerName || "",
+      reviewerId: entry.reviewerId || item.reviewerId || item.currentContent?.reviewerId || item.vibeReview?.reviewerId || "",
       provider: entry.provider || item.currentContent?.ai?.provider || "",
       model: entry.model || item.currentContent?.ai?.model || "",
       effort: entry.effort || item.currentContent?.ai?.effort || "",
@@ -103,8 +105,44 @@ export function buildReviewActivityHistory(items = []) {
       traceUri: entry.traceUri || item.traceLinks?.find?.((link) => link.type === "source_uri")?.uri || "",
       item,
     };
-  }));
-  return [...activities, ...baselineActivities(list)]
+  })).filter((activity) => (
+    activity.kind !== "session"
+    || !["started", "in_progress"].includes(clean(activity.outcome).toLowerCase())
+  ));
+  const sessionDecisions = list.flatMap((item) => {
+    if (item.reviewUnitType !== REVIEW_UNIT_TYPES.REVIEW_SESSION) return [];
+    return (item.currentContent?.decisions || []).map((decision, index) => ({
+      id: `${item.id}-decision-${decision.rowId || decision.sourceRowId || index}-${decision.timestamp || index}`,
+      kind: "decision",
+      at: decision.timestamp || item.updatedAt || item.createdAt || "",
+      label: clean(decision.decision || decision.newReviewValue || decision.action || "Decision recorded"),
+      itemLabel: decision.label || decision.rowId || decision.sourceRowId || `Row ${index + 1}`,
+      rowId: clean(decision.rowId || decision.sourceRowId),
+      rowIndex: Number.isFinite(Number(decision.rowIndex)) ? Number(decision.rowIndex) : null,
+      action: decision.action || "",
+      decision: decision.decision || decision.newReviewValue || "",
+      rationale: decision.rationale || decision.proposal?.rationale || "",
+      userFeedback: decision.userFeedback || "",
+      reviewerName: item.currentContent?.reviewerName || item.vibeReview?.reviewerName || "",
+      reviewerId: item.currentContent?.reviewerId || item.reviewerId || item.vibeReview?.reviewerId || "",
+      provider: item.currentContent?.ai?.provider || "",
+      model: item.currentContent?.ai?.model || "",
+      effort: item.currentContent?.ai?.effort || "",
+      sessionId: item.currentContent?.sessionId || "",
+      scopeLabel: item.currentContent?.scope || "",
+      sourceRunId: item.currentContent?.sourceRunId || item.sourceRunId || "",
+      before: decision.previousRow,
+      after: decision.nextRow,
+      item: {
+        ...item,
+        currentContent: {
+          ...(item.currentContent || {}),
+          columns: decision.headers || decision.columns || item.currentContent?.columns || [],
+        },
+      },
+    }));
+  });
+  return [...activities, ...sessionDecisions, ...baselineActivities(list)]
     .sort((a, b) => (Date.parse(b.at || 0) || 0) - (Date.parse(a.at || 0) || 0));
 }
 
@@ -250,11 +288,11 @@ function DiffRows({ rows }) {
   );
 }
 
-function EvidenceDiff({ before, after, item }) {
+function EvidenceDiff({ before, after, item, defaultOpen = false }) {
   if (before === undefined && after === undefined) return null;
   const comparison = buildReadableEvidenceDiff(before, after, item);
   return (
-    <details className="mt-3 rounded-md border border-gray-200 bg-white">
+    <details open={defaultOpen} className="mt-3 rounded-md border border-gray-200 bg-white">
       <summary className="cursor-pointer px-3 py-2 text-xs font-semibold text-gray-700">
         Before / after evidence · {comparison.changed.length} field{comparison.changed.length === 1 ? "" : "s"} changed
       </summary>
@@ -398,6 +436,26 @@ export default function ReviewActivityHistoryModal({ record, onClose, onOpenSour
                       <span className="truncate text-[10px] text-gray-500">· {activity.itemCount} row{activity.itemCount === 1 ? "" : "s"} registered</span>
                       <time className="ml-auto shrink-0 text-[10px] text-gray-500">{activity.at ? new Date(activity.at).toLocaleString() : "Time unavailable"}</time>
                     </div>
+                  ) : activity.kind === "decision" ? (
+                    <div className="bg-white/70 px-3 py-3">
+                      <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-semibold text-gray-950">{activity.itemLabel || activityDisplayName(activity)}</div>
+                          <div className="mt-0.5 text-xs text-gray-700">
+                            <span className="font-semibold">Decision:</span> {activity.decision || activityLabel(activity)}
+                            {activity.action ? ` · ${activity.action.replace(/[_-]+/g, " ")}` : ""}
+                          </div>
+                        </div>
+                        <div className="shrink-0 text-right text-[11px] text-gray-600">
+                          <div className="font-semibold text-gray-800">{activity.reviewerName || activity.reviewerId || "Reviewer unavailable"}</div>
+                          <time>{activity.at ? new Date(activity.at).toLocaleString() : "Time unavailable"}</time>
+                        </div>
+                      </div>
+                      <EvidenceDiff before={activity.before} after={activity.after} item={activity.item} defaultOpen />
+                      {activity.rationale && <div className="mt-2 rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-sm leading-5 text-gray-800"><span className="font-semibold">Supporting rationale:</span> {activity.rationale}</div>}
+                      {activity.userFeedback && <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950"><span className="font-semibold">Reviewer feedback:</span> {activity.userFeedback}</div>}
+                      {onOpenSource && <button type="button" className="mt-2 inline-flex items-center gap-1 rounded-md border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50" onClick={() => onOpenSource(activity.item)}><ExternalLink size={14} /> Jump to reviewed source</button>}
+                    </div>
                   ) : (
                     <details>
                       <summary className="flex min-w-0 cursor-pointer list-none items-center gap-2 px-2.5 py-1.5 marker:hidden">
@@ -414,6 +472,7 @@ export default function ReviewActivityHistoryModal({ record, onClose, onOpenSour
                           {activity.sessionId && <span className="rounded-full border border-violet-200 bg-white px-2 py-0.5">Session: {activity.sessionId}</span>}
                           {(activity.provider || activity.model || activity.effort) && <span className="rounded-full border border-blue-200 bg-white px-2 py-0.5">AI: {[activity.provider, activity.model, activity.effort].filter(Boolean).join(" · ")}</span>}
                           {activity.action && <span className="rounded-full border border-emerald-200 bg-white px-2 py-0.5">Action: {activity.action}</span>}
+                          {(activity.reviewerName || activity.reviewerId) && <span className="rounded-full border border-gray-200 bg-white px-2 py-0.5">Reviewer: {activity.reviewerName || activity.reviewerId}</span>}
                           {activity.item && activity.kind === "decision" && <span className="rounded-full border border-gray-200 bg-white px-2 py-0.5">Review state: {REVIEW_LIFECYCLE_LABELS[reviewLifecycleStateForItem(activity.item)]}</span>}
                           {activity.item?.status && activity.kind === "decision" && <span className="rounded-full border border-gray-200 bg-white px-2 py-0.5">Disposition: {REVIEW_STATUS_LABELS[activity.item.status] || activity.item.status}</span>}
                         </div>

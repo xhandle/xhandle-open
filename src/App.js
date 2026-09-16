@@ -8956,6 +8956,33 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setPendingReviewSourceJump(item);
   }, [activeProjectId, getReviewItemProjectId]);
 
+  const resumeCollaboratorVibeReview = useCallback((review) => {
+    if (!review?.sessionId || !review?.threadId || !review?.projectId || !review?.domain) {
+      window.alert("This older review does not contain enough project, thread, and session metadata to resume safely. Start a new review instead.");
+      return;
+    }
+    if (review.workspaceType === "code-based-architecture") {
+      const project = codeArchitectureProjects.find((entry) => entry.id === review.projectId);
+      const repo = (project?.repos || []).find((entry) => [entry?.id, entry?.repoId, entry?.repoName, [entry?.owner, entry?.repo].filter(Boolean).join("/")]
+        .map((value) => String(value || "").trim()).filter(Boolean).includes(String(review.repoId || "")));
+      if (!project || (review.repoId && !repo)) {
+        window.alert("The original code-architecture project or repository is no longer available. No data was changed.");
+        return;
+      }
+      setActiveCodeArchitectureProjectId(project.id);
+      setActiveCodeArchitectureFolderId(null);
+      if (repo) setCodeArchitectureProjects((current) => current.map((entry) => entry.id === project.id ? { ...entry, activeRepoId: repo.id } : entry));
+    } else {
+      if (!projects.some((entry) => entry.id === review.projectId)) {
+        window.alert("The original project is no longer available. No data was changed.");
+        return;
+      }
+      setActiveProjectId(review.projectId);
+    }
+    setSection("copilot");
+    setTimeout(() => window.dispatchEvent(new CustomEvent("xhandle:resume-vibe-review", { detail: review })), 100);
+  }, [codeArchitectureProjects, projects]);
+
   useEffect(() => {
     if (!pendingReviewSourceJump) return;
     const isCodeArchitectureReviewItem =
@@ -14412,6 +14439,7 @@ const projectHint = useMemo(() => ({
                 copilotContext={getActiveProjectContext()}
                 appFocus={getCollaboratorAppFocus()}
                 onRemoveActiveSelection={clearCollaboratorActiveSelection}
+                reviewer={gate.user}
                 onRequestDock={() => {
                   setDockOpen(true);
                   try { localStorage.setItem('xhandle.copilotDockOpen','true'); } catch {}
@@ -15246,6 +15274,7 @@ const projectHint = useMemo(() => ({
     copilotContext={getActiveProjectContext()}
     appFocus={getCollaboratorAppFocus()}
     onRemoveActiveSelection={clearCollaboratorActiveSelection}
+    reviewer={gate.user}
   />
 )}
 
@@ -15258,6 +15287,7 @@ const projectHint = useMemo(() => ({
   onOpenSource: jumpToReviewSource,
   onExportCodeArchitectureReviewPackage: handleExportCodeArchitectureReviewPackage,
   isExportingCodeArchitectureReviewPackage: isGeneratingCodeArchitectureReviewApp,
+  onResumeVibeReview: resumeCollaboratorVibeReview,
 })}
 
 {section === 'reports' && (

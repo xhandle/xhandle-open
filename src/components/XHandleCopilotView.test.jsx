@@ -30,6 +30,8 @@ const {
   CollaboratorComposerMenu,
   CollaboratorPromptComposer,
   FunctionalVibeReviewRecoveryCard,
+  FunctionalVibeReviewCard,
+  HazardVibeReviewCard,
   FUNCTIONAL_DECOMPOSITION_GENERATION_INSTRUCTIONS,
   SUBSYSTEM_ARCHITECTURE_REVIEW_SYSTEM_PROMPT,
   buildFunctionalAbstractionChoiceMessage,
@@ -79,6 +81,30 @@ const {
   selectLiveCollaboratorReasoning,
   streamChat,
 } = require("./XHandleCopilotView");
+
+describe("paused vibe review cards", () => {
+  const renderActions = (element) => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => root.render(element));
+    return { host, root };
+  };
+
+  it("shows only Resume review on a paused hazard card", () => {
+    const { host, root } = renderActions(<HazardVibeReviewCard message={{ vibeReview: { sessionId: "s", sourceRowId: "r", paused: true } }} />);
+    expect(host.textContent).toContain("Resume review");
+    expect(host.textContent).not.toContain("Pause review");
+    act(() => root.unmount()); host.remove();
+  });
+
+  it("shows Pause review while functional review is active", () => {
+    const { host, root } = renderActions(<FunctionalVibeReviewCard message={{ functionalVibeReview: { sessionId: "s", rowId: "r", decision: "Keep" } }} />);
+    expect(host.textContent).toContain("Pause review");
+    expect(host.textContent).not.toContain("Resume review");
+    act(() => root.unmount()); host.remove();
+  });
+});
 
 describe("functional vibe review recovery", () => {
   it("offers an explicit resume action when the next proposal could not load", () => {

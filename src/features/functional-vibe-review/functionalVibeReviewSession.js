@@ -5,6 +5,7 @@ const uid = () => (typeof crypto !== "undefined" && crypto.randomUUID?.()) || `f
 const defaultStorage = () => typeof localStorage !== "undefined" ? localStorage : null;
 const volatileMapsByStorage = new WeakMap();
 const nullStorageMaps = {};
+const runtimeId = `functional-review-runtime-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 function volatileMaps(storage) {
   if (!storage || (typeof storage !== "object" && typeof storage !== "function")) return nullStorageMaps;
@@ -72,16 +73,17 @@ function normalizeRowSnapshot(rows = []) {
   }).filter(Boolean);
 }
 
-export function createFunctionalVibeReviewSession({ projectId, threadId, queue = [], rowSnapshot = [], reviewName = "", scopeLabel = "", reviewFields = [], reviewInstructions = "", ai = {}, workspaceType = "functional-project", repoId = "" }) {
+export function createFunctionalVibeReviewSession({ projectId, threadId, queue = [], rowSnapshot = [], reviewName = "", scopeLabel = "", reviewFields = [], reviewInstructions = "", reviewerName = "", reviewerId = "", ai = {}, workspaceType = "functional-project", repoId = "" }) {
   const stableQueue = Array.from(new Set(queue.map(String).filter(Boolean)));
   return {
     id: uid(), projectId: String(projectId), threadId: String(threadId), queue: stableQueue,
     rowSnapshot: normalizeRowSnapshot(rowSnapshot),
     reviewName: String(reviewName || "").trim(), scopeLabel, cursor: 0, state: FUNCTIONAL_VIBE_REVIEW_STATES.PROPOSING, proposal: null,
+    reviewerName: String(reviewerName || "").trim(), reviewerId: String(reviewerId || "").trim(),
     reviewFields: Array.from(new Set((reviewFields || []).map(String).filter(Boolean))),
     reviewInstructions: String(reviewInstructions || "").trim(),
     workspaceType, repoId,
-    decisions: [], skips: [], failures: [], missingRows: [], ai: { ...ai }, createdAt: now(), updatedAt: now(),
+    decisions: [], skips: [], failures: [], missingRows: [], ai: { ...ai }, runtimeId, createdAt: now(), updatedAt: now(),
   };
 }
 
@@ -92,7 +94,7 @@ export function currentFunctionalVibeReviewRowId(session) {
 export function transitionFunctionalVibeReviewSession(session, event = {}) {
   if (!session) return session;
   const next = { ...session, updatedAt: now() };
-  if (event.type === "proposal") return { ...next, state: FUNCTIONAL_VIBE_REVIEW_STATES.AWAITING, proposal: event.proposal };
+  if (event.type === "proposal") return { ...next, state: FUNCTIONAL_VIBE_REVIEW_STATES.AWAITING, proposal: event.proposal, currentRowSnapshot: event.currentRowSnapshot || session.currentRowSnapshot || null };
   if (event.type === "applying") return { ...next, state: FUNCTIONAL_VIBE_REVIEW_STATES.APPLYING };
   if (event.type === "decision") {
     const cursor = session.cursor + 1;
@@ -109,7 +111,7 @@ export function transitionFunctionalVibeReviewSession(session, event = {}) {
   if (event.type === "failure") return { ...next, state: FUNCTIONAL_VIBE_REVIEW_STATES.AWAITING, failures: [...session.failures, event.record] };
   if (event.type === "stop") return { ...next, state: FUNCTIONAL_VIBE_REVIEW_STATES.CANCELLED, proposal: null };
   if (event.type === "pause") return { ...next, state: FUNCTIONAL_VIBE_REVIEW_STATES.PAUSED };
-  if (event.type === "resume") return { ...next, state: session.proposal ? FUNCTIONAL_VIBE_REVIEW_STATES.AWAITING : FUNCTIONAL_VIBE_REVIEW_STATES.PROPOSING };
+  if (event.type === "resume") return { ...next, runtimeId, state: session.proposal ? FUNCTIONAL_VIBE_REVIEW_STATES.AWAITING : FUNCTIONAL_VIBE_REVIEW_STATES.PROPOSING };
   if (event.type === "undo") {
     const last = session.decisions[session.decisions.length - 1];
     const rowIndex = last ? session.queue.indexOf(last.rowId) : -1;
@@ -178,9 +180,16 @@ export function loadFunctionalVibeReviewSession(projectId, threadId, storage = d
   // APPLYING represents a foreground UI request, not a durable background job.
   // If the component reloads or the request fails mid-transition, make the
   // existing proposal retryable instead of stranding the review indefinitely.
-  return session?.state === FUNCTIONAL_VIBE_REVIEW_STATES.APPLYING
-    ? { ...session, state: FUNCTIONAL_VIBE_REVIEW_STATES.AWAITING }
-    : session;
+  if (!session) return null;
+  const terminal = [FUNCTIONAL_VIBE_REVIEW_STATES.COMPLETED, FUNCTIONAL_VIBE_REVIEW_STATES.CANCELLED, FUNCTIONAL_VIBE_REVIEW_STATES.PAUSED].includes(session.state);
+  if (!terminal && session.runtimeId !== runtimeId) return { ...session, state: FUNCTIONAL_VIBE_REVIEW_STATES.PAUSED, recoveredAfterRestart: true };
+  return session.state === FUNCTIONAL_VIBE_REVIEW_STATES.APPLYING ? { ...session, state: FUNCTIONAL_VIBE_REVIEW_STATES.AWAITING } : session;
+}
+export function findFunctionalVibeReviewSessionById(sessionId, storage = defaultStorage()) {
+  const session = Object.values(loadMap(storage, KEY)).find((item) => String(item?.id || "") === String(sessionId || "")) || null;
+  if (!session) return null;
+  const terminal = [FUNCTIONAL_VIBE_REVIEW_STATES.COMPLETED, FUNCTIONAL_VIBE_REVIEW_STATES.CANCELLED, FUNCTIONAL_VIBE_REVIEW_STATES.PAUSED].includes(session.state);
+  return !terminal && session.runtimeId !== runtimeId ? { ...session, state: FUNCTIONAL_VIBE_REVIEW_STATES.PAUSED, recoveredAfterRestart: true } : session;
 }
 
 export function appendFunctionalVibeReviewAudit(record, storage = defaultStorage()) {

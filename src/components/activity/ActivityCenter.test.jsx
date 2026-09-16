@@ -8,7 +8,15 @@ jest.mock("lucide-react", () => {
 const React = require("react");
 const { act } = React;
 const { createRoot } = require("react-dom/client");
-const { ActivitiesButton, ActivityProvider } = require("./ActivityCenter");
+const { ActivitiesButton, ActivityProvider, visibleActivityEntries } = require("./ActivityCenter");
+
+test("omits paused recoverable work from Activities", () => {
+  const activities = new Map([
+    ["paused-review", { status: "paused", title: "Review" }],
+    ["running-task", { status: "running", title: "Task" }],
+  ]);
+  expect(visibleActivityEntries(activities).map(([id]) => id)).toEqual(["running-task"]);
+});
 
 describe("ActivitiesButton", () => {
   let host;

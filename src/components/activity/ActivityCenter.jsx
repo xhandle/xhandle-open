@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { ChevronDown, Loader2 } from "lucide-react";
 
 const ActivityContext = createContext(null);
+export const visibleActivityEntries = (activities) => Array.from(activities?.entries?.() || []).filter(([, activity]) => activity.status !== "paused");
 
 export function ActivityProvider({ children }) {
   const [activities, setActivities] = useState(new Map()); // id -> {title, status, step, total, message, createdAt}
@@ -80,7 +81,8 @@ function ProgressBar({ step, total }) {
 
 export function ActivitiesButton() {
   const { activities } = useActivityCenter();
-  const running = Array.from(activities.values()).some(a => a.status === "running");
+  const visibleActivities = visibleActivityEntries(activities);
+  const running = visibleActivities.some(([, activity]) => activity.status === "running");
   const [open, setOpen] = useState(false);
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, right: 8 });
   const buttonRef = useRef(null);
@@ -129,10 +131,10 @@ export function ActivitiesButton() {
       role="status"
       aria-live="polite"
     >
-      {activities.size === 0 ? (
+      {visibleActivities.length === 0 ? (
         <div className="p-3 text-sm text-neutral-500">No active activities.</div>
       ) : (
-        Array.from(activities.entries())
+        visibleActivities
           .sort((a, b) => b[1].createdAt - a[1].createdAt)
           .map(([id, a]) => {
             const pct = a.status === "running" && a.total > 0

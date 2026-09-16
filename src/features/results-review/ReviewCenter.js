@@ -9,6 +9,8 @@ import {
 import { createReviewId } from "./reviewUtils";
 import { useResultsReview } from "./ResultsReviewProvider";
 import ReviewActivityHistoryModal from "./ReviewActivityHistoryModal";
+import { findVibeReviewSessionById, VIBE_REVIEW_STATES } from "../project-hazard-analysis/vibeReviewSession";
+import { findFunctionalVibeReviewSessionById, FUNCTIONAL_VIBE_REVIEW_STATES } from "../functional-vibe-review/functionalVibeReviewSession";
 
 const SUMMARY_ARTIFACTS_KEY = "xhandle:review-summary-artifacts";
 
@@ -173,6 +175,35 @@ function newestReviewItem(group = {}) {
   return (group.items || []).reduce((newest, item) => (
     !newest || itemUpdatedTime(item) > itemUpdatedTime(newest) ? item : newest
   ), null);
+}
+
+export function resumableVibeReviewForGroup(group = {}) {
+  if (group.artifactType !== "collaborator_vibe_review_session") return null;
+  const item = newestReviewItem(group);
+  const outcome = String(item?.currentContent?.outcome || item?.vibeReview?.outcome || "").toLowerCase();
+  if (["completed", "stopped", "cancelled"].includes(outcome)) return null;
+  const sessionId = String(item?.currentContent?.sessionId || item?.vibeReview?.sessionId || "");
+  if (!sessionId) return null;
+  const domain = String(item?.currentContent?.domain || item?.vibeReview?.domain || "");
+  const persistedSession = domain === "functional-decomposition"
+    ? findFunctionalVibeReviewSessionById(sessionId)
+    : findVibeReviewSessionById(sessionId);
+  const evidenceState = String(item?.currentContent?.state || "");
+  const paused = outcome === "paused"
+    || evidenceState === VIBE_REVIEW_STATES.PAUSED
+    || evidenceState === FUNCTIONAL_VIBE_REVIEW_STATES.PAUSED
+    || persistedSession?.state === VIBE_REVIEW_STATES.PAUSED
+    || persistedSession?.state === FUNCTIONAL_VIBE_REVIEW_STATES.PAUSED;
+  if (!paused) return null;
+  return {
+    sessionId,
+    threadId: String(item?.currentContent?.threadId || item?.vibeReview?.threadId || item?.traceLinks?.find?.((link) => link.type === "collaborator_thread")?.threadId || ""),
+    projectId: String(item?.projectId || group.projectId || ""),
+    domain,
+    workspaceType: String(item?.currentContent?.workspaceType || "functional-project"),
+    repoId: String(item?.currentContent?.repoId || ""),
+    reviewName: String(item?.currentContent?.reviewName || item?.vibeReview?.reviewName || ""),
+  };
 }
 
 function reviewRecordName(group = {}) {
@@ -371,6 +402,7 @@ export default function ReviewCenter({
   onOpenSource,
   onExportCodeArchitectureReviewPackage,
   isExportingCodeArchitectureReviewPackage = false,
+  onResumeVibeReview,
 }) {
   const review = useResultsReview();
   const [filter, setFilter] = useState("all");
@@ -573,6 +605,7 @@ export default function ReviewCenter({
                           <div className="space-y-1.5 border-t border-gray-200 p-2">
                             {typeGroup.groups.map((group) => {
                       const pct = progressPercent(group);
+                      const resumableReview = resumableVibeReviewForGroup(group);
                       return (
                         <div key={group.key} className="relative overflow-hidden rounded-md border border-gray-200 bg-white px-2.5 py-2 shadow-sm">
                           <div className="flex min-w-0 items-center gap-2">
@@ -613,6 +646,15 @@ export default function ReviewCenter({
                             >
                               Open
                             </button>
+                            {resumableReview && (
+                              <button
+                                type="button"
+                                className="h-7 shrink-0 rounded-md bg-indigo-600 px-2 text-[11px] font-semibold text-white hover:bg-indigo-700"
+                                onClick={() => onResumeVibeReview?.(resumableReview)}
+                              >
+                                Resume review
+                              </button>
+                            )}
                             <button
                               type="button"
                               className="h-7 shrink-0 rounded-md border border-blue-200 bg-blue-50 px-2 text-[11px] font-semibold text-blue-700 hover:bg-blue-100"

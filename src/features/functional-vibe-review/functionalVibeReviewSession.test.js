@@ -52,6 +52,14 @@ test("persists the user-supplied review name", () => {
   expect(session.reviewName).toBe("Localization interface review");
 });
 
+test("pause and explicit resume preserve the saved proposal and current row snapshot", () => {
+  let session = createFunctionalVibeReviewSession({ projectId: "p", threadId: "t", queue: ["a"], reviewName: "Named" });
+  session = transitionFunctionalVibeReviewSession(session, { type: "proposal", proposal: { decision: "Revise", proposedRow: { fromFunction: "A" } }, currentRowSnapshot: { fromFunction: "A" } });
+  const paused = transitionFunctionalVibeReviewSession(session, { type: "pause" });
+  expect(paused).toMatchObject({ state: "paused", cursor: 0, proposal: session.proposal, currentRowSnapshot: { fromFunction: "A" }, reviewName: "Named" });
+  expect(transitionFunctionalVibeReviewSession(paused, { type: "resume" })).toMatchObject({ state: "awaiting_decision", proposal: session.proposal, cursor: 0 });
+});
+
 test("retains the original reviewer instructions after resolving a scope choice", () => {
   const session = createFunctionalVibeReviewSession({
     projectId: "p",

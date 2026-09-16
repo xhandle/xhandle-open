@@ -173,6 +173,8 @@ export function createVibeReviewDecisionEvidence({
   columns,
   rationale = "",
   userFeedback = "",
+  reviewerName = "",
+  reviewerId = "",
   ai = {},
   timestamp,
 } = {}) {
@@ -202,6 +204,8 @@ export function createVibeReviewDecisionEvidence({
     decision,
     rationale,
     userFeedback,
+    reviewerName,
+    reviewerId,
     provider: ai?.provider || "",
     model: ai?.model || "",
     effort: ai?.effort || "",
@@ -223,6 +227,7 @@ export function createVibeReviewDecisionEvidence({
     currentContent: { rowIndex: normalizedRowIndex, rowId, columns: reviewColumns, row: currentRow, removed: decision === "Remove" },
     status: reviewStatusForVibeDecision(domain, decision, action),
     reviewerFeedback: userFeedback || rationale || "",
+    reviewerId,
     reviewedAt,
     confidence: ai?.confidence ?? null,
     traceLinks: [
@@ -231,7 +236,7 @@ export function createVibeReviewDecisionEvidence({
       { type: "source_uri", uri: traceUri },
     ],
     history: [history],
-    vibeReview: { domain, sessionId, threadId, scopeLabel, reviewTarget, workspaceType, repoId, rowId, label, action, decision, ai: { ...ai } },
+    vibeReview: { domain, sessionId, threadId, scopeLabel, reviewTarget, workspaceType, repoId, rowId, label, action, decision, reviewerName, reviewerId, ai: { ...ai } },
     createdAt: reviewedAt,
     updatedAt: reviewedAt,
   });
@@ -245,9 +250,13 @@ export function createVibeReviewSessionEvidence({ domain, session, outcome = "in
   const stopped = outcome === "stopped" || outcome === "cancelled";
   const currentContent = {
     sessionId,
+    threadId: session?.threadId || "",
     reviewName: session?.reviewName || "",
+    reviewerName: session?.reviewerName || "",
+    reviewerId: session?.reviewerId || "",
     domain,
     outcome,
+    state: session?.state || "",
     scope: session?.scopeLabel || "",
     reviewTarget: session?.reviewTarget || "",
     workspaceType: session?.workspaceType || "functional-project",
@@ -285,8 +294,9 @@ export function createVibeReviewSessionEvidence({ domain, session, outcome = "in
       { type: "reviewed_artifact", domain, projectId, workspaceType: session?.workspaceType || "functional-project", repoId: session?.repoId || "", sourceRunId: session?.sourceRunId || "" },
       { type: "collaborator_thread", threadId: session?.threadId || "", sessionId },
     ],
-    history: [createHistoryEntry("collaborator_vibe_review_session", { outcome, summary: safeReviewValue(summary), at: timestamp })],
-    vibeReview: { domain, sessionId, threadId: session?.threadId || "", reviewName: session?.reviewName || "", scopeLabel: session?.scopeLabel || "", reviewTarget: session?.reviewTarget || "", outcome },
+    reviewerId: session?.reviewerId || "",
+    history: [createHistoryEntry("collaborator_vibe_review_session", { outcome, summary: safeReviewValue(summary), reviewerName: session?.reviewerName || "", reviewerId: session?.reviewerId || "", at: timestamp })],
+    vibeReview: { domain, sessionId, threadId: session?.threadId || "", reviewName: session?.reviewName || "", reviewerName: session?.reviewerName || "", reviewerId: session?.reviewerId || "", scopeLabel: session?.scopeLabel || "", reviewTarget: session?.reviewTarget || "", outcome },
     createdAt: session?.createdAt || timestamp,
     updatedAt: timestamp,
   });

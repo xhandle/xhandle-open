@@ -71,6 +71,48 @@ test("builds a chronological QA history with row decisions, sessions, and the so
   }));
 });
 
+test("hides routine started and in-progress session checkpoints while retaining meaningful lifecycle events", () => {
+  const item = {
+    ...sessionItem,
+    history: [
+      { id: "started", action: "collaborator_vibe_review_session", outcome: "started", at: "2026-09-14T12:00:00.000Z" },
+      { id: "progress", action: "collaborator_vibe_review_session", outcome: "in_progress", at: "2026-09-14T12:01:00.000Z" },
+      { id: "paused", action: "collaborator_vibe_review_session", outcome: "paused", at: "2026-09-14T12:02:00.000Z" },
+      { id: "completed", action: "collaborator_vibe_review_session", outcome: "completed", at: "2026-09-14T12:03:00.000Z" },
+    ],
+  };
+
+  const activities = buildReviewActivityHistory([item]);
+  expect(activities.filter((activity) => activity.kind === "session").map((activity) => activity.outcome)).toEqual(["completed", "paused"]);
+  expect(activities.some((activity) => activity.outcome === "started")).toBe(false);
+  expect(activities.some((activity) => activity.outcome === "in_progress")).toBe(false);
+});
+
+test("uses captured decision headings instead of generic column numbers for session decision diffs", () => {
+  const item = {
+    ...sessionItem,
+    currentContent: {
+      ...sessionItem.currentContent,
+      decisions: [{
+        sourceRowId: "RAW-1",
+        label: "Dispatch → Assignment → Manage Mission",
+        decision: "Yes",
+        previousRow: ["RAW-1", "Needs Review", "Old rationale"],
+        nextRow: ["RAW-1", "Yes", "New rationale"],
+        headers: ["Raw Analysis Row ID", "Guide Phrase Applicable", "Guide Phrase Applicability Rationale"],
+        timestamp: "2026-09-14T12:05:00.000Z",
+      }],
+    },
+  };
+
+  const decision = buildReviewActivityHistory([item]).find((activity) => activity.kind === "decision");
+  const comparison = buildReadableEvidenceDiff(decision.before, decision.after, decision.item);
+  expect(comparison.changed.map((row) => row.field)).toEqual([
+    "Guide Phrase Applicable",
+    "Guide Phrase Applicability Rationale",
+  ]);
+});
+
 test("builds a human-readable field comparison for row evidence", () => {
   const comparison = buildReadableEvidenceDiff(["Needs Review", "old rationale"], ["Yes", "updated rationale"], {
     currentContent: { columns: ["Safety Significance", "Safety Rationale"] },

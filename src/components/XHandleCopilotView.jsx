@@ -70,7 +70,7 @@ import {
   requestVibeReviewProposal,
 } from "../features/project-hazard-analysis/vibeReviewProposal";
 import {
-  appendVibeReviewAudit, createVibeReviewSession, currentVibeReviewRowId, loadVibeReviewSession,
+  appendVibeReviewAudit, createVibeReviewSession, currentVibeReviewRowId, findVibeReviewSessionById, loadVibeReviewSession,
   parseVibeReviewAction, saveVibeReviewSession, summarizeVibeReviewSession, transitionVibeReviewSession,
   VIBE_REVIEW_STATES,
 } from "../features/project-hazard-analysis/vibeReviewSession";
@@ -94,9 +94,9 @@ import {
   createFunctionalVibeReviewSession,
   currentFunctionalVibeReviewRowId,
   FUNCTIONAL_VIBE_REVIEW_STATES,
+  findFunctionalVibeReviewSessionById,
   loadFunctionalVibeReviewSession,
   parseFunctionalVibeReviewAction,
-  recoverFunctionalVibeReviewRows,
   saveFunctionalVibeReviewSession,
   summarizeFunctionalVibeReviewSession,
   transitionFunctionalVibeReviewSession,
@@ -2615,7 +2615,7 @@ export function HazardVibeReviewCard({ message, disabled = false, onAction, onOp
   const existingValue = card.existingValue ?? card.existingSafetySignificant;
   const proposedValue = card.proposedValue ?? card.proposedSafetySignificant;
   return (
-    <section className="mt-2 rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-xs" aria-label={`Hazard review item ${card.progress || ""}`}>
+    <section data-vibe-review-session={card.sessionId} data-vibe-review-actionable={active ? "true" : undefined} className="mt-2 rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-xs" aria-label={`Hazard review item ${card.progress || ""}`}>
       <div className="flex items-center justify-between gap-2 font-semibold text-neutral-800">
         <span>{card.progress}</span>
         <button type="button" className="text-indigo-700 underline focus:ring-2 focus:ring-indigo-400" onClick={() => onOpenSource?.(card)} aria-label={`Open hazard-analysis row ${card.sourceRowId}`}>Open source row</button>
@@ -2627,7 +2627,7 @@ export function HazardVibeReviewCard({ message, disabled = false, onAction, onOp
       {proposedValue ? <div className="mt-1"><span className="font-medium">Proposed:</span> {proposedValue}{card.proposalDescriptor ? ` · ${card.proposalDescriptor}` : card.classification ? ` · ${card.classification}${card.rule ? ` (${card.rule})` : ""}` : ""} · {card.confidence || "Medium"} confidence</div> : null}
       <p className="mt-1 text-neutral-700">{card.rationale || card.evidenceGap}</p>
       {active && <div className="mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Hazard review decision actions">
-        {[['accept','Accept proposal'],['yes','Mark Yes'],['no','Mark No'],['skip','Skip for later'], ...(card.canUndo ? [['undo','Undo last decision']] : []), ['stop','Stop review']].map(([action, label]) => (
+        {(card.paused ? [['resume', 'Resume review']] : [['accept','Accept proposal'],['yes','Mark Yes'],['no','Mark No'],['skip','Skip for later'], ...(card.canUndo ? [['undo','Undo last decision']] : []), ['pause','Pause review'], ['stop','Stop review']]).map(([action, label]) => (
           <button key={action} type="button" disabled={disabled || (action === 'accept' && !proposedValue)} onClick={() => onAction?.(action, card)} className="rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 font-medium text-neutral-800 hover:bg-neutral-50 focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:cursor-not-allowed disabled:opacity-50" aria-label={`${label} for row ${card.sourceRowId}`}>{disabled ? (action === 'accept' ? 'Applying…' : label) : label}</button>
         ))}
       </div>}
@@ -2641,7 +2641,7 @@ export function FunctionalVibeReviewCard({ message, disabled = false, onAction, 
   const active = !card.completed && !card.unresolved;
   const proposalActionable = ["Keep", "Revise", "Remove"].includes(card.decision);
   return (
-    <section className="mt-2 rounded-lg border border-indigo-200 bg-indigo-50/60 p-3 text-xs" aria-label={`Functional decomposition review item ${card.progress || ""}`}>
+    <section data-vibe-review-session={card.sessionId} data-vibe-review-actionable={active ? "true" : undefined} className="mt-2 rounded-lg border border-indigo-200 bg-indigo-50/60 p-3 text-xs" aria-label={`Functional decomposition review item ${card.progress || ""}`}>
       <div className="flex items-center justify-between gap-2 font-semibold text-neutral-800">
         <span>{card.progress}</span>
         <button type="button" className="text-indigo-700 underline focus:ring-2 focus:ring-indigo-400" onClick={() => onOpenSource?.(card)} aria-label={`Open functional-decomposition row ${card.rowId}`}>Open source row</button>
@@ -2665,15 +2665,16 @@ export function FunctionalVibeReviewCard({ message, disabled = false, onAction, 
       ) : null}
       <p className="mt-1 text-neutral-700">{card.rationale || card.remainingQuestion}</p>
       {active && <div className="mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Functional decomposition review actions">
-        {[
+        {(card.paused ? [["resume", "Resume review", false]] : [
           ["accept", "Accept proposal", !proposalActionable],
           ["keep", "Keep as is", false],
           ["revise", "Apply revision", !card.proposedRow],
           ["remove", "Remove row", false],
           ["skip", "Skip for later", false],
           ...(card.canUndo ? [["undo", "Undo last decision", false]] : []),
+          ["pause", "Pause review", false],
           ["stop", "Stop review", false],
-        ].map(([action, label, actionDisabled]) => (
+        ]).map(([action, label, actionDisabled]) => (
           <button key={action} type="button" disabled={disabled || actionDisabled} onClick={() => onAction?.(action, card)} className="rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 font-medium text-neutral-800 hover:bg-neutral-50 focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:cursor-not-allowed disabled:opacity-50" aria-label={`${label} for functional row ${card.rowId}`}>{disabled && action === "accept" ? "Applying…" : label}</button>
         ))}
       </div>}
@@ -4327,6 +4328,7 @@ export default function XHandleCopilotView({
   onRequestUndock,
   defaultSidebarOpen = true,
   isDark = false,
+  reviewer = {},
 }) {
   const resultsReview = useResultsReview();
   const enrichedContext = useMemo(
@@ -4401,6 +4403,7 @@ function cancelCtxEditor() {
   const [collaboratorModelsByProvider, setCollaboratorModelsByProvider] = useState({});
   const [collaboratorModelsBusy, setCollaboratorModelsBusy] = useState(false);
   const [voiceModeEnabled, setVoiceModeEnabled] = useState(false);
+  const [pendingVibeReviewResume, setPendingVibeReviewResume] = useState(null);
 
   const scrollRef = useRef(null);
   const endRef = useRef(null);
@@ -4526,6 +4529,50 @@ function cancelCtxEditor() {
   useEffect(() => {
     setEditingMessage(null);
   }, [activeId, docked]);
+
+  useEffect(() => {
+    const handleResumeRequest = (event) => {
+      const requested = event?.detail || {};
+      const session = requested.domain === "functional-decomposition"
+        ? findFunctionalVibeReviewSessionById(requested.sessionId)
+        : findVibeReviewSessionById(requested.sessionId);
+      if (!session || session.threadId !== requested.threadId || session.projectId !== requested.projectId) return;
+      setThreads(loadThreads());
+      setActiveId(session.threadId);
+      setPendingVibeReviewResume({ domain: requested.domain, session });
+    };
+    window.addEventListener("xhandle:resume-vibe-review", handleResumeRequest);
+    return () => window.removeEventListener("xhandle:resume-vibe-review", handleResumeRequest);
+  }, []);
+
+  useEffect(() => {
+    const thread = loadThreads().find((entry) => entry.id === activeId);
+    if (!thread) return;
+    let changed = false;
+    const messages = (thread.messages || []).map((message) => {
+      const hazard = message?.vibeReview;
+      if (hazard && !hazard.completed) {
+        const session = loadVibeReviewSession(hazard.projectId, activeId);
+        if (session?.id === hazard.sessionId && session.state === VIBE_REVIEW_STATES.PAUSED && !hazard.paused) {
+          changed = true;
+          return { ...message, vibeReview: { ...hazard, paused: true } };
+        }
+      }
+      const functional = message?.functionalVibeReview;
+      if (functional && !functional.completed) {
+        const session = loadFunctionalVibeReviewSession(functional.projectId, activeId);
+        if (session?.id === functional.sessionId && session.state === FUNCTIONAL_VIBE_REVIEW_STATES.PAUSED && !functional.paused) {
+          changed = true;
+          return { ...message, functionalVibeReview: { ...functional, paused: true } };
+        }
+      }
+      return message;
+    });
+    if (changed) {
+      setMessages(activeId, messages);
+      setThreads(loadThreads());
+    }
+  }, [activeId]);
 
 /* === NEW: capture region contexts only when docked === */
 /* === capture region contexts only when docked === */
@@ -4673,7 +4720,12 @@ useEffect(() => {
       ? summarizeVibeReviewSession(session)
       : summarizeFunctionalVibeReviewSession(session);
     try {
-      return await resultsReview.recordVibeReviewEvidence(createVibeReviewSessionEvidence({ domain, session, outcome, summary }));
+      const attributedSession = {
+        ...session,
+        reviewerName: session.reviewerName || reviewer.name || reviewer.email || "Local reviewer",
+        reviewerId: session.reviewerId || reviewer.id || reviewer.email || "local-user",
+      };
+      return await resultsReview.recordVibeReviewEvidence(createVibeReviewSessionEvidence({ domain, session: attributedSession, outcome, summary }));
     } catch (error) {
       console.warn("[results-review] Failed to capture Collaborator vibe-review session", error);
       return null;
@@ -4682,7 +4734,11 @@ useEffect(() => {
 
   const captureVibeReviewDecision = async (details) => {
     try {
-      return await resultsReview.recordVibeReviewEvidence(createVibeReviewDecisionEvidence(details));
+      return await resultsReview.recordVibeReviewEvidence(createVibeReviewDecisionEvidence({
+        reviewerName: reviewer.name || reviewer.email || "Local reviewer",
+        reviewerId: reviewer.id || reviewer.email || "local-user",
+        ...details,
+      }));
     } catch (error) {
       console.warn("[results-review] Failed to capture Collaborator vibe-review decision", error);
       return null;
@@ -4768,7 +4824,7 @@ useEffect(() => {
       const normalized = await requestVibeReviewProposal({ headers, row, projectName: state.projectName, organizationContext: state.organizationContext,
         provider: working.ai.provider, model: working.ai.model, effort: working.ai.effort,
         reviewTarget: working.reviewTarget || "safetySignificant", signal });
-      working = transitionVibeReviewSession(working, { type: "proposal", proposal: normalized.proposal });
+      working = transitionVibeReviewSession(working, { type: "proposal", proposal: normalized.proposal, currentRowSnapshot: [...row] });
       saveVibeReviewSession(working);
       const card = buildVibeReviewCard(working, state, rowId, normalized);
       const providerFormatFailure = normalized.errors?.some((error) => /omitted the required normalizedDecision|usable structured decision/i.test(String(error)));
@@ -4812,6 +4868,15 @@ useEffect(() => {
     setThreads(loadThreads());
   };
 
+  const setHazardSessionCardsState = (sessionId, patch, { retire = false } = {}) => {
+    const thread = loadThreads().find((entry) => entry.id === activeId);
+    if (!thread) return;
+    setMessages(activeId, (thread.messages || []).map((message) => message?.vibeReview?.sessionId === sessionId
+      ? { ...message, vibeReview: { ...message.vibeReview, ...(retire ? { completed: true, outcome: "superseded-by-resume" } : {}), ...patch } }
+      : message));
+    setThreads(loadThreads());
+  };
+
   const handleVibeReviewAction = async (action, card, userFeedback = "", fromRunCopilot = false, signal) => {
     if (busy && !fromRunCopilot) return;
     setAutoStick(true);
@@ -4820,10 +4885,16 @@ useEffect(() => {
       : ["Applying the review decision.", "Preparing the next hazard review item."]);
     setBusy(true);
     try {
-      const providerApi = await waitForActionProvider("project-functional-diagram", 1800);
       let session = loadVibeReviewSession(card.projectId, activeId);
       if (!session || session.id !== card.sessionId) throw new Error("This review session is no longer active.");
-      if (currentVibeReviewRowId(session) !== card.sourceRowId) throw new Error("That item is no longer current; use the controls on the latest review card.");
+      if (action === "pause") {
+        session = transitionVibeReviewSession(session, { type: "pause" });
+        saveVibeReviewSession(session);
+        setHazardSessionCardsState(session.id, { paused: true });
+        await captureVibeReviewSession("hazard-analysis", session, "paused");
+        return;
+      }
+      const providerApi = await waitForActionProvider("project-functional-diagram", 1800);
       const state = providerApi?.getHazardVibeReviewState?.();
       if (
         String(state?.activeProjectId || "") !== String(session.projectId) ||
@@ -4864,16 +4935,27 @@ useEffect(() => {
         saveVibeReviewSession(session); await captureVibeReviewSession("hazard-analysis", session, "in_progress"); closeVibeReviewCard(card, "skipped"); await appendVibeReviewProposal(session, providerApi, signal); return;
       }
       if (action === "resume") {
-        if (session.state === VIBE_REVIEW_STATES.AWAITING) {
-          appendMessage(activeId, { role: "assistant", content: "The current review item is already waiting for your decision. Use Accept proposal, Mark Yes, Mark No, Skip for later, or Stop review." });
-          setThreads(loadThreads());
-          return;
-        }
+        if ([VIBE_REVIEW_STATES.COMPLETED, VIBE_REVIEW_STATES.CANCELLED].includes(session.state)) throw new Error("This review is finished and cannot be resumed.");
         session = transitionVibeReviewSession(session, { type: "resume" });
         saveVibeReviewSession(session);
-        await appendVibeReviewProposal(session, providerApi, signal);
+        const rowId = currentVibeReviewRowId(session);
+        if (!rowId) throw new Error("This saved review has no current row and cannot be safely resumed. Start a new review.");
+        const headers = state?.summary?.[0] || [];
+        const idIndex = headers.findIndex((header) => /^(?:Raw Analysis Row ID|Raw Row ID|Analysis Row ID)$/i.test(String(header).trim()));
+        const row = state?.summary?.slice(1).find((candidate) => String(candidate?.[idIndex] || "").trim() === rowId);
+        if (!row) throw new Error("The saved current row no longer exists. No data was changed; restart the review with a new scope.");
+        if (session.currentRowSnapshot && JSON.stringify(session.currentRowSnapshot) !== JSON.stringify(row)) throw new Error("The saved current row changed after the review was paused. No data was changed; restart or review the updated row in a new session.");
+        setHazardSessionCardsState(session.id, {}, { retire: true });
+        if (session.proposal) {
+          const cardToRestore = buildVibeReviewCard(session, state, rowId, { valid: true, proposal: session.proposal });
+          appendMessage(activeId, { role: "assistant", content: `Resumed ${session.reviewName || "hazard review"} at the saved current item.`, vibeReview: cardToRestore });
+          setThreads(loadThreads());
+        } else {
+          await appendVibeReviewProposal(session, providerApi, signal);
+        }
         return;
       }
+      if (currentVibeReviewRowId(session) !== card.sourceRowId) return;
       let proposal = session.proposal;
       if (action === "yes" || action === "no") {
         const headers = state.summary[0]; const idIndex = headers.findIndex((h) => /Raw (?:Analysis )?Row ID|Analysis Row ID/i.test(h));
@@ -4908,7 +4990,9 @@ useEffect(() => {
         previousRow: result.previousRow, nextRow: result.nextRow, headers: result.headers,
         previousGovernedFields, reviewTarget: session.reviewTarget || "safetySignificant", newReviewValue,
         newSafetySignificant: proposal.governedDecision["Safety Significant"],
-        proposal: { normalizedDecision: proposal.normalizedDecision, confidence: proposal.applicabilityConfidence || proposal.governedDecision["Classification Confidence"] }, userFeedback, timestamp: new Date().toISOString() };
+        proposal: { normalizedDecision: proposal.normalizedDecision, confidence: proposal.applicabilityConfidence || proposal.governedDecision["Classification Confidence"] },
+        rationale: proposal.governedDecision["Guide Phrase Applicability Rationale"] || proposal.governedDecision["Safety Significance Rationale"] || proposal.governedDecision["Classification Evidence"] || proposal.explanation || "",
+        userFeedback, timestamp: new Date().toISOString() };
       appendVibeReviewAudit({ ...record, sessionId: session.id, projectId: session.projectId, threadId: session.threadId, provider: session.ai.provider, model: session.ai.model, effort: session.ai.effort, validationOutcome: "applied", newGovernedFields: proposal.governedDecision });
       await captureVibeReviewDecision({
         domain: "hazard-analysis", projectId: session.projectId, workspaceType: session.workspaceType,
@@ -4927,6 +5011,13 @@ useEffect(() => {
       await appendVibeReviewProposal(session, providerApi, signal);
     } catch (error) {
       if ((signal?.aborted || error?.name === "AbortError") && fromRunCopilot) throw error;
+      if (action === "resume" && card?.projectId) {
+        const failedResume = loadVibeReviewSession(card.projectId, activeId);
+        if (failedResume && ![VIBE_REVIEW_STATES.COMPLETED, VIBE_REVIEW_STATES.CANCELLED].includes(failedResume.state)) {
+          saveVibeReviewSession(transitionVibeReviewSession(failedResume, { type: "pause" }));
+          setHazardSessionCardsState(failedResume.id, { paused: true });
+        }
+      }
       const decisionHelp = action === "yes" || action === "no"
         ? " Your explicit reviewer selection was not applied; the row remains unchanged."
         : "";
@@ -5017,7 +5108,7 @@ useEffect(() => {
         effort: working.ai.effort,
         signal,
       });
-      working = transitionFunctionalVibeReviewSession(working, { type: "proposal", proposal: normalized.proposal });
+      working = transitionFunctionalVibeReviewSession(working, { type: "proposal", proposal: normalized.proposal, currentRowSnapshot: { ...entry.row } });
       saveFunctionalVibeReviewSession(working);
       const card = buildFunctionalVibeReviewCard(working, state, rowId, normalized);
       appendMessage(activeId, {
@@ -5092,6 +5183,17 @@ useEffect(() => {
     setThreads(loadThreads());
   };
 
+  const setFunctionalSessionCardsState = (sessionId, patch, { retire = false } = {}) => {
+    const thread = loadThreads().find((entry) => entry.id === activeId);
+    if (!thread) return;
+    setMessages(activeId, (thread.messages || []).map((message) => {
+      if (message?.functionalVibeReview?.sessionId === sessionId) return { ...message, functionalVibeReview: { ...message.functionalVibeReview, ...(retire ? { completed: true, outcome: "superseded-by-resume" } : {}), ...patch } };
+      if (retire && message?.functionalVibeReviewRecovery?.sessionId === sessionId) return { ...message, functionalVibeReviewRecovery: { ...message.functionalVibeReviewRecovery, completed: true } };
+      return message;
+    }));
+    setThreads(loadThreads());
+  };
+
   const handleFunctionalVibeReviewAction = async (action, card, userFeedback = "", fromRunCopilot = false, signal) => {
     if (busy && !fromRunCopilot) return;
     setAutoStick(true);
@@ -5100,9 +5202,17 @@ useEffect(() => {
       : ["Applying the review decision.", "Preparing the next functional-decomposition review item."]);
     setBusy(true);
     try {
-      const providerApi = await waitForActionProvider("project-functional-diagram", 1800);
       let session = loadFunctionalVibeReviewSession(card.projectId, activeId);
       if (!session || session.id !== card.sessionId) throw new Error("This functional review session is no longer active.");
+      if (action === "pause") {
+        session = transitionFunctionalVibeReviewSession(session, { type: "pause" });
+        saveFunctionalVibeReviewSession(session);
+        setFunctionalSessionCardsState(session.id, { paused: true });
+        closeFunctionalVibeReviewRecoveryCards(session.id);
+        await captureVibeReviewSession("functional-decomposition", session, "paused");
+        return;
+      }
+      const providerApi = await waitForActionProvider("project-functional-diagram", 1800);
       let state = providerApi?.getFunctionalVibeReviewState?.();
       if (String(state?.activeProjectId || "") !== String(session.projectId)) throw new Error("This review is paused. Return to its original project before applying a decision.");
       if (String(state?.workspaceType || "functional-project") !== String(session.workspaceType || "functional-project")) {
@@ -5113,49 +5223,21 @@ useEffect(() => {
       }
 
       const currentRowId = currentFunctionalVibeReviewRowId(session);
-      const currentRowAvailable = state?.rows?.some((entry) => String(entry?.rowId || "") === String(currentRowId || ""));
-      if (action !== "stop" && session.workspaceType !== "code-based-architecture" && currentRowId && !currentRowAvailable) {
-        const thread = loadThreads().find((entry) => entry.id === activeId);
-        const legacyProposalRows = [...(thread?.messages || [])]
-          .reverse()
-          .map((message) => extractFunctionalRowsFromAssistantText(message?.content || ""))
-          .find((rows) => rows.length >= session.queue.length) || [];
-        const recoveredRows = recoverFunctionalVibeReviewRows(session, legacyProposalRows);
-        if (!recoveredRows.length || !providerApi?.restoreFunctionalVibeReviewRows) {
-          throw new Error("The project decomposition is unavailable and this review session does not contain a recoverable snapshot.");
-        }
-        const restored = await providerApi.restoreFunctionalVibeReviewRows({
-          projectId: session.projectId,
-          rows: recoveredRows,
-          workspaceType: session.workspaceType,
-        });
-        state = restored?.state || providerApi?.getFunctionalVibeReviewState?.();
-        session = {
-          ...session,
-          state: session.state === FUNCTIONAL_VIBE_REVIEW_STATES.APPLYING
-            ? FUNCTIONAL_VIBE_REVIEW_STATES.AWAITING
-            : session.state,
-          rowSnapshot: state?.rows || session.rowSnapshot || [],
-          updatedAt: new Date().toISOString(),
-        };
-        saveFunctionalVibeReviewSession(session);
-        appendMessage(activeId, {
-          role: "assistant",
-          content: `I restored ${recoveredRows.length} functional-decomposition rows from the review checkpoint and preserved the decisions already applied.`,
-        });
-        setThreads(loadThreads());
-      }
 
       if (action === "resume") {
-        if (session.state === FUNCTIONAL_VIBE_REVIEW_STATES.AWAITING) {
-          appendMessage(activeId, { role: "assistant", content: "The current functional row is already waiting for your decision. Use Accept proposal, Keep as is, Apply revision, Remove row, Skip for later, or Stop review." });
-          setThreads(loadThreads());
-          return;
-        }
+        if ([FUNCTIONAL_VIBE_REVIEW_STATES.COMPLETED, FUNCTIONAL_VIBE_REVIEW_STATES.CANCELLED].includes(session.state)) throw new Error("This review is finished and cannot be resumed.");
         session = transitionFunctionalVibeReviewSession(session, { type: "resume" });
         saveFunctionalVibeReviewSession(session);
-        closeFunctionalVibeReviewRecoveryCards(session.id);
-        try {
+        if (!currentRowId) throw new Error("This saved review has no current row and cannot be safely resumed. Start a new review.");
+        const entry = state?.rows?.find((candidate) => String(candidate?.rowId || "") === String(currentRowId));
+        if (!entry) throw new Error("The saved current row no longer exists. No data was changed; restart the review with a new scope.");
+        if (session.currentRowSnapshot && JSON.stringify(session.currentRowSnapshot) !== JSON.stringify(entry.row)) throw new Error("The saved current row changed after the review was paused. No data was changed; restart or review the updated row in a new session.");
+        setFunctionalSessionCardsState(session.id, {}, { retire: true });
+        if (session.proposal) {
+          const cardToRestore = buildFunctionalVibeReviewCard(session, state, currentRowId, { valid: true, proposal: session.proposal });
+          appendMessage(activeId, { role: "assistant", content: `Resumed ${session.reviewName || "functional review"} at the saved current item.`, functionalVibeReview: cardToRestore });
+          setThreads(loadThreads());
+        } else try {
           await appendFunctionalVibeReviewProposal(session, providerApi, state, signal);
         } catch (resumeError) {
           appendFunctionalVibeReviewRecovery(session,
@@ -5164,7 +5246,7 @@ useEffect(() => {
         return;
       }
 
-      if (currentFunctionalVibeReviewRowId(session) !== card.rowId) throw new Error("That item is no longer current; use the controls on the latest review card.");
+      if (currentFunctionalVibeReviewRowId(session) !== card.rowId) return;
 
       if (action === "undo") {
         const last = session.decisions[session.decisions.length - 1];
@@ -5305,7 +5387,10 @@ useEffect(() => {
     } catch (error) {
       if ((signal?.aborted || error?.name === "AbortError") && fromRunCopilot) throw error;
       const failedSession = card?.projectId ? loadFunctionalVibeReviewSession(card.projectId, activeId) : null;
-      if (failedSession && currentFunctionalVibeReviewRowId(failedSession) === card?.rowId) {
+      if (action === "resume" && failedSession && ![FUNCTIONAL_VIBE_REVIEW_STATES.COMPLETED, FUNCTIONAL_VIBE_REVIEW_STATES.CANCELLED].includes(failedSession.state)) {
+        saveFunctionalVibeReviewSession(transitionFunctionalVibeReviewSession(failedSession, { type: "pause" }));
+        setFunctionalSessionCardsState(failedSession.id, { paused: true });
+      } else if (failedSession && currentFunctionalVibeReviewRowId(failedSession) === card?.rowId) {
         saveFunctionalVibeReviewSession(transitionFunctionalVibeReviewSession(failedSession, {
           type: "failure",
           record: { rowId: card?.rowId, label: card?.label, reason: error?.message || "The review action failed." },
@@ -5318,6 +5403,27 @@ useEffect(() => {
       setWorkProgress([]);
     }
   };
+
+  // The action handlers intentionally use the latest render closure; adding them
+  // would retrigger this one-shot explicit-resume effect on every render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!pendingVibeReviewResume || pendingVibeReviewResume.session.threadId !== activeId || busy) return;
+    const { domain, session } = pendingVibeReviewResume;
+    setPendingVibeReviewResume(null);
+    const rowId = domain === "functional-decomposition"
+      ? currentFunctionalVibeReviewRowId(session)
+      : currentVibeReviewRowId(session);
+    const resumeCard = domain === "functional-decomposition"
+      ? { sessionId: session.id, projectId: session.projectId, rowId }
+      : { sessionId: session.id, projectId: session.projectId, sourceRowId: rowId };
+    const resume = domain === "functional-decomposition"
+      ? handleFunctionalVibeReviewAction("resume", resumeCard)
+      : handleVibeReviewAction("resume", resumeCard);
+    Promise.resolve(resume).finally(() => {
+      requestAnimationFrame(() => document.querySelector(`[data-vibe-review-session="${session.id}"][data-vibe-review-actionable="true"]`)?.scrollIntoView?.({ behavior: "smooth", block: "center" }));
+    });
+  }, [activeId, busy, pendingVibeReviewResume]);
 
   async function handleOpenFunctionalVibeReviewSource(card) {
     const provider = await waitForActionProvider("project-functional-diagram", 1800);
@@ -5911,6 +6017,8 @@ useEffect(() => {
           scopeLabel: scopeResult.scopeLabel,
           reviewFields: scopeResult.reviewFields || [],
           reviewInstructions: options.functionalReviewInstructions || userText,
+          reviewerName: reviewer.name || reviewer.email || "Local reviewer",
+          reviewerId: reviewer.id || reviewer.email || "local-user",
           ai: collaboratorAI,
           workspaceType: state.workspaceType || "functional-project",
           repoId: state.repoId || "",
@@ -5978,6 +6086,8 @@ useEffect(() => {
           reviewName,
           scopeLabel: scopeResult.scopeLabel,
           reviewTarget: scopeResult.reviewTarget || "safetySignificant",
+          reviewerName: reviewer.name || reviewer.email || "Local reviewer",
+          reviewerId: reviewer.id || reviewer.email || "local-user",
           ai: collaboratorAI,
           workspaceType: state.workspaceType || "functional-project",
           sourceRunId: state.sourceRunId || "",

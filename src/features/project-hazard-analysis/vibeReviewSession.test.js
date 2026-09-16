@@ -54,6 +54,23 @@ test("persists compact sessions across remount without full row payloads", () =>
   expect(JSON.stringify(loadVibeReviewSession("p", "t", storage))).not.toContain("Function (From)");
 });
 
+test("pause persists the complete cursor, proposal, progress, and identity without advancing", () => {
+  const storage = { data: {}, getItem(k) { return this.data[k] || null; }, setItem(k, v) { this.data[k] = v; } };
+  let session = createVibeReviewSession({ projectId: "p", threadId: "t", queue: ["r1", "r2"], reviewName: "Named", workspaceType: "code-based-architecture", repoId: "repo", sourceRunId: "run" });
+  session = transitionVibeReviewSession(session, { type: "proposal", proposal: { normalizedDecision: "Safety — Direct" }, currentRowSnapshot: ["r1", "Yes"] });
+  session = { ...session, decisions: [{ sourceRowId: "prior" }], skips: [{ sourceRowId: "skip" }], failures: [{ sourceRowId: "fail" }] };
+  const paused = transitionVibeReviewSession(session, { type: "pause" });
+  saveVibeReviewSession(paused, storage);
+  expect(loadVibeReviewSession("p", "t", storage)).toMatchObject({ id: session.id, projectId: "p", threadId: "t", queue: ["r1", "r2"], cursor: 0, state: "paused", proposal: session.proposal, currentRowSnapshot: ["r1", "Yes"], reviewName: "Named", repoId: "repo", sourceRunId: "run", decisions: session.decisions, skips: session.skips, failures: session.failures });
+});
+
+test("legacy active-looking persisted sessions load as paused and never auto-resume", () => {
+  const legacy = { id: "old", projectId: "p", threadId: "t", queue: ["r1"], cursor: 0, state: "awaiting_decision", proposal: { normalizedDecision: "Safety — Direct" } };
+  const storage = { getItem: () => JSON.stringify({ "p:t": legacy }), setItem: jest.fn() };
+  expect(loadVibeReviewSession("p", "t", storage)).toMatchObject({ id: "old", state: "paused", recoveredAfterRestart: true, proposal: legacy.proposal });
+  expect(storage.setItem).not.toHaveBeenCalled();
+});
+
 test("preserves Code-Based Architecture run identity across a review session", () => {
   const storage = { data: {}, getItem(k) { return this.data[k] || null; }, setItem(k, v) { this.data[k] = v; } };
   const session = createVibeReviewSession({

@@ -5,6 +5,7 @@ const uid = () => (typeof crypto !== "undefined" && crypto.randomUUID?.()) || `v
 const defaultStorage = () => typeof localStorage !== "undefined" ? localStorage : null;
 const volatileMapsByStorage = new WeakMap();
 const nullStorageMaps = {};
+const runtimeId = `hazard-review-runtime-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 function volatileMaps(storage) {
   if (!storage || (typeof storage !== "object" && typeof storage !== "function")) return nullStorageMaps;
@@ -57,16 +58,17 @@ export const VIBE_REVIEW_STATES = Object.freeze({
   COMPLETED: "completed", CANCELLED: "cancelled", PAUSED: "paused",
 });
 
-export function createVibeReviewSession({ projectId, threadId, queue = [], reviewName = "", scopeLabel = "", reviewTarget = "safetySignificant", ai = {}, workspaceType = "functional-project", sourceRunId = "", repoId = "" }) {
+export function createVibeReviewSession({ projectId, threadId, queue = [], reviewName = "", scopeLabel = "", reviewTarget = "safetySignificant", reviewerName = "", reviewerId = "", ai = {}, workspaceType = "functional-project", sourceRunId = "", repoId = "" }) {
   const stableQueue = Array.from(new Set(queue.map(String).filter(Boolean)));
   return {
     id: uid(), projectId: String(projectId), threadId: String(threadId), queue: stableQueue,
     reviewName: String(reviewName || "").trim(), scopeLabel, reviewTarget: reviewTarget === "guidePhraseApplicable" ? reviewTarget : "safetySignificant",
+    reviewerName: String(reviewerName || "").trim(), reviewerId: String(reviewerId || "").trim(),
     cursor: 0, state: VIBE_REVIEW_STATES.PROPOSING, proposal: null,
     workspaceType: String(workspaceType || "functional-project"),
     sourceRunId: String(sourceRunId || ""),
     repoId: String(repoId || ""),
-    decisions: [], skips: [], failures: [], missingRows: [], ai: { ...ai }, createdAt: now(), updatedAt: now(),
+    decisions: [], skips: [], failures: [], missingRows: [], ai: { ...ai }, runtimeId, createdAt: now(), updatedAt: now(),
   };
 }
 
@@ -75,7 +77,7 @@ export function currentVibeReviewRowId(session) { return session?.queue?.[sessio
 export function transitionVibeReviewSession(session, event = {}) {
   if (!session) return session;
   const next = { ...session, updatedAt: now() };
-  if (event.type === "proposal") return { ...next, state: VIBE_REVIEW_STATES.AWAITING, proposal: event.proposal };
+  if (event.type === "proposal") return { ...next, state: VIBE_REVIEW_STATES.AWAITING, proposal: event.proposal, currentRowSnapshot: event.currentRowSnapshot || session.currentRowSnapshot || null };
   if (event.type === "applying") return { ...next, state: VIBE_REVIEW_STATES.APPLYING };
   if (event.type === "decision") {
     const decisions = [...session.decisions, event.record];
@@ -90,7 +92,7 @@ export function transitionVibeReviewSession(session, event = {}) {
   if (event.type === "failure") return { ...next, state: VIBE_REVIEW_STATES.AWAITING, failures: [...session.failures, event.record] };
   if (event.type === "stop") return { ...next, state: VIBE_REVIEW_STATES.CANCELLED, proposal: null };
   if (event.type === "pause") return { ...next, state: VIBE_REVIEW_STATES.PAUSED };
-  if (event.type === "resume") return { ...next, state: session.proposal ? VIBE_REVIEW_STATES.AWAITING : VIBE_REVIEW_STATES.PROPOSING };
+  if (event.type === "resume") return { ...next, runtimeId, state: session.proposal ? VIBE_REVIEW_STATES.AWAITING : VIBE_REVIEW_STATES.PROPOSING };
   if (event.type === "undo") {
     const last = session.decisions[session.decisions.length - 1];
     const rowIndex = last ? session.queue.indexOf(last.sourceRowId) : -1;
@@ -115,7 +117,16 @@ export function saveVibeReviewSession(session, storage = defaultStorage()) {
   return session;
 }
 export function loadVibeReviewSession(projectId, threadId, storage = defaultStorage()) {
-  return loadMap(storage, KEY)[`${projectId}:${threadId}`] || null;
+  const session = loadMap(storage, KEY)[`${projectId}:${threadId}`] || null;
+  if (!session) return null;
+  const terminal = [VIBE_REVIEW_STATES.COMPLETED, VIBE_REVIEW_STATES.CANCELLED, VIBE_REVIEW_STATES.PAUSED].includes(session.state);
+  return !terminal && session.runtimeId !== runtimeId ? { ...session, state: VIBE_REVIEW_STATES.PAUSED, recoveredAfterRestart: true } : session;
+}
+export function findVibeReviewSessionById(sessionId, storage = defaultStorage()) {
+  const session = Object.values(loadMap(storage, KEY)).find((item) => String(item?.id || "") === String(sessionId || "")) || null;
+  if (!session) return null;
+  const terminal = [VIBE_REVIEW_STATES.COMPLETED, VIBE_REVIEW_STATES.CANCELLED, VIBE_REVIEW_STATES.PAUSED].includes(session.state);
+  return !terminal && session.runtimeId !== runtimeId ? { ...session, state: VIBE_REVIEW_STATES.PAUSED, recoveredAfterRestart: true } : session;
 }
 export function appendVibeReviewAudit(record, storage = defaultStorage()) {
   const map = loadMap(storage, AUDIT_KEY); const projectId = String(record.projectId || "");
