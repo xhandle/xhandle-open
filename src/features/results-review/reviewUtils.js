@@ -35,6 +35,7 @@ export function normalizeReviewItem(item = {}) {
     confidence: item.confidence ?? null,
     riskImpact: item.riskImpact || "",
     traceLinks: Array.isArray(item.traceLinks) ? item.traceLinks : [],
+    vibeReview: item.vibeReview && typeof item.vibeReview === "object" ? { ...item.vibeReview } : null,
     version: Number.isFinite(Number(item.version)) ? Number(item.version) : 1,
     history: Array.isArray(item.history) ? item.history : [],
     createdAt: item.createdAt || now,

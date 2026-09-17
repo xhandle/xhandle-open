@@ -1,6 +1,6 @@
 import React, { act, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import FunctionalDiagramWorkspace from './FunctionalDiagramWorkspace';
+import FunctionalDiagramWorkspace, { viewModeForTableFocus } from './FunctionalDiagramWorkspace';
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -65,4 +65,10 @@ test('switching view modes does not remount the diagram', () => {
   clickView('Diagram');
 
   expect(onDiagramMount).toHaveBeenCalledTimes(1);
+});
+
+test('review row focus preserves split view and only converts diagram-only view to table', () => {
+  expect(viewModeForTableFocus('split')).toBe('split');
+  expect(viewModeForTableFocus('table')).toBe('table');
+  expect(viewModeForTableFocus('diagram')).toBe('table');
 });

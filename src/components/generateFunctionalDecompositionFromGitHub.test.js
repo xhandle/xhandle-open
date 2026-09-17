@@ -80,6 +80,59 @@ describe("code architecture functional split view", () => {
     expect(host.querySelector('[aria-label="Resize code architecture diagram and functional table panes"]')).toBeTruthy();
     expect(host.querySelector('[data-testid="code-architecture-diagram"]')).toBeTruthy();
   });
+
+  it("keeps a controlled table view selected when reviewed row data refreshes", () => {
+    const React = require("react");
+    const { act } = React;
+    const renderTable = (from) => (
+      <FunctionalDecompositionTable
+        data={[{
+          from,
+          action: "Selected sensor data",
+          to: "Construct model input",
+          architecture: { subsystem: "Inference", csci: "Runtime", csc: "Input", csu: "Input Builder" },
+        }]}
+        repoId="repo"
+        branch="main"
+        viewMode="table"
+      />
+    );
+
+    act(() => root.render(renderTable("Select sensor input")));
+    expect(host.querySelector('[aria-label="Code architecture functional decomposition table"]')).toBeTruthy();
+    expect(host.querySelector('[aria-label="Code architecture diagram"]')).toBeFalsy();
+
+    act(() => root.render(renderTable("Select validated sensor input")));
+    expect(host.querySelector('[aria-label="Code architecture functional decomposition table"]')).toBeTruthy();
+    expect(host.querySelector('[aria-label="Code architecture diagram"]')).toBeFalsy();
+  });
+
+  it("preserves split view when review progression focuses a table row", () => {
+    const React = require("react");
+    const { act } = React;
+    const onViewModeChange = jest.fn();
+
+    act(() => root.render(
+      <FunctionalDecompositionTable
+        data={[{
+          from: "Select sensor input",
+          action: "Selected sensor data",
+          to: "Construct model input",
+          architecture: { subsystem: "Inference", csci: "Runtime", csc: "Input", csu: "Input Builder" },
+        }]}
+        repoId="repo"
+        branch="main"
+        viewMode="split"
+        onViewModeChange={onViewModeChange}
+        forceTableOpenKey="next-review-item"
+        highlightedRowIndex={0}
+      />,
+    ));
+
+    expect(host.querySelector('[aria-label="Code architecture diagram"]')).toBeTruthy();
+    expect(host.querySelector('[aria-label="Code architecture functional decomposition table"]')).toBeTruthy();
+    expect(onViewModeChange).not.toHaveBeenCalledWith("table");
+  });
 });
 
 describe("code architecture functional table cell editing", () => {

@@ -18,6 +18,9 @@ test("recognizes functional vibe review without confusing ordinary generation", 
   expect(isFunctionalVibeReviewIntent("Vibe review the current functional decomposition one row at a time")).toBe(true);
   expect(isFunctionalVibeReviewIntent("Create a functional decomposition for a rover")).toBe(false);
   expect(isFunctionalVibeReviewIntent("Let's vibe review the CSU column items")).toBe(true);
+  expect(isFunctionalVibeReviewIntent("lets vibe review the items marked Needs Review under Lifecycle Phase")).toBe(true);
+  expect(isFunctionalVibeReviewIntent("Vibe review Needs Review items under Interface Type")).toBe(true);
+  expect(isFunctionalVibeReviewIntent("Vibe review Needs Review items under Hazard Analysis Eligibility")).toBe(true);
 });
 
 test("reviews Code-Based Architecture hierarchy columns as functional-decomposition scope", () => {
@@ -104,6 +107,20 @@ test("scopes a quoted Lifecycle Phase column request to Needs Review only", () =
   expect(result.queue).toEqual(["review-a", "review-b"]);
   expect(result.scopeLabel).toBe("Lifecycle Phase = Needs Review");
   expect(result.reviewFields).toEqual(["lifecyclePhase"]);
+});
+
+test("scopes the conversational Lifecycle Phase request used by Collaborator", () => {
+  const cbaRows = [
+    { rowId: "static", rowIndex: 0, row: { ...rows[0].row, lifecyclePhase: "Static Structure" } },
+    { rowId: "review", rowIndex: 1, row: { ...rows[1].row, lifecyclePhase: "Needs Review" } },
+  ];
+  const result = resolveFunctionalVibeReviewScope(
+    "lets vibe review the items marked Needs Review under Lifecycle Phase",
+    cbaRows,
+  );
+  expect(result.status).toBe("matched");
+  expect(result.queue).toEqual(["review"]);
+  expect(result.scopeLabel).toBe("Lifecycle Phase = Needs Review");
 });
 
 test("uses the table's Needs Review default when lifecycle classification is blank", () => {

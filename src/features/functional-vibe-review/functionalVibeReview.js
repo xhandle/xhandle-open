@@ -160,7 +160,11 @@ export function isFunctionalVibeReviewIntent(value = "") {
   const text = key(value);
   const functional = /\bfunctional (?:decomposition|architecture|interfaces?|rows?)\b/.test(text)
     || /\bdecomposition rows?\b/.test(text)
-    || /\b(?:csci|csc|csu)(?: column)?(?: items?| rows?| allocations?)?\b/.test(text);
+    || /\b(?:csci|csc|csu)(?: column)?(?: items?| rows?| allocations?)?\b/.test(text)
+    // These are governed columns of the functional/code-architecture table.
+    // Naming one is sufficient to disambiguate a review request from the
+    // hazard-analysis meaning of the generic value "Needs Review".
+    || /\b(?:lifecycle phase|execution phase|interface type|interface semantics|interface classification|hazard analysis eligibility|eligibility rationale)\b/.test(text);
   if (!functional) return false;
   return /\bvi(?:b|v)e review\b/.test(text)
     || /\b(?:walk me through|go through)\b.*\b(?:one at a time|row by row|interface by interface)\b/.test(text)

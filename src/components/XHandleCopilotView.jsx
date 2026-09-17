@@ -102,7 +102,6 @@ import {
   transitionFunctionalVibeReviewSession,
 } from "../features/functional-vibe-review/functionalVibeReviewSession";
 import {
-  createVibeReviewDecisionEvidence,
   createVibeReviewSessionEvidence,
   useResultsReview,
 } from "../features/results-review";
@@ -136,6 +135,11 @@ export function buildCollaboratorVoiceGreeting() {
   return firstName
     ? `Hi ${firstName}. What would you like to think through together?`
     : "Hi. What would you like to think through together?";
+}
+
+export function canAdvancePastMissingHazardReviewRow(queue = [], cursor = 0, availableRowIds = []) {
+  const available = availableRowIds instanceof Set ? availableRowIds : new Set(availableRowIds);
+  return queue.slice(Number(cursor) + 1).some((rowId) => available.has(String(rowId)));
 }
 
 export function buildCollaboratorModelOptions(provider, selectedModel = "", providerModels = []) {
@@ -4329,6 +4333,7 @@ export default function XHandleCopilotView({
   defaultSidebarOpen = true,
   isDark = false,
   reviewer = {},
+  onResumeVibeReviewWorkspace,
 }) {
   const resultsReview = useResultsReview();
   const enrichedContext = useMemo(
@@ -4546,6 +4551,19 @@ function cancelCtxEditor() {
   }, []);
 
   useEffect(() => {
+    const handleOpenThread = (event) => {
+      const threadId = String(event?.detail?.threadId || "");
+      if (!threadId) return;
+      const thread = loadThreads().find((entry) => entry.id === threadId);
+      if (!thread) return;
+      setThreads(loadThreads());
+      setActiveId(threadId);
+    };
+    window.addEventListener("xhandle:open-collaborator-thread", handleOpenThread);
+    return () => window.removeEventListener("xhandle:open-collaborator-thread", handleOpenThread);
+  }, []);
+
+  useEffect(() => {
     const thread = loadThreads().find((entry) => entry.id === activeId);
     if (!thread) return;
     let changed = false;
@@ -4732,17 +4750,11 @@ useEffect(() => {
     }
   };
 
-  const captureVibeReviewDecision = async (details) => {
-    try {
-      return await resultsReview.recordVibeReviewEvidence(createVibeReviewDecisionEvidence({
-        reviewerName: reviewer.name || reviewer.email || "Local reviewer",
-        reviewerId: reviewer.id || reviewer.email || "local-user",
-        ...details,
-      }));
-    } catch (error) {
-      console.warn("[results-review] Failed to capture Collaborator vibe-review decision", error);
-      return null;
-    }
+  const captureVibeReviewDecision = async () => {
+    // Individual decisions are retained in the persisted vibe-review session
+    // and its audit trail. Publishing them as artifact review items creates a
+    // second top-level Review Center record for the same named review.
+    return null;
   };
 
   function handleSelectRegion() {
@@ -4811,13 +4823,22 @@ useEffect(() => {
 
   const appendVibeReviewProposal = async (session, providerApi, signal) => {
     let working = session;
-    let state = providerApi.getHazardVibeReviewState();
     while (currentVibeReviewRowId(working)) {
+      const activeProvider = await waitForActionProvider("project-functional-diagram", 1800) || providerApi;
+      const state = activeProvider?.getHazardVibeReviewState?.();
       const rowId = currentVibeReviewRowId(working);
-      const headers = state.summary?.[0] || [];
+      const headers = state?.summary?.[0] || [];
       const idIndex = headers.findIndex((header) => /^(?:Raw Analysis Row ID|Raw Row ID|Analysis Row ID)$/i.test(String(header).trim()));
+      if (!Array.isArray(state?.summary) || !headers.length || idIndex < 0) {
+        throw new Error("The active hazard-analysis rows could not be loaded. The saved review queue was preserved.");
+      }
       const row = state.summary?.slice(1).find((candidate) => String(candidate?.[idIndex] || "").trim() === rowId);
       if (!row) {
+        const availableRowIds = new Set(state.summary.slice(1).map((candidate) => String(candidate?.[idIndex] || "").trim()).filter(Boolean));
+        const laterQueuedRowExists = canAdvancePastMissingHazardReviewRow(working.queue, working.cursor, availableRowIds);
+        if (!laterQueuedRowExists) {
+          throw new Error("The active hazard analysis no longer matches the saved review queue. No remaining items were discarded; reopen the original analysis or restart this review explicitly.");
+        }
         working = transitionVibeReviewSession(working, { type: "missing", record: { sourceRowId: rowId, reason: "Row was deleted after this review began." } });
         saveVibeReviewSession(working); continue;
       }
@@ -4896,10 +4917,21 @@ useEffect(() => {
       }
       const providerApi = await waitForActionProvider("project-functional-diagram", 1800);
       const state = providerApi?.getHazardVibeReviewState?.();
-      if (
+      const hazardWorkspaceMismatch = (
         String(state?.activeProjectId || "") !== String(session.projectId) ||
         String(state?.workspaceType || "functional-project") !== String(session.workspaceType || "functional-project")
-      ) throw new Error("This review is paused. Return to its original project and workspace before applying a decision.");
+      );
+      if (hazardWorkspaceMismatch) {
+        if (action === "resume" && onResumeVibeReviewWorkspace) {
+          onResumeVibeReviewWorkspace({
+            sessionId: session.id, threadId: session.threadId, projectId: session.projectId,
+            domain: "hazard-analysis", workspaceType: session.workspaceType || "functional-project",
+            repoId: session.repoId || "", reviewName: session.reviewName || "",
+          });
+          return;
+        }
+        throw new Error("This review is paused. Return to its original project and workspace before applying a decision.");
+      }
       if (action === "undo") {
         const last = session.decisions[session.decisions.length - 1];
         if (!last) throw new Error("There is no applied review decision to undo.");
@@ -4943,7 +4975,11 @@ useEffect(() => {
         const headers = state?.summary?.[0] || [];
         const idIndex = headers.findIndex((header) => /^(?:Raw Analysis Row ID|Raw Row ID|Analysis Row ID)$/i.test(String(header).trim()));
         const row = state?.summary?.slice(1).find((candidate) => String(candidate?.[idIndex] || "").trim() === rowId);
-        if (!row) throw new Error("The saved current row no longer exists. No data was changed; restart the review with a new scope.");
+        if (!row) {
+          setHazardSessionCardsState(session.id, {}, { retire: true });
+          await appendVibeReviewProposal(session, providerApi, signal);
+          return;
+        }
         if (session.currentRowSnapshot && JSON.stringify(session.currentRowSnapshot) !== JSON.stringify(row)) throw new Error("The saved current row changed after the review was paused. No data was changed; restart or review the updated row in a new session.");
         setHazardSessionCardsState(session.id, {}, { retire: true });
         if (session.proposal) {
@@ -4979,6 +5015,19 @@ useEffect(() => {
         reviewerDisposition: action === "yes" || action === "no",
         update: { ...proposal, ...proposal.governedDecision,
         "Classification Evidence": `${proposal.governedDecision["Classification Evidence"] || proposal["Classification Evidence"] || ""}${userFeedback ? ` User-supplied feedback: ${userFeedback}` : ""}`.trim() } });
+      if (result?.missing) {
+        session = transitionVibeReviewSession(session, {
+          type: "missing",
+          record: { sourceRowId: card.sourceRowId, reason: "The source row no longer exists in the active hazard analysis." },
+        });
+        saveVibeReviewSession(session);
+        closeVibeReviewCard(card, "source-row-missing");
+        await appendVibeReviewProposal(session, providerApi, signal);
+        return;
+      }
+      if (!Array.isArray(result?.headers) || !Array.isArray(result?.previousRow) || !Array.isArray(result?.nextRow)) {
+        throw new Error("The hazard review decision returned incomplete row evidence. The review was not advanced.");
+      }
       const governedHeaders = session.reviewTarget === "guidePhraseApplicable"
         ? new Set(result.headers.filter((header, index) => result.previousRow[index] !== result.nextRow[index]))
         : new Set(Object.keys(proposal.governedDecision));
@@ -5214,12 +5263,21 @@ useEffect(() => {
       }
       const providerApi = await waitForActionProvider("project-functional-diagram", 1800);
       let state = providerApi?.getFunctionalVibeReviewState?.();
-      if (String(state?.activeProjectId || "") !== String(session.projectId)) throw new Error("This review is paused. Return to its original project before applying a decision.");
-      if (String(state?.workspaceType || "functional-project") !== String(session.workspaceType || "functional-project")) {
-        throw new Error("This review is paused. Return to its original workspace before applying a decision.");
-      }
-      if (session.repoId && String(state?.repoId || "") !== String(session.repoId)) {
-        throw new Error("This review is paused. Return to its original repository analysis before applying a decision.");
+      const functionalWorkspaceMismatch = (
+        String(state?.activeProjectId || "") !== String(session.projectId)
+        || String(state?.workspaceType || "functional-project") !== String(session.workspaceType || "functional-project")
+        || (session.repoId && String(state?.repoId || "") !== String(session.repoId))
+      );
+      if (functionalWorkspaceMismatch) {
+        if (action === "resume" && onResumeVibeReviewWorkspace) {
+          onResumeVibeReviewWorkspace({
+            sessionId: session.id, threadId: session.threadId, projectId: session.projectId,
+            domain: "functional-decomposition", workspaceType: session.workspaceType || "functional-project",
+            repoId: session.repoId || "", reviewName: session.reviewName || "",
+          });
+          return;
+        }
+        throw new Error("This review is paused. Return to its original project, workspace, and repository before applying a decision.");
       }
 
       const currentRowId = currentFunctionalVibeReviewRowId(session);

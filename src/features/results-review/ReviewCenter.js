@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from "react";
-import { ChevronRight, FileArchive, FileText, Trash2 } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { ChevronRight, FileArchive, FileText, Folder, FolderPlus, PanelLeftClose, PanelLeftOpen, Pencil, Trash2 } from "lucide-react";
 import {
   REVIEW_LIFECYCLE_STATES,
   REVIEW_STATUSES,
@@ -13,6 +13,97 @@ import { findVibeReviewSessionById, VIBE_REVIEW_STATES } from "../project-hazard
 import { findFunctionalVibeReviewSessionById, FUNCTIONAL_VIBE_REVIEW_STATES } from "../functional-vibe-review/functionalVibeReviewSession";
 
 const SUMMARY_ARTIFACTS_KEY = "xhandle:review-summary-artifacts";
+const REVIEW_FOLDERS_KEY = "xhandle:review-center-folders:v1";
+
+export function normalizeReviewFolderState(value = {}) {
+  const rawFolders = Array.isArray(value.folders)
+    ? value.folders.filter((folder) => folder?.id && String(folder.name || "").trim()).map((folder) => ({ ...folder, id: String(folder.id), name: String(folder.name).trim() }))
+    : [];
+  const validIds = new Set(rawFolders.map((folder) => folder.id));
+  const foldersById = new Map(rawFolders.map((folder) => [folder.id, folder]));
+  const folders = rawFolders.map((folder) => {
+    const candidateParentId = String(folder.parentId || "");
+    let parentId = candidateParentId && candidateParentId !== folder.id && validIds.has(candidateParentId) ? candidateParentId : "";
+    const visited = new Set([folder.id]);
+    let cyclic = false;
+    while (parentId) {
+      if (visited.has(parentId)) { cyclic = true; break; }
+      visited.add(parentId);
+      const parent = foldersById.get(parentId);
+      parentId = String(parent?.parentId || "");
+    }
+    return { ...folder, parentId: !cyclic && candidateParentId && candidateParentId !== folder.id && validIds.has(candidateParentId) ? candidateParentId : "" };
+  });
+  const assignments = Object.fromEntries(Object.entries(value.assignments || {}).filter(([, folderId]) => validIds.has(String(folderId))));
+  const projectNames = Object.fromEntries(Object.entries(value.projectNames || {})
+    .map(([projectId, name]) => [String(projectId), String(name || "").trim()])
+    .filter(([projectId, name]) => projectId && name));
+  return { folders, assignments, projectNames, sidebarCollapsed: Boolean(value.sidebarCollapsed) };
+}
+
+export function reviewFolderDescendantIds(folders = [], folderId = "") {
+  const result = new Set();
+  const visit = (parentId) => folders.filter((folder) => String(folder.parentId || "") === String(parentId)).forEach((folder) => {
+    if (result.has(folder.id)) return;
+    result.add(folder.id);
+    visit(folder.id);
+  });
+  if (folderId) result.add(folderId);
+  visit(folderId);
+  return result;
+}
+
+export function flattenReviewFolderTree(folders = [], parentId = "", depth = 0) {
+  return folders
+    .filter((folder) => String(folder.parentId || "") === String(parentId || ""))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { sensitivity: "base" }))
+    .flatMap((folder) => [{ folder, depth }, ...flattenReviewFolderTree(folders, folder.id, depth + 1)]);
+}
+
+export function renameReviewFolderState(state = {}, folderId = "", name = "") {
+  const nextName = String(name || "").trim();
+  if (!folderId || !nextName) return normalizeReviewFolderState(state);
+  return normalizeReviewFolderState({
+    ...state,
+    folders: (state.folders || []).map((folder) => folder.id === folderId ? { ...folder, name: nextName } : folder),
+  });
+}
+
+export function renameReviewProjectState(state = {}, projectId = "", name = "") {
+  const nextName = String(name || "").trim();
+  if (!projectId || !nextName) return normalizeReviewFolderState(state);
+  return normalizeReviewFolderState({
+    ...state,
+    projectNames: { ...(state.projectNames || {}), [projectId]: nextName },
+  });
+}
+
+export function moveReviewFolderState(state = {}, folderId = "", parentId = "") {
+  const normalized = normalizeReviewFolderState(state);
+  const folder = normalized.folders.find((entry) => entry.id === folderId);
+  const targetParentId = String(parentId || "");
+  if (!folder) return normalized;
+  if (targetParentId && !normalized.folders.some((entry) => entry.id === targetParentId)) return normalized;
+  if (targetParentId === folderId || reviewFolderDescendantIds(normalized.folders, folderId).has(targetParentId)) return normalized;
+  return normalizeReviewFolderState({
+    ...normalized,
+    folders: normalized.folders.map((entry) => entry.id === folderId ? { ...entry, parentId: targetParentId } : entry),
+  });
+}
+
+function loadReviewFolderState() {
+  try {
+    return normalizeReviewFolderState(JSON.parse(localStorage.getItem(REVIEW_FOLDERS_KEY) || "{}"));
+  } catch {
+    return normalizeReviewFolderState();
+  }
+}
+
+function saveReviewFolderState(value) {
+  const normalized = normalizeReviewFolderState(value);
+  localStorage.setItem(REVIEW_FOLDERS_KEY, JSON.stringify(normalized));
+  return normalized;
+}
 
 const IN_PROGRESS_STATUSES = new Set([
   REVIEW_STATUSES.NEEDS_REGENERATION,
@@ -206,6 +297,19 @@ export function resumableVibeReviewForGroup(group = {}) {
   };
 }
 
+export function collaboratorThreadForGroup(group = {}) {
+  if (group.artifactType !== "collaborator_vibe_review_session") return null;
+  const item = newestReviewItem(group);
+  const threadId = String(item?.currentContent?.threadId || item?.vibeReview?.threadId || item?.traceLinks?.find?.((link) => link.type === "collaborator_thread")?.threadId || "");
+  if (!threadId) return null;
+  return {
+    threadId,
+    sessionId: String(item?.currentContent?.sessionId || item?.vibeReview?.sessionId || ""),
+    projectId: String(item?.projectId || group.projectId || ""),
+    reviewName: String(item?.currentContent?.reviewName || item?.vibeReview?.reviewName || reviewRecordName(group)),
+  };
+}
+
 function reviewRecordName(group = {}) {
   const item = newestReviewItem(group) || {};
   const isVibeReview = group.artifactType === "collaborator_vibe_review_session";
@@ -234,9 +338,19 @@ function reviewUnitKey(item = {}) {
   return item.artifactId || item.id;
 }
 
+export function isSessionOwnedVibeDecision(item = {}, allItems = []) {
+  if (item.artifactType === "collaborator_vibe_review_session" || item.reviewUnitType === "review_session") return false;
+  const sessionId = String(item.vibeReview?.sessionId || item.traceLinks?.find?.((link) => link.type === "collaborator_thread")?.sessionId || "");
+  if (!sessionId) return false;
+  return allItems.some((candidate) => (
+    candidate.artifactType === "collaborator_vibe_review_session"
+    && String(candidate.currentContent?.sessionId || candidate.vibeReview?.sessionId || "") === sessionId
+  ));
+}
+
 function groupReviewItems(items, projects = []) {
   const groups = new Map();
-  items.forEach((item) => {
+  items.filter((item) => !isSessionOwnedVibeDecision(item, items)).forEach((item) => {
     const projectId = resolveProjectIdForItem(item, projects);
     const artifactRoot = artifactRootForItem(item);
     const key = [
@@ -308,9 +422,17 @@ function progressPercent(group) {
   return Math.round(((group.closed + group.archived) / group.total) * 100);
 }
 
-function relatedReviewHistoryItems(group, allItems = []) {
+export function relatedReviewHistoryItems(group, allItems = []) {
   const groupItems = group?.items || [];
   const artifactType = String(group?.artifactType || "");
+  if (artifactType === "collaborator_vibe_review_session") {
+    const sessionIds = new Set(groupItems.map((item) => String(item.currentContent?.sessionId || item.vibeReview?.sessionId || "")).filter(Boolean));
+    const decisions = allItems.filter((item) => (
+      item.artifactType !== "collaborator_vibe_review_session"
+      && sessionIds.has(String(item.vibeReview?.sessionId || item.traceLinks?.find?.((link) => link.type === "collaborator_thread")?.sessionId || ""))
+    ));
+    return [...groupItems, ...decisions];
+  }
   const domain = artifactType.includes("hazard_summary")
     ? "hazard-analysis"
     : artifactType.includes("functional_decomposition")
@@ -329,6 +451,10 @@ function relatedReviewHistoryItems(group, allItems = []) {
     return !groupRepoId || !sessionRepoId || groupRepoId === sessionRepoId;
   });
   return [...groupItems, ...relatedSessions];
+}
+
+export function reviewRecordDeletionIds(record = {}) {
+  return Array.from(new Set((record.reviewItemIds || record.items?.map((item) => item.id) || []).filter(Boolean)));
 }
 
 function projectNameForId(projectId, projects = []) {
@@ -403,6 +529,7 @@ export default function ReviewCenter({
   onExportCodeArchitectureReviewPackage,
   isExportingCodeArchitectureReviewPackage = false,
   onResumeVibeReview,
+  onOpenCollaboratorThread,
 }) {
   const review = useResultsReview();
   const [filter, setFilter] = useState("all");
@@ -411,6 +538,10 @@ export default function ReviewCenter({
   const [collapsedTypeKeys, setCollapsedTypeKeys] = useState(() => new Set());
   const [historyRecord, setHistoryRecord] = useState(null);
   const [changingGroupKey, setChangingGroupKey] = useState("");
+  const [folderState, setFolderState] = useState(loadReviewFolderState);
+  const [selectedFolderId, setSelectedFolderId] = useState("all");
+  const [folderContextMenu, setFolderContextMenu] = useState(null);
+  const [dragOverFolderId, setDragOverFolderId] = useState("");
 
   const items = useMemo(() => (
     (review.reviewItems || []).filter((item) => reviewItemBelongsToLiveProject(item, projects))
@@ -420,9 +551,91 @@ export default function ReviewCenter({
     if (filter === "all") return true;
     return lifecycleLabel(group).toLowerCase().replace(/\s+/g, "-") === filter;
   }), [filter, groups]);
-  const filteredItems = useMemo(() => filteredGroups.flatMap((group) => group.items), [filteredGroups]);
-  const projectPanels = useMemo(() => groupProjectPanels(filteredGroups, projects), [filteredGroups, projects]);
-  const filteredStats = useMemo(() => summarizeGroups(filteredGroups), [filteredGroups]);
+  const flattenedFolders = useMemo(() => flattenReviewFolderTree(folderState.folders), [folderState.folders]);
+  const organizedGroups = useMemo(() => filteredGroups.filter((group) => {
+    if (selectedFolderId === "all") return true;
+    const assignedFolderId = folderState.assignments[group.key] || "";
+    if (selectedFolderId === "unfiled") return !assignedFolderId;
+    return reviewFolderDescendantIds(folderState.folders, selectedFolderId).has(assignedFolderId);
+  }), [filteredGroups, folderState.assignments, folderState.folders, selectedFolderId]);
+  const filteredItems = useMemo(() => organizedGroups.flatMap((group) => group.items), [organizedGroups]);
+  const projectPanels = useMemo(() => groupProjectPanels(organizedGroups, projects).map((panel) => ({
+    ...panel,
+    projectName: folderState.projectNames?.[panel.projectId] || panel.projectName,
+    customProjectName: Boolean(folderState.projectNames?.[panel.projectId]),
+  })), [folderState.projectNames, organizedGroups, projects]);
+  const filteredStats = useMemo(() => summarizeGroups(organizedGroups), [organizedGroups]);
+
+  const persistFolderState = (updater) => {
+    setFolderState((current) => saveReviewFolderState(typeof updater === "function" ? updater(current) : updater));
+  };
+
+  const createFolder = (reviewKey = "", parentId = "") => {
+    const name = window.prompt("Folder name");
+    if (!String(name || "").trim()) return null;
+    const folder = { id: createReviewId("review-folder", Date.now(), Math.random().toString(36).slice(2, 8)), name: String(name).trim(), parentId: String(parentId || ""), createdAt: new Date().toISOString() };
+    persistFolderState((current) => ({
+      ...current,
+      folders: [...current.folders, folder],
+      assignments: reviewKey ? { ...current.assignments, [reviewKey]: folder.id } : current.assignments,
+    }));
+    if (!reviewKey) setSelectedFolderId(folder.id);
+    setFolderContextMenu(null);
+    return folder;
+  };
+
+  const assignReviewToFolder = (reviewKey, folderId = "") => {
+    if (!reviewKey) return;
+    persistFolderState((current) => {
+      const assignments = { ...current.assignments };
+      if (folderId) assignments[reviewKey] = folderId;
+      else delete assignments[reviewKey];
+      return { ...current, assignments };
+    });
+    setFolderContextMenu(null);
+  };
+
+  const deleteFolder = (folderId) => {
+    persistFolderState((current) => ({
+      ...current,
+      folders: current.folders
+        .filter((folder) => folder.id !== folderId)
+        .map((folder) => folder.parentId === folderId ? { ...folder, parentId: current.folders.find((entry) => entry.id === folderId)?.parentId || "" } : folder),
+      assignments: Object.fromEntries(Object.entries(current.assignments).filter(([, assigned]) => assigned !== folderId)),
+    }));
+    if (selectedFolderId === folderId) setSelectedFolderId("all");
+  };
+
+  const renameFolder = (folderId) => {
+    const folder = folderState.folders.find((entry) => entry.id === folderId);
+    if (!folder) return;
+    const name = window.prompt("Folder name", folder.name);
+    if (!String(name || "").trim()) return;
+    persistFolderState((current) => renameReviewFolderState(current, folderId, name));
+  };
+
+  const renameReviewProject = (projectId, currentName) => {
+    const name = window.prompt("Review project name", currentName);
+    if (!String(name || "").trim()) return;
+    persistFolderState((current) => renameReviewProjectState(current, projectId, name));
+  };
+
+  const moveFolder = (folderId, parentId = "") => {
+    if (!folderId) return;
+    persistFolderState((current) => moveReviewFolderState(current, folderId, parentId));
+    setDragOverFolderId("");
+  };
+
+  useEffect(() => {
+    if (!folderContextMenu) return undefined;
+    const close = () => setFolderContextMenu(null);
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("blur", close);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("blur", close);
+    };
+  }, [folderContextMenu]);
 
   const generateSummaryArtifact = () => {
     const { counts, markdown } = summarizeItems(filteredItems);
@@ -482,13 +695,12 @@ export default function ReviewCenter({
       projectName,
       recordName: reviewRecordName(group),
       items: historyItems,
-      reviewItemIds: group.items.map((item) => item.id),
-      deleteItemIds: historyItems.map((item) => item.id),
+      reviewItemIds: historyItems.map((item) => item.id),
     });
   };
 
   const deleteReviewRecord = async (record) => {
-    const ids = Array.from(new Set(record?.deleteItemIds || record?.items?.map((item) => item.id) || [])).filter(Boolean);
+    const ids = reviewRecordDeletionIds(record);
     if (!ids.length) return false;
     const label = [record?.projectName, record?.materialType].filter(Boolean).join(" · ") || "this review record";
     const confirmed = window.confirm(`Delete ${label}?\n\nThis will permanently remove ${ids.length} review item${ids.length === 1 ? "" : "s"} and the associated QA history. The source artifact will not be deleted.`);
@@ -553,34 +765,120 @@ export default function ReviewCenter({
         All projects: {filteredStats.total} review items across {filteredGroups.length} review material group{filteredGroups.length === 1 ? "" : "s"} · {filteredStats.open} open · {filteredStats.inProgress} in progress · {filteredStats.closed} closed · {filteredStats.archived} archived
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-md border border-gray-200 bg-[#F8FAFC] p-2">
+      <div className="flex min-h-0 flex-1 gap-2">
+        <aside className={`${folderState.sidebarCollapsed ? "w-11" : "w-60"} flex shrink-0 flex-col overflow-hidden rounded-md border border-gray-200 bg-white transition-[width]`} aria-label="Review folders">
+          <div className="flex h-11 items-center justify-between border-b border-gray-200 px-2">
+            {!folderState.sidebarCollapsed && <span className="text-sm font-semibold text-gray-900">Review folders</span>}
+            <button
+              type="button"
+              className="rounded p-1.5 text-gray-600 hover:bg-gray-100"
+              aria-label={folderState.sidebarCollapsed ? "Expand review folders" : "Collapse review folders"}
+              onClick={() => persistFolderState((current) => ({ ...current, sidebarCollapsed: !current.sidebarCollapsed }))}
+            >
+              {folderState.sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+            </button>
+          </div>
+          {!folderState.sidebarCollapsed && (
+            <div className="min-h-0 flex-1 overflow-y-auto p-2">
+              <button type="button" className="mb-2 flex w-full items-center justify-center gap-1.5 rounded-md border border-blue-200 bg-blue-50 px-2 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100" onClick={() => createFolder("", ['all', 'unfiled'].includes(selectedFolderId) ? "" : selectedFolderId)}>
+                <FolderPlus size={14} /> {['all', 'unfiled'].includes(selectedFolderId) ? "New folder" : "New subfolder"}
+              </button>
+              <div className="space-y-1">
+                {[
+                  { id: "all", name: "All reviews", count: filteredGroups.length },
+                  { id: "unfiled", name: "Unfiled", count: filteredGroups.filter((group) => !folderState.assignments[group.key]).length },
+                  ...flattenedFolders.map(({ folder, depth }) => ({
+                    ...folder,
+                    depth,
+                    count: filteredGroups.filter((group) => reviewFolderDescendantIds(folderState.folders, folder.id).has(folderState.assignments[group.key])).length,
+                  })),
+                ].map((folder) => (
+                  <div
+                    key={folder.id}
+                    draggable={!['all', 'unfiled'].includes(folder.id)}
+                    className={`group flex items-center rounded-md ${dragOverFolderId === folder.id ? "ring-2 ring-blue-400" : ""} ${selectedFolderId === folder.id ? "bg-blue-50 text-blue-900" : "text-gray-700 hover:bg-gray-50"}`}
+                    onDragStart={(event) => {
+                      if (['all', 'unfiled'].includes(folder.id)) return;
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("application/x-xhandle-review-folder-id", folder.id);
+                    }}
+                    onDragEnd={() => setDragOverFolderId("")}
+                    onDragOver={(event) => { event.preventDefault(); setDragOverFolderId(folder.id); }}
+                    onDragLeave={() => setDragOverFolderId("")}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      const draggedFolderId = event.dataTransfer.getData("application/x-xhandle-review-folder-id");
+                      if (draggedFolderId) {
+                        moveFolder(draggedFolderId, folder.id === "all" || folder.id === "unfiled" ? "" : folder.id);
+                        return;
+                      }
+                      const reviewKey = event.dataTransfer.getData("application/x-xhandle-review-key") || event.dataTransfer.getData("text/plain");
+                      assignReviewToFolder(reviewKey, folder.id === "all" || folder.id === "unfiled" ? "" : folder.id);
+                      setDragOverFolderId("");
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="flex min-w-0 flex-1 items-center gap-2 py-2 pr-2 text-left text-xs font-medium"
+                      style={{ paddingLeft: `${8 + Number(folder.depth || 0) * 16}px` }}
+                      onClick={() => setSelectedFolderId(folder.id)}
+                    >
+                      <Folder size={14} className="shrink-0" />
+                      <span className="min-w-0 flex-1 truncate">{folder.name}</span>
+                      <span className="shrink-0 text-[10px] text-gray-500">{folder.count}</span>
+                    </button>
+                    {!['all', 'unfiled'].includes(folder.id) && (
+                      <>
+                        <button type="button" className="hidden rounded p-1 text-gray-400 hover:bg-blue-50 hover:text-blue-700 group-hover:block" aria-label={`Create folder inside ${folder.name}`} title="Create subfolder" onClick={() => createFolder("", folder.id)}><FolderPlus size={12} /></button>
+                        <button type="button" className="hidden rounded p-1 text-gray-400 hover:bg-blue-50 hover:text-blue-700 group-hover:block" aria-label={`Rename folder ${folder.name}`} title="Rename folder" onClick={() => renameFolder(folder.id)}><Pencil size={12} /></button>
+                        <button type="button" className="mr-1 hidden rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-700 group-hover:block" aria-label={`Delete folder ${folder.name}`} onClick={() => deleteFolder(folder.id)}><Trash2 size={12} /></button>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3 px-1 text-[10px] leading-4 text-gray-500">Drag reviews or folders into another folder. Drop them on All reviews or Unfiled to move them to the top level.</p>
+            </div>
+          )}
+        </aside>
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain rounded-md border border-gray-200 bg-[#F8FAFC] p-2">
         <div className="space-y-2">
           {projectPanels.map((panel) => {
           const expanded = expandedProjectIds.has(panel.projectId);
           return (
             <section key={panel.projectId} className="rounded-md border border-gray-200 bg-[#F8FAFC]">
-              <button
-                type="button"
-                className={`flex w-full items-start justify-between gap-3 bg-white px-4 py-4 text-left hover:bg-gray-50 ${expanded ? "border-b border-gray-200" : ""}`}
-                onClick={() => toggleProjectPanel(panel.projectId)}
-                aria-expanded={expanded}
-              >
-                <span className="flex min-w-0 gap-3">
+              <div className={`flex items-start gap-2 bg-white px-4 py-4 ${expanded ? "border-b border-gray-200" : ""}`}>
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 items-start gap-3 text-left hover:text-blue-800"
+                  onClick={() => toggleProjectPanel(panel.projectId)}
+                  aria-expanded={expanded}
+                >
                   <ChevronRight
                     size={18}
                     className={`mt-1 shrink-0 text-gray-500 transition-transform ${expanded ? "rotate-90" : ""}`}
                   />
                   <span className="min-w-0">
-                    <span className="block text-lg font-semibold text-gray-950">{projectPanelTitle(panel.projectName)}</span>
+                    <span className="block text-lg font-semibold text-gray-950">{panel.customProjectName ? panel.projectName : projectPanelTitle(panel.projectName)}</span>
                     <span className="mt-1 block text-sm text-gray-600">
                       {panel.total} review items across {panel.groups.length} review material group{panel.groups.length === 1 ? "" : "s"} · {panel.open} open · {panel.inProgress} in progress · {panel.closed} closed · {panel.archived} archived
                     </span>
                   </span>
-                </span>
-                <span className="shrink-0 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-800">
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-gray-200 text-gray-500 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                  aria-label={`Rename review project ${panel.projectName}`}
+                  title="Rename review project"
+                  onClick={() => renameReviewProject(panel.projectId, panel.projectName)}
+                >
+                  <Pencil size={13} />
+                </button>
+                <button type="button" className="shrink-0 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-800 hover:bg-blue-100" onClick={() => toggleProjectPanel(panel.projectId)}>
                   {expanded ? "Collapse" : "Expand"}
-                </span>
-              </button>
+                </button>
+              </div>
 
               {expanded && (
                 <div className="space-y-2 p-3">
@@ -606,8 +904,22 @@ export default function ReviewCenter({
                             {typeGroup.groups.map((group) => {
                       const pct = progressPercent(group);
                       const resumableReview = resumableVibeReviewForGroup(group);
+                      const collaboratorThread = collaboratorThreadForGroup(group);
                       return (
-                        <div key={group.key} className="relative overflow-hidden rounded-md border border-gray-200 bg-white px-2.5 py-2 shadow-sm">
+                        <div
+                          key={group.key}
+                          draggable
+                          onDragStart={(event) => {
+                            event.dataTransfer.effectAllowed = "move";
+                            event.dataTransfer.setData("application/x-xhandle-review-key", group.key);
+                            event.dataTransfer.setData("text/plain", group.key);
+                          }}
+                          onContextMenu={(event) => {
+                            event.preventDefault();
+                            setFolderContextMenu({ reviewKey: group.key, reviewName: reviewRecordName(group), x: event.clientX, y: event.clientY });
+                          }}
+                          className="relative cursor-grab overflow-hidden rounded-md border border-gray-200 bg-white px-2.5 py-2 shadow-sm active:cursor-grabbing"
+                        >
                           <div className="flex min-w-0 items-center gap-2">
                             <div className="min-w-0 flex-1">
                               <div className="truncate text-xs font-semibold text-gray-950" title={reviewRecordName(group)}>{reviewRecordName(group)}</div>
@@ -646,6 +958,15 @@ export default function ReviewCenter({
                             >
                               Open
                             </button>
+                            {collaboratorThread && (
+                              <button
+                                type="button"
+                                className="h-7 shrink-0 rounded-md border border-indigo-200 bg-indigo-50 px-2 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100"
+                                onClick={() => onOpenCollaboratorThread?.(collaboratorThread)}
+                              >
+                                Open thread
+                              </button>
+                            )}
                             {resumableReview && (
                               <button
                                 type="button"
@@ -668,11 +989,11 @@ export default function ReviewCenter({
                               aria-label={`Delete ${reviewRecordName(group)}`}
                               title="Delete review record"
                               onClick={() => {
-                                const historyItems = relatedReviewHistoryItems(group, items);
+                                const relatedItems = relatedReviewHistoryItems(group, items);
                                 deleteReviewRecord({
                                   ...group,
                                   projectName: panel.projectName,
-                                  deleteItemIds: historyItems.map((item) => item.id),
+                                  reviewItemIds: relatedItems.map((item) => item.id),
                                 });
                               }}
                             >
@@ -700,7 +1021,28 @@ export default function ReviewCenter({
             </div>
           )}
         </div>
+        </div>
       </div>
+      {folderContextMenu && (
+        <div
+          className="fixed z-[110] w-64 overflow-hidden rounded-md border border-gray-200 bg-white py-1 shadow-xl"
+          style={{ left: Math.min(folderContextMenu.x, window.innerWidth - 272), top: Math.min(folderContextMenu.y, window.innerHeight - 320) }}
+          role="menu"
+          aria-label={`Organize ${folderContextMenu.reviewName}`}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <div className="border-b border-gray-100 px-3 py-2 text-xs font-semibold text-gray-900">Add to folder</div>
+          <button type="button" role="menuitem" className="block w-full px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-50" onClick={() => assignReviewToFolder(folderContextMenu.reviewKey, "")}>Unfiled</button>
+          {flattenedFolders.map(({ folder, depth }) => (
+            <button key={folder.id} type="button" role="menuitem" className="flex w-full items-center gap-2 py-2 pr-3 text-left text-xs text-gray-700 hover:bg-gray-50" style={{ paddingLeft: `${12 + depth * 16}px` }} onClick={() => assignReviewToFolder(folderContextMenu.reviewKey, folder.id)}>
+              <Folder size={13} /> <span className="truncate">{folder.name}</span>
+            </button>
+          ))}
+          <button type="button" role="menuitem" className="flex w-full items-center gap-2 border-t border-gray-100 px-3 py-2 text-left text-xs font-semibold text-blue-700 hover:bg-blue-50" onClick={() => createFolder(folderContextMenu.reviewKey)}>
+            <FolderPlus size={13} /> Create folder and add
+          </button>
+        </div>
+      )}
       <ReviewActivityHistoryModal
         record={historyRecord}
         onClose={() => setHistoryRecord(null)}

@@ -40,7 +40,7 @@ import PromptWizard from './components/PromptWizard';
 import { buildPromptWizardCollaboratorRequest } from './components/functionalDecompositionGeneration';
 import ConversationalWizard from './components/ConversationalWizard';
 import LiteSummaryDiagramReactFlow from './components/LiteSummaryDiagramReactFlow';
-import FunctionalDiagramWorkspace from './components/FunctionalDiagramWorkspace';
+import FunctionalDiagramWorkspace, { viewModeForTableFocus } from './components/FunctionalDiagramWorkspace';
 import { generateAgenticRiskReport } from './components/generateAgenticReport';
 import SafetyReportViewer from './components/SafetyReportViewer';
 import ProjectTabSideToolbar, {
@@ -3788,6 +3788,7 @@ const [cbaTableData, setCbaTableData] = useState([]);
 const [selectedCbaElement, setSelectedCbaElement] = useState(null);
 const [activeCodeArchitectureSelection, setActiveCodeArchitectureSelection] = useState(null);
 const [codeArchitectureWorkspaceTab, setCodeArchitectureWorkspaceTab] = useState("architecture");
+const [codeArchitectureFunctionalViewMode, setCodeArchitectureFunctionalViewMode] = useState("architecture");
 const [codeArchitectureFolderView, setCodeArchitectureFolderView] = useState("projects");
 const [codeArchitectureArtifactFocus, setCodeArchitectureArtifactFocus] = useState(null);
 const [hazardRemediationTab, setHazardRemediationTab] = useState("hazard-analysis");
@@ -7253,6 +7254,8 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [functionalColumnSearches, setFunctionalColumnSearches] = useState({});
   const [isGeneratingDecomposition, setIsGeneratingDecomposition] = useState(false);
   const [functionalViewMode, setFunctionalViewMode] = useState('diagram');
+  const functionalViewModePreferenceRef = useRef('diagram');
+  functionalViewModePreferenceRef.current = functionalViewMode;
   const [functionalAuditProposal, setFunctionalAuditProposal] = useState(null);
   const [isFunctionalAuditRunning, setIsFunctionalAuditRunning] = useState(false);
   const [functionalAuditSelectedRows, setFunctionalAuditSelectedRows] = useState({});
@@ -8778,7 +8781,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     if (!Number.isFinite(targetIndex)) return;
 
     setActiveTab('Functional Diagramming');
-    setFunctionalViewMode('table');
+    setFunctionalViewMode(viewModeForTableFocus(functionalViewModePreferenceRef.current));
     setFunctionalColumnFilters({});
     setFunctionalFilterColumn(null);
     setHighlightedFunctionalRowIndex(targetIndex);
@@ -8972,16 +8975,27 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       setActiveCodeArchitectureProjectId(project.id);
       setActiveCodeArchitectureFolderId(null);
       if (repo) setCodeArchitectureProjects((current) => current.map((entry) => entry.id === project.id ? { ...entry, activeRepoId: repo.id } : entry));
+      setSection("code-architecture");
     } else {
       if (!projects.some((entry) => entry.id === review.projectId)) {
         window.alert("The original project is no longer available. No data was changed.");
         return;
       }
       setActiveProjectId(review.projectId);
+      setSection("projects");
     }
-    setSection("copilot");
-    setTimeout(() => window.dispatchEvent(new CustomEvent("xhandle:resume-vibe-review", { detail: review })), 100);
+    setDockOpen(true);
+    setTimeout(() => window.dispatchEvent(new CustomEvent("xhandle:resume-vibe-review", { detail: review })), 250);
   }, [codeArchitectureProjects, projects]);
+
+  const openCollaboratorReviewThread = useCallback((review) => {
+    if (!review?.threadId) {
+      window.alert("This review record does not contain a Collaborator thread reference.");
+      return;
+    }
+    setDockOpen(true);
+    setTimeout(() => window.dispatchEvent(new CustomEvent("xhandle:open-collaborator-thread", { detail: review })), 100);
+  }, []);
 
   useEffect(() => {
     if (!pendingReviewSourceJump) return;
@@ -14440,6 +14454,7 @@ const projectHint = useMemo(() => ({
                 appFocus={getCollaboratorAppFocus()}
                 onRemoveActiveSelection={clearCollaboratorActiveSelection}
                 reviewer={gate.user}
+                onResumeVibeReviewWorkspace={resumeCollaboratorVibeReview}
                 onRequestDock={() => {
                   setDockOpen(true);
                   try { localStorage.setItem('xhandle.copilotDockOpen','true'); } catch {}
@@ -15275,6 +15290,7 @@ const projectHint = useMemo(() => ({
     appFocus={getCollaboratorAppFocus()}
     onRemoveActiveSelection={clearCollaboratorActiveSelection}
     reviewer={gate.user}
+    onResumeVibeReviewWorkspace={resumeCollaboratorVibeReview}
   />
 )}
 
@@ -15288,6 +15304,7 @@ const projectHint = useMemo(() => ({
   onExportCodeArchitectureReviewPackage: handleExportCodeArchitectureReviewPackage,
   isExportingCodeArchitectureReviewPackage: isGeneratingCodeArchitectureReviewApp,
   onResumeVibeReview: resumeCollaboratorVibeReview,
+  onOpenCollaboratorThread: openCollaboratorReviewThread,
 })}
 
 {section === 'reports' && (
@@ -15779,6 +15796,8 @@ const projectHint = useMemo(() => ({
               <div className="min-h-0 flex-1 overflow-hidden rounded-xl border bg-white p-3">
                 <FunctionalDecompositionTable
                   data={cbaTableData}
+                  viewMode={codeArchitectureFunctionalViewMode}
+                  onViewModeChange={setCodeArchitectureFunctionalViewMode}
                   projectId={activeCodeArchitectureProject.id}
                   repoMeta={activeCodeArchitectureRepoMeta}
                   onDataChange={setCbaTableData}
@@ -16452,6 +16471,7 @@ const projectHint = useMemo(() => ({
                         viewMode={functionalViewMode}
                         onViewModeChange={(mode) => {
                           if (mode !== 'table' && functionalViewMode === 'table') commitFunctionalRowsToDiagram();
+                          functionalViewModePreferenceRef.current = mode;
                           setFunctionalViewMode(mode);
                         }}
                         onDiagramResize={handleFunctionalDiagramResize}

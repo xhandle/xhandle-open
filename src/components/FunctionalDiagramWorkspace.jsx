@@ -6,6 +6,12 @@ export const FUNCTIONAL_VIEW_MODES = Object.freeze({
   SPLIT: 'split',
 });
 
+export const viewModeForTableFocus = (currentMode) => (
+  currentMode === FUNCTIONAL_VIEW_MODES.DIAGRAM
+    ? FUNCTIONAL_VIEW_MODES.TABLE
+    : currentMode
+);
+
 const VIEW_OPTIONS = [
   [FUNCTIONAL_VIEW_MODES.DIAGRAM, 'Diagram'],
   [FUNCTIONAL_VIEW_MODES.TABLE, 'Table'],

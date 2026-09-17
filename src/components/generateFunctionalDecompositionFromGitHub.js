@@ -3978,12 +3978,22 @@ export const FunctionalDecompositionTable = ({
   onDataChange,
   collaboratorSelection = null,
   onCollaboratorSelectionChange,
+  viewMode = null,
+  onViewModeChange,
 }) => {
   const [manualData, setManualData] = useState(null);
   const [collapsed, setCollapsed] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
 
-  const [view, setView] = useState("architecture"); // professional hierarchy first when available
+  const [internalView, setInternalView] = useState("architecture"); // professional hierarchy first when available
+  const view = viewMode || internalView;
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const setView = React.useCallback((nextView) => {
+    const resolvedView = typeof nextView === "function" ? nextView(viewRef.current) : nextView;
+    setInternalView(resolvedView);
+    onViewModeChange?.(resolvedView);
+  }, [onViewModeChange]);
   const [splitDiagramPercent, setSplitDiagramPercent] = useState(50);
   const [architectureAbstraction, setArchitectureAbstraction] = useState("subsystem");
   const [cleanOnceKey, setCleanOnceKey] = useState(() => `clean-${Date.now()}`); // one-time arrange on first open
@@ -4050,8 +4060,8 @@ const repoName = useMemo(() => {
 
   React.useEffect(() => {
     if (!forceTableOpenKey) return;
-    setView("table");
-  }, [forceTableOpenKey]);
+    setView((currentView) => currentView === "split" ? currentView : "table");
+  }, [forceTableOpenKey, setView]);
 
   const startSplitResize = React.useCallback((event) => {
     if (view !== "split" || event.button !== 0) return;
@@ -4097,11 +4107,11 @@ const repoName = useMemo(() => {
     if (highlightedRowIndex === null || highlightedRowIndex === undefined || highlightedRowIndex === "") return;
     const targetIndex = Number(highlightedRowIndex);
     if (!Number.isFinite(targetIndex)) return;
-    setView("table");
+    setView((currentView) => currentView === "split" ? currentView : "table");
     setTimeout(() => {
       tableRowRefs.current[targetIndex]?.scrollIntoView?.({ behavior: "smooth", block: "center" });
     }, 80);
-  }, [highlightedRowIndex]);
+  }, [highlightedRowIndex, setView]);
 
   const rowsWithTraceIds = useMemo(
     () => ensureCodeArchitectureTraceIds(manualData || data || []),
@@ -4213,7 +4223,7 @@ const repoName = useMemo(() => {
         setView(previousView);
       }
     }
-  }, [manualData, data, view, repoName, branch, reportStorageKey]);
+  }, [manualData, data, view, repoName, branch, reportStorageKey, setView]);
 
   // --- file filter helpers/state for the left sidebar ---
 function relatedFiles(cell) {
@@ -4550,7 +4560,7 @@ React.useEffect(() => {
     setView("architecture");
     setArchitectureAbstraction("detailed");
     setCleanOnceKey(`trace-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
-  }, [includeRowFiles]);
+  }, [includeRowFiles, setView]);
   const buildCsuDiagramTarget = React.useCallback((row, sourceIndex, type) => ({
     type: type === "action" ? "edge" : "node",
     mode: type === "from" ? "from" : type === "to" ? "to" : "edge",
@@ -4584,7 +4594,7 @@ React.useEffect(() => {
     setArchitectureAbstraction("detailed");
     setCleanOnceKey(`trace-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
     return requestCsuDiagramFocus(enrichedTarget, onFocusTargetHandled);
-  }, [diagramRows, focusTarget, includeRowFiles, onFocusTargetHandled, requestCsuDiagramFocus]);
+  }, [diagramRows, focusTarget, includeRowFiles, onFocusTargetHandled, requestCsuDiagramFocus, setView]);
   React.useEffect(() => {
     if (!queuedCsuFocusTarget || view !== "architecture" || architectureAbstraction !== "detailed") return undefined;
     return requestCsuDiagramFocus(queuedCsuFocusTarget, () => setQueuedCsuFocusTarget(null));

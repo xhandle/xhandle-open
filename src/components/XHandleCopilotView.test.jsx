@@ -37,6 +37,7 @@ const {
   buildFunctionalAbstractionChoiceMessage,
   buildCollaboratorChatPayload,
   buildCollaboratorVoiceGreeting,
+  canAdvancePastMissingHazardReviewRow,
   buildContextualVibeReviewOptions,
   buildContextualVibeReviewQueuePrompt,
   buildCollaboratorContinuationMessages,
@@ -81,6 +82,16 @@ const {
   selectLiveCollaboratorReasoning,
   streamChat,
 } = require("./XHandleCopilotView");
+
+describe("hazard vibe review queue consistency", () => {
+  it("advances past an isolated deleted row when a later queued row still exists", () => {
+    expect(canAdvancePastMissingHazardReviewRow(["RAW-1", "RAW-2", "RAW-3"], 0, new Set(["RAW-2", "RAW-3"]))).toBe(true);
+  });
+
+  it("preserves the queue when the active analysis matches none of the remaining row IDs", () => {
+    expect(canAdvancePastMissingHazardReviewRow(["RAW-1", "RAW-2", "RAW-3"], 0, new Set(["OTHER-1"]))).toBe(false);
+  });
+});
 
 describe("paused vibe review cards", () => {
   const renderActions = (element) => {
