@@ -25,6 +25,7 @@ import ReactFlow, {
   useEdgesState,
   ConnectionMode,
   BaseEdge,
+  EdgeLabelRenderer,
   StepEdge,
   useReactFlow,
 } from 'reactflow';
@@ -144,8 +145,45 @@ function normalizeEdgeRoutingStyle(value) {
 
 function edgeTypeForRoutingStyle(value) {
   return normalizeEdgeRoutingStyle(value) === EDGE_ROUTING_STYLES.RECTANGULAR
-    ? 'smartStep'
+    ? 'manualOrthogonal'
     : 'smartBezier';
+}
+
+export const MANUAL_EDGE_ENDPOINT_SPACING = 40;
+
+function pointForEndpointLead(x, y, position, spacing = MANUAL_EDGE_ENDPOINT_SPACING) {
+  if (position === Position.Left) return { x: x - spacing, y };
+  if (position === Position.Top) return { x, y: y - spacing };
+  if (position === Position.Bottom) return { x, y: y + spacing };
+  return { x: x + spacing, y };
+}
+
+export function buildManualOrthogonalRoute({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, corridor, sourceSpacing, targetSpacing } = {}) {
+  const source = { x: Number(sourceX) || 0, y: Number(sourceY) || 0 };
+  const target = { x: Number(targetX) || 0, y: Number(targetY) || 0 };
+  const normalizedSourceSpacing = Math.max(MANUAL_EDGE_ENDPOINT_SPACING, Number(sourceSpacing) || MANUAL_EDGE_ENDPOINT_SPACING);
+  const normalizedTargetSpacing = Math.max(MANUAL_EDGE_ENDPOINT_SPACING, Number(targetSpacing) || MANUAL_EDGE_ENDPOINT_SPACING);
+  const sourceLead = pointForEndpointLead(source.x, source.y, sourcePosition, normalizedSourceSpacing);
+  const targetLead = pointForEndpointLead(target.x, target.y, targetPosition, normalizedTargetSpacing);
+  const horizontalDeparture = sourcePosition === Position.Left || sourcePosition === Position.Right;
+  const facingHorizontally = (sourcePosition === Position.Right && targetPosition === Position.Left) || (sourcePosition === Position.Left && targetPosition === Position.Right);
+  const facingVertically = (sourcePosition === Position.Bottom && targetPosition === Position.Top) || (sourcePosition === Position.Top && targetPosition === Position.Bottom);
+  const horizontalLeadOverlap = facingHorizontally && ((sourcePosition === Position.Right && sourceLead.x >= targetLead.x) || (sourcePosition === Position.Left && sourceLead.x <= targetLead.x));
+  const verticalLeadOverlap = facingVertically && ((sourcePosition === Position.Bottom && sourceLead.y >= targetLead.y) || (sourcePosition === Position.Top && sourceLead.y <= targetLead.y));
+  const detour = horizontalLeadOverlap || verticalLeadOverlap;
+  const axis = detour ? (horizontalDeparture ? 'y' : 'x') : (horizontalDeparture ? 'x' : 'y');
+  const defaultCorridor = axis === 'x'
+    ? (detour ? Math.min(sourceLead.x, targetLead.x) - MANUAL_EDGE_ENDPOINT_SPACING : (sourceLead.x + targetLead.x) / 2)
+    : (detour ? Math.min(sourceLead.y, targetLead.y) - MANUAL_EDGE_ENDPOINT_SPACING : (sourceLead.y + targetLead.y) / 2);
+  const routeCorridor = Number.isFinite(Number(corridor)) ? Number(corridor) : defaultCorridor;
+  const points = axis === 'x'
+    ? [source, sourceLead, { x: routeCorridor, y: sourceLead.y }, { x: routeCorridor, y: targetLead.y }, targetLead, target]
+    : [source, sourceLead, { x: sourceLead.x, y: routeCorridor }, { x: targetLead.x, y: routeCorridor }, targetLead, target];
+  return { axis, corridor: routeCorridor, detour, sourceSpacing: normalizedSourceSpacing, targetSpacing: normalizedTargetSpacing, points: points.filter((point, index) => index === 0 || point.x !== points[index - 1].x || point.y !== points[index - 1].y) };
+}
+
+function orthogonalPath(points = []) {
+  return points.map((point, index) => `${index ? 'L' : 'M'} ${point.x},${point.y}`).join(' ');
 }
 
 /* ================================
@@ -529,7 +567,7 @@ function saveEdgeAggregationState(storageKey, state = {}) {
 function loadEdgeRoutingState(storageKey) {
   try {
     const raw = localStorage.getItem(`${storageKey}:edge-routing:v1`);
-    if (!raw) return { defaultStyle: EDGE_ROUTING_STYLES.RECTANGULAR, overrides: {} };
+    if (!raw) return { defaultStyle: EDGE_ROUTING_STYLES.RECTANGULAR, overrides: {}, manualRoutes: {} };
     const parsed = raw ? JSON.parse(raw) : {};
     const overrides = parsed?.overrides && typeof parsed.overrides === 'object' ? parsed.overrides : {};
     return {
@@ -539,9 +577,10 @@ function loadEdgeRoutingState(storageKey) {
           .filter(([key]) => Boolean(key))
           .map(([key, value]) => [key, normalizeEdgeRoutingStyle(value)])
       ),
+      manualRoutes: parsed?.manualRoutes && typeof parsed.manualRoutes === 'object' ? parsed.manualRoutes : {},
     };
   } catch {
-    return { defaultStyle: EDGE_ROUTING_STYLES.RECTANGULAR, overrides: {} };
+    return { defaultStyle: EDGE_ROUTING_STYLES.RECTANGULAR, overrides: {}, manualRoutes: {} };
   }
 }
 
@@ -550,6 +589,7 @@ function saveEdgeRoutingState(storageKey, state = {}) {
     localStorage.setItem(`${storageKey}:edge-routing:v1`, JSON.stringify({
       defaultStyle: normalizeEdgeRoutingStyle(state.defaultStyle),
       overrides: state.overrides && typeof state.overrides === 'object' ? state.overrides : {},
+      manualRoutes: state.manualRoutes && typeof state.manualRoutes === 'object' ? state.manualRoutes : {},
     }));
   } catch {}
 }
@@ -569,6 +609,7 @@ function getPromptWizardInitialEdgeRoutingState() {
   return {
     defaultStyle: EDGE_ROUTING_STYLES.RECTANGULAR,
     overrides: {},
+    manualRoutes: {},
   };
 }
 
@@ -659,6 +700,9 @@ function cloneEdgeRoutingForHistory(state = {}) {
   return {
     defaultStyle: normalizeEdgeRoutingStyle(state.defaultStyle),
     overrides: state.overrides && typeof state.overrides === 'object' ? { ...state.overrides } : {},
+    manualRoutes: state.manualRoutes && typeof state.manualRoutes === 'object'
+      ? Object.fromEntries(Object.entries(state.manualRoutes).map(([key, route]) => [key, { ...route }]))
+      : {},
   };
 }
 
@@ -958,22 +1002,84 @@ const NoteNode = ({ data, selected }) => {
  * Edge fallback (orthogonal)
  * ================================ */
 function OrthogonalFallbackEdge(props) {
-  const { id, sourceX, sourceY, targetX, targetY, markerStart, markerEnd, style, selected } = props;
-  const viaX = { x: targetX, y: sourceY };
-  const useHV = Math.abs(targetX - sourceX) > Math.abs(targetY - sourceY);
-  const d = useHV
-    ? `M ${sourceX},${sourceY} L ${viaX.x},${viaX.y} L ${targetX},${targetY}`
-    : `M ${sourceX},${sourceY} L ${sourceX},${targetY} L ${targetX},${targetY}`;
+  const { id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerStart, markerEnd, style, selected, label, data } = props;
+  const { getZoom } = useReactFlow();
+  const route = buildManualOrthogonalRoute({
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    sourcePosition,
+    targetPosition,
+    corridor: data?.manualRoute?.corridor,
+    sourceSpacing: data?.manualRoute?.sourceSpacing,
+    targetSpacing: data?.manualRoute?.targetSpacing,
+  });
+  const d = orthogonalPath(route.points);
   const stroke = style?.stroke || '#1f2544';
   const width = selected ? 3.5 : 2.5;
+  const middlePoint = route.points[Math.floor(route.points.length / 2)] || { x: (sourceX + targetX) / 2, y: (sourceY + targetY) / 2 };
+  const routeControls = [
+    { key: 'sourceSpacing', point: { x: (route.points[0].x + route.points[1].x) / 2, y: (route.points[0].y + route.points[1].y) / 2 }, cursor: [Position.Left, Position.Right].includes(sourcePosition) ? 'ew-resize' : 'ns-resize' },
+    { key: 'corridor', point: middlePoint, cursor: route.axis === 'x' ? 'ew-resize' : 'ns-resize' },
+    { key: 'targetSpacing', point: { x: (route.points.at(-2).x + route.points.at(-1).x) / 2, y: (route.points.at(-2).y + route.points.at(-1).y) / 2 }, cursor: [Position.Left, Position.Right].includes(targetPosition) ? 'ew-resize' : 'ns-resize' },
+  ];
+  const startRouteDrag = (event, control = 'corridor') => {
+    event.preventDefault();
+    event.stopPropagation();
+    const position = control === 'sourceSpacing' ? sourcePosition : control === 'targetSpacing' ? targetPosition : null;
+    const dragAxis = control === 'corridor' ? route.axis : ([Position.Left, Position.Right].includes(position) ? 'x' : 'y');
+    const initialClient = dragAxis === 'x' ? event.clientX : event.clientY;
+    const initialValue = control === 'corridor' ? route.corridor : route[control];
+    const direction = position === Position.Left || position === Position.Top ? -1 : 1;
+    window.dispatchEvent(new CustomEvent('xhandle:manual-edge-route-start', { detail: { routingTargetKey: data?.routingTargetKey } }));
+    const move = (moveEvent) => {
+      const currentClient = dragAxis === 'x' ? moveEvent.clientX : moveEvent.clientY;
+      const delta = (currentClient - initialClient) / Math.max(0.1, getZoom?.() || 1);
+      const value = control === 'corridor' ? initialValue + delta : Math.max(MANUAL_EDGE_ENDPOINT_SPACING, initialValue + delta * direction);
+      window.dispatchEvent(new CustomEvent('xhandle:manual-edge-route-change', {
+        detail: { routingTargetKey: data?.routingTargetKey, routePatch: { axis: route.axis, [control]: value } },
+      }));
+    };
+    const stop = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stop);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop, { once: true });
+  };
   return (
-    <BaseEdge
-      id={id}
-      path={d}
-      markerStart={markerStart}
-      markerEnd={{ ...(markerEnd || {}), color: stroke, width: ARROW_SIZE, height: ARROW_SIZE, type: MarkerType.ArrowClosed }}
-      style={{ stroke, strokeWidth: width }}
-    />
+    <>
+      <BaseEdge
+        id={id}
+        path={d}
+        markerStart={markerStart}
+        markerEnd={markerEnd}
+        style={{ ...style, stroke, strokeWidth: width }}
+      />
+      {(selected || data?.isHighlighted) ? routeControls.map((control) => (
+        <circle
+          key={control.key}
+          className="nodrag nopan"
+          cx={control.point.x}
+          cy={control.point.y}
+          r={7}
+          fill="#fff"
+          stroke={BRAND.purple}
+          strokeWidth={2}
+          role="button"
+          tabIndex={0}
+          aria-label={`Adjust selected edge ${control.key}`}
+          onPointerDown={(event) => startRouteDrag(event, control.key)}
+          style={{ cursor: control.cursor, pointerEvents: 'all', filter: 'drop-shadow(0 1px 2px rgba(15,15,18,0.25))' }}
+        >
+          <title>{control.key === 'corridor' ? 'Drag to adjust this edge route' : 'Drag to adjust spacing from the node'}</title>
+        </circle>
+      )) : null}
+      <EdgeLabelRenderer>
+        {label ? <div className="nodrag nopan" style={{ position: 'absolute', transform: `translate(-50%, -50%) translate(${middlePoint.x}px,${middlePoint.y - 14}px)`, fontSize: 11, color: BRAND.dark, background: 'rgba(255,255,255,0.9)', padding: '2px 5px', borderRadius: 4, pointerEvents: 'none' }}>{label}</div> : null}
+      </EdgeLabelRenderer>
+    </>
   );
 }
 
@@ -1285,6 +1391,7 @@ function buildEdgesFromRaw(rawEdges, positions, aggregation = {}, routing = {}) 
         ...(e.data || {}),
         routingStyle,
         routingTargetKey,
+        manualRoute: routing.manualRoutes?.[routingTargetKey] || null,
       },
       style: {
         stroke,
@@ -2137,7 +2244,7 @@ const DiagramBody = forwardRef(function DiagramBody(
   );
   const edgeTypes = useMemo(() => {
     const Smart = !hasGroups && typeof SmartBezierEdge === 'function' && SmartBezierEdge;
-    return { smartBezier: Smart, smartStep: StepEdge };
+    return { smartBezier: Smart, smartStep: StepEdge, manualOrthogonal: OrthogonalFallbackEdge };
   }, [hasGroups]);
   const [highlightedEdgeId, setHighlightedEdgeId] = useState(null);
   const [groupBoxes, setGroupBoxes] = useState(() => loadGroupBoxes(storageKey));
@@ -4658,8 +4765,40 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
     : normalizeEdgeRoutingStyle(edgeRouting.defaultStyle);
   const rebuildEdgesWithRouting = useCallback((nextRouting) => {
     const rawEdges = rowsToRawEdges(rows);
-    setEdges(buildEdgesFromRaw(rawEdges, buildAbsolutePositionMap(getNodes()), edgeAggregationRef.current, nextRouting));
-  }, [getNodes, rows, setEdges]);
+    setEdges(buildEdgesFromRaw(rawEdges, buildAbsolutePositionMap(getNodes()), edgeAggregationRef.current, nextRouting)
+      .map((edge) => ({ ...edge, selected: edge.id === highlightedEdgeId })));
+  }, [getNodes, highlightedEdgeId, rows, setEdges]);
+  useEffect(() => {
+    const startManualRoute = (event) => {
+      if (!event.detail?.routingTargetKey) return;
+      captureDiagramHistoryCheckpoint();
+    };
+    const changeManualRoute = (event) => {
+      const { routingTargetKey, routePatch } = event.detail || {};
+      if (!routingTargetKey || !routePatch || typeof routePatch !== 'object') return;
+      setEdgeRouting((current) => {
+        const next = {
+          ...current,
+          manualRoutes: {
+            ...(current.manualRoutes || {}),
+            [routingTargetKey]: {
+              ...(current.manualRoutes?.[routingTargetKey] || {}),
+              ...routePatch,
+            },
+          },
+        };
+        edgeRoutingRef.current = next;
+        rebuildEdgesWithRouting(next);
+        return next;
+      });
+    };
+    window.addEventListener('xhandle:manual-edge-route-start', startManualRoute);
+    window.addEventListener('xhandle:manual-edge-route-change', changeManualRoute);
+    return () => {
+      window.removeEventListener('xhandle:manual-edge-route-start', startManualRoute);
+      window.removeEventListener('xhandle:manual-edge-route-change', changeManualRoute);
+    };
+  }, [captureDiagramHistoryCheckpoint, rebuildEdgesWithRouting]);
   const applyEdgeAggregation = useCallback((updater) => {
     setEdgeAggregation((current) => {
       const next = updater({
@@ -4738,6 +4877,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
     const next = {
       defaultStyle: normalizeEdgeRoutingStyle(style),
       overrides: {},
+      manualRoutes: edgeRoutingRef.current.manualRoutes || {},
     };
     if (
       edgeRoutingRef.current.defaultStyle === next.defaultStyle &&
@@ -4761,12 +4901,23 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
           ...(current.overrides || {}),
           [highlightedRoutingTargetKey]: nextStyle,
         },
+        manualRoutes: current.manualRoutes || {},
       };
       edgeRoutingRef.current = next;
       rebuildEdgesWithRouting(next);
       return next;
     });
   }, [captureDiagramHistoryCheckpoint, highlightedRoutingStyle, highlightedRoutingTargetKey, rebuildEdgesWithRouting]);
+  const resetHighlightedManualRoute = useCallback(() => {
+    if (!highlightedRoutingTargetKey || !edgeRoutingRef.current.manualRoutes?.[highlightedRoutingTargetKey]) return;
+    captureDiagramHistoryCheckpoint();
+    const manualRoutes = { ...(edgeRoutingRef.current.manualRoutes || {}) };
+    delete manualRoutes[highlightedRoutingTargetKey];
+    const next = { ...edgeRoutingRef.current, manualRoutes };
+    edgeRoutingRef.current = next;
+    setEdgeRouting(next);
+    rebuildEdgesWithRouting(next);
+  }, [captureDiagramHistoryCheckpoint, highlightedRoutingTargetKey, rebuildEdgesWithRouting]);
 
   const fitDiagramToView = useCallback(() => {
     try {
@@ -4934,6 +5085,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
             <button type="button" onClick={() => setAllEdgeRoutingStyle(EDGE_ROUTING_STYLES.BEZIER)} title="Set all edges to Bezier routing" style={toolButtonStyle({ active: edgeRouting.defaultStyle === EDGE_ROUTING_STYLES.BEZIER && !Object.keys(edgeRouting.overrides || {}).length })}>B</button>
             <button type="button" onClick={() => setAllEdgeRoutingStyle(EDGE_ROUTING_STYLES.RECTANGULAR)} title="Set all edges to rectangular routing" style={toolButtonStyle({ active: edgeRouting.defaultStyle === EDGE_ROUTING_STYLES.RECTANGULAR && !Object.keys(edgeRouting.overrides || {}).length })}>R</button>
             <button type="button" onClick={toggleHighlightedEdgeRoutingStyle} title="Toggle routing for selected edge or bundle" disabled={!highlightedRoutingTargetKey} style={toolButtonStyle({ active: Boolean(highlightedRoutingTargetKey), disabled: !highlightedRoutingTargetKey, tone: BRAND.purple })}>{highlightedRoutingStyle === EDGE_ROUTING_STYLES.RECTANGULAR ? 'B' : 'R'}</button>
+            <button type="button" onClick={resetHighlightedManualRoute} title="Reset selected edge to automatic routing" disabled={!highlightedRoutingTargetKey || !edgeRouting.manualRoutes?.[highlightedRoutingTargetKey]} style={toolButtonStyle({ disabled: !highlightedRoutingTargetKey || !edgeRouting.manualRoutes?.[highlightedRoutingTargetKey], tone: BRAND.purple })}>↺</button>
           </div>
         </>
       );
@@ -5095,13 +5247,24 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
           onEdgeUpdateStart={onEdgeUpdateStart}
           onEdgeUpdate={onEdgeUpdate}
           onEdgeUpdateEnd={onEdgeUpdateEnd}
-          onEdgeClick={(evt, edge) => setHighlightedEdgeId(edge.id)}
-          onPaneClick={() => { setHighlightedEdgeId(null); setContextMenu(null); }}
+          onEdgeClick={(evt, edge) => {
+            setHighlightedEdgeId(edge.id);
+            setEdges((allEdges) => allEdges.map((candidate) => ({ ...candidate, selected: candidate.id === edge.id })));
+          }}
+          onPaneClick={() => {
+            setHighlightedEdgeId(null);
+            setEdges((allEdges) => allEdges.map((edge) => edge.selected ? { ...edge, selected: false } : edge));
+            setContextMenu(null);
+          }}
           onPaneContextMenu={(event) => {
             event.preventDefault();
             setContextMenu(null);
           }}
-          onNodeClick={() => { setHighlightedEdgeId(null); setContextMenu(null); }}
+          onNodeClick={() => {
+            setHighlightedEdgeId(null);
+            setEdges((allEdges) => allEdges.map((edge) => edge.selected ? { ...edge, selected: false } : edge));
+            setContextMenu(null);
+          }}
           onNodeContextMenu={(event, node) => {
             event.preventDefault();
             event.stopPropagation();
