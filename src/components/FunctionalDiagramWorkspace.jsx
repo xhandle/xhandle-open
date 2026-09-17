@@ -12,6 +12,12 @@ export const viewModeForTableFocus = (currentMode) => (
     : currentMode
 );
 
+export const viewModeForDiagramFocus = (currentMode) => (
+  currentMode === FUNCTIONAL_VIEW_MODES.SPLIT
+    ? FUNCTIONAL_VIEW_MODES.SPLIT
+    : FUNCTIONAL_VIEW_MODES.DIAGRAM
+);
+
 const VIEW_OPTIONS = [
   [FUNCTIONAL_VIEW_MODES.DIAGRAM, 'Diagram'],
   [FUNCTIONAL_VIEW_MODES.TABLE, 'Table'],

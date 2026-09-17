@@ -3950,6 +3950,14 @@ function codeArchitectureFunctionalCellRows(value, columnId) {
   return Math.min(28, Math.max(2, estimated + 1));
 }
 
+export const codeArchitectureViewModeForDiagramFocus = (currentView) => (
+  currentView === "split" ? "split" : "architecture"
+);
+
+export const codeArchitectureViewShowsDiagram = (view) => (
+  view === "architecture" || view === "split"
+);
+
 export const FunctionalDecompositionTable = ({
   data,
   repoId = "repo",
@@ -4557,7 +4565,7 @@ React.useEffect(() => {
     event?.stopPropagation?.();
     includeRowFiles(target.row, target.mode);
     setQueuedCsuFocusTarget(target);
-    setView("architecture");
+    setView(codeArchitectureViewModeForDiagramFocus);
     setArchitectureAbstraction("detailed");
     setCleanOnceKey(`trace-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
   }, [includeRowFiles, setView]);
@@ -4590,13 +4598,13 @@ React.useEffect(() => {
       ? { ...focusTarget, rowIndex: matchedRowIndex }
       : focusTarget;
     includeRowFiles(enrichedTarget.row || enrichedTarget, enrichedTarget.mode);
-    setView("architecture");
+    setView(codeArchitectureViewModeForDiagramFocus);
     setArchitectureAbstraction("detailed");
     setCleanOnceKey(`trace-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
     return requestCsuDiagramFocus(enrichedTarget, onFocusTargetHandled);
   }, [diagramRows, focusTarget, includeRowFiles, onFocusTargetHandled, requestCsuDiagramFocus, setView]);
   React.useEffect(() => {
-    if (!queuedCsuFocusTarget || view !== "architecture" || architectureAbstraction !== "detailed") return undefined;
+    if (!queuedCsuFocusTarget || !codeArchitectureViewShowsDiagram(view) || architectureAbstraction !== "detailed") return undefined;
     return requestCsuDiagramFocus(queuedCsuFocusTarget, () => setQueuedCsuFocusTarget(null));
   }, [architectureAbstraction, queuedCsuFocusTarget, requestCsuDiagramFocus, view]);
 

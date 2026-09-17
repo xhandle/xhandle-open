@@ -40,7 +40,7 @@ import PromptWizard from './components/PromptWizard';
 import { buildPromptWizardCollaboratorRequest } from './components/functionalDecompositionGeneration';
 import ConversationalWizard from './components/ConversationalWizard';
 import LiteSummaryDiagramReactFlow from './components/LiteSummaryDiagramReactFlow';
-import FunctionalDiagramWorkspace, { viewModeForTableFocus } from './components/FunctionalDiagramWorkspace';
+import FunctionalDiagramWorkspace, { viewModeForDiagramFocus, viewModeForTableFocus } from './components/FunctionalDiagramWorkspace';
 import { generateAgenticRiskReport } from './components/generateAgenticReport';
 import SafetyReportViewer from './components/SafetyReportViewer';
 import ProjectTabSideToolbar, {
@@ -7161,7 +7161,7 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   // ────────────────────────────────────────────────────────────────────────────────
 
   const diagramRef = useRef();
-  const pendingFunctionalDiagramFocusRef = useRef(null);
+  const [pendingFunctionalDiagramFocus, setPendingFunctionalDiagramFocus] = useState(null);
   const stepDescriptionsMap = {
     HRWhatIf: {
       total: 9,
@@ -7847,10 +7847,10 @@ const handleFunctionalDiagramResize = useCallback(() => {
 
 const handleOpenHazardDiagramTarget = useCallback((target) => {
   if (!target) return;
-  pendingFunctionalDiagramFocusRef.current = target;
+  setPendingFunctionalDiagramFocus({ ...target, requestId: `${Date.now()}-${Math.random()}` });
   commitFunctionalRowsToDiagram();
   setShowPromptWizard(false);
-  setFunctionalViewMode('diagram');
+  setFunctionalViewMode(viewModeForDiagramFocus(functionalViewModePreferenceRef.current));
   setActiveTab('Functional Diagramming');
 }, [commitFunctionalRowsToDiagram]);
 
@@ -11129,18 +11129,16 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
 
   useEffect(() => {
     if (activeTab !== 'Functional Diagramming' || functionalViewMode === 'table' || !activeProjectDiagramReady) return undefined;
-    if (!pendingFunctionalDiagramFocusRef.current) return undefined;
+    if (!pendingFunctionalDiagramFocus) return undefined;
 
-    const retryDelays = [0, 100, 300, 700];
+    const retryDelays = [0, 100, 300, 700, 1200, 2000];
     const timers = retryDelays.map((delay) => window.setTimeout(() => {
-      const target = pendingFunctionalDiagramFocusRef.current;
-      if (!target) return;
-      const focused = diagramRef.current?.focusArchitectureTarget?.(target);
-      if (focused) pendingFunctionalDiagramFocusRef.current = null;
+      const focused = diagramRef.current?.focusArchitectureTarget?.(pendingFunctionalDiagramFocus);
+      if (focused) setPendingFunctionalDiagramFocus(null);
     }, delay));
 
     return () => timers.forEach((timer) => window.clearTimeout(timer));
-  }, [activeProjectDiagramReady, activeProjectDiagramKey, activeTab, functionalViewMode]);
+  }, [activeProjectDiagramReady, activeProjectDiagramKey, activeTab, functionalViewMode, pendingFunctionalDiagramFocus]);
 
   const handleRunAnalysis = async (selectedMethod, options = {}) => {
     const shouldRegenerate = Boolean(options.regenerate);

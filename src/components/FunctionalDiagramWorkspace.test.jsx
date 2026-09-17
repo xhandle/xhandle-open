@@ -1,6 +1,6 @@
 import React, { act, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import FunctionalDiagramWorkspace, { viewModeForTableFocus } from './FunctionalDiagramWorkspace';
+import FunctionalDiagramWorkspace, { viewModeForDiagramFocus, viewModeForTableFocus } from './FunctionalDiagramWorkspace';
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -71,4 +71,10 @@ test('review row focus preserves split view and only converts diagram-only view 
   expect(viewModeForTableFocus('split')).toBe('split');
   expect(viewModeForTableFocus('table')).toBe('table');
   expect(viewModeForTableFocus('diagram')).toBe('table');
+});
+
+test('diagram links preserve split view and convert table-only view to diagram', () => {
+  expect(viewModeForDiagramFocus('split')).toBe('split');
+  expect(viewModeForDiagramFocus('table')).toBe('diagram');
+  expect(viewModeForDiagramFocus('diagram')).toBe('diagram');
 });

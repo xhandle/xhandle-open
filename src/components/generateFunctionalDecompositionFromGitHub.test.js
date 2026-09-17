@@ -30,6 +30,8 @@ jest.mock("../features/code-architecture-assurance/codeArchitectureMetrics", () 
 
 const {
   FunctionalDecompositionTable,
+  codeArchitectureViewModeForDiagramFocus,
+  codeArchitectureViewShowsDiagram,
   buildSourceFileIndexRecord,
   groundFunctionalDecompositionRow,
   updateCodeArchitectureFunctionalCell,
@@ -132,6 +134,15 @@ describe("code architecture functional split view", () => {
     expect(host.querySelector('[aria-label="Code architecture diagram"]')).toBeTruthy();
     expect(host.querySelector('[aria-label="Code architecture functional decomposition table"]')).toBeTruthy();
     expect(onViewModeChange).not.toHaveBeenCalledWith("table");
+  });
+
+  it("preserves split view when a table link focuses the diagram", () => {
+    expect(codeArchitectureViewModeForDiagramFocus("split")).toBe("split");
+    expect(codeArchitectureViewModeForDiagramFocus("table")).toBe("architecture");
+    expect(codeArchitectureViewModeForDiagramFocus("architecture")).toBe("architecture");
+    expect(codeArchitectureViewShowsDiagram("split")).toBe(true);
+    expect(codeArchitectureViewShowsDiagram("architecture")).toBe(true);
+    expect(codeArchitectureViewShowsDiagram("table")).toBe(false);
   });
 });
 
