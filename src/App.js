@@ -41,6 +41,7 @@ import { buildPromptWizardCollaboratorRequest } from './components/functionalDec
 import ConversationalWizard from './components/ConversationalWizard';
 import LiteSummaryDiagramReactFlow from './components/LiteSummaryDiagramReactFlow';
 import FunctionalDiagramWorkspace, { viewModeForDiagramFocus, viewModeForTableFocus } from './components/FunctionalDiagramWorkspace';
+import { runStorageWrite } from './lib/safeStorage';
 import { generateAgenticRiskReport } from './components/generateAgenticReport';
 import SafetyReportViewer from './components/SafetyReportViewer';
 import ProjectTabSideToolbar, {
@@ -1700,8 +1701,24 @@ function installLocalStorageBroadcast() {
     'LiteSummaryDiagram::',    // any per-diagram cache you keep
     'cba:',                    // big code-arch blobs if they churn
   ];
+  const QUOTA_AWARE_KEYS = new Set([
+    'xhc.threads',
+    'xhandle.hazardVibeReview.sessions.v1',
+    'xhandle.hazardVibeReview.audit.v1',
+    'xhandle.functionalVibeReview.sessions.v1',
+    'xhandle.functionalVibeReview.audit.v1',
+  ]);
 
   let pending = false;
+  let quotaNotificationSent = false;
+  const reportQuota = (key, error) => {
+    if (quotaNotificationSent) return;
+    quotaNotificationSent = true;
+    console.warn(`[storage] Browser storage quota exceeded while saving ${key || 'application data'}. Existing data was left intact.`, error);
+    try {
+      window.dispatchEvent(new CustomEvent('xhandle:storage-quota-exceeded', { detail: { key: String(key || '') } }));
+    } catch {}
+  };
   const fire = () => {
     if (pending) return;
     pending = true;
@@ -1723,14 +1740,42 @@ function installLocalStorageBroadcast() {
   const _rem = localStorage.removeItem.bind(localStorage);
   const _clr = localStorage.clear.bind(localStorage);
 
-  localStorage.setItem = function (k, v) { _set(k, v); if (shouldFireForKey(k)) fire(); };
-  localStorage.removeItem = function (k)  { _rem(k);   if (shouldFireForKey(k)) fire(); };
-  localStorage.clear = function ()        { _clr();    fire(); };
+  localStorage.setItem = function (k, v) {
+    let quotaError = null;
+    const saved = runStorageWrite(() => _set(k, v), {
+      onQuota: (error) => {
+        quotaError = error;
+        reportQuota(k, error);
+      },
+      onError: (error) => console.warn(`[storage] Unable to save ${k || 'application data'}.`, error),
+    });
+    // These stores deliberately catch quota errors and fall back to compacted
+    // session/in-memory snapshots. Let their recovery logic observe the error.
+    if (!saved && quotaError && QUOTA_AWARE_KEYS.has(String(k || ''))) throw quotaError;
+    if (saved) {
+      quotaNotificationSent = false;
+      if (shouldFireForKey(k)) fire();
+    }
+  };
+  localStorage.removeItem = function (k) {
+    const removed = runStorageWrite(() => _rem(k), { onError: (error) => console.warn(`[storage] Unable to remove ${k || 'application data'}.`, error) });
+    if (removed && shouldFireForKey(k)) fire();
+  };
+  localStorage.clear = function () {
+    const cleared = runStorageWrite(_clr, { onError: (error) => console.warn('[storage] Unable to clear browser storage.', error) });
+    if (cleared) fire();
+  };
 
   window.addEventListener("storage", (e) => {
     if (e.storageArea !== localStorage) return;
     if (shouldFireForKey(e.key)) fire();
   });
+}
+
+// Install before React mounts so child passive effects cannot surface an
+// uncaught quota exception before App's own effects run.
+if (typeof window !== 'undefined') {
+  try { installLocalStorageBroadcast(); } catch {}
 }
 
 
@@ -3712,6 +3757,7 @@ const [section, setSection] = useState(DEFAULT_START_SECTION); // 'projects' | '
 
   // Docked Copilot (persistent)
   const [dockOpen, setDockOpen] = useState(() => localStorage.getItem('xhandle.copilotDockOpen') === 'true');
+  const [collaboratorResumeRequest, setCollaboratorResumeRequest] = useState(null);
   const [dockCollapsed, setDockCollapsed] = useState(
     () => localStorage.getItem('xhandle.copilotDockCollapsed') === 'true'
   );
@@ -8985,7 +9031,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       setSection("projects");
     }
     setDockOpen(true);
-    setTimeout(() => window.dispatchEvent(new CustomEvent("xhandle:resume-vibe-review", { detail: review })), 250);
+    setCollaboratorResumeRequest({ ...review, requestId: `${Date.now()}-${Math.random()}` });
   }, [codeArchitectureProjects, projects]);
 
   const openCollaboratorReviewThread = useCallback((review) => {
@@ -14453,6 +14499,8 @@ const projectHint = useMemo(() => ({
                 onRemoveActiveSelection={clearCollaboratorActiveSelection}
                 reviewer={gate.user}
                 onResumeVibeReviewWorkspace={resumeCollaboratorVibeReview}
+                resumeVibeReviewRequest={collaboratorResumeRequest}
+                onResumeVibeReviewRequestHandled={(requestId) => setCollaboratorResumeRequest((current) => current?.requestId === requestId ? null : current)}
                 onRequestDock={() => {
                   setDockOpen(true);
                   try { localStorage.setItem('xhandle.copilotDockOpen','true'); } catch {}
@@ -15289,6 +15337,8 @@ const projectHint = useMemo(() => ({
     onRemoveActiveSelection={clearCollaboratorActiveSelection}
     reviewer={gate.user}
     onResumeVibeReviewWorkspace={resumeCollaboratorVibeReview}
+    resumeVibeReviewRequest={collaboratorResumeRequest}
+    onResumeVibeReviewRequestHandled={(requestId) => setCollaboratorResumeRequest((current) => current?.requestId === requestId ? null : current)}
   />
 )}
 

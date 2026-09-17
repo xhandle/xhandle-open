@@ -150,6 +150,7 @@ function edgeTypeForRoutingStyle(value) {
 }
 
 export const MANUAL_EDGE_ENDPOINT_SPACING = 40;
+export const ORTHOGONAL_MIN_BEND_RUN = 56;
 
 function pointForEndpointLead(x, y, position, spacing = MANUAL_EDGE_ENDPOINT_SPACING) {
   if (position === Position.Left) return { x: x - spacing, y };
@@ -158,7 +159,7 @@ function pointForEndpointLead(x, y, position, spacing = MANUAL_EDGE_ENDPOINT_SPA
   return { x: x + spacing, y };
 }
 
-export function buildManualOrthogonalRoute({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, corridor, sourceSpacing, targetSpacing } = {}) {
+export function buildManualOrthogonalRoute({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, corridor, routeAxis, sourceSpacing, targetSpacing } = {}) {
   const source = { x: Number(sourceX) || 0, y: Number(sourceY) || 0 };
   const target = { x: Number(targetX) || 0, y: Number(targetY) || 0 };
   const normalizedSourceSpacing = Math.max(MANUAL_EDGE_ENDPOINT_SPACING, Number(sourceSpacing) || MANUAL_EDGE_ENDPOINT_SPACING);
@@ -170,11 +171,15 @@ export function buildManualOrthogonalRoute({ sourceX, sourceY, targetX, targetY,
   const facingVertically = (sourcePosition === Position.Bottom && targetPosition === Position.Top) || (sourcePosition === Position.Top && targetPosition === Position.Bottom);
   const horizontalLeadOverlap = facingHorizontally && ((sourcePosition === Position.Right && sourceLead.x >= targetLead.x) || (sourcePosition === Position.Left && sourceLead.x <= targetLead.x));
   const verticalLeadOverlap = facingVertically && ((sourcePosition === Position.Bottom && sourceLead.y >= targetLead.y) || (sourcePosition === Position.Top && sourceLead.y <= targetLead.y));
-  const detour = horizontalLeadOverlap || verticalLeadOverlap;
-  const axis = detour ? (horizontalDeparture ? 'y' : 'x') : (horizontalDeparture ? 'x' : 'y');
+  const horizontalBendRunIsCompact = facingHorizontally && Math.abs(targetLead.x - sourceLead.x) < ORTHOGONAL_MIN_BEND_RUN * 2;
+  const verticalBendRunIsCompact = facingVertically && Math.abs(targetLead.y - sourceLead.y) < ORTHOGONAL_MIN_BEND_RUN * 2;
+  const detour = horizontalLeadOverlap || verticalLeadOverlap || horizontalBendRunIsCompact || verticalBendRunIsCompact;
+  const automaticAxis = detour ? (horizontalDeparture ? 'y' : 'x') : (horizontalDeparture ? 'x' : 'y');
+  const axis = ['x', 'y'].includes(routeAxis) ? routeAxis : automaticAxis;
+  const detourClearance = MANUAL_EDGE_ENDPOINT_SPACING + ORTHOGONAL_MIN_BEND_RUN;
   const defaultCorridor = axis === 'x'
-    ? (detour ? Math.min(sourceLead.x, targetLead.x) - MANUAL_EDGE_ENDPOINT_SPACING : (sourceLead.x + targetLead.x) / 2)
-    : (detour ? Math.min(sourceLead.y, targetLead.y) - MANUAL_EDGE_ENDPOINT_SPACING : (sourceLead.y + targetLead.y) / 2);
+    ? (detour ? Math.min(sourceLead.x, targetLead.x) - detourClearance : (sourceLead.x + targetLead.x) / 2)
+    : (detour ? Math.min(sourceLead.y, targetLead.y) - detourClearance : (sourceLead.y + targetLead.y) / 2);
   const routeCorridor = Number.isFinite(Number(corridor)) ? Number(corridor) : defaultCorridor;
   const points = axis === 'x'
     ? [source, sourceLead, { x: routeCorridor, y: sourceLead.y }, { x: routeCorridor, y: targetLead.y }, targetLead, target]
@@ -847,7 +852,8 @@ const BidirectionalNode = ({ data, selected }) => {
         padding: THEME.node.pad,
         border,
         borderRadius: THEME.radius,
-        background: tint,
+        backgroundColor: '#fff',
+        backgroundImage: `linear-gradient(${tint}, ${tint})`,
         boxShadow: selected
           ? `0 0 0 5px ${rgba(brandColor, 0.18)}, ${THEME.node.shadow}`
           : THEME.node.shadow,
@@ -980,7 +986,8 @@ const NoteNode = ({ data, selected }) => {
         padding: 14,
         border: `1px solid ${rgba(brandColor, 0.45)}`,
         borderRadius: 8,
-        background: tint,
+        backgroundColor: '#fff',
+        backgroundImage: `linear-gradient(${tint}, ${tint})`,
         boxShadow: selected ? `0 0 0 5px ${rgba(brandColor, 0.18)}, ${THEME.node.shadow}` : THEME.node.shadow,
         color: BRAND.dark,
         display: 'flex',
@@ -1012,6 +1019,7 @@ function OrthogonalFallbackEdge(props) {
     sourcePosition,
     targetPosition,
     corridor: data?.manualRoute?.corridor,
+    routeAxis: data?.manualRoute?.axis,
     sourceSpacing: data?.manualRoute?.sourceSpacing,
     targetSpacing: data?.manualRoute?.targetSpacing,
   });
@@ -5227,6 +5235,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
         <ReactFlow
           nodes={viewNodes}
           edges={viewEdges}
+          elevateEdgesOnSelect={false}
           onInit={(instance) => {
             setTimeout(() => {
               try {

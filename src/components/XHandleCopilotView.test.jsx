@@ -38,6 +38,7 @@ const {
   buildCollaboratorChatPayload,
   buildCollaboratorVoiceGreeting,
   canAdvancePastMissingHazardReviewRow,
+  waitForHydratedHazardReviewState,
   buildContextualVibeReviewOptions,
   buildContextualVibeReviewQueuePrompt,
   buildCollaboratorContinuationMessages,
@@ -82,6 +83,7 @@ const {
   selectLiveCollaboratorReasoning,
   streamChat,
 } = require("./XHandleCopilotView");
+const { registerActionProvider } = require("../features/app/actionRegistry");
 
 describe("hazard vibe review queue consistency", () => {
   it("advances past an isolated deleted row when a later queued row still exists", () => {
@@ -90,6 +92,28 @@ describe("hazard vibe review queue consistency", () => {
 
   it("preserves the queue when the active analysis matches none of the remaining row IDs", () => {
     expect(canAdvancePastMissingHazardReviewRow(["RAW-1", "RAW-2", "RAW-3"], 0, new Set(["OTHER-1"]))).toBe(false);
+  });
+
+  it("waits for the matching hazard analysis to hydrate before returning resume state", async () => {
+    let calls = 0;
+    const provider = {
+      getHazardVibeReviewState: () => {
+        calls += 1;
+        return calls < 2
+          ? { activeProjectId: "project-1", workspaceType: "functional-project", summary: null }
+          : { activeProjectId: "project-1", workspaceType: "functional-project", summary: [["Raw Analysis Row ID"], ["RAW-1"]] };
+      },
+    };
+    const unregister = registerActionProvider("project-functional-diagram", provider);
+    const result = await waitForHydratedHazardReviewState({
+      provider,
+      projectId: "project-1",
+      timeoutMs: 100,
+      pollMs: 1,
+    });
+    unregister();
+    expect(result.state.summary[1][0]).toBe("RAW-1");
+    expect(calls).toBeGreaterThanOrEqual(2);
   });
 });
 

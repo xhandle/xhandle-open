@@ -104,8 +104,25 @@ describe('manual orthogonal edge routing', () => {
     expect(route.axis).toBe('y');
     expect(route.points[1]).toEqual({ x: 140, y: 100 });
     expect(route.points.at(-2)).toEqual({ x: 120, y: 100 });
-    expect(route.points).toContainEqual({ x: 140, y: 60 });
-    expect(route.points).toContainEqual({ x: 120, y: 60 });
+    expect(route.points).toContainEqual({ x: 140, y: 4 });
+    expect(route.points).toContainEqual({ x: 120, y: 4 });
+  });
+
+  test('detours before a valid route becomes visually over-compact', () => {
+    const route = buildManualOrthogonalRoute({
+      sourceX: 100,
+      sourceY: 100,
+      targetX: 270,
+      targetY: 140,
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
+    });
+    // The 90 px gap between lead-ins is non-overlapping, but would leave
+    // less than the minimum run on each side of a centered bend.
+    expect(route.points[1]).toEqual({ x: 140, y: 100 });
+    expect(route.points.at(-2)).toEqual({ x: 230, y: 140 });
+    expect(route.detour).toBe(true);
+    expect(route.axis).toBe('y');
   });
 
   test('includes manual routes in undo and redo comparisons', () => {

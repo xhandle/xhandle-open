@@ -142,6 +142,32 @@ export function canAdvancePastMissingHazardReviewRow(queue = [], cursor = 0, ava
   return queue.slice(Number(cursor) + 1).some((rowId) => available.has(String(rowId)));
 }
 
+export async function waitForHydratedHazardReviewState({
+  provider,
+  projectId,
+  workspaceType = "functional-project",
+  timeoutMs = 8000,
+  pollMs = 100,
+} = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let latestState = null;
+  do {
+    const activeProvider = await waitForActionProvider("project-functional-diagram", Math.min(1800, Math.max(0, deadline - Date.now()))) || provider;
+    latestState = activeProvider?.getHazardVibeReviewState?.() || null;
+    const headers = latestState?.summary?.[0];
+    const matchesWorkspace = (
+      String(latestState?.activeProjectId || "") === String(projectId || "") &&
+      String(latestState?.workspaceType || "functional-project") === String(workspaceType || "functional-project")
+    );
+    const hasRows = Array.isArray(latestState?.summary) && latestState.summary.length > 1;
+    const hasRowId = Array.isArray(headers) && headers.some((header) => /^(?:Raw Analysis Row ID|Raw Row ID|Analysis Row ID)$/i.test(String(header).trim()));
+    if (matchesWorkspace && hasRows && hasRowId) return { provider: activeProvider, state: latestState };
+    if (Date.now() >= deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(pollMs, Math.max(0, deadline - Date.now()))));
+  } while (Date.now() <= deadline);
+  return { provider, state: latestState };
+}
+
 export function buildCollaboratorModelOptions(provider, selectedModel = "", providerModels = []) {
   const sourceModels = Array.isArray(providerModels) && providerModels.length
     ? providerModels
@@ -4334,6 +4360,8 @@ export default function XHandleCopilotView({
   isDark = false,
   reviewer = {},
   onResumeVibeReviewWorkspace,
+  resumeVibeReviewRequest = null,
+  onResumeVibeReviewRequestHandled,
 }) {
   const resultsReview = useResultsReview();
   const enrichedContext = useMemo(
@@ -4535,20 +4563,33 @@ function cancelCtxEditor() {
     setEditingMessage(null);
   }, [activeId, docked]);
 
-  useEffect(() => {
-    const handleResumeRequest = (event) => {
-      const requested = event?.detail || {};
+  const queueVibeReviewResume = React.useCallback((requested = {}) => {
       const session = requested.domain === "functional-decomposition"
         ? findFunctionalVibeReviewSessionById(requested.sessionId)
         : findVibeReviewSessionById(requested.sessionId);
-      if (!session || session.threadId !== requested.threadId || session.projectId !== requested.projectId) return;
+      if (!session || session.threadId !== requested.threadId || session.projectId !== requested.projectId) {
+        window.alert("The saved review session could not be loaded. Browser storage may be full or the review may predate resumable sessions. No data was changed.");
+        return false;
+      }
       setThreads(loadThreads());
       setActiveId(session.threadId);
       setPendingVibeReviewResume({ domain: requested.domain, session });
+      return true;
+  }, []);
+
+  useEffect(() => {
+    const handleResumeRequest = (event) => {
+      queueVibeReviewResume(event?.detail || {});
     };
     window.addEventListener("xhandle:resume-vibe-review", handleResumeRequest);
     return () => window.removeEventListener("xhandle:resume-vibe-review", handleResumeRequest);
-  }, []);
+  }, [queueVibeReviewResume]);
+
+  useEffect(() => {
+    if (!resumeVibeReviewRequest?.requestId) return;
+    queueVibeReviewResume(resumeVibeReviewRequest);
+    onResumeVibeReviewRequestHandled?.(resumeVibeReviewRequest.requestId);
+  }, [onResumeVibeReviewRequestHandled, queueVibeReviewResume, resumeVibeReviewRequest]);
 
   useEffect(() => {
     const handleOpenThread = (event) => {
@@ -4915,8 +4956,8 @@ useEffect(() => {
         await captureVibeReviewSession("hazard-analysis", session, "paused");
         return;
       }
-      const providerApi = await waitForActionProvider("project-functional-diagram", 1800);
-      const state = providerApi?.getHazardVibeReviewState?.();
+      let providerApi = await waitForActionProvider("project-functional-diagram", 1800);
+      let state = providerApi?.getHazardVibeReviewState?.();
       const hazardWorkspaceMismatch = (
         String(state?.activeProjectId || "") !== String(session.projectId) ||
         String(state?.workspaceType || "functional-project") !== String(session.workspaceType || "functional-project")
@@ -4968,6 +5009,17 @@ useEffect(() => {
       }
       if (action === "resume") {
         if ([VIBE_REVIEW_STATES.COMPLETED, VIBE_REVIEW_STATES.CANCELLED].includes(session.state)) throw new Error("This review is finished and cannot be resumed.");
+        const hydrated = await waitForHydratedHazardReviewState({
+          provider: providerApi,
+          projectId: session.projectId,
+          workspaceType: session.workspaceType || "functional-project",
+        });
+        providerApi = hydrated.provider || providerApi;
+        state = hydrated.state;
+        const hydratedHeaders = state?.summary?.[0];
+        if (!Array.isArray(state?.summary) || state.summary.length < 2 || !Array.isArray(hydratedHeaders)) {
+          throw new Error("The original hazard analysis is still loading. The review remains paused; wait for the analysis to appear, then resume again.");
+        }
         session = transitionVibeReviewSession(session, { type: "resume" });
         saveVibeReviewSession(session);
         const rowId = currentVibeReviewRowId(session);
