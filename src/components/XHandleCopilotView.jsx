@@ -1550,7 +1550,7 @@ export function buildFunctionalAbstractionChoiceMessage() {
 }
 
 export function buildResolvedAbstractionRequest(pendingRequest, selectedLevel) {
-  const levelInstruction = `Abstraction level selected by the user: ${selectedLevel}.\n${functionalAbstractionInstruction(selectedLevel)}`;
+  const levelInstruction = `Abstraction level selected by the user: ${selectedLevel}.\n${functionalAbstractionInstruction(selectedLevel)}\nGenerate the complete reviewable seven-column functional decomposition now. Do not ask which project should receive it and do not ask another setup question. The draft does not modify a project.`;
   const priorModelContent = pendingRequest?.options?.modelUserContent;
   const modelUserContent = Array.isArray(priorModelContent)
     ? [...priorModelContent, { type: "text", text: levelInstruction }]
@@ -3498,10 +3498,11 @@ export function isFunctionalDecompositionRevisionFeedbackRequest(text = "", focu
     String(focus?.section || "").toLowerCase() === "projects" &&
     String(focus?.activeTab || "").toLowerCase() === "functional diagramming";
   const explicitTarget = /functional\s+(decomposition|diagram|architecture|table|rows?)|decomposition\s+(table|rows?)/.test(q);
-  const structuralFeedback = /\b(function\s*\(?from\)?|function\s*\(?to\)?|control action|subsystem allocation|receiver|source|endpoint|leaf function|container|interface|row|rows)\b/.test(q);
+  const subsystemFunctionMultiplicity = /\b(multiple|several|distinct|more than one)\s+functions?\s+per\s+subsystem\b|\bnot\s+(?:just\s+)?one\s+function\s+per\s+subsystem\b/.test(q);
+  const structuralFeedback = /\b(function\s*\(?from\)?|function\s*\(?to\)?|functions?|control action|subsystem allocation|receiver|source|endpoint|leaf function|container|interface|row|rows)\b/.test(q);
   const revisionIntent = /\b(revise|repair|fix|correct|rewrite|replace|change|update|incorporate|apply|address|resolve)\b/.test(q);
   const directiveFeedback = /\b(should|must|needs? to|rather than|instead of)\b/.test(q) &&
-    /\b(incorrect|wrong|invalid|missing|duplicate|generic|disconnected|inconsistent|container|leaf|receiver|endpoint|interface)\b/.test(q);
+    /\b(incorrect|wrong|invalid|missing|duplicate|generic|disconnected|inconsistent|container|leaf|receiver|endpoint|interface|multiple|distinct|function)\b/.test(q);
   const feedbackFraming = /\b(based on|using|incorporate|apply|address)\s+(this|that|the|these|those|following|above)\s+(feedback|review|finding|findings|issue|issues|recommendation|recommendations)\b/.test(q);
   const priorQualityReviewReference = isFunctionalQualityReviewRevisionIntent(q);
   const diagnosticFeedback = (
@@ -3513,7 +3514,7 @@ export function isFunctionalDecompositionRevisionFeedbackRequest(text = "", focu
   const readOnlyOnly = /^\s*(can|could|would|will|do|does|is|are|why|how|what)\b/.test(q) &&
     !revisionIntent && !directiveFeedback && !feedbackFraming;
   if (readOnlyOnly || auditOnly) return false;
-  return (explicitTarget || focusIsFunctionalTable) && (structuralFeedback || priorQualityReviewReference) && (revisionIntent || directiveFeedback || feedbackFraming || diagnosticFeedback || priorQualityReviewReference);
+  return (explicitTarget || focusIsFunctionalTable || subsystemFunctionMultiplicity) && (structuralFeedback || priorQualityReviewReference) && (revisionIntent || directiveFeedback || feedbackFraming || diagnosticFeedback || priorQualityReviewReference || subsystemFunctionMultiplicity);
 }
 
 function isFunctionalSubsystemAllocationReviewRequest(text = "") {
@@ -3722,12 +3723,12 @@ function extractFunctionLabelRenameRequest(text = "", pendingReference = null) {
   return null;
 }
 
-function getPendingFunctionalProjectCreateName(text = "") {
+export function getPendingFunctionalProjectCreateName(text = "") {
   const raw = String(text || "").trim();
   if (!/\b(create|make|start|new)\b/i.test(raw) || !/\bproject\b/i.test(raw)) return "";
   if (!/\b(use|with|from|as|functional decomposition|decomposition|these|this|above|pending)\b/i.test(raw)) return "";
   const patterns = [
-    /\b(?:create|make|start)\s+(?:a\s+)?new\s+project\s+(?:call|called|named|for)\s+["“]?(.+?)["”]?(?:\s+and\b|\s+with\b|\s+using\b|\s+use\b|\s+as\b|[.!?]?$)/i,
+    /\b(?:create|make|start)\s+(?:(?:a\s+)?new|anew)\s+project\s+(?:call|called|named|for)\s+["“]?(.+?)["”]?(?:\s+and\b|\s+with\b|\s+using\b|\s+use\b|\s+as\b|[.!?]?$)/i,
     /\b(?:create|make|start)\s+(?:a\s+)?project\s+(?:call|called|named|for)\s+["“]?(.+?)["”]?(?:\s+and\b|\s+with\b|\s+using\b|\s+use\b|\s+as\b|[.!?]?$)/i,
     /\bnew\s+project\s*:\s*["“]?(.+?)["”]?(?:\s+and\b|\s+with\b|\s+using\b|\s+use\b|\s+as\b|[.!?]?$)/i,
   ];
@@ -3886,6 +3887,27 @@ export function extractFunctionalRowsFromAssistantText(text = "") {
   });
   flushCurrent();
   return proseRows;
+}
+
+export function findLatestFunctionalRowsInMessages(messages = []) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "assistant") continue;
+    const rows = extractFunctionalRowsFromAssistantText(message?.content || "");
+    if (rows.length) return rows;
+  }
+  return [];
+}
+
+export function buildPendingFunctionalDraftRevisionRequest(feedback = "", rows = []) {
+  return [
+    "Revise the reviewable functional-decomposition draft below. This is a draft revision, not a saved workspace mutation.",
+    "Apply the user's feedback to the complete table and return a replacement seven-column functional decomposition.",
+    "For every internally owned subsystem, define multiple distinct behavioral functions wherever its responsibilities support decomposition; do not use a one-subsystem/one-function naming pattern or hide child functions in Details cells. Assign each function to exactly one subsystem and connect meaningful intra-subsystem and inter-subsystem control, data, feedback, fault, cancellation, and recovery interfaces. Preserve sound unrelated content.",
+    `User feedback:\n${String(feedback || "").trim()}`,
+    "Current draft rows:",
+    formatFunctionalRowsMarkdown(rows),
+  ].join("\n\n");
 }
 
 export function extractMultiLevelLeafInventory(responseText = "") {
@@ -6328,6 +6350,7 @@ useEffect(() => {
         fallbackProjectId: enrichedContext?.project?.id || enrichedContext?.workspace?.activeProjectId || null,
       });
       const activeThreadAtStart = loadThreads().find((thread) => thread.id === activeId);
+      const latestThreadFunctionalRows = findLatestFunctionalRowsInMessages(activeThreadAtStart?.messages || []);
       const previousAssistantContent = [...(activeThreadAtStart?.messages || [])]
         .reverse()
         .find((message) => message?.role === "assistant" && String(message?.content || "").trim())?.content || "";
@@ -6497,10 +6520,9 @@ useEffect(() => {
         }
       }
       const pendingCellUpdate = pendingFunctionalRows.length ? parsePendingFunctionalRowsCellUpdate(userText) : null;
-      const pendingProjectCreateName = pendingFunctionalRows.length
-        ? (requestedFunctionalProjectName || pendingFunctionalProjectName)
-        : "";
-      if (!options?.abstractionResolved && pendingProjectCreateName && (requestedFunctionalProjectName || shouldHandlePendingRowsApply(userText, options))) {
+      const pendingProjectCreateName = requestedFunctionalProjectName || pendingFunctionalProjectName;
+      const recoverableFunctionalRows = pendingFunctionalRows.length ? pendingFunctionalRows : latestThreadFunctionalRows;
+      if (!options?.abstractionResolved && pendingProjectCreateName && recoverableFunctionalRows.length && (requestedFunctionalProjectName || shouldHandlePendingRowsApply(userText, options))) {
         const provider = await waitForActionProvider("project-functional-diagram", 1800);
         if (provider?.createProjectFromFunctionalDecompositionRows) {
           appendMessage(activeId, {
@@ -6511,7 +6533,7 @@ useEffect(() => {
           try {
             const result = await provider.createProjectFromFunctionalDecompositionRows({
               projectName: pendingProjectCreateName,
-              rows: pendingFunctionalRows,
+              rows: recoverableFunctionalRows,
               source: "collaborator-chat-new-project",
             });
             const skippedAdds = result?.skippedAddCount
@@ -6547,7 +6569,7 @@ useEffect(() => {
 	      if (shouldHandlePendingRowsApply(userText, options)) {
 	        const extractedPreviousRows = pendingFunctionalRows.length
 	          ? []
-	          : extractFunctionalRowsFromAssistantText(previousAssistantContent);
+	          : latestThreadFunctionalRows;
 	        const rowsToApply = pendingFunctionalRows.length ? pendingFunctionalRows : extractedPreviousRows;
 	        if (!rowsToApply.length && isExplicitApplyPendingRowsRequest(userText)) {
 	          appendMessage(activeId, {
@@ -6652,6 +6674,33 @@ useEffect(() => {
         }
       }
       if (isFunctionalDecompositionRevisionFeedbackRequest(userText, focusContext)) {
+        if (recoverableFunctionalRows.length) {
+          appendMessage(activeId, {
+            role: "assistant",
+            content: "I’ll revise the pending functional-decomposition draft directly and keep it reviewable. I won’t modify a project until you explicitly apply it.",
+          });
+          setThreads(loadThreads());
+          try {
+            const revisionRequest = buildPendingFunctionalDraftRevisionRequest(userText, recoverableFunctionalRows);
+            const generation = await generateFunctionalDecompositionWithCollaborator({
+              userRequest: revisionRequest,
+              abstractionLevel: "multi-level",
+              maxTokens: 16000,
+              maxContinuations: 2,
+              signal: promptSignal,
+              onStage: (message) => reportProgress(message),
+            });
+            setPendingFunctionalRows(generation.rows);
+            appendMessage(activeId, { role: "assistant", content: generation.answer });
+          } catch (error) {
+            appendMessage(activeId, {
+              role: "assistant",
+              content: `I couldn’t revise the pending functional-decomposition draft: ${error?.message || "unknown error"}`,
+            });
+          }
+          setThreads(loadThreads());
+          return;
+        }
         if (isFunctionalQualityReviewRevisionIntent(userText) && !priorFunctionalQualityReview) {
           appendMessage(activeId, {
             role: "assistant",

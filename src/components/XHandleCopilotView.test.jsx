@@ -38,12 +38,14 @@ const {
   buildCollaboratorChatPayload,
   buildCollaboratorVoiceGreeting,
   canAdvancePastMissingHazardReviewRow,
+  getPendingFunctionalProjectCreateName,
   waitForHydratedHazardReviewState,
   buildContextualVibeReviewOptions,
   buildContextualVibeReviewQueuePrompt,
   buildCollaboratorContinuationMessages,
   buildCollaboratorModelOptions,
   buildResolvedAbstractionRequest,
+  buildPendingFunctionalDraftRevisionRequest,
   buildPromptContentFromContext,
   compactPromptHistory,
   isDiagramFunctionalDecompositionRequest,
@@ -55,6 +57,7 @@ const {
   isFunctionalDraftDecisionFollowUp,
   resolvePendingFunctionalAbstractionLevel,
   extractFunctionalRowsFromAssistantText,
+  findLatestFunctionalRowsInMessages,
   extractSubsystemFunctionLookupRequest,
   extractMultiLevelLeafInventory,
   formatCollaboratorReasoningList,
@@ -994,6 +997,40 @@ describe("subsystem generation prompting", () => {
     expect(needsFunctionalAbstractionClarification(request)).toBe(false);
   });
 
+  it("extracts a requested project name when 'a new' is typed as 'anew'", () => {
+    expect(getPendingFunctionalProjectCreateName("create anew project called LLM and add this to it.")).toBe("LLM");
+    expect(getPendingFunctionalProjectCreateName("create a new project called LLM and add this to it.")).toBe("LLM");
+  });
+
+  it("recovers the latest parseable draft when project creation follows intervening messages", () => {
+    const messages = [
+      { role: "assistant", content: "| Subsystem | Function From | Function From Details | Control Action | Control Action Details | Function To | Function To Details |\n|---|---|---|---|---|---|---|\n| Conversation | Manage request | Track it | Request | Carry input | Generate response | Produce output |" },
+      { role: "user", content: "create a new project called LLM and add this to it" },
+      { role: "assistant", content: "Could you paste it again?" },
+    ];
+    expect(findLatestFunctionalRowsInMessages(messages)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ fromFunction: "Manage request", controlAction: "Request", toFunction: "Generate response" }),
+    ]));
+  });
+
+  it("revises a pending draft with multiple functions per internal subsystem", () => {
+    const feedback = "There should be multiple functions per subsystem, not one function per subsystem.";
+    const request = buildPendingFunctionalDraftRevisionRequest(feedback, [{
+      subsystem: "Conversation Management",
+      fromFunction: "Manage Conversation",
+      fromDetails: "Track interaction state.",
+      controlAction: "Conversation Request",
+      controlDetails: "Carry a user request.",
+      toFunction: "Generate Response",
+      toDetails: "Produce output.",
+    }]);
+    expect(isFunctionalDecompositionRevisionFeedbackRequest(feedback, {})).toBe(true);
+    expect(request).toContain("multiple distinct behavioral functions");
+    expect(request).toContain("one-subsystem/one-function");
+    expect(request).toContain("Conversation Management");
+    expect(request).toContain("Manage Conversation");
+  });
+
   it("builds a structured radio-choice prompt with a multi-level default", () => {
     const message = buildFunctionalAbstractionChoiceMessage();
     expect(message.role).toBe("assistant");
@@ -1046,6 +1083,7 @@ describe("subsystem generation prompting", () => {
     expect(resolved.userText).toBe("Create a functional decomposition from this diagram");
     expect(resolved.modelUserContent[0]).toBe(imagePart);
     expect(resolved.modelUserContent.at(-1).text).toContain("DETAILED FUNCTIONAL abstraction");
+    expect(resolved.modelUserContent.at(-1).text).toContain("Do not ask which project should receive it");
   });
 
   it("removes the UI-only abstraction question before generating the resolved request", () => {
