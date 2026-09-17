@@ -16425,6 +16425,50 @@ const projectHint = useMemo(() => ({
   </button>
 ))}
 
+    {activeTab === 'Functional Diagramming' && responseRows.length > 0 && (
+      <details className="relative ml-auto">
+        <summary
+          className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-md text-xl font-bold leading-none text-gray-600 hover:bg-gray-100 hover:text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2D7DFE] [&::-webkit-details-marker]:hidden"
+          aria-label="Functional diagram actions"
+          title="Functional diagram actions"
+        >
+          ⋮
+        </summary>
+        <div className="absolute right-0 top-9 z-50 w-44 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 text-left shadow-lg">
+          {[
+            ['diagram', 'Diagram'],
+            ['table', 'Table'],
+            ['split', 'Split view'],
+          ].map(([mode, label]) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={(event) => {
+                if (mode !== 'table' && functionalViewMode === 'table') commitFunctionalRowsToDiagram();
+                functionalViewModePreferenceRef.current = mode;
+                setFunctionalViewMode(mode);
+                event.currentTarget.closest('details')?.removeAttribute('open');
+              }}
+              className={`block w-full px-3 py-2 text-left text-sm ${functionalViewMode === mode ? 'bg-purple-50 font-semibold text-[#7A37FF]' : 'text-gray-700 hover:bg-gray-50'}`}
+            >
+              {label}
+            </button>
+          ))}
+          <div className="my-1 border-t border-gray-100" />
+          <button
+            type="button"
+            onClick={(event) => {
+              exportDecompositionCSV();
+              event.currentTarget.closest('details')?.removeAttribute('open');
+            }}
+            className="block w-full px-3 py-2 text-left text-sm font-medium text-emerald-700 hover:bg-emerald-50"
+          >
+            Export CSV
+          </button>
+        </div>
+      </details>
+    )}
+
     </div>
   </div>
 </div>
@@ -16516,6 +16560,7 @@ const projectHint = useMemo(() => ({
                   {responseRows.length > 0 && (
                     <>
                       <FunctionalDiagramWorkspace
+                        showControls={false}
                         viewMode={functionalViewMode}
                         onViewModeChange={(mode) => {
                           if (mode !== 'table' && functionalViewMode === 'table') commitFunctionalRowsToDiagram();
@@ -16530,7 +16575,7 @@ const projectHint = useMemo(() => ({
                         )}
                         diagram={(
                       <div className="flex min-h-0 w-full flex-1">
-                        <div className="min-h-0 flex-1 pt-6">
+                        <div className="min-h-0 flex-1">
                           <div className="relative h-full min-h-0 w-full overflow-hidden rounded-2xl bg-white">
                           {activeProjectDiagramReady ? (
                             <LiteSummaryDiagramReactFlow

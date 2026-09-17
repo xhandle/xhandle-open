@@ -29,6 +29,7 @@ const { createRoot } = require("react-dom/client");
 const {
   CollaboratorComposerMenu,
   CollaboratorPromptComposer,
+  collaboratorClipboardHtmlToMarkdown,
   FunctionalVibeReviewRecoveryCard,
   FunctionalVibeReviewCard,
   HazardVibeReviewCard,
@@ -67,6 +68,9 @@ const {
   mergeCollaboratorContinuation,
   functionalAbstractionInstruction,
   isSubsystemGenerationRequest,
+  isAuthoritativeFunctionalAllocationRequest,
+  authoritativeFunctionalAllocationInstruction,
+  extractAuthoritativeFunctionalAllocationInventory,
   needsFunctionalAbstractionClarification,
   materializeMultiLevelReview,
   renderCopilotContext,
@@ -74,6 +78,7 @@ const {
   sanitizeSubsystemArchitectureReview,
   shouldHandlePendingRowsApply,
   isFunctionalDecompositionRevisionFeedbackRequest,
+  isFunctionalDecompositionAuditRequest,
   shouldReviewGeneratedFunctionalDecomposition,
   validateSubsystemArchitectureReview,
   validateMultiLevelHierarchy,
@@ -282,6 +287,13 @@ describe("contextual vibe review", () => {
 });
 
 describe("subsystem generation prompting", () => {
+  it("preserves rich clipboard lists as Markdown in the Collaborator composer", () => {
+    expect(collaboratorClipboardHtmlToMarkdown(
+      "<p>Architecture:</p><ul><li><strong>Perception</strong></li><li>Planning<ol><li>Route planning</li></ol></li></ul>",
+      "Architecture: Perception Planning Route planning",
+    )).toBe("Architecture:\n\n- **Perception**\n- Planning\n  1. Route planning");
+  });
+
   it("personalizes the natural voice greeting when the user has supplied a name", () => {
     const priorProfile = localStorage.getItem("xhandle.userProfile");
     localStorage.setItem("xhandle.userProfile", JSON.stringify({ name: "Nick Peilan" }));
@@ -995,6 +1007,58 @@ describe("subsystem generation prompting", () => {
 
     expect(isSubsystemGenerationRequest(request)).toBe(true);
     expect(needsFunctionalAbstractionClarification(request)).toBe(false);
+  });
+
+  it("does not mistake domain update terms in a generation inventory for revision commands", () => {
+    const request = [
+      "Create a functional decomposition for an autonomy stack that maps to the following:",
+      "Sensor & Perception Subsystem: sensor calibration, object tracking, world-model generation.",
+      "Software & Configuration Update Subsystem: software deployment, configuration update, map update, rollback.",
+      "Human-Machine Interface Subsystem: mission-status display, fault indication, operator warnings.",
+      "Behavioral Planning Subsystem: gap selection, maneuver evaluation, control functions.",
+      "Vehicle Interface Subsystem: command validation, manual/autonomous control switching.",
+    ].join("\n");
+    expect(isSubsystemGenerationRequest(request)).toBe(true);
+    expect(isFunctionalDecompositionRevisionFeedbackRequest(request, { section: "projects", activeTab: "Functional Diagramming" })).toBe(false);
+    expect(isFunctionalDecompositionAuditRequest(request)).toBe(false);
+    expect(extractSubsystemFunctionLookupRequest(request)).toBeNull();
+    expect(needsFunctionalAbstractionClarification(request)).toBe(true);
+    expect(isAuthoritativeFunctionalAllocationRequest(request)).toBe(true);
+    const allocationContract = authoritativeFunctionalAllocationInstruction(request);
+    expect(allocationContract).toContain("required allocation specification");
+    expect(allocationContract).toContain("Preserve every user-named subsystem");
+    expect(allocationContract).toContain("Preserve every user-listed function under the subsystem where the user placed it");
+  });
+
+  it("treats a numbered 'based on this' subsystem inventory as authoritative", () => {
+    const request = [
+      "create a functional decomposition based on this:",
+      "1. Sensor & Perception Subsystem",
+      "Sensor interfaces",
+      "Cameras",
+      "Object detection",
+      "2. Localization & State Estimation Subsystem",
+      "GNSS localization",
+      "Vehicle pose estimation",
+      "3. Vehicle / Controlled Process",
+      "Steering system",
+      "Service braking system",
+      "4. External Environment / External Actors",
+      "Other vehicles",
+      "Pedestrians",
+    ].join("\n");
+
+    expect(isAuthoritativeFunctionalAllocationRequest(request)).toBe(true);
+    expect(extractAuthoritativeFunctionalAllocationInventory(request)).toEqual([
+      { subsystem: "Sensor & Perception Subsystem", functions: ["Sensor interfaces", "Cameras", "Object detection"] },
+      { subsystem: "Localization & State Estimation Subsystem", functions: ["GNSS localization", "Vehicle pose estimation"] },
+      { subsystem: "Vehicle / Controlled Process", functions: ["Steering system", "Service braking system"] },
+      { subsystem: "External Environment / External Actors", functions: ["Other vehicles", "Pedestrians"] },
+    ]);
+    const instruction = authoritativeFunctionalAllocationInstruction(request);
+    expect(instruction).toContain("4 ownership sections and 9 allocated items");
+    expect(instruction).toContain("Vehicle / Controlled Process");
+    expect(instruction).toContain("do not externalize a supplied section");
   });
 
   it("extracts a requested project name when 'a new' is typed as 'anew'", () => {

@@ -2427,6 +2427,7 @@ const DiagramBody = forwardRef(function DiagramBody(
   );
 
   const diagramHostRef = useRef(null);
+  const flowCanvasHostRef = useRef(null);
   const nodeIdCounter = useRef(0);
   const [editModal, setEditModal] = useState(null);
 
@@ -3135,7 +3136,7 @@ useEffect(() => {
 }, []);
 
   function findNodeUnderPointer(evt) {
-    const bounds = diagramHostRef.current?.getBoundingClientRect();
+    const bounds = flowCanvasHostRef.current?.getBoundingClientRect();
     if (!bounds) return null;
     const local = { x: evt.clientX - bounds.left, y: evt.clientY - bounds.top };
     const p = project(local);
@@ -3407,7 +3408,7 @@ useEffect(() => {
     const session = childDragRef.current?.nodeId === draggedNode.id
       ? childDragRef.current
       : null;
-    const bounds = diagramHostRef.current?.getBoundingClientRect();
+    const bounds = flowCanvasHostRef.current?.getBoundingClientRect();
     const clientX = Number(event?.clientX ?? event?.nativeEvent?.clientX);
     const clientY = Number(event?.clientY ?? event?.nativeEvent?.clientY);
     let pointerPosition = null;
@@ -5146,32 +5147,33 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
       {/* 🧠 Canvas */}
       <div
         style={{
-          border: `2px solid ${BRAND.blue}`,
-          borderRadius: '8px',
-          overflow: 'hidden',
           width: '100%',
           height: '100%',
+          display: 'flex',
+          minWidth: 0,
+          gap: 8,
         }}
       >
         <div
           style={{
-            position: 'absolute',
-            top: 12,
-            bottom: 12,
-            left: 12,
-            zIndex: 25,
+            position: 'relative',
+            flex: `0 0 ${canvasToolbarCollapsed ? 36 : 128}px`,
+            zIndex: 5,
             width: canvasToolbarCollapsed ? 36 : 128,
+            minWidth: canvasToolbarCollapsed ? 36 : 128,
+            height: '100%',
             pointerEvents: 'auto',
-            transition: 'width 160ms ease',
+            transition: 'width 160ms ease, min-width 160ms ease, flex-basis 160ms ease',
+            border: '1px solid rgba(15,15,18,0.12)',
+            borderRadius: 8,
+            background: '#fff',
+            overflow: 'hidden',
           }}
         >
           <div
             style={{
               height: '100%',
-              border: '1px solid rgba(15,15,18,0.12)',
-              borderRadius: 10,
-              background: 'rgba(255,255,255,0.96)',
-              boxShadow: '0 12px 28px rgba(15,15,18,0.16)',
+              background: '#fff',
               overflow: 'hidden',
               display: 'flex',
               flexDirection: 'column',
@@ -5232,6 +5234,18 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
             </div>
           </div>
         </div>
+        <div
+          ref={flowCanvasHostRef}
+          style={{
+            position: 'relative',
+            flex: '1 1 auto',
+            minWidth: 0,
+            height: '100%',
+            border: `2px solid ${BRAND.blue}`,
+            borderRadius: 8,
+            overflow: 'hidden',
+          }}
+        >
         <ReactFlow
           nodes={viewNodes}
           edges={viewEdges}
@@ -5359,7 +5373,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
             const isInside = event.target.closest('.react-flow__node, .react-flow__edge, .react-flow__edge-label');
             if (isInside) return;
           
-            const bounds = diagramHostRef.current?.getBoundingClientRect();
+            const bounds = flowCanvasHostRef.current?.getBoundingClientRect();
             const position = nearestFreePosition(
               { x: event.clientX - (bounds?.left || 0), y: event.clientY - (bounds?.top || 0) },
               getNodes()
@@ -5393,7 +5407,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
 	              return;
 	            }
 	            if (node?.parentNode) {
-	              const bounds = diagramHostRef.current?.getBoundingClientRect();
+	              const bounds = flowCanvasHostRef.current?.getBoundingClientRect();
 	              const clientX = Number(event?.clientX ?? event?.nativeEvent?.clientX);
 	              const clientY = Number(event?.clientY ?? event?.nativeEvent?.clientY);
 	              const pointerPosition = bounds && Number.isFinite(clientX) && Number.isFinite(clientY)
@@ -5456,6 +5470,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
           <Background variant="dots" gap={18} size={1} />
           <Controls showInteractive={false} position="bottom-right" />
         </ReactFlow>
+        </div>
       </div>
 
       {contextMenu && (

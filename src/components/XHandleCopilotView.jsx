@@ -367,6 +367,64 @@ function resizeCollaboratorTextarea(element) {
   element.style.overflowY = element.scrollHeight > maximumHeight ? "auto" : "hidden";
 }
 
+export function collaboratorClipboardHtmlToMarkdown(html = "", plainText = "") {
+  const source = String(html || "");
+  if (!source || typeof DOMParser === "undefined") return String(plainText || "");
+  const documentNode = new DOMParser().parseFromString(source, "text/html");
+  if (!documentNode.body.querySelector("ul, ol")) return String(plainText || "");
+
+  const inline = (node) => {
+    if (node.nodeType === 3) return node.nodeValue || "";
+    if (node.nodeType !== 1) return "";
+    const tag = node.tagName.toLowerCase();
+    const content = Array.from(node.childNodes).map(inline).join("");
+    if (tag === "br") return "\n";
+    if (tag === "strong" || tag === "b") return `**${content}**`;
+    if (tag === "em" || tag === "i") return `*${content}*`;
+    if (tag === "code") return `\`${content}\``;
+    if (tag === "a") {
+      const href = node.getAttribute("href");
+      return href ? `[${content}](${href})` : content;
+    }
+    return content;
+  };
+
+  const list = (element, depth = 0) => Array.from(element.children)
+    .filter((child) => child.tagName?.toLowerCase() === "li")
+    .map((item, index) => {
+      const nestedLists = Array.from(item.children).filter((child) => /^(UL|OL)$/.test(child.tagName));
+      const directContent = Array.from(item.childNodes)
+        .filter((child) => !(child.nodeType === 1 && /^(UL|OL)$/.test(child.tagName)))
+        .map(inline)
+        .join("")
+        .replace(/\s+/g, " ")
+        .trim();
+      const marker = element.tagName.toLowerCase() === "ol" ? `${index + 1}.` : "-";
+      const line = `${"  ".repeat(depth)}${marker} ${directContent}`.trimEnd();
+      const nested = nestedLists.map((child) => list(child, depth + 1)).filter(Boolean).join("\n");
+      return nested ? `${line}\n${nested}` : line;
+    })
+    .join("\n");
+
+  const block = (node) => {
+    if (node.nodeType === 3) return (node.nodeValue || "").trim();
+    if (node.nodeType !== 1) return "";
+    const tag = node.tagName.toLowerCase();
+    if (tag === "ul" || tag === "ol") return list(node);
+    if (/^h[1-6]$/.test(tag)) return `${"#".repeat(Number(tag[1]))} ${inline(node).trim()}`;
+    if (tag === "blockquote") return inline(node).trim().split("\n").map((line) => `> ${line}`).join("\n");
+    if (["p", "div", "section", "article"].includes(tag)) return inline(node).trim();
+    return inline(node).trim();
+  };
+
+  return Array.from(documentNode.body.childNodes)
+    .map(block)
+    .filter(Boolean)
+    .join("\n\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export function CollaboratorPromptComposer({
   textareaRef,
   defaultValue = "",
@@ -390,6 +448,23 @@ export function CollaboratorPromptComposer({
     onDraftChange?.(event.currentTarget.value);
   };
 
+  const handlePaste = (event) => {
+    const html = event.clipboardData?.getData("text/html") || "";
+    if (!html || !/<(?:ul|ol)(?:\s|>)/i.test(html)) return;
+    const markdown = collaboratorClipboardHtmlToMarkdown(
+      html,
+      event.clipboardData?.getData("text/plain") || "",
+    );
+    if (!markdown) return;
+    event.preventDefault();
+    const target = event.currentTarget;
+    const start = target.selectionStart ?? target.value.length;
+    const end = target.selectionEnd ?? start;
+    target.setRangeText(markdown, start, end, "end");
+    resizeCollaboratorTextarea(target);
+    onDraftChange?.(target.value);
+  };
+
   return (
     <div>
       <div className="rounded-[26px] border border-neutral-200 bg-white p-2 shadow-sm transition focus-within:border-neutral-300 focus-within:shadow-md">
@@ -403,6 +478,7 @@ export function CollaboratorPromptComposer({
             placeholder={placeholder}
             defaultValue={defaultValue}
             onChange={handleChange}
+            onPaste={handlePaste}
             onKeyDown={(event) => {
               if (event.key !== "Enter" || event.shiftKey || event.nativeEvent?.isComposing) return;
               event.preventDefault();
@@ -1438,6 +1514,62 @@ export function isSubsystemGenerationRequest(promptText = "") {
   return generationIntent && architectureTarget && !requirementsOnly && !designDocumentOnly;
 }
 
+export function isAuthoritativeFunctionalAllocationRequest(promptText = "") {
+  const query = String(promptText || "");
+  const allocationFraming = /\b(?:maps?\s+to|map\s+the\s+decomposition\s+to|use|using|based\s+on)\s+(?:exactly\s+)?(?:(?:the\s+)?following|this)\b/i.test(query);
+  const subsystemHeadings = query.match(/\b[^\n]{0,100}\bSubsystem\b/gi) || [];
+  const numberedSections = query.match(/^\s*\d+\.\s+[^\n]+$/gm) || [];
+  return isSubsystemGenerationRequest(query) && allocationFraming && (
+    subsystemHeadings.length >= 2 || numberedSections.length >= 2
+  );
+}
+
+export function extractAuthoritativeFunctionalAllocationInventory(promptText = "") {
+  if (!isAuthoritativeFunctionalAllocationRequest(promptText)) return [];
+  const ignoredTail = /^(?:what level of abstraction|functional decomposition abstraction level|which project should|system level|subsystem level|detailed functional level|multi-level)/i;
+  const sections = [];
+  let current = null;
+  for (const rawLine of String(promptText || "").split(/\r?\n/)) {
+    const line = rawLine.trim().replace(/^[-*•]\s+/, "");
+    if (!line) continue;
+    const heading = line.match(/^\d+\.\s+(.+)$/);
+    if (heading) {
+      current = { subsystem: heading[1].trim(), functions: [] };
+      sections.push(current);
+      continue;
+    }
+    if (!current || ignoredTail.test(line)) {
+      if (current && ignoredTail.test(line)) current = null;
+      continue;
+    }
+    current.functions.push(line);
+  }
+  return sections.filter((section) => section.subsystem && section.functions.length);
+}
+
+export function authoritativeFunctionalAllocationInstruction(promptText = "") {
+  if (!isAuthoritativeFunctionalAllocationRequest(promptText)) return "";
+  const inventory = extractAuthoritativeFunctionalAllocationInventory(promptText);
+  const inventorySummary = inventory.length
+    ? [
+        `- Parsed authoritative inventory: ${inventory.length} ownership sections and ${inventory.reduce((total, section) => total + section.functions.length, 0)} allocated items.`,
+        `- Required ownership sections, in order: ${inventory.map((section) => section.subsystem).join(" | ")}.`,
+      ]
+    : [];
+  return [
+    "AUTHORITATIVE USER ALLOCATION CONTRACT:",
+    ...inventorySummary,
+    "- Treat the supplied subsystem/function inventory as a required allocation specification, not as examples, suggestions, or material to summarize.",
+    "- Preserve every user-named subsystem as a distinct ownership boundary using its supplied name. Do not merge, omit, rename, or replace it with a preferred architecture label.",
+    "- Preserve every user-listed function under the subsystem where the user placed it. Do not merge, omit, rename, re-parent, or demote a listed function into a Details cell.",
+    "- The model may infer descriptions, canonical input/output contracts, interface direction, control-action names, feedback paths, fault paths, cancellation paths, recovery paths, and justified external exchanges.",
+    "- Every prescribed function must appear as Function From or Function To in at least one final interface row, and the Subsystem value for a prescribed Function From must be its prescribed owner.",
+    "- Do not apply normal brevity targets or subsystem/function count targets when they conflict with complete preservation of the supplied inventory.",
+    "- Do not claim that only a subset of the supplied sections is in scope, and do not externalize a supplied section merely to reduce the output. A heading explicitly labeled as an external actor or controlled process remains a prescribed boundary section and must still be represented.",
+    "- Before returning the result, audit subsystem names, function names, and parent allocations against the original inventory and restore every omission or altered allocation.",
+  ].join("\n");
+}
+
 export function inferFunctionalAbstractionLevel(promptText = "") {
   const query = String(promptText || "").toLowerCase();
   const canonicalValue = query.trim();
@@ -1550,7 +1682,8 @@ export function buildFunctionalAbstractionChoiceMessage() {
 }
 
 export function buildResolvedAbstractionRequest(pendingRequest, selectedLevel) {
-  const levelInstruction = `Abstraction level selected by the user: ${selectedLevel}.\n${functionalAbstractionInstruction(selectedLevel)}\nGenerate the complete reviewable seven-column functional decomposition now. Do not ask which project should receive it and do not ask another setup question. The draft does not modify a project.`;
+  const allocationInstruction = authoritativeFunctionalAllocationInstruction(pendingRequest?.userText || "");
+  const levelInstruction = `Abstraction level selected by the user: ${selectedLevel}.\n${functionalAbstractionInstruction(selectedLevel)}${allocationInstruction ? `\n\n${allocationInstruction}` : ""}\nGenerate the complete reviewable seven-column functional decomposition now. Do not ask which project should receive it and do not ask another setup question. The draft does not modify a project.`;
   const priorModelContent = pendingRequest?.options?.modelUserContent;
   const modelUserContent = Array.isArray(priorModelContent)
     ? [...priorModelContent, { type: "text", text: levelInstruction }]
@@ -1725,10 +1858,11 @@ export function validateMultiLevelHierarchy(hierarchy) {
 }
 
 async function extractMultiLevelHierarchy(userRequest, feedback = "", attempt = 0) {
+  const allocationInstruction = authoritativeFunctionalAllocationInstruction(userRequest);
   const raw = await callChat([
-    { role: "system", content: MULTI_LEVEL_HIERARCHY_SYSTEM_PROMPT.trim() },
+    { role: "system", content: [MULTI_LEVEL_HIERARCHY_SYSTEM_PROMPT.trim(), allocationInstruction].filter(Boolean).join("\n\n") },
     { role: "user", content: [String(userRequest || ""), feedback].filter(Boolean).join("\n\n") },
-  ], undefined, { maxTokens: 5000 });
+  ], undefined, { maxTokens: allocationInstruction ? 16000 : 5000 });
   let hierarchy;
   let errors;
   try {
@@ -1855,8 +1989,9 @@ export function materializeMultiLevelReview(hierarchy, interfacePlan) {
 }
 
 async function generateMultiLevelArchitecture(userRequest, hierarchy, feedback = "", attempt = 0) {
+  const allocationInstruction = authoritativeFunctionalAllocationInstruction(userRequest);
   const raw = await callChat([
-    { role: "system", content: MULTI_LEVEL_INTERFACE_SYSTEM_PROMPT.trim() },
+    { role: "system", content: [MULTI_LEVEL_INTERFACE_SYSTEM_PROMPT.trim(), allocationInstruction].filter(Boolean).join("\n\n") },
     {
       role: "user",
       content: [
@@ -1865,7 +2000,7 @@ async function generateMultiLevelArchitecture(userRequest, hierarchy, feedback =
         feedback,
       ].filter(Boolean).join("\n\n"),
     },
-  ], undefined, { maxTokens: 8000 });
+  ], undefined, { maxTokens: allocationInstruction ? 16000 : 8000 });
   let materialized;
   let errors;
   try {
@@ -2852,6 +2987,9 @@ const mdComponents = {
 // Forced light table styles for content rendered inside the blue user bubble
 const mdComponentsUser = {
   ...mdComponents,
+  ul: ({ children }) => <ul className="my-2 list-disc space-y-1 pl-6 text-left">{children}</ul>,
+  ol: ({ children }) => <ol className="my-2 list-decimal space-y-1 pl-6 text-left">{children}</ol>,
+  li: ({ children }) => <li className="pl-1 leading-relaxed marker:text-indigo-200">{children}</li>,
   table: ({ children }) => (
     <div className="overflow-auto my-3">
       <table className="w-full text-sm bg-[#F6F1FF] border border-[#E5DBFF] rounded">
@@ -3482,8 +3620,9 @@ function buildScopedContext(base, scope) {
   return scoped;
 }
 
-function isFunctionalDecompositionAuditRequest(text = "") {
+export function isFunctionalDecompositionAuditRequest(text = "") {
   const q = String(text || "").toLowerCase();
+  if (isSubsystemGenerationRequest(q)) return false;
   if (isFunctionalQualityReviewIntent(q)) return false;
   const asksForAudit = /\b(audit|review|assess|evaluate|inspect|check|gap|missing|complete|completeness|improve)\b/.test(q);
   const functionalTarget = /functional\s+(decomposition|diagram|architecture|table|rows?)|function\s+(table|rows?)|decomposition\s+(table|rows?)|\bsubsystem\s+functions?\b|\bsubsystem\s+interfaces?\b|\binterfaces?\s+between\b/.test(q);
@@ -3494,6 +3633,14 @@ function isFunctionalDecompositionAuditRequest(text = "") {
 
 export function isFunctionalDecompositionRevisionFeedbackRequest(text = "", focus = {}) {
   const q = String(text || "").toLowerCase();
+  const explicitlyTargetsExistingDecomposition = (
+    /\b(revise|repair|fix|correct|rewrite|replace|change|update|modify)\b[^.\n]{0,80}\b(current|existing|active|previous|above|draft|saved)\b[^.\n]{0,80}\b(functional\s+)?(decomposition|table|rows?|diagram)\b/.test(q) ||
+    /\b(current|existing|active|previous|above|draft|saved)\b[^.\n]{0,80}\b(functional\s+)?(decomposition|table|rows?|diagram)\b/.test(q)
+  );
+  // Long architecture inventories often contain domain nouns such as
+  // "configuration update" or "replacement". A clear create/generate
+  // request must win unless the user explicitly refers to an existing draft.
+  if (isSubsystemGenerationRequest(q) && !explicitlyTargetsExistingDecomposition) return false;
   const focusIsFunctionalTable =
     String(focus?.section || "").toLowerCase() === "projects" &&
     String(focus?.activeTab || "").toLowerCase() === "functional diagramming";
@@ -3536,6 +3683,7 @@ function normalizeFunctionalLookupText(value = "") {
 
 export function extractSubsystemFunctionLookupRequest(text = "") {
   const raw = String(text || "").trim();
+  if (isSubsystemGenerationRequest(raw)) return null;
   if (isFunctionalDecompositionRevisionFeedbackRequest(raw)) return null;
   const q = normalizeFunctionalLookupText(raw);
   const asksForReadOnlyReview = /\b(review|show|list|tell|what|which|see|find|summarize|display)\b/.test(q);
@@ -7412,7 +7560,7 @@ Runtime context:
                                 ...mdComponentsUser,
                                 h1: ({ children }) => <h1 className={`${userH1} font-bold mt-1 mb-2`}>{children}</h1>,
                                 h2: ({ children }) => <h2 className={`${userH2} font-semibold mt-1 mb-2`}>{children}</h2>,
-                                p:  ({ children }) => <p className={`${userP} leading-relaxed mb-2`}>{children}</p>,
+                                p:  ({ children }) => <p className={`${userP} whitespace-pre-wrap text-left leading-relaxed mb-2`}>{children}</p>,
                               }}
                             >
                               {String(turn.user.content || "")}
@@ -7661,7 +7809,7 @@ Runtime context:
                               ...mdComponentsUser,
                               h1: ({ children }) => <h1 className={`${userH1} font-bold mt-1 mb-1.5`}>{children}</h1>,
                               h2: ({ children }) => <h2 className={`${userH2} font-semibold mt-1 mb-1.5`}>{children}</h2>,
-                              p:  ({ children }) => <p className="text-[13px] leading-relaxed mb-1.5">{children}</p>,
+                              p:  ({ children }) => <p className="whitespace-pre-wrap text-left text-[13px] leading-relaxed mb-1.5">{children}</p>,
                             }}
                           >
                             {String(turn.user.content || "")}

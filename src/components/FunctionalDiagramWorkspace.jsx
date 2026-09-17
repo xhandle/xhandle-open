@@ -33,6 +33,7 @@ export default function FunctionalDiagramWorkspace({
   diagram,
   table,
   tableActions,
+  showControls = true,
 }) {
   const [diagramPercent, setDiagramPercent] = useState(50);
   const workspaceRef = useRef(null);
@@ -75,7 +76,7 @@ export default function FunctionalDiagramWorkspace({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden" data-testid="functional-workspace">
-      <div className="mb-3 flex shrink-0 flex-wrap items-center justify-center gap-3">
+      {showControls && <div className="mb-3 flex shrink-0 flex-wrap items-center justify-center gap-3">
         {tableVisible && tableActions}
         <div
           className="inline-flex rounded-lg border border-gray-200 bg-gray-100 p-1 shadow-sm"
@@ -100,7 +101,7 @@ export default function FunctionalDiagramWorkspace({
             );
           })}
         </div>
-      </div>
+      </div>}
 
       <div ref={workspaceRef} className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden md:flex-row md:gap-0">
         <section
