@@ -205,7 +205,7 @@ export function buildHazardQualityFindings(cells = {}) {
   const causal = text(cells["Causal Factor"] || cells["Causal Factors"] || cells["Causal Scenario"]);
   const requirement = text(cells["System Requirement"] || cells["Safety Requirements/Constraints"] || cells["Safety Constraint"]);
   const parameterSource = text(cells["Requirement Parameter Source"]);
-  const assessment = text(cells["Proposed Safety Assessment"]);
+  const assessment = text(cells["Safety Classification"] || cells["Safety Significant"] || cells["Proposed Safety Assessment"]);
   const hazard = text(cells.Hazard || cells.Hazards);
   const assumptions = text(cells["Context Assumptions"]);
   const operationalContext = text([
@@ -285,7 +285,7 @@ export function buildHazardAnalysisPatternFindings(summary = []) {
       sourceIndexes: applicableRows.map(({ sourceIndex }) => sourceIndex),
     });
   }
-  if (applicableRows.length >= 3 && applicableRows.every(({ cells }) => /^safety\b/i.test(text(cells["Proposed Safety Assessment"])))) {
+  if (applicableRows.length >= 3 && applicableRows.every(({ cells }) => /^safety(?:\s*[—-]|\b)|^yes$/i.test(text(cells["Safety Classification"] || cells["Safety Significant"] || cells["Proposed Safety Assessment"])))) {
     findings.push({
       id: createSafetyModelId("QF", "all-applicable-rows-safety"),
       message: "Every applicable row is classified Safety. Review whether mission/reliability effects were automatically escalated without a credible harm path.",
@@ -320,7 +320,7 @@ export function buildHazardAnalysisPatternFindings(summary = []) {
     interfaceGroups.get(key).push({ cells, sourceIndex });
   });
   const safetyInterfaces = Array.from(interfaceGroups.values()).filter((entries) => (
-    entries.some(({ cells }) => /^safety\b/i.test(text(cells["Proposed Safety Assessment"])))
+    entries.some(({ cells }) => /^safety(?:\s*[—-]|\b)|^yes$/i.test(text(cells["Safety Classification"] || cells["Safety Significant"] || cells["Proposed Safety Assessment"])))
   ));
   if (interfaceGroups.size >= 10 && safetyInterfaces.length / interfaceGroups.size >= 0.85) {
     findings.push({

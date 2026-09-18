@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import {
   loadThreads, saveThreads, newThread, renameThread, deleteThread,
-  togglePin, appendMessage, setMessages
+  togglePin, appendMessage, setMessages, ensureThread
 } from "./copilotThreads";
 import { generateThreadTitle } from "./generateThreadTitle";
 import { ACCOUNT_ID, backendURL, buildAIAuthOpts, getLocalAccessToken } from "./backendConfig";
@@ -2800,6 +2800,35 @@ export function HazardVibeReviewCard({ message, disabled = false, onAction, onOp
   );
 }
 
+export function HazardDownstreamImpactCard({ message, disabled = false, onAction, onOpenSource }) {
+  const card = message?.hazardDownstreamImpact;
+  if (!card) return null;
+  const active = !card.completed;
+  return (
+    <section className="mt-2 rounded-lg border border-blue-200 bg-blue-50/60 p-3 text-xs" aria-label={`Downstream impact for row ${card.sourceRowId}`}>
+      <div className="flex items-center justify-between gap-2 font-semibold text-neutral-900">
+        <span>Reviewed decision saved</span>
+        <button type="button" className="text-indigo-700 underline focus:ring-2 focus:ring-indigo-400" onClick={() => onOpenSource?.(card)}>Open source row</button>
+      </div>
+      <p className="mt-2 text-neutral-700">
+        {card.label || card.sourceRowId} now has a governed {card.reviewedField || "Guide Phrase Applicable"} decision of <strong>{card.decision}</strong>.
+        The existing downstream analysis has not been changed.
+      </p>
+      <div className="mt-2 font-medium text-neutral-800">Potential downstream updates</div>
+      <ul className="mt-1 list-disc space-y-0.5 pl-4 text-neutral-700">
+        {(card.impacts || []).map((impact) => <li key={impact}>{impact}</li>)}
+      </ul>
+      {card.resultSummary ? <p className="mt-2 rounded border border-blue-100 bg-white p-2 text-neutral-700">{card.resultSummary}</p> : null}
+      {active ? (
+        <div className="mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Downstream regeneration actions">
+          <button type="button" disabled={disabled} onClick={() => onAction?.("regenerate", card)} className="rounded-md bg-indigo-600 px-2.5 py-1.5 font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">{disabled ? "Regenerating…" : "Regenerate affected row"}</button>
+          <button type="button" disabled={disabled} onClick={() => onAction?.("later", card)} className="rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-50">Regenerate later</button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export function FunctionalVibeReviewCard({ message, disabled = false, onAction, onOpenSource }) {
   const card = message?.functionalVibeReview;
   if (!card) return null;
@@ -4741,6 +4770,14 @@ function cancelCtxEditor() {
         window.alert("The saved review session could not be loaded. Browser storage may be full or the review may predate resumable sessions. No data was changed.");
         return false;
       }
+      const existingThread = loadThreads().find((thread) => thread.id === session.threadId);
+      if (!existingThread) {
+        ensureThread(
+          session.threadId,
+          session.reviewName || "Recovered vibe review",
+          { greeting: `Recovered the Collaborator thread for the unfinished review “${session.reviewName || "Vibe review"}”. Resume review to continue at the saved item.` },
+        );
+      }
       setThreads(loadThreads());
       setActiveId(session.threadId);
       setPendingVibeReviewResume({ domain: requested.domain, session });
@@ -4765,7 +4802,15 @@ function cancelCtxEditor() {
     const handleOpenThread = (event) => {
       const threadId = String(event?.detail?.threadId || "");
       if (!threadId) return;
-      const thread = loadThreads().find((entry) => entry.id === threadId);
+      let thread = loadThreads().find((entry) => entry.id === threadId);
+      if (!thread && event?.detail?.sessionId) {
+        const session = event.detail.domain === "functional-decomposition"
+          ? findFunctionalVibeReviewSessionById(event.detail.sessionId)
+          : findVibeReviewSessionById(event.detail.sessionId);
+        if (session?.threadId === threadId) {
+          thread = ensureThread(threadId, session.reviewName || "Recovered vibe review");
+        }
+      }
       if (!thread) return;
       setThreads(loadThreads());
       setActiveId(threadId);
@@ -5032,7 +5077,7 @@ useEffect(() => {
     };
   };
 
-  const appendVibeReviewProposal = async (session, providerApi, signal) => {
+  const appendVibeReviewProposal = async (session, providerApi, signal, { continuation = false } = {}) => {
     let working = session;
     while (currentVibeReviewRowId(working)) {
       const activeProvider = await waitForActionProvider("project-functional-diagram", 1800) || providerApi;
@@ -5060,11 +5105,12 @@ useEffect(() => {
       saveVibeReviewSession(working);
       const card = buildVibeReviewCard(working, state, rowId, normalized);
       const providerFormatFailure = normalized.errors?.some((error) => /omitted the required normalizedDecision|usable structured decision/i.test(String(error)));
+      const continuationPrefix = continuation ? "Next review item: " : "";
       appendMessage(activeId, { role: "assistant", content: normalized.valid
-        ? `Here is the proposed assessment for Raw Analysis Row ID ${rowId}. It is an AI proposal, not approved engineering evidence.`
+        ? `${continuationPrefix}Here is the proposed assessment for Raw Analysis Row ID ${rowId}. It is an AI proposal, not approved engineering evidence.`
         : providerFormatFailure
-          ? `The selected model did not return a usable structured proposal for ${rowId}, including after one repair attempt. The row is unchanged. You can still make an explicit reviewer disposition with Mark Yes or Mark No, or skip it.`
-          : `I can’t form a valid Yes/No ${working.reviewTarget === "guidePhraseApplicable" ? "guide-phrase applicability " : ""}proposal for ${rowId}. Evidence gap: ${normalized.evidenceGap}`, vibeReview: card });
+          ? `${continuationPrefix}The selected model did not return a usable structured proposal for ${rowId}, including after one repair attempt. The row is unchanged. You can still make an explicit reviewer disposition with Mark Yes or Mark No, or skip it.`
+          : `${continuationPrefix}I can’t form a valid Yes/No ${working.reviewTarget === "guidePhraseApplicable" ? "guide-phrase applicability " : ""}proposal for ${rowId}. Evidence gap: ${normalized.evidenceGap}`, vibeReview: card });
       setThreads(loadThreads()); return working;
     }
     const summary = summarizeVibeReviewSession(working);
@@ -5079,7 +5125,7 @@ useEffect(() => {
     const downstreamMessage = session.workspaceType === "code-based-architecture"
       ? "\n\nReview any linked remediation and assurance artifacts because governed code-architecture hazard classifications changed."
       : session.reviewTarget === "guidePhraseApplicable"
-        ? "\n\nRegenerate Safety Issues because governed guide-phrase applicability changed."
+        ? "\n\nRegenerate Safety Issues to propagate the governed guide-phrase applicability changes. The reviewed hazard-row decisions remain valid unless their interface, operational context, or guide phrase changes."
         : "\n\nRegenerate Safety Issues because governed hazard classifications changed.";
     const reviewedField = session.reviewTarget === "guidePhraseApplicable" ? "Guide Phrase Applicable" : "Safety Significant";
     return `Hazard vibe review ${session.state === VIBE_REVIEW_STATES.CANCELLED ? "stopped" : "complete"}. Scope: ${session.scopeLabel}; reviewed field: ${reviewedField}; ${counts.total} total. Reviewed ${counts.reviewed}; accepted ${counts.accepted}; overridden to Yes ${counts.overriddenToYes}; overridden to No ${counts.overriddenToNo}; skipped ${counts.skipped}; failed ${counts.failed}; remaining ${counts.remaining}. Changed to Yes: ${counts.changedToYes}; changed to No: ${counts.changedToNo}.${changed ? `\n\nChanged rows:\n${changed}` : ""}${unresolved ? `\n\nSkipped or unresolved:\n${unresolved}` : ""}${session.decisions.length ? downstreamMessage : ""}`;
@@ -5274,12 +5320,41 @@ useEffect(() => {
         rationale: proposal.governedDecision["Classification Rationale"] || proposal.governedDecision["Classification Evidence"] || "",
         userFeedback, ai: session.ai, timestamp: record.timestamp,
       });
+      if (["guidePhraseApplicable", "safetySignificant"].includes(session.reviewTarget)) {
+        const applicabilityReview = session.reviewTarget === "guidePhraseApplicable";
+        appendMessage(activeId, {
+          role: "assistant",
+          content: `The reviewed ${applicabilityReview ? "applicability" : "safety-significance"} decision is saved. Downstream regeneration is a separate step so no additional engineering fields are changed without an explicit action.`,
+          hazardDownstreamImpact: {
+            sessionId: session.id,
+            projectId: session.projectId,
+            sourceRowId: card.sourceRowId,
+            workspaceType: session.workspaceType || "functional-project",
+            sourceRunId: session.sourceRunId || "",
+            label: record.label,
+            decision: newReviewValue,
+            reviewTarget: session.reviewTarget,
+            reviewedField: applicabilityReview ? "Guide Phrase Applicable" : "Safety Significant",
+            impacts: applicabilityReview ? [
+              "Hazard, loss, unsafe-control-action, and causal-scenario content may change.",
+              "Mitigations, constraints, and allocated requirements may change.",
+              "Safety classification and safety significance must be reassessed from the regenerated causal path.",
+              "Consolidated Safety Issues remain stale until they are regenerated separately.",
+            ] : [
+              "Safety classification, classification rule, and causal-path type may change.",
+              "Loss, hazard, consequence, and physical-harm-chain claims must be reconciled with the reviewed decision.",
+              "Mitigations, safety constraints, requirements, and verification evidence may change.",
+              "Consolidated Safety Issues remain stale until they are regenerated separately.",
+            ],
+          },
+        });
+      }
       session = transitionVibeReviewSession(session, { type: "decision", record }); saveVibeReviewSession(session);
       if (session.state !== VIBE_REVIEW_STATES.COMPLETED) {
         await captureVibeReviewSession("hazard-analysis", session, "in_progress");
       }
       closeVibeReviewCard(card, action === "accept" ? "accepted" : `marked-${action}`);
-      await appendVibeReviewProposal(session, providerApi, signal);
+      await appendVibeReviewProposal(session, providerApi, signal, { continuation: true });
     } catch (error) {
       if ((signal?.aborted || error?.name === "AbortError") && fromRunCopilot) throw error;
       if (action === "resume" && card?.projectId) {
@@ -5930,6 +6005,51 @@ useEffect(() => {
   async function handleOpenVibeReviewSource(card) {
     const provider = await waitForActionProvider("project-functional-diagram", 1800);
     provider?.openHazardVibeReviewRow?.(card);
+  }
+
+  function completeHazardDownstreamImpactCard(card, outcome, resultSummary = "") {
+    const thread = loadThreads().find((entry) => entry.id === activeId);
+    if (!thread) return;
+    setMessages(activeId, (thread.messages || []).map((message) => (
+      message?.hazardDownstreamImpact?.sessionId === card.sessionId
+      && message.hazardDownstreamImpact.sourceRowId === card.sourceRowId
+      && !message.hazardDownstreamImpact.completed
+        ? { ...message, hazardDownstreamImpact: { ...message.hazardDownstreamImpact, completed: true, outcome, resultSummary } }
+        : message
+    )));
+    setThreads(loadThreads());
+  }
+
+  async function handleHazardDownstreamImpactAction(action, card) {
+    if (!card || busy) return;
+    if (action === "later") {
+      completeHazardDownstreamImpactCard(card, "deferred", `Regeneration was deferred. The reviewed ${card.reviewedField || "applicability"} decision remains saved, and downstream Safety Issues remain stale.`);
+      return;
+    }
+    setBusy(true);
+    setWorkProgress([`Regenerating the affected hazard row from the reviewed ${card.reviewedField || "applicability"} decision…`]);
+    try {
+      const provider = await waitForActionProvider("project-functional-diagram", 1800);
+      if (!provider?.regenerateHazardVibeReviewRow) throw new Error("The scoped hazard-regeneration provider is unavailable.");
+      const result = await provider.regenerateHazardVibeReviewRow(card);
+      if (!result) throw new Error("The affected row was not regenerated.");
+      const governedFields = card.reviewTarget === "safetySignificant"
+        ? ["Safety Significant", "Safety Significance Rationale"]
+        : ["Guide Phrase Applicable", "Guide Phrase Applicability Rationale"];
+      const changed = (result.changedFields || []).filter((field) => !governedFields.includes(field));
+      const summary = changed.length
+        ? `Regenerated the affected row. Downstream content changed in ${changed.length} field${changed.length === 1 ? "" : "s"}: ${changed.join(", ")}. The reviewed ${card.reviewedField || "applicability"} decision remained locked. Regenerate Safety Issues separately when ready.`
+        : `Regenerated the affected row. No downstream fields changed, and the reviewed ${card.reviewedField || "applicability"} decision remained locked.`;
+      completeHazardDownstreamImpactCard(card, "regenerated", summary);
+      appendMessage(activeId, { role: "assistant", content: summary });
+      setThreads(loadThreads());
+    } catch (error) {
+      appendMessage(activeId, { role: "assistant", content: `I couldn’t regenerate the affected hazard row: ${error?.message || "the regeneration did not complete"}. The reviewed ${card.reviewedField || "applicability"} decision remains saved and no downstream update was applied.` });
+      setThreads(loadThreads());
+    } finally {
+      setBusy(false);
+      setWorkProgress([]);
+    }
   }
 
   function completeWorkspacePlanCard(messageIndex, outcome, detail = "") {
@@ -7629,6 +7749,7 @@ Runtime context:
                           onContinue={handleCollaboratorChoice}
                         />
                       <HazardVibeReviewCard message={am} disabled={busy} onAction={handleVibeReviewAction} onOpenSource={handleOpenVibeReviewSource} />
+                      <HazardDownstreamImpactCard message={am} disabled={busy} onAction={handleHazardDownstreamImpactAction} onOpenSource={handleOpenVibeReviewSource} />
                       <FunctionalVibeReviewCard message={am} disabled={busy} onAction={handleFunctionalVibeReviewAction} onOpenSource={handleOpenFunctionalVibeReviewSource} />
                       <FunctionalVibeReviewRecoveryCard message={am} disabled={busy} onAction={handleFunctionalVibeReviewAction} />
                       <WorkspaceActionPlanCard message={am} disabled={busy} onApply={handleWorkspacePlanApply} onCancel={handleWorkspacePlanCancel} onOpenSource={handleOpenWorkspacePlanSource} />
@@ -7653,7 +7774,7 @@ Runtime context:
                     const el = scrollRef.current;
                     if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
                   }}
-                  className="absolute bottom-24 right-6 p-2 rounded-full bg-indigo-600 text-white shadow-lg hover:bg-indigo-700"
+                  className="absolute bottom-24 left-1/2 -translate-x-1/2 p-2 rounded-full bg-indigo-600 text-white shadow-lg hover:bg-indigo-700"
                   title="Jump to latest response"
                 >
                   <ArrowDown className="w-5 h-5" />
@@ -7871,6 +7992,7 @@ Runtime context:
                         onContinue={handleCollaboratorChoice}
                       />
                         <HazardVibeReviewCard message={am} disabled={busy} onAction={handleVibeReviewAction} onOpenSource={handleOpenVibeReviewSource} />
+                        <HazardDownstreamImpactCard message={am} disabled={busy} onAction={handleHazardDownstreamImpactAction} onOpenSource={handleOpenVibeReviewSource} />
                         <FunctionalVibeReviewCard message={am} disabled={busy} onAction={handleFunctionalVibeReviewAction} onOpenSource={handleOpenFunctionalVibeReviewSource} />
                         <FunctionalVibeReviewRecoveryCard message={am} disabled={busy} onAction={handleFunctionalVibeReviewAction} />
                         <WorkspaceActionPlanCard message={am} disabled={busy} onApply={handleWorkspacePlanApply} onCancel={handleWorkspacePlanCancel} onOpenSource={handleOpenWorkspacePlanSource} />
@@ -7899,7 +8021,7 @@ Runtime context:
                 const el = scrollRef.current;
                 if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
               }}
-              className="absolute bottom-24 right-4 z-10 rounded-full bg-indigo-600 p-2 text-white shadow-lg hover:bg-indigo-700"
+              className="absolute bottom-24 left-1/2 z-10 -translate-x-1/2 rounded-full bg-indigo-600 p-2 text-white shadow-lg hover:bg-indigo-700"
               title="Jump to latest response"
               aria-label="Jump to latest Collaborator response"
             >

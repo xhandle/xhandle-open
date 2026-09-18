@@ -219,6 +219,16 @@ import {
   normalizeHazardAnalysisResolutionStatus,
 } from "./features/project-hazard-analysis/classificationResolutionStatus";
 import { indexVibeReviewHeaders } from "./features/project-hazard-analysis/vibeReviewScope";
+import { loadVibeReviewAudit } from "./features/project-hazard-analysis/vibeReviewSession";
+import {
+  applyReviewedApplicabilityToGenerationInput,
+  applyReviewedSafetySignificanceToGenerationInput,
+  buildReviewedRowRegenerationContext,
+  latestGuidePhraseReviewByRowId,
+  latestSafetySignificanceReviewByRowId,
+  normalizeReviewedHazardRowForPersistence,
+  restoreReviewedGuidePhraseDecisions,
+} from "./features/project-hazard-analysis/hazardRegenerationReview";
 import {
   normalizeProjectHazardMethod,
   shouldApplyHazardReconciliation,
@@ -431,8 +441,6 @@ const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
     "Requirement Parameter Source",
     "Verification Method",
     "Acceptance Criteria",
-    "Proposed Safety Assessment",
-    "Proposed Safety Assessment Rationale",
     "Safety Classification",
     "Safety Classification Rule",
     "Causal Path Type",
@@ -468,8 +476,6 @@ const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
     "Requirement Parameter Source",
     "Verification Method",
     "Acceptance Criteria",
-    "Proposed Safety Assessment",
-    "Proposed Safety Assessment Rationale",
     "Safety Classification",
     "Safety Classification Rule",
     "Causal Path Type",
@@ -493,8 +499,6 @@ const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
     "Causal Factor",
     "Mitigation Strategy",
     "System Requirement",
-    "Proposed Safety Assessment",
-    "Proposed Safety Assessment Rationale",
   ],
   HARA: [
     "Item / Function",
@@ -508,8 +512,6 @@ const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
     "ASIL",
     "Safety Goal",
     "Rationale",
-    "Proposed Safety Assessment",
-    "Proposed Safety Assessment Rationale",
     "Safety Significant",
     "Safety Significance Rationale",
   ],
@@ -528,8 +530,6 @@ const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
     "Software Safety Requirement",
     "Verification",
     "Rationale",
-    "Proposed Safety Assessment",
-    "Proposed Safety Assessment Rationale",
     "Safety Significant",
     "Safety Significance Rationale",
   ],
@@ -540,8 +540,6 @@ const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
     "Causal Factor",
     "Mitigation Strategy",
     "System Requirement",
-    "Proposed Safety Assessment",
-    "Proposed Safety Assessment Rationale",
   ],
 };
 
@@ -816,7 +814,22 @@ function stripProjectRiskProfileColumns(sheets = {}) {
     if (keepIndexes.length === sheetRows[0].length) return [sheetName, sheetRows];
     return [sheetName, sheetRows.map((row) => keepIndexes.map((index) => row?.[index] ?? ""))];
   }));
-  return normalizeHazardAnalysisResolutionStatus(strippedSheets);
+  return normalizeHazardAnalysisResolutionStatus(removeProposedSafetyAssessmentColumns(strippedSheets));
+}
+
+function removeProposedSafetyAssessmentColumns(sheets = {}) {
+  if (!sheets || typeof sheets !== "object") return sheets;
+  const omitted = new Set(["Proposed Safety Assessment", "Proposed Safety Assessment Rationale"]);
+  return Object.fromEntries(Object.entries(sheets).map(([sheetName, sheetRows]) => {
+    if (!Array.isArray(sheetRows) || !Array.isArray(sheetRows[0])) return [sheetName, sheetRows];
+    const keepIndexes = sheetRows[0]
+      .map((header, index) => ({ header: String(header || "").trim(), index }))
+      .filter(({ header }) => !omitted.has(header))
+      .map(({ index }) => index);
+    return keepIndexes.length === sheetRows[0].length
+      ? [sheetName, sheetRows]
+      : [sheetName, sheetRows.map((row) => keepIndexes.map((index) => row?.[index] ?? ""))];
+  }));
 }
 
 function normalizeAllocationText(value) {
@@ -8555,6 +8568,77 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     return map;
   }, [draftHazardReviewItems]);
 
+  const guidePhraseVibeReviewByRowId = latestGuidePhraseReviewByRowId(
+    resultsReview.reviewItems,
+    activeProjectId,
+    loadVibeReviewAudit(activeProjectId)
+  );
+  const safetySignificanceVibeReviewByRowId = latestSafetySignificanceReviewByRowId(
+    resultsReview.reviewItems,
+    activeProjectId,
+    loadVibeReviewAudit(activeProjectId)
+  );
+  const guidePhraseReviewEvidenceSignature = Array.from(guidePhraseVibeReviewByRowId.entries())
+    .map(([rowId, item]) => `${rowId}:${item?.reviewedAt || item?.updatedAt || ""}:${item?.vibeReview?.decision || ""}`)
+    .sort()
+    .join("|");
+  const restoredGuidePhraseReviewsRef = useRef("");
+
+  useEffect(() => {
+    if (!activeProjectId || !projectLoaded || loadedProjectId !== activeProjectId) return;
+    if (!Array.isArray(analysisResult?.Summary?.[0]) || !guidePhraseReviewEvidenceSignature) return;
+    const summary = analysisResult.Summary;
+    const headers = summary[0];
+    const idIndex = findSummaryColumn(headers, ["Raw Analysis Row ID", "Raw Row ID", "Analysis Row ID"]);
+    const applicabilityIndex = findSummaryColumn(headers, ["Guide Phrase Applicable"]);
+    const currentSignature = summary.slice(1)
+      .map((row) => `${row?.[idIndex] || ""}:${row?.[applicabilityIndex] || ""}`)
+      .join("|");
+    const restorationKey = `${activeProjectId}:${guidePhraseReviewEvidenceSignature}:${currentSignature}`;
+    if (restoredGuidePhraseReviewsRef.current === restorationKey) return;
+    restoredGuidePhraseReviewsRef.current = restorationKey;
+
+    const restorationMap = latestGuidePhraseReviewByRowId(
+      resultsReview.reviewItems,
+      activeProjectId,
+      loadVibeReviewAudit(activeProjectId)
+    );
+    const restoration = restoreReviewedGuidePhraseDecisions(summary, restorationMap);
+    if (!restoration.changed) return;
+    const restoredById = new Map(restoration.summary.slice(1).map((row) => [String(row?.[idIndex] || "").trim(), row]));
+    const nextDraftRows = Object.fromEntries(Object.entries(draftHazardRowsByIndex || {}).map(([key, entry]) => {
+      if (!Array.isArray(entry?.row)) return [key, entry];
+      const draftIdIndex = findSummaryColumn(draftHazardHeaders, ["Raw Analysis Row ID", "Raw Row ID", "Analysis Row ID"]);
+      const rowId = String(entry.row[draftIdIndex] || "").trim();
+      const restoredRow = restoredById.get(rowId);
+      return restoredRow
+        ? [key, { ...entry, row: alignSummaryRowToHeaders(headers, restoredRow, draftHazardHeaders, entry.row) }]
+        : [key, entry];
+    }));
+    const nextAnalysisResult = { ...(analysisResult || {}), Summary: restoration.summary };
+    setAnalysisResult(nextAnalysisResult);
+    setDraftHazardRowsByIndex(nextDraftRows);
+    saveProjectHazardAnalysisRecord(activeProjectId, {
+      analysisResult: nextAnalysisResult,
+      draftHazardRowsByIndex: nextDraftRows,
+      riskRegister,
+    }).catch((error) => console.warn("[hazard-review] Failed to persist restored guide-phrase decisions", error));
+    setSafetyIssueRefreshStatus({
+      kind: "working",
+      message: `Restored ${restoration.restoredRowIds.length} reviewed guide-phrase applicability decision${restoration.restoredRowIds.length === 1 ? "" : "s"} that had been overwritten by regeneration. Regenerate Safety Issues to propagate those reviewed decisions.`,
+    });
+  }, [
+    activeProjectId,
+    analysisResult,
+    draftHazardHeaders,
+    draftHazardRowsByIndex,
+    guidePhraseReviewEvidenceSignature,
+    loadedProjectId,
+    projectLoaded,
+    resultsReview.reviewItems,
+    riskRegister,
+  ]);
+
   const draftHazardReviewDrawerOptions = useMemo(() => ({
     sourceFeature: "AI Hazard Analysis",
     sourceMethod: riskMethod,
@@ -10776,6 +10860,21 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   ]);
 
   const applyHazardVibeReviewDecision = useCallback(async ({ projectId, sourceRowId, update, reviewerDisposition = false, reviewTarget = "safetySignificant", workspaceType = "functional-project", sourceRunId = "" }) => {
+    const applySafetySignificanceOnly = (summary, rowIndex) => {
+      const decision = String(update?.["Safety Significant"] || "").trim();
+      if (!/^(?:Yes|No)$/i.test(decision)) throw new Error("Safety Significant must be an explicit Yes or No decision.");
+      const nextSummary = summary.map((row) => Array.isArray(row) ? [...row] : row);
+      const headers = nextSummary[0];
+      const nextRow = nextSummary[rowIndex];
+      const decisionIndex = findSummaryColumn(headers, ["Safety Significant"]);
+      const rationaleIndex = findSummaryColumn(headers, ["Safety Significance Rationale"]);
+      if (decisionIndex < 0) throw new Error("The hazard summary does not contain Safety Significant.");
+      nextRow[decisionIndex] = /^yes$/i.test(decision) ? "Yes" : "No";
+      if (rationaleIndex >= 0) {
+        nextRow[rationaleIndex] = String(update?.["Safety Significance Rationale"] || update?.["Classification Evidence"] || nextRow[rationaleIndex] || "").trim();
+      }
+      return { summary: nextSummary, changedRowIndexes: [rowIndex], rejectedUpdates: [] };
+    };
     if (workspaceType === "code-based-architecture") {
       if (!activeCodeArchitectureProjectId || String(projectId) !== String(activeCodeArchitectureProjectId)) {
         throw new Error("This review belongs to another Code-Based Architecture project. Return to the original project before applying a decision.");
@@ -10784,7 +10883,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         ? codeArchitectureHazardRun
         : await getCodeArchitectureHazardRunById(sourceRunId);
       if (!run) throw new Error("The reviewed Code-Based Architecture hazard run is no longer available.");
-      const summary = run?.generatedSheets?.Summary;
+      const summary = removeProposedSafetyAssessmentColumns({ Summary: run?.generatedSheets?.Summary })?.Summary;
       if (!Array.isArray(summary?.[0])) throw new Error("Generate the Code-Based Architecture hazard-analysis Summary before applying review decisions.");
       const indexes = indexVibeReviewHeaders(summary[0]);
       const rowIndex = summary.slice(1).findIndex((row) => String(row?.[indexes.rawRowId] || "").trim() === String(sourceRowId || "").trim()) + 1;
@@ -10792,12 +10891,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       const previousRow = [...summary[rowIndex]];
       const applied = reviewTarget === "guidePhraseApplicable"
         ? applyGuidePhraseApplicabilityUpdates(summary, [{ ...update, sourceRowId }], [sourceRowId])
-        : applyNeedsReviewResolutionUpdates(
-          summary,
-          [{ ...update, sourceRowId }],
-          [sourceRowId],
-          { allowHumanAdjudication: reviewerDisposition === true },
-        );
+        : applySafetySignificanceOnly(summary, rowIndex);
       if (applied.rejectedUpdates.length || !applied.changedRowIndexes.length) {
         throw new Error(applied.rejectedUpdates[0]?.error || "The governed decision was invalid or did not change the row.");
       }
@@ -10813,7 +10907,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     if (!activeProjectId || String(projectId) !== String(activeProjectId)) {
       throw new Error("This review belongs to another project. Return to the original project before applying a decision.");
     }
-    const summary = analysisResult?.Summary;
+    const summary = removeProposedSafetyAssessmentColumns({ Summary: analysisResult?.Summary })?.Summary;
     if (!Array.isArray(summary?.[0])) throw new Error("Generate the hazard-analysis Summary before applying review decisions.");
     const indexes = indexVibeReviewHeaders(summary[0]);
     const rowIndex = summary.slice(1).findIndex((row) => String(row?.[indexes.rawRowId] || "").trim() === String(sourceRowId || "").trim()) + 1;
@@ -10821,21 +10915,46 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const previousRow = [...summary[rowIndex]];
     const applied = reviewTarget === "guidePhraseApplicable"
       ? applyGuidePhraseApplicabilityUpdates(summary, [{ ...update, sourceRowId }], [sourceRowId])
-      : applyNeedsReviewResolutionUpdates(
-        summary,
-        [{ ...update, sourceRowId }],
-        [sourceRowId],
-        { allowHumanAdjudication: reviewerDisposition === true },
-      );
+      : applySafetySignificanceOnly(summary, rowIndex);
     if (applied.rejectedUpdates.length || !applied.changedRowIndexes.length) {
       throw new Error(applied.rejectedUpdates[0]?.error || "The governed decision was invalid or did not change the row.");
     }
     const nextAnalysisResult = { ...(analysisResult || {}), Summary: applied.summary };
+    const reviewedAt = new Date().toISOString();
     const nextDraftRows = Object.fromEntries(Object.entries(draftHazardRowsByIndex || {}).map(([key, entry]) => {
       if (!Array.isArray(entry?.row)) return [key, entry];
       const draftIdIndex = findSummaryColumn(draftHazardHeaders, ["Raw Analysis Row ID", "Raw Row ID", "Analysis Row ID"]);
       if (String(entry.row[draftIdIndex] || "").trim() !== String(sourceRowId || "").trim()) return [key, entry];
-      return [key, { ...entry, row: alignSummaryRowToHeaders(applied.summary[0], applied.summary[rowIndex], draftHazardHeaders, entry.row) }];
+      const reviewedRow = alignSummaryRowToHeaders(applied.summary[0], applied.summary[rowIndex], draftHazardHeaders, entry.row);
+      return [key, {
+        ...entry,
+        row: reviewedRow,
+        ...(reviewTarget === "guidePhraseApplicable" ? {
+          guidePhraseReviewEvidence: {
+            projectId: String(activeProjectId || ""),
+            reviewedAt,
+            currentContent: { rowId: sourceRowId, columns: [...draftHazardHeaders], row: [...reviewedRow] },
+            vibeReview: {
+              domain: "hazard-analysis",
+              reviewTarget: "guidePhraseApplicable",
+              rowId: sourceRowId,
+              decision: update?.["Guide Phrase Applicable"] || reviewedRow[findSummaryColumn(draftHazardHeaders, ["Guide Phrase Applicable"])],
+            },
+          },
+        } : {
+          safetySignificanceReviewEvidence: {
+            projectId: String(activeProjectId || ""),
+            reviewedAt,
+            currentContent: { rowId: sourceRowId, columns: [...draftHazardHeaders], row: [...reviewedRow] },
+            vibeReview: {
+              domain: "hazard-analysis",
+              reviewTarget: "safetySignificant",
+              rowId: sourceRowId,
+              decision: update?.["Safety Significant"] || reviewedRow[findSummaryColumn(draftHazardHeaders, ["Safety Significant"])],
+            },
+          },
+        }),
+      }];
     }));
     setAnalysisResult(nextAnalysisResult);
     setDraftHazardRowsByIndex(nextDraftRows);
@@ -10884,7 +11003,9 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       if (!Array.isArray(entry?.row)) return [key, entry];
       const idIndex = findSummaryColumn(draftHazardHeaders, ["Raw Analysis Row ID", "Raw Row ID", "Analysis Row ID"]);
       if (String(entry.row[idIndex] || "").trim() !== String(sourceRowId || "").trim()) return [key, entry];
-      return [key, { ...entry, row: alignSummaryRowToHeaders(summary[0], restoredSummary[rowIndex], draftHazardHeaders, entry.row) }];
+      const restoredEntry = { ...entry };
+      delete restoredEntry.guidePhraseReviewEvidence;
+      return [key, { ...restoredEntry, row: alignSummaryRowToHeaders(summary[0], restoredSummary[rowIndex], draftHazardHeaders, entry.row) }];
     }));
     const persisted = await saveProjectHazardAnalysisRecord(activeProjectId, { analysisResult: nextAnalysisResult, draftHazardRowsByIndex: nextDraftRows, riskRegister });
     if (!persisted) throw new Error("The restored row could not be persisted.");
@@ -10982,6 +11103,8 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     return { ...result, undoDepth: getWorkspaceUndoDepth() };
   }, [refreshCollaboratorWorkspaceState]);
 
+  const hazardRowRegeneratorRef = useRef(null);
+
   useEffect(() => registerActionProvider("collaborator-workspace", {
     getState: () => ({
       activeProjectId,
@@ -11028,6 +11151,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       applyHazardVibeReviewDecision,
       undoHazardVibeReviewDecision,
       openHazardVibeReviewRow,
+      regenerateHazardVibeReviewRow: (args) => hazardRowRegeneratorRef.current?.(args),
     });
   }, [
     activeProjectId,
@@ -11224,6 +11348,30 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       const savedDraftRow = Array.isArray(savedDraft?.row)
         ? alignSummaryRowToHeaders(draftHazardHeaders, savedDraft.row, targetHeaders, fallbackRow)
         : null;
+      const priorCompletedRow = !savedDraftRow
+        ? findExistingHazardRowForFunctionalRow(analysisRow, existingSummary, guidePhrase, target.context)
+        : null;
+      const previousReviewedRow = savedDraftRow || (priorCompletedRow
+        ? alignSummaryRowToHeaders(existingSummary?.[0] || [], priorCompletedRow, targetHeaders, fallbackRow)
+        : null);
+      const rawIdIndex = findSummaryColumn(targetHeaders, ["Raw Analysis Row ID", "Raw Row ID", "Analysis Row ID"]);
+      const reviewedRowId = rawIdIndex >= 0
+        ? String(previousReviewedRow?.[rawIdIndex] || fallbackRow?.[rawIdIndex] || "").trim()
+        : "";
+      const storedReviewEvidence = savedDraft?.guidePhraseReviewEvidence || null;
+      const storedSafetyReviewEvidence = savedDraft?.safetySignificanceReviewEvidence || null;
+      let generationInput = applyReviewedApplicabilityToGenerationInput({
+        headers: targetHeaders,
+        previousRow: previousReviewedRow,
+        currentBasisRow: fallbackRow,
+        reviewItem: storedReviewEvidence || guidePhraseVibeReviewByRowId.get(reviewedRowId),
+        functionalRow: analysisRow,
+      });
+      generationInput = applyReviewedSafetySignificanceToGenerationInput({
+        headers: targetHeaders,
+        reviewItem: storedSafetyReviewEvidence || safetySignificanceVibeReviewByRowId.get(reviewedRowId),
+        functionalRow: generationInput.functionalRow,
+      });
       const savedDraftIsMeaningful = savedDraftRow
         ? (savedDraft?.generated || isMeaningfullyGeneratedDraftRow(savedDraftRow, fallbackRow))
         : false;
@@ -11250,7 +11398,14 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         }
       }
 
-      rowsToGenerate.push({ ...target, functionalRow: analysisRow, fallbackRow });
+      rowsToGenerate.push({
+        ...target,
+        functionalRow: generationInput.functionalRow,
+        fallbackRow,
+        previousRow: previousReviewedRow,
+        storedReviewEvidence,
+        storedSafetyReviewEvidence,
+      });
     });
 
     if (!shouldRegenerate && hazardTargets.length > 0 && rowsToGenerate.length === 0) {
@@ -11296,7 +11451,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     }
 
     const functionalDecompositionSheet = [
-      ["Function (From)", "Function (From) Details", "Control Action", "Control Action Details", "Function (To)", "Function (To) Details", "Operational Context ID", "Operational Scenario", "Operational Mode", "Operating Conditions", "Context Assumptions", "Guide Phrase", "Guide Phrase Applicable", "Guide Phrase Applicability Rationale"],
+      ["Function (From)", "Function (From) Details", "Control Action", "Control Action Details", "Function (To)", "Function (To) Details", "Operational Context ID", "Operational Scenario", "Operational Mode", "Operating Conditions", "Context Assumptions", "Guide Phrase", "Guide Phrase Applicable", "Guide Phrase Applicability Rationale", "Guide Phrase Applicability Review Status", "Safety Significant", "Safety Significance Rationale", "Safety Significance Review Status"],
       ...rowsToGenerate.map(({ functionalRow }) => [
         functionalRow.fromFunction || "",
         functionalRow.fromDetails || functionalRow.fromFunctionDetails || "",
@@ -11312,6 +11467,10 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         functionalRow.guidePhrase || "",
         functionalRow.guidePhraseApplicable || "",
         functionalRow.guidePhraseApplicabilityRationale || "",
+        functionalRow.guidePhraseApplicabilityReviewStatus || "",
+        functionalRow.safetySignificant || "",
+        functionalRow.safetySignificanceRationale || "",
+        functionalRow.safetySignificanceReviewStatus || "",
       ])
     ];
     const sheets = { "Functional Decomposition": functionalDecompositionSheet };
@@ -11360,15 +11519,45 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const generatedRows = Array.isArray(generatedSummary) ? generatedSummary.slice(1) : [];
     const generatedDraftRows = {};
 
-    rowsToGenerate.forEach(({ rowKey, fallbackRow }, generatedIndex) => {
+    rowsToGenerate.forEach(({ rowKey, fallbackRow, previousRow, storedReviewEvidence, storedSafetyReviewEvidence }, generatedIndex) => {
       const generatedRow = generatedRows[generatedIndex];
-      const nextRow = Array.isArray(generatedRow)
+      const alignedRow = Array.isArray(generatedRow)
         ? alignSummaryRowToHeaders(generatedHeaders, generatedRow, targetHeaders, fallbackRow)
         : fallbackRow;
+      const rawIdIndex = findSummaryColumn(targetHeaders, ["Raw Analysis Row ID", "Raw Row ID", "Analysis Row ID"]);
+      const rowId = rawIdIndex >= 0 ? String(previousRow?.[rawIdIndex] || alignedRow?.[rawIdIndex] || "").trim() : "";
+      const normalizedPersistence = normalizeReviewedHazardRowForPersistence({
+        headers: targetHeaders,
+        sourceRow: previousRow || fallbackRow,
+        previousRow,
+        currentBasisRow: fallbackRow,
+        regeneratedRow: alignedRow,
+        guidePhraseReviewItem: storedReviewEvidence || guidePhraseVibeReviewByRowId.get(rowId),
+        safetySignificanceReviewItem: storedSafetyReviewEvidence || safetySignificanceVibeReviewByRowId.get(rowId),
+      });
+      const { row: nextRow, guidePhraseReview: reviewReconciliation, safetySignificanceReview: safetyReviewReconciliation } = normalizedPersistence;
       if (isMeaningfullyGeneratedDraftRow(nextRow, fallbackRow)) {
         generatedDraftRows[rowKey] = {
           row: nextRow,
           generated: true,
+          ...(reviewReconciliation.status !== "unreviewed" ? {
+            reviewReconciliation: {
+              status: reviewReconciliation.status,
+              changedBasisFields: reviewReconciliation.changedBasisFields,
+              reviewedAt: reviewReconciliation.reviewedAt || "",
+              reviewerName: reviewReconciliation.reviewerName || "",
+              regeneratedAt: new Date().toISOString(),
+            },
+          } : {}),
+          ...(safetyReviewReconciliation.status !== "unreviewed" ? {
+            safetyReviewReconciliation: {
+              status: safetyReviewReconciliation.status,
+              reviewedAt: safetyReviewReconciliation.reviewedAt || "",
+              reviewerName: safetyReviewReconciliation.reviewerName || "",
+              regeneratedAt: new Date().toISOString(),
+            },
+            safetySignificanceReviewEvidence: storedSafetyReviewEvidence || safetySignificanceVibeReviewByRowId.get(rowId),
+          } : {}),
         };
       }
     });
@@ -11508,7 +11697,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     }
   };
 
-  const handleGenerateDraftHazardRow = async (hazardTargetIndex) => {
+  const handleGenerateDraftHazardRow = async (hazardTargetIndex, options = {}) => {
     if (draftHazardGeneratingIndex !== null || isAnalyzing) return;
     const target = draftHazardTargets[hazardTargetIndex];
     const functionalRow = target?.analysisRow;
@@ -11526,37 +11715,98 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       "Glossary",
       "Known Controls and Evidence",
     ]);
-    const functionalDecompositionSheet = [
-      ["Function (From)", "Function (From) Details", "Control Action", "Control Action Details", "Function (To)", "Function (To) Details", "Operational Context ID", "Operational Scenario", "Operational Mode", "Operating Conditions", "Context Assumptions", "Guide Phrase", "Guide Phrase Applicable", "Guide Phrase Applicability Rationale"],
-      [
-        functionalRow.fromFunction || "",
-        functionalRow.fromDetails || functionalRow.fromFunctionDetails || "",
-        functionalRow.controlAction || "",
-        functionalRow.controlDetails || functionalRow.controlActionDetails || "",
-        functionalRow.toFunction || "",
-        functionalRow.toDetails || functionalRow.toFunctionDetails || "",
-        functionalRow.hazardContextId || "context-unspecified",
-        functionalRow.operationalScenario || "",
-        functionalRow.operationalMode || "",
-        functionalRow.operatingConditions || "",
-        functionalRow.contextAssumptions || "",
-        functionalRow.guidePhrase || "",
-        functionalRow.guidePhraseApplicable || "",
-        functionalRow.guidePhraseApplicabilityRationale || "",
-      ],
-    ];
-    const sheets = { "Functional Decomposition": functionalDecompositionSheet };
     const dummySetFolders = async (updater) => {
       const prev = {};
       return typeof updater === "function" ? updater(prev) : updater;
     };
     const targetHeaders = getProjectDraftHazardHeaders(selectedMethod);
     const fallbackRow = buildProjectDraftHazardRow(functionalRow, targetHeaders);
+    const storedDraftRows = loadProjectData(activeProjectId)?.draftHazardRowsByIndex || draftHazardRowsByIndex || {};
+    const storedDraft = storedDraftRows[rowKey]
+      || (target.legacyRowKey ? storedDraftRows[target.legacyRowKey] : null)
+      || (target.guidePhraseIndex === 0 ? storedDraftRows[target.originalIndex] : null);
+    let previousRow = Array.isArray(storedDraft?.row)
+      ? alignSummaryRowToHeaders(draftHazardHeaders, storedDraft.row, targetHeaders, fallbackRow)
+      : null;
+    if (!previousRow) {
+      const completedRow = findExistingHazardRowForFunctionalRow(
+        functionalRow,
+        analysisResult?.Summary,
+        target.guidePhrase,
+        target.context
+      );
+      if (completedRow) {
+        previousRow = alignSummaryRowToHeaders(analysisResult?.Summary?.[0] || [], completedRow, targetHeaders, fallbackRow);
+      }
+    }
+    const rawIdIndex = findSummaryColumn(targetHeaders, ["Raw Analysis Row ID", "Raw Row ID", "Analysis Row ID"]);
+    const reviewedRowId = rawIdIndex >= 0 ? String(previousRow?.[rawIdIndex] || fallbackRow?.[rawIdIndex] || "").trim() : "";
+    let generationInput = applyReviewedApplicabilityToGenerationInput({
+      headers: targetHeaders,
+      previousRow,
+      currentBasisRow: fallbackRow,
+      reviewItem: storedDraft?.guidePhraseReviewEvidence || guidePhraseVibeReviewByRowId.get(reviewedRowId),
+      functionalRow,
+    });
+    const persistedSafetyReviewEvidence = storedDraft?.safetySignificanceReviewEvidence
+      || safetySignificanceVibeReviewByRowId.get(reviewedRowId);
+    const explicitSafetyReviewEvidence = options.reviewTarget === "safetySignificant" && /^(?:yes|no)$/i.test(String(options.reviewDecision || "").trim())
+      ? {
+          ...(persistedSafetyReviewEvidence || {}),
+          reviewedAt: persistedSafetyReviewEvidence?.reviewedAt || new Date().toISOString(),
+          vibeReview: {
+            ...(persistedSafetyReviewEvidence?.vibeReview || {}),
+            domain: "hazard-analysis",
+            reviewTarget: "safetySignificant",
+            rowId: reviewedRowId,
+            decision: /^yes$/i.test(String(options.reviewDecision).trim()) ? "Yes" : "No",
+          },
+        }
+      : null;
+    const storedSafetyReviewEvidence = explicitSafetyReviewEvidence
+      || persistedSafetyReviewEvidence;
+    generationInput = applyReviewedSafetySignificanceToGenerationInput({
+      headers: targetHeaders,
+      reviewItem: storedSafetyReviewEvidence,
+      functionalRow: generationInput.functionalRow,
+    });
+    const generationFunctionalRow = generationInput.functionalRow;
+    const functionalDecompositionSheet = [
+      ["Function (From)", "Function (From) Details", "Control Action", "Control Action Details", "Function (To)", "Function (To) Details", "Operational Context ID", "Operational Scenario", "Operational Mode", "Operating Conditions", "Context Assumptions", "Guide Phrase", "Guide Phrase Applicable", "Guide Phrase Applicability Rationale", "Guide Phrase Applicability Review Status", "Safety Significant", "Safety Significance Rationale", "Safety Significance Review Status"],
+      [
+        generationFunctionalRow.fromFunction || "",
+        generationFunctionalRow.fromDetails || generationFunctionalRow.fromFunctionDetails || "",
+        generationFunctionalRow.controlAction || "",
+        generationFunctionalRow.controlDetails || generationFunctionalRow.controlActionDetails || "",
+        generationFunctionalRow.toFunction || "",
+        generationFunctionalRow.toDetails || generationFunctionalRow.toFunctionDetails || "",
+        generationFunctionalRow.hazardContextId || "context-unspecified",
+        generationFunctionalRow.operationalScenario || "",
+        generationFunctionalRow.operationalMode || "",
+        generationFunctionalRow.operatingConditions || "",
+        generationFunctionalRow.contextAssumptions || "",
+        generationFunctionalRow.guidePhrase || "",
+        generationFunctionalRow.guidePhraseApplicable || "",
+        generationFunctionalRow.guidePhraseApplicabilityRationale || "",
+        generationFunctionalRow.guidePhraseApplicabilityReviewStatus || "",
+        generationFunctionalRow.safetySignificant || "",
+        generationFunctionalRow.safetySignificanceRationale || "",
+        generationFunctionalRow.safetySignificanceReviewStatus || "",
+      ],
+    ];
+    const sheets = { "Functional Decomposition": functionalDecompositionSheet };
 
     setDraftHazardGeneratingIndex(hazardTargetIndex);
     try {
+      const baseOperationalContext = buildHazardOperationalContextPrompt([target.context]);
+      const reviewedRowRegenerationContext = buildReviewedRowRegenerationContext({
+        headers: targetHeaders,
+        row: previousRow || fallbackRow,
+        reviewTarget: options.reviewTarget || "",
+        decision: options.reviewDecision || "",
+      });
       const rawSheets = await runLiteAIAnalysis({
-        tableRows: [functionalRow],
+        tableRows: [generationFunctionalRow],
         sheets,
         setFolders: dummySetFolders,
         currentFolder: "LiteProject",
@@ -11565,19 +11815,30 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         setProgress: () => {},
         hazardMethod: selectedMethod,
         omitConsolidatedRequirement: true,
-        operationalContext: buildHazardOperationalContextPrompt([target.context]),
+        operationalContext: [baseOperationalContext, reviewedRowRegenerationContext].filter(Boolean).join("\n\n"),
         organizationContext: organizationCalibration.context,
       });
       const generatedSheets = addSubsystemAllocationsToProjectHazardSummary(
         stripProjectRiskProfileColumns(rawSheets),
-        [functionalRow]
+        [generationFunctionalRow]
       );
       const summary = findBestGeneratedHazardSummary(generatedSheets);
       const generatedHeaders = Array.isArray(summary?.[0]) ? summary[0] : [];
       const generatedRow = Array.isArray(summary?.[1]) ? summary[1] : null;
-      const nextRow = generatedRow
+      const alignedRow = generatedRow
         ? alignSummaryRowToHeaders(generatedHeaders, generatedRow, targetHeaders, fallbackRow)
         : fallbackRow;
+      const rowId = rawIdIndex >= 0 ? String(previousRow?.[rawIdIndex] || alignedRow?.[rawIdIndex] || "").trim() : "";
+      const normalizedPersistence = normalizeReviewedHazardRowForPersistence({
+        headers: targetHeaders,
+        sourceRow: previousRow || fallbackRow,
+        previousRow,
+        currentBasisRow: fallbackRow,
+        regeneratedRow: alignedRow,
+        guidePhraseReviewItem: storedDraft?.guidePhraseReviewEvidence || guidePhraseVibeReviewByRowId.get(rowId),
+        safetySignificanceReviewItem: storedSafetyReviewEvidence,
+      });
+      const { row: nextRow, guidePhraseReview: reviewReconciliation, safetySignificanceReview: safetyReviewReconciliation } = normalizedPersistence;
       const generated = isMeaningfullyGeneratedDraftRow(nextRow, fallbackRow);
       if (!generated) {
         throw new Error("The selected method completed but did not return usable hazard values for this row.");
@@ -11612,6 +11873,24 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         [rowKey]: {
           row: nextRow,
           generated,
+          ...(reviewReconciliation.status !== "unreviewed" ? {
+            reviewReconciliation: {
+              status: reviewReconciliation.status,
+              changedBasisFields: reviewReconciliation.changedBasisFields,
+              reviewedAt: reviewReconciliation.reviewedAt || "",
+              reviewerName: reviewReconciliation.reviewerName || "",
+              regeneratedAt: new Date().toISOString(),
+            },
+          } : {}),
+          ...(safetyReviewReconciliation.status !== "unreviewed" ? {
+            safetyReviewReconciliation: {
+              status: safetyReviewReconciliation.status,
+              reviewedAt: safetyReviewReconciliation.reviewedAt || "",
+              reviewerName: safetyReviewReconciliation.reviewerName || "",
+              regeneratedAt: new Date().toISOString(),
+            },
+            safetySignificanceReviewEvidence: storedSafetyReviewEvidence,
+          } : {}),
         },
       };
       setDraftHazardRowsByIndex(nextDraftRows);
@@ -11634,7 +11913,11 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         nextRiskRegister = riskRegister;
         setSafetyIssueRefreshStatus({
           kind: "working",
-          message: "A hazard row changed. Use Regenerate with AI when you are ready to update the consolidated issue set.",
+          message: reviewReconciliation.status === "preserved"
+            ? "The hazard row was regenerated and its reviewed guide-phrase applicability was preserved because the interface, context, and guide phrase did not change. Use Regenerate with AI to update the consolidated issue set."
+            : reviewReconciliation.status === "basis-changed"
+              ? `The hazard row was regenerated, but its applicability review was reopened because these decision-basis fields changed: ${reviewReconciliation.changedBasisFields.join(", ")}.`
+              : "A hazard row changed. Use Regenerate with AI when you are ready to update the consolidated issue set.",
         });
       }
       if (activeProjectId) {
@@ -11661,30 +11944,90 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
           } : {}),
         });
       }
+      const regenerationRecordedAt = new Date().toISOString();
+      const regenerationAuditSuffix = options.reviewTarget
+        ? `:regeneration:${regenerationRecordedAt}`
+        : "";
       const reviewItem = normalizeReviewItem({
         id: createReviewId(
           `hazard-draft-${activeProjectId || "default"}`,
           "hazard_summary_draft_table",
-          `row:${rowKey}`
+          `row:${rowKey}${regenerationAuditSuffix}`
         ),
         artifactType: "hazard_summary_draft_table",
-        artifactId: `hazard-summary-draft:${activeProjectId || "default"}:row:${rowKey}`,
+        artifactId: `hazard-summary-draft:${activeProjectId || "default"}:row:${rowKey}${regenerationAuditSuffix}`,
         reviewUnitType: REVIEW_UNIT_TYPES.TABLE_ROW,
         sourceFeature: "AI Hazard Analysis",
         sourceMethod: selectedMethod,
-        sourceRunId: `hazard-draft-${activeProjectId || "default"}`,
+        sourceRunId: options.reviewTarget
+          ? `hazard-reviewed-regeneration-${activeProjectId || "default"}-${regenerationRecordedAt}`
+          : `hazard-draft-${activeProjectId || "default"}`,
         projectId: activeProjectId || "",
-        originalContent: { rowIndex: hazardTargetIndex, rowKey, interfaceIndex: target.interfaceIndex, guidePhraseIndex: target.guidePhraseIndex, columns: targetHeaders, row: nextRow },
+        reviewedAt: safetyReviewReconciliation.reviewedAt || reviewReconciliation.reviewedAt || regenerationRecordedAt,
+        regeneratedAt: regenerationRecordedAt,
+        reviewerName: safetyReviewReconciliation.reviewerName || reviewReconciliation.reviewerName || "",
+        vibeReview: options.reviewTarget ? {
+          domain: "hazard-analysis",
+          reviewTarget: options.reviewTarget,
+          rowId,
+          decision: options.reviewDecision || "",
+          reviewerName: safetyReviewReconciliation.reviewerName || reviewReconciliation.reviewerName || "",
+          provenance: "explicit-downstream-regeneration",
+        } : undefined,
+        originalContent: { rowIndex: hazardTargetIndex, rowKey, interfaceIndex: target.interfaceIndex, guidePhraseIndex: target.guidePhraseIndex, columns: targetHeaders, row: previousRow || fallbackRow },
         currentContent: { rowIndex: hazardTargetIndex, rowKey, interfaceIndex: target.interfaceIndex, guidePhraseIndex: target.guidePhraseIndex, columns: targetHeaders, row: nextRow },
         traceLinks: [{ type: "table_row", rowIndex: hazardTargetIndex, rowKey }],
       });
       await resultsReview.createReviewItems([reviewItem]);
+      const changedFields = targetHeaders.filter((header, index) => String(previousRow?.[index] ?? "") !== String(nextRow?.[index] ?? ""));
+      const changes = changedFields.map((field) => {
+        const index = targetHeaders.indexOf(field);
+        return { field, before: previousRow?.[index] ?? "", after: nextRow?.[index] ?? "" };
+      });
+      return {
+        projectId: activeProjectId,
+        sourceRowId: rowId,
+        rowIndex: hazardTargetIndex,
+        headers: targetHeaders,
+        previousRow,
+        nextRow,
+        changedFields,
+        changes,
+      };
     } catch (error) {
       console.error("[project-hazard-draft] Failed to generate draft hazard row", error);
+      if (options.throwOnError) throw error;
       window.alert(error?.message || "Unable to generate this hazard row. Check your AI provider settings and try again.");
+      return null;
     } finally {
       setDraftHazardGeneratingIndex(null);
     }
+  };
+
+  hazardRowRegeneratorRef.current = async ({ projectId, sourceRowId, workspaceType = "functional-project", reviewTarget = "", decision = "" } = {}) => {
+    if (workspaceType !== "functional-project") {
+      throw new Error("Scoped downstream regeneration is currently available for project hazard analyses only.");
+    }
+    if (!activeProjectId || String(projectId || "") !== String(activeProjectId)) {
+      throw new Error("Return to the reviewed project before regenerating this hazard row.");
+    }
+    const rowId = String(sourceRowId || "").trim();
+    const persistedDraftRows = loadProjectData(activeProjectId)?.draftHazardRowsByIndex || {};
+    const targetIndex = draftHazardTargets.findIndex((candidate) => {
+      const entry = persistedDraftRows?.[candidate.rowKey]
+        || draftHazardRowsByIndex?.[candidate.rowKey]
+        || (candidate.legacyRowKey ? persistedDraftRows?.[candidate.legacyRowKey] : null)
+        || (candidate.legacyRowKey ? draftHazardRowsByIndex?.[candidate.legacyRowKey] : null);
+      if (!Array.isArray(entry?.row)) return false;
+      const idIndex = findSummaryColumn(draftHazardHeaders, ["Raw Analysis Row ID", "Raw Row ID", "Analysis Row ID"]);
+      return String(entry.row[idIndex] || "").trim() === rowId;
+    });
+    if (targetIndex < 0) throw new Error("The reviewed hazard row is no longer available for scoped regeneration.");
+    return handleGenerateDraftHazardRow(targetIndex, {
+      throwOnError: true,
+      reviewTarget,
+      reviewDecision: decision,
+    });
   };
 
   const handleDraftHazardCellChange = (hazardTargetIndex, columnIndex, value) => {
@@ -12803,7 +13146,7 @@ Hazard method: ${riskMethod}
 
 ${organizationCalibration.context || "No organization calibration profile is enabled for this project."}
 
-Only the rows below are eligible because their Proposed Safety Assessment is Safety. Do not use or infer from Mission/Reliability rows.
+Only the rows below are eligible because their canonical Safety Classification is Safety — Direct or Safety — Related. Do not use or infer from Mission/Reliability, Not Applicable, or Needs Review rows.
 
 Safety hazard evidence, grouped only to reduce transport size (the grouping does not decide issue boundaries):
 ${JSON.stringify(consolidationEvidence)}
@@ -16426,7 +16769,7 @@ const projectHint = useMemo(() => ({
 ))}
 
     {activeTab === 'Functional Diagramming' && responseRows.length > 0 && (
-      <details className="relative ml-auto">
+      <details className={`relative ml-auto ${dockOpen && dockCollapsed ? 'mr-16' : ''}`}>
         <summary
           className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-md text-xl font-bold leading-none text-gray-600 hover:bg-gray-100 hover:text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2D7DFE] [&::-webkit-details-marker]:hidden"
           aria-label="Functional diagram actions"
@@ -16491,14 +16834,20 @@ const projectHint = useMemo(() => ({
   </section>
 )}
 {activeTab === 'Functional Diagramming' && (
-  <div className="flex min-h-0 flex-1 flex-col overflow-hidden pb-3 text-center">
-                  {showPromptWizard && responseRows.length === 0 && (
-                    <>
-
-                    </>
+  <div className={`flex min-h-0 flex-1 flex-col overflow-hidden pb-3 text-center ${
+    activeProjectDiagramReady && responseRows.length > 0
+      ? '-ml-3 md:-ml-5 lg:-ml-7'
+      : ''
+  }`}>
+                  {activeProjectId && !activeProjectDiagramReady && (
+                    <div className="flex min-h-[18rem] flex-1 items-center justify-center" role="status" aria-live="polite">
+                      <div className="rounded-xl border border-gray-200 bg-white px-5 py-4 text-sm text-gray-500 shadow-sm">
+                        Loading project diagram…
+                      </div>
+                    </div>
                   )}
 
-                  {showPromptWizard && responseRows.length === 0 && (
+                  {activeProjectDiagramReady && showPromptWizard && responseRows.length === 0 && (
                     <div className="mx-auto w-full max-w-[min(96vw,calc(100vw-9rem))]">
                       {/* Realtime voice discovery is currently provided by OpenAI Realtime. */}
                       {conversationalProjectModeAvailable && (
@@ -16557,7 +16906,7 @@ const projectHint = useMemo(() => ({
                     </div>
                   )}
 
-                  {responseRows.length > 0 && (
+                  {activeProjectDiagramReady && responseRows.length > 0 && (
                     <>
                       <FunctionalDiagramWorkspace
                         showControls={false}
@@ -19129,6 +19478,17 @@ const updateRiskInProject = async (projectId, predicate) => {
   }}
   onBaselineRepo={handleBaselineRepo} // ✅ runs the same analyzer as "Analyze"
   onAIProviderSaved={refreshGate}
+  onWorkspaceProjectRestored={({ workspaceType }) => {
+    if (workspaceType === "code-architecture") {
+      try {
+        setCodeArchitectureProjects(normalizeCodeArchitectureProjects(JSON.parse(localStorage.getItem(CBA_PROJECTS_KEY) || "[]")));
+      } catch {}
+      return;
+    }
+    try {
+      setProjects(repairDuplicateProjectIds(JSON.parse(localStorage.getItem(PROJECTS_KEY) || "[]")));
+    } catch {}
+  }}
  />
 )}
 

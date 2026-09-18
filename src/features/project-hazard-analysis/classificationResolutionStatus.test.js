@@ -125,4 +125,17 @@ describe("classification resolution status", () => {
     expect(normalized.Summary[0]).toContain(CLASSIFICATION_RESOLUTION_STATUS_HEADER);
     expect(normalized.Metadata).toEqual([["Name"], ["Example"]]);
   });
+
+  test("does not persist the retired proposed safety assessment columns", () => {
+    const normalized = normalizeHazardAnalysisResolutionStatus({
+      Summary: [
+        ["Safety Classification", "Safety Significant", "Proposed Safety Assessment", "Proposed Safety Assessment Rationale"],
+        ["Mission/Reliability", "No", "Mission/Reliability", "Legacy duplicate rationale"],
+      ],
+    });
+    expect(normalized.Summary[0]).not.toContain("Proposed Safety Assessment");
+    expect(normalized.Summary[0]).not.toContain("Proposed Safety Assessment Rationale");
+    expect(normalized.Summary[1][normalized.Summary[0].indexOf("Safety Classification")]).toBe("Mission/Reliability");
+    expect(normalized.Summary[1][normalized.Summary[0].indexOf("Safety Significant")]).toBe("No");
+  });
 });

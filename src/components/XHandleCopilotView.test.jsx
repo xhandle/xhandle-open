@@ -32,6 +32,7 @@ const {
   collaboratorClipboardHtmlToMarkdown,
   FunctionalVibeReviewRecoveryCard,
   FunctionalVibeReviewCard,
+  HazardDownstreamImpactCard,
   HazardVibeReviewCard,
   FUNCTIONAL_DECOMPOSITION_GENERATION_INSTRUCTIONS,
   SUBSYSTEM_ARCHITECTURE_REVIEW_SYSTEM_PROMPT,
@@ -145,6 +146,49 @@ describe("paused vibe review cards", () => {
     const { host, root } = renderActions(<FunctionalVibeReviewCard message={{ functionalVibeReview: { sessionId: "s", rowId: "r", decision: "Keep" } }} />);
     expect(host.textContent).toContain("Pause review");
     expect(host.textContent).not.toContain("Resume review");
+    act(() => root.unmount()); host.remove();
+  });
+
+  it("keeps downstream regeneration separate from the accepted applicability decision", () => {
+    const onAction = jest.fn();
+    const { host, root } = renderActions(<HazardDownstreamImpactCard
+      message={{ hazardDownstreamImpact: {
+        sessionId: "s",
+        sourceRowId: "RAW-1",
+        decision: "Yes",
+        impacts: ["Safety classification must be reassessed."],
+      } }}
+      onAction={onAction}
+    />);
+    expect(host.textContent).toContain("Reviewed decision saved");
+    expect(host.textContent).toContain("Regenerate affected row");
+    expect(host.textContent).toContain("Regenerate later");
+    const regenerate = [...host.querySelectorAll("button")].find((button) => button.textContent === "Regenerate affected row");
+    act(() => regenerate.click());
+    expect(onAction).toHaveBeenCalledWith("regenerate", expect.objectContaining({ sourceRowId: "RAW-1" }));
+    act(() => root.unmount()); host.remove();
+  });
+
+  it("passes the reviewed Safety Significant decision through the explicit regeneration action", () => {
+    const onAction = jest.fn();
+    const { host, root } = renderActions(<HazardDownstreamImpactCard
+      message={{ hazardDownstreamImpact: {
+        sessionId: "safety-session",
+        sourceRowId: "RAW-SAFETY-1",
+        reviewTarget: "safetySignificant",
+        reviewedField: "Safety Significant",
+        decision: "No",
+        impacts: ["Safety Classification must be reconciled."],
+      } }}
+      onAction={onAction}
+    />);
+    expect(host.textContent).toContain("Safety Significant decision of No");
+    const regenerate = [...host.querySelectorAll("button")].find((button) => button.textContent === "Regenerate affected row");
+    act(() => regenerate.click());
+    expect(onAction).toHaveBeenCalledWith("regenerate", expect.objectContaining({
+      reviewTarget: "safetySignificant",
+      decision: "No",
+    }));
     act(() => root.unmount()); host.remove();
   });
 });

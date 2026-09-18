@@ -168,9 +168,14 @@ export function recoverFunctionalVibeReviewRows(session, fallbackRows = []) {
 export function saveFunctionalVibeReviewSession(session, storage = defaultStorage()) {
   const map = loadMap(storage, KEY);
   map[`${session.projectId}:${session.threadId}`] = session;
-  const retained = Object.fromEntries(Object.entries(map)
-    .sort(([, a], [, b]) => Date.parse(b?.updatedAt || 0) - Date.parse(a?.updatedAt || 0))
-    .slice(0, 16));
+  const sorted = Object.entries(map)
+    .sort(([, a], [, b]) => Date.parse(b?.updatedAt || 0) - Date.parse(a?.updatedAt || 0));
+  const unfinished = sorted.filter(([, item]) => ![FUNCTIONAL_VIBE_REVIEW_STATES.COMPLETED, FUNCTIONAL_VIBE_REVIEW_STATES.CANCELLED].includes(item?.state));
+  const terminal = sorted.filter(([, item]) => [FUNCTIONAL_VIBE_REVIEW_STATES.COMPLETED, FUNCTIONAL_VIBE_REVIEW_STATES.CANCELLED].includes(item?.state));
+  const retained = Object.fromEntries([
+    ...unfinished,
+    ...terminal.slice(0, Math.max(0, 16 - unfinished.length)),
+  ]);
   persistMap(storage, KEY, retained);
   return session;
 }

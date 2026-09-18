@@ -66,10 +66,45 @@ function slug(value) {
     .slice(0, 36);
 }
 
+function cleanRequestedScenario(value) {
+  return String(value || "")
+    .replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "")
+    .replace(/^\s*scenario\s*:\s*/i, "")
+    .split(/\s*\|\s*(?=(?:mode|conditions?|assumptions?)\s*:)/i)[0]
+    .trim();
+}
+
+export function extractExplicitScenarioRequests(value) {
+  const request = String(value || "");
+  const directive = /\b(?:create|generate|add|use|include)\s+(?:the\s+)?(?:following|these|specific|exact)\s+(?:\d+\s+)?(?:operational\s+)?scenarios?\b/i.exec(request);
+  if (!directive) return [];
+
+  const remainder = request.slice(directive.index + directive[0].length).replace(/^\s*:\s*/, "");
+  const lines = remainder.split(/\r?\n/);
+  const listed = lines
+    .filter((line) => /^\s*(?:[-*•]|\d+[.)])\s+/.test(line))
+    .map(cleanRequestedScenario)
+    .filter(Boolean);
+  const candidates = listed.length
+    ? listed
+    : String(lines.find((line) => line.trim()) || "")
+      .split(/\s*;\s*/)
+      .map(cleanRequestedScenario)
+      .filter(Boolean);
+
+  const seen = new Set();
+  return candidates.slice(0, 50).filter((scenario) => {
+    const identity = scenario.toLowerCase();
+    if (seen.has(identity)) return false;
+    seen.add(identity);
+    return true;
+  });
+}
+
 export function parseHazardOperationalContextResponse(value, timestamp = Date.now()) {
   const parsed = extractJsonArray(value);
   if (!Array.isArray(parsed)) throw new Error("The AI response was not an operational-context list.");
-  const proposed = parsed.slice(0, 12).map((context, index) => ({
+  const proposed = parsed.slice(0, 50).map((context, index) => ({
     id: `context-ai-${timestamp}-${index + 1}-${slug(context?.scenario || context?.mode) || "proposal"}`,
     scenario: context?.scenario,
     mode: context?.mode,
@@ -95,7 +130,7 @@ async function requestConfiguredAI(prompt, systemPrompt = "") {
     body: JSON.stringify({
       model,
       temperature: 0.2,
-      max_tokens: 2200,
+      max_tokens: 5000,
       messages: [
         {
           role: "system",
@@ -133,7 +168,7 @@ async function parseOrRepairOperationalContexts(response, originalPrompt) {
       "Regenerate the answer as one valid JSON object with exactly this shape:",
       '{"contexts":[{"scenario":"concrete operating situation or mission phase","mode":"system operating mode","conditions":"material environmental, temporal, actor, or system-state conditions","assumptions":"explicit assumptions used by the analysis"}]}',
       "",
-      "Return 3 to 8 complete, distinct contexts. Return JSON only—no Markdown fences, preamble, explanation, or trailing commentary.",
+      "Return every context required by an explicit scenario list in the original request; otherwise return 3 to 8 complete, distinct contexts. Return JSON only—no Markdown fences, preamble, explanation, or trailing commentary.",
     ].join("\n");
     const repaired = await requestConfiguredAI(
       repairPrompt,
@@ -167,6 +202,12 @@ export async function generateHazardOperationalContexts({
       functionTo: String(row?.toFunction || "").trim(),
     }));
   const existing = normalizeHazardOperationalContexts(existingContexts).map(({ scenario, mode }) => ({ scenario, mode }));
+  const explicitScenarios = extractExplicitScenarioRequests(request);
+  const existingScenarioNames = new Set(existing.map(({ scenario }) => scenario.toLowerCase()));
+  const requiredScenarios = explicitScenarios.filter((scenario) => !existingScenarioNames.has(scenario.toLowerCase()));
+  const explicitScenarioContract = explicitScenarios.length
+    ? `\nThe user explicitly requested these scenarios:\n${JSON.stringify(explicitScenarios)}\n\nExplicit-list rules:\n- Treat the listed scenario names as requirements, not suggestions.\n- For each listed scenario that is not already represented in the existing combinations, return exactly one context.\n- Copy each required scenario name exactly, preserving spelling and order.\n- Infer only its mode, conditions, and assumptions from the user description and architecture.\n- Do not replace, merge, generalize, rename, or add scenarios.\n- Required new scenarios: ${JSON.stringify(requiredScenarios)}`
+    : "";
 
   const prompt = `
 You are proposing operational contexts for a safety hazard analysis.
@@ -181,8 +222,9 @@ ${JSON.stringify(architecture)}
 
 Existing scenario-mode combinations to avoid duplicating:
 ${JSON.stringify(existing)}
+${explicitScenarioContract}
 
-Return ONLY one valid JSON object containing a "contexts" array with 3 to 8 useful, distinct, applicable operational context objects. Each context object must contain exactly:
+Return ONLY one valid JSON object containing a "contexts" array with ${explicitScenarios.length ? "exactly the required new scenarios listed above" : "3 to 8 useful, distinct, applicable operational context objects"}. Each context object must contain exactly:
 - scenario: a concrete operating situation or mission phase
 - mode: the system operating mode active in that scenario
 - conditions: concise environmental, temporal, actor, or system-state conditions that materially influence hazards
@@ -200,6 +242,14 @@ Rules:
 
   const response = await requestConfiguredAI(prompt);
   const generated = await parseOrRepairOperationalContexts(response, prompt);
+  if (explicitScenarios.length) {
+    const byScenario = new Map(generated.map((context) => [context.scenario.toLowerCase(), context]));
+    const missing = requiredScenarios.filter((scenario) => !byScenario.has(scenario.toLowerCase()));
+    if (missing.length) {
+      throw new Error(`The AI did not preserve these explicitly requested scenarios: ${missing.join(", ")}. Please retry.`);
+    }
+    return requiredScenarios.map((scenario) => byScenario.get(scenario.toLowerCase()));
+  }
   if (!generated.length) throw new Error("The AI response did not contain complete scenario and mode combinations.");
   return generated;
 }

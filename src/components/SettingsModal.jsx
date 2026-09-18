@@ -44,6 +44,13 @@ import {
   subscribeToLocalBackup,
 } from "../lib/localBackupService";
 import { notifyBackupDataChanged } from "../lib/localBackupEvents";
+import { listProjects as listWorkspaceGraphProjects } from "../features/workspace-graph";
+import {
+  ACTIVE_CODE_ARCHITECTURE_PROJECTS_KEY,
+  ACTIVE_FUNCTIONAL_PROJECTS_KEY,
+  buildBrowserStorageSummary,
+  classifyStoredWorkspaceProjects,
+} from "./storageWorkspaceVisibility";
 import {
   buildEffectiveOrganizationProfileContext,
   createOrganizationProfileRecord,
@@ -155,6 +162,14 @@ const CREDENTIAL_STORAGE_KEYS = new Set([
   "xhandle.localAIProviderSettings",
   "xhandle.aiProvider.keys",
 ]);
+function readStoredProjectList(key) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 function storageByteLength(value) {
   const text = typeof value === "string" ? value : JSON.stringify(value ?? "");
@@ -293,6 +308,7 @@ export default function SettingsModal({
   connected: githubConnectedProp = false,
   onBaselineRepo,
   onAIProviderSaved,
+  onWorkspaceProjectRestored,
   activeProject = null,
   projectOrganizationProfile = null,
   onProjectOrganizationProfileChange,
@@ -522,6 +538,7 @@ export default function SettingsModal({
   const [storageBusy, setStorageBusy] = useState(false);
   const [storageMsg, setStorageMsg] = useState("");
   const [selectedStorageItems, setSelectedStorageItems] = useState({});
+  const [storedWorkspaceProjects, setStoredWorkspaceProjects] = useState([]);
   const storageTabScanStartedRef = useRef(false);
   const fileInputRef = useRef(null);
   const selectedSavedProvider = providerStatus?.savedProviders?.find(
@@ -529,6 +546,7 @@ export default function SettingsModal({
   );
   const selectedModelProfile = getProviderModelProfile(aiProvider, providerModel);
   const selectedModelSupportsEffort = supportsAIProviderEffort(aiProvider, providerModel);
+  const browserStorageSummary = buildBrowserStorageSummary(storageInventory);
   const providerModelOptions = (() => {
     const provider = normalizeAIProvider(aiProvider);
     const records = providerModelsByProvider[provider] || getProviderModelOptions(provider);
@@ -664,6 +682,15 @@ export default function SettingsModal({
           });
         }
       }
+
+      const functionalProjects = readStoredProjectList(ACTIVE_FUNCTIONAL_PROJECTS_KEY);
+      const codeArchitectureProjects = readStoredProjectList(ACTIVE_CODE_ARCHITECTURE_PROJECTS_KEY);
+      const graphProjects = await listWorkspaceGraphProjects().catch(() => []);
+      setStoredWorkspaceProjects(classifyStoredWorkspaceProjects(
+        graphProjects,
+        functionalProjects,
+        codeArchitectureProjects,
+      ));
 
       const items = [
         ...Object.values(localGroups),
@@ -879,6 +906,41 @@ export default function SettingsModal({
       setStorageMsg(`❌ ${error?.message || error}`);
     } finally {
       setStorageBusy(false);
+    }
+  };
+
+  const restoreStoredWorkspaceProject = async (project) => {
+    if (!project?.recoverable || !project?.sourceData) return;
+    const storageKey = project.workspaceType === "code-architecture"
+      ? ACTIVE_CODE_ARCHITECTURE_PROJECTS_KEY
+      : ACTIVE_FUNCTIONAL_PROJECTS_KEY;
+    const projects = readStoredProjectList(storageKey);
+    if (projects.some((entry) => String(entry?.id) === String(project.id))) {
+      setStorageMsg(`ℹ️ ${project.name || "Project"} is already visible in the active workspace.`);
+      await refreshStorageInventory();
+      return;
+    }
+    const restored = {
+      ...project.sourceData,
+      id: project.id,
+      name: project.sourceData?.name || project.name || "Restored project",
+      restoredAt: new Date().toISOString(),
+    };
+    try {
+      localStorage.setItem(storageKey, JSON.stringify([restored, ...projects]));
+      onWorkspaceProjectRestored?.({
+        workspaceType: project.workspaceType,
+        projectId: project.id,
+        project: restored,
+      });
+      window.dispatchEvent?.(new CustomEvent("xhandle:data-changed", {
+        detail: { source: "settings-storage-restore", projectId: project.id },
+      }));
+      notifyBackupDataChanged("storage-project-restore");
+      setStorageMsg(`✅ Restored ${restored.name} to the active ${project.workspaceType === "code-architecture" ? "Code-Based Architecture" : "Projects"} workspace.`);
+      await refreshStorageInventory();
+    } catch (error) {
+      setStorageMsg(`❌ ${error?.message || error}`);
     }
   };
 
@@ -1708,15 +1770,121 @@ export default function SettingsModal({
               <p className="text-sm text-slate-600">
                 Review and delete xHandle data stored in this browser. Credentials and API keys are separated and are never selected by default.
               </p>
-              <div className="text-sm text-slate-700">
-                <span className="font-medium">Origin usage:</span>{" "}
-                {storageInventory
-                  ? `${formatStorageBytes(storageInventory.usageBytes)}${storageInventory.quotaBytes ? ` of ${formatStorageBytes(storageInventory.quotaBytes)} quota` : ""}`
-                  : storageBusy ? "Calculating…" : "Loading…"}
+              <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+                <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
+                  <span className="font-semibold text-slate-900">Browser storage</span>
+                  {storageInventory ? (
+                    <span className="font-medium text-slate-700">
+                      {browserStorageSummary.quotaBytes
+                        ? `${formatStorageBytes(browserStorageSummary.usedBytes)} of ${formatStorageBytes(browserStorageSummary.quotaBytes)} used`
+                        : `${formatStorageBytes(browserStorageSummary.usedBytes)} used · capacity not reported by this browser`}
+                    </span>
+                  ) : (
+                    <span className="text-slate-500">{storageBusy ? "Calculating…" : "Loading…"}</span>
+                  )}
+                </div>
+                <div
+                  className="mt-3 flex h-5 w-full overflow-hidden rounded-md bg-slate-200 ring-1 ring-inset ring-slate-300"
+                  role="img"
+                  aria-label={browserStorageSummary.quotaBytes
+                    ? `${formatStorageBytes(browserStorageSummary.usedBytes)} used and ${formatStorageBytes(browserStorageSummary.availableBytes)} available of ${formatStorageBytes(browserStorageSummary.quotaBytes)}`
+                    : `${formatStorageBytes(browserStorageSummary.usedBytes)} used; browser capacity unavailable`}
+                >
+                  {browserStorageSummary.segments.map((segment) => {
+                    const denominator = Math.max(browserStorageSummary.quotaBytes, browserStorageSummary.usedBytes, 1);
+                    const width = Math.max(segment.bytes > 0 ? 0.35 : 0, (segment.bytes / denominator) * 100);
+                    return (
+                      <div
+                        key={segment.id}
+                        style={{ width: `${width}%`, backgroundColor: segment.color }}
+                        title={`${segment.label}: ${formatStorageBytes(segment.bytes)}`}
+                      />
+                    );
+                  })}
+                  {browserStorageSummary.availableBytes != null && browserStorageSummary.availableBytes > 0 && (
+                    <div
+                      className="min-w-0 flex-1 bg-slate-200"
+                      title={`Available: ${formatStorageBytes(browserStorageSummary.availableBytes)}`}
+                    />
+                  )}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600">
+                  {browserStorageSummary.segments.map((segment) => (
+                    <span key={segment.id} className="inline-flex items-center gap-1.5">
+                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: segment.color }} />
+                      {segment.label} · {formatStorageBytes(segment.bytes)}
+                    </span>
+                  ))}
+                  {browserStorageSummary.availableBytes != null && (
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="h-2.5 w-2.5 rounded-full bg-slate-300" />
+                      Available · {formatStorageBytes(browserStorageSummary.availableBytes)}
+                    </span>
+                  )}
+                </div>
+                {!browserStorageSummary.quotaBytes && storageInventory && (
+                  <p className="mt-2 text-[11px] leading-4 text-slate-500">
+                    This browser did not expose its storage quota. The used amount is calculated from the xHandle records that can be measured here.
+                  </p>
+                )}
               </div>
               {storageInventory?.refreshedAt && (
                 <div className="text-xs text-slate-500">
                   Last scanned {new Date(storageInventory.refreshedAt).toLocaleString()}. Sizes are approximate JSON payload sizes; browser overhead may differ.
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white">
+              <div className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-200 px-4 py-3">
+                <div>
+                  <div className="text-sm font-semibold text-slate-900">Workspace project visibility</div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Active projects are visible in the workspace. Removed projects are retained storage records that are no longer listed in their workspace.
+                  </p>
+                </div>
+                <div className="flex gap-2 text-xs">
+                  <span className="rounded-full bg-emerald-100 px-2 py-1 font-medium text-emerald-700">
+                    {storedWorkspaceProjects.filter((project) => project.active).length} active
+                  </span>
+                  <span className="rounded-full bg-amber-100 px-2 py-1 font-medium text-amber-800">
+                    {storedWorkspaceProjects.filter((project) => !project.active).length} removed
+                  </span>
+                </div>
+              </div>
+              {storedWorkspaceProjects.length ? (
+                <div className="max-h-48 divide-y divide-slate-100 overflow-auto">
+                  {storedWorkspaceProjects.map((project) => (
+                    <div key={`${project.workspaceType}:${project.id}`} className={`flex items-center gap-3 px-4 py-3 ${project.active ? "bg-white" : "bg-amber-50/50"}`}>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="truncate text-sm font-medium text-slate-900">{project.name || "Unnamed project"}</span>
+                          <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${project.active ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
+                            {project.active ? "Active · visible" : "Removed · not visible"}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {project.workspaceType === "code-architecture" ? "Code-Based Architecture" : "Projects"} workspace
+                          {project.updatedAt ? ` · Stored ${new Date(project.updatedAt).toLocaleString()}` : ""}
+                        </div>
+                      </div>
+                      {!project.active && (
+                        <button
+                          type="button"
+                          className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          disabled={storageBusy || !project.recoverable}
+                          onClick={() => restoreStoredWorkspaceProject(project)}
+                          title={project.recoverable ? "Restore this project to its workspace" : "This stored record does not contain enough project data to restore"}
+                        >
+                          {project.recoverable ? "Restore" : "Not recoverable"}
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="px-4 py-5 text-sm text-slate-500">
+                  {storageBusy ? "Checking workspace visibility…" : "No recoverable workspace project records were found."}
                 </div>
               )}
             </div>
@@ -1752,6 +1920,7 @@ export default function SettingsModal({
               </button>
             </div>
 
+            <div className="text-sm font-semibold text-slate-900">Stored data categories</div>
             {storageInventory?.items?.length > 0 ? (
               <div className="max-h-[46vh] overflow-auto rounded-2xl border border-slate-200">
                 <table className="w-full text-left text-sm">

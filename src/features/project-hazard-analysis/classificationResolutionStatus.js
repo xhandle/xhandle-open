@@ -136,8 +136,17 @@ export function normalizeHazardAnalysisResolutionStatus(analysisResult = null) {
   if (!analysisResult || typeof analysisResult !== "object" || !Array.isArray(analysisResult.Summary?.[0])) {
     return analysisResult;
   }
+  const sourceHeaders = analysisResult.Summary[0];
+  const omitted = new Set(["proposed safety assessment", "proposed safety assessment rationale"]);
+  const keepIndexes = sourceHeaders
+    .map((header, index) => ({ header: normalized(header), index }))
+    .filter(({ header }) => !omitted.has(header))
+    .map(({ index }) => index);
+  const summary = keepIndexes.length === sourceHeaders.length
+    ? analysisResult.Summary
+    : analysisResult.Summary.map((row) => keepIndexes.map((index) => row?.[index] ?? ""));
   return {
     ...analysisResult,
-    Summary: ensureClassificationResolutionStatus(analysisResult.Summary),
+    Summary: ensureClassificationResolutionStatus(summary),
   };
 }

@@ -22,8 +22,8 @@ const EVIDENCE_FIELDS = [
   ["Safety Constraint", [/^Safety Constraint$/i, /^Safety Requirements?\/?Constraints?$/i]],
   ["System Requirement", [/^System Requirement$/i]],
   ["Requirement Parameter Source", [/^Requirement Parameter Source$/i]],
-  ["Proposed Safety Assessment", [/^Proposed Safety Assessment$/i, /^Safety Significant$/i]],
-  ["Proposed Safety Assessment Rationale", [/^Proposed Safety Assessment Rationale$/i, /^Safety Significance Rationale$/i]],
+  ["Safety Significant", [/^Safety Significant$/i]],
+  ["Safety Significance Rationale", [/^Safety Significance Rationale$/i, /^Proposed Safety Assessment Rationale$/i]],
   ["Safety Classification", [/^Safety Classification$/i]],
   ["Safety Classification Rule", [/^Safety Classification Rule$/i]],
   ["Causal Path Type", [/^Causal Path Type$/i]],
@@ -63,11 +63,15 @@ export function isSafetyIssueEvidenceRow(row = [], headers = []) {
   const applicable = cellValue([/^Guide Phrase Applicable$/i]);
   if (/^(?:no\b|not applicable\b)/i.test(applicable)) return false;
 
-  const proposed = cellValue([/^Proposed Safety Assessment$/i]);
-  if (proposed) return normalizeSafetyAssessment(proposed) === "Safety";
+  const classification = cellValue([/^Safety Classification$/i]);
+  if (classification) return /^Safety\s*[—-]\s*(?:Direct|Related)$/i.test(classification);
 
   const significant = cellValue([/^Safety Significant$/i]);
   if (significant) return normalizeSafetyAssessment(significant) === "Safety";
+
+  // Legacy analyses may contain only the retired proposed assessment column.
+  const proposed = cellValue([/^Proposed Safety Assessment$/i]);
+  if (proposed) return normalizeSafetyAssessment(proposed) === "Safety";
 
   // Legacy/imported analyses did not always include a safety classifier. Keep
   // them available for review instead of silently emptying the risk tab.

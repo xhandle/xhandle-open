@@ -78,6 +78,10 @@ function flattenDecomposition(sheets) {
   const guidePhraseIdx = findColumn(["Guide Phrase", "Guide Word", "Guideword", "STPA Guide Phrase"], -1);
   const guideApplicableIdx = findColumn(["Guide Phrase Applicable", "Guide Applicable", "Applicability", "Applicable"], -1);
   const guideRationaleIdx = findColumn(["Guide Phrase Applicability Rationale", "Applicability Rationale", "Guide Phrase Rationale"], -1);
+  const guideReviewStatusIdx = findColumn(["Guide Phrase Applicability Review Status", "Applicability Review Status"], -1);
+  const safetySignificantIdx = findColumn(["Safety Significant"], -1);
+  const safetyRationaleIdx = findColumn(["Safety Significance Rationale"], -1);
+  const safetyReviewStatusIdx = findColumn(["Safety Significance Review Status"], -1);
   const scenarioIdx = findColumn(["Operational Scenario", "Scenario", "Operating Scenario"], -1);
   const contextIdIdx = findColumn(["Operational Context ID", "Context ID"], -1);
   const modeIdx = findColumn(["Operational Mode", "Mode", "System Mode"], -1);
@@ -105,6 +109,10 @@ function flattenDecomposition(sheets) {
         guidePhrase: guidePhraseIdx >= 0 ? sanitizeText(getCellText(row[guidePhraseIdx])) : "",
         guidePhraseApplicable: guideApplicableIdx >= 0 ? sanitizeText(getCellText(row[guideApplicableIdx])) : "",
         guidePhraseApplicabilityRationale: guideRationaleIdx >= 0 ? sanitizeText(getCellText(row[guideRationaleIdx])) : "",
+        guidePhraseApplicabilityReviewStatus: guideReviewStatusIdx >= 0 ? sanitizeText(getCellText(row[guideReviewStatusIdx])) : "",
+        safetySignificant: safetySignificantIdx >= 0 ? sanitizeText(getCellText(row[safetySignificantIdx])) : "",
+        safetySignificanceRationale: safetyRationaleIdx >= 0 ? sanitizeText(getCellText(row[safetyRationaleIdx])) : "",
+        safetySignificanceReviewStatus: safetyReviewStatusIdx >= 0 ? sanitizeText(getCellText(row[safetyReviewStatusIdx])) : "",
         operationalScenario: scenarioIdx >= 0 ? sanitizeText(getCellText(row[scenarioIdx])) : "",
         operationalContextId: contextIdIdx >= 0 ? sanitizeText(getCellText(row[contextIdIdx])) : "",
         operationalMode: modeIdx >= 0 ? sanitizeText(getCellText(row[modeIdx])) : "",
@@ -164,6 +172,10 @@ function compactPromptItem(item = {}, maxChars = 120) {
     guidePhrase: truncateForPrompt(item.guidePhrase, maxChars),
     guidePhraseApplicable: truncateForPrompt(item.guidePhraseApplicable, 24),
     guidePhraseApplicabilityRationale: truncateForPrompt(item.guidePhraseApplicabilityRationale, maxChars),
+    guidePhraseApplicabilityReviewStatus: truncateForPrompt(item.guidePhraseApplicabilityReviewStatus, 32),
+    safetySignificant: truncateForPrompt(item.safetySignificant, 24),
+    safetySignificanceRationale: truncateForPrompt(item.safetySignificanceRationale, maxChars * 2),
+    safetySignificanceReviewStatus: truncateForPrompt(item.safetySignificanceReviewStatus, 32),
     operationalScenario: truncateForPrompt(item.operationalScenario, maxChars),
     operationalContextId: truncateForPrompt(item.operationalContextId, 100),
     operationalMode: truncateForPrompt(item.operationalMode, maxChars),
@@ -221,8 +233,6 @@ const CAUSAL_FACTOR_CATEGORIES = new Set([
   "ML model / uncertainty",
 ]);
 export const SAFETY_SIGNIFICANCE_FIELDS = [
-  ["proposedSafetyAssessment", "Proposed Safety Assessment"],
-  ["proposedSafetyAssessmentRationale", "Proposed Safety Assessment Rationale"],
   ["safetyClassification", "Safety Classification"],
   ["safetyClassificationRule", "Safety Classification Rule"],
   ["causalPathType", "Causal Path Type"],
@@ -429,6 +439,7 @@ For each functional decomposition row, identify one credible unsafe control acti
 - Mark No when the deviation has no meaningful semantics for the control-action type, is precluded by an authoritative context assumption, cannot affect the target in that mode, or has no credible adverse consequence. Normal, stationary, startup, shutdown, maintenance, degraded, and recovery contexts often differ; assess rather than assuming all seven guide phrases apply.
 - Do not force a quota or distribution, but treat an all-Yes result as a warning and re-check each interface/context combination independently.
 - Only assess applicable guide phrases. If guidePhraseApplicable is No, set hazard-bearing fields to "Not applicable:" with a short reason and classify the row as Mission/Reliability during safety significance review.
+- If safetySignificanceReviewStatus is Reviewed and safetySignificant is Yes or No, treat that as an authoritative human-reviewed decision. Generate the loss, hazard, causal chain, classification, mitigations, constraints, requirements, and verification evidence consistently with it. Do not re-decide or overwrite it.
 - Losses must describe plausible adverse end states or consequences.
 - Keep Losses at the system level and reusable. Do not encode the guide phrase, causal mechanism, interface name, or operational-context detail in a Loss. Reuse the same concise Loss wording when multiple rows lead to the same adverse end state.
 - Hazards must describe unsafe system states, not generic failures, and include the local effect, system-level effect, and plausible consequence.
@@ -1740,6 +1751,8 @@ Return ONLY a JSON array. Each object must include:
 id, semanticMeaningful, receiverCanBeAffected, contextSupportsMechanism, adverseStateSupported, guidePhraseApplicable, guidePhraseApplicabilityRationale, applicabilityMechanism, applicabilityEvidenceField, applicabilityEvidenceQuote, strongestReasonForNo, notApplicableReasonCode, notApplicableEvidenceField, notApplicableEvidenceQuote, proposedSafetyAssessment, proposedSafetyAssessmentRationale, safetyClassification, safetyClassificationRule, causalPathType, causalEffect, resultingSystemState, intermediateSafetyFunction, intermediateSafetyEffect, protectionAssessment, protectionStatus, physicalHarmChainTermination, classificationEvidence, classificationConfidence, safetyExposureCategory, safetyExposurePath, safetyEvidenceField, safetyEvidenceQuote, safetyContributionType, causalNecessitySupported, additionalFailureRequired, safeguardPrecludesPath, safetySignificant, safetySignificanceRationale.
 
 Applicability and safety rules:
+- If row.guidePhraseApplicabilityReviewStatus is Reviewed and row.guidePhraseApplicable is Yes or No, that is a governed human-reviewed decision. Preserve it and its rationale exactly; do not re-decide applicability. Classify the downstream safety fields consistently with that governed decision.
+- If row.safetySignificanceReviewStatus is Reviewed and row.safetySignificant is Yes or No, that is a governed human-reviewed decision. Preserve it and its rationale exactly; reconcile every downstream classification and causal-path field with it rather than re-deciding it.
 - Re-decide applicability independently; do not defer to generated.guidePhraseApplicable or let the candidate Hazard/Loss create facts that are absent from the functional row and operational context. Decide applicability from row semantics and context first, then use generated text only to classify a supported adverse path.
 - semanticMeaningful, receiverCanBeAffected, contextSupportsMechanism, and adverseStateSupported must each be exactly Yes or No. guidePhraseApplicable must be Yes only when all four are Yes; otherwise it must be No.
 - guidePhraseApplicable must be exactly Yes or No.
@@ -1818,13 +1831,22 @@ ${JSON.stringify(tagItems.map(({ item, row }) => ({
 }
 
 function mergeAuditTag(config, row, item, index, tag = {}, { requireChallengeEvidence = false } = {}) {
-  const structuredDecision = requireChallengeEvidence
-    ? validateApplicabilityEvidence(tag, item)
-    : deriveStructuredApplicability(tag, row);
+  const reviewedApplicability = /^reviewed$/i.test(sanitizeText(item?.guidePhraseApplicabilityReviewStatus))
+    && /^(?:yes|no)$/i.test(normalizeGuidePhraseApplicability(item?.guidePhraseApplicable));
+  const structuredDecision = reviewedApplicability
+    ? {
+        guidePhraseApplicable: normalizeGuidePhraseApplicability(item.guidePhraseApplicable),
+        guidePhraseApplicabilityRationale: sanitizeText(item.guidePhraseApplicabilityRationale),
+      }
+    : requireChallengeEvidence
+      ? validateApplicabilityEvidence(tag, item)
+      : deriveStructuredApplicability(tag, row);
   const auditedApplicability = structuredDecision.guidePhraseApplicable;
   const auditedRationale = structuredDecision.guidePhraseApplicabilityRationale;
 
-  const safetyAssessment = auditedApplicability === "Needs Review"
+  const reviewedSafetySignificance = /^reviewed$/i.test(sanitizeText(item?.safetySignificanceReviewStatus))
+    && /^(?:yes|no)$/i.test(sanitizeText(item?.safetySignificant));
+  let safetyAssessment = auditedApplicability === "Needs Review"
     ? {
       proposedSafetyAssessment: "Mission/Reliability",
       proposedSafetyAssessmentRationale: "Needs review: guide-phrase applicability could not be validated without a grounded positive decision or a valid non-applicability proof.",
@@ -1847,6 +1869,37 @@ function mergeAuditTag(config, row, item, index, tag = {}, { requireChallengeEvi
       requireEvidence: requireChallengeEvidence,
       item,
     });
+
+  if (reviewedSafetySignificance) {
+    const reviewedDecision = /^yes$/i.test(sanitizeText(item.safetySignificant)) ? "Yes" : "No";
+    const reviewedRationale = sanitizeText(item.safetySignificanceRationale)
+      || `Human-reviewed Safety Significant decision: ${reviewedDecision}.`;
+    safetyAssessment = reviewedDecision === "Yes"
+      ? {
+          ...safetyAssessment,
+          proposedSafetyAssessment: "Safety",
+          proposedSafetyAssessmentRationale: reviewedRationale,
+          safetyClassification: /^Safety\s*[—-]/i.test(safetyAssessment.safetyClassification || "")
+            ? safetyAssessment.safetyClassification
+            : SAFETY_CLASSIFICATION.RELATED,
+          safetyClassificationRule: /^Safety\s*[—-]/i.test(safetyAssessment.safetyClassification || "")
+            ? safetyAssessment.safetyClassificationRule
+            : "R4",
+          causalPathType: safetyAssessment.causalPathType === "Direct" ? "Direct" : "Contributory",
+          safetySignificant: "Yes",
+        }
+      : {
+          ...safetyAssessment,
+          proposedSafetyAssessment: "Mission/Reliability",
+          proposedSafetyAssessmentRationale: reviewedRationale,
+          safetyClassification: SAFETY_CLASSIFICATION.MISSION,
+          safetyClassificationRule: "M1",
+          causalPathType: "None",
+          intermediateSafetyFunction: "",
+          intermediateSafetyEffect: "",
+          safetySignificant: "No",
+        };
+  }
 
   return normalizeRow(config, {
     ...row,

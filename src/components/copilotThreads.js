@@ -7,7 +7,28 @@ const MAX_MESSAGES_PER_THREAD = 80;
 const MAX_MESSAGE_CONTENT_CHARS = 64000;
 const MAX_STORAGE_CHARS = 3_500_000;
 const SESSION_FALLBACK_KEY = `${KEY}.sessionFallback`;
+const REVIEW_SESSION_KEYS = [
+  "xhandle.hazardVibeReview.sessions.v1",
+  "xhandle.functionalVibeReview.sessions.v1",
+];
 let volatileThreads = null;
+
+function unfinishedReviewThreadIds() {
+  const ids = new Set();
+  const storages = [];
+  try { if (typeof localStorage !== "undefined") storages.push(localStorage); } catch {}
+  try { if (typeof sessionStorage !== "undefined") storages.push(sessionStorage); } catch {}
+  storages.forEach((storage) => REVIEW_SESSION_KEYS.forEach((key) => {
+    try {
+      const sessions = JSON.parse(storage.getItem(key) || "{}");
+      Object.values(sessions || {}).forEach((session) => {
+        if (!session?.threadId || ["completed", "cancelled"].includes(String(session.state || "").toLowerCase())) return;
+        ids.add(String(session.threadId));
+      });
+    } catch {}
+  }));
+  return ids;
+}
 
 function truncateText(value, maxChars = MAX_MESSAGE_CONTENT_CHARS) {
   const text = String(value || "");
@@ -66,7 +87,12 @@ function sortThreadsForRetention(threads = []) {
 function compactThreadsForStorage(threads = [], aggressive = false) {
   const threadLimit = aggressive ? 8 : MAX_THREADS;
   const messageLimit = aggressive ? 30 : MAX_MESSAGES_PER_THREAD;
-  return sortThreadsForRetention(threads).slice(0, threadLimit).map((thread) => {
+  const protectedIds = unfinishedReviewThreadIds();
+  const sorted = sortThreadsForRetention(threads);
+  const protectedThreads = sorted.filter((thread) => protectedIds.has(String(thread?.id || "")));
+  const otherThreads = sorted.filter((thread) => !protectedIds.has(String(thread?.id || "")));
+  const retained = [...protectedThreads, ...otherThreads.slice(0, Math.max(0, threadLimit - protectedThreads.length))];
+  return retained.map((thread) => {
     const messages = Array.isArray(thread?.messages) ? thread.messages : [];
     return {
       ...thread,
@@ -80,7 +106,11 @@ function serializeThreadsForStorage(threads = [], aggressive = false) {
   let compacted = compactThreadsForStorage(threads, aggressive);
   let serialized = JSON.stringify(compacted);
   while (serialized.length > MAX_STORAGE_CHARS && compacted.length > 1) {
-    compacted = compactThreadsForStorage(compacted.slice(0, Math.max(1, compacted.length - 2)), true);
+    const protectedIds = unfinishedReviewThreadIds();
+    const protectedCount = compacted.filter((thread) => protectedIds.has(String(thread?.id || ""))).length;
+    const nextLength = Math.max(protectedCount, Math.max(1, compacted.length - 2));
+    if (nextLength >= compacted.length) break;
+    compacted = compactThreadsForStorage(compacted.slice(0, nextLength), true);
     serialized = JSON.stringify(compacted);
   }
   if (serialized.length > MAX_STORAGE_CHARS) {
@@ -157,6 +187,28 @@ export function newThread(title = "New topic", options = {}) {
   all.unshift(t);
   saveThreads(all);
   return t;
+}
+export function ensureThread(id, title = "Recovered review", options = {}) {
+  const threadId = String(id || "").trim();
+  if (!threadId) return null;
+  const all = loadThreads();
+  const existing = all.find((thread) => String(thread?.id || "") === threadId);
+  if (existing) return existing;
+  const greeting = String(options?.greeting || "").trim()
+    || "This Collaborator thread was restored from an unfinished review session. Resume the review to continue where you left off.";
+  const restored = {
+    id: threadId,
+    title: String(title || "Recovered review").trim() || "Recovered review",
+    pinned: false,
+    protectedByReview: true,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    autoTitleDone: true,
+    messages: [{ role: "assistant", content: greeting }],
+  };
+  all.unshift(restored);
+  saveThreads(all);
+  return restored;
 }
 export function renameThread(id, title) {
   const all = loadThreads();

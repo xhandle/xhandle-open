@@ -74,6 +74,46 @@ describe('manual orthogonal edge routing', () => {
     expect(route.points).toContainEqual({ x: 300, y: 275 });
   });
 
+  test('places adjusters at segment midpoints and constrains them perpendicular to each segment', () => {
+    const route = buildManualOrthogonalRoute({
+      sourceX: 100,
+      sourceY: 80,
+      targetX: 400,
+      targetY: 240,
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
+      corridor: 260,
+      sourceOffset: 30,
+      targetOffset: -20,
+    });
+    expect(route.controls).toEqual([
+      expect.objectContaining({ key: 'sourceOffset', dragAxis: 'y', orientation: 'horizontal', point: { x: 200, y: 110 } }),
+      expect.objectContaining({ key: 'corridor', dragAxis: 'x', orientation: 'vertical', point: { x: 260, y: 165 } }),
+      expect.objectContaining({ key: 'targetOffset', dragAxis: 'y', orientation: 'horizontal', point: { x: 310, y: 220 } }),
+    ]);
+    expect(route.points).toContainEqual({ x: 140, y: 110 });
+    expect(route.points).toContainEqual({ x: 360, y: 220 });
+  });
+
+  test('moves vertical segment handles left and right', () => {
+    const route = buildManualOrthogonalRoute({
+      sourceX: 100,
+      sourceY: 100,
+      targetX: 300,
+      targetY: 400,
+      sourcePosition: Position.Bottom,
+      targetPosition: Position.Top,
+      corridor: 275,
+      sourceOffset: 25,
+      targetOffset: -35,
+    });
+    expect(route.controls[0]).toEqual(expect.objectContaining({ dragAxis: 'x', orientation: 'vertical' }));
+    expect(route.controls[1]).toEqual(expect.objectContaining({ dragAxis: 'y', orientation: 'horizontal' }));
+    expect(route.controls[2]).toEqual(expect.objectContaining({ dragAxis: 'x', orientation: 'vertical' }));
+    expect(route.points).toContainEqual({ x: 125, y: 140 });
+    expect(route.points).toContainEqual({ x: 265, y: 360 });
+  });
+
   test('clamps manually adjusted endpoint spacing to the minimum lead-in', () => {
     const route = buildManualOrthogonalRoute({
       sourceX: 50,

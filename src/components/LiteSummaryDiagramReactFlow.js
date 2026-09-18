@@ -159,7 +159,7 @@ function pointForEndpointLead(x, y, position, spacing = MANUAL_EDGE_ENDPOINT_SPA
   return { x: x + spacing, y };
 }
 
-export function buildManualOrthogonalRoute({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, corridor, routeAxis, sourceSpacing, targetSpacing } = {}) {
+export function buildManualOrthogonalRoute({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, corridor, routeAxis, sourceSpacing, targetSpacing, sourceOffset, targetOffset } = {}) {
   const source = { x: Number(sourceX) || 0, y: Number(sourceY) || 0 };
   const target = { x: Number(targetX) || 0, y: Number(targetY) || 0 };
   const normalizedSourceSpacing = Math.max(MANUAL_EDGE_ENDPOINT_SPACING, Number(sourceSpacing) || MANUAL_EDGE_ENDPOINT_SPACING);
@@ -181,10 +181,53 @@ export function buildManualOrthogonalRoute({ sourceX, sourceY, targetX, targetY,
     ? (detour ? Math.min(sourceLead.x, targetLead.x) - detourClearance : (sourceLead.x + targetLead.x) / 2)
     : (detour ? Math.min(sourceLead.y, targetLead.y) - detourClearance : (sourceLead.y + targetLead.y) / 2);
   const routeCorridor = Number.isFinite(Number(corridor)) ? Number(corridor) : defaultCorridor;
-  const points = axis === 'x'
-    ? [source, sourceLead, { x: routeCorridor, y: sourceLead.y }, { x: routeCorridor, y: targetLead.y }, targetLead, target]
-    : [source, sourceLead, { x: sourceLead.x, y: routeCorridor }, { x: targetLead.x, y: routeCorridor }, targetLead, target];
-  return { axis, corridor: routeCorridor, detour, sourceSpacing: normalizedSourceSpacing, targetSpacing: normalizedTargetSpacing, points: points.filter((point, index) => index === 0 || point.x !== points[index - 1].x || point.y !== points[index - 1].y) };
+  const normalizedSourceOffset = Number.isFinite(Number(sourceOffset)) ? Number(sourceOffset) : 0;
+  const normalizedTargetOffset = Number.isFinite(Number(targetOffset)) ? Number(targetOffset) : 0;
+  const rawPoints = axis === 'x'
+    ? [
+        source,
+        sourceLead,
+        { x: sourceLead.x, y: sourceLead.y + normalizedSourceOffset },
+        { x: routeCorridor, y: sourceLead.y + normalizedSourceOffset },
+        { x: routeCorridor, y: targetLead.y + normalizedTargetOffset },
+        { x: targetLead.x, y: targetLead.y + normalizedTargetOffset },
+        targetLead,
+        target,
+      ]
+    : [
+        source,
+        sourceLead,
+        { x: sourceLead.x + normalizedSourceOffset, y: sourceLead.y },
+        { x: sourceLead.x + normalizedSourceOffset, y: routeCorridor },
+        { x: targetLead.x + normalizedTargetOffset, y: routeCorridor },
+        { x: targetLead.x + normalizedTargetOffset, y: targetLead.y },
+        targetLead,
+        target,
+      ];
+  const segmentDefinition = (key, startIndex, endIndex, dragAxis) => ({
+    key,
+    dragAxis,
+    orientation: dragAxis === 'x' ? 'vertical' : 'horizontal',
+    point: {
+      x: (rawPoints[startIndex].x + rawPoints[endIndex].x) / 2,
+      y: (rawPoints[startIndex].y + rawPoints[endIndex].y) / 2,
+    },
+  });
+  const controls = axis === 'x'
+    ? [segmentDefinition('sourceOffset', 2, 3, 'y'), segmentDefinition('corridor', 3, 4, 'x'), segmentDefinition('targetOffset', 4, 5, 'y')]
+    : [segmentDefinition('sourceOffset', 2, 3, 'x'), segmentDefinition('corridor', 3, 4, 'y'), segmentDefinition('targetOffset', 4, 5, 'x')];
+  const points = rawPoints.filter((point, index) => index === 0 || point.x !== rawPoints[index - 1].x || point.y !== rawPoints[index - 1].y);
+  return {
+    axis,
+    corridor: routeCorridor,
+    detour,
+    sourceSpacing: normalizedSourceSpacing,
+    targetSpacing: normalizedTargetSpacing,
+    sourceOffset: normalizedSourceOffset,
+    targetOffset: normalizedTargetOffset,
+    points,
+    controls,
+  };
 }
 
 function orthogonalPath(points = []) {
@@ -1020,33 +1063,37 @@ function OrthogonalFallbackEdge(props) {
     targetPosition,
     corridor: data?.manualRoute?.corridor,
     routeAxis: data?.manualRoute?.axis,
-    sourceSpacing: data?.manualRoute?.sourceSpacing,
-    targetSpacing: data?.manualRoute?.targetSpacing,
+    // The former adjuster model persisted arbitrarily large endpoint spacing.
+    // Draw.io-style segment editing keeps these lead-ins stable, so legacy
+    // spacing is intentionally ignored rather than producing off-screen loops.
+    sourceSpacing: MANUAL_EDGE_ENDPOINT_SPACING,
+    targetSpacing: MANUAL_EDGE_ENDPOINT_SPACING,
+    sourceOffset: data?.manualRoute?.sourceOffset,
+    targetOffset: data?.manualRoute?.targetOffset,
   });
   const d = orthogonalPath(route.points);
   const stroke = style?.stroke || '#1f2544';
   const width = selected ? 3.5 : 2.5;
   const middlePoint = route.points[Math.floor(route.points.length / 2)] || { x: (sourceX + targetX) / 2, y: (sourceY + targetY) / 2 };
-  const routeControls = [
-    { key: 'sourceSpacing', point: { x: (route.points[0].x + route.points[1].x) / 2, y: (route.points[0].y + route.points[1].y) / 2 }, cursor: [Position.Left, Position.Right].includes(sourcePosition) ? 'ew-resize' : 'ns-resize' },
-    { key: 'corridor', point: middlePoint, cursor: route.axis === 'x' ? 'ew-resize' : 'ns-resize' },
-    { key: 'targetSpacing', point: { x: (route.points.at(-2).x + route.points.at(-1).x) / 2, y: (route.points.at(-2).y + route.points.at(-1).y) / 2 }, cursor: [Position.Left, Position.Right].includes(targetPosition) ? 'ew-resize' : 'ns-resize' },
-  ];
+  const routeControls = (route.controls || []).map((control) => ({
+    ...control,
+    cursor: control.dragAxis === 'x' ? 'ew-resize' : 'ns-resize',
+  }));
   const startRouteDrag = (event, control = 'corridor') => {
     event.preventDefault();
     event.stopPropagation();
-    const position = control === 'sourceSpacing' ? sourcePosition : control === 'targetSpacing' ? targetPosition : null;
-    const dragAxis = control === 'corridor' ? route.axis : ([Position.Left, Position.Right].includes(position) ? 'x' : 'y');
+    const routeControl = routeControls.find((candidate) => candidate.key === control);
+    if (!routeControl) return;
+    const dragAxis = routeControl.dragAxis;
     const initialClient = dragAxis === 'x' ? event.clientX : event.clientY;
-    const initialValue = control === 'corridor' ? route.corridor : route[control];
-    const direction = position === Position.Left || position === Position.Top ? -1 : 1;
+    const initialValue = Number(route[control]) || 0;
     window.dispatchEvent(new CustomEvent('xhandle:manual-edge-route-start', { detail: { routingTargetKey: data?.routingTargetKey } }));
     const move = (moveEvent) => {
       const currentClient = dragAxis === 'x' ? moveEvent.clientX : moveEvent.clientY;
       const delta = (currentClient - initialClient) / Math.max(0.1, getZoom?.() || 1);
-      const value = control === 'corridor' ? initialValue + delta : Math.max(MANUAL_EDGE_ENDPOINT_SPACING, initialValue + delta * direction);
+      const value = initialValue + delta;
       window.dispatchEvent(new CustomEvent('xhandle:manual-edge-route-change', {
-        detail: { routingTargetKey: data?.routingTargetKey, routePatch: { axis: route.axis, [control]: value } },
+        detail: { routingTargetKey: data?.routingTargetKey, routePatch: { model: 'segment-v2', axis: route.axis, [control]: value } },
       }));
     };
     const stop = () => {
@@ -1081,7 +1128,7 @@ function OrthogonalFallbackEdge(props) {
           onPointerDown={(event) => startRouteDrag(event, control.key)}
           style={{ cursor: control.cursor, pointerEvents: 'all', filter: 'drop-shadow(0 1px 2px rgba(15,15,18,0.25))' }}
         >
-          <title>{control.key === 'corridor' ? 'Drag to adjust this edge route' : 'Drag to adjust spacing from the node'}</title>
+          <title>{control.orientation === 'vertical' ? 'Drag left or right to reposition this vertical segment' : 'Drag up or down to reposition this horizontal segment'}</title>
         </circle>
       )) : null}
       <EdgeLabelRenderer>

@@ -1,4 +1,4 @@
-import { loadThreads, saveThreads } from "./copilotThreads";
+import { ensureThread, loadThreads, saveThreads } from "./copilotThreads";
 
 describe("Collaborator thread persistence", () => {
   beforeEach(() => {
@@ -41,5 +41,31 @@ describe("Collaborator thread persistence", () => {
 
     expect(loadThreads()[0].messages[0].content).toBe("Item 5 of 12");
     setItem.mockRestore();
+  });
+
+  it("never compacts away a thread linked to an unfinished review", () => {
+    localStorage.setItem("xhandle.hazardVibeReview.sessions.v1", JSON.stringify({
+      "project:protected-thread": {
+        projectId: "project",
+        threadId: "protected-thread",
+        state: "paused",
+        updatedAt: "2026-01-01T00:00:00Z",
+      },
+    }));
+    const threads = Array.from({ length: 24 }, (_, index) => ({
+      id: index === 23 ? "protected-thread" : `thread-${index}`,
+      title: `Thread ${index}`,
+      createdAt: index,
+      updatedAt: index,
+      messages: [{ role: "assistant", content: `Message ${index}` }],
+    }));
+    saveThreads(threads);
+    expect(loadThreads().some((thread) => thread.id === "protected-thread")).toBe(true);
+  });
+
+  it("recreates a missing Collaborator thread with its original id", () => {
+    const restored = ensureThread("missing-review-thread", "Recovered safety review");
+    expect(restored).toMatchObject({ id: "missing-review-thread", title: "Recovered safety review", protectedByReview: true });
+    expect(loadThreads().find((thread) => thread.id === "missing-review-thread")?.messages[0].content).toContain("restored");
   });
 });

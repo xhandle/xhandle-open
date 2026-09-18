@@ -114,3 +114,15 @@ test("keeps an active review usable when browser storage quota is exhausted", ()
     expect.objectContaining({ sourceRowId: "RAW-QUOTA-1" }),
   ]);
 });
+
+test("does not evict unfinished reviews when the session history exceeds its terminal retention limit", () => {
+  const storage = { data: {}, getItem(key) { return this.data[key] || null; }, setItem(key, value) { this.data[key] = value; } };
+  const protectedSession = createVibeReviewSession({ projectId: "protected-project", threadId: "protected-thread", queue: ["RAW-1"] });
+  saveVibeReviewSession(protectedSession, storage);
+  for (let index = 0; index < 20; index += 1) {
+    let session = createVibeReviewSession({ projectId: `terminal-${index}`, threadId: `thread-${index}`, queue: ["RAW-1"] });
+    session = transitionVibeReviewSession(session, { type: "stop" });
+    saveVibeReviewSession(session, storage);
+  }
+  expect(loadVibeReviewSession("protected-project", "protected-thread", storage)).toMatchObject({ state: VIBE_REVIEW_STATES.PROPOSING });
+});

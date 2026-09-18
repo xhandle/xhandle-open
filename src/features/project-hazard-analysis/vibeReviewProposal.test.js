@@ -251,3 +251,71 @@ test("runs one policy-correction pass when a provider improperly credits an assu
     global.fetch = originalFetch;
   }
 });
+
+test("does not treat an unconfirmed safeguard as a blocker to a grounded Related path", async () => {
+  const originalFetch = global.fetch;
+  const rowFields = {
+    "Raw Analysis Row ID": "RAW-HEALTH-1",
+    "Function (From)": "Monitor Vehicle Health",
+    "Control Action": "Vehicle Health Assessment",
+    "Function (To)": "Manage Operating Readiness",
+    "Guide Phrase": "The control action is stopped too soon",
+    "Guide Phrase Applicable": "Yes",
+    "Safety Classification Rule": "U4",
+    "Causal Effect": "Readiness management continues using stale vehicle-health information.",
+    "Resulting System State": "The vehicle continues an automated lane change with degraded actuation capability.",
+    "Intermediate Safety Function": "Manage Operating Readiness motion inhibit",
+    "Intermediate Safety Effect": "The inhibit is not issued while stale health data remains accepted.",
+    "Protection Assessment": "No confirmed independent absence-detection timeout is documented.",
+    "Protection Status": "Unknown",
+    Hazard: "Loss of vehicle control during an automated lane change.",
+    Loss: "Collision causing injury to occupants or nearby road users.",
+    "Causal Scenario": "Health updates stop and a subsequent actuator fault is not reflected before motion authorization continues.",
+  };
+  const first = {
+    normalizedDecision: "Needs Review",
+    "Safety Classification Rule": "U4",
+    "Causal Path Type": "Uncertain",
+    "Protection Status": "Unknown",
+    remainingEvidenceGap: "No evidence confirms whether an absence-detection timeout exists.",
+  };
+  const corrected = {
+    normalizedDecision: "Safety — Related",
+    "Safety Classification Rule": "R2",
+    "Causal Path Type": "Contributory",
+    "Causal Effect": rowFields["Causal Effect"],
+    "Resulting System State": rowFields["Resulting System State"],
+    "Intermediate Safety Function": rowFields["Intermediate Safety Function"],
+    "Intermediate Safety Effect": rowFields["Intermediate Safety Effect"],
+    "Protection Assessment": rowFields["Protection Assessment"],
+    "Protection Status": "Unknown",
+    "Classification Evidence": "The stopped health stream can prevent the readiness inhibit and contribute to collision.",
+    "Safety Significance Rationale": "The row establishes a contributory path to physical harm; the unconfirmed timeout is not credited.",
+    remainingEvidenceGap: "Whether an independent timeout exists remains unconfirmed.",
+  };
+  global.fetch = jest.fn()
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(first) } }] }) })
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(corrected) } }] }) });
+  try {
+    const headers = Object.keys(rowFields);
+    const result = await requestVibeReviewProposal({
+      headers,
+      row: headers.map((header) => rowFields[header]),
+      projectName: "Autonomous vehicle",
+      provider: "claude",
+      model: "test",
+      effort: "medium",
+    });
+    expect(result.valid).toBe(true);
+    expect(result.proposal.governedDecision).toMatchObject({
+      "Safety Classification": "Safety — Related",
+      "Safety Significant": "Yes",
+      "Protection Status": "Unknown",
+    });
+    expect(global.fetch.mock.calls[0][1].body).toMatch(/does not invalidate an otherwise complete/i);
+    expect(global.fetch.mock.calls[1][1].body).toMatch(/unconfirmed safeguard cannot block/i);
+    expect(global.fetch.mock.calls[1][1].body).toMatch(/do not require proof that no safeguard exists/i);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});

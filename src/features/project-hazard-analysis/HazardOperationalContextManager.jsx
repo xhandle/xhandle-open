@@ -107,12 +107,12 @@ export default function HazardOperationalContextManager({
               <Sparkles size={16} /> Generate with AI
             </div>
             <p className="mt-1 text-xs leading-5 text-blue-900/80">
-              Describe the system, mission, environment, operating concept, or conditions that should shape the analysis. Suggestions remain editable until you save.
+              Describe the system, mission, environment, operating concept, or conditions that should shape the analysis. To require specific scenarios, say “create the following scenarios” and provide a list. Suggestions remain editable until you save.
             </p>
             <textarea
               value={description}
               onChange={(event) => setDescription(event.target.value)}
-              placeholder="Example: A delivery robot operates on sidewalks and crosswalks in autonomous, remote-assisted, degraded-sensor, and maintenance conditions…"
+              placeholder={'Example: A delivery robot operates on sidewalks and crosswalks…\n\nOr: Create the following scenarios:\n- Sidewalk delivery\n- Signalized crosswalk\n- Remote-assisted recovery'}
               rows={4}
               className="mt-3 w-full resize-y rounded-md border border-blue-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-400 focus:outline-none"
             />
