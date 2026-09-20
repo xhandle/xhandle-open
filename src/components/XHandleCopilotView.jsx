@@ -62,9 +62,12 @@ import {
 } from "../features/collaborator-workspace";
 import { describeActiveSelection } from "../features/collaborator-selection/activeSelectionContext";
 import { describeScopeResolution, indexVibeReviewHeaders, isHazardVibeReviewIntent, resolveHazardVibeReviewScope } from "../features/project-hazard-analysis/vibeReviewScope";
+import { CLASSIFICATION_RESOLUTION_STATUS, inspectClassificationResolution } from "../features/project-hazard-analysis/classificationResolutionStatus";
+import { isSubstantiveClassificationEvidence } from "../features/project-hazard-analysis/safetySignificancePolicy";
 import { isBatchNeedsReviewResolverIntent } from "../features/project-hazard-analysis/needsReviewCollaboratorIntent";
 import {
   buildHumanGuidePhraseApplicabilityDecision,
+  buildHumanSafetyClassificationDecision,
   buildHumanVibeReviewDecision,
   compactVibeReviewRow,
   requestVibeReviewProposal,
@@ -74,6 +77,12 @@ import {
   parseVibeReviewAction, saveVibeReviewSession, summarizeVibeReviewSession, transitionVibeReviewSession,
   VIBE_REVIEW_STATES,
 } from "../features/project-hazard-analysis/vibeReviewSession";
+import {
+  currentReviewCascadeStep,
+  planFunctionalDecisionCascade,
+  planHazardDecisionCascade,
+  selectReviewCascadeSteps,
+} from "../features/review-cascade/reviewCascade";
 import {
   buildFunctionalVibeReviewChoicePrompt,
   describeFunctionalVibeReviewScope,
@@ -2779,8 +2788,18 @@ export function HazardVibeReviewCard({ message, disabled = false, onAction, onOp
   const existingLabel = card.existingLabel || "Safety Significant";
   const existingValue = card.existingValue ?? card.existingSafetySignificant;
   const proposedValue = card.proposedValue ?? card.proposedSafetySignificant;
+  const actions = card.paused ? [['resume', 'Resume review', false]] : card.prerequisiteRequired
+    ? [['reviewSafetySignificance', 'Review Safety Significance first', false]]
+    : ["safetyClassification", "classificationResolution"].includes(card.reviewTarget)
+    ? [['accept','Accept proposal', !proposedValue],['classificationDirect','Mark Safety — Direct', false],['classificationRelated','Mark Safety — Related', !card.relatedClassificationSupported],['classificationMission','Mark Mission/Reliability', false], ...(card.allowNotApplicable ? [['classificationNotApplicable','Mark Not Applicable', false]] : []), ['skip','Skip for later', false], ...(card.canUndo ? [['undo','Undo last decision', false]] : []), ['pause','Pause review', false], ['stop','Stop review', false]]
+    : [['accept','Accept proposal', !proposedValue],['yes','Mark Yes', false],['no','Mark No', false],['skip','Skip for later', false], ...(card.canUndo ? [['undo','Undo last decision', false]] : []), ['pause','Pause review', false], ['stop','Stop review', false]];
   return (
     <section data-vibe-review-session={card.sessionId} data-vibe-review-actionable={active ? "true" : undefined} className="mt-2 rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-xs" aria-label={`Hazard review item ${card.progress || ""}`}>
+      {card.reviewSequence ? (
+        <div className="mb-2 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1.5 font-semibold text-indigo-900">
+          Parent item {card.reviewSequence.parentItem} of {card.reviewSequence.parentTotal} · Follow-up part {card.reviewSequence.part} of {card.reviewSequence.total}: {card.reviewSequence.label}
+        </div>
+      ) : null}
       <div className="flex items-center justify-between gap-2 font-semibold text-neutral-800">
         <span>{card.progress}</span>
         <button type="button" className="text-indigo-700 underline focus:ring-2 focus:ring-indigo-400" onClick={() => onOpenSource?.(card)} aria-label={`Open hazard-analysis row ${card.sourceRowId}`}>Open source row</button>
@@ -2791,9 +2810,15 @@ export function HazardVibeReviewCard({ message, disabled = false, onAction, onOp
       <div className="mt-2"><span className="font-medium">Existing {existingLabel}:</span> {existingValue || "Not set"}{card.existingRationale ? ` — ${card.existingRationale}` : ""}</div>
       {proposedValue ? <div className="mt-1"><span className="font-medium">Proposed:</span> {proposedValue}{card.proposalDescriptor ? ` · ${card.proposalDescriptor}` : card.classification ? ` · ${card.classification}${card.rule ? ` (${card.rule})` : ""}` : ""} · {card.confidence || "Medium"} confidence</div> : null}
       <p className="mt-1 text-neutral-700">{card.rationale || card.evidenceGap}</p>
+      {card.manualDispositionWarning ? <p className="mt-2 rounded-md border border-amber-300 bg-white p-2 text-amber-900">{card.manualDispositionWarning}</p> : null}
+      {card.prerequisiteRequired ? (
+        <p className="mt-2 rounded-md border border-amber-300 bg-white p-2 font-medium text-amber-900">
+          Safety Classification depends on a governed Safety Significance decision. Complete that prerequisite for this row, then this classification review will resume automatically.
+        </p>
+      ) : null}
       {active && <div className="mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Hazard review decision actions">
-        {(card.paused ? [['resume', 'Resume review']] : [['accept','Accept proposal'],['yes','Mark Yes'],['no','Mark No'],['skip','Skip for later'], ...(card.canUndo ? [['undo','Undo last decision']] : []), ['pause','Pause review'], ['stop','Stop review']]).map(([action, label]) => (
-          <button key={action} type="button" disabled={disabled || (action === 'accept' && !proposedValue)} onClick={() => onAction?.(action, card)} className="rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 font-medium text-neutral-800 hover:bg-neutral-50 focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:cursor-not-allowed disabled:opacity-50" aria-label={`${label} for row ${card.sourceRowId}`}>{disabled ? (action === 'accept' ? 'Applying…' : label) : label}</button>
+        {actions.map(([action, label, actionDisabled]) => (
+          <button key={action} type="button" disabled={disabled || actionDisabled} onClick={() => onAction?.(action, card)} className="rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 font-medium text-neutral-800 hover:bg-neutral-50 focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:cursor-not-allowed disabled:opacity-50" aria-label={`${label} for row ${card.sourceRowId}`}>{disabled ? (action === 'accept' ? 'Applying…' : label) : label}</button>
         ))}
       </div>}
     </section>
@@ -2802,10 +2827,27 @@ export function HazardVibeReviewCard({ message, disabled = false, onAction, onOp
 
 export function HazardDownstreamImpactCard({ message, disabled = false, onAction, onOpenSource }) {
   const card = message?.hazardDownstreamImpact;
+  const normalizedImpacts = (card?.impacts || []).map((impact, index) => typeof impact === "string"
+    ? { id: `impact-${index + 1}`, label: impact }
+    : { id: impact.id || `impact-${index + 1}`, label: impact.label || impact.reason || "Downstream review", ...impact });
+  const [selectedImpactIds, setSelectedImpactIds] = useState(() => normalizedImpacts.map((impact) => impact.id));
+  const autoAdvancedEmptyRef = useRef(false);
+  const active = Boolean(card && !card.completed);
+  useEffect(() => {
+    if (!card || !active || normalizedImpacts.length || autoAdvancedEmptyRef.current) return;
+    autoAdvancedEmptyRef.current = true;
+    onAction?.("skipAll", { ...card, selectedImpactIds: [], automatic: true });
+  }, [active, card, normalizedImpacts.length, onAction]);
   if (!card) return null;
-  const active = !card.completed;
+  const selected = new Set(selectedImpactIds);
+  const toggleImpact = (id) => setSelectedImpactIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
   return (
     <section className="mt-2 rounded-lg border border-blue-200 bg-blue-50/60 p-3 text-xs" aria-label={`Downstream impact for row ${card.sourceRowId}`}>
+      {card.reviewSequence ? (
+        <div className="mb-2 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1.5 font-semibold text-indigo-900">
+          Parent item {card.reviewSequence.parentItem} of {card.reviewSequence.parentTotal} · Follow-up part {card.reviewSequence.part} of {card.reviewSequence.total}: {card.reviewSequence.label}
+        </div>
+      ) : null}
       <div className="flex items-center justify-between gap-2 font-semibold text-neutral-900">
         <span>Reviewed decision saved</span>
         <button type="button" className="text-indigo-700 underline focus:ring-2 focus:ring-indigo-400" onClick={() => onOpenSource?.(card)}>Open source row</button>
@@ -2815,14 +2857,27 @@ export function HazardDownstreamImpactCard({ message, disabled = false, onAction
         The existing downstream analysis has not been changed.
       </p>
       <div className="mt-2 font-medium text-neutral-800">Potential downstream updates</div>
-      <ul className="mt-1 list-disc space-y-0.5 pl-4 text-neutral-700">
-        {(card.impacts || []).map((impact) => <li key={impact}>{impact}</li>)}
-      </ul>
+      {!normalizedImpacts.length ? <p className="mt-2 rounded border border-blue-100 bg-white p-2 text-neutral-700">No downstream column reviews are required. Continuing to the next review item…</p> : null}
+      <fieldset className="mt-2 space-y-1.5" disabled={disabled || !active}>
+        <legend className="sr-only">Choose downstream reviews</legend>
+        {normalizedImpacts.map((impact) => (
+          <label key={impact.id} className="flex cursor-pointer items-start gap-2 rounded border border-blue-100 bg-white px-2 py-1.5 text-neutral-700">
+            <input type="checkbox" className="mt-0.5" checked={selected.has(impact.id)} onChange={() => toggleImpact(impact.id)} />
+            <span>
+              <span className="font-medium text-neutral-800">{impact.label}</span>
+              {impact.reason ? <span className="mt-0.5 block text-neutral-600">{impact.reason}</span> : null}
+              {impact.affectedColumns?.length ? <span className="mt-1 block text-[11px] text-neutral-500"><strong>Columns:</strong> {impact.affectedColumns.join(", ")}</span> : null}
+            </span>
+          </label>
+        ))}
+      </fieldset>
       {card.resultSummary ? <p className="mt-2 rounded border border-blue-100 bg-white p-2 text-neutral-700">{card.resultSummary}</p> : null}
-      {active ? (
-        <div className="mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Downstream regeneration actions">
-          <button type="button" disabled={disabled} onClick={() => onAction?.("regenerate", card)} className="rounded-md bg-indigo-600 px-2.5 py-1.5 font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">{disabled ? "Regenerating…" : "Regenerate affected row"}</button>
-          <button type="button" disabled={disabled} onClick={() => onAction?.("later", card)} className="rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-50">Regenerate later</button>
+      {active && normalizedImpacts.length ? (
+        <div className="mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Downstream review actions">
+          <button type="button" disabled={disabled} onClick={() => setSelectedImpactIds(normalizedImpacts.map((impact) => impact.id))} className="rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-50">Select all</button>
+          <button type="button" disabled={disabled} onClick={() => setSelectedImpactIds([])} className="rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-50">Clear all</button>
+          <button type="button" disabled={disabled || selectedImpactIds.length === 0} onClick={() => onAction?.("reviewSelected", { ...card, selectedImpactIds })} className="rounded-md bg-indigo-600 px-2.5 py-1.5 font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">{disabled ? "Starting…" : `Review selected (${selectedImpactIds.length})`}</button>
+          <button type="button" disabled={disabled} onClick={() => onAction?.("skipAll", { ...card, selectedImpactIds: [] })} className="rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 font-medium text-neutral-800 hover:bg-neutral-50 disabled:opacity-50">Skip downstream reviews</button>
         </div>
       ) : null}
     </section>
@@ -4990,6 +5045,11 @@ useEffect(() => {
 
   const captureVibeReviewSession = async (domain, session, outcome = "in_progress") => {
     if (!session) return null;
+    if (typeof window !== "undefined" && ["completed", "stopped", "cancelled", "closed"].includes(outcome)) {
+      window.dispatchEvent(new CustomEvent("xhandle:vibe-review-cell-impacts-clear", {
+        detail: { domain, projectId: session.projectId, sessionId: session.id, outcome },
+      }));
+    }
     const summary = domain === "hazard-analysis"
       ? summarizeVibeReviewSession(session)
       : summarizeFunctionalVibeReviewSession(session);
@@ -5048,40 +5108,57 @@ useEffect(() => {
     const governed = proposal.governedDecision || {};
     const counts = summarizeVibeReviewSession(session);
     const applicabilityReview = session.reviewTarget === "guidePhraseApplicable";
+    const resolutionReview = session.reviewTarget === "classificationResolution";
+    const classificationReview = session.reviewTarget === "safetyClassification" || resolutionReview;
+    const resolutionInspection = resolutionReview ? inspectClassificationResolution(headers, state.summary[rowIndex]) : null;
+    const safetySignificance = String(fields["Safety Significant"] || "").trim();
+    const prerequisiteRequired = classificationReview
+      && !/^no$|^not applicable$/i.test(String(fields["Guide Phrase Applicable"] || "").trim())
+      && !/^(?:yes|no)$/i.test(safetySignificance);
     return {
       sessionId: session.id, projectId: session.projectId, sourceRowId: rowId, rowIndex,
       reviewTarget: session.reviewTarget || "safetySignificant",
+      prerequisiteRequired,
       workspaceType: session.workspaceType || "functional-project",
       sourceRunId: session.sourceRunId || "",
       progress: `Item ${session.cursor + 1} of ${session.queue.length} · ${counts.reviewed} decided · ${counts.skipped} skipped · ${counts.remaining} remaining`,
+      reviewSequence: session.reviewSequence || null,
       from: fields["Function (From)"], controlAction: fields["Control Action"], to: fields["Function (To)"],
       subsystem: fields["Subsystem Allocation"], guidePhrase: fields["Guide Phrase"],
       context: [fields["Operational Scenario"], fields["Operational Mode"]].filter(Boolean).join(" / "),
-      existingLabel: applicabilityReview ? "Guide Phrase Applicable" : "Safety Significant",
-      existingValue: applicabilityReview ? fields["Guide Phrase Applicable"] : fields["Safety Significant"],
+      existingLabel: applicabilityReview ? "Guide Phrase Applicable" : resolutionReview ? "Classification Resolution Status" : classificationReview ? "Safety Classification" : "Safety Significant",
+      existingValue: applicabilityReview ? fields["Guide Phrase Applicable"] : resolutionReview ? fields["Classification Resolution Status"] : classificationReview ? fields["Safety Classification"] : fields["Safety Significant"],
       existingSafetySignificant: fields["Safety Significant"],
-      existingRationale: applicabilityReview ? fields["Guide Phrase Applicability Rationale"] : fields["Safety Significance Rationale"],
-      explanation: normalized?.valid
+      existingRationale: applicabilityReview ? fields["Guide Phrase Applicability Rationale"] : resolutionReview ? (resolutionInspection?.findings || []).join(" ") : classificationReview ? fields["Classification Evidence"] : fields["Safety Significance Rationale"],
+      explanation: prerequisiteRequired
+        ? "Safety Significance is not yet governed for this row, so Safety Classification cannot be finalized."
+        : normalized?.valid
         ? (proposal.explanation || "The proposal passed the configured safety-classification checks.")
         : `The AI assessment was withheld because it did not pass the configured safety-classification checks: ${normalized?.evidenceGap || "a definitive classification was not supported"}.`,
-      proposedValue: applicabilityReview
+      proposedValue: prerequisiteRequired || (resolutionReview && !normalized?.valid) ? "" : applicabilityReview
         ? (governed["Guide Phrase Applicable"] === "Needs Review" ? "" : governed["Guide Phrase Applicable"])
-        : (governed["Safety Significant"] === "Needs Review" ? "" : governed["Safety Significant"]),
+        : classificationReview ? governed["Safety Classification"] : (governed["Safety Significant"] === "Needs Review" ? "" : governed["Safety Significant"]),
       proposedSafetySignificant: governed["Safety Significant"] === "Needs Review" ? "" : governed["Safety Significant"],
-      proposalDescriptor: applicabilityReview ? "Guide Phrase Applicable" : "",
+      proposalDescriptor: applicabilityReview ? "Guide Phrase Applicable" : classificationReview ? `${governed["Safety Classification Rule"] || "rule pending"} · ${governed["Causal Path Type"] || "path pending"}` : "",
       classification: governed["Safety Classification"], rule: governed["Safety Classification Rule"],
       confidence: applicabilityReview ? proposal.applicabilityConfidence : governed["Classification Confidence"],
-      rationale: applicabilityReview ? governed["Guide Phrase Applicability Rationale"] : governed["Safety Significance Rationale"],
+      rationale: prerequisiteRequired ? "Review Safety Significance first; the current classification session and row position will be preserved." : applicabilityReview ? governed["Guide Phrase Applicability Rationale"] : classificationReview ? governed["Classification Evidence"] : governed["Safety Significance Rationale"],
       evidenceGap: normalized?.evidenceGap, proposal,
+      manualDispositionWarning: resolutionReview
+        ? "Manual classification buttons record a human disposition. They clear this gap only when the row's supporting evidence passes policy validation."
+        : "",
+      allowNotApplicable: /^no$/i.test(String(fields["Guide Phrase Applicable"] || "")),
+      relatedClassificationSupported: isSubstantiveClassificationEvidence(fields["Intermediate Safety Function"] || governed["Intermediate Safety Function"])
+        && isSubstantiveClassificationEvidence(fields["Intermediate Safety Effect"] || governed["Intermediate Safety Effect"]),
       canUndo: session.decisions.length > 0,
     };
   };
 
-  const appendVibeReviewProposal = async (session, providerApi, signal, { continuation = false } = {}) => {
+  const appendVibeReviewProposal = async (session, providerApi, signal, { continuation = false, stateOverride = null } = {}) => {
     let working = session;
     while (currentVibeReviewRowId(working)) {
       const activeProvider = await waitForActionProvider("project-functional-diagram", 1800) || providerApi;
-      const state = activeProvider?.getHazardVibeReviewState?.();
+      const state = stateOverride || activeProvider?.getHazardVibeReviewState?.();
       const rowId = currentVibeReviewRowId(working);
       const headers = state?.summary?.[0] || [];
       const idIndex = headers.findIndex((header) => /^(?:Raw Analysis Row ID|Raw Row ID|Analysis Row ID)$/i.test(String(header).trim()));
@@ -5098,22 +5175,46 @@ useEffect(() => {
         working = transitionVibeReviewSession(working, { type: "missing", record: { sourceRowId: rowId, reason: "Row was deleted after this review began." } });
         saveVibeReviewSession(working); continue;
       }
-      const normalized = await requestVibeReviewProposal({ headers, row, projectName: state.projectName, organizationContext: state.organizationContext,
-        provider: working.ai.provider, model: working.ai.model, effort: working.ai.effort,
-        reviewTarget: working.reviewTarget || "safetySignificant", signal });
+      const rowFields = Object.fromEntries(headers.map((header, index) => [header, row[index] ?? ""]));
+      const prerequisiteRequired = ["safetyClassification", "classificationResolution"].includes(working.reviewTarget)
+        && !/^no$|^not applicable$/i.test(String(rowFields["Guide Phrase Applicable"] || "").trim())
+        && !/^(?:yes|no)$/i.test(String(rowFields["Safety Significant"] || "").trim());
+      const normalized = prerequisiteRequired
+        ? { valid: false, errors: ["Safety Significance must be reviewed first"], evidenceGap: "Safety Significance is an unresolved governed prerequisite.", proposal: { reviewTarget: "safetyClassification", governedDecision: null } }
+        : await requestVibeReviewProposal({ headers, row, projectName: state.projectName, organizationContext: state.organizationContext,
+          provider: working.ai.provider, model: working.ai.model, effort: working.ai.effort,
+          reviewTarget: working.reviewTarget || "safetySignificant", signal });
       working = transitionVibeReviewSession(working, { type: "proposal", proposal: normalized.proposal, currentRowSnapshot: [...row] });
       saveVibeReviewSession(working);
       const card = buildVibeReviewCard(working, state, rowId, normalized);
       const providerFormatFailure = normalized.errors?.some((error) => /omitted the required normalizedDecision|usable structured decision/i.test(String(error)));
-      const continuationPrefix = continuation ? "Next review item: " : "";
-      appendMessage(activeId, { role: "assistant", content: normalized.valid
+      const continuationPrefix = continuation
+        ? (working.reviewSequence ? `Follow-up part ${working.reviewSequence.part} of ${working.reviewSequence.total}: ` : "Next review item: ")
+        : "";
+      appendMessage(activeId, { role: "assistant", content: card?.prerequisiteRequired
+        ? `${continuationPrefix}Safety Significance must be reviewed before Safety Classification for ${rowId}. Your classification review position will be preserved.`
+        : normalized.valid
         ? `${continuationPrefix}Here is the proposed assessment for Raw Analysis Row ID ${rowId}. It is an AI proposal, not approved engineering evidence.`
         : providerFormatFailure
-          ? `${continuationPrefix}The selected model did not return a usable structured proposal for ${rowId}, including after one repair attempt. The row is unchanged. You can still make an explicit reviewer disposition with Mark Yes or Mark No, or skip it.`
-          : `${continuationPrefix}I can’t form a valid Yes/No ${working.reviewTarget === "guidePhraseApplicable" ? "guide-phrase applicability " : ""}proposal for ${rowId}. Evidence gap: ${normalized.evidenceGap}`, vibeReview: card });
+          ? `${continuationPrefix}The selected model did not return a usable structured proposal for ${rowId}, including after one repair attempt. The row is unchanged. ${["safetyClassification", "classificationResolution"].includes(working.reviewTarget) ? "You can make an explicit human classification disposition or skip it; a manual disposition may leave an evidence gap." : "You can still make an explicit reviewer disposition with Mark Yes or Mark No, or skip it."}`
+          : `${continuationPrefix}I can’t form a valid ${working.reviewTarget === "guidePhraseApplicable" ? "Yes/No guide-phrase applicability" : ["safetyClassification", "classificationResolution"].includes(working.reviewTarget) ? "safety-classification" : "Yes/No safety-significance"} proposal for ${rowId}. Evidence gap: ${normalized.evidenceGap}`, vibeReview: card });
       setThreads(loadThreads()); return working;
     }
     const summary = summarizeVibeReviewSession(working);
+    if (working.returnToReviewSession || working.returnToClassificationSession) {
+      const resumed = {
+        ...(working.returnToReviewSession || working.returnToClassificationSession),
+        state: VIBE_REVIEW_STATES.PROPOSING,
+        proposal: null,
+        currentRowSnapshot: null,
+        updatedAt: new Date().toISOString(),
+      };
+      saveVibeReviewSession(resumed);
+      await captureVibeReviewSession("hazard-analysis", working, "completed");
+      appendMessage(activeId, { role: "assistant", content: `Follow-up review complete. Returning to the saved ${(resumed.reviewTarget || "parent").replace(/([A-Z])/g, " $1").trim()} review.` });
+      setThreads(loadThreads());
+      return appendVibeReviewProposal(resumed, providerApi, signal);
+    }
     await captureVibeReviewSession("hazard-analysis", working, "completed");
     appendMessage(activeId, { role: "assistant", content: formatVibeReviewSummary(working, summary) }); setThreads(loadThreads());
     return working;
@@ -5127,7 +5228,11 @@ useEffect(() => {
       : session.reviewTarget === "guidePhraseApplicable"
         ? "\n\nRegenerate Safety Issues to propagate the governed guide-phrase applicability changes. The reviewed hazard-row decisions remain valid unless their interface, operational context, or guide phrase changes."
         : "\n\nRegenerate Safety Issues because governed hazard classifications changed.";
-    const reviewedField = session.reviewTarget === "guidePhraseApplicable" ? "Guide Phrase Applicable" : "Safety Significant";
+    const reviewedField = session.reviewTarget === "guidePhraseApplicable" ? "Guide Phrase Applicable" : session.reviewTarget === "classificationResolution" ? "Classification Resolution Status" : session.reviewTarget === "safetyClassification" ? "Safety Classification" : "Safety Significant";
+    if (["safetyClassification", "classificationResolution"].includes(session.reviewTarget)) {
+      const classificationCounts = Object.entries(counts.classificationChanges || {}).filter(([, count]) => count).map(([value, count]) => `${value}: ${count}`).join("; ") || "none";
+      return `Hazard vibe review ${session.state === VIBE_REVIEW_STATES.CANCELLED ? "stopped" : "complete"}. Scope: ${session.scopeLabel}; reviewed field: Safety Classification; ${counts.total} total. Reviewed ${counts.reviewed}; accepted ${counts.accepted}; skipped ${counts.skipped}; failed ${counts.failed}; remaining ${counts.remaining}. Classification changes: ${classificationCounts}.${changed ? `\n\nChanged rows:\n${changed}` : ""}${unresolved ? `\n\nSkipped or unresolved:\n${unresolved}` : ""}${session.decisions.length ? "\n\nRegenerate Safety Issues as a separate step; the reviewed applicability, safety significance, and safety classification decisions remain governed." : ""}`;
+    }
     return `Hazard vibe review ${session.state === VIBE_REVIEW_STATES.CANCELLED ? "stopped" : "complete"}. Scope: ${session.scopeLabel}; reviewed field: ${reviewedField}; ${counts.total} total. Reviewed ${counts.reviewed}; accepted ${counts.accepted}; overridden to Yes ${counts.overriddenToYes}; overridden to No ${counts.overriddenToNo}; skipped ${counts.skipped}; failed ${counts.failed}; remaining ${counts.remaining}. Changed to Yes: ${counts.changedToYes}; changed to No: ${counts.changedToNo}.${changed ? `\n\nChanged rows:\n${changed}` : ""}${unresolved ? `\n\nSkipped or unresolved:\n${unresolved}` : ""}${session.decisions.length ? downstreamMessage : ""}`;
   };
 
@@ -5188,6 +5293,33 @@ useEffect(() => {
           return;
         }
         throw new Error("This review is paused. Return to its original project and workspace before applying a decision.");
+      }
+      if (action === "reviewSafetySignificance") {
+        if (!["safetyClassification", "classificationResolution"].includes(session.reviewTarget)) throw new Error("This prerequisite action is only available during classification review.");
+        const prerequisite = {
+          ...createVibeReviewSession({
+            projectId: session.projectId,
+            threadId: session.threadId,
+            queue: [card.sourceRowId],
+            reviewName: `Safety Significance prerequisite — ${session.reviewName || "Safety Classification review"}`,
+            scopeLabel: `Safety Significant for ${card.sourceRowId}`,
+            reviewTarget: "safetySignificant",
+            reviewerName: session.reviewerName,
+            reviewerId: session.reviewerId,
+            ai: session.ai,
+            workspaceType: session.workspaceType,
+            sourceRunId: session.sourceRunId,
+            repoId: session.repoId,
+          }),
+          returnToClassificationSession: { ...session, proposal: null, currentRowSnapshot: null },
+        };
+        saveVibeReviewSession(prerequisite);
+        closeVibeReviewCard(card, "prerequisite-review");
+        await captureVibeReviewSession("hazard-analysis", prerequisite, "started");
+        appendMessage(activeId, { role: "assistant", content: `Reviewing Safety Significance for ${card.sourceRowId} first. Your Safety Classification review position is saved.` });
+        setThreads(loadThreads());
+        await appendVibeReviewProposal(prerequisite, providerApi, signal);
+        return;
       }
       if (action === "undo") {
         const last = session.decisions[session.decisions.length - 1];
@@ -5250,18 +5382,22 @@ useEffect(() => {
         }
         if (session.currentRowSnapshot && JSON.stringify(session.currentRowSnapshot) !== JSON.stringify(row)) throw new Error("The saved current row changed after the review was paused. No data was changed; restart or review the updated row in a new session.");
         setHazardSessionCardsState(session.id, {}, { retire: true });
-        if (session.proposal) {
+        if (session.proposal && session.reviewTarget !== "classificationResolution") {
           const cardToRestore = buildVibeReviewCard(session, state, rowId, { valid: true, proposal: session.proposal });
           appendMessage(activeId, { role: "assistant", content: `Resumed ${session.reviewName || "hazard review"} at the saved current item.`, vibeReview: cardToRestore });
           setThreads(loadThreads());
         } else {
-          await appendVibeReviewProposal(session, providerApi, signal);
+          const refreshedSession = session.reviewTarget === "classificationResolution"
+            ? { ...session, state: VIBE_REVIEW_STATES.PROPOSING, proposal: null, currentRowSnapshot: null }
+            : session;
+          saveVibeReviewSession(refreshedSession);
+          await appendVibeReviewProposal(refreshedSession, providerApi, signal);
         }
         return;
       }
       if (currentVibeReviewRowId(session) !== card.sourceRowId) return;
       let proposal = session.proposal;
-      if (action === "yes" || action === "no") {
+      if (["yes", "no", "classificationDirect", "classificationRelated", "classificationMission", "classificationNotApplicable"].includes(action)) {
         const headers = state.summary[0]; const idIndex = headers.findIndex((h) => /Raw (?:Analysis )?Row ID|Analysis Row ID/i.test(h));
         const row = state.summary.slice(1).find((candidate) => String(candidate[idIndex]).trim() === card.sourceRowId);
         if (!row) throw new Error("The source row is no longer available in the active hazard analysis.");
@@ -5270,9 +5406,12 @@ useEffect(() => {
           proposal,
           userFeedback,
         };
+        const classificationByAction = { classificationDirect: "Safety — Direct", classificationRelated: "Safety — Related", classificationMission: "Mission/Reliability", classificationNotApplicable: "Not Applicable" };
         const humanDecision = session.reviewTarget === "guidePhraseApplicable"
           ? buildHumanGuidePhraseApplicabilityDecision({ ...decisionArgs, applicable: action === "yes" ? "Yes" : "No" })
-          : buildHumanVibeReviewDecision({ ...decisionArgs, significance: action === "yes" ? "Yes" : "No" });
+          : ["safetyClassification", "classificationResolution"].includes(session.reviewTarget)
+            ? buildHumanSafetyClassificationDecision({ ...decisionArgs, classification: classificationByAction[action] })
+            : buildHumanVibeReviewDecision({ ...decisionArgs, significance: action === "yes" ? "Yes" : "No" });
         proposal = { ...humanDecision, governedDecision: { ...humanDecision } };
       }
       if (!proposal?.governedDecision) throw new Error(`A definitive proposal is unavailable. Skip this row or provide the missing evidence: ${card.evidenceGap || "classification basis"}.`);
@@ -5302,14 +5441,20 @@ useEffect(() => {
       const previousGovernedFields = Object.fromEntries(result.headers.map((header, index) => [header, result.previousRow[index]]).filter(([header]) => governedHeaders.has(header)));
       const newReviewValue = session.reviewTarget === "guidePhraseApplicable"
         ? proposal.governedDecision["Guide Phrase Applicable"]
-        : proposal.governedDecision["Safety Significant"];
+        : ["safetyClassification", "classificationResolution"].includes(session.reviewTarget) ? proposal.governedDecision["Safety Classification"] : proposal.governedDecision["Safety Significant"];
       const record = { sourceRowId: card.sourceRowId, rowIndex: result.rowIndex - 1, label: `${card.from} → ${card.controlAction} → ${card.to}`, action,
         previousRow: result.previousRow, nextRow: result.nextRow, headers: result.headers,
         previousGovernedFields, reviewTarget: session.reviewTarget || "safetySignificant", newReviewValue,
         newSafetySignificant: proposal.governedDecision["Safety Significant"],
         proposal: { normalizedDecision: proposal.normalizedDecision, confidence: proposal.applicabilityConfidence || proposal.governedDecision["Classification Confidence"] },
         rationale: proposal.governedDecision["Guide Phrase Applicability Rationale"] || proposal.governedDecision["Safety Significance Rationale"] || proposal.governedDecision["Classification Evidence"] || proposal.explanation || "",
-        userFeedback, timestamp: new Date().toISOString() };
+        userFeedback, reviewerName: session.reviewerName || "", reviewerId: session.reviewerId || "", timestamp: new Date().toISOString() };
+      if (typeof window !== "undefined") {
+        const changedColumns = result.headers.filter((header, index) => result.previousRow[index] !== result.nextRow[index]);
+        if (changedColumns.length) window.dispatchEvent(new CustomEvent("xhandle:vibe-review-cell-impacts", {
+          detail: { domain: "hazard-analysis", projectId: session.projectId, sessionId: session.id, rowId: card.sourceRowId, changedColumns },
+        }));
+      }
       appendVibeReviewAudit({ ...record, sessionId: session.id, projectId: session.projectId, threadId: session.threadId, provider: session.ai.provider, model: session.ai.model, effort: session.ai.effort, validationOutcome: "applied", newGovernedFields: proposal.governedDecision });
       await captureVibeReviewDecision({
         domain: "hazard-analysis", projectId: session.projectId, workspaceType: session.workspaceType,
@@ -5320,11 +5465,69 @@ useEffect(() => {
         rationale: proposal.governedDecision["Classification Rationale"] || proposal.governedDecision["Classification Evidence"] || "",
         userFeedback, ai: session.ai, timestamp: record.timestamp,
       });
-      if (["guidePhraseApplicable", "safetySignificant"].includes(session.reviewTarget)) {
-        const applicabilityReview = session.reviewTarget === "guidePhraseApplicable";
+      if (session.reviewTarget === "classificationResolution") {
+        const validatedStatuses = new Set([
+          CLASSIFICATION_RESOLUTION_STATUS.POLICY_VALIDATED,
+          CLASSIFICATION_RESOLUTION_STATUS.HUMAN_POLICY_VALIDATED,
+        ]);
+        if (!validatedStatuses.has(result.classificationResolutionStatus)) {
+          const remainingFindings = (result.classificationResolutionFindings || []).filter(Boolean);
+          const retrySession = {
+            ...session,
+            state: VIBE_REVIEW_STATES.AWAITING,
+            proposal: null,
+            currentRowSnapshot: [...result.nextRow],
+            updatedAt: new Date().toISOString(),
+          };
+          saveVibeReviewSession(retrySession);
+          closeVibeReviewCard(card, "policy-gap-remains");
+          const retryState = {
+            ...state,
+            summary: [result.headers, ...state.summary.slice(1).map((row) => {
+              const sourceHeaders = state.summary[0];
+              const sourceIdIndex = sourceHeaders.findIndex((header) => /^(?:Raw Analysis Row ID|Raw Row ID|Analysis Row ID)$/i.test(String(header).trim()));
+              return String(row?.[sourceIdIndex] || "").trim() === card.sourceRowId ? result.nextRow : row;
+            })],
+          };
+          const unresolved = {
+            valid: false,
+            errors: remainingFindings,
+            evidenceGap: remainingFindings.join(" ") || "The selected classification still conflicts with the row evidence.",
+            proposal: { reviewTarget: "classificationResolution", governedDecision: null },
+          };
+          appendMessage(activeId, {
+            role: "assistant",
+            content: `Same review item remains unresolved for ${card.sourceRowId}; it has not advanced to the next item. Classification Resolution Status is ${result.classificationResolutionStatus || "unresolved"}.${remainingFindings.length ? ` Remaining findings:\n- ${remainingFindings.join("\n- ")}` : ""} Choose a supported classification, skip this row, pause, or stop the review.`,
+            vibeReview: buildVibeReviewCard(retrySession, retryState, card.sourceRowId, unresolved),
+          });
+          setThreads(loadThreads());
+          return;
+        }
         appendMessage(activeId, {
           role: "assistant",
-          content: `The reviewed ${applicabilityReview ? "applicability" : "safety-significance"} decision is saved. Downstream regeneration is a separate step so no additional engineering fields are changed without an explicit action.`,
+          content: `Policy gap resolved for ${card.sourceRowId}. Classification Resolution Status is now ${result.classificationResolutionStatus}.`,
+        });
+      }
+      const cascade = planHazardDecisionCascade({
+        projectId: session.projectId,
+        workspaceType: session.workspaceType,
+        sourceReviewId: session.id,
+        rowId: card.sourceRowId,
+        reviewTarget: session.reviewTarget,
+        decision: newReviewValue,
+      });
+      const parentReviewPosition = { item: session.cursor + 1, total: session.queue.length };
+      const cascadeStep = currentReviewCascadeStep(cascade);
+      const immediateFollowUpTarget = cascadeStep?.type === "hazard-safety-significance"
+        ? "safetySignificant"
+        : cascadeStep?.type === "hazard-safety-classification" ? "safetyClassification" : "";
+      let waitingForDownstreamSelection = false;
+      if (["guidePhraseApplicable", "safetySignificant", "safetyClassification", "classificationResolution"].includes(session.reviewTarget) && !immediateFollowUpTarget && cascade.steps.length > 0) {
+        const applicabilityReview = session.reviewTarget === "guidePhraseApplicable";
+        const classificationReview = ["safetyClassification", "classificationResolution"].includes(session.reviewTarget);
+        appendMessage(activeId, {
+          role: "assistant",
+          content: `The reviewed ${applicabilityReview ? "applicability" : classificationReview ? "Safety Classification" : "safety-significance"} decision is saved. Downstream regeneration is a separate step so no additional engineering fields are changed without an explicit action.`,
           hazardDownstreamImpact: {
             sessionId: session.id,
             projectId: session.projectId,
@@ -5334,26 +5537,66 @@ useEffect(() => {
             label: record.label,
             decision: newReviewValue,
             reviewTarget: session.reviewTarget,
-            reviewedField: applicabilityReview ? "Guide Phrase Applicable" : "Safety Significant",
-            impacts: applicabilityReview ? [
-              "Hazard, loss, unsafe-control-action, and causal-scenario content may change.",
-              "Mitigations, constraints, and allocated requirements may change.",
-              "Safety classification and safety significance must be reassessed from the regenerated causal path.",
-              "Consolidated Safety Issues remain stale until they are regenerated separately.",
-            ] : [
-              "Safety classification, classification rule, and causal-path type may change.",
-              "Loss, hazard, consequence, and physical-harm-chain claims must be reconciled with the reviewed decision.",
-              "Mitigations, safety constraints, requirements, and verification evidence may change.",
-              "Consolidated Safety Issues remain stale until they are regenerated separately.",
-            ],
+            reviewedField: applicabilityReview ? "Guide Phrase Applicable" : classificationReview ? "Safety Classification" : "Safety Significant",
+            impacts: cascade.steps.map((step) => ({ id: step.id, type: step.type, label: step.label, reason: step.reason, affectedColumns: step.affectedColumns || [] })),
+            cascade,
+            pausesParentReview: true,
+            reviewSequence: session.reviewSequence
+              ? { ...session.reviewSequence, part: Math.min(session.reviewSequence.total, session.reviewSequence.part + 1), label: "Choose downstream column reviews" }
+              : { parentItem: parentReviewPosition.item, parentTotal: parentReviewPosition.total, part: 1, total: 1, label: "Choose downstream column reviews" },
           },
         });
+        waitingForDownstreamSelection = true;
       }
       session = transitionVibeReviewSession(session, { type: "decision", record }); saveVibeReviewSession(session);
       if (session.state !== VIBE_REVIEW_STATES.COMPLETED) {
         await captureVibeReviewSession("hazard-analysis", session, "in_progress");
       }
       closeVibeReviewCard(card, action === "accept" ? "accepted" : `marked-${action}`);
+      if (immediateFollowUpTarget) {
+        const followUp = {
+          ...createVibeReviewSession({
+            projectId: session.projectId,
+            threadId: session.threadId,
+            queue: [card.sourceRowId],
+            reviewName: `${cascadeStep.label} — ${session.reviewName || record.label}`,
+            scopeLabel: `${cascadeStep.label} for ${card.sourceRowId}`,
+            reviewTarget: immediateFollowUpTarget,
+            reviewerName: session.reviewerName,
+            reviewerId: session.reviewerId,
+            ai: session.ai,
+            workspaceType: session.workspaceType,
+            sourceRunId: session.sourceRunId,
+            repoId: session.repoId,
+          }),
+          cascade,
+          reviewSequence: {
+            parentItem: parentReviewPosition.item,
+            parentTotal: parentReviewPosition.total,
+            part: 1,
+            total: 2,
+            label: cascadeStep.label,
+          },
+          returnToReviewSession: { ...session, proposal: null, currentRowSnapshot: null },
+        };
+        saveVibeReviewSession(followUp);
+        await captureVibeReviewSession("hazard-analysis", followUp, "started");
+        appendMessage(activeId, { role: "assistant", content: `${cascadeStep.reason} Starting ${cascadeStep.label} now; the current review position is saved.` });
+        setThreads(loadThreads());
+        const idIndex = state.summary[0].findIndex((header) => /^(?:Raw Analysis Row ID|Raw Row ID|Analysis Row ID)$/i.test(String(header).trim()));
+        const followUpState = {
+          ...state,
+          summary: [state.summary[0], ...state.summary.slice(1).map((row) => (
+            String(row?.[idIndex] || "").trim() === card.sourceRowId ? result.nextRow : row
+          ))],
+        };
+        await appendVibeReviewProposal(followUp, providerApi, signal, { continuation: true, stateOverride: followUpState });
+        return;
+      }
+      if (waitingForDownstreamSelection) {
+        setThreads(loadThreads());
+        return;
+      }
       await appendVibeReviewProposal(session, providerApi, signal, { continuation: true });
     } catch (error) {
       if ((signal?.aborted || error?.name === "AbortError") && fromRunCopilot) throw error;
@@ -5713,6 +5956,21 @@ useEffect(() => {
         beforeRow: result.previousRow, afterRow: record.nextRow, columns: record.columns,
         rationale: record.rationale || proposal.explanation || "", userFeedback, ai: session.ai, timestamp: record.timestamp,
       });
+      const functionalCascade = planFunctionalDecisionCascade({
+        projectId: session.projectId,
+        workspaceType: session.workspaceType,
+        sourceReviewId: session.id,
+        rowId: card.rowId,
+        decision,
+      });
+      if (functionalCascade.steps.length) {
+        appendMessage(activeId, {
+          role: "assistant",
+          content: `The accepted functional change queued a follow-up review cascade:\n${functionalCascade.steps.map((step, index) => `${index + 1}. ${step.label} — ${step.reason}`).join("\n")}`,
+          reviewCascade: functionalCascade,
+        });
+        setThreads(loadThreads());
+      }
       const propagatedRows = record.affectedRows.filter((entry) => entry.propagated);
       for (const entry of propagatedRows) {
         await captureVibeReviewDecision({
@@ -6007,14 +6265,14 @@ useEffect(() => {
     provider?.openHazardVibeReviewRow?.(card);
   }
 
-  function completeHazardDownstreamImpactCard(card, outcome, resultSummary = "") {
+  function completeHazardDownstreamImpactCard(card, outcome, resultSummary = "", extra = {}) {
     const thread = loadThreads().find((entry) => entry.id === activeId);
     if (!thread) return;
     setMessages(activeId, (thread.messages || []).map((message) => (
       message?.hazardDownstreamImpact?.sessionId === card.sessionId
       && message.hazardDownstreamImpact.sourceRowId === card.sourceRowId
       && !message.hazardDownstreamImpact.completed
-        ? { ...message, hazardDownstreamImpact: { ...message.hazardDownstreamImpact, completed: true, outcome, resultSummary } }
+        ? { ...message, hazardDownstreamImpact: { ...message.hazardDownstreamImpact, completed: true, outcome, resultSummary, ...extra } }
         : message
     )));
     setThreads(loadThreads());
@@ -6022,33 +6280,106 @@ useEffect(() => {
 
   async function handleHazardDownstreamImpactAction(action, card) {
     if (!card || busy) return;
-    if (action === "later") {
-      completeHazardDownstreamImpactCard(card, "deferred", `Regeneration was deferred. The reviewed ${card.reviewedField || "applicability"} decision remains saved, and downstream Safety Issues remain stale.`);
+    if (action === "skipAll") {
+      const selectedCascade = card.cascade ? selectReviewCascadeSteps(card.cascade, []) : null;
+      const automatic = card.automatic === true;
+      completeHazardDownstreamImpactCard(card, automatic ? "not-required" : "skipped", automatic
+        ? `No downstream reviews were required. Continued automatically with the reviewed ${card.reviewedField || "decision"} preserved.`
+        : `All downstream reviews were explicitly skipped. The reviewed ${card.reviewedField || "applicability"} decision remains saved; no downstream engineering fields were changed and affected artifacts remain stale.`, {
+        selectedImpactIds: [],
+        cascade: selectedCascade,
+      });
+      await continueHazardReviewAfterDownstreamDecision(card);
       return;
     }
+    if (action !== "reviewSelected" || !card.selectedImpactIds?.length) return;
+    const selectedImpactIds = [...new Set(card.selectedImpactIds)];
+    const selectedImpacts = (card.impacts || []).filter((impact, index) => selectedImpactIds.includes(
+      typeof impact === "string" ? `impact-${index + 1}` : impact.id || `impact-${index + 1}`
+    ));
+    const selectedLabels = (card.impacts || []).map((impact, index) => ({
+      id: typeof impact === "string" ? `impact-${index + 1}` : impact.id || `impact-${index + 1}`,
+      label: typeof impact === "string" ? impact : `${impact.label || impact.reason || "Downstream review"}${impact.affectedColumns?.length ? ` — columns: ${impact.affectedColumns.join(", ")}` : ""}`,
+    })).filter((impact) => selectedImpactIds.includes(impact.id)).map((impact) => impact.label);
+    const cascadeStepIds = (card.cascade?.steps || []).filter((step) => selectedImpactIds.includes(step.impactId || step.id)).map((step) => step.id);
+    const selectedCascade = card.cascade ? selectReviewCascadeSteps(card.cascade, cascadeStepIds) : null;
     setBusy(true);
-    setWorkProgress([`Regenerating the affected hazard row from the reviewed ${card.reviewedField || "applicability"} decision…`]);
+    setWorkProgress([`Preparing ${selectedImpactIds.length} selected downstream review${selectedImpactIds.length === 1 ? "" : "s"}…`]);
     try {
       const provider = await waitForActionProvider("project-functional-diagram", 1800);
       if (!provider?.regenerateHazardVibeReviewRow) throw new Error("The scoped hazard-regeneration provider is unavailable.");
-      const result = await provider.regenerateHazardVibeReviewRow(card);
-      if (!result) throw new Error("The affected row was not regenerated.");
+      const rowReviewSelected = selectedImpacts.some((impact) => typeof impact === "string" || impact.type !== "safety-issue-regeneration");
+      const safetyIssuesSelected = selectedImpacts.some((impact) => typeof impact !== "string" && impact.type === "safety-issue-regeneration");
+      const result = rowReviewSelected
+        ? await provider.regenerateHazardVibeReviewRow({ ...card, selectedImpactIds, selectedImpactLabels: selectedLabels })
+        : null;
+      if (rowReviewSelected && !result) throw new Error("The affected row was not regenerated.");
       const governedFields = card.reviewTarget === "safetySignificant"
         ? ["Safety Significant", "Safety Significance Rationale"]
         : ["Guide Phrase Applicable", "Guide Phrase Applicability Rationale"];
-      const changed = (result.changedFields || []).filter((field) => !governedFields.includes(field));
-      const summary = changed.length
+      const changed = (result?.changedFields || []).filter((field) => !governedFields.includes(field));
+      if (typeof window !== "undefined" && changed.length) window.dispatchEvent(new CustomEvent("xhandle:vibe-review-cell-impacts", {
+        detail: { domain: "hazard-analysis", projectId: card.projectId, sessionId: card.sessionId, rowId: card.sourceRowId, changedColumns: changed },
+      }));
+      let summary = changed.length
         ? `Regenerated the affected row. Downstream content changed in ${changed.length} field${changed.length === 1 ? "" : "s"}: ${changed.join(", ")}. The reviewed ${card.reviewedField || "applicability"} decision remained locked. Regenerate Safety Issues separately when ready.`
-        : `Regenerated the affected row. No downstream fields changed, and the reviewed ${card.reviewedField || "applicability"} decision remained locked.`;
-      completeHazardDownstreamImpactCard(card, "regenerated", summary);
-      appendMessage(activeId, { role: "assistant", content: summary });
+        : rowReviewSelected ? `Regenerated the affected row. No downstream fields changed, and the reviewed ${card.reviewedField || "applicability"} decision remained locked.` : "";
+      if (safetyIssuesSelected) {
+        if (!provider?.regenerateConsolidatedSafetyIssues) throw new Error("The consolidated Safety Issues regeneration provider is unavailable.");
+        const issues = await provider.regenerateConsolidatedSafetyIssues({ mergeExisting: true });
+        summary = summary.replace(" Regenerate Safety Issues separately when ready.", "");
+        summary = `${summary}${summary ? " " : ""}Regenerated ${issues?.length || 0} consolidated Safety Issue${issues?.length === 1 ? "" : "s"}.`;
+      }
+      completeHazardDownstreamImpactCard(card, "reviewed", summary, { selectedImpactIds, cascade: selectedCascade });
       setThreads(loadThreads());
+      await continueHazardReviewAfterDownstreamDecision(card);
     } catch (error) {
       appendMessage(activeId, { role: "assistant", content: `I couldn’t regenerate the affected hazard row: ${error?.message || "the regeneration did not complete"}. The reviewed ${card.reviewedField || "applicability"} decision remains saved and no downstream update was applied.` });
       setThreads(loadThreads());
     } finally {
       setBusy(false);
       setWorkProgress([]);
+    }
+  }
+
+  async function continueHazardReviewAfterDownstreamDecision(card) {
+    if (!card?.pausesParentReview || !card?.projectId || !card?.sessionId) return;
+    try {
+      let session = findVibeReviewSessionById(card.sessionId)
+        || loadVibeReviewSession(card.projectId, activeId);
+      if (!session || session.state === VIBE_REVIEW_STATES.CANCELLED) return;
+      const provider = await waitForActionProvider("project-functional-diagram", 1800);
+      if (!provider) throw new Error("The hazard review provider is unavailable.");
+      if (session.state === VIBE_REVIEW_STATES.COMPLETED && (session.returnToReviewSession || session.returnToClassificationSession)) {
+        const child = session;
+        session = {
+          ...(child.returnToReviewSession || child.returnToClassificationSession),
+          state: VIBE_REVIEW_STATES.PROPOSING,
+          proposal: null,
+          currentRowSnapshot: null,
+          updatedAt: new Date().toISOString(),
+        };
+        saveVibeReviewSession(session);
+        await captureVibeReviewSession("hazard-analysis", child, "completed");
+        appendMessage(activeId, {
+          role: "assistant",
+          content: `Follow-up parts ${child.reviewSequence?.total || 2} of ${child.reviewSequence?.total || 2} complete for parent item ${child.reviewSequence?.parentItem || ""}${child.reviewSequence?.parentTotal ? ` of ${child.reviewSequence.parentTotal}` : ""}. Returning to the parent review.`,
+        });
+        setThreads(loadThreads());
+      } else if (session.state === VIBE_REVIEW_STATES.COMPLETED) {
+        if (!session.completionSummaryEmitted) {
+          const completedSession = { ...session, completionSummaryEmitted: true, updatedAt: new Date().toISOString() };
+          saveVibeReviewSession(completedSession);
+          await captureVibeReviewSession("hazard-analysis", completedSession, "completed");
+          appendMessage(activeId, { role: "assistant", content: formatVibeReviewSummary(completedSession) });
+          setThreads(loadThreads());
+        }
+        return;
+      }
+      await appendVibeReviewProposal(session, provider, undefined, { continuation: true });
+    } catch (error) {
+      appendMessage(activeId, { role: "assistant", content: `The downstream decision was saved, but I couldn’t load the next review item: ${error?.message || "the review could not continue"}. Resume the review to try again.` });
+      setThreads(loadThreads());
     }
   }
 

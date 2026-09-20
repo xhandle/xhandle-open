@@ -216,8 +216,16 @@ import {
 import {
   CLASSIFICATION_RESOLUTION_STATUS,
   CLASSIFICATION_RESOLUTION_STATUS_HEADER,
+  ensureClassificationResolutionStatus,
+  inspectClassificationResolution,
   normalizeHazardAnalysisResolutionStatus,
 } from "./features/project-hazard-analysis/classificationResolutionStatus";
+import {
+  getSafetyDetailEntries,
+  isSafetyDetailHeader,
+  reconcileDerivedSafetyColumns,
+  safetyColumnDisplayLabel,
+} from "./features/project-hazard-analysis/safetyColumnSchema";
 import { indexVibeReviewHeaders } from "./features/project-hazard-analysis/vibeReviewScope";
 import { loadVibeReviewAudit } from "./features/project-hazard-analysis/vibeReviewSession";
 import {
@@ -226,6 +234,7 @@ import {
   buildReviewedRowRegenerationContext,
   latestGuidePhraseReviewByRowId,
   latestSafetySignificanceReviewByRowId,
+  latestSafetyClassificationReviewByRowId,
   normalizeReviewedHazardRowForPersistence,
   restoreReviewedGuidePhraseDecisions,
 } from "./features/project-hazard-analysis/hazardRegenerationReview";
@@ -363,6 +372,22 @@ const PROJECT_HAZARD_CONTEXT_HEADER_LIST = [
   "Context Assumptions",
 ];
 const PROJECT_HAZARD_CONTEXT_HEADERS = new Set(PROJECT_HAZARD_CONTEXT_HEADER_LIST);
+
+function getAdaptiveHazardColumnWidth(header, rows = [], columnIndex = 0) {
+  const lengths = rows
+    .map((entry) => String((entry?.row || entry)?.[columnIndex] ?? "").trim().length)
+    .filter(Boolean)
+    .sort((a, b) => a - b);
+  const representativeLength = Math.max(
+    String(header || "").length,
+    lengths.length ? lengths[Math.min(lengths.length - 1, Math.floor(lengths.length * 0.75))] : 0
+  );
+  if (representativeLength <= 18) return 144;
+  if (representativeLength <= 45) return 192;
+  if (representativeLength <= 100) return 256;
+  if (representativeLength <= 240) return 336;
+  return 416;
+}
 
 function buildProjectDraftHazardTargets(functionalRows = [], method = "STPA-Textbook", contexts = []) {
   const guidePhrases = getProjectHazardGuidePhrases(method);
@@ -7277,6 +7302,9 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [showDiagram, setShowDiagram] = useState(false);
   const [selectedLabel, setSelectedLabel] = useState(null);
   const [columnFilters, setColumnFilters] = useState({});
+  const [hazardColumnWidthOverrides, setHazardColumnWidthOverrides] = useState({});
+  const [hazardRowHeightOverrides, setHazardRowHeightOverrides] = useState({});
+  const [activeVibeReviewCellImpacts, setActiveVibeReviewCellImpacts] = useState({});
   const dropdownRefs = useRef({});
   const hazardRowRefs = useRef({});
   const [highlightedHazardRowIndex, setHighlightedHazardRowIndex] = useState(null);
@@ -7300,6 +7328,64 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [needsReviewDraftingGroupId, setNeedsReviewDraftingGroupId] = useState("");
   const [needsReviewResolverStatus, setNeedsReviewResolverStatus] = useState(null);
   const needsReviewResolverAbortRef = useRef(null);
+
+  useEffect(() => {
+    if (!activeProjectId) return;
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(`xhandle:hazard-table-size:${activeProjectId}`) || "{}");
+      setHazardColumnWidthOverrides(saved.columns || {});
+      setHazardRowHeightOverrides(saved.rows || {});
+    } catch {
+      setHazardColumnWidthOverrides({});
+      setHazardRowHeightOverrides({});
+    }
+  }, [activeProjectId]);
+
+  useEffect(() => {
+    if (!activeProjectId) return;
+    try {
+      window.localStorage.setItem(`xhandle:hazard-table-size:${activeProjectId}`, JSON.stringify({
+        columns: hazardColumnWidthOverrides,
+        rows: hazardRowHeightOverrides,
+      }));
+    } catch {
+      // Resizing remains available for the current session when browser storage is unavailable.
+    }
+  }, [activeProjectId, hazardColumnWidthOverrides, hazardRowHeightOverrides]);
+
+  useEffect(() => {
+    const recordImpact = (event) => {
+      const detail = event?.detail || {};
+      if (detail.domain !== "hazard-analysis" || String(detail.projectId || "") !== String(activeProjectId || "")) return;
+      const sessionId = String(detail.sessionId || "");
+      const rowId = String(detail.rowId || "");
+      if (!sessionId || !rowId) return;
+      setActiveVibeReviewCellImpacts((current) => {
+        const session = current[sessionId] || {};
+        const columns = new Set([...(session[rowId] || []), ...(detail.changedColumns || []).map(String)]);
+        return { ...current, [sessionId]: { ...session, [rowId]: [...columns] } };
+      });
+    };
+    const clearImpacts = (event) => {
+      const detail = event?.detail || {};
+      if (detail.domain !== "hazard-analysis" || String(detail.projectId || "") !== String(activeProjectId || "")) return;
+      setActiveVibeReviewCellImpacts((current) => {
+        const next = { ...current };
+        delete next[String(detail.sessionId || "")];
+        return next;
+      });
+    };
+    window.addEventListener("xhandle:vibe-review-cell-impacts", recordImpact);
+    window.addEventListener("xhandle:vibe-review-cell-impacts-clear", clearImpacts);
+    return () => {
+      window.removeEventListener("xhandle:vibe-review-cell-impacts", recordImpact);
+      window.removeEventListener("xhandle:vibe-review-cell-impacts-clear", clearImpacts);
+    };
+  }, [activeProjectId]);
+
+  const isVibeReviewCellImpacted = useCallback((rowId, header) => Object.values(activeVibeReviewCellImpacts).some(
+    (session) => (session?.[String(rowId)] || []).includes(String(header))
+  ), [activeVibeReviewCellImpacts]);
   const [showHazardContextManager, setShowHazardContextManager] = useState(false);
   const [pendingReviewSourceJump, setPendingReviewSourceJump] = useState(null);
   const [filterColumnIndex, setFilterColumnIndex] = useState(null);
@@ -8208,7 +8294,9 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     };
   }, [activeProjectId, analysisResult, hazardNeedsReviewResolutions, needsReviewResolutionGroups, needsReviewRowCount, setSection]);
   const visibleDraftHazardColumnCount = draftHazardHeaders.filter((header) => !PROJECT_HAZARD_CONTEXT_HEADERS.has(header)).length;
-  const visibleHazardSummaryColumnCount = hazardSummaryHeaders.filter((header) => !PROJECT_HAZARD_CONTEXT_HEADERS.has(header)).length;
+  const visibleHazardSummaryColumnCount = hazardSummaryHeaders.filter((header) => (
+    !PROJECT_HAZARD_CONTEXT_HEADERS.has(header) && !isSafetyDetailHeader(header)
+  )).length;
   const hazardSummaryDisplayRows = useMemo(() => {
     const completedSummary = Array.isArray(analysisResult?.Summary?.[0])
       ? analysisResult.Summary
@@ -8251,7 +8339,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       }
 
       return {
-        row: displayRow,
+        row: reconcileDerivedSafetyColumns(hazardSummaryHeaders, displayRow),
         originalIndex: targetIndex,
         interfaceIndex: originalIndex,
         guidePhraseIndex: target.guidePhraseIndex,
@@ -8263,6 +8351,39 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       };
     });
   }, [analysisResult, draftHazardHeaders, draftHazardRowsByIndex, draftHazardTargets, hazardSummaryHeaders]);
+  const hazardSummaryColumnWidths = useMemo(() => hazardSummaryHeaders.map((header, columnIndex) => (
+    hazardColumnWidthOverrides[header] || getAdaptiveHazardColumnWidth(header, hazardSummaryDisplayRows, columnIndex)
+  )), [hazardColumnWidthOverrides, hazardSummaryDisplayRows, hazardSummaryHeaders]);
+  const startHazardColumnResize = useCallback((event, header, initialWidth) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const onMove = (moveEvent) => setHazardColumnWidthOverrides((current) => ({
+      ...current,
+      [header]: Math.max(96, Math.min(720, initialWidth + moveEvent.clientX - startX)),
+    }));
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp, { once: true });
+  }, []);
+  const startHazardRowResize = useCallback((event, rowKey, initialHeight) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const startY = event.clientY;
+    const onMove = (moveEvent) => setHazardRowHeightOverrides((current) => ({
+      ...current,
+      [rowKey]: Math.max(44, Math.min(640, initialHeight + moveEvent.clientY - startY)),
+    }));
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp, { once: true });
+  }, []);
   const classificationResolutionStatusIndex = hazardSummaryHeaders.indexOf(CLASSIFICATION_RESOLUTION_STATUS_HEADER);
   const classificationResolutionGapCount = useMemo(() => (
     classificationResolutionStatusIndex < 0 ? 0 : hazardSummaryDisplayRows.filter(({ row }) => (
@@ -8350,6 +8471,9 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       };
     });
   }, [draftHazardHeaders, draftHazardRowsByIndex, draftHazardTargets]);
+  const draftHazardColumnWidths = useMemo(() => draftHazardHeaders.map((header, columnIndex) => (
+    hazardColumnWidthOverrides[header] || getAdaptiveHazardColumnWidth(header, draftHazardSummaryRows, columnIndex)
+  )), [draftHazardHeaders, draftHazardSummaryRows, hazardColumnWidthOverrides]);
   const hasRegeneratableRiskProfileRows = useMemo(() => (
     draftHazardSummaryRows.some(({ generated }) => generated) ||
     (Array.isArray(analysisResult?.Summary) && analysisResult.Summary.length > 1)
@@ -8461,7 +8585,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     });
   };
   const getDraftHazardCellRows = (value) => {
-    return estimateWrappedTextareaRows(value, 18, Infinity);
+    return estimateWrappedTextareaRows(value, 12, Infinity);
   };
   const riskAssessmentSource = useMemo(() => {
     if (Array.isArray(analysisResult?.Summary?.[0]) && analysisResult.Summary.length > 1) {
@@ -8574,6 +8698,11 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     loadVibeReviewAudit(activeProjectId)
   );
   const safetySignificanceVibeReviewByRowId = latestSafetySignificanceReviewByRowId(
+    resultsReview.reviewItems,
+    activeProjectId,
+    loadVibeReviewAudit(activeProjectId)
+  );
+  const safetyClassificationVibeReviewByRowId = latestSafetyClassificationReviewByRowId(
     resultsReview.reviewItems,
     activeProjectId,
     loadVibeReviewAudit(activeProjectId)
@@ -10860,6 +10989,33 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   ]);
 
   const applyHazardVibeReviewDecision = useCallback(async ({ projectId, sourceRowId, update, reviewerDisposition = false, reviewTarget = "safetySignificant", workspaceType = "functional-project", sourceRunId = "" }) => {
+    const applySafetyClassificationOnly = (summary, rowIndex) => {
+      const allowed = ["Safety Classification", "Safety Classification Rule", "Causal Path Type", "Classification Evidence", "Classification Confidence"];
+      const decision = String(update?.["Safety Classification"] || "").trim();
+      if (!["Safety — Direct", "Safety — Related", "Mission/Reliability", "Not Applicable"].includes(decision)) throw new Error("Safety Classification must be an explicit canonical classification.");
+      const nextSummary = summary.map((row) => Array.isArray(row) ? [...row] : row);
+      const headers = nextSummary[0];
+      allowed.forEach((header) => {
+        const index = findSummaryColumn(headers, [header]);
+        if (index >= 0 && Object.prototype.hasOwnProperty.call(update || {}, header)) nextSummary[rowIndex][index] = String(update[header] ?? "").trim();
+      });
+      return { summary: nextSummary, changedRowIndexes: [rowIndex], rejectedUpdates: [] };
+    };
+    const applyClassificationResolution = (summary, rowIndex) => {
+      const allowed = new Set([
+        "Safety Classification", "Safety Classification Rule", "Causal Path Type", "Classification Evidence", "Classification Confidence",
+        "Causal Effect", "Resulting System State", "Intermediate Safety Function", "Intermediate Safety Effect",
+        "Protection Assessment", "Protection Status", "Physical-Harm Chain Termination",
+      ]);
+      const nextSummary = summary.map((row) => Array.isArray(row) ? [...row] : row);
+      const headers = nextSummary[0];
+      headers.forEach((header, index) => {
+        if (allowed.has(header) && Object.prototype.hasOwnProperty.call(update || {}, header)) {
+          nextSummary[rowIndex][index] = String(update[header] ?? "").trim();
+        }
+      });
+      return { summary: ensureClassificationResolutionStatus(nextSummary), changedRowIndexes: [rowIndex], rejectedUpdates: [] };
+    };
     const applySafetySignificanceOnly = (summary, rowIndex) => {
       const decision = String(update?.["Safety Significant"] || "").trim();
       if (!/^(?:Yes|No)$/i.test(decision)) throw new Error("Safety Significant must be an explicit Yes or No decision.");
@@ -10891,7 +11047,8 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       const previousRow = [...summary[rowIndex]];
       const applied = reviewTarget === "guidePhraseApplicable"
         ? applyGuidePhraseApplicabilityUpdates(summary, [{ ...update, sourceRowId }], [sourceRowId])
-        : applySafetySignificanceOnly(summary, rowIndex);
+        : reviewTarget === "classificationResolution" ? applyClassificationResolution(summary, rowIndex)
+          : reviewTarget === "safetyClassification" ? applySafetyClassificationOnly(summary, rowIndex) : applySafetySignificanceOnly(summary, rowIndex);
       if (applied.rejectedUpdates.length || !applied.changedRowIndexes.length) {
         throw new Error(applied.rejectedUpdates[0]?.error || "The governed decision was invalid or did not change the row.");
       }
@@ -10902,7 +11059,9 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       };
       await saveCodeArchitectureHazardRun(nextRun);
       setCodeArchitectureHazardRun(nextRun);
-      return { sourceRowId, rowIndex, previousRow, nextRow: [...applied.summary[rowIndex]], headers: [...applied.summary[0]], safetyIssuesStale: false };
+      const resolution = inspectClassificationResolution(applied.summary[0], applied.summary[rowIndex]);
+      return { sourceRowId, rowIndex, previousRow, nextRow: [...applied.summary[rowIndex]], headers: [...applied.summary[0]], safetyIssuesStale: false,
+        classificationResolutionStatus: resolution.status, classificationResolutionFindings: resolution.findings };
     }
     if (!activeProjectId || String(projectId) !== String(activeProjectId)) {
       throw new Error("This review belongs to another project. Return to the original project before applying a decision.");
@@ -10915,7 +11074,8 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const previousRow = [...summary[rowIndex]];
     const applied = reviewTarget === "guidePhraseApplicable"
       ? applyGuidePhraseApplicabilityUpdates(summary, [{ ...update, sourceRowId }], [sourceRowId])
-      : applySafetySignificanceOnly(summary, rowIndex);
+      : reviewTarget === "classificationResolution" ? applyClassificationResolution(summary, rowIndex)
+        : reviewTarget === "safetyClassification" ? applySafetyClassificationOnly(summary, rowIndex) : applySafetySignificanceOnly(summary, rowIndex);
     if (applied.rejectedUpdates.length || !applied.changedRowIndexes.length) {
       throw new Error(applied.rejectedUpdates[0]?.error || "The governed decision was invalid or did not change the row.");
     }
@@ -10941,6 +11101,13 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
               decision: update?.["Guide Phrase Applicable"] || reviewedRow[findSummaryColumn(draftHazardHeaders, ["Guide Phrase Applicable"])],
             },
           },
+        } : ["safetyClassification", "classificationResolution"].includes(reviewTarget) ? {
+          safetyClassificationReviewEvidence: {
+            projectId: String(activeProjectId || ""), reviewedAt,
+            currentContent: { rowId: sourceRowId, columns: [...draftHazardHeaders], row: [...reviewedRow] },
+            vibeReview: { domain: "hazard-analysis", reviewTarget: "safetyClassification", rowId: sourceRowId,
+              decision: update?.["Safety Classification"] || reviewedRow[findSummaryColumn(draftHazardHeaders, ["Safety Classification"])] },
+          },
         } : {
           safetySignificanceReviewEvidence: {
             projectId: String(activeProjectId || ""),
@@ -10961,7 +11128,9 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setSafetyIssueRefreshStatus({ kind: "working", message: "Hazard classifications changed. Use Regenerate with AI to refresh the consolidated issue set." });
     const persisted = await saveProjectHazardAnalysisRecord(activeProjectId, { analysisResult: nextAnalysisResult, draftHazardRowsByIndex: nextDraftRows, riskRegister });
     if (!persisted) { setAnalysisResult(analysisResult); setDraftHazardRowsByIndex(draftHazardRowsByIndex); throw new Error("The review decision could not be persisted; the row was restored."); }
-    return { sourceRowId, rowIndex, previousRow, nextRow: [...applied.summary[rowIndex]], headers: [...applied.summary[0]], safetyIssuesStale: true };
+    const resolution = inspectClassificationResolution(applied.summary[0], applied.summary[rowIndex]);
+    return { sourceRowId, rowIndex, previousRow, nextRow: [...applied.summary[rowIndex]], headers: [...applied.summary[0]], safetyIssuesStale: true,
+      classificationResolutionStatus: resolution.status, classificationResolutionFindings: resolution.findings };
   }, [activeCodeArchitectureProjectId, activeProjectId, analysisResult, codeArchitectureHazardRun, draftHazardHeaders, draftHazardRowsByIndex, riskRegister]);
 
   const undoHazardVibeReviewDecision = useCallback(async ({ projectId, sourceRowId, previousGovernedFields, workspaceType = "functional-project", sourceRunId = "" }) => {
@@ -11152,6 +11321,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       undoHazardVibeReviewDecision,
       openHazardVibeReviewRow,
       regenerateHazardVibeReviewRow: (args) => hazardRowRegeneratorRef.current?.(args),
+      regenerateConsolidatedSafetyIssues: ({ mergeExisting = true } = {}) => refreshSafetyIssuesFromSummary({ mergeExisting }),
     });
   }, [
     activeProjectId,
@@ -11534,6 +11704,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         regeneratedRow: alignedRow,
         guidePhraseReviewItem: storedReviewEvidence || guidePhraseVibeReviewByRowId.get(rowId),
         safetySignificanceReviewItem: storedSafetyReviewEvidence || safetySignificanceVibeReviewByRowId.get(rowId),
+        safetyClassificationReviewItem: safetyClassificationVibeReviewByRowId.get(rowId),
       });
       const { row: nextRow, guidePhraseReview: reviewReconciliation, safetySignificanceReview: safetyReviewReconciliation } = normalizedPersistence;
       if (isMeaningfullyGeneratedDraftRow(nextRow, fallbackRow)) {
@@ -11805,6 +11976,9 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         reviewTarget: options.reviewTarget || "",
         decision: options.reviewDecision || "",
       });
+      const selectedDownstreamReviewContext = Array.isArray(options.selectedDownstreamReviewLabels) && options.selectedDownstreamReviewLabels.length
+        ? `Reviewer-selected downstream review scope:\n${options.selectedDownstreamReviewLabels.map((label) => `- ${label}`).join("\n")}\nEvaluate the selected scopes in dependency order. Do not interpret this selection as reviewer acceptance of any consequential engineering judgment.`
+        : "";
       const rawSheets = await runLiteAIAnalysis({
         tableRows: [generationFunctionalRow],
         sheets,
@@ -11815,7 +11989,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         setProgress: () => {},
         hazardMethod: selectedMethod,
         omitConsolidatedRequirement: true,
-        operationalContext: [baseOperationalContext, reviewedRowRegenerationContext].filter(Boolean).join("\n\n"),
+        operationalContext: [baseOperationalContext, reviewedRowRegenerationContext, selectedDownstreamReviewContext].filter(Boolean).join("\n\n"),
         organizationContext: organizationCalibration.context,
       });
       const generatedSheets = addSubsystemAllocationsToProjectHazardSummary(
@@ -11837,6 +12011,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         regeneratedRow: alignedRow,
         guidePhraseReviewItem: storedDraft?.guidePhraseReviewEvidence || guidePhraseVibeReviewByRowId.get(rowId),
         safetySignificanceReviewItem: storedSafetyReviewEvidence,
+        safetyClassificationReviewItem: safetyClassificationVibeReviewByRowId.get(rowId),
       });
       const { row: nextRow, guidePhraseReview: reviewReconciliation, safetySignificanceReview: safetyReviewReconciliation } = normalizedPersistence;
       const generated = isMeaningfullyGeneratedDraftRow(nextRow, fallbackRow);
@@ -12004,7 +12179,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     }
   };
 
-  hazardRowRegeneratorRef.current = async ({ projectId, sourceRowId, workspaceType = "functional-project", reviewTarget = "", decision = "" } = {}) => {
+  hazardRowRegeneratorRef.current = async ({ projectId, sourceRowId, workspaceType = "functional-project", reviewTarget = "", decision = "", selectedImpactIds = [], selectedImpactLabels = [] } = {}) => {
     if (workspaceType !== "functional-project") {
       throw new Error("Scoped downstream regeneration is currently available for project hazard analyses only.");
     }
@@ -12027,6 +12202,8 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       throwOnError: true,
       reviewTarget,
       reviewDecision: decision,
+      selectedDownstreamReviewIds: selectedImpactIds,
+      selectedDownstreamReviewLabels: selectedImpactLabels,
     });
   };
 
@@ -17315,13 +17492,14 @@ const projectHint = useMemo(() => ({
                 {draftHazardHeaders.map((header, idx) => (
                   <th
                     key={`${header}-${idx}`}
-                    className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(header) ? 'hidden ' : ''}sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap`}
+                    className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(header) ? 'hidden ' : ''}relative sticky top-0 z-30 px-3 py-2 border-b border-gray-200 bg-white whitespace-nowrap`}
+                    style={{ width: draftHazardColumnWidths[idx], minWidth: draftHazardColumnWidths[idx], maxWidth: draftHazardColumnWidths[idx] }}
                   >
                     <div ref={(el) => (draftHazardDropdownRefs.current[idx] = el)} className="relative">
                       <button
                         type="button"
                         onClick={() => setDraftHazardFilterColumnIndex((prev) => (prev === idx ? null : idx))}
-                        className={`w-full min-w-44 rounded-md border px-3 py-2 text-left transition flex items-center justify-between gap-3 ${
+                        className={`w-full rounded-md border px-2.5 py-1.5 text-left transition flex items-center justify-between gap-2 ${
                           draftHazardFilterColumnIndex === idx || (draftHazardColumnFilters[idx] || []).length
                             ? 'border-[#2D7DFE] bg-[#EEF4FF] text-[#0B3EA8]'
                             : 'border-gray-200 bg-white text-[#4B5563] hover:border-gray-300'
@@ -17409,6 +17587,15 @@ const projectHint = useMemo(() => ({
                         </div>
                       )}
                     </div>
+                    <div
+                      role="separator"
+                      aria-orientation="vertical"
+                      aria-label={`Resize ${header} column`}
+                      className="absolute right-0 top-0 z-40 h-full w-1.5 cursor-col-resize touch-none hover:bg-indigo-400"
+                      onPointerDown={(event) => startHazardColumnResize(event, header, draftHazardColumnWidths[idx])}
+                      onDoubleClick={() => setHazardColumnWidthOverrides((current) => { const next = { ...current }; delete next[header]; return next; })}
+                      title="Drag to resize; double-click to restore automatic width"
+                    />
                   </th>
                 ))}
               </tr>
@@ -17432,7 +17619,7 @@ const projectHint = useMemo(() => ({
               )}
             </thead>
             <tbody className="text-[#374151] text-sm">
-              {groupedFilteredDraftHazardSummaryRows.map(({ row, originalIndex, rowKey, generated, context, groupMeta, variantMeta, isFirstInGroup, isFirstInVariantGroup, groupCount, variantCount }, idx) => {
+              {groupedFilteredDraftHazardSummaryRows.map(({ row, originalIndex, rowKey, generated, groupMeta, variantMeta, isFirstInGroup, isFirstInVariantGroup, groupCount, variantCount }, idx) => {
                 const generating = draftHazardGeneratingIndex === originalIndex;
                 const reviewItem = draftHazardReviewByRow.get(rowKey) || draftHazardReviewByRow.get(originalIndex);
                 const groupCollapsed = collapsedHazardInterfaceKeys.has(groupMeta.key);
@@ -17473,6 +17660,7 @@ const projectHint = useMemo(() => ({
                     {!groupCollapsed && !variantCollapsed && (
                       <tr
                         id={`hazard-source-row-${originalIndex + 1}`}
+                        style={hazardRowHeightOverrides[`draft:${rowKey}`] ? { height: hazardRowHeightOverrides[`draft:${rowKey}`] } : undefined}
                         ref={(el) => {
                           if (el) hazardRowRefs.current[originalIndex] = el;
                           else delete hazardRowRefs.current[originalIndex];
@@ -17480,34 +17668,34 @@ const projectHint = useMemo(() => ({
                         aria-selected={selectedForCollaborator}
                         className={`${highlighted ? "bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset" : selectedForCollaborator ? "bg-indigo-50 ring-2 ring-indigo-400 ring-inset" : (idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]")} transition-colors`}
                       >
-                        <td className="px-6 py-4 align-top border-b border-gray-100">
-                          <div className="flex flex-col items-start gap-2">
-                            {!isUnspecifiedHazardContext(context) && (
-                              <span className="max-w-48 rounded-full bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-700" title={getHazardOperationalContextLabel(context)}>
-                                {getHazardOperationalContextLabel(context)}
-                              </span>
-                            )}
+                        <td className="relative px-3 py-2 align-top border-b border-gray-100">
+                          <div className="flex max-w-52 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] leading-4 text-slate-600">
                             <button
                               type="button"
                               onClick={() => handleGenerateDraftHazardRow(originalIndex)}
                               disabled={draftHazardGeneratingIndex !== null}
-                              className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-medium ${
-                                generated
-                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                                  : 'border-[#2D7DFE] bg-white text-[#1c5fde] hover:bg-blue-50'
-                              } disabled:cursor-not-allowed disabled:opacity-60`}
+                              className="text-[11px] font-semibold text-indigo-700 underline decoration-indigo-300 underline-offset-2 hover:text-indigo-900 disabled:cursor-not-allowed disabled:opacity-60"
                               title="Autogenerate this hazard row with the selected method"
                             >
-                              <Sparkles size={14} aria-hidden="true" />
                               {generating ? 'Generating...' : generated ? 'Regenerate' : 'Generate'}
                             </button>
                             {reviewItem && (
                               <ReviewStatusBadge
                                 reviewItem={reviewItem}
                                 openOptions={draftHazardReviewDrawerOptions}
+                                variant="text"
                               />
                             )}
                           </div>
+                          <div
+                            role="separator"
+                            aria-orientation="horizontal"
+                            aria-label={`Resize hazard row ${originalIndex + 1}`}
+                            className="absolute bottom-0 left-0 z-10 h-1.5 w-full cursor-row-resize touch-none hover:bg-indigo-400"
+                            onPointerDown={(event) => startHazardRowResize(event, `draft:${rowKey}`, event.currentTarget.closest("tr")?.getBoundingClientRect().height || 64)}
+                            onDoubleClick={() => setHazardRowHeightOverrides((current) => { const next = { ...current }; delete next[`draft:${rowKey}`]; return next; })}
+                            title="Drag to resize; double-click to restore automatic height"
+                          />
                         </td>
                         {row.map((cell, colIdx) => {
                           const diagramTarget = buildHazardDiagramFocusTarget(draftHazardHeaders, row, colIdx);
@@ -17523,10 +17711,10 @@ const projectHint = useMemo(() => ({
                             columnIndex: colIdx,
                           });
                           return (
-                            <td key={colIdx} onClick={selectCell} className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(draftHazardHeaders[colIdx]) ? 'hidden ' : ''}px-6 py-4 align-top whitespace-pre-wrap border-b border-gray-100 ${selectedCell ? 'bg-indigo-100 ring-2 ring-indigo-500 ring-inset' : ''}`}>
+                            <td key={colIdx} onClick={selectCell} style={{ width: draftHazardColumnWidths[colIdx], minWidth: draftHazardColumnWidths[colIdx], maxWidth: draftHazardColumnWidths[colIdx] }} className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(draftHazardHeaders[colIdx]) ? 'hidden ' : ''}relative px-3 py-2 align-top whitespace-pre-wrap border-b border-gray-100 ${selectedCell ? 'bg-indigo-100 ring-2 ring-indigo-500 ring-inset' : ''}`}>
                               <div className="flex items-start gap-1">
                                 <textarea
-                                  className="min-h-[44px] w-full resize-none overflow-hidden break-words bg-transparent text-sm leading-5 text-gray-900 [overflow-wrap:anywhere] focus:outline-none"
+                                  className="min-h-[30px] w-full resize-none overflow-visible break-words bg-transparent text-xs leading-4 text-gray-900 [overflow-wrap:anywhere] focus:outline-none"
                                   value={cell}
                                   onChange={(event) => handleDraftHazardCellChange(originalIndex, colIdx, event.target.value)}
                                   onFocus={selectCell}
@@ -17548,6 +17736,9 @@ const projectHint = useMemo(() => ({
                                   </button>
                                 ) : null}
                               </div>
+                              {isVibeReviewCellImpacted(selectionRowId, draftHazardHeaders[colIdx]) && (
+                                <span className="absolute bottom-1 right-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[11px] font-bold leading-none text-white shadow" title="Changed during the active Vibe Review" aria-label="Changed during the active Vibe Review">!</span>
+                              )}
                             </td>
                           );
                         })}
@@ -17598,23 +17789,24 @@ const projectHint = useMemo(() => ({
                   <th className="sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap">
                     Review
                   </th>
-                  {hazardSummaryHeaders.map((header, idx) => (
+                  {hazardSummaryHeaders.map((header, idx) => isSafetyDetailHeader(header) ? null : (
                     <th
                       key={idx}
-                      className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(header) ? 'hidden ' : ''}sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap`}
+                      className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(header) ? 'hidden ' : ''}relative sticky top-0 z-30 px-3 py-2 border-b border-gray-200 bg-white whitespace-nowrap`}
+                      style={{ width: hazardSummaryColumnWidths[idx], minWidth: hazardSummaryColumnWidths[idx], maxWidth: hazardSummaryColumnWidths[idx] }}
                     >
                       <div ref={(el) => (dropdownRefs.current[idx] = el)} className="relative">
                         <button
                           type="button"
                           onClick={() => setFilterColumnIndex((prev) => (prev === idx ? null : idx))}
-                          className={`w-full min-w-44 rounded-md border px-3 py-2 text-left transition flex items-center justify-between gap-3 ${
+                          className={`w-full rounded-md border px-2.5 py-1.5 text-left transition flex items-center justify-between gap-2 ${
                             filterColumnIndex === idx || (columnFilters[idx] || []).length
                               ? 'border-[#2D7DFE] bg-[#EEF4FF] text-[#0B3EA8]'
                               : 'border-gray-200 bg-white text-[#4B5563] hover:border-gray-300'
                           }`}
-                          title={`Filter ${header}`}
+                          title={`Filter ${safetyColumnDisplayLabel(header)}`}
                         >
-                          <span className="min-w-0 flex-1 truncate">{header}</span>
+                          <span className="min-w-0 flex-1 truncate">{safetyColumnDisplayLabel(header)}</span>
                           <span className="shrink-0 inline-flex items-center gap-2">
                             {(columnFilters[idx] || []).length > 0 && (
                               <span className="rounded-full bg-[#2D7DFE] px-2 py-0.5 text-[11px] font-semibold text-white">
@@ -17637,7 +17829,7 @@ const projectHint = useMemo(() => ({
                           <div className="absolute left-0 mt-2 w-72 bg-white border border-gray-200 rounded-xl shadow-xl z-50 overflow-hidden">
                             <div className="p-3 border-b sticky top-0 bg-white z-10 space-y-2">
                               <div className="flex items-center justify-between gap-2">
-                                <div className="text-xs font-semibold text-gray-700 truncate">{header}</div>
+                                <div className="text-xs font-semibold text-gray-700 truncate">{safetyColumnDisplayLabel(header)}</div>
                                 {(columnFilters[idx] || []).length > 0 && (
                                   <button
                                     type="button"
@@ -17650,7 +17842,7 @@ const projectHint = useMemo(() => ({
                               </div>
                               <input
                                 type="text"
-                                placeholder={`Search ${header}...`}
+                                placeholder={`Search ${safetyColumnDisplayLabel(header)}...`}
                                 value={columnSearches[idx] || ''}
                                 onChange={(e) =>
                                   setColumnSearches({ ...columnSearches, [idx]: e.target.value })
@@ -17695,6 +17887,15 @@ const projectHint = useMemo(() => ({
                           </div>
                         )}
                       </div>
+                      <div
+                        role="separator"
+                        aria-orientation="vertical"
+                        aria-label={`Resize ${safetyColumnDisplayLabel(header)} column`}
+                        className="absolute right-0 top-0 z-40 h-full w-1.5 cursor-col-resize touch-none hover:bg-indigo-400"
+                        onPointerDown={(event) => startHazardColumnResize(event, header, hazardSummaryColumnWidths[idx])}
+                        onDoubleClick={() => setHazardColumnWidthOverrides((current) => { const next = { ...current }; delete next[header]; return next; })}
+                        title="Drag to resize; double-click to restore automatic width"
+                      />
                     </th>
                   ))}
                 </tr>
@@ -17719,7 +17920,7 @@ const projectHint = useMemo(() => ({
               </thead>
               <tbody className="text-[#374151] text-sm">
                 {groupedFilteredHazardSummaryRows
-                  .map(({ row, originalIndex, generated, pending, context, groupMeta, variantMeta, isFirstInGroup, isFirstInVariantGroup, groupCount, variantCount }, idx) => {
+                  .map(({ row, originalIndex, generated, pending, groupMeta, variantMeta, isFirstInGroup, isFirstInVariantGroup, groupCount, variantCount }, idx) => {
                     const generating = draftHazardGeneratingIndex === originalIndex;
                     const reviewItem = hazardSummaryReviewByRow.get(originalIndex);
                     const rejected = reviewItem?.status === REVIEW_STATUSES.REJECTED;
@@ -17761,6 +17962,7 @@ const projectHint = useMemo(() => ({
                         {!groupCollapsed && !variantCollapsed && (
                           <tr
                             id={`hazard-source-row-${originalIndex + 1}`}
+                            style={hazardRowHeightOverrides[`summary:${selectionRowId}`] ? { height: hazardRowHeightOverrides[`summary:${selectionRowId}`] } : undefined}
                             ref={(el) => {
                               if (el) hazardRowRefs.current[originalIndex] = el;
                               else delete hazardRowRefs.current[originalIndex];
@@ -17776,13 +17978,8 @@ const projectHint = useMemo(() => ({
                                   : idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]"
                             }`}
                           >
-                            <td className="px-6 py-4 align-top border-b border-gray-100">
-                              <div className="flex flex-col items-start gap-2">
-                                {!isUnspecifiedHazardContext(context) && (
-                                  <span className="max-w-48 rounded-full bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-700" title={getHazardOperationalContextLabel(context)}>
-                                    {getHazardOperationalContextLabel(context)}
-                                  </span>
-                                )}
+                            <td className="relative px-3 py-2 align-top border-b border-gray-100">
+                              <div className="flex max-w-56 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] leading-4 text-slate-600">
                                 {reviewItem && (
                                   <ReviewStatusBadge
                                     reviewItem={reviewItem}
@@ -17790,28 +17987,46 @@ const projectHint = useMemo(() => ({
                                       ...hazardReviewDrawerOptions,
                                       reviewItemIds: hazardSummaryReviewItems.map((item) => item.id),
                                     }}
+                                    variant="text"
                                   />
                                 )}
+                                {(() => {
+                                  const significanceIndex = hazardSummaryHeaders.indexOf("Safety Significant");
+                                  const significance = significanceIndex >= 0 ? String(row?.[significanceIndex] || "").trim() : "";
+                                  if (!significance) return null;
+                                  return (
+                                    <span title="Governed prerequisite for Safety Classification">
+                                      Safety significance: <strong>{significance}</strong> ·
+                                    </span>
+                                  );
+                                })()}
                                 <button
                                   type="button"
                                   onClick={() => handleGenerateDraftHazardRow(originalIndex)}
                                   disabled={isAnalyzing || draftHazardGeneratingIndex !== null}
-                                  className="inline-flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                  className="text-[11px] font-semibold text-indigo-700 underline decoration-indigo-300 underline-offset-2 hover:text-indigo-900 disabled:cursor-not-allowed disabled:opacity-60"
                                   title="Regenerate this hazard analysis row with the selected method"
                                 >
-                                  <Sparkles size={14} aria-hidden="true" />
                                   {generating ? 'Generating...' : generated ? 'Regenerate' : 'Generate'}
                                 </button>
                                 {pending && !generated && (
-                                  <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
-                                    New row
-                                  </span>
+                                  <span>New row ·</span>
                                 )}
                               </div>
+                              <div
+                                role="separator"
+                                aria-orientation="horizontal"
+                                aria-label={`Resize hazard row ${originalIndex + 1}`}
+                                className="absolute bottom-0 left-0 z-10 h-1.5 w-full cursor-row-resize touch-none hover:bg-indigo-400"
+                                onPointerDown={(event) => startHazardRowResize(event, `summary:${selectionRowId}`, event.currentTarget.closest("tr")?.getBoundingClientRect().height || 64)}
+                                onDoubleClick={() => setHazardRowHeightOverrides((current) => { const next = { ...current }; delete next[`summary:${selectionRowId}`]; return next; })}
+                                title="Drag to resize; double-click to restore automatic height"
+                              />
                             </td>
                             {row.map((cell, colIdx) => {
                               const diagramTarget = buildHazardDiagramFocusTarget(hazardSummaryHeaders, row, colIdx);
                               const columnHeader = hazardSummaryHeaders[colIdx];
+                              if (isSafetyDetailHeader(columnHeader)) return null;
                               const selectedCell = isSelectedTableCell(activeTableSelection, "hazard-analysis", selectionRowId, colIdx);
                               const selectCell = () => selectTableCellForCollaborator({
                                 tableId: "hazard-analysis",
@@ -17834,7 +18049,7 @@ const projectHint = useMemo(() => ({
                                     ? "border-blue-200 bg-blue-50 text-blue-800"
                                     : "border-emerald-200 bg-emerald-50 text-emerald-800";
                               return (
-                                <td key={colIdx} onClick={selectCell} className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(columnHeader) ? 'hidden ' : ''}min-w-56 max-w-xl break-words px-6 py-4 align-top whitespace-pre-wrap [overflow-wrap:anywhere] border-b border-gray-100 ${selectedCell ? 'bg-indigo-100 ring-2 ring-indigo-500 ring-inset' : ''} ${rejected ? 'text-rose-900 line-through decoration-rose-400' : ''}`}>
+                                <td key={colIdx} onClick={selectCell} style={{ width: hazardSummaryColumnWidths[colIdx], minWidth: hazardSummaryColumnWidths[colIdx], maxWidth: hazardSummaryColumnWidths[colIdx] }} className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(columnHeader) ? 'hidden ' : ''}relative break-words px-3 py-2 align-top whitespace-pre-wrap text-xs leading-4 [overflow-wrap:anywhere] border-b border-gray-100 ${selectedCell ? 'bg-indigo-100 ring-2 ring-indigo-500 ring-inset' : ''} ${rejected ? 'text-rose-900 line-through decoration-rose-400' : ''}`}>
                                   {diagramTarget ? (
                                     <div className="flex items-start gap-1">
                                       <span className="min-w-0 flex-1">{cell}</span>
@@ -17858,7 +18073,10 @@ const projectHint = useMemo(() => ({
                                     >
                                       {cell}
                                     </span>
-                                  ) : cell}
+                                  ) : <div>{cell}</div>}
+                                  {isVibeReviewCellImpacted(selectionRowId, columnHeader) && (
+                                    <span className="absolute bottom-1 right-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[11px] font-bold leading-none text-white shadow" title="Changed during the active Vibe Review" aria-label="Changed during the active Vibe Review">!</span>
+                                  )}
                                 </td>
                               );
                             })}

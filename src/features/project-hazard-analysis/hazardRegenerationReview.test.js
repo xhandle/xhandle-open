@@ -4,6 +4,7 @@ import {
   buildReviewedRowRegenerationContext,
   latestGuidePhraseReviewByRowId,
   latestSafetySignificanceReviewByRowId,
+  latestSafetyClassificationReviewByRowId,
   normalizeReviewedHazardRowForPersistence,
   reconcileRegeneratedGuidePhraseReview,
   reconcileRegeneratedSafetySignificanceReview,
@@ -26,6 +27,94 @@ const governedReview = (decision, row) => ({
   reviewedAt: "2026-09-18T13:00:00Z",
   currentContent: { columns: persistenceHeaders, row },
   vibeReview: { decision, reviewerName: "Nick", reviewTarget: "safetySignificant" },
+});
+
+const rationaleHeaders = [
+  "Raw Analysis Row ID", "Source ID", "Review Session ID", "Reviewer Name", "Reviewed At",
+  "Guide Phrase Applicable", "Safety Classification", "Safety Classification Rule", "Causal Path Type",
+  "Causal Effect", "Resulting System State", "Intermediate Safety Function", "Intermediate Safety Effect",
+  "Protection Assessment", "Protection Status", "Physical-Harm Chain Termination", "Classification Evidence",
+  "Safety Significant", "Safety Significance Rationale", "Classification Resolution Status",
+];
+
+const rationaleRow = (fields = {}) => rationaleHeaders.map((header) => fields[header] || "");
+const rationaleReview = (decision, row, extras = {}) => ({
+  reviewedAt: "2026-09-18T13:00:00Z",
+  originalContent: { columns: rationaleHeaders, row: [...row] },
+  currentContent: { columns: rationaleHeaders, row },
+  vibeReview: { decision, reviewerName: "Nick", reviewTarget: "safetySignificant", ...extras },
+});
+
+test("final persistence replaces stale governed-No rationale with the regenerated mission boundary", () => {
+  const staleRationale = "Needs review: Mission/Reliability contradicts an asserted L1-L3 or physical-harm path. Needs review: could not be validated.";
+  const source = rationaleRow({
+    "Raw Analysis Row ID": "RAW-AWARENESS", "Source ID": "SRC-A", "Review Session ID": "SESSION-A",
+    "Reviewer Name": "Nick", "Reviewed At": "2026-09-18T13:00:00Z", "Guide Phrase Applicable": "Yes",
+    "Safety Significant": "No", "Safety Significance Rationale": staleRationale,
+  });
+  const generated = rationaleRow({
+    "Raw Analysis Row ID": "changed", "Source ID": "changed", "Review Session ID": "changed",
+    "Reviewer Name": "changed", "Reviewed At": "changed", "Guide Phrase Applicable": "Yes",
+    "Safety Classification": "Mission/Reliability", "Safety Classification Rule": "M1", "Causal Path Type": "None",
+    "Causal Effect": "stale fleet awareness", "Resulting System State": "operators see delayed fleet status",
+    "Physical-Harm Chain Termination": "stale fleet and operational awareness",
+    "Safety Significant": "Needs Review", "Safety Significance Rationale": staleRationale,
+  });
+  const reviewItem = rationaleReview("No", source);
+  const beforeSnapshot = JSON.stringify(reviewItem);
+  const fields = persistenceFields(rationaleHeaders, normalizeReviewedHazardRowForPersistence({
+    headers: rationaleHeaders, sourceRow: source, regeneratedRow: generated, safetySignificanceReviewItem: reviewItem,
+  }).row);
+  expect(fields["Safety Significance Rationale"]).toMatch(/No reviewer rationale was supplied/i);
+  expect(fields["Safety Significance Rationale"]).toMatch(/stale fleet and operational awareness/i);
+  expect(fields["Safety Significance Rationale"]).toMatch(/no documented propagation into vehicle control or physical harm/i);
+  expect(fields["Safety Significance Rationale"]).not.toMatch(/needs? review|could not be validated|contradict/i);
+  expect(fields["Classification Resolution Status"]).toBe("Human Disposition — Evidence Gap");
+  expect(fields).toMatchObject({
+    "Raw Analysis Row ID": "RAW-AWARENESS", "Source ID": "SRC-A", "Review Session ID": "SESSION-A",
+    "Reviewer Name": "Nick", "Reviewed At": "2026-09-18T13:00:00Z", "Safety Significant": "No",
+  });
+  expect(JSON.stringify(reviewItem)).toBe(beforeSnapshot);
+  expect(reviewItem.originalContent.row[rationaleHeaders.indexOf("Safety Significance Rationale")]).toBe(staleRationale);
+  expect(reviewItem.currentContent.row[rationaleHeaders.indexOf("Safety Significance Rationale")]).toBe(staleRationale);
+});
+
+test("final persistence keeps supplied reviewer rationale authoritative and adds concise regenerated context", () => {
+  const source = rationaleRow({ "Guide Phrase Applicable": "Yes", "Safety Significant": "No", "Safety Significance Rationale": "Reviewer confirmed this output is advisory only." });
+  const generated = rationaleRow({
+    "Guide Phrase Applicable": "Yes", "Safety Significant": "Needs Review", "Causal Effect": "delayed dashboard awareness",
+    "Physical-Harm Chain Termination": "the advisory dashboard", "Safety Significance Rationale": "Needs review: old contradiction.",
+  });
+  const fields = persistenceFields(rationaleHeaders, normalizeReviewedHazardRowForPersistence({
+    headers: rationaleHeaders, sourceRow: source, regeneratedRow: generated,
+    safetySignificanceReviewItem: rationaleReview("No", source),
+  }).row);
+  expect(fields["Safety Significance Rationale"]).toMatch(/Reviewer rationale: Reviewer confirmed this output is advisory only\./);
+  expect(fields["Safety Significance Rationale"]).toMatch(/terminates at the advisory dashboard/i);
+  expect(fields["Safety Significance Rationale"]).not.toMatch(/needs? review|old contradiction/i);
+});
+
+test.each([
+  ["Safety — Direct", "", "", "Direct", /Safety — Direct with a direct physical-harm path/i],
+  ["Safety — Related", "Safe motion authorization", "Delayed intervention", "Contributory", /Safety — Related with a contributory path through Safe motion authorization/i],
+])("final persistence gives governed Yes a clean %s rationale", (classification, intermediateFunction, intermediateEffect, causalPath, expected) => {
+  const source = rationaleRow({ "Guide Phrase Applicable": "Yes", "Safety Significant": "Yes", "Safety Significance Rationale": "Needs review: could not be validated." });
+  const generated = rationaleRow({
+    "Guide Phrase Applicable": "Yes", "Safety Significant": "Needs Review", "Safety Classification": classification,
+    "Intermediate Safety Function": intermediateFunction, "Intermediate Safety Effect": intermediateEffect,
+    "Protection Assessment": "Independence is not documented", "Protection Status": "Unknown",
+    "Safety Significance Rationale": "Uncertain; needs review.",
+  });
+  const fields = persistenceFields(rationaleHeaders, normalizeReviewedHazardRowForPersistence({
+    headers: rationaleHeaders, sourceRow: source, regeneratedRow: generated,
+    safetySignificanceReviewItem: rationaleReview("Yes", source),
+  }).row);
+  expect(fields["Safety Significance Rationale"]).toMatch(expected);
+  expect(fields["Safety Significance Rationale"]).toMatch(/Protection status remains Unknown.*does not reverse the governed Yes decision/i);
+  expect(fields["Safety Significance Rationale"]).not.toMatch(/needs? review|could not be validated|uncertain/i);
+  expect(fields["Causal Path Type"]).toBe(causalPath);
+  expect(fields["Protection Status"]).toBe("Unknown");
+  expect(fields["Protection Assessment"]).toBe("Independence is not documented");
 });
 
 test("final persistence normalizer repairs the supplied reviewed collision pattern without erasing an unknown safeguard", () => {
@@ -383,4 +472,69 @@ test("applicability No makes all derived fields coherently Not Applicable while 
   expect(result[7]).toBe("N4");
   expect(result[8]).toBe("None");
   expect(result[9]).toBe("Not Applicable");
+});
+
+test("classification review lookup and final normalizer preserve all governed layers", () => {
+  const headers = ["Raw Analysis Row ID", "Guide Phrase Applicable", "Guide Phrase Applicability Rationale", "Safety Significant", "Safety Significance Rationale", "Safety Classification", "Safety Classification Rule", "Causal Path Type", "Classification Evidence", "Classification Confidence"];
+  const reviewed = ["RAW-C", "Yes", "app bytes", "No", "significance bytes", "Mission/Reliability", "M2", "None", "reviewed classification rationale", "High"];
+  const item = { projectId: "project-1", reviewedAt: "2026-09-18T12:00:00Z", currentContent: { rowId: "RAW-C", columns: headers, row: reviewed }, vibeReview: { domain: "hazard-analysis", reviewTarget: "safetyClassification", rowId: "RAW-C", decision: "Mission/Reliability", reviewerName: "Nick" } };
+  expect(latestSafetyClassificationReviewByRowId([item], "project-1").get("RAW-C")).toBe(item);
+  const generated = ["RAW-C", "Yes", "app bytes", "No", "significance bytes", "Safety — Direct", "D1", "Direct", "generated overwrite", "Low"];
+  const result = normalizeReviewedHazardRowForPersistence({ headers, sourceRow: reviewed, regeneratedRow: generated, safetyClassificationReviewItem: item });
+  expect(result.row[headers.indexOf("Guide Phrase Applicable")]).toBe("Yes");
+  expect(result.row[headers.indexOf("Guide Phrase Applicability Rationale")]).toBe("app bytes");
+  expect(result.row[headers.indexOf("Safety Significant")]).toBe("No");
+  expect(result.row[headers.indexOf("Safety Significance Rationale")]).toBe("significance bytes");
+  expect(result.row[headers.indexOf("Safety Classification")]).toBe("Mission/Reliability");
+  expect(result.row[headers.indexOf("Safety Classification Rule")]).toBe("M2");
+  expect(result.row[headers.indexOf("Classification Evidence")]).toBe("reviewed classification rationale");
+});
+
+test("locked Mission/Reliability classification removes regenerated physical-harm contradictions", () => {
+  const headers = [
+    "Raw Analysis Row ID", "Function (To)", "Guide Phrase Applicable", "Loss", "Hazard",
+    "Raw Loss Candidate", "Raw Hazard Candidate", "Canonical Loss ID", "Canonical Hazard ID",
+    "Unsafe Control Action", "Causal Scenario", "Causal Factor", "Causal Effect",
+    "Resulting System State", "Intermediate Safety Function", "Intermediate Safety Effect",
+    "Protection Assessment", "Protection Status", "Physical-Harm Chain Termination",
+    "Safety Classification", "Safety Classification Rule", "Causal Path Type",
+    "Classification Evidence", "Classification Confidence", "Safety Significant",
+    "Safety Significance Rationale", "Classification Resolution Status",
+  ];
+  const reviewed = [
+    "RAW-0D1MMKU", "Report Vehicle Status", "Yes", "old", "old", "old", "old", "L2", "H-1",
+    "old", "old", "old", "Superseded status reaches fleet supervision.",
+    "Fleet supervision displays an out-of-sequence vehicle status.", "", "", "", "Absent",
+    "Terminates at the fleet display; no vehicle-control authority is documented.",
+    "Mission/Reliability", "M1", "None",
+    "Report Vehicle Status has no documented control authority back to motion execution.", "Medium", "No", "", "Needs Review",
+  ];
+  const item = {
+    currentContent: { columns: headers, row: reviewed },
+    vibeReview: { decision: "Mission/Reliability", reviewTarget: "safetyClassification" },
+  };
+  const generated = [...reviewed];
+  generated[headers.indexOf("Loss")] = "Potential collision and injury.";
+  generated[headers.indexOf("Hazard")] = "Unsafe vehicle state causing collision.";
+  generated[headers.indexOf("Raw Loss Candidate")] = "Property damage.";
+  generated[headers.indexOf("Raw Hazard Candidate")] = "Collision risk.";
+  generated[headers.indexOf("Canonical Loss ID")] = "L2";
+  generated[headers.indexOf("Canonical Hazard ID")] = "H-INVALID_STATE";
+  generated[headers.indexOf("Safety Classification")] = "Safety — Direct";
+  generated[headers.indexOf("Safety Significant")] = "Yes";
+  generated[headers.indexOf("Causal Path Type")] = "Direct";
+
+  const result = normalizeReviewedHazardRowForPersistence({
+    headers, sourceRow: reviewed, regeneratedRow: generated, safetyClassificationReviewItem: item,
+  }).row;
+  const fields = persistenceFields(headers, result);
+  expect(fields["Safety Classification"]).toBe("Mission/Reliability");
+  expect(fields["Safety Significant"]).toBe("No");
+  expect(fields["Causal Path Type"]).toBe("None");
+  expect(fields["Protection Status"]).toBe("Not Applicable");
+  expect(fields["Canonical Loss ID"]).toBe("");
+  expect(fields["Canonical Hazard ID"]).toBe("");
+  expect(`${fields.Loss} ${fields.Hazard} ${fields["Raw Loss Candidate"]} ${fields["Raw Hazard Candidate"]}`)
+    .not.toMatch(/collision|injury|property damage/i);
+  expect(fields["Classification Resolution Status"]).not.toBe("Needs Review");
 });

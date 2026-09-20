@@ -2,6 +2,7 @@ import {
   auditSafetyClassificationRecord,
   normalizeSafetyClassification,
 } from "./safetySignificancePolicy";
+import { reconcileDerivedSafetyColumns } from "./safetyColumnSchema";
 
 const clean = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
 const normalized = (value) => clean(value).toLowerCase();
@@ -87,15 +88,21 @@ function rowNeedsReview(fields = {}) {
     || (classification && normalizeSafetyClassification(classification) === "Needs Review");
 }
 
-export function deriveClassificationResolutionStatus(headers = [], row = []) {
+export function inspectClassificationResolution(headers = [], row = []) {
   const fields = fieldsFromRow(headers, row);
-  if (rowNeedsReview(fields)) return CLASSIFICATION_RESOLUTION_STATUS.NEEDS_REVIEW;
+  if (rowNeedsReview(fields)) return {
+    status: CLASSIFICATION_RESOLUTION_STATUS.NEEDS_REVIEW,
+    findings: ["A governed applicability, safety-significance, or safety-classification decision still needs review."],
+  };
 
   const humanDisposition = hasHumanDisposition(fields);
   if (!hasCompletePolicySchema(headers)) {
-    return humanDisposition
-      ? CLASSIFICATION_RESOLUTION_STATUS.HUMAN_EVIDENCE_GAP
-      : CLASSIFICATION_RESOLUTION_STATUS.NOT_EVALUATED;
+    return {
+      status: humanDisposition
+        ? CLASSIFICATION_RESOLUTION_STATUS.HUMAN_EVIDENCE_GAP
+        : CLASSIFICATION_RESOLUTION_STATUS.NOT_EVALUATED,
+      findings: ["The hazard summary does not contain the complete policy-evidence schema required for validation."],
+    };
   }
 
   const audit = auditSafetyClassificationRecord(policyRecord(fields), {
@@ -104,14 +111,21 @@ export function deriveClassificationResolutionStatus(headers = [], row = []) {
     to: fields["Function (To)"],
     guidePhrase: fields["Guide Phrase"],
   });
-  if (humanDisposition) {
-    return audit.validationFindings.length
-      ? CLASSIFICATION_RESOLUTION_STATUS.HUMAN_EVIDENCE_GAP
-      : CLASSIFICATION_RESOLUTION_STATUS.HUMAN_POLICY_VALIDATED;
-  }
-  return audit.validationFindings.length
-    ? CLASSIFICATION_RESOLUTION_STATUS.POLICY_GAP
-    : CLASSIFICATION_RESOLUTION_STATUS.POLICY_VALIDATED;
+  return {
+    status: humanDisposition
+      ? (audit.validationFindings.length
+        ? CLASSIFICATION_RESOLUTION_STATUS.HUMAN_EVIDENCE_GAP
+        : CLASSIFICATION_RESOLUTION_STATUS.HUMAN_POLICY_VALIDATED)
+      : (audit.validationFindings.length
+        ? CLASSIFICATION_RESOLUTION_STATUS.POLICY_GAP
+        : CLASSIFICATION_RESOLUTION_STATUS.POLICY_VALIDATED),
+    findings: [...(audit.validationFindings || [])],
+    audit,
+  };
+}
+
+export function deriveClassificationResolutionStatus(headers = [], row = []) {
+  return inspectClassificationResolution(headers, row).status;
 }
 
 export function ensureClassificationResolutionStatus(summary = []) {
@@ -124,9 +138,9 @@ export function ensureClassificationResolutionStatus(summary = []) {
     : [...sourceHeaders, CLASSIFICATION_RESOLUTION_STATUS_HEADER];
   const statusIndex = existingIndex >= 0 ? existingIndex : headers.length - 1;
   const rows = summary.slice(1).map((sourceRow) => {
-    const row = [...(Array.isArray(sourceRow) ? sourceRow : [])];
+    const row = reconcileDerivedSafetyColumns(sourceHeaders, Array.isArray(sourceRow) ? sourceRow : []);
     while (row.length < headers.length) row.push("");
-    row[statusIndex] = deriveClassificationResolutionStatus(sourceHeaders, sourceRow);
+    row[statusIndex] = deriveClassificationResolutionStatus(sourceHeaders, row);
     return row;
   });
   return [headers, ...rows];

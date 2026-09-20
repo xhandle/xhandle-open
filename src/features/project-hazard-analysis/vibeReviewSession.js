@@ -62,7 +62,8 @@ export function createVibeReviewSession({ projectId, threadId, queue = [], revie
   const stableQueue = Array.from(new Set(queue.map(String).filter(Boolean)));
   return {
     id: uid(), projectId: String(projectId), threadId: String(threadId), queue: stableQueue,
-    reviewName: String(reviewName || "").trim(), scopeLabel, reviewTarget: reviewTarget === "guidePhraseApplicable" ? reviewTarget : "safetySignificant",
+    reviewName: String(reviewName || "").trim(), scopeLabel,
+    reviewTarget: ["guidePhraseApplicable", "safetyClassification", "classificationResolution", "safetySignificant"].includes(reviewTarget) ? reviewTarget : "safetySignificant",
     reviewerName: String(reviewerName || "").trim(), reviewerId: String(reviewerId || "").trim(),
     cursor: 0, state: VIBE_REVIEW_STATES.PROPOSING, proposal: null,
     workspaceType: String(workspaceType || "functional-project"),
@@ -146,11 +147,13 @@ export function summarizeVibeReviewSession(session) {
   const decisionValue = (item) => item.newReviewValue || item.newSafetySignificant;
   const yes = session.decisions.filter((item) => decisionValue(item) === "Yes").length;
   const no = session.decisions.filter((item) => decisionValue(item) === "No").length;
+  const classificationChanges = Object.fromEntries(["Safety — Direct", "Safety — Related", "Mission/Reliability", "Not Applicable"]
+    .map((value) => [value, session.decisions.filter((item) => decisionValue(item) === value).length]));
   return { total: session.queue.length, reviewed: session.decisions.length, accepted,
     overriddenToYes: session.decisions.filter((item) => item.action === "yes").length,
     overriddenToNo: session.decisions.filter((item) => item.action === "no").length,
     skipped: session.skips.length, failed: session.failures.length + session.missingRows.length,
-    remaining: Math.max(0, session.queue.length - session.cursor), changedToYes: yes, changedToNo: no };
+    remaining: Math.max(0, session.queue.length - session.cursor), changedToYes: yes, changedToNo: no, classificationChanges };
 }
 
 export function parseVibeReviewAction(value = "") {
@@ -158,6 +161,10 @@ export function parseVibeReviewAction(value = "") {
   if (/^(accept|agree|use (?:the )?proposal)(?:\b|$)/.test(text)) return "accept";
   if (/^(yes|mark (?:it )?yes)(?:\b|$)/.test(text)) return "yes";
   if (/^(no|mark (?:it )?no)(?:\b|$)/.test(text)) return "no";
+  if (/^(?:mark )?safety\s*[\u2014-]\s*direct(?:\b|$)/.test(text)) return "classificationDirect";
+  if (/^(?:mark )?safety\s*[\u2014-]\s*related(?:\b|$)/.test(text)) return "classificationRelated";
+  if (/^(?:mark )?mission(?:\/| or )reliability(?:\b|$)/.test(text)) return "classificationMission";
+  if (/^(?:mark )?not applicable(?:\b|$)/.test(text)) return "classificationNotApplicable";
   if (/^(skip|later|come back to (?:this|it))(?:\b|$)/.test(text)) return "skip";
   if (/^(stop|finish|end (?:the )?review)(?:\b|$)/.test(text)) return "stop";
   if (/^(resume|continue (?:the )?review)(?:\b|$)/.test(text)) return "resume";

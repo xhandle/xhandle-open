@@ -17,18 +17,21 @@ export default function ReviewStatusBadge({
   reviewItemId,
   className = "",
   openOptions = {},
+  variant = "badge",
 }) {
   const review = useResultsReview();
   const item = reviewItem || (reviewItemId ? review.getReviewItemById(reviewItemId) : null);
   if (!item) return null;
 
   const label = REVIEW_STATUS_LABELS[item.status] || "Pending Review";
-  const style = STATUS_STYLES[item.status] || STATUS_STYLES[REVIEW_STATUSES.DRAFT_AI_GENERATED];
+  const style = variant === "text"
+    ? "border-transparent bg-transparent p-0 text-indigo-700 underline decoration-indigo-300 underline-offset-2 hover:text-indigo-900"
+    : STATUS_STYLES[item.status] || STATUS_STYLES[REVIEW_STATUSES.DRAFT_AI_GENERATED];
 
   return (
     <button
       type="button"
-      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold leading-5 transition hover:shadow-sm ${style} ${className}`}
+      className={`inline-flex items-center text-[11px] font-semibold leading-4 transition ${variant === "text" ? "" : "rounded-full border px-2 py-0.5 hover:shadow-sm"} ${style} ${className}`}
       title="Open review drawer"
       onClick={(event) => {
         event.stopPropagation();

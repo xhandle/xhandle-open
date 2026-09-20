@@ -1,11 +1,11 @@
 import { isHazardVibeReviewIntent, resolveHazardVibeReviewScope } from "./vibeReviewScope";
 
 const summary = [
-  ["Raw Analysis Row ID", "Safety Significant", "Safety Classification", "Subsystem Allocation", "Function (From)", "Control Action", "Function (To)", "Guide Phrase", "Operational Scenario", "Operational Mode"],
-  ["row-2", "Needs Review", "Needs Review", "Braking", "Planner", "Brake request", "Controller", "Not provided", "Wet road", "Auto"],
-  ["row-1", "Yes", "Safety — Direct", "Steering", "Planner", "Steer request", "Controller", "Too late", "Wet road", "Auto"],
-  ["row-2", "Needs Review", "Needs Review", "Braking", "Planner", "Brake request", "Controller", "Not provided", "Wet road", "Auto"],
-  ["row-3", "No", "Mission/Reliability", "Telemetry", "Reporter", "Status", "Cloud", "Incorrect", "Depot", "Parked"],
+  ["Raw Analysis Row ID", "Safety Significant", "Safety Classification", "Classification Resolution Status", "Subsystem Allocation", "Function (From)", "Control Action", "Function (To)", "Guide Phrase", "Operational Scenario", "Operational Mode"],
+  ["row-2", "Needs Review", "Needs Review", "Needs Review", "Braking", "Planner", "Brake request", "Controller", "Not provided", "Wet road", "Auto"],
+  ["row-1", "Yes", "Safety — Direct", "Policy Validation Gap", "Steering", "Planner", "Steer request", "Controller", "Too late", "Wet road", "Auto"],
+  ["row-2", "Needs Review", "Needs Review", "Needs Review", "Braking", "Planner", "Brake request", "Controller", "Not provided", "Wet road", "Auto"],
+  ["row-3", "No", "Mission/Reliability", "Policy Validated", "Telemetry", "Reporter", "Status", "Cloud", "Incorrect", "Depot", "Parked"],
 ];
 
 test.each(["Vibe review the hazard-analysis rows where Safety Significance is Needs Review", "review these hazard results with me", "walk me through Needs Review safety significance rows"])("recognizes hazard review intent: %s", (prompt) => {
@@ -62,6 +62,21 @@ test("does not confuse Guide Phrase Applicable with the Guide Phrase column", ()
   expect(result.queue).toEqual(["row-2"]);
   expect(result.filters.map((filter) => filter.field)).toEqual(["guidePhraseApplicable"]);
   expect(result.reviewTarget).toBe("guidePhraseApplicable");
+});
+
+test("routes Safety Classification Needs Review to its distinct review target", () => {
+  const result = resolveHazardVibeReviewScope("lets vibe review safety classification=needs review", summary);
+  expect(result.status).toBe("matched");
+  expect(result.filters).toEqual([expect.objectContaining({ field: "safetyClassification", value: "Needs Review" })]);
+  expect(result.reviewTarget).toBe("safetyClassification");
+});
+
+test("routes Classification Resolution Status independently from Safety Classification", () => {
+  const result = resolveHazardVibeReviewScope("lets vibe review Classification Resolution Status = Policy Validation Gap", summary);
+  expect(result.status).toBe("matched");
+  expect(result.queue).toEqual(["row-1"]);
+  expect(result.filters).toEqual([expect.objectContaining({ field: "classificationResolutionStatus", value: "Policy Validation Gap" })]);
+  expect(result.reviewTarget).toBe("classificationResolution");
 });
 
 test("does not confuse functional decomposition creation with hazard review", () => {

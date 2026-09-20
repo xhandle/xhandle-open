@@ -31,11 +31,12 @@ const NOT_APPLICABLE_RULE = /^N[1-4]$/i;
 const HARM_PATH = /\b(?:L[1-3]\b|collision|crash|injur\w*|fatal\w*|death|physical harm|strik(?:e|ing)|crush\w*|burn\w*|electrocut\w*|toxic release|environmental harm|hazardous energy|unsafe (?:proximity|separation|clearance)|loss of (?:safe )?separation|unintended (?:physical )?(?:motion|movement|actuation)|loss of (?:vehicle|machine|motion|physical) control|vehicle instability|rollover|physical (?:asset|property|equipment|infrastructure) damage)\b/i;
 const NEGATED_HARM_ASSERTION = /\b(?:no|not|without|cannot|does not|do not|fails? to|did not)\b[^.;\n]{0,100}\b(?:L[1-3]|physical harm|harm path|mishap|collision|crash|injur\w*|fatal\w*|death|hazardous state|hazardous outcome|physical damage|environmental harm)\b/gi;
 
-function isSubstantiveClassificationEvidence(value = "") {
+export function isSubstantiveClassificationEvidence(value = "") {
   const candidate = normalized(value);
   if (!candidate) return false;
   if (/^not applicable\b/.test(candidate)) return false;
-  return !/^(?:n\/?a|none|unknown|tbd|to be determined|not established|not documented|not defined|unconfirmed)[.!]?$/.test(candidate);
+  if (/^none(?:\s+(?:credited|identified|documented|established|applicable|identified in (?:the )?row evidence))?[.!]?$/.test(candidate)) return false;
+  return !/^(?:n\/?a|unknown|tbd|to be determined|not established|not documented|not defined|unconfirmed)[.!]?$/.test(candidate);
 }
 
 export function normalizeProtectionStatus(value = "", assessment = "") {
@@ -226,6 +227,9 @@ export function validateSafetyClassificationRecord(record = {}, item = {}) {
     if (!isSubstantiveClassificationEvidence(resultingSystemState)) findings.push("Safety — Direct requires the resulting hazardous system state.");
     if (!hasHarmPath) findings.push("Safety — Direct requires a traceable L1-L3 mishap or physical-harm path.");
     if (!protectionAssessment) findings.push("Safety — Direct requires an assessment of credited independent protections.");
+    if (isSubstantiveClassificationEvidence(intermediateSafetyFunction) || isSubstantiveClassificationEvidence(intermediateSafetyEffect)) {
+      findings.push("Safety — Direct cannot depend on an intermediate safety function; classify an established intermediate contribution as Safety — Related.");
+    }
     if (!DIRECT_RULE.test(classificationRule)) findings.push("Safety — Direct requires a D1-D3 classification rule.");
   } else if (classification === SAFETY_CLASSIFICATION.RELATED) {
     if (pathType !== SAFETY_PATH_TYPE.CONTRIBUTORY) findings.push("Safety — Related requires a Contributory causal path.");

@@ -5,8 +5,183 @@ import {
   extractVibeReviewProviderText,
   normalizeVibeReviewProposal,
   normalizeGuidePhraseApplicabilityProposal,
+  normalizeSafetyClassificationProposal,
+  buildHumanSafetyClassificationDecision,
+  buildDeterministicClassificationResolutionRepair,
   requestVibeReviewProposal,
 } from "./vibeReviewProposal";
+
+test("deterministically repairs Direct to Related only when the intermediate path is already documented", () => {
+  const repaired = buildDeterministicClassificationResolutionRepair({
+    "Raw Analysis Row ID": "RAW-POLICY",
+    "Intermediate Safety Function": "Receive Haulage Mission",
+    "Intermediate Safety Effect": "Validates and accepts a mission that can alter active maneuver execution.",
+    "Classification Evidence": "The receiver participates between fleet dispatch and vehicle execution.",
+  }, ["Safety — Direct cannot depend on an intermediate safety function; classify an established intermediate contribution as Safety — Related."]);
+  expect(repaired).toMatchObject({
+    normalizedDecision: "Safety — Related",
+    "Safety Classification": "Safety — Related",
+    "Safety Classification Rule": "R1",
+    "Causal Path Type": "Contributory",
+  });
+  expect(buildDeterministicClassificationResolutionRepair({
+    "Intermediate Safety Function": "Receive Haulage Mission",
+  }, ["Safety — Direct cannot depend on an intermediate safety function."])).toBeNull();
+  expect(buildDeterministicClassificationResolutionRepair({
+    "Intermediate Safety Function": "None identified in row evidence",
+    "Intermediate Safety Effect": "None credited",
+  }, ["Safety — Direct cannot depend on an intermediate safety function."])).toBeNull();
+});
+
+test("deterministically repairs Related to Direct when absence sentinels document no intermediate path", () => {
+  const repaired = buildDeterministicClassificationResolutionRepair({
+    "Raw Analysis Row ID": "RAW-DIRECT",
+    "Safety Classification": "Safety — Related",
+    "Causal Effect": "Late mission intent interrupts the active lane-change trajectory.",
+    "Resulting System State": "The vehicle remains partially across the lane boundary near adjacent traffic.",
+    "Intermediate Safety Function": "None identified",
+    "Intermediate Safety Effect": "None identified",
+    Hazard: "Unsafe lane occupancy can lead to collision.",
+    Loss: "Injury or property damage from collision.",
+    "Classification Evidence": "The documented path reaches unsafe occupancy without an intervening response.",
+  }, [
+    "Safety — Related requires a named intermediate safety function, control, barrier, or response.",
+    "Safety — Related requires the effect on the intermediate safety function.",
+  ]);
+  expect(repaired).toMatchObject({
+    normalizedDecision: "Safety — Direct",
+    "Safety Classification": "Safety — Direct",
+    "Safety Classification Rule": "D1",
+    "Causal Path Type": "Direct",
+    "Intermediate Safety Function": "",
+    "Intermediate Safety Effect": "",
+  });
+});
+
+test("does not invent a Direct repair without an established harm path", () => {
+  expect(buildDeterministicClassificationResolutionRepair({
+    "Causal Effect": "A message is delayed.",
+    "Resulting System State": "The display is stale.",
+    "Intermediate Safety Function": "None identified",
+    "Intermediate Safety Effect": "None identified",
+  }, ["Safety — Related requires a named intermediate safety function."])).toBeNull();
+});
+
+test("rejects a manual Related classification without substantive intermediate evidence", () => {
+  expect(() => buildHumanSafetyClassificationDecision({
+    classification: "Safety — Related",
+    rowFields: {
+      "Raw Analysis Row ID": "RAW-RELATED",
+      "Guide Phrase Applicable": "Yes",
+      "Safety Significant": "Yes",
+      "Intermediate Safety Function": "None identified",
+      "Intermediate Safety Effect": "None credited",
+    },
+  })).toThrow(/requires a substantive named intermediate safety function/i);
+});
+
+test("governed upstream decisions constrain classification without entering its write set", () => {
+  const no = normalizeSafetyClassificationProposal({ normalizedDecision: "Safety — Direct", explanation: "Physical harm wording conflicts." }, {
+    "Raw Analysis Row ID": "R-NO", "Guide Phrase Applicable": "Yes", "Safety Significant": "No",
+  });
+  expect(no.proposal.governedDecision).toMatchObject({ "Safety Classification": "Mission/Reliability", "Causal Path Type": "None" });
+  expect(no.proposal.governedDecision).not.toHaveProperty("Safety Significant");
+  expect(no.proposal.governedDecision).not.toHaveProperty("Guide Phrase Applicable");
+  const na = normalizeSafetyClassificationProposal({ normalizedDecision: "Safety — Related" }, {
+    "Raw Analysis Row ID": "R-NA", "Guide Phrase Applicable": "No", "Safety Significant": "Yes",
+  });
+  expect(na.proposal.governedDecision["Safety Classification"]).toBe("Not Applicable");
+});
+
+test("explicit classification selection cannot override governed significance", () => {
+  const rowFields = { "Raw Analysis Row ID": "R-1", "Guide Phrase Applicable": "Yes", "Safety Significant": "No",
+    "Safety Significance Rationale": "Authoritative human disposition." };
+  expect(() => buildHumanSafetyClassificationDecision({ rowFields, classification: "Safety — Direct" })).toThrow(/permit only Mission\/Reliability/i);
+  const decision = buildHumanSafetyClassificationDecision({ rowFields, classification: "Mission/Reliability" });
+  expect(decision).not.toHaveProperty("Safety Significant");
+  expect(decision).not.toHaveProperty("Safety Significance Rationale");
+});
+
+test("protection-only uncertainty does not withhold an otherwise established safety classification", () => {
+  const rowFields = {
+    "Raw Analysis Row ID": "RAW-0DKV2D2",
+    "Function (From)": "Report Vehicle Status",
+    "Control Action": "Vehicle Status Report",
+    "Function (To)": "Manage Fleet Missions",
+    "Guide Phrase": "Providing the control action causes a hazard",
+    "Guide Phrase Applicable": "Yes",
+    "Safety Significant": "Yes",
+    Loss: "Collision causing physical harm.",
+    Hazard: "An unsafe fleet command reaches the vehicle during a lateral transition.",
+    "Causal Scenario": "Invalid status causes fleet mission management to issue an incompatible command during the maneuver.",
+    "Causal Effect": "Manage Fleet Missions reasons from invalid vehicle status and issues an incompatible fleet command.",
+    "Resulting System State": "The vehicle receives a command inconsistent with its current lateral-transition state.",
+    "Protection Assessment": "Onboard arbitration may cross-check the command, but its existence and effectiveness are unconfirmed.",
+    "Protection Status": "Unknown",
+  };
+  const result = normalizeSafetyClassificationProposal({
+    normalizedDecision: "Needs Review",
+    "Safety Classification Rule": "U2",
+    "Causal Path Type": "Uncertain",
+    "Causal Effect": rowFields["Causal Effect"],
+    "Resulting System State": rowFields["Resulting System State"],
+    "Protection Assessment": rowFields["Protection Assessment"],
+    "Protection Status": "Unknown",
+    "Classification Evidence": "The invalid report can drive an incompatible command into the active maneuver.",
+    remainingEvidenceGap: "Whether onboard command arbitration validates incoming fleet commands is unconfirmed; this affects protection status only and does not unresolve the causal classification.",
+  }, rowFields);
+  expect(result.valid).toBe(true);
+  expect(result.proposal.governedDecision).toMatchObject({
+    "Safety Classification": "Safety — Direct",
+    "Causal Path Type": "Direct",
+  });
+  expect(result.evidenceGap).toMatch(/protection status only/i);
+});
+
+test("material causal uncertainty still withholds a classification", () => {
+  const result = normalizeSafetyClassificationProposal({
+    normalizedDecision: "Needs Review",
+    remainingEvidenceGap: "It is unknown whether the receiver can issue any command that affects vehicle motion.",
+  }, {
+    "Raw Analysis Row ID": "RAW-GAP",
+    "Guide Phrase Applicable": "Yes",
+    "Safety Significant": "Yes",
+  });
+  expect(result.valid).toBe(false);
+  expect(result.proposal.governedDecision).toBeNull();
+});
+
+test("reclassifies a direct proposal with a named intermediate safety function as Safety — Related", () => {
+  const rowFields = {
+    "Raw Analysis Row ID": "RAW-FLEET",
+    "Guide Phrase Applicable": "Yes",
+    "Safety Significant": "Needs Review",
+    Loss: "Collision causing physical harm.",
+    Hazard: "An incompatible command alters the active vehicle trajectory.",
+    "Causal Scenario": "Invalid fleet status leads to a conflicting command during a lane change.",
+    "Protection Assessment": "Arbitration effectiveness is unknown and is not credited.",
+  };
+  const result = normalizeVibeReviewProposal({
+    normalizedDecision: "Safety — Direct",
+    "Safety Classification Rule": "D1",
+    "Causal Path Type": "Direct",
+    "Causal Effect": "Manage Fleet Missions issues a command that conflicts with the active maneuver.",
+    "Resulting System State": "The conflicting command reaches onboard command arbitration during active lateral motion.",
+    "Intermediate Safety Function": "Onboard command arbitration",
+    "Intermediate Safety Effect": "If accepted without a maneuver-state cross-check, the command causes an unsafe trajectory alteration.",
+    "Protection Assessment": "Arbitration effectiveness is unknown and is not credited.",
+    "Protection Status": "Unknown",
+    "Classification Evidence": "The conflicting command propagates through the named arbitration function toward physical harm.",
+    "Safety Significance Rationale": "The causal path to collision is established; protection uncertainty remains separate.",
+    "Classification Confidence": "Medium",
+  }, rowFields);
+  expect(result.valid).toBe(true);
+  expect(result.proposal.governedDecision).toMatchObject({
+    "Safety Classification": "Safety — Related",
+    "Causal Path Type": "Contributory",
+    "Intermediate Safety Function": "Onboard command arbitration",
+  });
+});
 
 const applicabilityRow = {
   "Raw Analysis Row ID": "RAW-APP-1",

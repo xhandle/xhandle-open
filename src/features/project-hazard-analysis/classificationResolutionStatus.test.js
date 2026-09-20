@@ -2,6 +2,7 @@ import {
   CLASSIFICATION_RESOLUTION_STATUS,
   CLASSIFICATION_RESOLUTION_STATUS_HEADER,
   deriveClassificationResolutionStatus,
+  inspectClassificationResolution,
   ensureClassificationResolutionStatus,
   normalizeHazardAnalysisResolutionStatus,
 } from "./classificationResolutionStatus";
@@ -87,6 +88,23 @@ describe("classification resolution status", () => {
     expect(deriveClassificationResolutionStatus(headers, reviewed)).toBe(
       CLASSIFICATION_RESOLUTION_STATUS.HUMAN_EVIDENCE_GAP,
     );
+  });
+
+  test("exposes the exact failed policy checks for a resolution review", () => {
+    const inspected = inspectClassificationResolution(headers, row({
+      "Safety Classification": "Safety — Related",
+      "Safety Classification Rule": "R1",
+      "Causal Path Type": "Contributory",
+      "Intermediate Safety Function": "",
+      "Intermediate Safety Effect": "",
+      Hazard: "The robot may collide with a person.",
+      Loss: "A person may be injured.",
+    }));
+    expect(inspected.status).toBe(CLASSIFICATION_RESOLUTION_STATUS.POLICY_GAP);
+    expect(inspected.findings).toEqual(expect.arrayContaining([
+      expect.stringContaining("named intermediate safety function"),
+      expect.stringContaining("effect on the intermediate safety function"),
+    ]));
   });
 
   test("retains Needs Review as an unresolved status", () => {

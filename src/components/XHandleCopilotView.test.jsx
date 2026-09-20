@@ -142,6 +142,63 @@ describe("paused vibe review cards", () => {
     act(() => root.unmount()); host.remove();
   });
 
+  it("renders classification-specific labels and actions without Yes or No controls", () => {
+    const { host, root } = renderActions(<HazardVibeReviewCard message={{ vibeReview: {
+      sessionId: "classification", sourceRowId: "r", reviewTarget: "safetyClassification",
+      existingLabel: "Safety Classification", existingValue: "Needs Review", proposedValue: "Mission/Reliability",
+      allowNotApplicable: true,
+    } }} />);
+    expect(host.textContent).toContain("Existing Safety Classification");
+    expect(host.textContent).toContain("Mark Safety — Direct");
+    expect(host.textContent).toContain("Mark Safety — Related");
+    expect(host.textContent).toContain("Mark Mission/Reliability");
+    expect(host.textContent).toContain("Mark Not Applicable");
+    const labels = [...host.querySelectorAll("button")].map((button) => button.textContent);
+    expect(labels).not.toContain("Mark Yes");
+    expect(labels).not.toContain("Mark No");
+    act(() => root.unmount()); host.remove();
+  });
+
+  it("disables unsupported Related and Accept actions when no valid proposal or intermediate evidence exists", () => {
+    const { host, root } = renderActions(<HazardVibeReviewCard message={{ vibeReview: {
+      sessionId: "resolution", sourceRowId: "RAW-1", reviewTarget: "classificationResolution",
+      existingLabel: "Classification Resolution Status", existingValue: "Policy Validation Gap",
+      proposedValue: "", relatedClassificationSupported: false,
+    } }} />);
+    const button = (label) => [...host.querySelectorAll("button")].find((candidate) => candidate.textContent === label);
+    expect(button("Accept proposal").disabled).toBe(true);
+    expect(button("Mark Safety — Related").disabled).toBe(true);
+    expect(button("Mark Safety — Direct").disabled).toBe(false);
+    expect(button("Skip for later").disabled).toBe(false);
+    act(() => root.unmount()); host.remove();
+  });
+
+  it("blocks classification actions behind an explicit Safety Significance prerequisite", () => {
+    const onAction = jest.fn();
+    const { host, root } = renderActions(<HazardVibeReviewCard onAction={onAction} message={{ vibeReview: {
+      sessionId: "classification", sourceRowId: "RAW-1", reviewTarget: "safetyClassification",
+      existingLabel: "Safety Classification", existingValue: "Needs Review", prerequisiteRequired: true,
+    } }} />);
+    expect(host.textContent).toContain("Safety Classification depends on a governed Safety Significance decision");
+    expect(host.textContent).toContain("Review Safety Significance first");
+    expect(host.textContent).not.toContain("Mark Safety — Direct");
+    const button = [...host.querySelectorAll("button")].find((candidate) => candidate.textContent === "Review Safety Significance first");
+    act(() => button.click());
+    expect(onAction).toHaveBeenCalledWith("reviewSafetySignificance", expect.objectContaining({ sourceRowId: "RAW-1" }));
+    act(() => root.unmount()); host.remove();
+  });
+
+  it("labels dependent hazard assessments as numbered follow-up parts of the parent item", () => {
+    const { host, root } = renderActions(<HazardVibeReviewCard message={{ vibeReview: {
+      sessionId: "child", sourceRowId: "RAW-2", reviewTarget: "safetyClassification",
+      progress: "Item 1 of 1", existingLabel: "Safety Classification", existingValue: "Needs Review",
+      reviewSequence: { parentItem: 2, parentTotal: 4, part: 1, total: 2, label: "Review Safety Classification" },
+    } }} />);
+    expect(host.textContent).toContain("Parent item 2 of 4");
+    expect(host.textContent).toContain("Follow-up part 1 of 2: Review Safety Classification");
+    act(() => root.unmount()); host.remove();
+  });
+
   it("shows Pause review while functional review is active", () => {
     const { host, root } = renderActions(<FunctionalVibeReviewCard message={{ functionalVibeReview: { sessionId: "s", rowId: "r", decision: "Keep" } }} />);
     expect(host.textContent).toContain("Pause review");
@@ -161,11 +218,32 @@ describe("paused vibe review cards", () => {
       onAction={onAction}
     />);
     expect(host.textContent).toContain("Reviewed decision saved");
-    expect(host.textContent).toContain("Regenerate affected row");
-    expect(host.textContent).toContain("Regenerate later");
-    const regenerate = [...host.querySelectorAll("button")].find((button) => button.textContent === "Regenerate affected row");
-    act(() => regenerate.click());
-    expect(onAction).toHaveBeenCalledWith("regenerate", expect.objectContaining({ sourceRowId: "RAW-1" }));
+    expect(host.textContent).toContain("Review selected (1)");
+    expect(host.textContent).toContain("Skip downstream reviews");
+    const review = [...host.querySelectorAll("button")].find((button) => button.textContent === "Review selected (1)");
+    act(() => review.click());
+    expect(onAction).toHaveBeenCalledWith("reviewSelected", expect.objectContaining({ sourceRowId: "RAW-1", selectedImpactIds: ["impact-1"] }));
+    act(() => root.unmount()); host.remove();
+  });
+
+  it("automatically advances an empty downstream-review card", () => {
+    const onAction = jest.fn();
+    const { host, root } = renderActions(<HazardDownstreamImpactCard
+      message={{ hazardDownstreamImpact: {
+        sessionId: "empty",
+        sourceRowId: "RAW-NONE",
+        decision: "Safety — Direct",
+        impacts: [],
+      } }}
+      onAction={onAction}
+    />);
+    expect(host.textContent).toContain("No downstream column reviews are required");
+    expect(host.textContent).not.toContain("Skip downstream reviews");
+    expect(onAction).toHaveBeenCalledWith("skipAll", expect.objectContaining({
+      sourceRowId: "RAW-NONE",
+      selectedImpactIds: [],
+      automatic: true,
+    }));
     act(() => root.unmount()); host.remove();
   });
 
@@ -183,12 +261,30 @@ describe("paused vibe review cards", () => {
       onAction={onAction}
     />);
     expect(host.textContent).toContain("Safety Significant decision of No");
-    const regenerate = [...host.querySelectorAll("button")].find((button) => button.textContent === "Regenerate affected row");
-    act(() => regenerate.click());
-    expect(onAction).toHaveBeenCalledWith("regenerate", expect.objectContaining({
+    const review = [...host.querySelectorAll("button")].find((button) => button.textContent === "Review selected (1)");
+    act(() => review.click());
+    expect(onAction).toHaveBeenCalledWith("reviewSelected", expect.objectContaining({
       reviewTarget: "safetySignificant",
       decision: "No",
+      selectedImpactIds: ["impact-1"],
     }));
+    act(() => root.unmount()); host.remove();
+  });
+
+  it("allows any subset or an explicit skip of downstream reviews", () => {
+    const onAction = jest.fn();
+    const { host, root } = renderActions(<HazardDownstreamImpactCard message={{ hazardDownstreamImpact: {
+      sessionId: "subset", sourceRowId: "RAW-2", decision: "Yes", impacts: ["First review", "Second review", "Third review"],
+    } }} onAction={onAction} />);
+    const checks = [...host.querySelectorAll('input[type="checkbox"]')];
+    act(() => checks[1].click());
+    expect(host.textContent).toContain("Review selected (2)");
+    const review = [...host.querySelectorAll("button")].find((button) => button.textContent === "Review selected (2)");
+    act(() => review.click());
+    expect(onAction).toHaveBeenCalledWith("reviewSelected", expect.objectContaining({ selectedImpactIds: ["impact-1", "impact-3"] }));
+    const skip = [...host.querySelectorAll("button")].find((button) => button.textContent === "Skip downstream reviews");
+    act(() => skip.click());
+    expect(onAction).toHaveBeenCalledWith("skipAll", expect.objectContaining({ selectedImpactIds: [] }));
     act(() => root.unmount()); host.remove();
   });
 });

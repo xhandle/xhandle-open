@@ -9,9 +9,31 @@ import {
   safetyClassificationRollup,
   validateSafetyClassificationRecord,
   auditSafetyClassificationRecord,
+  isSubstantiveClassificationEvidence,
 } from "./safetySignificancePolicy";
 
 describe("safety significance policy", () => {
+  test.each(["None", "None credited", "None identified", "None documented", "None identified in row evidence", "N/A", "Not applicable"])(
+    "treats %s as an absence marker rather than intermediate-function evidence",
+    (value) => expect(isSubstantiveClassificationEvidence(value)).toBe(false),
+  );
+
+  test("does not create a Direct policy gap from explicit intermediate-function absence markers", () => {
+    const result = validateSafetyClassificationRecord({
+      guidePhraseApplicable: "Yes",
+      safetyClassification: "Safety — Direct",
+      safetyClassificationRule: "D1",
+      causalPathType: "Direct",
+      causalEffect: "The planner continues an unsafe lateral command.",
+      resultingSystemState: "The vehicle occupies an unsafe position near adjacent traffic.",
+      intermediateSafetyFunction: "None credited",
+      intermediateSafetyEffect: "Not applicable",
+      hazards: "The vehicle may collide with adjacent traffic.",
+      losses: "L2 — Physical property damage.",
+      protectionAssessment: "No independent protection is credited.",
+    });
+    expect(result.findings).not.toContain(expect.stringContaining("cannot depend on an intermediate safety function"));
+  });
   test("keeps direct and related classifications distinct while rolling both up to Safety", () => {
     expect(safetyClassificationRollup(SAFETY_CLASSIFICATION.DIRECT)).toBe("Safety");
     expect(safetyClassificationRollup(SAFETY_CLASSIFICATION.RELATED)).toBe("Safety");
@@ -219,5 +241,20 @@ describe("safety significance policy", () => {
     expect(normalizeSafetyClassificationRule("D2", SAFETY_CLASSIFICATION.MISSION, {
       evidence: "Reporting-only status reaches fleet tracking.",
     })).toBe("M3");
+  });
+
+  test("rejects Direct when the proposed harm path depends on an intermediate safety function", () => {
+    const result = validateSafetyClassificationRecord({
+      safetyClassification: "Safety — Direct",
+      safetyClassificationRule: "D1",
+      causalPathType: "Direct",
+      causalEffect: "Fleet management issues a conflicting command.",
+      resultingSystemState: "The command reaches the vehicle during a lane change.",
+      intermediateSafetyFunction: "Onboard command arbitration",
+      intermediateSafetyEffect: "Arbitration accepts the conflicting command.",
+      protectionAssessment: "Effectiveness is unknown and is not credited.",
+      loss: "Collision causing physical harm.",
+    });
+    expect(result.findings.join(" ")).toMatch(/cannot depend on an intermediate safety function/i);
   });
 });

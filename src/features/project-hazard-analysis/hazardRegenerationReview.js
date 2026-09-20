@@ -66,6 +66,8 @@ const PHYSICAL_HARM_NARRATIVE_COLUMNS = [
 
 const PLACEHOLDER = /^(?:|unknown|undetermined|needs review|uncertain|tbd|to be determined|n\/?a)$/i;
 const AFFIRMATIVE_HARM = /\b(?:collision|crash|injur\w*|fatal\w*|death|physical harm|property damage|environmental harm|loss of (?:safe )?separation|unsafe proximity|unintended (?:physical )?(?:motion|movement)|hazardous energy)\b/i;
+const STALE_REVIEW_LANGUAGE = /\b(?:needs? review|uncertain|unresolved|could not be validated|cannot be validated|contradict(?:s|ion|ory)|prior generated (?:classification|interpretation)|old physical-harm)\b/i;
+const NO_REVIEWER_RATIONALE = /\b(?:no (?:additional )?reviewer rationale (?:was )?supplied|supporting rationale was not supplied|no rationale (?:was )?supplied)\b/i;
 
 const findColumnIndex = (headers, name) => (headers || []).findIndex(
   (header) => clean(header).toLowerCase() === name.toLowerCase()
@@ -74,6 +76,65 @@ const findColumnIndex = (headers, name) => (headers || []).findIndex(
 const cell = (headers, row, name) => {
   const index = findColumnIndex(headers, name);
   return index >= 0 ? row?.[index] : "";
+};
+
+const usefulCurrentEvidence = (value) => {
+  const text = clean(value);
+  return text && !PLACEHOLDER.test(text) && !STALE_REVIEW_LANGUAGE.test(text) ? text : "";
+};
+
+const reviewerRationaleFromReviewItem = (reviewItem, reviewedRationale = "") => {
+  const explicit = clean(
+    reviewItem?.vibeReview?.humanAdjudicationRationale
+    || reviewItem?.vibeReview?.reviewerRationale
+    || reviewItem?.vibeReview?.userFeedback
+    || reviewItem?.userFeedback
+  );
+  if (explicit) return explicit;
+  const rationale = clean(reviewedRationale);
+  const labeled = rationale.match(/Reviewer rationale:\s*(.*?)(?=\s+(?:Existing documented basis:|Unresolved validation context retained:|This disposition records)|$)/i)?.[1];
+  if (clean(labeled)) return clean(labeled);
+  if (!rationale || STALE_REVIEW_LANGUAGE.test(rationale) || NO_REVIEWER_RATIONALE.test(rationale)) return "";
+  return rationale;
+};
+
+const buildGovernedSafetyRationale = ({ headers, row, reviewItem, decision }) => {
+  const reviewedColumns = reviewItem?.currentContent?.columns;
+  const reviewedRow = reviewItem?.currentContent?.row;
+  const reviewedRationale = Array.isArray(reviewedColumns) && Array.isArray(reviewedRow)
+    ? cell(reviewedColumns, reviewedRow, "Safety Significance Rationale")
+    : "";
+  const reviewerRationale = reviewerRationaleFromReviewItem(reviewItem, reviewedRationale);
+  const reviewerBasis = reviewerRationale
+    ? `Human disposition. Reviewer rationale: ${reviewerRationale}`
+    : "Human disposition. No reviewer rationale was supplied.";
+  const classification = clean(cell(headers, row, "Safety Classification"));
+
+  if (/^no$/i.test(decision)) {
+    const effect = usefulCurrentEvidence(cell(headers, row, "Causal Effect"));
+    const state = usefulCurrentEvidence(cell(headers, row, "Resulting System State"));
+    const termination = usefulCurrentEvidence(cell(headers, row, "Physical-Harm Chain Termination"));
+    const boundary = [effect, state].filter((value, index, values) => value && values.indexOf(value) === index).join("; ");
+    const regeneratedContext = boundary
+      ? `Regenerated evidence confines the effect to ${boundary}.`
+      : "Regenerated evidence supports the non-safety disposition.";
+    const terminationContext = termination
+      ? `The causal chain terminates at ${termination}; no documented propagation into vehicle control or physical harm is established.`
+      : "The causal chain terminates at the documented mission/reliability effect; no documented propagation into vehicle control or physical harm is established.";
+    return `${reviewerBasis} ${regeneratedContext} ${terminationContext}`;
+  }
+
+  const related = /^Safety\s*[—-]\s*Related$/i.test(classification);
+  const intermediateFunction = usefulCurrentEvidence(cell(headers, row, "Intermediate Safety Function"));
+  const intermediateEffect = usefulCurrentEvidence(cell(headers, row, "Intermediate Safety Effect"));
+  const pathContext = related
+    ? `The governed Yes decision is Safety — Related with a contributory path${intermediateFunction ? ` through ${intermediateFunction}` : ""}${intermediateEffect ? `, where ${intermediateEffect}` : ""}.`
+    : "The governed Yes decision is Safety — Direct with a direct physical-harm path.";
+  const protectionStatus = clean(cell(headers, row, "Protection Status"));
+  const protectionContext = /^unknown$/i.test(protectionStatus)
+    ? "Protection status remains Unknown as an evidence gap; it does not reverse the governed Yes decision."
+    : "";
+  return [reviewerBasis, pathContext, protectionContext].filter(Boolean).join(" ");
 };
 
 export function buildReviewedRowRegenerationContext({ headers = [], row = [], reviewTarget = "", decision = "" } = {}) {
@@ -124,6 +185,78 @@ const clearContradictoryIdentifiers = (headers, row, safetySignificant) => {
     const safetyOnly = /^(?:L|H|LOSS|HAZARD|SAFETY)[-_:\s]/i.test(value);
     if ((safetySignificant && missionOnly) || (!safetySignificant && safetyOnly)) row[index] = "";
   });
+};
+
+const reconcileLockedSafetyClassification = (headers, row, reviewItem) => {
+  if (!reviewItem) return;
+  const columns = reviewItem?.currentContent?.columns || [];
+  const reviewed = reviewItem?.currentContent?.row || [];
+  const decision = clean(cell(columns, reviewed, "Safety Classification") || reviewItem?.vibeReview?.decision);
+  if (!decision) return;
+
+  ["Safety Classification", "Safety Classification Rule", "Causal Path Type", "Classification Evidence", "Classification Confidence"].forEach((header) => {
+    const value = header === "Safety Classification" ? decision : cell(columns, reviewed, header);
+    if (clean(value)) write(headers, row, header, value);
+  });
+
+  if (/^Mission\/Reliability$/i.test(decision)) {
+    const receiver = usefulCurrentEvidence(cell(headers, row, "Function (To)")) || "the receiving function";
+    const effect = usefulCurrentEvidence(cell(headers, row, "Causal Effect"));
+    const state = usefulCurrentEvidence(cell(headers, row, "Resulting System State"));
+    const missionEffect = effect && !AFFIRMATIVE_HARM.test(effect)
+      ? effect
+      : `The deviation degrades the accuracy, ordering, availability, or coordination of ${receiver}.`;
+    const missionState = state && !AFFIRMATIVE_HARM.test(state)
+      ? state
+      : `${receiver} operates with an inaccurate, stale, unavailable, or incorrectly coordinated mission state.`;
+    const termination = usefulCurrentEvidence(cell(headers, row, "Physical-Harm Chain Termination"));
+    const coherentTermination = termination && !AFFIRMATIVE_HARM.test(termination)
+      ? termination
+      : `The documented effect terminates at ${receiver}; no downstream vehicle-control authority or physical-harm propagation is established by this row.`;
+
+    write(headers, row, "Safety Significant", "No");
+    write(headers, row, "Causal Path Type", "None");
+    write(headers, row, "Intermediate Safety Function", "Not Applicable");
+    write(headers, row, "Intermediate Safety Effect", "Not Applicable");
+    write(headers, row, "Protection Assessment", "No independent safety protection is credited or required to establish this mission/reliability boundary.");
+    write(headers, row, "Protection Status", "Not Applicable");
+    write(headers, row, "Physical-Harm Chain Termination", coherentTermination);
+    write(headers, row, "Causal Effect", missionEffect);
+    write(headers, row, "Resulting System State", missionState);
+    const significanceRationale = clean(cell(headers, row, "Safety Significance Rationale"));
+    if (!significanceRationale || PLACEHOLDER.test(significanceRationale) || STALE_REVIEW_LANGUAGE.test(significanceRationale) || AFFIRMATIVE_HARM.test(significanceRationale)) {
+      write(headers, row, "Safety Significance Rationale", `The governed Mission/Reliability classification confines the documented effect to ${receiver}; no downstream physical-harm path is established by this row.`);
+    }
+
+    ["Loss", "Losses", "Raw Loss Candidate"].forEach((header) => {
+      const value = clean(cell(headers, row, header));
+      if (AFFIRMATIVE_HARM.test(value)) write(headers, row, header, `Loss of mission effectiveness or supervisory awareness caused by ${missionEffect}`);
+    });
+    ["Hazard", "Hazards", "Raw Hazard Candidate"].forEach((header) => {
+      const value = clean(cell(headers, row, header));
+      if (AFFIRMATIVE_HARM.test(value)) write(headers, row, header, missionState);
+    });
+    ["Unsafe Control Action", "Causal Scenario", "Causal Factor"].forEach((header) => {
+      const value = clean(cell(headers, row, header));
+      if (AFFIRMATIVE_HARM.test(value)) write(headers, row, header, `${missionEffect} ${coherentTermination}`);
+    });
+    ["Canonical Loss ID", "Canonical Hazard ID", "Loss ID", "Hazard ID"].forEach((header) => write(headers, row, header, ""));
+    return;
+  }
+
+  if (/^Safety\s*[—-]\s*(?:Direct|Related)$/i.test(decision)) {
+    write(headers, row, "Safety Significant", "Yes");
+    const related = /Related$/i.test(decision);
+    write(headers, row, "Causal Path Type", related ? "Contributory" : "Direct");
+    if (!related) {
+      write(headers, row, "Intermediate Safety Function", "Not Applicable");
+      write(headers, row, "Intermediate Safety Effect", "Not Applicable");
+    }
+    clearContradictoryIdentifiers(headers, row, true);
+  } else if (/^Not Applicable$/i.test(decision)) {
+    write(headers, row, "Safety Significant", "Not Applicable");
+    write(headers, row, "Causal Path Type", "None");
+  }
 };
 
 export function latestGuidePhraseReviewByRowId(reviewItems = [], projectId = "", auditRecords = []) {
@@ -207,6 +340,27 @@ export function latestSafetySignificanceReviewByRowId(reviewItems = [], projectI
         },
       });
     });
+  return byRowId;
+}
+
+export function latestSafetyClassificationReviewByRowId(reviewItems = [], projectId = "", auditRecords = []) {
+  const byRowId = new Map();
+  const accept = (rowId, decision, item) => {
+    if (!rowId || !/^(?:Safety [—-] (?:Direct|Related)|Mission\/Reliability|Not Applicable)$/i.test(decision)) return;
+    byRowId.set(rowId, item);
+  };
+  (reviewItems || []).forEach((item) => {
+    const review = item?.vibeReview;
+    if (review?.domain !== "hazard-analysis" || review?.reviewTarget !== "safetyClassification" || String(item?.projectId || "") !== String(projectId || "")) return;
+    accept(clean(review.rowId || item?.currentContent?.rowId), clean(review.decision), item);
+  });
+  (auditRecords || []).filter((record) => String(record?.projectId || "") === String(projectId || "")).forEach((record) => {
+    const rowId = clean(record?.sourceRowId || record?.rowId);
+    if (record?.action === "undo") { byRowId.delete(rowId); return; }
+    if (record?.reviewTarget !== "safetyClassification") return;
+    const decision = clean(record?.newReviewValue || record?.newGovernedFields?.["Safety Classification"]);
+    accept(rowId, decision, { projectId, reviewedAt: record.timestamp || "", currentContent: { rowId, columns: record.headers || [], row: record.nextRow || [] }, vibeReview: { domain: "hazard-analysis", reviewTarget: "safetyClassification", rowId, decision, reviewerName: record.reviewerName || "" } });
+  });
   return byRowId;
 }
 
@@ -387,7 +541,11 @@ export function reconcileRegeneratedSafetySignificanceReview({
     }
     if (protectionStatusIndex >= 0) next[protectionStatusIndex] = "Not Applicable";
     const overrideNote = "Human disposition overrides the prior generated safety interpretation; no safety-significant physical-harm path is retained.";
-    if (terminationIndex >= 0) next[terminationIndex] = overrideNote;
+    if (terminationIndex >= 0 && (
+      PLACEHOLDER.test(clean(next[terminationIndex]))
+      || AFFIRMATIVE_HARM.test(clean(next[terminationIndex]))
+      || STALE_REVIEW_LANGUAGE.test(clean(next[terminationIndex]))
+    )) next[terminationIndex] = overrideNote;
     if (evidenceIndex >= 0 && (PLACEHOLDER.test(clean(next[evidenceIndex])) || AFFIRMATIVE_HARM.test(clean(next[evidenceIndex])))) {
       next[evidenceIndex] = overrideNote;
     }
@@ -432,6 +590,7 @@ export function normalizeReviewedHazardRowForPersistence({
   regeneratedRow = [],
   guidePhraseReviewItem = null,
   safetySignificanceReviewItem = null,
+  safetyClassificationReviewItem = null,
 } = {}) {
   const identityPreservedRow = preserveRegeneratedRowIdentity({ headers, sourceRow, regeneratedRow });
   const guidePhraseReview = reconcileRegeneratedGuidePhraseReview({
@@ -477,6 +636,17 @@ export function normalizeReviewedHazardRowForPersistence({
     write(headers, row, "Safety Classification Rule", /^M[1-4]$/i.test(rule) ? rule.toUpperCase() : "M1");
     write(headers, row, "Causal Path Type", "None");
     clearContradictoryIdentifiers(headers, row, false);
+  }
+
+  reconcileLockedSafetyClassification(headers, row, safetyClassificationReviewItem);
+
+  if (/^(?:yes|no)$/i.test(governedSafety) && safetySignificanceReviewItem) {
+    write(headers, row, "Safety Significance Rationale", buildGovernedSafetyRationale({
+      headers,
+      row,
+      reviewItem: safetySignificanceReviewItem,
+      decision: governedSafety,
+    }));
   }
 
   const resolutionStatusIndex = findColumnIndex(headers, CLASSIFICATION_RESOLUTION_STATUS_HEADER);

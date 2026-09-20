@@ -25,6 +25,7 @@ function customScopeDetails(prompt = "") {
 }
 
 export const VIBE_REVIEW_COLUMNS = Object.freeze({
+  classificationResolutionStatus: ["Classification Resolution Status", "Resolution Status", "Policy Validation Status"],
   safetySignificant: ["Safety Significant", "Safety Significance"],
   safetyClassification: ["Safety Classification", "Classification"],
   guidePhraseApplicable: ["Guide Phrase Applicable", "Applicability"],
@@ -43,7 +44,7 @@ export function isHazardVibeReviewIntent(value = "") {
   if (!/\b(?:review|walk|go)\b/.test(text)) return false;
   return /\bvi(?:b|v)e review\b/.test(text)
     || /\breview (?:these |the )?(?:hazard|safety)(?: analysis)? (?:results?|rows?)\b/.test(text)
-    || /\breview\b.*\b(?:safety significance|safety significant|safety classification|needs review)\b/.test(text)
+    || /\breview\b.*\b(?:classification resolution status|policy validation gap|evidence gap|safety significance|safety significant|safety classification|needs review)\b/.test(text)
     || /\bwalk me through\b.*\b(?:hazard|safety significance|needs review)\b/.test(text)
     || /\bgo through\b.*\b(?:hazard|safety significance|needs review)\b/.test(text);
 }
@@ -91,8 +92,9 @@ export function resolveHazardVibeReviewScope(prompt = "", summary = []) {
   const unmatched = [];
   const nearbyValues = {};
   const explicitColumns = [
+    ["classificationResolutionStatus", /\bclassification resolution status|policy validation status\b/],
     ["safetySignificant", /\bsafety significant|safety significance\b/],
-    ["safetyClassification", /\bsafety classification|classification\b/],
+    ["safetyClassification", /\bsafety classification\b/],
     ["guidePhraseApplicable", /\bguide phrase applicable|applicability\b/],
     ["subsystem", /\bsubsystem(?: allocation)?\b/],
     ["from", /\bfunction from|from function|controller\b/],
@@ -121,7 +123,7 @@ export function resolveHazardVibeReviewScope(prompt = "", summary = []) {
   });
 
   // "Needs Review rows" is sufficiently canonical even when the column is omitted.
-  if (!filters.some((filter) => filter.field === "safetySignificant")
+  if (!filters.some((filter) => ["safetySignificant", "safetyClassification"].includes(filter.field))
     && !filters.some((filter) => key(filter.value) === "needs review")
     && indexes.safetySignificant >= 0 && /\bneeds? review\b/.test(promptKey)) {
     const actual = uniqueValues(summary, indexes.safetySignificant).find((value) => key(value) === "needs review");
@@ -154,7 +156,11 @@ export function resolveHazardVibeReviewScope(prompt = "", summary = []) {
   });
   const reviewTarget = filters.some((filter) => filter.field === "guidePhraseApplicable")
     ? "guidePhraseApplicable"
-    : "safetySignificant";
+    : filters.some((filter) => filter.field === "classificationResolutionStatus")
+      ? "classificationResolution"
+    : filters.some((filter) => filter.field === "safetyClassification")
+      ? "safetyClassification"
+      : "safetySignificant";
   return {
     status: rows.length ? "matched" : "zero",
     filters,

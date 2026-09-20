@@ -22,6 +22,20 @@ test("retains the reviewed hazard column so actions cannot mutate a different fi
   expect(session.reviewTarget).toBe("guidePhraseApplicable");
 });
 
+test("persists classification as a distinct target and summarizes classification values", () => {
+  let session = createVibeReviewSession({ projectId: "p", threadId: "classification", queue: ["row-1"], reviewTarget: "safetyClassification" });
+  expect(session.reviewTarget).toBe("safetyClassification");
+  session = transitionVibeReviewSession(session, { type: "decision", record: { sourceRowId: "row-1", action: "classificationMission", newReviewValue: "Mission/Reliability" } });
+  expect(summarizeVibeReviewSession(session).classificationChanges["Mission/Reliability"]).toBe(1);
+});
+
+test("preserves classification resolution as a distinct target", () => {
+  const session = createVibeReviewSession({
+    projectId: "p", threadId: "resolution", queue: ["row-1"], reviewTarget: "classificationResolution",
+  });
+  expect(session.reviewTarget).toBe("classificationResolution");
+});
+
 test("persists the user-supplied review name", () => {
   const session = createVibeReviewSession({
     projectId: "p",
