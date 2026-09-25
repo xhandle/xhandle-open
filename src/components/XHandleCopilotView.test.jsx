@@ -41,6 +41,7 @@ const {
   buildCollaboratorVoiceGreeting,
   canAdvancePastMissingHazardReviewRow,
   getPendingFunctionalProjectCreateName,
+  waitForCommittedHazardReviewRow,
   waitForHydratedHazardReviewState,
   buildContextualVibeReviewOptions,
   buildContextualVibeReviewQueuePrompt,
@@ -86,6 +87,9 @@ const {
   normalizeMultiLevelHierarchy,
   parseCollaboratorReasoningEnvelope,
   recalculateFunctionalDirectionAudit,
+  isFunctionalDecompositionDraftRequest,
+  withFunctionalDecompositionDirective,
+  FUNCTIONAL_DECOMPOSITION_DIRECTIVE,
   recoverCompletedFunctionalAbstractionLevel,
   resolveCollaboratorProjectBoundary,
   selectCurrentCollaboratorReasoningStep,
@@ -93,6 +97,7 @@ const {
   streamChat,
 } = require("./XHandleCopilotView");
 const { registerActionProvider } = require("../features/app/actionRegistry");
+const { isWorkspaceMutationIntent } = require("../features/collaborator-workspace");
 
 describe("hazard vibe review queue consistency", () => {
   it("advances past an isolated deleted row when a later queued row still exists", () => {
@@ -123,6 +128,59 @@ describe("hazard vibe review queue consistency", () => {
     unregister();
     expect(result.state.summary[1][0]).toBe("RAW-1");
     expect(calls).toBeGreaterThanOrEqual(2);
+  });
+
+  it("does not begin a dependent review until the committed governed value is visible", async () => {
+    let calls = 0;
+    const provider = {
+      getHazardVibeReviewState: () => {
+        calls += 1;
+        return {
+          activeProjectId: "project-1",
+          workspaceType: "functional-project",
+          summary: [
+            ["Raw Analysis Row ID", "Safety Significant"],
+            ["RAW-1", calls < 3 ? "Needs Review" : "Yes"],
+          ],
+        };
+      },
+    };
+    const unregister = registerActionProvider("project-functional-diagram", provider);
+    const result = await waitForCommittedHazardReviewRow({
+      provider,
+      projectId: "project-1",
+      sourceRowId: "RAW-1",
+      expectedField: "Safety Significant",
+      expectedValue: "Yes",
+      timeoutMs: 100,
+      pollMs: 1,
+    });
+    unregister();
+    expect(result.confirmed).toBe(true);
+    expect(result.row[1]).toBe("Yes");
+    expect(calls).toBeGreaterThanOrEqual(3);
+  });
+
+  it("refuses a dependent review while the provider still exposes the stale prerequisite", async () => {
+    const provider = {
+      getHazardVibeReviewState: () => ({
+        activeProjectId: "project-1",
+        workspaceType: "functional-project",
+        summary: [["Raw Analysis Row ID", "Safety Significant"], ["RAW-1", "Needs Review"]],
+      }),
+    };
+    const unregister = registerActionProvider("project-functional-diagram", provider);
+    const result = await waitForCommittedHazardReviewRow({
+      provider,
+      projectId: "project-1",
+      sourceRowId: "RAW-1",
+      expectedField: "Safety Significant",
+      expectedValue: "Yes",
+      timeoutMs: 5,
+      pollMs: 1,
+    });
+    unregister();
+    expect(result.confirmed).toBe(false);
   });
 });
 
@@ -1325,6 +1383,41 @@ describe("subsystem generation prompting", () => {
     )).toBe("");
   });
 
+  it("does not reuse a consumed selection when the same request is asked again", () => {
+    // Observed: the reviewer typed the same sentence a second time and never saw
+    // the picker, because the earlier turn's answer was recovered by text match.
+    const request = "Create a functional decomposition for a Warehouse Yard Truck.";
+    const messages = [
+      { role: "user", content: request },
+      {
+        role: "assistant",
+        content: "What level of abstraction should I use for this functional decomposition?",
+        choicePrompt: { type: "functional-abstraction", selectedValue: "multi-level", completed: true },
+      },
+      { role: "assistant", content: "| Subsystem | Function From | ... |" },
+      { role: "user", content: request },
+    ];
+
+    expect(recoverCompletedFunctionalAbstractionLevel(request, messages)).toBe("");
+    expect(needsFunctionalAbstractionClarification(request)).toBe(true);
+  });
+
+  it("still recovers the selection that belongs to the request being run", () => {
+    // The selection arrives after the user message it answers, so nothing has
+    // consumed it yet and the generation must not ask the question again.
+    const request = "Create a functional decomposition for a Warehouse Yard Truck.";
+    const messages = [
+      { role: "user", content: request },
+      {
+        role: "assistant",
+        content: "What level of abstraction should I use for this functional decomposition?",
+        choicePrompt: { type: "functional-abstraction", selectedValue: "subsystem", completed: true },
+      },
+    ];
+
+    expect(recoverCompletedFunctionalAbstractionLevel(request, messages)).toBe("subsystem");
+  });
+
   it("does not reinterpret a resumed abstraction choice as approval to apply rows", () => {
     const resumed = "create a functional decomposition for an autonomy stack\n\nUse multi-level abstraction";
     expect(shouldHandlePendingRowsApply(resumed)).toBe(true);
@@ -1726,5 +1819,67 @@ describe("diagram functional decomposition prompting", () => {
     expect(content[0].text).toContain("branched lines");
     expect(content[0].text).toContain("Coverage Check");
     expect(content.some((part) => part.type === "image_url")).toBe(true);
+  });
+});
+
+describe("a functional decomposition draft is not a workspace edit", () => {
+  // The workspace action planner replied to "Create a functional decomposition
+  // for a Warehouse Yard Truck." with "new project or existing one?" and
+  // returned, so generation never ran. A draft modifies no project.
+  const draftRequest = "Create a functional decomposition for a Warehouse Yard Truck.";
+
+  it("routes a draft request away from the workspace action planner", () => {
+    expect(isFunctionalDecompositionDraftRequest(draftRequest)).toBe(true);
+    // The planner would otherwise claim it: "create" plus the noun
+    // "decomposition" is a mutation by its vocabulary.
+    expect(isWorkspaceMutationIntent(draftRequest)).toBe(true);
+  });
+
+  it("recognizes the other draft phrasings", () => {
+    expect(isFunctionalDecompositionDraftRequest("Generate a functional decomposition for an automatic door")).toBe(true);
+    expect(isFunctionalDecompositionDraftRequest("Draft the functional architecture for the yard truck")).toBe(true);
+  });
+
+  it("leaves a real workspace edit with the planner", () => {
+    expect(isFunctionalDecompositionDraftRequest("Add a braking subsystem to the Atoms Transport project")).toBe(false);
+    expect(isFunctionalDecompositionDraftRequest("Update the owner cell on the braking risk to Nick")).toBe(false);
+  });
+
+  it("leaves applying a draft to a project with the planner", () => {
+    expect(isFunctionalDecompositionDraftRequest(
+      "Create a new project called Yard Truck using this functional decomposition",
+    )).toBe(false);
+    expect(isFunctionalDecompositionDraftRequest("Apply those functional decomposition rows")).toBe(false);
+  });
+});
+
+describe("the generate-now directive reaches the model", () => {
+  // generateFunctionalDecompositionWithCollaborator is always called with the
+  // thread's prompt history, so the request it builds for itself -- the only
+  // copy that carried the directive -- was dead code on the live path.
+  it("appends the directive to a supplied prompt history", () => {
+    const history = [
+      { role: "system", content: "Style: ..." },
+      { role: "user", content: "Create a functional decomposition for a Warehouse Yard Truck." },
+    ];
+    const prepared = withFunctionalDecompositionDirective(history, "multi-level");
+
+    expect(prepared).toHaveLength(3);
+    expect(prepared[2].content).toContain(FUNCTIONAL_DECOMPOSITION_DIRECTIVE);
+    expect(prepared[2].content).toContain("Abstraction level selected by the user: multi-level.");
+  });
+
+  it("does not add a second copy when the history already carries it", () => {
+    const history = [
+      { role: "user", content: `Create a decomposition.\n\n${FUNCTIONAL_DECOMPOSITION_DIRECTIVE}` },
+    ];
+    expect(withFunctionalDecompositionDirective(history, "system")).toHaveLength(1);
+  });
+
+  it("finds the directive inside multi-part content", () => {
+    const history = [
+      { role: "user", content: [{ type: "text", text: FUNCTIONAL_DECOMPOSITION_DIRECTIVE }] },
+    ];
+    expect(withFunctionalDecompositionDirective(history, "system")).toHaveLength(1);
   });
 });

@@ -38,6 +38,20 @@ test("accepts the canonical Safety Significant selector handoff", () => {
   expect(result.scopeLabel).toContain("Safety Significant = Needs Review");
 });
 
+test("does not report zero matches when matching legacy rows are missing raw IDs", () => {
+  const legacySummary = [
+    ["Safety Significant", "Function (From)"],
+    ["Needs Review", "Planner"],
+  ];
+  const result = resolveHazardVibeReviewScope(
+    "lets vibe review Safety Significant = Needs Review",
+    legacySummary,
+  );
+  expect(result.status).toBe("matched");
+  expect(result.queue).toHaveLength(1);
+  expect(result.queue[0]).toMatch(/^RAW-/);
+});
+
 test("accepts an explicit Yes Safety Significance scope", () => {
   const result = resolveHazardVibeReviewScope(
     "Vibe review hazard-analysis rows where Safety Significance is Yes.",

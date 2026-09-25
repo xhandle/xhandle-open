@@ -62,6 +62,8 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
     };
   }, [initialReviewItems]);
 
+  const [persistenceFailure, setPersistenceFailure] = useState(null);
+
   const persist = useCallback(async (updater) => {
     const previousItems = reviewItemsRef.current;
     if (readOnly) {
@@ -75,7 +77,20 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
     persistenceQueueRef.current = persistenceQueueRef.current
       .catch(() => {})
       .then(() => saveReviewItems(nextItems));
-    await persistenceQueueRef.current;
+    const saved = await persistenceQueueRef.current;
+    // Optimistic in-memory state is kept so the reviewer does not lose their
+    // work mid-session, but the failure is announced rather than swallowed:
+    // this evidence will not survive a reload.
+    if (saved && saved.ok === false) {
+      setPersistenceFailure({ at: new Date().toISOString(), failure: saved.failure, message: saved.message });
+      try {
+        window.dispatchEvent(new CustomEvent("xhandle:results-review:persistence-failed", {
+          detail: { itemCount: nextItems.length, failure: saved.failure, message: saved.message },
+        }));
+      } catch {}
+    } else if (saved && saved.ok) {
+      setPersistenceFailure(null);
+    }
     return nextItems;
   }, [readOnly]);
 
@@ -266,6 +281,8 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
 
   const value = useMemo(() => ({
     reviewItems,
+    /** Non-null when review evidence is in memory only and will not survive a reload. */
+    persistenceFailure,
     openResultsReviewDrawer,
     closeResultsReviewDrawer,
     toggleResultsReviewDrawer,
@@ -304,7 +321,7 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
     requestReviewItemRegeneration,
     markNeedsMoreContext,
     supersedeReviewItem,
-  ]);
+  , persistenceFailure]);
 
   return (
     <ResultsReviewContext.Provider value={value}>

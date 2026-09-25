@@ -2,12 +2,17 @@ import {
   auditSafetyClassificationRecord,
   normalizeSafetyClassification,
 } from "./safetySignificancePolicy";
-import { reconcileDerivedSafetyColumns } from "./safetyColumnSchema";
+import {
+  describeSignificanceConflict,
+  derivedSignificanceConflict,
+  reconcileDerivedSafetyColumns,
+} from "./safetyColumnSchema";
 
 const clean = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
 const normalized = (value) => clean(value).toLowerCase();
 
 export const CLASSIFICATION_RESOLUTION_STATUS_HEADER = "Classification Resolution Status";
+export const RAW_ANALYSIS_ROW_ID_HEADER = "Raw Analysis Row ID";
 
 export const CLASSIFICATION_RESOLUTION_STATUS = Object.freeze({
   NEEDS_REVIEW: "Needs Review",
@@ -30,6 +35,56 @@ function indexOfHeader(headers = [], candidates = []) {
   return candidates
     .map((candidate) => normalizedHeaders.indexOf(normalized(candidate)))
     .find((index) => index >= 0) ?? -1;
+}
+
+function stableRowId(value = "") {
+  // FNV-1a keeps legacy analyses reviewable without depending on an AI-issued
+  // identifier. The row position is included by the caller to disambiguate
+  // otherwise identical analysis variants; once normalized, the ID persists.
+  let hash = 0x811c9dc5;
+  const input = String(value);
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `RAW-${(hash >>> 0).toString(36).toUpperCase().padStart(7, "0")}`;
+}
+
+export function ensureHazardAnalysisRowIds(summary = []) {
+  if (!Array.isArray(summary?.[0])) return summary;
+  const sourceHeaders = summary[0].map(clean);
+  const existingIndex = indexOfHeader(sourceHeaders, [
+    RAW_ANALYSIS_ROW_ID_HEADER,
+    "Raw Row ID",
+    "Analysis Row ID",
+    "Row ID",
+  ]);
+  const headers = existingIndex >= 0
+    ? [...sourceHeaders]
+    : [...sourceHeaders, RAW_ANALYSIS_ROW_ID_HEADER];
+  const idIndex = existingIndex >= 0 ? existingIndex : headers.length - 1;
+  const used = new Set();
+  const rows = summary.slice(1).map((sourceRow, rowOffset) => {
+    const row = Array.isArray(sourceRow) ? [...sourceRow] : [];
+    while (row.length < headers.length) row.push("");
+    let id = clean(row[idIndex]);
+    if (!id) {
+      const identityCells = sourceHeaders.map((header, index) => (
+        index === existingIndex || normalized(header) === normalized(CLASSIFICATION_RESOLUTION_STATUS_HEADER)
+          ? ""
+          : clean(row[index])
+      ));
+      let salt = rowOffset + 1;
+      do {
+        id = stableRowId(`${identityCells.join("\u001f")}\u001e${salt}`);
+        salt += 1;
+      } while (used.has(id));
+      row[idIndex] = id;
+    }
+    used.add(id);
+    return row;
+  });
+  return [headers, ...rows];
 }
 
 function fieldsFromRow(headers = [], row = []) {
@@ -96,12 +151,27 @@ export function inspectClassificationResolution(headers = [], row = []) {
   };
 
   const humanDisposition = hasHumanDisposition(fields);
+
+  // A governed significance decision that the classification contradicts is
+  // never resolved automatically, so it must block validation in every branch
+  // below rather than being reconciled away on the path to storage.
+  const significanceConflict = derivedSignificanceConflict(headers, row);
+  const conflictFindings = significanceConflict ? [describeSignificanceConflict(significanceConflict)] : [];
+  const gapStatus = humanDisposition
+    ? CLASSIFICATION_RESOLUTION_STATUS.HUMAN_EVIDENCE_GAP
+    : CLASSIFICATION_RESOLUTION_STATUS.POLICY_GAP;
+
   if (!hasCompletePolicySchema(headers)) {
     return {
-      status: humanDisposition
-        ? CLASSIFICATION_RESOLUTION_STATUS.HUMAN_EVIDENCE_GAP
-        : CLASSIFICATION_RESOLUTION_STATUS.NOT_EVALUATED,
-      findings: ["The hazard summary does not contain the complete policy-evidence schema required for validation."],
+      status: significanceConflict
+        ? gapStatus
+        : (humanDisposition
+          ? CLASSIFICATION_RESOLUTION_STATUS.HUMAN_EVIDENCE_GAP
+          : CLASSIFICATION_RESOLUTION_STATUS.NOT_EVALUATED),
+      findings: [
+        ...conflictFindings,
+        "The hazard summary does not contain the complete policy-evidence schema required for validation.",
+      ],
     };
   }
 
@@ -111,16 +181,18 @@ export function inspectClassificationResolution(headers = [], row = []) {
     to: fields["Function (To)"],
     guidePhrase: fields["Guide Phrase"],
   });
+  const unresolved = significanceConflict || audit.validationFindings.length;
   return {
     status: humanDisposition
-      ? (audit.validationFindings.length
+      ? (unresolved
         ? CLASSIFICATION_RESOLUTION_STATUS.HUMAN_EVIDENCE_GAP
         : CLASSIFICATION_RESOLUTION_STATUS.HUMAN_POLICY_VALIDATED)
-      : (audit.validationFindings.length
+      : (unresolved
         ? CLASSIFICATION_RESOLUTION_STATUS.POLICY_GAP
         : CLASSIFICATION_RESOLUTION_STATUS.POLICY_VALIDATED),
-    findings: [...(audit.validationFindings || [])],
+    findings: [...conflictFindings, ...(audit.validationFindings || [])],
     audit,
+    significanceConflict: significanceConflict || null,
   };
 }
 
@@ -130,14 +202,15 @@ export function deriveClassificationResolutionStatus(headers = [], row = []) {
 
 export function ensureClassificationResolutionStatus(summary = []) {
   if (!Array.isArray(summary?.[0])) return summary;
-  const sourceHeaders = summary[0].map(clean);
+  const identifiedSummary = ensureHazardAnalysisRowIds(summary);
+  const sourceHeaders = identifiedSummary[0].map(clean);
   if (indexOfHeader(sourceHeaders, ["Safety Classification", "Safety Significant"]) < 0) return summary;
   const existingIndex = indexOfHeader(sourceHeaders, [CLASSIFICATION_RESOLUTION_STATUS_HEADER]);
   const headers = existingIndex >= 0
     ? [...sourceHeaders]
     : [...sourceHeaders, CLASSIFICATION_RESOLUTION_STATUS_HEADER];
   const statusIndex = existingIndex >= 0 ? existingIndex : headers.length - 1;
-  const rows = summary.slice(1).map((sourceRow) => {
+  const rows = identifiedSummary.slice(1).map((sourceRow) => {
     const row = reconcileDerivedSafetyColumns(sourceHeaders, Array.isArray(sourceRow) ? sourceRow : []);
     while (row.length < headers.length) row.push("");
     row[statusIndex] = deriveClassificationResolutionStatus(sourceHeaders, row);

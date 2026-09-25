@@ -1,3 +1,5 @@
+import { ensureHazardAnalysisRowIds } from "./classificationResolutionStatus";
+
 const clean = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
 const key = (value) => clean(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 const CUSTOM_SCOPE_MARKER = /user(?:\s+|-)specified scope\s*:?\s*(.+)$/i;
@@ -83,7 +85,8 @@ function safetySignificanceMatches(promptKey, values) {
 
 export function resolveHazardVibeReviewScope(prompt = "", summary = []) {
   if (!Array.isArray(summary?.[0])) return { status: "missing_summary", filters: [], rows: [], nearbyValues: {} };
-  const headers = summary[0];
+  const reviewableSummary = ensureHazardAnalysisRowIds(summary);
+  const headers = reviewableSummary[0];
   const indexes = indexVibeReviewHeaders(headers);
   const promptKey = key(prompt);
   const customScope = customScopeDetails(prompt);
@@ -111,7 +114,7 @@ export function resolveHazardVibeReviewScope(prompt = "", summary = []) {
     // "Guide Phrase Applicable" is one field, not a request to also filter
     // the distinct Guide Phrase column.
     if (name === "guidePhrase" && /\bguide phrase applicable|guide phrase applicability\b/.test(promptKey)) return;
-    const values = uniqueValues(summary, indexes[name]);
+    const values = uniqueValues(reviewableSummary, indexes[name]);
     nearbyValues[name] = values;
     let matches = values.filter((value) => valueMention(promptKey, value));
     if (name === "safetySignificant") {
@@ -126,7 +129,7 @@ export function resolveHazardVibeReviewScope(prompt = "", summary = []) {
   if (!filters.some((filter) => ["safetySignificant", "safetyClassification"].includes(filter.field))
     && !filters.some((filter) => key(filter.value) === "needs review")
     && indexes.safetySignificant >= 0 && /\bneeds? review\b/.test(promptKey)) {
-    const actual = uniqueValues(summary, indexes.safetySignificant).find((value) => key(value) === "needs review");
+    const actual = uniqueValues(reviewableSummary, indexes.safetySignificant).find((value) => key(value) === "needs review");
     if (actual) filters.push({ field: "safetySignificant", header: headers[indexes.safetySignificant], value: actual });
   }
 
@@ -138,7 +141,7 @@ export function resolveHazardVibeReviewScope(prompt = "", summary = []) {
   if (!filters.length && !explicitlyAllRows && !customScope.raw) {
     return { status: "needs_scope", filters, rows: [], queue: [], nearbyValues, indexes };
   }
-  const matchedRows = summary.slice(1).map((row, offset) => ({ row, rowIndex: offset + 1 })).filter(({ row, rowIndex }) => {
+  const matchedRows = reviewableSummary.slice(1).map((row, offset) => ({ row, rowIndex: offset + 1 })).filter(({ row, rowIndex }) => {
     if (!filters.every((filter) => key(row?.[indexes[filter.field]]) === key(filter.value))) return false;
     if (customScope.range && (rowIndex < customScope.range[0] || rowIndex > customScope.range[1])) return false;
     if (customScope.tokens.length) {

@@ -213,15 +213,27 @@ describe("sheet to row conversion", () => {
       fields: [["guidePhrase", "Guide Phrase"], ["guidePhraseApplicable", "Guide Phrase Applicable"]],
     };
     const rows = sheetToRows([
-      ["STPA ID", "Guide Phrase", "Guide Phrase Applicable", "Proposed Safety Assessment", "Source Files"],
-      ["FD-1-STPA", "Not providing", "Yes", "Safety", "src/brake.js"],
+      ["STPA ID", "Guide Phrase", "Guide Phrase Applicable", "Safety Significant", "Source Files"],
+      ["FD-1-STPA", "Not providing", "Yes", "Yes", "src/brake.js"],
     ], config);
     expect(rows).toEqual([{
       id: "FD-1-STPA",
       guidePhrase: "Not providing",
       guidePhraseApplicable: "Yes",
-      proposedSafetyAssessment: "Safety",
+      safetySignificant: "Yes",
     }]);
+  });
+
+  test("leaves a retired column out of the scored fields", () => {
+    // "Proposed Safety Assessment" was withdrawn from the schema; it is now an
+    // unmapped column like the traceability ones and must not resurface as a
+    // scored field. normalizeProducedSafetySignificance still reads it so that
+    // fixture JSON recorded before the retirement keeps scoring.
+    const rows = sheetToRows([
+      ["STPA ID", "Proposed Safety Assessment", "Source Files"],
+      ["FD-1-STPA", "Safety", "src/brake.js"],
+    ], { sheetName: "STPA", fields: [] });
+    expect(rows).toEqual([{ id: "FD-1-STPA" }]);
   });
 
   test("returns nothing for an empty or header-only sheet", () => {

@@ -53,7 +53,7 @@ export const FUNCTIONAL_REVIEW_FIELDS = Object.freeze([
   ...FUNCTIONAL_HAZARD_ANALYSIS_FIELDS,
 ]);
 
-const FIELD_LABELS = Object.freeze({
+export const FUNCTIONAL_FIELD_LABELS = Object.freeze({
   subsystem: "Subsystem",
   fromFunction: "Function (From)",
   fromDetails: "Function (From) Details",
@@ -71,7 +71,7 @@ const FIELD_LABELS = Object.freeze({
   hazardAnalysisEligibilityRationale: "Eligibility Rationale",
 });
 
-const aliases = Object.freeze({
+export const FUNCTIONAL_FIELD_ALIASES = Object.freeze({
   subsystem: ["subsystem", "subsystem allocation"],
   fromFunction: ["from function", "function from", "function (from)", "source function"],
   fromDetails: ["from details", "function from details", "function (from) details", "source details"],
@@ -88,6 +88,9 @@ const aliases = Object.freeze({
   hazardAnalysisEligibility: ["hazard analysis eligibility", "analysis eligibility", "eligibility"],
   hazardAnalysisEligibilityRationale: ["hazard analysis eligibility rationale", "eligibility rationale"],
 });
+
+const FIELD_LABELS = FUNCTIONAL_FIELD_LABELS;
+const aliases = FUNCTIONAL_FIELD_ALIASES;
 
 function createRowId() {
   return (typeof crypto !== "undefined" && crypto.randomUUID?.())

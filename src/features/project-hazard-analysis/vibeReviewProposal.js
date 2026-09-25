@@ -5,6 +5,87 @@ import { inspectClassificationResolution } from "./classificationResolutionStatu
 
 const clean = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
 
+/**
+ * Identity of the contract a proposal was produced under.
+ *
+ * Recorded alongside every proposal so a stored decision can be traced to the
+ * prompt, schema and policy that generated it. Without it, changing a prompt
+ * silently reinterprets every decision already in the artifact.
+ */
+export const HAZARD_REVIEW_CONTRACT = Object.freeze({
+  promptVersion: "hazard-review-prompt/2026-09-20",
+  schemaVersion: "hazard-review-proposal/1",
+  policyVersion: "safety-significance-policy/2026-09-20",
+});
+
+export const DEFAULT_HAZARD_REVIEW_TIMEOUT_MS = 120000;
+
+/**
+ * The review schema asks for roughly eighteen fields, several of them prose, and
+ * reasoning models spend part of the output budget before emitting any of it. A
+ * budget that is merely "usually enough" produces truncated JSON, which parses
+ * to nothing and is then reported as "the model did not return a usable
+ * proposal" -- indistinguishable from the model ignoring the format.
+ */
+export const HAZARD_REVIEW_TOKEN_BUDGET = 2600;
+export const HAZARD_REVIEW_RETRY_TOKEN_BUDGET = 5200;
+
+const TRUNCATED_FINISH_REASONS = new Set(["length", "max_tokens", "max_output_tokens"]);
+
+export function isTruncatedCompletion(finishReason) {
+  return TRUNCATED_FINISH_REASONS.has(String(finishReason || "").toLowerCase());
+}
+
+/**
+ * Bound every hazard provider call the way the functional review already does.
+ * A provider that never responds used to hang the review indefinitely with no
+ * way back to the queue.
+ */
+export function callHazardReviewProvider({ label, workflow, provider, model, effort, signal, timeoutMs = DEFAULT_HAZARD_REVIEW_TIMEOUT_MS, maxTokens = 1500 }) {
+  return async (messages, overrideMaxTokens) => {
+    const tokenBudget = Number(overrideMaxTokens) > 0 ? Number(overrideMaxTokens) : maxTokens;
+    const requestController = new AbortController();
+    let timedOut = false;
+    const forwardAbort = () => requestController.abort(signal?.reason);
+    if (signal?.aborted) forwardAbort();
+    else signal?.addEventListener?.("abort", forwardAbort, { once: true });
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      requestController.abort();
+    }, Math.max(1, Number(timeoutMs) || DEFAULT_HAZARD_REVIEW_TIMEOUT_MS));
+    try {
+      const response = await fetch(`${backendURL}/api/chat`, {
+        method: "POST",
+        ...buildAIAuthOpts({ "Content-Type": "application/json" }),
+        signal: requestController.signal,
+        // Only fields the provider API understands may appear here: the backend
+        // spreads this whole body into the upstream request, so an unrecognised
+        // key is rejected by the provider. Contract identity is recorded on the
+        // review session and its audit trail instead.
+        body: JSON.stringify({
+          provider, model, effort, reasoning_effort: effort,
+          xhandleWorkflow: workflow, messages, temperature: 0.1, max_tokens: tokenBudget,
+        }),
+      });
+      if (!response.ok) throw new Error(`${label} failed (${response.status}). ${await response.text().catch(() => "")}`.trim());
+      const payload = await response.json();
+      // The finish reason is the only way to tell a cut-off answer from a
+      // badly-formatted one, and they need different remedies.
+      return {
+        text: extractVibeReviewProviderText(payload),
+        finishReason: payload?.choices?.[0]?.finish_reason || payload?.stop_reason || "",
+      };
+    } catch (error) {
+      if (timedOut) throw new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)} seconds.`);
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+      signal?.removeEventListener?.("abort", forwardAbort);
+    }
+  };
+}
+
+
 function contentText(value) {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) return value.map(contentText).filter(Boolean).join("\n");
@@ -149,27 +230,68 @@ export function normalizeGuidePhraseApplicabilityProposal(raw = {}, rowFields = 
   };
 }
 
-export function buildHumanGuidePhraseApplicabilityDecision({ rowFields = {}, proposal = {}, applicable, userFeedback = "" } = {}) {
+/**
+ * Compose a governed rationale that does not repeat or nest itself.
+ *
+ * The rationale is written back into the row, so the next decision reads it as
+ * "existing basis" and embeds it again -- a row reviewed three times carried
+ * three nested copies of its own history inside the largest artifact in browser
+ * storage. The reviewer's decision and any genuinely new gap are the durable
+ * content; prior rationales remain in the revision history and audit trail.
+ */
+const GOVERNED_RATIONALE_MAX_CHARS = 1200;
+const PRIOR_RATIONALE_MARKER = /^Human-directed (?:Vibe Review|Safety Classification) decision:/i;
+
+/**
+ * A field that already holds a previous governed rationale is history, not
+ * evidence for the next decision. Embedding it -- even wrapped in "Existing
+ * documented basis:" -- is what made the rationale grow on every review.
+ */
+export function withoutPriorGovernedRationale(value) {
+  const text = clean(value);
+  return PRIOR_RATIONALE_MARKER.test(text) ? "" : text;
+}
+
+export function composeGovernedRationale(parts = []) {
+  const seen = new Set();
+  const kept = [];
+  parts.map((part) => clean(part)).filter(Boolean).forEach((part, index) => {
+    // The first part is this decision's own header. A later part that looks
+    // like one is a PRIOR decision's rationale: history, not evidence here.
+    if (index > 0 && PRIOR_RATIONALE_MARKER.test(part)) return;
+    const fingerprint = part.toLowerCase();
+    if (seen.has(fingerprint)) return;
+    seen.add(fingerprint);
+    kept.push(part);
+  });
+  const composed = kept.join(" ");
+  if (composed.length <= GOVERNED_RATIONALE_MAX_CHARS) return composed;
+  return `${composed.slice(0, GOVERNED_RATIONALE_MAX_CHARS).trimEnd()}… (rationale truncated; the full history is in the review audit trail.)`;
+}
+
+
+export function buildHumanGuidePhraseApplicabilityDecision({ rowFields = {}, proposal = {}, applicable, userFeedback = "", proposalValid = null } = {}) {
   const decision = /^yes$/i.test(clean(applicable)) ? "Yes" : "No";
   const reviewerBasis = clean(userFeedback);
-  const proposed = proposal?.governedDecision || {};
+  const proposed = proposalValid === false ? {} : (proposal?.governedDecision || {});
   if (decision === "No" && proposed["Guide Phrase Applicable"] !== "No" && !reviewerBasis) {
     throw new Error("Mark No requires a row-specific explanation of why this guide-phrase deviation cannot affect the receiving function. Reply “no — because …” or skip it.");
   }
   const existingGap = firstValue(proposal.remainingEvidenceGap, proposal.evidenceGap);
-  const baseRationale = firstValue(
+  const baseRationale = withoutPriorGovernedRationale(firstValue(
     reviewerBasis,
     proposed["Guide Phrase Applicability Rationale"],
     rowFields["Guide Phrase Applicability Rationale"],
-  );
-  const rationale = [
+  )) || clean(reviewerBasis);
+  const applicabilityGapAdds = existingGap && clean(existingGap).toLowerCase() !== clean(baseRationale).toLowerCase();
+  const rationale = composeGovernedRationale([
     `Human-directed Vibe Review decision: Guide Phrase Applicable = ${decision}.`,
     baseRationale || (decision === "Yes"
       ? "The reviewer determined that the stated deviation is meaningful for this interface and can affect the receiving function."
       : "The reviewer determined that the stated deviation cannot affect the receiving function in this context."),
-    existingGap ? `Remaining contract or downstream-classification evidence gap: ${existingGap}` : "",
+    applicabilityGapAdds ? `Remaining contract or downstream-classification evidence gap: ${existingGap}` : "",
     "This applicability disposition does not independently resolve Safety Significance.",
-  ].filter(Boolean).join(" ");
+  ]);
   return {
     sourceRowId: rowFields["Raw Analysis Row ID"],
     reviewTarget: "guidePhraseApplicable",
@@ -190,25 +312,49 @@ export function buildHumanGuidePhraseApplicabilityDecision({ rowFields = {}, pro
 export async function requestGuidePhraseApplicabilityProposal({ headers, row, projectName, organizationContext = "", provider, model, effort, signal }) {
   const rowFields = compactVibeReviewRow(headers, row);
   const prompt = `Review exactly one hazard-analysis row for Guide Phrase Applicable only. This is an applicability decision, not a Safety Significance classification.\n\nProject: ${projectName || "Untitled project"}\n${organizationContext || "No applicable organization profile text is available."}\n\nRow evidence:\n${JSON.stringify(rowFields, null, 2)}\n\nReturn strict JSON with: sourceRowId, explanation, applicabilityDecision, Guide Phrase Applicable, Guide Phrase Applicability Rationale, applicabilityMechanism, notApplicableReasonCode, strongestReasonForNo, notApplicableEvidenceField, notApplicableEvidenceQuote, Classification Confidence, remainingEvidenceGap.\nRules: applicabilityDecision and Guide Phrase Applicable must be exactly Yes, No, or Needs Review. Decide whether the named guide-phrase deviation is semantically meaningful for this interface and can affect the receiving function in the stated context. Do not decide whether the resulting effect is Safety Significant. Missing numeric thresholds, validity windows, protections, or downstream physical-harm evidence may lower confidence or remain as an evidence gap, but they are not by themselves proof that a semantically possible deviation is inapplicable. For Yes, name the interface-specific receiver effect in applicabilityMechanism. For No, satisfy a strict proof obligation: notApplicableReasonCode is exactly Semantic mismatch, Receiver unaffected, Architecture precludes deviation, or No adverse state in context; strongestReasonForNo states why the deviation cannot matter; and notApplicableEvidenceField plus notApplicableEvidenceQuote cite an exact excerpt from the supplied row. Use Needs Review only when the supplied interface semantics truly cannot establish whether the deviation can occur or affect the receiver.`;
-  const callProvider = async (messages) => {
-    const response = await fetch(`${backendURL}/api/chat`, { method: "POST", ...buildAIAuthOpts({ "Content-Type": "application/json" }), signal,
-      body: JSON.stringify({ provider, model, effort, reasoning_effort: effort, xhandleWorkflow: "hazard-applicability-vibe-review", messages, temperature: 0.1, max_tokens: 1500 }) });
-    if (!response.ok) throw new Error(`Guide-phrase applicability review failed (${response.status}). ${await response.text().catch(() => "")}`.trim());
-    return extractVibeReviewProviderText(await response.json());
-  };
+  const callProvider = callHazardReviewProvider({
+    label: "Guide-phrase applicability review",
+    workflow: "hazard-applicability-vibe-review",
+    provider, model, effort, signal,
+  });
   const messages = [
     { role: "system", content: "Assess only guide-phrase applicability for one interface. Keep applicability separate from downstream safety classification. Return strict JSON only." },
     { role: "user", content: prompt },
   ];
-  const rawText = await callProvider(messages);
+  const attempt = await requestCompletion(callProvider, messages, { budget: HAZARD_REVIEW_TOKEN_BUDGET });
+  const rawText = attempt.text;
   let normalized = normalizeGuidePhraseApplicabilityProposal(rawText, rowFields);
   if (normalized.valid) return normalized;
   const repairedText = await callProvider([
     { role: "system", content: "Repair one guide-phrase applicability proposal. Use only supplied evidence, keep applicability separate from safety significance, and return strict JSON only." },
     { role: "user", content: `The proposal failed: ${normalized.errors.join("; ") || normalized.evidenceGap}. Reissue the complete object. A missing interface contract is not proof of non-applicability when the deviation is semantically meaningful.\n\nOriginal task:\n${prompt}\n\nProvider response:\n${rawText || "(empty response)"}` },
   ]);
-  normalized = normalizeGuidePhraseApplicabilityProposal(repairedText, rowFields);
-  return normalized;
+  normalized = normalizeGuidePhraseApplicabilityProposal(repairedText.text ?? repairedText, rowFields);
+  return { ...normalized, providerFailure: normalized.valid ? null : describeProviderFormatFailure(attempt) };
+}
+
+
+/**
+ * Ask the provider, and if the answer was cut off, ask again with room.
+ *
+ * A truncated completion is the one failure the caller can actually fix, so it
+ * is worth one retry with a larger budget before reporting a format failure.
+ */
+async function requestCompletion(callProvider, messages, { budget, retryBudget } = {}) {
+  let attempt = await callProvider(messages, budget);
+  if (isTruncatedCompletion(attempt.finishReason) || !clean(attempt.text)) {
+    attempt = await callProvider(messages, retryBudget || HAZARD_REVIEW_RETRY_TOKEN_BUDGET);
+  }
+  return attempt;
+}
+
+/** Explain a format failure in terms the reviewer can act on. */
+export function describeProviderFormatFailure(attempt) {
+  if (isTruncatedCompletion(attempt?.finishReason)) {
+    return "the model's response was cut off before it finished the assessment";
+  }
+  if (!clean(attempt?.text)) return "the model returned an empty response";
+  return "the model did not return the required structured fields";
 }
 
 export function normalizeVibeReviewProposal(raw = {}, rowFields = {}, requestedSignificance = "") {
@@ -227,27 +373,37 @@ export function normalizeVibeReviewProposal(raw = {}, rowFields = {}, requestedS
     : proposal;
   const normalized = normalizeNeedsReviewClassificationDecision(proposalForNormalization, rowFields, rowFields["Safety Classification Rule"] || "U4");
   const governed = normalized.decision;
-  const joinEvidence = (...values) => values.map(clean).filter(Boolean).join(" ");
+  const mergeAliases = (...values) => values.map(clean).filter(Boolean).join(" ");
+  // The governed decision is a COMPLETE materialized candidate row:
+  // normalizeNeedsReviewClassificationDecision already folds in the current row
+  // for every field the proposal left unset, and deliberately emits "" for the
+  // fields this classification must not carry. Validating a concatenation of the
+  // pre-update row and the candidate therefore resurrects evidence the candidate
+  // just cleared -- a proposed Direct would be audited against the previous
+  // Related intermediate effect and rejected for a contradiction that exists in
+  // neither state. The validator must see exactly one complete candidate.
   const audited = auditSafetyClassificationRecord({
     guidePhrase: rowFields["Guide Phrase"],
     guidePhraseApplicable: governed["Guide Phrase Applicable"],
     safetyClassification: governed["Safety Classification"],
     safetyClassificationRule: governed["Safety Classification Rule"],
     causalPathType: governed["Causal Path Type"],
-    causalEffect: joinEvidence(rowFields["Causal Effect"], governed["Causal Effect"]),
-    resultingSystemState: joinEvidence(rowFields["Resulting System State"], governed["Resulting System State"]),
+    causalEffect: governed["Causal Effect"],
+    resultingSystemState: governed["Resulting System State"],
     intermediateSafetyFunction: governed["Intermediate Safety Function"],
-    intermediateSafetyEffect: joinEvidence(rowFields["Intermediate Safety Effect"], governed["Intermediate Safety Effect"]),
-    protectionAssessment: joinEvidence(rowFields["Protection Assessment"], governed["Protection Assessment"]),
+    intermediateSafetyEffect: governed["Intermediate Safety Effect"],
+    protectionAssessment: governed["Protection Assessment"],
     protectionStatus: governed["Protection Status"],
     physicalHarmChainTermination: governed["Physical-Harm Chain Termination"],
-    classificationEvidence: joinEvidence(rowFields["Classification Evidence"], governed["Classification Evidence"]),
-    safetySignificanceRationale: joinEvidence(rowFields["Safety Significance Rationale"], governed["Safety Significance Rationale"]),
-    proposedSafetyAssessmentRationale: joinEvidence(rowFields["Proposed Safety Assessment Rationale"], governed["Proposed Safety Assessment Rationale"]),
+    classificationEvidence: governed["Classification Evidence"],
+    safetySignificanceRationale: governed["Safety Significance Rationale"],
+    proposedSafetyAssessmentRationale: governed["Proposed Safety Assessment Rationale"],
     proposedSafetyAssessment: governed["Proposed Safety Assessment"],
     safetySignificant: governed["Safety Significant"],
-    losses: joinEvidence(rowFields.Losses, rowFields.Loss),
-    hazards: joinEvidence(rowFields.Hazards, rowFields.Hazard),
+    // Losses and Hazards are not governed by the decision; these merge two
+    // spellings of the same source column, not old and new state.
+    losses: mergeAliases(rowFields.Losses, rowFields.Loss),
+    hazards: mergeAliases(rowFields.Hazards, rowFields.Hazard),
     causalScenario: rowFields["Causal Scenario"],
     safetyExposurePath: rowFields["Safety Exposure Path"],
   }, {
@@ -400,7 +556,7 @@ export function normalizeSafetyClassificationProposal(raw = {}, rowFields = {}) 
   };
 }
 
-export function buildHumanSafetyClassificationDecision({ rowFields = {}, proposal = {}, classification, userFeedback = "" } = {}) {
+export function buildHumanSafetyClassificationDecision({ rowFields = {}, proposal = {}, classification, userFeedback = "", proposalValid = null } = {}) {
   const applicable = canonicalApplicabilityDecision(rowFields["Guide Phrase Applicable"]);
   const significant = canonicalApplicabilityDecision(rowFields["Safety Significant"]);
   const requested = clean(classification);
@@ -412,14 +568,27 @@ export function buildHumanSafetyClassificationDecision({ rowFields = {}, proposa
     !isSubstantiveClassificationEvidence(rowFields["Intermediate Safety Function"] || proposal?.governedDecision?.["Intermediate Safety Function"])
     || !isSubstantiveClassificationEvidence(rowFields["Intermediate Safety Effect"] || proposal?.governedDecision?.["Intermediate Safety Effect"])
   )) throw new Error("Safety — Related requires a substantive named intermediate safety function and its effect. Choose Safety — Direct or document that intermediate evidence first.");
-  const base = proposal?.governedDecision || {};
+  // A proposal that failed validation contributes no governed evidence. Its
+  // fields describe an assessment the policy rejected, and carrying them into
+  // the row would record rejected reasoning as engineering evidence.
+  const base = proposalValid === false ? {} : (proposal?.governedDecision || {});
+  const supportingEvidence = proposalValid === false
+    ? clean(rowFields["Classification Evidence"])
+    : clean(base["Classification Evidence"] || proposal.explanation);
   const rule = requested === "Safety — Direct" ? "D1" : requested === "Safety — Related" ? "R1" : requested === "Mission/Reliability" ? "M1" : "N1";
-  const rationale = [`Human-directed Safety Classification decision: ${requested}.`, clean(userFeedback), clean(base["Classification Evidence"] || proposal.explanation)].filter(Boolean).join(" ");
+  const rationale = composeGovernedRationale([
+    `Human-directed Safety Classification decision: ${requested}.`,
+    clean(userFeedback),
+    supportingEvidence,
+    proposalValid === false
+      ? "The AI assessment for this row did not pass the configured checks and was not used as evidence."
+      : "",
+  ]);
   return {
     sourceRowId: rowFields["Raw Analysis Row ID"], reviewTarget: "safetyClassification", normalizedDecision: requested,
     "Safety Classification": requested, "Safety Classification Rule": rule,
     "Causal Path Type": requested === "Safety — Direct" ? "Direct" : requested === "Safety — Related" ? "Contributory" : "None",
-    "Classification Evidence": rationale, "Classification Confidence": userFeedback ? "Medium" : (base["Classification Confidence"] || "Low"),
+    "Classification Evidence": rationale, "Classification Confidence": proposalValid === false ? "Low" : (userFeedback ? "Medium" : (base["Classification Confidence"] || "Low")),
   };
 }
 
@@ -453,34 +622,40 @@ function humanYesClassification(rowFields = {}, proposal = {}) {
  * unresolved evidence remains in the rationale and is handled as a validation
  * note by the resolver.
  */
-export function buildHumanVibeReviewDecision({ rowFields = {}, proposal = {}, significance, userFeedback = "" } = {}) {
+
+export function buildHumanVibeReviewDecision({ rowFields = {}, proposal = {}, significance, userFeedback = "", proposalValid = null } = {}) {
   const requested = /^yes$/i.test(clean(significance)) ? "Yes" : "No";
-  const governed = proposal?.governedDecision || {};
+  // A proposal the policy rejected contributes no governed evidence; carrying
+  // its fields forward would record rejected reasoning as the reviewer's.
+  const governed = proposalValid === false ? {} : (proposal?.governedDecision || {});
   const classification = requested === "Yes"
     ? humanYesClassification(rowFields, proposal)
     : (/^no$/i.test(clean(rowFields["Guide Phrase Applicable"])) ? "Not Applicable" : "Mission/Reliability");
   const related = classification === "Safety — Related";
   const direct = classification === "Safety — Direct";
   const notApplicable = classification === "Not Applicable";
-  const existingBasis = firstValue(
+  const existingBasis = withoutPriorGovernedRationale(firstValue(
     rowFields["Safety Significance Rationale"],
     rowFields["Classification Evidence"],
     rowFields["Proposed Safety Assessment Rationale"],
     proposal.explanation,
-  );
+  ));
   const remainingGap = firstValue(
     proposal.remainingEvidenceGap,
     proposal.evidenceGap,
     rowFields["Safety Classification"] === "Needs Review" ? existingBasis : "",
   );
   const reviewerBasis = clean(userFeedback);
-  const rationale = [
+  // A value that is both the existing basis and the remaining gap is one fact,
+  // not two; emitting both produced the same sentence twice.
+  const gapAddsSomething = remainingGap && clean(remainingGap).toLowerCase() !== clean(existingBasis).toLowerCase();
+  const rationale = composeGovernedRationale([
     `Human-directed Vibe Review decision: the reviewer marked Safety Significant = ${requested}.`,
     reviewerBasis ? `Reviewer rationale: ${reviewerBasis}` : "No additional reviewer rationale was supplied with the button action.",
     existingBasis ? `Existing documented basis: ${existingBasis}` : "No additional supporting architecture evidence was documented in this action.",
-    remainingGap ? `Unresolved validation context retained: ${remainingGap}` : "",
+    gapAddsSomething ? `Unresolved validation context retained: ${remainingGap}` : "",
     "This disposition records the reviewer’s decision; it does not claim that missing architecture evidence was established by the AI.",
-  ].filter(Boolean).join(" ");
+  ]);
   const evidence = [
     firstValue(governed["Classification Evidence"], rowFields["Classification Evidence"]),
     `Human reviewer disposition: ${requested}.`,
@@ -552,17 +727,17 @@ export async function requestVibeReviewProposal({ headers, row, projectName, org
     : "";
   const prompt = `Review exactly one hazard-analysis row. Produce a concise proposed engineering assessment; it remains a proposal until a human applies it.\n\nProject: ${projectName || "Untitled project"}\n${organizationContext || "No applicable organization profile text is available."}\n\nRow evidence:\n${JSON.stringify(rowFields, null, 2)}\n${requestedSignificance ? `\nThe user explicitly requests Safety Significant ${requestedSignificance}. Select a coherent ${requestedSignificance === "Yes" ? "Safety — Direct or Safety — Related" : "Mission/Reliability or Not Applicable"} subtype only if evidence supports it.` : ""}${userFeedback ? `\nUser-supplied feedback (label this as user-supplied in the rationale): ${userFeedback}` : ""}\n\nReturn strict JSON with: sourceRowId, explanation (brief deviation, causal effect, resulting state, harm/mission boundary), normalizedDecision, Safety Classification Rule, Causal Path Type, Causal Effect, Resulting System State, Intermediate Safety Function, Intermediate Safety Effect, Protection Assessment, Protection Status, Physical-Harm Chain Termination, Guide Phrase Applicable, Guide Phrase Applicability Rationale, Classification Evidence, Classification Confidence, Safety Significance Rationale, remainingEvidenceGap.\nRules: normalizedDecision is exactly Safety — Direct, Safety — Related, Mission/Reliability, Not Applicable, or Needs Review. Do not invent architecture, safeguards, authority, timing, or evidence. Context assumptions are not verified design evidence. Never credit a protection whose availability, independence, freshness, or effectiveness is Unknown, assumed, unconfirmed, or unverified as the reason a physical-harm chain terminates. If the source row asserts an open or contributory physical-harm path, Mission/Reliability is allowed only when supplied evidence establishes a concrete chain-termination mechanism; otherwise retain Needs Review or select an evidence-supported Safety subtype. Explicitly documented absence of a safeguard is absence evidence; uncertainty whether one exists is an evidence gap. A Related decision names the intermediate safety function/effect. Mission/Reliability names where physical-harm chain terminates. Needs Review names one material evidence gap.`;
   const governedPrompt = `${prompt}${resolutionContract}\nUnknown protection status does not invalidate an otherwise complete direct or contributory physical-harm path and is not, by itself, a reason for Needs Review. Do not require proof that no safeguard exists. When the deviation, causal effect, resulting state, and physical-harm path are established, classify the evidenced Safety subtype and retain safeguard uncertainty separately as Protection Status Unknown and, if useful, remainingEvidenceGap. Use Needs Review only when a fact required to establish the causal classification itself remains unresolved.`;
-  const callProvider = async (messages, maxTokens = 1800) => {
-    const response = await fetch(`${backendURL}/api/chat`, { method: "POST", ...buildAIAuthOpts({ "Content-Type": "application/json" }), signal,
-      body: JSON.stringify({ provider, model, effort, reasoning_effort: effort, xhandleWorkflow: "hazard-vibe-review", messages, temperature: 0.1, max_tokens: maxTokens }) });
-    if (!response.ok) throw new Error(`Vibe review proposal failed (${response.status}). ${await response.text().catch(() => "")}`.trim());
-    return extractVibeReviewProviderText(await response.json());
-  };
+  const callProvider = callHazardReviewProvider({
+    label: "Vibe review proposal",
+    workflow: "hazard-vibe-review",
+    provider, model, effort, signal, maxTokens: 1800,
+  });
   const messages = [
     { role: "system", content: `Apply the supplied safety-significance policy to one row using only supplied evidence. Return bounded strict JSON; no hidden reasoning.${classificationContract}${reviewerDecisionInstruction}` },
     { role: "user", content: governedPrompt },
   ];
-  const rawText = await callProvider(messages);
+  const attempt = await requestCompletion(callProvider, messages, { budget: HAZARD_REVIEW_TOKEN_BUDGET });
+  const rawText = attempt.text;
   let normalizedProposal = resolutionReview
     ? normalizeVibeReviewProposal(rawText, rowFields, requestedSignificance)
     : classificationReview ? normalizeSafetyClassificationProposal(rawText, rowFields) : normalizeVibeReviewProposal(rawText, rowFields, requestedSignificance);
@@ -578,9 +753,13 @@ export async function requestVibeReviewProposal({ headers, row, projectName, org
     { role: "system", content: repairSystem },
     { role: "user", content: `${repairInstruction}\n\nOriginal task:\n${governedPrompt}\n\nProvider response to correct:\n${rawText || "(empty or unrecognized response)"}` },
   ], 1800);
+  const repairedRaw = repairedText.text ?? repairedText;
   normalizedProposal = resolutionReview
-    ? normalizeVibeReviewProposal(repairedText, rowFields, requestedSignificance)
-    : classificationReview ? normalizeSafetyClassificationProposal(repairedText, rowFields) : normalizeVibeReviewProposal(repairedText, rowFields, requestedSignificance);
+    ? normalizeVibeReviewProposal(repairedRaw, rowFields, requestedSignificance)
+    : classificationReview ? normalizeSafetyClassificationProposal(repairedRaw, rowFields) : normalizeVibeReviewProposal(repairedRaw, rowFields, requestedSignificance);
+  if (!normalizedProposal.valid) {
+    normalizedProposal = { ...normalizedProposal, providerFailure: describeProviderFormatFailure(attempt) };
+  }
   if (resolutionReview && !normalizedProposal.valid) {
     const deterministicRepair = buildDeterministicClassificationResolutionRepair(
       rowFields,

@@ -9,6 +9,7 @@ describe("hazard safety column schema", () => {
   test("separates default columns from retained safety details", () => {
     expect(isSafetyDetailHeader("Safety Classification Rule")).toBe(true);
     expect(isSafetyDetailHeader("Protection Assessment")).toBe(true);
+    expect(isSafetyDetailHeader("Safety Significant")).toBe(false);
     expect(isSafetyDetailHeader("Safety Classification")).toBe(false);
     expect(safetyColumnDisplayLabel("Classification Evidence")).toBe("Classification Rationale");
     expect(getSafetyDetailEntries(

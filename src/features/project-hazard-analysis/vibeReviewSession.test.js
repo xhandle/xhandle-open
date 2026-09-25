@@ -58,6 +58,8 @@ test("undo rewinds to the restored row and resume is an explicit action", () => 
   expect(currentVibeReviewRowId(session)).toBe("row-1");
   expect(session.state).toBe(VIBE_REVIEW_STATES.PROPOSING);
   expect(parseVibeReviewAction("resume")).toBe("resume");
+  expect(parseVibeReviewAction("let's continue")).toBe("resume");
+  expect(parseVibeReviewAction("continue")).toBe("resume");
 });
 
 test("persists compact sessions across remount without full row payloads", () => {

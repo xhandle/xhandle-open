@@ -69,3 +69,38 @@ describe("Collaborator thread persistence", () => {
     expect(loadThreads().find((thread) => thread.id === "missing-review-thread")?.messages[0].content).toContain("restored");
   });
 });
+
+describe("unfinished review thread protection", () => {
+  const SESSION_KEY = "xhandle.hazardVibeReview.sessions.v1";
+  const thread = (id, extra = {}) => ({ id, title: "Review", messages: [{ role: "user", content: "x" }], ...extra });
+
+  beforeEach(() => { localStorage.clear(); });
+
+  it("protects a thread whose review is stored as a stack", () => {
+    localStorage.setItem(SESSION_KEY, JSON.stringify({
+      "P1:T1": [
+        { id: "s1", threadId: "T1", state: "proposing" },
+        { id: "s2", threadId: "T1", state: "awaiting_decision" },
+      ],
+    }));
+    saveThreads([thread("T1"), thread("T2")]);
+    expect(loadThreads().map((entry) => entry.id)).toEqual(expect.arrayContaining(["T1"]));
+  });
+
+  it("still protects a thread stored in the older single-session shape", () => {
+    localStorage.setItem(SESSION_KEY, JSON.stringify({
+      "P1:T9": { id: "s1", threadId: "T9", state: "proposing" },
+    }));
+    saveThreads([thread("T9")]);
+    expect(loadThreads().map((entry) => entry.id)).toContain("T9");
+  });
+
+  it("does not protect a thread whose review already finished", () => {
+    localStorage.setItem(SESSION_KEY, JSON.stringify({
+      "P1:T1": [{ id: "s1", threadId: "T1", state: "completed" }],
+    }));
+    // Protection is what keeps a thread through aggressive pruning; a finished
+    // review must not hold history open forever.
+    expect(loadThreads()).toEqual([]);
+  });
+});

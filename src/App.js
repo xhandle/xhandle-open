@@ -16,6 +16,7 @@ import {
   ArrowUp,
   ArrowDown,
   Trash2,             // for delete buttons
+  History,            // hazard-analysis version recovery
   MoreVertical,
   Download,
   PanelLeftClose,
@@ -32,6 +33,7 @@ import {
   RotateCcw,
   ChevronsUp,
   ChevronsDown,
+  Upload,
 } from 'lucide-react';
 import XHandleCopilotView, { generateFunctionalDecompositionWithCollaborator } from "./components/XHandleCopilotView";
 import { runLiteAIAnalysis } from './components/aiAnalysisLite';
@@ -204,6 +206,7 @@ import {
 } from "./features/project-hazard-analysis/projectHazardDiagramSummary";
 import HazardOperationalContextManager from "./features/project-hazard-analysis/HazardOperationalContextManager";
 import HazardAnalysisResetModal from "./features/project-hazard-analysis/HazardAnalysisResetModal";
+import HazardAnalysisRecoveryModal from "./features/project-hazard-analysis/HazardAnalysisRecoveryModal";
 import NeedsReviewResolverModal from "./features/project-hazard-analysis/NeedsReviewResolverModal";
 import {
   applyGuidePhraseApplicabilityUpdates,
@@ -217,6 +220,7 @@ import {
   CLASSIFICATION_RESOLUTION_STATUS,
   CLASSIFICATION_RESOLUTION_STATUS_HEADER,
   ensureClassificationResolutionStatus,
+  ensureHazardAnalysisRowIds,
   inspectClassificationResolution,
   normalizeHazardAnalysisResolutionStatus,
 } from "./features/project-hazard-analysis/classificationResolutionStatus";
@@ -226,6 +230,20 @@ import {
   reconcileDerivedSafetyColumns,
   safetyColumnDisplayLabel,
 } from "./features/project-hazard-analysis/safetyColumnSchema";
+import {
+  HAZARD_WRITE_OUTCOME,
+  describeHazardWriteFailure,
+  listHazardAnalysisRevisions,
+  readHazardAnalysisRevision,
+  restoreHazardAnalysisRevision,
+  saveHazardAnalysis,
+} from "./features/project-hazard-analysis/projectHazardAnalysisStorage";
+import {
+  findRowIndexById,
+  rowChanged,
+  rowFingerprint,
+  verifyGovernedDecision,
+} from "./features/project-hazard-analysis/governedDecisionCommit";
 import { indexVibeReviewHeaders } from "./features/project-hazard-analysis/vibeReviewScope";
 import { loadVibeReviewAudit } from "./features/project-hazard-analysis/vibeReviewSession";
 import {
@@ -249,6 +267,18 @@ import {
   FUNCTIONAL_VIBE_REVIEW_ID_FIELD,
   normalizeCodeArchitectureFunctionalReviewRow,
 } from "./features/functional-vibe-review/functionalVibeReview";
+import {
+  FUNCTIONAL_DECOMPOSITION_COLUMNS,
+  describeFunctionalCsvProblems,
+  functionalDecompositionToCsv,
+  parseFunctionalDecompositionCsv,
+} from "./features/functional-decomposition/decompositionCsv";
+import {
+  applyHazardAnalysisCsvImport,
+  describeHazardCsvPlan,
+  describeHazardCsvProblems,
+  planHazardAnalysisCsvImport,
+} from "./features/project-hazard-analysis/hazardAnalysisCsv";
 import { generateHazardOperationalContexts } from "./features/project-hazard-analysis/hazardOperationalContextAi";
 import {
   buildHazardDiagramFocusTarget,
@@ -291,6 +321,7 @@ import {
 import {
   deleteProjectHazardAnalysisRecord,
   loadProjectHazardAnalysisRecord,
+  loadProjectHazardAnalysisRecordState,
   saveProjectHazardAnalysisRecord,
 } from "./features/project-hazard-analysis/projectHazardAnalysisStorage";
 import {
@@ -3884,6 +3915,11 @@ const [highlightedCodeArchitectureHazardRowIndex, setHighlightedCodeArchitecture
 const [pendingCodeArchitectureDiagramTarget, setPendingCodeArchitectureDiagramTarget] = useState(null);
 const [codeArchitectureHazardMethod, setCodeArchitectureHazardMethod] = useState("STPA-Textbook");
 const [codeArchitectureHazardRun, setCodeArchitectureHazardRun] = useState(null);
+// A cascade commits twice inside one handler (significance, then its
+// classification follow-up). Reading the run from the render closure gives the
+// second commit the PRE-decision row, so it refuses or reverts the first.
+const codeArchitectureHazardRunRef = useRef(codeArchitectureHazardRun);
+const activeCodeArchitectureProjectIdRef = useRef(null);
 const [isRunningCodeArchitectureHazard, setIsRunningCodeArchitectureHazard] = useState(false);
 const [codeArchitectureHazardContexts, setCodeArchitectureHazardContexts] = useState([]);
 const [selectedCodeArchitectureHazardContextId, setSelectedCodeArchitectureHazardContextId] = useState("all");
@@ -7297,6 +7333,27 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [committedFunctionalDiagramRows, setCommittedFunctionalDiagramRows] = useState([]);
   const [diagramCategories, setDiagramCategories] = useState(null);
   const [analysisResult, setAnalysisResult] = useState(null);
+  /**
+   * A review can commit twice inside one async handler: a safety-significance
+   * decision immediately followed by its safety-classification follow-up. The
+   * second commit runs before React has re-rendered, so reading the hazard
+   * summary from the render closure gives it the PRE-decision row -- which
+   * would silently revert the decision it just made. These refs always hold the
+   * latest committed value, so every commit builds on the previous one.
+   */
+  const analysisResultRef = useRef(analysisResult);
+  /**
+   * The revision the in-memory analysis was loaded from.
+   *
+   * Every hazard mutation passes this as `expectedRevision`, so a writer whose
+   * copy is behind another tab's is rejected instead of replacing it. Null means
+   * "unknown base" -- treated as a non-mutating read path only.
+   */
+  const analysisRevisionRef = useRef(null);
+  const [hazardRecoveryOpen, setHazardRecoveryOpen] = useState(false);
+  const [hazardRevisionListing, setHazardRevisionListing] = useState(null);
+  const [hazardRevisionPreview, setHazardRevisionPreview] = useState(null);
+  const [hazardRestoringRevision, setHazardRestoringRevision] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isRegeneratingRiskProfile, setIsRegeneratingRiskProfile] = useState(false);
   const [showDiagram, setShowDiagram] = useState(false);
@@ -7310,6 +7367,7 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [highlightedHazardRowIndex, setHighlightedHazardRowIndex] = useState(null);
   const [hazardReviewRunId, setHazardReviewRunId] = useState(null);
   const [draftHazardRowsByIndex, setDraftHazardRowsByIndex] = useState({});
+  const draftHazardRowsByIndexRef = useRef(draftHazardRowsByIndex);
   const [draftHazardGeneratingIndex, setDraftHazardGeneratingIndex] = useState(null);
   const [draftHazardFilterColumnIndex, setDraftHazardFilterColumnIndex] = useState(null);
   const [draftHazardColumnFilters, setDraftHazardColumnFilters] = useState({});
@@ -7422,6 +7480,8 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const hazardReconciliationHydrationRef = useRef(null);
   const projectPersistenceHydrationRef = useRef(null);
   const lastKnownFunctionalRowsRef = useRef(new Map());
+  const decompositionCsvInputRef = useRef(null);
+  const hazardCsvInputRef = useRef(null);
   const hazardAnalysisArtifactHydrationRef = useRef(null);
   const safetyIssueReportHydrationRef = useRef(null);
   const [generatingSafetyIssueReportIds, setGeneratingSafetyIssueReportIds] = useState(new Set());
@@ -7639,6 +7699,7 @@ useEffect(() => {
   useEffect(() => {
     let safetyReportLoadCancelled = false;
     let hazardArtifactLoadCancelled = false;
+    let hazardArtifactHydrationSafe = false;
     hazardReconciliationHydrationRef.current = activeProjectId || null;
     projectPersistenceHydrationRef.current = activeProjectId || null;
     safetyIssueReportHydrationRef.current = activeProjectId || null;
@@ -7742,9 +7803,19 @@ useEffect(() => {
     setSelectedRiskPriority("All");
     setRiskReportMode("preview");
     setRiskRegister(data?.hazardAnalysisStorage === "artifact-store" ? [] : (data?.riskRegister || []));
-    loadProjectHazardAnalysisRecord(projectIdForLoad)
-      .then(async (storedAnalysis) => {
+    loadProjectHazardAnalysisRecordState(projectIdForLoad)
+      .then(async ({ status: storageStatus, record: storedAnalysis, error: storageError }) => {
         if (hazardArtifactLoadCancelled) return;
+        if (["error", "unavailable"].includes(storageStatus)) {
+          console.error("[project-hazard-storage] Hazard artifact hydration failed; autosave remains blocked to protect the last known good record.", storageError);
+          setSafetyIssueRefreshStatus({
+            kind: "error",
+            message: "The saved hazard analysis could not be loaded. Its stored record was not overwritten. Reload the project after browser storage becomes available.",
+          });
+          setIsHazardAnalysisArtifactLoading(false);
+          return;
+        }
+        hazardArtifactHydrationSafe = true;
         if (storedAnalysis) {
           const restoredAnalysis = storedAnalysis.analysisResult
             ? stripProjectRiskProfileColumns(storedAnalysis.analysisResult)
@@ -7753,6 +7824,8 @@ useEffect(() => {
             ? storedAnalysis.riskRegister
             : buildRecoverableSafetyIssuesFromSummary(restoredAnalysis?.Summary);
           setAnalysisResult(restoredAnalysis);
+          analysisResultRef.current = restoredAnalysis;
+          analysisRevisionRef.current = storedAnalysis.revision ?? null;
           setDraftHazardRowsByIndex(storedAnalysis.draftHazardRowsByIndex || {});
           setRiskRegister(restoredRisks);
           if (!storedAnalysis.riskRegister?.length && restoredRisks.length) {
@@ -7783,7 +7856,7 @@ useEffect(() => {
         }
       })
       .finally(() => {
-        if (!hazardArtifactLoadCancelled && hazardAnalysisArtifactHydrationRef.current === projectIdForLoad) {
+        if (hazardArtifactHydrationSafe && !hazardArtifactLoadCancelled && hazardAnalysisArtifactHydrationRef.current === projectIdForLoad) {
           hazardAnalysisArtifactHydrationRef.current = null;
           setIsHazardAnalysisArtifactLoading(false);
         }
@@ -8297,6 +8370,17 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   const visibleHazardSummaryColumnCount = hazardSummaryHeaders.filter((header) => (
     !PROJECT_HAZARD_CONTEXT_HEADERS.has(header) && !isSafetyDetailHeader(header)
   )).length;
+  const hazardSummaryDisplayColumnIndexes = useMemo(() => {
+    const indexes = hazardSummaryHeaders.map((_, index) => index);
+    const safetySignificantIndex = hazardSummaryHeaders.indexOf("Safety Significant");
+    const functionFromIndex = hazardSummaryHeaders.indexOf("Function (From)");
+    if (safetySignificantIndex < 0 || functionFromIndex < 0) return indexes;
+
+    const reordered = indexes.filter((index) => index !== safetySignificantIndex);
+    const functionFromDisplayIndex = reordered.indexOf(functionFromIndex);
+    reordered.splice(functionFromDisplayIndex, 0, safetySignificantIndex);
+    return reordered;
+  }, [hazardSummaryHeaders]);
   const hazardSummaryDisplayRows = useMemo(() => {
     const completedSummary = Array.isArray(analysisResult?.Summary?.[0])
       ? analysisResult.Summary
@@ -8735,7 +8819,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const restoration = restoreReviewedGuidePhraseDecisions(summary, restorationMap);
     if (!restoration.changed) return;
     const restoredById = new Map(restoration.summary.slice(1).map((row) => [String(row?.[idIndex] || "").trim(), row]));
-    const nextDraftRows = Object.fromEntries(Object.entries(draftHazardRowsByIndex || {}).map(([key, entry]) => {
+    const nextDraftRows = Object.fromEntries(Object.entries(draftHazardRowsByIndexRef.current || {}).map(([key, entry]) => {
       if (!Array.isArray(entry?.row)) return [key, entry];
       const draftIdIndex = findSummaryColumn(draftHazardHeaders, ["Raw Analysis Row ID", "Raw Row ID", "Analysis Row ID"]);
       const rowId = String(entry.row[draftIdIndex] || "").trim();
@@ -10698,6 +10782,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   const applyFunctionalVibeReviewDecision = useCallback(async ({
     projectId,
     rowId,
+    expectedRowFingerprint = null,
     recoveryRows = [],
     decision,
     proposedRow,
@@ -10719,6 +10804,10 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       const normalizedDecision = ["Keep", "Revise", "Remove"].includes(decision) ? decision : "";
       if (!normalizedDecision) throw new Error("Choose Keep, Revise, or Remove before applying this review item.");
       const previousRow = { ...currentRows[rowIndex], architecture: { ...(currentRows[rowIndex].architecture || {}) } };
+      if (expectedRowFingerprint
+        && rowFingerprint(normalizeCodeArchitectureFunctionalReviewRow(currentRows[rowIndex]), { ignoreKeys: ["_functionalVibeReview"] }) !== expectedRowFingerprint) {
+        return { conflict: true, rowId, currentRow: previousRow };
+      }
       let nextRows;
       if (normalizedDecision === "Remove") {
         nextRows = currentRows.filter((_, index) => index !== rowIndex);
@@ -10770,6 +10859,10 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const rowIndex = currentRows.findIndex((row) => String(row?.[FUNCTIONAL_VIBE_REVIEW_ID_FIELD] || "") === String(rowId || ""));
     if (rowIndex < 0) throw new Error("The functional-decomposition row is no longer available.");
     const previousRow = { ...currentRows[rowIndex] };
+    if (expectedRowFingerprint
+      && rowFingerprint(previousRow, { ignoreKeys: ["_functionalVibeReview"] }) !== expectedRowFingerprint) {
+      return { conflict: true, rowId, currentRow: previousRow };
+    }
     const normalizedDecision = ["Keep", "Revise", "Remove"].includes(decision) ? decision : "";
     if (!normalizedDecision) throw new Error("Choose Keep, Revise, or Remove before applying this review item.");
 
@@ -10948,6 +11041,109 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     return true;
   }, [activeCodeArchitectureProjectId, activeCodeArchitectureRepo, activeProjectId, cbaTableData, handleOpenCodeArchitectureFunctionalRow, handleOpenFunctionalRow, responseRows]);
 
+  useEffect(() => { analysisResultRef.current = analysisResult; }, [analysisResult]);
+
+  /**
+   * Track the head revision produced by every successful write in THIS context.
+   *
+   * The review passes `expectedRevision` so a writer whose copy is behind
+   * another tab's is rejected. But the debounced autosave, regeneration, and the
+   * pre-review checkpoint also advance the revision, and they are not the
+   * review -- without this the review's next commit is rejected as stale against
+   * a write from its own tab.
+   *
+   * The event is same-context only, which is exactly the distinction wanted:
+   * local writes keep the base revision current, while another tab's writes are
+   * not heard and so still produce a genuine conflict.
+   */
+  useEffect(() => {
+    const onHazardWrite = (event) => {
+      const detail = event?.detail;
+      if (!detail?.ok || detail.revision === undefined || detail.revision === null) return;
+      if (String(detail.projectId || "") !== String(activeProjectIdRef.current || "")) return;
+      analysisRevisionRef.current = detail.revision;
+    };
+    window.addEventListener("xhandle:hazard-analysis-write", onHazardWrite);
+    return () => window.removeEventListener("xhandle:hazard-analysis-write", onHazardWrite);
+  }, []);
+  useEffect(() => { codeArchitectureHazardRunRef.current = codeArchitectureHazardRun; }, [codeArchitectureHazardRun]);
+  useEffect(() => { activeCodeArchitectureProjectIdRef.current = activeCodeArchitectureProjectId; }, [activeCodeArchitectureProjectId]);
+  useEffect(() => { draftHazardRowsByIndexRef.current = draftHazardRowsByIndex; }, [draftHazardRowsByIndex]);
+
+  /** Write the code-architecture hazard run and its live ref together. */
+  const commitCodeArchitectureHazardRun = useCallback((nextRun) => {
+    codeArchitectureHazardRunRef.current = nextRun;
+    setCodeArchitectureHazardRun(nextRun);
+  }, []);
+
+  /** Write hazard state and its live ref together, so a later read in the same tick is current. */
+
+  const commitAnalysisResult = useCallback((nextAnalysisResult, nextDraftRows, nextRevision) => {
+    analysisResultRef.current = nextAnalysisResult;
+    if (nextRevision !== undefined) analysisRevisionRef.current = nextRevision;
+    setAnalysisResult(nextAnalysisResult);
+    if (nextDraftRows !== undefined) {
+      draftHazardRowsByIndexRef.current = nextDraftRows;
+      setDraftHazardRowsByIndex(nextDraftRows);
+    }
+  }, []);
+
+  const openHazardRecovery = useCallback(async () => {
+    setHazardRevisionPreview(null);
+    setHazardRecoveryOpen(true);
+    setHazardRevisionListing(await listHazardAnalysisRevisions(activeProjectIdRef.current));
+  }, []);
+
+  const previewHazardRevision = useCallback(async (revision) => {
+    const result = await readHazardAnalysisRevision(activeProjectIdRef.current, revision);
+    setHazardRevisionPreview(result.status === "ok" ? result.revision : null);
+  }, []);
+
+  const restoreHazardRevision = useCallback(async (revision) => {
+    setHazardRestoringRevision(revision);
+    try {
+      const result = await restoreHazardAnalysisRevision(activeProjectIdRef.current, revision);
+      if (result.status !== "ok" || !result.record) {
+        window.alert(describeHazardWriteFailure({ outcome: result.status }));
+        return;
+      }
+      // Adopt the restored content and its new revision, so the next mutation
+      // builds on what was just restored rather than what it replaced.
+      commitAnalysisResult(result.record.analysisResult, result.record.draftHazardRowsByIndex || {}, result.record.revision);
+      setRiskRegister(Array.isArray(result.record.riskRegister) ? result.record.riskRegister : []);
+      setHazardRecoveryOpen(false);
+      setHazardRevisionPreview(null);
+    } finally {
+      setHazardRestoringRevision(null);
+    }
+  }, [commitAnalysisResult]);
+
+  /**
+   * Fix the stable row IDs into the stored analysis before a review snapshots them.
+   *
+   * Row IDs are a content hash, synthesized on read whenever the column is
+   * absent. A review snapshots its queue from that derived view, then its first
+   * decision changes the row -- so the ID re-derives to a different value and
+   * the follow-up review reports "the source row no longer exists". Writing the
+   * IDs down first binds them to the pre-decision content, where they belong.
+   */
+  const ensureHazardRowIdsPersisted = useCallback(async () => {
+    const current = analysisResultRef.current;
+    if (!Array.isArray(current?.Summary?.[0])) return false;
+    const identified = ensureHazardAnalysisRowIds(current.Summary);
+    if (identified === current.Summary) return false;
+    const unchanged = identified.length === current.Summary.length
+      && identified.every((row, index) => row.length === current.Summary[index].length
+        && row.every((cell, cellIndex) => cell === current.Summary[index][cellIndex]));
+    if (unchanged) return false;
+    const next = { ...current, Summary: identified };
+    commitAnalysisResult(next, undefined);
+    const saved = await saveHazardAnalysis(activeProjectIdRef.current, { analysisResult: next },
+      { reason: "materialize-row-ids", expectedRevision: analysisRevisionRef.current });
+    if (saved.revision !== undefined) analysisRevisionRef.current = saved.revision;
+    return saved.outcome === HAZARD_WRITE_OUTCOME.OK || saved.outcome === HAZARD_WRITE_OUTCOME.UNCHANGED;
+  }, [commitAnalysisResult]);
+
   const getHazardVibeReviewState = useCallback(() => {
     const organizationSections = [
       "Safety Philosophy", "Hazard and Loss Taxonomy", "Risk Classification", "Engineering Rules",
@@ -10957,8 +11153,12 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       return {
         activeProjectId: activeCodeArchitectureProjectId,
         projectName: activeCodeArchitectureProject?.name || "Untitled code architecture project",
-        summary: codeArchitectureHazardRun?.generatedSheets?.Summary || null,
-        riskMethod: codeArchitectureHazardRun?.hazardMethod || codeArchitectureHazardMethod,
+        // Must match the view applyHazardVibeReviewDecision reads; see the
+        // functional-project branch below for why a mismatch is not cosmetic.
+        summary: ensureHazardAnalysisRowIds(
+          removeProposedSafetyAssessmentColumns({ Summary: codeArchitectureHazardRunRef.current?.generatedSheets?.Summary || null })?.Summary || null,
+        ),
+        riskMethod: codeArchitectureHazardRunRef.current?.hazardMethod || codeArchitectureHazardMethod,
         organizationContext: getProjectOrganizationCalibration(activeCodeArchitectureProjectId, organizationSections).context,
         workspaceType: "code-based-architecture",
         sourceRunId: codeArchitectureHazardRun?.id || "",
@@ -10968,7 +11168,13 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     return {
       activeProjectId,
       projectName: projects.find((entry) => entry.id === activeProjectId)?.name || "Untitled project",
-      summary: analysisResult?.Summary || null,
+      // Must match the exact view applyHazardVibeReviewDecision reads. A proposal
+      // is fingerprinted from this summary and the fingerprint is re-checked
+      // against the apply-side row, so any column-set difference between the two
+      // reads as "the row changed" and refuses a perfectly valid decision.
+      summary: ensureHazardAnalysisRowIds(
+        removeProposedSafetyAssessmentColumns({ Summary: analysisResultRef.current?.Summary || null })?.Summary || null,
+      ),
       riskMethod,
       organizationContext: getProjectOrganizationCalibration(activeProjectId, organizationSections).context,
       workspaceType: "functional-project",
@@ -10988,7 +11194,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     section,
   ]);
 
-  const applyHazardVibeReviewDecision = useCallback(async ({ projectId, sourceRowId, update, reviewerDisposition = false, reviewTarget = "safetySignificant", workspaceType = "functional-project", sourceRunId = "" }) => {
+  const applyHazardVibeReviewDecision = useCallback(async ({ projectId, sourceRowId, update, reviewerDisposition = false, reviewTarget = "safetySignificant", workspaceType = "functional-project", sourceRunId = "", expectedRowFingerprint = null }) => {
     const applySafetyClassificationOnly = (summary, rowIndex) => {
       const allowed = ["Safety Classification", "Safety Classification Rule", "Causal Path Type", "Classification Evidence", "Classification Confidence"];
       const decision = String(update?.["Safety Classification"] || "").trim();
@@ -11032,66 +11238,93 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       return { summary: nextSummary, changedRowIndexes: [rowIndex], rejectedUpdates: [] };
     };
     if (workspaceType === "code-based-architecture") {
-      if (!activeCodeArchitectureProjectId || String(projectId) !== String(activeCodeArchitectureProjectId)) {
+      if (!activeCodeArchitectureProjectIdRef.current || String(projectId) !== String(activeCodeArchitectureProjectIdRef.current)) {
         throw new Error("This review belongs to another Code-Based Architecture project. Return to the original project before applying a decision.");
       }
-      const run = String(codeArchitectureHazardRun?.id || "") === String(sourceRunId || "")
-        ? codeArchitectureHazardRun
+      const run = String(codeArchitectureHazardRunRef.current?.id || "") === String(sourceRunId || "")
+        ? codeArchitectureHazardRunRef.current
         : await getCodeArchitectureHazardRunById(sourceRunId);
       if (!run) throw new Error("The reviewed Code-Based Architecture hazard run is no longer available.");
-      const summary = removeProposedSafetyAssessmentColumns({ Summary: run?.generatedSheets?.Summary })?.Summary;
+      const summary = ensureHazardAnalysisRowIds(removeProposedSafetyAssessmentColumns({ Summary: run?.generatedSheets?.Summary })?.Summary);
       if (!Array.isArray(summary?.[0])) throw new Error("Generate the Code-Based Architecture hazard-analysis Summary before applying review decisions.");
       const indexes = indexVibeReviewHeaders(summary[0]);
       const rowIndex = summary.slice(1).findIndex((row) => String(row?.[indexes.rawRowId] || "").trim() === String(sourceRowId || "").trim()) + 1;
       if (rowIndex <= 0) return { missing: true, sourceRowId };
       const previousRow = [...summary[rowIndex]];
+      if (expectedRowFingerprint && rowFingerprint(previousRow) !== expectedRowFingerprint) {
+        return { conflict: true, sourceRowId, currentRow: previousRow, headers: [...summary[0]] };
+      }
       const applied = reviewTarget === "guidePhraseApplicable"
         ? applyGuidePhraseApplicabilityUpdates(summary, [{ ...update, sourceRowId }], [sourceRowId])
         : reviewTarget === "classificationResolution" ? applyClassificationResolution(summary, rowIndex)
           : reviewTarget === "safetyClassification" ? applySafetyClassificationOnly(summary, rowIndex) : applySafetySignificanceOnly(summary, rowIndex);
-      if (applied.rejectedUpdates.length || !applied.changedRowIndexes.length) {
-        throw new Error(applied.rejectedUpdates[0]?.error || "The governed decision was invalid or did not change the row.");
+      if (applied.rejectedUpdates.length) {
+        throw new Error(applied.rejectedUpdates[0]?.error || "The governed decision was invalid.");
       }
+      // Normalize first, then verify, then persist: the row that is checked and
+      // the row that is returned as review evidence must be the row that is
+      // stored. Verification runs before any write, so a rejected commit leaves
+      // the artifact untouched.
+      const committedSummary = ensureClassificationResolutionStatus(applied.summary);
+      const committedIndex = findRowIndexById(committedSummary, sourceRowId);
+      if (committedIndex <= 0) throw new Error("The reviewed row could not be read back after the update. No change was saved.");
+      const committedRow = [...committedSummary[committedIndex]];
+      const verified = verifyGovernedDecision({ reviewTarget, update, headers: committedSummary[0], committedRow });
+      if (!verified.ok) throw new Error(verified.error);
       const nextRun = {
         ...run,
-        generatedSheets: { ...(run.generatedSheets || {}), Summary: applied.summary },
+        generatedSheets: { ...(run.generatedSheets || {}), Summary: committedSummary },
         updatedAt: new Date().toISOString(),
       };
       await saveCodeArchitectureHazardRun(nextRun);
-      setCodeArchitectureHazardRun(nextRun);
-      const resolution = inspectClassificationResolution(applied.summary[0], applied.summary[rowIndex]);
-      return { sourceRowId, rowIndex, previousRow, nextRow: [...applied.summary[rowIndex]], headers: [...applied.summary[0]], safetyIssuesStale: false,
+      commitCodeArchitectureHazardRun(nextRun);
+      const resolution = inspectClassificationResolution(committedSummary[0], committedRow);
+      return { sourceRowId, rowIndex: committedIndex, previousRow, nextRow: committedRow, headers: [...committedSummary[0]], safetyIssuesStale: false,
+        changed: rowChanged(previousRow, committedRow),
         classificationResolutionStatus: resolution.status, classificationResolutionFindings: resolution.findings };
     }
-    if (!activeProjectId || String(projectId) !== String(activeProjectId)) {
+    if (!activeProjectIdRef.current || String(projectId) !== String(activeProjectIdRef.current)) {
       throw new Error("This review belongs to another project. Return to the original project before applying a decision.");
     }
-    const summary = removeProposedSafetyAssessmentColumns({ Summary: analysisResult?.Summary })?.Summary;
+    const summary = ensureHazardAnalysisRowIds(removeProposedSafetyAssessmentColumns({ Summary: analysisResultRef.current?.Summary })?.Summary);
     if (!Array.isArray(summary?.[0])) throw new Error("Generate the hazard-analysis Summary before applying review decisions.");
     const indexes = indexVibeReviewHeaders(summary[0]);
     const rowIndex = summary.slice(1).findIndex((row) => String(row?.[indexes.rawRowId] || "").trim() === String(sourceRowId || "").trim()) + 1;
     if (rowIndex <= 0) return { missing: true, sourceRowId };
     const previousRow = [...summary[rowIndex]];
+    if (expectedRowFingerprint && rowFingerprint(previousRow) !== expectedRowFingerprint) {
+      return { conflict: true, sourceRowId, currentRow: previousRow, headers: [...summary[0]] };
+    }
     const applied = reviewTarget === "guidePhraseApplicable"
       ? applyGuidePhraseApplicabilityUpdates(summary, [{ ...update, sourceRowId }], [sourceRowId])
       : reviewTarget === "classificationResolution" ? applyClassificationResolution(summary, rowIndex)
         : reviewTarget === "safetyClassification" ? applySafetyClassificationOnly(summary, rowIndex) : applySafetySignificanceOnly(summary, rowIndex);
-    if (applied.rejectedUpdates.length || !applied.changedRowIndexes.length) {
-      throw new Error(applied.rejectedUpdates[0]?.error || "The governed decision was invalid or did not change the row.");
+    if (applied.rejectedUpdates.length) {
+      throw new Error(applied.rejectedUpdates[0]?.error || "The governed decision was invalid.");
     }
-    const nextAnalysisResult = { ...(analysisResult || {}), Summary: applied.summary };
+    // Normalize before verifying, setting state, and persisting, so the row the
+    // reviewer is told about, the row held in memory, and the row written to
+    // IndexedDB are the same row. saveProjectHazardAnalysisRecord normalizes
+    // internally; doing it here first removes the divergence between them.
+    const nextAnalysisResult = normalizeHazardAnalysisResolutionStatus({ ...(analysisResultRef.current || {}), Summary: applied.summary });
+    const committedSummary = nextAnalysisResult.Summary;
+    const committedIndex = findRowIndexById(committedSummary, sourceRowId);
+    if (committedIndex <= 0) throw new Error("The reviewed row could not be read back after the update. No change was saved.");
+    const committedRow = [...committedSummary[committedIndex]];
+    const verified = verifyGovernedDecision({ reviewTarget, update, headers: committedSummary[0], committedRow });
+    if (!verified.ok) throw new Error(verified.error);
     const reviewedAt = new Date().toISOString();
-    const nextDraftRows = Object.fromEntries(Object.entries(draftHazardRowsByIndex || {}).map(([key, entry]) => {
+    const nextDraftRows = Object.fromEntries(Object.entries(draftHazardRowsByIndexRef.current || {}).map(([key, entry]) => {
       if (!Array.isArray(entry?.row)) return [key, entry];
       const draftIdIndex = findSummaryColumn(draftHazardHeaders, ["Raw Analysis Row ID", "Raw Row ID", "Analysis Row ID"]);
       if (String(entry.row[draftIdIndex] || "").trim() !== String(sourceRowId || "").trim()) return [key, entry];
-      const reviewedRow = alignSummaryRowToHeaders(applied.summary[0], applied.summary[rowIndex], draftHazardHeaders, entry.row);
+      const reviewedRow = alignSummaryRowToHeaders(committedSummary[0], committedRow, draftHazardHeaders, entry.row);
       return [key, {
         ...entry,
         row: reviewedRow,
         ...(reviewTarget === "guidePhraseApplicable" ? {
           guidePhraseReviewEvidence: {
-            projectId: String(activeProjectId || ""),
+            projectId: String(activeProjectIdRef.current || ""),
             reviewedAt,
             currentContent: { rowId: sourceRowId, columns: [...draftHazardHeaders], row: [...reviewedRow] },
             vibeReview: {
@@ -11103,14 +11336,14 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
           },
         } : ["safetyClassification", "classificationResolution"].includes(reviewTarget) ? {
           safetyClassificationReviewEvidence: {
-            projectId: String(activeProjectId || ""), reviewedAt,
+            projectId: String(activeProjectIdRef.current || ""), reviewedAt,
             currentContent: { rowId: sourceRowId, columns: [...draftHazardHeaders], row: [...reviewedRow] },
             vibeReview: { domain: "hazard-analysis", reviewTarget: "safetyClassification", rowId: sourceRowId,
               decision: update?.["Safety Classification"] || reviewedRow[findSummaryColumn(draftHazardHeaders, ["Safety Classification"])] },
           },
         } : {
           safetySignificanceReviewEvidence: {
-            projectId: String(activeProjectId || ""),
+            projectId: String(activeProjectIdRef.current || ""),
             reviewedAt,
             currentContent: { rowId: sourceRowId, columns: [...draftHazardHeaders], row: [...reviewedRow] },
             vibeReview: {
@@ -11123,23 +11356,31 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         }),
       }];
     }));
-    setAnalysisResult(nextAnalysisResult);
-    setDraftHazardRowsByIndex(nextDraftRows);
+    const restoreAnalysisResult = analysisResultRef.current;
+    const restoreDraftRows = draftHazardRowsByIndexRef.current;
+    commitAnalysisResult(nextAnalysisResult, nextDraftRows);
     setSafetyIssueRefreshStatus({ kind: "working", message: "Hazard classifications changed. Use Regenerate with AI to refresh the consolidated issue set." });
-    const persisted = await saveProjectHazardAnalysisRecord(activeProjectId, { analysisResult: nextAnalysisResult, draftHazardRowsByIndex: nextDraftRows, riskRegister });
-    if (!persisted) { setAnalysisResult(analysisResult); setDraftHazardRowsByIndex(draftHazardRowsByIndex); throw new Error("The review decision could not be persisted; the row was restored."); }
-    const resolution = inspectClassificationResolution(applied.summary[0], applied.summary[rowIndex]);
-    return { sourceRowId, rowIndex, previousRow, nextRow: [...applied.summary[rowIndex]], headers: [...applied.summary[0]], safetyIssuesStale: true,
+    const saveResult = await saveHazardAnalysis(activeProjectIdRef.current, {
+      analysisResult: nextAnalysisResult, draftHazardRowsByIndex: nextDraftRows,
+    }, { reason: `vibe-review:${reviewTarget}`, expectedRevision: analysisRevisionRef.current });
+    if (saveResult.outcome !== HAZARD_WRITE_OUTCOME.OK && saveResult.outcome !== HAZARD_WRITE_OUTCOME.UNCHANGED) {
+      commitAnalysisResult(restoreAnalysisResult, restoreDraftRows);
+      throw new Error(describeHazardWriteFailure(saveResult));
+    }
+    analysisRevisionRef.current = saveResult.revision ?? analysisRevisionRef.current;
+    const resolution = inspectClassificationResolution(committedSummary[0], committedRow);
+    return { sourceRowId, rowIndex: committedIndex, previousRow, nextRow: committedRow, headers: [...committedSummary[0]], safetyIssuesStale: true,
+      changed: rowChanged(previousRow, committedRow),
       classificationResolutionStatus: resolution.status, classificationResolutionFindings: resolution.findings };
-  }, [activeCodeArchitectureProjectId, activeProjectId, analysisResult, codeArchitectureHazardRun, draftHazardHeaders, draftHazardRowsByIndex, riskRegister]);
+  }, [commitAnalysisResult, commitCodeArchitectureHazardRun, draftHazardHeaders]);
 
   const undoHazardVibeReviewDecision = useCallback(async ({ projectId, sourceRowId, previousGovernedFields, workspaceType = "functional-project", sourceRunId = "" }) => {
     if (workspaceType === "code-based-architecture") {
-      if (!activeCodeArchitectureProjectId || String(projectId) !== String(activeCodeArchitectureProjectId)) {
+      if (!activeCodeArchitectureProjectIdRef.current || String(projectId) !== String(activeCodeArchitectureProjectIdRef.current)) {
         throw new Error("Return to the reviewed Code-Based Architecture project before undoing this decision.");
       }
-      const run = String(codeArchitectureHazardRun?.id || "") === String(sourceRunId || "")
-        ? codeArchitectureHazardRun
+      const run = String(codeArchitectureHazardRunRef.current?.id || "") === String(sourceRunId || "")
+        ? codeArchitectureHazardRunRef.current
         : await getCodeArchitectureHazardRunById(sourceRunId);
       const summary = run?.generatedSheets?.Summary;
       const indexes = indexVibeReviewHeaders(summary?.[0] || []);
@@ -11155,20 +11396,20 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         updatedAt: new Date().toISOString(),
       };
       await saveCodeArchitectureHazardRun(nextRun);
-      setCodeArchitectureHazardRun(nextRun);
+      commitCodeArchitectureHazardRun(nextRun);
       return { sourceRowId, rowIndex, previousRow: [...summary[rowIndex]], nextRow: [...restoredSummary[rowIndex]], headers: [...restoredSummary[0]] };
     }
-    if (!activeProjectId || String(projectId) !== String(activeProjectId)) throw new Error("Return to the reviewed project before undoing this decision.");
-    const summary = analysisResult?.Summary;
+    if (!activeProjectIdRef.current || String(projectId) !== String(activeProjectIdRef.current)) throw new Error("Return to the reviewed project before undoing this decision.");
+    const summary = analysisResultRef.current?.Summary;
     const indexes = indexVibeReviewHeaders(summary?.[0] || []);
     const rowIndex = summary?.slice(1).findIndex((row) => String(row?.[indexes.rawRowId] || "").trim() === String(sourceRowId || "").trim()) + 1;
     if (!previousGovernedFields || rowIndex <= 0) throw new Error("The original governed fields are no longer available for a safe undo.");
     const restoredSummaryDraft = summary.map((row, index) => index === rowIndex
       ? row.map((value, columnIndex) => Object.prototype.hasOwnProperty.call(previousGovernedFields, summary[0][columnIndex]) ? previousGovernedFields[summary[0][columnIndex]] : value)
       : row);
-    const nextAnalysisResult = normalizeHazardAnalysisResolutionStatus({ ...(analysisResult || {}), Summary: restoredSummaryDraft });
+    const nextAnalysisResult = normalizeHazardAnalysisResolutionStatus({ ...(analysisResultRef.current || {}), Summary: restoredSummaryDraft });
     const restoredSummary = nextAnalysisResult.Summary;
-    const nextDraftRows = Object.fromEntries(Object.entries(draftHazardRowsByIndex || {}).map(([key, entry]) => {
+    const nextDraftRows = Object.fromEntries(Object.entries(draftHazardRowsByIndexRef.current || {}).map(([key, entry]) => {
       if (!Array.isArray(entry?.row)) return [key, entry];
       const idIndex = findSummaryColumn(draftHazardHeaders, ["Raw Analysis Row ID", "Raw Row ID", "Analysis Row ID"]);
       if (String(entry.row[idIndex] || "").trim() !== String(sourceRowId || "").trim()) return [key, entry];
@@ -11176,18 +11417,22 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       delete restoredEntry.guidePhraseReviewEvidence;
       return [key, { ...restoredEntry, row: alignSummaryRowToHeaders(summary[0], restoredSummary[rowIndex], draftHazardHeaders, entry.row) }];
     }));
-    const persisted = await saveProjectHazardAnalysisRecord(activeProjectId, { analysisResult: nextAnalysisResult, draftHazardRowsByIndex: nextDraftRows, riskRegister });
-    if (!persisted) throw new Error("The restored row could not be persisted.");
-    setAnalysisResult(nextAnalysisResult);
-    setDraftHazardRowsByIndex(nextDraftRows);
+    const saveResult = await saveHazardAnalysis(activeProjectIdRef.current, {
+      analysisResult: nextAnalysisResult, draftHazardRowsByIndex: nextDraftRows,
+    }, { reason: "vibe-review:undo", expectedRevision: analysisRevisionRef.current });
+    if (saveResult.outcome !== HAZARD_WRITE_OUTCOME.OK && saveResult.outcome !== HAZARD_WRITE_OUTCOME.UNCHANGED) {
+      throw new Error(describeHazardWriteFailure(saveResult));
+    }
+    analysisRevisionRef.current = saveResult.revision ?? analysisRevisionRef.current;
+    commitAnalysisResult(nextAnalysisResult, nextDraftRows);
     setSafetyIssueRefreshStatus({ kind: "working", message: "A hazard review decision was undone. Use Regenerate with AI to refresh the consolidated issue set." });
     return { sourceRowId, rowIndex, previousRow: [...summary[rowIndex]], nextRow: [...restoredSummary[rowIndex]], headers: [...restoredSummary[0]] };
-  }, [activeCodeArchitectureProjectId, activeProjectId, analysisResult, codeArchitectureHazardRun, draftHazardHeaders, draftHazardRowsByIndex, riskRegister]);
+  }, [commitAnalysisResult, commitCodeArchitectureHazardRun, draftHazardHeaders]);
 
   const openHazardVibeReviewRow = useCallback(({ projectId, sourceRowId, workspaceType = "functional-project" }) => {
     if (workspaceType === "code-based-architecture") {
       if (String(projectId) !== String(activeCodeArchitectureProjectId)) return false;
-      const summary = codeArchitectureHazardRun?.generatedSheets?.Summary;
+      const summary = ensureHazardAnalysisRowIds(codeArchitectureHazardRun?.generatedSheets?.Summary);
       const indexes = indexVibeReviewHeaders(summary?.[0] || []);
       const rowIndex = summary?.slice(1).findIndex((row) => String(row?.[indexes.rawRowId] || "").trim() === String(sourceRowId || "").trim()) + 1;
       if (rowIndex <= 0) return false;
@@ -11198,14 +11443,21 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       return true;
     }
     if (String(projectId) !== String(activeProjectId)) return false;
-    const summary = analysisResult?.Summary;
+    const summary = ensureHazardAnalysisRowIds(analysisResult?.Summary);
     const indexes = indexVibeReviewHeaders(summary?.[0] || []);
     const rowIndex = summary?.slice(1).findIndex((row) => String(row?.[indexes.rawRowId] || "").trim() === String(sourceRowId || "").trim()) + 1;
     if (rowIndex <= 0) return false;
-    const displayIdIndex = indexVibeReviewHeaders(hazardSummaryHeaders).rawRowId;
-    const displayIndex = hazardSummaryDisplayRows.findIndex(({ row }) => (
+    const reviewableDisplaySummary = ensureHazardAnalysisRowIds([
+      hazardSummaryHeaders,
+      ...hazardSummaryDisplayRows.map(({ row }) => row),
+    ]);
+    const displayIdIndex = indexVibeReviewHeaders(reviewableDisplaySummary?.[0] || []).rawRowId;
+    const displayIdMatch = reviewableDisplaySummary?.slice(1).findIndex((row) => (
       String(row?.[displayIdIndex] || "").trim() === String(sourceRowId || "").trim()
-    ));
+    )) ?? -1;
+    const displayIndex = displayIdMatch >= 0
+      ? displayIdMatch
+      : hazardSummaryDisplayRows.findIndex(({ originalIndex }) => originalIndex === rowIndex - 1);
     setSection("projects");
     setActiveTab("Hazard Analysis");
     handleOpenHazardSummaryRow(displayIndex >= 0 ? displayIndex : rowIndex - 1);
@@ -11317,6 +11569,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       openFunctionalVibeReviewRow,
       openNeedsReviewResolverFromCollaborator,
       getHazardVibeReviewState,
+      ensureHazardRowIdsPersisted,
       applyHazardVibeReviewDecision,
       undoHazardVibeReviewDecision,
       openHazardVibeReviewRow,
@@ -11373,15 +11626,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setFunctionalColumnSearches({});
   };
   const handleRemoveRow = (index) => setResponseRows((currentRows) => currentRows.filter((_, i) => i !== index));
-  const functionalTableColumns = [
-    { key: 'subsystem', label: 'Subsystem' },
-    { key: 'fromFunction', label: 'Function (From)' },
-    { key: 'fromDetails', label: 'Function (From) Details' },
-    { key: 'controlAction', label: 'Control Action' },
-    { key: 'controlDetails', label: 'Control Action Details' },
-    { key: 'toFunction', label: 'Function (To)' },
-    { key: 'toDetails', label: 'Function (To) Details' },
-  ];
+  const functionalTableColumns = FUNCTIONAL_DECOMPOSITION_COLUMNS;
   const buildFunctionalTableDiagramTarget = (row, field) => {
     if (field === 'fromFunction' && String(row?.fromFunction || '').trim()) {
       return { kind: 'function', label: row.fromFunction };
@@ -12188,7 +12433,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     }
     const rowId = String(sourceRowId || "").trim();
     const persistedDraftRows = loadProjectData(activeProjectId)?.draftHazardRowsByIndex || {};
-    const targetIndex = draftHazardTargets.findIndex((candidate) => {
+    let targetIndex = draftHazardTargets.findIndex((candidate) => {
       const entry = persistedDraftRows?.[candidate.rowKey]
         || draftHazardRowsByIndex?.[candidate.rowKey]
         || (candidate.legacyRowKey ? persistedDraftRows?.[candidate.legacyRowKey] : null)
@@ -12197,6 +12442,26 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       const idIndex = findSummaryColumn(draftHazardHeaders, ["Raw Analysis Row ID", "Raw Row ID", "Analysis Row ID"]);
       return String(entry.row[idIndex] || "").trim() === rowId;
     });
+    // Legacy analyses may have received their stable Raw Analysis Row ID when
+    // the Summary was normalized for Vibe Review, while the older draft cache
+    // still has a blank ID. Resolve the same target through the completed
+    // Summary rather than treating the reviewed row as deleted.
+    if (targetIndex < 0) {
+      const reviewableSummary = ensureHazardAnalysisRowIds(analysisResult?.Summary);
+      const summaryIdIndex = findSummaryColumn(reviewableSummary?.[0] || [], [
+        "Raw Analysis Row ID", "Raw Row ID", "Analysis Row ID",
+      ]);
+      targetIndex = draftHazardTargets.findIndex((candidate) => {
+        const completedRow = findExistingHazardRowForFunctionalRow(
+          candidate.analysisRow,
+          reviewableSummary,
+          candidate.guidePhrase,
+          candidate.context,
+        );
+        return summaryIdIndex >= 0
+          && String(completedRow?.[summaryIdIndex] || "").trim() === rowId;
+      });
+    }
     if (targetIndex < 0) throw new Error("The reviewed hazard row is no longer available for scoped regeneration.");
     return handleGenerateDraftHazardRow(targetIndex, {
       throwOnError: true,
@@ -13771,17 +14036,133 @@ Rules:
   // Exporters
   const exportDecompositionCSV = () => {
     if (!responseRows?.length) return;
-    const headers = functionalTableColumns.map(({ label }) => label);
-    const rows2D = responseRows.map((row) => (
-      functionalTableColumns.map(({ key }) => row?.[key] ?? "")
-    ));
-    const escapeCell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const csv = [headers, ...rows2D].map(r => r.map(escapeCell).join(',')).join('\r\n');
-    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob([functionalDecompositionToCsv(responseRows)], { type: 'text/csv;charset=utf-8;' });
     const ts = new Date().toISOString().slice(0, 10);
     const filename = `functional_decomposition_${ts}.csv`;
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  };
+
+  /**
+   * Load an exported-and-edited table back over the current one.
+   *
+   * This replaces every row, so it refuses a file that carries any problem
+   * rather than importing the part of it that parsed: a half-applied import
+   * would silently drop review work the user believed they had saved.
+   */
+  const importDecompositionCSV = async (file) => {
+    if (!file) return;
+    if (!activeProjectId) {
+      window.alert('Open the project that should receive this table first.');
+      return;
+    }
+    let text = '';
+    try {
+      text = await file.text();
+    } catch (error) {
+      window.alert(`That file could not be read: ${error?.message || 'unknown error'}`);
+      return;
+    }
+    const parsed = parseFunctionalDecompositionCsv(text);
+    const problems = describeFunctionalCsvProblems(parsed);
+    if (problems) {
+      window.alert(problems);
+      return;
+    }
+    const blankNote = parsed.ignoredBlankRows
+      ? ` ${parsed.ignoredBlankRows} blank line${parsed.ignoredBlankRows === 1 ? '' : 's'} ignored.`
+      : '';
+    const replaced = responseRows?.length || 0;
+    const confirmed = window.confirm(
+      `Replace the ${replaced} row${replaced === 1 ? '' : 's'} in this functional decomposition with ${parsed.rows.length} imported row${parsed.rows.length === 1 ? '' : 's'}?${blankNote}`,
+    );
+    if (!confirmed) return;
+
+    const ensured = ensureFunctionalVibeReviewRowIds(parsed.rows);
+    if (!saveProjectPatch(activeProjectId, { responseRows: ensured.rows })) {
+      window.alert('The imported table could not be saved in browser storage. Nothing was changed.');
+      return;
+    }
+    lastKnownFunctionalRowsRef.current.set(String(activeProjectId), ensured.rows);
+    setResponseRows(ensured.rows);
+    setCommittedFunctionalDiagramRows(getProjectDiagramRows(ensured.rows));
+    setDiagramCategories((current) => mergeSubsystemDiagramCategories(current, ensured.rows));
+    setFunctionalFilterColumn(null);
+    setFunctionalColumnFilters({});
+    setFunctionalColumnSearches({});
+  };
+
+  /**
+   * Merge an externally reviewed hazard analysis back in.
+   *
+   * Goes through the same durable write the vibe review uses: the row IDs are
+   * materialized first so the file's addresses still resolve, the in-memory
+   * copy is swapped before the save so a failure has something to roll back to,
+   * and the save is a compare-and-set against the revision this tab last saw.
+   * The previous content stays in the revision journal, so Restore… undoes it.
+   */
+  const importHazardAnalysisCSV = async (file) => {
+    if (!file) return;
+    if (!activeProjectId) {
+      window.alert('Open the project whose hazard analysis this file belongs to first.');
+      return;
+    }
+    if (isAnalyzing || isResettingHazardAnalysis) {
+      window.alert('Wait for the current hazard-analysis operation to finish before importing.');
+      return;
+    }
+    let text = '';
+    try {
+      text = await file.text();
+    } catch (error) {
+      window.alert(`That file could not be read: ${error?.message || 'unknown error'}`);
+      return;
+    }
+
+    // Bind the content-hash row IDs before matching against them, for the same
+    // reason a review does: an unwritten ID re-derives and stops matching.
+    await ensureHazardRowIdsPersisted();
+
+    const current = analysisResultRef.current;
+    const plan = planHazardAnalysisCsvImport(current?.Summary, text);
+    const problems = describeHazardCsvProblems(plan);
+    if (problems) {
+      window.alert(problems);
+      return;
+    }
+    if (!plan.changedRowCount) {
+      window.alert('Every row in that file already matches this hazard analysis. Nothing was changed.');
+      return;
+    }
+    if (!window.confirm(describeHazardCsvPlan(plan))) return;
+
+    const nextAnalysisResult = { ...current, Summary: applyHazardAnalysisCsvImport(current.Summary, plan.updates) };
+    const restoreAnalysisResult = current;
+    commitAnalysisResult(nextAnalysisResult, undefined);
+    const saveResult = await saveHazardAnalysis(
+      activeProjectIdRef.current,
+      { analysisResult: nextAnalysisResult },
+      { reason: 'csv-import', expectedRevision: analysisRevisionRef.current },
+    );
+    if (saveResult.outcome !== HAZARD_WRITE_OUTCOME.OK && saveResult.outcome !== HAZARD_WRITE_OUTCOME.UNCHANGED) {
+      commitAnalysisResult(restoreAnalysisResult, undefined);
+      window.alert(describeHazardWriteFailure(saveResult));
+      return;
+    }
+    analysisRevisionRef.current = saveResult.revision ?? analysisRevisionRef.current;
+    setSafetyIssueRefreshStatus({
+      kind: 'working',
+      message: `Imported CSV updates to ${plan.changedRowCount} hazard row${plan.changedRowCount === 1 ? '' : 's'}. Use Regenerate with AI to refresh the consolidated issue set.`,
+    });
+    if (plan.conflicts.length) {
+      window.alert([
+        `${plan.changedRowCount} row${plan.changedRowCount === 1 ? ' was' : 's were'} updated.`,
+        '',
+        `${plan.conflicts.length} row${plan.conflicts.length === 1 ? '' : 's'} now hold a Safety Significant decision the imported classification contradicts. Neither value was altered automatically; re-review them:`,
+        ...plan.conflicts.slice(0, 5).map((conflict) => `• ${conflict}`),
+        plan.conflicts.length > 5 ? `…and ${plan.conflicts.length - 5} more.` : '',
+      ].filter(Boolean).join('\n'));
+    }
   };
 
   const exportHazardAnalysisCSV = () => {
@@ -13954,7 +14335,7 @@ const handleClearHazardAnalysis = async (scope = "results") => {
       analysisResult: null,
       draftHazardRowsByIndex: {},
       riskRegister: [],
-    });
+    }, { allowAnalysisClear: true, reason: "explicit-user-clear" });
     if (!artifactCleared || !saveProjectPatch(activeProjectId, clearedPatch)) {
       throw new Error("The cleared project state could not be persisted, so no data was cleared.");
     }
@@ -14845,6 +15226,30 @@ const projectHint = useMemo(() => ({
         title="Export the visible hazard analysis table rows as CSV"
       />
       <ProjectTabToolbarButton
+        icon={<Upload size={17} />}
+        label="Import CSV…"
+        collapsed={hazardTabToolbarCollapsed}
+        tone="success"
+        onClick={() => hazardCsvInputRef.current?.click()}
+        disabled={
+          !activeProjectId || isAnalyzing || isResettingHazardAnalysis ||
+          !Array.isArray(analysisResult?.Summary?.[0])
+        }
+        title="Merge an exported hazard analysis CSV back in, matched by Raw Analysis Row ID"
+      />
+      <input
+        ref={hazardCsvInputRef}
+        type="file"
+        accept=".csv,text/csv"
+        className="hidden"
+        onChange={async (event) => {
+          const file = event.target.files?.[0];
+          // Clear first, so re-importing the same filename still fires onChange.
+          event.target.value = '';
+          await importHazardAnalysisCSV(file);
+        }}
+      />
+      <ProjectTabToolbarButton
         icon={allVisibleHazardInterfacesCollapsed ? <ChevronsDown size={17} /> : <ChevronsUp size={17} />}
         label={allVisibleHazardInterfacesCollapsed ? 'Expand all groups' : 'Collapse all groups'}
         collapsed={hazardTabToolbarCollapsed}
@@ -14853,6 +15258,13 @@ const projectHint = useMemo(() => ({
         title={allVisibleHazardInterfacesCollapsed
           ? "Expand all visible interface guide-phrase groups"
           : "Collapse all visible interface guide-phrase groups"}
+      />
+      <ProjectTabToolbarButton
+        icon={<History size={17} />}
+        label="Restore…"
+        collapsed={hazardTabToolbarCollapsed}
+        onClick={openHazardRecovery}
+        title="List and restore a previously saved version of this hazard analysis"
       />
       <ProjectTabToolbarButton
         icon={<Trash2 size={17} />}
@@ -16985,9 +17397,32 @@ const projectHint = useMemo(() => ({
           >
             Export CSV
           </button>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.currentTarget.closest('details')?.removeAttribute('open');
+              decompositionCsvInputRef.current?.click();
+            }}
+            className="block w-full px-3 py-2 text-left text-sm font-medium text-emerald-700 hover:bg-emerald-50"
+            title="Replace this table with an exported CSV you have edited"
+          >
+            Import CSV
+          </button>
         </div>
       </details>
     )}
+    <input
+      ref={decompositionCsvInputRef}
+      type="file"
+      accept=".csv,text/csv"
+      className="hidden"
+      onChange={async (event) => {
+        const file = event.target.files?.[0];
+        // Clear first, so re-importing the same filename still fires onChange.
+        event.target.value = '';
+        await importDecompositionCSV(file);
+      }}
+    />
 
     </div>
   </div>
@@ -17394,6 +17829,19 @@ const projectHint = useMemo(() => ({
   onGenerate={handleGenerateHazardOperationalContexts}
 />}
 {activeProjectId && showHazardResetModal && (
+  <HazardAnalysisRecoveryModal
+    open={hazardRecoveryOpen}
+    projectName={projects.find((entry) => entry.id === activeProjectId)?.name || ""}
+    headMissing={!analysisResult?.Summary}
+    listing={hazardRevisionListing}
+    previewRevision={hazardRevisionPreview}
+    busyRevision={hazardRestoringRevision}
+    onPreview={previewHazardRevision}
+    onRestore={restoreHazardRevision}
+    onClose={() => setHazardRecoveryOpen(false)}
+  />
+)}
+{activeProjectId && showHazardResetModal && (
   <HazardAnalysisResetModal
     counts={hazardResetCounts}
     busy={isResettingHazardAnalysis}
@@ -17789,7 +18237,9 @@ const projectHint = useMemo(() => ({
                   <th className="sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap">
                     Review
                   </th>
-                  {hazardSummaryHeaders.map((header, idx) => isSafetyDetailHeader(header) ? null : (
+                  {hazardSummaryDisplayColumnIndexes.map((idx) => {
+                    const header = hazardSummaryHeaders[idx];
+                    return isSafetyDetailHeader(header) ? null : (
                     <th
                       key={idx}
                       className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(header) ? 'hidden ' : ''}relative sticky top-0 z-30 px-3 py-2 border-b border-gray-200 bg-white whitespace-nowrap`}
@@ -17897,7 +18347,8 @@ const projectHint = useMemo(() => ({
                         title="Drag to resize; double-click to restore automatic width"
                       />
                     </th>
-                  ))}
+                    );
+                  })}
                 </tr>
                 {activeHazardFilterCount > 0 && (
                   <tr>
@@ -17990,16 +18441,6 @@ const projectHint = useMemo(() => ({
                                     variant="text"
                                   />
                                 )}
-                                {(() => {
-                                  const significanceIndex = hazardSummaryHeaders.indexOf("Safety Significant");
-                                  const significance = significanceIndex >= 0 ? String(row?.[significanceIndex] || "").trim() : "";
-                                  if (!significance) return null;
-                                  return (
-                                    <span title="Governed prerequisite for Safety Classification">
-                                      Safety significance: <strong>{significance}</strong> ·
-                                    </span>
-                                  );
-                                })()}
                                 <button
                                   type="button"
                                   onClick={() => handleGenerateDraftHazardRow(originalIndex)}
@@ -18023,7 +18464,8 @@ const projectHint = useMemo(() => ({
                                 title="Drag to resize; double-click to restore automatic height"
                               />
                             </td>
-                            {row.map((cell, colIdx) => {
+                            {hazardSummaryDisplayColumnIndexes.map((colIdx) => {
+                              const cell = row[colIdx];
                               const diagramTarget = buildHazardDiagramFocusTarget(hazardSummaryHeaders, row, colIdx);
                               const columnHeader = hazardSummaryHeaders[colIdx];
                               if (isSafetyDetailHeader(columnHeader)) return null;

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Loader2, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { normalizeHazardOperationalContexts } from "./hazardOperationalContexts";
+import { handleMarkdownPaste } from "../../lib/markdownClipboard";
 
 function newContext() {
   return {
@@ -40,6 +41,11 @@ export default function HazardOperationalContextManager({
       context.id === id ? { ...context, [field]: value } : context
     )));
   };
+
+  // A list copied out of Collaborator arrives as bare prose through the
+  // clipboard's plain-text flavour, which drops the numbering. Keep the
+  // Markdown form so the scenarios stay enumerated in the prompt.
+  const pasteDescriptionAsMarkdown = (event) => handleMarkdownPaste(event, (value) => setDescription(value));
 
   const save = () => {
     const incomplete = drafts.some((context) => !String(context.scenario || "").trim() || !String(context.mode || "").trim());
@@ -112,6 +118,7 @@ export default function HazardOperationalContextManager({
             <textarea
               value={description}
               onChange={(event) => setDescription(event.target.value)}
+              onPaste={pasteDescriptionAsMarkdown}
               placeholder={'Example: A delivery robot operates on sidewalks and crosswalks…\n\nOr: Create the following scenarios:\n- Sidewalk delivery\n- Signalized crosswalk\n- Remote-assisted recovery'}
               rows={4}
               className="mt-3 w-full resize-y rounded-md border border-blue-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-400 focus:outline-none"

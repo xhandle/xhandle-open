@@ -21,9 +21,16 @@ function unfinishedReviewThreadIds() {
   storages.forEach((storage) => REVIEW_SESSION_KEYS.forEach((key) => {
     try {
       const sessions = JSON.parse(storage.getItem(key) || "{}");
-      Object.values(sessions || {}).forEach((session) => {
-        if (!session?.threadId || ["completed", "cancelled"].includes(String(session.state || "").toLowerCase())) return;
-        ids.add(String(session.threadId));
+      // A thread holds a STACK of review sessions (a cascade follow-up suspends
+      // its parent). Older records are a single bare session, so accept both:
+      // reading only the object shape silently protected nothing, and active
+      // review threads were pruned under the storage pressure a long review
+      // creates -- which is precisely when their history matters most.
+      Object.values(sessions || {}).forEach((value) => {
+        (Array.isArray(value) ? value : [value]).forEach((session) => {
+          if (!session?.threadId || ["completed", "cancelled"].includes(String(session.state || "").toLowerCase())) return;
+          ids.add(String(session.threadId));
+        });
       });
     } catch {}
   }));

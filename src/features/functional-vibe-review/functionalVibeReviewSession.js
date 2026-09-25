@@ -1,27 +1,10 @@
+import { createReviewSessionStore } from "../vibe-review-engine/reviewSessionStore";
+
 const KEY = "xhandle.functionalVibeReview.sessions.v1";
 const AUDIT_KEY = "xhandle.functionalVibeReview.audit.v1";
 const now = () => new Date().toISOString();
 const uid = () => (typeof crypto !== "undefined" && crypto.randomUUID?.()) || `fvr-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-const defaultStorage = () => typeof localStorage !== "undefined" ? localStorage : null;
-const volatileMapsByStorage = new WeakMap();
-const nullStorageMaps = {};
 const runtimeId = `functional-review-runtime-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
-function volatileMaps(storage) {
-  if (!storage || (typeof storage !== "object" && typeof storage !== "function")) return nullStorageMaps;
-  if (!volatileMapsByStorage.has(storage)) volatileMapsByStorage.set(storage, {});
-  return volatileMapsByStorage.get(storage);
-}
-
-function browserSessionStorage(storage) {
-  try {
-    return typeof localStorage !== "undefined" && storage === localStorage && typeof sessionStorage !== "undefined"
-      ? sessionStorage
-      : null;
-  } catch {
-    return null;
-  }
-}
 
 export const FUNCTIONAL_VIBE_REVIEW_STATES = Object.freeze({
   PROPOSING: "proposing",
@@ -32,33 +15,24 @@ export const FUNCTIONAL_VIBE_REVIEW_STATES = Object.freeze({
   PAUSED: "paused",
 });
 
-function parseMap(storage, storageKey) {
-  try { return JSON.parse(storage?.getItem(storageKey) || "{}") || {}; } catch { return {}; }
-}
+const store = createReviewSessionStore({
+  key: KEY, auditKey: AUDIT_KEY, states: FUNCTIONAL_VIBE_REVIEW_STATES, runtimeId,
+  // Functional undo rebuilds the row from previousRow and reverses propagated
+  // reallocations from affectedRows, so neither may be trimmed. Only the
+  // post-decision detail is shed.
+  trimmableDecisionFields: ["nextRow", "proposedRow", "columns"],
+  // APPLYING is a foreground UI request, not a durable background job. If the
+  // component reloads mid-transition, make the existing proposal retryable
+  // instead of stranding the review.
+  reviveActive: (session) => (session.state === FUNCTIONAL_VIBE_REVIEW_STATES.APPLYING
+    ? { ...session, state: FUNCTIONAL_VIBE_REVIEW_STATES.AWAITING }
+    : session),
+});
 
-function loadMap(storage, storageKey) {
-  const persistent = parseMap(storage, storageKey);
-  const tabFallback = parseMap(browserSessionStorage(storage), storageKey);
-  return { ...persistent, ...tabFallback, ...(volatileMaps(storage)[storageKey] || {}) };
-}
 
-function persistMap(storage, storageKey, map) {
-  volatileMaps(storage)[storageKey] = map;
-  try {
-    storage?.setItem(storageKey, JSON.stringify(map));
-    try { browserSessionStorage(storage)?.removeItem(storageKey); } catch {}
-    return "persistent";
-  } catch {
-    try {
-      browserSessionStorage(storage)?.setItem(storageKey, JSON.stringify(map));
-      return "session";
-    } catch {
-      // The volatile copy keeps the active review usable when browser storage is
-      // full or unavailable. Applied row decisions persist in the project store.
-      return "memory";
-    }
-  }
-}
+
+
+
 
 function normalizeRowSnapshot(rows = []) {
   return (Array.isArray(rows) ? rows : []).map((entry, index) => {
@@ -165,49 +139,16 @@ export function recoverFunctionalVibeReviewRows(session, fallbackRows = []) {
   return rows;
 }
 
-export function saveFunctionalVibeReviewSession(session, storage = defaultStorage()) {
-  const map = loadMap(storage, KEY);
-  map[`${session.projectId}:${session.threadId}`] = session;
-  const sorted = Object.entries(map)
-    .sort(([, a], [, b]) => Date.parse(b?.updatedAt || 0) - Date.parse(a?.updatedAt || 0));
-  const unfinished = sorted.filter(([, item]) => ![FUNCTIONAL_VIBE_REVIEW_STATES.COMPLETED, FUNCTIONAL_VIBE_REVIEW_STATES.CANCELLED].includes(item?.state));
-  const terminal = sorted.filter(([, item]) => [FUNCTIONAL_VIBE_REVIEW_STATES.COMPLETED, FUNCTIONAL_VIBE_REVIEW_STATES.CANCELLED].includes(item?.state));
-  const retained = Object.fromEntries([
-    ...unfinished,
-    ...terminal.slice(0, Math.max(0, 16 - unfinished.length)),
-  ]);
-  persistMap(storage, KEY, retained);
-  return session;
-}
+export const readFunctionalVibeReviewStack = store.readStack;
+export const saveFunctionalVibeReviewSession = store.saveSession;
+export const pushFunctionalVibeReviewSession = store.pushSession;
+export const popFunctionalVibeReviewSession = store.popSession;
+export const loadFunctionalVibeReviewSession = store.loadSession;
+export const findFunctionalVibeReviewSessionById = store.findSessionById;
 
-export function loadFunctionalVibeReviewSession(projectId, threadId, storage = defaultStorage()) {
-  const session = loadMap(storage, KEY)[`${projectId}:${threadId}`] || null;
-  // APPLYING represents a foreground UI request, not a durable background job.
-  // If the component reloads or the request fails mid-transition, make the
-  // existing proposal retryable instead of stranding the review indefinitely.
-  if (!session) return null;
-  const terminal = [FUNCTIONAL_VIBE_REVIEW_STATES.COMPLETED, FUNCTIONAL_VIBE_REVIEW_STATES.CANCELLED, FUNCTIONAL_VIBE_REVIEW_STATES.PAUSED].includes(session.state);
-  if (!terminal && session.runtimeId !== runtimeId) return { ...session, state: FUNCTIONAL_VIBE_REVIEW_STATES.PAUSED, recoveredAfterRestart: true };
-  return session.state === FUNCTIONAL_VIBE_REVIEW_STATES.APPLYING ? { ...session, state: FUNCTIONAL_VIBE_REVIEW_STATES.AWAITING } : session;
-}
-export function findFunctionalVibeReviewSessionById(sessionId, storage = defaultStorage()) {
-  const session = Object.values(loadMap(storage, KEY)).find((item) => String(item?.id || "") === String(sessionId || "")) || null;
-  if (!session) return null;
-  const terminal = [FUNCTIONAL_VIBE_REVIEW_STATES.COMPLETED, FUNCTIONAL_VIBE_REVIEW_STATES.CANCELLED, FUNCTIONAL_VIBE_REVIEW_STATES.PAUSED].includes(session.state);
-  return !terminal && session.runtimeId !== runtimeId ? { ...session, state: FUNCTIONAL_VIBE_REVIEW_STATES.PAUSED, recoveredAfterRestart: true } : session;
-}
+export const appendFunctionalVibeReviewAudit = store.appendAudit;
 
-export function appendFunctionalVibeReviewAudit(record, storage = defaultStorage()) {
-  const map = loadMap(storage, AUDIT_KEY);
-  const projectId = String(record.projectId || "");
-  map[projectId] = [...(map[projectId] || []), record].slice(-250);
-  persistMap(storage, AUDIT_KEY, map);
-  return record;
-}
-
-export function loadFunctionalVibeReviewAudit(projectId, storage = defaultStorage()) {
-  return loadMap(storage, AUDIT_KEY)[String(projectId)] || [];
-}
+export const loadFunctionalVibeReviewAudit = store.loadAudit;
 
 export function summarizeFunctionalVibeReviewSession(session) {
   const decisions = session?.decisions || [];

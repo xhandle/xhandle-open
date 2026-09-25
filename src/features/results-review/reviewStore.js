@@ -62,24 +62,53 @@ export async function loadReviewItems() {
   }
 }
 
+/**
+ * Persist the review collection, reporting whether it durably landed.
+ *
+ * This used to catch an IndexedDB failure and return the input list, so the
+ * provider resolved normally and the UI could report evidence as saved when it
+ * existed only in memory and would vanish on reload.
+ */
 export async function saveReviewItems(items) {
   const list = Array.isArray(items) ? items : [];
   try {
     const db = await openReviewDB();
     if (!db) {
       saveLocalStorageItems(list);
-      return list;
+      return { ok: true, items: list, durability: "local-storage" };
     }
+    // Write the difference rather than clearing the collection and rewriting it.
+    // A clear-then-rewrite means every update momentarily holds no evidence at
+    // all, and a failure part way through leaves the store short of records that
+    // nobody actually deleted.
+    const nextIds = new Set(list.map((item) => item.id));
     const tx = db.transaction(STORE_NAME, "readwrite");
-    await tx.store.clear();
-    await Promise.all(list.map((item) => tx.store.put(item)));
+    const existingIds = await tx.store.getAllKeys();
+    await Promise.all([
+      ...list.map((item) => tx.store.put(item)),
+      ...existingIds.filter((id) => !nextIds.has(id)).map((id) => tx.store.delete(id)),
+    ]);
     await tx.done;
     clearLocalStorageItems();
+    return { ok: true, items: list, durability: "indexeddb" };
   } catch (error) {
-    saveLocalStorageItems(list);
-    console.warn("[results-review] IndexedDB save failed; localStorage fallback retained", error);
+    // Never mirror a whole failed collection into localStorage: review evidence
+    // grows without bound and doing so is a reliable way to exhaust the quota
+    // that everything else -- including recovery -- depends on.
+    console.error("[results-review] IndexedDB save failed; review evidence was not persisted.", error);
+    try {
+      window.dispatchEvent(new CustomEvent("xhandle:results-review:persistence-failed", {
+        detail: { itemCount: list.length, message: error?.message || "" },
+      }));
+    } catch {}
+    return {
+      ok: false,
+      items: list,
+      durability: "memory-only",
+      failure: /quota/i.test(String(error?.message || "")) || error?.name === "QuotaExceededError" ? "quota" : "write-error",
+      message: error?.message || "",
+    };
   }
-  return list;
 }
 
 export async function upsertReviewItems(items) {

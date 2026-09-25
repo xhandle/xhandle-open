@@ -53,4 +53,37 @@ describe("HazardOperationalContextManager", () => {
       host.remove();
     }
   });
+
+  it("keeps a list copied from Collaborator as Markdown in the generation prompt", () => {
+    // Pasting the panel's rendered scenarios used to land as bare prose,
+    // because a textarea takes the clipboard's text/plain flavour and that
+    // flavour of an <ol> has no numbers in it.
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    try {
+      act(() => root.render(
+        <HazardOperationalContextManager open contexts={[]} onSave={jest.fn()} onClose={jest.fn()} />,
+      ));
+
+      const prompt = document.body.querySelector("textarea");
+      expect(prompt.placeholder).toContain("Create the following scenarios");
+
+      act(() => {
+        const event = new Event("paste", { bubbles: true, cancelable: true });
+        event.clipboardData = {
+          getData: (type) => (type === "text/html"
+            ? "<ol><li>Truck idles at a staging spot.</li><li>Truck couples to a trailer.</li></ol>"
+            : "Truck idles at a staging spot.\nTruck couples to a trailer."),
+        };
+        prompt.dispatchEvent(event);
+      });
+
+      expect(prompt.value).toBe("1. Truck idles at a staging spot.\n2. Truck couples to a trailer.");
+    } finally {
+      act(() => root.unmount());
+      host.remove();
+    }
+  });
 });
