@@ -277,6 +277,7 @@ import {
 import {
   applyHazardAnalysisCsvImport,
   applyHazardCsvImportToDrafts,
+  buildHazardCsvImportSummary,
   describeHazardCsvPlan,
   planHazardAnalysisCsvImport,
 } from "./features/project-hazard-analysis/hazardAnalysisCsv";
@@ -7458,6 +7459,7 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [functionalColumnSearches, setFunctionalColumnSearches] = useState({});
   const [isGeneratingDecomposition, setIsGeneratingDecomposition] = useState(false);
   const [functionalViewMode, setFunctionalViewMode] = useState('diagram');
+  const [hazardViewMode, setHazardViewMode] = useState('table');
   const functionalViewModePreferenceRef = useRef('diagram');
   functionalViewModePreferenceRef.current = functionalViewMode;
   const [functionalAuditProposal, setFunctionalAuditProposal] = useState(null);
@@ -8071,8 +8073,8 @@ const handleOpenHazardDiagramTarget = useCallback((target) => {
   commitFunctionalRowsToDiagram();
   setShowPromptWizard(false);
   setFunctionalViewMode(viewModeForDiagramFocus(functionalViewModePreferenceRef.current));
-  setActiveTab('Functional Diagramming');
-}, [commitFunctionalRowsToDiagram]);
+  if (activeTab !== 'Hazard Analysis' || hazardViewMode !== 'split') setActiveTab('Functional Diagramming');
+}, [commitFunctionalRowsToDiagram, activeTab, hazardViewMode]);
 
    // Accept an optional prompt override so we don't rely on async state
 // Accept an optional prompt override for Custom Report
@@ -11726,7 +11728,9 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   );
 
   useEffect(() => {
-    if (activeTab !== 'Functional Diagramming' || functionalViewMode === 'table' || !activeProjectDiagramReady) return undefined;
+    const diagramVisible = (activeTab === 'Functional Diagramming' && functionalViewMode !== 'table')
+      || (activeTab === 'Hazard Analysis' && hazardViewMode === 'split');
+    if (!diagramVisible || !activeProjectDiagramReady) return undefined;
     if (!pendingFunctionalDiagramFocus) return undefined;
 
     const retryDelays = [0, 100, 300, 700, 1200, 2000];
@@ -11736,7 +11740,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     }, delay));
 
     return () => timers.forEach((timer) => window.clearTimeout(timer));
-  }, [activeProjectDiagramReady, activeProjectDiagramKey, activeTab, functionalViewMode, pendingFunctionalDiagramFocus]);
+  }, [activeProjectDiagramReady, activeProjectDiagramKey, activeTab, functionalViewMode, hazardViewMode, pendingFunctionalDiagramFocus]);
 
   const handleRunAnalysis = async (selectedMethod, options = {}) => {
     const shouldRegenerate = Boolean(options.regenerate);
@@ -14163,7 +14167,7 @@ Rules:
       window.alert('Open the project whose hazard analysis this file belongs to first.');
       return;
     }
-    if (isAnalyzing || isResettingHazardAnalysis) {
+    if (isAnalyzing || isResettingHazardAnalysis || draftHazardGeneratingIndex !== null) {
       window.alert('Wait for the current hazard-analysis operation to finish before importing.');
       return;
     }
@@ -14180,7 +14184,10 @@ Rules:
     await ensureHazardRowIdsPersisted();
 
     const current = analysisResultRef.current;
-    const plan = planHazardAnalysisCsvImport(current?.Summary, text, {
+    // Use all draft rows, including rows hidden by filters, as the baseline for
+    // an externally completed export. Persist it only after a confirmed import.
+    const importSummary = buildHazardCsvImportSummary(current?.Summary, draftHazardHeaders, draftHazardSummaryRows);
+    const plan = planHazardAnalysisCsvImport(importSummary, text, {
       draftHeaders: draftHazardHeaders, draftRows: draftHazardRowsByIndexRef.current,
     });
     if (plan.errors.length) {
@@ -14193,7 +14200,7 @@ Rules:
     }
     if (!window.confirm(describeHazardCsvPlan(plan))) return;
 
-    const nextAnalysisResult = { ...current, Summary: applyHazardAnalysisCsvImport(current.Summary, plan.updates) };
+    const nextAnalysisResult = { ...current, Summary: applyHazardAnalysisCsvImport(importSummary, plan.updates) };
     const restoreAnalysisResult = current;
     const restoreDraftRows = draftHazardRowsByIndexRef.current;
     const nextDraftRows = applyHazardCsvImportToDrafts(restoreDraftRows, draftHazardHeaders, plan.updates);
@@ -15275,6 +15282,17 @@ const projectHint = useMemo(() => ({
         </ProjectTabToolbarStatus>
       )}
       <ProjectTabToolbarButton
+        icon={<PanelLeftOpen size={17} />}
+        label={hazardViewMode === 'split' ? "Table only" : "Split view"}
+        collapsed={hazardTabToolbarCollapsed}
+        onClick={() => {
+          if (hazardViewMode === 'table') commitFunctionalRowsToDiagram();
+          setHazardViewMode((mode) => mode === 'split' ? 'table' : 'split');
+        }}
+        disabled={!activeProjectDiagramReady || responseRows.length === 0}
+        title={hazardViewMode === 'split' ? "Show only the hazard analysis table" : "Show the functional diagram beside the hazard analysis table"}
+      />
+      <ProjectTabToolbarButton
         icon={<Download size={17} />}
         label="Export CSV"
         collapsed={hazardTabToolbarCollapsed}
@@ -15295,7 +15313,8 @@ const projectHint = useMemo(() => ({
         onClick={() => hazardCsvInputRef.current?.click()}
         disabled={
           !activeProjectId || isAnalyzing || isResettingHazardAnalysis ||
-          !Array.isArray(analysisResult?.Summary?.[0])
+          draftHazardGeneratingIndex !== null ||
+          (!Array.isArray(analysisResult?.Summary?.[0]) && draftHazardSummaryRows.length === 0)
         }
         title="Merge reviewed CSV rows by row ID or matching interface and context columns"
       />
@@ -17934,6 +17953,56 @@ const projectHint = useMemo(() => ({
 )}
 {activeProjectId && activeTab === 'Hazard Analysis' && (
   <section className="mt-2 flex min-h-0 flex-1 items-stretch overflow-hidden pb-3">
+    <div className="flex min-h-0 min-w-0 flex-1">
+    <FunctionalDiagramWorkspace
+      showControls={false}
+      viewMode={hazardViewMode}
+      tableLabel="Hazard analysis table"
+      onDiagramResize={handleFunctionalDiagramResize}
+      diagram={hazardViewMode === 'split' ? (
+                      <div className="flex min-h-0 w-full flex-1">
+                        <div className="min-h-0 flex-1">
+                          <div className="relative h-full min-h-0 w-full overflow-hidden rounded-2xl bg-white">
+                          {activeProjectDiagramReady ? (
+                            <LiteSummaryDiagramReactFlow
+  key={activeProjectDiagramKey}
+  ref={diagramRef}
+  rows={committedFunctionalDiagramRows}
+  autoCategories={diagramCategories}
+  cleanOnceKey={cleanOnceKey}
+  onCleanApplied={() => setCleanOnceKey(null)}   // ← clear after first use
+  storageKey={`diagram:positions:${activeProjectId}`} // ← per-project persistence
+	  onUpdateRows={handleProjectDiagramRowsUpdate}
+	  onCanvasSelectionChange={setFunctionalCanvasSelection}
+	  onRequestCreateProject={handleCreateProjectFromSelection}   // ← ADD THIS
+	  hazardSummary={diagramHazardData.summary}
+	  hazardRowSourceIndexes={diagramHazardData.sourceIndexes}
+  riskRegister={riskRegister}
+  onOpenHazardRow={handleOpenHazardSummaryRow}
+  onOpenSafetyIssue={(issueOrId) => {
+    const issueId = typeof issueOrId === 'string' ? issueOrId : issueOrId?.id;
+    if (!issueId) return;
+    const priority = typeof issueOrId === 'object'
+      ? issueOrId?.priority
+      : riskRegister.find((risk) => risk.id === issueId)?.priority;
+    setActiveTab('Safety Issues & Risk Assessment');
+    setSelectedRiskPriority(priority || 'All');
+    setActiveRiskId(issueId);
+  }}
+/>
+                          ) : (
+                            <div className="flex h-full min-h-0 items-center justify-center text-sm font-medium text-gray-500">
+                              Loading project diagram...
+                            </div>
+                          )}
+
+
+                          </div>
+                        </div>
+                      </div>
+      ) : null}
+      table={(
+    <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
     {hazardAnalysisControls}
     <div className="flex min-h-0 min-w-0 flex-1 flex-col pl-4">
     {activeTableSelection?.tableId === "hazard-analysis" && (
@@ -18610,6 +18679,10 @@ const projectHint = useMemo(() => ({
         )}
       </>
     )}
+    </div>
+    </div>
+      )}
+    />
     </div>
   </section>
 )}

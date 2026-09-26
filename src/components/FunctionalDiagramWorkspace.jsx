@@ -34,6 +34,7 @@ export default function FunctionalDiagramWorkspace({
   table,
   tableActions,
   showControls = true,
+  tableLabel = "Functional decomposition table",
 }) {
   const [diagramPercent, setDiagramPercent] = useState(50);
   const workspaceRef = useRef(null);
@@ -135,7 +136,7 @@ export default function FunctionalDiagramWorkspace({
         )}
 
         <section
-          aria-label="Functional decomposition table"
+          aria-label={tableLabel}
           className={`${tableVisible ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-col overflow-hidden`}
           style={{ flexBasis: viewMode === FUNCTIONAL_VIEW_MODES.SPLIT ? `${100 - diagramPercent}%` : '100%' }}
         >

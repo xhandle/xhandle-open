@@ -9,6 +9,7 @@
 import {
   applyHazardAnalysisCsvImport,
   applyHazardCsvImportToDrafts,
+  buildHazardCsvImportSummary,
   describeHazardCsvPlan,
   describeHazardCsvProblems,
   planHazardAnalysisCsvImport,
@@ -32,6 +33,58 @@ const summary = () => [
 ];
 
 const csv = (rows) => toCsvText(rows);
+
+describe("imports into unfinished hazard analyses", () => {
+  const headers = ["Function (From)", "Control Action", "Function (To)", "Guide Phrase", "Raw Analysis Row ID", "Causal Scenario"];
+  const drafts = [
+    { row: ["Planner", "Motion plan", "Executor", "Too late", "", ""] },
+    { row: ["Planner", "Motion plan", "Executor", "Not provided", "", ""] },
+  ];
+
+  it("accepts completed placeholder context but never guesses between contexts", () => {
+    const contextHeaders = [...headers, "Operational Context ID", "Operational Scenario", "Operational Mode", "Operating Conditions"];
+    const generic = [...drafts[0].row, "context-unspecified", "Unspecified scenario", "Unspecified mode", ""];
+    const completed = [...drafts[0].row, "OC-PUDO-01", "Passenger pickup", "Remote driving", "Low speed"];
+    completed[4] = "PUDO-0001";
+    completed[5] = "Command delay during approach";
+    const baseline = buildHazardCsvImportSummary(null, contextHeaders, [{ row: generic }]);
+    const plan = planHazardAnalysisCsvImport(baseline, csv([contextHeaders, completed]));
+    expect(plan.errors).toEqual([]);
+    const merged = applyHazardAnalysisCsvImport(baseline, plan.updates);
+    expect(merged[1].slice(5)).toEqual(completed.slice(5));
+    expect(merged[1][4]).toBe(baseline[1][4]);
+    const otherContext = [...generic];
+    otherContext[4] = "RAW-OTHER";
+    otherContext[6] = "OC-OTHER";
+    otherContext[7] = "Depot";
+    expect(planHazardAnalysisCsvImport([baseline[0], baseline[1], otherContext], csv([contextHeaders, completed])).errors).toHaveLength(1);
+    expect(planHazardAnalysisCsvImport([baseline[0], otherContext], csv([contextHeaders, completed])).errors).toHaveLength(1);
+  });
+
+  it.each(["", "RAW-EXTERNAL"])("merges completed draft exports with ID %p while preserving omitted rows", (externalId) => {
+    const baseline = buildHazardCsvImportSummary(null, headers, drafts);
+    const plan = planHazardAnalysisCsvImport(baseline, csv([
+      headers,
+      ["Planner", "Motion plan", "Executor", "Too late", externalId, "Planner misses the execution deadline"],
+    ]));
+    expect(plan.errors).toEqual([]);
+    expect(plan.changedRowCount).toBe(1);
+    const merged = applyHazardAnalysisCsvImport(baseline, plan.updates);
+    expect(merged[1][5]).toBe("Planner misses the execution deadline");
+    expect(merged[1][4]).toBeTruthy();
+    expect(merged[1][4]).toBe(baseline[1][4]);
+    expect(merged[2]).toEqual(baseline[2]);
+    expect(drafts[0].row[4]).toBe("");
+    expect(drafts[0].row[5]).toBe("");
+    expect(planHazardAnalysisCsvImport(merged, csv([headers, merged[1]])).changedRowCount).toBe(0);
+  });
+
+  it("keeps the existing saved baseline and rejects an empty workspace", () => {
+    const saved = summary();
+    expect(buildHazardCsvImportSummary(saved, headers, drafts)).toBe(saved);
+    expect(planHazardAnalysisCsvImport(buildHazardCsvImportSummary(null), csv([headers])).errors).toHaveLength(1);
+  });
+});
 
 describe("planHazardAnalysisCsvImport", () => {
   it("changes only the cells that actually differ", () => {

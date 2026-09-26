@@ -18,7 +18,15 @@
  */
 
 import { csvCellText, csvHeaderKey, parseCsv } from "../../lib/csv";
+import { ensureHazardAnalysisRowIds } from "./classificationResolutionStatus";
 import { derivedSignificanceConflict, describeSignificanceConflict } from "./safetyColumnSchema";
+
+/** Build an import baseline without saving or treating unfinished rows as generated. */
+export function buildHazardCsvImportSummary(summary, draftHeaders = [], draftRows = []) {
+  if (Array.isArray(summary?.[0])) return summary;
+  if (!draftHeaders.length || !draftRows.length) return [];
+  return ensureHazardAnalysisRowIds([draftHeaders, ...draftRows.map(({ row }) => row)]);
+}
 
 export const HAZARD_ROW_ID_HEADERS = Object.freeze([
   "Raw Analysis Row ID",
@@ -69,6 +77,15 @@ function matchesIdentity(sourceRow, targetRow, columns) {
     && columns.every(({ source, target }) => csvCellText(sourceRow?.[source]) === csvCellText(targetRow?.[target]));
 }
 
+function hasUnspecifiedContext(headers, row) {
+  const placeholders = ["context-unspecified", "Unspecified scenario", "Unspecified mode", ""];
+  return CONTEXT_HEADERS.every((header, index) => {
+    const column = headers.findIndex((value) => csvHeaderKey(value) === csvHeaderKey(header));
+    const value = column < 0 ? "" : csvCellText(row[column]);
+    return !value || value === placeholders[index];
+  });
+}
+
 /**
  * Work out what an imported file would change, without changing anything.
  *
@@ -90,6 +107,7 @@ export function planHazardAnalysisCsvImport(summary = [], text = "", { draftHead
   const csvHeaders = grid[0];
   const csvIdIndex = findRowIdColumn(csvHeaders);
   const identity = identityColumns(csvHeaders, headers);
+  const interfaceIdentity = identity.filter(({ target }) => !CONTEXT_HEADERS.includes(headers[target]));
   if (csvIdIndex < 0 && !identity.length) {
     return emptyPlan([`The header row has no ${HAZARD_ROW_ID_HEADERS[0]} column. Export the analysis first and edit that file.`]);
   }
@@ -153,8 +171,18 @@ export function planHazardAnalysisCsvImport(summary = [], text = "", { draftHead
 
     let rowIndex = id ? rowIndexById.get(id) : undefined;
     if (rowIndex === undefined) {
-      const candidates = summary.slice(1).map((row, index) => ({ row, index: index + 1 }))
+      let candidates = summary.slice(1).map((row, index) => ({ row, index: index + 1 }))
         .filter(({ row }) => matchesIdentity(cells, row, identity));
+      // Completing a generic export can supply context as well as analysis.
+      // Only relax placeholder context when the interface uniquely identifies
+      // one row across the entire analysis; never choose among real contexts.
+      if (!candidates.length) {
+        const interfaceCandidates = summary.slice(1).map((row, index) => ({ row, index: index + 1 }))
+          .filter(({ row }) => matchesIdentity(cells, row, interfaceIdentity));
+        if (interfaceCandidates.length === 1 && hasUnspecifiedContext(headers, interfaceCandidates[0].row)) {
+          candidates = interfaceCandidates;
+        }
+      }
       if (candidates.length !== 1) {
         errors.push(candidates.length > 1
           ? `Line ${line}: identifying columns match ${candidates.length} rows. Include a matching Raw Analysis Row ID or distinguishing operational context.`
