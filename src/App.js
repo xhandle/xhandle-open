@@ -1,3 +1,6 @@
+import { identifyProjectHazardDraftRow } from './features/project-hazard-analysis/projectHazardDraftIds';
+import { buildCodeArchitectureHazardCsvDraft } from './features/code-architecture-hazard-analysis/codeArchitectureHazardCsv';
+import { summarySheetToHazardSummaryRows } from './features/code-architecture-hazard-analysis/codeArchitectureHazardUtils';
 import { useCallback, useRef, useState, useEffect, useMemo } from 'react';
 import { FlaskConical } from 'lucide-react';
 import VnVCenterPro from './components/VnVCenterPro';
@@ -434,6 +437,7 @@ function buildProjectDraftHazardTargets(functionalRows = [], method = "STPA-Text
           ...functionalRow,
           guidePhrase,
           guidePhraseIndex,
+          hazardDraftIdentity: rowKey,
           guidePhraseApplicable: "",
           guidePhraseApplicabilityRationale: "",
           hazardContextId: context.id,
@@ -604,7 +608,7 @@ const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
 function getProjectDraftHazardHeaders(method = "STPA") {
   const normalizedMethod = normalizeProjectHazardMethod(method);
   const methodHeaders = PROJECT_DRAFT_HAZARD_METHOD_HEADERS[normalizedMethod] || PROJECT_DRAFT_HAZARD_METHOD_HEADERS.STPA;
-  return Array.from(new Set([...PROJECT_DRAFT_HAZARD_BASE_HEADERS, ...methodHeaders, ...PROJECT_HAZARD_CONTEXT_HEADER_LIST]));
+  return Array.from(new Set([...PROJECT_DRAFT_HAZARD_BASE_HEADERS, ...methodHeaders, ...PROJECT_HAZARD_CONTEXT_HEADER_LIST, "Raw Analysis Row ID"]));
 }
 
 function buildProjectDraftHazardRow(functionalRow = {}, headers = getProjectDraftHazardHeaders()) {
@@ -625,7 +629,7 @@ function buildProjectDraftHazardRow(functionalRow = {}, headers = getProjectDraf
     "Item / Function": functionalRow?.fromFunction || functionalRow?.toFunction || "",
     "Function": functionalRow?.fromFunction || functionalRow?.toFunction || "",
   };
-  return headers.map((header) => knownValues[header] || "");
+  return identifyProjectHazardDraftRow(headers, headers.map((header) => knownValues[header] || ""), null, functionalRow.hazardDraftIdentity || "");
 }
 
 const PROJECT_DRAFT_HAZARD_HEADER_ALIASES = {
@@ -719,9 +723,10 @@ function findBestGeneratedHazardSummary(sheets = {}) {
   ));
 }
 
-function isMeaningfullyGeneratedDraftRow(row = [], fallbackRow = []) {
+function isMeaningfullyGeneratedDraftRow(row = [], fallbackRow = [], headers = []) {
   return row.some((cell, index) => (
     index >= PROJECT_DRAFT_HAZARD_BASE_HEADERS.length &&
+    headers[index] !== "Raw Analysis Row ID" &&
     String(cell || "").trim() &&
     String(cell || "").trim() !== String(fallbackRow[index] || "").trim()
   ));
@@ -3905,6 +3910,7 @@ const [cbaTableData, setCbaTableData] = useState([]);
 const [selectedCbaElement, setSelectedCbaElement] = useState(null);
 const [activeCodeArchitectureSelection, setActiveCodeArchitectureSelection] = useState(null);
 const [codeArchitectureWorkspaceTab, setCodeArchitectureWorkspaceTab] = useState("architecture");
+const [codeArchitectureHazardSplitView, setCodeArchitectureHazardSplitView] = useState(false);
 const [codeArchitectureFunctionalViewMode, setCodeArchitectureFunctionalViewMode] = useState("architecture");
 const [codeArchitectureFolderView, setCodeArchitectureFolderView] = useState("projects");
 const [codeArchitectureArtifactFocus, setCodeArchitectureArtifactFocus] = useState(null);
@@ -8209,7 +8215,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
           || (target.legacyRowKey && target.guidePhraseIndex === 0 ? draftHazardRowsByIndex[target.originalIndex] : null);
         if (!Array.isArray(savedDraft?.row)) return null;
         const aligned = alignSummaryRowToHeaders(targetHeaders, savedDraft.row, targetHeaders, fallbackRow);
-        return savedDraft.generated && isMeaningfullyGeneratedDraftRow(aligned, fallbackRow) ? aligned : null;
+        return savedDraft.generated && isMeaningfullyGeneratedDraftRow(aligned, fallbackRow, targetHeaders) ? aligned : null;
       })
       .filter(Boolean);
     if (!recoveredRows.length) return;
@@ -8258,7 +8264,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         if (!legacyTarget) return;
         const fallbackRow = buildProjectDraftHazardRow(legacyTarget.analysisRow, targetHeaders);
         const alignedRow = alignSummaryRowToHeaders(existingSummary[0] || [], existingRow, targetHeaders, fallbackRow);
-        if (!isMeaningfullyGeneratedDraftRow(alignedRow, fallbackRow)) return;
+        if (!isMeaningfullyGeneratedDraftRow(alignedRow, fallbackRow, targetHeaders)) return;
         nextDraftRows[legacyTarget.rowKey] = { row: alignedRow, generated: true };
       });
     }
@@ -8270,7 +8276,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
           || (target.legacyRowKey && target.guidePhraseIndex === 0 ? draftHazardRowsByIndex[target.originalIndex] : null);
         if (Array.isArray(existingDraft?.row)) {
           const alignedDraft = alignSummaryRowToHeaders(targetHeaders, existingDraft.row, targetHeaders, fallbackRow);
-          if (isMeaningfullyGeneratedDraftRow(alignedDraft, fallbackRow)) {
+          if (isMeaningfullyGeneratedDraftRow(alignedDraft, fallbackRow, targetHeaders)) {
             nextDraftRows[target.rowKey] = {
               row: alignedDraft,
               generated: Boolean(existingDraft.generated),
@@ -8281,7 +8287,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         const existingCompletedRow = findExistingHazardRowForFunctionalRow(target.analysisRow, existingSummary, target.guidePhrase, target.context);
         if (!existingCompletedRow) return null;
         const alignedCompleted = alignSummaryRowToHeaders(existingSummary[0] || [], existingCompletedRow, targetHeaders, fallbackRow);
-        if (!isMeaningfullyGeneratedDraftRow(alignedCompleted, fallbackRow)) return null;
+        if (!isMeaningfullyGeneratedDraftRow(alignedCompleted, fallbackRow, targetHeaders)) return null;
         nextDraftRows[target.rowKey] = {
           row: alignedCompleted,
           generated: true,
@@ -8401,7 +8407,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         ? alignSummaryRowToHeaders(draftHazardHeaders, savedDraft.row, hazardSummaryHeaders, fallbackRow)
         : null;
       const generatedDraft = Boolean(savedDraft?.generated) && Boolean(
-        alignedDraft && isMeaningfullyGeneratedDraftRow(alignedDraft, fallbackRow)
+        alignedDraft && isMeaningfullyGeneratedDraftRow(alignedDraft, fallbackRow, hazardSummaryHeaders)
       );
       const completedRow = completedSummary
         ? findExistingHazardRowForFunctionalRow(analysisRow, completedSummary, target.guidePhrase, target.context)
@@ -8410,7 +8416,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         ? alignSummaryRowToHeaders(completedHeaders, completedRow, hazardSummaryHeaders, fallbackRow)
         : null;
       const generatedCompleted = Boolean(
-        alignedCompleted && isMeaningfullyGeneratedDraftRow(alignedCompleted, fallbackRow)
+        alignedCompleted && isMeaningfullyGeneratedDraftRow(alignedCompleted, fallbackRow, hazardSummaryHeaders)
       );
       const generated = generatedDraft || generatedCompleted;
       let displayRow = generatedDraft ? alignedDraft : (generatedCompleted ? alignedCompleted : fallbackRow);
@@ -8548,7 +8554,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         || (target.legacyRowKey ? draftHazardRowsByIndex[target.legacyRowKey] : null)
         || (target.legacyRowKey && target.guidePhraseIndex === 0 ? draftHazardRowsByIndex[target.originalIndex] : null);
       return {
-        row: savedDraft?.row || buildProjectDraftHazardRow(target.analysisRow, draftHazardHeaders),
+        row: identifyProjectHazardDraftRow(draftHazardHeaders, savedDraft?.row || buildProjectDraftHazardRow(target.analysisRow, draftHazardHeaders), buildProjectDraftHazardRow(target.analysisRow, draftHazardHeaders)),
         originalIndex: index,
         interfaceIndex: target.originalIndex,
         guidePhraseIndex: target.guidePhraseIndex,
@@ -11805,7 +11811,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         functionalRow: generationInput.functionalRow,
       });
       const savedDraftIsMeaningful = savedDraftRow
-        ? (savedDraft?.generated || isMeaningfullyGeneratedDraftRow(savedDraftRow, fallbackRow))
+        ? (savedDraft?.generated || isMeaningfullyGeneratedDraftRow(savedDraftRow, fallbackRow, targetHeaders))
         : false;
       if (!shouldRegenerate) {
         if (savedDraftIsMeaningful) {
@@ -11820,7 +11826,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         if (completedRow) {
           const completedHeaders = existingSummary[0] || [];
           const alignedCompletedRow = alignSummaryRowToHeaders(completedHeaders, completedRow, targetHeaders, fallbackRow);
-          if (isMeaningfullyGeneratedDraftRow(alignedCompletedRow, fallbackRow)) {
+          if (isMeaningfullyGeneratedDraftRow(alignedCompletedRow, fallbackRow, targetHeaders)) {
             preservedDraftRows[rowKey] = {
               row: alignedCompletedRow,
               generated: true,
@@ -11850,7 +11856,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
               || startingDraftRows[target.rowKey]?.row
               || (target.legacyRowKey ? startingDraftRows[target.legacyRowKey]?.row : null)
               || buildProjectDraftHazardRow(target.analysisRow, targetHeaders))
-            .filter((row, index) => isMeaningfullyGeneratedDraftRow(row, buildProjectDraftHazardRow(allHazardTargets[index].analysisRow, targetHeaders))),
+            .filter((row, index) => isMeaningfullyGeneratedDraftRow(row, buildProjectDraftHazardRow(allHazardTargets[index].analysisRow, targetHeaders), targetHeaders)),
         ],
       };
       const nextRiskRegister = riskRegister;
@@ -11969,7 +11975,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         safetyClassificationReviewItem: safetyClassificationVibeReviewByRowId.get(rowId),
       });
       const { row: nextRow, guidePhraseReview: reviewReconciliation, safetySignificanceReview: safetyReviewReconciliation } = normalizedPersistence;
-      if (isMeaningfullyGeneratedDraftRow(nextRow, fallbackRow)) {
+      if (isMeaningfullyGeneratedDraftRow(nextRow, fallbackRow, targetHeaders)) {
         generatedDraftRows[rowKey] = {
           row: nextRow,
           generated: true,
@@ -12006,7 +12012,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         const row = mergedDraftRows[target.rowKey]?.row
           || (target.legacyRowKey ? mergedDraftRows[target.legacyRowKey]?.row : null)
           || fallbackRow;
-        return isMeaningfullyGeneratedDraftRow(row, fallbackRow) ? row : null;
+        return isMeaningfullyGeneratedDraftRow(row, fallbackRow, targetHeaders) ? row : null;
       })
       .filter(Boolean);
     const finalSheets = {
@@ -12276,7 +12282,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         safetyClassificationReviewItem: safetyClassificationVibeReviewByRowId.get(rowId),
       });
       const { row: nextRow, guidePhraseReview: reviewReconciliation, safetySignificanceReview: safetyReviewReconciliation } = normalizedPersistence;
-      const generated = isMeaningfullyGeneratedDraftRow(nextRow, fallbackRow);
+      const generated = isMeaningfullyGeneratedDraftRow(nextRow, fallbackRow, targetHeaders);
       if (!generated) {
         throw new Error("The selected method completed but did not return usable hazard values for this row.");
       }
@@ -12296,7 +12302,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
           if (!completedRow) return;
           const rowFallback = buildProjectDraftHazardRow(sourceRow, targetHeaders);
           const alignedRow = alignSummaryRowToHeaders(completedHeaders, completedRow, targetHeaders, rowFallback);
-          if (isMeaningfullyGeneratedDraftRow(alignedRow, rowFallback)) {
+          if (isMeaningfullyGeneratedDraftRow(alignedRow, rowFallback, targetHeaders)) {
             completedDraftRows[completedTarget.rowKey] = {
               row: alignedRow,
               generated: true,
@@ -12339,7 +12345,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
           .map((summaryTarget) => {
             const rowFallback = buildProjectDraftHazardRow(summaryTarget.analysisRow, targetHeaders);
             const rowForSummary = nextDraftRows[summaryTarget.rowKey]?.row || rowFallback;
-            return isMeaningfullyGeneratedDraftRow(rowForSummary, rowFallback) ? rowForSummary : null;
+            return isMeaningfullyGeneratedDraftRow(rowForSummary, rowFallback, targetHeaders) ? rowForSummary : null;
           })
           .filter(Boolean);
         nextAnalysisResult = {
@@ -12535,19 +12541,19 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   const handleDraftHazardCellChange = (hazardTargetIndex, columnIndex, value) => {
     const target = draftHazardTargets[hazardTargetIndex];
     const functionalRow = target?.analysisRow;
-    if (!target || !functionalRow) return;
+    if (!target || !functionalRow || draftHazardHeaders[columnIndex] === "Raw Analysis Row ID") return;
     const rowKey = target.rowKey;
     let nextRowForReview = null;
     setDraftHazardRowsByIndex((prev) => {
       const existing = prev[rowKey] || (target.guidePhraseIndex === 0 ? prev[target.originalIndex] : null);
-      const baseRow = existing?.row || buildProjectDraftHazardRow(functionalRow, draftHazardHeaders);
+      const baseRow = identifyProjectHazardDraftRow(draftHazardHeaders, existing?.row || buildProjectDraftHazardRow(functionalRow, draftHazardHeaders), buildProjectDraftHazardRow(functionalRow, draftHazardHeaders));
       const nextRow = baseRow.map((cell, index) => (index === columnIndex ? value : cell));
       nextRowForReview = nextRow;
       return {
         ...prev,
         [rowKey]: {
           row: nextRow,
-          generated: existing?.generated || isMeaningfullyGeneratedDraftRow(nextRow, buildProjectDraftHazardRow(functionalRow, draftHazardHeaders)),
+          generated: existing?.generated || isMeaningfullyGeneratedDraftRow(nextRow, buildProjectDraftHazardRow(functionalRow, draftHazardHeaders), draftHazardHeaders),
         },
       };
     });
@@ -12761,7 +12767,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         if (!matched) return;
         const fallbackRow = buildProjectDraftHazardRow(target.analysisRow, targetHeaders);
         const aligned = alignSummaryRowToHeaders(workingSummary[0] || [], matched, targetHeaders, fallbackRow);
-        if (!isMeaningfullyGeneratedDraftRow(aligned, fallbackRow)) return;
+        if (!isMeaningfullyGeneratedDraftRow(aligned, fallbackRow, targetHeaders)) return;
         nextDraftRows[target.rowKey] = { row: aligned, generated: true };
       });
 
@@ -14070,6 +14076,39 @@ Rules:
       total: stepDescriptionsMap[codeArchitectureHazardMethod]?.total || 9,
       message: "",
     });
+  };
+
+  const codeArchitectureCsvDraft = useMemo(() => buildCodeArchitectureHazardCsvDraft({
+    cbaRows: cbaTableData, repoMeta: activeCodeArchitectureRepoMeta,
+    projectId: activeCodeArchitectureProjectId, method: codeArchitectureHazardMethod,
+    operationalContexts: codeArchitectureHazardContexts,
+  }, getProjectDraftHazardHeaders(codeArchitectureHazardMethod)), [
+    cbaTableData, activeCodeArchitectureRepoMeta, activeCodeArchitectureProjectId,
+    codeArchitectureHazardMethod, codeArchitectureHazardContexts,
+  ]);
+
+  const codeArchitectureCsvWorkspaceKey = `${activeCodeArchitectureProjectId}:${codeArchitectureCsvDraft.repoId}:${codeArchitectureCsvDraft.architectureSnapshotHash}:${codeArchitectureHazardMethod}`;
+  const codeArchitectureCsvWorkspaceRef = useRef(null);
+  codeArchitectureCsvWorkspaceRef.current = { key: codeArchitectureCsvWorkspaceKey, running: isRunningCodeArchitectureHazard };
+
+  const handleImportCodeArchitectureSummary = async (summary, expectedRun, restore = false) => {
+    if (codeArchitectureCsvWorkspaceRef.current.running || codeArchitectureCsvWorkspaceRef.current.key !== codeArchitectureCsvWorkspaceKey
+      || codeArchitectureHazardRunRef.current !== expectedRun
+      || activeCodeArchitectureProjectIdRef.current !== activeCodeArchitectureProjectId) {
+      throw new Error("The active analysis changed. Reopen the CSV in the current workspace.");
+    }
+    const baseline = expectedRun || codeArchitectureCsvDraft;
+    const nextRun = {
+      ...baseline,
+      generatedSheets: { ...baseline.generatedSheets, Summary: summary },
+      summaryRows: summarySheetToHazardSummaryRows(summary),
+      csvImportPreviousSummary: restore ? null : baseline.generatedSheets.Summary,
+      updatedAt: new Date().toISOString(),
+    };
+    await saveCodeArchitectureHazardRun(nextRun);
+    if (codeArchitectureCsvWorkspaceRef.current.key === codeArchitectureCsvWorkspaceKey
+      && activeCodeArchitectureProjectIdRef.current === activeCodeArchitectureProjectId
+      && codeArchitectureHazardRunRef.current === expectedRun) commitCodeArchitectureHazardRun(nextRun);
   };
 
   const handleDeleteCodeArchitectureHazardSummaryRow = useCallback(async (rowIndex) => {
@@ -17015,6 +17054,27 @@ const projectHint = useMemo(() => ({
                     <CodeArchitectureHazardPanel
                       cbaRows={cbaTableData}
                       latestRun={codeArchitectureHazardRun}
+                      splitView={codeArchitectureHazardSplitView}
+                      onSplitViewChange={setCodeArchitectureHazardSplitView}
+                      diagram={(
+                        <FunctionalDecompositionTable
+                          data={cbaTableData}
+                          viewMode="architecture"
+                          showViewControls={false}
+                          projectId={activeCodeArchitectureProject.id}
+                          repoMeta={activeCodeArchitectureRepoMeta}
+                          onDataChange={setCbaTableData}
+                          onRequestCreateProject={handleCreateProjectFromSelection}
+                          collaboratorSelection={activeCodeArchitectureSelection}
+                          onCollaboratorSelectionChange={setActiveCodeArchitectureSelection}
+                          hazardSummary={codeArchitectureHazardRun?.generatedSheets?.Summary}
+                          onOpenHazardRow={handleOpenCodeArchitectureHazardSummaryRow}
+                          focusTarget={pendingCodeArchitectureDiagramTarget}
+                          onFocusTargetHandled={() => setPendingCodeArchitectureDiagramTarget(null)}
+                        />
+                      )}
+                      draftRun={codeArchitectureCsvDraft}
+                      onImportSummary={handleImportCodeArchitectureSummary}
                       method={codeArchitectureHazardMethod}
                       onMethodChange={setCodeArchitectureHazardMethod}
                       onRunAnalysis={handleRunCodeArchitectureHazardAnalysis}
@@ -17037,7 +17097,7 @@ const projectHint = useMemo(() => ({
                       onCollaboratorSelectionChange={setActiveCodeArchitectureSelection}
                       onOpenArchitectureTarget={(target) => {
                         setPendingCodeArchitectureDiagramTarget(target);
-                        setCodeArchitectureWorkspaceTab("architecture");
+                        if (!codeArchitectureHazardSplitView) setCodeArchitectureWorkspaceTab("architecture");
                       }}
                       reviewMode={false}
                     />
@@ -18296,6 +18356,7 @@ const projectHint = useMemo(() => ({
                                 <textarea
                                   className="min-h-[30px] w-full resize-none overflow-visible break-words bg-transparent text-xs leading-4 text-gray-900 [overflow-wrap:anywhere] focus:outline-none"
                                   value={cell}
+                                  readOnly={draftHazardHeaders[colIdx] === "Raw Analysis Row ID"}
                                   onChange={(event) => handleDraftHazardCellChange(originalIndex, colIdx, event.target.value)}
                                   onFocus={selectCell}
                                   rows={getDraftHazardCellRows(cell)}

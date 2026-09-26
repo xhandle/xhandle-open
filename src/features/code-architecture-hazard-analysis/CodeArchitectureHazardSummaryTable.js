@@ -55,6 +55,7 @@ export default function CodeArchitectureHazardSummaryTable({
   selectedOperationalContextId = "all",
   collapseAllRequest = null,
   onGroupStateChange,
+  onVisibleSummaryChange,
   readOnly = false,
 }) {
   const rowRefs = useRef({});
@@ -253,6 +254,9 @@ export default function CodeArchitectureHazardSummaryTable({
     () => filterCodeArchitectureHazardRowsByContext(headers, filteredRowItems, selectedOperationalContextId),
     [filteredRowItems, headers, selectedOperationalContextId],
   );
+  useEffect(() => {
+    onVisibleSummaryChange?.([headers, ...contextFilteredRowItems.map(({ row }) => row)]);
+  }, [headers, contextFilteredRowItems, onVisibleSummaryChange]);
   const hazardGroups = useMemo(
     () => buildCodeArchitectureHazardGroups(headers, contextFilteredRowItems),
     [contextFilteredRowItems, headers],

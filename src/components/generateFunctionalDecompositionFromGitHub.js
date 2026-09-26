@@ -3987,6 +3987,7 @@ export const FunctionalDecompositionTable = ({
   collaboratorSelection = null,
   onCollaboratorSelectionChange,
   viewMode = null,
+  showViewControls = true,
   onViewModeChange,
 }) => {
   const [manualData, setManualData] = useState(null);
@@ -4611,7 +4612,7 @@ React.useEffect(() => {
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
       {/* Toolbar */}
-      <div className="shrink-0 flex flex-wrap items-center justify-between gap-2">
+      {showViewControls && <div className="shrink-0 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           {/* View toggle */}
           <button
@@ -4663,7 +4664,7 @@ React.useEffect(() => {
             {fullscreen ? "Exit Fullscreen" : "Fullscreen"}
           </button>
         </div>
-      </div>
+      </div>}
 
       {/* Surface */}
       <div

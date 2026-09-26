@@ -1,8 +1,16 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import FunctionalDiagramWorkspace from '../../components/FunctionalDiagramWorkspace';
+import { filterCodeArchitectureHazardRowsByContext } from './codeArchitectureHazardGrouping';
+import HazardCsvIssuesModal from '../project-hazard-analysis/HazardCsvIssuesModal';
+import { ensureHazardAnalysisRowIds } from '../project-hazard-analysis/classificationResolutionStatus';
+import { applyHazardAnalysisCsvImport, planHazardAnalysisCsvImport, describeHazardCsvPlan } from '../project-hazard-analysis/hazardAnalysisCsv';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronsDown,
   ChevronsUp,
   Download,
+  PanelLeftOpen,
+  Upload,
+  RotateCcw,
   Loader2,
   Settings,
   Sparkles,
@@ -45,6 +53,11 @@ function downloadSummaryCsv(summarySheet, repoName = "code_architecture") {
 export default function CodeArchitectureHazardPanel({
   cbaRows = [],
   latestRun,
+  draftRun,
+  diagram,
+  splitView = false,
+  onSplitViewChange,
+  onImportSummary,
   method,
   onMethodChange,
   onRunAnalysis,
@@ -68,7 +81,37 @@ export default function CodeArchitectureHazardPanel({
   onCollaboratorSelectionChange,
   reviewMode = false,
 }) {
-  const summarySheet = latestRun?.generatedSheets?.Summary;
+  const summarySheet = useMemo(() => ensureHazardAnalysisRowIds(
+    latestRun?.generatedSheets?.Summary || draftRun?.generatedSheets?.Summary || []
+  ), [latestRun, draftRun]);
+  const csvInputRef = useRef(null);
+  const visibleSummaryRef = useRef(null);
+  const [csvIssues, setCsvIssues] = useState([]);
+  const [importing, setImporting] = useState(false);
+  const handleVisibleSummary = useCallback((sheet) => {
+    visibleSummaryRef.current = { sheet, source: summarySheet, context: selectedOperationalContextId };
+  }, [summarySheet, selectedOperationalContextId]);
+  const exportCsv = () => {
+    const visible = visibleSummaryRef.current;
+    const sheet = visible?.source === summarySheet && visible?.context === selectedOperationalContextId
+      ? visible.sheet
+      : [summarySheet[0], ...filterCodeArchitectureHazardRowsByContext(summarySheet[0],
+        summarySheet.slice(1).map(row => ({ row })), selectedOperationalContextId).map(({ row }) => row)];
+    downloadSummaryCsv(sheet, latestRun?.repoName || draftRun?.repoName);
+  };
+  const importCsv = async (file) => {
+    if (!file || isRunning || importing || reviewMode) return;
+    setImporting(true);
+    try {
+      const plan = planHazardAnalysisCsvImport(summarySheet, await file.text());
+      if (plan.errors.length) { setCsvIssues(plan.errors); return; }
+      if (!plan.changedRowCount) { window.alert('Every row already matches. Nothing was changed.'); return; }
+      if (!window.confirm(describeHazardCsvPlan(plan))) return;
+      await onImportSummary(applyHazardAnalysisCsvImport(summarySheet, plan.updates), latestRun);
+      window.alert(`Imported updates to ${plan.changedRowCount} rows.${plan.conflicts.length ? ` ${plan.conflicts.length} classification/significance conflicts need review.` : ''}`);
+    } catch (error) { setCsvIssues([error.message || 'Import could not be saved.']); }
+    finally { setImporting(false); }
+  };
   const hasSummary = Array.isArray(summarySheet) && summarySheet.length >= 2;
   const [showSummary, setShowSummary] = useState(hasSummary);
   const [allGroupsCollapsed, setAllGroupsCollapsed] = useState(false);
@@ -118,7 +161,16 @@ export default function CodeArchitectureHazardPanel({
   }, []);
 
   return (
+    <div className="flex h-full min-h-0 min-w-0 flex-col">
+    <FunctionalDiagramWorkspace
+      showControls={false}
+      viewMode={splitView ? 'split' : 'table'}
+      tableLabel="Code architecture hazard analysis table"
+      onDiagramResize={() => window.dispatchEvent(new Event('resize'))}
+      diagram={splitView ? diagram : null}
+      table={(
     <div className="flex h-full min-h-0 overflow-hidden rounded-xl border border-slate-200 bg-white">
+      <HazardCsvIssuesModal issues={csvIssues} onClose={() => setCsvIssues([])} />
       <ProjectTabSideToolbar
         label="Code Architecture Hazard Analysis tools"
         collapsed={toolbarCollapsed}
@@ -139,7 +191,7 @@ export default function CodeArchitectureHazardPanel({
               value={method}
               onChange={(event) => onMethodChange?.(event.target.value)}
               className="w-full rounded-md border border-slate-200 bg-white px-2 py-2 text-xs font-medium text-slate-700"
-              disabled={isRunning || reviewMode}
+              disabled={isRunning || importing || reviewMode}
             >
               {CODE_ARCHITECTURE_HAZARD_METHOD_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
@@ -151,7 +203,7 @@ export default function CodeArchitectureHazardPanel({
               value={selectedOperationalContextId}
               onChange={(event) => onSelectedOperationalContextChange?.(event.target.value)}
               className="w-full rounded-md border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700"
-              disabled={isRunning || reviewMode}
+              disabled={isRunning || importing || reviewMode}
               title="Filter results and scope the next analysis run to an operational scenario and mode"
             >
               <option value="all">All contexts ({effectiveContexts.length})</option>
@@ -165,7 +217,7 @@ export default function CodeArchitectureHazardPanel({
             label="Manage contexts"
             collapsed={toolbarCollapsed}
             onClick={onManageOperationalContexts}
-            disabled={isRunning || reviewMode}
+            disabled={isRunning || importing || reviewMode}
           />
         </ProjectTabToolbarSection>
 
@@ -185,7 +237,7 @@ export default function CodeArchitectureHazardPanel({
               collapsed={toolbarCollapsed}
               tone="primary"
               onClick={() => onRunAnalysis?.(method)}
-              disabled={isRunning || eligibilitySummary.include === 0}
+              disabled={isRunning || importing || eligibilitySummary.include === 0}
             />
           )}
           {isRunning && !reviewMode && (
@@ -207,14 +259,42 @@ export default function CodeArchitectureHazardPanel({
               {progress?.message || "Running code architecture hazard analysis…"}
             </ProjectTabToolbarStatus>
           )}
+          {diagram && <ProjectTabToolbarButton
+            icon={<PanelLeftOpen size={17} />}
+            label={splitView ? "Table only" : "Split view"}
+            collapsed={toolbarCollapsed}
+            onClick={() => onSplitViewChange?.(!splitView)}
+            title={splitView ? "Show only the hazard table" : "Show the code architecture diagram beside the hazard table"}
+          />}
           <ProjectTabToolbarButton
             icon={<Download size={17} />}
             label="Export CSV"
             collapsed={toolbarCollapsed}
             tone="success"
-            onClick={() => downloadSummaryCsv(summarySheet, latestRun?.repoName)}
+            onClick={exportCsv}
             disabled={!hasSummary}
           />
+          {!reviewMode && <>
+            <ProjectTabToolbarButton
+              icon={<Upload size={17} />} label="Import CSV…" collapsed={toolbarCollapsed}
+              tone="success" onClick={() => csvInputRef.current?.click()}
+              disabled={!hasSummary || isRunning || importing || !onImportSummary}
+            />
+            <input ref={csvInputRef} type="file" accept=".csv,text/csv" className="hidden"
+              aria-label="Import code architecture hazard CSV"
+              onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; importCsv(file); }} />
+            {latestRun?.csvImportPreviousSummary && <ProjectTabToolbarButton
+              icon={<RotateCcw size={17} />} label="Undo CSV import" collapsed={toolbarCollapsed}
+              disabled={isRunning || importing}
+              onClick={async () => {
+                if (!window.confirm('Restore the hazard table from before the last CSV import?')) return;
+                setImporting(true);
+                try { await onImportSummary(latestRun.csvImportPreviousSummary, latestRun, true); }
+                catch (error) { setCsvIssues([error.message]); }
+                finally { setImporting(false); }
+              }}
+            />}
+          </>}
           <ProjectTabToolbarButton
             icon={allGroupsCollapsed ? <ChevronsDown size={17} /> : <ChevronsUp size={17} />}
             label={allGroupsCollapsed ? "Expand all groups" : "Collapse all groups"}
@@ -237,7 +317,7 @@ export default function CodeArchitectureHazardPanel({
               collapsed={toolbarCollapsed}
               tone="danger"
               onClick={onClearContents}
-              disabled={isRunning || !latestRun}
+              disabled={isRunning || importing || !latestRun}
             />
           )}
           {!isRunning && (
@@ -266,6 +346,7 @@ export default function CodeArchitectureHazardPanel({
                 {progress?.message || "Running code architecture hazard analysis..."}
               </div>
             )}
+            {!latestRun && hasSummary && <div className="text-sm text-slate-600">Incomplete hazard analysis draft. Export these rows, complete them externally, then import the CSV results.</div>}
             {showSummary && (
               <CodeArchitectureHazardSummaryTable
                 summarySheet={summarySheet}
@@ -273,11 +354,12 @@ export default function CodeArchitectureHazardPanel({
                 reviewItems={reviewItems}
                 reviewByRow={reviewByRow}
                 reviewDrawerOptions={reviewDrawerOptions}
-                showReview
+                showReview={Boolean(latestRun)}
+                onVisibleSummaryChange={handleVisibleSummary}
                 highlightedRowIndex={highlightedRowIndex}
                 storageKey={`code-architecture-hazard-summary:${latestRun?.repoId || "repo"}:${latestRun?.id || "latest"}`}
                 onOpenArchitectureTarget={onOpenArchitectureTarget}
-                onDeleteRow={reviewMode ? undefined : onDeleteSummaryRow}
+                onDeleteRow={reviewMode || !latestRun ? undefined : onDeleteSummaryRow}
                 onCollaboratorSelectionChange={onCollaboratorSelectionChange}
                 selectedOperationalContextId={selectedOperationalContextId}
                 collapseAllRequest={collapseAllRequest}
@@ -292,6 +374,9 @@ export default function CodeArchitectureHazardPanel({
           </div>
         )}
       </div>
+    </div>
+      )}
+    />
     </div>
   );
 }

@@ -45,11 +45,12 @@ function loadFallbackState() {
 }
 
 function saveFallbackState(state) {
-  if (typeof localStorage === "undefined") return;
+  if (typeof localStorage === "undefined") throw new Error("Browser storage is unavailable.");
   try {
     localStorage.setItem(LS_KEY, JSON.stringify({ ...emptyState(), ...state }));
   } catch (error) {
     console.warn("[code-architecture-hazard-analysis] localStorage save failed", error);
+    throw error;
   }
 }
 
