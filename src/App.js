@@ -206,6 +206,7 @@ import {
 } from "./features/project-hazard-analysis/projectHazardDiagramSummary";
 import HazardOperationalContextManager from "./features/project-hazard-analysis/HazardOperationalContextManager";
 import HazardAnalysisResetModal from "./features/project-hazard-analysis/HazardAnalysisResetModal";
+import HazardCsvIssuesModal from "./features/project-hazard-analysis/HazardCsvIssuesModal";
 import HazardAnalysisRecoveryModal from "./features/project-hazard-analysis/HazardAnalysisRecoveryModal";
 import NeedsReviewResolverModal from "./features/project-hazard-analysis/NeedsReviewResolverModal";
 import {
@@ -275,8 +276,8 @@ import {
 } from "./features/functional-decomposition/decompositionCsv";
 import {
   applyHazardAnalysisCsvImport,
+  applyHazardCsvImportToDrafts,
   describeHazardCsvPlan,
-  describeHazardCsvProblems,
   planHazardAnalysisCsvImport,
 } from "./features/project-hazard-analysis/hazardAnalysisCsv";
 import { generateHazardOperationalContexts } from "./features/project-hazard-analysis/hazardOperationalContextAi";
@@ -7482,6 +7483,7 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const lastKnownFunctionalRowsRef = useRef(new Map());
   const decompositionCsvInputRef = useRef(null);
   const hazardCsvInputRef = useRef(null);
+  const [hazardCsvIssues, setHazardCsvIssues] = useState([]);
   const hazardAnalysisArtifactHydrationRef = useRef(null);
   const safetyIssueReportHydrationRef = useRef(null);
   const [generatingSafetyIssueReportIds, setGeneratingSafetyIssueReportIds] = useState(new Set());
@@ -8640,6 +8642,17 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   const visibleHazardInterfaceKeys = Array.isArray(analysisResult?.Summary?.[0])
     ? filteredHazardSummaryInterfaceKeys
     : filteredDraftHazardInterfaceKeys;
+  const showingSavedHazardSummary = Array.isArray(analysisResult?.Summary?.[0]);
+  const hazardMatchingRowCount = showingSavedHazardSummary
+    ? filteredHazardSummaryRows.length
+    : filteredDraftHazardSummaryRows.length;
+  const hazardContextRowCount = (showingSavedHazardSummary
+    ? hazardSummaryDisplayRows
+    : draftHazardSummaryRows
+  ).filter(({ contextId }) => selectedHazardContextId === "all" || contextId === selectedHazardContextId).length;
+  const hazardHasColumnFilters = (showingSavedHazardSummary
+    ? activeHazardFilterCount
+    : activeDraftHazardFilterCount) > 0;
   const allVisibleHazardInterfacesCollapsed = visibleHazardInterfaceKeys.length > 0
     && visibleHazardInterfaceKeys.every((key) => collapsedHazardInterfaceKeys.has(key));
   const collapseAllHazardInterfaces = () => {
@@ -12472,6 +12485,49 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     });
   };
 
+  const saveManualHazardCell = async (targetIndex, header, value, displayedRow) => {
+    if (isAnalyzing || isResettingHazardAnalysis || draftHazardGeneratingIndex !== null) {
+      throw new Error("Wait for hazard generation or restoration to finish, then save your edit.");
+    }
+    const projectId = activeProjectIdRef.current;
+    if (!projectId || projectId !== activeProjectId) throw new Error("Return to the project before saving this edit.");
+    const target = draftHazardTargets[targetIndex];
+    if (!target) throw new Error("This row is no longer available.");
+    if (["Raw Analysis Row ID", CLASSIFICATION_RESOLUTION_STATUS_HEADER].includes(header)) return;
+    const columnIndex = draftHazardHeaders.indexOf(header);
+    if (columnIndex < 0) throw new Error("This column is no longer available.");
+    const previousAnalysis = analysisResultRef.current;
+    const previousDrafts = draftHazardRowsByIndexRef.current;
+    const existing = previousDrafts[target.rowKey];
+    const nextRow = [...(existing?.row || displayedRow)];
+    nextRow[columnIndex] = value;
+    const statusIndex = draftHazardHeaders.indexOf(CLASSIFICATION_RESOLUTION_STATUS_HEADER);
+    if (statusIndex >= 0) nextRow[statusIndex] = inspectClassificationResolution(draftHazardHeaders, nextRow).status;
+    const nextDrafts = { ...previousDrafts, [target.rowKey]: { ...existing, row: nextRow, generated: true } };
+    const summary = previousAnalysis?.Summary;
+    const rawId = displayedRow[draftHazardHeaders.indexOf("Raw Analysis Row ID")];
+    const summaryIdIndex = summary?.[0]?.indexOf("Raw Analysis Row ID") ?? -1;
+    const matchedRow = summary && ((rawId && summaryIdIndex >= 0
+      ? summary.slice(1).find((row) => row[summaryIdIndex] === rawId)
+      : null) || findExistingHazardRowForFunctionalRow(target.analysisRow, summary, target.guidePhrase, target.context));
+    const nextAnalysis = summary ? {
+      ...previousAnalysis,
+      Summary: summary.map((row, index) => index > 0 && row === matchedRow
+        ? alignSummaryRowToHeaders(draftHazardHeaders, nextRow, summary[0], row)
+        : row),
+    } : previousAnalysis;
+    const result = await saveHazardAnalysis(projectId, {
+      analysisResult: nextAnalysis, draftHazardRowsByIndex: nextDrafts,
+    }, { reason: "manual-cell-edit", expectedRevision: analysisRevisionRef.current });
+    if (result.outcome !== HAZARD_WRITE_OUTCOME.OK && result.outcome !== HAZARD_WRITE_OUTCOME.UNCHANGED) {
+      throw new Error(describeHazardWriteFailure(result));
+    }
+    if (activeProjectIdRef.current !== projectId) return;
+    analysisRevisionRef.current = result.revision ?? analysisRevisionRef.current;
+    commitAnalysisResult(nextAnalysis, nextDrafts);
+    setSafetyIssueRefreshStatus({ kind: "working", message: "Hazard evidence changed. Regenerate the consolidated safety issues when ready." });
+  };
+
   const handleDraftHazardCellChange = (hazardTargetIndex, columnIndex, value) => {
     const target = draftHazardTargets[hazardTargetIndex];
     const functionalRow = target?.analysisRow;
@@ -14124,10 +14180,11 @@ Rules:
     await ensureHazardRowIdsPersisted();
 
     const current = analysisResultRef.current;
-    const plan = planHazardAnalysisCsvImport(current?.Summary, text);
-    const problems = describeHazardCsvProblems(plan);
-    if (problems) {
-      window.alert(problems);
+    const plan = planHazardAnalysisCsvImport(current?.Summary, text, {
+      draftHeaders: draftHazardHeaders, draftRows: draftHazardRowsByIndexRef.current,
+    });
+    if (plan.errors.length) {
+      setHazardCsvIssues(plan.errors);
       return;
     }
     if (!plan.changedRowCount) {
@@ -14138,14 +14195,16 @@ Rules:
 
     const nextAnalysisResult = { ...current, Summary: applyHazardAnalysisCsvImport(current.Summary, plan.updates) };
     const restoreAnalysisResult = current;
-    commitAnalysisResult(nextAnalysisResult, undefined);
+    const restoreDraftRows = draftHazardRowsByIndexRef.current;
+    const nextDraftRows = applyHazardCsvImportToDrafts(restoreDraftRows, draftHazardHeaders, plan.updates);
+    commitAnalysisResult(nextAnalysisResult, nextDraftRows);
     const saveResult = await saveHazardAnalysis(
       activeProjectIdRef.current,
-      { analysisResult: nextAnalysisResult },
+      { analysisResult: nextAnalysisResult, draftHazardRowsByIndex: nextDraftRows },
       { reason: 'csv-import', expectedRevision: analysisRevisionRef.current },
     );
     if (saveResult.outcome !== HAZARD_WRITE_OUTCOME.OK && saveResult.outcome !== HAZARD_WRITE_OUTCOME.UNCHANGED) {
-      commitAnalysisResult(restoreAnalysisResult, undefined);
+      commitAnalysisResult(restoreAnalysisResult, restoreDraftRows);
       window.alert(describeHazardWriteFailure(saveResult));
       return;
     }
@@ -14154,6 +14213,9 @@ Rules:
       kind: 'working',
       message: `Imported CSV updates to ${plan.changedRowCount} hazard row${plan.changedRowCount === 1 ? '' : 's'}. Use Regenerate with AI to refresh the consolidated issue set.`,
     });
+    if (!plan.conflicts.length) {
+      window.alert(`Imported CSV updates to ${plan.changedRowCount} hazard row${plan.changedRowCount === 1 ? '' : 's'}.`);
+    }
     if (plan.conflicts.length) {
       window.alert([
         `${plan.changedRowCount} row${plan.changedRowCount === 1 ? ' was' : 's were'} updated.`,
@@ -15235,7 +15297,7 @@ const projectHint = useMemo(() => ({
           !activeProjectId || isAnalyzing || isResettingHazardAnalysis ||
           !Array.isArray(analysisResult?.Summary?.[0])
         }
-        title="Merge an exported hazard analysis CSV back in, matched by Raw Analysis Row ID"
+        title="Merge reviewed CSV rows by row ID or matching interface and context columns"
       />
       <input
         ref={hazardCsvInputRef}
@@ -17828,6 +17890,7 @@ const projectHint = useMemo(() => ({
   onSave={handleSaveHazardOperationalContexts}
   onGenerate={handleGenerateHazardOperationalContexts}
 />}
+<HazardCsvIssuesModal issues={hazardCsvIssues} onClose={() => setHazardCsvIssues([])} />
 {activeProjectId && showHazardResetModal && (
   <HazardAnalysisRecoveryModal
     open={hazardRecoveryOpen}
@@ -17914,6 +17977,24 @@ const projectHint = useMemo(() => ({
         )}
       </div>
     )}
+    <div className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 bg-[#F8FAFC] px-3 py-2 text-sm text-gray-700">
+      <span role="status" aria-live="polite" aria-atomic="true">
+        <strong className="tabular-nums">{hazardMatchingRowCount.toLocaleString()}</strong>
+        {" of "}{hazardContextRowCount.toLocaleString()}{" rows"}
+        {hazardHasColumnFilters ? " match filters" : " shown"}
+        {selectedHazardContextId !== "all" && " in this context"}
+      </span>
+      <span className="text-xs text-gray-500">Click a cell to edit. Changes save when you leave the cell.</span>
+      {hazardHasColumnFilters && (
+        <button
+          type="button"
+          onClick={showingSavedHazardSummary ? clearAllHazardFilters : clearAllDraftHazardFilters}
+          className="shrink-0 rounded border border-gray-200 bg-white px-2 py-1 text-xs font-semibold text-[#2D7DFE] hover:bg-blue-50"
+        >
+          Clear filters
+        </button>
+      )}
+    </div>
     {!analysisResult?.Summary && hazardResetStatus?.kind === "cleared" && Object.keys(draftHazardRowsByIndex || {}).length === 0 ? (
       <div className="flex min-h-[280px] flex-1 items-center justify-center rounded-xl border border-dashed border-gray-300 bg-white p-8 text-center">
         <div className="max-w-md">
@@ -18047,24 +18128,6 @@ const projectHint = useMemo(() => ({
                   </th>
                 ))}
               </tr>
-              {activeDraftHazardFilterCount > 0 && (
-                <tr>
-                  <th colSpan={visibleDraftHazardColumnCount + 1} className="sticky top-[64px] z-20 bg-[#F8FAFC] border-b border-gray-200 px-4 py-2 text-left">
-                    <div className="flex items-center justify-between gap-3 text-xs text-gray-600">
-                      <span>
-                        Showing {filteredDraftHazardSummaryRows.length} of {draftHazardSummaryRows.length} rows with {activeDraftHazardFilterCount} selected filter{activeDraftHazardFilterCount === 1 ? '' : 's'}.
-                      </span>
-                      <button
-                        type="button"
-                        onClick={clearAllDraftHazardFilters}
-                        className="rounded border border-gray-200 bg-white px-2 py-1 text-[#2D7DFE] hover:bg-blue-50"
-                      >
-                        Clear filters
-                      </button>
-                    </div>
-                  </th>
-                </tr>
-              )}
             </thead>
             <tbody className="text-[#374151] text-sm">
               {groupedFilteredDraftHazardSummaryRows.map(({ row, originalIndex, rowKey, generated, groupMeta, variantMeta, isFirstInGroup, isFirstInVariantGroup, groupCount, variantCount }, idx) => {
@@ -18350,24 +18413,6 @@ const projectHint = useMemo(() => ({
                     );
                   })}
                 </tr>
-                {activeHazardFilterCount > 0 && (
-                  <tr>
-                    <th colSpan={visibleHazardSummaryColumnCount + 1} className="sticky top-[64px] z-20 bg-[#F8FAFC] border-b border-gray-200 px-4 py-2 text-left">
-                      <div className="flex items-center justify-between gap-3 text-xs text-gray-600">
-                        <span>
-                          Showing {filteredHazardSummaryRows.length} of {hazardSummaryDisplayRows.length} rows with {activeHazardFilterCount} selected filter{activeHazardFilterCount === 1 ? '' : 's'}.
-                        </span>
-                        <button
-                          type="button"
-                          onClick={clearAllHazardFilters}
-                          className="rounded border border-gray-200 bg-white px-2 py-1 text-[#2D7DFE] hover:bg-blue-50"
-                        >
-                          Clear filters
-                        </button>
-                      </div>
-                    </th>
-                  </tr>
-                )}
               </thead>
               <tbody className="text-[#374151] text-sm">
                 {groupedFilteredHazardSummaryRows
@@ -18480,6 +18525,31 @@ const projectHint = useMemo(() => ({
                                 row,
                                 columnIndex: colIdx,
                               });
+                              const editableCellProps = columnHeader === "Raw Analysis Row ID" || columnHeader === CLASSIFICATION_RESOLUTION_STATUS_HEADER ? {} : {
+                                contentEditable: "plaintext-only",
+                                suppressContentEditableWarning: true,
+                                role: "textbox",
+                                "aria-multiline": true,
+                                "aria-label": `${columnHeader}, row ${originalIndex + 1}`,
+                                onFocus: selectCell,
+                                onBlur: async (event) => {
+                                  const element = event.currentTarget;
+                                  const nextValue = element.innerText ?? element.textContent ?? "";
+                                  if (nextValue === String(cell ?? "")) return;
+                                  try {
+                                    await saveManualHazardCell(originalIndex, columnHeader, nextValue, row);
+                                  } catch (error) {
+                                    window.alert(`Your edit could not be saved: ${error.message}. The edited text is still in the cell; click it and leave it to retry.`);
+                                  }
+                                },
+                                onKeyDown: (event) => {
+                                  if (event.key === "Escape") {
+                                    event.preventDefault();
+                                    event.currentTarget.textContent = String(cell ?? "");
+                                    event.currentTarget.blur();
+                                  }
+                                },
+                              };
                               const isResolutionStatus = columnHeader === CLASSIFICATION_RESOLUTION_STATUS_HEADER;
                               const resolutionStatusClass = cell === CLASSIFICATION_RESOLUTION_STATUS.HUMAN_EVIDENCE_GAP
                                 || cell === CLASSIFICATION_RESOLUTION_STATUS.POLICY_GAP
@@ -18494,7 +18564,7 @@ const projectHint = useMemo(() => ({
                                 <td key={colIdx} onClick={selectCell} style={{ width: hazardSummaryColumnWidths[colIdx], minWidth: hazardSummaryColumnWidths[colIdx], maxWidth: hazardSummaryColumnWidths[colIdx] }} className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(columnHeader) ? 'hidden ' : ''}relative break-words px-3 py-2 align-top whitespace-pre-wrap text-xs leading-4 [overflow-wrap:anywhere] border-b border-gray-100 ${selectedCell ? 'bg-indigo-100 ring-2 ring-indigo-500 ring-inset' : ''} ${rejected ? 'text-rose-900 line-through decoration-rose-400' : ''}`}>
                                   {diagramTarget ? (
                                     <div className="flex items-start gap-1">
-                                      <span className="min-w-0 flex-1">{cell}</span>
+                                      <div {...editableCellProps} className="min-w-0 flex-1 whitespace-pre-wrap outline-none">{cell}</div>
                                       <button
                                         type="button"
                                         className="shrink-0 rounded p-1 text-[#2D7DFE] hover:bg-blue-100 hover:text-[#1E61D6]"
@@ -18515,7 +18585,7 @@ const projectHint = useMemo(() => ({
                                     >
                                       {cell}
                                     </span>
-                                  ) : <div>{cell}</div>}
+                                  ) : <div {...editableCellProps} className="min-h-[16px] whitespace-pre-wrap outline-none">{cell}</div>}
                                   {isVibeReviewCellImpacted(selectionRowId, columnHeader) && (
                                     <span className="absolute bottom-1 right-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[11px] font-bold leading-none text-white shadow" title="Changed during the active Vibe Review" aria-label="Changed during the active Vibe Review">!</span>
                                   )}

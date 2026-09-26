@@ -11,11 +11,10 @@
  *      records, and safety issues all address rows by it. Rebuilding the table
  *      from a CSV would re-derive every ID and orphan that history.
  *
- * So an import is a merge: rows are matched by Raw Analysis Row ID, only the
- * columns actually present in the file are touched, and every unmatched row and
- * absent column is left exactly as it was. A file that names a row this
- * analysis does not have is refused rather than appended, because a new hazard
- * row needs a derived ID and a generation pass, not a spreadsheet line.
+ * Imports first match stable IDs, then uniquely identifying interface/context
+ * columns for older exports with blank or externally assigned IDs. Existing
+ * internal IDs are retained so linked reviews remain attached to the same row.
+ * Unmatched and ambiguous rows are reported; row order is never an identity.
  */
 
 import { csvCellText, csvHeaderKey, parseCsv } from "../../lib/csv";
@@ -49,6 +48,27 @@ const findRowIdColumn = (headerCells = []) => {
     .findIndex((cell) => wanted.has(csvHeaderKey(cell)));
 };
 
+const IDENTITY_GROUPS = [
+  ["Function (From)", "Control Action", "Function (To)", "Guide Phrase"],
+  ["Item / Function", "Failure Mode"],
+];
+const CONTEXT_HEADERS = ["Operational Context ID", "Operational Scenario", "Operational Mode", "Operating Conditions"];
+
+function identityColumns(sourceHeaders, targetHeaders) {
+  const source = sourceHeaders.map(csvHeaderKey);
+  const target = targetHeaders.map(csvHeaderKey);
+  const group = IDENTITY_GROUPS.find((names) => names.every((name) => source.includes(csvHeaderKey(name)) && target.includes(csvHeaderKey(name))));
+  if (!group) return [];
+  return [...group, ...CONTEXT_HEADERS.filter((name) => source.includes(csvHeaderKey(name)) && target.includes(csvHeaderKey(name)))]
+    .map((name) => ({ source: source.indexOf(csvHeaderKey(name)), target: target.indexOf(csvHeaderKey(name)) }));
+}
+
+function matchesIdentity(sourceRow, targetRow, columns) {
+  return columns.length > 0
+    && columns.some(({ source }) => csvCellText(sourceRow?.[source]))
+    && columns.every(({ source, target }) => csvCellText(sourceRow?.[source]) === csvCellText(targetRow?.[target]));
+}
+
 /**
  * Work out what an imported file would change, without changing anything.
  *
@@ -58,7 +78,7 @@ const findRowIdColumn = (headerCells = []) => {
  * reviewed. `conflicts` describes governed values the imported classification
  * contradicts; those are surfaced, never silently reconciled.
  */
-export function planHazardAnalysisCsvImport(summary = [], text = "") {
+export function planHazardAnalysisCsvImport(summary = [], text = "", { draftHeaders = [], draftRows = {} } = {}) {
   const headers = Array.isArray(summary?.[0]) ? summary[0] : null;
   if (!headers) {
     return emptyPlan(["This project has no hazard analysis table to merge into."]);
@@ -69,7 +89,8 @@ export function planHazardAnalysisCsvImport(summary = [], text = "") {
 
   const csvHeaders = grid[0];
   const csvIdIndex = findRowIdColumn(csvHeaders);
-  if (csvIdIndex < 0) {
+  const identity = identityColumns(csvHeaders, headers);
+  if (csvIdIndex < 0 && !identity.length) {
     return emptyPlan([`The header row has no ${HAZARD_ROW_ID_HEADERS[0]} column. Export the analysis first and edit that file.`]);
   }
   const summaryIdIndex = findRowIdColumn(headers);
@@ -109,32 +130,53 @@ export function planHazardAnalysisCsvImport(summary = [], text = "") {
     if (id && !rowIndexById.has(id)) rowIndexById.set(id, offset + 1);
   });
 
+  const draftIdIndex = findRowIdColumn(draftHeaders);
+  const draftIndexes = new Map(draftHeaders.map((header, index) => [csvHeaderKey(header), index]));
   const errors = [];
   const updates = [];
   const seenIds = new Map();
+  const seenRows = new Map();
+  let identityMatchedRowCount = 0;
   const changedColumns = new Set();
   let unchangedRowCount = 0;
 
   grid.slice(1).forEach((cells, offset) => {
     const line = offset + 2;
     const id = csvCellText(cells?.[csvIdIndex]);
-    if (!id) {
-      if (cells.every((cell) => !csvCellText(cell))) return;
-      errors.push(`Line ${line} has no Raw Analysis Row ID.`);
-      return;
-    }
-    const firstLine = seenIds.get(id);
+    if (cells.every((cell) => !csvCellText(cell))) return;
+    const firstLine = id && seenIds.get(id);
     if (firstLine) {
       errors.push(`Line ${line} repeats Raw Analysis Row ID ${id} from line ${firstLine}.`);
       return;
     }
-    seenIds.set(id, line);
+    if (id) seenIds.set(id, line);
 
-    const rowIndex = rowIndexById.get(id);
+    let rowIndex = id ? rowIndexById.get(id) : undefined;
     if (rowIndex === undefined) {
-      errors.push(`Line ${line}: this analysis has no row with Raw Analysis Row ID ${id}. Rows cannot be added by import.`);
+      const candidates = summary.slice(1).map((row, index) => ({ row, index: index + 1 }))
+        .filter(({ row }) => matchesIdentity(cells, row, identity));
+      if (candidates.length !== 1) {
+        errors.push(candidates.length > 1
+          ? `Line ${line}: identifying columns match ${candidates.length} rows. Include a matching Raw Analysis Row ID or distinguishing operational context.`
+          : `Line ${line}: no matching row for Raw Analysis Row ID ${id || "(blank)"} or the identifying columns. Include unchanged interface and context columns to match an existing row.`);
+        return;
+      }
+      rowIndex = candidates[0].index;
+      identityMatchedRowCount += 1;
+    }
+    if (seenRows.has(rowIndex)) {
+      errors.push(`Line ${line} matches the same analysis row as line ${seenRows.get(rowIndex)}.`);
       return;
     }
+    seenRows.set(rowIndex, line);
+    const canonicalId = csvCellText(summary[rowIndex]?.[summaryIdIndex]);
+    const draftIdentity = identityColumns(headers, draftHeaders);
+    const matchingDraftEntries = Object.entries(draftRows).filter(([, entry]) => {
+      if (!Array.isArray(entry?.row)) return false;
+      if (canonicalId && csvCellText(entry.row[draftIdIndex]) === canonicalId) return true;
+      if (!matchesIdentity(summary[rowIndex], entry.row, draftIdentity)) return false;
+      return summary.slice(1).filter((row) => matchesIdentity(row, entry.row, draftIdentity)).length === 1;
+    });
 
     const current = summary[rowIndex] || [];
     const changes = mapped
@@ -144,14 +186,19 @@ export function planHazardAnalysisCsvImport(summary = [], text = "") {
         value: csvCellText(cells?.[csvIndex]),
         previous: csvCellText(current?.[summaryIndex]),
       }))
-      .filter((change) => change.value !== change.previous);
+      // A previous import may have saved Summary but left the displayed draft
+      // stale. Include those differences so importing the same file repairs it.
+      .filter((change) => change.value !== change.previous || matchingDraftEntries.some(([, { row }]) => {
+        const index = draftIndexes.get(csvHeaderKey(change.header));
+        return index !== undefined && csvCellText(row[index]) !== change.value;
+      }));
 
     if (!changes.length) {
       unchangedRowCount += 1;
       return;
     }
     changes.forEach((change) => changedColumns.add(change.header));
-    updates.push({ rowId: id, rowIndex, line, changes });
+    updates.push({ rowId: canonicalId, rowIndex, line, changes, draftKeys: matchingDraftEntries.map(([key]) => key) });
   });
 
   const governedColumns = HAZARD_GOVERNED_HEADERS.filter((header) => changedColumns.has(header));
@@ -162,6 +209,7 @@ export function planHazardAnalysisCsvImport(summary = [], text = "") {
     errors,
     unknownColumns,
     changedRowCount: updates.length,
+    identityMatchedRowCount,
     changedColumns: Array.from(changedColumns),
     governedColumns,
     unchangedRowCount,
@@ -210,6 +258,25 @@ export function applyHazardAnalysisCsvImport(summary = [], updates = []) {
   return next;
 }
 
+/** Mirror imported cells into the generated rows used by the table. */
+export function applyHazardCsvImportToDrafts(draftRows = {}, draftHeaders = [], updates = []) {
+  const idIndex = findRowIdColumn(draftHeaders);
+  if (idIndex < 0 || !updates.length) return draftRows;
+  const byId = new Map(updates.filter((update) => update.rowId).map((update) => [update.rowId, update]));
+  const byKey = new Map(updates.flatMap((update) => (update.draftKeys || []).map((key) => [key, update])));
+  const indexes = new Map(draftHeaders.map((header, index) => [csvHeaderKey(header), index]));
+  return Object.fromEntries(Object.entries(draftRows).map(([key, entry]) => {
+    const update = Array.isArray(entry?.row) && (byKey.get(key) || byId.get(csvCellText(entry.row[idIndex])));
+    if (!update) return [key, entry];
+    const row = [...entry.row];
+    update.changes.forEach(({ header, value }) => {
+      const index = indexes.get(csvHeaderKey(header));
+      if (index !== undefined) row[index] = value;
+    });
+    return [key, { ...entry, row }];
+  }));
+}
+
 /** One human-readable block naming everything that blocks an import. */
 export function describeHazardCsvProblems({ errors = [] } = {}, limit = 6) {
   if (!errors.length) return "";
@@ -230,6 +297,9 @@ export function describeHazardCsvPlan(plan, limit = 8) {
     "",
     `Columns changed: ${plan.changedColumns.slice(0, limit).join(", ")}${plan.changedColumns.length > limit ? `, and ${plan.changedColumns.length - limit} more` : ""}.`,
   ];
+  if (plan.identityMatchedRowCount) {
+    lines.push(`${plan.identityMatchedRowCount} rows matched by identifying columns because their imported IDs were blank or different. Existing internal row IDs will be retained to preserve linked reviews.`);
+  }
   if (plan.unchangedRowCount) {
     lines.push(`${plan.unchangedRowCount} row${plan.unchangedRowCount === 1 ? "" : "s"} in the file match the analysis already and will not be touched.`);
   }

@@ -20,6 +20,8 @@ import {
   saveProjectHazardAnalysisRecord,
 } from "./projectHazardAnalysisStorage";
 
+import { planHazardAnalysisCsvImport, applyHazardAnalysisCsvImport, applyHazardCsvImportToDrafts } from "./hazardAnalysisCsv";
+
 const analysis = (label, rows = 1) => ({
   Summary: [["Hazard"], ...Array.from({ length: rows }, (_, index) => [`${label}-${index}`])],
 });
@@ -346,4 +348,27 @@ describe("compare-and-set versus this tab's own background writes", () => {
     expect(result).toMatchObject({ outcome: HAZARD_WRITE_OUTCOME.STALE, actualRevision: 9 });
     expect(headOf().analysisResult).toEqual(analysis("from another tab"));
   });
+});
+
+
+it("persists imported Summary and displayed rows together and restores both", async () => {
+  const headers = ["Raw Analysis Row ID", "Hazard"];
+  const original = { Summary: [headers, ["RAW-1", "old hazard"]] };
+  const draftRows = { "context:guide": { generated: true, row: ["RAW-1", "old hazard"] } };
+  await saveHazardAnalysis("csv-project", { analysisResult: original, draftHazardRowsByIndex: draftRows });
+  const plan = planHazardAnalysisCsvImport(original.Summary, "Raw Analysis Row ID,Hazard\nRAW-1,updated hazard", {
+    draftHeaders: headers, draftRows,
+  });
+  const result = await saveHazardAnalysis("csv-project", {
+    analysisResult: { Summary: applyHazardAnalysisCsvImport(original.Summary, plan.updates) },
+    draftHazardRowsByIndex: applyHazardCsvImportToDrafts(draftRows, headers, plan.updates),
+  }, { reason: "csv-import", expectedRevision: 1 });
+  expect(result.outcome).toBe(HAZARD_WRITE_OUTCOME.OK);
+  const loaded = await loadProjectHazardAnalysisRecord("csv-project");
+  expect(loaded.analysisResult.Summary[1][1]).toBe("updated hazard");
+  expect(loaded.draftHazardRowsByIndex["context:guide"].row[1]).toBe("updated hazard");
+  await restoreHazardAnalysisRevision("csv-project", 1);
+  const restored = await loadProjectHazardAnalysisRecord("csv-project");
+  expect(restored.analysisResult.Summary[1][1]).toBe("old hazard");
+  expect(restored.draftHazardRowsByIndex["context:guide"].row[1]).toBe("old hazard");
 });

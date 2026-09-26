@@ -8,6 +8,7 @@
 
 import {
   applyHazardAnalysisCsvImport,
+  applyHazardCsvImportToDrafts,
   describeHazardCsvPlan,
   describeHazardCsvProblems,
   planHazardAnalysisCsvImport,
@@ -84,7 +85,7 @@ describe("planHazardAnalysisCsvImport", () => {
 
     expect(plan.updates).toEqual([]);
     expect(plan.errors[0]).toContain("RAW-9");
-    expect(plan.errors[0]).toContain("cannot be added by import");
+    expect(plan.errors[0]).toContain("Include unchanged interface and context columns");
   });
 
   it("refuses a duplicated or missing row ID", () => {
@@ -99,7 +100,7 @@ describe("planHazardAnalysisCsvImport", () => {
       ["Raw Analysis Row ID", "Causal Scenario"],
       ["", "Orphan"],
     ]));
-    expect(missing.errors[0]).toBe("Line 2 has no Raw Analysis Row ID.");
+    expect(missing.errors[0]).toContain("no matching row");
   });
 
   it("refuses a file with no row ID column", () => {
@@ -206,5 +207,88 @@ describe("the messages the reviewer is shown", () => {
     const message = describeHazardCsvProblems({ errors: ["a", "b", "c"] }, 2);
     expect(message).toContain("• a");
     expect(message).toContain("…and 1 more.");
+  });
+});
+
+
+describe("imports into the displayed generated rows", () => {
+  const draftHeaders = [...HEADERS].reverse();
+  const drafts = () => ({
+    "context:guide:1": { generated: true, row: [...summary()[1]].reverse(), note: "keep metadata" },
+    "context:guide:2": { generated: true, row: [...summary()[2]].reverse() },
+  });
+  const text = csv([["Raw Analysis Row ID", "Safety Significance Rationale"], ["RAW-1", ""]]);
+
+  it("updates by stable ID and header, preserves blank edits and unrelated rows", () => {
+    const original = drafts();
+    const plan = planHazardAnalysisCsvImport(summary(), text, { draftHeaders, draftRows: original });
+    const next = applyHazardCsvImportToDrafts(original, draftHeaders, plan.updates);
+    expect(next["context:guide:1"].row[0]).toBe("");
+    expect(next["context:guide:1"].generated).toBe(true);
+    expect(next["context:guide:1"].note).toBe("keep metadata");
+    expect(next["context:guide:2"]).toBe(original["context:guide:2"]);
+    expect(original["context:guide:1"].row[0]).toBe("Credited in the design review.");
+  });
+
+  it("repairs a previous Summary-only import when the same CSV is retried", () => {
+    const savedSummary = applyHazardAnalysisCsvImport(summary(), planHazardAnalysisCsvImport(summary(), text).updates);
+    const original = drafts();
+    const plan = planHazardAnalysisCsvImport(savedSummary, text, { draftHeaders, draftRows: original });
+    expect(plan.changedRowCount).toBe(1);
+    const next = applyHazardCsvImportToDrafts(original, draftHeaders, plan.updates);
+    expect(next["context:guide:1"].row[0]).toBe("");
+    expect(planHazardAnalysisCsvImport(savedSummary, text, { draftHeaders, draftRows: next }).changedRowCount).toBe(0);
+  });
+});
+
+
+describe("legacy exports with blank or externally assigned IDs", () => {
+  const headers = ["Raw Analysis Row ID", "Function (From)", "Control Action", "Function (To)", "Guide Phrase", "Operational Scenario", "Hazard"];
+  const rows = [headers,
+    ["INTERNAL-1", "Dispatch", "Mission", "Vehicle", "Not provided", "Normal", "old first"],
+    ["INTERNAL-2", "Dispatch", "Mission", "Vehicle", "Provided", "Normal", "old second"],
+  ];
+
+  it.each(["EXTERNAL", ""])("matches reordered edited rows with %p IDs, preserving internal references", (id) => {
+    const imported = [headers, [id ? `${id}-2` : "", ...rows[2].slice(1, -1), "new second"], [id ? `${id}-1` : "", ...rows[1].slice(1, -1), "new first"]];
+    const draftRows = { first: { generated: true, row: ["", ...rows[1].slice(1)] } };
+    const plan = planHazardAnalysisCsvImport(rows, csv(imported), { draftHeaders: headers, draftRows });
+    expect(plan.errors).toEqual([]);
+    expect(plan.identityMatchedRowCount).toBe(2);
+    const merged = applyHazardAnalysisCsvImport(rows, plan.updates);
+    expect(merged[1]).toEqual(["INTERNAL-1", ...rows[1].slice(1, -1), "new first"]);
+    expect(merged[2]).toEqual(["INTERNAL-2", ...rows[2].slice(1, -1), "new second"]);
+    expect(applyHazardCsvImportToDrafts(draftRows, headers, plan.updates).first.row[6]).toBe("new first");
+    expect(describeHazardCsvPlan(plan)).toContain("Existing internal row IDs will be retained");
+  });
+
+  it("accepts an export with no ID column and preserves omitted rows", () => {
+    const plan = planHazardAnalysisCsvImport(rows, csv([headers.slice(1), [...rows[2].slice(1, -1), "new second"]]));
+    expect(plan.errors).toEqual([]);
+    expect(plan.changedRowCount).toBe(1);
+    expect(applyHazardAnalysisCsvImport(rows, plan.updates)[1]).toEqual(rows[1]);
+  });
+
+  it("rejects ambiguous identities instead of using file order", () => {
+    const ambiguous = [...rows, ["INTERNAL-3", ...rows[1].slice(1)]];
+    const plan = planHazardAnalysisCsvImport(ambiguous, csv([headers, ["EXTERNAL", ...rows[1].slice(1)]]));
+    expect(plan.errors[0]).toContain("match 2 rows");
+    expect(plan.updates).toEqual([]);
+  });
+
+  it("rejects two different CSV IDs that resolve to the same internal row", () => {
+    const plan = planHazardAnalysisCsvImport(rows, csv([headers,
+      ["EXTERNAL-1", ...rows[1].slice(1)], ["EXTERNAL-2", ...rows[1].slice(1)],
+    ]));
+    expect(plan.errors[0]).toContain("same analysis row as line 2");
+  });
+
+  it("uses context to distinguish identical interfaces", () => {
+    const contextual = [...rows, ["INTERNAL-3", ...rows[1].slice(1, 5), "Emergency", "old emergency"]];
+    const plan = planHazardAnalysisCsvImport(contextual, csv([headers,
+      ["EXTERNAL", ...contextual[3].slice(1, -1), "new emergency"],
+    ]));
+    expect(plan.errors).toEqual([]);
+    expect(plan.updates[0].rowId).toBe("INTERNAL-3");
   });
 });
