@@ -1,3 +1,5 @@
+import { fillNotApplicableHazardCells } from './features/project-hazard-analysis/hazardNotApplicableCells';
+import { recordUserPreprocessing, constrainPreprocessedInput, reconcileUserPreprocessing, matchPreprocessedGeneratedRow, respectNewerHazardReviews, preprocessingGenerationBasis } from './features/project-hazard-analysis/hazardUserPreprocessing';
 import { identifyProjectHazardDraftRow } from './features/project-hazard-analysis/projectHazardDraftIds';
 import { buildCodeArchitectureHazardCsvDraft } from './features/code-architecture-hazard-analysis/codeArchitectureHazardCsv';
 import { summarySheetToHazardSummaryRows } from './features/code-architecture-hazard-analysis/codeArchitectureHazardUtils';
@@ -8278,6 +8280,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
           const alignedDraft = alignSummaryRowToHeaders(targetHeaders, existingDraft.row, targetHeaders, fallbackRow);
           if (isMeaningfullyGeneratedDraftRow(alignedDraft, fallbackRow, targetHeaders)) {
             nextDraftRows[target.rowKey] = {
+              ...existingDraft,
               row: alignedDraft,
               generated: Boolean(existingDraft.generated),
             };
@@ -8433,7 +8436,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       }
 
       return {
-        row: reconcileDerivedSafetyColumns(hazardSummaryHeaders, displayRow),
+        row: fillNotApplicableHazardCells(hazardSummaryHeaders, reconcileDerivedSafetyColumns(hazardSummaryHeaders, displayRow)),
         originalIndex: targetIndex,
         interfaceIndex: originalIndex,
         guidePhraseIndex: target.guidePhraseIndex,
@@ -8554,7 +8557,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         || (target.legacyRowKey ? draftHazardRowsByIndex[target.legacyRowKey] : null)
         || (target.legacyRowKey && target.guidePhraseIndex === 0 ? draftHazardRowsByIndex[target.originalIndex] : null);
       return {
-        row: identifyProjectHazardDraftRow(draftHazardHeaders, savedDraft?.row || buildProjectDraftHazardRow(target.analysisRow, draftHazardHeaders), buildProjectDraftHazardRow(target.analysisRow, draftHazardHeaders)),
+        row: fillNotApplicableHazardCells(draftHazardHeaders, identifyProjectHazardDraftRow(draftHazardHeaders, savedDraft?.row || buildProjectDraftHazardRow(target.analysisRow, draftHazardHeaders), buildProjectDraftHazardRow(target.analysisRow, draftHazardHeaders))),
         originalIndex: index,
         interfaceIndex: target.originalIndex,
         guidePhraseIndex: target.guidePhraseIndex,
@@ -11810,12 +11813,20 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         reviewItem: storedSafetyReviewEvidence || safetySignificanceVibeReviewByRowId.get(reviewedRowId),
         functionalRow: generationInput.functionalRow,
       });
+      const userPreprocessing = respectNewerHazardReviews(savedDraft?.userPreprocessing, [
+        storedReviewEvidence || guidePhraseVibeReviewByRowId.get(reviewedRowId),
+        storedSafetyReviewEvidence || safetySignificanceVibeReviewByRowId.get(reviewedRowId),
+        safetyClassificationVibeReviewByRowId.get(reviewedRowId),
+      ]);
+      generationInput.functionalRow = constrainPreprocessedInput(generationInput.functionalRow,
+        userPreprocessing, targetHeaders, fallbackRow);
       const savedDraftIsMeaningful = savedDraftRow
         ? (savedDraft?.generated || isMeaningfullyGeneratedDraftRow(savedDraftRow, fallbackRow, targetHeaders))
         : false;
-      if (!shouldRegenerate) {
+      if (!shouldRegenerate && !savedDraft?.userPreprocessing?.pending) {
         if (savedDraftIsMeaningful) {
           preservedDraftRows[rowKey] = {
+            ...savedDraft,
             row: savedDraftRow,
             generated: true,
           };
@@ -11843,6 +11854,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         previousRow: previousReviewedRow,
         storedReviewEvidence,
         storedSafetyReviewEvidence,
+        userPreprocessing,
       });
     });
 
@@ -11957,8 +11969,11 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const generatedRows = Array.isArray(generatedSummary) ? generatedSummary.slice(1) : [];
     const generatedDraftRows = {};
 
-    rowsToGenerate.forEach(({ rowKey, fallbackRow, previousRow, storedReviewEvidence, storedSafetyReviewEvidence }, generatedIndex) => {
-      const generatedRow = generatedRows[generatedIndex];
+    rowsToGenerate.forEach(({ rowKey, fallbackRow, previousRow, storedReviewEvidence, storedSafetyReviewEvidence, userPreprocessing }, generatedIndex) => {
+      const generatedRow = userPreprocessing
+        ? matchPreprocessedGeneratedRow(generatedHeaders, generatedRows, targetHeaders, preprocessingGenerationBasis(targetHeaders, fallbackRow, userPreprocessing))
+        : generatedRows[generatedIndex];
+      if (userPreprocessing && !generatedRow) throw new Error('Generated results could not be matched uniquely to a preprocessed row. Existing user assessments were not replaced.');
       const alignedRow = Array.isArray(generatedRow)
         ? alignSummaryRowToHeaders(generatedHeaders, generatedRow, targetHeaders, fallbackRow)
         : fallbackRow;
@@ -11974,9 +11989,12 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         safetySignificanceReviewItem: storedSafetyReviewEvidence || safetySignificanceVibeReviewByRowId.get(rowId),
         safetyClassificationReviewItem: safetyClassificationVibeReviewByRowId.get(rowId),
       });
-      const { row: nextRow, guidePhraseReview: reviewReconciliation, safetySignificanceReview: safetyReviewReconciliation } = normalizedPersistence;
+      const preprocessed = reconcileUserPreprocessing(targetHeaders, normalizedPersistence.row, userPreprocessing, fallbackRow);
+      const nextRow = preprocessed.row;
+      const { guidePhraseReview: reviewReconciliation, safetySignificanceReview: safetyReviewReconciliation } = normalizedPersistence;
       if (isMeaningfullyGeneratedDraftRow(nextRow, fallbackRow, targetHeaders)) {
         generatedDraftRows[rowKey] = {
+          userPreprocessing: userPreprocessing ? { ...userPreprocessing, pending: false, conflicts: preprocessed.conflicts } : undefined,
           row: nextRow,
           generated: true,
           ...(reviewReconciliation.status !== "unreviewed" ? {
@@ -12209,7 +12227,12 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       reviewItem: storedSafetyReviewEvidence,
       functionalRow: generationInput.functionalRow,
     });
-    const generationFunctionalRow = generationInput.functionalRow;
+    const userPreprocessing = respectNewerHazardReviews(storedDraft?.userPreprocessing, [
+      storedDraft?.guidePhraseReviewEvidence || guidePhraseVibeReviewByRowId.get(reviewedRowId),
+      storedSafetyReviewEvidence, safetyClassificationVibeReviewByRowId.get(reviewedRowId),
+    ]);
+    const generationFunctionalRow = constrainPreprocessedInput(generationInput.functionalRow,
+      userPreprocessing, targetHeaders, fallbackRow);
     const functionalDecompositionSheet = [
       ["Function (From)", "Function (From) Details", "Control Action", "Control Action Details", "Function (To)", "Function (To) Details", "Operational Context ID", "Operational Scenario", "Operational Mode", "Operating Conditions", "Context Assumptions", "Guide Phrase", "Guide Phrase Applicable", "Guide Phrase Applicability Rationale", "Guide Phrase Applicability Review Status", "Safety Significant", "Safety Significance Rationale", "Safety Significance Review Status"],
       [
@@ -12281,7 +12304,9 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         safetySignificanceReviewItem: storedSafetyReviewEvidence,
         safetyClassificationReviewItem: safetyClassificationVibeReviewByRowId.get(rowId),
       });
-      const { row: nextRow, guidePhraseReview: reviewReconciliation, safetySignificanceReview: safetyReviewReconciliation } = normalizedPersistence;
+      const preprocessed = reconcileUserPreprocessing(targetHeaders, normalizedPersistence.row, userPreprocessing, fallbackRow);
+      const nextRow = preprocessed.row;
+      const { guidePhraseReview: reviewReconciliation, safetySignificanceReview: safetyReviewReconciliation } = normalizedPersistence;
       const generated = isMeaningfullyGeneratedDraftRow(nextRow, fallbackRow, targetHeaders);
       if (!generated) {
         throw new Error("The selected method completed but did not return usable hazard values for this row.");
@@ -12314,6 +12339,8 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         ...completedDraftRows,
         ...(loadProjectData(activeProjectId)?.draftHazardRowsByIndex || draftHazardRowsByIndex || {}),
         [rowKey]: {
+          ...storedDraft,
+          userPreprocessing: userPreprocessing ? { ...userPreprocessing, pending: false, conflicts: preprocessed.conflicts } : undefined,
           row: nextRow,
           generated,
           ...(reviewReconciliation.status !== "unreviewed" ? {
@@ -12513,7 +12540,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     nextRow[columnIndex] = value;
     const statusIndex = draftHazardHeaders.indexOf(CLASSIFICATION_RESOLUTION_STATUS_HEADER);
     if (statusIndex >= 0) nextRow[statusIndex] = inspectClassificationResolution(draftHazardHeaders, nextRow).status;
-    const nextDrafts = { ...previousDrafts, [target.rowKey]: { ...existing, row: nextRow, generated: true } };
+    const nextDrafts = { ...previousDrafts, [target.rowKey]: { ...existing, row: nextRow, generated: true, userPreprocessing: recordUserPreprocessing(existing?.userPreprocessing, draftHazardHeaders, nextRow, [header], buildProjectDraftHazardRow(target.analysisRow, draftHazardHeaders)) } };
     const summary = previousAnalysis?.Summary;
     const rawId = displayedRow[draftHazardHeaders.indexOf("Raw Analysis Row ID")];
     const summaryIdIndex = summary?.[0]?.indexOf("Raw Analysis Row ID") ?? -1;
@@ -12552,7 +12579,9 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       return {
         ...prev,
         [rowKey]: {
+          ...existing,
           row: nextRow,
+          userPreprocessing: recordUserPreprocessing(existing?.userPreprocessing, draftHazardHeaders, nextRow, [draftHazardHeaders[columnIndex]], buildProjectDraftHazardRow(functionalRow, draftHazardHeaders)),
           generated: existing?.generated || isMeaningfullyGeneratedDraftRow(nextRow, buildProjectDraftHazardRow(functionalRow, draftHazardHeaders), draftHazardHeaders),
         },
       };
@@ -13974,8 +14003,10 @@ Rules:
       message: "Starting analysis...",
     });
 
+    const priorRunForPreprocessing = codeArchitectureHazardRunRef.current;
     try {
       const run = await runCodeArchitectureHazardAnalysis({
+        previousRun: codeArchitectureHazardRunRef.current,
         cbaRows: cbaTableData,
         method: selectedMethod,
         repoMeta,
@@ -14041,6 +14072,7 @@ Rules:
       }
       finishActivity(actId, "success", "Code architecture hazard analysis complete");
     } catch (error) {
+      if (Object.keys(priorRunForPreprocessing?.userPreprocessing || {}).length) commitCodeArchitectureHazardRun(priorRunForPreprocessing);
       const canceled = abortController.signal.aborted || error?.name === "AbortError";
       console.error("[code-architecture-hazard-analysis] Run failed", error);
       setCodeArchitectureHazardProgress((prev) => ({
@@ -14098,8 +14130,23 @@ Rules:
       throw new Error("The active analysis changed. Reopen the CSV in the current workspace.");
     }
     const baseline = expectedRun || codeArchitectureCsvDraft;
+    const userPreprocessing = restore ? (baseline.csvImportPreviousPreprocessing || {}) : { ...baseline.userPreprocessing };
+    if (!restore) {
+      const headers = summary[0];
+      const idIndex = headers.indexOf('Raw Analysis Row ID');
+      const oldSummary = ensureHazardAnalysisRowIds(baseline.generatedSheets.Summary);
+      summary.slice(1).forEach(row => {
+        const id = row[idIndex];
+        const old = oldSummary.slice(1).find(candidate => candidate[oldSummary[0].indexOf("Raw Analysis Row ID")] === id);
+        const changed = headers.filter((header, index) => String(row[index] || '') !== String(old?.[index] || ''));
+        if (changed.length) userPreprocessing[id] = recordUserPreprocessing(userPreprocessing[id], headers, row, changed, old || row);
+      });
+    }
     const nextRun = {
       ...baseline,
+      userPreprocessing,
+      csvImportPreviousPreprocessing: restore ? null : baseline.userPreprocessing,
+      userPreprocessingConflicts: Object.entries(userPreprocessing).flatMap(([id, assessment]) => (assessment?.conflicts || []).map(message => `${id}: ${message}`)),
       generatedSheets: { ...baseline.generatedSheets, Summary: summary },
       summaryRows: summarySheetToHazardSummaryRows(summary),
       csvImportPreviousSummary: restore ? null : baseline.generatedSheets.Summary,
@@ -14242,7 +14289,19 @@ Rules:
     const nextAnalysisResult = { ...current, Summary: applyHazardAnalysisCsvImport(importSummary, plan.updates) };
     const restoreAnalysisResult = current;
     const restoreDraftRows = draftHazardRowsByIndexRef.current;
-    const nextDraftRows = applyHazardCsvImportToDrafts(restoreDraftRows, draftHazardHeaders, plan.updates);
+    const nextDraftRows = { ...applyHazardCsvImportToDrafts(restoreDraftRows, draftHazardHeaders, plan.updates) };
+    plan.updates.forEach(update => {
+      const originalRow = importSummary[update.rowIndex];
+      const target = draftHazardTargets.find(candidate => findExistingHazardRowForFunctionalRow(
+        candidate.analysisRow, [importSummary[0], originalRow], candidate.guidePhrase, candidate.context
+      ));
+      if (!target) return;
+      const fallback = buildProjectDraftHazardRow(target.analysisRow, draftHazardHeaders);
+      const row = alignSummaryRowToHeaders(importSummary[0], nextAnalysisResult.Summary[update.rowIndex], draftHazardHeaders, fallback);
+      const existing = nextDraftRows[target.rowKey];
+      nextDraftRows[target.rowKey] = { ...existing, row, generated: true,
+        userPreprocessing: recordUserPreprocessing(existing?.userPreprocessing, draftHazardHeaders, row, update.changes.map(change => change.header), fallback) };
+    });
     commitAnalysisResult(nextAnalysisResult, nextDraftRows);
     const saveResult = await saveHazardAnalysis(
       activeProjectIdRef.current,
@@ -18065,6 +18124,14 @@ const projectHint = useMemo(() => ({
     <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
     {hazardAnalysisControls}
     <div className="flex min-h-0 min-w-0 flex-1 flex-col pl-4">
+    {Object.values(draftHazardRowsByIndex).some(entry => entry?.userPreprocessing?.conflicts?.length) && (
+      <details className="mb-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm">
+        <summary>User preprocessing needs review</summary>
+        {Object.entries(draftHazardRowsByIndex).flatMap(([key, entry]) => (entry?.userPreprocessing?.conflicts || []).map((message, index) => (
+          <p key={`${key}:${index}`}>{entry.row?.[draftHazardRawRowIdIndex] || key}: {message}</p>
+        )))}
+      </details>
+    )}
     {activeTableSelection?.tableId === "hazard-analysis" && (
       <div className="mb-3 flex shrink-0 items-center justify-between gap-3 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
         <span><strong>Collaborator reference:</strong> {describeActiveSelection(activeTableSelection)}. This row and cell will be included automatically in typed and voice requests.</span>

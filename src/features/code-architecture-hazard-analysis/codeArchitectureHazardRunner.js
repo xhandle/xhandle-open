@@ -1,3 +1,6 @@
+import { fillNotApplicableHazardSummary } from '../project-hazard-analysis/hazardNotApplicableCells';
+import { prepareCodeHazardPreprocessing, reconcileCodeHazardPreprocessing } from './codeArchitectureHazardPreprocessing';
+import { ensureHazardAnalysisRowIds } from '../project-hazard-analysis/classificationResolutionStatus';
 import { runLiteAIAnalysis } from "../../components/aiAnalysisLite";
 import { saveCodeArchitectureHazardRun } from "./codeArchitectureHazardStore";
 import { enrichHazardTableRowsWithSourceContent } from "./codeArchitectureHazardSourceAudit";
@@ -11,6 +14,7 @@ import {
 } from "./codeArchitectureHazardUtils";
 
 export async function runCodeArchitectureHazardAnalysis({
+  previousRun = null,
   cbaRows = [],
   method = "STPA-Textbook",
   repoMeta = {},
@@ -28,14 +32,14 @@ export async function runCodeArchitectureHazardAnalysis({
     throw new Error("Generate or load a code-based functional architecture before running hazard analysis.");
   }
 
-  const input = buildCodeArchitectureHazardInput({
+  const input = prepareCodeHazardPreprocessing(buildCodeArchitectureHazardInput({
     cbaRows,
     repoMeta,
     projectId,
     method,
     operationalContexts,
     selectedOperationalContextId,
-  });
+  }), previousRun);
   if (!input.tableRows.length) {
     throw new Error("No Code-Based Architecture rows are marked Include for hazard analysis. Review or override the eligibility classifications in the functional decomposition table.");
   }
@@ -99,7 +103,12 @@ export async function runCodeArchitectureHazardAnalysis({
       ensureHazardSummaryTraceColumns(currentGeneratedSheets, sourceAuditedTableRows),
       sourceAuditedTableRows
     );
-    onPartialRunUpdate(buildRun(reviewedSheets));
+    // Intermediate sheets can omit assessed rows or identity columns. Keep the
+    // authoritative imported table visible until the final preservation pass
+    // succeeds. Progress reporting continues independently of table updates.
+    if (!input.tableRows.some(row => row.userPreprocessing)) {
+      onPartialRunUpdate(buildRun(reviewedSheets));
+    }
     return nextFolders;
   };
 
@@ -121,11 +130,18 @@ export async function runCodeArchitectureHazardAnalysis({
     contextSources: input.contextSources,
     signal,
   });
-  const generatedSheets = ensureHazardSummaryEvidenceColumns(
+  let generatedSheets = ensureHazardSummaryEvidenceColumns(
     ensureHazardSummaryTraceColumns(generatedSheetsRaw, sourceAuditedTableRows),
     sourceAuditedTableRows
   );
 
+  const hasPreprocessing = input.tableRows.some(row => row.userPreprocessing);
+  if (hasPreprocessing && generatedSheets.Summary) generatedSheets = { ...generatedSheets, Summary: ensureHazardAnalysisRowIds(generatedSheets.Summary) };
+  const reconciled = reconcileCodeHazardPreprocessing(generatedSheets, input.tableRows);
+  generatedSheets = { ...reconciled.sheets, Summary: fillNotApplicableHazardSummary(reconciled.sheets.Summary) };
+  if (hasPreprocessing && input.tableRows.some(row => row.userPreprocessing && !reconciled.ownership[row.userPreprocessingId])) {
+    throw new Error('Generated results could not be matched uniquely to the user assessments. The prior saved run remains available.');
+  }
   const run = normalizeCodeArchitectureHazardRun({
     id,
     sourceRunId,
@@ -165,6 +181,10 @@ export async function runCodeArchitectureHazardAnalysis({
     contextSources: input.contextSources,
   });
 
+  if (hasPreprocessing) {
+    run.userPreprocessing = { ...previousRun?.userPreprocessing, ...reconciled.ownership };
+    run.userPreprocessingConflicts = reconciled.conflicts;
+  }
   await saveCodeArchitectureHazardRun(run);
   onActivityUpdate({ step: 9, message: "Code architecture hazard analysis complete." });
   return run;

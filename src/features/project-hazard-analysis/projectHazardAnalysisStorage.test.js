@@ -372,3 +372,24 @@ it("persists imported Summary and displayed rows together and restores both", as
   expect(restored.analysisResult.Summary[1][1]).toBe("old hazard");
   expect(restored.draftHazardRowsByIndex["context:guide"].row[1]).toBe("old hazard");
 });
+
+test('user preprocessing survives durable save, reload, and revision restoration', async () => {
+  const userPreprocessing = { values: { 'Guide Phrase Applicable': 'No' }, basis: { 'Control Action': 'Plan' }, pending: true };
+  const first = await saveHazardAnalysis('preprocessing-project', {
+    analysisResult: analysis('original'),
+    draftHazardRowsByIndex: { row1: { row: ['RAW-1', 'No'], generated: false, userPreprocessing } },
+  });
+  const saved = await loadProjectHazardAnalysisRecord('preprocessing-project');
+  expect(saved.draftHazardRowsByIndex.row1.userPreprocessing).toEqual(userPreprocessing);
+  await saveHazardAnalysis('preprocessing-project', {
+    analysisResult: analysis('updated'), draftHazardRowsByIndex: {},
+  }, { expectedRevision: first.revision });
+  const revisions = await listHazardAnalysisRevisions('preprocessing-project');
+  expect(revisions.status).toBe(HAZARD_WRITE_OUTCOME.OK);
+  // The original revision retains ownership along with the original row values.
+  const original = revisionsOf('preprocessing-project').find(entry => entry.draftHazardRowsByIndex?.row1);
+  expect(original.draftHazardRowsByIndex.row1.userPreprocessing).toEqual(userPreprocessing);
+  await restoreHazardAnalysisRevision('preprocessing-project', first.revision);
+  const restored = await loadProjectHazardAnalysisRecord('preprocessing-project');
+  expect(restored.draftHazardRowsByIndex.row1.userPreprocessing).toEqual(userPreprocessing);
+});

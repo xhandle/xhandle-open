@@ -1,3 +1,4 @@
+import { fillNotApplicableHazardCells } from './hazardNotApplicableCells';
 import {
   CLASSIFICATION_RESOLUTION_STATUS_HEADER,
   deriveClassificationResolutionStatus,
@@ -653,7 +654,7 @@ export function normalizeReviewedHazardRowForPersistence({
   if (resolutionStatusIndex >= 0) {
     row[resolutionStatusIndex] = deriveClassificationResolutionStatus(headers, row);
   }
-  return { row, guidePhraseReview, safetySignificanceReview };
+  return { row: fillNotApplicableHazardCells(headers, row), guidePhraseReview, safetySignificanceReview };
 }
 
 export function applyReviewedSafetySignificanceToGenerationInput({

@@ -1,3 +1,4 @@
+import { fillNotApplicableHazardSummary } from '../project-hazard-analysis/hazardNotApplicableCells';
 import FunctionalDiagramWorkspace from '../../components/FunctionalDiagramWorkspace';
 import { filterCodeArchitectureHazardRowsByContext } from './codeArchitectureHazardGrouping';
 import HazardCsvIssuesModal from '../project-hazard-analysis/HazardCsvIssuesModal';
@@ -81,9 +82,9 @@ export default function CodeArchitectureHazardPanel({
   onCollaboratorSelectionChange,
   reviewMode = false,
 }) {
-  const summarySheet = useMemo(() => ensureHazardAnalysisRowIds(
+  const summarySheet = useMemo(() => fillNotApplicableHazardSummary(ensureHazardAnalysisRowIds(
     latestRun?.generatedSheets?.Summary || draftRun?.generatedSheets?.Summary || []
-  ), [latestRun, draftRun]);
+  )), [latestRun, draftRun]);
   const csvInputRef = useRef(null);
   const visibleSummaryRef = useRef(null);
   const [csvIssues, setCsvIssues] = useState([]);
@@ -329,6 +330,10 @@ export default function CodeArchitectureHazardPanel({
       </ProjectTabSideToolbar>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        {latestRun?.userPreprocessingConflicts?.length > 0 && <details className="m-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm">
+          <summary>User preprocessing needs review ({latestRun.userPreprocessingConflicts.length})</summary>
+          {latestRun.userPreprocessingConflicts.map((message, index) => <p key={index}>{message}</p>)}
+        </details>}
         {operationalContexts.length === 0 && !reviewMode && (
           <button
             type="button"
