@@ -18,7 +18,7 @@
  */
 
 import { csvCellText, csvHeaderKey, parseCsv } from "../../lib/csv";
-import { ensureHazardAnalysisRowIds } from "./classificationResolutionStatus";
+import { ensureHazardAnalysisRowIds, inspectClassificationResolution } from "./classificationResolutionStatus";
 import { derivedSignificanceConflict, describeSignificanceConflict } from "./safetyColumnSchema";
 
 /** Build an import baseline without saving or treating unfinished rows as generated. */
@@ -274,6 +274,14 @@ function describeMergedConflicts(summary, updates) {
     .filter(Boolean);
 }
 
+// Resolution is derived evidence, not a decision supplied by the CSV. Keep
+// schema and all governed decisions intact; replace only an existing status.
+function refreshImportedResolution(headers, row) {
+  const index = headers.findIndex(header => csvHeaderKey(header) === csvHeaderKey("Classification Resolution Status"));
+  if (index >= 0) row[index] = inspectClassificationResolution(headers, row).status;
+  return row;
+}
+
 /** Apply a plan's updates, returning a new Summary. The input is not mutated. */
 export function applyHazardAnalysisCsvImport(summary = [], updates = []) {
   if (!updates.length) return summary;
@@ -282,6 +290,7 @@ export function applyHazardAnalysisCsvImport(summary = [], updates = []) {
     const row = next[rowIndex];
     if (!Array.isArray(row)) return;
     changes.forEach(({ summaryIndex, value }) => { row[summaryIndex] = value; });
+    refreshImportedResolution(next[0], row);
   });
   return next;
 }
@@ -301,7 +310,7 @@ export function applyHazardCsvImportToDrafts(draftRows = {}, draftHeaders = [], 
       const index = indexes.get(csvHeaderKey(header));
       if (index !== undefined) row[index] = value;
     });
-    return [key, { ...entry, row }];
+    return [key, { ...entry, row: refreshImportedResolution(draftHeaders, row) }];
   }));
 }
 

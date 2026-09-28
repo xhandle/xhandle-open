@@ -1,0 +1,6 @@
+/* Keep editor pointers stable regardless of React Flow's stylesheet load order. */
+.project-functional-diagram .react-flow__pane,
+.project-functional-diagram .react-flow__node,
+.project-functional-diagram .react-flow__nodesselection-rect {
+  cursor: default;
+}

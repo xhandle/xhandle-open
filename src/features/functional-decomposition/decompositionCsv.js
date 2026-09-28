@@ -107,7 +107,7 @@ export function parseFunctionalDecompositionCsv(text = "") {
     const row = {};
     FUNCTIONAL_ROW_FIELDS.forEach((field) => {
       const columnIndex = columns.get(field);
-      row[field] = columnIndex === undefined ? "" : csvCellText(cells[columnIndex]);
+      if (field !== "system" || columnIndex !== undefined) row[field] = columnIndex === undefined ? "" : csvCellText(cells[columnIndex]);
     });
     if (FUNCTIONAL_ROW_FIELDS.every((field) => !row[field])) {
       ignoredBlankRows += 1;
@@ -128,11 +128,22 @@ export function parseFunctionalDecompositionCsv(text = "") {
 
   const conflicts = [];
   const owners = new Map();
+  const systemOwners = new Map();
+  const subsystemSystems = new Map();
   const interfaces = new Map();
   rows.forEach((row, index) => {
     const line = lineNumbers[index];
     const fromKey = labelKey(row.fromFunction);
     const subsystem = row.subsystem;
+    if (Object.prototype.hasOwnProperty.call(row, 'system')) {
+      [[systemOwners, fromKey, row.fromFunction], [subsystemSystems, labelKey(subsystem), subsystem]].forEach(([map, key, label]) => {
+        if (!key) return;
+        const previous = map.get(key);
+        if (previous && labelKey(previous.system) !== labelKey(row.system)) {
+          conflicts.push(`Line ${line}: "${label}" has system "${row.system || '(none)'}" here and "${previous.system || '(none)'}" on line ${previous.line}.`);
+        } else if (!previous) map.set(key, { system: row.system, line });
+      });
+    }
     if (fromKey && subsystem) {
       const existing = owners.get(fromKey);
       if (existing && labelKey(existing.subsystem) !== labelKey(subsystem)) {

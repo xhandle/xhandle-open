@@ -65,6 +65,7 @@ export async function runLiteAIAnalysis({
   contextSources = null,
   omitConsolidatedRequirement = false,
   signal = null,
+  onStageComplete = async () => {},
 }) {
   const totalSteps = 9;
   let step = 0;
@@ -125,6 +126,7 @@ export async function runLiteAIAnalysis({
       contextSources,
       signal,
       onProgress: updateGeneratorProgress,
+      onStageComplete,
       omitConsolidatedRequirement,
     })) || updatedSheets;
     step = 9;
@@ -226,6 +228,7 @@ export async function runLiteAIAnalysis({
       contextSources,
       signal,
       onProgress: updateGeneratorProgress,
+      onStageComplete,
       omitConsolidatedRequirement,
     })) || updatedSheets;
     step = 9;
@@ -246,6 +249,7 @@ export async function runLiteAIAnalysis({
       contextSources,
       signal,
       onProgress: updateGeneratorProgress,
+      onStageComplete,
       omitConsolidatedRequirement,
     })) || updatedSheets;
     step = 9;
@@ -268,6 +272,7 @@ export async function runLiteAIAnalysis({
       analysisContext,
       contextSources,
       onProgress: updateGeneratorProgress,
+      onStageComplete,
     })) || updatedSheets;
 
     step = 9;
@@ -289,6 +294,7 @@ export async function runLiteAIAnalysis({
       analysisContext,
       contextSources,
       onProgress: updateGeneratorProgress,
+      onStageComplete,
     })) || updatedSheets;
 
     step = 9;

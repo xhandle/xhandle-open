@@ -24,6 +24,13 @@ const EXCLUDED_BACKUP_KEYS = new Set([
 
 const KNOWN_DB_CONFIGS = [
   {
+    name: "xhandle-recovery", version: 1,
+    stores: { checkpoints: { keyPath: null } },
+    open: () => openDB("xhandle-recovery", 1, {
+      upgrade(db) { if (!db.objectStoreNames.contains("checkpoints")) db.createObjectStore("checkpoints"); },
+    }),
+  },
+  {
     name: "xhandle-project-reports",
     version: 1,
     stores: {

@@ -1,4 +1,4 @@
-import { openDB } from "idb";
+import { openRecoveryDatabase } from "../../lib/durableRecovery";
 import { normalizeHazardAnalysisResolutionStatus } from "./classificationResolutionStatus";
 
 const DB_NAME = "xhandle-project-hazard-analysis";
@@ -84,10 +84,26 @@ function enqueueProjectWrite(projectId, operation) {
 }
 
 async function openHazardDatabase() {
-  return openDB(DB_NAME, DB_VERSION, {
+  const db = await openRecoveryDatabase(DB_NAME, DB_VERSION, {
     upgrade(db) {
       if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME, { keyPath: "projectId" });
       if (!db.objectStoreNames.contains(REVISION_STORE_NAME)) db.createObjectStore(REVISION_STORE_NAME, { keyPath: "key" });
+    },
+  });
+  return new Proxy(db, {
+    get(target, property) {
+      const value = target[property];
+      if (typeof value !== 'function') return value;
+      if (!['get', 'getAll', 'getAllKeys'].includes(property)) return value.bind(target);
+      return (...args) => {
+        let timer;
+        return Promise.race([
+          Promise.resolve().then(() => value.apply(target, args)),
+          new Promise((_, reject) => { timer = setTimeout(() => {
+            target.close?.(); reject(new Error('Hazard storage read timed out.'));
+          }, 15000); }),
+        ]).finally(() => clearTimeout(timer));
+      };
     },
   });
 }
@@ -152,9 +168,18 @@ async function runHazardTransaction(db, work) {
   const tx = db.transaction([STORE_NAME, REVISION_STORE_NAME], "readwrite");
   const heads = tx.objectStore ? tx.objectStore(STORE_NAME) : tx.store;
   const revisions = tx.objectStore ? tx.objectStore(REVISION_STORE_NAME) : tx.store;
-  const result = await work({ heads, revisions });
-  await tx.done;
-  return result;
+  let timer;
+  try {
+    return await Promise.race([
+      (async () => { const result = await work({ heads, revisions }); await tx.done; return result; })(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          try { tx.abort(); } catch {}
+          reject(new Error("Hazard storage transaction timed out."));
+        }, 15000);
+      }),
+    ]);
+  } finally { clearTimeout(timer); db.close?.(); }
 }
 
 /** Remaining browser storage, where the platform can tell us. */
@@ -180,16 +205,17 @@ export async function listHazardAnalysisRevisions(projectId) {
   try {
     const db = await openHazardDatabase();
     if (!db) return { status: HAZARD_WRITE_OUTCOME.UNAVAILABLE, revisions: [] };
-    const all = (await db.getAll(REVISION_STORE_NAME)) || [];
-    const revisions = all
-      .filter((entry) => entry?.projectId === id)
-      .sort((a, b) => (a.revision || 0) - (b.revision || 0))
-      .map(({ key, analysisResult, draftHazardRowsByIndex, riskRegister, ...meta }) => ({
-        ...meta,
-        // Metadata only: a recovery list must not pull every full analysis into
-        // memory just to show a table of dates.
-        rowCount: Array.isArray(analysisResult?.Summary) ? Math.max(analysisResult.Summary.length - 1, 0) : 0,
-      }));
+    const keys = (await db.getAllKeys(REVISION_STORE_NAME)) || [];
+    const revisions = [];
+    // Read only this project's revisions, one body at a time.
+    for (const key of keys.filter(key => String(key).startsWith(`${id}::`))) {
+      const entry = await db.get(REVISION_STORE_NAME, key);
+      if (!entry || entry.projectId !== id) continue;
+      const { analysisResult, draftHazardRowsByIndex, riskRegister, contentSignature, ...meta } = entry;
+      revisions.push({ ...meta, rowCount: Array.isArray(analysisResult?.Summary) ? Math.max(analysisResult.Summary.length - 1, 0) : 0 });
+    }
+    db.close?.();
+    revisions.sort((a, b) => (a.revision || 0) - (b.revision || 0));
     return { status: HAZARD_WRITE_OUTCOME.OK, revisions };
   } catch (error) {
     console.warn("[project-hazard-storage] Unable to list hazard analysis revisions", error);

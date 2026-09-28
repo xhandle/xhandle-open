@@ -1,19 +1,13 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "./index.css";
+import { installDeferredResizeObserver } from "./lib/deferredResizeObserver";
 import { installAIRequestAuthShim } from "./lib/installAIRequestAuthShim";
 
 installAIRequestAuthShim();
 
 if (typeof window !== "undefined" && typeof window.ResizeObserver === "function") {
-  const NativeResizeObserver = window.ResizeObserver;
-  window.ResizeObserver = class ResizeObserver extends NativeResizeObserver {
-    constructor(callback) {
-      super((entries, observer) => {
-        window.requestAnimationFrame(() => callback(entries, observer));
-      });
-    }
-  };
+  installDeferredResizeObserver(window);
 
   const suppressResizeObserverOverlay = (event) => {
     const message = event?.message || event?.reason?.message || "";

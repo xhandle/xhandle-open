@@ -65,14 +65,14 @@ describe("the export/import round trip", () => {
 
     expect(parsed.errors).toEqual([]);
     expect(parsed.conflicts).toEqual([]);
-    expect(parsed.rows).toEqual(rows);
+    expect(parsed.rows).toEqual(rows.map(row => ({ ...row, system: row.system || "" })));
   });
 
-  it("writes the seven exported column labels in order", () => {
+  it("writes System before the existing exported columns", () => {
     const [header] = parseCsv(functionalDecompositionToCsv([]));
     expect(header).toEqual(FUNCTIONAL_DECOMPOSITION_COLUMNS.map(({ label }) => label));
     expect(header).toEqual([
-      "Subsystem", "Function (From)", "Function (From) Details", "Control Action",
+      "System", "Subsystem", "Function (From)", "Function (From) Details", "Control Action",
       "Control Action Details", "Function (To)", "Function (To) Details",
     ]);
   });
@@ -206,5 +206,27 @@ describe("describeFunctionalCsvProblems", () => {
     expect(message).toContain("• two");
     expect(message).toContain("…and 2 more.");
     expect(message).not.toContain("• three");
+  });
+});
+
+
+describe("optional System allocation", () => {
+  it("round trips explicit systems and explicit blank values", () => {
+    const rows = [row({ system: "Vehicle" }), row({ system: "", subsystem: "Other", fromFunction: "Other source" })];
+    const parsed = parseFunctionalDecompositionCsv(functionalDecompositionToCsv(rows));
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.conflicts).toEqual([]);
+    expect(parsed.rows).toEqual(rows);
+  });
+  it("continues accepting legacy files without a System column", () => {
+    const parsed = parseFunctionalDecompositionCsv("Subsystem,Function (From),Control Action,Function (To)\nPlanning,Plan,Command,Control");
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.conflicts).toEqual([]);
+    expect(parsed.rows[0]).not.toHaveProperty("system");
+  });
+  it("rejects contradictory system owners for the same subsystem", () => {
+    const parsed = parseFunctionalDecompositionCsv(functionalDecompositionToCsv([row({ system: "Vehicle" }), row({ system: "Fleet", fromFunction: "Other" })]));
+    expect(parsed.conflicts).toHaveLength(1);
+    expect(parsed.conflicts[0]).toContain('system "Fleet"');
   });
 });

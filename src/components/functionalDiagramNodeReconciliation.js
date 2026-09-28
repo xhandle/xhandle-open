@@ -1,3 +1,5 @@
+import { absoluteElementPosition } from './functionalSystemGroups';
+
 export const DIAGRAM_NODE_PROVENANCE = Object.freeze({
   GENERATED: 'functional-row',
   MANUAL: 'user-manual',
@@ -104,11 +106,14 @@ export function resolveGeneratedNodePlacement({
   const parentId = explicitlyUngrouped ? null : (explicitParent || expectedGroup?.id || null);
   const oldParent = existing?.parentNode ? groupById.get(existing.parentNode) : (savedParent ? groupById.get(savedParent) : null);
   const local = saved?.position || existing?.position;
+  const parentNodes = [...groupById.values()];
+  const oldOrigin = absoluteElementPosition(oldParent, parentNodes);
+  const newOrigin = absoluteElementPosition(groupById.get(parentId), parentNodes);
   const absolute = local
-    ? (oldParent ? { x: oldParent.position.x + local.x, y: oldParent.position.y + local.y } : { ...local })
+    ? (oldParent ? { x: oldOrigin.x + local.x, y: oldOrigin.y + local.y } : { ...local })
     : null;
   const position = absolute && parentId
-    ? { x: absolute.x - groupById.get(parentId).position.x, y: absolute.y - groupById.get(parentId).position.y }
+    ? { x: absolute.x - newOrigin.x, y: absolute.y - newOrigin.y }
     : absolute;
   return { parentId, position, groupingIntent: explicitParent ? 'explicit' : 'automatic' };
 }

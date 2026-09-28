@@ -1,3 +1,5 @@
+import { classifyAssociatedHazard } from './associatedHazardClassification';
+import { initialDiagramLayoutPending, readDiagramViewport } from './functionalDiagramInitialization';
 // LiteSummaryDiagramReactFlow.js — xHandle look, NO AUTO LAYOUT + ONE-TIME CLEAN & SPREAD
 // - Positions persist across unmounts
 // - One-time overlap removal + viewport spread after prompt via `cleanOnceKey` prop or `ref.cleanOnce()`
@@ -22,6 +24,7 @@ import ReactFlow, {
   Position,
   addEdge,
   useNodesState,
+  useNodesInitialized,
   useEdgesState,
   ConnectionMode,
   BaseEdge,
@@ -30,6 +33,9 @@ import ReactFlow, {
   useReactFlow,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
+import './functionalDiagramCursors.css';
+import { diagramRectsOverlap, GROUP_COLLISION_CLEARANCE } from './functionalDiagramCollision';
+import { tightenSystemSpacing, systemForElement, tightenSystemSubsystemSpacing, separateSystemGroups, rowsWithDiagramSystems, reconcileTableSystems, absoluteElementPosition, applyGroupGeometry, canContainElement, detachDeletedSystemParents, fitSystemAncestors, resizeSystemElements, isSystemGroup, orderParentElements, reparentSystemElements } from './functionalSystemGroups';
 import { toPng } from 'html-to-image';
 import { SmartBezierEdge } from '@tisoap/react-flow-smart-edge';
 import ELK from 'elkjs/lib/elk.bundled.js';
@@ -246,8 +252,9 @@ const rgba = (hex, alpha) => {
 
 function positionsAbsMapFromRF(rfNodes) {
   const m = new Map();
+  const byId = new Map((rfNodes || []).map(node => [node.id, node]));
   (rfNodes || []).forEach((n) => {
-    const p = n.positionAbsolute || n.position || { x: 0, y: 0 };
+    const p = getNodeAbsolutePosition(n, byId);
     m.set(n.id, { x: p.x, y: p.y });
   });
   return m;
@@ -295,6 +302,7 @@ function cleanNodeForExport(node) {
     id: node.id,
     type: node.type || 'default',
     label: node.data?.label || node.id,
+    ...(node.data?.elementType ? { elementType: node.data.elementType } : {}),
     description: node.data?.description || '',
     position: node.position || { x: 0, y: 0 },
     positionAbsolute: node.positionAbsolute || node.position || { x: 0, y: 0 },
@@ -1009,10 +1017,11 @@ const GroupBoxNode = ({ data, selected }) => {
 	          borderBottom: `1px dashed ${rgba(brandColor, 0.3)}`,
 	          textAlign: 'left',
 	          pointerEvents: 'auto',
-	          cursor: 'grab',
+	          cursor: 'default',
 	        }}
       >
         {data.label || 'Group'}
+        {data.elementType === 'system' && <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 500 }}>System</span>}
       </div>
     </div>
   );
@@ -1501,8 +1510,8 @@ function sizeGroupToFitChildren(box, children) {
   children.forEach((child) => {
     const x = child?.position?.x ?? GROUP.padX;
     const y = child?.position?.y ?? GROUP.padTop;
-    maxRight = Math.max(maxRight, x + NODE_LAYOUT.w + GROUP.padX);
-    maxBottom = Math.max(maxBottom, y + NODE_LAYOUT.h + GROUP.padBottom);
+    maxRight = Math.max(maxRight, x + (child.type === 'groupBox' ? Number(child.style?.width) || GROUP.w : NODE_LAYOUT.w) + GROUP.padX);
+    maxBottom = Math.max(maxBottom, y + (child.type === 'groupBox' ? Number(child.style?.height) || GROUP.h : NODE_LAYOUT.h) + GROUP.padBottom);
   });
 
   return {
@@ -1661,22 +1670,6 @@ function diagramRectForNode(node = {}, nodeById = new Map()) {
   };
 }
 
-function diagramRectsOverlap(a = {}, b = {}, padding = 0) {
-  const ax = Number(a.x) || 0;
-  const ay = Number(a.y) || 0;
-  const aw = Number(a.width) || 0;
-  const ah = Number(a.height) || 0;
-  const bx = Number(b.x) || 0;
-  const by = Number(b.y) || 0;
-  const bw = Number(b.width) || 0;
-  const bh = Number(b.height) || 0;
-  return !(
-    ax + aw + padding < bx ||
-    bx + bw + padding < ax ||
-    ay + ah + padding < by ||
-    by + bh + padding < ay
-  );
-}
 
 function collectOccupiedDiagramRects(existingBoxes = [], graphNodes = []) {
   const nodeById = new Map((Array.isArray(graphNodes) ? graphNodes : []).map((node) => [node.id, node]));
@@ -1721,7 +1714,7 @@ function findOpenGroupBoxPosition(boxSize = {}, existingBoxes = [], graphNodes =
           width: candidate.width,
           height: candidate.height,
         };
-        if (occupiedRects.every((rect) => !diagramRectsOverlap(candidateRect, rect, 80))) return candidate.position;
+        if (occupiedRects.every((rect) => !diagramRectsOverlap(candidateRect, rect, GROUP_COLLISION_CLEARANCE))) return candidate.position;
       }
     }
   }
@@ -1910,7 +1903,7 @@ function normalizeCategories(aiPlan, rows) {
     normalized.splice(10);
   }
 
-  if (!normalized.length && allFunctions.length) {
+  if (!normalized.length && allFunctions.length && !isTableSubsystemPlan) {
     normalized.push({ name: 'Functional Architecture', functions: allFunctions });
     return normalized;
   }
@@ -2280,7 +2273,7 @@ function spreadToViewport({ nodes, containerW, containerH, padX = THEME.canvas.p
  * Component
  * ================================ */
 const DiagramBody = forwardRef(function DiagramBody(
-    { rows = [], onUpdateRows, storageKey = 'diagram:positions:v1', cleanOnceKey = null, onCleanApplied, fitAfterClean = true, autoCategories = null, hazardSummary = null, hazardRowSourceIndexes = [], riskRegister = [], onOpenHazardRow, onOpenSafetyIssue, onCanvasSelectionChange },
+    { rows = [], onUpdateRows, storageKey = 'diagram:positions:v1', cleanOnceKey = null, onCleanApplied, fitAfterClean = true, autoCategories = null, hazardSummary = null, hazardRowSourceIndexes = [], riskRegister = [], onOpenHazardRow, onOpenFunctionalRow, onOpenSafetyIssue, onCanvasSelectionChange },
     ref
 ) {
   const nodeTypes = useMemo(() => ({ bidirectional: BidirectionalNode, groupBox: GroupBoxNode, note: NoteNode }), []);
@@ -2293,6 +2286,7 @@ const DiagramBody = forwardRef(function DiagramBody(
     });
   }, [rawSetNodes]);
   const [edges, setEdges, reactflowOnEdgesChange] = useEdgesState([]);
+  const measuredNodesReady = useNodesInitialized();
   const hasGroups = useMemo(
     () => nodes.some((n) => n.type === 'groupBox'),
     [nodes]
@@ -2606,16 +2600,10 @@ const DiagramBody = forwardRef(function DiagramBody(
     return value || `Hazard ${sourceIndex + 1}`;
   }, [hazardTitleIndex]);
 
-  const proposedSafetyAssessmentIndex = useMemo(() => (
-    hazardHeaders.findIndex((header) => /^proposed\s+safety\s+assessment$/i.test(String(header || '').trim()))
-  ), [hazardHeaders]);
-
-  const getProposedSafetyAssessment = useCallback((cells = []) => {
-    if (proposedSafetyAssessmentIndex < 0) return 'Safety';
-    const value = String(cells?.[proposedSafetyAssessmentIndex] || '').trim().toLowerCase();
-    if (/^safety\b|safety[-\s]?critical|safety\s*significant/.test(value)) return 'Safety';
-    return 'Mission/Reliability';
-  }, [proposedSafetyAssessmentIndex]);
+  const getProposedSafetyAssessment = useCallback(
+    (cells = []) => classifyAssociatedHazard(hazardHeaders, cells),
+    [hazardHeaders]
+  );
 
   const getRiskSourceIndexes = useCallback((risk) => {
     const indexes = Array.isArray(risk?.sourceIndexes) ? risk.sourceIndexes : [];
@@ -2721,6 +2709,24 @@ const DiagramBody = forwardRef(function DiagramBody(
     return associated;
   }, [functionalRowInterfaceMatches, getHazardInterface, hazardDataRows, hazardRowSourceIndexes, nodes, normalizeAssociationText, rows]);
 
+  const editFunctionalRows = useMemo(() => {
+    if (!editModal) return [];
+    const ids = new Set([editModal.id]);
+    // Include descendants of system/subsystem containers.
+    let grew = true;
+    while (grew) {
+      grew = false;
+      nodes.forEach(node => {
+        if (ids.has(node.parentNode) && !ids.has(node.id)) { ids.add(node.id); grew = true; }
+      });
+    }
+    return rows.map((row, index) => ({ row, index })).filter(({ row, index }) =>
+      editModal.type === 'edge'
+        ? edgeIdForRow(row, index) === editModal.id || editModal.data?.rowIndexes?.includes(index)
+        : ids.has(nodeIdForFunction(row.fromFunction)) || ids.has(nodeIdForFunction(row.toFunction))
+    );
+  }, [editModal, nodes, rows]);
+
   const editHazardRows = useMemo(
     () => getAssociatedHazardRows(editModal),
     [editModal, getAssociatedHazardRows]
@@ -2732,7 +2738,16 @@ const DiagramBody = forwardRef(function DiagramBody(
   );
 
   const editMissionReliabilityRows = useMemo(
-    () => editHazardRows.filter(({ cells }) => getProposedSafetyAssessment(cells) !== 'Safety'),
+    () => editHazardRows.filter(({ cells }) => getProposedSafetyAssessment(cells) === 'Mission/Reliability'),
+    [editHazardRows, getProposedSafetyAssessment]
+  );
+
+  const editExcludedHazardRows = useMemo(
+    () => editHazardRows.filter(({ cells }) => getProposedSafetyAssessment(cells) === 'Not Applicable'),
+    [editHazardRows, getProposedSafetyAssessment]
+  );
+  const editUnresolvedHazardRows = useMemo(
+    () => editHazardRows.filter(({ cells }) => getProposedSafetyAssessment(cells) === 'Needs Review'),
     [editHazardRows, getProposedSafetyAssessment]
   );
 
@@ -2889,6 +2904,9 @@ const DiagramBody = forwardRef(function DiagramBody(
 
   const builtCountRef = useRef(0);
   const builtOnceRef = useRef(false);
+  const initialArrangementPendingRef = useRef(false);
+  const [initialLayoutReady, setInitialLayoutReady] = useState(false);
+  const savedViewport = useMemo(() => readDiagramViewport(localStorage, storageKey), [storageKey]);
   const structureRef = useRef('');
 
   const flushGroupResizeAndPersistence = useCallback(({ updateState = true } = {}) => {
@@ -3087,7 +3105,7 @@ const DiagramBody = forwardRef(function DiagramBody(
     const node = graphNodes.find((entry) => entry.id === nodeId) || nodes.find((entry) => entry.id === nodeId);
     if (!node?.parentNode) return '';
     const group = groupBoxesRef.current.find((box) => box.id === node.parentNode) || groupBoxes.find((box) => box.id === node.parentNode);
-    return String(group?.label || '').trim();
+    return isSystemGroup(group) ? '' : String(group?.label || '').trim();
   }, [getNodes, groupBoxes, nodes]);
 
   const updateSubsystemForFunctionNodeIds = useCallback((nodeIds, subsystemName, sourceRows = rows) => {
@@ -3117,6 +3135,8 @@ const DiagramBody = forwardRef(function DiagramBody(
     storageKeyRef.current = storageKey;
     setHydratedStorageKey(null);
     posRef.current = loadPositions(storageKey);
+    initialArrangementPendingRef.current = initialDiagramLayoutPending(localStorage, storageKey, posRef.current.size > 0);
+    setInitialLayoutReady(!initialArrangementPendingRef.current);
     const loadedDeletedAutoGroupIds = loadDeletedAutoGroupIds(storageKey);
     deletedAutoGroupIdsRef.current = loadedDeletedAutoGroupIds;
     setDeletedAutoGroupIds(loadedDeletedAutoGroupIds);
@@ -3295,8 +3315,39 @@ useEffect(() => {
     };
   }, [flushGroupResizeAndPersistence, storageKey, manualNodesStore]);
 
+  const applySystemGeometry = useCallback((result) => {
+    result.nodes.forEach(node => {
+      posRef.current.set(node.id, { ...posRef.current.get(node.id), position: node.position, parentId: node.parentNode || null });
+    });
+    groupBoxesRef.current = result.boxes;
+    setGroupBoxes(result.boxes);
+    persistGroupsSoon(result.boxes);
+    setNodes(result.nodes);
+    persistSoon();
+  }, [persistGroupsSoon, persistSoon, setNodes]);
+
+  const settleSystemOverlaps = useCallback(() => {
+    const boxes = groupBoxesRef.current;
+    const separated = separateSystemGroups(boxes);
+    if (separated === boxes) return false;
+    const nextNodes = applyGroupGeometry(getNodes(), separated);
+    applySystemGeometry({ nodes: nextNodes, boxes: separated });
+    const rawEdges = rowsToRawEdges(rows);
+    setEdges(buildEdgesFromRaw(rawEdges, buildAbsolutePositionMap(nextNodes), edgeAggregationRef.current, edgeRoutingRef.current));
+    return true;
+  }, [applySystemGeometry, getNodes, rows, setEdges]);
+
   const queueGroupResizeUpdate = useCallback((id, dimensions) => {
     if (!id || !dimensions) return;
+    const nestedBox = groupBoxesRef.current.find(box => box.id === id);
+    if (isSystemGroup(nestedBox) || nestedBox?.parentNode) {
+      if (Number(dimensions.width) === nestedBox.width && Number(dimensions.height) === nestedBox.height
+        && (!Number.isFinite(dimensions.x) || dimensions.x === nestedBox.position.x)
+        && (!Number.isFinite(dimensions.y) || dimensions.y === nestedBox.position.y)) return;
+      applySystemGeometry(resizeSystemElements(getNodes(), groupBoxesRef.current, id, dimensions,
+        { ...GROUP, nodeWidth: NODE_LAYOUT.w, nodeHeight: NODE_LAYOUT.h }));
+      return;
+    }
     const rawWidth = Number(dimensions.width);
     const rawHeight = Number(dimensions.height);
     if (!Number.isFinite(rawWidth) || !Number.isFinite(rawHeight)) return;
@@ -3350,7 +3401,7 @@ useEffect(() => {
         },
         resizedBox
       );
-      posRef.current.set(node.id, { position: nextPosition, parentId: id });
+      posRef.current.set(node.id, { ...posRef.current.get(node.id), position: nextPosition, parentId: id });
       return {
         ...node,
         position: nextPosition,
@@ -3362,11 +3413,12 @@ useEffect(() => {
     resizeFrameRef.current = requestAnimationFrame(() => {
       flushGroupResizeAndPersistence();
     });
-  }, [flushGroupResizeAndPersistence, setNodes]);
+  }, [applySystemGeometry, getNodes, flushGroupResizeAndPersistence, setNodes]);
 
   const startGroupResize = useCallback((id, dimensions = {}) => {
     if (!id) return;
     const currentBox = groupBoxesRef.current.find((box) => box.id === id);
+    if (isSystemGroup(currentBox) || currentBox?.parentNode) captureDiagramHistoryCheckpoint();
     const rawX = Number(dimensions.x);
     const rawY = Number(dimensions.y);
     const rawWidth = Number(dimensions.width);
@@ -3393,13 +3445,14 @@ useEffect(() => {
       startBox,
       childAbsolutePositions,
     });
-  }, [getNodes]);
+  }, [captureDiagramHistoryCheckpoint, getNodes]);
 
   const endGroupResize = useCallback((id, dimensions) => {
     queueGroupResizeUpdate(id, dimensions);
     groupResizeSessionRef.current.delete(id);
     flushGroupResizeAndPersistence();
-  }, [flushGroupResizeAndPersistence, queueGroupResizeUpdate]);
+    settleSystemOverlaps();
+  }, [flushGroupResizeAndPersistence, queueGroupResizeUpdate, settleSystemOverlaps]);
 
   const exportDiagramJson = useCallback(() => {
     const exportedAt = new Date().toISOString();
@@ -3427,7 +3480,7 @@ useEffect(() => {
   const growGroupToFitMembers = useCallback((groupId, sourceNodes = null) => {
     if (!groupId) return;
     const currentNodes = sourceNodes || getNodes();
-    const childNodes = currentNodes.filter((node) => node.parentNode === groupId && node.type !== 'groupBox');
+    const childNodes = currentNodes.filter((node) => node.parentNode === groupId);
     setGroupBoxes((currentBoxes) => {
       const existingBox = currentBoxes.find((box) => box.id === groupId);
       if (!existingBox) return currentBoxes;
@@ -3447,7 +3500,7 @@ useEffect(() => {
   }, [getNodes, persistGroupsSoon]);
 
   const expandGroupWhileDraggingChild = useCallback((event, draggedNode) => {
-    if (!draggedNode?.parentNode || draggedNode.type === 'groupBox') return;
+    if (!draggedNode?.parentNode) return;
     const groupId = draggedNode.parentNode;
     const currentBox = groupBoxesRef.current.find((box) => box.id === groupId);
     if (!currentBox) return;
@@ -3479,10 +3532,11 @@ useEffect(() => {
     const height = Math.max(currentBox.height || GROUP.h, GROUP.minH);
     const nodeWidth = Number(draggedNode.width) || NODE_LAYOUT.w;
     const nodeHeight = Number(draggedNode.height) || NODE_LAYOUT.h;
-    const innerLeft = currentBox.position.x + GROUP.padX;
-    const innerTop = currentBox.position.y + GROUP.padTop;
-    const innerRight = currentBox.position.x + width - GROUP.padX;
-    const innerBottom = currentBox.position.y + height - GROUP.padBottom;
+    const parentAbsolute = absoluteElementPosition(byId.get(groupId), currentNodes);
+    const innerLeft = parentAbsolute.x + GROUP.padX;
+    const innerTop = parentAbsolute.y + GROUP.padTop;
+    const innerRight = parentAbsolute.x + width - GROUP.padX;
+    const innerBottom = parentAbsolute.y + height - GROUP.padBottom;
 
     // Each side grows by the exact pointer overshoot. This gives left, right,
     // and top the same continuous behavior as bottom expansion.
@@ -3491,6 +3545,23 @@ useEffect(() => {
     const growTop = Math.max(0, innerTop - desiredAbsolute.y);
     const growBottom = Math.max(0, desiredAbsolute.y + nodeHeight - innerBottom);
     if (!growLeft && !growRight && !growTop && !growBottom) return;
+
+    if (isSystemGroup(currentBox) || currentBox.parentNode) {
+      const nextPosition = { x: currentBox.position.x - growLeft, y: currentBox.position.y - growTop };
+      const snapshot = resizeSystemElements(currentNodes, groupBoxesRef.current, groupId, {
+        ...nextPosition, width: width + growLeft + growRight, height: height + growTop + growBottom,
+      }, { ...GROUP, nodeWidth: NODE_LAYOUT.w, nodeHeight: NODE_LAYOUT.h });
+      const origin = absoluteElementPosition(snapshot.nodes.find(node => node.id === groupId), snapshot.nodes);
+      snapshot.nodes = snapshot.nodes.map(node => node.id === draggedNode.id ? { ...node, position: {
+        x: Math.max(GROUP.padX, desiredAbsolute.x - origin.x),
+        y: Math.max(GROUP.padTop, desiredAbsolute.y - origin.y),
+      } } : node);
+      snapshot.boxes = fitSystemAncestors(snapshot.nodes, snapshot.boxes, groupId,
+        { ...GROUP, nodeWidth: NODE_LAYOUT.w, nodeHeight: NODE_LAYOUT.h });
+      snapshot.nodes = applyGroupGeometry(snapshot.nodes, snapshot.boxes);
+      applySystemGeometry(snapshot);
+      return;
+    }
 
     const nextBox = {
       ...currentBox,
@@ -3527,14 +3598,14 @@ useEffect(() => {
       // amount so their absolute canvas positions do not change.
       const nextPosition = node.id === draggedNode.id
         ? {
-            x: desiredAbsolute.x - nextBox.position.x,
-            y: desiredAbsolute.y - nextBox.position.y,
+            x: desiredAbsolute.x - (parentAbsolute.x - growLeft),
+            y: desiredAbsolute.y - (parentAbsolute.y - growTop),
           }
         : {
             x: currentPosition.x + growLeft,
             y: currentPosition.y + growTop,
           };
-      posRef.current.set(node.id, { position: nextPosition, parentId: groupId });
+      posRef.current.set(node.id, { ...posRef.current.get(node.id), position: nextPosition, parentId: groupId });
       return nextPosition === currentPosition ? node : { ...node, position: nextPosition };
     }));
     childDragRef.current = {
@@ -3542,16 +3613,56 @@ useEffect(() => {
       nodeId: draggedNode.id,
       parentId: groupId,
       position: {
-        x: desiredAbsolute.x - nextBox.position.x,
-        y: desiredAbsolute.y - nextBox.position.y,
+        x: desiredAbsolute.x - (parentAbsolute.x - growLeft),
+        y: desiredAbsolute.y - (parentAbsolute.y - growTop),
       },
     };
     persistSoon();
-  }, [getNodes, persistGroupsSoon, persistSoon, project, setNodes]);
+  }, [applySystemGeometry, getNodes, persistGroupsSoon, persistSoon, project, setNodes]);
+
+  const systemRowsSignature = useCallback(sourceRows => JSON.stringify([storageKey, sourceRows.map(row => [row.fromFunction, row.subsystem, row.system ?? null])]), [storageKey]);
+  const publishDiagramSystems = useCallback((sourceNodes, sourceBoxes, sourceRows = rows) => {
+    if (!onUpdateRows) return;
+    const nextRows = rowsWithDiagramSystems(sourceRows, sourceNodes, sourceBoxes);
+    if (nextRows === rows) return;
+    onUpdateRows(nextRows);
+  }, [onUpdateRows, rows, storageKey]);
+
+  const applySystemMembership = useCallback((nodeIds, groupId, sourceNodes = getNodes(), sourceBoxes = groupBoxesRef.current) => {
+    const result = reparentSystemElements(sourceNodes, sourceBoxes, nodeIds, groupId,
+      { ...GROUP, nodeWidth: NODE_LAYOUT.w, nodeHeight: NODE_LAYOUT.h });
+    result.movedIds.forEach(id => {
+      const node = result.nodes.find(item => item.id === id);
+      posRef.current.set(id, { position: node.position, parentId: node.parentNode || null, groupingIntent: 'explicit' });
+    });
+    const nextUngrouped = new Set(ungroupedAutoNodeIdsRef.current);
+    result.movedIds.forEach(id => groupId ? nextUngrouped.delete(id) : nextUngrouped.add(id));
+    ungroupedAutoNodeIdsRef.current = nextUngrouped;
+    setUngroupedAutoNodeIds(nextUngrouped);
+    saveUngroupedAutoNodeIds(storageKey, nextUngrouped);
+    groupBoxesRef.current = result.boxes;
+    setGroupBoxes(result.boxes);
+    persistGroupsSoon(result.boxes);
+    setNodes(applyGroupGeometry(result.nodes, result.boxes));
+    persistSoon();
+    setContextMenu(null);
+    refreshEdgesFromNodes(result.nodes);
+    const target = result.boxes.find(box => box.id === groupId);
+    const movedFunctions = new Set(result.nodes.filter(node => result.movedIds.includes(node.id) && node.type !== 'groupBox').map(node => node.id));
+    const allocatedRows = movedFunctions.size ? rows.map(row => movedFunctions.has(nodeIdForFunction(row.fromFunction))
+      ? { ...row, subsystem: target && !isSystemGroup(target) ? target.label : '' } : row) : rows;
+    publishDiagramSystems(result.nodes, result.boxes, allocatedRows);
+  }, [getNodes, persistGroupsSoon, persistSoon, publishDiagramSystems, refreshEdgesFromNodes, rows, setNodes, storageKey]);
+
 
   const assignNodesToGroup = useCallback((nodeIds, groupId) => {
     const targetBox = groupBoxes.find((box) => box.id === groupId);
     if (!targetBox || !nodeIds?.length) return;
+    if (isSystemGroup(targetBox) || targetBox.parentNode || getNodes().some(node => nodeIds.includes(node.id) && (node.type === 'groupBox' || isSystemGroup(groupBoxes.find(box => box.id === node.parentNode))))) {
+      captureDiagramHistoryCheckpoint();
+      applySystemMembership(nodeIds, groupId);
+      return;
+    }
     captureDiagramHistoryCheckpoint();
 
     const nextUngrouped = new Set(ungroupedAutoNodeIdsRef.current);
@@ -3589,10 +3700,15 @@ useEffect(() => {
       refreshEdgesFromNodes(latestNodes);
     }, 0);
     updateSubsystemForFunctionNodeIds(nodeIds, targetBox.label);
-  }, [captureDiagramHistoryCheckpoint, getNodes, groupBoxes, growGroupToFitMembers, persistSoon, refreshEdgesFromNodes, setNodes, storageKey, updateSubsystemForFunctionNodeIds]);
+  }, [applySystemMembership, captureDiagramHistoryCheckpoint, getNodes, groupBoxes, growGroupToFitMembers, persistSoon, refreshEdgesFromNodes, setNodes, storageKey, updateSubsystemForFunctionNodeIds]);
 
   const ungroupNodes = useCallback((nodeIds) => {
     if (!nodeIds?.length) return;
+    if (getNodes().some(node => nodeIds.includes(node.id) && (node.type === 'groupBox' || isSystemGroup(groupBoxesRef.current.find(box => box.id === node.parentNode)) || groupBoxesRef.current.find(box => box.id === node.parentNode)?.parentNode))) {
+      captureDiagramHistoryCheckpoint();
+      applySystemMembership(nodeIds, null);
+      return;
+    }
     captureDiagramHistoryCheckpoint();
     const selectedIds = new Set(nodeIds);
     const autoGroupIds = new Set(groupBoxesRef.current.filter((box) => box.autoGenerated).map((box) => box.id));
@@ -3631,7 +3747,7 @@ useEffect(() => {
     setContextMenu(null);
     setTimeout(() => refreshEdgesFromNodes(getNodes()), 0);
     updateSubsystemForFunctionNodeIds(nodeIds, '');
-  }, [captureDiagramHistoryCheckpoint, getNodes, persistSoon, refreshEdgesFromNodes, setNodes, storageKey, updateSubsystemForFunctionNodeIds]);
+  }, [applySystemMembership, captureDiagramHistoryCheckpoint, getNodes, persistSoon, refreshEdgesFromNodes, setNodes, storageKey, updateSubsystemForFunctionNodeIds]);
 
   useEffect(() => {
     if (!storageReady) return;
@@ -3809,19 +3925,8 @@ useEffect(() => {
     structureRef.current = '';
   }, [autoCategories, rows, groupBoxes, nodes, storageKey, deletedAutoGroupIds, ungroupedAutoNodeIds, persistGroupsSoon, setGroupBoxes, storageReady]);
 
-  // Extra fit when parent flips cleanOnceKey (used after prompt finishes)
-useEffect(() => {
-  if (!cleanOnceKey) return;
-  const t = setTimeout(() => {
-    try {
-      fitView({ padding: 0.2, includeHiddenNodes: true });
-    } catch {}
-  }, 120); // small defer lets RF settle labels/edges
-  return () => clearTimeout(t);
-}, [cleanOnceKey, fitView]);
-
-
-  const runCleanAndSpread = useCallback(async ({ applyInitialEdgeDefaults = false, recordHistory = true } = {}) => {
+  const runCleanAndSpread = useCallback(async ({ applyInitialEdgeDefaults = false, recordHistory = true, initialRender = false } = {}) => {
+    const layoutNodes = initialRender ? nodes : getNodes();
     if (recordHistory) captureDiagramHistoryCheckpoint();
     if (applyInitialEdgeDefaults) {
       const initialAggregation = getPromptWizardInitialEdgeAggregationState(edgeAggregationRef.current);
@@ -3832,6 +3937,25 @@ useEffect(() => {
       setEdgeRouting(initialRouting);
       saveEdgeAggregationState(storageKey, initialAggregation);
       saveEdgeRoutingState(storageKey, initialRouting);
+    }
+
+    const nestedLayout = tightenSystemSubsystemSpacing(layoutNodes, groupBoxes,
+      { ...GROUP, nodeWidth: NODE_LAYOUT.w, nodeHeight: NODE_LAYOUT.h });
+    const tightened = tightenSystemSpacing(nestedLayout.nodes, nestedLayout.boxes,
+      { ...GROUP, nodeWidth: NODE_LAYOUT.w, nodeHeight: NODE_LAYOUT.h });
+    if (tightened.boxes !== groupBoxes) {
+      groupBoxesRef.current = tightened.boxes;
+      setGroupBoxes(tightened.boxes);
+      setNodes(tightened.nodes);
+      tightened.nodes.forEach(node => posRef.current.set(node.id, {
+        ...posRef.current.get(node.id), position: node.position, parentId: node.parentNode || null,
+      }));
+      saveGroupBoxes(storageKey, tightened.boxes);
+      savePositions(storageKey, posRef.current);
+      setEdges(buildEdgesFromRaw(rowsToRawEdges(rows), buildAbsolutePositionMap(tightened.nodes),
+        edgeAggregationRef.current, edgeRoutingRef.current));
+      if (fitAfterClean) setTimeout(() => fitView({ padding: 0.2, duration: initialRender ? 0 : 600, includeHiddenNodes: true }), 0);
+      return;
     }
 
     const categories = Array.isArray(autoCategories?.categories) ? autoCategories.categories : [];
@@ -3849,7 +3973,7 @@ useEffect(() => {
         savePositions(storageKey, posRef.current);
         structureRef.current = '';
         persistSoon();
-        const currentNodes = getNodes();
+        const currentNodes = layoutNodes;
         if (currentNodes.length) {
           const nextNodes = currentNodes.map((node) => {
             const saved = posRef.current.get(node.id);
@@ -3864,13 +3988,13 @@ useEffect(() => {
           const rawEdges = rowsToRawEdges(rows);
           setEdges(buildEdgesFromRaw(rawEdges, buildAbsolutePositionMap(nextNodes), edgeAggregationRef.current, edgeRoutingRef.current));
         }
-        setTimeout(() => fitView({ padding: 0.2, duration: 600, includeHiddenNodes: true }), 0);
+        setTimeout(() => fitView({ padding: 0.2, duration: initialRender ? 0 : 600, includeHiddenNodes: true }), 0);
         return;
       }
     }
 
-    const movableNodes = nodes.filter((n) => n.type !== 'groupBox' && !n.parentNode);
-    const elkNodes = await runElkLayoutOnce({ nodes: movableNodes, edges });
+    const movableNodes = layoutNodes.filter((n) => n.type !== 'groupBox' && !n.parentNode);
+    const elkNodes = movableNodes.length ? await runElkLayoutOnce({ nodes: movableNodes, edges }) : [];
     setNodes((nds) => {
       const laidById = new Map(elkNodes.map((n) => [n.id, n.position]));
       return nds.map((n) => {
@@ -3883,13 +4007,13 @@ useEffect(() => {
     savePositions(storageKey, posRef.current);
     const rawEdges = rowsToRawEdges(rows);
     const absolutePositions = buildAbsolutePositionMap(
-      nodes.map((node) => {
+      layoutNodes.map((node) => {
         const match = elkNodes.find((laid) => laid.id === node.id);
         return match ? { ...node, position: match.position } : node;
       })
     );
     setEdges(buildEdgesFromRaw(rawEdges, absolutePositions, edgeAggregationRef.current, edgeRoutingRef.current));
-    if (fitAfterClean) setTimeout(() => fitView({ padding: 0.2, duration: 600, includeHiddenNodes: true }), 0);
+    if (fitAfterClean) setTimeout(() => fitView({ padding: 0.2, duration: initialRender ? 0 : 600, includeHiddenNodes: true }), 0);
   }, [autoCategories, captureDiagramHistoryCheckpoint, groupBoxes, nodes, edges, rows, storageKey, fitAfterClean, fitView, persistSoon, getNodes, setEdges]);
 
   const canvasSpawnPosition = useCallback((offset = { x: 96, y: 108 }) => {
@@ -3991,6 +4115,25 @@ useEffect(() => {
     captureDiagramHistoryCheckpoint();
     setComments((current) => current.filter((comment) => comment.id !== commentId));
   }, [captureDiagramHistoryCheckpoint]);
+
+  const createSystemBox = useCallback(() => {
+    captureDiagramHistoryCheckpoint();
+    const currentNodes = getNodes();
+    const selected = currentNodes.filter(node => selectedNodeIds.includes(node.id) && !isSystemGroup(groupBoxes.find(box => box.id === node.id)) && node.type !== 'note');
+    const positions = selected.map(node => getNodeAbsolutePosition(node, new Map(currentNodes.map(item => [item.id, item]))));
+    const position = positions.length ? {
+      x: Math.min(...positions.map(pos => pos.x)) - GROUP.padX,
+      y: Math.min(...positions.map(pos => pos.y)) - GROUP.padTop,
+    } : canvasSpawnPosition({ x: 96, y: 96 });
+    let number = 1;
+    const groupLabels = new Set(groupBoxes.map(box => box.label));
+    while (groupLabels.has(`System ${number}`)) number++;
+    const box = { id: `g:${cryptoId()}`, elementType: 'system', label: `System ${number}`,
+      description: '', position, width: GROUP.w, height: GROUP.h, brandColor: BRAND.purple,
+      userResized: false, autoGenerated: false };
+    const node = { id: box.id, type: 'groupBox', position, data: { label: box.label, elementType: 'system' }, style: { width: box.width, height: box.height } };
+    applySystemMembership(selected.map(item => item.id), box.id, [...currentNodes, node], [...groupBoxes, box]);
+  }, [applySystemMembership, canvasSpawnPosition, captureDiagramHistoryCheckpoint, getNodes, groupBoxes, selectedNodeIds]);
 
   const createGroupBox = useCallback(() => {
     captureDiagramHistoryCheckpoint();
@@ -4189,7 +4332,7 @@ useEffect(() => {
         }
         if (c.type === 'dimensions' && c.id && c.dimensions) {
           const targetBox = groupBoxes.find((box) => box.id === c.id);
-          if (targetBox && !groupResizeSessionRef.current.has(c.id)) {
+          if (targetBox && c.resizing === true && !groupResizeSessionRef.current.has(c.id)) {
             queueGroupResizeUpdate(c.id, c.dimensions);
           }
         }
@@ -4216,8 +4359,9 @@ useEffect(() => {
               return nextIds;
             });
           }
+          const detached = detachDeletedSystemParents(getNodes(), groupBoxesRef.current, deletedIds);
           setGroupBoxes((currentBoxes) => {
-            const nextBoxes = currentBoxes.filter((box) => !deletedIds.has(box.id));
+            const nextBoxes = detached.boxes;
             persistGroupsSoon(nextBoxes);
             return nextBoxes;
           });
@@ -4227,20 +4371,31 @@ useEffect(() => {
               if (!n.parentNode || !deletedIds.has(n.parentNode)) return n;
               const abs = getNodeAbsolutePosition(n, byId);
               posRef.current.set(n.id, { position: abs, parentId: null });
+              if (deletedGroups.some(box => isSystemGroup(box) && box.id === n.parentNode)) {
+                const nextUngrouped = new Set(ungroupedAutoNodeIdsRef.current);
+                nextUngrouped.add(n.id);
+                ungroupedAutoNodeIdsRef.current = nextUngrouped;
+                setUngroupedAutoNodeIds(nextUngrouped);
+                saveUngroupedAutoNodeIds(storageKey, nextUngrouped);
+              }
               return { ...n, parentNode: undefined, extent: undefined, position: abs };
             });
           });
         }
-        const updatedRows = rows.filter((r) => {
+        let updatedRows = rows.filter((r) => {
           const fromId = nodeIdForFunction(r.fromFunction);
           const toId = nodeIdForFunction(r.toFunction);
           return !deletedIds.has(fromId) && !deletedIds.has(toId);
         });
+        if (deletedGroups.some(isSystemGroup)) {
+          const detached = detachDeletedSystemParents(getNodes(), groupBoxes, deletedIds);
+          updatedRows = rowsWithDiagramSystems(updatedRows, detached.nodes, detached.boxes);
+        }
         onUpdateRows?.(updatedRows);
       }
       reactflowOnNodesChange(changes);
     },
-    [captureDiagramHistoryCheckpoint, rows, reactflowOnNodesChange, onUpdateRows, persistSoon, groupBoxes, queueGroupResizeUpdate, persistGroupsSoon, setNodes, storageKey]
+    [captureDiagramHistoryCheckpoint, getNodes, rows, systemRowsSignature, reactflowOnNodesChange, onUpdateRows, persistSoon, groupBoxes, queueGroupResizeUpdate, persistGroupsSoon, setNodes, storageKey]
   );
 
   const onEdgesChange = useCallback(
@@ -4271,6 +4426,8 @@ useEffect(() => {
   /* Build when structure changes */
 		  useEffect(() => {
 		    if (!storageReady) return;
+            // The category effect may have queued subsystem boxes in this commit.
+            if (groupBoxesRef.current !== groupBoxes) return;
 		    if (groupDragRef.current) return;
 		    if (childDragRef.current) return;
 		    if (resizeFrameRef.current) return;
@@ -4290,8 +4447,8 @@ useEffect(() => {
       !nodes.some((node) => node.id === box.id && node.type === 'groupBox')
     ));
 
-    const sig = structureSignature(rows);
-    const groupSig = JSON.stringify(groupBoxes.map((box) => [box.id, box.label, box.description, box.brandColor, box.autoGenerated]));
+    const sig = structureSignature(rows) + systemRowsSignature(rows);
+    const groupSig = JSON.stringify(groupBoxes.map((box) => [box.id, box.label, box.description, box.brandColor, box.autoGenerated, box.elementType, box.parentNode]));
     const fullSig = `${sig}::${groupSig}`;
     const structureUnchanged = builtOnceRef.current && fullSig === structureRef.current;
     if (structureUnchanged && !missingWantedNodes.length && !missingGroupNodes.length) return;
@@ -4301,7 +4458,7 @@ const sortedNodeIds = Array.from(wantedNodeIds).sort();
 const functionalNodeDetails = buildFunctionalNodeDetails(rows);
 const plannedTopLevelPositions = new Map();
 const plannedGroupPositions = new Map();
-const groupByLabel = new Map(groupBoxes.map((box) => [cleanCategoryTitle(box.label || '').toLowerCase(), box]));
+const groupByLabel = new Map(groupBoxes.filter(box => !isSystemGroup(box)).map((box) => [cleanCategoryTitle(box.label || '').toLowerCase(), box]));
 const groupById = new Map(groupBoxes.map((box) => [box.id, box]));
 const functionSubsystemMap = buildFunctionSubsystemOwnershipMap(rows, cleanCategoryTitle);
 const automaticGroupByFunction = new Map();
@@ -4333,12 +4490,14 @@ posRef.current.forEach((saved, nodeId) => {
   }
 });
 
-const groupNodes = groupBoxes.map((box) => ({
+const renderGroupNode = (box) => ({
   id: box.id,
   type: 'groupBox',
+  parentNode: box.parentNode || undefined,
   position: box.position,
   data: {
     label: box.label,
+    elementType: box.elementType,
     description: box.description || '',
     brandColor: box.brandColor || BRAND.purple,
     onResizeStart: (dimensions) => startGroupResize(box.id, dimensions),
@@ -4361,7 +4520,8 @@ const groupNodes = groupBoxes.map((box) => ({
   dragHandle: '.project-group-drag-handle',
   connectable: false,
   focusable: false,
-}));
+});
+const groupNodes = orderParentElements(groupBoxes).map(renderGroupNode);
 
 const nodeShellStyle = {
   zIndex: 2,
@@ -4494,7 +4654,27 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
       };
     });
 
-    const nextNodes = [...groupNodes, ...nextFunctionalNodes, ...manualNodes];
+    // Resolve the complete hierarchy before publishing any nodes to React Flow.
+    // A separate effect could otherwise replace a newer graph with a partial one.
+    const baseNodes = [...groupNodes, ...nextFunctionalNodes, ...manualNodes];
+    const hydrated = rowsWithDiagramSystems(rows, baseNodes, groupBoxes, { missingOnly: true });
+    const result = reconcileTableSystems(hydrated, baseNodes, groupBoxes,
+      { ...GROUP, nodeWidth: NODE_LAYOUT.w, nodeHeight: NODE_LAYOUT.h });
+    const nextNodes = [
+      ...orderParentElements(result.boxes).map(renderGroupNode),
+      ...result.nodes.filter(node => node.type !== 'groupBox'),
+    ];
+    if (result.boxes !== groupBoxes) {
+      result.nodes.forEach(node => {
+        const previous = posRef.current.get(node.id);
+        posRef.current.set(node.id, { ...previous, position: node.position, parentId: node.parentNode || null });
+      });
+      groupBoxesRef.current = result.boxes;
+      setGroupBoxes(result.boxes);
+      persistGroupsSoon(result.boxes);
+      persistSoon();
+    }
+    if (hydrated !== rows && onUpdateRows) onUpdateRows(hydrated);
     const rawEdges = rowsToRawEdges(rows);
     const nextEdges = buildEdgesFromRaw(rawEdges, buildAbsolutePositionMap(nextNodes), edgeAggregationRef.current, edgeRoutingRef.current);
 
@@ -4511,6 +4691,18 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, persistSoon, persistManualSoon, manualNodesStore, nodes, setNodes, setEdges, runCleanAndSpread, groupBoxes, startGroupResize, queueGroupResizeUpdate, endGroupResize, storageReady, ungroupedAutoNodeIds]);
 
+  const systemGeometryReady = useMemo(() => {
+    const renderedIds = new Set(nodes.map(node => node.id));
+    return groupBoxes.filter(isSystemGroup).every(box => renderedIds.has(box.id));
+  }, [nodes, groupBoxes]);
+
+  useEffect(() => {
+    if (!storageReady || !systemGeometryReady || groupDragRef.current || childDragRef.current || groupResizeSessionRef.current.size) return;
+    const systems = groupBoxes.filter(isSystemGroup);
+    if (systems.length < 2) return;
+    settleSystemOverlaps();
+  }, [groupBoxes, storageReady, systemGeometryReady, settleSystemOverlaps]);
+
 	  useEffect(() => {
 	    if (!storageReady) return;
 	    if (!groupBoxes.length) return;
@@ -4522,7 +4714,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
         if (box.descriptionUserEdited) return box;
         if (box.description && /^(prompt-wizard|llm-table-subsystems)$/i.test(String(box.descriptionSource || ''))) return box;
         const childFunctions = nodes
-          .filter((node) => node.parentNode === box.id && node.type !== 'groupBox')
+          .filter((node) => node.parentNode === box.id && (isSystemGroup(box) || node.type !== 'groupBox'))
           .map((node) => String(node?.data?.label || '').trim())
           .filter(Boolean);
         const generatedDescription = generateGroupDescription(box.label, childFunctions, rows);
@@ -4549,7 +4741,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
     const membershipSignature = JSON.stringify(groupBoxes.map((box) => [
       box.id,
       nodes
-        .filter((node) => node.parentNode === box.id && node.type !== 'groupBox')
+        .filter((node) => node.parentNode === box.id && (isSystemGroup(box) || node.type !== 'groupBox'))
         .map((node) => node.id)
         .sort(),
     ]));
@@ -4559,7 +4751,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
     setGroupBoxes((currentBoxes) => {
       const nextBoxes = currentBoxes.map((box) => {
         if (box.autoGenerated || box.userResized) return box;
-        const childNodes = nodes.filter((node) => node.parentNode === box.id && node.type !== 'groupBox');
+        const childNodes = nodes.filter((node) => node.parentNode === box.id && (isSystemGroup(box) || node.type !== 'groupBox'));
         const nextSize = sizeGroupToFitChildren(box, childNodes);
         if (nextSize.width === (box.width || GROUP.w) && nextSize.height === (box.height || GROUP.h)) {
           return box;
@@ -4645,18 +4837,60 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
     );
   }, [rows, setNodes, setEdges, storageReady]);
 
-  /* One-time clean+spread trigger */
+  /* Arrange a new diagram only after its complete hierarchy has been built. */
   useEffect(() => {
-    if (!storageReady) return;
-    if (!cleanOnceKey) return;
-    if (cleanedKeysRef.current.has(cleanOnceKey)) return;
-    if (!nodes.length) return;
+    if (!storageReady || !builtOnceRef.current || !nodes.length || !measuredNodesReady) return;
+    const requested = cleanOnceKey && !cleanedKeysRef.current.has(cleanOnceKey);
+    if (requested && !initialArrangementPendingRef.current) {
+      try {
+        if (localStorage.getItem(storageKey + ':initial-layout:v1') === 'pending') {
+          initialArrangementPendingRef.current = true;
+          setInitialLayoutReady(false);
+        }
+      } catch {}
+    }
+    // Parent import/generation notifications must never rearrange a saved diagram.
+    if (!initialArrangementPendingRef.current) {
+      if (requested) {
+        cleanedKeysRef.current.add(cleanOnceKey);
+        onCleanApplied?.(cleanOnceKey);
+      }
+      return;
+    }
+    if (groupBoxesRef.current !== groupBoxes) return;
+    if (groupBoxes.some(box => {
+      const node = nodes.find(item => item.id === box.id);
+      return !node || node.parentNode !== (box.parentNode || undefined)
+        || node.style?.width !== (box.width || GROUP.w)
+        || node.style?.height !== (box.height || GROUP.h);
+    })) return;
+    if (rows.some(row => {
+      const from = nodes.find(node => node.id === nodeIdForFunction(row.fromFunction));
+      const to = nodes.find(node => node.id === nodeIdForFunction(row.toFunction));
+      if ((row.fromFunction && !from) || (row.toFunction && !to)) return true;
+      return from && Object.prototype.hasOwnProperty.call(row, 'system')
+        && systemForElement(from, nodes, groupBoxes).trim().toLowerCase() !== String(row.system || '').trim().toLowerCase();
+    })) return;
 
-    runCleanAndSpread({ applyInitialEdgeDefaults: true, recordHistory: false });
-    cleanedKeysRef.current.add(cleanOnceKey);
-    // tell parent we consumed the key so it won't fire on remount
-    try { onCleanApplied?.(cleanOnceKey); } catch {}
-  }, [cleanOnceKey, nodes, runCleanAndSpread, onCleanApplied, storageReady]);
+    // Wait for the current graph/measurement commit to settle, canceling if
+    // category or membership effects publish a newer graph in the meantime.
+    const frame = requestAnimationFrame(() => {
+      initialArrangementPendingRef.current = false;
+      if (requested) cleanedKeysRef.current.add(cleanOnceKey);
+      const arrangementStorageKey = storageKey;
+      runCleanAndSpread({ recordHistory: false, initialRender: true }).then(() => {
+        if (storageKeyRef.current !== arrangementStorageKey) return;
+        try { localStorage.setItem(arrangementStorageKey + ':initial-layout:v1', 'complete'); } catch {}
+        setInitialLayoutReady(true);
+      }).catch(error => {
+        console.error('[functional-diagram] Initial arrangement failed', error);
+        setInitialLayoutReady(true);
+      });
+      if (requested) onCleanApplied?.(cleanOnceKey);
+    });
+    return () => cancelAnimationFrame(frame);
+
+  }, [cleanOnceKey, nodes, groupBoxes, rows, runCleanAndSpread, onCleanApplied, storageReady, storageKey, measuredNodesReady]);
 
   /* Connect / Update */
   const onConnect = useCallback(
@@ -5163,6 +5397,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
         <div style={toolGridStyle}>
           <button type="button" onClick={addManualDiagramNode} title="Add node" style={toolButtonStyle({ active: true })}>+</button>
           <button type="button" onClick={createGroupBox} title="Group selected nodes" style={toolButtonStyle({ active: true, tone: BRAND.purple })}>□</button>
+          <button type="button" onClick={createSystemBox} title="Add system (group selected functions or subsystems)" aria-label="Add system" style={toolButtonStyle({ active: true, tone: BRAND.purple })}>▣</button>
           <button type="button" onClick={addNoteNode} title="Add note" style={toolButtonStyle({ tone: BRAND.yellow })}>📝</button>
           <button
             type="button"
@@ -5190,7 +5425,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
 
   /* Render */
   return (
-    <div ref={diagramHostRef} style={{ width: '100%', height: '100%', minHeight: 0, position: 'relative' }}>
+    <div ref={diagramHostRef} className="project-functional-diagram" style={{ width: '100%', height: '100%', minHeight: 0, position: 'relative' }}>
       {/* 🧠 Canvas */}
       <div
         style={{
@@ -5294,10 +5529,16 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
           }}
         >
         <ReactFlow
+          style={{ visibility: initialLayoutReady ? 'visible' : 'hidden' }}
+          defaultViewport={savedViewport || { x: 0, y: 0, zoom: 1 }}
+          onMoveEnd={(_event, viewport) => {
+            try { localStorage.setItem(storageKey + ':viewport:v1', JSON.stringify(viewport)); } catch {}
+          }}
           nodes={viewNodes}
           edges={viewEdges}
           elevateEdgesOnSelect={false}
           onInit={(instance) => {
+            if (savedViewport) return;
             setTimeout(() => {
               try {
                 instance.fitView({ padding: 0.2, includeHiddenNodes: true });
@@ -5339,7 +5580,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
             event.preventDefault();
             event.stopPropagation();
             const selected = selectedNodeIds.length ? selectedNodeIds : [node.id];
-            const eligible = selected.filter((id) => !id.startsWith('g:'));
+            const eligible = selected.filter((id) => !isSystemGroup(groupBoxes.find(box => box.id === id)));
             const bounds = diagramHostRef.current?.getBoundingClientRect();
             setContextMenu({
               x: event.clientX - (bounds?.left || 0),
@@ -5477,7 +5718,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
 	            }
 	          }}
 	          onNodeDrag={(event, node) => {
-	            if (node?.type !== 'groupBox') expandGroupWhileDraggingChild(event, node);
+	            if (node?.parentNode || node?.type !== 'groupBox') expandGroupWhileDraggingChild(event, node);
 	          }}
 	          onNodeDragStop={(_, node) => {
 	            if (node?.id && node?.position) {
@@ -5488,9 +5729,13 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
 
                 setGroupBoxes((currentBoxes) => {
                   const baseBoxes = groupBoxesRef.current.length ? groupBoxesRef.current : currentBoxes;
-                  const nextBoxes = baseBoxes.map((box) => (
+                  let nextBoxes = baseBoxes.map((box) => (
                     box.id === node.id ? { ...box, position: { ...node.position } } : box
                   ));
+                  if (node.parentNode) {
+                    nextBoxes = fitSystemAncestors(getNodes(), nextBoxes, node.parentNode, { ...GROUP, nodeWidth: NODE_LAYOUT.w, nodeHeight: NODE_LAYOUT.h });
+                    setNodes(nds => applyGroupGeometry(nds, nextBoxes));
+                  }
                   persistGroupsSoon(nextBoxes);
                   return nextBoxes;
                 });
@@ -5501,6 +5746,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
 	              // A position drag is presentation-only. Keep ownership, grouping,
 	              // group bounds, and every other node exactly as they were.
 	              posRef.current.set(node.id, {
+                  ...posRef.current.get(node.id),
 	                position: { ...node.position },
 	                parentId: node.parentNode || null,
 	              });
@@ -5509,7 +5755,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
 	              savePositions(storageKey, posRef.current);
 	              childDragRef.current = null;
               setTimeout(() => {
-                refreshEdgesFromNodes(getNodes());
+                if (!settleSystemOverlaps()) refreshEdgesFromNodes(getNodes());
               }, 0);
             }
           }}
@@ -5547,13 +5793,13 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
               <div style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, borderTop: '1px solid rgba(15,15,18,0.08)', borderBottom: '1px solid rgba(15,15,18,0.08)' }}>
                 Add Selected Nodes To Group
               </div>
-              {groupBoxes.map((box) => (
+              {groupBoxes.filter(box => contextMenu.nodeIds.some(id => canContainElement(box, getNodes().find(node => node.id === id), groupBoxes))).map((box) => (
                 <button
                   key={box.id}
                   onClick={() => assignNodesToGroup(contextMenu.nodeIds, box.id)}
                   style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px', fontSize: 13, background: '#fff', border: 'none', cursor: 'pointer' }}
                 >
-                  {box.label}
+                  {box.label}{isSystemGroup(box) ? ' (System)' : ''}
                 </button>
               ))}
               <button
@@ -5773,14 +6019,31 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                 />
               </div>
             )}
-            <div
+            <details key={`${editModal.id}-decomposition`} style={{ marginTop: 16, borderTop: '1px solid #ddd', paddingTop: 14 }}>
+              <summary style={{ cursor: 'pointer', fontWeight: 700 }}>
+                Associated Functional Decomposition · {editFunctionalRows.length} rows
+              </summary>
+              {editFunctionalRows.map(({ row, index }) => (
+                <div key={index} style={{ padding: '8px 0', fontSize: 13 }}>
+                  <span>Row {index + 1}: {row.fromFunction} → {row.controlAction} → {row.toFunction}</span>
+                  {typeof onOpenFunctionalRow === 'function' && (
+                    <button type="button" style={{ marginLeft: 10, textDecoration: 'underline' }} onClick={() => {
+                      setEditModal(null);
+                      onOpenFunctionalRow(index, row);
+                    }}>Open in functional decomposition table</button>
+                  )}
+                </div>
+              ))}
+              {!editFunctionalRows.length && <p>No linked functional decomposition rows.</p>}
+            </details>
+            <details key={`${editModal.id}-hazards`}
               style={{
                 marginTop: 16,
                 borderTop: '1px solid rgba(15,15,18,0.1)',
                 paddingTop: 14,
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
+              <summary style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.dark }}>
                   Associated Hazard Analysis
                 </div>
@@ -5789,7 +6052,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                     {editHazardRows.length} result{editHazardRows.length === 1 ? '' : 's'}
                   </div>
                 )}
-              </div>
+              </summary>
               {!hazardDataRows.length ? (
                 <div style={{ fontSize: 13, color: 'rgba(15,15,18,0.58)' }}>
                   Run hazard analysis to see linked results here.
@@ -5830,24 +6093,38 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                       emptyText: 'No linked rows are tagged Mission/Reliability for this item.',
                     })}
                   </div>
+                  {[
+                    ['Not Applicable', editExcludedHazardRows],
+                    ['Needs Review / Unclassified', editUnresolvedHazardRows],
+                  ].map(([label, associatedRows]) => (
+                    <div key={label}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 13, fontWeight: 700 }}>
+                        <span>{label}</span><span>{associatedRows.length}</span>
+                      </div>
+                      {renderAssociatedHazardRows(associatedRows, {
+                        accentColor: '#475569', accentTint: '#F1F5F9',
+                        emptyText: `No linked rows are ${label.toLowerCase()}.`,
+                      })}
+                    </div>
+                  ))}
                 </div>
               )}
-            </div>
-            <div
+            </details>
+            <details key={`${editModal.id}-issues`}
               style={{
                 marginTop: 16,
                 borderTop: '1px solid rgba(15,15,18,0.1)',
                 paddingTop: 14,
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
+              <summary style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.dark }}>
                   Associated Safety Issues
                 </div>
                 <div style={{ fontSize: 12, color: 'rgba(15,15,18,0.58)' }}>
                   {editSafetyIssues.length} issue{editSafetyIssues.length === 1 ? '' : 's'}
                 </div>
-              </div>
+              </summary>
               {!Array.isArray(riskRegister) || !riskRegister.length ? (
                 <div style={{ fontSize: 13, color: 'rgba(15,15,18,0.58)' }}>
                   Generate the risk assessment to see consolidated safety issues here.
@@ -5958,7 +6235,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                   ))}
                 </div>
               )}
-            </div>
+            </details>
             </div>
             <div
               style={{
@@ -6053,7 +6330,9 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
 	                          : n
 	                      )
 	                    );
-                    updateSubsystemForFunctionNodeIds(childNodeIds, editModal.label);
+                    if (isSystemGroup(groupBoxesRef.current.find(box => box.id === editModal.id))) {
+                      publishDiagramSystems(getNodes(), groupBoxesRef.current.map(box => box.id === editModal.id ? { ...box, label: editModal.label } : box));
+                    } else updateSubsystemForFunctionNodeIds(childNodeIds, editModal.label);
 	                    setEditModal(null);
 	                    return;
 	                  }

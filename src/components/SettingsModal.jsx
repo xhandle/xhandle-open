@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { storageScanTimeout } from "../lib/storageScanTimeout";
 import { backendURL, ACCOUNT_ID, getLocalAccessToken } from "./backendConfig";
 import {
   FileTypeSelectorModal,
@@ -77,6 +78,7 @@ const STORAGE_DATABASES = [
   "xhandle",
   "xhandle-workspace-graph",
   "xhandle-project-hazard-analysis",
+  "xhandle-recovery",
   "xhandle-hazard-analysis-reset",
   "xhandle-project-reports",
   "xhandle-results-review",
@@ -121,6 +123,7 @@ const INDEXED_DB_STORE_DETAILS = {
   "xhandle-results-review:reviewItems": ["Analysis review decisions", "Review statuses, comments, and decisions recorded against generated analysis results."],
   "xhandle-code-architecture-hazard-analysis:hazardAnalysisRuns": ["Code hazard-analysis runs", "Saved code-architecture hazard analyses and their run history."],
   "xhandle-code-architecture-assurance:artifactRows": ["Code assurance artifacts", "Generated assurance artifacts, evidence, and traceability rows for analyzed source code."],
+  "xhandle-recovery:checkpoints": ["Recovery checkpoints", "Functional decomposition backups and the latest saved analysis stages. Deleting these removes recovery copies."],
   "xhandle-project-hazard-analysis:analyses": ["Project hazard analyses", "Complete hazard-analysis results saved for each project. Removing them clears results from the Hazard Analysis tab."],
   "xhandle-hazard-analysis-reset:snapshots": ["Hazard-analysis undo snapshots", "Temporary snapshots used to restore a project after clearing its hazard analysis."],
   "xhandle-project-reports:safetyIssueReports": ["Safety issue reports", "Generated stakeholder-facing safety issue reports saved for each project."],
@@ -211,10 +214,20 @@ function openRawIndexedDb(name) {
       resolve(null);
       return;
     }
-    const request = indexedDB.open(name);
-    request.onerror = () => resolve(null);
-    request.onblocked = () => resolve(null);
-    request.onsuccess = () => resolve(request.result);
+    let finished = false;
+    const finish = value => {
+      if (finished) { try { value?.close(); } catch {} return; }
+      finished = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(null), 5000);
+    try {
+      const request = indexedDB.open(name);
+      request.onerror = () => finish(null);
+      request.onblocked = () => finish(null);
+      request.onsuccess = () => finish(request.result);
+    } catch { finish(null); }
   });
 }
 
@@ -228,8 +241,21 @@ async function inspectIndexedDbStore(dbName, storeName) {
     let count = 0;
     let bytes = 0;
     let sampleKey = "";
+    let tx;
+    let finished = false;
+    const finish = error => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      try { db.close(); } catch {}
+      resolve({ count, bytes, sampleKey, error });
+    };
+    const timer = setTimeout(() => {
+      finish("Store scan timed out; totals may be incomplete.");
+      try { tx?.abort(); } catch {}
+    }, 5000);
     try {
-      const tx = db.transaction(storeName, "readonly");
+      tx = db.transaction(storeName, "readonly");
       const store = tx.objectStore(storeName);
       const cursorRequest = store.openCursor();
       cursorRequest.onsuccess = () => {
@@ -240,17 +266,11 @@ async function inspectIndexedDbStore(dbName, storeName) {
         try { bytes += storageByteLength(cursor.value); } catch {}
         cursor.continue();
       };
-      tx.oncomplete = () => {
-        try { db.close(); } catch {}
-        resolve({ count, bytes, sampleKey });
-      };
-      tx.onerror = () => {
-        try { db.close(); } catch {}
-        resolve({ count, bytes, sampleKey, error: tx.error?.message || "Unable to inspect store." });
-      };
+      tx.oncomplete = () => finish("");
+      tx.onerror = () => finish(tx.error?.message || "Unable to inspect store.");
+      tx.onabort = () => finish(tx.error?.message || "Store scan was aborted.");
     } catch (error) {
-      try { db.close(); } catch {}
-      resolve({ count, bytes, sampleKey, error: error?.message || String(error) });
+      finish(error?.message || String(error));
     }
   });
 }
@@ -631,8 +651,9 @@ export default function SettingsModal({
     setStorageBusy(true);
     setStorageMsg("");
     try {
+      const warnings = [];
       const usage = typeof navigator !== "undefined" && navigator.storage?.estimate
-        ? await navigator.storage.estimate().catch(() => null)
+        ? await storageScanTimeout(() => navigator.storage.estimate(), "Browser quota estimate").catch(error => { warnings.push(error.message); return null; })
         : null;
       const localGroups = {};
       if (typeof localStorage !== "undefined") {
@@ -661,9 +682,9 @@ export default function SettingsModal({
       }
 
       const indexedDbItems = [];
-      for (const dbName of STORAGE_DATABASES) {
+      await Promise.all(STORAGE_DATABASES.map(async dbName => {
         const db = await openRawIndexedDb(dbName);
-        if (!db) continue;
+        if (!db) { warnings.push(dbName + ": unavailable or timed out."); return; }
         const storeNames = Array.from(db.objectStoreNames || []);
         try { db.close(); } catch {}
         for (const storeName of storeNames) {
@@ -681,11 +702,11 @@ export default function SettingsModal({
             error: inspected.error || "",
           });
         }
-      }
+      }));
 
       const functionalProjects = readStoredProjectList(ACTIVE_FUNCTIONAL_PROJECTS_KEY);
       const codeArchitectureProjects = readStoredProjectList(ACTIVE_CODE_ARCHITECTURE_PROJECTS_KEY);
-      const graphProjects = await listWorkspaceGraphProjects().catch(() => []);
+      const graphProjects = await storageScanTimeout(() => listWorkspaceGraphProjects(), "Workspace visibility scan").catch(error => { warnings.push(error.message); return []; });
       setStoredWorkspaceProjects(classifyStoredWorkspaceProjects(
         graphProjects,
         functionalProjects,
@@ -702,6 +723,7 @@ export default function SettingsModal({
         items,
         refreshedAt: new Date().toISOString(),
       });
+      if (warnings.length) setStorageMsg("Partial storage scan: " + warnings.join(" "));
       setSelectedStorageItems((current) => {
         const allowedIds = new Set(items.map((item) => item.id));
         return Object.fromEntries(Object.entries(current || {}).filter(([id]) => allowedIds.has(id)));

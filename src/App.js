@@ -1,9 +1,14 @@
+import { createProjectRunGuard } from "./lib/projectRunGuard";
+import { chooseDecompositionRecovery, nextDecompositionVersion } from "./lib/decompositionRecovery";
+import { recoveryRecord, saveRecoveryRecord, flushRecoveryRecord, deleteProjectRecovery } from "./lib/durableRecovery";
+import { functionalColumnFilterOptions } from './features/functional-decomposition/columnFilterOptions';
+import { editFunctionalSystem } from './components/functionalSystemGroups';
 import { fillNotApplicableHazardCells } from './features/project-hazard-analysis/hazardNotApplicableCells';
 import { recordUserPreprocessing, constrainPreprocessedInput, reconcileUserPreprocessing, matchPreprocessedGeneratedRow, respectNewerHazardReviews, preprocessingGenerationBasis } from './features/project-hazard-analysis/hazardUserPreprocessing';
 import { identifyProjectHazardDraftRow } from './features/project-hazard-analysis/projectHazardDraftIds';
 import { buildCodeArchitectureHazardCsvDraft } from './features/code-architecture-hazard-analysis/codeArchitectureHazardCsv';
 import { summarySheetToHazardSummaryRows } from './features/code-architecture-hazard-analysis/codeArchitectureHazardUtils';
-import { useCallback, useRef, useState, useEffect, useMemo } from 'react';
+import { useCallback, useRef, useState, useEffect, useLayoutEffect, useMemo } from 'react';
 import { FlaskConical } from 'lucide-react';
 import VnVCenterPro from './components/VnVCenterPro';
 import ReadmeModal from './components/ReadmeModal';
@@ -24,6 +29,8 @@ import {
   History,            // hazard-analysis version recovery
   MoreVertical,
   Download,
+  Lock,
+  Unlock,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -286,6 +293,7 @@ import {
   describeHazardCsvPlan,
   planHazardAnalysisCsvImport,
 } from "./features/project-hazard-analysis/hazardAnalysisCsv";
+import { selectHazardDisplayRow } from "./features/project-hazard-analysis/hazardDisplayRow";
 import { generateHazardOperationalContexts } from "./features/project-hazard-analysis/hazardOperationalContextAi";
 import {
   buildHazardDiagramFocusTarget,
@@ -1820,16 +1828,17 @@ function installLocalStorageBroadcast() {
 
   localStorage.setItem = function (k, v) {
     let quotaError = null;
+    let writeError = null;
     const saved = runStorageWrite(() => _set(k, v), {
       onQuota: (error) => {
         quotaError = error;
         reportQuota(k, error);
       },
-      onError: (error) => console.warn(`[storage] Unable to save ${k || 'application data'}.`, error),
+      onError: (error) => { writeError = error; console.warn(`[storage] Unable to save ${k || 'application data'}.`, error); },
     });
     // These stores deliberately catch quota errors and fall back to compacted
     // session/in-memory snapshots. Let their recovery logic observe the error.
-    if (!saved && quotaError && QUOTA_AWARE_KEYS.has(String(k || ''))) throw quotaError;
+    if (!saved && (String(k) === PROJECT_DATA_KEY || (quotaError && QUOTA_AWARE_KEYS.has(String(k || ''))))) throw quotaError || writeError;
     if (saved) {
       quotaNotificationSent = false;
       if (shouldFireForKey(k)) fire();
@@ -1857,21 +1866,23 @@ if (typeof window !== 'undefined') {
 }
 
 
+let projectMapReadFailed = false;
 let projectMapCache = null;
 let projectMapSerializedCache = null;
 
 function readProjectMap() {
   try {
     const serialized = localStorage.getItem(PROJECT_DATA_KEY) || '{}';
-    if (projectMapCache && serialized === projectMapSerializedCache) return projectMapCache;
+    if (projectMapCache && serialized === projectMapSerializedCache) { projectMapReadFailed = false; return projectMapCache; }
     const parsed = JSON.parse(serialized);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid project storage");
+    projectMapReadFailed = false;
     projectMapCache = parsed && typeof parsed === "object" ? parsed : {};
     projectMapSerializedCache = serialized;
     return projectMapCache;
   } catch {
-    projectMapCache = {};
-    projectMapSerializedCache = null;
-    return projectMapCache;
+    projectMapReadFailed = true;
+    return projectMapCache || {};
   }
 }
 function writeProjectMap(map) {
@@ -1889,9 +1900,18 @@ function writeProjectMap(map) {
 function saveProjectPatch(projectId, patch) {
   if (!projectId) return false;
   const map = readProjectMap();
+  if (projectMapReadFailed) return false;
   const prev = map[projectId] || {};
-  map[projectId] = { ...prev, ...patch, _updatedAt: new Date().toISOString() };
-  return writeProjectMap(map);
+  const decompositionChanged = Array.isArray(patch.responseRows) && JSON.stringify(patch.responseRows) !== JSON.stringify(prev.responseRows);
+  const record = { ...prev, ...patch, _updatedAt: new Date().toISOString(),
+    ...(decompositionChanged ? { decompositionVersion: nextDecompositionVersion(prev.decompositionVersion) } : {}) };
+
+  const saved = writeProjectMap({ ...map, [projectId]: record });
+  if (Array.isArray(patch.responseRows) && (decompositionChanged || !saved)) {
+    saveRecoveryRecord(`${saved ? "decomposition" : "decomposition-candidate"}:${projectId}`, { responseRows: patch.responseRows, accepted: saved, decompositionVersion: record.decompositionVersion, updatedAt: record._updatedAt })
+      .catch(error => console.error('[project-recovery] Decomposition checkpoint failed', error));
+  }
+  return saved;
 }
 function loadProjectData(projectId) {
   const map = readProjectMap();
@@ -1968,6 +1988,7 @@ function hasAnalysisSummary(value) {
 
 function functionalRowSignature(rows) {
   return JSON.stringify((rows || []).map((row) => ({
+    system: String(row?.system || "").trim(),
     subsystem: String(row?.subsystem || "").trim(),
     fromFunction: String(row?.fromFunction || "").trim(),
     fromDetails: String(row?.fromDetails || "").trim(),
@@ -1980,6 +2001,7 @@ function functionalRowSignature(rows) {
 
 function functionalDiagramMembershipSignature(rows = []) {
   return JSON.stringify((rows || []).map((row) => ({
+    system: String(row?.system || "").trim(),
     subsystem: String(row?.subsystem || "").trim(),
     fromFunction: String(row?.fromFunction || "").trim(),
     controlAction: String(row?.controlAction || "").trim(),
@@ -2118,6 +2140,7 @@ function completeFunctionalRowFields(row = {}, existingRows = [], options = {}) 
   );
 
   return {
+    ...(Object.prototype.hasOwnProperty.call(row, "system") ? { system: row.system } : {}),
     subsystem,
     fromFunction,
     fromDetails,
@@ -3375,7 +3398,7 @@ function buildSubsystemDiagramCategories(rows = []) {
   const subsystemCountsByFunction = new Map();
 
   rowsArray.forEach((row) => {
-    const subsystem = cleanDiagramCategoryName(row?.subsystem || "");
+    const subsystem = (String(row?.subsystem || "").trim() ? cleanDiagramCategoryName(row.subsystem) : "");
     const fromFunction = String(row?.fromFunction || "").trim();
     if (!subsystem || !fromFunction || /\b(unallocated|unassigned|uncategorized)\b/i.test(subsystem)) return;
     const functionKey = fromFunction.toLowerCase();
@@ -3390,7 +3413,7 @@ function buildSubsystemDiagramCategories(rows = []) {
   });
 
   rowsArray.forEach((row) => {
-    const subsystem = cleanDiagramCategoryName(row?.subsystem || "");
+    const subsystem = (String(row?.subsystem || "").trim() ? cleanDiagramCategoryName(row.subsystem) : "");
     const toFunction = String(row?.toFunction || "").trim();
     if (!subsystem || !toFunction || /\b(unallocated|unassigned|uncategorized)\b/i.test(subsystem)) return;
     const functionKey = toFunction.toLowerCase();
@@ -3399,7 +3422,7 @@ function buildSubsystemDiagramCategories(rows = []) {
 
   const buckets = new Map();
   (rows || []).forEach((row, index) => {
-    const subsystem = cleanDiagramCategoryName(row?.subsystem || "");
+    const subsystem = (String(row?.subsystem || "").trim() ? cleanDiagramCategoryName(row.subsystem) : "");
     if (!subsystem || /\b(unallocated|unassigned|uncategorized)\b/i.test(subsystem)) return;
     if (!buckets.has(subsystem)) {
       buckets.set(subsystem, {
@@ -3443,6 +3466,7 @@ function buildTableSubsystemDiagramCategoriesMeta(rows = []) {
 
 function functionalSubsystemDescriptionSignature(rows = []) {
   return JSON.stringify((Array.isArray(rows) ? rows : []).map((row) => ({
+    system: String(row?.system || "").trim(),
     subsystem: String(row?.subsystem || "").trim(),
     fromFunction: String(row?.fromFunction || "").trim(),
     fromDetails: String(row?.fromDetails || "").trim(),
@@ -5443,6 +5467,18 @@ useEffect(() => {
   // ────────────────────────────────────────────────────────────────────────────────
   // Sidebar + nav
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isSidebarLocked, setIsSidebarLocked] = useState(() => {
+    try { return localStorage.getItem('xhandle.sidebarLocked') === 'true'; }
+    catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('xhandle.sidebarLocked', String(isSidebarLocked)); } catch {}
+    if (isSidebarLocked) {
+      setIsSidebarOpen(true);
+      setIsSidebarFullyCollapsed(false);
+    }
+  }, [isSidebarLocked]);
+
   const [isSidebarFullyCollapsed, setIsSidebarFullyCollapsed] = useState(() => {
     try { return localStorage.getItem('xhandle.sidebarFullyCollapsed') === 'true'; }
     catch { return false; }
@@ -6359,6 +6395,9 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
         setShowPromptWizard(true);
       }
     }
+    deleteProjectRecovery(projectId).catch(error => {
+      window.alert(`Project removed, but recovery cleanup failed: ${error.message}. Retry cleanup from Storage settings.`);
+    });
     removeProjectData(projectId);
     deleteProjectHazardAnalysisRecord(projectId).catch((error) => {
       console.warn("[project-hazard-storage] Failed to remove hazard artifacts for deleted project", error);
@@ -7762,6 +7801,11 @@ useEffect(() => {
       return;
     }
     const data = loadProjectData(activeProjectId);
+    if (projectMapReadFailed) {
+      setSafetyIssueRefreshStatus({ kind: 'error', message: 'Project storage could not be read. Saving is blocked to protect existing data. Close other tabs and reload when storage is available.' });
+      setLoadingProjectId(null);
+      return;
+    }
     const projectIdForLoad = activeProjectId;
     const persistedResponseRows = Array.isArray(data?.responseRows) ? data.responseRows : [];
     const checkpointRows = lastKnownFunctionalRowsRef.current.get(String(projectIdForLoad)) || [];
@@ -7878,21 +7922,54 @@ useEffect(() => {
     setFunctionalAuditProposal(null);
     setFunctionalAuditSelectedRows({});
     setFunctionalAuditFeedback("");
-    const loadTimer = setTimeout(() => {
-      setLoadedProjectId(projectIdForLoad);
-      setProjectLoaded(true);
-      setLoadingProjectId((current) => (current === projectIdForLoad ? null : current));
-    }, 0);
+    // Wait for recovery before enabling autosave; never save an empty loading state.
+    let decompositionLoadCancelled = false;
+    const finishProjectLoad = async () => {
+      try {
+        {
+          let checkpoint;
+          try { checkpoint = await recoveryRecord(`decomposition:${projectIdForLoad}`); }
+          catch (error) {
+            if (decompositionLoadCancelled) return;
+            if (!data) throw error;
+            setSafetyIssueRefreshStatus({ kind: 'error', message: `Loaded saved project data. Recovery storage is unavailable: ${error.message}. Reopen the project to retry recovery.` });
+          }
+          const recovered = chooseDecompositionRecovery(data, checkpoint);
+          if (checkpoint && !data?.decompositionVersion && data && JSON.stringify(checkpoint.responseRows) !== JSON.stringify(data.responseRows)) {
+            setSafetyIssueRefreshStatus({ kind: 'info', message: 'A legacy recovery checkpoint differs from this project. Saved project data was preserved; the checkpoint remains available in a storage backup for review.' });
+          }
+          if (decompositionLoadCancelled) return;
+          if (recovered) {
+            setResponseRows(recovered.responseRows);
+            setCommittedFunctionalDiagramRows(getProjectDiagramRows(recovered.responseRows));
+            setShowPromptWizard(recovered.responseRows.length === 0);
+            saveProjectPatch(projectIdForLoad, { responseRows: recovered.responseRows });
+            setSafetyIssueRefreshStatus({ kind: 'info', message: 'Recovered functional decomposition from a durable checkpoint.' });
+          }
+        }
+        if (decompositionLoadCancelled) return;
+        setLoadedProjectId(projectIdForLoad);
+        setProjectLoaded(true);
+        setLoadingProjectId((current) => (current === projectIdForLoad ? null : current));
+      } catch (error) {
+        if (decompositionLoadCancelled) return;
+        setLoadingProjectId(null);
+        setSafetyIssueRefreshStatus({ kind: 'error', message: `Recovery storage could not be checked; project saving remains blocked. ${error.message}` });
+      }
+    };
+    finishProjectLoad();
 
     return () => {
       safetyReportLoadCancelled = true;
       hazardArtifactLoadCancelled = true;
-      clearTimeout(loadTimer);
+      decompositionLoadCancelled = true;
     };
   }, [activeProjectId]);
 
-  useEffect(() => {
+  const navigationEpochRef = useRef(0);
+  useLayoutEffect(() => {
     activeProjectIdRef.current = activeProjectId;
+    navigationEpochRef.current += 1;
   }, [activeProjectId]);
 
   useEffect(() => {
@@ -7992,7 +8069,9 @@ useEffect(() => {
 	    draftHazardRowsByIndex: undefined,
 	    riskRegister: undefined,
 	  };
-  saveProjectPatch(activeProjectId, patch);
+  if (!saveProjectPatch(activeProjectId, patch)) {
+    setSafetyIssueRefreshStatus({ kind: 'error', message: 'Project changes could not be saved. Keep this tab open and export your functional decomposition before refreshing.' });
+  }
 }, [
   activeProjectId,
   loadingProjectId,
@@ -8000,12 +8079,9 @@ useEffect(() => {
   loadedProjectId,
   responseRows,
   diagramCategories,
-  analysisResult,
   riskMethod,
   agentReportResult,
-	  riskRegister, // <-- ensure riskRegister is in the deps
 	  requirements,
-  draftHazardRowsByIndex,
 	  hazardOperationalContexts,
 	  hazardNeedsReviewResolutions,
 	]);
@@ -8422,7 +8498,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         alignedCompleted && isMeaningfullyGeneratedDraftRow(alignedCompleted, fallbackRow, hazardSummaryHeaders)
       );
       const generated = generatedDraft || generatedCompleted;
-      let displayRow = generatedDraft ? alignedDraft : (generatedCompleted ? alignedCompleted : fallbackRow);
+      let displayRow = selectHazardDisplayRow({ generatedDraft, generatedCompleted, alignedDraft, alignedCompleted, fallbackRow });
       const resolutionStatusIndex = hazardSummaryHeaders.indexOf(CLASSIFICATION_RESOLUTION_STATUS_HEADER);
       if (
         generatedDraft
@@ -11112,6 +11188,19 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     }
   }, []);
 
+  const exportHazardRunCheckpoint = async () => {
+    try {
+      const checkpoint = await recoveryRecord(`hazard-run:${activeProjectId}`);
+      if (!checkpoint) { window.alert('No saved run checkpoint exists for this project yet.'); return; }
+      const url = URL.createObjectURL(new Blob([JSON.stringify(checkpoint, null, 2)], { type: 'application/json' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `hazard-run-checkpoint-${activeProjectId}.json`;
+      document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) { window.alert(`The checkpoint could not be read: ${error.message}`); }
+  };
+
   const openHazardRecovery = useCallback(async () => {
     setHazardRevisionPreview(null);
     setHazardRecoveryOpen(true);
@@ -11630,6 +11719,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
 
   const handleRowChange = (index, field, value) => {
     setResponseRows((currentRows) => {
+      if (field === "system") return editFunctionalSystem(currentRows, index, value);
       const conflict = getFunctionalLabelConflictForEdit(currentRows, index, field, value);
       if (conflict) {
         window.alert(conflict);
@@ -11689,17 +11779,8 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   const getFunctionalCellRows = (value) => {
     return estimateWrappedTextareaRows(value, 20, 28);
   };
-  const getUniqueFunctionalColumnValues = (field, searchText = '') => {
-    const unique = new Set();
-    responseRows.forEach((row) => {
-      const value = getFunctionalCellValue(row, field);
-      if (value) unique.add(value);
-    });
-    const q = String(searchText || '').toLowerCase();
-    return Array.from(unique)
-      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }))
-      .filter((val) => val.toLowerCase().includes(q));
-  };
+  const getUniqueFunctionalColumnValues = (field, searchText = '') =>
+    functionalColumnFilterOptions(responseRows, functionalColumnFilters, field, getFunctionalCellValue, searchText);
   const setFunctionalFilterValues = (field, values) => {
     setFunctionalColumnFilters((prev) => ({ ...prev, [field]: values }));
   };
@@ -11924,7 +12005,20 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       ])
     ];
     const sheets = { "Functional Decomposition": functionalDecompositionSheet };
-    const dummySetFolders = async (updater) => { const prev = {}; const newState = await updater(prev); return newState; };
+    const projectIdAtRun = activeProjectId;
+    const revisionAtRun = analysisRevisionRef.current;
+    const runIsVisible = createProjectRunGuard(projectIdAtRun, activeProjectIdRef, navigationEpochRef);
+    let latestStage = null;
+    let checkpointFolders = {};
+    const dummySetFolders = async (updater) => {
+      checkpointFolders = typeof updater === 'function' ? await updater(checkpointFolders) : updater;
+      await saveRecoveryRecord(`hazard-run:${projectIdAtRun}`, {
+        projectId: projectIdAtRun, runId: sourceRunId, method: selectedMethod,
+        folders: checkpointFolders, responseRows, contexts: contextsToRun,
+        preprocessing: startingDraftRows, latestStage, status: 'in-progress', updatedAt: new Date().toISOString(),
+      });
+      return checkpointFolders;
+    };
     const currentFolder = "LiteProject";
 
     // NEW: start activity
@@ -11946,7 +12040,12 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setProgress({ step: 0, total: stepDescriptionsMap[selectedMethod]?.total || 9, message: workloadMessage });
 
     try {
+      await saveRecoveryRecord(`decomposition:${projectIdAtRun}`, { responseRows, decompositionVersion: loadProjectData(projectIdAtRun)?.decompositionVersion || nextDecompositionVersion(), updatedAt: new Date().toISOString() });
       const rawFinalSheets = await runLiteAIAnalysis({
+      onStageComplete: async (stage) => {
+        latestStage = stage;
+        await dummySetFolders(checkpointFolders);
+      },
       tableRows: rowsToGenerate.map(({ functionalRow }) => functionalRow),
       sheets,
       setFolders: dummySetFolders,
@@ -12037,36 +12136,46 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       ...generatedSheets,
       Summary: [targetHeaders, ...mergedSummaryRows],
     };
+    // Hazard results must survive even if consolidation or the browser fails.
+    const checkpointResult = await saveHazardAnalysis(projectIdAtRun, {
+      analysisResult: finalSheets, draftHazardRowsByIndex: mergedDraftRows, riskRegister,
+    }, { reason: 'generation-before-consolidation', expectedRevision: revisionAtRun });
+    if (![HAZARD_WRITE_OUTCOME.OK, HAZARD_WRITE_OUTCOME.UNCHANGED].includes(checkpointResult.outcome)) {
+      throw new Error(describeHazardWriteFailure(checkpointResult));
+    }
+    if (runIsVisible()) commitAnalysisResult(finalSheets, mergedDraftRows, checkpointResult.revision);
     let nextRiskRegister = riskRegister;
     try {
-      nextRiskRegister = await requestConsolidatedSafetyIssuesFromSummary(finalSheets.Summary, {
+      if (runIsVisible()) nextRiskRegister = await requestConsolidatedSafetyIssuesFromSummary(finalSheets.Summary, {
         mergeExisting: Boolean(existingSummary) && !shouldRegenerate,
         signal: abortController.signal,
       });
     } catch (error) {
       if (abortController.signal.aborted) throw error;
       if (error?.name === "AbortError") {
-        setSafetyIssueRefreshStatus({ kind: "info", message: "Safety issue consolidation was canceled. Existing safety issues were left unchanged." });
+        if (runIsVisible()) setSafetyIssueRefreshStatus({ kind: "info", message: "Safety issue consolidation was canceled. Existing safety issues were left unchanged." });
       } else {
       console.error("[risk-assessment] LLM consolidation failed while preserving generated hazard rows", error);
       if (!nextRiskRegister?.length) nextRiskRegister = buildRecoverableSafetyIssuesFromSummary(finalSheets.Summary);
-      setSafetyIssueRefreshStatus({
+      if (runIsVisible()) setSafetyIssueRefreshStatus({
         kind: "error",
         message: `${error?.message || "The LLM could not consolidate the generated hazard rows."}${nextRiskRegister?.length ? " Provisional issues remain available; retry Regenerate with AI." : ""}`,
       });
       }
     }
 
-    setAnalysisResult(finalSheets);
-    setDraftHazardRowsByIndex(mergedDraftRows);
-    setRiskRegister(nextRiskRegister);
     let analysisPersisted = true;
     if (activeProjectId) {
-      analysisPersisted = await saveProjectHazardAnalysisRecord(activeProjectId, {
+      const finalSave = await saveHazardAnalysis(projectIdAtRun, {
         analysisResult: finalSheets,
         draftHazardRowsByIndex: mergedDraftRows,
         riskRegister: nextRiskRegister,
-      });
+      }, { reason: 'generation-complete', expectedRevision: checkpointResult.revision });
+      analysisPersisted = [HAZARD_WRITE_OUTCOME.OK, HAZARD_WRITE_OUTCOME.UNCHANGED].includes(finalSave.outcome);
+      if (analysisPersisted && runIsVisible()) {
+        commitAnalysisResult(finalSheets, mergedDraftRows, finalSave.revision);
+        setRiskRegister(nextRiskRegister);
+      }
       const metadataPersisted = saveProjectPatch(activeProjectId, {
         hazardAnalysisStorage: "artifact-store",
         analysisResult: undefined,
@@ -12088,7 +12197,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       analysisPersisted = analysisPersisted && metadataPersisted;
       if (analysisPersisted && hazardResetStatus?.kind === "cleared") {
         await deleteHazardAnalysisResetSnapshot(activeProjectId);
-        setHazardResetStatus(null);
+        if (runIsVisible()) setHazardResetStatus(null);
       }
     }
     if (Array.isArray(finalSheets?.Summary) && finalSheets.Summary.length > 1) {
@@ -12114,11 +12223,14 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         + "Keep this page open and export the analysis before clearing browser data."
       );
     }
-    setShowDiagram(false);
-    setActiveTab('Hazard Analysis');
+    if (runIsVisible()) { setShowDiagram(false); setActiveTab('Hazard Analysis'); }
 
-    // NEW: finish activity
-    finishActivity(actId, "success", "Analysis complete");
+    await saveRecoveryRecord(`hazard-run:${projectIdAtRun}`, {
+      projectId: projectIdAtRun, runId: sourceRunId, method: selectedMethod,
+      folders: checkpointFolders, responseRows, contexts: contextsToRun,
+      preprocessing: startingDraftRows, latestStage, status: analysisPersisted ? 'complete' : 'save-failed', updatedAt: new Date().toISOString(),
+    });
+    finishActivity(actId, analysisPersisted ? "success" : "error", analysisPersisted ? "Analysis complete" : "Analysis generated but could not be fully saved");
     } catch (error) {
       const wasCanceled = abortController.signal.aborted || error?.name === "AbortError";
       const message = wasCanceled
@@ -14202,6 +14314,8 @@ Rules:
       window.alert('Open the project that should receive this table first.');
       return;
     }
+    const projectIdAtImport = activeProjectId;
+    const importIsVisible = createProjectRunGuard(projectIdAtImport, activeProjectIdRef, navigationEpochRef);
     let text = '';
     try {
       text = await file.text();
@@ -14209,6 +14323,7 @@ Rules:
       window.alert(`That file could not be read: ${error?.message || 'unknown error'}`);
       return;
     }
+    if (!importIsVisible()) return;
     const parsed = parseFunctionalDecompositionCsv(text);
     const problems = describeFunctionalCsvProblems(parsed);
     if (problems) {
@@ -14225,10 +14340,27 @@ Rules:
     if (!confirmed) return;
 
     const ensured = ensureFunctionalVibeReviewRowIds(parsed.rows);
-    if (!saveProjectPatch(activeProjectId, { responseRows: ensured.rows })) {
+    if (!saveProjectPatch(projectIdAtImport, { responseRows: ensured.rows })) {
       window.alert('The imported table could not be saved in browser storage. Nothing was changed.');
       return;
     }
+    // A replacement with entirely new functions is a new diagram, even when
+    // the project's starter diagram has already been displayed and saved.
+    const existingFunctions = new Set((responseRows || []).flatMap(row =>
+      [row.fromFunction, row.toFunction].map(value => String(value || '').trim().toLowerCase()).filter(Boolean)));
+    const retainsExistingFunctions = ensured.rows.some(row =>
+      [row.fromFunction, row.toFunction].some(value => existingFunctions.has(String(value || '').trim().toLowerCase())));
+    if (!retainsExistingFunctions) {
+      try { localStorage.setItem(`diagram:positions:${projectIdAtImport}:initial-layout:v1`, 'pending'); } catch {}
+
+    }
+    try {
+      await flushRecoveryRecord(`decomposition:${projectIdAtImport}`);
+    } catch (error) {
+      window.alert(`The table was saved, but its recovery checkpoint failed: ${error.message}. Export a copy before leaving this page.`);
+    }
+    if (!importIsVisible()) return;
+    if (!retainsExistingFunctions) setCleanOnceKey(`import-${Date.now()}`);
     lastKnownFunctionalRowsRef.current.set(String(activeProjectId), ensured.rows);
     setResponseRows(ensured.rows);
     setCommittedFunctionalDiagramRows(getProjectDiagramRows(ensured.rows));
@@ -15439,6 +15571,13 @@ const projectHint = useMemo(() => ({
           : "Collapse all visible interface guide-phrase groups"}
       />
       <ProjectTabToolbarButton
+        icon={<Download size={17} />}
+        label="Export run checkpoint"
+        collapsed={hazardTabToolbarCollapsed}
+        onClick={exportHazardRunCheckpoint}
+        title="Download the latest saved analysis stages for recovery; this is not a completed hazard CSV"
+      />
+      <ProjectTabToolbarButton
         icon={<History size={17} />}
         label="Restore…"
         collapsed={hazardTabToolbarCollapsed}
@@ -15658,15 +15797,16 @@ const projectHint = useMemo(() => ({
     <aside
       id="xhandle-primary-sidebar"
       onMouseEnter={() => setIsSidebarOpen(true)}
-      onMouseLeave={() => setIsSidebarOpen(false)}
+      onMouseLeave={() => { if (!isSidebarLocked) setIsSidebarOpen(false); }}
       className={`sticky top-0 h-full border-r bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80 z-30 transition-[width] duration-300 ease-in-out overflow-hidden
         ${isSidebarOpen ? 'w-64' : 'w-[68px]'} hidden md:flex flex-col`}
     >
-        <div className="flex min-h-14 items-center px-3 py-3">
+        <div className="flex min-h-14 items-center gap-1 px-3 py-3">
           {isSidebarOpen && (
             <button
               type="button"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-gray-600 hover:bg-gray-100 hover:text-gray-900 disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={isSidebarLocked}
               title="Fully collapse navigation sidebar"
               aria-label="Fully collapse navigation sidebar"
               aria-controls="xhandle-primary-sidebar"
@@ -15677,6 +15817,19 @@ const projectHint = useMemo(() => ({
               }}
             >
               <PanelLeftClose className="h-4 w-4" />
+            </button>
+          )}
+          {isSidebarOpen && (
+            <button
+              type="button"
+              className={`inline-flex h-8 w-8 items-center justify-center rounded-lg ${isSidebarLocked ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}`}
+              title={isSidebarLocked ? "Unlock navigation sidebar" : "Lock navigation sidebar open"}
+              aria-label={isSidebarLocked ? "Unlock navigation sidebar" : "Lock navigation sidebar open"}
+              aria-pressed={isSidebarLocked}
+              aria-controls="xhandle-primary-sidebar"
+              onClick={() => setIsSidebarLocked(locked => !locked)}
+            >
+              {isSidebarLocked ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
             </button>
           )}
         </div>
@@ -17753,6 +17906,12 @@ const projectHint = useMemo(() => ({
 	  hazardSummary={diagramHazardData.summary}
 	  hazardRowSourceIndexes={diagramHazardData.sourceIndexes}
   riskRegister={riskRegister}
+  onOpenFunctionalRow={(_index, row) => {
+    const sourceIndex = responseRows.findIndex(candidate => candidate === row || (
+      candidate.fromFunction === row.fromFunction && candidate.controlAction === row.controlAction && candidate.toFunction === row.toFunction
+    ));
+    if (sourceIndex >= 0) handleOpenFunctionalRow(sourceIndex);
+  }}
   onOpenHazardRow={handleOpenHazardSummaryRow}
   onOpenSafetyIssue={(issueOrId) => {
     const issueId = typeof issueOrId === 'string' ? issueOrId : issueOrId?.id;
@@ -17973,7 +18132,7 @@ const projectHint = useMemo(() => ({
                                       <div className="flex items-start gap-1">
                                         <textarea
                                           className={`w-full resize-none overflow-hidden break-words bg-transparent text-sm leading-5 [overflow-wrap:anywhere] focus:outline-none ${rejected ? 'line-through decoration-rose-400' : ''}`}
-                                          value={row[field]}
+                                          value={row[field] || ""}
                                           onChange={(e) => handleRowChange(originalIndex, field, e.target.value)}
                                           onFocus={selectCell}
                                           rows={getFunctionalCellRows(row[field])}
@@ -18097,6 +18256,12 @@ const projectHint = useMemo(() => ({
 	  hazardSummary={diagramHazardData.summary}
 	  hazardRowSourceIndexes={diagramHazardData.sourceIndexes}
   riskRegister={riskRegister}
+  onOpenFunctionalRow={(_index, row) => {
+    const sourceIndex = responseRows.findIndex(candidate => candidate === row || (
+      candidate.fromFunction === row.fromFunction && candidate.controlAction === row.controlAction && candidate.toFunction === row.toFunction
+    ));
+    if (sourceIndex >= 0) handleOpenFunctionalRow(sourceIndex);
+  }}
   onOpenHazardRow={handleOpenHazardSummaryRow}
   onOpenSafetyIssue={(issueOrId) => {
     const issueId = typeof issueOrId === 'string' ? issueOrId : issueOrId?.id;
@@ -21505,6 +21670,12 @@ const updateRiskInProject = async (projectId, predicate) => {
                     if (newProjectError) setNewProjectError('');
                   }}
                   onKeyDown={(e) => {
+                    // Safari inspects the input later in this keydown event.
+                    // Keep it mounted until keyup before closing the dialog.
+                    if (!e.nativeEvent.isComposing && (e.key === 'Enter' || e.key === 'Escape')) e.preventDefault();
+                  }}
+                  onKeyUp={(e) => {
+                    if (e.nativeEvent.isComposing) return;
                     if (e.key === 'Enter') createProject();
                     if (e.key === 'Escape') {
                       setShowNewProject(false);

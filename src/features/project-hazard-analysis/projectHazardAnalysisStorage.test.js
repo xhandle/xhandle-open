@@ -211,7 +211,7 @@ describe("revision history", () => {
       status: HAZARD_WRITE_OUTCOME.OK, revisions: [],
     });
 
-    getDb()._failures.set("analysisRevisions:getAll", new Error("storage offline"));
+    getDb()._failures.set("analysisRevisions:getAllKeys", new Error("storage offline"));
     await expect(listHazardAnalysisRevisions("project-1")).resolves.toMatchObject({
       status: HAZARD_WRITE_OUTCOME.WRITE_ERROR,
     });
