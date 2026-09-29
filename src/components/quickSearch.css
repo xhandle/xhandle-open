@@ -1,0 +1,8 @@
+@keyframes xhandle-search-highlight {
+  0%, 80% { outline: 3px solid #2d7dfe; outline-offset: -3px; }
+  100% { outline: 3px solid transparent; outline-offset: -3px; }
+}
+.xhandle-search-hit { animation: xhandle-search-highlight 5s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .xhandle-search-hit { animation-timing-function: step-end; }
+}

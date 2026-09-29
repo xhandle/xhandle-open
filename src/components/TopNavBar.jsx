@@ -1,3 +1,4 @@
+import QuickSearch from "./QuickSearch.js";
 // TopNavBar.jsx
 import { Settings } from "lucide-react";
 import UserProfileButton from "./UserProfileButton";
@@ -29,6 +30,7 @@ export default function TopNavBar({
 
         {/* RIGHT: actions */}
         <div className="relative flex items-center gap-3 shrink-0">
+          <QuickSearch />
           <button
             type="button"
             onClick={onOpenReadme}

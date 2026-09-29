@@ -317,3 +317,21 @@ test('system modal inherits nested function hazards, mission results and safety 
   expect(container.textContent).not.toContain('Unresolved result');
   expect(section('Safety Hazards').open).toBe(false);
 });
+
+test('quick search indexes diagram nodes and connections and focuses without rearranging', async () => {
+  mount(); await tick();
+  const host = container.querySelector('.project-functional-diagram');
+  host.getClientRects = () => [{ width: 800, height: 600 }];
+  const entries = [];
+  act(() => window.dispatchEvent(new CustomEvent('xhandle:quick-search-collect', { detail: { entries } })));
+  const entry = entries.find(item => item.label === 'Plan');
+  expect(entry).toBeTruthy();
+  expect(entries.some(item => item.kind === 'Diagram connection')).toBe(true);
+  const positions = mockNodes.map(node => ({ id: node.id, position: node.position }));
+  act(() => entry.activate());
+  expect(mockApi.fitView).toHaveBeenCalledWith(expect.objectContaining({
+    nodes: [expect.objectContaining({ id: 'n:Plan' })],
+  }));
+  expect(mockNodes.find(node => node.id === 'n:Plan').selected).toBe(true);
+  expect(mockNodes.map(node => ({ id: node.id, position: node.position }))).toEqual(positions);
+});

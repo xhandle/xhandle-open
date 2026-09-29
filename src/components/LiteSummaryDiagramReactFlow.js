@@ -1,3 +1,4 @@
+import { QUICK_SEARCH_COLLECT, isSearchVisible } from './quickSearchUtils';
 import { classifyAssociatedHazard } from './associatedHazardClassification';
 import { initialDiagramLayoutPending, readDiagramViewport } from './functionalDiagramInitialization';
 // LiteSummaryDiagramReactFlow.js — xHandle look, NO AUTO LAYOUT + ONE-TIME CLEAN & SPREAD
@@ -2960,6 +2961,40 @@ const DiagramBody = forwardRef(function DiagramBody(
   const pendingEdgeUpdateRowsRef = useRef(null);
 
   const { fitView, project, getNodes, getEdges, getViewport } = useReactFlow();
+  useEffect(() => {
+    const collect = event => {
+      if (!isSearchVisible(diagramHostRef.current)) return;
+      const currentNodes = getNodes();
+      const focus = (targetNodes, nodeId, edgeId) => {
+        setSelectedNodeIds(nodeId ? [nodeId] : []);
+        setHighlightedEdgeId(edgeId || null);
+        setNodes(all => all.map(node => ({ ...node, selected: node.id === nodeId })));
+        setEdges(all => all.map(edge => ({ ...edge, selected: edge.id === edgeId })));
+        fitView({ nodes: targetNodes, padding: 0.45, duration: 250, maxZoom: 1.15 });
+      };
+      currentNodes.filter(node => !node.hidden).forEach(node => {
+        event.detail.entries.push({
+          id: storageKey + ':node:' + node.id,
+          kind: node.type === 'groupBox' ? (isSystemGroup(node) ? 'System' : 'Subsystem') : 'Diagram node',
+          label: String(node.data?.label || node.id),
+          text: String(node.data?.description || ''),
+          activate: () => focus([node], node.id, null),
+        });
+      });
+      getEdges().filter(edge => !edge.hidden).forEach(edge => {
+        const endpoints = currentNodes.filter(node => node.id === edge.source || node.id === edge.target);
+        event.detail.entries.push({
+          id: storageKey + ':edge:' + edge.id, kind: 'Diagram connection',
+          label: String(edge.data?.label || edge.label || 'Connection'),
+          text: endpoints.map(node => node.data?.label || node.id).join(' → ') + ' ' + String(edge.data?.description || ''),
+          activate: () => focus(endpoints, null, edge.id),
+        });
+      });
+    };
+    window.addEventListener(QUICK_SEARCH_COLLECT, collect);
+    return () => window.removeEventListener(QUICK_SEARCH_COLLECT, collect);
+  }, [fitView, getNodes, getEdges, setNodes, setEdges, storageKey]);
+
   const undoStackRef = useRef([]);
   const redoStackRef = useRef([]);
   const historyLastKeyRef = useRef('');
