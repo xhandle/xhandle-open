@@ -44,6 +44,12 @@ export function buildSafetyIssueContextVariants(issue = {}, proposedVariants = [
   });
 
   const proposals = Array.isArray(proposedVariants) ? proposedVariants : [];
+  // A saved single-context issue has one assessment. Manual issue edits are
+  // authoritative over its cached context rating (including older records).
+  // Fresh AI proposals and multi-context assessments retain their own ratings.
+  const useIssueRating = groups.size === 1 && Array.isArray(issue.contextVariants)
+    && issue.contextVariants.length === 1;
+
   return Array.from(groups.values()).map((context) => {
     const proposal = proposals.find((candidate) => {
       const candidateId = String(candidate?.contextId || "").trim();
@@ -62,8 +68,8 @@ export function buildSafetyIssueContextVariants(issue = {}, proposedVariants = [
       conditions: context.conditions.join("; "),
       assumptions: context.assumptions.join("; "),
       hazardVariation: context.hazardVariations.join("; ") || String(proposal.hazardVariation || "").trim() || issue.description || "",
-      likelihood: normalizeContextRiskRating(proposal.likelihood, issue.likelihood),
-      severity: normalizeContextRiskRating(proposal.severity, issue.severity),
+      likelihood: normalizeContextRiskRating(useIssueRating ? issue.likelihood : proposal.likelihood, useIssueRating ? proposal.likelihood : issue.likelihood),
+      severity: normalizeContextRiskRating(useIssueRating ? issue.severity : proposal.severity, useIssueRating ? proposal.severity : issue.severity),
       riskRationale: String(proposal.riskRationale || "").trim() || "Context-specific rating requires engineering review.",
       sourceIndexes: proposedSources.length ? proposedSources : context.sourceIndexes.sort((a, b) => a - b),
     };

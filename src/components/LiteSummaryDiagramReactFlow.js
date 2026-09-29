@@ -2657,18 +2657,34 @@ const DiagramBody = forwardRef(function DiagramBody(
   const getAssociatedHazardRows = useCallback((target) => {
     if (!hazardDataRows.length || !target) return [];
 
+    const isGroupTarget = target.type === 'node' && (target.nodeType === 'groupBox' || String(target.id || '').startsWith('g:'));
+    const childLabels = new Set();
+    if (isGroupTarget) {
+      // Systems can contain subsystems as well as functions. Traverse every level
+      // once per lookup, rather than repeating the traversal for every hazard row.
+      const descendants = new Set([target.id]);
+      let grew = true;
+      while (grew) {
+        grew = false;
+        nodes.forEach((node) => {
+          if (descendants.has(node.parentNode) && !descendants.has(node.id)) {
+            descendants.add(node.id);
+            grew = true;
+          }
+        });
+      }
+      nodes.forEach((node) => {
+        if (node.id !== target.id && descendants.has(node.id) && node.type !== 'groupBox') {
+          const label = normalizeAssociationText(node?.data?.label || String(node.id || '').replace(/^n:/, ''));
+          if (label) childLabels.add(label);
+        }
+      });
+    }
+
     const matchesHazardInterface = (cells) => {
       const hazardInterface = getHazardInterface(cells);
       if (!hazardInterface.from && !hazardInterface.to) return false;
-      const isGroupTarget = target.type === 'node' && (target.nodeType === 'groupBox' || String(target.id || '').startsWith('g:'));
-
       if (isGroupTarget) {
-        const childNodes = nodes.filter((node) => node.parentNode === target.id && node.type !== 'groupBox');
-        const childLabels = new Set(
-          childNodes
-            .map((node) => normalizeAssociationText(node?.data?.label || String(node?.id || '').replace(/^n:/, '')))
-            .filter(Boolean)
-        );
         return childLabels.has(hazardInterface.from) || childLabels.has(hazardInterface.to);
       }
 
@@ -2728,8 +2744,10 @@ const DiagramBody = forwardRef(function DiagramBody(
   }, [editModal, nodes, rows]);
 
   const editHazardRows = useMemo(
-    () => getAssociatedHazardRows(editModal),
-    [editModal, getAssociatedHazardRows]
+    () => getAssociatedHazardRows(editModal).filter(
+      ({ cells }) => getProposedSafetyAssessment(cells) !== 'Not Applicable'
+    ),
+    [editModal, getAssociatedHazardRows, getProposedSafetyAssessment]
   );
 
   const editSafetyHazardRows = useMemo(
@@ -2739,15 +2757,6 @@ const DiagramBody = forwardRef(function DiagramBody(
 
   const editMissionReliabilityRows = useMemo(
     () => editHazardRows.filter(({ cells }) => getProposedSafetyAssessment(cells) === 'Mission/Reliability'),
-    [editHazardRows, getProposedSafetyAssessment]
-  );
-
-  const editExcludedHazardRows = useMemo(
-    () => editHazardRows.filter(({ cells }) => getProposedSafetyAssessment(cells) === 'Not Applicable'),
-    [editHazardRows, getProposedSafetyAssessment]
-  );
-  const editUnresolvedHazardRows = useMemo(
-    () => editHazardRows.filter(({ cells }) => getProposedSafetyAssessment(cells) === 'Needs Review'),
     [editHazardRows, getProposedSafetyAssessment]
   );
 
@@ -6036,80 +6045,30 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
               ))}
               {!editFunctionalRows.length && <p>No linked functional decomposition rows.</p>}
             </details>
-            <details key={`${editModal.id}-hazards`}
-              style={{
-                marginTop: 16,
-                borderTop: '1px solid rgba(15,15,18,0.1)',
-                paddingTop: 14,
-              }}
-            >
-              <summary style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.dark }}>
-                  Associated Hazard Analysis
-                </div>
-                {hazardDataRows.length > 0 && (
-                  <div style={{ fontSize: 12, color: 'rgba(15,15,18,0.58)' }}>
-                    {editHazardRows.length} result{editHazardRows.length === 1 ? '' : 's'}
+            {[
+              { key: 'hazards', label: 'Safety Hazards', rows: editSafetyHazardRows,
+                accentColor: BRAND.blue, accentTint: '#EEF4FF',
+                emptyText: 'No linked safety hazards for this item.' },
+              { key: 'mission', label: 'Mission/Reliability Issues', rows: editMissionReliabilityRows,
+                accentColor: '#92400E', accentTint: '#FFF7ED',
+                emptyText: 'No linked Mission/Reliability issues for this item.' },
+            ].map((group) => (
+              <details key={`${editModal.id}-${group.key}`}
+                style={{ marginTop: 16, borderTop: '1px solid rgba(15,15,18,0.1)', paddingTop: 14 }}
+              >
+                <summary style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.dark }}>{group.label}</span>
+                  <span style={{ fontSize: 12, color: 'rgba(15,15,18,0.58)' }}>
+                    {group.rows.length} result{group.rows.length === 1 ? '' : 's'}
+                  </span>
+                </summary>
+                {!hazardDataRows.length ? (
+                  <div style={{ fontSize: 13, color: 'rgba(15,15,18,0.58)' }}>
+                    Run hazard analysis to see linked results here.
                   </div>
-                )}
-              </summary>
-              {!hazardDataRows.length ? (
-                <div style={{ fontSize: 13, color: 'rgba(15,15,18,0.58)' }}>
-                  Run hazard analysis to see linked results here.
-                </div>
-              ) : editHazardRows.length === 0 ? (
-                <div style={{ fontSize: 13, color: 'rgba(15,15,18,0.58)' }}>
-                  No hazard analysis rows are linked to this {editModal.type}.
-                </div>
-              ) : (
-                <div style={{ display: 'grid', gap: 14 }}>
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
-                      <div style={{ fontSize: 13, fontWeight: 800, color: '#0B3EA8' }}>
-                        Safety Hazards
-                      </div>
-                      <div style={{ fontSize: 12, color: 'rgba(15,15,18,0.58)' }}>
-                        {editSafetyHazardRows.length}
-                      </div>
-                    </div>
-                    {renderAssociatedHazardRows(editSafetyHazardRows, {
-                      accentColor: BRAND.blue,
-                      accentTint: '#EEF4FF',
-                      emptyText: 'No linked rows are tagged Safety for this item.',
-                    })}
-                  </div>
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
-                      <div style={{ fontSize: 13, fontWeight: 800, color: '#92400E' }}>
-                        Mission/Reliability Issues
-                      </div>
-                      <div style={{ fontSize: 12, color: 'rgba(15,15,18,0.58)' }}>
-                        {editMissionReliabilityRows.length}
-                      </div>
-                    </div>
-                    {renderAssociatedHazardRows(editMissionReliabilityRows, {
-                      accentColor: '#92400E',
-                      accentTint: '#FFF7ED',
-                      emptyText: 'No linked rows are tagged Mission/Reliability for this item.',
-                    })}
-                  </div>
-                  {[
-                    ['Not Applicable', editExcludedHazardRows],
-                    ['Needs Review / Unclassified', editUnresolvedHazardRows],
-                  ].map(([label, associatedRows]) => (
-                    <div key={label}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 13, fontWeight: 700 }}>
-                        <span>{label}</span><span>{associatedRows.length}</span>
-                      </div>
-                      {renderAssociatedHazardRows(associatedRows, {
-                        accentColor: '#475569', accentTint: '#F1F5F9',
-                        emptyText: `No linked rows are ${label.toLowerCase()}.`,
-                      })}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </details>
+                ) : renderAssociatedHazardRows(group.rows, group)}
+              </details>
+            ))}
             <details key={`${editModal.id}-issues`}
               style={{
                 marginTop: 16,

@@ -54,3 +54,19 @@ describe("safety issue operational contexts", () => {
     ])).toEqual(expect.objectContaining({ contextId: "b" }));
   });
 });
+
+test('saved single-context assessment uses manual issue ratings instead of stale cached ratings', () => {
+ const contextVariants=[{contextId:'one',likelihood:3,severity:3}];
+ const issue={likelihood:5,severity:5,contextVariants,evidence:[{sourceIndex:1,cells:{'Operational Context ID':'one'}}]};
+ const result=buildSafetyIssueContextVariants(issue,contextVariants);
+ expect(result[0].likelihood).toBe(5);
+ expect(result[0].severity).toBe(5);
+ expect(getBoundingSafetyIssueContext(result)).toMatchObject({likelihood:5,severity:5});
+ expect(contextVariants[0].likelihood).toBe(3);
+});
+
+test('multi-context issue rating does not overwrite separately assessed contexts', () => {
+ const contextVariants=[{contextId:'one',likelihood:2,severity:3},{contextId:'two',likelihood:4,severity:4}];
+ const issue={likelihood:5,severity:5,contextVariants,evidence:contextVariants.map((c,i)=>({sourceIndex:i+1,cells:{'Operational Context ID':c.contextId}}))};
+ expect(buildSafetyIssueContextVariants(issue,contextVariants).map(c=>[c.likelihood,c.severity])).toEqual([[2,3],[4,4]]);
+});

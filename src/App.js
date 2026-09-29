@@ -1,3 +1,5 @@
+import { reorderProject } from "./lib/projectOrder";
+import { loadSidebarPreferences, SIDEBAR_PREFERENCES_KEY } from "./lib/sidebarPreferences";
 import { createProjectRunGuard } from "./lib/projectRunGuard";
 import { chooseDecompositionRecovery, nextDecompositionVersion } from "./lib/decompositionRecovery";
 import { recoveryRecord, saveRecoveryRecord, flushRecoveryRecord, deleteProjectRecovery } from "./lib/durableRecovery";
@@ -40,6 +42,7 @@ import {
   Loader2,
   ShieldCheck,
   ClipboardCheck,
+  DraftingCompass,
   Sparkles,
   RefreshCw,
   RotateCcw,
@@ -3855,6 +3858,18 @@ useEffect(() => {
   return () => { window.removeEventListener("xhandle:data-changed", onChange); clearTimeout(t); };
 }, []);
 
+const [sidebarVisibility, setSidebarVisibility] = useState(loadSidebarPreferences);
+const [sidebarPreferenceError, setSidebarPreferenceError] = useState('');
+const updateSidebarVisibility = (next) => {
+  try {
+    localStorage.setItem(SIDEBAR_PREFERENCES_KEY, JSON.stringify(next));
+    if (localStorage.getItem(SIDEBAR_PREFERENCES_KEY) !== JSON.stringify(next)) throw new Error('Storage write failed');
+    setSidebarVisibility(next);
+    setSidebarPreferenceError('');
+  } catch {
+    setSidebarPreferenceError('Could not save sidebar preferences. Please retry.');
+  }
+};
 const [section, setSection] = useState(DEFAULT_START_SECTION); // 'projects' | 'console' | 'risk' | 'reports' | 'settings'
 
   // Docked Copilot (persistent)
@@ -5605,6 +5620,7 @@ Output: clean Markdown only (no surrounding backticks).
   const [newProjectError, setNewProjectError] = useState('');
   const [newProjectFolderError, setNewProjectFolderError] = useState('');
   const [draggingProjectId, setDraggingProjectId] = useState(null);
+  const [projectDropTarget, setProjectDropTarget] = useState(null);
   const [dragOverProjectFolderId, setDragOverProjectFolderId] = useState(null);
 
      // NEW: Project Manager (AI-PM) filters
@@ -7101,6 +7117,7 @@ const deleteProjectFolder = (folderId) => {
 };
 
 const moveProjectToFolder = (projectId, folderId) => {
+  setProjectDropTarget(null);
   if (!projectId) return;
   const nextFolderId = folderId || null;
   setProjects((prev) =>
@@ -15835,7 +15852,7 @@ const projectHint = useMemo(() => ({
         </div>
 
         <div className="px-3 py-2 flex flex-col gap-1">
-<div className="order-3">
+<div className="order-3" hidden={sidebarVisibility["review-center"] === false}>
   <NavItem
     icon={ClipboardCheck}
     label="Review Center"
@@ -15844,7 +15861,7 @@ const projectHint = useMemo(() => ({
   />
 </div>
 
-<div className="order-4">
+<div className="order-4" hidden={sidebarVisibility["reports"] === false}>
   <NavItem
     icon={FileText}
     label="Reports"
@@ -15853,7 +15870,7 @@ const projectHint = useMemo(() => ({
   />
 </div>
 
-<div className="order-1">
+<div className="order-1" hidden={sidebarVisibility["code-architecture"] === false}>
   <div className={`w-full ${isSidebarOpen ? '' : 'flex justify-center'}`}>
     <div className={`flex items-center ${isSidebarOpen ? 'gap-1' : ''} w-full min-w-0`}>
       <div className="min-w-0 flex-1">
@@ -16167,7 +16184,7 @@ const projectHint = useMemo(() => ({
   )}
 </div>
 
-<div className="order-7">
+<div className="order-7" hidden={sidebarVisibility["safety-case"] === false}>
   <NavItem
     icon={ShieldCheck}
     label="Safety Case"
@@ -16176,16 +16193,16 @@ const projectHint = useMemo(() => ({
   />
 </div>
 
-<div className="order-5">
+<div className="order-5" hidden={sidebarVisibility["requirements"] === false}>
   <NavItem
-    icon={FileText}
+    icon={DraftingCompass}
     label="Design Management"
     active={section === 'requirements'}
     onClick={() => setSection('requirements')}
   />
 </div>
 
-<div className="order-6">
+<div className="order-6" hidden={sidebarVisibility["vnv"] === false}>
   <NavItem
     icon={FlaskConical}
     label="System Test"
@@ -16195,7 +16212,7 @@ const projectHint = useMemo(() => ({
 </div>
 
 {/* xHandle Copilot dock */}
-<div className="order-8">
+<div className="order-8" hidden={sidebarVisibility["collaborator"] === false}>
   <NavItem
     icon={CollaboratorNavIcon}
     iconProps={{ active: dockOpen }}
@@ -16217,7 +16234,7 @@ const projectHint = useMemo(() => ({
 
 
           {/* Projects row with + and collapsible list */}
-          <div className="order-2">
+          <div className="order-2" hidden={sidebarVisibility["projects"] === false}>
           <div className={`w-full ${isSidebarOpen ? '' : 'flex justify-center'}`}>
             <div className={`flex items-center ${isSidebarOpen ? 'gap-2' : ''} w-full`}>
               <NavItem
@@ -16296,6 +16313,7 @@ const projectHint = useMemo(() => ({
                 e.preventDefault();
                 e.dataTransfer.dropEffect = "move";
                 setDragOverProjectFolderId("__root__");
+                setProjectDropTarget(null);
               }}
               onDragLeave={(e) => {
                 if (!e.currentTarget.contains(e.relatedTarget)) setDragOverProjectFolderId(null);
@@ -16325,8 +16343,40 @@ const projectHint = useMemo(() => ({
   <div
     key={p.id}
     className={`group relative rounded-lg ${draggingProjectId === p.id ? 'opacity-50' : ''}`}
+    style={projectDropTarget?.id === p.id ? {
+      boxShadow: projectDropTarget.position === "before"
+        ? "inset 0 2px #2D7DFE" : "inset 0 -2px #2D7DFE"
+    } : undefined}
+    onDragOver={(e) => {
+      if (!draggingProjectId) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = "move";
+      setDragOverProjectFolderId(null);
+      if (draggingProjectId === p.id) { setProjectDropTarget(null); return; }
+      const bounds = e.currentTarget.getBoundingClientRect();
+      const position = e.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+      setProjectDropTarget((prev) => prev?.id === p.id && prev.position === position
+        ? prev : { id: p.id, position });
+    }}
+    onDragLeave={(e) => {
+      if (!e.currentTarget.contains(e.relatedTarget)) setProjectDropTarget(null);
+    }}
+    onDrop={(e) => {
+      if (!draggingProjectId) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const projectId = e.dataTransfer.getData("application/x-xhandle-project-id") || draggingProjectId;
+      const bounds = e.currentTarget.getBoundingClientRect();
+      const position = e.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+      setProjects((prev) => reorderProject(prev, projectId, p.id, position));
+      setDraggingProjectId(null);
+      setDragOverProjectFolderId(null);
+      setProjectDropTarget(null);
+    }}
     draggable={editingProjectId !== p.id}
     onDragStart={(e) => {
+      setProjectDropTarget(null);
       setDraggingProjectId(p.id);
       setDragOverProjectFolderId(null);
       e.dataTransfer.effectAllowed = "move";
@@ -16334,6 +16384,7 @@ const projectHint = useMemo(() => ({
       e.dataTransfer.setData("text/plain", p.name || "Project");
     }}
     onDragEnd={() => {
+      setProjectDropTarget(null);
       setDraggingProjectId(null);
       setDragOverProjectFolderId(null);
     }}
@@ -16438,6 +16489,7 @@ const projectHint = useMemo(() => ({
           e.stopPropagation();
           e.dataTransfer.dropEffect = "move";
           setDragOverProjectFolderId(folder.id);
+          setProjectDropTarget(null);
           if (!isOpen) setOpenProjectFolderIds((prev) => ({ ...prev, [folder.id]: true }));
         }}
         onDragLeave={(e) => {
@@ -17947,6 +17999,23 @@ const projectHint = useMemo(() => ({
                           ) : <span />}
                           <button onClick={handleAddRow} className="px-4 py-2 text-sm border rounded bg-[#ECEEFF] hover:bg-[#D7DAFF] text-[#0F0F12]">+ Add Row</button>
                         </div>
+                        <div className="sticky left-0 my-3 flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 bg-[#F8FAFC] px-3 py-2 text-sm text-gray-700">
+                          <span role="status" aria-live="polite" aria-atomic="true">
+                            <strong className="tabular-nums">{filteredFunctionalRows.length.toLocaleString()}</strong>
+                            {" of "}{responseRows.length.toLocaleString()}{" rows"}
+                            {activeFunctionalFilterCount > 0 ? " match filters" : " shown"}
+                          </span>
+                          <span className="text-xs text-gray-500">Click a cell to edit. Changes save when you leave the cell.</span>
+                          {activeFunctionalFilterCount > 0 && (
+                            <button
+                              type="button"
+                              onClick={clearAllFunctionalFilters}
+                              className="shrink-0 rounded border border-gray-200 bg-white px-2 py-1 text-xs font-semibold text-[#2D7DFE] hover:bg-blue-50"
+                            >
+                              Clear filters
+                            </button>
+                          )}
+                        </div>
                         <table className="min-w-full border-separate border-spacing-0 text-sm text-left">
                           <thead>
                             <tr className="text-[#4B5563] text-sm font-medium">
@@ -18055,24 +18124,6 @@ const projectHint = useMemo(() => ({
                                 Remove
                               </th>
                             </tr>
-                            {activeFunctionalFilterCount > 0 && (
-                              <tr>
-                                <th colSpan={functionalTableColumns.length + 1 + (functionalReviewItems.length > 0 ? 1 : 0)} className="sticky top-[64px] z-20 bg-[#F8FAFC] border-b border-gray-200 px-4 py-2 text-left">
-                                  <div className="flex items-center justify-between gap-3 text-xs text-gray-600">
-                                    <span>
-                                      Showing {filteredFunctionalRows.length} of {responseRows.length} rows with {activeFunctionalFilterCount} selected filter{activeFunctionalFilterCount === 1 ? '' : 's'}.
-                                    </span>
-                                    <button
-                                      type="button"
-                                      onClick={clearAllFunctionalFilters}
-                                      className="rounded border border-gray-200 bg-white px-2 py-1 text-[#2D7DFE] hover:bg-blue-50"
-                                    >
-                                      Clear filters
-                                    </button>
-                                  </div>
-                                </th>
-                              </tr>
-                            )}
                           </thead>
                           <tbody className="text-[#374151] text-sm">
                             {filteredFunctionalRows.map(({ row, originalIndex }, idx) => {
@@ -20560,6 +20611,9 @@ const updateRiskInProject = async (projectId, predicate) => {
 {/* Settings Modal */}
 {showSettingsModal && (
   <SettingsModal
+  sidebarVisibility={sidebarVisibility}
+  onSidebarVisibilityChange={updateSidebarVisibility}
+  sidebarPreferenceError={sidebarPreferenceError}
   connected={repoConnected}
   activeProject={activeProject}
   projectOrganizationProfile={activeProjectId ? loadProjectData(activeProjectId)?.organizationProfile : null}

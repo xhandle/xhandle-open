@@ -1,3 +1,4 @@
+import { SIDEBAR_AREAS } from "../lib/sidebarPreferences";
 import { useState, useEffect, useRef } from "react";
 import { storageScanTimeout } from "../lib/storageScanTimeout";
 import { backendURL, ACCOUNT_ID, getLocalAccessToken } from "./backendConfig";
@@ -68,6 +69,7 @@ const VSCODE_EXTENSION_FILENAME = `xhandle-safety-${VSCODE_EXTENSION_VERSION}.vs
 const VSCODE_EXTENSION_DOWNLOAD_URL = `/downloads/${VSCODE_EXTENSION_FILENAME}`;
 const MAX_ANALYSIS_CONTEXT_FILE_CHARS = 60000;
 const SETTINGS_TABS = new Set([
+  "sidebar",
   "openai",
   "organization-profile",
   "vscode",
@@ -323,6 +325,9 @@ function indexedDbStoreDescription(dbName, storeName) {
 }
 
 export default function SettingsModal({
+  sidebarVisibility = {},
+  onSidebarVisibilityChange,
+  sidebarPreferenceError = "",
   onClose,
   onSynced,
   connected: githubConnectedProp = false,
@@ -1181,12 +1186,30 @@ export default function SettingsModal({
             <TabButton label="Organization Profile" active={tab === "organization-profile"} onClick={() => setTab("organization-profile")} />
             <TabButton label="VS Code" active={tab === "vscode"} onClick={() => setTab("vscode")} />
             <TabButton label="Backup" active={tab === "backup"} onClick={() => setTab("backup")} />
+            <TabButton label="Sidebar" active={tab === "sidebar"} onClick={() => setTab("sidebar")} />
             <TabButton label="Storage" active={tab === "storage"} onClick={() => setTab("storage")} />
           </div>
         </div>
 
         {/* Panels scroll independently so their action rows cannot fall behind the footer. */}
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
+        {tab === "sidebar" && (
+          <section className="space-y-4">
+            <h3 className="font-semibold text-gray-900">Sidebar areas</h3>
+            <p className="text-sm text-gray-600">Choose which areas appear in the left navigation. Changes save automatically in this browser. Hiding an area does not delete its data or close your current view.</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {SIDEBAR_AREAS.map(([id, label]) => (
+                <label key={id} className="flex items-center gap-3 rounded-lg border p-3">
+                  <input type="checkbox" checked={sidebarVisibility[id] !== false}
+                    onChange={event => onSidebarVisibilityChange?.({ ...sidebarVisibility, [id]: event.target.checked })} />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+            <button type="button" className="rounded-lg border px-3 py-2 text-sm" onClick={() => onSidebarVisibilityChange?.(Object.fromEntries(SIDEBAR_AREAS.map(([id]) => [id, true])))}>Show all areas</button>
+            {sidebarPreferenceError && <p role="alert" className="text-sm text-red-700">{sidebarPreferenceError}</p>}
+          </section>
+        )}
         {tab === "organization-profile" && (
           <section className="space-y-4">
             <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-950">

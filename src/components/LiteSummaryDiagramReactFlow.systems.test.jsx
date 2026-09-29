@@ -287,3 +287,33 @@ test('a new CSV diagram replaces the completed starter layout and arranges once'
   expect(geometry()).toEqual(initial);
   expect(localStorage.getItem(key + ':initial-layout:v1')).toBe('complete');
 });
+
+test('system modal inherits nested function hazards, mission results and safety issues', async () => {
+  const hazardSummary = [
+    ['Function (From)', 'Control Action', 'Function (To)', 'Safety Classification', 'Hazard'],
+    ['Plan', 'Command', 'Control', 'Safety — Direct', 'Unsafe motion'],
+    ['Control', 'Status', 'Plan', 'Mission/Reliability', 'Service delay'],
+    ['Unrelated', 'Other', 'Elsewhere', 'Safety — Direct', 'Unrelated hazard'],
+    ['Plan', 'Command', 'Control', 'Not Applicable', 'Excluded result'],
+    ['Plan', 'Command', 'Control', 'Needs Review', 'Unresolved result'],
+  ];
+  act(() => root.render(<Diagram rows={rows} storageKey={key}
+    hazardSummary={hazardSummary}
+    riskRegister={[{ id: 'risk-1', title: 'Inherited safety issue', sourceIndexes: [1], likelihood: 3, severity: 3 }]} />));
+  await tick();
+  act(() => mockFlowProps.onSelectionChange({ nodes: [mockNodes.find(node => node.id === 'g:planning')] }));
+  act(() => container.querySelector('button[aria-label="Add system"]').click());
+  await tick();
+  const system = mockNodes.find(node => node.data.elementType === 'system');
+  act(() => mockFlowProps.onNodeDoubleClick({ preventDefault() {}, stopPropagation() {} }, system));
+  const sections = Array.from(container.querySelectorAll('details'));
+  const section = title => sections.find(el => el.querySelector('summary')?.textContent.includes(title));
+  expect(section('Safety Hazards').textContent).toContain('1 result');
+  expect(section('Safety Hazards').textContent).toContain('Unsafe motion');
+  expect(section('Mission/Reliability Issues').textContent).toContain('Service delay');
+  expect(section('Associated Safety Issues').textContent).toContain('1 issue');
+  expect(container.textContent).not.toContain('Unrelated hazard');
+  expect(container.textContent).not.toContain('Excluded result');
+  expect(container.textContent).not.toContain('Unresolved result');
+  expect(section('Safety Hazards').open).toBe(false);
+});
