@@ -102,8 +102,8 @@ export function resolveGeneratedNodePlacement({
   explicitlyUngrouped = false,
 }) {
   const savedParent = saved?.parentId && groupById.has(saved.parentId) ? saved.parentId : null;
-  const explicitParent = saved?.groupingIntent === 'explicit' && savedParent;
-  const parentId = explicitlyUngrouped ? null : (explicitParent || expectedGroup?.id || null);
+  const explicitPlacement = saved?.groupingIntent === 'explicit' && (!saved.parentId || Boolean(savedParent));
+  const parentId = explicitlyUngrouped ? null : (explicitPlacement ? savedParent : expectedGroup?.id || null);
   const oldParent = existing?.parentNode ? groupById.get(existing.parentNode) : (savedParent ? groupById.get(savedParent) : null);
   const local = saved?.position || existing?.position;
   const parentNodes = [...groupById.values()];
@@ -115,5 +115,5 @@ export function resolveGeneratedNodePlacement({
   const position = absolute && parentId
     ? { x: absolute.x - newOrigin.x, y: absolute.y - newOrigin.y }
     : absolute;
-  return { parentId, position, groupingIntent: explicitParent ? 'explicit' : 'automatic' };
+  return { parentId, position, groupingIntent: explicitPlacement ? 'explicit' : 'automatic' };
 }

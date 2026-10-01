@@ -42,6 +42,11 @@ test('explicit ungroup and regroup decisions override automatic ownership', () =
   expect(resolveGeneratedNodePlacement({ saved: { position: { x: 20, y: 20 }, parentId: groupA.id, groupingIntent: 'explicit' }, expectedGroup: groupB, groupById: groups }).parentId).toBe(groupA.id);
 });
 
+test('an explicitly placed top-level endpoint stays ungrouped after a manual connection', () => {
+  const result = resolveGeneratedNodePlacement({ saved: {position:{x:40,y:80},parentId:null,groupingIntent:'explicit'}, expectedGroup:groupA,groupById:new Map([[groupA.id,groupA]]) });
+  expect(result).toEqual({parentId:null,position:{x:40,y:80},groupingIntent:'explicit'});
+});
+
 test('legacy container artifacts require automatic-group evidence', () => {
   const artifact = { id: 'n:A', parentNode: groupA.id, data: { label: 'A' } };
   const ambiguous = { id: 'n:custom', parentNode: groupA.id, data: { label: 'Custom' } };

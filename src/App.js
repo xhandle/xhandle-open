@@ -8165,6 +8165,9 @@ const handleProjectDiagramRowsUpdate = useCallback((nextRowsOrUpdater) => {
     if (!Array.isArray(nextRows)) return currentRows;
     const nextCommittedRows = getProjectDiagramRows(nextRows);
     const tableOnlyRows = currentRows.filter((row) => !hasProjectDiagramRelationship(row));
+    // Manual edits and undo must publish matching row/category revisions together.
+    // The general table/import effect still handles all other update paths.
+    setDiagramCategories(current => mergeSubsystemDiagramCategories(current, nextCommittedRows));
     setCommittedFunctionalDiagramRows(nextCommittedRows);
     return [...nextCommittedRows, ...tableOnlyRows];
   });
