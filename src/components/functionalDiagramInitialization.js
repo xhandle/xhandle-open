@@ -14,3 +14,9 @@ export function readDiagramViewport(storage, key) {
     return value && [value.x, value.y, value.zoom].every(Number.isFinite) && value.zoom > 0 ? value : null;
   } catch { return null; }
 }
+// A CSV replaces the table even when its function names overlap with the old
+// table. Keep this request durable if the diagram is not currently mounted.
+export function requestImportedDiagramLayout(storage, key) {
+  storage.setItem(key + ':csv-import-pending:v1', 'true');
+  storage.setItem(key + ':initial-layout:v1', 'pending');
+}

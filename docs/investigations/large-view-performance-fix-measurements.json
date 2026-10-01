@@ -1,0 +1,1704 @@
+{
+  "build": "localhost:3000 development build; isolated browser profiles",
+  "runs": {
+    "chromium_draft_1400": {
+      "interfaces": 200,
+      "mode": "draft",
+      "diagramCounts": {
+        "nodes": 247,
+        "edges": 200,
+        "dom": 8739
+      },
+      "tableCounts": {
+        "rows": 1404,
+        "cells": 2444,
+        "textareas": 0,
+        "dom": 6823
+      },
+      "stats": {
+        "diagram-select-0": {
+          "ms": 144,
+          "longTasks": [
+            78
+          ],
+          "storageWrites": [
+            {
+              "key": "diagram:positions:perf-synthetic",
+              "ms": 0.20000000298023224
+            },
+            {
+              "key": "diagram:positions:perf-synthetic",
+              "ms": 0
+            }
+          ],
+          "selectedNodes": 1,
+          "hotFrames": [
+            {
+              "name": "(program)",
+              "ms": 595,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "querySelector",
+              "ms": 9,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "shallow$1",
+              "ms": 8,
+              "line": 7180,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "setState",
+              "ms": 8,
+              "line": 7282,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "querySelector",
+              "ms": 8,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "shallow$1",
+              "ms": 6,
+              "line": 7180,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "createElement",
+              "ms": 5,
+              "line": 266225,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(garbage collector)",
+              "ms": 5,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "diffProperties",
+              "ms": 5,
+              "line": 241497,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "setState",
+              "ms": 4,
+              "line": 7282,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "selector$f",
+              "ms": 4,
+              "line": 2559,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "createElement",
+              "ms": 4,
+              "line": 266225,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            }
+          ]
+        },
+        "diagram-select-1": {
+          "ms": 82,
+          "longTasks": [
+            54
+          ],
+          "storageWrites": [
+            {
+              "key": "diagram:positions:perf-synthetic",
+              "ms": 0
+            }
+          ],
+          "selectedNodes": 1,
+          "hotFrames": [
+            {
+              "name": "(program)",
+              "ms": 234,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "shallow$1",
+              "ms": 11,
+              "line": 7180,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "shallow$1",
+              "ms": 9,
+              "line": 7180,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "querySelector",
+              "ms": 8,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "setState",
+              "ms": 5,
+              "line": 7282,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "createElement",
+              "ms": 5,
+              "line": 266225,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "diffProperties",
+              "ms": 5,
+              "line": 241497,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "setState",
+              "ms": 5,
+              "line": 7282,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(garbage collector)",
+              "ms": 4,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "createElement",
+              "ms": 4,
+              "line": 266225,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "createElement",
+              "ms": 4,
+              "line": 266225,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "assignFiberPropertiesInDEV",
+              "ms": 3,
+              "line": 257412,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            }
+          ]
+        },
+        "diagram-select-2": {
+          "ms": 82,
+          "longTasks": [
+            54
+          ],
+          "storageWrites": [
+            {
+              "key": "diagram:positions:perf-synthetic",
+              "ms": 0
+            }
+          ],
+          "selectedNodes": 1,
+          "hotFrames": [
+            {
+              "name": "(program)",
+              "ms": 239,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "shallow$1",
+              "ms": 10,
+              "line": 7180,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "shallow$1",
+              "ms": 8,
+              "line": 7180,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "querySelector",
+              "ms": 7,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "querySelector",
+              "ms": 6,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "EdgeWrapper",
+              "ms": 4,
+              "line": 5409,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "createElement",
+              "ms": 4,
+              "line": 266225,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(anonymous)",
+              "ms": 4,
+              "line": 7287,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(garbage collector)",
+              "ms": 4,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "now",
+              "ms": 3,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "diffProperties",
+              "ms": 3,
+              "line": 241497,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "EdgeWrapper",
+              "ms": 3,
+              "line": 5409,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            }
+          ]
+        },
+        "hazard-tab": {
+          "ms": 135,
+          "longTasks": [
+            81
+          ],
+          "storageWrites": [
+            {
+              "key": "diagram:positions:perf-synthetic",
+              "ms": 0.20000000298023224
+            },
+            {
+              "key": "diagram:positions:perf-synthetic:groups:v1",
+              "ms": 0
+            },
+            {
+              "key": "diagram:positions:perf-synthetic:manual:v1",
+              "ms": 0
+            }
+          ],
+          "selectedNodes": 0,
+          "hotFrames": [
+            {
+              "name": "(program)",
+              "ms": 278,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "setAttribute",
+              "ms": 7,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "DraftHazardTableRow",
+              "ms": 5,
+              "line": 323586,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "removeChild",
+              "ms": 5,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "(anonymous)",
+              "ms": 4,
+              "line": 397106,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "setValueForStyles",
+              "ms": 4,
+              "line": 235239,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "indexVibeReviewHeaders",
+              "ms": 3,
+              "line": 431068,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "setInitialProperties",
+              "ms": 3,
+              "line": 241388,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "commitHookEffectListUnmount",
+              "ms": 3,
+              "line": 252733,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "detachDeletedInstance",
+              "ms": 3,
+              "line": 242837,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(garbage collector)",
+              "ms": 3,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "jsxDEV",
+              "ms": 3,
+              "line": 264017,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            }
+          ]
+        },
+        "hazard-cell": {
+          "ms": 33,
+          "longTasks": [],
+          "storageWrites": [],
+          "selectedNodes": 0,
+          "hotFrames": [
+            {
+              "name": "(program)",
+              "ms": 252,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "(idle)",
+              "ms": 6,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "jsxDEV",
+              "ms": 3,
+              "line": 264017,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(garbage collector)",
+              "ms": 2,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "querySelectorAll",
+              "ms": 1,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "(anonymous)",
+              "ms": 1,
+              "line": 431071,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(anonymous)",
+              "ms": 1,
+              "line": 317438,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(anonymous)",
+              "ms": 1,
+              "line": 317227,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "ReactElement",
+              "ms": 1,
+              "line": 263960,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "createWorkInProgress",
+              "ms": 1,
+              "line": 257057,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "updateSimpleMemoComponent",
+              "ms": 1,
+              "line": 249565,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "DraftHazardTableRow",
+              "ms": 1,
+              "line": 323586,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            }
+          ]
+        },
+        "hazard-cell-next": {
+          "ms": 15,
+          "longTasks": [],
+          "storageWrites": [],
+          "selectedNodes": 0,
+          "hotFrames": [
+            {
+              "name": "(program)",
+              "ms": 228,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "querySelectorAll",
+              "ms": 1,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "(anonymous)",
+              "ms": 1,
+              "line": 317227,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "ReactElement",
+              "ms": 1,
+              "line": 263960,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "defineKeyPropWarningGetter",
+              "ms": 1,
+              "line": 263909,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "indexVibeReviewHeaders",
+              "ms": 1,
+              "line": 431068,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "createWorkInProgress",
+              "ms": 1,
+              "line": 257057,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "shallowEqual",
+              "ms": 1,
+              "line": 239917,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "diffProperties",
+              "ms": 1,
+              "line": 241497,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "validatePropertiesInDevelopment",
+              "ms": 1,
+              "line": 241140,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "now",
+              "ms": 1,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "(idle)",
+              "ms": 1,
+              "line": 0,
+              "url": ""
+            }
+          ]
+        },
+        "hazard-cell-third": {
+          "ms": 15,
+          "longTasks": [],
+          "storageWrites": [],
+          "selectedNodes": 0,
+          "hotFrames": [
+            {
+              "name": "(program)",
+              "ms": 235,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "shallowEqual",
+              "ms": 3,
+              "line": 239917,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(garbage collector)",
+              "ms": 3,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "(anonymous)",
+              "ms": 2,
+              "line": 317438,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(anonymous)",
+              "ms": 1,
+              "line": 431071,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "jsxDEV",
+              "ms": 1,
+              "line": 264017,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "ReactElement",
+              "ms": 1,
+              "line": 263960,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "ReactElement",
+              "ms": 1,
+              "line": 263960,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "validatePropertiesInDevelopment",
+              "ms": 1,
+              "line": 241140,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            }
+          ]
+        },
+        "hazard-filter": {
+          "ms": 25,
+          "longTasks": [],
+          "storageWrites": [],
+          "selectedNodes": 0,
+          "hotFrames": [
+            {
+              "name": "(program)",
+              "ms": 234,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "(anonymous)",
+              "ms": 3,
+              "line": 305269,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "jsxDEV",
+              "ms": 3,
+              "line": 264017,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "indexVibeReviewHeaders",
+              "ms": 1,
+              "line": 431068,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "ReactElement",
+              "ms": 1,
+              "line": 263960,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "validateExplicitKey",
+              "ms": 1,
+              "line": 264155,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "pushHostContext",
+              "ms": 1,
+              "line": 245886,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "shallowEqual",
+              "ms": 1,
+              "line": 239917,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "updateHostComponent$1",
+              "ms": 1,
+              "line": 251623,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "validateProperty$1",
+              "ms": 1,
+              "line": 236041,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "isCustomComponent",
+              "ms": 1,
+              "line": 235375,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(idle)",
+              "ms": 1,
+              "line": 0,
+              "url": ""
+            }
+          ]
+        },
+        "quick-search-open": {
+          "ms": 37,
+          "longTasks": [],
+          "storageWrites": [],
+          "selectedNodes": 0,
+          "hotFrames": [
+            {
+              "name": "(program)",
+              "ms": 257,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "(idle)",
+              "ms": 8,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "focus",
+              "ms": 3,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "(anonymous)",
+              "ms": 2,
+              "line": 396764,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "querySelectorAll",
+              "ms": 1,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "getClientRects",
+              "ms": 1,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "normalizeSearchText",
+              "ms": 1,
+              "line": 396799,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "RegExp: \\s+",
+              "ms": 1,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "coerceRef",
+              "ms": 1,
+              "line": 244143,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(anonymous)",
+              "ms": 1,
+              "line": 351085,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "dispatchEventForPluginEventSystem",
+              "ms": 1,
+              "line": 240860,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "getEventTarget",
+              "ms": 1,
+              "line": 236214,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            }
+          ]
+        }
+      },
+      "behavior": {
+        "lastRowInitiallyDeferred": true,
+        "searchRevealedLastRow": true,
+        "editSavedInView": true,
+        "cellHasNoInternalScroll": true,
+        "savedLayoutPreserved": true,
+        "editSurvivedReload": true,
+        "searchRespectsFilters": true,
+        "searchRespectsCollapsedGroups": true
+      },
+      "errors": []
+    },
+    "chromium_completed_700": {
+      "interfaces": 100,
+      "mode": "completed",
+      "diagramCounts": {
+        "nodes": 124,
+        "edges": 100,
+        "dom": 4567
+      },
+      "tableCounts": {
+        "rows": 704,
+        "cells": 1595,
+        "textareas": 0,
+        "dom": 4139
+      },
+      "stats": {
+        "diagram-select-0": {
+          "ms": 47,
+          "longTasks": [],
+          "storageWrites": [
+            {
+              "key": "diagram:positions:perf-synthetic",
+              "ms": 0
+            }
+          ],
+          "selectedNodes": 1,
+          "hotFrames": [
+            {
+              "name": "(program)",
+              "ms": 369,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "setState",
+              "ms": 4,
+              "line": 7282,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "setState",
+              "ms": 3,
+              "line": 7282,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(garbage collector)",
+              "ms": 3,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "(idle)",
+              "ms": 1,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "getListener",
+              "ms": 1,
+              "line": 236352,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "getMarkerId",
+              "ms": 1,
+              "line": 2002,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "shallow$1",
+              "ms": 1,
+              "line": 7180,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "applyChanges",
+              "ms": 1,
+              "line": 4054,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(anonymous)",
+              "ms": 1,
+              "line": 335326,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "beginWork",
+              "ms": 1,
+              "line": 251420,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(anonymous)",
+              "ms": 1,
+              "line": 4060,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            }
+          ]
+        },
+        "diagram-select-1": {
+          "ms": 39,
+          "longTasks": [],
+          "storageWrites": [
+            {
+              "key": "diagram:positions:perf-synthetic",
+              "ms": 0
+            }
+          ],
+          "selectedNodes": 1,
+          "hotFrames": [
+            {
+              "name": "(program)",
+              "ms": 119,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "shallow$1",
+              "ms": 4,
+              "line": 7180,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "updateHostComponent$1",
+              "ms": 3,
+              "line": 251623,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "now",
+              "ms": 3,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "(anonymous)",
+              "ms": 3,
+              "line": 7287,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "EdgeWrapper",
+              "ms": 3,
+              "line": 5409,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "shallowEqual",
+              "ms": 3,
+              "line": 239917,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "shallow$1",
+              "ms": 3,
+              "line": 7180,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(garbage collector)",
+              "ms": 3,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "renderWithHooks",
+              "ms": 1,
+              "line": 246174,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "jsxDEV",
+              "ms": 1,
+              "line": 264017,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "createElement",
+              "ms": 1,
+              "line": 266225,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            }
+          ]
+        },
+        "diagram-select-2": {
+          "ms": 37,
+          "longTasks": [],
+          "storageWrites": [
+            {
+              "key": "diagram:positions:perf-synthetic",
+              "ms": 0
+            }
+          ],
+          "selectedNodes": 1,
+          "hotFrames": [
+            {
+              "name": "(program)",
+              "ms": 106,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "DiagramBody",
+              "ms": 4,
+              "line": 337150,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "shallow$1",
+              "ms": 4,
+              "line": 7180,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "querySelector",
+              "ms": 3,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "jsxDEV",
+              "ms": 3,
+              "line": 264017,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(anonymous)",
+              "ms": 3,
+              "line": 7287,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "shallow$1",
+              "ms": 3,
+              "line": 7180,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(garbage collector)",
+              "ms": 2,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "getHandle",
+              "ms": 1,
+              "line": 5671,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "useRef",
+              "ms": 1,
+              "line": 247592,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "createElement",
+              "ms": 1,
+              "line": 266225,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "NodeWrapper",
+              "ms": 1,
+              "line": 4852,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            }
+          ]
+        },
+        "hazard-tab": {
+          "ms": 61,
+          "longTasks": [],
+          "storageWrites": [
+            {
+              "key": "diagram:positions:perf-synthetic",
+              "ms": 0.10000000894069672
+            },
+            {
+              "key": "diagram:positions:perf-synthetic:groups:v1",
+              "ms": 0
+            },
+            {
+              "key": "diagram:positions:perf-synthetic:manual:v1",
+              "ms": 0
+            }
+          ],
+          "selectedNodes": 0,
+          "hotFrames": [
+            {
+              "name": "(program)",
+              "ms": 113,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "(anonymous)",
+              "ms": 5,
+              "line": 397097,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "setAttribute",
+              "ms": 4,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "ReactElement",
+              "ms": 4,
+              "line": 263960,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "removeChild",
+              "ms": 3,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "detachDeletedInstance",
+              "ms": 3,
+              "line": 242837,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "savePositions",
+              "ms": 1,
+              "line": 335056,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "beginWork",
+              "ms": 1,
+              "line": 251420,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "LiteXHandle",
+              "ms": 1,
+              "line": 300285,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "isSelectedTableRow",
+              "ms": 1,
+              "line": 413520,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "default",
+              "ms": 1,
+              "line": 197606,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "jsxWithValidation",
+              "ms": 1,
+              "line": 264288,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            }
+          ]
+        },
+        "completed-hazard-tab": {
+          "ms": 230,
+          "longTasks": [
+            54,
+            157
+          ],
+          "storageWrites": [
+            {
+              "key": "diagram:positions:perf-synthetic",
+              "ms": 0
+            },
+            {
+              "key": "diagram:positions:perf-synthetic:groups:v1",
+              "ms": 0
+            },
+            {
+              "key": "diagram:positions:perf-synthetic:manual:v1",
+              "ms": 0
+            }
+          ],
+          "selectedNodes": 0,
+          "hotFrames": [
+            {
+              "name": "(program)",
+              "ms": 155,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "clean",
+              "ms": 11,
+              "line": 423443,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "normalizeAllocationText",
+              "ms": 11,
+              "line": 297022,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "clean",
+              "ms": 10,
+              "line": 427026,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "clean",
+              "ms": 8,
+              "line": 427026,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "clean",
+              "ms": 8,
+              "line": 423443,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "clean",
+              "ms": 6,
+              "line": 423443,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(anonymous)",
+              "ms": 6,
+              "line": 296815,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(garbage collector)",
+              "ms": 5,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "normalizeAllocationText",
+              "ms": 5,
+              "line": 297022,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(anonymous)",
+              "ms": 5,
+              "line": 296817,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "normalizeAllocationText",
+              "ms": 5,
+              "line": 297022,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            }
+          ]
+        },
+        "hazard-cell": {
+          "ms": 25,
+          "longTasks": [],
+          "storageWrites": [],
+          "selectedNodes": 0,
+          "hotFrames": [
+            {
+              "name": "(program)",
+              "ms": 135,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "(garbage collector)",
+              "ms": 3,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "workLoop",
+              "ms": 1,
+              "line": 287415,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "ReactElement",
+              "ms": 1,
+              "line": 263960,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "clean",
+              "ms": 1,
+              "line": 431023,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "shallowEqual",
+              "ms": 1,
+              "line": 239917,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "diffProperties",
+              "ms": 1,
+              "line": 241497,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "getPropertyInfo",
+              "ms": 1,
+              "line": 233145,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "renderWithHooks",
+              "ms": 1,
+              "line": 246174,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "jsxDEV",
+              "ms": 1,
+              "line": 264017,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "hasValidKey",
+              "ms": 1,
+              "line": 263887,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "updatedAncestorInfo",
+              "ms": 1,
+              "line": 242023,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            }
+          ]
+        },
+        "hazard-cell-next": {
+          "ms": 12,
+          "longTasks": [],
+          "storageWrites": [],
+          "selectedNodes": 0,
+          "hotFrames": [
+            {
+              "name": "(program)",
+              "ms": 115,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "fieldsFromRow",
+              "ms": 9,
+              "line": 423498,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "hasCompletePolicySchema",
+              "ms": 3,
+              "line": 423501,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "resolveClassification",
+              "ms": 3,
+              "line": 429016,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "indexVibeReviewHeaders",
+              "ms": 1,
+              "line": 431059,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(anonymous)",
+              "ms": 1,
+              "line": 317769,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "jsxDEV",
+              "ms": 1,
+              "line": 264017,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "deleteRemainingChildren",
+              "ms": 1,
+              "line": 244250,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "completeWork",
+              "ms": 1,
+              "line": 251881,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "createElementNS",
+              "ms": 1,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "diffProperties",
+              "ms": 1,
+              "line": 241497,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "postMessage",
+              "ms": 1,
+              "line": 0,
+              "url": ""
+            }
+          ]
+        },
+        "hazard-cell-third": {
+          "ms": 11,
+          "longTasks": [],
+          "storageWrites": [],
+          "selectedNodes": 0,
+          "hotFrames": [
+            {
+              "name": "(program)",
+              "ms": 119,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "jsxDEV",
+              "ms": 2,
+              "line": 264017,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "hasValidRef",
+              "ms": 1,
+              "line": 263876,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "warnOnInvalidKey",
+              "ms": 1,
+              "line": 244529,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "now",
+              "ms": 1,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "hasValidKey",
+              "ms": 1,
+              "line": 266097,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(idle)",
+              "ms": 1,
+              "line": 0,
+              "url": ""
+            }
+          ]
+        },
+        "hazard-filter": {
+          "ms": 17,
+          "longTasks": [],
+          "storageWrites": [],
+          "selectedNodes": 0,
+          "hotFrames": [
+            {
+              "name": "(program)",
+              "ms": 128,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "(idle)",
+              "ms": 3,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "key",
+              "ms": 1,
+              "line": 431024,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "hasValidRef",
+              "ms": 1,
+              "line": 263876,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "ReactElement",
+              "ms": 1,
+              "line": 263960,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "updateWorkInProgressHook",
+              "ms": 1,
+              "line": 246352,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "prepareUpdate",
+              "ms": 1,
+              "line": 242361,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "warnInvalidARIAProps",
+              "ms": 1,
+              "line": 235993,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "assertValidProps",
+              "ms": 1,
+              "line": 235348,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "now",
+              "ms": 1,
+              "line": 0,
+              "url": ""
+            }
+          ]
+        },
+        "quick-search-open": {
+          "ms": 16,
+          "longTasks": [],
+          "storageWrites": [],
+          "selectedNodes": 0,
+          "hotFrames": [
+            {
+              "name": "(program)",
+              "ms": 118,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "(idle)",
+              "ms": 5,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "isSearchVisible",
+              "ms": 1,
+              "line": 396791,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "(anonymous)",
+              "ms": 1,
+              "line": 396755,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "normalizeSearchText",
+              "ms": 1,
+              "line": 396790,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "createElement",
+              "ms": 1,
+              "line": 241313,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "markRef$1",
+              "ms": 1,
+              "line": 251584,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            },
+            {
+              "name": "focus",
+              "ms": 1,
+              "line": 0,
+              "url": ""
+            },
+            {
+              "name": "dispatchEventForPluginEventSystem",
+              "ms": 1,
+              "line": 240860,
+              "url": "http://localhost:3000/static/js/bundle.js"
+            }
+          ]
+        }
+      },
+      "behavior": {
+        "lastRowInitiallyDeferred": true,
+        "searchRevealedLastRow": true,
+        "editSavedInView": true,
+        "cellHasNoInternalScroll": true,
+        "savedLayoutPreserved": true,
+        "editSurvivedReload": true
+      },
+      "errors": []
+    },
+    "webkit_draft_140": {
+      "interfaces": 20,
+      "mode": "draft",
+      "diagramCounts": {
+        "nodes": 25,
+        "edges": 20,
+        "dom": 1227
+      },
+      "tableCounts": {
+        "rows": 144,
+        "cells": 1224,
+        "textareas": 0,
+        "dom": 4430
+      },
+      "stats": {
+        "diagram-select-0": {
+          "ms": 57,
+          "longTasks": [],
+          "storageWrites": [
+            {
+              "key": "diagram:positions:perf-synthetic",
+              "ms": 0
+            }
+          ],
+          "selectedNodes": 1,
+          "hotFrames": []
+        },
+        "diagram-select-1": {
+          "ms": 26,
+          "longTasks": [],
+          "storageWrites": [
+            {
+              "key": "diagram:positions:perf-synthetic",
+              "ms": 0
+            }
+          ],
+          "selectedNodes": 1,
+          "hotFrames": []
+        },
+        "diagram-select-2": {
+          "ms": 29,
+          "longTasks": [],
+          "storageWrites": [
+            {
+              "key": "diagram:positions:perf-synthetic",
+              "ms": 0
+            }
+          ],
+          "selectedNodes": 1,
+          "hotFrames": []
+        },
+        "hazard-tab": {
+          "ms": 142,
+          "longTasks": [],
+          "storageWrites": [
+            {
+              "key": "diagram:positions:perf-synthetic",
+              "ms": 0
+            },
+            {
+              "key": "diagram:positions:perf-synthetic:groups:v1",
+              "ms": 0
+            },
+            {
+              "key": "diagram:positions:perf-synthetic:manual:v1",
+              "ms": 0
+            }
+          ],
+          "selectedNodes": 0,
+          "hotFrames": []
+        },
+        "hazard-cell": {
+          "ms": 21,
+          "longTasks": [],
+          "storageWrites": [],
+          "selectedNodes": 0,
+          "hotFrames": []
+        },
+        "hazard-cell-next": {
+          "ms": 22,
+          "longTasks": [],
+          "storageWrites": [],
+          "selectedNodes": 0,
+          "hotFrames": []
+        },
+        "hazard-cell-third": {
+          "ms": 31,
+          "longTasks": [],
+          "storageWrites": [],
+          "selectedNodes": 0,
+          "hotFrames": []
+        },
+        "hazard-filter": {
+          "ms": 30,
+          "longTasks": [],
+          "storageWrites": [],
+          "selectedNodes": 0,
+          "hotFrames": []
+        },
+        "quick-search-open": {
+          "ms": 20,
+          "longTasks": [],
+          "storageWrites": [],
+          "selectedNodes": 0,
+          "hotFrames": []
+        }
+      },
+      "behavior": {
+        "lastRowInitiallyDeferred": true,
+        "searchRevealedLastRow": true,
+        "editSavedInView": true,
+        "cellHasNoInternalScroll": true,
+        "savedLayoutPreserved": true,
+        "editSurvivedReload": true,
+        "searchRespectsFilters": true,
+        "searchRespectsCollapsedGroups": true
+      },
+      "errors": []
+    }
+  }
+}

@@ -1,3 +1,4 @@
+import { requestImportedDiagramLayout } from './functionalDiagramInitialization';
 import { diagramRectsOverlap, GROUP_COLLISION_CLEARANCE } from './functionalDiagramCollision';
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -288,6 +289,44 @@ test('a new CSV diagram replaces the completed starter layout and arranges once'
   expect(localStorage.getItem(key + ':initial-layout:v1')).toBe('complete');
 });
 
+test('CSV replacement with retained functions builds the full hierarchy before arranging and preserves it on reopen', async () => {
+  mount(); await tick();
+  const importedRows = [
+    { system: 'Vehicle', subsystem: 'Execution', fromFunction: 'Plan', controlAction: 'Command', toFunction: 'Control' },
+    { system: 'Vehicle', subsystem: 'Planning', fromFunction: 'Control', controlAction: 'Feedback', toFunction: 'Plan' },
+    { system: 'External', subsystem: 'Dispatch', fromFunction: 'Operator', controlAction: 'Request', toFunction: 'Plan' },
+  ];
+  const categories = { source: 'table-subsystems', categories: [
+    { name: 'Execution', functions: ['Plan'] }, { name: 'Planning', functions: ['Control'] },
+    { name: 'Dispatch', functions: ['Operator'] },
+  ] };
+  localStorage.setItem(key + ':initial-layout:v1', 'pending');
+  requestImportedDiagramLayout(localStorage, key);
+  // App changes the instance key only for a confirmed CSV replacement.
+  act(() => root.render(<Diagram key="csv-replacement" rows={importedRows} autoCategories={categories}
+    storageKey={key} cleanOnceKey="import-existing" />));
+  await tick();
+  expect(mockNodes.filter(node => node.data.elementType === 'system')).toHaveLength(2);
+  expect(mockNodes.filter(node => node.type !== 'groupBox')).toHaveLength(3);
+  for (const row of importedRows) {
+    const fn = mockNodes.find(node => node.id === 'n:' + row.fromFunction);
+    const parent = mockNodes.find(node => node.id === fn.parentNode);
+    expect(parent.data.label).toBe(row.subsystem);
+    expect(mockNodes.find(node => node.id === parent.parentNode).data.label).toBe(row.system);
+  }
+  const geometry = () => mockNodes.map(node => ({ id: node.id, parent: node.parentNode,
+    position: node.position, width: node.style?.width, height: node.style?.height }));
+  const first = geometry();
+  act(() => container.querySelector('button[title="Auto arrange"]').click());
+  await tick();
+  expect(geometry()).toEqual(first);
+  expect(localStorage.getItem(key + ':initial-layout:v1')).toBe('complete');
+  act(() => root.unmount()); root = createRoot(container);
+  act(() => root.render(<Diagram rows={importedRows} autoCategories={categories} storageKey={key} />));
+  await tick();
+  expect(geometry()).toEqual(first);
+});
+
 test('system modal inherits nested function hazards, mission results and safety issues', async () => {
   const hazardSummary = [
     ['Function (From)', 'Control Action', 'Function (To)', 'Safety Classification', 'Hazard'],
@@ -334,4 +373,55 @@ test('quick search indexes diagram nodes and connections and focuses without rea
   }));
   expect(mockNodes.find(node => node.id === 'n:Plan').selected).toBe(true);
   expect(mockNodes.map(node => ({ id: node.id, position: node.position }))).toEqual(positions);
+});
+
+test('node selection retains unrelated presentation objects and does not reload stored positions', async () => {
+  mount(); await tick();
+  const before = mockFlowProps.nodes.find(node => node.id === 'n:Control');
+  const edges = mockFlowProps.edges;
+  const read = jest.spyOn(Storage.prototype, 'getItem'); read.mockClear();
+  act(() => {
+    mockFlowProps.onNodeClick();
+    mockFlowProps.onSelectionChange({ nodes: [mockNodes.find(node => node.id === 'n:Plan')] });
+  });
+  expect(mockFlowProps.nodes.find(node => node.id === 'n:Control')).toBe(before);
+  expect(mockFlowProps.edges).toBe(edges);
+  expect(read.mock.calls.filter(([storedKey]) => storedKey === key)).toHaveLength(0);
+  read.mockRestore();
+});
+
+test.each([false, true])('separates stacked health-monitoring functions on %s initial arrangement or Auto arrange', async initial => {
+  const names = ['Monitor Qibus Runtime Health', 'Publish Qibus Health State', 'Evaluate Qibus Runtime Readiness'];
+  const healthRows = names.map((name, i) => ({ system: 'Qibus', subsystem: 'Qibus Health Monitoring',
+    fromFunction: name, controlAction: 'Health ' + i, toFunction: names[(i + 1) % names.length] }));
+  const boxes = [
+    { id: 'g:system:qibus', elementType: 'system', label: 'Qibus', position: { x: 20, y: 20 }, width: 500, height: 350 },
+    { id: 'g:health', label: 'Qibus Health Monitoring', parentNode: 'g:system:qibus', position: { x: 18, y: 46 }, width: 420, height: 280 },
+  ];
+  localStorage.setItem(key + ':groups:v1', JSON.stringify(boxes));
+  localStorage.setItem(key, JSON.stringify(names.map(name => ['n:' + name,
+    { position: { x: 18, y: 46 }, parentId: 'g:health', groupingIntent: 'explicit' }])));
+  localStorage.setItem(key + ':initial-layout:v1', initial ? 'pending' : 'complete');
+  act(() => root.render(<Diagram rows={healthRows} storageKey={key} />));
+  await tick();
+  if (!initial) {
+    act(() => container.querySelector('button[title="Auto arrange"]').click());
+    await tick();
+  }
+  const functions = mockNodes.filter(node => node.parentNode === 'g:health');
+  expect(functions).toHaveLength(3);
+  const subsystem = mockNodes.find(node => node.id === 'g:health');
+  functions.forEach((node, i) => {
+    expect(node.position.x + 250).toBeLessThanOrEqual(subsystem.style.width);
+    expect(node.position.y + 72).toBeLessThanOrEqual(subsystem.style.height);
+    functions.slice(i + 1).forEach(other => expect(diagramRectsOverlap(
+      { ...node.position, width: 250, height: 72 }, { ...other.position, width: 250, height: 72 }, 0)).toBe(false));
+  });
+  const geometry = () => mockNodes.map(node => ({ id: node.id, position: node.position, parent: node.parentNode, style: node.style }));
+  const arranged = geometry();
+  act(() => container.querySelector('button[title="Auto arrange"]').click()); await tick();
+  expect(geometry()).toEqual(arranged);
+  act(() => root.unmount()); root = createRoot(container);
+  act(() => root.render(<Diagram rows={healthRows} storageKey={key} />)); await tick();
+  expect(geometry()).toEqual(arranged);
 });

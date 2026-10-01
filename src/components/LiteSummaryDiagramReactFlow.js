@@ -1,3 +1,4 @@
+import { createPresentationCache, clearEdgeSelection, indexNodesByParent } from './diagramPresentationCache';
 import { QUICK_SEARCH_COLLECT, isSearchVisible } from './quickSearchUtils';
 import { classifyAssociatedHazard } from './associatedHazardClassification';
 import { initialDiagramLayoutPending, readDiagramViewport } from './functionalDiagramInitialization';
@@ -36,7 +37,7 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import './functionalDiagramCursors.css';
 import { diagramRectsOverlap, GROUP_COLLISION_CLEARANCE } from './functionalDiagramCollision';
-import { tightenSystemSpacing, systemForElement, tightenSystemSubsystemSpacing, separateSystemGroups, rowsWithDiagramSystems, reconcileTableSystems, absoluteElementPosition, applyGroupGeometry, canContainElement, detachDeletedSystemParents, fitSystemAncestors, resizeSystemElements, isSystemGroup, orderParentElements, reparentSystemElements } from './functionalSystemGroups';
+import { separateContainedFunctions, tightenSystemSpacing, systemForElement, tightenSystemSubsystemSpacing, separateSystemGroups, rowsWithDiagramSystems, reconcileTableSystems, absoluteElementPosition, applyGroupGeometry, canContainElement, detachDeletedSystemParents, fitSystemAncestors, resizeSystemElements, isSystemGroup, orderParentElements, reparentSystemElements } from './functionalSystemGroups';
 import { toPng } from 'html-to-image';
 import { SmartBezierEdge } from '@tisoap/react-flow-smart-edge';
 import ELK from 'elkjs/lib/elk.bundled.js';
@@ -891,7 +892,7 @@ const CommentBadge = ({ count = 0, onClick }) => {
   );
 };
 
-const BidirectionalNode = ({ data, selected }) => {
+const BidirectionalNode = React.memo(({ data, selected }) => {
   const brandColor = data.brandColor || BRAND.blue;
   const tint = data.brandTint || rgba(brandColor, 0.08);
   const border = `1px solid ${rgba(brandColor, THEME.node.borderAlpha)}`;
@@ -969,9 +970,9 @@ const BidirectionalNode = ({ data, selected }) => {
       </div>
     </div>
   );
-};
+});
 
-const GroupBoxNode = ({ data, selected }) => {
+const GroupBoxNode = React.memo(({ data, selected }) => {
   const brandColor = data.brandColor || BRAND.purple;
   return (
     <div
@@ -1026,9 +1027,9 @@ const GroupBoxNode = ({ data, selected }) => {
       </div>
     </div>
   );
-};
+});
 
-const NoteNode = ({ data, selected }) => {
+const NoteNode = React.memo(({ data, selected }) => {
   const brandColor = data.brandColor || BRAND.yellow;
   const tint = data.brandTint || rgba(brandColor, 0.2);
   return (
@@ -1056,7 +1057,7 @@ const NoteNode = ({ data, selected }) => {
       </div>
     </div>
   );
-};
+});
 
 /* ================================
  * Edge fallback (orthogonal)
@@ -2421,14 +2422,13 @@ const DiagramBody = forwardRef(function DiagramBody(
     onCanvasSelectionChange(payload);
   }, [buildCanvasSelectionSnapshot, onCanvasSelectionChange]);
 
-  const viewNodes = useMemo(() => {
-    const active = edges.find((e) => e.id === highlightedEdgeId);
-    const actSet = active ? new Set([active?.source, active?.target]) : null;
-    return nodes.map((n) => {
+  const presentNode = useMemo(() => createPresentationCache((n, key) => {
+    const highlighted = Boolean(key & 1);
+    const selectedGroup = Boolean(key & 2);
       const commentCount = commentsForDiagramTarget(comments, 'node', n.id).length;
       return {
         ...n,
-        zIndex: n.type === 'groupBox' && selectedNodeIds.includes(n.id) ? 4 : n.zIndex,
+        zIndex: selectedGroup ? 4 : n.zIndex,
         data: {
           ...(n.data || {}),
           commentCount,
@@ -2439,15 +2439,19 @@ const DiagramBody = forwardRef(function DiagramBody(
             draft: '',
           }) : null,
         },
-        style: actSet?.has(n.id) ? { ...(n.style || {}), filter: 'drop-shadow(0 0 14px rgba(122,55,255,0.8))' } : n.style,
+        style: highlighted ? { ...(n.style || {}), filter: 'drop-shadow(0 0 14px rgba(122,55,255,0.8))' } : n.style,
       };
-    });
-  }, [nodes, edges, highlightedEdgeId, selectedNodeIds, comments]);
+  }), [comments]);
+  const nodesByParent = useMemo(() => indexNodesByParent(nodes), [nodes]);
+  const viewNodes = useMemo(() => {
+    const active = edges.find(edge => edge.id === highlightedEdgeId);
+    const selected = new Set(selectedNodeIds);
+    return nodes.map(node => presentNode(node,
+      ((active && (node.id === active.source || node.id === active.target)) ? 1 : 0)
+      | ((node.type === 'groupBox' && selected.has(node.id)) ? 2 : 0)));
+  }, [nodes, edges, highlightedEdgeId, selectedNodeIds, presentNode]);
 
-  const viewEdges = useMemo(
-    () =>
-      edges.map((e) => {
-        const isOn = e.id === highlightedEdgeId;
+  const presentEdge = useMemo(() => createPresentationCache((e, isOn) => {
         const stroke = e.data?.aggregated ? BRAND.purple : BRAND.blue;
         const commentCount = commentsForDiagramTarget(comments, 'edge', e.id).length;
         return {
@@ -2464,9 +2468,9 @@ const DiagramBody = forwardRef(function DiagramBody(
           },
           markerEnd: e.markerEnd ?? { type: MarkerType.ArrowClosed, color: stroke, width: ARROW_SIZE, height: ARROW_SIZE },
         };
-      }),
-    [edges, highlightedEdgeId, comments]
-  );
+  }), [comments]);
+  const viewEdges = useMemo(() => edges.map(edge => presentEdge(edge, edge.id === highlightedEdgeId)),
+    [edges, highlightedEdgeId, presentEdge]);
 
   const diagramHostRef = useRef(null);
   const flowCanvasHostRef = useRef(null);
@@ -2880,7 +2884,8 @@ const DiagramBody = forwardRef(function DiagramBody(
   }, []);
 
   // positions map persisted across unmounts
-  const posRef = useRef(loadPositions(storageKey));
+  const posRef = useRef(null);
+  if (posRef.current === null) posRef.current = loadPositions(storageKey);
   const groupSaveTimer = useRef(null);
   const manualSaveTimer = useRef(null);
   const saveTimer = useRef(null);
@@ -3179,17 +3184,33 @@ const DiagramBody = forwardRef(function DiagramBody(
     storageKeyRef.current = storageKey;
     setHydratedStorageKey(null);
     posRef.current = loadPositions(storageKey);
-    initialArrangementPendingRef.current = initialDiagramLayoutPending(localStorage, storageKey, posRef.current.size > 0);
+    let importing = false;
+    try { importing = localStorage.getItem(storageKey + ':csv-import-pending:v1') === 'true'; } catch {}
+    initialArrangementPendingRef.current = importing || initialDiagramLayoutPending(localStorage, storageKey, posRef.current.size > 0);
     setInitialLayoutReady(!initialArrangementPendingRef.current);
     const loadedDeletedAutoGroupIds = loadDeletedAutoGroupIds(storageKey);
+    // Imported allocations supersede old canvas grouping overrides. Keep saved
+    // positions and presentation metadata; only reset the imported membership.
+    if (importing) {
+      loadedDeletedAutoGroupIds.clear();
+      saveDeletedAutoGroupIds(storageKey, loadedDeletedAutoGroupIds);
+      buildWantedNodeIdSet(rows).forEach(id => {
+        const saved = posRef.current.get(id);
+        if (saved) posRef.current.set(id, { ...saved, groupingIntent: 'automatic' });
+      });
+    }
     deletedAutoGroupIdsRef.current = loadedDeletedAutoGroupIds;
     setDeletedAutoGroupIds(loadedDeletedAutoGroupIds);
     const loadedUngroupedAutoNodeIds = loadUngroupedAutoNodeIds(storageKey);
+    if (importing) {
+      buildWantedNodeIdSet(rows).forEach(id => loadedUngroupedAutoNodeIds.delete(id));
+      saveUngroupedAutoNodeIds(storageKey, loadedUngroupedAutoNodeIds);
+    }
     ungroupedAutoNodeIdsRef.current = loadedUngroupedAutoNodeIds;
     setUngroupedAutoNodeIds(loadedUngroupedAutoNodeIds);
     const loadedGroupBoxes = pruneGroupBoxesForProject(
       loadGroupBoxes(storageKey),
-      autoCategories,
+      importing && !autoCategories ? { source: 'table-subsystems', categories: [] } : autoCategories,
       rows,
       loadedDeletedAutoGroupIds
     );
@@ -3197,7 +3218,10 @@ const DiagramBody = forwardRef(function DiagramBody(
     groupBoxesRef.current = loadedGroupBoxes;
     setGroupBoxes(loadedGroupBoxes);
     saveGroupBoxes(storageKey, loadedGroupBoxes);
-    if (positionsChanged) savePositions(storageKey, posRef.current);
+    if (positionsChanged || importing) savePositions(storageKey, posRef.current);
+    if (importing) {
+      try { localStorage.removeItem(storageKey + ':csv-import-pending:v1'); } catch {}
+    }
     setManualNodesStore(loadManualNodes(storageKey));
     setComments(loadDiagramComments(storageKey));
     const loadedEdgeAggregation = loadEdgeAggregationState(storageKey);
@@ -3983,7 +4007,9 @@ useEffect(() => {
       saveEdgeRoutingState(storageKey, initialRouting);
     }
 
-    const nestedLayout = tightenSystemSubsystemSpacing(layoutNodes, groupBoxes,
+    const separated = separateContainedFunctions(layoutNodes, groupBoxes,
+      { ...GROUP, nodeWidth: NODE_LAYOUT.w, nodeHeight: NODE_LAYOUT.h, nodeGapY: AUTO_CATEGORY.nodeGapY });
+    const nestedLayout = tightenSystemSubsystemSpacing(separated.nodes, separated.boxes,
       { ...GROUP, nodeWidth: NODE_LAYOUT.w, nodeHeight: NODE_LAYOUT.h });
     const tightened = tightenSystemSpacing(nestedLayout.nodes, nestedLayout.boxes,
       { ...GROUP, nodeWidth: NODE_LAYOUT.w, nodeHeight: NODE_LAYOUT.h });
@@ -4484,12 +4510,10 @@ useEffect(() => {
       if (fromId) wantedNodeIds.add(fromId);
       if (toId) wantedNodeIds.add(toId);
     });
-    const missingWantedNodes = Array.from(wantedNodeIds).filter((id) => (
-      !nodes.some((node) => node.id === id && node.type !== 'groupBox')
-    ));
-    const missingGroupNodes = groupBoxes.filter((box) => (
-      !nodes.some((node) => node.id === box.id && node.type === 'groupBox')
-    ));
+    const functionIds = new Set(nodes.filter(node => node.type !== 'groupBox').map(node => node.id));
+    const groupIds = new Set(nodes.filter(node => node.type === 'groupBox').map(node => node.id));
+    const missingWantedNodes = Array.from(wantedNodeIds).filter(id => !functionIds.has(id));
+    const missingGroupNodes = groupBoxes.filter(box => !groupIds.has(box.id));
 
     const sig = structureSignature(rows) + systemRowsSignature(rows);
     const groupSig = JSON.stringify(groupBoxes.map((box) => [box.id, box.label, box.description, box.brandColor, box.autoGenerated, box.elementType, box.parentNode]));
@@ -4757,8 +4781,8 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
       const nextBoxes = currentBoxes.map((box) => {
         if (box.descriptionUserEdited) return box;
         if (box.description && /^(prompt-wizard|llm-table-subsystems)$/i.test(String(box.descriptionSource || ''))) return box;
-        const childFunctions = nodes
-          .filter((node) => node.parentNode === box.id && (isSystemGroup(box) || node.type !== 'groupBox'))
+        const childFunctions = (nodesByParent.get(box.id) || [])
+          .filter((node) => isSystemGroup(box) || node.type !== 'groupBox')
           .map((node) => String(node?.data?.label || '').trim())
           .filter(Boolean);
         const generatedDescription = generateGroupDescription(box.label, childFunctions, rows);
@@ -4773,7 +4797,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
       }
       return currentBoxes;
     });
-  }, [groupBoxes, nodes, rows, persistGroupsSoon, storageReady]);
+  }, [groupBoxes, nodesByParent, rows, persistGroupsSoon, storageReady]);
 
 	  useEffect(() => {
 	    if (!storageReady) return;
@@ -4784,8 +4808,8 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
     // is presentation-only and must never resize a group or displace siblings.
     const membershipSignature = JSON.stringify(groupBoxes.map((box) => [
       box.id,
-      nodes
-        .filter((node) => node.parentNode === box.id && (isSystemGroup(box) || node.type !== 'groupBox'))
+      (nodesByParent.get(box.id) || [])
+        .filter((node) => isSystemGroup(box) || node.type !== 'groupBox')
         .map((node) => node.id)
         .sort(),
     ]));
@@ -4811,7 +4835,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
       persistGroupsSoon(nextBoxes);
       return nextBoxes;
     });
-  }, [groupBoxes, nodes, persistGroupsSoon, storageReady]);
+  }, [groupBoxes, nodes, nodesByParent, persistGroupsSoon, storageReady]);
 
 	  useEffect(() => {
 	    if (!storageReady) return;
@@ -5608,7 +5632,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
           }}
           onPaneClick={() => {
             setHighlightedEdgeId(null);
-            setEdges((allEdges) => allEdges.map((edge) => edge.selected ? { ...edge, selected: false } : edge));
+            setEdges(clearEdgeSelection);
             setContextMenu(null);
           }}
           onPaneContextMenu={(event) => {
@@ -5617,7 +5641,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
           }}
           onNodeClick={() => {
             setHighlightedEdgeId(null);
-            setEdges((allEdges) => allEdges.map((edge) => edge.selected ? { ...edge, selected: false } : edge));
+            setEdges(clearEdgeSelection);
             setContextMenu(null);
           }}
           onNodeContextMenu={(event, node) => {
@@ -5650,7 +5674,8 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
             });
           }}
           onSelectionChange={({ nodes: selectedNodes }) => {
-            setSelectedNodeIds((selectedNodes || []).map((n) => n.id));
+            const ids = (selectedNodes || []).map(node => node.id);
+            setSelectedNodeIds(previous => previous.length === ids.length && previous.every((id, index) => id === ids[index]) ? previous : ids);
           }}
           selectionOnDrag
           multiSelectionKeyCode={['Meta', 'Control', 'Shift']}

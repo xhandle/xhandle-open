@@ -1,0 +1,551 @@
+[
+  {
+    "browser": "chromium",
+    "platform": "MacIntel",
+    "baseline": {
+      "before": {
+        "x": 33.9398,
+        "y": 235.175,
+        "zoom": 0.764411
+      },
+      "after": {
+        "x": -6.06015,
+        "y": 175.175,
+        "zoom": 0.764411
+      },
+      "zoomChanged": false
+    },
+    "afterSearch": {
+      "before": {
+        "x": -6.06015,
+        "y": 175.175,
+        "zoom": 0.764411
+      },
+      "after": {
+        "x": -0.533763,
+        "y": 152.927,
+        "zoom": 0.647261
+      },
+      "zoomChanged": true
+    },
+    "afterModifierReset": {
+      "before": {
+        "x": -0.533763,
+        "y": 152.927,
+        "zoom": 0.647261
+      },
+      "after": {
+        "x": -40.5338,
+        "y": 92.9266,
+        "zoom": 0.647261
+      },
+      "zoomChanged": false
+    },
+    "afterButtonSearch": {
+      "before": {
+        "x": -40.5338,
+        "y": 92.9266,
+        "zoom": 0.647261
+      },
+      "after": {
+        "x": -80.5338,
+        "y": 32.9266,
+        "zoom": 0.647261
+      },
+      "zoomChanged": false
+    },
+    "syntheticPinch": {
+      "before": {
+        "x": -80.5338,
+        "y": 32.9266,
+        "zoom": 0.647261
+      },
+      "after": {
+        "x": -99.7621,
+        "y": 10.1029,
+        "zoom": 0.548066
+      },
+      "zoomChanged": true
+    },
+    "events": [
+      {
+        "type": "wheel",
+        "phase": "capture",
+        "meta": false,
+        "ctrl": false,
+        "dx": 80,
+        "dy": 120
+      },
+      {
+        "type": "keydown",
+        "phase": "capture",
+        "key": "Meta",
+        "meta": true,
+        "ctrl": false
+      },
+      {
+        "type": "keydown",
+        "phase": "bubble",
+        "key": "Meta",
+        "meta": true,
+        "ctrl": false
+      },
+      {
+        "type": "keydown",
+        "phase": "capture",
+        "key": "f",
+        "meta": true,
+        "ctrl": false
+      },
+      {
+        "type": "keydown",
+        "phase": "bubble",
+        "key": "f",
+        "meta": true,
+        "ctrl": false
+      },
+      {
+        "type": "keyup",
+        "phase": "capture",
+        "key": "f",
+        "meta": true,
+        "ctrl": false
+      },
+      {
+        "type": "keyup",
+        "phase": "capture",
+        "key": "Meta",
+        "meta": false,
+        "ctrl": false
+      },
+      {
+        "type": "wheel",
+        "phase": "capture",
+        "meta": false,
+        "ctrl": false,
+        "dx": 80,
+        "dy": 120
+      },
+      {
+        "type": "keydown",
+        "phase": "capture",
+        "key": "Meta",
+        "meta": true,
+        "ctrl": false
+      },
+      {
+        "type": "keydown",
+        "phase": "bubble",
+        "key": "Meta",
+        "meta": true,
+        "ctrl": false
+      },
+      {
+        "type": "keyup",
+        "phase": "capture",
+        "key": "Meta",
+        "meta": false,
+        "ctrl": false
+      },
+      {
+        "type": "keyup",
+        "phase": "bubble",
+        "key": "Meta",
+        "meta": false,
+        "ctrl": false
+      },
+      {
+        "type": "wheel",
+        "phase": "capture",
+        "meta": false,
+        "ctrl": false,
+        "dx": 80,
+        "dy": 120
+      },
+      {
+        "type": "wheel",
+        "phase": "capture",
+        "meta": false,
+        "ctrl": false,
+        "dx": 80,
+        "dy": 120
+      },
+      {
+        "type": "wheel",
+        "phase": "capture",
+        "meta": false,
+        "ctrl": true,
+        "dx": 0,
+        "dy": 12
+      }
+    ],
+    "errors": [],
+    "environment": "macOS headless browser; automated wheel/keyboard events"
+  },
+  {
+    "browser": "webkit",
+    "platform": "MacIntel",
+    "baseline": {
+      "before": {
+        "x": 33.93985,
+        "y": 235.175446,
+        "zoom": 0.764411
+      },
+      "after": {
+        "x": -6.06015,
+        "y": 175.175446,
+        "zoom": 0.764411
+      },
+      "zoomChanged": false
+    },
+    "afterSearch": {
+      "before": {
+        "x": -6.06015,
+        "y": 175.175446,
+        "zoom": 0.764411
+      },
+      "after": {
+        "x": -0.533763,
+        "y": 152.92662,
+        "zoom": 0.647261
+      },
+      "zoomChanged": true
+    },
+    "afterModifierReset": {
+      "before": {
+        "x": -0.533763,
+        "y": 152.92662,
+        "zoom": 0.647261
+      },
+      "after": {
+        "x": -40.533764,
+        "y": 92.92662,
+        "zoom": 0.647261
+      },
+      "zoomChanged": false
+    },
+    "afterButtonSearch": {
+      "before": {
+        "x": -40.533764,
+        "y": 92.92662,
+        "zoom": 0.647261
+      },
+      "after": {
+        "x": -80.53376,
+        "y": 32.92662,
+        "zoom": 0.647261
+      },
+      "zoomChanged": false
+    },
+    "syntheticPinch": {
+      "before": {
+        "x": -80.53376,
+        "y": 32.92662,
+        "zoom": 0.647261
+      },
+      "after": {
+        "x": -99.762054,
+        "y": 10.10292,
+        "zoom": 0.548066
+      },
+      "zoomChanged": true
+    },
+    "events": [
+      {
+        "type": "wheel",
+        "phase": "capture",
+        "meta": false,
+        "ctrl": false,
+        "dx": 80,
+        "dy": 120
+      },
+      {
+        "type": "keydown",
+        "phase": "capture",
+        "key": "Meta",
+        "meta": true,
+        "ctrl": false
+      },
+      {
+        "type": "keydown",
+        "phase": "bubble",
+        "key": "Meta",
+        "meta": true,
+        "ctrl": false
+      },
+      {
+        "type": "keydown",
+        "phase": "capture",
+        "key": "f",
+        "meta": true,
+        "ctrl": false
+      },
+      {
+        "type": "keydown",
+        "phase": "bubble",
+        "key": "f",
+        "meta": true,
+        "ctrl": false
+      },
+      {
+        "type": "keyup",
+        "phase": "capture",
+        "key": "f",
+        "meta": true,
+        "ctrl": false
+      },
+      {
+        "type": "keyup",
+        "phase": "capture",
+        "key": "Meta",
+        "meta": false,
+        "ctrl": false
+      },
+      {
+        "type": "wheel",
+        "phase": "capture",
+        "meta": false,
+        "ctrl": false,
+        "dx": 80,
+        "dy": 120
+      },
+      {
+        "type": "keydown",
+        "phase": "capture",
+        "key": "Meta",
+        "meta": true,
+        "ctrl": false
+      },
+      {
+        "type": "keydown",
+        "phase": "bubble",
+        "key": "Meta",
+        "meta": true,
+        "ctrl": false
+      },
+      {
+        "type": "keyup",
+        "phase": "capture",
+        "key": "Meta",
+        "meta": false,
+        "ctrl": false
+      },
+      {
+        "type": "keyup",
+        "phase": "bubble",
+        "key": "Meta",
+        "meta": false,
+        "ctrl": false
+      },
+      {
+        "type": "wheel",
+        "phase": "capture",
+        "meta": false,
+        "ctrl": false,
+        "dx": 80,
+        "dy": 120
+      },
+      {
+        "type": "wheel",
+        "phase": "capture",
+        "meta": false,
+        "ctrl": false,
+        "dx": 80,
+        "dy": 120
+      },
+      {
+        "type": "wheel",
+        "phase": "capture",
+        "meta": false,
+        "ctrl": true,
+        "dx": 0,
+        "dy": 12
+      }
+    ],
+    "errors": [],
+    "environment": "macOS headless browser; automated wheel/keyboard events"
+  },
+  {
+    "browser": "chromium",
+    "platform": "Win32",
+    "baseline": {
+      "before": {
+        "x": 34.2935,
+        "y": 236.294,
+        "zoom": 0.758706
+      },
+      "after": {
+        "x": -5.70647,
+        "y": 176.294,
+        "zoom": 0.758706
+      },
+      "zoomChanged": false
+    },
+    "afterSearch": {
+      "before": {
+        "x": -5.70647,
+        "y": 176.294,
+        "zoom": 0.758706
+      },
+      "after": {
+        "x": -0.234284,
+        "y": 153.873,
+        "zoom": 0.642431
+      },
+      "zoomChanged": true
+    },
+    "afterModifierReset": {
+      "before": {
+        "x": -0.234284,
+        "y": 153.873,
+        "zoom": 0.642431
+      },
+      "after": {
+        "x": -40.2343,
+        "y": 93.8734,
+        "zoom": 0.642431
+      },
+      "zoomChanged": false
+    },
+    "afterButtonSearch": {
+      "before": {
+        "x": -40.2343,
+        "y": 93.8734,
+        "zoom": 0.642431
+      },
+      "after": {
+        "x": -80.2343,
+        "y": 33.8734,
+        "zoom": 0.642431
+      },
+      "zoomChanged": false
+    },
+    "syntheticPinch": {
+      "before": {
+        "x": -80.2343,
+        "y": 33.8734,
+        "zoom": 0.642431
+      },
+      "after": {
+        "x": -82.3092,
+        "y": 31.4008,
+        "zoom": 0.631832
+      },
+      "zoomChanged": true
+    },
+    "events": [
+      {
+        "type": "wheel",
+        "phase": "capture",
+        "meta": false,
+        "ctrl": false,
+        "dx": 80,
+        "dy": 120
+      },
+      {
+        "type": "keydown",
+        "phase": "capture",
+        "key": "Control",
+        "meta": false,
+        "ctrl": true
+      },
+      {
+        "type": "keydown",
+        "phase": "bubble",
+        "key": "Control",
+        "meta": false,
+        "ctrl": true
+      },
+      {
+        "type": "keydown",
+        "phase": "capture",
+        "key": "f",
+        "meta": false,
+        "ctrl": true
+      },
+      {
+        "type": "keydown",
+        "phase": "bubble",
+        "key": "f",
+        "meta": false,
+        "ctrl": true
+      },
+      {
+        "type": "keyup",
+        "phase": "capture",
+        "key": "f",
+        "meta": false,
+        "ctrl": true
+      },
+      {
+        "type": "keyup",
+        "phase": "capture",
+        "key": "Control",
+        "meta": false,
+        "ctrl": false
+      },
+      {
+        "type": "wheel",
+        "phase": "capture",
+        "meta": false,
+        "ctrl": false,
+        "dx": 80,
+        "dy": 120
+      },
+      {
+        "type": "keydown",
+        "phase": "capture",
+        "key": "Control",
+        "meta": false,
+        "ctrl": true
+      },
+      {
+        "type": "keydown",
+        "phase": "bubble",
+        "key": "Control",
+        "meta": false,
+        "ctrl": true
+      },
+      {
+        "type": "keyup",
+        "phase": "capture",
+        "key": "Control",
+        "meta": false,
+        "ctrl": false
+      },
+      {
+        "type": "keyup",
+        "phase": "bubble",
+        "key": "Control",
+        "meta": false,
+        "ctrl": false
+      },
+      {
+        "type": "wheel",
+        "phase": "capture",
+        "meta": false,
+        "ctrl": false,
+        "dx": 80,
+        "dy": 120
+      },
+      {
+        "type": "wheel",
+        "phase": "capture",
+        "meta": false,
+        "ctrl": false,
+        "dx": 80,
+        "dy": 120
+      },
+      {
+        "type": "wheel",
+        "phase": "capture",
+        "meta": false,
+        "ctrl": true,
+        "dx": 0,
+        "dy": 12
+      }
+    ],
+    "errors": [],
+    "environment": "Windows user-agent/platform emulation on macOS, not native Windows"
+  }
+]

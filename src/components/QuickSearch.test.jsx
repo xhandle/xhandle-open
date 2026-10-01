@@ -1,6 +1,7 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import QuickSearch from './QuickSearch.js';
+import { useKeyPress } from 'reactflow';
 import { tableSearchEntries, filterSearchEntries, QUICK_SEARCH_COLLECT } from './quickSearchUtils';
 
 jest.mock('lucide-react', () => ({ Search: () => null }));
@@ -202,4 +203,44 @@ test('a pending shortcut is cancelled when the window loses focus', () => {
   act(() => window.dispatchEvent(new Event('blur')));
   act(() => jest.runOnlyPendingTimers());
   expect(document.querySelector('[role="dialog"]')).toBeNull();
+});
+
+
+// Exercise React Flow's actual document listener, not a mock canvas handler.
+test.each([['Meta', 'metaKey'], ['Control', 'ctrlKey']])('%s is released in the canvas after shortcut search takes focus', (key, modifier) => {
+  jest.useFakeTimers();
+  function CanvasKeyState() {
+    const pressed = useKeyPress(key);
+    return <output data-canvas-modifier>{String(pressed)}</output>;
+  }
+  act(() => root.render(<><CanvasKeyState /><QuickSearch /></>));
+  act(() => document.body.dispatchEvent(new KeyboardEvent('keydown', { key, [modifier]: true, bubbles: true })));
+  expect(host.querySelector('output').textContent).toBe('true');
+  act(() => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', [modifier]: true, bubbles: true, cancelable: true })));
+  act(() => jest.runOnlyPendingTimers());
+  const input = document.querySelector('[role="combobox"]');
+  expect(document.activeElement).toBe(input);
+  act(() => input.dispatchEvent(new KeyboardEvent('keyup', { key: 'f', [modifier]: true, bubbles: true })));
+  act(() => input.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true })));
+  expect(host.querySelector('output').textContent).toBe('false');
+  expect(input.isConnected).toBe(true);
+});
+
+test.each(['Meta', 'Control', 'Shift', 'Alt'])('search allows %s release but blocks new modifier presses', key => {
+  act(() => root.render(<QuickSearch />));
+  act(() => host.querySelector('button').click());
+  const input = document.querySelector('[role="combobox"]');
+  const backgroundDown = jest.fn();
+  const backgroundUp = jest.fn();
+  document.addEventListener('keydown', backgroundDown);
+  document.addEventListener('keyup', backgroundUp);
+  try {
+    act(() => input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true })));
+    act(() => input.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true })));
+    expect(backgroundDown).not.toHaveBeenCalled();
+    expect(backgroundUp).toHaveBeenCalledTimes(1);
+  } finally {
+    document.removeEventListener('keydown', backgroundDown);
+    document.removeEventListener('keyup', backgroundUp);
+  }
 });

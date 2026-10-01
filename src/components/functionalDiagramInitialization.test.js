@@ -1,4 +1,4 @@
-import { initialDiagramLayoutPending, readDiagramViewport } from './functionalDiagramInitialization';
+import { initialDiagramLayoutPending, readDiagramViewport, requestImportedDiagramLayout } from './functionalDiagramInitialization';
 beforeEach(() => localStorage.clear());
 test('seed positions do not complete a pending first layout', () => {
   expect(initialDiagramLayoutPending(localStorage, 'new', false)).toBe(true);
@@ -8,6 +8,12 @@ test('seed positions do not complete a pending first layout', () => {
 });
 test('legacy saved layouts are preserved', () => {
   expect(initialDiagramLayoutPending(localStorage, 'old', true)).toBe(false);
+});
+test('CSV replacement requests arrangement even with completed saved positions', () => {
+  localStorage.setItem('existing:initial-layout:v1', 'complete');
+  requestImportedDiagramLayout(localStorage, 'existing');
+  expect(initialDiagramLayoutPending(localStorage, 'existing', true)).toBe(true);
+  expect(localStorage.getItem('existing:csv-import-pending:v1')).toBe('true');
 });
 test('restores valid viewport and rejects corrupt values', () => {
   localStorage.setItem('d:viewport:v1', JSON.stringify({ x: 123, y: -45, zoom: 0.6 }));

@@ -247,6 +247,61 @@ export function separateSystemGroups(boxes) {
   return changed ? next : boxes;
 }
 
+// Repair contained function overlaps before arranging their containers. This is
+// called by explicit/first arrangement, never by ordinary saved-layout loading.
+export function separateContainedFunctions(nodes, boxes, padding) {
+  let nextNodes = nodes;
+  let nextBoxes = boxes;
+  // Fit subsystems first so their systems see the final child dimensions.
+  const orderedBoxes = [...boxes].sort((a, b) => Number(isSystemGroup(a)) - Number(isSystemGroup(b)));
+  for (const original of orderedBoxes) {
+    const currentBoxes = new Map(nextBoxes.map(item => [item.id, item]));
+    const box = currentBoxes.get(original.id);
+    const children = nextNodes.filter(node => node.parentNode === box.id);
+    const rectFor = node => {
+      const childBox = currentBoxes.get(node.id);
+      return { ...node.position,
+        width: childBox?.width || Math.max(node.width || 0, padding.nodeWidth),
+        height: childBox?.height || Math.max(node.height || 0, padding.nodeHeight) };
+    };
+    // Notes and child containers stay put; functions avoid them as well.
+    const placed = children.filter(node => node.type === 'groupBox' || node.type === 'note').map(rectFor);
+    const functions = children.filter(node => node.type !== 'groupBox' && node.type !== 'note');
+    const displaced = [];
+    const replacements = new Map();
+    for (const node of functions) {
+      const rect = rectFor(node);
+      if (rect.x < padding.padX || rect.y < padding.padTop
+        || placed.some(other => diagramRectsOverlap(rect, other, 24))) {
+        displaced.push({ node, rect });
+      } else placed.push(rect);
+    }
+    for (const { node, rect } of displaced) {
+      rect.x = Math.max(padding.padX, rect.x);
+      rect.y = Math.max(padding.padTop, rect.y);
+      let blocker = placed.find(other => diagramRectsOverlap(rect, other, 24));
+      while (blocker) {
+        rect.y = blocker.y + blocker.height + Math.max(25, padding.nodeGapY || 48);
+        blocker = placed.find(other => diagramRectsOverlap(rect, other, 24));
+      }
+      placed.push(rect);
+      replacements.set(node.id, { x: rect.x, y: rect.y });
+    }
+    const needsGrowth = placed.some(rect => rect.x + rect.width + padding.padX > box.width
+      || rect.y + rect.height + padding.padBottom > box.height);
+    if (!replacements.size && !needsGrowth) continue;
+    nextNodes = nextNodes.map(node => replacements.has(node.id)
+      ? { ...node, position: replacements.get(node.id) } : node);
+    nextBoxes = nextBoxes.map(item => item.id === box.id ? { ...item,
+      width: Math.max(item.width || padding.w, ...placed.map(rect => rect.x + rect.width + padding.padX)),
+      height: Math.max(item.height || padding.h, ...placed.map(rect => rect.y + rect.height + padding.padBottom)),
+    } : item);
+    nextBoxes = fitSystemAncestors(nextNodes, nextBoxes, box.parentNode, padding);
+    nextNodes = applyGroupGeometry(nextNodes, nextBoxes);
+  }
+  return { nodes: nextNodes, boxes: nextBoxes };
+}
+
 // Close unused horizontal/vertical gaps without changing subsystem contents
 // or reflowing the diagram into a new grid.
 export function tightenSystemSubsystemSpacing(nodes, boxes, padding) {

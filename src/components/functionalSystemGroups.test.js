@@ -1,5 +1,5 @@
 import { diagramRectsOverlap, GROUP_COLLISION_CLEARANCE } from './functionalDiagramCollision';
-import { reconcileTableSystems, separateSystemGroups, absoluteElementPosition, applyGroupGeometry, canContainElement, detachDeletedSystemParents, isSystemGroup, reparentSystemElements, resizeSystemElements } from './functionalSystemGroups';
+import { separateContainedFunctions, reconcileTableSystems, separateSystemGroups, absoluteElementPosition, applyGroupGeometry, canContainElement, detachDeletedSystemParents, isSystemGroup, reparentSystemElements, resizeSystemElements } from './functionalSystemGroups';
 import { resolveGeneratedNodePlacement } from './functionalDiagramNodeReconciliation';
 import { cloneDiagramNodeForHistory, diagramHistoryComparable } from './LiteSummaryDiagramReactFlow';
 
@@ -140,4 +140,31 @@ test('direct system imports do not stack functions when local coordinates are cl
         { ...other.position, width: 180, height: 72 }, 0)).toBe(false);
     });
   });
+});
+
+
+test('contained overlap repair preserves clear placements, grows ancestors, and is idempotent', () => {
+  const { nodes, boxes } = nest();
+  const a = nodes.find(node => node.id === 'n:A');
+  const stack = [nodes, [
+    { ...a, id: 'n:stacked', width: 240, height: 110 },
+    { ...a, id: 'n:clear', position: { x: 30, y: 500 } },
+    { id: 'note:one', type: 'note', parentNode: a.parentNode, position: { x: 30, y: 210 }, width: 240, height: 140 },
+  ]].flat();
+  const result = separateContainedFunctions(stack, boxes, padding);
+  expect(result.nodes.find(node => node.id === 'n:A')).toBe(a);
+  expect(result.nodes.find(node => node.id === 'n:clear')).toBe(stack.find(node => node.id === 'n:clear'));
+  expect(result.nodes.find(node => node.id === 'note:one')).toBe(stack.find(node => node.id === 'note:one'));
+  const moved = result.nodes.find(node => node.id === 'n:stacked');
+  expect(moved.parentNode).toBe(a.parentNode);
+  const rect = node => ({ ...node.position, width: node.width || padding.nodeWidth, height: node.height || padding.nodeHeight });
+  result.nodes.filter(node => node.parentNode === a.parentNode && node.id !== moved.id)
+    .forEach(node => expect(diagramRectsOverlap(rect(moved), rect(node), 24)).toBe(false));
+  const sub = result.boxes.find(box => box.id === a.parentNode);
+  expect(sub.height).toBeGreaterThanOrEqual(moved.position.y + moved.height + padding.padBottom);
+  const system = result.boxes.find(box => box.id === sub.parentNode);
+  expect(system.height).toBeGreaterThanOrEqual(sub.position.y + sub.height + padding.padBottom);
+  const repeated = separateContainedFunctions(result.nodes, result.boxes, padding);
+  expect(repeated.nodes).toBe(result.nodes);
+  expect(repeated.boxes).toBe(result.boxes);
 });

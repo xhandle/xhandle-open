@@ -1,0 +1,358 @@
+{
+  "scope": "Isolated synthetic functional diagram, actual React Flow interaction handlers",
+  "limitations": [
+    "WebKit automation is not the installed Safari application.",
+    "Windows shortcuts were tested by emulating Windows user agent and platform in Chrome on macOS; native Windows was not tested.",
+    "Pinch was checked with a synthetic ctrl-wheel event; a physical trackpad was not available to automation."
+  ],
+  "runs": {
+    "chrome_mac": {
+      "browser": "chromium",
+      "platform": "MacIntel",
+      "baseline": {
+        "before": {
+          "x": 34.2935,
+          "y": 236.294,
+          "zoom": 0.758706
+        },
+        "after": {
+          "x": -5.70647,
+          "y": 176.294,
+          "zoom": 0.758706
+        },
+        "zoomChanged": false
+      },
+      "closeResults": {
+        "button": {
+          "before": {
+            "x": 33.5612,
+            "y": 184.451,
+            "zoom": 1.02321
+          },
+          "after": {
+            "x": -6.43882,
+            "y": 124.451,
+            "zoom": 1.02321
+          },
+          "zoomChanged": false
+        },
+        "escape": {
+          "before": {
+            "x": 33.5612,
+            "y": 184.451,
+            "zoom": 1.02321
+          },
+          "after": {
+            "x": -6.43882,
+            "y": 124.451,
+            "zoom": 1.02321
+          },
+          "zoomChanged": false
+        },
+        "result-click": {
+          "before": {
+            "x": 128.12,
+            "y": 219.029,
+            "zoom": 0.846792
+          },
+          "after": {
+            "x": 88.1196,
+            "y": 159.029,
+            "zoom": 0.846792
+          },
+          "zoomChanged": false
+        },
+        "result-enter": {
+          "before": {
+            "x": 128.12,
+            "y": 219.029,
+            "zoom": 0.846792
+          },
+          "after": {
+            "x": 88.1196,
+            "y": 159.029,
+            "zoom": 0.846792
+          },
+          "zoomChanged": false
+        },
+        "backdrop": {
+          "before": {
+            "x": 33.5612,
+            "y": 184.451,
+            "zoom": 1.02321
+          },
+          "after": {
+            "x": -6.43882,
+            "y": 124.451,
+            "zoom": 1.02321
+          },
+          "zoomChanged": false
+        }
+      },
+      "deliberateModifierScroll": {
+        "before": {
+          "x": 33.5612,
+          "y": 184.451,
+          "zoom": 1.02321
+        },
+        "after": {
+          "x": 33.0154,
+          "y": 160.781,
+          "zoom": 0.866396
+        },
+        "zoomChanged": true
+      },
+      "syntheticPinch": {
+        "before": {
+          "x": -6.98459,
+          "y": 100.781,
+          "zoom": 0.866396
+        },
+        "after": {
+          "x": -37.4846,
+          "y": 67.5583,
+          "zoom": 0.733616
+        },
+        "zoomChanged": true
+      },
+      "checks": {
+        "searchDeletionSafe": true,
+        "modifierSelection": true,
+        "drag": true
+      },
+      "errors": []
+    },
+    "webkit_mac": {
+      "browser": "webkit",
+      "platform": "MacIntel",
+      "baseline": {
+        "before": {
+          "x": 33.93985,
+          "y": 235.175446,
+          "zoom": 0.764411
+        },
+        "after": {
+          "x": -6.06015,
+          "y": 175.175446,
+          "zoom": 0.764411
+        },
+        "zoomChanged": false
+      },
+      "closeResults": {
+        "button": {
+          "before": {
+            "x": 33.56118,
+            "y": 184.451477,
+            "zoom": 1.023207
+          },
+          "after": {
+            "x": -6.438818,
+            "y": 124.451477,
+            "zoom": 1.023207
+          },
+          "zoomChanged": false
+        },
+        "escape": {
+          "before": {
+            "x": 33.56118,
+            "y": 184.451477,
+            "zoom": 1.023207
+          },
+          "after": {
+            "x": -6.438818,
+            "y": 124.451477,
+            "zoom": 1.023207
+          },
+          "zoomChanged": false
+        },
+        "result-click": {
+          "before": {
+            "x": 128.119598,
+            "y": 219.028809,
+            "zoom": 0.846792
+          },
+          "after": {
+            "x": 88.119598,
+            "y": 159.028809,
+            "zoom": 0.846792
+          },
+          "zoomChanged": false
+        },
+        "result-enter": {
+          "before": {
+            "x": 128.119598,
+            "y": 219.028809,
+            "zoom": 0.846792
+          },
+          "after": {
+            "x": 88.119598,
+            "y": 159.028809,
+            "zoom": 0.846792
+          },
+          "zoomChanged": false
+        },
+        "backdrop": {
+          "before": {
+            "x": 33.56118,
+            "y": 184.451477,
+            "zoom": 1.023207
+          },
+          "after": {
+            "x": -6.438818,
+            "y": 124.451477,
+            "zoom": 1.023207
+          },
+          "zoomChanged": false
+        }
+      },
+      "deliberateModifierScroll": {
+        "before": {
+          "x": 33.56118,
+          "y": 184.451477,
+          "zoom": 1.023207
+        },
+        "after": {
+          "x": 33.015415,
+          "y": 160.781067,
+          "zoom": 0.866396
+        },
+        "zoomChanged": true
+      },
+      "syntheticPinch": {
+        "before": {
+          "x": -6.984586,
+          "y": 100.781067,
+          "zoom": 0.866396
+        },
+        "after": {
+          "x": -37.484631,
+          "y": 67.55835,
+          "zoom": 0.733616
+        },
+        "zoomChanged": true
+      },
+      "checks": {
+        "searchDeletionSafe": true,
+        "modifierSelection": true,
+        "drag": true
+      },
+      "errors": []
+    },
+    "chrome_windows_emulation": {
+      "browser": "chromium",
+      "platform": "Win32",
+      "baseline": {
+        "before": {
+          "x": 34.2935,
+          "y": 236.294,
+          "zoom": 0.758706
+        },
+        "after": {
+          "x": -5.70647,
+          "y": 176.294,
+          "zoom": 0.758706
+        },
+        "zoomChanged": false
+      },
+      "closeResults": {
+        "button": {
+          "before": {
+            "x": 33.5612,
+            "y": 184.451,
+            "zoom": 1.02321
+          },
+          "after": {
+            "x": -6.43882,
+            "y": 124.451,
+            "zoom": 1.02321
+          },
+          "zoomChanged": false
+        },
+        "escape": {
+          "before": {
+            "x": 33.5612,
+            "y": 184.451,
+            "zoom": 1.02321
+          },
+          "after": {
+            "x": -6.43882,
+            "y": 124.451,
+            "zoom": 1.02321
+          },
+          "zoomChanged": false
+        },
+        "result-click": {
+          "before": {
+            "x": 128.12,
+            "y": 219.029,
+            "zoom": 0.846792
+          },
+          "after": {
+            "x": 88.1196,
+            "y": 159.029,
+            "zoom": 0.846792
+          },
+          "zoomChanged": false
+        },
+        "result-enter": {
+          "before": {
+            "x": 128.12,
+            "y": 219.029,
+            "zoom": 0.846792
+          },
+          "after": {
+            "x": 88.1196,
+            "y": 159.029,
+            "zoom": 0.846792
+          },
+          "zoomChanged": false
+        },
+        "backdrop": {
+          "before": {
+            "x": 33.5612,
+            "y": 184.451,
+            "zoom": 1.02321
+          },
+          "after": {
+            "x": -6.43882,
+            "y": 124.451,
+            "zoom": 1.02321
+          },
+          "zoomChanged": false
+        }
+      },
+      "deliberateModifierScroll": {
+        "before": {
+          "x": 33.5612,
+          "y": 184.451,
+          "zoom": 1.02321
+        },
+        "after": {
+          "x": 33.0154,
+          "y": 160.781,
+          "zoom": 0.866396
+        },
+        "zoomChanged": true
+      },
+      "syntheticPinch": {
+        "before": {
+          "x": -6.98459,
+          "y": 100.781,
+          "zoom": 0.866396
+        },
+        "after": {
+          "x": -10.2679,
+          "y": 97.2046,
+          "zoom": 0.852102
+        },
+        "zoomChanged": true
+      },
+      "checks": {
+        "searchDeletionSafe": true,
+        "modifierSelection": true,
+        "drag": true
+      },
+      "errors": []
+    }
+  }
+}

@@ -1,3 +1,9 @@
+import { requestImportedDiagramLayout } from './components/functionalDiagramInitialization';
+import { REVIEW_STATUS_LABELS } from './features/results-review/reviewTypes';
+import useDeferredTableRow, { estimateTableRowHeight } from './components/useDeferredTableRow';
+import { registerTableSearchProvider, modelTableSearchEntries } from './components/quickSearchUtils';
+import useEventCallback from './hooks/useEventCallback';
+import InlineHazardText from './components/InlineHazardText';
 import { reorderProject } from "./lib/projectOrder";
 import { loadSidebarPreferences, SIDEBAR_PREFERENCES_KEY } from "./lib/sidebarPreferences";
 import { createProjectRunGuard } from "./lib/projectRunGuard";
@@ -7397,6 +7403,7 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
 
   const [responseRows, setResponseRows] = useState([]);
   const [committedFunctionalDiagramRows, setCommittedFunctionalDiagramRows] = useState([]);
+  const [functionalDiagramImportVersion, setFunctionalDiagramImportVersion] = useState(0);
   const [diagramCategories, setDiagramCategories] = useState(null);
   const [analysisResult, setAnalysisResult] = useState(null);
   /**
@@ -7556,7 +7563,10 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [selectedRiskPriority, setSelectedRiskPriority] = useState("All");
   const [activeRiskId, setActiveRiskId] = useState(null);
   const selectTableCellForCollaborator = useCallback((selection) => {
-    setActiveTableSelection(createTableCellSelection(selection));
+    setActiveTableSelection(previous => {
+      const next = createTableCellSelection(selection);
+      return JSON.stringify(previous) === JSON.stringify(next) ? previous : next;
+    });
   }, []);
   const clearCollaboratorActiveSelection = useCallback((selection) => {
     if (isCodeArchitectureSelection(selection)) {
@@ -8769,25 +8779,48 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     if (allVisibleHazardInterfacesCollapsed) expandAllHazardInterfaces();
     else collapseAllHazardInterfaces();
   };
-  const toggleHazardInterfaceCollapsed = (key) => {
+  const toggleHazardInterfaceCollapsed = useEventCallback((key) => {
     setCollapsedHazardInterfaceKeys((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
     });
-  };
-  const toggleHazardVariantExpanded = (key) => {
+  });
+  const toggleHazardVariantExpanded = useEventCallback((key) => {
     setExpandedHazardVariantKeys((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
     });
-  };
-  const getDraftHazardCellRows = (value) => {
-    return estimateWrappedTextareaRows(value, 12, Infinity);
-  };
+  });
+
+  const hazardSearchTableRef = useRef(null);
+  const collectHazardSearchEntries = useEventCallback(() => {
+    const completed = Boolean(analysisResult?.Summary);
+    const headers = completed ? hazardSummaryHeaders : draftHazardHeaders;
+    const items = (completed ? groupedFilteredHazardSummaryRows : groupedFilteredDraftHazardSummaryRows)
+      .filter(item => !collapsedHazardInterfaceKeys.has(item.groupMeta.key)
+        && !(item.variantCount > 1 && !expandedHazardVariantKeys.has(item.variantMeta.key)));
+    const indexes = (completed ? hazardSummaryDisplayColumnIndexes : headers.map((_, index) => index))
+      .filter(index => !PROJECT_HAZARD_CONTEXT_HEADERS.has(headers[index]) && (!completed || !isSafetyDetailHeader(headers[index])));
+    const searchableItems = items.map(item => {
+      const review = completed ? hazardSummaryReviewByRow.get(item.originalIndex)
+        : draftHazardReviewByRow.get(item.rowKey) || draftHazardReviewByRow.get(item.originalIndex);
+      return { ...item, searchPrefix: [
+        review ? (REVIEW_STATUS_LABELS[review.status] || "Pending Review") : "",
+        draftHazardGeneratingIndex === item.originalIndex ? "Generating..." : item.generated ? "Regenerate" : "Generate",
+        completed && item.pending && !item.generated ? "New row" : "",
+      ].filter(Boolean).join(" · ") };
+    });
+    return modelTableSearchEntries({ table: hazardSearchTableRef.current, label: "Hazard Analysis", indexes, items: searchableItems });
+  });
+  useLayoutEffect(() => {
+    const table = hazardSearchTableRef.current;
+    if (!table) return undefined;
+    return registerTableSearchProvider(table, collectHazardSearchEntries);
+  });
   const riskAssessmentSource = useMemo(() => {
     if (Array.isArray(analysisResult?.Summary?.[0]) && analysisResult.Summary.length > 1) {
       const [headers, ...rows] = analysisResult.Summary;
@@ -11825,7 +11858,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       )
     );
   const activeProjectDiagramKey = activeProjectId
-    ? `diagram:${activeProjectId}:${loadedProjectId === activeProjectId && projectLoaded ? "ready" : "loading"}`
+    ? `diagram:${activeProjectId}:${loadedProjectId === activeProjectId && projectLoaded ? "ready" : "loading"}:${functionalDiagramImportVersion}`
     : "diagram:none";
   const activeProjectDiagramReady = Boolean(
     activeProjectId &&
@@ -12283,7 +12316,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     }
   };
 
-  const handleGenerateDraftHazardRow = async (hazardTargetIndex, options = {}) => {
+  const handleGenerateDraftHazardRow = useEventCallback(async (hazardTargetIndex, options = {}) => {
     if (draftHazardGeneratingIndex !== null || isAnalyzing) return;
     const target = draftHazardTargets[hazardTargetIndex];
     const functionalRow = target?.analysisRow;
@@ -12601,7 +12634,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     } finally {
       setDraftHazardGeneratingIndex(null);
     }
-  };
+  });
 
   hazardRowRegeneratorRef.current = async ({ projectId, sourceRowId, workspaceType = "functional-project", reviewTarget = "", decision = "", selectedImpactIds = [], selectedImpactLabels = [] } = {}) => {
     if (workspaceType !== "functional-project") {
@@ -12651,7 +12684,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     });
   };
 
-  const saveManualHazardCell = async (targetIndex, header, value, displayedRow) => {
+  const saveManualHazardCell = useEventCallback(async (targetIndex, header, value, displayedRow) => {
     if (isAnalyzing || isResettingHazardAnalysis || draftHazardGeneratingIndex !== null) {
       throw new Error("Wait for hazard generation or restoration to finish, then save your edit.");
     }
@@ -12692,9 +12725,9 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     analysisRevisionRef.current = result.revision ?? analysisRevisionRef.current;
     commitAnalysisResult(nextAnalysis, nextDrafts);
     setSafetyIssueRefreshStatus({ kind: "working", message: "Hazard evidence changed. Regenerate the consolidated safety issues when ready." });
-  };
+  });
 
-  const handleDraftHazardCellChange = (hazardTargetIndex, columnIndex, value) => {
+  const handleDraftHazardCellChange = useEventCallback((hazardTargetIndex, columnIndex, value) => {
     const target = draftHazardTargets[hazardTargetIndex];
     const functionalRow = target?.analysisRow;
     if (!target || !functionalRow || draftHazardHeaders[columnIndex] === "Raw Analysis Row ID") return;
@@ -12740,7 +12773,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         console.warn("[results-review] Failed to sync draft hazard cell edit", error);
       });
     }
-  };
+  });
 
   const handleNeedsReviewAnswerChange = (groupId, answer, scopeSignature) => {
     setHazardNeedsReviewResolutions((current) => ({
@@ -14357,31 +14390,27 @@ Rules:
     if (!confirmed) return;
 
     const ensured = ensureFunctionalVibeReviewRowIds(parsed.rows);
-    if (!saveProjectPatch(projectIdAtImport, { responseRows: ensured.rows })) {
+    const importedCategories = mergeSubsystemDiagramCategories(diagramCategories, ensured.rows);
+    if (!saveProjectPatch(projectIdAtImport, { responseRows: ensured.rows, diagramCategories: importedCategories })) {
       window.alert('The imported table could not be saved in browser storage. Nothing was changed.');
       return;
-    }
-    // A replacement with entirely new functions is a new diagram, even when
-    // the project's starter diagram has already been displayed and saved.
-    const existingFunctions = new Set((responseRows || []).flatMap(row =>
-      [row.fromFunction, row.toFunction].map(value => String(value || '').trim().toLowerCase()).filter(Boolean)));
-    const retainsExistingFunctions = ensured.rows.some(row =>
-      [row.fromFunction, row.toFunction].some(value => existingFunctions.has(String(value || '').trim().toLowerCase())));
-    if (!retainsExistingFunctions) {
-      try { localStorage.setItem(`diagram:positions:${projectIdAtImport}:initial-layout:v1`, 'pending'); } catch {}
-
     }
     try {
       await flushRecoveryRecord(`decomposition:${projectIdAtImport}`);
     } catch (error) {
       window.alert(`The table was saved, but its recovery checkpoint failed: ${error.message}. Export a copy before leaving this page.`);
     }
+    // Every confirmed replacement needs a new layout, even when function names
+    // overlap. Publish rows, categories and the diagram instance together so
+    // old hierarchy/measurement effects cannot overwrite the imported graph.
+    try { requestImportedDiagramLayout(localStorage, `diagram:positions:${projectIdAtImport}`); } catch {}
     if (!importIsVisible()) return;
-    if (!retainsExistingFunctions) setCleanOnceKey(`import-${Date.now()}`);
+    setCleanOnceKey(`import-${Date.now()}`);
+    setFunctionalDiagramImportVersion(version => version + 1);
     lastKnownFunctionalRowsRef.current.set(String(activeProjectId), ensured.rows);
     setResponseRows(ensured.rows);
     setCommittedFunctionalDiagramRows(getProjectDiagramRows(ensured.rows));
-    setDiagramCategories((current) => mergeSubsystemDiagramCategories(current, ensured.rows));
+    setDiagramCategories(importedCategories);
     setFunctionalFilterColumn(null);
     setFunctionalColumnFilters({});
     setFunctionalColumnSearches({});
@@ -18126,7 +18155,7 @@ const projectHint = useMemo(() => ({
                             </tr>
                           </thead>
                           <tbody className="text-[#374151] text-sm">
-                            {filteredFunctionalRows.map(({ row, originalIndex }, idx) => {
+                            {functionalViewMode !== 'diagram' && filteredFunctionalRows.map(({ row, originalIndex }, idx) => {
                               const reviewItem = functionalReviewByRow.get(originalIndex);
                               const rejected = reviewItem?.status === REVIEW_STATUSES.REJECTED;
                               const highlighted = highlightedFunctionalRowIndex === originalIndex;
@@ -18424,7 +18453,7 @@ const projectHint = useMemo(() => ({
           </div>
         </div>
         <div className="relative min-h-0 w-full flex-1 overflow-auto rounded-md shadow-sm">
-          <table className="min-w-full border-separate border-spacing-0 text-sm text-left">
+          <table ref={hazardSearchTableRef} className="min-w-full border-separate border-spacing-0 text-sm text-left">
             <thead>
               <tr className="text-[#4B5563] text-sm font-medium">
                 <th className="sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap">
@@ -18542,135 +18571,34 @@ const projectHint = useMemo(() => ({
               </tr>
             </thead>
             <tbody className="text-[#374151] text-sm">
-              {groupedFilteredDraftHazardSummaryRows.map(({ row, originalIndex, rowKey, generated, groupMeta, variantMeta, isFirstInGroup, isFirstInVariantGroup, groupCount, variantCount }, idx) => {
-                const generating = draftHazardGeneratingIndex === originalIndex;
-                const reviewItem = draftHazardReviewByRow.get(rowKey) || draftHazardReviewByRow.get(originalIndex);
-                const groupCollapsed = collapsedHazardInterfaceKeys.has(groupMeta.key);
-                const highlighted = highlightedHazardRowIndex === originalIndex;
-                const variantCollapsed = variantCount > 1 && !expandedHazardVariantKeys.has(variantMeta.key);
-                const selectionRowId = String(row?.[draftHazardRawRowIdIndex] || rowKey || `hazard-draft:${activeProjectId}:${originalIndex}`);
-                const selectedForCollaborator = isSelectedTableRow(activeTableSelection, "hazard-analysis", selectionRowId);
-                return (
-                  <React.Fragment key={rowKey || originalIndex}>
-                    {isFirstInGroup && (
-                      <tr className="bg-[#EEF4FF]">
-                        <td colSpan={visibleDraftHazardColumnCount + 1} className="px-4 py-2 border-b border-blue-100">
-                          <button
-                            type="button"
-                            onClick={() => toggleHazardInterfaceCollapsed(groupMeta.key)}
-                            className="inline-flex items-center gap-2 text-left text-sm font-semibold text-[#0B3EA8]"
-                          >
-                            <span aria-hidden="true">{groupCollapsed ? '▸' : '▾'}</span>
-                            <span>{groupMeta.label}</span>
-                            <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-[#2D7DFE]">
-                              {groupCount} analysis variant{groupCount === 1 ? '' : 's'}
-                            </span>
-                          </button>
-                        </td>
-                      </tr>
-                    )}
-                    {!groupCollapsed && isFirstInVariantGroup && variantCount > 1 && (
-                      <tr className="bg-slate-50">
-                        <td colSpan={visibleDraftHazardColumnCount + 1} className="border-b border-slate-200 px-8 py-2">
-                          <button type="button" onClick={() => toggleHazardVariantExpanded(variantMeta.key)} className="inline-flex items-center gap-2 text-left text-xs font-medium text-slate-700">
-                            <span aria-hidden="true">{variantCollapsed ? '▸' : '▾'}</span>
-                            <span>{variantMeta.label}</span>
-                            <span className="rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-600">{variantCount} contexts</span>
-                          </button>
-                        </td>
-                      </tr>
-                    )}
-                    {!groupCollapsed && !variantCollapsed && (
-                      <tr
-                        id={`hazard-source-row-${originalIndex + 1}`}
-                        style={hazardRowHeightOverrides[`draft:${rowKey}`] ? { height: hazardRowHeightOverrides[`draft:${rowKey}`] } : undefined}
-                        ref={(el) => {
-                          if (el) hazardRowRefs.current[originalIndex] = el;
-                          else delete hazardRowRefs.current[originalIndex];
-                        }}
-                        aria-selected={selectedForCollaborator}
-                        className={`${highlighted ? "bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset" : selectedForCollaborator ? "bg-indigo-50 ring-2 ring-indigo-400 ring-inset" : (idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]")} transition-colors`}
-                      >
-                        <td className="relative px-3 py-2 align-top border-b border-gray-100">
-                          <div className="flex max-w-52 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] leading-4 text-slate-600">
-                            <button
-                              type="button"
-                              onClick={() => handleGenerateDraftHazardRow(originalIndex)}
-                              disabled={draftHazardGeneratingIndex !== null}
-                              className="text-[11px] font-semibold text-indigo-700 underline decoration-indigo-300 underline-offset-2 hover:text-indigo-900 disabled:cursor-not-allowed disabled:opacity-60"
-                              title="Autogenerate this hazard row with the selected method"
-                            >
-                              {generating ? 'Generating...' : generated ? 'Regenerate' : 'Generate'}
-                            </button>
-                            {reviewItem && (
-                              <ReviewStatusBadge
-                                reviewItem={reviewItem}
-                                openOptions={draftHazardReviewDrawerOptions}
-                                variant="text"
-                              />
-                            )}
-                          </div>
-                          <div
-                            role="separator"
-                            aria-orientation="horizontal"
-                            aria-label={`Resize hazard row ${originalIndex + 1}`}
-                            className="absolute bottom-0 left-0 z-10 h-1.5 w-full cursor-row-resize touch-none hover:bg-indigo-400"
-                            onPointerDown={(event) => startHazardRowResize(event, `draft:${rowKey}`, event.currentTarget.closest("tr")?.getBoundingClientRect().height || 64)}
-                            onDoubleClick={() => setHazardRowHeightOverrides((current) => { const next = { ...current }; delete next[`draft:${rowKey}`]; return next; })}
-                            title="Drag to resize; double-click to restore automatic height"
-                          />
-                        </td>
-                        {row.map((cell, colIdx) => {
-                          const diagramTarget = buildHazardDiagramFocusTarget(draftHazardHeaders, row, colIdx);
-                          const selectedCell = isSelectedTableCell(activeTableSelection, "hazard-analysis", selectionRowId, colIdx);
-                          const selectCell = () => selectTableCellForCollaborator({
-                            tableId: "hazard-analysis",
-                            tableLabel: "Hazard Analysis",
-                            projectId: activeProjectId,
-                            rowId: selectionRowId,
-                            rowIndex: originalIndex,
-                            headers: draftHazardHeaders,
-                            row,
-                            columnIndex: colIdx,
-                          });
-                          return (
-                            <td key={colIdx} onClick={selectCell} style={{ width: draftHazardColumnWidths[colIdx], minWidth: draftHazardColumnWidths[colIdx], maxWidth: draftHazardColumnWidths[colIdx] }} className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(draftHazardHeaders[colIdx]) ? 'hidden ' : ''}relative px-3 py-2 align-top whitespace-pre-wrap border-b border-gray-100 ${selectedCell ? 'bg-indigo-100 ring-2 ring-indigo-500 ring-inset' : ''}`}>
-                              <div className="flex items-start gap-1">
-                                <textarea
-                                  className="min-h-[30px] w-full resize-none overflow-visible break-words bg-transparent text-xs leading-4 text-gray-900 [overflow-wrap:anywhere] focus:outline-none"
-                                  value={cell}
-                                  readOnly={draftHazardHeaders[colIdx] === "Raw Analysis Row ID"}
-                                  onChange={(event) => handleDraftHazardCellChange(originalIndex, colIdx, event.target.value)}
-                                  onFocus={selectCell}
-                                  rows={getDraftHazardCellRows(cell)}
-                                  aria-label={`${draftHazardHeaders[colIdx]}, row ${originalIndex + 1}`}
-                                />
-                                {diagramTarget ? (
-                                  <button
-                                    type="button"
-                                    className="shrink-0 rounded p-1 text-[#2D7DFE] hover:bg-blue-100 hover:text-[#1E61D6]"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      handleOpenHazardDiagramTarget(diagramTarget);
-                                    }}
-                                    title={getHazardDiagramLinkLabel(diagramTarget)}
-                                    aria-label={`${getHazardDiagramLinkLabel(diagramTarget)} for row ${originalIndex + 1}`}
-                                  >
-                                    ↗
-                                  </button>
-                                ) : null}
-                              </div>
-                              {isVibeReviewCellImpacted(selectionRowId, draftHazardHeaders[colIdx]) && (
-                                <span className="absolute bottom-1 right-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[11px] font-bold leading-none text-white shadow" title="Changed during the active Vibe Review" aria-label="Changed during the active Vibe Review">!</span>
-                              )}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    )}
-                  </React.Fragment>
-                );
-              })}
+              {groupedFilteredDraftHazardSummaryRows.map((item, idx) => <DraftHazardTableRow
+                  key={item.rowKey || item.originalIndex}
+                  item={item}
+                  idx={idx}
+                  activeProjectId={activeProjectId}
+                  activeTableSelection={isSelectedTableRow(activeTableSelection, "hazard-analysis", String(item.row?.[draftHazardRawRowIdIndex] || item.rowKey || `hazard-draft:${activeProjectId}:${item.originalIndex}`)) ? activeTableSelection : null}
+                  collapsedHazardInterfaceKeys={collapsedHazardInterfaceKeys}
+                  draftHazardColumnWidths={draftHazardColumnWidths}
+                  draftHazardGeneratingIndex={draftHazardGeneratingIndex}
+                  draftHazardHeaders={draftHazardHeaders}
+                  draftHazardRawRowIdIndex={draftHazardRawRowIdIndex}
+                  draftHazardReviewByRow={draftHazardReviewByRow}
+                  draftHazardReviewDrawerOptions={draftHazardReviewDrawerOptions}
+                  expandedHazardVariantKeys={expandedHazardVariantKeys}
+                  handleDraftHazardCellChange={handleDraftHazardCellChange}
+                  handleGenerateDraftHazardRow={handleGenerateDraftHazardRow}
+                  handleOpenHazardDiagramTarget={handleOpenHazardDiagramTarget}
+                  hazardRowHeightOverrides={hazardRowHeightOverrides}
+                  hazardRowRefs={hazardRowRefs}
+                  highlightedHazardRowIndex={highlightedHazardRowIndex}
+                  isVibeReviewCellImpacted={isVibeReviewCellImpacted}
+                  selectTableCellForCollaborator={selectTableCellForCollaborator}
+                  setHazardRowHeightOverrides={setHazardRowHeightOverrides}
+                  startHazardRowResize={startHazardRowResize}
+                  toggleHazardInterfaceCollapsed={toggleHazardInterfaceCollapsed}
+                  toggleHazardVariantExpanded={toggleHazardVariantExpanded}
+                  visibleDraftHazardColumnCount={visibleDraftHazardColumnCount}
+                />)}
               {draftHazardSummaryRows.length === 0 && (
                 <tr>
                   <td colSpan={visibleDraftHazardColumnCount + 1} className="px-6 py-8 text-center text-sm text-gray-500">
@@ -18707,7 +18635,7 @@ const projectHint = useMemo(() => ({
 </div>
 ) : (
           <div className="relative min-h-0 w-full flex-1 overflow-auto rounded-md shadow-sm">
-            <table className="min-w-full border-separate border-spacing-0 text-sm text-left">
+            <table ref={hazardSearchTableRef} className="min-w-full border-separate border-spacing-0 text-sm text-left">
               <thead>
                 <tr className="text-[#4B5563] text-sm font-medium">
                   <th className="sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap">
@@ -18829,187 +18757,37 @@ const projectHint = useMemo(() => ({
               </thead>
               <tbody className="text-[#374151] text-sm">
                 {groupedFilteredHazardSummaryRows
-                  .map(({ row, originalIndex, generated, pending, groupMeta, variantMeta, isFirstInGroup, isFirstInVariantGroup, groupCount, variantCount }, idx) => {
-                    const generating = draftHazardGeneratingIndex === originalIndex;
-                    const reviewItem = hazardSummaryReviewByRow.get(originalIndex);
-                    const rejected = reviewItem?.status === REVIEW_STATUSES.REJECTED;
-                    const highlighted = highlightedHazardRowIndex === originalIndex;
-                    const groupCollapsed = collapsedHazardInterfaceKeys.has(groupMeta.key);
-                    const variantCollapsed = variantCount > 1 && !expandedHazardVariantKeys.has(variantMeta.key);
-                    const selectionRowId = String(row?.[hazardRawRowIdIndex] || `hazard:${activeProjectId}:${originalIndex}`);
-                    const selectedForCollaborator = isSelectedTableRow(activeTableSelection, "hazard-analysis", selectionRowId);
-                    return (
-                      <React.Fragment key={`${originalIndex}-${groupMeta.key}`}>
-                        {isFirstInGroup && (
-                          <tr className="bg-[#EEF4FF]">
-                            <td colSpan={visibleHazardSummaryColumnCount + 1} className="px-4 py-2 border-b border-blue-100">
-                              <button
-                                type="button"
-                                onClick={() => toggleHazardInterfaceCollapsed(groupMeta.key)}
-                                className="inline-flex items-center gap-2 text-left text-sm font-semibold text-[#0B3EA8]"
-                              >
-                                <span aria-hidden="true">{groupCollapsed ? '▸' : '▾'}</span>
-                                <span>{groupMeta.label}</span>
-                                <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-[#2D7DFE]">
-                                  {groupCount} analysis variant{groupCount === 1 ? '' : 's'}
-                                </span>
-                              </button>
-                            </td>
-                          </tr>
-                        )}
-                        {!groupCollapsed && isFirstInVariantGroup && variantCount > 1 && (
-                          <tr className="bg-slate-50">
-                            <td colSpan={visibleHazardSummaryColumnCount + 1} className="border-b border-slate-200 px-8 py-2">
-                              <button type="button" onClick={() => toggleHazardVariantExpanded(variantMeta.key)} className="inline-flex items-center gap-2 text-left text-xs font-medium text-slate-700">
-                                <span aria-hidden="true">{variantCollapsed ? '▸' : '▾'}</span>
-                                <span>{variantMeta.label}</span>
-                                <span className="rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-600">{variantCount} contexts</span>
-                              </button>
-                            </td>
-                          </tr>
-                        )}
-                        {!groupCollapsed && !variantCollapsed && (
-                          <tr
-                            id={`hazard-source-row-${originalIndex + 1}`}
-                            style={hazardRowHeightOverrides[`summary:${selectionRowId}`] ? { height: hazardRowHeightOverrides[`summary:${selectionRowId}`] } : undefined}
-                            ref={(el) => {
-                              if (el) hazardRowRefs.current[originalIndex] = el;
-                              else delete hazardRowRefs.current[originalIndex];
-                            }}
-                            aria-selected={selectedForCollaborator}
-                            className={`transition-colors ${
-                              highlighted
-                                ? 'bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset'
-                                : selectedForCollaborator
-                                  ? 'bg-indigo-50 ring-2 ring-indigo-400 ring-inset'
-                                : rejected
-                                  ? 'bg-rose-50/60'
-                                  : idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]"
-                            }`}
-                          >
-                            <td className="relative px-3 py-2 align-top border-b border-gray-100">
-                              <div className="flex max-w-56 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] leading-4 text-slate-600">
-                                {reviewItem && (
-                                  <ReviewStatusBadge
-                                    reviewItem={reviewItem}
-                                    openOptions={{
-                                      ...hazardReviewDrawerOptions,
-                                      reviewItemIds: hazardSummaryReviewItems.map((item) => item.id),
-                                    }}
-                                    variant="text"
-                                  />
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={() => handleGenerateDraftHazardRow(originalIndex)}
-                                  disabled={isAnalyzing || draftHazardGeneratingIndex !== null}
-                                  className="text-[11px] font-semibold text-indigo-700 underline decoration-indigo-300 underline-offset-2 hover:text-indigo-900 disabled:cursor-not-allowed disabled:opacity-60"
-                                  title="Regenerate this hazard analysis row with the selected method"
-                                >
-                                  {generating ? 'Generating...' : generated ? 'Regenerate' : 'Generate'}
-                                </button>
-                                {pending && !generated && (
-                                  <span>New row ·</span>
-                                )}
-                              </div>
-                              <div
-                                role="separator"
-                                aria-orientation="horizontal"
-                                aria-label={`Resize hazard row ${originalIndex + 1}`}
-                                className="absolute bottom-0 left-0 z-10 h-1.5 w-full cursor-row-resize touch-none hover:bg-indigo-400"
-                                onPointerDown={(event) => startHazardRowResize(event, `summary:${selectionRowId}`, event.currentTarget.closest("tr")?.getBoundingClientRect().height || 64)}
-                                onDoubleClick={() => setHazardRowHeightOverrides((current) => { const next = { ...current }; delete next[`summary:${selectionRowId}`]; return next; })}
-                                title="Drag to resize; double-click to restore automatic height"
-                              />
-                            </td>
-                            {hazardSummaryDisplayColumnIndexes.map((colIdx) => {
-                              const cell = row[colIdx];
-                              const diagramTarget = buildHazardDiagramFocusTarget(hazardSummaryHeaders, row, colIdx);
-                              const columnHeader = hazardSummaryHeaders[colIdx];
-                              if (isSafetyDetailHeader(columnHeader)) return null;
-                              const selectedCell = isSelectedTableCell(activeTableSelection, "hazard-analysis", selectionRowId, colIdx);
-                              const selectCell = () => selectTableCellForCollaborator({
-                                tableId: "hazard-analysis",
-                                tableLabel: "Hazard Analysis",
-                                projectId: activeProjectId,
-                                rowId: selectionRowId,
-                                rowIndex: originalIndex,
-                                headers: hazardSummaryHeaders,
-                                row,
-                                columnIndex: colIdx,
-                              });
-                              const editableCellProps = columnHeader === "Raw Analysis Row ID" || columnHeader === CLASSIFICATION_RESOLUTION_STATUS_HEADER ? {} : {
-                                contentEditable: "plaintext-only",
-                                suppressContentEditableWarning: true,
-                                role: "textbox",
-                                "aria-multiline": true,
-                                "aria-label": `${columnHeader}, row ${originalIndex + 1}`,
-                                onFocus: selectCell,
-                                onBlur: async (event) => {
-                                  const element = event.currentTarget;
-                                  const nextValue = element.innerText ?? element.textContent ?? "";
-                                  if (nextValue === String(cell ?? "")) return;
-                                  try {
-                                    await saveManualHazardCell(originalIndex, columnHeader, nextValue, row);
-                                  } catch (error) {
-                                    window.alert(`Your edit could not be saved: ${error.message}. The edited text is still in the cell; click it and leave it to retry.`);
-                                  }
-                                },
-                                onKeyDown: (event) => {
-                                  if (event.key === "Escape") {
-                                    event.preventDefault();
-                                    event.currentTarget.textContent = String(cell ?? "");
-                                    event.currentTarget.blur();
-                                  }
-                                },
-                              };
-                              const isResolutionStatus = columnHeader === CLASSIFICATION_RESOLUTION_STATUS_HEADER;
-                              const resolutionStatusClass = cell === CLASSIFICATION_RESOLUTION_STATUS.HUMAN_EVIDENCE_GAP
-                                || cell === CLASSIFICATION_RESOLUTION_STATUS.POLICY_GAP
-                                ? "border-amber-200 bg-amber-50 text-amber-800"
-                                : cell === CLASSIFICATION_RESOLUTION_STATUS.NEEDS_REVIEW
-                                  || cell === CLASSIFICATION_RESOLUTION_STATUS.NOT_EVALUATED
-                                  ? "border-slate-200 bg-slate-100 text-slate-700"
-                                  : cell === CLASSIFICATION_RESOLUTION_STATUS.HUMAN_POLICY_VALIDATED
-                                    ? "border-blue-200 bg-blue-50 text-blue-800"
-                                    : "border-emerald-200 bg-emerald-50 text-emerald-800";
-                              return (
-                                <td key={colIdx} onClick={selectCell} style={{ width: hazardSummaryColumnWidths[colIdx], minWidth: hazardSummaryColumnWidths[colIdx], maxWidth: hazardSummaryColumnWidths[colIdx] }} className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(columnHeader) ? 'hidden ' : ''}relative break-words px-3 py-2 align-top whitespace-pre-wrap text-xs leading-4 [overflow-wrap:anywhere] border-b border-gray-100 ${selectedCell ? 'bg-indigo-100 ring-2 ring-indigo-500 ring-inset' : ''} ${rejected ? 'text-rose-900 line-through decoration-rose-400' : ''}`}>
-                                  {diagramTarget ? (
-                                    <div className="flex items-start gap-1">
-                                      <div {...editableCellProps} className="min-w-0 flex-1 whitespace-pre-wrap outline-none">{cell}</div>
-                                      <button
-                                        type="button"
-                                        className="shrink-0 rounded p-1 text-[#2D7DFE] hover:bg-blue-100 hover:text-[#1E61D6]"
-                                        onClick={(event) => {
-                                          event.stopPropagation();
-                                          handleOpenHazardDiagramTarget(diagramTarget);
-                                        }}
-                                        title={getHazardDiagramLinkLabel(diagramTarget)}
-                                        aria-label={`${getHazardDiagramLinkLabel(diagramTarget)} for row ${originalIndex + 1}`}
-                                      >
-                                        ↗
-                                      </button>
-                                    </div>
-                                  ) : isResolutionStatus && cell ? (
-                                    <span
-                                      className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${resolutionStatusClass}`}
-                                      title="Policy validation checks record structure and internal classification consistency; it does not independently verify the engineering evidence."
-                                    >
-                                      {cell}
-                                    </span>
-                                  ) : <div {...editableCellProps} className="min-h-[16px] whitespace-pre-wrap outline-none">{cell}</div>}
-                                  {isVibeReviewCellImpacted(selectionRowId, columnHeader) && (
-                                    <span className="absolute bottom-1 right-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[11px] font-bold leading-none text-white shadow" title="Changed during the active Vibe Review" aria-label="Changed during the active Vibe Review">!</span>
-                                  )}
-                                </td>
-                              );
-                            })}
-                          </tr>
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
+                  .map((item, idx) => <CompletedHazardTableRow
+                  key={item.rowKey || item.originalIndex}
+                  item={item}
+                  idx={idx}
+                  activeProjectId={activeProjectId}
+                  activeTableSelection={isSelectedTableRow(activeTableSelection, "hazard-analysis", String(item.row?.[hazardRawRowIdIndex] || `hazard:${activeProjectId}:${item.originalIndex}`)) ? activeTableSelection : null}
+                  collapsedHazardInterfaceKeys={collapsedHazardInterfaceKeys}
+                  draftHazardGeneratingIndex={draftHazardGeneratingIndex}
+                  expandedHazardVariantKeys={expandedHazardVariantKeys}
+                  handleGenerateDraftHazardRow={handleGenerateDraftHazardRow}
+                  handleOpenHazardDiagramTarget={handleOpenHazardDiagramTarget}
+                  hazardRawRowIdIndex={hazardRawRowIdIndex}
+                  hazardReviewDrawerOptions={hazardReviewDrawerOptions}
+                  hazardRowHeightOverrides={hazardRowHeightOverrides}
+                  hazardRowRefs={hazardRowRefs}
+                  hazardSummaryColumnWidths={hazardSummaryColumnWidths}
+                  hazardSummaryDisplayColumnIndexes={hazardSummaryDisplayColumnIndexes}
+                  hazardSummaryHeaders={hazardSummaryHeaders}
+                  hazardSummaryReviewByRow={hazardSummaryReviewByRow}
+                  hazardSummaryReviewItems={hazardSummaryReviewItems}
+                  highlightedHazardRowIndex={highlightedHazardRowIndex}
+                  isAnalyzing={isAnalyzing}
+                  isVibeReviewCellImpacted={isVibeReviewCellImpacted}
+                  saveManualHazardCell={saveManualHazardCell}
+                  selectTableCellForCollaborator={selectTableCellForCollaborator}
+                  setHazardRowHeightOverrides={setHazardRowHeightOverrides}
+                  startHazardRowResize={startHazardRowResize}
+                  toggleHazardInterfaceCollapsed={toggleHazardInterfaceCollapsed}
+                  toggleHazardVariantExpanded={toggleHazardVariantExpanded}
+                  visibleHazardSummaryColumnCount={visibleHazardSummaryColumnCount}
+                />)}
                 {filteredHazardSummaryRows.length === 0 && (
                   <tr>
                     <td colSpan={visibleHazardSummaryColumnCount + 1} className="px-6 py-8 text-center text-sm text-gray-500">
@@ -21990,6 +21768,386 @@ function Badge({ children }) {
 function EmptyState({ text }) {
   return <div className="text-sm text-gray-500">{text}</div>;
 }
+
+const DraftHazardTableRow = React.memo(function DraftHazardTableRow({
+  item,
+  idx,
+  activeProjectId,
+  activeTableSelection,
+  collapsedHazardInterfaceKeys,
+  draftHazardColumnWidths,
+  draftHazardGeneratingIndex,
+  draftHazardHeaders,
+  draftHazardRawRowIdIndex,
+  draftHazardReviewByRow,
+  draftHazardReviewDrawerOptions,
+  expandedHazardVariantKeys,
+  handleDraftHazardCellChange,
+  handleGenerateDraftHazardRow,
+  handleOpenHazardDiagramTarget,
+  hazardRowHeightOverrides,
+  hazardRowRefs,
+  highlightedHazardRowIndex,
+  isVibeReviewCellImpacted,
+  selectTableCellForCollaborator,
+  setHazardRowHeightOverrides,
+  startHazardRowResize,
+  toggleHazardInterfaceCollapsed,
+  toggleHazardVariantExpanded,
+  visibleDraftHazardColumnCount
+}) {
+  const { row, originalIndex, rowKey, generated, groupMeta, variantMeta, isFirstInGroup, isFirstInVariantGroup, groupCount, variantCount } = item;
+
+                const generating = draftHazardGeneratingIndex === originalIndex;
+                const reviewItem = draftHazardReviewByRow.get(rowKey) || draftHazardReviewByRow.get(originalIndex);
+                const groupCollapsed = collapsedHazardInterfaceKeys.has(groupMeta.key);
+                const highlighted = highlightedHazardRowIndex === originalIndex;
+                const variantCollapsed = variantCount > 1 && !expandedHazardVariantKeys.has(variantMeta.key);
+                const selectionRowId = String(row?.[draftHazardRawRowIdIndex] || rowKey || `hazard-draft:${activeProjectId}:${originalIndex}`);
+                const selectedForCollaborator = isSelectedTableRow(activeTableSelection, "hazard-analysis", selectionRowId);
+                const deferredRow = useDeferredTableRow({
+                  id: `hazard-source-row-${originalIndex + 1}`, index: idx,
+                  active: highlighted || selectedForCollaborator, bypass: groupCollapsed || variantCollapsed,
+                  height: estimateTableRowHeight(row, draftHazardColumnWidths, draftHazardHeaders.map((_, index) => index).filter(index => !PROJECT_HAZARD_CONTEXT_HEADERS.has(draftHazardHeaders[index]))) + (isFirstInGroup ? 48 : 0),
+                  colSpan: visibleDraftHazardColumnCount + 1, rowRefs: hazardRowRefs, originalIndex,
+                });
+                if (deferredRow) return deferredRow;
+                return (
+                  <React.Fragment key={rowKey || originalIndex}>
+                    {isFirstInGroup && (
+                      <tr className="bg-[#EEF4FF]">
+                        <td colSpan={visibleDraftHazardColumnCount + 1} className="px-4 py-2 border-b border-blue-100">
+                          <button
+                            type="button"
+                            onClick={() => toggleHazardInterfaceCollapsed(groupMeta.key)}
+                            className="inline-flex items-center gap-2 text-left text-sm font-semibold text-[#0B3EA8]"
+                          >
+                            <span aria-hidden="true">{groupCollapsed ? '▸' : '▾'}</span>
+                            <span>{groupMeta.label}</span>
+                            <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-[#2D7DFE]">
+                              {groupCount} analysis variant{groupCount === 1 ? '' : 's'}
+                            </span>
+                          </button>
+                        </td>
+                      </tr>
+                    )}
+                    {!groupCollapsed && isFirstInVariantGroup && variantCount > 1 && (
+                      <tr className="bg-slate-50">
+                        <td colSpan={visibleDraftHazardColumnCount + 1} className="border-b border-slate-200 px-8 py-2">
+                          <button type="button" onClick={() => toggleHazardVariantExpanded(variantMeta.key)} className="inline-flex items-center gap-2 text-left text-xs font-medium text-slate-700">
+                            <span aria-hidden="true">{variantCollapsed ? '▸' : '▾'}</span>
+                            <span>{variantMeta.label}</span>
+                            <span className="rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-600">{variantCount} contexts</span>
+                          </button>
+                        </td>
+                      </tr>
+                    )}
+                    {!groupCollapsed && !variantCollapsed && (
+                      <tr
+                        id={`hazard-source-row-${originalIndex + 1}`}
+                        style={hazardRowHeightOverrides[`draft:${rowKey}`] ? { height: hazardRowHeightOverrides[`draft:${rowKey}`] } : undefined}
+                        ref={(el) => {
+                          if (el) hazardRowRefs.current[originalIndex] = el;
+                          else delete hazardRowRefs.current[originalIndex];
+                        }}
+                        aria-selected={selectedForCollaborator}
+                        className={`${highlighted ? "bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset" : selectedForCollaborator ? "bg-indigo-50 ring-2 ring-indigo-400 ring-inset" : (idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]")} transition-colors`}
+                      >
+                        <td className="relative px-3 py-2 align-top border-b border-gray-100">
+                          <div className="flex max-w-52 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] leading-4 text-slate-600">
+                            <button
+                              type="button"
+                              onClick={() => handleGenerateDraftHazardRow(originalIndex)}
+                              disabled={draftHazardGeneratingIndex !== null}
+                              className="text-[11px] font-semibold text-indigo-700 underline decoration-indigo-300 underline-offset-2 hover:text-indigo-900 disabled:cursor-not-allowed disabled:opacity-60"
+                              title="Autogenerate this hazard row with the selected method"
+                            >
+                              {generating ? 'Generating...' : generated ? 'Regenerate' : 'Generate'}
+                            </button>
+                            {reviewItem && (
+                              <ReviewStatusBadge
+                                reviewItem={reviewItem}
+                                openOptions={draftHazardReviewDrawerOptions}
+                                variant="text"
+                              />
+                            )}
+                          </div>
+                          <div
+                            role="separator"
+                            aria-orientation="horizontal"
+                            aria-label={`Resize hazard row ${originalIndex + 1}`}
+                            className="absolute bottom-0 left-0 z-10 h-1.5 w-full cursor-row-resize touch-none hover:bg-indigo-400"
+                            onPointerDown={(event) => startHazardRowResize(event, `draft:${rowKey}`, event.currentTarget.closest("tr")?.getBoundingClientRect().height || 64)}
+                            onDoubleClick={() => setHazardRowHeightOverrides((current) => { const next = { ...current }; delete next[`draft:${rowKey}`]; return next; })}
+                            title="Drag to resize; double-click to restore automatic height"
+                          />
+                        </td>
+                        {row.map((cell, colIdx) => {
+                          if (PROJECT_HAZARD_CONTEXT_HEADERS.has(draftHazardHeaders[colIdx])) return null;
+                          const diagramTarget = buildHazardDiagramFocusTarget(draftHazardHeaders, row, colIdx);
+                          const selectedCell = isSelectedTableCell(activeTableSelection, "hazard-analysis", selectionRowId, colIdx);
+                          const selectCell = () => selectTableCellForCollaborator({
+                            tableId: "hazard-analysis",
+                            tableLabel: "Hazard Analysis",
+                            projectId: activeProjectId,
+                            rowId: selectionRowId,
+                            rowIndex: originalIndex,
+                            headers: draftHazardHeaders,
+                            row,
+                            columnIndex: colIdx,
+                          });
+                          return (
+                            <td key={colIdx} data-column-index={colIdx} onClick={selectCell} style={{ width: draftHazardColumnWidths[colIdx], minWidth: draftHazardColumnWidths[colIdx], maxWidth: draftHazardColumnWidths[colIdx] }} className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(draftHazardHeaders[colIdx]) ? 'hidden ' : ''}relative px-3 py-2 align-top whitespace-pre-wrap border-b border-gray-100 ${selectedCell ? 'bg-indigo-100 ring-2 ring-indigo-500 ring-inset' : ''}`}>
+                              <div className="flex items-start gap-1">
+                                <InlineHazardText value={cell} readOnly={draftHazardHeaders[colIdx] === "Raw Analysis Row ID"} onFocus={selectCell} onCommit={value => handleDraftHazardCellChange(originalIndex, colIdx, value)} label={`${draftHazardHeaders[colIdx]}, row ${originalIndex + 1}`} />
+                                {diagramTarget ? (
+                                  <button
+                                    type="button"
+                                    className="shrink-0 rounded p-1 text-[#2D7DFE] hover:bg-blue-100 hover:text-[#1E61D6]"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      handleOpenHazardDiagramTarget(diagramTarget);
+                                    }}
+                                    title={getHazardDiagramLinkLabel(diagramTarget)}
+                                    aria-label={`${getHazardDiagramLinkLabel(diagramTarget)} for row ${originalIndex + 1}`}
+                                  >
+                                    ↗
+                                  </button>
+                                ) : null}
+                              </div>
+                              {isVibeReviewCellImpacted(selectionRowId, draftHazardHeaders[colIdx]) && (
+                                <span className="absolute bottom-1 right-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[11px] font-bold leading-none text-white shadow" title="Changed during the active Vibe Review" aria-label="Changed during the active Vibe Review">!</span>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+
+});
+
+const CompletedHazardTableRow = React.memo(function CompletedHazardTableRow({
+  item,
+  idx,
+  activeProjectId,
+  activeTableSelection,
+  collapsedHazardInterfaceKeys,
+  draftHazardGeneratingIndex,
+  expandedHazardVariantKeys,
+  handleGenerateDraftHazardRow,
+  handleOpenHazardDiagramTarget,
+  hazardRawRowIdIndex,
+  hazardReviewDrawerOptions,
+  hazardRowHeightOverrides,
+  hazardRowRefs,
+  hazardSummaryColumnWidths,
+  hazardSummaryDisplayColumnIndexes,
+  hazardSummaryHeaders,
+  hazardSummaryReviewByRow,
+  hazardSummaryReviewItems,
+  highlightedHazardRowIndex,
+  isAnalyzing,
+  isVibeReviewCellImpacted,
+  saveManualHazardCell,
+  selectTableCellForCollaborator,
+  setHazardRowHeightOverrides,
+  startHazardRowResize,
+  toggleHazardInterfaceCollapsed,
+  toggleHazardVariantExpanded,
+  visibleHazardSummaryColumnCount
+}) {
+  const { row, originalIndex, generated, pending, groupMeta, variantMeta, isFirstInGroup, isFirstInVariantGroup, groupCount, variantCount } = item;
+
+                    const generating = draftHazardGeneratingIndex === originalIndex;
+                    const reviewItem = hazardSummaryReviewByRow.get(originalIndex);
+                    const rejected = reviewItem?.status === REVIEW_STATUSES.REJECTED;
+                    const highlighted = highlightedHazardRowIndex === originalIndex;
+                    const groupCollapsed = collapsedHazardInterfaceKeys.has(groupMeta.key);
+                    const variantCollapsed = variantCount > 1 && !expandedHazardVariantKeys.has(variantMeta.key);
+                    const selectionRowId = String(row?.[hazardRawRowIdIndex] || `hazard:${activeProjectId}:${originalIndex}`);
+                    const selectedForCollaborator = isSelectedTableRow(activeTableSelection, "hazard-analysis", selectionRowId);
+                    const deferredRow = useDeferredTableRow({
+                  id: `hazard-source-row-${originalIndex + 1}`, index: idx,
+                  active: highlighted || selectedForCollaborator, bypass: groupCollapsed || variantCollapsed,
+                  height: estimateTableRowHeight(row, hazardSummaryColumnWidths, hazardSummaryHeaders.map((_, index) => index).filter(index => !PROJECT_HAZARD_CONTEXT_HEADERS.has(hazardSummaryHeaders[index]) && !isSafetyDetailHeader(hazardSummaryHeaders[index]))) + (isFirstInGroup ? 48 : 0),
+                  colSpan: visibleHazardSummaryColumnCount + 1, rowRefs: hazardRowRefs, originalIndex,
+                });
+                if (deferredRow) return deferredRow;
+                return (
+                      <React.Fragment key={`${originalIndex}-${groupMeta.key}`}>
+                        {isFirstInGroup && (
+                          <tr className="bg-[#EEF4FF]">
+                            <td colSpan={visibleHazardSummaryColumnCount + 1} className="px-4 py-2 border-b border-blue-100">
+                              <button
+                                type="button"
+                                onClick={() => toggleHazardInterfaceCollapsed(groupMeta.key)}
+                                className="inline-flex items-center gap-2 text-left text-sm font-semibold text-[#0B3EA8]"
+                              >
+                                <span aria-hidden="true">{groupCollapsed ? '▸' : '▾'}</span>
+                                <span>{groupMeta.label}</span>
+                                <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-[#2D7DFE]">
+                                  {groupCount} analysis variant{groupCount === 1 ? '' : 's'}
+                                </span>
+                              </button>
+                            </td>
+                          </tr>
+                        )}
+                        {!groupCollapsed && isFirstInVariantGroup && variantCount > 1 && (
+                          <tr className="bg-slate-50">
+                            <td colSpan={visibleHazardSummaryColumnCount + 1} className="border-b border-slate-200 px-8 py-2">
+                              <button type="button" onClick={() => toggleHazardVariantExpanded(variantMeta.key)} className="inline-flex items-center gap-2 text-left text-xs font-medium text-slate-700">
+                                <span aria-hidden="true">{variantCollapsed ? '▸' : '▾'}</span>
+                                <span>{variantMeta.label}</span>
+                                <span className="rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-600">{variantCount} contexts</span>
+                              </button>
+                            </td>
+                          </tr>
+                        )}
+                        {!groupCollapsed && !variantCollapsed && (
+                          <tr
+                            id={`hazard-source-row-${originalIndex + 1}`}
+                            style={hazardRowHeightOverrides[`summary:${selectionRowId}`] ? { height: hazardRowHeightOverrides[`summary:${selectionRowId}`] } : undefined}
+                            ref={(el) => {
+                              if (el) hazardRowRefs.current[originalIndex] = el;
+                              else delete hazardRowRefs.current[originalIndex];
+                            }}
+                            aria-selected={selectedForCollaborator}
+                            className={`transition-colors ${
+                              highlighted
+                                ? 'bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset'
+                                : selectedForCollaborator
+                                  ? 'bg-indigo-50 ring-2 ring-indigo-400 ring-inset'
+                                : rejected
+                                  ? 'bg-rose-50/60'
+                                  : idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]"
+                            }`}
+                          >
+                            <td className="relative px-3 py-2 align-top border-b border-gray-100">
+                              <div className="flex max-w-56 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] leading-4 text-slate-600">
+                                {reviewItem && (
+                                  <ReviewStatusBadge
+                                    reviewItem={reviewItem}
+                                    openOptions={{
+                                      ...hazardReviewDrawerOptions,
+                                      reviewItemIds: hazardSummaryReviewItems.map((item) => item.id),
+                                    }}
+                                    variant="text"
+                                  />
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleGenerateDraftHazardRow(originalIndex)}
+                                  disabled={isAnalyzing || draftHazardGeneratingIndex !== null}
+                                  className="text-[11px] font-semibold text-indigo-700 underline decoration-indigo-300 underline-offset-2 hover:text-indigo-900 disabled:cursor-not-allowed disabled:opacity-60"
+                                  title="Regenerate this hazard analysis row with the selected method"
+                                >
+                                  {generating ? 'Generating...' : generated ? 'Regenerate' : 'Generate'}
+                                </button>
+                                {pending && !generated && (
+                                  <span>New row ·</span>
+                                )}
+                              </div>
+                              <div
+                                role="separator"
+                                aria-orientation="horizontal"
+                                aria-label={`Resize hazard row ${originalIndex + 1}`}
+                                className="absolute bottom-0 left-0 z-10 h-1.5 w-full cursor-row-resize touch-none hover:bg-indigo-400"
+                                onPointerDown={(event) => startHazardRowResize(event, `summary:${selectionRowId}`, event.currentTarget.closest("tr")?.getBoundingClientRect().height || 64)}
+                                onDoubleClick={() => setHazardRowHeightOverrides((current) => { const next = { ...current }; delete next[`summary:${selectionRowId}`]; return next; })}
+                                title="Drag to resize; double-click to restore automatic height"
+                              />
+                            </td>
+                            {hazardSummaryDisplayColumnIndexes.map((colIdx) => {
+                              const cell = row[colIdx];
+                              const diagramTarget = buildHazardDiagramFocusTarget(hazardSummaryHeaders, row, colIdx);
+                              const columnHeader = hazardSummaryHeaders[colIdx];
+                              if (isSafetyDetailHeader(columnHeader) || PROJECT_HAZARD_CONTEXT_HEADERS.has(columnHeader)) return null;
+                              const selectedCell = isSelectedTableCell(activeTableSelection, "hazard-analysis", selectionRowId, colIdx);
+                              const selectCell = () => selectTableCellForCollaborator({
+                                tableId: "hazard-analysis",
+                                tableLabel: "Hazard Analysis",
+                                projectId: activeProjectId,
+                                rowId: selectionRowId,
+                                rowIndex: originalIndex,
+                                headers: hazardSummaryHeaders,
+                                row,
+                                columnIndex: colIdx,
+                              });
+                              const editableCellProps = columnHeader === "Raw Analysis Row ID" || columnHeader === CLASSIFICATION_RESOLUTION_STATUS_HEADER ? {} : {
+                                contentEditable: "plaintext-only",
+                                suppressContentEditableWarning: true,
+                                role: "textbox",
+                                "aria-multiline": true,
+                                "aria-label": `${columnHeader}, row ${originalIndex + 1}`,
+                                onFocus: selectCell,
+                                onBlur: async (event) => {
+                                  const element = event.currentTarget;
+                                  const nextValue = element.innerText ?? element.textContent ?? "";
+                                  if (nextValue === String(cell ?? "")) return;
+                                  try {
+                                    await saveManualHazardCell(originalIndex, columnHeader, nextValue, row);
+                                  } catch (error) {
+                                    window.alert(`Your edit could not be saved: ${error.message}. The edited text is still in the cell; click it and leave it to retry.`);
+                                  }
+                                },
+                                onKeyDown: (event) => {
+                                  if (event.key === "Escape") {
+                                    event.preventDefault();
+                                    event.currentTarget.textContent = String(cell ?? "");
+                                    event.currentTarget.blur();
+                                  }
+                                },
+                              };
+                              const isResolutionStatus = columnHeader === CLASSIFICATION_RESOLUTION_STATUS_HEADER;
+                              const resolutionStatusClass = cell === CLASSIFICATION_RESOLUTION_STATUS.HUMAN_EVIDENCE_GAP
+                                || cell === CLASSIFICATION_RESOLUTION_STATUS.POLICY_GAP
+                                ? "border-amber-200 bg-amber-50 text-amber-800"
+                                : cell === CLASSIFICATION_RESOLUTION_STATUS.NEEDS_REVIEW
+                                  || cell === CLASSIFICATION_RESOLUTION_STATUS.NOT_EVALUATED
+                                  ? "border-slate-200 bg-slate-100 text-slate-700"
+                                  : cell === CLASSIFICATION_RESOLUTION_STATUS.HUMAN_POLICY_VALIDATED
+                                    ? "border-blue-200 bg-blue-50 text-blue-800"
+                                    : "border-emerald-200 bg-emerald-50 text-emerald-800";
+                              return (
+                                <td key={colIdx} data-column-index={colIdx} onClick={selectCell} style={{ width: hazardSummaryColumnWidths[colIdx], minWidth: hazardSummaryColumnWidths[colIdx], maxWidth: hazardSummaryColumnWidths[colIdx] }} className={`${PROJECT_HAZARD_CONTEXT_HEADERS.has(columnHeader) ? 'hidden ' : ''}relative break-words px-3 py-2 align-top whitespace-pre-wrap text-xs leading-4 [overflow-wrap:anywhere] border-b border-gray-100 ${selectedCell ? 'bg-indigo-100 ring-2 ring-indigo-500 ring-inset' : ''} ${rejected ? 'text-rose-900 line-through decoration-rose-400' : ''}`}>
+                                  {diagramTarget ? (
+                                    <div className="flex items-start gap-1">
+                                      <div {...editableCellProps} className="min-w-0 flex-1 whitespace-pre-wrap outline-none">{cell}</div>
+                                      <button
+                                        type="button"
+                                        className="shrink-0 rounded p-1 text-[#2D7DFE] hover:bg-blue-100 hover:text-[#1E61D6]"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          handleOpenHazardDiagramTarget(diagramTarget);
+                                        }}
+                                        title={getHazardDiagramLinkLabel(diagramTarget)}
+                                        aria-label={`${getHazardDiagramLinkLabel(diagramTarget)} for row ${originalIndex + 1}`}
+                                      >
+                                        ↗
+                                      </button>
+                                    </div>
+                                  ) : isResolutionStatus && cell ? (
+                                    <span
+                                      className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${resolutionStatusClass}`}
+                                      title="Policy validation checks record structure and internal classification consistency; it does not independently verify the engineering evidence."
+                                    >
+                                      {cell}
+                                    </span>
+                                  ) : <div {...editableCellProps} className="min-h-[16px] whitespace-pre-wrap outline-none">{cell}</div>}
+                                  {isVibeReviewCellImpacted(selectionRowId, columnHeader) && (
+                                    <span className="absolute bottom-1 right-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[11px] font-bold leading-none text-white shadow" title="Changed during the active Vibe Review" aria-label="Changed during the active Vibe Review">!</span>
+                                  )}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+
+});
 
 function App() {
   return (

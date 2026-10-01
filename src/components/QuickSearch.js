@@ -118,6 +118,10 @@ export default function QuickSearch() {
             }
           }}
           onKeyUp={event => {
+            // The canvas can receive a modifier press before Cmd/Ctrl+F opens
+            // search. Let its release clear zoom/selection state even though
+            // focus moved here; keep typing and action keys inside the dialog.
+            if (['Meta', 'Control', 'Shift', 'Alt'].includes(event.key)) return;
             event.stopPropagation();
             const pending = pendingKeyAction.current;
             if (!pending || pending.key !== event.key) return;

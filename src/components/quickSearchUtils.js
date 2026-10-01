@@ -1,5 +1,47 @@
 export const QUICK_SEARCH_COLLECT = 'xhandle:quick-search-collect';
 
+const tableProviders = new WeakMap();
+export function registerTableSearchProvider(table, provider) {
+  tableProviders.set(table, provider);
+  return () => { if (tableProviders.get(table) === provider) tableProviders.delete(table); };
+}
+
+// Model-backed tables avoid thousands of computed-style/layout reads on Find.
+// Entries represent the currently expanded, filtered rows, not the entire CSV.
+export function modelTableSearchEntries({ table, label, indexes, items }) {
+  const active = table.ownerDocument.activeElement;
+  const activeRow = table.contains(active) ? active.closest('tr') : null;
+  const activeColumn = Number(active?.closest('[data-column-index]')?.dataset.columnIndex);
+  return items.map(({ row, originalIndex, searchPrefix }) => {
+    const id = `hazard-source-row-${originalIndex + 1}`;
+    const parts = indexes.map(index => activeRow?.id === id && activeColumn === index
+      ? normalizeSearchText(active.value ?? active.innerText ?? active.textContent)
+      : normalizeSearchText(row[index]));
+    return {
+      id, kind: 'Table row', label, text: [searchPrefix, ...parts].filter(Boolean).join(' · '),
+      activate(query) {
+        const targetRow = table.ownerDocument.getElementById(id);
+        if (!targetRow || !table.contains(targetRow)) return;
+        const terms = normalizeSearchText(query).toLowerCase().split(' ').filter(Boolean);
+        const match = Math.max(0, parts.findIndex(part => terms.some(term => part.toLowerCase().includes(term))));
+        const jump = () => {
+          const rowElement = table.ownerDocument.getElementById(id);
+          if (!rowElement || !table.contains(rowElement)) return;
+          const cell = rowElement.querySelector(`[data-column-index="${indexes[match]}"]`);
+          (cell || rowElement).scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+          rowElement.classList.remove('xhandle-search-hit');
+          void rowElement.offsetWidth;
+          rowElement.classList.add('xhandle-search-hit');
+        };
+        if (targetRow.dataset.deferredRow) {
+          targetRow.dispatchEvent(new Event('xhandle:reveal-row'));
+          requestAnimationFrame(() => requestAnimationFrame(jump));
+        } else jump();
+      },
+    };
+  }).filter(entry => entry.text);
+}
+
 export const normalizeSearchText = value => String(value || '').replace(/\s+/g, ' ').trim();
 
 export function isSearchVisible(element) {
@@ -46,6 +88,8 @@ export function tableSearchEntries(root = document) {
   };
   root.querySelectorAll('table, [role="table"], [role="grid"]').forEach((table, tableIndex) => {
     if (!visible(table) || table.closest('[data-quick-search]')) return;
+    const provider = tableProviders.get(table);
+    if (provider) { entries.push(...provider()); return; }
     const caption = table.querySelector('caption');
     const label = table.getAttribute('aria-label') || (caption && searchCellText(caption, visible))
       || normalizeSearchText(Array.from(table.querySelectorAll('thead th')).slice(0, 3).map(th => searchCellText(th, visible)).join(' · '))
