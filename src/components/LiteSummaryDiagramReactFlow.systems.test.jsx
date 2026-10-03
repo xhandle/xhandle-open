@@ -78,6 +78,96 @@ const openGroupMenu = id => {
 };
 const clickText = text => act(() => Array.from(container.querySelectorAll('button')).find(button => button.textContent === text).click());
 
+const toolbarDrag = title => {
+  const button = container.querySelector(`button[title="${title}"]`);
+  expect(button.draggable).toBe(true);
+  const event = new Event('dragstart', {bubbles:true,cancelable:true});
+  Object.defineProperty(event,'dataTransfer',{value:{setData:jest.fn()}});
+  act(()=>button.dispatchEvent(event));
+  return button;
+};
+const toolbarDrop = position => act(()=>mockFlowProps.onDrop({
+  clientX:position.x,clientY:position.y,preventDefault(){},stopPropagation(){},
+}));
+
+test.each([
+  ['Add node','bidirectional'], ['Group selected nodes','groupBox'],
+  ['Add system (group selected functions or subsystems)','groupBox'], ['Add note','note'],
+])('toolbar drop creates one %s at the projected position without grouping selected nodes', async (title,type) => {
+  mount(); await tick();
+  act(()=>mockFlowProps.onSelectionChange({nodes:[mockNodes.find(node=>node.id==='n:Plan')]}));
+  const geometry = () => mockNodes.map(node=>({id:node.id,parent:node.parentNode,position:node.position}));
+  const before = geometry();
+  const originalIds = new Set(before.map(node=>node.id));
+  const canvas = container.querySelector('.react-flow');
+  canvas.getBoundingClientRect = () => ({left:100,top:50});
+  const originalProject = mockApi.project;
+  mockApi.project = point => ({x:(point.x-40)/2,y:(point.y+20)/2});
+  // Re-render to expose the changed projection function to the drop handler.
+  mount(); await tick();
+  try {
+    toolbarDrag(title);
+    toolbarDrop({x:4140,y:1630}); await tick(); await tick();
+    const added = mockNodes.filter(node=>!originalIds.has(node.id));
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatchObject({type,position:{x:2000,y:800}});
+    expect(added[0].parentNode).toBeFalsy();
+    expect(geometry().filter(node=>originalIds.has(node.id))).toEqual(before);
+    act(()=>container.querySelector('button[title="Undo last diagram change"]').click()); await tick();
+    expect(geometry()).toEqual(before);
+    act(()=>container.querySelector('button[title="Redo diagram change"]').click()); await tick();
+    expect(mockNodes.some(node=>node.id===added[0].id)).toBe(true);
+    const saved = geometry();
+    act(()=>root.unmount()); root=createRoot(container); mount(); await tick();
+    expect(geometry()).toEqual(saved);
+  } finally { mockApi.project = originalProject; }
+});
+
+test('toolbar drops nest new subsystems and functions at the destination, ignoring prior selection', async () => {
+  mount(); await tick();
+  const originalPlan = {...mockNodes.find(node=>node.id==='n:Plan')};
+  act(()=>mockFlowProps.onSelectionChange({nodes:[originalPlan]}));
+  toolbarDrag('Add system (group selected functions or subsystems)'); toolbarDrop({x:1000,y:1000}); await tick();
+  const system = mockNodes.find(node=>node.data.elementType==='system');
+  toolbarDrag('Group selected nodes'); toolbarDrop({x:1070,y:1080}); await tick();
+  const subsystem = mockNodes.find(node=>node.type==='groupBox' && node.parentNode===system.id);
+  expect(subsystem.position).toEqual({x:70,y:80});
+  toolbarDrag('Add node'); toolbarDrop({x:1100,y:1140}); await tick();
+  const added = mockNodes.find(node=>node.id.startsWith('n:new:'));
+  expect(added.parentNode).toBe(subsystem.id);
+  expect(added.position).toEqual({x:30,y:60});
+  expect(mockNodes.find(node=>node.id===originalPlan.id)).toMatchObject({parentNode:originalPlan.parentNode,position:originalPlan.position});
+});
+
+test('cancelled toolbar drags and unrelated drops create nothing', async () => {
+  mount(); await tick();
+  const ids = mockNodes.map(node=>node.id);
+  toolbarDrop({x:1000,y:1000}); await tick();
+  expect(mockNodes.map(node=>node.id)).toEqual(ids);
+  const button = toolbarDrag('Add node');
+  act(()=>button.dispatchEvent(new Event('dragend',{bubbles:true})));
+  toolbarDrop({x:1000,y:1000}); await tick();
+  expect(mockNodes.map(node=>node.id)).toEqual(ids);
+});
+
+test('the first drop on an empty manual canvas keeps its chosen position', async () => {
+  localStorage.clear();
+  act(()=>root.render(<Diagram rows={[]} storageKey={key}/>)); await tick();
+  expect(mockNodes).toHaveLength(0);
+  toolbarDrag('Add node');
+  const event = new Event('drop',{bubbles:true,cancelable:true});
+  Object.defineProperties(event,{clientX:{value:650},clientY:{value:420}});
+  // The host accepts drops even before the initially empty React Flow is visible.
+  act(()=>container.querySelector('.react-flow').parentElement.dispatchEvent(event));
+  await tick(); await tick();
+  expect(mockNodes).toHaveLength(1);
+  expect(mockNodes[0].position).toEqual({x:650,y:420});
+  expect(localStorage.getItem(key+':initial-layout:v1')).toBe('complete');
+  act(()=>root.unmount()); root=createRoot(container);
+  act(()=>root.render(<Diagram rows={[]} storageKey={key}/>)); await tick();
+  expect(mockNodes[0].position).toEqual({x:650,y:420});
+});
+
 test('new disconnected functions save without another edit and survive reload', async () => {
   mount(); await tick();
   act(() => container.querySelector('button[title="Add node"]').click());
@@ -283,6 +373,76 @@ test('repairs saved system overlaps and maintains clearance after dragging and r
   act(() => first.data.onResizeEnd({ x: 0, y: 0, width: 3000, height: 3000 }));
   await tick(); expectClear();
   act(() => root.unmount()); root = createRoot(container); mount(); await tick(); expectClear();
+});
+
+test('manual system resize keeps children fixed and stops at neighboring systems instead of rearranging', async () => {
+  localStorage.setItem(`${key}:groups:v1`,JSON.stringify([
+    {id:'g:external',elementType:'system',label:'External',position:{x:1250,y:100},width:420,height:330},
+    {id:'g:vehicle',elementType:'system',label:'Vehicle',position:{x:100,y:100},width:1000,height:750},
+    {id:'g:planning',label:'Planning',parentNode:'g:vehicle',position:{x:30,y:60},width:420,height:280},
+  ]));
+  mount(); await tick();
+  const geometry = () => mockNodes.map(node=>({id:node.id,parent:node.parentNode,position:node.position,width:node.style?.width,height:node.style?.height}));
+  const before = geometry();
+  const system = mockNodes.find(node=>node.id==='g:vehicle');
+  act(()=>system.data.onResizeStart({x:100,y:100,width:1000,height:750}));
+  act(()=>system.data.onResize({x:100,y:0,width:1040,height:850})); await tick();
+  act(()=>system.data.onResizeEnd({x:100,y:-100,width:1080,height:950})); await tick(); await tick();
+  // The last proposal would violate the existing inter-system clearance.
+  expect(mockNodes.find(node=>node.id==='g:vehicle').position).toEqual({x:100,y:0});
+  expect(mockNodes.find(node=>node.id==='g:planning').position).toEqual({x:30,y:160});
+  expect(mockNodes.find(node=>node.id==='n:Plan').position).toEqual({x:30,y:60});
+  expect(geometry().find(node=>node.id==='g:external')).toEqual(before.find(node=>node.id==='g:external'));
+  const after = geometry();
+  act(()=>container.querySelector('button[title="Undo last diagram change"]').click()); await tick();
+  expect(geometry()).toEqual(before);
+  act(()=>container.querySelector('button[title="Redo diagram change"]').click()); await tick();
+  expect(geometry()).toEqual(after);
+  act(()=>root.unmount()); root=createRoot(container); mount(); await tick();
+  expect(geometry()).toEqual(after);
+});
+
+test('dragging a subsystem past system boundaries follows the pointer continuously and survives reload', async () => {
+  localStorage.setItem(`${key}:groups:v1`,JSON.stringify([
+    {id:'g:vehicle',elementType:'system',label:'Vehicle',position:{x:100,y:100},width:1000,height:750},
+    {id:'g:planning',label:'Planning',parentNode:'g:vehicle',position:{x:30,y:60},width:420,height:280},
+  ]));
+  mount(); await tick();
+  const initial=mockNodes.find(node=>node.id==='g:planning');
+  // React Flow can constrain its supplied position; the pointer must still grow the parent.
+  act(()=>mockFlowProps.onNodeDragStart({clientX:150,clientY:180},initial));
+  const onNodeDrag = mockFlowProps.onNodeDrag;
+  for(const x of [750,770,790]) {
+    act(()=>onNodeDrag({clientX:x+120,clientY:180},initial)); await tick();
+    const moved=mockNodes.find(node=>node.id==='g:planning');
+    expect(moved.position).toEqual({x,y:60});
+    expect(mockNodes.find(node=>node.id==='g:vehicle').style.width).toBe(x+420+18);
+    expect(mockNodes.find(node=>node.id==='n:Plan').position).toEqual({x:30,y:60});
+  }
+  act(()=>mockFlowProps.onNodeDragStop({},initial)); await tick();
+  expect(mockNodes.find(node=>node.id==='g:planning').position.x).toBe(790);
+  act(()=>root.unmount()); root=createRoot(container); mount(); await tick();
+  expect(mockNodes.find(node=>node.id==='g:planning').position.x).toBe(790);
+  expect(mockNodes.find(node=>node.id==='g:vehicle').style.width).toBe(1228);
+});
+
+test('shrinking a system pushes its subsystem as a unit and supports undo, redo and reload', async () => {
+  localStorage.setItem(`${key}:groups:v1`,JSON.stringify([
+    {id:'g:vehicle',elementType:'system',label:'Vehicle',position:{x:100,y:100},width:1000,height:750},
+    {id:'g:planning',label:'Planning',parentNode:'g:vehicle',position:{x:500,y:400},width:420,height:280},
+  ]));
+  mount(); await tick();
+  const system=mockNodes.find(node=>node.id==='g:vehicle');
+  act(()=>system.data.onResizeStart({x:100,y:100,width:1000,height:750}));
+  act(()=>system.data.onResizeEnd({x:100,y:100,width:700,height:500})); await tick();
+  expect(mockNodes.find(node=>node.id==='g:planning').position).toEqual({x:262,y:202});
+  expect(mockNodes.find(node=>node.id==='n:Plan').position).toEqual({x:30,y:60});
+  act(()=>container.querySelector('button[title="Undo last diagram change"]').click()); await tick();
+  expect(mockNodes.find(node=>node.id==='g:planning').position).toEqual({x:500,y:400});
+  act(()=>container.querySelector('button[title="Redo diagram change"]').click()); await tick();
+  expect(mockNodes.find(node=>node.id==='g:planning').position).toEqual({x:262,y:202});
+  act(()=>root.unmount()); root=createRoot(container); mount(); await tick();
+  expect(mockNodes.find(node=>node.id==='g:planning').position).toEqual({x:262,y:202});
 });
 
 test('builds imported systems, subsystems and functions together without remounting', async () => {
@@ -565,4 +725,159 @@ test.each([false, true])('separates stacked health-monitoring functions on %s in
   act(() => root.unmount()); root = createRoot(container);
   act(() => root.render(<Diagram rows={healthRows} storageKey={key} />)); await tick();
   expect(geometry()).toEqual(arranged);
+});
+
+test.each(['manual','auto','nested'])('generated %s subsystem description saves immediately, survives arrangement and reload, and supports undo', async kind => {
+  const categories={source:'table-subsystems',categories:[{name:'Planning',functions:['Plan','Control']}]};
+  if(kind==='auto')localStorage.removeItem(`${key}:groups:v1`);
+  if(kind==='nested'){
+    const groups=JSON.parse(localStorage.getItem(`${key}:groups:v1`));
+    groups[0].parentNode='g:system';
+    groups.push({id:'g:system',elementType:'system',label:'Vehicle',position:{x:0,y:0},width:900,height:700});
+    localStorage.setItem(`${key}:groups:v1`,JSON.stringify(groups));
+  }
+  const render=()=>act(()=>root.render(<Diagram rows={rows} storageKey={key} autoCategories={kind==='auto'?categories:undefined}/>));
+  render();await tick();
+  const target=mockNodes.find(node=>node.type==='groupBox'&&node.data.label==='Planning');
+  const previous=target.data.description;
+  const fetch=global.fetch;
+  global.fetch=jest.fn().mockResolvedValue({ok:true,json:async()=>({choices:[{message:{content:'Persisted magic description'}}]})});
+  try{
+    act(()=>mockFlowProps.onNodeDoubleClick({preventDefault(){},stopPropagation(){}},target));
+    await act(async()=>container.querySelector('button[aria-label="Regenerate description with AI"]').click());
+    clickText('Save');
+    const stored=()=>JSON.parse(localStorage.getItem(`${key}:groups:v1`)).find(box=>box.id===target.id);
+    // No timer advance: explicit Save must already be durable.
+    expect(stored()).toMatchObject({description:'Persisted magic description',descriptionUserEdited:true});
+    act(()=>container.querySelector('button[title="Undo last diagram change"]').click());await tick();
+    expect(stored().description).toBe(previous);
+    act(()=>container.querySelector('button[title="Redo diagram change"]').click());await tick();
+    expect(stored().description).toBe('Persisted magic description');
+    act(()=>container.querySelector('button[title="Auto arrange"]').click());await tick();
+    expect(stored()).toMatchObject({description:'Persisted magic description',descriptionUserEdited:true});
+    act(()=>root.unmount());root=createRoot(container);render();await tick();
+    expect(mockNodes.find(node=>node.id===target.id).data.description).toBe('Persisted magic description');
+  }finally{global.fetch=fetch;}
+});
+
+test.each(['throw','swallow'])('failed group Save (%s) retains the draft and supports retry without changing the saved node', async failure => {
+  mount();await tick();
+  const target=mockNodes.find(node=>node.id==='g:planning');
+  act(()=>mockFlowProps.onNodeDoubleClick({preventDefault(){},stopPropagation(){}},target));
+  const fetch=global.fetch;
+  global.fetch=jest.fn().mockResolvedValue({ok:true,json:async()=>({choices:[{message:{content:'Keep this draft'}}]})});
+  const set=Storage.prototype.setItem;
+  let spy;
+  try{
+    await act(async()=>container.querySelector('button[aria-label="Regenerate description with AI"]').click());
+    spy=jest.spyOn(Storage.prototype,'setItem').mockImplementation(function(k,v){
+      if(k===`${key}:groups:v1`){if(failure==='throw')throw new DOMException('Full','QuotaExceededError');return;}
+      return set.call(this,k,v);
+    });
+    clickText('Save');
+    expect(container.querySelector('[role="alert"]').textContent).toContain('Unable to save');
+    expect(container.querySelector('textarea').value).toBe('Keep this draft');
+    expect(mockNodes.find(node=>node.id===target.id).data.description).toBe(target.data.description);
+    expect(JSON.parse(localStorage.getItem(`${key}:groups:v1`)).find(box=>box.id===target.id).description).toBe(target.data.description);
+    spy.mockRestore();spy=null;
+    clickText('Save');
+    expect(container.querySelector('textarea')).toBeNull();
+    expect(JSON.parse(localStorage.getItem(`${key}:groups:v1`)).find(box=>box.id===target.id).description).toBe('Keep this draft');
+  }finally{spy?.mockRestore();global.fetch=fetch;}
+});
+
+test('pending generation blocks Save, Cancel remains available, and late responses cannot replace a reopened draft', async () => {
+  mount();await tick();
+  const target=mockNodes.find(node=>node.id==='g:planning');
+  const open=()=>act(()=>mockFlowProps.onNodeDoubleClick({preventDefault(){},stopPropagation(){}},target));
+  const fetch=global.fetch;
+  let resolve;
+  global.fetch=jest.fn(()=>new Promise(done=>resolve=done));
+  try{
+    open();
+    act(()=>container.querySelector('button[aria-label="Regenerate description with AI"]').click());
+    expect([...container.querySelectorAll('button')].find(button=>button.textContent==='Save').disabled).toBe(true);
+    clickText('Cancel');open();
+    await act(async()=>resolve({ok:true,json:async()=>({choices:[{message:{content:'Stale description'}}]})}));
+    expect(container.querySelector('textarea').value).toBe(target.data.description);
+    clickText('Cancel');await tick();
+    expect(JSON.parse(localStorage.getItem(`${key}:groups:v1`)).find(box=>box.id===target.id).description).toBe(target.data.description);
+  }finally{global.fetch=fetch;}
+});
+
+test('saved system/subsystem descriptions populate table rows and table edits return to the diagram without a synchronization loop', async () => {
+  localStorage.setItem(`${key}:groups:v1`,JSON.stringify([
+    {id:'g:vehicle',elementType:'system',label:'Vehicle',description:'Saved vehicle details',descriptionUserEdited:true,position:{x:0,y:0},width:900,height:700},
+    {id:'g:planning',label:'Planning',description:'Saved planning details',descriptionUserEdited:true,parentNode:'g:vehicle',position:{x:50,y:80},width:750,height:400},
+  ]));
+  let current,update;let publications=0;
+  function Controlled(){
+    const [data,setData]=React.useState([{...rows[0],system:'Vehicle',fromDetails:'Plan details',toDetails:'Control details'}]);
+    current=data;update=setData;
+    const publish=React.useCallback(next=>{publications++;setData(next);},[]);
+    return <Diagram rows={data} onUpdateRows={publish} storageKey={key}/>;
+  }
+  act(()=>root.render(<Controlled/>));await tick();await tick();
+  expect(current[0]).toMatchObject({system:'Vehicle',systemDetails:'Saved vehicle details',subsystemDetails:'Saved planning details',fromDetails:'Plan details'});
+  act(()=>update(current.map(row=>({...row,subsystemDetails:'Edited in table'}))));await tick();await tick();
+  expect(mockNodes.find(node=>node.id==='g:planning').data.description).toBe('Edited in table');
+  expect(current[0].subsystemDetails).toBe('Edited in table');
+  expect(publications).toBeLessThan(10);
+});
+
+test('edge colors match arrowheads and survive routing, auto arrange, undo/redo, and reload', async () => {
+  mount(); await tick();
+  const open = () => act(() => mockFlowProps.onEdgeDoubleClick({ preventDefault() {}, stopPropagation() {} }, mockFlowProps.edges[0]));
+  const stroke = () => mockFlowProps.edges[0].style.stroke;
+  const original = stroke();
+  open();
+  act(() => container.querySelector('button[aria-label="Choose color #7A37FF"]').click());
+  clickText('Cancel');
+  expect(stroke()).toBe(original);
+  open();
+  const picker = container.querySelector('input[aria-label="Custom color"]');
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(picker, '#123456');
+    picker.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  clickText('Save'); await tick();
+  expect(stroke()).toBe('#123456');
+  expect(mockFlowProps.edges[0].markerEnd.color).toBe('#123456');
+  const clickTitle = title => act(() => container.querySelector(`button[title="${title}"]`).click());
+  clickTitle('Undo last diagram change'); await tick();
+  expect(stroke()).toBe(original);
+  clickTitle('Redo diagram change'); await tick();
+  expect(stroke()).toBe('#123456');
+  clickTitle('Set all edges to Bezier routing'); await tick();
+  expect(stroke()).toBe('#123456');
+  clickTitle('Auto arrange'); await tick();
+  expect(stroke()).toBe('#123456');
+  clickTitle('Clean layout and restore default rectangular bidirectional routing'); await tick();
+  expect(stroke()).toBe('#123456');
+  act(() => root.unmount()); root = createRoot(container);
+  mount(); await tick();
+  expect(stroke()).toBe('#123456');
+  expect(mockFlowProps.edges[0].markerEnd.color).toBe('#123456');
+});
+
+test('coloring a bidirectional bundle colors both arrowheads and its expanded edges', async () => {
+  const pairRows = [...rows, { fromFunction: 'Control', controlAction: 'Feedback', toFunction: 'Plan' }];
+  act(() => root.render(<Diagram rows={pairRows} storageKey={key} />)); await tick();
+  expect(mockFlowProps.edges).toHaveLength(1);
+  act(() => mockFlowProps.onEdgeDoubleClick({ preventDefault() {}, stopPropagation() {} }, mockFlowProps.edges[0]));
+  act(() => container.querySelector('button[aria-label="Choose color #7A37FF"]').click());
+  // Pick a color different from the default purple bundle.
+  const buttons = container.querySelectorAll('button[aria-label^="Choose color"]');
+  act(() => buttons[2].click());
+  const chosen = buttons[2].getAttribute('aria-label').replace('Choose color ', '');
+  clickText('Save'); await tick();
+  expect(mockFlowProps.edges[0].style.stroke).toBe(chosen);
+  expect(mockFlowProps.edges[0].markerStart.color).toBe(chosen);
+  expect(mockFlowProps.edges[0].markerEnd.color).toBe(chosen);
+  act(() => container.querySelector('button[title="Expand all bidirectional bundles"]').click()); await tick();
+  expect(mockFlowProps.edges).toHaveLength(2);
+  mockFlowProps.edges.forEach(edge => {
+    expect(edge.style.stroke).toBe(chosen);
+    expect(edge.markerEnd.color).toBe(chosen);
+  });
 });

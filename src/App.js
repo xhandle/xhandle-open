@@ -1,3 +1,5 @@
+import { editFunctionalEntityDetails } from './components/functionalDiagramTableDetails';
+import CopyTableButton from './components/CopyTableButton';
 import { requestImportedDiagramLayout } from './components/functionalDiagramInitialization';
 import { REVIEW_STATUS_LABELS } from './features/results-review/reviewTypes';
 import useDeferredTableRow, { estimateTableRowHeight } from './components/useDeferredTableRow';
@@ -11773,6 +11775,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   const handleRowChange = (index, field, value) => {
     setResponseRows((currentRows) => {
       if (field === "system") return editFunctionalSystem(currentRows, index, value);
+      if (["systemDetails", "subsystemDetails", "fromDetails", "toDetails"].includes(field)) return editFunctionalEntityDetails(currentRows, index, field, value);
       const conflict = getFunctionalLabelConflictForEdit(currentRows, index, field, value);
       if (conflict) {
         window.alert(conflict);
@@ -18021,16 +18024,20 @@ const projectHint = useMemo(() => ({
                         )}
 
                         table={(
-                      <div className="relative min-h-0 w-full flex-1 overflow-auto rounded-md shadow-sm">
-                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-white px-4 py-3">
+                      <div className="relative flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-md shadow-sm">
+                        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-white px-4 py-3">
                           {activeTableSelection?.tableId === "functional-decomposition" ? (
                             <div className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs text-indigo-800">
                               <span><strong>Collaborator reference:</strong> {describeActiveSelection(activeTableSelection)} · included automatically in typed and voice requests</span>
                               <button type="button" onClick={() => setActiveTableSelection(null)} className="font-semibold hover:text-indigo-950" aria-label="Clear selected functional table context">×</button>
                             </div>
                           ) : <span />}
-                          <button onClick={handleAddRow} className="px-4 py-2 text-sm border rounded bg-[#ECEEFF] hover:bg-[#D7DAFF] text-[#0F0F12]">+ Add Row</button>
+                          <div className="ml-auto flex items-center gap-2">
+                            <button onClick={handleAddRow} className="px-4 py-2 text-sm border rounded bg-[#ECEEFF] hover:bg-[#D7DAFF] text-[#0F0F12]">+ Add Row</button>
+                            <CopyTableButton columns={functionalTableColumns} rows={filteredFunctionalRows.map(({ row }) => row)} />
+                          </div>
                         </div>
+                        <div className="min-h-0 flex-1 overflow-auto">
                         <div className="sticky left-0 my-3 flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 bg-[#F8FAFC] px-3 py-2 text-sm text-gray-700">
                           <span role="status" aria-live="polite" aria-atomic="true">
                             <strong className="tabular-nums">{filteredFunctionalRows.length.toLocaleString()}</strong>
@@ -18217,6 +18224,7 @@ const projectHint = useMemo(() => ({
                                           className={`w-full resize-none overflow-hidden break-words bg-transparent text-sm leading-5 [overflow-wrap:anywhere] focus:outline-none ${rejected ? 'line-through decoration-rose-400' : ''}`}
                                           value={row[field] || ""}
                                           onChange={(e) => handleRowChange(originalIndex, field, e.target.value)}
+                                          onBlur={commitFunctionalRowsToDiagram}
                                           onFocus={selectCell}
                                           rows={getFunctionalCellRows(row[field])}
                                           aria-label={`${functionalTableColumns[columnIndex].label}, row ${originalIndex + 1}`}
@@ -18254,6 +18262,7 @@ const projectHint = useMemo(() => ({
                             )}
                           </tbody>
                         </table>
+                        </div>
                       </div>
                         )}
                       />
@@ -18429,6 +18438,7 @@ const projectHint = useMemo(() => ({
         {selectedHazardContextId !== "all" && " in this context"}
       </span>
       <span className="text-xs text-gray-500">Click a cell to edit. Changes save when you leave the cell.</span>
+      <div className="ml-auto flex items-center gap-2">
       {hazardHasColumnFilters && (
         <button
           type="button"
@@ -18438,6 +18448,12 @@ const projectHint = useMemo(() => ({
           Clear filters
         </button>
       )}
+      <CopyTableButton
+        label="Copy hazard analysis table"
+        columns={(showingSavedHazardSummary ? hazardSummaryHeaders : draftHazardHeaders).map((label, key) => ({ key, label }))}
+        rows={(showingSavedHazardSummary ? filteredHazardSummaryRows : filteredDraftHazardSummaryRows).map(({ row }) => row)}
+      />
+      </div>
     </div>
     {!analysisResult?.Summary && hazardResetStatus?.kind === "cleared" && Object.keys(draftHazardRowsByIndex || {}).length === 0 ? (
       <div className="flex min-h-[280px] flex-1 items-center justify-center rounded-xl border border-dashed border-gray-300 bg-white p-8 text-center">

@@ -1,5 +1,6 @@
 // src/components/XHandleCopilotView.jsx
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import MarkdownDraftTablePreview from './MarkdownDraftTablePreview';
 import React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -465,17 +466,22 @@ export function CollaboratorPromptComposer({
   pendingContext = null,
   menuProps,
 }) {
+  const [previewDraft, setPreviewDraft] = useState(defaultValue);
+  const deferredPreviewDraft = useDeferredValue(previewDraft);
+  useEffect(() => { setPreviewDraft(defaultValue); }, [defaultValue]);
   useEffect(() => {
     resizeCollaboratorTextarea(textareaRef?.current);
   }, [textareaRef]);
 
   const handleChange = (event) => {
+    setPreviewDraft(event.currentTarget.value);
     resizeCollaboratorTextarea(event.currentTarget);
     onDraftChange?.(event.currentTarget.value);
   };
 
   const handlePaste = (event) => {
     handleMarkdownPaste(event, (value, target) => {
+      setPreviewDraft(value);
       resizeCollaboratorTextarea(target);
       onDraftChange?.(value);
     });
@@ -485,6 +491,7 @@ export function CollaboratorPromptComposer({
     <div>
       <div className="rounded-[26px] border border-neutral-200 bg-white p-2 shadow-sm transition focus-within:border-neutral-300 focus-within:shadow-md">
         {pendingContext && <div className="px-1 pt-1">{pendingContext}</div>}
+        <MarkdownDraftTablePreview text={deferredPreviewDraft} />
         <div className="flex items-end gap-1.5">
           <CollaboratorComposerMenu {...menuProps} />
           <textarea

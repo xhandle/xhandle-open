@@ -107,7 +107,7 @@ export function parseFunctionalDecompositionCsv(text = "") {
     const row = {};
     FUNCTIONAL_ROW_FIELDS.forEach((field) => {
       const columnIndex = columns.get(field);
-      if (field !== "system" || columnIndex !== undefined) row[field] = columnIndex === undefined ? "" : csvCellText(cells[columnIndex]);
+      if (!["system", "systemDetails", "subsystemDetails"].includes(field) || columnIndex !== undefined) row[field] = columnIndex === undefined ? "" : csvCellText(cells[columnIndex]);
     });
     if (FUNCTIONAL_ROW_FIELDS.every((field) => !row[field])) {
       ignoredBlankRows += 1;

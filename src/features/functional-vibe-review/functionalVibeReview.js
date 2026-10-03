@@ -25,7 +25,9 @@ export const FUNCTIONAL_VIBE_REVIEW_ID_FIELD = "_functionalVibeReviewId";
 
 export const FUNCTIONAL_ROW_FIELDS = Object.freeze([
   "system",
+  "systemDetails",
   "subsystem",
+  "subsystemDetails",
   "fromFunction",
   "fromDetails",
   "controlAction",
@@ -56,7 +58,9 @@ export const FUNCTIONAL_REVIEW_FIELDS = Object.freeze([
 
 export const FUNCTIONAL_FIELD_LABELS = Object.freeze({
   system: "System",
+  systemDetails: "System Details",
   subsystem: "Subsystem",
+  subsystemDetails: "Subsystem Details",
   fromFunction: "Function (From)",
   fromDetails: "Function (From) Details",
   controlAction: "Control Action",
@@ -75,7 +79,9 @@ export const FUNCTIONAL_FIELD_LABELS = Object.freeze({
 
 export const FUNCTIONAL_FIELD_ALIASES = Object.freeze({
   system: ["system", "system allocation"],
+  systemDetails: ["system details", "system description"],
   subsystem: ["subsystem", "subsystem allocation"],
+  subsystemDetails: ["subsystem details", "subsystem description"],
   fromFunction: ["from function", "function from", "function (from)", "source function"],
   fromDetails: ["from details", "function from details", "function (from) details", "source details"],
   controlAction: ["control action", "interface", "exchange", "flow"],
@@ -449,14 +455,14 @@ export function normalizeFunctionalVibeReviewProposal(raw = {}, currentRow = {})
   const proposedSource = source.proposedRow || source.revisedRow || source.revision || source.row || {};
   const proposedRow = Object.fromEntries(FUNCTIONAL_REVIEW_FIELDS.map((field) => [
     field,
-    readAlias(proposedSource, field) || (field === "system" || !FUNCTIONAL_ROW_FIELDS.includes(field) ? clean(currentRow?.[field]) : ""),
+    readAlias(proposedSource, field) || (["system", "systemDetails", "subsystemDetails"].includes(field) || !FUNCTIONAL_ROW_FIELDS.includes(field) ? clean(currentRow?.[field]) : ""),
   ]));
   const changedFields = decision === "Revise"
     ? FUNCTIONAL_REVIEW_FIELDS.filter((field) => clean(currentRow?.[field]) !== proposedRow[field])
     : [];
   const errors = [];
   if (decision === "Revise") {
-    const missing = FUNCTIONAL_ROW_FIELDS.filter((field) => field !== "system" && !proposedRow[field]);
+    const missing = FUNCTIONAL_ROW_FIELDS.filter((field) => !["system", "systemDetails", "subsystemDetails"].includes(field) && !proposedRow[field]);
     if (missing.length) errors.push(`The proposed revision omitted: ${missing.map((field) => FIELD_LABELS[field]).join(", ")}.`);
     if ((clean(currentRow?.hazardAnalysisEligibility) || proposedRow.hazardAnalysisEligibility)
       && !["Include", "Exclude", "Needs Review"].includes(proposedRow.hazardAnalysisEligibility)) {

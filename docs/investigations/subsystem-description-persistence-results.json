@@ -1,0 +1,294 @@
+{
+  "chrome": {
+    "browser": "chromium",
+    "results": [
+      {
+        "mode": "saved-manual",
+        "draftBeforeSave": [
+          {
+            "id": "g:planning",
+            "description": "Planning contains 2 functions: Control, Plan. It covers 1 interface/control action: Command, and should be reviewed for timing, data/state ownership, and receiver effects."
+          }
+        ],
+        "after": [
+          {
+            "id": "g:planning",
+            "description": "Magic description for saved-manual.",
+            "edited": true
+          }
+        ],
+        "persisted": true
+      },
+      {
+        "mode": "saved-nested",
+        "draftBeforeSave": [
+          {
+            "id": "g:planning",
+            "description": "Planning contains 2 functions: Control, Plan. It covers 1 interface/control action: Command, and should be reviewed for timing, data/state ownership, and receiver effects."
+          }
+        ],
+        "after": [
+          {
+            "id": "g:planning",
+            "description": "Magic description for saved-nested.",
+            "edited": true
+          }
+        ],
+        "persisted": true
+      },
+      {
+        "mode": "saved-auto",
+        "draftBeforeSave": [
+          {
+            "id": "g:auto:table:planning",
+            "description": "Planning groups 2 related functions that coordinate 1 interface/control action: Command. This category owns the related control flow, data exchange, and coordination responsibilities in the generated architecture.",
+            "auto": true
+          }
+        ],
+        "after": [
+          {
+            "id": "g:auto:table:planning",
+            "description": "Magic description for saved-auto.",
+            "edited": true,
+            "auto": true
+          }
+        ],
+        "persisted": true
+      },
+      {
+        "mode": "auto-arrange",
+        "draftBeforeSave": [
+          {
+            "id": "g:auto:table:planning",
+            "description": "Planning groups 2 related functions that coordinate 1 interface/control action: Command. This category owns the related control flow, data exchange, and coordination responsibilities in the generated architecture.",
+            "auto": true
+          }
+        ],
+        "after": [
+          {
+            "id": "g:auto:table:planning",
+            "description": "Planning groups 2 related functions that coordinate 1 interface/control action: Command. This category owns the related control flow, data exchange, and coordination responsibilities in the generated architecture.",
+            "auto": true
+          }
+        ],
+        "persisted": false
+      },
+      {
+        "mode": "unsaved",
+        "draftBeforeSave": [
+          {
+            "id": "g:planning",
+            "description": "Planning contains 2 functions: Control, Plan. It covers 1 interface/control action: Command, and should be reviewed for timing, data/state ownership, and receiver effects."
+          }
+        ],
+        "after": [
+          {
+            "id": "g:planning",
+            "description": "Planning contains 2 functions: Control, Plan. It covers 1 interface/control action: Command, and should be reviewed for timing, data/state ownership, and receiver effects."
+          }
+        ],
+        "persisted": false
+      },
+      {
+        "mode": "immediate-reload",
+        "draftBeforeSave": [
+          {
+            "id": "g:planning",
+            "description": "Planning contains 2 functions: Control, Plan. It covers 1 interface/control action: Command, and should be reviewed for timing, data/state ownership, and receiver effects."
+          }
+        ],
+        "after": [
+          {
+            "id": "g:planning",
+            "description": "Planning contains 2 functions: Control, Plan. It covers 1 interface/control action: Command, and should be reviewed for timing, data/state ownership, and receiver effects."
+          }
+        ],
+        "persisted": false
+      },
+      {
+        "mode": "save-during-generation",
+        "draftBeforeSave": [
+          {
+            "id": "g:planning",
+            "description": "Planning contains 2 functions: Control, Plan. It covers 1 interface/control action: Command, and should be reviewed for timing, data/state ownership, and receiver effects."
+          }
+        ],
+        "after": [
+          {
+            "id": "g:planning",
+            "description": "Planning contains 2 functions: Control, Plan. It covers 1 interface/control action: Command, and should be reviewed for timing, data/state ownership, and receiver effects.",
+            "edited": true
+          }
+        ],
+        "persisted": false
+      }
+    ]
+  },
+  "webkit": {
+    "browser": "webkit",
+    "results": [
+      {
+        "mode": "saved-manual",
+        "draftBeforeSave": [
+          {
+            "id": "g:planning",
+            "description": "Planning contains 2 functions: Control, Plan. It covers 1 interface/control action: Command, and should be reviewed for timing, data/state ownership, and receiver effects."
+          }
+        ],
+        "after": [
+          {
+            "id": "g:planning",
+            "description": "Magic description for saved-manual.",
+            "edited": true
+          }
+        ],
+        "persisted": true
+      },
+      {
+        "mode": "saved-nested",
+        "draftBeforeSave": [
+          {
+            "id": "g:planning",
+            "description": "Planning contains 2 functions: Control, Plan. It covers 1 interface/control action: Command, and should be reviewed for timing, data/state ownership, and receiver effects."
+          }
+        ],
+        "after": [
+          {
+            "id": "g:planning",
+            "description": "Magic description for saved-nested.",
+            "edited": true
+          }
+        ],
+        "persisted": true
+      },
+      {
+        "mode": "saved-auto",
+        "draftBeforeSave": [
+          {
+            "id": "g:auto:table:planning",
+            "description": "Planning groups 2 related functions that coordinate 1 interface/control action: Command. This category owns the related control flow, data exchange, and coordination responsibilities in the generated architecture.",
+            "auto": true
+          }
+        ],
+        "after": [
+          {
+            "id": "g:auto:table:planning",
+            "description": "Magic description for saved-auto.",
+            "edited": true,
+            "auto": true
+          }
+        ],
+        "persisted": true
+      },
+      {
+        "mode": "auto-arrange",
+        "draftBeforeSave": [
+          {
+            "id": "g:auto:table:planning",
+            "description": "Planning groups 2 related functions that coordinate 1 interface/control action: Command. This category owns the related control flow, data exchange, and coordination responsibilities in the generated architecture.",
+            "auto": true
+          }
+        ],
+        "after": [
+          {
+            "id": "g:auto:table:planning",
+            "description": "Planning groups 2 related functions that coordinate 1 interface/control action: Command. This category owns the related control flow, data exchange, and coordination responsibilities in the generated architecture.",
+            "auto": true
+          }
+        ],
+        "persisted": false
+      },
+      {
+        "mode": "unsaved",
+        "draftBeforeSave": [
+          {
+            "id": "g:planning",
+            "description": "Planning contains 2 functions: Control, Plan. It covers 1 interface/control action: Command, and should be reviewed for timing, data/state ownership, and receiver effects."
+          }
+        ],
+        "after": [
+          {
+            "id": "g:planning",
+            "description": "Planning contains 2 functions: Control, Plan. It covers 1 interface/control action: Command, and should be reviewed for timing, data/state ownership, and receiver effects."
+          }
+        ],
+        "persisted": false
+      },
+      {
+        "mode": "immediate-reload",
+        "draftBeforeSave": [
+          {
+            "id": "g:planning",
+            "description": "Planning contains 2 functions: Control, Plan. It covers 1 interface/control action: Command, and should be reviewed for timing, data/state ownership, and receiver effects."
+          }
+        ],
+        "after": [
+          {
+            "id": "g:planning",
+            "description": "Planning contains 2 functions: Control, Plan. It covers 1 interface/control action: Command, and should be reviewed for timing, data/state ownership, and receiver effects."
+          }
+        ],
+        "persisted": false
+      },
+      {
+        "mode": "save-during-generation",
+        "draftBeforeSave": [
+          {
+            "id": "g:planning",
+            "description": "Planning contains 2 functions: Control, Plan. It covers 1 interface/control action: Command, and should be reviewed for timing, data/state ownership, and receiver effects."
+          }
+        ],
+        "after": [
+          {
+            "id": "g:planning",
+            "description": "Planning contains 2 functions: Control, Plan. It covers 1 interface/control action: Command, and should be reviewed for timing, data/state ownership, and receiver effects.",
+            "edited": true
+          }
+        ],
+        "persisted": false
+      }
+    ]
+  },
+  "quotaFaultInjection": {
+    "mode": "storage-failure",
+    "draftBeforeSave": [
+      {
+        "id": "g:planning",
+        "description": "Planning contains 2 functions: Control, Plan. It covers 1 interface/control action: Command, and should be reviewed for timing, data/state ownership, and receiver effects."
+      }
+    ],
+    "after": [
+      {
+        "id": "g:planning",
+        "description": "Planning contains 2 functions: Control, Plan. It covers 1 interface/control action: Command, and should be reviewed for timing, data/state ownership, and receiver effects."
+      }
+    ],
+    "persisted": false
+  },
+  "autoArrangeConfirmedSavedBeforeAction": {
+    "mode": "auto-arrange",
+    "draftBeforeSave": [
+      {
+        "id": "g:auto:table:planning",
+        "description": "Planning groups 2 related functions that coordinate 1 interface/control action: Command. This category owns the related control flow, data exchange, and coordination responsibilities in the generated architecture.",
+        "auto": true
+      }
+    ],
+    "committedBeforeAction": [
+      {
+        "id": "g:auto:table:planning",
+        "description": "Magic description for auto-arrange.",
+        "edited": true,
+        "auto": true
+      }
+    ],
+    "after": [
+      {
+        "id": "g:auto:table:planning",
+        "description": "Planning groups 2 related functions that coordinate 1 interface/control action: Command. This category owns the related control flow, data exchange, and coordination responsibilities in the generated architecture.",
+        "auto": true
+      }
+    ],
+    "persisted": false
+  }
+}

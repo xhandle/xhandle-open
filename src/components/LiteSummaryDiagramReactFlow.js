@@ -1,4 +1,6 @@
-import { manualDropTarget, reparentManualElements, rowsWithManualSubsystem } from './manualDiagramEditing';
+import { applyTableContainerDetails, rowsWithDiagramDetails } from './functionalDiagramTableDetails';
+import { preserveGroupMetadata } from './diagramGroupMetadata';
+import { expandManualAncestorsForDrag, manualDropTarget, reparentManualElements, resizeManualContainer, rowsWithManualSubsystem } from './manualDiagramEditing';
 import { createPresentationCache, clearEdgeSelection, indexNodesByParent } from './diagramPresentationCache';
 import { QUICK_SEARCH_COLLECT, isSearchVisible } from './quickSearchUtils';
 import { classifyAssociatedHazard } from './associatedHazardClassification';
@@ -38,7 +40,7 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import './functionalDiagramCursors.css';
 import { diagramRectsOverlap, GROUP_COLLISION_CLEARANCE } from './functionalDiagramCollision';
-import { separateContainedFunctions, tightenSystemSpacing, systemForElement, tightenSystemSubsystemSpacing, separateSystemGroups, rowsWithDiagramSystems, reconcileTableSystems, absoluteElementPosition, applyGroupGeometry, canContainElement, detachDeletedSystemParents, fitSystemAncestors, resizeSystemElements, isSystemGroup, orderParentElements } from './functionalSystemGroups';
+import { separateContainedFunctions, tightenSystemSpacing, systemForElement, tightenSystemSubsystemSpacing, separateSystemGroups, rowsWithDiagramSystems, reconcileTableSystems, absoluteElementPosition, applyGroupGeometry, canContainElement, detachDeletedSystemParents, fitSystemAncestors, isSystemGroup, orderParentElements } from './functionalSystemGroups';
 import { toPng } from 'html-to-image';
 import { SmartBezierEdge } from '@tisoap/react-flow-smart-edge';
 import ELK from 'elkjs/lib/elk.bundled.js';
@@ -137,6 +139,7 @@ const COLOR_PRESETS = [
   '#EF4444',
   '#14B8A6',
 ];
+const EDIT_COLOR_PRESETS = [...COLOR_PRESETS, '#000000'];
 
 // Arrow size knob (in px)
 const ARROW_SIZE = 18;
@@ -473,10 +476,14 @@ function loadGroupBoxes(storageKey) {
   }
 }
 
-function saveGroupBoxes(storageKey, boxes) {
+function saveGroupBoxes(storageKey, boxes, { verify = false } = {}) {
   try {
-    localStorage.setItem(`${storageKey}:groups:v1`, JSON.stringify(boxes || []));
-  } catch {}
+    const key = `${storageKey}:groups:v1`;
+    const serialized = JSON.stringify(boxes || []);
+    localStorage.setItem(key, serialized);
+    // Some application storage wrappers report quota errors without throwing.
+    return !verify || localStorage.getItem(key) === serialized;
+  } catch { return false; }
 }
 
 function saveAutoCategoryMeta(storageKey, meta) {
@@ -637,6 +644,7 @@ function loadEdgeRoutingState(storageKey) {
           .map(([key, value]) => [key, normalizeEdgeRoutingStyle(value)])
       ),
       manualRoutes: parsed?.manualRoutes && typeof parsed.manualRoutes === 'object' ? parsed.manualRoutes : {},
+      colors: parsed?.colors && typeof parsed.colors === 'object' ? parsed.colors : {},
     };
   } catch {
     return { defaultStyle: EDGE_ROUTING_STYLES.RECTANGULAR, overrides: {}, manualRoutes: {} };
@@ -649,6 +657,7 @@ function saveEdgeRoutingState(storageKey, state = {}) {
       defaultStyle: normalizeEdgeRoutingStyle(state.defaultStyle),
       overrides: state.overrides && typeof state.overrides === 'object' ? state.overrides : {},
       manualRoutes: state.manualRoutes && typeof state.manualRoutes === 'object' ? state.manualRoutes : {},
+      colors: state.colors || {},
     }));
   } catch {}
 }
@@ -757,6 +766,7 @@ function cloneEdgeAggregationForHistory(state = {}) {
 
 function cloneEdgeRoutingForHistory(state = {}) {
   return {
+    colors: { ...(state.colors || {}) },
     defaultStyle: normalizeEdgeRoutingStyle(state.defaultStyle),
     overrides: state.overrides && typeof state.overrides === 'object' ? { ...state.overrides } : {},
     manualRoutes: state.manualRoutes && typeof state.manualRoutes === 'object'
@@ -995,6 +1005,7 @@ const GroupBoxNode = React.memo(({ data, selected }) => {
       <NodeResizer
         minWidth={GROUP.minW}
         minHeight={GROUP.minH}
+        shouldResize={(_, params) => data.shouldResize?.(params) !== false}
         onResizeStart={(_, params) => data.onResizeStart?.(params)}
         onResize={(_, params) => data.onResize?.(params)}
         onResizeEnd={(_, params) => data.onResizeEnd?.(params)}
@@ -1446,7 +1457,9 @@ function buildEdgesFromRaw(rawEdges, positions, aggregation = {}, routing = {}) 
 
     const isAggregated = Boolean(e.data?.aggregated);
     const isBidirectionalAggregated = Boolean(e.data?.bidirectionalAggregated);
-    const stroke = isAggregated ? BRAND.purple : BRAND.blue;
+    const memberColors = (isAggregated ? e.data.edgeIds : [e.id]).map(id => routing.colors?.[id]);
+    const customColor = memberColors[0] && memberColors.every(color => color === memberColors[0]) ? memberColors[0] : null;
+    const stroke = customColor || (isAggregated ? BRAND.purple : BRAND.blue);
     const routingTargetKey = edgeRoutingTargetKey(e);
     const routingStyle = resolveEdgeRoutingStyle(e, routing);
     return {
@@ -2107,7 +2120,7 @@ function buildAutoCategoryLayout(categories) {
   return { boxes, positionByFunction };
 }
 
-function applyCategoryLayoutToPositionMap({ categories, rows, posMap, excludedNodeIds = new Set() }) {
+function applyCategoryLayoutToPositionMap({ categories, rows, posMap, excludedNodeIds = new Set(), existingBoxes = [] }) {
   const functions = getUniqueFunctionsFromRows(rows);
   const renderableFunctions = new Set(functions);
   const excludedFunctions = new Set(
@@ -2170,7 +2183,7 @@ function applyCategoryLayoutToPositionMap({ categories, rows, posMap, excludedNo
     }
   });
 
-  return boxes;
+  return preserveGroupMetadata(boxes, existingBoxes);
 }
 
 function serializeManualNode(node) {
@@ -2454,7 +2467,7 @@ const DiagramBody = forwardRef(function DiagramBody(
   }, [nodes, edges, highlightedEdgeId, selectedNodeIds, presentNode]);
 
   const presentEdge = useMemo(() => createPresentationCache((e, isOn) => {
-        const stroke = e.data?.aggregated ? BRAND.purple : BRAND.blue;
+        const stroke = e.style?.stroke || (e.data?.aggregated ? BRAND.purple : BRAND.blue);
         const commentCount = commentsForDiagramTarget(comments, 'edge', e.id).length;
         return {
           ...e,
@@ -2466,7 +2479,7 @@ const DiagramBody = forwardRef(function DiagramBody(
             stroke,
             strokeWidth: isOn ? (e.data?.aggregated ? 6 : 4.5) : (e.data?.aggregated ? 5 : THEME.edge.width),
             opacity: isOn ? 1 : THEME.edge.opacity,
-            filter: isOn ? 'drop-shadow(0 0 6px rgba(45,125,254,0.45))' : undefined,
+            filter: isOn ? `drop-shadow(0 0 6px ${rgba(stroke, 0.45)})` : undefined,
           },
           markerEnd: e.markerEnd ?? { type: MarkerType.ArrowClosed, color: stroke, width: ARROW_SIZE, height: ARROW_SIZE },
         };
@@ -2476,6 +2489,7 @@ const DiagramBody = forwardRef(function DiagramBody(
 
   const diagramHostRef = useRef(null);
   const flowCanvasHostRef = useRef(null);
+  const toolbarDragRef = useRef(null);
   const nodeIdCounter = useRef(0);
   const [editModal, setEditModal] = useState(null);
 
@@ -2483,6 +2497,7 @@ const DiagramBody = forwardRef(function DiagramBody(
     if (!editModal || editModal.regeneratingDescription) return;
 
     const modalSnapshot = editModal;
+    const descriptionRequestId = cryptoId();
     const currentNodes = getNodes();
     const nodeById = new Map(currentNodes.map((node) => [node.id, node]));
     let itemType = 'functional node';
@@ -2565,7 +2580,7 @@ const DiagramBody = forwardRef(function DiagramBody(
     }
 
     setEditModal((current) => current?.id === modalSnapshot.id
-      ? { ...current, regeneratingDescription: true, descriptionError: '' }
+      ? { ...current, descriptionRequestId, regeneratingDescription: true, descriptionError: '' }
       : current);
 
     try {
@@ -2601,11 +2616,11 @@ const DiagramBody = forwardRef(function DiagramBody(
 
       const description = cleanGeneratedDescription(extractChatText(await response.json()));
       if (!description) throw new Error('The AI provider returned an empty description.');
-      setEditModal((current) => current?.id === modalSnapshot.id
+      setEditModal((current) => current?.descriptionRequestId === descriptionRequestId
         ? { ...current, description, regeneratingDescription: false, descriptionError: '' }
         : current);
     } catch (error) {
-      setEditModal((current) => current?.id === modalSnapshot.id
+      setEditModal((current) => current?.descriptionRequestId === descriptionRequestId
         ? {
             ...current,
             regeneratingDescription: false,
@@ -3455,6 +3470,21 @@ useEffect(() => {
     return true;
   }, [applySystemGeometry, getNodes, rows, setEdges]);
 
+  const manualGroupResizeResult = useCallback((id, dimensions) => {
+    const session = groupResizeSessionRef.current.get(id);
+    const boxes = groupBoxesRef.current.map(box => box.id === id ? (session?.startBox || box)
+      : session?.childPositions?.has(box.id) ? { ...box, position: session.childPositions.get(box.id) } : box);
+    const currentNodes = getNodes().map(node => session?.childPositions?.has(node.id)
+      ? { ...node, position: session.childPositions.get(node.id) } : node);
+    return resizeManualContainer(currentNodes, boxes, id, dimensions,
+      { ...GROUP, nodeWidth: NODE_LAYOUT.w, nodeHeight: NODE_LAYOUT.h });
+  }, [getNodes]);
+
+  const shouldResizeGroup = useCallback((id, dimensions) => {
+    const box = groupBoxesRef.current.find(item => item.id === id);
+    return !(isSystemGroup(box) || box?.parentNode) || Boolean(manualGroupResizeResult(id, dimensions));
+  }, [manualGroupResizeResult]);
+
   const queueGroupResizeUpdate = useCallback((id, dimensions) => {
     if (!id || !dimensions) return;
     const nestedBox = groupBoxesRef.current.find(box => box.id === id);
@@ -3462,8 +3492,8 @@ useEffect(() => {
       if (Number(dimensions.width) === nestedBox.width && Number(dimensions.height) === nestedBox.height
         && (!Number.isFinite(dimensions.x) || dimensions.x === nestedBox.position.x)
         && (!Number.isFinite(dimensions.y) || dimensions.y === nestedBox.position.y)) return;
-      applySystemGeometry(resizeSystemElements(getNodes(), groupBoxesRef.current, id, dimensions,
-        { ...GROUP, nodeWidth: NODE_LAYOUT.w, nodeHeight: NODE_LAYOUT.h }));
+      const result = manualGroupResizeResult(id, dimensions);
+      if (result) applySystemGeometry(result);
       return;
     }
     const rawWidth = Number(dimensions.width);
@@ -3531,7 +3561,7 @@ useEffect(() => {
     resizeFrameRef.current = requestAnimationFrame(() => {
       flushGroupResizeAndPersistence();
     });
-  }, [applySystemGeometry, getNodes, flushGroupResizeAndPersistence, setNodes]);
+  }, [applySystemGeometry, manualGroupResizeResult, flushGroupResizeAndPersistence, setNodes]);
 
   const startGroupResize = useCallback((id, dimensions = {}) => {
     if (!id) return;
@@ -3552,15 +3582,19 @@ useEffect(() => {
       height: Number.isFinite(rawHeight) ? Math.max(GROUP.minH, Math.round(rawHeight)) : (currentBox?.height || GROUP.h),
     };
     const childAbsolutePositions = new Map();
+    const childPositions = new Map();
     getNodes().forEach((node) => {
-      if (node.parentNode !== id || node.type === 'groupBox') return;
+      if (node.parentNode !== id) return;
+      childPositions.set(node.id, { ...node.position });
+      if (node.type === 'groupBox') return;
       childAbsolutePositions.set(node.id, {
         x: startBox.position.x + (node.position?.x ?? GROUP.padX),
         y: startBox.position.y + (node.position?.y ?? GROUP.padTop),
       });
     });
     groupResizeSessionRef.current.set(id, {
-      startBox,
+      startBox: isSystemGroup(currentBox) || currentBox?.parentNode ? { ...currentBox, position: { ...currentBox.position } } : startBox,
+      childPositions,
       childAbsolutePositions,
     });
   }, [captureDiagramHistoryCheckpoint, getNodes]);
@@ -3626,8 +3660,9 @@ useEffect(() => {
       : currentAbsolute;
     const width = Math.max(currentBox.width || GROUP.w, GROUP.minW);
     const height = Math.max(currentBox.height || GROUP.h, GROUP.minH);
-    const nodeWidth = Number(draggedNode.width) || NODE_LAYOUT.w;
-    const nodeHeight = Number(draggedNode.height) || NODE_LAYOUT.h;
+    const draggedBox = groupBoxesRef.current.find(box => box.id === draggedNode.id);
+    const nodeWidth = draggedBox?.width || Number(draggedNode.width) || NODE_LAYOUT.w;
+    const nodeHeight = draggedBox?.height || Number(draggedNode.height) || NODE_LAYOUT.h;
     const parentAbsolute = absoluteElementPosition(byId.get(groupId), currentNodes);
     const innerLeft = parentAbsolute.x + GROUP.padX;
     const innerTop = parentAbsolute.y + GROUP.padTop;
@@ -3640,21 +3675,16 @@ useEffect(() => {
     const growRight = Math.max(0, desiredAbsolute.x + nodeWidth - innerRight);
     const growTop = Math.max(0, innerTop - desiredAbsolute.y);
     const growBottom = Math.max(0, desiredAbsolute.y + nodeHeight - innerBottom);
-    if (!growLeft && !growRight && !growTop && !growBottom) return;
+    if (!growLeft && !growRight && !growTop && !growBottom) {
+      if (session) childDragRef.current = { ...session, position: draggedNode.position };
+      return;
+    }
 
     if (isSystemGroup(currentBox) || currentBox.parentNode) {
-      const nextPosition = { x: currentBox.position.x - growLeft, y: currentBox.position.y - growTop };
-      const snapshot = resizeSystemElements(currentNodes, groupBoxesRef.current, groupId, {
-        ...nextPosition, width: width + growLeft + growRight, height: height + growTop + growBottom,
-      }, { ...GROUP, nodeWidth: NODE_LAYOUT.w, nodeHeight: NODE_LAYOUT.h });
-      const origin = absoluteElementPosition(snapshot.nodes.find(node => node.id === groupId), snapshot.nodes);
-      snapshot.nodes = snapshot.nodes.map(node => node.id === draggedNode.id ? { ...node, position: {
-        x: Math.max(GROUP.padX, desiredAbsolute.x - origin.x),
-        y: Math.max(GROUP.padTop, desiredAbsolute.y - origin.y),
-      } } : node);
-      snapshot.boxes = fitSystemAncestors(snapshot.nodes, snapshot.boxes, groupId,
-        { ...GROUP, nodeWidth: NODE_LAYOUT.w, nodeHeight: NODE_LAYOUT.h });
-      snapshot.nodes = applyGroupGeometry(snapshot.nodes, snapshot.boxes);
+      const snapshot = expandManualAncestorsForDrag(currentNodes, groupBoxesRef.current, draggedNode.id,
+        desiredAbsolute, { ...GROUP, nodeWidth: NODE_LAYOUT.w, nodeHeight: NODE_LAYOUT.h });
+      childDragRef.current = { ...(session || {}), nodeId: draggedNode.id, parentId: groupId,
+        position: snapshot.nodes.find(node => node.id === draggedNode.id).position };
       applySystemGeometry(snapshot);
       return;
     }
@@ -3920,6 +3950,7 @@ useEffect(() => {
 
     const boxes = applyCategoryLayoutToPositionMap({
       categories: activeCategories,
+      existingBoxes: groupBoxesRef.current,
       rows,
       posMap: posRef.current,
       excludedNodeIds: ungroupedAutoNodeIds,
@@ -3945,7 +3976,7 @@ useEffect(() => {
     if (recordHistory) captureDiagramHistoryCheckpoint();
     if (applyInitialEdgeDefaults) {
       const initialAggregation = getPromptWizardInitialEdgeAggregationState(edgeAggregationRef.current);
-      const initialRouting = getPromptWizardInitialEdgeRoutingState();
+      const initialRouting = { ...getPromptWizardInitialEdgeRoutingState(), colors: edgeRoutingRef.current.colors || {} };
       edgeAggregationRef.current = initialAggregation;
       edgeRoutingRef.current = initialRouting;
       setEdgeAggregation(initialAggregation);
@@ -3979,6 +4010,7 @@ useEffect(() => {
     if (categories.length && groupBoxes.every((box) => box.autoGenerated)) {
       const boxes = applyCategoryLayoutToPositionMap({
         categories: normalizeCategories(autoCategories, rows),
+        existingBoxes: groupBoxesRef.current,
         rows,
         posMap: posRef.current,
         excludedNodeIds: ungroupedAutoNodeIdsRef.current,
@@ -4042,19 +4074,20 @@ useEffect(() => {
     }
   }, [project]);
 
-  const addManualDiagramNode = useCallback(() => {
+  const addManualDiagramNode = useCallback((dropPosition = null) => {
     captureDiagramHistoryCheckpoint();
     const existing = collectExistingLabels(getNodes(), rows);
     const label = makeUniqueNewLabel(existing);
     const id = nodeIdForFunction(label);
     const currentNodes = getNodes();
-    const selectedContainer = selectedNodeIds.length === 1
-      ? groupBoxesRef.current.find(box => box.id === selectedNodeIds[0]) : null;
+    const selectedContainer = dropPosition
+      ? manualDropTarget(dropPosition, [{ id, type: 'bidirectional' }], groupBoxesRef.current)
+      : selectedNodeIds.length === 1 ? groupBoxesRef.current.find(box => box.id === selectedNodeIds[0]) : null;
     const origin = selectedContainer ? absoluteElementPosition(selectedContainer, groupBoxesRef.current) : null;
     const local = selectedContainer ? findOpenPositionInGroup(selectedContainer,
       currentNodes.filter(node => node.parentNode === selectedContainer.id).map(node => node.position)) : null;
-    const position = origin ? { x: origin.x + local.x, y: origin.y + local.y }
-      : nearestFreePosition(canvasSpawnPosition(), currentNodes);
+    const position = dropPosition || (origin ? { x: origin.x + local.x, y: origin.y + local.y }
+      : nearestFreePosition(canvasSpawnPosition(), currentNodes));
     const newNode = withDiagramNodeProvenance({
       id,
       type: 'bidirectional',
@@ -4068,11 +4101,11 @@ useEffect(() => {
     persistSoon();
   }, [applySystemMembership, canvasSpawnPosition, captureDiagramHistoryCheckpoint, getNodes, persistSoon, rows, selectedNodeIds, setNodes]);
 
-  const addNoteNode = useCallback(() => {
+  const addNoteNode = useCallback((dropPosition = null) => {
     captureDiagramHistoryCheckpoint();
     const existingNotes = getNodes().filter((node) => node.type === 'note').length;
     const id = `note:${cryptoId()}`;
-    const position = nearestFreePosition(canvasSpawnPosition({ x: 128, y: 128 }), getNodes());
+    const position = dropPosition || nearestFreePosition(canvasSpawnPosition({ x: 128, y: 128 }), getNodes());
     const noteNode = withDiagramNodeProvenance({
       id,
       type: 'note',
@@ -4141,15 +4174,15 @@ useEffect(() => {
     setComments((current) => current.filter((comment) => comment.id !== commentId));
   }, [captureDiagramHistoryCheckpoint]);
 
-  const createSystemBox = useCallback(() => {
+  const createSystemBox = useCallback((dropPosition = null) => {
     captureDiagramHistoryCheckpoint();
     const currentNodes = getNodes();
-    const selected = currentNodes.filter(node => selectedNodeIds.includes(node.id) && !isSystemGroup(groupBoxes.find(box => box.id === node.id)) && node.type !== 'note');
+    const selected = dropPosition ? [] : currentNodes.filter(node => selectedNodeIds.includes(node.id) && !isSystemGroup(groupBoxes.find(box => box.id === node.id)) && node.type !== 'note');
     const positions = selected.map(node => getNodeAbsolutePosition(node, new Map(currentNodes.map(item => [item.id, item]))));
-    const position = positions.length ? {
+    const position = dropPosition || (positions.length ? {
       x: Math.min(...positions.map(pos => pos.x)) - GROUP.padX,
       y: Math.min(...positions.map(pos => pos.y)) - GROUP.padTop,
-    } : canvasSpawnPosition({ x: 96, y: 96 });
+    } : canvasSpawnPosition({ x: 96, y: 96 }));
     let number = 1;
     const groupLabels = new Set(groupBoxes.map(box => box.label));
     while (groupLabels.has(`System ${number}`)) number++;
@@ -4160,10 +4193,10 @@ useEffect(() => {
     applySystemMembership(selected.map(item => item.id), box.id, [...currentNodes, node], [...groupBoxes, box]);
   }, [applySystemMembership, canvasSpawnPosition, captureDiagramHistoryCheckpoint, getNodes, groupBoxes, selectedNodeIds]);
 
-  const createGroupBox = useCallback(() => {
+  const createGroupBox = useCallback((dropPosition = null) => {
     captureDiagramHistoryCheckpoint();
     const currentNodes = getNodes();
-    const selectedNodes = currentNodes.filter((node) => (
+    const selectedNodes = dropPosition ? [] : currentNodes.filter((node) => (
       selectedNodeIds.includes(node.id) &&
       node.type !== 'groupBox' &&
       !node.id.startsWith('g:')
@@ -4172,7 +4205,7 @@ useEffect(() => {
     let groupCount = groupBoxes.length + 1;
     const existingGroupLabels = new Set(groupBoxesRef.current.map(box => box.label));
     while (existingGroupLabels.has(`Group ${groupCount}`)) groupCount++;
-    let position = canvasSpawnPosition({ x: 96, y: 96 });
+    let position = dropPosition || canvasSpawnPosition({ x: 96, y: 96 });
     let width = GROUP.w;
     let height = GROUP.h;
 
@@ -4209,7 +4242,11 @@ useEffect(() => {
 
     const groupNode = { id: groupId, type: 'groupBox', position,
       data: { label: newBox.label }, style: { width, height } };
-    if (selectedNodes.length) {
+    const dropContainer = dropPosition && manualDropTarget(dropPosition, [groupNode], [...groupBoxesRef.current, newBox]);
+    if (dropContainer) {
+      applySystemMembership([groupId], dropContainer.id,
+        [...currentNodes, groupNode], [...groupBoxesRef.current, newBox]);
+    } else if (selectedNodes.length) {
       applySystemMembership(selectedNodes.map(node => node.id), groupId,
         [...currentNodes, groupNode], [...groupBoxesRef.current, newBox]);
     } else {
@@ -4218,6 +4255,43 @@ useEffect(() => {
       setGroupBoxes(nextBoxes);
     }
   }, [applySystemMembership, canvasSpawnPosition, captureDiagramHistoryCheckpoint, getNodes, groupBoxes.length, persistGroupsSoon, selectedNodeIds]);
+
+  const toolbarDragProps = (kind) => ({
+    draggable: true,
+    onDragStart: event => {
+      toolbarDragRef.current = { kind, storageKey };
+      event.dataTransfer.setData('application/x-xhandle-diagram-node', kind);
+      event.dataTransfer.effectAllowed = 'copy';
+    },
+    onDragEnd: () => { toolbarDragRef.current = null; },
+  });
+  const onToolbarDragOver = event => {
+    if (toolbarDragRef.current?.storageKey !== storageKey) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  };
+  const onToolbarDrop = event => {
+    const drag = toolbarDragRef.current;
+    if (!drag || drag.storageKey !== storageKey) return;
+    event.preventDefault();
+    event.stopPropagation();
+    toolbarDragRef.current = null;
+    const canvas = flowCanvasHostRef.current?.querySelector('.react-flow');
+    const bounds = canvas?.getBoundingClientRect();
+    if (!bounds || !Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return;
+    const position = project({ x: event.clientX - bounds.left, y: event.clientY - bounds.top });
+    // A blank manual canvas has no imported/generated graph to arrange. Its
+    // first explicit drop establishes the layout, including on later reloads.
+    if (!getNodes().length && !rows.some(row => row.fromFunction || row.toFunction)) {
+      initialArrangementPendingRef.current = false;
+      try { localStorage.setItem(storageKey + ':initial-layout:v1', 'complete'); } catch {}
+      setInitialLayoutReady(true);
+    }
+    if (drag.kind === 'function') addManualDiagramNode(position);
+    else if (drag.kind === 'subsystem') createGroupBox(position);
+    else if (drag.kind === 'system') createSystemBox(position);
+    else if (drag.kind === 'note') addNoteNode(position);
+  };
 
   const ungroupSelectedNodes = useCallback(() => {
     const selected = selectedNodeIds.length ? selectedNodeIds : getNodes().filter((node) => node.parentNode).map((node) => node.id);
@@ -4526,6 +4600,7 @@ const renderGroupNode = (box) => ({
     description: box.description || '',
     brandColor: box.brandColor || BRAND.purple,
     onResizeStart: (dimensions) => startGroupResize(box.id, dimensions),
+    shouldResize: (dimensions) => shouldResizeGroup(box.id, dimensions),
     onResize: (dimensions) => queueGroupResizeUpdate(box.id, dimensions),
     onResizeEnd: (dimensions) => endGroupResize(box.id, dimensions),
   },
@@ -4714,7 +4789,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
   // autoCategories changes are applied by the category-layout effect, which
   // updates groupBoxes and deliberately invalidates this structure build.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, persistSoon, persistManualSoon, manualNodesStore, nodes, setNodes, setEdges, runCleanAndSpread, groupBoxes, startGroupResize, queueGroupResizeUpdate, endGroupResize, storageReady, ungroupedAutoNodeIds]);
+  }, [rows, persistSoon, persistManualSoon, manualNodesStore, nodes, setNodes, setEdges, runCleanAndSpread, groupBoxes, startGroupResize, shouldResizeGroup, queueGroupResizeUpdate, endGroupResize, storageReady, ungroupedAutoNodeIds]);
 
   const systemGeometryReady = useMemo(() => {
     const renderedIds = new Set(nodes.map(node => node.id));
@@ -4727,6 +4802,23 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
     if (systems.length < 2) return;
     settleSystemOverlaps();
   }, [groupBoxes, storageReady, systemGeometryReady, settleSystemOverlaps]);
+
+  const previousDescriptionRowsRef = useRef(null);
+  useEffect(() => { previousDescriptionRowsRef.current = null; }, [storageKey]);
+  useEffect(() => {
+    if (!storageReady || !builtOnceRef.current || manualDragRef.current || groupDragRef.current || childDragRef.current || groupResizeSessionRef.current.size) return;
+    const nextBoxes = applyTableContainerDetails(groupBoxesRef.current, rows, previousDescriptionRowsRef.current);
+    previousDescriptionRowsRef.current = rows;
+    if (nextBoxes !== groupBoxesRef.current) {
+      groupBoxesRef.current = nextBoxes;
+      setGroupBoxes(nextBoxes);
+      persistGroupsSoon(nextBoxes);
+      return;
+    }
+    if (!onUpdateRows) return;
+    const nextRows = rowsWithDiagramDetails(rows, nodes, nextBoxes);
+    if (nextRows !== rows) onUpdateRows(nextRows);
+  }, [rows, nodes, groupBoxes, storageKey, storageReady, onUpdateRows, persistGroupsSoon]);
 
 	  useEffect(() => {
 	    if (!storageReady) return;
@@ -5193,6 +5285,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
       defaultStyle: normalizeEdgeRoutingStyle(style),
       overrides: {},
       manualRoutes: edgeRoutingRef.current.manualRoutes || {},
+      colors: edgeRoutingRef.current.colors || {},
     };
     if (
       edgeRoutingRef.current.defaultStyle === next.defaultStyle &&
@@ -5420,10 +5513,10 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
       <>
         <div style={toolSectionLabelStyle}>Create</div>
         <div style={toolGridStyle}>
-          <button type="button" onClick={addManualDiagramNode} title="Add node" style={toolButtonStyle({ active: true })}>+</button>
-          <button type="button" onClick={createGroupBox} title="Group selected nodes" style={toolButtonStyle({ active: true, tone: BRAND.purple })}>□</button>
-          <button type="button" onClick={createSystemBox} title="Add system (group selected functions or subsystems)" aria-label="Add system" style={toolButtonStyle({ active: true, tone: BRAND.purple })}>▣</button>
-          <button type="button" onClick={addNoteNode} title="Add note" style={toolButtonStyle({ tone: BRAND.yellow })}>📝</button>
+          <button type="button" {...toolbarDragProps('function')} onClick={() => addManualDiagramNode()} title="Add node" style={toolButtonStyle({ active: true })}>+</button>
+          <button type="button" {...toolbarDragProps('subsystem')} onClick={() => createGroupBox()} title="Group selected nodes" style={toolButtonStyle({ active: true, tone: BRAND.purple })}>□</button>
+          <button type="button" {...toolbarDragProps('system')} onClick={() => createSystemBox()} title="Add system (group selected functions or subsystems)" aria-label="Add system" style={toolButtonStyle({ active: true, tone: BRAND.purple })}>▣</button>
+          <button type="button" {...toolbarDragProps('note')} onClick={() => addNoteNode()} title="Add note" style={toolButtonStyle({ tone: BRAND.yellow })}>📝</button>
           <button
             type="button"
             onClick={() => openCommentComposer(selectedCommentTarget)}
@@ -5543,6 +5636,8 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
         </div>
         <div
           ref={flowCanvasHostRef}
+          onDragOver={onToolbarDragOver}
+          onDrop={onToolbarDrop}
           style={{
             position: 'relative',
             flex: '1 1 auto',
@@ -5554,6 +5649,8 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
           }}
         >
         <ReactFlow
+          onDragOver={onToolbarDragOver}
+          onDrop={onToolbarDrop}
           style={{ visibility: initialLayoutReady ? 'visible' : 'hidden' }}
           defaultViewport={savedViewport || { x: 0, y: 0, zoom: 1 }}
           onMoveEnd={(_event, viewport) => {
@@ -5678,6 +5775,8 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
               id: edge.id,
               label: edge.data?.baseLabel || edge.label || '',
               description: edge.data?.description || edge.data?.summary || '',
+              color: edge.style?.stroke || (edge.data?.aggregated ? BRAND.purple : BRAND.blue),
+              originalColor: edge.style?.stroke || (edge.data?.aggregated ? BRAND.purple : BRAND.blue),
               data: edge.data || {},
               aggregated: Boolean(edge.data?.aggregated),
             });
@@ -5725,7 +5824,6 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
 	                groupId: node.id,
 	                startPosition: { ...startBox.position },
 	              };
-	              return;
 	            }
 	            if (node?.parentNode) {
 	              const bounds = flowCanvasHostRef.current?.getBoundingClientRect();
@@ -5779,10 +5877,11 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                   ? groupDragRef.current
                   : null;
 
+                const finalPosition = childDragRef.current?.nodeId === node.id ? childDragRef.current.position : node.position;
                 setGroupBoxes((currentBoxes) => {
                   const baseBoxes = groupBoxesRef.current.length ? groupBoxesRef.current : currentBoxes;
                   let nextBoxes = baseBoxes.map((box) => (
-                    box.id === node.id ? { ...box, position: { ...node.position } } : box
+                    box.id === node.id ? { ...box, position: { ...finalPosition } } : box
                   ));
                   if (node.parentNode) {
                     nextBoxes = fitSystemAncestors(getNodes(), nextBoxes, node.parentNode, { ...GROUP, nodeWidth: NODE_LAYOUT.w, nodeHeight: NODE_LAYOUT.h });
@@ -6037,16 +6136,17 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                 rows={4}
               />
             </label>
+            {editModal.saveError && <div role="alert" style={{ marginTop: 6, color: '#B91C1C' }}>{editModal.saveError}</div>}
             {editModal.descriptionError && (
               <div role="alert" style={{ marginTop: 6, fontSize: 12, color: '#B91C1C' }}>
                 {editModal.descriptionError}
               </div>
             )}
-            {editModal.type === 'node' && (
+            {(
               <div style={{ marginTop: 12 }}>
                 <div style={{ fontSize: 14, marginBottom: 6 }}>Color:</div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
-                  {COLOR_PRESETS.map((color) => (
+                  {EDIT_COLOR_PRESETS.map((color) => (
                     <button
                       key={color}
                       type="button"
@@ -6066,6 +6166,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                 </div>
                 <input
                   type="color"
+                  aria-label="Custom color"
                   value={editModal.color || BRAND.blue}
                   onChange={(e) => setEditModal((m) => ({ ...m, color: e.target.value }))}
                   style={{ display: 'block', width: 56, height: 36, padding: 0, border: '1px solid #ddd', borderRadius: 8, background: '#fff' }}
@@ -6257,7 +6358,9 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                 Cancel
               </button>
 	              <button
+                    disabled={Boolean(editModal.regeneratingDescription)}
 		                onClick={() => {
+                    if (editModal.regeneratingDescription) return;
 	                  const nextLabel = String(editModal.label || '').trim();
 	                  if (editModal.type === 'node') {
 	                    if (!nextLabel) {
@@ -6301,7 +6404,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
 	                      }
 	                    }
 	                  }
-	                  captureDiagramHistoryCheckpoint();
+                    if (!(editModal.type === 'node' && editModal.id.startsWith('g:'))) captureDiagramHistoryCheckpoint();
 		                if (editModal.type === 'node') {
                     const nodeColor = editModal.color || BRAND.blue;
                     const nodeTint =
@@ -6310,23 +6413,20 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                     const childNodeIds = getNodes()
                       .filter((node) => node.parentNode === editModal.id && node.type !== 'groupBox')
                       .map((node) => node.id);
-	                    setGroupBoxes((currentBoxes) => {
-                        const baseBoxes = groupBoxesRef.current.length ? groupBoxesRef.current : currentBoxes;
-	                      const nextBoxes = baseBoxes.map((box) => (
-	                        box.id === editModal.id
-                            ? {
-                                ...box,
-                                label: editModal.label,
-                                manualMembership: true,
-                                description: editModal.description,
-                                descriptionUserEdited: true,
-                                brandColor: nodeColor,
-                              }
-                            : box
-	                      ));
-	                      persistGroupsSoon(nextBoxes);
-	                      return nextBoxes;
-	                    });
+                    const baseBoxes = groupBoxesRef.current;
+                    const nextBoxes = baseBoxes.map(box => box.id === editModal.id ? {
+                      ...box, label: editModal.label, manualMembership: true,
+                      description: editModal.description, descriptionUserEdited: true, brandColor: nodeColor,
+                    } : box);
+                    if (!baseBoxes.some(box => box.id === editModal.id) || !saveGroupBoxes(storageKey, nextBoxes, { verify: true })) {
+                      setEditModal(current => ({ ...current, saveError: 'Unable to save this description to browser storage. Your draft is still here. Free space in Settings → Storage, then click Save to retry.' }));
+                      return;
+                    }
+                    // Cancel an older debounced write before it can overwrite the explicit Save.
+                    if (groupSaveTimer.current) clearTimeout(groupSaveTimer.current);
+                    captureDiagramHistoryCheckpoint();
+                    groupBoxesRef.current = nextBoxes;
+                    setGroupBoxes(nextBoxes);
 	                    setNodes((nds) =>
 	                      nds.map((n) =>
 	                        n.id === editModal.id
@@ -6377,13 +6477,10 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
 	                    )
                   );
 
-                  const updatedRows = rows.map((r) => {
-                    if (nodeIdForFunction(r.fromFunction) === editModal.id)
-                      return { ...r, fromFunction: normalizeFunctionName(editModal.label), fromDetails: editModal.description };
-                    if (nodeIdForFunction(r.toFunction) === editModal.id)
-                      return { ...r, toFunction: normalizeFunctionName(editModal.label), toDetails: editModal.description };
-                    return r;
-                  });
+                  const updatedRows = rows.map(r => ({...r,
+                    ...(nodeIdForFunction(r.fromFunction) === editModal.id ? {fromFunction:normalizeFunctionName(editModal.label),fromDetails:editModal.description} : {}),
+                    ...(nodeIdForFunction(r.toFunction) === editModal.id ? {toFunction:normalizeFunctionName(editModal.label),toDetails:editModal.description} : {}),
+                  }));
 
                   const oldId = editModal.id;
                   const newId = nodeIdForFunction(editModal.label);
@@ -6419,18 +6516,19 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
 
                   onUpdateRows?.(updatedRows);
                 } else {
-                  setEdges((eds) =>
-                    eds.map((e) =>
-                      e.id === editModal.id
-                        ? { ...e, label: editModal.label, data: { ...e.data, description: editModal.description } }
-                        : e
-                    )
-                  );
+                  const nextRouting = { ...edgeRoutingRef.current, colors: { ...(edgeRoutingRef.current.colors || {}) } };
+                  if (editModal.color !== editModal.originalColor) {
+                    const edgeIds = editModal.aggregated ? editModal.data.edgeIds : [editModal.id];
+                    edgeIds.forEach(id => { nextRouting.colors[id] = editModal.color; });
+                    edgeRoutingRef.current = nextRouting;
+                    setEdgeRouting(nextRouting);
+                    saveEdgeRoutingState(storageKey, nextRouting);
+                  }
                   const updatedRows = rows.map((r, i) => {
-                    const edgeId = edgeIdForRow(r, i);
-                    if (edgeId !== editModal.id) return r;
+                    if (edgeIdForRow(r, i) !== editModal.id) return r;
                     return { ...r, controlAction: editModal.label, controlDetails: editModal.description };
                   });
+                  setEdges(buildEdgesFromRaw(rowsToRawEdges(updatedRows), buildAbsolutePositionMap(getNodes()), edgeAggregationRef.current, nextRouting));
                   onUpdateRows?.(updatedRows);
                 }
                   setEditModal(null);
@@ -6442,6 +6540,8 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                   borderRadius: 8,
                   fontWeight: 700,
                   boxShadow: '0 6px 16px rgba(122,55,255,0.18)',
+                  opacity: editModal.regeneratingDescription ? 0.5 : 1,
+                  cursor: editModal.regeneratingDescription ? 'wait' : 'pointer',
                 }}
               >
                 Save

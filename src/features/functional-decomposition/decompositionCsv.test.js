@@ -65,14 +65,14 @@ describe("the export/import round trip", () => {
 
     expect(parsed.errors).toEqual([]);
     expect(parsed.conflicts).toEqual([]);
-    expect(parsed.rows).toEqual(rows.map(row => ({ ...row, system: row.system || "" })));
+    expect(parsed.rows).toEqual(rows.map(row => ({ ...row, system: row.system || "", systemDetails: row.systemDetails || "", subsystemDetails: row.subsystemDetails || "" })));
   });
 
   it("writes System before the existing exported columns", () => {
     const [header] = parseCsv(functionalDecompositionToCsv([]));
     expect(header).toEqual(FUNCTIONAL_DECOMPOSITION_COLUMNS.map(({ label }) => label));
     expect(header).toEqual([
-      "System", "Subsystem", "Function (From)", "Function (From) Details", "Control Action",
+      "System", "System Details", "Subsystem", "Subsystem Details", "Function (From)", "Function (From) Details", "Control Action",
       "Control Action Details", "Function (To)", "Function (To) Details",
     ]);
   });
@@ -216,7 +216,7 @@ describe("optional System allocation", () => {
     const parsed = parseFunctionalDecompositionCsv(functionalDecompositionToCsv(rows));
     expect(parsed.errors).toEqual([]);
     expect(parsed.conflicts).toEqual([]);
-    expect(parsed.rows).toEqual(rows);
+    expect(parsed.rows).toEqual(rows.map(row => ({...row,systemDetails:row.systemDetails || "",subsystemDetails:row.subsystemDetails || ""})));
   });
   it("continues accepting legacy files without a System column", () => {
     const parsed = parseFunctionalDecompositionCsv("Subsystem,Function (From),Control Action,Function (To)\nPlanning,Plan,Command,Control");
@@ -229,4 +229,14 @@ describe("optional System allocation", () => {
     expect(parsed.conflicts).toHaveLength(1);
     expect(parsed.conflicts[0]).toContain('system "Fleet"');
   });
+});
+
+test('container details round trip, with descriptions optional in legacy CSV files',()=>{
+ const rows=[{system:'Vehicle',systemDetails:'Overall vehicle',subsystem:'Planning',subsystemDetails:'Plans motion',
+  fromFunction:'Plan',fromDetails:'Plans',controlAction:'Command',controlDetails:'Trajectory',toFunction:'Act',toDetails:'Executes'}];
+ expect(parseFunctionalDecompositionCsv(functionalDecompositionToCsv(rows)).rows).toEqual(rows);
+ const legacy=parseFunctionalDecompositionCsv('Subsystem,Function (From),Control Action,Function (To)\nPlanning,Plan,Command,Act');
+ expect(legacy.errors).toEqual([]);
+ expect(legacy.rows[0]).not.toHaveProperty('systemDetails');
+ expect(legacy.rows[0]).not.toHaveProperty('subsystemDetails');
 });
