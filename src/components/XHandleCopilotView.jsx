@@ -1,6 +1,12 @@
+import AttachmentPreview from './AttachmentPreview';
+import { buildAttachmentPreview, retainAttachmentPreviews } from '../lib/collaboratorAttachmentPreviews';
 // src/components/XHandleCopilotView.jsx
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import MarkdownDraftTablePreview from './MarkdownDraftTablePreview';
+import CollaboratorAttachmentCard from './CollaboratorAttachmentCard';
+import SentAttachmentChips from './SentAttachmentChips';
+import { promptDisplayText, revisePromptMessage } from '../lib/collaboratorMessagePresentation';
+import { buildPastedTextAttachment, readClipboardContent } from '../lib/pastedTextAttachment';
 import React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -464,9 +470,13 @@ export function CollaboratorPromptComposer({
   isGenerating = false,
   queuedCount = 0,
   pendingContext = null,
+  onPasteAttachment,
+  onPasteFiles,
   menuProps,
 }) {
   const [previewDraft, setPreviewDraft] = useState(defaultValue);
+  const [pendingPastes, setPendingPastes] = useState(0);
+  const [pasteError, setPasteError] = useState('');
   const deferredPreviewDraft = useDeferredValue(previewDraft);
   useEffect(() => { setPreviewDraft(defaultValue); }, [defaultValue]);
   useEffect(() => {
@@ -480,6 +490,24 @@ export function CollaboratorPromptComposer({
   };
 
   const handlePaste = (event) => {
+    setPasteError('');
+    if (onPasteAttachment || onPasteFiles) {
+      const { files, text } = readClipboardContent(event.clipboardData);
+      if (files.length && onPasteFiles) {
+        event.preventDefault();
+        setPendingPastes(count => count + 1);
+        Promise.resolve().then(() => onPasteFiles(files))
+          .catch(() => setPasteError('Unable to read the pasted attachment. Please paste it again or use Add files or images.'))
+          .finally(() => setPendingPastes(count => count - 1));
+        return;
+      }
+      const attachment = buildPastedTextAttachment(text);
+      if (attachment && onPasteAttachment) {
+        event.preventDefault();
+        onPasteAttachment(attachment);
+        return;
+      }
+    }
     handleMarkdownPaste(event, (value, target) => {
       setPreviewDraft(value);
       resizeCollaboratorTextarea(target);
@@ -491,6 +519,8 @@ export function CollaboratorPromptComposer({
     <div>
       <div className="rounded-[26px] border border-neutral-200 bg-white p-2 shadow-sm transition focus-within:border-neutral-300 focus-within:shadow-md">
         {pendingContext && <div className="px-1 pt-1">{pendingContext}</div>}
+        {pendingPastes > 0 && <div role="status" className="px-2 py-1 text-xs text-neutral-500">Adding attachment…</div>}
+        {pasteError && <div role="alert" className="px-2 py-1 text-xs text-red-600">{pasteError}</div>}
         <MarkdownDraftTablePreview text={deferredPreviewDraft} />
         <div className="flex items-end gap-1.5">
           <CollaboratorComposerMenu {...menuProps} />
@@ -505,6 +535,7 @@ export function CollaboratorPromptComposer({
             onKeyDown={(event) => {
               if (event.key !== "Enter" || event.shiftKey || event.nativeEvent?.isComposing) return;
               event.preventDefault();
+              if (pendingPastes > 0) return;
               if (isGenerating) onQueue?.();
               else onSend?.();
             }}
@@ -512,7 +543,7 @@ export function CollaboratorPromptComposer({
           <button
             type="button"
             onClick={isGenerating ? onStop : onSend}
-            disabled={isGenerating ? false : !canSend}
+            disabled={isGenerating ? false : pendingPastes > 0 || !canSend}
             aria-label={isGenerating ? "Stop generating" : "Send message"}
             title={isGenerating ? "Stop generating" : "Send message"}
             className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white transition-colors disabled:cursor-not-allowed disabled:bg-neutral-200 disabled:text-neutral-400 ${isGenerating ? "bg-neutral-900 hover:bg-neutral-700" : "bg-indigo-600 hover:bg-indigo-700"}`}
@@ -1362,7 +1393,13 @@ export function buildCollaboratorChatPayload(messages, {
     temperature: 0,
     top_p: 0.1,
     max_tokens: maxTokens,
-    messages,
+    messages: messages.map(message => {
+      const modelMessage = { ...message };
+      delete modelMessage.promptText;
+      delete modelMessage.attachmentContentLength;
+      delete modelMessage.attachments;
+      return modelMessage;
+    }),
     stream,
   };
   if (supportsAIProviderEffort(provider, model)) payload.effort = effort;
@@ -3183,7 +3220,7 @@ function readFileAsDataUrl(file) {
   });
 }
 
-async function buildFileContextChip(file) {
+async function buildFileContextChip(file, { preserveFullText = false } = {}) {
   const base = {
     file: {
       name: file?.name || "Untitled file",
@@ -3196,7 +3233,7 @@ async function buildFileContextChip(file) {
 
   if (isTextLikeFile(file)) {
     const fullText = await readFileAsText(file);
-    const truncated = fullText.length > COLLABORATOR_FILE_TEXT_LIMIT;
+    const truncated = !preserveFullText && fullText.length > COLLABORATOR_FILE_TEXT_LIMIT;
     return {
       ...base,
       fileText: truncated
@@ -3215,6 +3252,7 @@ async function buildFileContextChip(file) {
 
   return {
     ...base,
+    unsupportedPreview: true,
     fileText: `[${file.name || "File"} attached. Binary or unsupported-for-text-preview file; Collaborator can see metadata but not extracted contents in this browser session.]`,
   };
 }
@@ -3331,6 +3369,21 @@ function buildHistoryContentFromContext(contexts = [], promptText = "") {
   return [contextBlob, String(promptText || "").trim()].filter(Boolean).join("\n\n");
 }
 
+export function buildHistoryUserMessage(contexts = [], promptText = '') {
+  const content = buildHistoryContentFromContext(contexts, promptText);
+  if (!contexts.length) return { role: 'user', content };
+  return {
+    role: 'user', content, promptText: String(promptText || ''),
+    attachmentContentLength: buildHistoryContentFromContext(contexts, '').length,
+    // Store only small display descriptors; content already retains the text.
+    attachments: contexts.map(context => ({
+      id: context.id,
+      name: getContextChipLabel(context),
+      kind: context.imageDataUrl ? 'image' : getContextChipType(context),
+    })),
+  };
+}
+
 function getContextChipType(c) {
   if (c.tableMarkdown) return "table";
   if (c.file) return "file";
@@ -3339,10 +3392,10 @@ function getContextChipType(c) {
 }
 
 function getContextChipLabel(c) {
-  if (c.tableMarkdown) return "|…table…";
-  if (c.file) return `${c.file.name || "attached file"} (${formatFileSize(c.file.size || 0)})`;
-  if (c.text) return c.text.slice(0, 60) + (c.text.length > 60 ? "…" : "");
-  return "screenshot";
+  if (c.tableMarkdown) return "Selected table";
+  if (c.file) return c.file.name || "Attached file";
+  if (c.text) return "Selected text";
+  return "Screenshot";
 }
 
 /* ----------------------- Turn grouping (inline layout) --------------------- */
@@ -4653,6 +4706,7 @@ export default function XHandleCopilotView({
 
   // add state
 const [ctxEditorOpen, setCtxEditorOpen] = useState(false);
+const [previewContext, setPreviewContext] = useState(null);
 const [ctxDraft, setCtxDraft] = useState(null); // { id, text?, tableMarkdown?, imageDataUrl?, file?, fileText? }
 const fileInputRef = useRef(null);
 const attachFileInputRef = useRef(null);
@@ -5040,13 +5094,13 @@ useEffect(() => {
     const editSession = editingMessage;
     if (!active?.id || editSession?.messageIndex == null || busy) return;
     const revisedContent = String(editSession.draft ?? "");
-    if (!revisedContent.trim()) return;
+    if (!revisedContent.trim() && !active.messages?.[editSession.messageIndex]?.attachments?.length) return;
 
     const revisedMessages = (active.messages || [])
       .slice(0, editSession.messageIndex + 1)
       .map((message, index) => (
         index === editSession.messageIndex
-          ? { ...message, content: revisedContent }
+          ? revisePromptMessage(message, revisedContent)
           : message
       ));
 
@@ -5054,14 +5108,19 @@ useEffect(() => {
     setThreads(loadThreads());
     setEditingMessage(null);
 
-    await runCopilot(revisedContent);
+    const content = revisedMessages[editSession.messageIndex].content;
+    await runCopilot(content, { modelUserContent: content });
   }
 
   async function handleAttachFiles(event) {
     const files = Array.from(event.target.files || []);
     event.target.value = "";
+    await addFileAttachments(files);
+  }
+
+  async function addFileAttachments(files, options) {
     if (!files.length) return;
-    const chips = await Promise.all(files.map(buildFileContextChip));
+    const chips = await Promise.all(files.map(file => buildFileContextChip(file, options)));
     setRegionContexts(prev => [
       ...prev,
       ...chips.map((chip) => ({
@@ -6156,6 +6215,8 @@ useEffect(() => {
     return {
       threadId: active?.id,
       historyContent: buildHistoryContentFromContext(contexts, input),
+      historyMessage: buildHistoryUserMessage(contexts, input),
+      contexts,
       modelUserContent: buildPromptContentFromContext(contexts, input),
       diagramFunctionalDecomposition: isDiagramFunctionalDecompositionRequest(contexts, input),
     };
@@ -6175,7 +6236,7 @@ useEffect(() => {
     if (!pending?.threadId || !pending.historyContent) return;
 
     setAutoStick(true);
-    appendMessage(pending.threadId, { role: "user", content: pending.historyContent });
+    appendMessage(pending.threadId, retainAttachmentPreviews(pending.historyMessage, pending.contexts));
     setThreads(loadThreads());
     await runCopilot(pending.historyContent, {
       modelUserContent: pending.modelUserContent,
@@ -6190,7 +6251,7 @@ useEffect(() => {
     setAutoStick(true);
     const pending = buildPendingPrompt(input);
 
-    const userMsg = { role: "user", content: pending.historyContent };
+    const userMsg = retainAttachmentPreviews(pending.historyMessage, pending.contexts);
     clearPromptComposer();
 
     appendMessage(active.id, userMsg);
@@ -6228,7 +6289,7 @@ useEffect(() => {
     const modelContent = buildPromptContentFromContext(regionContexts, input);
     const historyContent = buildHistoryContentFromContext(regionContexts, input);
 
-    appendMessage(threadId, { role: "user", content: historyContent });
+    appendMessage(threadId, retainAttachmentPreviews(buildHistoryUserMessage(regionContexts, input), regionContexts));
     setRegionContexts([]);
     setAutoStick(true);
     setThreads(loadThreads());
@@ -7972,9 +8033,11 @@ Runtime context:
   const renderPendingContextChips = () => (
     (regionContexts.length > 0 || activeReferenceSelections.length > 0) && (
       <div className="mb-2">
-        <div className="text-[11px] text-neutral-600 mb-1">
-          Context for Collaborator ({regionContexts.length + activeReferenceSelections.length})
-        </div>
+        {activeReferenceSelections.length > 0 && (
+          <div className="text-[11px] text-neutral-600 mb-1">
+            Selected context ({activeReferenceSelections.length})
+          </div>
+        )}
         <div className="flex flex-wrap gap-1.5">
           {activeReferenceSelections.map((selection, index) => (
             <button
@@ -7989,43 +8052,23 @@ Runtime context:
               <span aria-hidden="true" className="font-semibold text-indigo-500">×</span>
             </button>
           ))}
-          {regionContexts.map(c => (
-            <button
-              type="button"
-              key={c.id}
-              onClick={() => openCtxEditor(c)}
-              className="inline-flex items-center gap-2 max-w-[260px] truncate px-2 py-1 rounded-full text-xs border bg-neutral-50 hover:bg-neutral-100 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-              title="Click to preview/edit"
-            >
-              <span className="uppercase tracking-wide text-[10px] text-neutral-500">
-                {getContextChipType(c)}
-              </span>
-              <span className="truncate">
-                {getContextChipLabel(c)}
-              </span>
-              <span
-                role="button"
-                tabIndex={0}
-                className="ml-1 rounded hover:bg-neutral-200 px-1"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setRegionContexts(prev => prev.filter(x => x.id !== c.id));
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setRegionContexts(prev => prev.filter(x => x.id !== c.id));
-                  }
-                }}
-                aria-label="Remove"
-                title="Remove"
-              >
-                ✕
-              </span>
-            </button>
-          ))}
-          {regionContexts.length > 0 && (
+        </div>
+        {regionContexts.length > 0 && (
+          <div className="flex gap-2 overflow-x-auto py-2" aria-label="Attachments">
+            {regionContexts.map(c => (
+              <CollaboratorAttachmentCard
+                key={c.id}
+                name={getContextChipLabel(c)}
+                description={c.file ? formatFileSize(c.file.size || 0) : c.text?.slice(0, 120)}
+                kind={getContextChipType(c)}
+                imageDataUrl={c.imageDataUrl}
+                onOpen={() => setPreviewContext({ context: c, name: getContextChipLabel(c), preview: buildAttachmentPreview(c, getContextChipLabel(c)) })}
+                onRemove={() => setRegionContexts(prev => prev.filter(x => x.id !== c.id))}
+              />
+            ))}
+          </div>
+        )}
+          {regionContexts.length > 1 && (
             <button
               className="ml-1 text-[11px] px-2 py-1 border rounded hover:bg-neutral-50"
               onClick={() => setRegionContexts([])}
@@ -8034,7 +8077,6 @@ Runtime context:
               Clear attachments
             </button>
           )}
-        </div>
       </div>
     )
   );
@@ -8180,20 +8222,21 @@ Runtime context:
                           <div className="absolute right-2 top-2 opacity-0 transition group-hover:opacity-100 flex items-center gap-1">
                             <HoverActionButton
                               title="Edit prompt"
-                              onClick={() => startInlineEdit(turn.user.messageIndex, turn.user.content)}
+                              onClick={() => startInlineEdit(turn.user.messageIndex, promptDisplayText(turn.user))}
                               className="border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50"
                             >
                               <Pencil className="w-3.5 h-3.5" />
                             </HoverActionButton>
                             <HoverActionButton
                               title="Copy prompt"
-                              onClick={() => copyText(turn.user.content)}
+                              onClick={() => copyText(promptDisplayText(turn.user))}
                               className="border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50"
                             >
                               <Copy className="w-3.5 h-3.5" />
                             </HoverActionButton>
                           </div>
-                          {editingMessage?.messageIndex === turn.user.messageIndex ? (
+                          <SentAttachmentChips attachments={turn.user.attachments} />
+                        {editingMessage?.messageIndex === turn.user.messageIndex ? (
                             <MessageInlineEditor
                               value={editingMessage?.draft ?? ""}
                               onChange={updateEditingDraft}
@@ -8215,7 +8258,7 @@ Runtime context:
                                 p:  ({ children }) => <p className={`${userP} whitespace-pre-wrap text-left leading-relaxed mb-2`}>{children}</p>,
                               }}
                             >
-                              {String(turn.user.content || "")}
+                              {promptDisplayText(turn.user)}
                             </ReactMarkdown>
                           )}
                         </div>
@@ -8328,6 +8371,8 @@ Runtime context:
                 isGenerating={promptRunning}
                 queuedCount={queuedFollowUpCount}
                 pendingContext={renderPendingContextChips()}
+                onPasteAttachment={pushPendingContext}
+                onPasteFiles={files => addFileAttachments(files, { preserveFullText: true })}
                 menuProps={{
                   provider: collaboratorAI.provider,
                   model: collaboratorAI.model,
@@ -8430,19 +8475,20 @@ Runtime context:
                         <div className="absolute right-2 top-2 opacity-0 transition group-hover:opacity-100 flex items-center gap-1">
                           <HoverActionButton
                             title="Edit prompt"
-                            onClick={() => startInlineEdit(turn.user.messageIndex, turn.user.content)}
+                            onClick={() => startInlineEdit(turn.user.messageIndex, promptDisplayText(turn.user))}
                             className="border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50"
                           >
                             <Pencil className="w-3.5 h-3.5" />
                           </HoverActionButton>
                           <HoverActionButton
                             title="Copy prompt"
-                            onClick={() => copyText(turn.user.content)}
+                            onClick={() => copyText(promptDisplayText(turn.user))}
                             className="border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50"
                           >
                             <Copy className="w-3.5 h-3.5" />
                           </HoverActionButton>
                         </div>
+                        <SentAttachmentChips attachments={turn.user.attachments} />
                         {editingMessage?.messageIndex === turn.user.messageIndex ? (
                           <MessageInlineEditor
                             value={editingMessage?.draft ?? ""}
@@ -8465,7 +8511,7 @@ Runtime context:
                               p:  ({ children }) => <p className="whitespace-pre-wrap text-left text-[13px] leading-relaxed mb-1.5">{children}</p>,
                             }}
                           >
-                            {String(turn.user.content || "")}
+                            {promptDisplayText(turn.user)}
                           </ReactMarkdown>
                         )}
                       </div>
@@ -8574,6 +8620,8 @@ Runtime context:
               isGenerating={promptRunning}
               queuedCount={queuedFollowUpCount}
               pendingContext={renderPendingContextChips()}
+              onPasteAttachment={pushPendingContext}
+              onPasteFiles={files => addFileAttachments(files, { preserveFullText: true })}
               menuProps={{
                 provider: collaboratorAI.provider,
                 model: collaboratorAI.model,
@@ -8609,6 +8657,9 @@ Runtime context:
 
         </div>
       )}
+      {previewContext && <AttachmentPreview attachment={previewContext}
+        onClose={() => setPreviewContext(null)}
+        onEdit={() => { openCtxEditor(previewContext.context); setPreviewContext(null); }} />}
       {ctxEditorOpen && ctxDraft && (
   <div
     className="xhandle-modal-viewport fixed inset-0 z-[1200] bg-black/40 flex items-center justify-center"
@@ -8639,6 +8690,7 @@ Runtime context:
 	          </div>
 	        )}
 	        {/* TEXT / TABLE */}
+            <MarkdownDraftTablePreview text={ctxDraft.tableMarkdown ?? ctxDraft.fileText ?? ctxDraft.text ?? ''} />
 	        {(ctxDraft.text || ctxDraft.tableMarkdown || ctxDraft.fileText) && (
 	          <div className="space-y-2">
 	            <label className="text-xs text-neutral-600 block">

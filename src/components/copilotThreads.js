@@ -1,3 +1,4 @@
+import { deleteAttachmentPreviews } from '../lib/collaboratorAttachmentPreviews';
 // src/components/copilotThreads.js
 const KEY = "xhc.threads";
 const MAX_THREADS = 20;
@@ -146,6 +147,14 @@ export function loadThreads() {
   if (tabSnapshot) return sortThreadsForRetention(tabSnapshot);
   return sortThreadsForRetention(read(typeof localStorage !== "undefined" ? localStorage : null, KEY) || []);
 }
+function releaseRemovedPreviews(before, after) {
+  const attachments = threads => threads.flatMap(thread => thread.messages || []).flatMap(message => message.attachments || []);
+  const retained = new Set(attachments(after).map(attachment => attachment?.previewId).filter(Boolean));
+  const removed = attachments(before).filter(attachment => attachment?.previewId && !retained.has(attachment.previewId));
+  if (removed.length) void deleteAttachmentPreviews(removed);
+  return after;
+}
+
 export function saveThreads(threads) {
   if (typeof localStorage === "undefined") return compactThreadsForStorage(threads);
   let prepared = serializeThreadsForStorage(threads);
@@ -153,7 +162,7 @@ export function saveThreads(threads) {
     localStorage.setItem(KEY, prepared.serialized);
     try { sessionStorage?.removeItem(SESSION_FALLBACK_KEY); } catch {}
     volatileThreads = null;
-    return prepared.compacted;
+    return releaseRemovedPreviews(threads, prepared.compacted);
   } catch (error) {}
 
   prepared = serializeThreadsForStorage(threads, true);
@@ -161,12 +170,12 @@ export function saveThreads(threads) {
     localStorage.setItem(KEY, prepared.serialized);
     try { sessionStorage?.removeItem(SESSION_FALLBACK_KEY); } catch {}
     volatileThreads = null;
-    return prepared.compacted;
+    return releaseRemovedPreviews(threads, prepared.compacted);
   } catch {
     try {
       sessionStorage?.setItem(SESSION_FALLBACK_KEY, prepared.serialized);
       volatileThreads = null;
-      return prepared.compacted;
+      return releaseRemovedPreviews(threads, prepared.compacted);
     } catch {}
   }
 
@@ -223,8 +232,10 @@ export function renameThread(id, title) {
   if (i >= 0) { all[i].title = title || all[i].title; all[i].updatedAt = Date.now(); saveThreads(all); }
 }
 export function deleteThread(id) {
-  const all = loadThreads().filter(t => t.id !== id);
+  const threads = loadThreads();
+  const all = threads.filter(t => t.id !== id);
   saveThreads(all);
+  void deleteAttachmentPreviews(threads.filter(t => t.id === id).flatMap(t => t.messages || []).flatMap(m => m.attachments || []));
 }
 export function togglePin(id) {
   const all = loadThreads();
@@ -246,8 +257,10 @@ export function setMessages(id, messages) {
   const all = loadThreads();
   const i = all.findIndex(t => t.id === id);
   if (i >= 0) {
+    const previous = all[i].messages;
     all[i].messages = messages;
     all[i].updatedAt = Date.now();
     saveThreads(all);
+    releaseRemovedPreviews([{ messages: previous }], all);
   }
 }

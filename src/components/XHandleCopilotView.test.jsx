@@ -50,6 +50,7 @@ const {
   buildResolvedAbstractionRequest,
   buildPendingFunctionalDraftRevisionRequest,
   buildPromptContentFromContext,
+  buildHistoryUserMessage,
   compactPromptHistory,
   isDiagramFunctionalDecompositionRequest,
   isContextualVibeReviewIntent,
@@ -1881,5 +1882,97 @@ describe("the generate-now directive reaches the model", () => {
       { role: "user", content: [{ type: "text", text: FUNCTIONAL_DECOMPOSITION_DIRECTIVE }] },
     ];
     expect(withFunctionalDecompositionDirective(history, "system")).toHaveLength(1);
+  });
+});
+
+describe('pasted text attachments', () => {
+  it('attaches a large paste without changing the draft or selection, and includes its full text in the model prompt', () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const onPasteAttachment = jest.fn();
+    const onDraftChange = jest.fn();
+    const pasted = 'Important content\n'.repeat(6000) + 'END OF ATTACHMENT';
+    try {
+      act(() => root.render(<CollaboratorPromptComposer
+        textareaRef={React.createRef()} defaultValue="Review this please"
+        onPasteAttachment={onPasteAttachment} onDraftChange={onDraftChange}
+        menuProps={{provider:'openai',model:'gpt-5.5',effort:'medium'}}
+      />));
+      const textarea = host.querySelector('textarea');
+      textarea.setSelectionRange(7, 11);
+      const paste = new Event('paste', {bubbles:true,cancelable:true});
+      Object.defineProperty(paste,'clipboardData',{value:{getData:type=>type==='text/plain'?pasted:''}});
+      act(() => textarea.dispatchEvent(paste));
+      expect(paste.defaultPrevented).toBe(true);
+      expect(onPasteAttachment).toHaveBeenCalledTimes(1);
+      expect(textarea.value).toBe('Review this please');
+      expect(textarea.selectionStart).toBe(7);
+      expect(textarea.selectionEnd).toBe(11);
+      expect(onDraftChange).not.toHaveBeenCalled();
+      const attachment = onPasteAttachment.mock.calls[0][0];
+      expect(buildPromptContentFromContext([attachment], textarea.value)).toContain(pasted);
+      expect(buildPromptContentFromContext([attachment], textarea.value)).toContain('Review this please');
+      const shortPaste = new Event('paste',{bubbles:true,cancelable:true});
+      Object.defineProperty(shortPaste,'clipboardData',{value:{getData:type=>type==='text/plain'?'short text':''}});
+      act(() => textarea.dispatchEvent(shortPaste));
+      expect(shortPaste.defaultPrevented).toBe(true);
+      expect(onPasteAttachment).toHaveBeenCalledTimes(2);
+    } finally {
+      act(() => root.unmount());host.remove();
+    }
+  });
+});
+
+it('waits for pasted files before sending and shows read failures without changing the draft', async () => {
+  const host = document.createElement('div');document.body.appendChild(host);
+  const root = createRoot(host);
+  let rejectRead;
+  const onPasteFiles = jest.fn(() => new Promise((resolve,reject)=>{rejectRead=reject;}));
+  const onSend = jest.fn();
+  try {
+    act(()=>root.render(<CollaboratorPromptComposer textareaRef={React.createRef()} defaultValue="Typed prompt" canSend onSend={onSend} onPasteFiles={onPasteFiles} menuProps={{provider:'openai',model:'gpt-5.5',effort:'medium'}} />));
+    const file = new File(['image'], 'screenshot.png', {type:'image/png'});
+    const event = new Event('paste',{bubbles:true,cancelable:true});
+    Object.defineProperty(event,'clipboardData',{value:{files:[file],getData:()=>''}});
+    await act(async()=>host.querySelector('textarea').dispatchEvent(event));
+    expect(event.defaultPrevented).toBe(true);
+    expect(onPasteFiles).toHaveBeenCalledWith([file]);
+    expect(host.querySelector('[aria-label="Send message"]').disabled).toBe(true);
+    act(()=>host.querySelector('textarea').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true})));
+    expect(onSend).not.toHaveBeenCalled();
+    await act(async()=>rejectRead(new Error('read failed')));
+    expect(host.querySelector('[role="alert"]').textContent).toContain('Unable to read');
+    expect(host.querySelector('textarea').value).toBe('Typed prompt');
+    expect(host.querySelector('[aria-label="Send message"]').disabled).toBe(false);
+  } finally {act(()=>root.unmount());host.remove();}
+});
+
+describe('sent attachment presentation', () => {
+  const { promptDisplayText, revisePromptMessage } = require('../lib/collaboratorMessagePresentation');
+  const context = {id:'attachment-1',file:{name:'pasted-content.md',type:'text/markdown',size:123},fileText:'| Action |\n| --- |\n| Stop |'};
+  it('keeps display descriptors separate from model content through serialization and edits', () => {
+    const message = JSON.parse(JSON.stringify(buildHistoryUserMessage([context], 'Review this')));
+    expect(promptDisplayText(message)).toBe('Review this');
+    expect(message.attachments).toEqual([{id:'attachment-1',name:'pasted-content.md',kind:'file'}]);
+    expect(message.content).toContain(context.fileText);
+    const updated = revisePromptMessage(message, 'Review the timing');
+    expect(promptDisplayText(updated)).toBe('Review the timing');
+    expect(updated.attachments).toEqual(message.attachments);
+    expect(updated.content).toContain(context.fileText);
+    expect(updated.content.endsWith('Review the timing')).toBe(true);
+    const model = buildCollaboratorChatPayload([updated]).messages[0];
+    expect(model.content).toBe(updated.content);
+    expect(model).not.toHaveProperty('attachments');
+    expect(model).not.toHaveProperty('promptText');
+    expect(model).not.toHaveProperty('attachmentContentLength');
+  });
+  it('supports attachment-only prompts and preserves ordinary message rendering', () => {
+    const message = buildHistoryUserMessage([context], '');
+    expect(promptDisplayText(message)).toBe('');
+    expect(message.attachments).toHaveLength(1);
+    expect(revisePromptMessage(message, '').content).toContain(context.fileText);
+    expect(promptDisplayText({role:'user',content:'Old prompt'})).toBe('Old prompt');
+    expect(buildHistoryUserMessage([], 'Plain prompt')).toEqual({role:'user',content:'Plain prompt'});
   });
 });

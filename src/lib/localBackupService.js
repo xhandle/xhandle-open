@@ -24,6 +24,13 @@ const EXCLUDED_BACKUP_KEYS = new Set([
 
 const KNOWN_DB_CONFIGS = [
   {
+    name: "xhandle-collaborator-attachments", version: 1,
+    stores: { previews: { keyPath: null } },
+    open: () => openDB("xhandle-collaborator-attachments", 1, {
+      upgrade(db) { if (!db.objectStoreNames.contains("previews")) db.createObjectStore("previews"); },
+    }),
+  },
+  {
     name: "xhandle-recovery", version: 1,
     stores: { checkpoints: { keyPath: null } },
     open: () => openDB("xhandle-recovery", 1, {

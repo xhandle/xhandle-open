@@ -1,4 +1,6 @@
-import { ensureThread, loadThreads, saveThreads } from "./copilotThreads";
+import { deleteAttachmentPreviews } from '../lib/collaboratorAttachmentPreviews';
+jest.mock('../lib/collaboratorAttachmentPreviews', () => ({ deleteAttachmentPreviews: jest.fn(async () => {}) }));
+import { deleteThread, setMessages, ensureThread, loadThreads, saveThreads } from "./copilotThreads";
 
 describe("Collaborator thread persistence", () => {
   beforeEach(() => {
@@ -102,5 +104,28 @@ describe("unfinished review thread protection", () => {
     // Protection is what keeps a thread through aggressive pruning; a finished
     // review must not hold history open forever.
     expect(loadThreads()).toEqual([]);
+  });
+});
+
+
+describe('attachment preview retention', () => {
+  beforeEach(() => { localStorage.clear(); sessionStorage.clear(); deleteAttachmentPreviews.mockClear(); });
+  it('removes previews when a thread is deleted', () => {
+    saveThreads([{ id: 'preview-thread', messages: [{ role: 'user', attachments: [{ previewId: 'image-1' }] }] }]);
+    deleteThread('preview-thread');
+    expect(deleteAttachmentPreviews).toHaveBeenCalledWith([{ previewId: 'image-1' }]);
+  });
+  it('keeps referenced previews while releasing discarded edit branches', () => {
+    const first = { role: 'user', attachments: [{ previewId: 'keep' }] };
+    saveThreads([{ id: 'edit-thread', messages: [first, { role: 'user', attachments: [{ previewId: 'discard' }] }] }]);
+    setMessages('edit-thread', [first]);
+    expect(deleteAttachmentPreviews).toHaveBeenCalledWith([{ previewId: 'discard' }]);
+  });
+  it('releases previews from history pruned by the message limit', () => {
+    saveThreads([{ id: 'long-thread', messages: [
+      { role: 'user', attachments: [{ previewId: 'old' }] },
+      ...Array.from({length: 80}, () => ({ role: 'assistant', content: 'reply' })),
+    ] }]);
+    expect(deleteAttachmentPreviews).toHaveBeenCalledWith([{ previewId: 'old' }]);
   });
 });
