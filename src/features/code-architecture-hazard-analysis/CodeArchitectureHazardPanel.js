@@ -76,6 +76,7 @@ export default function CodeArchitectureHazardPanel({
   reviewDrawerOptions,
   forceSummaryOpenKey,
   highlightedRowIndex,
+  onRowFocusResolved,
   onOpenArchitectureTarget,
   onClearContents,
   onDeleteSummaryRow,
@@ -362,6 +363,9 @@ export default function CodeArchitectureHazardPanel({
                 showReview={Boolean(latestRun)}
                 onVisibleSummaryChange={handleVisibleSummary}
                 highlightedRowIndex={highlightedRowIndex}
+                focusRequestKey={forceSummaryOpenKey}
+                onRowFocusResolved={onRowFocusResolved}
+                onSelectedOperationalContextChange={onSelectedOperationalContextChange}
                 storageKey={`code-architecture-hazard-summary:${latestRun?.repoId || "repo"}:${latestRun?.id || "latest"}`}
                 onOpenArchitectureTarget={onOpenArchitectureTarget}
                 onDeleteRow={reviewMode || !latestRun ? undefined : onDeleteSummaryRow}

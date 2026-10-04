@@ -1,7 +1,10 @@
+import useTableRowFocus from "./useTableRowFocus";
+import { resolveArchitectureTarget, retryDiagramFocus } from "./codeArchitectureNavigation";
 import CopyTableButton from './CopyTableButton';
 // 📁 generateFunctionalDecompositionFromGitHub.js
 
 import React, { useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import LiteSummaryDiagramReactFlowGitHub from "./LiteSummaryDiagramReactFlowGitHub";
 import ArchitectureReportViewer from "./ArchitectureReportViewer";
 import { FilterableHeaderCell, useColumnFilters } from "./FilterableTableHeader";
@@ -3970,6 +3973,7 @@ export const FunctionalDecompositionTable = ({
   reviewByRow,
   reviewDrawerOptions = {},
   forceTableOpenKey,
+  onRowFocusResolved,
   highlightedRowIndex = null,
   hazardSummary = null,
   assuranceArtifacts = null,
@@ -3989,10 +3993,11 @@ export const FunctionalDecompositionTable = ({
   onCollaboratorSelectionChange,
   viewMode = null,
   showViewControls = true,
+  viewControlsTarget = null,
   onViewModeChange,
 }) => {
   const [manualData, setManualData] = useState(null);
-  const [collapsed, setCollapsed] = useState(false);
+  const [canvasToolsTarget, setCanvasToolsTarget] = useState(null);
   const [fullscreen, setFullscreen] = useState(false);
 
   const [internalView, setInternalView] = useState("architecture"); // professional hierarchy first when available
@@ -4006,7 +4011,7 @@ export const FunctionalDecompositionTable = ({
   }, [onViewModeChange]);
   const [splitDiagramPercent, setSplitDiagramPercent] = useState(50);
   const [architectureAbstraction, setArchitectureAbstraction] = useState("subsystem");
-  const [cleanOnceKey, setCleanOnceKey] = useState(() => `clean-${Date.now()}`); // one-time arrange on first open
+  const [cleanOnceKey, setCleanOnceKey] = useState(() => `initial-${Date.now()}`); // one-time arrange on first open
   const [architectureReport, setArchitectureReport] = useState(null);
   const [selectedArchitectureRowId, setSelectedArchitectureRowId] = useState("");
   const [queuedCsuFocusTarget, setQueuedCsuFocusTarget] = useState(null);
@@ -4118,10 +4123,7 @@ const repoName = useMemo(() => {
     const targetIndex = Number(highlightedRowIndex);
     if (!Number.isFinite(targetIndex)) return;
     setView((currentView) => currentView === "split" ? currentView : "table");
-    setTimeout(() => {
-      tableRowRefs.current[targetIndex]?.scrollIntoView?.({ behavior: "smooth", block: "center" });
-    }, 80);
-  }, [highlightedRowIndex, setView]);
+  }, [highlightedRowIndex, forceTableOpenKey, setView]);
 
   const rowsWithTraceIds = useMemo(
     () => ensureCodeArchitectureTraceIds(manualData || data || []),
@@ -4235,166 +4237,6 @@ const repoName = useMemo(() => {
     }
   }, [manualData, data, view, repoName, branch, reportStorageKey, setView]);
 
-  // --- file filter helpers/state for the left sidebar ---
-function relatedFiles(cell) {
-  if (!cell || typeof cell !== "string") return [];
-  return cell.split(/[,;]+/).map((value) => value.trim()).filter(Boolean);
-}
-
-function architectureFolderLabel(value, fallback) {
-  const text = String(value || "").trim();
-  return text || fallback;
-}
-
-const uniqueFiles = useMemo(() => {
-  const s = new Set();
-  (diagramRows || []).forEach((r) => {
-    relatedFiles(r.fromFile).forEach((file) => s.add(file));
-    relatedFiles(r.toFile).forEach((file) => s.add(file));
-  });
-  return Array.from(s).sort((a, b) => a.localeCompare(b));
-}, [diagramRows]);
-
-	const [includedFiles, setIncludedFiles] = useState(uniqueFiles);
-	const includedFilesSignature = useMemo(
-	  () => includedFiles.slice().sort((a, b) => a.localeCompare(b)).join("\n"),
-	  [includedFiles]
-	);
-
-// keep selection in sync with data changes
-React.useEffect(() => {
-  setIncludedFiles(uniqueFiles);
-}, [uniqueFiles]);
-
-const [fileQuery, setFileQuery] = useState("");
-const filteredFileTree = useMemo(() => {
-  const q = fileQuery.trim().toLowerCase();
-  const root = new Map();
-  const addGroup = (map, key, label) => {
-    if (!map.has(key)) map.set(key, { key, label, children: new Map(), files: new Set() });
-    return map.get(key);
-  };
-
-  (diagramRows || []).forEach((row) => {
-    const arch = row.architecture || {};
-    const subsystem = architectureFolderLabel(arch.subsystem, "Application Subsystem");
-    const csci = architectureFolderLabel(arch.csci, "Application Software");
-    const csc = architectureFolderLabel(arch.csc, "Core Components");
-    const csu = architectureFolderLabel(arch.csu, row.fromFunction || row.toFunction || "Functional Unit");
-    const files = Array.from(new Set([...relatedFiles(row.fromFile), ...relatedFiles(row.toFile)]));
-    if (!files.length) files.push("Unfiled");
-
-    const haystack = [subsystem, csci, csc, csu, ...files].join(" ").toLowerCase();
-    if (q && !haystack.includes(q)) return;
-
-    const subsystemNode = addGroup(root, subsystem, subsystem);
-    const csciNode = addGroup(subsystemNode.children, `${subsystem}/${csci}`, csci);
-    const cscNode = addGroup(csciNode.children, `${subsystem}/${csci}/${csc}`, csc);
-    const csuNode = addGroup(cscNode.children, `${subsystem}/${csci}/${csc}/${csu}`, csu);
-    files.forEach((file) => csuNode.files.add(file));
-  });
-
-  const sortGroups = (groups) => Array.from(groups.values())
-    .sort((a, b) => a.label.localeCompare(b.label))
-    .map((group) => ({
-      ...group,
-      children: sortGroups(group.children),
-      files: Array.from(group.files).sort((a, b) => a.localeCompare(b)),
-    }));
-
-  return sortGroups(root);
-}, [diagramRows, fileQuery]);
-
-const filteredTreeFileCount = useMemo(() => {
-  const files = new Set();
-  const visit = (groups) => {
-    groups.forEach((group) => {
-      (group.files || []).forEach((file) => files.add(file));
-      visit(group.children || []);
-    });
-  };
-  visit(filteredFileTree);
-  return files.size;
-}, [filteredFileTree]);
-
-	const toggleIncludedFile = React.useCallback((file, checked) => {
-	  setIncludedFiles((prev) => {
-	    if (checked) return [...new Set([...prev, file])];
-	    return prev.filter((item) => item !== file);
-	  });
-	}, []);
-	const toggleIncludedFiles = React.useCallback((files, checked) => {
-	  const fileList = Array.from(new Set(files || [])).filter(Boolean);
-	  if (!fileList.length) return;
-	  setIncludedFiles((prev) => {
-	    if (checked) return Array.from(new Set([...prev, ...fileList]));
-	    const remove = new Set(fileList);
-	    return prev.filter((item) => !remove.has(item));
-	  });
-	}, []);
-
-	const renderFileTree = React.useCallback((groups, depth = 0) => (
-	  groups.map((group) => {
-    const groupFiles = new Set();
-    const collect = (node) => {
-      (node.files || []).forEach((file) => groupFiles.add(file));
-      (node.children || []).forEach(collect);
-    };
-	    collect(group);
-	    const selectedCount = Array.from(groupFiles).filter((file) => includedFiles.includes(file)).length;
-	    const totalCount = groupFiles.size;
-	    const allSelected = totalCount > 0 && selectedCount === totalCount;
-	    const partiallySelected = selectedCount > 0 && selectedCount < totalCount;
-	    return (
-	      <details key={group.key} className="rounded-md">
-	        <summary
-          className="flex cursor-pointer list-none items-center gap-1 rounded px-1 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-          title={group.label}
-          style={{ paddingLeft: depth ? `${depth * 10 + 4}px` : 4 }}
-	        >
-	          <span className="text-slate-400">▾</span>
-	          <input
-	            type="checkbox"
-	            className="h-3.5 w-3.5 shrink-0"
-	            checked={allSelected}
-	            ref={(input) => {
-	              if (input) input.indeterminate = partiallySelected;
-	            }}
-	            onClick={(event) => event.stopPropagation()}
-	            onChange={(event) => toggleIncludedFiles(Array.from(groupFiles), event.target.checked)}
-	            aria-label={`Toggle ${group.label}`}
-	          />
-	          <span className="truncate">{group.label}</span>
-	          <span className="ml-auto shrink-0 text-[10px] font-medium text-slate-400">
-	            {selectedCount}/{totalCount}
-          </span>
-        </summary>
-        <div className="space-y-1">
-          {renderFileTree(group.children || [], depth + 1)}
-          {(group.files || []).map((file) => {
-            const checked = includedFiles.includes(file);
-            return (
-              <label
-                key={`${group.key}:${file}`}
-                className="flex items-center gap-2 rounded px-1 py-0.5 text-xs text-slate-700 hover:bg-slate-50"
-                style={{ paddingLeft: `${(depth + 1) * 10 + 12}px` }}
-              >
-                <input
-                  type="checkbox"
-                  className="h-3.5 w-3.5"
-                  checked={checked}
-                  onChange={(event) => toggleIncludedFile(file, event.target.checked)}
-                />
-                <span className="truncate" title={file}>{file}</span>
-              </label>
-            );
-          })}
-        </div>
-      </details>
-	      );
-	  })
-	), [includedFiles, toggleIncludedFile, toggleIncludedFiles]);
-
 const diagramHeight = "100%";
 
 React.useEffect(() => {
@@ -4407,7 +4249,7 @@ React.useEffect(() => {
     }, delay)
   );
   return () => timers.forEach((timer) => clearTimeout(timer));
-	}, [view, architectureAbstraction, fullscreen, collapsed, includedFilesSignature, diagramRows.length]);
+	}, [view, architectureAbstraction, fullscreen, diagramRows.length]);
 
   const thBase =
     "sticky top-0 z-10 bg-indigo-50 text-slate-700 font-semibold text-[13px] uppercase tracking-wide border-b border-slate-200 px-3 py-2";
@@ -4511,6 +4353,17 @@ React.useEffect(() => {
     return column ? column.getValue(item.row) : "";
   }, [tableColumns]);
   const tableFilterState = useColumnFilters(sourceTableRows, getTableFilterCell);
+  React.useEffect(() => {
+    if (highlightedRowIndex == null) return;
+    if (sourceTableRows.some(item => item.sourceIndex === highlightedRowIndex) &&
+        !tableFilterState.filteredRows.some(item => item.sourceIndex === highlightedRowIndex)) {
+      tableFilterState.clearAllFilters();
+    }
+  }, [highlightedRowIndex, forceTableOpenKey, sourceTableRows, tableFilterState]);
+  const rowFocusRevision = useMemo(() => ({ view, rows: tableFilterState.filteredRows }), [view, tableFilterState.filteredRows]);
+  useTableRowFocus({ requestKey: forceTableOpenKey, rowIndex: highlightedRowIndex,
+    rowRefs: tableRowRefs, revision: rowFocusRevision, onResolved: onRowFocusResolved });
+
   const copyTableColumns = useMemo(() => tableColumns.map(column => ({
     key: column.id, label: column.label, getValue: ({ row }) => column.getValue(row),
   })), [tableColumns]);
@@ -4535,50 +4388,26 @@ React.useEffect(() => {
     link.remove();
     URL.revokeObjectURL(url);
   }, [repoName, tableRowsWithTraceIds, tableColumns]);
-  const includeRowFiles = React.useCallback((row, mode) => {
-    const files = [];
-    if (mode !== "to") files.push(row?.fromFile);
-    if (mode !== "from") files.push(row?.toFile);
-    const nextFiles = files
-      .flatMap((value) => String(value || "").split(/[,;]+/))
-      .map((value) => value.trim())
-      .filter(Boolean);
-    if (!nextFiles.length) return;
-    setIncludedFiles((prev) => Array.from(new Set([...prev, ...nextFiles])));
-  }, []);
-  const requestCsuDiagramFocus = React.useCallback((target, onDone) => {
-    const delays = [120, 240, 420, 700, 1100, 1600, 2300, 3200, 4500, 6200];
-    const timers = [];
-    let completed = false;
-    const clearTimers = () => timers.forEach((timer) => clearTimeout(timer));
-    delays.forEach((delay, index) => {
-      const timer = setTimeout(() => {
-        if (completed) return;
-        const focused = diagramRef.current?.focusArchitectureTarget?.(target);
-        if (focused || index === delays.length - 1) {
-          completed = true;
-          clearTimers();
-          onDone?.();
-        }
-      }, delay);
-      timers.push(timer);
-    });
-    return clearTimers;
-  }, []);
+  const focusHandledRef = useRef(onFocusTargetHandled);
+  focusHandledRef.current = onFocusTargetHandled;
+  const externalFocusRef = useRef(focusTarget);
+  externalFocusRef.current = focusTarget;
+  const requestCsuDiagramFocus = React.useCallback((target, onDone) =>
+    retryDiagramFocus(() => diagramRef.current, target, onDone), []);
   const openCsuDiagramTarget = React.useCallback((event, target) => {
     event?.preventDefault?.();
     event?.stopPropagation?.();
-    includeRowFiles(target.row, target.mode);
+    if (externalFocusRef.current) focusHandledRef.current?.(externalFocusRef.current);
     setQueuedCsuFocusTarget(target);
     setView(codeArchitectureViewModeForDiagramFocus);
     setArchitectureAbstraction("detailed");
-    setCleanOnceKey(`trace-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
-  }, [includeRowFiles, setView]);
+  }, [setView]);
   const buildCsuDiagramTarget = React.useCallback((row, sourceIndex, type) => ({
     type: type === "action" ? "edge" : "node",
     mode: type === "from" ? "from" : type === "to" ? "to" : "edge",
     row,
     rowIndex: sourceIndex,
+    traceId: row.traceId,
     rowRef: row.rowRef || sourceIndex + 1,
     nodeId: type === "from" ? row.fromNodeId : type === "to" ? row.toNodeId : "",
     edgeId: type === "action" ? row.edgeId : "",
@@ -4591,30 +4420,60 @@ React.useEffect(() => {
   }), []);
   React.useEffect(() => {
     if (!focusTarget) return;
-    const targetRowIndex = Number(focusTarget.rowIndex);
-    const matchedRowIndex = Number.isFinite(targetRowIndex) && targetRowIndex >= 0
-      ? targetRowIndex
-      : diagramRows.findIndex((row) =>
-        String(row.fromFunction || "") === String(focusTarget.fromFunction || "") &&
-        String(row.controlAction || "") === String(focusTarget.controlAction || "") &&
-        String(row.toFunction || "") === String(focusTarget.toFunction || "")
-      );
-    const enrichedTarget = matchedRowIndex >= 0
-      ? { ...focusTarget, rowIndex: matchedRowIndex }
-      : focusTarget;
-    includeRowFiles(enrichedTarget.row || enrichedTarget, enrichedTarget.mode);
+    const enrichedTarget = resolveArchitectureTarget(focusTarget, diagramRows);
+    if (!enrichedTarget) return;
     setView(codeArchitectureViewModeForDiagramFocus);
     setArchitectureAbstraction("detailed");
-    setCleanOnceKey(`trace-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
-    return requestCsuDiagramFocus(enrichedTarget, onFocusTargetHandled);
-  }, [diagramRows, focusTarget, includeRowFiles, onFocusTargetHandled, requestCsuDiagramFocus, setView]);
+    setQueuedCsuFocusTarget({ ...enrichedTarget, externalRequest: focusTarget });
+  }, [diagramRows, focusTarget, setView]);
   React.useEffect(() => {
     if (!queuedCsuFocusTarget || !codeArchitectureViewShowsDiagram(view) || architectureAbstraction !== "detailed") return undefined;
-    return requestCsuDiagramFocus(queuedCsuFocusTarget, () => setQueuedCsuFocusTarget(null));
-  }, [architectureAbstraction, queuedCsuFocusTarget, requestCsuDiagramFocus, view]);
+    const resolved = resolveArchitectureTarget(queuedCsuFocusTarget, diagramRows);
+    if (!resolved) return;
+    return requestCsuDiagramFocus(resolved, () => {
+      setQueuedCsuFocusTarget(current => current === queuedCsuFocusTarget ? null : current);
+      if (queuedCsuFocusTarget.externalRequest) focusHandledRef.current?.(queuedCsuFocusTarget.externalRequest);
+    });
+  }, [architectureAbstraction, diagramRows, queuedCsuFocusTarget, requestCsuDiagramFocus, view]);
+
+  const selectView = (mode) => {
+    setView(mode);
+    if (mode === "architecture") {
+      setArchitectureAbstraction("subsystem");
+      setCleanOnceKey(`clean-${Date.now()}`);
+    }
+  };
+
+  const menuViewControls = viewControlsTarget ? createPortal(
+    <div className="border-b border-gray-100 pb-1 mb-1">
+      {[
+        ["architecture", levelLabels.architecture],
+        ["table", "Table"],
+        ["split", "Split view"],
+      ].map(([mode, label]) => (
+        <button
+          key={mode}
+          type="button"
+          disabled={mode !== "table" && !hasArchitecture}
+          aria-pressed={view === mode}
+          className={`block w-full px-3 py-2 text-left text-sm disabled:cursor-not-allowed disabled:opacity-50 ${
+            view === mode ? "bg-purple-50 font-semibold text-[#7A37FF]" : "text-gray-700 hover:bg-gray-50"
+          }`}
+          onClick={(event) => {
+            selectView(mode);
+            event.currentTarget.closest('details')?.removeAttribute('open');
+          }}
+        >
+          {label}
+        </button>
+      ))}
+    </div>,
+    viewControlsTarget
+  ) : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
+      {menuViewControls}
       {/* Toolbar */}
       {showViewControls && <div className="shrink-0 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
@@ -4623,11 +4482,7 @@ React.useEffect(() => {
             className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm disabled:opacity-60 ${
               view === "architecture" ? "bg-[#2D7DFE] text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
             }`}
-            onClick={() => {
-              setView("architecture");
-              setArchitectureAbstraction("subsystem");
-              setCleanOnceKey(`clean-${Date.now()}`);
-            }}
+            onClick={() => selectView("architecture")}
             disabled={!hasArchitecture}
           >
             {levelLabels.architecture}
@@ -4636,7 +4491,7 @@ React.useEffect(() => {
             className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm ${
               view === "table" ? "bg-[#2D7DFE] text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
             }`}
-            onClick={() => setView("table")}
+            onClick={() => selectView("table")}
           >
             Table
           </button>
@@ -4645,7 +4500,7 @@ React.useEffect(() => {
 	            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm ${
 	              view === "split" ? "bg-[#2D7DFE] text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
 	            }`}
-	            onClick={() => setView("split")}
+	            onClick={() => selectView("split")}
 	            disabled={!hasArchitecture}
 	          >
 	            Split view
@@ -4742,65 +4597,14 @@ React.useEffect(() => {
       </div>
     )}
     <div className="flex min-h-0 flex-1">
-      {/* Left sidebar */}
-      <aside
-  className={`${collapsed ? "w-10" : "w-64"} relative flex min-h-0 flex-col border-r bg-white transition-all duration-200`}
->
-  {/* Collapse/expand button */}
-  <button
-    onClick={() => setCollapsed((v) => !v)}
-    className="absolute right-1 top-3 z-10 rounded-full border bg-white px-2 py-1 text-xs shadow"
-    aria-label={collapsed ? "Expand filters" : "Collapse filters"}
-    title={collapsed ? "Expand" : "Collapse"}
-  >
-    {collapsed ? "›" : "‹"}
-  </button>
-
-  {/* Sidebar content only when expanded */}
-  {!collapsed && (
-    <div className="flex min-h-0 flex-1 flex-col p-3">
-      <div className="font-semibold text-sm mb-2">Files</div>
-
-      <div className="mb-2 shrink-0">
-        <input
-          value={fileQuery}
-          onChange={(e) => setFileQuery(e.target.value)}
-          placeholder="Search files…"
-          className="w-full rounded-md border px-2 py-1 text-sm"
-        />
-      </div>
-
-      <div className="mb-3 flex shrink-0 items-center gap-2 text-xs">
-        <button
-          type="button"
-          onClick={() => setIncludedFiles(uniqueFiles)}
-          className="px-2 py-1 rounded border hover:bg-gray-50"
+      {!reviewMode && (
+        <aside
+          aria-label="Code architecture tools sidebar"
+          className="shrink-0 min-h-0 border-r bg-white"
         >
-          Select all
-        </button>
-        <button
-          type="button"
-          onClick={() => setIncludedFiles([])}
-          className="px-2 py-1 rounded border hover:bg-gray-50"
-        >
-          Clear all
-        </button>
-      </div>
-
-      <div className="mb-2 shrink-0 text-[11px] text-slate-500">
-        {filteredTreeFileCount} file{filteredTreeFileCount === 1 ? "" : "s"} in hierarchy
-      </div>
-
-      <div className="min-h-0 flex-1 space-y-1 overflow-auto pr-1">
-        {renderFileTree(filteredFileTree)}
-        {filteredFileTree.length === 0 && (
-          <div className="text-xs text-slate-500">No matches</div>
-        )}
-      </div>
-    </div>
-  )}
-</aside>
-
+          <div ref={setCanvasToolsTarget} className="h-full" />
+        </aside>
+      )}
 
       {/* Diagram surface */}
       <div className="flex-1 p-3 min-h-0">
@@ -4837,12 +4641,13 @@ React.useEffect(() => {
           }}
           repoName={repoName}
           storageKey={storageKey}
+          canvasToolsTarget={canvasToolsTarget}
+          preserveLayoutOnMount={!!focusTarget || !!queuedCsuFocusTarget}
           cleanOnceKey={cleanOnceKey}
           height={diagramHeight}
           onCleanApplied={() => setCleanOnceKey(null)}
           onRequestCreateProject={onRequestCreateProject}
           reviewMode={reviewMode}
-          includeFiles={includedFiles}   // ← pass selection to diagram
           architectureMode={view === "architecture" || view === "split"}
           architectureAbstraction={architectureAbstraction}
           colorSystemElements={colorSystemElements}

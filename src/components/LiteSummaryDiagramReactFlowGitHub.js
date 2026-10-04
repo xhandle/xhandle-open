@@ -8,6 +8,7 @@ import React, {
   forwardRef,
   useImperativeHandle,
 } from 'react';
+import { createPortal } from 'react-dom';
 import ReactFlow, {
   BezierEdge,
   ReactFlowProvider,
@@ -620,7 +621,7 @@ function columnsForSquareNodeGrid(count, { maxColumns = 8 } = {}) {
   return Math.max(1, Math.min(maxColumns, count, ideal));
 }
 
-function buildArchitectureLayout(elkNodes, { colorSystemElements = false, systemElementColorOverrides = new Map() } = {}) {
+function buildArchitectureLayout(elkNodes, { colorSystemElements = false, systemElementColorOverrides = new Map(), preservePositions = false } = {}) {
   const dims = {
     nodeGapX: 72,
     nodeGapY: 54,
@@ -855,10 +856,37 @@ function buildArchitectureLayout(elkNodes, { colorSystemElements = false, system
     }
   }
 
-  return {
-    groupedNodes: [...subsystemBoxes, ...csciBoxes, ...cscBoxes, ...csuBoxes, ...childNodes],
-    absoluteNodes,
-  };
+  const groupedNodes = [...subsystemBoxes, ...csciBoxes, ...cscBoxes, ...csuBoxes, ...childNodes];
+  if (preservePositions) {
+    // Recreate container bounds around saved absolute function coordinates.
+    // Only navigation restoration uses this path; explicit arrange remains unchanged.
+    const bounds = new Map(elkNodes.map(node => [node.id, {
+      ...node.position, width: node.width || THEME.node.w, height: node.height || THEME.node.h,
+    }]));
+    const childrenByParent = new Map();
+    groupedNodes.forEach(node => {
+      if (!node.parentNode) return;
+      const children = childrenByParent.get(node.parentNode) || [];
+      children.push(node.id);
+      childrenByParent.set(node.parentNode, children);
+    });
+    for (const box of [...subsystemBoxes, ...csciBoxes, ...cscBoxes, ...csuBoxes].reverse()) {
+      const children = (childrenByParent.get(box.id) || []).map(id => bounds.get(id)).filter(Boolean);
+      if (!children.length) continue;
+      const x = Math.min(...children.map(child => child.x)) - 20;
+      const y = Math.min(...children.map(child => child.y)) - 50;
+      bounds.set(box.id, { x, y,
+        width: Math.max(...children.map(child => child.x + child.width)) - x + 20,
+        height: Math.max(...children.map(child => child.y + child.height)) - y + 20 });
+    }
+    return { absoluteNodes: elkNodes, groupedNodes: groupedNodes.map(node => {
+      const bound = bounds.get(node.id);
+      const parent = bounds.get(node.parentNode);
+      return { ...node, position: { x: bound.x - (parent?.x || 0), y: bound.y - (parent?.y || 0) },
+        ...(isGroupBox(node) ? { style: { ...node.style, width: bound.width, height: bound.height }, width: bound.width, height: bound.height } : {}) };
+    }) };
+  }
+  return { groupedNodes, absoluteNodes };
 }
 
 function sourceFunctionKey(fn) {
@@ -1997,9 +2025,10 @@ const DiagramBody = forwardRef(function DiagramBody(
     onUpdateRows,
     storageKey = "diagram:positions:v1",
     cleanOnceKey = null,
+    preserveLayoutOnMount = false,
+    canvasToolsTarget = undefined,
     onCleanApplied,
     fitAfterClean = true,
-    onRequestCreateProject, // NEW: parent handler
     includeFiles = undefined,            // undefined/null => show all; [] => show none
     repoName = "",
     architectureMode = false,
@@ -2044,7 +2073,15 @@ const DiagramBody = forwardRef(function DiagramBody(
   // -------------------- UI state ----------------------------
   const [highlightedEdgeId, setHighlightedEdgeId] = useState(null);
   const [selectedTrace, setSelectedTrace] = useState(null);
-  const [pendingArchitectureFocusTarget, setPendingArchitectureFocusTarget] = useState(null);
+  const navigationReadyRef = useRef(false);
+  const layoutEpochRef = useRef(0);
+  const layoutScopeRef = useRef(null);
+  const layoutScope = useMemo(() => `${storageKey}:${architectureMode}:${JSON.stringify(rows)}`, [storageKey, architectureMode, rows]);
+  if (layoutScopeRef.current !== layoutScope) {
+    layoutScopeRef.current = layoutScope;
+    layoutEpochRef.current += 1;
+  }
+  useEffect(() => () => { layoutEpochRef.current += 1; }, []);
   const [architectureFocus, setArchitectureFocus] = useState(null);
   const [architectureNodePositions, setArchitectureNodePositions] = useState(() => new Map());
   const [systemElementColorOverrides, setSystemElementColorOverrides] = useState(() => new Map());
@@ -2492,7 +2529,7 @@ const DiagramBody = forwardRef(function DiagramBody(
       })
       .filter((entry) => entry.row || entry.ref);
   }, [editModal, rows]);
-  const { fitView, project, getNodes, getEdges, getViewport, setViewport } = useReactFlow();
+  const { fitView, project, getNodes, getEdges, getViewport, setViewport, viewportInitialized } = useReactFlow();
   const useWindowsReviewPinchZoom = reviewMode && isWindowsReviewRuntime();
   const handleReviewWheelCapture = useCallback((event) => {
     if (!useWindowsReviewPinchZoom || !event.ctrlKey) return;
@@ -2689,33 +2726,6 @@ const DiagramBody = forwardRef(function DiagramBody(
     [architectureMode, fitView]
   );
 
-  // NEW: create-project modal & selection snapshot
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [projectName, setProjectName] = useState("");
-  const [selectionSnapshot, setSelectionSnapshot] = useState({ nodes: [], rows: [] });
-
-  // NEW: selected node labels
-  function getSelectedNodeLabels() {
-    const labels = [];
-    getNodes().forEach((n) => {
-      if (n.selected) {
-        const label =
-          (n.data && (n.data.label || n.data.name)) || n.id.replace(/^n:/, "");
-        if (label) labels.push(label);
-      }
-    });
-    return labels;
-  }
-
-  function filterRowsByNodes(selectedLabels) {
-    if (!Array.isArray(rows) || rows.length === 0) return [];
-    return rows.filter((r) => {
-      const from = String(r.fromFunction ?? "").trim();
-      const to = String(r.toFunction ?? "").trim();
-      return selectedLabels.includes(from) || selectedLabels.includes(to);
-    });
-  }
-
   const selectSourceTrace = useCallback(
     (sourceFn, originNodeId) => {
       const rfNodes = getNodes();
@@ -2760,43 +2770,25 @@ const DiagramBody = forwardRef(function DiagramBody(
 
   const performArchitectureTargetFocus = useCallback((target = {}) => {
     suppressAutoFitUntilRef.current = Date.now() + 1800;
-    const type = target.type || 'node';
-    const rowIndex = Number(target.rowIndex);
-    const functionName = String(target.functionName || '').trim();
+    if (architectureFocus) { setArchitectureFocus(null); return false; }
+    if (!navigationReadyRef.current) return false;
     const rfNodes = getNodes();
-
-    if (type === 'edge') {
-      const edgeId = target.edgeId || (Number.isFinite(rowIndex)
-        ? `e:n:${target.fromFunction}->n:${target.toFunction}-${rowIndex}`
-        : '');
-      const edge = getEdges().find((candidate) => candidate.id === edgeId) ||
-        getEdges().find((candidate) => {
-          const data = candidate?.data || {};
-          return (
-            (target.rowRef && String(data.rowRef || "") === String(target.rowRef)) ||
-            (String(data.fromFunction || "") === String(target.fromFunction || "") &&
-              String(data.controlAction || "") === String(target.controlAction || "") &&
-              String(data.toFunction || "") === String(target.toFunction || ""))
-          );
-        });
-      if (!edge?.id) return false;
+    const functionName = String(target.functionName || '').trim();
+    if (target.type === 'edge') {
+      const edge = getEdges().find(candidate => candidate.id === target.edgeId);
+      if (!edge) return false;
+      const nodeIds = [...new Set([edge.source, edge.target])];
+      if (!nodeIds.every(id => rfNodes.some(node => node.id === id && node.width && node.height))) return false;
+      if (!fitView({ nodes: nodeIds.map(id => ({ id })), padding: 0.12, duration: 0, maxZoom: 1.65 })) return false;
       setHighlightedEdgeId(edge.id);
-      const nodeIds = [edge.source, edge.target].filter((id) => rfNodes.some((node) => node.id === id));
-      setNodes((nds) => nds.map((node) => ({ ...node, selected: nodeIds.includes(node.id) })));
-      if (nodeIds.length) {
-        setTimeout(() => {
-          try {
-            fitView({ nodes: nodeIds.map((id) => ({ id })), padding: 0.12, duration: 600, maxZoom: 1.65 });
-          } catch {}
-        }, 0);
-      }
+      setSelectedTrace(null);
+      setNodes(nds => nds.map(node => ({ ...node, selected: nodeIds.includes(node.id) })));
       return true;
     }
-
-    const nodeId = target.nodeId || (functionName ? `n:${functionName}` : "");
-    if (!nodeId) return false;
-    const targetNode = rfNodes.find((node) => node.id === nodeId);
-    if (!targetNode) return false;
+    const nodeId = target.nodeId;
+    const targetNode = rfNodes.find(node => node.id === nodeId);
+    if (!targetNode?.width || !targetNode?.height) return false;
+    if (!fitView({ nodes: [{ id: nodeId }], padding: 0.18, duration: 0, maxZoom: 1.9 })) return false;
     setHighlightedEdgeId(null);
     setSelectedTrace({
       sourceFn: null,
@@ -2813,50 +2805,28 @@ const DiagramBody = forwardRef(function DiagramBody(
       label: targetNode.data?.label || functionName,
     });
     setNodes((nds) => nds.map((node) => ({ ...node, selected: node.id === nodeId })));
-    setTimeout(() => {
-      try {
-        fitView({ nodes: [{ id: nodeId }], padding: 0.18, duration: 600, maxZoom: 1.9 });
-      } catch {}
-    }, 0);
     return true;
-  }, [fitView, getEdges, getNodes, setNodes]);
+  }, [architectureFocus, fitView, getEdges, getNodes, setNodes]);
 
-  const focusArchitectureTarget = useCallback((target = {}) => {
-    const focused = performArchitectureTargetFocus(target);
-    if (!focused) {
-      suppressAutoFitUntilRef.current = Date.now() + 2200;
-      setPendingArchitectureFocusTarget({
-        ...target,
-        __focusAttempt: Number(target.__focusAttempt || 0),
-      });
-    } else {
-      setPendingArchitectureFocusTarget(null);
-    }
-    return focused;
-  }, [performArchitectureTargetFocus]);
-  
-
-  // NEW: open modal with snapshot
-  function openCreateProjectModal() {
-    const selected = getSelectedNodeLabels();
-    const filtered = filterRowsByNodes(selected);
-    setSelectionSnapshot({ nodes: selected, rows: filtered });
-    setProjectName("");
-    setShowCreateModal(true);
-  }
+  const focusArchitectureTarget = performArchitectureTargetFocus;
 
   // -------------------- positions persistence ----------------
   const posRef = useRef(new Map());
+  const restoredPositionIds = useRef(new Set());
+  const loadedPositionScopeRef = useRef(null);
   const [posLoaded, setPosLoaded] = useState(false);
     const saveTimer = useRef(null);
     useEffect(() => {
       let cancelled = false;
       setPosLoaded(false);
+      loadedPositionScopeRef.current = null;
       (async () => {
         try {
           const loaded = await idbPositionsLoad(storageKey);
           if (!cancelled) {
             posRef.current = loaded instanceof Map ? loaded : new Map();
+            restoredPositionIds.current = new Set(posRef.current.keys());
+            loadedPositionScopeRef.current = storageKey;
             setPosLoaded(true);
           }
         } catch {
@@ -2929,37 +2899,9 @@ const DiagramBody = forwardRef(function DiagramBody(
   const [initialLayoutPending, setInitialLayoutPending] = useState(() => !!cleanOnceKey);
   const shouldSuppressAutoFit = useCallback(() => Date.now() < suppressAutoFitUntilRef.current, []);
 
-  useEffect(() => {
-    if (!pendingArchitectureFocusTarget) return;
-    if (initialLayoutPending || activeArchitectureAbstraction !== 'detailed') return;
-    const attempt = Number(pendingArchitectureFocusTarget.__focusAttempt || 0);
-    if (attempt > 18) {
-      setPendingArchitectureFocusTarget(null);
-      return;
-    }
-    const timer = setTimeout(() => {
-      const focused = performArchitectureTargetFocus(pendingArchitectureFocusTarget);
-      if (focused) {
-        setPendingArchitectureFocusTarget(null);
-      } else {
-        suppressAutoFitUntilRef.current = Date.now() + 2200;
-        setPendingArchitectureFocusTarget({
-          ...pendingArchitectureFocusTarget,
-          __focusAttempt: attempt + 1,
-        });
-      }
-    }, attempt < 4 ? 120 : 260);
-    return () => clearTimeout(timer);
-  }, [
-    activeArchitectureAbstraction,
-    edges.length,
-    initialLayoutPending,
-    nodes.length,
-    pendingArchitectureFocusTarget,
-    performArchitectureTargetFocus,
-    viewEdges.length,
-    viewNodes.length,
-  ]);
+  navigationReadyRef.current = posLoaded && !initialLayoutPending &&
+    (!cleanOnceKey || cleanedKeysRef.current.has(cleanOnceKey)) &&
+    viewportInitialized && activeArchitectureAbstraction === 'detailed';
 
   useEffect(() => {
     if (!architectureMode || initialLayoutPending || !viewNodes.length || shouldSuppressAutoFit()) return;
@@ -2971,10 +2913,14 @@ const DiagramBody = forwardRef(function DiagramBody(
   }, [architectureMode, activeArchitectureAbstraction, fitCurrentView, initialLayoutPending, shouldSuppressAutoFit, viewNodes.length]);
 
   const runCleanAndSpread = useCallback(async () => {
+    const epoch = ++layoutEpochRef.current;
     // 1) Layout only real nodes (ignore boxes)
     const noteNodes = nodes.filter((node) => node.type === 'note');
     const realNodes = nodes.filter((node) => !isGroupBox(node) && node.type !== 'note');
-    const elkNodes = await runElkLayoutOnce({
+    const restore = preserveLayoutOnMount && String(cleanOnceKey).startsWith("initial-") && realNodes.every(node => restoredPositionIds.current.has(node.id));
+    const elkNodes = restore ? realNodes.map(node => ({
+      ...node, position: { ...posRef.current.get(node.id) }, parentNode: undefined, extent: undefined,
+    })) : await runElkLayoutOnce({
       nodes: realNodes,
       edges,
       groupByFile: true,
@@ -2983,7 +2929,7 @@ const DiagramBody = forwardRef(function DiagramBody(
     let groupedNodes;
     let positionedNodes = elkNodes;
     if (architectureMode) {
-      const architectureLayout = buildArchitectureLayout(elkNodes, { colorSystemElements, systemElementColorOverrides });
+      const architectureLayout = buildArchitectureLayout(elkNodes, { colorSystemElements, systemElementColorOverrides, preservePositions: restore });
       groupedNodes = architectureLayout.groupedNodes;
       positionedNodes = architectureLayout.absoluteNodes;
     } else {
@@ -3012,8 +2958,12 @@ const DiagramBody = forwardRef(function DiagramBody(
       groupedNodes = [...functionBoxNodes, ...childFileBoxes, ...childNodes];
     }
 
-    // 4) Render outer boxes first, then inner boxes, then nodes
-    setNodes([...groupedNodes, ...noteNodes]);
+    // Ignore a result from an old graph, unmounted view, or superseded layout.
+    if (epoch !== layoutEpochRef.current) return false;
+    setNodes(current => {
+      const selected = new Map(current.map(node => [node.id, node.selected]));
+      return [...groupedNodes, ...noteNodes].map(node => ({ ...node, selected: selected.get(node.id) || false }));
+    });
 
     // 5) Persist absolute positions
     positionedNodes.forEach((n) => posRef.current.set(n.id, { ...n.position }));
@@ -3027,11 +2977,11 @@ const DiagramBody = forwardRef(function DiagramBody(
     // 7) Optional fit
     if (fitAfterClean) {
       setTimeout(() => {
-        if (shouldSuppressAutoFit()) return;
+        if (epoch !== layoutEpochRef.current || shouldSuppressAutoFit()) return;
         fitCurrentView({ duration: 600 });
       }, 0);
     }
-  }, [nodes, edges, rows, fitAfterClean, fitCurrentView, persistSoon, architectureMode, colorSystemElements, systemElementColorOverrides, shouldSuppressAutoFit]);
+  }, [nodes, edges, rows, fitAfterClean, fitCurrentView, persistSoon, architectureMode, colorSystemElements, systemElementColorOverrides, shouldSuppressAutoFit, preserveLayoutOnMount, cleanOnceKey, setNodes, setEdges]);
   
   // Auto-fit when graph is (re)built or changes noticeably
 useEffect(() => {
@@ -3163,8 +3113,10 @@ const [autoSourceHandle, autoTargetHandle] = assignHandles(
   useEffect(() => {
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
-      if (!reviewMode) {
-        try { idbPositionsSave(storageKey, posRef.current); } catch {}
+      // StrictMode and rapid tab switches can unmount before hydration. Never
+      // overwrite saved positions with that uninitialized empty map.
+      if (!reviewMode && loadedPositionScopeRef.current === storageKey) {
+        idbPositionsSave(storageKey, posRef.current).catch(() => {});
       }
     };
   }, [storageKey, reviewMode]);
@@ -3429,7 +3381,10 @@ useEffect(() => {
   noteNodes.forEach((note) => {
     if (!posRef.current.has(note.id)) posRef.current.set(note.id, note.position);
   });
-  const nextNodes = [...generatedNodes, ...noteNodes];
+  const restoredNodes = architectureMode
+    ? buildArchitectureLayout(generatedNodes, { colorSystemElements, systemElementColorOverrides, preservePositions: true }).groupedNodes
+    : generatedNodes;
+  const nextNodes = [...restoredNodes, ...noteNodes];
 
   const rawEdges = rowsToRawEdges(rows);
   const nextEdges = buildEdgesFromRaw(rawEdges, posRef.current);
@@ -3441,7 +3396,7 @@ useEffect(() => {
     structureRef.current = sig;
   }
   return () => { cancelled = true; };
-}, [rows, posLoaded, persistSoon, nodes, setNodes, setEdges, architectureMode, canvasNotes]);
+}, [rows, posLoaded, persistSoon, nodes, setNodes, setEdges, architectureMode, canvasNotes, colorSystemElements, systemElementColorOverrides]);
 
 
   // Sync labels/details without moving nodes
@@ -3490,12 +3445,17 @@ useEffect(() => {
     });
   }, [rows, setNodes, setEdges]);
 
+  const cleanRunnerRef = useRef(runCleanAndSpread);
+  cleanRunnerRef.current = runCleanAndSpread;
+  const cleanAppliedRef = useRef(onCleanApplied);
+  cleanAppliedRef.current = onCleanApplied;
+  const layoutRowCount = rows.length;
   /* One-time clean+spread trigger */
   useEffect(() => {
     if (!cleanOnceKey) return;
     if (cleanedKeysRef.current.has(cleanOnceKey)) return;
     if (!nodes.length) {
-      if ((rows || []).length === 0 && posLoaded) {
+      if (layoutRowCount === 0 && posLoaded) {
         setInitialLayoutPending(false);
       } else {
         setInitialLayoutPending(true);
@@ -3507,19 +3467,19 @@ useEffect(() => {
     setInitialLayoutPending(true);
     (async () => {
       try {
-        await runCleanAndSpread();
+        await cleanRunnerRef.current();
         if (cancelled) return;
         cleanedKeysRef.current.add(cleanOnceKey);
         setInitialLayoutPending(false);
         // tell parent we consumed the key so it won't fire on remount
-        try { onCleanApplied?.(cleanOnceKey); } catch {}
+        try { cleanAppliedRef.current?.(cleanOnceKey); } catch {}
       } catch {
         if (!cancelled) setInitialLayoutPending(false);
       }
     })();
 
-    return () => { cancelled = true; };
-  }, [cleanOnceKey, nodes, runCleanAndSpread, onCleanApplied, posLoaded, rows]);
+    return () => { cancelled = true; layoutEpochRef.current += 1; };
+  }, [cleanOnceKey, nodes.length, posLoaded, layoutScope, layoutRowCount]);
 
   /* Connect / Update */
   const onConnect = useCallback(
@@ -3850,28 +3810,172 @@ useEffect(() => {
   });
 
   /* Render */
+  const toolsInSidebar = canvasToolsTarget !== undefined;
+  const toolCategories = [
+    { label: 'Create', icon: '+' },
+    { label: 'View', icon: '⌕' },
+    { label: 'Select', icon: '◎' },
+    { label: 'Aggregate', icon: '↔' },
+    { label: 'Route', icon: 'R' },
+    { label: 'Export', icon: '⇩' },
+  ];
+  const toolGroupStyle = { display: 'grid', gridTemplateColumns: 'repeat(3, 32px)', gap: 6 };
+  const toolGroupHeadingStyle = toolsInSidebar
+    ? { margin: '6px 2px 2px', color: 'rgba(15,15,18,0.52)', fontSize: 10, fontWeight: 800, letterSpacing: 0, textTransform: 'uppercase' }
+    : { margin: '6px 2px 6px', color: 'rgba(15,15,18,0.52)', fontSize: 10, fontWeight: 800, textTransform: 'uppercase' };
+  const toolDividerStyle = toolsInSidebar
+    ? { height: 1, background: 'rgba(15,15,18,0.08)', margin: '2px 0' }
+    : { height: 1, background: 'rgba(15,15,18,0.08)', margin: '8px 0 2px' };
+  const canvasTools = (
+          <div
+            aria-label="Code architecture canvas tools"
+            style={{
+              position: canvasToolsTarget === undefined ? 'absolute' : 'relative',
+              top: canvasToolsTarget === undefined ? 12 : undefined,
+              bottom: canvasToolsTarget === undefined ? 12 : undefined,
+              left: canvasToolsTarget === undefined ? 12 : undefined,
+              zIndex: 25,
+              width: canvasToolbarCollapsed ? 36 : 128,
+              height: toolsInSidebar ? '100%' : undefined,
+              pointerEvents: 'auto',
+              transition: 'width 160ms ease',
+            }}
+          >
+            <div
+              style={{
+                height: '100%',
+                border: toolsInSidebar ? 0 : '1px solid rgba(15,15,18,0.12)',
+                borderRadius: toolsInSidebar ? 0 : 10,
+                background: toolsInSidebar ? 'transparent' : 'rgba(255,255,255,0.96)',
+                boxShadow: canvasToolsTarget === undefined ? '0 12px 28px rgba(15,15,18,0.16)' : 'none',
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setCanvasToolbarCollapsed((value) => !value)}
+                title={canvasToolbarCollapsed ? 'Show canvas tools' : 'Hide canvas tools'}
+                aria-label={canvasToolbarCollapsed ? 'Show canvas tools' : 'Hide canvas tools'}
+                aria-expanded={!canvasToolbarCollapsed}
+                style={{
+                  height: 34,
+                  flexShrink: 0,
+                  border: 0,
+                  borderBottom: canvasToolbarCollapsed ? 0 : '1px solid rgba(15,15,18,0.08)',
+                  background: canvasToolbarCollapsed ? BRAND.blue : '#F8FAFC',
+                  color: canvasToolbarCollapsed ? 'white' : BRAND.dark,
+                  fontWeight: 900,
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                {canvasToolbarCollapsed ? '›' : '‹ Tools'}
+              </button>
+              {toolsInSidebar && canvasToolbarCollapsed && (
+                <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', display: 'grid', gap: 5, alignContent: 'start', padding: '8px 3px' }}>
+                  {toolCategories.map((category) => (
+                    <button
+                      key={category.label}
+                      type="button"
+                      title={category.label}
+                      aria-label={category.label}
+                      onClick={() => setCanvasToolbarCollapsed(false)}
+                      style={{ ...toolButtonStyle(), width: 30, height: 30, border: '1px solid rgba(15,15,18,0.12)', color: 'rgba(15,15,18,0.68)' }}
+                    >
+                      {category.icon}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {!canvasToolbarCollapsed && (
+                <div style={toolsInSidebar
+                  ? { flex: '1 1 auto', minHeight: 0, overflowY: 'auto', display: 'grid', gap: 6, alignContent: 'start', padding: 8 }
+                  : { flex: '1 1 auto', minHeight: 0, overflowY: 'auto', padding: 8 }}>
+                  <div style={toolGroupHeadingStyle}>
+                    Create
+                  </div>
+                  <div style={toolGroupStyle}>
+                    <button
+                      type="button"
+                      onClick={addCanvasNote}
+                      title="Drop a note on the canvas"
+                      aria-label="Add canvas note"
+                      style={toolButtonStyle({ tone: BRAND.yellow })}
+                    >
+                      📝
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openCommentComposer(selectedCommentTarget)}
+                      disabled={!selectedCommentTarget}
+                      title={selectedCommentTarget ? `Add comment to ${selectedCommentTarget.targetLabel}` : 'Select one node or edge to add a comment'}
+                      aria-label="Add comment to selected node or edge"
+                      style={toolButtonStyle({ active: Boolean(selectedCommentTarget), disabled: !selectedCommentTarget, tone: BRAND.purple })}
+                    >
+                      💬
+                    </button>
+                  </div>
+                  <div style={toolDividerStyle} />
+                  <div style={toolGroupHeadingStyle}>View</div>
+                  <div style={toolGroupStyle}>
+                    <button type="button" onClick={fitDiagramToView} title="Fit entire diagram to view" aria-label="Fit entire diagram to view" style={toolButtonStyle({ active: true })}>□</button>
+                    <button type="button" onClick={refreshDiagramRoutes} title="Refresh edge routes from current node positions" aria-label="Refresh edge routes" style={toolButtonStyle({ tone: BRAND.purple })}>⟳</button>
+                  </div>
+                  <div style={toolDividerStyle} />
+                  <div style={toolGroupHeadingStyle}>Select</div>
+                  <div style={toolGroupStyle}>
+                    <button type="button" onClick={selectAllFunctionNodes} title="Select all function nodes" aria-label="Select all function nodes" disabled={!nodes.some((node) => node.type !== 'groupBox' && node.type !== 'note')} style={toolButtonStyle({ disabled: !nodes.some((node) => node.type !== 'groupBox' && node.type !== 'note') })}>◎</button>
+                    <button type="button" onClick={clearDiagramSelection} title="Clear node selection and edge highlight" aria-label="Clear diagram selection" disabled={!selectedNodeIds.length && !highlightedEdgeId} style={toolButtonStyle({ disabled: !selectedNodeIds.length && !highlightedEdgeId, tone: BRAND.purple })}>×</button>
+                  </div>
+                  <div style={toolDividerStyle} />
+                  <div style={toolGroupHeadingStyle}>Aggregate</div>
+                  <div style={toolGroupStyle}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEdgeAggregation((current) => ({ ...current, directionalAll: !current.directionalAll, directionalExceptions: new Set() }));
+                        setHighlightedEdgeId(null);
+                      }}
+                      title={edgeAggregation.directionalAll ? 'Expand directional edge bundles' : 'Aggregate repeated directional edges'}
+                      aria-label="Toggle all directional edge bundles"
+                      style={toolButtonStyle({ active: edgeAggregation.directionalAll, tone: BRAND.purple })}
+                    >→</button>
+                    <button type="button" onClick={() => toggleAggregationPair('directional', highlightedDirectionalKey)} title="Aggregate or expand the selected directional pair" aria-label="Toggle selected directional pair" disabled={!canToggleDirectionalPair} style={toolButtonStyle({ active: directionalPairAggregated, disabled: !canToggleDirectionalPair })}>⇄</button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEdgeAggregation((current) => ({ ...current, bidirectionalAll: !current.bidirectionalAll, bidirectionalExceptions: new Set() }));
+                        setHighlightedEdgeId(null);
+                      }}
+                      title={edgeAggregation.bidirectionalAll ? 'Expand all bidirectional bundles' : 'Aggregate all traffic between node pairs regardless of direction'}
+                      aria-label="Toggle all bidirectional edge bundles"
+                      style={toolButtonStyle({ active: edgeAggregation.bidirectionalAll, tone: BRAND.purple })}
+                    >↔</button>
+                    <button type="button" onClick={() => toggleAggregationPair('bidirectional', highlightedBidirectionalKey)} title="Aggregate or expand the selected bidirectional node pair" aria-label="Toggle selected bidirectional pair" disabled={!canToggleBidirectionalPair} style={toolButtonStyle({ active: bidirectionalPairAggregated, disabled: !canToggleBidirectionalPair, tone: BRAND.purple })}>⟷</button>
+                  </div>
+                  <div style={toolDividerStyle} />
+                  <div style={toolGroupHeadingStyle}>Route</div>
+                  <div style={toolGroupStyle}>
+                    <button type="button" onClick={() => setAllEdgeRoutingStyle(EDGE_ROUTING_STYLES.BEZIER)} title="Set all edges to Bezier routing" aria-label="Use Bezier routing for all edges" style={toolButtonStyle({ active: edgeRouting.defaultStyle === EDGE_ROUTING_STYLES.BEZIER && !Object.keys(edgeRouting.overrides || {}).length })}>B</button>
+                    <button type="button" onClick={() => setAllEdgeRoutingStyle(EDGE_ROUTING_STYLES.RECTANGULAR)} title="Set all edges to rectangular routing" aria-label="Use rectangular routing for all edges" style={toolButtonStyle({ active: edgeRouting.defaultStyle === EDGE_ROUTING_STYLES.RECTANGULAR && !Object.keys(edgeRouting.overrides || {}).length })}>R</button>
+                    <button type="button" onClick={toggleHighlightedEdgeRoutingStyle} title="Toggle routing for selected edge or bundle" aria-label="Toggle selected edge routing" disabled={!highlightedToolbarEdge} style={toolButtonStyle({ active: Boolean(highlightedToolbarEdge), disabled: !highlightedToolbarEdge, tone: BRAND.purple })}>{highlightedRoutingStyle === EDGE_ROUTING_STYLES.RECTANGULAR ? 'B' : 'R'}</button>
+                  </div>
+                  <div style={toolDividerStyle} />
+                  <div style={toolGroupHeadingStyle}>Export</div>
+                  <div style={toolGroupStyle}>
+                    <button type="button" onClick={exportDiagramXml} title="Export XML" aria-label="Export diagram XML" style={toolButtonStyle({ active: true })}>X</button>
+                    <button type="button" onClick={exportDiagramJson} title="Export JSON" aria-label="Export diagram JSON" style={toolButtonStyle({ active: true })}>J</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+  );
+
   return (
     <div ref={diagramHostRef} style={{ width: '100%', height, minHeight: height === '100%' ? 0 : undefined, position: 'relative' }}>
-      {!reviewMode && (
-      <div style={{ position: 'absolute', top: 10, right: 10, zIndex: 10, display: 'flex', gap: 8 }}>
-<button
-  onClick={openCreateProjectModal}
-  style={{
-    background: BRAND.blue,
-    color: '#fff',
-    border: 'none',
-    borderRadius: 8,
-    padding: '8px 12px',
-    fontWeight: 700,
-    boxShadow: '0 6px 16px rgba(45,125,254,0.18)',
-    cursor: 'pointer',
-  }}
-  title="Create a new project from the currently selected nodes"
->
-  Add Selection → Project
-</button>
-</div>
-      )}
       {architectureFocus && (
         <div
           style={{
@@ -3992,132 +4096,9 @@ useEffect(() => {
             Arranging diagram...
           </div>
         )}
-        {!reviewMode && (
-          <div
-            aria-label="Code architecture canvas tools"
-            style={{
-              position: 'absolute',
-              top: 12,
-              bottom: 12,
-              left: 12,
-              zIndex: 25,
-              width: canvasToolbarCollapsed ? 36 : 128,
-              pointerEvents: 'auto',
-              transition: 'width 160ms ease',
-            }}
-          >
-            <div
-              style={{
-                height: '100%',
-                border: '1px solid rgba(15,15,18,0.12)',
-                borderRadius: 10,
-                background: 'rgba(255,255,255,0.96)',
-                boxShadow: '0 12px 28px rgba(15,15,18,0.16)',
-                overflow: 'hidden',
-                display: 'flex',
-                flexDirection: 'column',
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => setCanvasToolbarCollapsed((value) => !value)}
-                title={canvasToolbarCollapsed ? 'Show canvas tools' : 'Hide canvas tools'}
-                aria-label={canvasToolbarCollapsed ? 'Show canvas tools' : 'Hide canvas tools'}
-                style={{
-                  height: 34,
-                  border: 0,
-                  borderBottom: canvasToolbarCollapsed ? 0 : '1px solid rgba(15,15,18,0.08)',
-                  background: canvasToolbarCollapsed ? BRAND.blue : '#F8FAFC',
-                  color: canvasToolbarCollapsed ? 'white' : BRAND.dark,
-                  fontWeight: 900,
-                  fontSize: 12,
-                  cursor: 'pointer',
-                }}
-              >
-                {canvasToolbarCollapsed ? '›' : '‹ Tools'}
-              </button>
-              {!canvasToolbarCollapsed && (
-                <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', padding: 8 }}>
-                  <div style={{ margin: '6px 2px 6px', color: 'rgba(15,15,18,0.52)', fontSize: 10, fontWeight: 800, textTransform: 'uppercase' }}>
-                    Create
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 32px)', gap: 6 }}>
-                    <button
-                      type="button"
-                      onClick={addCanvasNote}
-                      title="Drop a note on the canvas"
-                      aria-label="Add canvas note"
-                      style={toolButtonStyle({ tone: BRAND.yellow })}
-                    >
-                      📝
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openCommentComposer(selectedCommentTarget)}
-                      disabled={!selectedCommentTarget}
-                      title={selectedCommentTarget ? `Add comment to ${selectedCommentTarget.targetLabel}` : 'Select one node or edge to add a comment'}
-                      aria-label="Add comment to selected node or edge"
-                      style={toolButtonStyle({ active: Boolean(selectedCommentTarget), disabled: !selectedCommentTarget, tone: BRAND.purple })}
-                    >
-                      💬
-                    </button>
-                  </div>
-                  <div style={{ height: 1, background: 'rgba(15,15,18,0.08)', margin: '8px 0 2px' }} />
-                  <div style={{ margin: '6px 2px 6px', color: 'rgba(15,15,18,0.52)', fontSize: 10, fontWeight: 800, textTransform: 'uppercase' }}>View</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 32px)', gap: 6 }}>
-                    <button type="button" onClick={fitDiagramToView} title="Fit entire diagram to view" aria-label="Fit entire diagram to view" style={toolButtonStyle({ active: true })}>□</button>
-                    <button type="button" onClick={refreshDiagramRoutes} title="Refresh edge routes from current node positions" aria-label="Refresh edge routes" style={toolButtonStyle({ tone: BRAND.purple })}>⟳</button>
-                  </div>
-                  <div style={{ height: 1, background: 'rgba(15,15,18,0.08)', margin: '8px 0 2px' }} />
-                  <div style={{ margin: '6px 2px 6px', color: 'rgba(15,15,18,0.52)', fontSize: 10, fontWeight: 800, textTransform: 'uppercase' }}>Select</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 32px)', gap: 6 }}>
-                    <button type="button" onClick={selectAllFunctionNodes} title="Select all function nodes" aria-label="Select all function nodes" disabled={!nodes.some((node) => node.type !== 'groupBox' && node.type !== 'note')} style={toolButtonStyle({ disabled: !nodes.some((node) => node.type !== 'groupBox' && node.type !== 'note') })}>◎</button>
-                    <button type="button" onClick={clearDiagramSelection} title="Clear node selection and edge highlight" aria-label="Clear diagram selection" disabled={!selectedNodeIds.length && !highlightedEdgeId} style={toolButtonStyle({ disabled: !selectedNodeIds.length && !highlightedEdgeId, tone: BRAND.purple })}>×</button>
-                  </div>
-                  <div style={{ height: 1, background: 'rgba(15,15,18,0.08)', margin: '8px 0 2px' }} />
-                  <div style={{ margin: '6px 2px 6px', color: 'rgba(15,15,18,0.52)', fontSize: 10, fontWeight: 800, textTransform: 'uppercase' }}>Aggregate</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 32px)', gap: 6 }}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEdgeAggregation((current) => ({ ...current, directionalAll: !current.directionalAll, directionalExceptions: new Set() }));
-                        setHighlightedEdgeId(null);
-                      }}
-                      title={edgeAggregation.directionalAll ? 'Expand directional edge bundles' : 'Aggregate repeated directional edges'}
-                      aria-label="Toggle all directional edge bundles"
-                      style={toolButtonStyle({ active: edgeAggregation.directionalAll, tone: BRAND.purple })}
-                    >→</button>
-                    <button type="button" onClick={() => toggleAggregationPair('directional', highlightedDirectionalKey)} title="Aggregate or expand the selected directional pair" aria-label="Toggle selected directional pair" disabled={!canToggleDirectionalPair} style={toolButtonStyle({ active: directionalPairAggregated, disabled: !canToggleDirectionalPair })}>⇄</button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEdgeAggregation((current) => ({ ...current, bidirectionalAll: !current.bidirectionalAll, bidirectionalExceptions: new Set() }));
-                        setHighlightedEdgeId(null);
-                      }}
-                      title={edgeAggregation.bidirectionalAll ? 'Expand all bidirectional bundles' : 'Aggregate all traffic between node pairs regardless of direction'}
-                      aria-label="Toggle all bidirectional edge bundles"
-                      style={toolButtonStyle({ active: edgeAggregation.bidirectionalAll, tone: BRAND.purple })}
-                    >↔</button>
-                    <button type="button" onClick={() => toggleAggregationPair('bidirectional', highlightedBidirectionalKey)} title="Aggregate or expand the selected bidirectional node pair" aria-label="Toggle selected bidirectional pair" disabled={!canToggleBidirectionalPair} style={toolButtonStyle({ active: bidirectionalPairAggregated, disabled: !canToggleBidirectionalPair, tone: BRAND.purple })}>⟷</button>
-                  </div>
-                  <div style={{ height: 1, background: 'rgba(15,15,18,0.08)', margin: '8px 0 2px' }} />
-                  <div style={{ margin: '6px 2px 6px', color: 'rgba(15,15,18,0.52)', fontSize: 10, fontWeight: 800, textTransform: 'uppercase' }}>Route</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 32px)', gap: 6 }}>
-                    <button type="button" onClick={() => setAllEdgeRoutingStyle(EDGE_ROUTING_STYLES.BEZIER)} title="Set all edges to Bezier routing" aria-label="Use Bezier routing for all edges" style={toolButtonStyle({ active: edgeRouting.defaultStyle === EDGE_ROUTING_STYLES.BEZIER && !Object.keys(edgeRouting.overrides || {}).length })}>B</button>
-                    <button type="button" onClick={() => setAllEdgeRoutingStyle(EDGE_ROUTING_STYLES.RECTANGULAR)} title="Set all edges to rectangular routing" aria-label="Use rectangular routing for all edges" style={toolButtonStyle({ active: edgeRouting.defaultStyle === EDGE_ROUTING_STYLES.RECTANGULAR && !Object.keys(edgeRouting.overrides || {}).length })}>R</button>
-                    <button type="button" onClick={toggleHighlightedEdgeRoutingStyle} title="Toggle routing for selected edge or bundle" aria-label="Toggle selected edge routing" disabled={!highlightedToolbarEdge} style={toolButtonStyle({ active: Boolean(highlightedToolbarEdge), disabled: !highlightedToolbarEdge, tone: BRAND.purple })}>{highlightedRoutingStyle === EDGE_ROUTING_STYLES.RECTANGULAR ? 'B' : 'R'}</button>
-                  </div>
-                  <div style={{ height: 1, background: 'rgba(15,15,18,0.08)', margin: '8px 0 2px' }} />
-                  <div style={{ margin: '6px 2px 6px', color: 'rgba(15,15,18,0.52)', fontSize: 10, fontWeight: 800, textTransform: 'uppercase' }}>Export</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 32px)', gap: 6 }}>
-                    <button type="button" onClick={exportDiagramXml} title="Export XML" aria-label="Export diagram XML" style={toolButtonStyle({ active: true })}>X</button>
-                    <button type="button" onClick={exportDiagramJson} title="Export JSON" aria-label="Export diagram JSON" style={toolButtonStyle({ active: true })}>J</button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+        {!reviewMode && (canvasToolsTarget === undefined
+          ? canvasTools
+          : canvasToolsTarget ? createPortal(canvasTools, canvasToolsTarget) : null)}
         <ReactFlow
           nodes={initialLayoutPending ? [] : viewNodes}
           edges={initialLayoutPending ? [] : viewEdges}
@@ -5180,98 +5161,6 @@ useEffect(() => {
         </div>
       )}
 
-      {/* Create Project modal */}
-{showCreateModal && !reviewMode && (
-<div
-  style={{
-    position: 'absolute',
-    inset: 0,
-    background: 'rgba(0,0,0,0.35)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 2000,
-  }}
->
-  <div
-    style={{
-      width: 420,
-      maxWidth: '90vw',
-      background: 'white',
-      border: '1px solid rgba(0,0,0,0.08)',
-      borderRadius: 14,
-      boxShadow: '0 18px 48px rgba(0,0,0,0.2)',
-      padding: 18,
-    }}
-  >
-    <h3 style={{ fontWeight: 700, fontSize: 16, marginBottom: 6 }}>Create Project from Selection</h3>
-    <p style={{ color: '#475569', fontSize: 13, marginBottom: 12 }}>
-      {selectionSnapshot.nodes.length} {selectionSnapshot.nodes.length === 1 ? 'node' : 'nodes'} selected.
-      We'll include all rows where Function (From) or Function (To) matches any selected node.
-    </p>
-
-    <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Project Name</label>
-    <input
-      autoFocus
-      value={projectName}
-      onChange={(e) => setProjectName(e.target.value)}
-      placeholder="e.g., Sensor Fusion Slice"
-      style={{
-        width: '100%',
-        padding: '10px 12px',
-        borderRadius: 10,
-        border: '1px solid #e2e8f0',
-        outline: 'none',
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' && projectName.trim()) {
-          const payload = {
-            name: projectName.trim(),
-            selectedNodes: selectionSnapshot.nodes,
-            filteredRows: selectionSnapshot.rows,
-          };
-          try { onRequestCreateProject?.(payload); } catch {}
-          setShowCreateModal(false);
-        }
-      }}
-    />
-
-    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
-      <button
-        onClick={() => setShowCreateModal(false)}
-        style={{ padding: '8px 12px', borderRadius: 10, border: '1px solid #e2e8f0', background: '#f8fafc' }}
-      >
-        Cancel
-      </button>
-      <button
-        disabled={!projectName.trim()}
-        onClick={() => {
-          if (!projectName.trim()) return;
-          const payload = {
-            name: projectName.trim(),
-            selectedNodes: selectionSnapshot.nodes,
-            filteredRows: selectionSnapshot.rows,
-          };
-          try { onRequestCreateProject?.(payload); } catch {}
-          setShowCreateModal(false);
-        }}
-        style={{
-          padding: '8px 12px',
-          borderRadius: 10,
-          border: 'none',
-          background: BRAND.purple,
-          color: 'white',
-          fontWeight: 700,
-          opacity: projectName.trim() ? 1 : 0.6,
-          boxShadow: '0 6px 16px rgba(122,55,255,0.18)',
-        }}
-      >
-        Create Project
-      </button>
-    </div>
-  </div>
-</div>
-)}
 
     </div>
   );

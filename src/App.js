@@ -1,3 +1,4 @@
+import ActionsMenu from "./components/ActionsMenu";
 import { editFunctionalEntityDetails } from './components/functionalDiagramTableDetails';
 import CopyTableButton from './components/CopyTableButton';
 import { requestImportedDiagramLayout } from './components/functionalDiagramInitialization';
@@ -1624,17 +1625,6 @@ function normalizeCodeArchitectureGroundingStats(grounding = null) {
     normalizedPathCount: Number(grounding.normalizedPathCount || 0),
     rejectionReasons,
   };
-}
-
-function codeArchitectureGroundingSummary(grounding = null) {
-  const stats = normalizeCodeArchitectureGroundingStats(grounding);
-  if (!stats) return "";
-  const parts = [];
-  if (stats.accepted) parts.push(`${stats.accepted.toLocaleString()} accepted`);
-  if (stats.rejected) parts.push(`${stats.rejected.toLocaleString()} rejected`);
-  if (stats.duplicateRowCount) parts.push(`${stats.duplicateRowCount.toLocaleString()} duplicate${stats.duplicateRowCount === 1 ? "" : "s"} removed`);
-  if (stats.weakEvidenceCount) parts.push(`${stats.weakEvidenceCount.toLocaleString()} weak evidence`);
-  return parts.join(" · ");
 }
 
 function parseGitHubRepoUrl(value = "") {
@@ -3961,6 +3951,7 @@ const [activeCodeArchitectureSelection, setActiveCodeArchitectureSelection] = us
 const [codeArchitectureWorkspaceTab, setCodeArchitectureWorkspaceTab] = useState("architecture");
 const [codeArchitectureHazardSplitView, setCodeArchitectureHazardSplitView] = useState(false);
 const [codeArchitectureFunctionalViewMode, setCodeArchitectureFunctionalViewMode] = useState("architecture");
+const [codeArchitectureViewControlsTarget, setCodeArchitectureViewControlsTarget] = useState(null);
 const [codeArchitectureFolderView, setCodeArchitectureFolderView] = useState("projects");
 const [codeArchitectureArtifactFocus, setCodeArchitectureArtifactFocus] = useState(null);
 const [hazardRemediationTab, setHazardRemediationTab] = useState("hazard-analysis");
@@ -3970,6 +3961,28 @@ const [highlightedCodeArchitectureFunctionalRowIndex, setHighlightedCodeArchitec
 const [codeArchitectureHazardSummaryOpenKey, setCodeArchitectureHazardSummaryOpenKey] = useState(null);
 const [highlightedCodeArchitectureHazardRowIndex, setHighlightedCodeArchitectureHazardRowIndex] = useState(null);
 const [pendingCodeArchitectureDiagramTarget, setPendingCodeArchitectureDiagramTarget] = useState(null);
+const codeArchitectureNavigationRef = useRef({});
+const codeArchitectureScopeRef = useRef(null);
+const codeArchitectureRowFocusScopeRef = useRef({});
+codeArchitectureNavigationRef.current = {
+  functional: codeArchitectureFunctionalTableOpenKey,
+  hazard: codeArchitectureHazardSummaryOpenKey,
+  projectId: activeCodeArchitectureProjectId,
+};
+const handleCodeArchitectureDiagramFocusHandled = useCallback(target => {
+  setPendingCodeArchitectureDiagramTarget(current => current === target ? null : current);
+}, []);
+const handleCodeArchitectureFunctionalFocusResolved = useCallback(key => {
+  setTimeout(() => {
+    if (codeArchitectureNavigationRef.current.functional === key) setHighlightedCodeArchitectureFunctionalRowIndex(null);
+  }, 2600);
+}, []);
+const handleCodeArchitectureHazardFocusResolved = useCallback(key => {
+  setTimeout(() => {
+    if (codeArchitectureNavigationRef.current.hazard === key) setHighlightedCodeArchitectureHazardRowIndex(null);
+  }, 2600);
+}, []);
+
 const [codeArchitectureHazardMethod, setCodeArchitectureHazardMethod] = useState("STPA-Textbook");
 const [codeArchitectureHazardRun, setCodeArchitectureHazardRun] = useState(null);
 // A cascade commits twice inside one handler (significance, then its
@@ -4016,6 +4029,7 @@ const activeCodeArchitectureRepo = useMemo(() => {
 const activeCodeArchitectureRowsKey = activeCodeArchitectureProject && activeCodeArchitectureRepo
   ? codeArchitectureRowsKey(activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id)
   : null;
+codeArchitectureScopeRef.current = activeCodeArchitectureRowsKey;
 const activeCodeArchitectureStoredMeta = useMemo(() => {
   if (!activeCodeArchitectureProject || !activeCodeArchitectureRepo) return null;
   try {
@@ -4040,8 +4054,6 @@ const activeCodeArchitectureRepoMeta = useMemo(() => {
   };
 }, [activeCodeArchitectureRepo, activeCodeArchitectureStoredMeta]);
 const activeCodeArchitectureUnavailableRowCount = Number(activeCodeArchitectureStoredMeta?.rowCount || 0);
-const activeCodeArchitectureMetricsSummary = codeArchitectureMetricsSummary(activeCodeArchitectureStoredMeta?.metrics);
-const activeCodeArchitectureGroundingSummary = codeArchitectureGroundingSummary(activeCodeArchitectureStoredMeta?.grounding);
 
 async function readCodeArchitectureRowsForRepo(project, repo, primaryKey) {
   if (!project || !repo || !primaryKey) return { rows: [], sourceKey: primaryKey || "" };
@@ -9300,12 +9312,10 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
 
     setSection("code-architecture");
     setCodeArchitectureWorkspaceTab("safety");
-    setCodeArchitectureHazardSummaryOpenKey(`open-${Date.now()}`);
+    setHazardRemediationTab("hazard-analysis");
+    setCodeArchitectureHazardSummaryOpenKey(`open-${Date.now()}-${Math.random()}`);
+    codeArchitectureRowFocusScopeRef.current.hazard = codeArchitectureScopeRef.current;
     setHighlightedCodeArchitectureHazardRowIndex(targetIndex);
-
-    setTimeout(() => {
-      setHighlightedCodeArchitectureHazardRowIndex((current) => (current === targetIndex ? null : current));
-    }, 2600);
   }, []);
 
   const handleOpenCodeArchitectureFunctionalRow = useCallback((target) => {
@@ -9318,12 +9328,9 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
 
     setSection("code-architecture");
     setCodeArchitectureWorkspaceTab("architecture");
-    setCodeArchitectureFunctionalTableOpenKey(`open-${Date.now()}`);
+    setCodeArchitectureFunctionalTableOpenKey(`open-${Date.now()}-${Math.random()}`);
+    codeArchitectureRowFocusScopeRef.current.functional = codeArchitectureScopeRef.current;
     setHighlightedCodeArchitectureFunctionalRowIndex(targetIndex);
-
-    setTimeout(() => {
-      setHighlightedCodeArchitectureFunctionalRowIndex((current) => (current === targetIndex ? null : current));
-    }, 2600);
   }, []);
 
   const readCodeArchitectureRepoRows = useCallback((projectId, repoId) => (
@@ -9344,19 +9351,19 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setActiveCodeArchitectureProjectId(projectId);
     if (targetRepoId) updateCodeArchitectureProject(projectId, { activeRepoId: targetRepoId });
     setCodeArchitectureWorkspaceTab("architecture");
-    setCodeArchitectureFunctionalTableOpenKey(`open-${Date.now()}`);
+    codeArchitectureRowFocusScopeRef.current.functional = codeArchitectureRowsKey(projectId, targetRepoId);
+    const requestKey = `open-${Date.now()}-${Math.random()}`;
+    setCodeArchitectureFunctionalTableOpenKey(requestKey);
 
     const numericIndex = Number(rowIndex);
     if (Number.isFinite(numericIndex) && numericIndex >= 0) {
       setHighlightedCodeArchitectureFunctionalRowIndex(numericIndex);
-      setTimeout(() => {
-        setHighlightedCodeArchitectureFunctionalRowIndex((current) => (current === numericIndex ? null : current));
-      }, 2600);
       return;
     }
 
     if (targetRepoId && (rowRef || traceId)) {
       readCbaRowsFromIndexedDB(codeArchitectureRowsKey(projectId, targetRepoId)).then((rows) => {
+        if (codeArchitectureNavigationRef.current.functional !== requestKey || codeArchitectureNavigationRef.current.projectId !== projectId) return;
         const target = String(traceId || rowRef || "").trim();
         const foundIndex = (Array.isArray(rows) ? rows : []).findIndex((row, index) =>
           String(row.traceId || "") === target ||
@@ -9365,9 +9372,6 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         );
         if (foundIndex >= 0) {
           setHighlightedCodeArchitectureFunctionalRowIndex(foundIndex);
-          setTimeout(() => {
-            setHighlightedCodeArchitectureFunctionalRowIndex((current) => (current === foundIndex ? null : current));
-          }, 2600);
         }
       });
     }
@@ -9380,13 +9384,13 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
 
     setSection("code-architecture");
     setCodeArchitectureWorkspaceTab(tab);
-    const focusKey = Date.now();
-    setCodeArchitectureArtifactFocus({ tab, rowIds: cleanIds, key: focusKey });
+    const focusKey = `${Date.now()}-${Math.random()}`;
+    setCodeArchitectureArtifactFocus({ tab, rowIds: cleanIds, key: focusKey, __scope: codeArchitectureScopeRef.current });
   }, []);
 
-  const handleCodeArchitectureArtifactFocusResolved = useCallback(() => {
+  const handleCodeArchitectureArtifactFocusResolved = useCallback(key => {
     setTimeout(() => {
-      setCodeArchitectureArtifactFocus(null);
+      setCodeArchitectureArtifactFocus(current => current?.key === key ? null : current);
     }, 2600);
   }, []);
 
@@ -9395,7 +9399,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       const refs = Array.isArray(row?.sourceArchitectureRefs) ? row.sourceArchitectureRefs : [];
       const ref = refs.find((entry) => architectureLabelFromRef(entry) === value) || refs[0] || null;
       if (ref) {
-        setPendingCodeArchitectureDiagramTarget(architectureRefToFocusTarget(ref));
+        setPendingCodeArchitectureDiagramTarget({ ...architectureRefToFocusTarget(ref), __scope: codeArchitectureScopeRef.current });
         setSection("code-architecture");
         setCodeArchitectureWorkspaceTab("architecture");
       }
@@ -10819,6 +10823,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         setHazardRemediationTab("hazard-analysis");
         if (Number.isFinite(rowIndex)) {
           setCodeArchitectureHazardSummaryOpenKey(`open-${Date.now()}`);
+          codeArchitectureRowFocusScopeRef.current.hazard = null;
           setHighlightedCodeArchitectureHazardRowIndex(rowIndex);
         }
         return { ok: true, artifactId, destination: "code-architecture-hazard-analysis" };
@@ -10832,6 +10837,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       const architectureRowIndex = Number(artifact?.structuredData?._rowIndex ?? rowIndex);
       if (artifactType === "code_architecture_edge" && Number.isFinite(architectureRowIndex)) {
         setCodeArchitectureFunctionalTableOpenKey(`open-${Date.now()}`);
+        codeArchitectureRowFocusScopeRef.current.functional = null;
         setHighlightedCodeArchitectureFunctionalRowIndex(architectureRowIndex);
       }
       return { ok: true, artifactId, destination: "code-architecture" };
@@ -16833,6 +16839,13 @@ const projectHint = useMemo(() => ({
 {section === 'code-architecture' && (
   <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-white px-3 py-1 md:px-5 lg:px-7">
     <h1 className="sr-only">Code-Based Architecture</h1>
+    <input
+      ref={codeArchitectureProjectImportInputRef}
+      type="file"
+      accept=".json,application/json"
+      className="hidden"
+      onChange={importCodeArchitectureProjectFromFile}
+    />
     {!activeCodeArchitectureProject && !activeCodeArchitectureFolder && (
       <section className="flex min-h-0 flex-1 flex-col overflow-hidden pb-3">
         <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
@@ -16841,13 +16854,7 @@ const projectHint = useMemo(() => ({
             <h2 className="text-xl font-semibold text-gray-900">Code architecture dashboard</h2>
 	          </div>
 	          <div className="flex flex-wrap items-center gap-2">
-	            <input
-	              ref={codeArchitectureProjectImportInputRef}
-	              type="file"
-	              accept=".json,application/json"
-	              className="hidden"
-	              onChange={importCodeArchitectureProjectFromFile}
-	            />
+
 	            <button
 	              type="button"
 	              onClick={() => {
@@ -16862,30 +16869,6 @@ const projectHint = useMemo(() => ({
 	            </button>
 	            <button
 	              type="button"
-	              onClick={() => codeArchitectureProjectImportInputRef.current?.click()}
-	              className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-	              title="Import a code architecture JSON file as a new project"
-	            >
-	              <FileText size={15} />
-	              Import Project
-	            </button>
-	            <button
-	              type="button"
-	              onClick={() => {
-	                const firstProjectId = codeArchitectureDashboardRows[0]?.id || codeArchitectureProjects[0]?.id || "";
-	                setCodeArchitectureProjectExportSelection(firstProjectId);
-	                setCodeArchitectureProjectExportMsg("");
-	                setShowCodeArchitectureProjectExport(true);
-	              }}
-	              disabled={!codeArchitectureProjects.length}
-	              className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-	              title="Export one Code-Based Architecture project"
-	            >
-	              <FileText size={15} />
-	              Export Project
-	            </button>
-	            <button
-	              type="button"
 	              onClick={() => {
                 setNewCodeArchitectureFolderParentId(null);
                 setNewCodeArchitectureFolderError('');
@@ -16896,6 +16879,43 @@ const projectHint = useMemo(() => ({
               <FolderPlus size={15} />
               Folder
             </button>
+            <ActionsMenu
+              label="Code architecture actions"
+              className={dockOpen && dockCollapsed ? 'mr-16' : ''}
+            >
+              <div
+                className="absolute right-0 top-9 z-50 w-52 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 text-left shadow-lg"
+                onClick={(event) => {
+                  if (event.target.closest('button:not(:disabled)')) event.currentTarget.closest('details')?.removeAttribute('open');
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => codeArchitectureProjectImportInputRef.current?.click()}
+                  className="inline-flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  title="Import a code architecture JSON file as a new project"
+                >
+                  <FileText size={15} />
+                  Import Project
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const firstProjectId = codeArchitectureDashboardRows[0]?.id || codeArchitectureProjects[0]?.id || "";
+                    setCodeArchitectureProjectExportSelection(firstProjectId);
+                    setCodeArchitectureProjectExportMsg("");
+                    setShowCodeArchitectureProjectExport(true);
+                  }}
+                  disabled={!codeArchitectureProjects.length}
+                  className="inline-flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  title="Export one Code-Based Architecture project"
+                >
+                  <FileText size={15} />
+                  Export Project
+                </button>
+
+              </div>
+            </ActionsMenu>
           </div>
         </div>
 
@@ -17067,87 +17087,9 @@ const projectHint = useMemo(() => ({
 
     {activeCodeArchitectureProject && (
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden pb-3">
-        <div className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-sm text-gray-500">Code architecture project</p>
-            <h2 className="text-xl font-semibold text-gray-900">{activeCodeArchitectureProject.name}</h2>
-            <p className="text-xs text-gray-500">{activeCodeArchitectureRepo ? activeCodeArchitectureRepo.repoName || activeCodeArchitectureRepo.repoId : "No GitHub repo connected"}</p>
-            {activeCodeArchitectureMetricsSummary && (
-              <p className="mt-1 text-xs text-gray-500">Last run: {activeCodeArchitectureMetricsSummary}</p>
-            )}
-            {activeCodeArchitectureGroundingSummary && (
-              <p className="mt-1 text-xs text-gray-500">Analysis quality: {activeCodeArchitectureGroundingSummary}</p>
-            )}
-	          </div>
-	          <div className="flex flex-wrap items-center gap-2">
-	            {activeCodeArchitectureProject.repos?.length > 0 && (
-	              <select
-                className="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm"
-                value={activeCodeArchitectureProject.activeRepoId || activeCodeArchitectureProject.repos[0]?.id || ""}
-                onChange={(event) => {
-                  const repoId = event.target.value;
-                  updateCodeArchitectureProject(activeCodeArchitectureProject.id, { activeRepoId: repoId });
-                }}
-              >
-                {activeCodeArchitectureProject.repos.map((repoConfig) => (
-                  <option key={repoConfig.id} value={repoConfig.id}>{repoConfig.repoName || repoConfig.repoId}</option>
-                ))}
-	              </select>
-	            )}
-	            <button
-	              type="button"
-	              onClick={() => {
-	                setCodeArchitectureWorkbookExportScope("project");
-	                setCodeArchitectureWorkbookExportSheets(CODE_ARCHITECTURE_WORKBOOK_SHEET_OPTIONS.map((option) => option.key));
-	                setCodeArchitectureWorkbookExportMsg("");
-	                setShowCodeArchitectureWorkbookExport(true);
-	              }}
-	              className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-	              title="Export this Code-Based Architecture project or analysis as a workbook"
-	            >
-	              <Download size={15} />
-	              Export
-	            </button>
-	            <button
-	              type="button"
-              onClick={() => openCodeArchitectureRepoConfig(activeCodeArchitectureProject.id, activeCodeArchitectureRepo?.id || null)}
-              className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-            >
-              <SettingsIcon size={15} />
-              GitHub config
-            </button>
-            <button
-              type="button"
-              onClick={() => openCodeArchitectureRepoConfig(activeCodeArchitectureProject.id, null)}
-              className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-            >
-              <Plus size={15} />
-              Repo
-            </button>
-            {activeCodeArchitectureRepo && (
-              <button
-                type="button"
-                onClick={() => handleBaselineRepo({ projectId: activeCodeArchitectureProject.id, repoConfig: activeCodeArchitectureRepo })}
-                className="inline-flex items-center gap-2 rounded-md bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]"
-              >
-                Analyze
-              </button>
-            )}
-          </div>
-        </div>
-
-        {cbaLoading
-          ? (
-            <div className="min-h-0 overflow-auto rounded-xl border bg-white p-8 text-gray-600 text-sm">{cbaLoadingLabel}</div>
-          )
-	          : !activeCodeArchitectureRepo ? (
-	            <div className="min-h-0 overflow-auto rounded-xl border bg-white p-8 text-gray-600 text-sm">
-	              Connect a GitHub repository to start analysis.
-	            </div>
-	          )
-          : cbaTableData.length > 0 ? (
-          <div className="flex min-h-0 flex-1 flex-col gap-2">
-            <div className="shrink-0 flex flex-wrap items-center gap-2 border-b border-slate-200 pb-1.5">
+        <div className="mb-2 flex shrink-0 items-start justify-end gap-2 border-b border-slate-200 pb-1.5">
+          {!cbaLoading && activeCodeArchitectureRepo && cbaTableData.length > 0 && (
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => setCodeArchitectureWorkspaceTab("architecture")}
@@ -17191,11 +17133,92 @@ const projectHint = useMemo(() => ({
                 </button>
               ))}
             </div>
+          )}
+          <div className="flex shrink-0 items-center gap-2">
+            <ActionsMenu
+              label="Code architecture actions"
+              className={dockOpen && dockCollapsed ? 'mr-16' : ''}
+            >
+              <div
+                className="absolute right-0 top-9 z-50 w-52 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 text-left shadow-lg"
+                onClick={(event) => {
+                  if (event.target.closest('button:not(:disabled)')) event.currentTarget.closest('details')?.removeAttribute('open');
+                }}
+              >
+                <div ref={setCodeArchitectureViewControlsTarget} />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCodeArchitectureWorkbookExportScope("project");
+                    setCodeArchitectureWorkbookExportSheets(CODE_ARCHITECTURE_WORKBOOK_SHEET_OPTIONS.map((option) => option.key));
+                    setCodeArchitectureWorkbookExportMsg("");
+                    setShowCodeArchitectureWorkbookExport(true);
+                  }}
+                  className="inline-flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  title="Export this Code-Based Architecture project or analysis as a workbook"
+                >
+                  <Download size={15} />
+                  Export
+                </button>
+                <button
+                  type="button"
+                  onClick={() => codeArchitectureProjectImportInputRef.current?.click()}
+                  className="inline-flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  title="Import a code architecture JSON file as a new project"
+                >
+                  <FileText size={15} />
+                  Import
+                </button>
+                <button
+                  type="button"
+              onClick={() => openCodeArchitectureRepoConfig(activeCodeArchitectureProject.id, activeCodeArchitectureRepo?.id || null)}
+              className="inline-flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <SettingsIcon size={15} />
+              GitHub config
+            </button>
+            <button
+              type="button"
+              onClick={() => openCodeArchitectureRepoConfig(activeCodeArchitectureProject.id, null)}
+              className="inline-flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Plus size={15} />
+              Repo
+            </button>
+            {activeCodeArchitectureRepo && (
+              <button
+                type="button"
+                onClick={() => handleBaselineRepo({ projectId: activeCodeArchitectureProject.id, repoConfig: activeCodeArchitectureRepo })}
+                className="inline-flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Sparkles size={15} />
+                Analyze
+              </button>
+            )}
+              </div>
+            </ActionsMenu>
+          </div>
+        </div>
+
+        {cbaLoading
+          ? (
+            <div className="min-h-0 overflow-auto rounded-xl border bg-white p-8 text-gray-600 text-sm">{cbaLoadingLabel}</div>
+          )
+	          : !activeCodeArchitectureRepo ? (
+	            <div className="min-h-0 overflow-auto rounded-xl border bg-white p-8 text-gray-600 text-sm">
+	              Connect a GitHub repository to start analysis.
+	            </div>
+	          )
+          : cbaTableData.length > 0 ? (
+          <div className="flex min-h-0 flex-1 flex-col gap-2">
             {codeArchitectureWorkspaceTab === "architecture" ? (
               <div className="min-h-0 flex-1 overflow-hidden rounded-xl border bg-white p-3">
                 <FunctionalDecompositionTable
+                  key={activeCodeArchitectureRowsKey}
                   data={cbaTableData}
                   viewMode={codeArchitectureFunctionalViewMode}
+                  showViewControls={false}
+                  viewControlsTarget={codeArchitectureViewControlsTarget}
                   onViewModeChange={setCodeArchitectureFunctionalViewMode}
                   projectId={activeCodeArchitectureProject.id}
                   repoMeta={activeCodeArchitectureRepoMeta}
@@ -17207,7 +17230,8 @@ const projectHint = useMemo(() => ({
                   reviewByRow={codeArchitectureFunctionalReviewByRow}
                   reviewDrawerOptions={codeArchitectureFunctionalReviewDrawerOptions}
                   forceTableOpenKey={codeArchitectureFunctionalTableOpenKey}
-                  highlightedRowIndex={highlightedCodeArchitectureFunctionalRowIndex}
+                  highlightedRowIndex={codeArchitectureRowFocusScopeRef.current.functional == null || codeArchitectureRowFocusScopeRef.current.functional === activeCodeArchitectureRowsKey ? highlightedCodeArchitectureFunctionalRowIndex : null}
+                  onRowFocusResolved={handleCodeArchitectureFunctionalFocusResolved}
                   hazardSummary={codeArchitectureHazardRun?.generatedSheets?.Summary}
                   assuranceArtifacts={{
                     softwareRequirements: loadArtifactRows(ARTIFACT_KINDS.SOFTWARE, activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id),
@@ -17221,8 +17245,8 @@ const projectHint = useMemo(() => ({
                   }}
                   onOpenFunctionalRow={handleOpenCodeArchitectureFunctionalRow}
                   onOpenAssuranceArtifactRow={handleOpenCodeArchitectureArtifactRows}
-                  focusTarget={pendingCodeArchitectureDiagramTarget}
-                  onFocusTargetHandled={() => setPendingCodeArchitectureDiagramTarget(null)}
+                  focusTarget={pendingCodeArchitectureDiagramTarget?.__scope === activeCodeArchitectureRowsKey ? pendingCodeArchitectureDiagramTarget : null}
+                  onFocusTargetHandled={handleCodeArchitectureDiagramFocusHandled}
                   onSelectArchitectureElement={(element) => {
                     setSelectedCbaElement(element);
                     setActiveCodeArchitectureSelection(element ? {
@@ -17257,7 +17281,7 @@ const projectHint = useMemo(() => ({
                   cbaRows={cbaTableData}
                   project={activeCodeArchitectureProject}
                   repo={activeCodeArchitectureRepo}
-                  focusTarget={codeArchitectureArtifactFocus}
+                  focusTarget={!codeArchitectureArtifactFocus?.__scope || codeArchitectureArtifactFocus.__scope === activeCodeArchitectureRowsKey ? codeArchitectureArtifactFocus : null}
                   onFocusResolved={handleCodeArchitectureArtifactFocusResolved}
                   onOpenTrace={handleOpenCodeArchitectureAssuranceTrace}
                   hazardAnalysis={codeArchitectureHazardRun}
@@ -17274,7 +17298,7 @@ const projectHint = useMemo(() => ({
                   sourceRows={loadArtifactRows(ARTIFACT_KINDS.SOFTWARE, activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id)}
                   project={activeCodeArchitectureProject}
                   repo={activeCodeArchitectureRepo}
-                  focusTarget={codeArchitectureArtifactFocus}
+                  focusTarget={!codeArchitectureArtifactFocus?.__scope || codeArchitectureArtifactFocus.__scope === activeCodeArchitectureRowsKey ? codeArchitectureArtifactFocus : null}
                   onFocusResolved={handleCodeArchitectureArtifactFocusResolved}
                   onOpenTrace={handleOpenCodeArchitectureAssuranceTrace}
                   onCollaboratorSelectionChange={setActiveCodeArchitectureSelection}
@@ -17290,7 +17314,7 @@ const projectHint = useMemo(() => ({
                   sourceRows={loadArtifactRows(ARTIFACT_KINDS.SYSTEM, activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id)}
                   project={activeCodeArchitectureProject}
                   repo={activeCodeArchitectureRepo}
-                  focusTarget={codeArchitectureArtifactFocus}
+                  focusTarget={!codeArchitectureArtifactFocus?.__scope || codeArchitectureArtifactFocus.__scope === activeCodeArchitectureRowsKey ? codeArchitectureArtifactFocus : null}
                   onFocusResolved={handleCodeArchitectureArtifactFocusResolved}
                   onOpenTrace={handleOpenCodeArchitectureAssuranceTrace}
                   onCollaboratorSelectionChange={setActiveCodeArchitectureSelection}
@@ -17306,7 +17330,7 @@ const projectHint = useMemo(() => ({
                   sourceRows={loadArtifactRows(ARTIFACT_KINDS.SUBSYSTEM, activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id)}
                   project={activeCodeArchitectureProject}
                   repo={activeCodeArchitectureRepo}
-                  focusTarget={codeArchitectureArtifactFocus}
+                  focusTarget={!codeArchitectureArtifactFocus?.__scope || codeArchitectureArtifactFocus.__scope === activeCodeArchitectureRowsKey ? codeArchitectureArtifactFocus : null}
                   onFocusResolved={handleCodeArchitectureArtifactFocusResolved}
                   onOpenTrace={handleOpenCodeArchitectureAssuranceTrace}
                   onCollaboratorSelectionChange={setActiveCodeArchitectureSelection}
@@ -17357,6 +17381,7 @@ const projectHint = useMemo(() => ({
                       onSplitViewChange={setCodeArchitectureHazardSplitView}
                       diagram={(
                         <FunctionalDecompositionTable
+                          key={activeCodeArchitectureRowsKey}
                           data={cbaTableData}
                           viewMode="architecture"
                           showViewControls={false}
@@ -17368,8 +17393,8 @@ const projectHint = useMemo(() => ({
                           onCollaboratorSelectionChange={setActiveCodeArchitectureSelection}
                           hazardSummary={codeArchitectureHazardRun?.generatedSheets?.Summary}
                           onOpenHazardRow={handleOpenCodeArchitectureHazardSummaryRow}
-                          focusTarget={pendingCodeArchitectureDiagramTarget}
-                          onFocusTargetHandled={() => setPendingCodeArchitectureDiagramTarget(null)}
+                          focusTarget={pendingCodeArchitectureDiagramTarget?.__scope === activeCodeArchitectureRowsKey ? pendingCodeArchitectureDiagramTarget : null}
+                          onFocusTargetHandled={handleCodeArchitectureDiagramFocusHandled}
                         />
                       )}
                       draftRun={codeArchitectureCsvDraft}
@@ -17391,11 +17416,12 @@ const projectHint = useMemo(() => ({
                       reviewByRow={codeArchitectureHazardReviewByRow}
                       reviewDrawerOptions={codeArchitectureHazardReviewDrawerOptions}
                       forceSummaryOpenKey={codeArchitectureHazardSummaryOpenKey}
-                      highlightedRowIndex={highlightedCodeArchitectureHazardRowIndex}
+                      highlightedRowIndex={codeArchitectureRowFocusScopeRef.current.hazard == null || codeArchitectureRowFocusScopeRef.current.hazard === activeCodeArchitectureRowsKey ? highlightedCodeArchitectureHazardRowIndex : null}
+                      onRowFocusResolved={handleCodeArchitectureHazardFocusResolved}
                       onDeleteSummaryRow={handleDeleteCodeArchitectureHazardSummaryRow}
                       onCollaboratorSelectionChange={setActiveCodeArchitectureSelection}
                       onOpenArchitectureTarget={(target) => {
-                        setPendingCodeArchitectureDiagramTarget(target);
+                        setPendingCodeArchitectureDiagramTarget({ ...target, __scope: codeArchitectureScopeRef.current });
                         if (!codeArchitectureHazardSplitView) setCodeArchitectureWorkspaceTab("architecture");
                       }}
                       reviewMode={false}

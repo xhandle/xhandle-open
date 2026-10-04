@@ -515,6 +515,7 @@ export default function EngineeringArtifactPanel({
         showReview
         showActions={!reviewMode}
         onOpenTrace={onOpenTrace}
+        focusRequestKey={focusTarget?.key}
         highlightedRowIds={focusTarget?.tab === kind ? focusTarget.rowIds : []}
         onFocusResolved={focusTarget?.tab === kind ? onFocusResolved : undefined}
         emptyMessage={definition.emptyMessage}

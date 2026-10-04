@@ -289,7 +289,7 @@ export function architectureRefsLabel(refs = []) {
 
 export function architectureRefToFocusTarget(ref = {}) {
   return {
-    type: ref.mode === "edge" ? "edge" : "node",
+    type: !ref.mode || ref.mode === "edge" ? "edge" : "node",
     mode: ref.mode || "edge",
     rowIndex: ref.rowIndex,
     rowRef: ref.rowRef,

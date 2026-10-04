@@ -1,3 +1,5 @@
+const mockDiagramFocus = jest.fn();
+const mockDiagramProps = [];
 jest.mock("lucide-react", () => {
   const Icon = () => <span />;
   return new Proxy({}, { get: () => Icon });
@@ -5,7 +7,8 @@ jest.mock("lucide-react", () => {
 jest.mock("./LiteSummaryDiagramReactFlowGitHub", () => {
   const React = require("react");
   return React.forwardRef(function MockDiagram(props, ref) {
-    React.useImperativeHandle(ref, () => ({ fitViewToDiagram: jest.fn() }), []);
+    mockDiagramProps.push(props);
+    React.useImperativeHandle(ref, () => ({ fitViewToDiagram: jest.fn(), focusArchitectureTarget: mockDiagramFocus }), []);
     return <div data-testid="code-architecture-diagram">diagram</div>;
   });
 });
@@ -683,4 +686,33 @@ describe("functional decomposition Python edge grounding", () => {
     expect(moduleCall.result).not.toBeNull();
     expect(moduleCall.result.grounding.relationshipType).toBe("direct_call");
   });
+});
+
+it("keeps one external focus request across completion callback rerenders without requesting layout", () => {
+  jest.useFakeTimers();
+  const React = require("react"), { act } = React;
+  const { createRoot } = require("react-dom/client");
+  const host = document.createElement("div"); document.body.appendChild(host);
+  const root = createRoot(host);
+  const rows = [{ traceId: "FD-1", from: "Plan", action: "Stop", to: "Control", fromNodeId: "plan", toNodeId: "control",
+    architecture: { subsystem: "Motion" } }];
+  const target = { type: "node", mode: "from", traceId: "FD-1", nodeId: "stale" };
+  const old = jest.fn(), current = jest.fn();
+  const render = callback => act(() => root.render(<FunctionalDecompositionTable data={rows} repoId="test-focus"
+    focusTarget={target} onFocusTargetHandled={callback} />));
+  mockDiagramFocus.mockReturnValue(false); mockDiagramProps.length = 0;
+  try {
+    render(old);
+    const key = mockDiagramProps[0].cleanOnceKey;
+    act(() => jest.advanceTimersByTime(8000));
+    expect(old).not.toHaveBeenCalled();
+    render(current);
+    mockDiagramFocus.mockReturnValue(true);
+    act(() => jest.advanceTimersByTime(100));
+    expect(old).not.toHaveBeenCalled();
+    expect(current).toHaveBeenCalledTimes(1);
+    expect(current).toHaveBeenCalledWith(target);
+    expect(mockDiagramFocus.mock.calls.at(-1)[0]).toMatchObject({ nodeId: "plan" });
+    expect(mockDiagramProps.every(props => props.cleanOnceKey === key)).toBe(true);
+  } finally { act(() => root.unmount()); host.remove(); jest.useRealTimers(); mockDiagramFocus.mockReset(); }
 });

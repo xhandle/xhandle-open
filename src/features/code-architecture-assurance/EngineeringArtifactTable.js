@@ -111,6 +111,7 @@ export default function EngineeringArtifactTable({
   onOpenTrace,
   highlightedRowIds = [],
   onFocusResolved,
+  focusRequestKey,
   emptyMessage = "No rows yet.",
   noMatchMessage = "No rows match the active column filters.",
   showActions = true,
@@ -251,11 +252,13 @@ export default function EngineeringArtifactTable({
     const aliases = rowFocusAliases(target.row, target.rowIndex);
     const node = aliases.map((id) => rowRefs.current[id]).find(Boolean);
     if (!node) return;
-    const scroll = () => node.scrollIntoView?.({ behavior: "smooth", block: "center" });
-    if (typeof requestAnimationFrame === "function") requestAnimationFrame(scroll);
-    else setTimeout(scroll, 0);
-    onFocusResolved?.(rowFocusAliases(target.row, target.rowIndex));
-  }, [highlightedSet, onFocusResolved, visibleRows]);
+    const frame = requestAnimationFrame(() => {
+      if (!node.isConnected) return;
+      node.scrollIntoView?.({ behavior: "smooth", block: "center" });
+      onFocusResolved?.(focusRequestKey);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [highlightedSet, onFocusResolved, visibleRows, focusRequestKey]);
   const reviewItemIds = useMemo(() => reviewItems.map((item) => item.id), [reviewItems]);
   const thBase = "border-b border-slate-200 bg-slate-50 px-3 py-2";
   const tdBase = "border-b border-slate-100 px-3 py-2 align-top text-[13px] text-slate-800";

@@ -1,3 +1,4 @@
+import useTableRowFocus from "../../components/useTableRowFocus";
 import CopyTableButton from '../../components/CopyTableButton';
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
@@ -49,6 +50,9 @@ export default function CodeArchitectureHazardSummaryTable({
   reviewDrawerOptions = {},
   showReview = true,
   highlightedRowIndex = null,
+  focusRequestKey,
+  onRowFocusResolved,
+  onSelectedOperationalContextChange,
   storageKey = "code-architecture-hazard-summary:latest",
   onOpenArchitectureTarget,
   onDeleteRow,
@@ -60,24 +64,8 @@ export default function CodeArchitectureHazardSummaryTable({
   readOnly = false,
 }) {
   const rowRefs = useRef({});
-  const [focusedRowIndex, setFocusedRowIndex] = useState(null);
   const [selectedCellKey, setSelectedCellKey] = useState("");
   const [collapsedInterfaceKeys, setCollapsedInterfaceKeys] = useState(() => new Set());
-
-  useEffect(() => {
-    if (highlightedRowIndex === null || highlightedRowIndex === undefined || highlightedRowIndex === "") return;
-    const targetIndex = Number(highlightedRowIndex);
-    if (!Number.isFinite(targetIndex)) return;
-    setFocusedRowIndex(targetIndex);
-  }, [highlightedRowIndex]);
-
-  useEffect(() => {
-    if (highlightedRowIndex === null || highlightedRowIndex === undefined || highlightedRowIndex === "") return;
-    const targetIndex = Number(highlightedRowIndex);
-    if (!Number.isFinite(targetIndex)) return;
-    const rowEl = rowRefs.current[targetIndex];
-    rowEl?.scrollIntoView?.({ behavior: "smooth", block: "center" });
-  }, [highlightedRowIndex, focusedRowIndex]);
 
   const headers = React.useMemo(
     () => (Array.isArray(summarySheet?.[0]) ? summarySheet[0] : []),
@@ -291,6 +279,22 @@ export default function CodeArchitectureHazardSummaryTable({
       && visibleInterfaceKeys.every((key) => collapsedInterfaceKeys.has(key));
     onGroupStateChange?.({ allCollapsed, groupCount: visibleInterfaceKeys.length });
   }, [collapsedInterfaceKeys, onGroupStateChange, visibleInterfaceKeys]);
+
+  useEffect(() => {
+    if (highlightedRowIndex == null || !rowItems.some(item => item.rowIndex === highlightedRowIndex)) return;
+    if (!filteredRowItems.some(item => item.rowIndex === highlightedRowIndex)) filterState.clearAllFilters();
+    if (!contextFilteredRowItems.some(item => item.rowIndex === highlightedRowIndex) && selectedOperationalContextId !== "all") {
+      onSelectedOperationalContextChange?.("all");
+    }
+    const group = hazardGroups.find(item => item.items.some(row => row.rowIndex === highlightedRowIndex));
+    if (group && collapsedInterfaceKeys.has(group.key)) {
+      setCollapsedInterfaceKeys(current => { const next = new Set(current); next.delete(group.key); return next; });
+    }
+  }, [highlightedRowIndex, focusRequestKey, rowItems, filteredRowItems, contextFilteredRowItems,
+    filterState, selectedOperationalContextId, onSelectedOperationalContextChange, hazardGroups, collapsedInterfaceKeys]);
+  const rowFocusRevision = useMemo(() => ({ hazardGroups, collapsedInterfaceKeys }), [hazardGroups, collapsedInterfaceKeys]);
+  useTableRowFocus({ requestKey: focusRequestKey, rowIndex: highlightedRowIndex,
+    rowRefs, revision: rowFocusRevision, onResolved: onRowFocusResolved });
 
   const tableColumnCount = visibleColumns.length
     + 1

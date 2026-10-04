@@ -81,3 +81,39 @@ it('copies only the selected operational context and visible hazard columns', as
     localStorage.removeItem(`${storageKey}:column-widths`);
   }
 });
+
+it('reveals a linked row inside a collapsed group and acknowledges repeated requests', () => {
+  jest.useFakeTimers();
+  const host = document.createElement('div'); document.body.appendChild(host);
+  const root = createRoot(host);
+  const resolved = jest.fn();
+  const sheet = [['Function (From)', 'Control Action', 'Function (To)'], ['Plan', 'Stop', 'Control']];
+  const render = (key, row) => act(() => root.render(<CodeArchitectureHazardSummaryTable
+    showReview={false} summarySheet={sheet} focusRequestKey={key} highlightedRowIndex={row}
+    onRowFocusResolved={resolved} />));
+  try {
+    render(null, null);
+    act(() => host.querySelector('tbody button[aria-expanded]').click());
+    expect(host.querySelectorAll('tbody tr')).toHaveLength(1);
+    render('first', 0);
+    act(() => jest.advanceTimersByTime(100));
+    expect(host.querySelectorAll('tbody tr')).toHaveLength(2);
+    expect(resolved).toHaveBeenLastCalledWith('first');
+    render('second', 0);
+    act(() => jest.advanceTimersByTime(100));
+    expect(resolved).toHaveBeenLastCalledWith('second');
+  } finally { act(() => root.unmount()); host.remove(); jest.useRealTimers(); }
+});
+it('requests all contexts when a linked hazard is hidden by the selected context', () => {
+  const host = document.createElement('div'); document.body.appendChild(host);
+  const root = createRoot(host); const change = jest.fn();
+  try {
+    act(() => root.render(<CodeArchitectureHazardSummaryTable showReview={false}
+      highlightedRowIndex={0} focusRequestKey="context-link" selectedOperationalContextId="highway"
+      onSelectedOperationalContextChange={change} summarySheet={[
+        ['Function (From)', 'Control Action', 'Function (To)', 'Operational Context ID'],
+        ['Plan', 'Stop', 'Control', 'urban'],
+      ]} />));
+    expect(change).toHaveBeenCalledWith('all');
+  } finally { act(() => root.unmount()); host.remove(); }
+});
