@@ -1,3 +1,4 @@
+import CopyTableButton from '../../components/CopyTableButton';
 import React, { useEffect, useState } from "react";
 import CodeReferenceList from "./CodeReferenceList";
 import ImpactFileContextViewer from "./ImpactFileContextViewer";
@@ -5,6 +6,13 @@ import ImplementationEvidenceForm from "./ImplementationEvidenceForm";
 import PatchProposalViewer from "./PatchProposalViewer";
 import ReviewDecisionControls from "./ReviewDecisionControls";
 import VerificationPanel from "./VerificationPanel";
+
+const COVERAGE_COPY_COLUMNS = [
+  { key: 'rowRef', label: 'Row', getValue: row => row.rowRef || 'n/a' },
+  { key: 'hazard', label: 'Hazard', getValue: row => row.hazard || 'Not specified' },
+  { key: 'mitigation', label: 'Mitigation', getValue: row => row.mitigation || 'Not specified' },
+  { key: 'sourceFiles', label: 'Source', getValue: row => (row.sourceFiles || []).join(', ') || 'n/a' },
+];
 
 export default function SafetyFindingDetail({
   finding,
@@ -109,7 +117,10 @@ export default function SafetyFindingDetail({
               <p className="mt-1 text-sm text-slate-700">{finding.proposedMitigation || "No mitigation proposed."}</p>
             </div>
             <div>
-              <div className="mb-2 text-sm font-semibold text-slate-800">Hazard Summary Coverage</div>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="text-sm font-semibold text-slate-800">Hazard Summary Coverage</div>
+                {coveredRows.length > 0 && <CopyTableButton label="Copy hazard summary coverage table" columns={COVERAGE_COPY_COLUMNS} rows={coveredRows} />}
+              </div>
               <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
                 <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
                   <span className="font-semibold text-slate-800">{coveredRefs.length || (finding.hazardRowRef ? 1 : 0)} covered row{(coveredRefs.length || (finding.hazardRowRef ? 1 : 0)) === 1 ? "" : "s"}</span>

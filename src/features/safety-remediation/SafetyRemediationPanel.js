@@ -1,3 +1,4 @@
+import CopyTableButton from '../../components/CopyTableButton';
 import React, { useEffect, useMemo, useState } from "react";
 import SafetyFindingList from "./SafetyFindingList";
 import SafetyFindingDetail from "./SafetyFindingDetail";
@@ -17,6 +18,7 @@ import {
   summarySheetToObjects,
 } from "./safetyRemediationUtils";
 import {
+  FINDING_STATUS_LABELS,
   SAFETY_FINDING_IMPLEMENTATION_STATUSES,
   SAFETY_FINDING_VIEWS,
   SAFETY_FINDING_VERIFICATION_STATUSES,
@@ -78,6 +80,19 @@ function normalizeRepairFiles(proposal = {}) {
     ...extractDiffPaths(proposal.unifiedDiff),
   ].filter(Boolean)));
 }
+
+const FINDING_COPY_COLUMNS = [
+  { key: 'id', label: 'Finding ID' },
+  { key: 'title', label: 'Title' },
+  { key: 'hazard', label: 'Hazard', getValue: row => row.hazard || row.description },
+  { key: 'reviewStatus', label: 'Review status', getValue: row => FINDING_STATUS_LABELS[row.reviewStatus] || row.reviewStatus },
+  { key: 'priority', label: 'Priority' },
+  { key: 'severity', label: 'Severity' },
+  { key: 'likelihood', label: 'Likelihood' },
+  { key: 'riskLevel', label: 'Risk', getValue: row => row.riskCode || row.riskLevel },
+  { key: 'proposedMitigation', label: 'Proposed mitigation' },
+  { key: 'coveredHazardRowRefs', label: 'Covered hazard rows', getValue: row => (Array.isArray(row.coveredHazardRowRefs) ? row.coveredHazardRowRefs.join(', ') : '') || row.hazardRowRef },
+];
 
 export default function SafetyRemediationPanel({
   project,
@@ -772,6 +787,7 @@ export default function SafetyRemediationPanel({
             <div className="text-sm font-semibold text-slate-800">Findings</div>
             <div className="flex items-center gap-2">
               <div className="text-xs text-slate-500">{scopedFindings.length} shown</div>
+              <CopyTableButton label="Copy safety remediation findings table" columns={FINDING_COPY_COLUMNS} rows={scopedFindings} />
               {!reviewMode && (
                 <button
                   type="button"

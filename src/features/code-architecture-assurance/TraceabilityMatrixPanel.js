@@ -451,6 +451,7 @@ export default function TraceabilityMatrixPanel({
         </div>
       </div>
       <EngineeringArtifactTable
+        copyLabel="Copy traceability matrix table"
         rows={rows}
         columns={TRACEABILITY_MATRIX_COLUMNS}
         storageKey={storageKeyFor("traceability-matrix", projectId, repoId)}

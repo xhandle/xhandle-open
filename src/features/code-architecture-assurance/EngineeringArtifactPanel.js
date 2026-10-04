@@ -503,6 +503,7 @@ export default function EngineeringArtifactPanel({
         {deriveMessage && <div className="mt-2 text-xs font-medium text-slate-600">{deriveMessage}</div>}
       </div>
       <EngineeringArtifactTable
+        copyLabel={`Copy ${definition.title.toLowerCase()} table`}
         rows={rows}
         columns={displayColumns}
         onUpdateRow={updateRow}

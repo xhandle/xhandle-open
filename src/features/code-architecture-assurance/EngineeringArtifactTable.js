@@ -1,3 +1,4 @@
+import CopyTableButton from '../../components/CopyTableButton';
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { FilterableHeaderCell, useColumnFilters } from "../../components/FilterableTableHeader";
 import ReviewStatusBadge from "../results-review/ReviewStatusBadge";
@@ -100,6 +101,7 @@ function normalizeColumnWidths(defaultWidths = {}, savedWidths = {}) {
 export default function EngineeringArtifactTable({
   rows = [],
   columns = [],
+  copyLabel = "Copy table",
   onUpdateRow,
   onDeleteRow,
   storageKey = "engineering-artifact-table:latest",
@@ -228,6 +230,11 @@ export default function EngineeringArtifactTable({
     reviewColumnWidth + actionsColumnWidth
   );
   const visibleRows = filterState.filteredRows;
+  const copyColumns = useMemo(() => visibleColumns.map(column => ({
+    key: column.key,
+    label: column.label,
+    getValue: ({ row }) => cellText(valueForColumn(row, column, tableContext)),
+  })), [visibleColumns, tableContext]);
   const [editingCellKey, setEditingCellKey] = useState("");
   const [selectedCellKey, setSelectedCellKey] = useState("");
   useEffect(() => {
@@ -262,7 +269,7 @@ export default function EngineeringArtifactTable({
 
   return (
     <div className="min-h-0 flex flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
-      <div className="flex shrink-0 items-center justify-end border-b border-slate-100 bg-white px-3 py-2">
+      <div className="flex shrink-0 items-center justify-end gap-2 border-b border-slate-100 bg-white px-3 py-2">
         <ColumnVisibilityMenu
           columns={columnOptions.map((column) => ({
             key: column.visibilityKey,
@@ -271,6 +278,7 @@ export default function EngineeringArtifactTable({
           hiddenKeys={hiddenColumnKeys}
           onChange={setHiddenColumnKeys}
         />
+        <CopyTableButton label={copyLabel} columns={copyColumns} rows={visibleRows} />
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
       <table className="table-fixed text-left text-sm" style={{ minWidth: tablePixelWidth }}>

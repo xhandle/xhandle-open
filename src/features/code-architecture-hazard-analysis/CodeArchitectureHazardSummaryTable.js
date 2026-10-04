@@ -1,3 +1,4 @@
+import CopyTableButton from '../../components/CopyTableButton';
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { FilterableHeaderCell, useColumnFilters } from "../../components/FilterableTableHeader";
@@ -249,6 +250,15 @@ export default function CodeArchitectureHazardSummaryTable({
       toFile: getCellByHeader(row, "Related Source File(s)"),
     };
   }, [getCellByHeader]);
+  const copyColumns = useMemo(() => [
+    {
+      key: 'operationalContext', label: 'Operational context',
+      getValue: ({ row }) => `${getCellByHeader(row, 'Operational Scenario') || 'Unspecified scenario'} · ${getCellByHeader(row, 'Operational Mode') || 'Unspecified mode'}`,
+    },
+    ...visibleColumns.map(column => ({
+      key: column.key, label: column.label, getValue: ({ row }) => row[column.index],
+    })),
+  ], [getCellByHeader, visibleColumns]);
   const filteredRowItems = filterState.filteredRows;
   const contextFilteredRowItems = useMemo(
     () => filterCodeArchitectureHazardRowsByContext(headers, filteredRowItems, selectedOperationalContextId),
@@ -425,12 +435,13 @@ export default function CodeArchitectureHazardSummaryTable({
 
   return (
     <div className={`${className || "max-h-80"} flex min-h-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white`}>
-      <div className="flex shrink-0 items-center justify-end border-b border-slate-100 bg-white px-3 py-2">
+      <div className="flex shrink-0 items-center justify-end gap-2 border-b border-slate-100 bg-white px-3 py-2">
         <ColumnVisibilityMenu
           columns={columnOptions.map((column) => ({ key: column.key, label: column.label }))}
           hiddenKeys={hiddenColumnKeys}
           onChange={setHiddenColumnKeys}
         />
+        <CopyTableButton label="Copy code architecture hazard analysis table" columns={copyColumns} rows={contextFilteredRowItems} />
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
       <table className="table-fixed text-left text-sm" style={{ minWidth: tablePixelWidth }}>

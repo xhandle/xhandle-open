@@ -8,7 +8,7 @@ export function tableToMarkdown(columns, rows) {
   return [
     line(columns.map(column => column.label)),
     `| ${columns.map(() => '---').join(' | ')} |`,
-    ...rows.map(row => line(columns.map(column => row[column.key]))),
+    ...rows.map(row => line(columns.map(column => typeof column.getValue === 'function' ? column.getValue(row) : row[column.key]))),
   ].join('\n');
 }
 

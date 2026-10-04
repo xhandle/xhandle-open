@@ -1,3 +1,4 @@
+import CopyTableButton from './CopyTableButton';
 // 📁 generateFunctionalDecompositionFromGitHub.js
 
 import React, { useMemo, useRef, useState } from "react";
@@ -4510,6 +4511,9 @@ React.useEffect(() => {
     return column ? column.getValue(item.row) : "";
   }, [tableColumns]);
   const tableFilterState = useColumnFilters(sourceTableRows, getTableFilterCell);
+  const copyTableColumns = useMemo(() => tableColumns.map(column => ({
+    key: column.id, label: column.label, getValue: ({ row }) => column.getValue(row),
+  })), [tableColumns]);
   const exportRowsToCsv = React.useCallback(() => {
     const csvEscape = (value) => {
       const text = String(value ?? "");
@@ -4883,9 +4887,13 @@ React.useEffect(() => {
 
           <section
             aria-label="Code architecture functional decomposition table"
-            className="min-h-0 min-w-0 flex-1 overflow-auto"
+            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
             style={{ flexBasis: view === "split" ? `${100 - splitDiagramPercent}%` : "100%" }}
           >
+            <div className="flex shrink-0 justify-end border-b border-slate-100 bg-white px-3 py-2">
+              <CopyTableButton label="Copy code architecture functional decomposition table" columns={copyTableColumns} rows={tableFilterState.filteredRows} />
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto">
             <table className="table-fixed" style={{ minWidth: tablePixelWidth }}>
               <colgroup>
                 {reviewItems.length > 0 && <col style={{ width: 110, minWidth: 110 }} />}
@@ -5036,6 +5044,7 @@ React.useEffect(() => {
                 )}
               </tbody>
             </table>
+            </div>
           </section>
         )}
         </div>

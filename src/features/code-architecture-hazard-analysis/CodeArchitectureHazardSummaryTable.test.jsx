@@ -55,3 +55,29 @@ describe("CodeArchitectureHazardSummaryTable grouping", () => {
     }
   });
 });
+
+it('copies only the selected operational context and visible hazard columns', async () => {
+  const host = document.createElement('div'); document.body.appendChild(host);
+  const root = createRoot(host);
+  const writeText = jest.fn().mockResolvedValue();
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  const storageKey = 'test:copy-context';
+  try {
+    act(() => root.render(<CodeArchitectureHazardSummaryTable showReview={false} storageKey={storageKey}
+      selectedOperationalContextId="urban" summarySheet={[
+        ['Function (From)', 'Control Action', 'Function (To)', 'Operational Context ID', 'Operational Scenario', 'Operational Mode'],
+        ['Plan', 'Stop', 'Control', 'urban', 'Curbside', 'Remote'],
+        ['Plan', 'Go', 'Control', 'highway', 'Highway', 'Autonomous'],
+      ]} />));
+    await act(async () => host.querySelector('[aria-label="Copy code architecture hazard analysis table"]').click());
+    const copied = writeText.mock.calls[0][0];
+    expect(copied).toContain('| Operational context | Function (From) | Control Action | Function (To) |');
+    expect(copied).toContain('| Curbside · Remote | Plan | Stop | Control |');
+    expect(copied).not.toContain('Highway');
+    expect(copied).not.toContain('Operational Context ID');
+  } finally {
+    act(() => root.unmount()); host.remove();
+    localStorage.removeItem(`${storageKey}:hidden-columns`);
+    localStorage.removeItem(`${storageKey}:column-widths`);
+  }
+});

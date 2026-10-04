@@ -1,3 +1,7 @@
+jest.mock("lucide-react", () => {
+  const Icon = () => <span />;
+  return new Proxy({}, { get: () => Icon });
+});
 jest.mock("./LiteSummaryDiagramReactFlowGitHub", () => {
   const React = require("react");
   return React.forwardRef(function MockDiagram(props, ref) {
@@ -12,10 +16,10 @@ jest.mock("./FilterableTableHeader", () => ({
   FilterableHeaderCell: function MockFilterableHeaderCell() {
     return null;
   },
-  useColumnFilters: () => ({
+  useColumnFilters: rows => ({
     filters: {},
     setFilter: jest.fn(),
-    filteredRows: [],
+    filteredRows: rows,
   }),
 }));
 jest.mock("../features/results-review/ReviewStatusBadge", () => function MockReviewStatusBadge() {
