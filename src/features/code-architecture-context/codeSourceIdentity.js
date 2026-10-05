@@ -6,6 +6,8 @@ export function codeSourceProvenance(source = {}) {
     sourceId: source.sourceId,
     snapshotId: source.snapshotId || '',
     folderName: source.folderName || source.repoName || '',
+  } : source?.evidenceVersion === 1 && source?.snapshotId ? {
+    sourceType: 'github', evidenceVersion: 1, snapshotId: source.snapshotId,
   } : {};
 }
 
@@ -13,6 +15,9 @@ export function codeSourceIndexPrefix(source = {}) {
   if (isLocalCodeSource(source)) {
     if (!source.sourceId || !source.snapshotId) return '';
     return `code:local:${source.sourceId}:${source.snapshotId}:`;
+  }
+  if (source?.evidenceVersion === 1 && source?.snapshotId && source?.owner && source?.repo) {
+    return `code:github:${source.owner}/${source.repo}:${source.snapshotId}:`;
   }
   return source?.owner && source?.repo ? `code:file:${source.owner}/${source.repo}:` : '';
 }

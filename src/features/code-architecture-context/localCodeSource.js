@@ -1,3 +1,4 @@
+import { digestBytes, digestText } from './codeSourceAcquisition';
 import { openDB } from 'idb';
 import { localCodeSourceDescriptor } from './codeSourceIdentity';
 
@@ -148,10 +149,11 @@ async function readEntry(entry, signal) {
   checkAbort(signal);
   const file = await entry.getFile();
   if (file.size > LOCAL_FILE_LIMIT) throw new Error(`File exceeds size limit: ${entry.path}`);
-  const text = await file.text();
+  const bytes = typeof file.arrayBuffer === 'function' ? new Uint8Array(await file.arrayBuffer()) : null;
+  const text = bytes ? new TextDecoder('utf-8', { fatal: true }).decode(bytes) : await file.text();
   checkAbort(signal);
   if (text.includes('\0')) throw new Error(`Binary content is not supported: ${entry.path}`);
-  return text;
+  return { content: text, contentDigest: bytes ? await digestBytes(bytes) : null, textDigest: await digestText(text), size: file.size, decoding: 'utf8-fatal-v1' };
 }
 
 // Hash one file at a time; retain file references/metadata, not the full source tree.
@@ -161,7 +163,7 @@ export async function createLocalSourceProvider(source, { signal, onProgress } =
   const entries = new Map();
   for (const entry of scan.entries) {
     let content;
-    try { content = await readEntry(entry, signal); } catch (error) {
+    try { content = (await readEntry(entry, signal)).content; } catch (error) {
       if (error.message.startsWith('Binary content')) { scan.skipped.push({ path: entry.path, reason: 'binary content' }); continue; }
       throw error;
     }
@@ -179,9 +181,10 @@ export async function createLocalSourceProvider(source, { signal, onProgress } =
     async readText({ path, signal: readSignal }) {
       const entry = entries.get(path);
       if (!entry) throw new Error(`File is not in the selected local snapshot: ${path}`);
-      const content = await readEntry(entry, readSignal || signal);
+      const read = await readEntry(entry, readSignal || signal);
+      const { content } = read;
       if (await hashLocalText(content) !== entry.sha) throw new Error(`Local file changed during analysis: ${path}. Reconnect or analyze again.`);
-      return { ok: true, content };
+      return { ok: true, ...read };
     },
   };
 }

@@ -613,8 +613,11 @@ function packRectsMasonryBalanced(items, { gap = 48, targetAspect = 1.15, maxCol
   return best?.packed || [];
 }
 
+const CSU_FUNCTION_GAP = { x: 216, y: 162 };
+
 function columnsForSquareNodeGrid(count, { maxColumns = 8 } = {}) {
   if (count <= 1) return 1;
+  // Keep the original grid shape when changing function spacing.
   const stepX = THEME.node.w + 72;
   const stepY = THEME.node.h + 54;
   const ideal = Math.ceil(Math.sqrt(count * (stepY / stepX)));
@@ -623,8 +626,8 @@ function columnsForSquareNodeGrid(count, { maxColumns = 8 } = {}) {
 
 function buildArchitectureLayout(elkNodes, { colorSystemElements = false, systemElementColorOverrides = new Map(), preservePositions = false } = {}) {
   const dims = {
-    nodeGapX: 72,
-    nodeGapY: 54,
+    nodeGapX: CSU_FUNCTION_GAP.x,
+    nodeGapY: CSU_FUNCTION_GAP.y,
     csuPad: 20,
     csuTop: 50,
     cscPad: 26,

@@ -1,3 +1,4 @@
+import { uniqueTopLevelPythonBody } from "../code-architecture-context/codeRelationshipEvidence";
 import { codeSourceIndexKey, codeSourceIndexPrefix, codeSourceProvenance, isLocalCodeSource } from "../code-architecture-context/codeSourceIdentity";
 const IDB_DB_NAME = "xhandle";
 const IDB_VERSION = 4;
@@ -262,6 +263,7 @@ function makeMissingExtractTrajTokensRow(records = [], rows = []) {
   );
   if (!record) return null;
   const fn = sourceFunctionsFromRecord(record).find((item) => normalizeCodeSymbol(functionNameOf(item)) === "extract_traj_tokens") || {};
+  if (!/\btorch\.clamp\s*\(/.test(uniqueTopLevelPythonBody(record.content || "", "extract_traj_tokens"))) return null;
   const filePath = record.path || record.filePath || fn.filePath || fn.path || "src/alpamayo1_5/models/token_utils.py";
   const enrichedFn = attachFunctionContent(record, {
     functionName: "extract_traj_tokens",
@@ -323,17 +325,19 @@ function makeMissingExtractTrajTokensRow(records = [], rows = []) {
 export async function enrichHazardTableRowsWithSourceContent(tableRows = [], repoMeta = {}, options = {}) {
   const rows = Array.isArray(tableRows) ? tableRows : [];
   const { owner, repo } = repoPartsFromMeta(repoMeta);
-  const source = isLocalCodeSource(repoMeta) ? codeSourceProvenance(repoMeta) : { owner, repo };
+  const source = { owner, repo, ...codeSourceProvenance(repoMeta) };
   if (!codeSourceIndexPrefix(source)) return rows;
 
   const loadSourceRecord = options.loadSourceRecord || loadIndexedSourceRecord;
   const allSourceRecords = options.allSourceRecords || await loadAllIndexedSourceRecords(source);
   const cache = new Map();
-  async function load(filePath) {
+  async function load(filePath, row) {
     if (!filePath) return null;
-    if (cache.has(filePath)) return cache.get(filePath);
-    const record = await loadSourceRecord({ ...source, filePath });
-    cache.set(filePath, record || null);
+    const rowSource = isLocalCodeSource(row) ? codeSourceProvenance(row) : isLocalCodeSource(repoMeta) && !row.sourceType ? codeSourceProvenance(repoMeta) : { owner, repo, ...codeSourceProvenance(row) };
+    const key = codeSourceIndexKey(rowSource, filePath);
+    if (cache.has(key)) return cache.get(key);
+    const record = await loadSourceRecord({ ...rowSource, filePath });
+    cache.set(key, record || null);
     return record || null;
   }
 
@@ -343,7 +347,7 @@ export async function enrichHazardTableRowsWithSourceContent(tableRows = [], rep
     const loadedFiles = [];
     const loadedFunctions = [];
     for (const filePath of filePaths) {
-      const record = await load(filePath);
+      const record = await load(filePath, row);
       if (!record?.content) continue;
       const recordFunctions = (record.sourceFunctions || []).map((fn) => attachFunctionContent(record, fn));
       loadedFiles.push({
@@ -369,7 +373,7 @@ export async function enrichHazardTableRowsWithSourceContent(tableRows = [], rep
     }
 
     const existingCodeEvidence = row.codeEvidence || {};
-    const repoWideUsageAudits = usageAuditsForRow(row, allSourceRecords);
+    const repoWideUsageAudits = usageAuditsForRow(row, allSourceRecords.filter(record => record.snapshotId === row.snapshotId && record.sourceId === row.sourceId));
     const nextSourceFunctions = mergeUniqueFunctions([
       ...(existingCodeEvidence.sourceFunctions || []),
       ...(row.sourceEvidence?.functions || []),

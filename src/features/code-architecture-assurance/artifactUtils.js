@@ -1,3 +1,4 @@
+import { codeSourceProvenance } from '../code-architecture-context/codeSourceIdentity';
 import { ARTIFACT_DEFINITIONS, ARTIFACT_KINDS } from "./artifactDefinitions";
 
 export function makeId(prefix = "artifact") {
@@ -321,6 +322,9 @@ export function architectureRefToFocusTarget(ref = {}) {
 
 export function architectureRefFromFunctionalRow(row = {}, rowIndex = 0, mode = "edge") {
   return {
+    ...codeSourceProvenance(row),
+    lineage: row.lineage || null,
+    canonicalRelationshipId: row.canonicalRelationshipId || "",
     rowIndex,
     rowRef: row.rowRef || rowIndex + 1,
     traceId: row.traceId || row.rowRef || String(rowIndex + 1),
@@ -341,21 +345,10 @@ export function architectureRefFromFunctionalRow(row = {}, rowIndex = 0, mode = 
 }
 
 export function findFunctionalRowByTrace(cbaRows = [], sourceId = "") {
-  const target = cellText(sourceId);
-  return cbaRows.find((row, index) =>
-    cellText(row.traceId) === target ||
-    cellText(row.rowRef) === target ||
-    String(index + 1) === target
-  );
+  return cbaRows[functionalRowIndexForTraceValue(cbaRows, sourceId)];
 }
-
 export function findFunctionalRowIndexByTrace(cbaRows = [], sourceId = "") {
-  const target = cellText(sourceId);
-  return cbaRows.findIndex((row, index) =>
-    cellText(row.traceId) === target ||
-    cellText(row.rowRef) === target ||
-    String(index + 1) === target
-  );
+  return functionalRowIndexForTraceValue(cbaRows, sourceId);
 }
 
 export function enrichRowForDisplay(row = {}) {
@@ -532,16 +525,14 @@ export function normalizeFunctionalRowRef(value) {
 }
 
 export function functionalRowIndexForTraceValue(cbaRows = [], value = "") {
+  cbaRows = Array.isArray(cbaRows) ? cbaRows : [];
+  const raw = cellText(value);
+  const exact = cbaRows.map((row,index)=>({row,index})).filter(({row})=>[row.traceId,row.functionalTraceId,row.sourceTraceId].some(id=>id && cellText(id)===raw));
+  if (exact.length) return exact.length === 1 ? exact[0].index : -1;
   const target = normalizeFunctionalRowRef(value);
   if (!target) return -1;
-  return (Array.isArray(cbaRows) ? cbaRows : []).findIndex((row, index) => {
-    const candidates = [
-      row?.traceId,
-      row?.rowRef,
-      row?.functionalTraceId,
-      row?.sourceTraceId,
-      index + 1,
-    ].map(normalizeFunctionalRowRef).filter(Boolean);
-    return candidates.includes(target);
-  });
+  const explicitRefs = cbaRows.map((row,index)=>({row,index})).filter(({row})=>row.rowRef != null && normalizeFunctionalRowRef(row.rowRef) === target);
+  if (explicitRefs.length) return explicitRefs.length === 1 ? explicitRefs[0].index : -1;
+  const matches = cbaRows.map((row,index)=>({row,index})).filter(({row,index})=> !row.lineage && [row.traceId,row.rowRef,row.functionalTraceId,row.sourceTraceId,index+1].map(normalizeFunctionalRowRef).filter(Boolean).includes(target));
+  return matches.length === 1 ? matches[0].index : -1;
 }

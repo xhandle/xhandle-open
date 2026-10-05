@@ -1,3 +1,4 @@
+import { currentArchitectureRows } from '../code-architecture-context/codeRelationshipEvidence';
 import React, { useEffect, useMemo, useState } from "react";
 import { ARTIFACT_DEFINITIONS, ARTIFACT_KINDS } from "./artifactDefinitions";
 import { DERIVE_BY_KIND } from "./artifactAI";
@@ -6,6 +7,8 @@ import { useArtifactReview } from "./useArtifactReview";
 import { useActivityCenter } from "../../components/activity/ActivityCenter";
 import {
   cellText,
+  resolveArtifactArchitectureRefs,
+  functionalRowIndexForTraceValue,
   createBaseArtifactRow,
   downstreamDesignElementIds,
   downstreamSubsystemRequirementIds,
@@ -199,7 +202,8 @@ export default function EngineeringArtifactPanel({
     subsystemRows: kind === ARTIFACT_KINDS.SUBSYSTEM ? [] : loadArtifactRows(ARTIFACT_KINDS.SUBSYSTEM, projectId, repoId),
     designRows: kind === ARTIFACT_KINDS.DESIGN ? [] : loadArtifactRows(ARTIFACT_KINDS.DESIGN, projectId, repoId),
   }));
-  const currentSourceRows = kind === ARTIFACT_KINDS.SOFTWARE ? cbaRows : parentSourceRows;
+  const activeArchitectureRows = useMemo(() => currentArchitectureRows(cbaRows), [cbaRows]);
+  const currentSourceRows = kind === ARTIFACT_KINDS.SOFTWARE ? activeArchitectureRows : parentSourceRows;
   const sourceRowsSignature = useMemo(() => {
     const list = Array.isArray(sourceRows) ? sourceRows : [];
     return `${list.length}:${list[0]?.id || ""}:${list[list.length - 1]?.id || ""}`;
@@ -449,6 +453,13 @@ export default function EngineeringArtifactPanel({
   }, [definition.title, kind, projectId, repoId, rows.length]);
 
   const sourceCount = sourceSnapshot.length;
+  const affectedReferenceCount = useMemo(() => rows.filter(row =>
+    resolveArtifactArchitectureRefs(row, kind, artifactContext).some(ref => {
+      if (!ref.traceId) return false;
+      const index = functionalRowIndexForTraceValue(cbaRows, ref.traceId);
+      return index < 0 || cbaRows[index]?.lineage?.status === "historical";
+    })
+  ).length, [rows, kind, artifactContext, cbaRows]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
@@ -457,6 +468,7 @@ export default function EngineeringArtifactPanel({
           <div>
             <h2 className="text-base font-semibold text-slate-900">{definition.title}</h2>
             <p className="mt-1 text-sm text-slate-500">{definition.description}</p>
+            {affectedReferenceCount > 0 && <p role="status" className="mt-1 text-sm text-amber-800">{affectedReferenceCount} saved rows reference historical or unresolved architecture. Their existing content and evidence are retained.</p>}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button

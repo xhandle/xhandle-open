@@ -4,10 +4,33 @@ const {
   extractFunctionalDecompositionTrace,
   isCodeArchitectureHazardAnalysisStale,
   normalizeCodeArchitectureHazardRun,
+  CODE_ARCHITECTURE_TRACEABILITY_COLUMNS,
+  HAZARD_SUMMARY_TRACEABILITY_COLUMNS,
+  traceabilityToSheetCells,
+  traceabilityObjectToSummaryFields,
+  summarySheetToHazardSummaryRows,
 } = require("./codeArchitectureHazardUtils");
 const {
   enrichHazardTableRowsWithSourceContent,
 } = require("./codeArchitectureHazardSourceAudit");
+
+it('retains immutable source provenance through functional and hazard CSV-shaped sheets', () => {
+  for (const provenance of [
+    {sourceType:'github',evidenceVersion:1,snapshotId:'a'.repeat(40)},
+    {sourceType:'local',sourceId:'folder-1',folderName:'Workspace',snapshotId:'local-snapshot'},
+  ]) {
+    const trace = {...provenance,traceId:'saved-trace',repoId:'fixture/repo',sourceFiles:['control.py'],lineage:{version:1,status:'current',scope:'project:A',runFingerprint:'run-1'},classificationPolicyVersion:1};
+    const functional = extractFunctionalDecompositionTrace(CODE_ARCHITECTURE_TRACEABILITY_COLUMNS, traceabilityToSheetCells(trace));
+    expect(functional).toMatchObject(provenance);
+    const fields = traceabilityObjectToSummaryFields(functional);
+    const [summary] = summarySheetToHazardSummaryRows([HAZARD_SUMMARY_TRACEABILITY_COLUMNS, HAZARD_SUMMARY_TRACEABILITY_COLUMNS.map(key => fields[key] || '')]);
+    expect(summary).toMatchObject({...provenance,traceId:'saved-trace',lineage:trace.lineage});
+    expect(summary.affectedCodeRefs[0]).toMatchObject({...provenance,filePath:'control.py',repoId:'fixture/repo'});
+  }
+  const legacy = extractFunctionalDecompositionTrace(['Trace ID','Related Source File(s)'], ['legacy','old.py']);
+  expect(legacy).not.toHaveProperty('snapshotId');
+  expect(legacy.affectedCodeRefs[0]).not.toHaveProperty('evidenceVersion');
+});
 
 function rowObject(summary, rowIndex = 1) {
   const headers = summary[0];

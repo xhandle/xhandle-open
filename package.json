@@ -29,6 +29,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@handsontable/react": "^15.2.0",
     "@hello-pangea/dnd": "^18.0.1",
+    "@lezer/python": "^1.1.18",
     "@tiptap/extension-image": "^3.6.6",
     "@tiptap/extension-link": "^3.6.6",
     "@tiptap/extension-placeholder": "^3.6.6",

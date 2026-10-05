@@ -107,12 +107,14 @@ function repoPartsFromMeta(repoMeta = {}, refs = []) {
   };
 }
 
+const sourceRefIdentity = ref => JSON.stringify([ref.sourceType || 'legacy', ref.sourceId || ref.repoId || ref.repoName || ref.repoUrl || '', ref.snapshotId || ref.commitSha || '']);
+
 function uniqueRefs(codeReferences = []) {
   const seen = new Set();
   return (Array.isArray(codeReferences) ? codeReferences : [])
     .filter((ref) => isPatchableSourceFile(ref?.filePath))
     .filter((ref) => {
-      const key = `${ref.filePath}:${ref.symbolName || ""}:${ref.startLine || ""}:${ref.endLine || ""}`;
+      const key = `${sourceRefIdentity(ref)}:${ref.filePath}:${ref.symbolName || ""}:${ref.startLine || ""}:${ref.endLine || ""}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -120,7 +122,7 @@ function uniqueRefs(codeReferences = []) {
     .slice(0, 8);
 }
 
-function snippetFromLines({ content, startLine, endLine, symbolName }) {
+function snippetFromLines({ content, startLine, endLine, symbolName, baseLine = 1 }) {
   const lines = String(content || "").split("\n");
   if (!lines.length) return null;
   let start = Number(startLine);
@@ -130,14 +132,14 @@ function snippetFromLines({ content, startLine, endLine, symbolName }) {
     const found = symbol
       ? lines.findIndex((line) => line.includes(symbol) || new RegExp(`\\b${symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(line))
       : -1;
-    start = found >= 0 ? found + 1 : 1;
+    start = found >= 0 ? found + baseLine : baseLine;
   }
   if (!Number.isFinite(end) || end < start) end = start;
 
-  const windowStart = Math.max(1, start - 35);
-  const windowEnd = Math.min(lines.length, Math.max(end + 45, start + 90));
+  const windowStart = Math.max(baseLine, start - 35);
+  const windowEnd = Math.min(baseLine + lines.length - 1, Math.max(end + 45, start + 90));
   const snippet = lines
-    .slice(windowStart - 1, windowEnd)
+    .slice(windowStart - baseLine, windowEnd - baseLine + 1)
     .map((line, index) => `${String(windowStart + index).padStart(5, " ")} | ${line}`)
     .join("\n");
   return { snippet, snippetStartLine: windowStart, snippetEndLine: windowEnd };
@@ -260,6 +262,10 @@ async function loadSourceRecordForRef({ ref, owner, repo, repoMeta = {} }) {
   const refOwner = owner || sourceParts.owner;
   const refRepo = repo || sourceParts.repo;
   const refBranch = ref.branch || repoMeta.branch || sourceParts.branch || "main";
+  if (ref.evidenceVersion === 1 && ref.snapshotId) {
+    const record = await loadIndexedSourceRecord({ owner: ref.owner || refOwner, repo: ref.repo || refRepo, ...codeSourceProvenance(ref), filePath });
+    return { record, content: record?.content || evidenceContentForRef(ref), source: record ? "github_source_snapshot" : "architecture_evidence", filePath, requestedFilePath: filePath, owner: refOwner, repo: refRepo, branch: ref.snapshotId, workspaceRoot: "", pathResolutionWarning: record ? "" : "Original snapshot file is unavailable; only retained excerpt evidence can be used.", vscodeDiagnostic: "", vscodeWorkspaceRoot: "" };
+  }
   const vscodeSource = await fetchVSCodeWorkspaceSource({ filePath, ref });
   let record = vscodeSource.record;
   let source = "vscode_active_workspace";
@@ -326,6 +332,7 @@ export async function buildSourceSnippetsForPatch({
     }
     const lineSnippet = snippetFromLines({
       content,
+      baseLine: source === "architecture_evidence" ? Number(ref.contentStartLine) || 1 : 1,
       startLine: ref.startLine,
       endLine: ref.endLine,
       symbolName: ref.symbolName,
@@ -377,7 +384,8 @@ export async function buildImpactFileContexts({
       repo,
       repoMeta,
     });
-    if (!filePath || byPath.has(filePath)) continue;
+    const sourcePathKey = `${sourceRefIdentity(ref)}:${filePath}`;
+    if (!filePath || byPath.has(sourcePathKey)) continue;
     if (!content) {
       diagnostics.push({
         filePath: requestedPath,
@@ -390,7 +398,8 @@ export async function buildImpactFileContexts({
       continue;
     }
     const lines = String(content).split("\n");
-    byPath.set(filePath, {
+    const baseLine = source === "architecture_evidence" ? Number(ref.contentStartLine) || 1 : 1;
+    byPath.set(sourcePathKey, {
       filePath,
       requestedFilePath,
       owner: refOwner,
@@ -403,14 +412,14 @@ export async function buildImpactFileContexts({
       lineCount: lines.length,
       loadedBytes: String(content).length,
       isTruncated: String(content).length >= 80000,
-      references: refs.filter((candidate) => candidate.filePath === requestedFilePath || candidate.filePath === filePath).map((candidate) => ({
+      references: refs.filter((candidate) => sourceRefIdentity(candidate) === sourceRefIdentity(ref) && (candidate.filePath === requestedFilePath || candidate.filePath === filePath)).map((candidate) => ({
         symbolName: candidate.symbolName || "",
         symbolType: candidate.symbolType || "",
         startLine: candidate.startLine || null,
         endLine: candidate.endLine || null,
         rationale: candidate.rationale || "",
       })),
-      content: lines.map((line, index) => `${String(index + 1).padStart(5, " ")} | ${line}`).join("\n"),
+      content: lines.map((line, index) => `${String(index + baseLine).padStart(5, " ")} | ${line}`).join("\n"),
     });
     if (byPath.size >= maxFiles) break;
   }

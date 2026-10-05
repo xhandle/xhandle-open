@@ -1,0 +1,12 @@
+# Fix remaining GitHub/local architecture convergence gaps
+
+Implement the findings in `docs/investigations/apmo1-github-local-workbook-comparison.md`.
+
+For identical selected repository-relative source contents, make the supported source-derived relationship inventory independent of transport, local folder name, model omissions, order, and paraphrasing. Keep the distinction between syntactic call evidence and resolved runtime behavior explicit. Do not claim a complete dynamic call graph.
+
+1. Replace the line-regex Python inventory with a browser-compatible syntax parser. Cover multiline definitions, class membership, module calls, imported aliases, and member call expressions. Preserve source locations. Track parse errors and unresolved/dynamic dispatch explicitly. Do not classify constants, comments, strings, or type annotations as executable calls. Avoid claiming that a parameter or rebound import resolves to an external API.
+2. Canonicalize evidence-backed endpoints/actions; retain model descriptions as enrichment and model-only proposals as explicitly unverified rows. Deduplicate using relationship identity rather than descriptive prose. Do not delete legitimate unsupported proposals simply to make totals match.
+3. Make new source-backed hierarchy allocation independent of repository display/folder names and model wording. Retain existing user edits and scoped trace IDs when evidence is unchanged; preserve historical rows and downstream assessments when evidence changes or migration is ambiguous.
+4. Version analysis/checkpoint policy so old partial inventories cannot be resumed under the new rules. Export canonical identities, row provenance, source hashes, effective settings, selection/coverage, limitations, and unresolved proposal counts with architecture workbooks. Keep existing workbook columns and legacy imports usable.
+5. Add meaningful regression tests for the observed Alpamayo patterns, intentionally different model responses, both source adapters, migration, and downstream hazard/remediation, requirements, design, and traceability. Use the locally supplied source read-only where available. Do not call paid AI services or overwrite customer workbooks.
+6. Run relevant checks and a production build. Document what was fixed, evidence from validation, and any remaining semantic coverage limits. Preserve unrelated uncommitted work; do not commit or push unless requested.

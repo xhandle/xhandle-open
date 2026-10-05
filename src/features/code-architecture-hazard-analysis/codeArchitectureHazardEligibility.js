@@ -93,6 +93,47 @@ export function classifyCodeArchitectureHazardEligibility(row = {}) {
     };
   }
 
+  // Stored legacy assessments keep their original interpretation on load.
+  if (!row.classificationPolicyVersion && existingEligibility) return {
+    lifecyclePhase: existingLifecycle || "Needs Review", interfaceType: existingInterface || "Needs Review",
+    hazardAnalysisEligibility: existingEligibility,
+    hazardAnalysisEligibilityRationale: row.hazardAnalysisEligibilityRationale || "Stored legacy assessment (unverified provenance).",
+    hazardAnalysisEligibilitySource: row.hazardAnalysisEligibilitySource || "legacy-stored",
+  };
+  if (row.classificationPolicyVersion === 2) {
+    const e = row.relationshipEvidence;
+    if (!e?.supported) return result("Needs Review", "Needs Review", "Needs Review", "Model-only relationship: source-supported call evidence has not been established.");
+    if (["structural_inheritance", "structural_member"].includes(e.kind)) return result("Static Structure", "Structural Relationship", "Exclude", "Source-defined structural relationship, not an executable exchange.");
+    const path = String(e.fromFile || "").toLowerCase();
+    if (/(^|\/)(tests?|__tests__|fixtures?|examples?|mocks?|demos?|benchmarks?)(\/|$)|(^|\/)(test_[^/]*|[^/]*_test)\.py$/.test(path)) return result("Test/Verification", "Function Call", "Exclude", "Evidenced call in a test/example source path.");
+    if (!["direct_call", "imported_call", "call_expression"].includes(e.kind)) return result("Needs Review", "Needs Review", "Needs Review", "Source relationship kind requires review.");
+    // Eligibility is a screening decision, not a dispatch-resolution claim.
+    // Caller and source-module roles let math/library and receiver calls within
+    // operational code participate even when their target names are generic.
+    const words = value => String(value || "").replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_.:/-]/g, " ").toLowerCase();
+    const symbols = words(`${e.from} ${e.to}`);
+    const sourceContext = `${symbols} ${words(path)}`;
+    const operational = /\b(control|command|sensor|trajectory|traj|predict|prediction|forward|inference|perception|planning|localization|localisation|feedback|health|watchdog|fault|safety|clamp|validate|brake|steer|motion|pose|telemetry|geometry|rotation|kinematics|diffusion)\b|\baction space\b/.test(sourceContext);
+    if (!operational) return result("Needs Review", "Function Call", "Needs Review", "Call syntax is evidenced; operational relevance is not established by its source symbols or module role.");
+    const initialization = /\b(initialize|initialise|init|configure|load|calibrate)\b/.test(words(e.from));
+    const type = inferredInterfaceType(symbols);
+    return result(initialization ? "Initialization" : "Runtime", initialization ? "Configuration/Authority" : type === "Needs Review" ? "Function Call" : type,
+      "Include", `Source-supported call in operationally relevant code; assess potential effects. ${e.targetResolution === "unresolved-runtime-target" ? "Receiver/runtime target remains unresolved." : e.targetResolution === "import-reference" ? "Import reference is evidenced; runtime dispatch is not proven." : "Lexical target is evidenced."} Inclusion does not establish a hazard or guide-phrase applicability.`);
+  }
+  if (row.classificationPolicyVersion === 1) {
+    const e = row.relationshipEvidence;
+    if (!e?.supported) return result("Needs Review", "Needs Review", "Needs Review", "Model-only relationship: supported executable or structural evidence has not been established.");
+    if (e.kind === "structural_inheritance") return result("Static Structure", "Structural Relationship", "Exclude", "Source-defined base-class relationship, not an executable exchange.");
+    if (e.kind === "structural_member") return result("Static Structure", "Structural Relationship", "Exclude", "Source-defined class membership, not an executable exchange.");
+    const paths = `${e.fromFile} ${e.toFile}`;
+    const symbols = `${e.from} ${e.to}`.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_.]/g, " ").toLowerCase();
+    if (/(^|[ /])(tests?|fixtures?|examples?|mocks?)([/ ]|$)|_test\.py/.test(paths)) return result("Test/Verification", "Function Call", "Exclude", "Evidenced relationship in a test/example source path.");
+    if (e.kind !== "direct_call") return result("Needs Review", "Needs Review", "Needs Review", "Unsupported relationship kind.");
+    const consequential = /\b(control|command|sensor|model|safety|trajectory|authority)\b/.test(symbols);
+    if (/\b(initialize|init|configure|load|calibrate)\b/.test(symbols) && consequential) return result("Initialization", "Configuration/Authority", "Include", "Evidenced initialization call with consequential source symbols; assess its operational consequence.");
+    if (/\b(control|command|sensor|trajectory|predict|forward|feedback|health|watchdog|fault|safety|clamp|validate|brake|steer|motion|pose|telemetry)\b/.test(symbols)) return result("Runtime", inferredInterfaceType(symbols) === "Needs Review" ? "Function Call" : inferredInterfaceType(symbols), "Include", "Evidenced executable call with operational/protective source symbols; eligibility does not assert a hazard.");
+    return result("Needs Review", "Function Call", "Needs Review", "Executable call verified; operational consequence is not established by supported source evidence.");
+  }
   const text = textForRow(row);
   const paths = pathForRow(row);
   const action = String(row.action || "").trim().toLowerCase();
@@ -148,7 +189,7 @@ export function ensureCodeArchitectureHazardEligibility(rows = []) {
 }
 
 export function summarizeCodeArchitectureHazardEligibility(rows = []) {
-  return ensureCodeArchitectureHazardEligibility(rows).reduce((summary, row) => {
+  return ensureCodeArchitectureHazardEligibility(rows.filter(row => row?.lineage?.status !== "historical")).reduce((summary, row) => {
     if (row.hazardAnalysisEligibility === "Include") summary.include += 1;
     else if (row.hazardAnalysisEligibility === "Exclude") summary.exclude += 1;
     else summary.needsReview += 1;
@@ -158,5 +199,5 @@ export function summarizeCodeArchitectureHazardEligibility(rows = []) {
 }
 
 export function isCodeArchitectureHazardEligible(row = {}) {
-  return classifyCodeArchitectureHazardEligibility(row).hazardAnalysisEligibility === "Include";
+  return row.lineage?.status !== "historical" && classifyCodeArchitectureHazardEligibility(row).hazardAnalysisEligibility === "Include";
 }

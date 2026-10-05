@@ -76,7 +76,7 @@ function buildCompleteness(issue) {
 }
 
 function rowForChain({ chainIndex, functionalRow, functionalIndex, architectureRef, sw, sys, sub, design, artifacts }) {
-  const issue = buildIssue({ sw, sys, sub, design });
+  const issue = compactList([buildIssue({ sw, sys, sub, design }), functionalRow?.lineage?.status === "historical" ? "Historical architecture evidence; review current applicability" : ""]);
   const refs = compactRefs([
     design ? resolveArtifactArchitectureRefs(design, ARTIFACT_KINDS.DESIGN, artifacts) : [],
     sub ? resolveArtifactArchitectureRefs(sub, ARTIFACT_KINDS.SUBSYSTEM, artifacts) : [],
@@ -130,13 +130,12 @@ function compactRefs(groups = []) {
   return refs;
 }
 
-function refsMatchFunctionalRow(refs = [], traceId = "", functionalIndex = 0) {
-  const targets = new Set([cellText(traceId), String(functionalIndex + 1)].filter(Boolean));
-  return (Array.isArray(refs) ? refs : []).some((ref) =>
-    targets.has(cellText(ref.traceId)) ||
-    targets.has(cellText(ref.rowRef)) ||
-    targets.has(String(Number(ref.rowIndex) + 1))
-  );
+function refsMatchFunctionalRow(refs = [], traceId = "", functionalIndex = 0, functionalRow = {}) {
+  return (Array.isArray(refs) ? refs : []).some(ref => {
+    if (cellText(ref.traceId)) return cellText(ref.traceId) === cellText(traceId);
+    if (functionalRow.lineage) return false;
+    return cellText(ref.rowRef) === cellText(functionalRow.rowRef || functionalIndex + 1) || Number(ref.rowIndex) === functionalIndex;
+  });
 }
 
 function missingParentRow({ chainIndex, type, row, parentField, parentLabel, refs, parentId }) {
@@ -225,7 +224,7 @@ export function buildTraceabilityRows({ cbaRows, softwareRows, systemRows, subsy
     const architectureRef = architectureRefFromFunctionalRow(functionalRow, functionalIndex, "edge");
     const swMatches = softwareRows.filter((sw) =>
       parentMatches(sw.sourceTraceId, traceId) ||
-      refsMatchFunctionalRow(sw.sourceArchitectureRefs || [], traceId, functionalIndex)
+      refsMatchFunctionalRow(sw.sourceArchitectureRefs || [], traceId, functionalIndex, functionalRow)
     );
     const swList = swMatches.length ? swMatches : [null];
 
@@ -266,6 +265,10 @@ export function buildTraceabilityRows({ cbaRows, softwareRows, systemRows, subsy
     });
   });
 
+  softwareRows.forEach(sw => {
+    if (rows.some(row => row.softwareRequirement === cellText(sw.id))) return;
+    rows.push(missingParentRow({ chainIndex: chainIndex++, type: "Software Requirement", row: sw, parentField: "softwareRequirement", parentLabel: "unambiguous retained architecture evidence", refs: sw.sourceArchitectureRefs || [], parentId: sw.sourceTraceId || "" }));
+  });
   systemRows.forEach((sys) => {
     const parents = parentIdsFor(sys, "parentSwRequirement", "software-requirement");
     const refs = resolveArtifactArchitectureRefs(sys, ARTIFACT_KINDS.SYSTEM, artifacts);

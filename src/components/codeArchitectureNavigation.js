@@ -6,6 +6,7 @@ export function resolveArchitectureTarget(target, rows = []) {
   const candidates = rows.map((row, rowIndex) => ({ row, rowIndex }));
   const traceId = text(target.traceId || target.row?.traceId);
   let match = traceId ? unique(candidates.filter(({ row }) => text(row.traceId) === traceId)) : null;
+  if (traceId && !match) return null; // An explicit missing/ambiguous identity is not a license to guess.
   const isEdge = target.type === 'edge' || target.mode === 'edge';
   const nodeKey = target.mode === 'to' ? 'toNodeId' : 'fromNodeId';
   if (!match && target.edgeId && isEdge) match = unique(candidates.filter(({ row }) => row.edgeId === target.edgeId));
@@ -36,7 +37,7 @@ export function resolveArchitectureTarget(target, rows = []) {
   const toName = text(row.toFunction ?? row.to);
   const fromId = row.fromNodeId || `n:${fromName}`;
   const toId = row.toNodeId || `n:${toName}`;
-  return { ...target, type: isEdge ? 'edge' : 'node', row, rowIndex, traceId: row.traceId, rowRef: row.rowRef,
+  return { ...target, resolutionStatus: row.lineage?.status === "historical" ? "historical" : row.lineage ? "current" : "legacy", type: isEdge ? 'edge' : 'node', row, rowIndex, traceId: row.traceId, rowRef: row.rowRef,
     fromFunction: fromName, toFunction: toName, controlAction: row.controlAction ?? row.action,
     fromFile: row.fromFile, toFile: row.toFile,
     nodeId: isEdge ? '' : target.mode === 'to' ? toId : fromId,

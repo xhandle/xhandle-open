@@ -1,3 +1,4 @@
+import { currentArchitectureRows } from '../code-architecture-context/codeRelationshipEvidence';
 import { backendURL, buildAIAuthOpts } from "../../components/backendConfig";
 import {
   ARTIFACT_KINDS,
@@ -2355,6 +2356,7 @@ export function importHazardSoftwareRequirements({ hazardAnalysis = null } = {})
 }
 
 export async function deriveSoftwareRequirements({ cbaRows = [], projectName = "", repoName = "", hazardAnalysis = null, onProgress = null } = {}) {
+  cbaRows = currentArchitectureRows(cbaRows);
   if (!Array.isArray(cbaRows) || !cbaRows.length) {
     throw new Error("Generate or load a functional decomposition before deriving software requirements.");
   }

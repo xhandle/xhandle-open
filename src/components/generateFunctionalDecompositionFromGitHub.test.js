@@ -615,6 +615,17 @@ describe("functional decomposition Python edge grounding", () => {
     expect(stats.rejectionReasons.row_not_grounded_in_current_file).toBe(1);
   });
 
+  it("rejects N/A placeholder endpoints before source grounding", () => {
+    const stats = makeStats();
+    const result = groundFunctionalDecompositionRow({
+      row: {from:"N/A",to:"N/A",action:"none",fromFile:"src/empty.py",toFile:"src/empty.py"},
+      currentFile: {path:"src/empty.py"}, currentFileRecord: {},
+      repoPathResolver: exactRepoPathResolver(), stats, chunkIndex:1,
+    });
+    expect(result).toBeNull();
+    expect(stats.rejectionReasons.placeholder_endpoint_label).toBe(1);
+  });
+
   it("rejects reversed current-file calls for cross-file rows", () => {
     const stats = makeStats();
     const content = [
@@ -721,4 +732,36 @@ it('builds local source evidence with snapshot identity and no GitHub links', ()
   const record = buildSourceFileIndexRecord({ sourceType: 'local', sourceId: 'folder', snapshotId: 'sha', folderName: 'controller', owner: '', repo: '', path: 'control.js', content: 'function brake() { return true; }', branch: '', commitSha: '' });
   expect(record).toMatchObject({ sourceType: 'local', sourceId: 'folder', snapshotId: 'sha' });
   expect(record.sourceFunctions[0]).toMatchObject({ sourceType: 'local', sourceId: 'folder', snapshotId: 'sha', sourceUrl: '', functionName: 'brake' });
+});
+
+describe('complete selected-file scheduling', () => {
+ const {planFunctionalAnalysisFiles,chunkTextWithOverlap} = require('./generateFunctionalDecompositionFromGitHub');
+ it('schedules eligible files that require more than eight chunks', () => {
+  const plan=planFunctionalAnalysisFiles([{path:'src/large.py',size:120000},{path:'src/small.py',size:200}]);
+  expect(plan.files).toHaveLength(2);
+  expect(plan.files.find(file=>file.path==='src/large.py').estimatedChunks).toBeGreaterThan(8);
+  expect(plan.skippedForChunkLimit).toEqual([]);
+ });
+ it('retains source size and vendor protections', () => {
+  expect(planFunctionalAnalysisFiles([{path:'src/huge.py',size:350001},{path:'vendor/code.py',size:20}]).files).toEqual([]);
+ });
+ it('bounds long lines and preserves all source characters with overlap', () => {
+  const source='a'.repeat(23000)+'\n'+'b'.repeat(17000);
+  const chunks=chunkTextWithOverlap(source,6000,400);
+  expect(chunks.every(chunk=>chunk.length<=6000)).toBe(true);
+  expect(chunks[0]+chunks.slice(1).map(chunk=>chunk.slice(400)).join('')).toBe(source);
+ });
+});
+
+it('indexes functions beyond 80,000 characters in an admitted source file', () => {
+ const content='# context\n'.repeat(10000)+'def late_target():\n    pass\ndef late_caller():\n    late_target()\n';
+ const record=buildSourceFileIndexRecord({owner:'fixture',repo:'fixture',path:'large.py',content});
+ expect(record.content).toBe(content);
+ expect(record.sourceFunctions.map(fn=>fn.functionName)).toEqual(expect.arrayContaining(['late_target','late_caller']));
+});
+
+it('allocates the same source rows identically regardless of repository or checkout folder name', () => {
+ const { inferArchitectureFallback } = require('./generateFunctionalDecompositionFromGitHub');
+ const row={from:'_TinyExpert',to:'torch.nn.Module',fromFile:'tests/test_diffusion_expert_cuda_graph.py',toFile:'tests/test_diffusion_expert_cuda_graph.py'};
+ expect(inferArchitectureFallback(row,{repoName:'alpamayo'})).toEqual(inferArchitectureFallback(row,{repoName:'alpamayo-main'}));
 });

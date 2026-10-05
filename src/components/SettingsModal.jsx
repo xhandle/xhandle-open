@@ -1,6 +1,7 @@
 import { SIDEBAR_AREAS } from "../lib/sidebarPreferences";
 import { useState, useEffect, useRef } from "react";
 import { storageScanTimeout } from "../lib/storageScanTimeout";
+import { permanentlyDeleteStoredProject } from './permanentlyDeleteStoredProject';
 import { backendURL, ACCOUNT_ID, getLocalAccessToken } from "./backendConfig";
 import {
   FileTypeSelectorModal,
@@ -228,6 +229,9 @@ function openRawIndexedDb(name) {
     const timer = setTimeout(() => finish(null), 5000);
     try {
       const request = indexedDB.open(name);
+      // Inspecting storage must not create an empty database ahead of its
+      // feature's schema initialization.
+      request.onupgradeneeded = () => request.transaction.abort();
       request.onerror = () => finish(null);
       request.onblocked = () => finish(null);
       request.onsuccess = () => finish(request.result);
@@ -970,6 +974,26 @@ export default function SettingsModal({
       await refreshStorageInventory();
     } catch (error) {
       setStorageMsg(`❌ ${error?.message || error}`);
+    }
+  };
+
+  const permanentlyDeleteWorkspaceProject = async (project) => {
+    if (storageBusy || project.active) return;
+    if (!window.confirm(`Permanently delete "${project.name || "Unnamed project"}"?\n\nThis deletes its retained project record and project-specific browser data, including saved analyses and diagrams. It will no longer be available to Restore. Other projects, shared repository caches, credentials, and existing backup files are kept.\n\nThis cannot be undone without a backup.`)) return;
+    setStorageBusy(true);
+    setStorageMsg("");
+    try {
+      await permanentlyDeleteStoredProject(project);
+      window.dispatchEvent?.(new CustomEvent("xhandle:data-changed", {
+        detail: {source:"settings-project-permanent-delete",projectId:project.id},
+      }));
+      notifyBackupDataChanged("storage-project-permanent-delete");
+      setStorageMsg(`✅ Permanently deleted ${project.name || "project"}.`);
+      await refreshStorageInventory();
+    } catch (error) {
+      setStorageMsg(`❌ Cleanup did not complete: ${error?.message || error}. Some records may already have been removed. Refresh and retry cleanup.`);
+    } finally {
+      setStorageBusy(false);
     }
   };
 
@@ -1916,6 +1940,7 @@ export default function SettingsModal({
                         </div>
                       </div>
                       {!project.active && (
+                        <div className="flex shrink-0 flex-wrap gap-2">
                         <button
                           type="button"
                           className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
@@ -1925,6 +1950,16 @@ export default function SettingsModal({
                         >
                           {project.recoverable ? "Restore" : "Not recoverable"}
                         </button>
+                        <button
+                          type="button"
+                          className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          disabled={storageBusy}
+                          onClick={() => permanentlyDeleteWorkspaceProject(project)}
+                          aria-label={`Permanently delete ${project.name || "project"}`}
+                        >
+                          Permanently delete
+                        </button>
+                        </div>
                       )}
                     </div>
                   ))}

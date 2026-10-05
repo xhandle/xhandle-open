@@ -1,3 +1,5 @@
+import { architectureEvidenceColumns, architectureCoverageSheets } from './features/code-architecture-assurance/codeArchitectureCoverageWorkbook';
+import ArchitectureRunRecovery from './features/code-architecture-assurance/ArchitectureRunRecovery';
 import LocalFolderChooser from "./features/code-architecture-context/LocalFolderChooser";
 import { scanLocalFolder, createLocalSourceProvider, getLocalFolderSession } from "./features/code-architecture-context/localCodeSource";
 import { isLocalCodeSource, localCodeSourceDescriptor, codeSourceProvenance } from "./features/code-architecture-context/codeSourceIdentity";
@@ -209,6 +211,8 @@ import {
   readCbaRowsFromIndexedDB,
   readFirstCbaRowsFromIndexedDB,
   writeCbaRowsToIndexedDB,
+  readArchitectureRunRecords,
+  writeImportedArchitectureRunRecords,
 } from "./features/code-architecture-assurance/codeArchitectureStorage";
 import {
   formatDuration,
@@ -1668,7 +1672,7 @@ function parseGitHubRepoUrl(value = "") {
 }
 
 function makeRepoConfig({
-  sourceType = "github", sourceId, folderName, snapshotId,
+  sourceType = "github", sourceId, folderName, snapshotId, evidenceVersion,
   owner = "",
   repo = "",
   repoUrl = "",
@@ -1697,6 +1701,7 @@ function makeRepoConfig({
     branch,
     commitSha,
     filesFound,
+    ...codeSourceProvenance({ sourceType, sourceId, folderName, snapshotId, evidenceVersion }),
     ...localCodeSourceDescriptor({ sourceType, sourceId, folderName, snapshotId }),
     createdAt: now,
     updatedAt: now,
@@ -1734,6 +1739,7 @@ function normalizeCodeArchitectureProjects(raw) {
             updatedAt: repo.updatedAt || project.updatedAt || project.createdAt || new Date().toISOString(),
             lastAnalyzedAt: repo.lastAnalyzedAt || null,
             sourceType: repo.sourceType || "github",
+            ...codeSourceProvenance(repo),
             ...localCodeSourceDescriptor(repo),
           };
         });
@@ -4454,7 +4460,7 @@ async function saveCodeArchitectureRepoConfig({ analyze = false } = {}) {
       setCodeArchitectureRepoConfigMessage("Repository saved.");
     }
   } catch (error) {
-    setShowCodeArchitectureRepoConfig(true);
+    if (error?.code !== "SOURCE_ANALYSIS_INCOMPLETE") setShowCodeArchitectureRepoConfig(true);
     setCodeArchitectureRepoConfigMessage(error?.message || String(error));
   } finally {
     setIsCodeArchitectureRepoAnalyzing(false);
@@ -4470,6 +4476,10 @@ function normalizeImportedCodeArchitectureRows(value) {
         ? value.data
         : [];
   return ensureCodeArchitectureTraceIds(rawRows.map((row) => ({
+    lineage: row.lineage || undefined,
+    canonicalRelationshipId: row.canonicalRelationshipId || undefined,
+    relationshipEvidence: row.relationshipEvidence || undefined,
+    classificationPolicyVersion: row.classificationPolicyVersion || undefined,
     from: row.from || row.fromFunction || row["Function (From)"] || "",
     fromFile: row.fromFile || row.fromRelatedFiles || row["Function (From) Related File(s)"] || "",
     fromDetails: row.fromDetails || row.fromFunctionDetails || row["Function (From) Details"] || "",
@@ -4535,7 +4545,10 @@ async function saveImportedCodeArchitectureRows({ project, file, rows, repoPacka
   repoConfig.contextSources = repoPackage?.metadata?.contextSources || repoPackage?.repo?.contextSources || null;
 
   const storageKey = codeArchitectureRowsKey(project.id, repoConfig.id);
-  const rowsPersisted = await writeCbaRowsToIndexedDB(storageKey, rows);
+  // Explicit project import copies ownership, without changing saved trace/artifact IDs.
+  rows = rows.map(row => row.lineage ? { ...row, lineage: { ...row.lineage, originalScope: row.lineage.originalScope || row.lineage.scope, scope: storageKey } } : row);
+  await writeImportedArchitectureRunRecords(storageKey, repoPackage?.runRecords || [], rows);
+  const rowsPersisted = true;
   localStorage.setItem(codeArchitectureMetaKey(project.id, repoConfig.id), JSON.stringify({
     repoId: repoConfig.repoId,
     repoName: repoConfig.repoName,
@@ -4545,6 +4558,12 @@ async function saveImportedCodeArchitectureRows({ project, file, rows, repoPacka
     importSource: file.name,
     importedAt,
     metrics: repoPackage?.metadata?.metrics || null,
+    sourceAnalysis: repoPackage?.metadata?.sourceAnalysis ? {
+      ...repoPackage.metadata.sourceAnalysis,
+      originalScope: repoPackage.metadata.sourceAnalysis.originalScope || repoPackage.metadata.sourceAnalysis.scope,
+      scope: storageKey,
+      manifestKey: `${storageKey}:run:${repoPackage.metadata.sourceAnalysis.fingerprint}`,
+    } : null,
     grounding: normalizeCodeArchitectureGroundingStats(repoPackage?.metadata?.grounding),
     operationalContext: repoConfig.operationalContext,
     contextSources: repoConfig.contextSources,
@@ -4784,6 +4803,7 @@ async function collectCodeArchitectureProjectExport(projectId) {
       },
       rows: ensureCodeArchitectureTraceIds(readResult.rows || []),
       metadata: meta || null,
+      runRecords: await readArchitectureRunRecords(primaryKey, readResult.rows || []),
       analysis: await collectCodeArchitectureRepoAnalysis(project, repo),
       sourceKey: readResult.sourceKey || primaryKey,
     });
@@ -4889,6 +4909,7 @@ function functionalRowsForWorkbook(rows = []) {
     "CSC": row.architecture?.csc || row.csc || "",
     "CSU": row.architecture?.csu || row.csu || "",
     "Architecture Rationale": row.architecture?.rationale || row.architectureRationale || "",
+    ...architectureEvidenceColumns(row),
   }));
 }
 
@@ -4999,6 +5020,7 @@ async function collectCodeArchitectureWorkbookRepoData(project, repo) {
   return {
     repo,
     cbaRows,
+    runRecords: await readArchitectureRunRecords(readResult.sourceKey || primaryKey, cbaRows),
     artifacts,
     hazardRun: latestCodeArchitectureHazardRun(
       analysis.hazardRuns,
@@ -5042,7 +5064,14 @@ async function exportCodeArchitectureWorkbook() {
       const repoData = await collectCodeArchitectureWorkbookRepoData(activeCodeArchitectureProject, repo);
       const prefix = String(repo.repoName || repo.repoId || repo.repo || "repo").slice(0, 12);
       if (codeArchitectureWorkbookExportSheets.includes("functional")) {
-        appendJsonSheet(XLSX, workbook, usedSheetNames, `${prefix} Architecture`, functionalRowsForWorkbook(repoData.cbaRows));
+        appendJsonSheet(XLSX, workbook, usedSheetNames, `${prefix} Architecture`, functionalRowsForWorkbook(repoData.cbaRows.filter(row => row.lineage?.status !== "historical")));
+        const historicalRows = repoData.cbaRows.filter(row => row.lineage?.status === "historical");
+        if (historicalRows.length) appendJsonSheet(XLSX, workbook, usedSheetNames, `${prefix} Architecture History`, functionalRowsForWorkbook(historicalRows));
+        const coverage = architectureCoverageSheets(repoData.runRecords);
+        appendJsonSheet(XLSX, workbook, usedSheetNames, `${prefix} Runs`, coverage.runs);
+        appendJsonSheet(XLSX, workbook, usedSheetNames, `${prefix} Coverage`, coverage.files);
+        if (coverage.relationships.length) appendJsonSheet(XLSX, workbook, usedSheetNames, `${prefix} Source Inventory`, coverage.relationships);
+        if (coverage.proposals.length) appendJsonSheet(XLSX, workbook, usedSheetNames, `${prefix} Review Proposals`, coverage.proposals);
       }
       if (codeArchitectureWorkbookExportSheets.includes("hazard")) {
         appendJsonSheet(XLSX, workbook, usedSheetNames, `${prefix} Hazards`, hazardSummaryRowsForWorkbook(repoData.hazardRun));
@@ -5321,6 +5350,7 @@ async function handleBaselineRepo({
           storage: rowsPersisted ? "indexedDB" : "unavailable",
           storageError: rowsPersisted ? "" : (metadata.storageError || "Generated rows could not be saved to browser storage."),
           metrics: metadata.metrics || null,
+          sourceAnalysis: metadata.sourceAnalysis || null,
           grounding: normalizeCodeArchitectureGroundingStats(metadata.grounding),
           operationalContext: updatedRepo.operationalContext,
           contextSources: updatedRepo.contextSources,
@@ -5434,6 +5464,7 @@ useEffect(() => {
           storage: rowsPersisted ? "indexedDB" : "unavailable",
           storageError: rowsPersisted ? "" : "Code architecture rows could not be saved to browser storage.",
           metrics: activeCodeArchitectureStoredMeta?.metrics || null,
+          sourceAnalysis: activeCodeArchitectureStoredMeta?.sourceAnalysis || null,
           grounding: normalizeCodeArchitectureGroundingStats(activeCodeArchitectureStoredMeta?.grounding),
           operationalContext: activeCodeArchitectureStoredMeta?.operationalContext || activeCodeArchitectureRepo.operationalContext || "",
           contextSources: activeCodeArchitectureStoredMeta?.contextSources || activeCodeArchitectureRepo.contextSources || null,
@@ -9390,19 +9421,18 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   }, []);
 
   const handleOpenCodeArchitectureFunctionalRow = useCallback((target) => {
-    const targetIndex = Number(
-      typeof target === "object" && target !== null
-        ? target.rowIndex ?? target.sourceIndex
-        : target
-    );
-    if (!Number.isFinite(targetIndex)) return;
+    const identity = target && typeof target === "object" ? target.traceId || target.rowRef : "";
+    const targetIndex = identity
+      ? functionalRowIndexForTraceValue(cbaTableData, String(identity))
+      : Number(typeof target === "object" && target !== null ? target.rowIndex ?? target.sourceIndex : target);
+    if (!Number.isFinite(targetIndex) || targetIndex < 0) return;
 
     setSection("code-architecture");
     setCodeArchitectureWorkspaceTab("architecture");
     setCodeArchitectureFunctionalTableOpenKey(`open-${Date.now()}-${Math.random()}`);
     codeArchitectureRowFocusScopeRef.current.functional = codeArchitectureScopeRef.current;
     setHighlightedCodeArchitectureFunctionalRowIndex(targetIndex);
-  }, []);
+  }, [cbaTableData]);
 
   const readCodeArchitectureRepoRows = useCallback((projectId, repoId) => (
     readCbaRowsFromIndexedDB(codeArchitectureRowsKey(projectId, repoId))
@@ -9427,7 +9457,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setCodeArchitectureFunctionalTableOpenKey(requestKey);
 
     const numericIndex = Number(rowIndex);
-    if (Number.isFinite(numericIndex) && numericIndex >= 0) {
+    if (!traceId && !rowRef && Number.isFinite(numericIndex) && numericIndex >= 0) {
       setHighlightedCodeArchitectureFunctionalRowIndex(numericIndex);
       return;
     }
@@ -9436,11 +9466,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       readCbaRowsFromIndexedDB(codeArchitectureRowsKey(projectId, targetRepoId)).then((rows) => {
         if (codeArchitectureNavigationRef.current.functional !== requestKey || codeArchitectureNavigationRef.current.projectId !== projectId) return;
         const target = String(traceId || rowRef || "").trim();
-        const foundIndex = (Array.isArray(rows) ? rows : []).findIndex((row, index) =>
-          String(row.traceId || "") === target ||
-          String(row.rowRef || "") === target ||
-          String(index + 1) === target
-        );
+        const foundIndex = functionalRowIndexForTraceValue(rows, target);
         if (foundIndex >= 0) {
           setHighlightedCodeArchitectureFunctionalRowIndex(foundIndex);
         }
@@ -17263,7 +17289,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
               <button
                 type="button"
                 disabled={cbaLoading}
-                onClick={() => handleBaselineRepo({ projectId: activeCodeArchitectureProject.id, repoConfig: activeCodeArchitectureRepo }).catch(error => { openCodeArchitectureRepoConfig(activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id); setCodeArchitectureRepoConfigMessage(error.message); })}
+                onClick={() => handleBaselineRepo({ projectId: activeCodeArchitectureProject.id, repoConfig: activeCodeArchitectureRepo }).catch(error => { if (error?.code !== "SOURCE_ANALYSIS_INCOMPLETE") openCodeArchitectureRepoConfig(activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id); setCodeArchitectureRepoConfigMessage(error.message); })}
                 className="inline-flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Sparkles size={15} />
@@ -17274,6 +17300,14 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
             </ActionsMenu>
           </div>
         </div>
+
+        {activeCodeArchitectureRepo && <ArchitectureRunRecovery
+          key={activeCodeArchitectureRowsKey}
+          scope={activeCodeArchitectureRowsKey}
+          loading={cbaLoading}
+          hasPublishedRows={cbaTableData.length > 0}
+          onResume={() => handleBaselineRepo({ projectId: activeCodeArchitectureProject.id, repoConfig: activeCodeArchitectureRepo })}
+        />}
 
         {cbaLoading
           ? (

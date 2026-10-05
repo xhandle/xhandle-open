@@ -124,7 +124,7 @@ export function codeReferencesFromEvidence({ architectureElement, repoMeta = {} 
     if (!cleanPath) return;
     if (fileRefs.has(cleanPath)) return;
     fileRefs.set(cleanPath, {
-      ...codeSourceProvenance(repoMeta),
+      ...(isLocalCodeSource(repoMeta) ? codeSourceProvenance(repoMeta) : {}),
       ...codeSourceProvenance(row),
       repoId,
       repoName,
@@ -149,9 +149,10 @@ export function codeReferencesFromEvidence({ architectureElement, repoMeta = {} 
     const key = `${fn.filePath}:${fn.functionName || ""}:${fn.startLine || ""}:${fn.endLine || ""}`;
     if (unique.has(key)) return;
     unique.set(key, {
-      ...codeSourceProvenance(repoMeta),
+      ...(isLocalCodeSource(repoMeta) ? codeSourceProvenance(repoMeta) : {}),
+      ...codeSourceProvenance(row),
       ...codeSourceProvenance(fn),
-      ...(isLocalCodeSource(fn) ? { content: fn.content || "" } : {}),
+      ...(isLocalCodeSource(fn) || fn.evidenceVersion === 1 || row.evidenceVersion === 1 ? { content: fn.content || "", contentStartLine: fn.startLine || 1 } : {}),
       repoId: repoMeta.repoId || repoMeta.repoName || fn.repo || "",
       repoName: repoMeta.repoName || fn.repo || "",
       repoPath: repoMeta.repoPath || "",

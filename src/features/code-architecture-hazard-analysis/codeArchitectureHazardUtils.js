@@ -1,3 +1,4 @@
+import { codeSourceProvenance } from '../code-architecture-context/codeSourceIdentity';
 import {
   CODE_ARCHITECTURE_HAZARD_REVIEW_STATUSES,
   CODE_ARCHITECTURE_HAZARD_SOURCE_TYPE,
@@ -45,6 +46,7 @@ function normalizeFunctionIdentity(value) {
 }
 
 function functionIdentityKey(row = {}, side = "from") {
+    if ([1, 2].includes(row.classificationPolicyVersion)) return JSON.stringify([row.relationshipEvidence?.[`${side}File`] || row[`${side}File`], row.relationshipEvidence?.[side] || row[side]]);
   const functionName = side === "to"
     ? (row.to ?? row.toFunction ?? "")
     : (row.from ?? row.fromFunction ?? "");
@@ -89,6 +91,35 @@ export function normalizeRepoId(repoMeta = {}) {
   return repoMeta.repoId || repoMeta.repoName || [repoMeta.owner, repoMeta.repo].filter(Boolean).join("/") || "";
 }
 
+// Optional portable provenance. Missing columns retain legacy lookup semantics.
+const SOURCE_TRACE_COLUMNS = [
+  "Evidence Source Type", "Evidence Snapshot ID", "Evidence Version",
+  "Local Source ID", "Local Folder Name", "Evidence Repository ID",
+  "Architecture Lineage Status", "Architecture Run Fingerprint", "Architecture Scope",
+  "Classification Policy Version",
+];
+function sourceTraceFields(trace = {}) {
+  return Object.fromEntries(SOURCE_TRACE_COLUMNS.map((name, index) => [name, [
+    trace.sourceType, trace.snapshotId, trace.evidenceVersion,
+    trace.sourceId, trace.folderName, trace.repoId,
+    trace.lineage?.status, trace.lineage?.runFingerprint, trace.lineage?.scope,
+    trace.classificationPolicyVersion,
+  ][index] || ""]));
+}
+function readSourceTrace(get) {
+  const status = get("Architecture Lineage Status");
+  return {
+    ...codeSourceProvenance({
+      sourceType: get("Evidence Source Type"), snapshotId: get("Evidence Snapshot ID"),
+      evidenceVersion: Number(get("Evidence Version")) || undefined,
+      sourceId: get("Local Source ID"), folderName: get("Local Folder Name"),
+    }),
+    repoId: get("Evidence Repository ID"),
+    ...(status ? { lineage: { version: 1, status, runFingerprint: get("Architecture Run Fingerprint"), scope: get("Architecture Scope") } } : {}),
+    ...(get("Classification Policy Version") ? { classificationPolicyVersion: Number(get("Classification Policy Version")) } : {}),
+  };
+}
+
 export const CODE_ARCHITECTURE_TRACEABILITY_COLUMNS = [
   "Trace ID",
   "From Node ID",
@@ -110,6 +141,7 @@ export const CODE_ARCHITECTURE_TRACEABILITY_COLUMNS = [
   "Hazard Analysis Eligibility",
   "Eligibility Rationale",
   "Eligibility Source",
+  ...SOURCE_TRACE_COLUMNS,
 ];
 
 function normalizeText(value) {
@@ -247,6 +279,7 @@ export function buildAffectedCodeRefsFromTraceability(trace = {}, repoMeta = {})
     const filePath = match?.[1] || sourceFiles[index] || "";
     if (!filePath) return;
     refs.push({
+      ...codeSourceProvenance(trace),
       repoId,
       repoName,
       repoPath: repoMeta.repoPath || "",
@@ -267,6 +300,7 @@ export function buildAffectedCodeRefsFromTraceability(trace = {}, repoMeta = {})
   sourceFiles.forEach((filePath) => {
     if (!filePath || refs.some((ref) => ref.filePath === filePath)) return;
     refs.push({
+      ...codeSourceProvenance(trace),
       repoId,
       repoName,
       repoPath: repoMeta.repoPath || "",
@@ -298,6 +332,9 @@ export function buildTraceabilityForArchitectureRow(row = {}, index = 0, repoMet
     ...((row.sourceEvidence?.files || []).map((file) => (typeof file === "string" ? file : file.filePath || file.path))),
   ].filter((filePath) => !isMarkdownSourcePath(filePath)));
   const trace = {
+    ...codeSourceProvenance(row),
+    lineage: row.lineage || null,
+    classificationPolicyVersion: row.classificationPolicyVersion,
     traceId: row?.traceId || "",
     fromNodeId: row?.fromNodeId || "",
     edgeId: row?.edgeId || "",
@@ -352,6 +389,7 @@ export function traceabilityToSheetCells(trace = {}) {
     trace.hazardAnalysisEligibility || "",
     trace.hazardAnalysisEligibilityRationale || "",
     trace.hazardAnalysisEligibilitySource || "",
+    ...Object.values(sourceTraceFields(trace)),
   ];
 }
 
@@ -365,6 +403,7 @@ export function extractFunctionalDecompositionTrace(headers = [], row = [], repo
   const functionTo = valueFor("Function (To)", "To Function", "Target Function") || normalizeText(row[2]);
   const controlAction = valueFor("Control Action", "Action", "Interface") || normalizeText(row[1]);
   const trace = {
+    ...readSourceTrace(valueFor),
     traceId: valueFor("Trace ID"),
     fromNodeId: valueFor("From Node ID"),
     edgeId: valueFor("Control Edge ID"),
@@ -388,7 +427,7 @@ export function extractFunctionalDecompositionTrace(headers = [], row = [], repo
     hazardAnalysisEligibility: valueFor("Hazard Analysis Eligibility"),
     hazardAnalysisEligibilityRationale: valueFor("Eligibility Rationale"),
     hazardAnalysisEligibilitySource: valueFor("Eligibility Source"),
-    repoId: normalizeRepoId(repoMeta),
+    repoId: valueFor("Evidence Repository ID") || normalizeRepoId(repoMeta),
     branch: repoMeta.branch || "",
   };
   if (!trace.sourceFiles.length) trace.sourceFiles = uniqueList([trace.fromFile, trace.toFile]);
@@ -430,6 +469,7 @@ export function traceabilityObjectToSummaryFields(trace = {}) {
     "Hazard Analysis Eligibility": trace.hazardAnalysisEligibility || "",
     "Eligibility Rationale": trace.hazardAnalysisEligibilityRationale || "",
     "Eligibility Source": trace.hazardAnalysisEligibilitySource || "",
+    ...sourceTraceFields(trace),
   };
 }
 
@@ -455,6 +495,7 @@ export const HAZARD_SUMMARY_TRACEABILITY_COLUMNS = [
   "Hazard Analysis Eligibility",
   "Eligibility Rationale",
   "Eligibility Source",
+  ...SOURCE_TRACE_COLUMNS,
 ];
 
 export const HAZARD_SUMMARY_EVIDENCE_COLUMNS = [
@@ -512,6 +553,10 @@ export function codeArchitectureRowsToHazardTableRows(cbaRows = [], repoMeta = {
       .filter((value, valueIndex, arr) => arr.indexOf(value) === valueIndex);
     const traceability = buildTraceabilityForArchitectureRow(row, index, repoMeta);
     return {
+      ...codeSourceProvenance(row),
+      lineage: row.lineage || null,
+      classificationPolicyVersion: row.classificationPolicyVersion,
+      canonicalRelationshipId: row.canonicalRelationshipId,
       id: architectureElementIdForRow(row, index),
       traceId: row.traceId || "",
       fromNodeId: row.fromNodeId || "",
@@ -672,6 +717,7 @@ export function summarySheetToHazardSummaryRows(summarySheet) {
       return index >= 0 ? normalizeText(Array.isArray(row) ? row[index] : "") : "";
     };
     const trace = {
+      ...readSourceTrace(get),
       traceId: get("Trace ID"),
       fromNodeId: get("From Node ID"),
       edgeId: get("Control Edge ID"),
@@ -690,6 +736,7 @@ export function summarySheetToHazardSummaryRows(summarySheet) {
       csu: get("CSU"),
     };
     const record = {
+      ...readSourceTrace(get),
       id: `cba-hazard-row-${rowIndex + 1}`,
       rowIndex,
       row,
