@@ -1,3 +1,4 @@
+import { codeSourceIndexKey, codeSourceIndexPrefix, codeSourceProvenance, isLocalCodeSource } from "../code-architecture-context/codeSourceIdentity";
 const IDB_DB_NAME = "xhandle";
 const IDB_VERSION = 4;
 const CODE_INDEX_STORE = "code_index";
@@ -62,9 +63,9 @@ function openXHandleDb() {
   });
 }
 
-async function loadIndexedSourceRecord({ owner, repo, filePath }) {
-  if (!owner || !repo || !filePath || typeof indexedDB === "undefined") return null;
-  const key = `code:file:${owner}/${repo}:${filePath}`;
+async function loadIndexedSourceRecord({ filePath, ...source }) {
+  const key = codeSourceIndexKey(source, filePath);
+  if (!key) return null;
   try {
     const db = await openXHandleDb();
     const result = await new Promise((resolve, reject) => {
@@ -72,7 +73,7 @@ async function loadIndexedSourceRecord({ owner, repo, filePath }) {
       const req = tx.objectStore(CODE_INDEX_STORE).get(key);
       req.onsuccess = () => resolve(req.result?.value || null);
       req.onerror = () => reject(req.error);
-    });
+    }).finally(() => db.close());
     if (result) return result;
   } catch {}
 
@@ -84,9 +85,9 @@ async function loadIndexedSourceRecord({ owner, repo, filePath }) {
   }
 }
 
-async function loadAllIndexedSourceRecords({ owner, repo }) {
-  if (!owner || !repo) return [];
-  const prefix = `code:file:${owner}/${repo}:`;
+async function loadAllIndexedSourceRecords(source) {
+  const prefix = codeSourceIndexPrefix(source);
+  if (!prefix) return [];
   if (typeof indexedDB !== "undefined") try {
     const db = await openXHandleDb();
     const rows = await new Promise((resolve, reject) => {
@@ -104,7 +105,7 @@ async function loadAllIndexedSourceRecords({ owner, repo }) {
         cursor.continue();
       };
       req.onerror = () => reject(req.error);
-    });
+    }).finally(() => db.close());
     if (rows.length) return rows;
   } catch {
     // Fall through to localStorage compatibility scan.
@@ -268,6 +269,7 @@ function makeMissingExtractTrajTokensRow(records = [], rows = []) {
     filePath,
   });
   return {
+    ...codeSourceProvenance(record),
     rowRef: "source-audit-extract-traj-tokens",
     traceId: "source-audit-extract-traj-tokens",
     fromFunction: "extract_traj_tokens",
@@ -284,6 +286,7 @@ function makeMissingExtractTrajTokensRow(records = [], rows = []) {
         checkedFiles: [filePath],
       },
       files: [{
+        ...codeSourceProvenance(record),
         filePath,
         fileName: filePath.split("/").pop() || filePath,
         repo: record.repo || "",
@@ -320,15 +323,16 @@ function makeMissingExtractTrajTokensRow(records = [], rows = []) {
 export async function enrichHazardTableRowsWithSourceContent(tableRows = [], repoMeta = {}, options = {}) {
   const rows = Array.isArray(tableRows) ? tableRows : [];
   const { owner, repo } = repoPartsFromMeta(repoMeta);
-  if (!owner || !repo) return rows;
+  const source = isLocalCodeSource(repoMeta) ? codeSourceProvenance(repoMeta) : { owner, repo };
+  if (!codeSourceIndexPrefix(source)) return rows;
 
   const loadSourceRecord = options.loadSourceRecord || loadIndexedSourceRecord;
-  const allSourceRecords = options.allSourceRecords || await loadAllIndexedSourceRecords({ owner, repo });
+  const allSourceRecords = options.allSourceRecords || await loadAllIndexedSourceRecords(source);
   const cache = new Map();
   async function load(filePath) {
     if (!filePath) return null;
     if (cache.has(filePath)) return cache.get(filePath);
-    const record = await loadSourceRecord({ owner, repo, filePath });
+    const record = await loadSourceRecord({ ...source, filePath });
     cache.set(filePath, record || null);
     return record || null;
   }
@@ -343,6 +347,7 @@ export async function enrichHazardTableRowsWithSourceContent(tableRows = [], rep
       if (!record?.content) continue;
       const recordFunctions = (record.sourceFunctions || []).map((fn) => attachFunctionContent(record, fn));
       loadedFiles.push({
+        ...codeSourceProvenance(record),
         filePath,
         fileName: filePath.split("/").pop() || filePath,
         repo: record.repo || repo,

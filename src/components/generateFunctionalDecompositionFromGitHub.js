@@ -1,3 +1,5 @@
+import { isLocalCodeSource, codeSourceProvenance, codeSourceIndexKey } from "../features/code-architecture-context/codeSourceIdentity";
+import { createLocalSourceProvider, hashLocalText } from "../features/code-architecture-context/localCodeSource";
 import useTableRowFocus from "./useTableRowFocus";
 import { resolveArchitectureTarget, retryDiagramFocus } from "./codeArchitectureNavigation";
 import CopyTableButton from './CopyTableButton';
@@ -84,7 +86,8 @@ async function idbPut(storeName, key, value) {
       resolve();
     };
     tx.onerror = () => reject(tx.error);
-  });
+    tx.onabort = () => reject(tx.error || new Error("Source storage transaction aborted."));
+  }).finally(() => db.close());
 }
 
 async function idbGet(storeName, key) {
@@ -94,7 +97,7 @@ async function idbGet(storeName, key) {
     const req = tx.objectStore(storeName).get(key);
     req.onsuccess = () => resolve(req.result?.value);
     req.onerror = () => reject(req.error);
-  });
+  }).finally(() => db.close());
 }
 
 async function idbDelete(storeName, key) {
@@ -107,7 +110,8 @@ async function idbDelete(storeName, key) {
       resolve();
     };
     tx.onerror = () => reject(tx.error);
-  });
+    tx.onabort = () => reject(tx.error || new Error("Source storage transaction aborted."));
+  }).finally(() => db.close());
 }
 
 async function idbDeleteByPrefix(storeName, prefix) {
@@ -127,7 +131,8 @@ async function idbDeleteByPrefix(storeName, prefix) {
       resolve();
     };
     tx.onerror = () => reject(tx.error);
-  });
+    tx.onabort = () => reject(tx.error || new Error("Source storage transaction aborted."));
+  }).finally(() => db.close());
 }
 
 // --- Lightweight file indexer for Copilot grounding ---
@@ -219,7 +224,7 @@ function githubSourceUrl({ owner, repo, path, branch, commitSha, startLine, endL
   return `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/blob/${encodeURIComponent(ref)}/${encodeURI(path)}${linePart}`;
 }
 
-function makeSourceFunction({ owner, repo, path, branch, commitSha, functionName, startLine, endLine }) {
+function makeSourceFunction({ owner, repo, path, branch, commitSha, functionName, startLine, endLine, ...source }) {
   return {
     functionName,
     filePath: path,
@@ -230,7 +235,8 @@ function makeSourceFunction({ owner, repo, path, branch, commitSha, functionName
     owner,
     branch,
     commitSha,
-    sourceUrl: githubSourceUrl({ owner, repo, path, branch, commitSha, startLine, endLine }),
+    ...codeSourceProvenance(source),
+    sourceUrl: isLocalCodeSource(source) ? "" : githubSourceUrl({ owner, repo, path, branch, commitSha, startLine, endLine }),
   };
 }
 
@@ -328,7 +334,7 @@ function extractSourceFunctions(source, lang, meta) {
   return [];
 }
 
-export function buildSourceFileIndexRecord({ owner, repo, path, content, branch, commitSha }) {
+export function buildSourceFileIndexRecord({ owner, repo, path, content, branch, commitSha, ...source }) {
   const MAX_BYTES = 80000; // keep per-file small
   const lang = detectLangFromPath(path);
   const clipped = (content || "").slice(0, MAX_BYTES);
@@ -355,7 +361,7 @@ export function buildSourceFileIndexRecord({ owner, repo, path, content, branch,
     } catch {}
   }
 
-  const sourceFunctions = extractSourceFunctions(clipped, lang, { owner, repo, path, branch, commitSha });
+  const sourceFunctions = extractSourceFunctions(clipped, lang, { owner, repo, path, branch, commitSha, ...source });
   const indexedFunctionNames = new Set(functions);
   sourceFunctions.forEach((fn) => indexedFunctionNames.add(fn.functionName));
   const sourceAudit = {};
@@ -368,6 +374,7 @@ export function buildSourceFileIndexRecord({ owner, repo, path, content, branch,
       .map((symbol) => symbol.name);
   }
   const record = {
+    ...codeSourceProvenance(source),
     path,
     lang,
     repo,
@@ -384,12 +391,13 @@ export function buildSourceFileIndexRecord({ owner, repo, path, content, branch,
   return record;
 }
 
-async function indexSourceFileToIDB({ owner, repo, path, content, branch, commitSha }) {
-  const record = buildSourceFileIndexRecord({ owner, repo, path, content, branch, commitSha });
+async function indexSourceFileToIDB({ owner, repo, path, content, branch, commitSha, ...source }) {
+  const record = buildSourceFileIndexRecord({ owner, repo, path, content, branch, commitSha, ...source });
 
   try {
-    await idbPut(IDB_STORES.codeIndex, `code:file:${owner}/${repo}:${path}`, record);
+    await idbPut(IDB_STORES.codeIndex, codeSourceIndexKey({ owner, repo, ...source }, path), record);
   } catch (e) {
+    if (isLocalCodeSource(source)) throw e;
     // As a last resort, no-throw fallback to localStorage (rare)
     try { localStorage.setItem(`code:file:${owner}/${repo}:${path}`, JSON.stringify(record)); } catch {}
   }
@@ -858,16 +866,17 @@ export function buildRepoStructureSummary(allFiles = []) {
   };
 }
 
-export async function fetchRepositoryContext({ owner, repo, token, ref, allFiles }) {
+export async function fetchRepositoryContext({ owner, repo, token, ref, allFiles, sourceProvider }) {
   const { folderSummary, topLevelEntries } = buildRepoStructureSummary(allFiles);
   const readme = findReadmeFile(allFiles);
   let readmeText = "";
 
   if (readme?.path) {
     try {
-      const got = await fetchGitHubFileSmart({ owner, repo, path: readme.path, token, ref, sha: readme.sha });
+      const got = await (sourceProvider ? sourceProvider.readText({ path: readme.path }) : fetchGitHubFileSmart({ owner, repo, path: readme.path, token, ref, sha: readme.sha }));
       if (got.ok) readmeText = String(got.content || "").slice(0, 18000);
     } catch (error) {
+      if (sourceProvider) throw error;
       console.warn("Unable to fetch README for architecture context.", error);
     }
   }
@@ -2289,8 +2298,11 @@ async function requestOpenAIProxyJsonWithMetrics({ metricsRun = null, ...params 
   return { ...payload, result };
 }
 
-function runWithFileTimeout(filePath, task, timeoutMs = FUNCTIONAL_DECOMPOSITION_FILE_TIMEOUT_MS) {
+function runWithFileTimeout(filePath, task, timeoutMs = FUNCTIONAL_DECOMPOSITION_FILE_TIMEOUT_MS, parentSignal) {
   const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const abort = () => controller?.abort(parentSignal?.reason);
+  parentSignal?.addEventListener("abort", abort, { once: true });
+  if (parentSignal?.aborted) abort();
   let timeoutId = null;
   const timeoutPromise = new Promise((_, reject) => {
     timeoutId = setTimeout(() => {
@@ -2306,6 +2318,7 @@ function runWithFileTimeout(filePath, task, timeoutMs = FUNCTIONAL_DECOMPOSITION
     timeoutPromise,
   ]).finally(() => {
     if (timeoutId) clearTimeout(timeoutId);
+    parentSignal?.removeEventListener("abort", abort);
   });
 }
 
@@ -3094,6 +3107,7 @@ function makeSourceAuditArchitectureRow({ record, fn, rowRef }) {
       content: sourceSnippetForFunction(record.content || "", fn),
     };
   return {
+    ...codeSourceProvenance(record),
     rowRef,
     traceId: `source-audit-${functionName}`,
     from: functionName,
@@ -3137,18 +3151,18 @@ function makeSourceAuditArchitectureRow({ record, fn, rowRef }) {
   };
 }
 
-async function buildCodeEvidenceForRows({ owner, repo, rows }) {
+async function buildCodeEvidenceForRows({ owner, repo, rows, ...source }) {
   const cache = new Map();
   async function getFileRecord(path) {
     if (!path) return null;
     if (cache.has(path)) return cache.get(path);
     let record = null;
     try {
-      record = await idbGet(IDB_STORES.codeIndex, `code:file:${owner}/${repo}:${path}`);
+      record = await idbGet(IDB_STORES.codeIndex, codeSourceIndexKey({ owner, repo, ...source }, path));
     } catch {}
     if (!record) {
       try {
-        const raw = localStorage.getItem(`code:file:${owner}/${repo}:${path}`);
+        const raw = localStorage.getItem(codeSourceIndexKey({ owner, repo, ...source }, path));
         record = raw ? JSON.parse(raw) : null;
       } catch {}
     }
@@ -3171,6 +3185,7 @@ async function buildCodeEvidenceForRows({ owner, repo, rows }) {
         content: sourceSnippetForFunction(record?.content || "", fn),
       })));
       fileRecords.push({
+        ...codeSourceProvenance(source),
         filePath: path,
         fileName: path.split("/").pop() || path,
         repo: record?.repo || repo,
@@ -3188,6 +3203,7 @@ async function buildCodeEvidenceForRows({ owner, repo, rows }) {
 
     enriched.push({
       ...row,
+      ...codeSourceProvenance(source),
       rowRef: index + 1,
       codeEvidence: {
         rowRefs: [index + 1],
@@ -3261,8 +3277,8 @@ async function ensureCodeArchitectureTraceIdsCooperative(rows = []) {
   return output;
 }
 
-async function classifyArchitectureRows({ rows, owner, repo, repoContext = {}, bearer = "", metricsRun = null }) {
-  const rowsWithEvidence = await buildCodeEvidenceForRows({ owner, repo, rows });
+async function classifyArchitectureRows({ rows, owner, repo, repoContext = {}, bearer = "", metricsRun = null, ...source }) {
+  const rowsWithEvidence = await buildCodeEvidenceForRows({ owner, repo, rows, ...source });
   if (!rowsWithEvidence.length) return rowsWithEvidence;
 
   const allocationPlan = await generateNestedArchitectureAllocationPlan({
@@ -3327,14 +3343,17 @@ export const generateFunctionalDecompositionFromGitHub = async (
 ) => {
   try {
     setLoading(true);
-    console.log("🔄 Starting functional decomposition generation from GitHub...");
+    console.log("🔄 Starting functional decomposition generation...");
 
     const repoConfig = opts?.repoConfig || {};
-    const owner = (repoConfig.owner || localStorage.getItem("repoOwner") || "").trim();
-    const repo = (repoConfig.repo || localStorage.getItem("repoName") || "").trim();
-    const token = (repoConfig.token || localStorage.getItem("githubToken") || "") || undefined;
-    if (!owner || !repo) throw new Error("Missing owner/repo. Connect a GitHub repository first.");
-    const outputStorageKey = opts?.storageKey || `cba:${owner}/${repo}`;
+    const local = isLocalCodeSource(repoConfig);
+    const sourceProvider = local ? await createLocalSourceProvider(repoConfig, { signal: opts.signal, onProgress: opts.onProgress }) : null;
+    const source = sourceProvider?.source || repoConfig;
+    const owner = local ? "" : (repoConfig.owner || localStorage.getItem("repoOwner") || "").trim();
+    const repo = local ? "" : (repoConfig.repo || localStorage.getItem("repoName") || "").trim();
+    const token = local ? undefined : (repoConfig.token || localStorage.getItem("githubToken") || "") || undefined;
+    if (!local && (!owner || !repo)) throw new Error("Missing owner/repo. Connect a GitHub repository first.");
+    const outputStorageKey = opts?.storageKey || (local ? `cba:local:${source.sourceId}` : `cba:${owner}/${repo}`);
     const metricsRun = createFunctionalDecompositionMetricsRun({
       projectId: opts?.projectId || repoConfig.projectId || "",
       repoId: repoConfig.id || repoConfig.repoId || `${owner}/${repo}`,
@@ -3346,24 +3365,24 @@ export const generateFunctionalDecompositionFromGitHub = async (
       completedFiles: 0,
       totalFiles: 0,
       currentFile: "",
-      message: "Resolving repository branch...",
+      message: local ? "Preparing local folder analysis..." : "Resolving repository branch...",
     });
 
     // Determine ref/branch once up front
-    const ref = repoConfig.branch || await getDefaultBranch(owner, repo, token);
+    const ref = local ? "" : repoConfig.branch || await getDefaultBranch(owner, repo, token);
     opts?.onProgress?.({
       phase: "scan",
       completedFiles: 0,
       totalFiles: 0,
       currentFile: "",
-      message: `Scanning ${owner}/${repo} file tree on ${ref}...`,
+      message: local ? `Scanning ${source.folderName}...` : `Scanning ${owner}/${repo} file tree on ${ref}...`,
     });
-    const commitSha = await getCommitShaForRef(owner, repo, token, ref);
-    await clearIndexedFilesForRepo(owner, repo);
+    const commitSha = local ? "" : await getCommitShaForRef(owner, repo, token, ref);
+    if (!local) await clearIndexedFilesForRepo(owner, repo);
 
     // List all repo files via GitHub Trees API (no backend state)
-    const allFiles = await listRepoFilesViaGitHub(owner, repo, token, ref);
-    if (!allFiles.length) throw new Error("No files found in GitHub repository.");
+    const allFiles = sourceProvider ? await sourceProvider.listFiles() : await listRepoFilesViaGitHub(owner, repo, token, ref);
+    if (!allFiles.length) throw new Error("No files found in the selected source.");
     const repoPathResolver = createRepoPathResolver(allFiles);
     const groundingStats = createFunctionalGroundingStats();
     opts?.onProgress?.({
@@ -3373,8 +3392,8 @@ export const generateFunctionalDecompositionFromGitHub = async (
       currentFile: "",
       message: `Found ${allFiles.length} repository files; filtering selectable source files...`,
     });
-    const repoContext = await fetchRepositoryContext({ owner, repo, token, ref, allFiles });
-    const userAnalysisContext = opts?.analysisContext || loadGitHubAnalysisContextFromStorage();
+    const repoContext = await fetchRepositoryContext({ owner, repo: local ? source.folderName : repo, token, ref, allFiles, sourceProvider });
+    const userAnalysisContext = opts?.analysisContext || (local ? { text: "", files: [] } : loadGitHubAnalysisContextFromStorage());
 
     // Exclude heavy/vendor dirs; allow all extensions for modal selection
     const candidates = filterSelectableRepoFiles(allFiles);
@@ -3493,7 +3512,8 @@ Rules:
 - Prefer interface-rich interactions when source evidence supports them, including APIs, callbacks, message/event flows, hardware boundaries, shared state, configuration files, protocols, imports/includes, and library/framework boundaries.
 - Analyze the current file/chunk only. README and repository context may guide terminology, but they are not evidence for rows unless the current source chunk also supports the interaction.
     `.trim();
-    const checkpointKey = `${FUNCTIONAL_DECOMPOSITION_CHECKPOINT_PREFIX}${outputStorageKey}:${commitSha || ref}`;
+    const revision = local ? `${source.snapshotId}:${await hashLocalText(JSON.stringify({ context: userAnalysisContext, model: BULK_ANALYSIS_MODEL, prompt, grounding: FUNCTIONAL_GROUNDING_VERSION }))}` : commitSha || ref;
+    const checkpointKey = `${FUNCTIONAL_DECOMPOSITION_CHECKPOINT_PREFIX}${outputStorageKey}:${revision}`;
     const planSignature = functionalAnalysisPlanSignature(validFiles);
     const savedCheckpoint = opts?.resumeFromCheckpoint === false
       ? null
@@ -3538,7 +3558,14 @@ Rules:
     }
 
     for (const file of validFiles) {
-      if (completedPathSet.has(file.path)) continue;
+      throwIfAborted(opts.signal);
+      if (completedPathSet.has(file.path)) {
+        // Rebuild evidence when resuming: completed rows still need their source index.
+        const got = await (sourceProvider ? sourceProvider.readText({ path: file.path, signal: opts.signal }) : fetchGitHubFileSmart({ owner, repo, token, ref, path: file.path, sha: file.sha }));
+        if (got.ok) await indexSourceFileToIDB({ owner, repo, path: file.path, content: got.content, branch: ref, commitSha, ...codeSourceProvenance(source) });
+        else throw new Error(`Cannot restore source evidence for ${file.path}`);
+        continue;
+      }
       const completedBeforeFile = completedFiles;
       const currentFileNumber = completedBeforeFile + 1;
       const totalFileCount = validFiles.length;
@@ -3555,7 +3582,7 @@ Rules:
             currentFile: file.path,
             message: `Batch ${currentBatchNumber} of ${analysisPlan.batchCount}: fetching file ${currentFileNumber} of ${totalFileCount}: ${file.path}`,
           });
-          const got = await fetchGitHubFileSmart({
+          const got = await (sourceProvider ? sourceProvider.readText({ path: file.path, signal }) : fetchGitHubFileSmart({
             backendURL, // unused now
             owner,
             repo,
@@ -3564,7 +3591,7 @@ Rules:
             ref,
             sha: file.sha,
             signal,
-          });
+          }));
           throwIfAborted(signal);
           if (!got.ok) {
             throw new Error(`Could not fetch ${file.path} from GitHub.`);
@@ -3575,6 +3602,7 @@ Rules:
             repo,
             path: file.path,
             content: got.content,
+            ...codeSourceProvenance(source),
             branch: ref,
             commitSha,
           });
@@ -3585,10 +3613,11 @@ Rules:
                 repo,
                 path: file.path,
                 content: got.content,
+                ...codeSourceProvenance(source),
                 branch: ref,
                 commitSha,
               });
-            } catch {}
+            } catch (error) { if (local) throw error; }
           }
           throwIfAborted(signal);
 
@@ -3695,10 +3724,11 @@ ${chunkedContent}`;
             // tiny throttle helps avoid transient 502/Fetch errors
             await sleep(120, signal);
           }
-        });
+        }, FUNCTIONAL_DECOMPOSITION_FILE_TIMEOUT_MS, opts.signal);
         allTableData.push(...fileTableData);
         fileAnalysisSucceeded = true;
       } catch (e) {
+        if (opts.signal?.aborted || (local && /Local file changed|size limit|quota|storage/i.test(e?.message || ""))) throw e;
         fileFailureMessage = e?.message || String(e);
         for (let i = failedFiles.length - 1; i >= 0; i -= 1) {
           if (failedFiles[i]?.path === file.path) failedFiles.splice(i, 1);
@@ -3744,6 +3774,8 @@ ${chunkedContent}`;
       }
     }
 
+    throwIfAborted(opts.signal);
+    if (local && failedFiles.length) throw new Error(`Local analysis is incomplete (${failedFiles.length} failed files). Previous results were preserved; reconnect and retry to resume.`);
     allTableData = dedupeFunctionalDecompositionRows(allTableData, groundingStats);
 
     console.log("🏛️ Classifying functional decomposition into Subsystem/CSCI/CSC/CSU architecture...");
@@ -3756,6 +3788,7 @@ ${chunkedContent}`;
     });
     const architectureRows = await ensureCodeArchitectureTraceIdsCooperative(await classifyArchitectureRows({
       rows: allTableData,
+      ...codeSourceProvenance(source),
       owner,
       repo,
       bearer,
@@ -3763,8 +3796,9 @@ ${chunkedContent}`;
       metricsRun,
     }));
 
+    throwIfAborted(opts.signal);
     const classifiedArchitectureRows = ensureCodeArchitectureTraceIds(architectureRows);
-    setTableData(classifiedArchitectureRows);
+    if (!local) setTableData(classifiedArchitectureRows);
 
     // NEW: make rows available to Copilot (read via cba:owner/repo)
     let storageSaved = false;
@@ -3795,6 +3829,10 @@ ${chunkedContent}`;
       console.warn("[cba] Failed to persist generated architecture rows", error);
     }
     
+    if (local) {
+      if (!storageSaved) throw new Error(`Local analysis results could not be saved: ${storageError}`);
+      setTableData(classifiedArchitectureRows);
+    }
     const finalMetrics = finishFunctionalDecompositionMetricsRun(metricsRun, {
       rowCount: architectureRows.length,
       selectedFiles: validFiles.length,
@@ -3806,11 +3844,13 @@ ${chunkedContent}`;
 
     console.log("📊 Parsed table rows:", architectureRows.length);
     const metadata = {
+      ...codeSourceProvenance(source),
+      excludedFiles: sourceProvider?.skipped || [],
       owner,
       repo,
       repoId: repoConfig.repoId || `${owner}/${repo}`,
       repoName: repoConfig.repoName || `${owner}/${repo}`,
-      repoUrl: repoConfig.repoUrl || `https://github.com/${owner}/${repo}`,
+      repoUrl: local ? "" : repoConfig.repoUrl || `https://github.com/${owner}/${repo}`,
       branch: ref,
       commitSha,
       filesFound: allFiles.length,
@@ -3820,7 +3860,7 @@ ${chunkedContent}`;
       skippedForChunkLimit: analysisPlan.skippedForChunkLimit.length,
       totalEstimatedChunks: analysisPlan.totalEstimatedChunks,
       batchCount: analysisPlan.batchCount,
-      fullCoverage: true,
+      fullCoverage: local ? skippedForScale === 0 && failedFiles.length === 0 && sourceProvider.skipped.length === 0 : true,
       analyzedFiles: completedPathSet.size,
       failedFileCount: failedFiles.length,
       failedFiles: failedFiles.slice(-25),
@@ -3845,7 +3885,7 @@ ${chunkedContent}`;
     
   } catch (error) {
     console.error("🚨 Failed to generate functional decomposition:", error);
-    setTableData([]);
+    if (!isLocalCodeSource(opts?.repoConfig)) setTableData([]);
     throw error;
   } finally {
     setLoading(false);

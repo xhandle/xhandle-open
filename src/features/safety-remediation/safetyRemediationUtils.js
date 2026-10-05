@@ -1,3 +1,4 @@
+import { codeSourceProvenance, isLocalCodeSource } from "../code-architecture-context/codeSourceIdentity";
 import {
   SAFETY_FINDING_IMPLEMENTATION_STATUSES,
   SAFETY_FINDING_REVIEW_STATUSES,
@@ -123,6 +124,8 @@ export function codeReferencesFromEvidence({ architectureElement, repoMeta = {} 
     if (!cleanPath) return;
     if (fileRefs.has(cleanPath)) return;
     fileRefs.set(cleanPath, {
+      ...codeSourceProvenance(repoMeta),
+      ...codeSourceProvenance(row),
       repoId,
       repoName,
       repoPath: repoMeta.repoPath || "",
@@ -146,6 +149,9 @@ export function codeReferencesFromEvidence({ architectureElement, repoMeta = {} 
     const key = `${fn.filePath}:${fn.functionName || ""}:${fn.startLine || ""}:${fn.endLine || ""}`;
     if (unique.has(key)) return;
     unique.set(key, {
+      ...codeSourceProvenance(repoMeta),
+      ...codeSourceProvenance(fn),
+      ...(isLocalCodeSource(fn) ? { content: fn.content || "" } : {}),
       repoId: repoMeta.repoId || repoMeta.repoName || fn.repo || "",
       repoName: repoMeta.repoName || fn.repo || "",
       repoPath: repoMeta.repoPath || "",

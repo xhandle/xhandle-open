@@ -31,11 +31,12 @@ function responseText(body = {}) {
 
 export async function generateRepositoryAnalysisContext({
   repositoryUrl,
+  sourceName,
   repositoryContext = {},
   existingContext = "",
 }) {
   const repoUrl = clean(repositoryUrl);
-  if (!repoUrl) throw new Error("Enter a repository URL before generating analysis context.");
+  if (!repoUrl && !clean(sourceName)) throw new Error("Enter a repository URL before generating analysis context.");
 
   const readmeExcerpt = clean(repositoryContext?.readmeText).slice(0, 18000);
   const folderSummary = clean(repositoryContext?.folderSummary).slice(0, 9000);
@@ -51,7 +52,7 @@ export async function generateRepositoryAnalysisContext({
   const prompt = [
     "Create concise analysis context for a code-based architecture project.",
     "",
-    `Repository URL: ${repoUrl}`,
+    repoUrl ? `Repository URL: ${repoUrl}` : `Local project: ${clean(sourceName)}`,
     `Repository name: ${clean(repositoryContext?.repoName) || "Unspecified"}`,
     `README path: ${clean(repositoryContext?.readmePath) || "Not found"}`,
     "",

@@ -1,3 +1,4 @@
+import { codeSourceIndexKey, isLocalCodeSource } from "../features/code-architecture-context/codeSourceIdentity";
 import AttachmentPreview from './AttachmentPreview';
 import { buildAttachmentPreview, retainAttachmentPreviews } from '../lib/collaboratorAttachmentPreviews';
 // src/components/XHandleCopilotView.jsx
@@ -3646,9 +3647,10 @@ function repoLikeFromHint(hint) {
   return hint?.owner && hint?.repo ? `${hint.owner}/${hint.repo}` : undefined;
 }
 
-function readIndexedFileFromLocalStorage(repoLike, path) {
+function readIndexedFileFromLocalStorage(repoLike, path, source) {
   if (!path) return null;
-  const key = repoLike ? `code:file:${repoLike}:${path}` : `code:file:${path}`;
+  const key = isLocalCodeSource(source) ? codeSourceIndexKey(source, path) : repoLike ? `code:file:${repoLike}:${path}` : `code:file:${path}`;
+  if (!key) return null;
   try { return JSON.parse(localStorage.getItem(key) || "null"); } catch { return null; }
 }
 
@@ -7742,9 +7744,15 @@ useEffect(() => {
       const guard = cbaGuardNote(scoped, scope);
       const repoLike = repoLikeFromHint(scoped?.projectHint);
       const canonicalFile = scope?.filePath
-        ? (scoped.sourceFiles || []).find(file => file?.path === scope.filePath || file?.path?.endsWith(`/${scope.filePath}`))
+        ? (scoped.sourceFiles || []).find(file => {
+          if (isLocalCodeSource(scoped?.projectHint)) {
+            const source = file?.structuredData || file;
+            if (source?.sourceId !== scoped.projectHint.sourceId || source?.snapshotId !== scoped.projectHint.snapshotId) return false;
+          }
+          return file?.path === scope.filePath || file?.path?.endsWith(`/${scope.filePath}`);
+        })
         : null;
-      const fileRec = canonicalFile || (scope?.filePath ? readIndexedFileFromLocalStorage(repoLike, scope.filePath) : null);
+      const fileRec = canonicalFile || (scope?.filePath ? readIndexedFileFromLocalStorage(repoLike, scope.filePath, scoped?.projectHint) : null);
       const fileGrounding = fileRec ? `\n\n${makeFileGrounding(fileRec)}` : "";
       const fileGuard = scope?.filePath && !fileRec
         ? `\nImportant: User asked about ${scope.filePath}, but no indexed file was found. Do not speculate; ask the user to sync/index the repository so this file can be read.`

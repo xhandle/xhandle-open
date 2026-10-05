@@ -1,3 +1,4 @@
+import { codeSourceIndexKey, codeSourceProvenance, isLocalCodeSource } from "../code-architecture-context/codeSourceIdentity";
 const IDB_DB_NAME = "xhandle";
 const IDB_VERSION = 4;
 const CODE_INDEX_STORE = "code_index";
@@ -43,7 +44,7 @@ async function idbGetCodeIndex(key) {
     const req = tx.objectStore(CODE_INDEX_STORE).get(key);
     req.onsuccess = () => resolve(req.result?.value || null);
     req.onerror = () => reject(req.error);
-  });
+  }).finally(() => db.close());
 }
 
 function normalizeText(value) {
@@ -142,9 +143,9 @@ function snippetFromLines({ content, startLine, endLine, symbolName }) {
   return { snippet, snippetStartLine: windowStart, snippetEndLine: windowEnd };
 }
 
-async function loadIndexedSourceRecord({ owner, repo, filePath }) {
-  if (!owner || !repo || !filePath) return null;
-  const key = `code:file:${owner}/${repo}:${filePath}`;
+async function loadIndexedSourceRecord({ filePath, ...source }) {
+  const key = codeSourceIndexKey(source, filePath);
+  if (!key) return null;
   try {
     const record = await idbGetCodeIndex(key);
     if (record) return record;
@@ -244,6 +245,17 @@ function evidenceContentForRef(ref = {}) {
 
 async function loadSourceRecordForRef({ ref, owner, repo, repoMeta = {} }) {
   const filePath = normalizeText(ref.filePath);
+  if (isLocalCodeSource(ref) || isLocalCodeSource(repoMeta)) {
+    const localSource = isLocalCodeSource(ref) ? ref : repoMeta;
+    const record = await loadIndexedSourceRecord({ ...codeSourceProvenance(localSource), filePath });
+    return {
+      record, content: record?.content || evidenceContentForRef(ref),
+      source: record?.content ? "local_source_snapshot" : "architecture_evidence",
+      filePath, requestedFilePath: filePath, owner: "", repo: "", branch: "",
+      workspaceRoot: "", pathResolutionWarning: "", vscodeWorkspaceRoot: "",
+      vscodeDiagnostic: record?.content || evidenceContentForRef(ref) ? "" : "Saved local source is unavailable. Reconnect and analyze this project folder again.",
+    };
+  }
   const sourceParts = sourceUrlParts(ref.sourceUrl || "");
   const refOwner = owner || sourceParts.owner;
   const refRepo = repo || sourceParts.repo;

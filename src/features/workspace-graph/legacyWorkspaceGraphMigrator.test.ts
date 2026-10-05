@@ -2,7 +2,7 @@ import {
   migrateLegacyStorageToWorkspaceGraph,
   migrateLegacyStorageToWorkspaceGraphIfStale,
 } from "./legacyWorkspaceGraphMigrator";
-import { upsertArtifacts, upsertProject, upsertRelationships } from "./workspaceGraphRepository";
+import { upsertArtifacts, upsertProject, upsertRelationships, upsertSourceFile } from "./workspaceGraphRepository";
 
 jest.mock("./workspaceGraphRepository", () => ({
   upsertArtifacts: jest.fn(async (rows) => rows),
@@ -57,6 +57,19 @@ describe("migrateLegacyStorageToWorkspaceGraph", () => {
     jest.clearAllMocks();
     localStorage.clear();
     installIndexedDbMock();
+  });
+
+  it("keeps local source files isolated by folder identity and snapshot", async () => {
+    installIndexedDbMock({ xhandle: { code_index: [
+      { key: 'code:local:one:v1:main.js', value: { sourceType: 'local', sourceId: 'one', snapshotId: 'v1', path: 'main.js', content: 'one' } },
+      { key: 'code:local:two:v1:main.js', value: { sourceType: 'local', sourceId: 'two', snapshotId: 'v1', path: 'main.js', content: 'two' } },
+      { key: 'code:local:one:v2:main.js', value: { sourceType: 'local', sourceId: 'one', snapshotId: 'v2', path: 'main.js', content: 'three' } },
+    ] } });
+    await migrateLegacyStorageToWorkspaceGraph();
+    const artifacts = (upsertArtifacts as jest.Mock).mock.calls[0][0].filter((item: any) => item.type === 'source_file');
+    expect(artifacts).toHaveLength(3);
+    expect(new Set(artifacts.map((item: any) => item.id)).size).toBe(3);
+    expect((upsertSourceFile as jest.Mock).mock.calls.map(call => call[0].repoId)).toEqual(['local:one', 'local:two', 'local:one']);
   });
 
   it("converts xhandle.projectData rows into functional decomposition artifacts", async () => {

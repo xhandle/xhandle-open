@@ -1,3 +1,6 @@
+import LocalFolderChooser from "./features/code-architecture-context/LocalFolderChooser";
+import { scanLocalFolder, createLocalSourceProvider, getLocalFolderSession } from "./features/code-architecture-context/localCodeSource";
+import { isLocalCodeSource, localCodeSourceDescriptor, codeSourceProvenance } from "./features/code-architecture-context/codeSourceIdentity";
 import ActionsMenu from "./components/ActionsMenu";
 import { editFunctionalEntityDetails } from './components/functionalDiagramTableDetails';
 import CopyTableButton from './components/CopyTableButton';
@@ -1588,6 +1591,7 @@ const normalizeRepoIdentityText = (value = "") => String(value || "").trim().toL
 function codeArchitectureReposMatch(a = {}, b = {}) {
   if (!a || !b) return false;
   if (a.id && b.id && a.id === b.id) return true;
+  if (isLocalCodeSource(a) || isLocalCodeSource(b)) return isLocalCodeSource(a) && isLocalCodeSource(b) && Boolean(a.sourceId) && a.sourceId === b.sourceId;
   const aRepoId = normalizeRepoIdentityText(a.repoId || normalizeRepoIdentity(a));
   const bRepoId = normalizeRepoIdentityText(b.repoId || normalizeRepoIdentity(b));
   if (aRepoId && bRepoId && aRepoId === bRepoId) return true;
@@ -1664,6 +1668,7 @@ function parseGitHubRepoUrl(value = "") {
 }
 
 function makeRepoConfig({
+  sourceType = "github", sourceId, folderName, snapshotId,
   owner = "",
   repo = "",
   repoUrl = "",
@@ -1680,6 +1685,7 @@ function makeRepoConfig({
   const now = new Date().toISOString();
   return {
     id: makeId(),
+    sourceType,
     owner: trimmedOwner,
     repo: trimmedRepo,
     repoId,
@@ -1691,6 +1697,7 @@ function makeRepoConfig({
     branch,
     commitSha,
     filesFound,
+    ...localCodeSourceDescriptor({ sourceType, sourceId, folderName, snapshotId }),
     createdAt: now,
     updatedAt: now,
   };
@@ -1703,7 +1710,7 @@ function normalizeCodeArchitectureProjects(raw) {
     .map((project) => {
       const repos = Array.isArray(project.repos) ? project.repos : [];
       const normalizedRepos = repos
-        .filter((repo) => repo && (repo.owner || repo.repo || repo.repoId))
+        .filter((repo) => repo && (repo.owner || repo.repo || repo.repoId || (isLocalCodeSource(repo) && repo.sourceId)))
         .map((repo) => {
           const owner = String(repo.owner || "").trim();
           const name = String(repo.repo || repo.repoName || "").replace(/^.*\//, "").trim();
@@ -1726,6 +1733,8 @@ function normalizeCodeArchitectureProjects(raw) {
             createdAt: repo.createdAt || project.createdAt || new Date().toISOString(),
             updatedAt: repo.updatedAt || project.updatedAt || project.createdAt || new Date().toISOString(),
             lastAnalyzedAt: repo.lastAnalyzedAt || null,
+            sourceType: repo.sourceType || "github",
+            ...localCodeSourceDescriptor(repo),
           };
         });
       return {
@@ -3931,6 +3940,7 @@ const [showCodeArchitectureRepoConfig, setShowCodeArchitectureRepoConfig] = useS
 const [codeArchitectureRepoConfigProjectId, setCodeArchitectureRepoConfigProjectId] = useState(null);
 const [codeArchitectureRepoConfigRepoId, setCodeArchitectureRepoConfigRepoId] = useState(null);
 const [codeArchitectureRepoDraft, setCodeArchitectureRepoDraft] = useState({
+  sourceType: "github",
   repoUrl: "",
   owner: "",
   repo: "",
@@ -3939,6 +3949,7 @@ const [codeArchitectureRepoDraft, setCodeArchitectureRepoDraft] = useState({
   analysisContextFiles: [],
 });
 const [codeArchitectureRepoConfigMessage, setCodeArchitectureRepoConfigMessage] = useState("");
+const codeArchitectureAnalysisInFlightRef = useRef(false);
 const [isCodeArchitectureRepoVerifying, setIsCodeArchitectureRepoVerifying] = useState(false);
 const [isCodeArchitectureRepoAnalyzing, setIsCodeArchitectureRepoAnalyzing] = useState(false);
 const [isCodeArchitectureContextGenerating, setIsCodeArchitectureContextGenerating] = useState(false);
@@ -4041,12 +4052,13 @@ const activeCodeArchitectureStoredMeta = useMemo(() => {
 const activeCodeArchitectureRepoMeta = useMemo(() => {
   if (!activeCodeArchitectureRepo) return getRepoMeta();
   return {
+    ...codeSourceProvenance(activeCodeArchitectureRepo),
     owner: activeCodeArchitectureRepo.owner || "",
     repo: activeCodeArchitectureRepo.repo || "",
     repoId: activeCodeArchitectureRepo.repoId || normalizeRepoIdentity(activeCodeArchitectureRepo),
     repoName: activeCodeArchitectureRepo.repoName || activeCodeArchitectureRepo.repoId || normalizeRepoIdentity(activeCodeArchitectureRepo),
     repoUrl: activeCodeArchitectureRepo.repoUrl || "",
-    branch: activeCodeArchitectureRepo.branch || "main",
+    branch: isLocalCodeSource(activeCodeArchitectureRepo) ? "" : activeCodeArchitectureRepo.branch || "main",
     commitSha: activeCodeArchitectureRepo.commitSha || "",
     analysisContext: activeCodeArchitectureRepo.analysisContext || { text: "", files: [] },
     operationalContext: activeCodeArchitectureStoredMeta?.operationalContext || activeCodeArchitectureRepo.operationalContext || "",
@@ -4194,6 +4206,7 @@ useEffect(() => {
           try {
             localStorage.setItem(codeArchitectureMetaKey(activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id), JSON.stringify({
               ...(activeCodeArchitectureStoredMeta || {}),
+              ...codeSourceProvenance(activeCodeArchitectureRepo),
               repoId: activeCodeArchitectureRepo.repoId || normalizeRepoIdentity(activeCodeArchitectureRepo),
               repoName: activeCodeArchitectureRepo.repoName || normalizeRepoIdentity(activeCodeArchitectureRepo),
               rowCount: rowsWithTraceIds.length,
@@ -4251,6 +4264,9 @@ function openCodeArchitectureRepoConfig(projectId = activeCodeArchitectureProjec
   setCodeArchitectureRepoConfigProjectId(projectId);
   setCodeArchitectureRepoConfigRepoId(repoConfig?.id || null);
   setCodeArchitectureRepoDraft({
+    ...localCodeSourceDescriptor(repoConfig || {}),
+    sourceType: repoConfig?.sourceType || "github",
+    selectedExtensions: repoConfig?.selectedExtensions || [],
     repoUrl: repoConfig?.repoUrl || (repoConfig?.owner && repoConfig?.repo ? `https://github.com/${repoConfig.owner}/${repoConfig.repo}` : ""),
     owner: repoConfig?.owner || "",
     repo: repoConfig?.repo || "",
@@ -4263,6 +4279,26 @@ function openCodeArchitectureRepoConfig(projectId = activeCodeArchitectureProjec
 }
 
 async function verifyCodeArchitectureRepo({ silent = false } = {}) {
+  if (isLocalCodeSource(codeArchitectureRepoDraft)) {
+    setIsCodeArchitectureRepoVerifying(true);
+    try {
+      const scan = await scanLocalFolder(codeArchitectureRepoDraft);
+      const repoConfig = makeRepoConfig({
+        ...codeArchitectureRepoDraft,
+        filesFound: scan.entries.length,
+        analysisContext: { text: codeArchitectureRepoDraft.analysisContextText, files: codeArchitectureRepoDraft.analysisContextFiles },
+      });
+      const existing = codeArchitectureProjects.find(project => project.id === codeArchitectureRepoConfigProjectId)?.repos?.find(entry => entry.id === codeArchitectureRepoConfigRepoId);
+      if (isLocalCodeSource(existing) && existing.sourceId === repoConfig.sourceId) repoConfig.id = existing.id;
+      const repoFiles = scan.entries.map(({ path, name, size }) => ({ path, name, size }));
+      setCodeArchitectureRepoFilesForModal(repoFiles);
+      setCodeArchitectureRepoConfigMessage(`Folder ready. ${repoFiles.length} eligible files; ${scan.skipped.length} excluded entries.`);
+      return { repoConfig, repoFiles };
+    } catch (error) {
+      setCodeArchitectureRepoConfigMessage(error.message);
+      return null;
+    } finally { setIsCodeArchitectureRepoVerifying(false); }
+  }
   const parsedRepoUrl = parseGitHubRepoUrl(codeArchitectureRepoDraft.repoUrl);
   const owner = (codeArchitectureRepoDraft.owner.trim() || parsedRepoUrl?.owner || "").trim();
   const repo = (codeArchitectureRepoDraft.repo.trim() || parsedRepoUrl?.repo || "").trim();
@@ -4297,7 +4333,8 @@ async function verifyCodeArchitectureRepo({ silent = false } = {}) {
       branch: defaultBranch,
       filesFound: count || repoFiles.length,
     });
-    if (codeArchitectureRepoConfigRepoId) repoConfig.id = codeArchitectureRepoConfigRepoId;
+    const existing = codeArchitectureProjects.find(project => project.id === codeArchitectureRepoConfigProjectId)?.repos?.find(entry => entry.id === codeArchitectureRepoConfigRepoId);
+    if (existing && !isLocalCodeSource(existing)) repoConfig.id = existing.id;
     if (!silent) setCodeArchitectureRepoConfigMessage(`Connected. Found ${count || repoFiles.length} repo files.`);
     setCodeArchitectureRepoFilesForModal(repoFiles);
     return { repoConfig, repoFiles };
@@ -4310,6 +4347,18 @@ async function verifyCodeArchitectureRepo({ silent = false } = {}) {
 }
 
 async function generateCodeArchitectureRepoContext() {
+  if (isLocalCodeSource(codeArchitectureRepoDraft)) {
+    setIsCodeArchitectureContextGenerating(true);
+    try {
+      const sourceProvider = await createLocalSourceProvider(codeArchitectureRepoDraft);
+      const repositoryContext = await fetchRepositoryContext({ allFiles: await sourceProvider.listFiles(), sourceProvider, repo: codeArchitectureRepoDraft.folderName });
+      const generated = await generateRepositoryAnalysisContext({ sourceName: codeArchitectureRepoDraft.folderName, repositoryContext, existingContext: codeArchitectureRepoDraft.analysisContextText });
+      setCodeArchitectureRepoDraft(draft => ({ ...draft, analysisContextText: generated }));
+      setCodeArchitectureRepoConfigMessage("Analysis context generated. Review it before saving or analyzing.");
+    } catch (error) { setCodeArchitectureRepoConfigMessage(error.message); }
+    finally { setIsCodeArchitectureContextGenerating(false); }
+    return;
+  }
   const parsedRepoUrl = parseGitHubRepoUrl(codeArchitectureRepoDraft.repoUrl);
   const owner = (codeArchitectureRepoDraft.owner.trim() || parsedRepoUrl?.owner || "").trim();
   const repo = (codeArchitectureRepoDraft.repo.trim() || parsedRepoUrl?.repo || "").trim();
@@ -4404,6 +4453,9 @@ async function saveCodeArchitectureRepoConfig({ analyze = false } = {}) {
     } else {
       setCodeArchitectureRepoConfigMessage("Repository saved.");
     }
+  } catch (error) {
+    setShowCodeArchitectureRepoConfig(true);
+    setCodeArchitectureRepoConfigMessage(error?.message || String(error));
   } finally {
     setIsCodeArchitectureRepoAnalyzing(false);
   }
@@ -4433,6 +4485,7 @@ function normalizeImportedCodeArchitectureRows(value) {
       csu: row.csu || row["CSU"] || "",
       rationale: row.architectureRationale || row["Architecture Rationale"] || "",
     },
+    ...codeSourceProvenance(row),
     codeEvidence: row.codeEvidence || null,
     sourceEvidence: row.sourceEvidence || null,
     lifecyclePhase: row.lifecyclePhase || row["Lifecycle Phase"] || "",
@@ -4459,6 +4512,9 @@ async function saveImportedCodeArchitectureRows({ project, file, rows, repoPacka
   const repoOwner = String(repoPackage?.repo?.owner || "manual").trim() || "manual";
   const repoName = String(repoPackage?.repo?.repo || safeFileName).trim() || safeFileName;
   const repoConfig = makeRepoConfig({
+    ...codeSourceProvenance(repoPackage?.repo),
+    selectedExtensions: repoPackage?.repo?.selectedExtensions || [],
+    analysisContext: repoPackage?.repo?.analysisContext || { text: "", files: [] },
     owner: repoOwner,
     repo: repoName,
     repoUrl: repoPackage?.repo?.repoUrl || "",
@@ -4468,6 +4524,10 @@ async function saveImportedCodeArchitectureRows({ project, file, rows, repoPacka
   });
   repoConfig.repoId = repoPackage?.repo?.repoId || `${repoOwner}/${repoName}`;
   repoConfig.repoName = safeFileName;
+  if (isLocalCodeSource(repoConfig)) {
+    const existing = (project.repos || []).find(entry => codeArchitectureReposMatch(entry, repoConfig));
+    if (existing) repoConfig.id = existing.id;
+  }
   repoConfig.imported = true;
   repoConfig.importedFileName = file.name;
   repoConfig.lastAnalyzedAt = importedAt;
@@ -4704,6 +4764,7 @@ async function collectCodeArchitectureProjectExport(projectId) {
       projectId: project.id,
       repo: {
         id: repo.id,
+        ...codeSourceProvenance(repo),
         owner: repo.owner || "",
         repo: repo.repo || "",
         repoId: repo.repoId || normalizeRepoIdentity(repo),
@@ -5147,6 +5208,7 @@ async function handleBaselineRepo({
   projectId,
   repoConfig,
 } = {}) {
+  if (codeArchitectureAnalysisInFlightRef.current) return;
   setSection("code-architecture");
   setCodeArchitectureWorkspaceTab("architecture");
   setCodeArchitectureFunctionalTableOpenKey(null);
@@ -5156,11 +5218,15 @@ async function handleBaselineRepo({
   const targetProjectId = projectId || activeCodeArchitectureProjectId;
   const targetProject = codeArchitectureProjects.find((entry) => entry.id === targetProjectId) || activeCodeArchitectureProject;
   const sourceRepoConfig = repoConfig || activeCodeArchitectureRepo;
-  const finalOwner = (owner || sourceRepoConfig?.owner || localStorage.getItem("repoOwner") || "").trim();
-  const finalRepo = (repo || sourceRepoConfig?.repo || localStorage.getItem("repoName") || "").trim();
-  const finalToken = (token || sourceRepoConfig?.token || localStorage.getItem("githubToken") || "").trim();
+  const local = isLocalCodeSource(sourceRepoConfig);
+  if (local) {
+    try { await getLocalFolderSession(sourceRepoConfig); } catch (error) { openCodeArchitectureRepoConfig(targetProjectId, sourceRepoConfig.id); setCodeArchitectureRepoConfigMessage(error.message); return; }
+  }
+  const finalOwner = local ? "" : (owner || sourceRepoConfig?.owner || localStorage.getItem("repoOwner") || "").trim();
+  const finalRepo = local ? "" : (repo || sourceRepoConfig?.repo || localStorage.getItem("repoName") || "").trim();
+  const finalToken = local ? "" : (token || sourceRepoConfig?.token || localStorage.getItem("githubToken") || "").trim();
 
-  if (!finalOwner || !finalRepo) {
+  if (!local && (!finalOwner || !finalRepo)) {
     throw new Error("Missing owner/repo. Connect a GitHub repository in Code-Based Architecture first.");
   }
 
@@ -5168,7 +5234,7 @@ async function handleBaselineRepo({
     ? selectedExtensions
     : sourceRepoConfig?.selectedExtensions?.length
       ? sourceRepoConfig.selectedExtensions
-      : getSavedGitHubSelectedExtensions();
+      : local ? [] : getSavedGitHubSelectedExtensions();
   const effectiveRepoConfig = sourceRepoConfig || makeRepoConfig({
     owner: finalOwner,
     repo: finalRepo,
@@ -5184,6 +5250,7 @@ async function handleBaselineRepo({
   setCodeArchitectureFunctionalReviewRunId(sourceRunId);
   setCbaLoadingLabel("Analyzing repository...");
 
+  codeArchitectureAnalysisInFlightRef.current = true;
   startActivity(id, {
     title: "Generating code-based architecture",
     message: "Preparing repository analysis...",
@@ -5193,7 +5260,7 @@ async function handleBaselineRepo({
 
   try {
     const result = await generateFunctionalDecompositionFromGitHub(
-      setCbaTableData,
+      rows => { if (codeArchitectureScopeRef.current === storageKey) setCbaTableData(rows); },
       setCbaLoading,
       null,
       {
@@ -5233,7 +5300,8 @@ async function handleBaselineRepo({
         token: finalToken,
         repoId: effectiveRepoConfig.repoId || `${finalOwner}/${finalRepo}`,
         repoName: effectiveRepoConfig.repoName || `${finalOwner}/${finalRepo}`,
-        repoUrl: effectiveRepoConfig.repoUrl || `https://github.com/${finalOwner}/${finalRepo}`,
+        repoUrl: local ? "" : effectiveRepoConfig.repoUrl || `https://github.com/${finalOwner}/${finalRepo}`,
+        ...codeSourceProvenance(metadata),
         selectedExtensions: effectiveSelectedExtensions,
         analysisContext: analysisContext || effectiveRepoConfig.analysisContext || { text: "", files: [] },
         operationalContext: metadata.operationalContext || effectiveRepoConfig.operationalContext || "",
@@ -5243,9 +5311,10 @@ async function handleBaselineRepo({
         filesFound: metadata.filesFound || effectiveRepoConfig.filesFound || 0,
         lastAnalyzedAt: new Date().toISOString(),
       };
-      upsertCodeArchitectureRepo(targetProject.id, updatedRepo);
+      upsertCodeArchitectureRepo(targetProject.id, updatedRepo, { setActive: codeArchitectureScopeRef.current === storageKey });
       try {
         localStorage.setItem(codeArchitectureMetaKey(targetProject.id, effectiveRepoConfig.id), JSON.stringify({
+          ...codeSourceProvenance(updatedRepo),
           repoId: updatedRepo.repoId,
           repoName: updatedRepo.repoName,
           rowCount: rowsPersisted && Array.isArray(rows) ? rows.length : 0,
@@ -5278,7 +5347,7 @@ async function handleBaselineRepo({
           }));
           await resultsReview.createReviewItems(createReviewItemsFromGeneratedTable({
             sourceFeature: "Code-Based Architecture Functional Decomposition",
-            sourceMethod: "GitHub repository analysis",
+            sourceMethod: local ? "Local project folder analysis" : "GitHub repository analysis",
             sourceRunId,
             artifactType: CODE_ARCHITECTURE_FUNCTIONAL_ARTIFACT_TYPE,
             artifactId: `code-architecture-functional-decomposition:${targetProject.id}:${effectiveRepoConfig.id}`,
@@ -5335,6 +5404,7 @@ async function handleBaselineRepo({
     finishActivity(id, "error", String(e?.message || e));
     throw e;
   } finally {
+    codeArchitectureAnalysisInFlightRef.current = false;
     setCbaLoading(false);
   }
 }
@@ -5357,6 +5427,7 @@ useEffect(() => {
       if (cancelled) return;
       try {
         localStorage.setItem(metaKey, JSON.stringify({
+          ...codeSourceProvenance(activeCodeArchitectureRepo),
           repoId: activeCodeArchitectureRepo.repoId || normalizeRepoIdentity(activeCodeArchitectureRepo),
           repoName: activeCodeArchitectureRepo.repoName || normalizeRepoIdentity(activeCodeArchitectureRepo),
           rowCount: rowsPersisted ? cbaTableData.length : 0,
@@ -9196,11 +9267,11 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
 
   const codeArchitectureFunctionalReviewDrawerOptions = useMemo(() => ({
     sourceFeature: "Code-Based Architecture Functional Decomposition",
-    sourceMethod: "GitHub repository analysis",
+    sourceMethod: isLocalCodeSource(activeCodeArchitectureRepoMeta) ? "Local project folder analysis" : "GitHub repository analysis",
     sourceRunId: codeArchitectureFunctionalReviewRunId,
     artifactType: CODE_ARCHITECTURE_FUNCTIONAL_ARTIFACT_TYPE,
     startAtFirstPending: true,
-  }), [codeArchitectureFunctionalReviewRunId]);
+  }), [codeArchitectureFunctionalReviewRunId, activeCodeArchitectureRepoMeta]);
 
   const codeArchitectureHazardReviewItems = useMemo(() => {
     const projectId = activeCodeArchitectureProjectId || codeArchitectureHazardRun?.projectId || "default";
@@ -15411,11 +15482,14 @@ const renderFolderDashboardPanel = (panel, index) => {
 };
 
 // Hint the Copilot about repo/baseline context (optional keys)
-const projectHint = useMemo(() => ({
+const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) ? ({
+  ...codeSourceProvenance(activeCodeArchitectureRepo),
+  baselineKey: activeCodeArchitectureRowsKey || undefined,
+}) : ({
   owner: activeCodeArchitectureRepo?.owner || localStorage.getItem("repoOwner") || undefined,
   repo: activeCodeArchitectureRepo?.repo || activeCodeArchitectureRepo?.repoName || localStorage.getItem("repoName") || undefined,
   baselineKey: localStorage.getItem("activeBaselineKey") || undefined,
-}), [activeCodeArchitectureRepo, activeProjectId]);
+}), [activeCodeArchitectureRepo, activeCodeArchitectureRowsKey]);
 
     // Gate the whole app
     if (gate.phase === 'checking') return null;
@@ -16923,7 +16997,7 @@ const projectHint = useMemo(() => ({
           <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white p-4">
             <h3 className="mb-3 shrink-0 text-sm font-semibold text-gray-900">Code architecture projects</h3>
             {codeArchitectureDashboardRows.length === 0 ? (
-              <div className="min-h-0 overflow-auto text-sm text-gray-500">Create a Code-Based Architecture project and connect a GitHub repo to begin.</div>
+              <div className="min-h-0 overflow-auto text-sm text-gray-500">Create a Code-Based Architecture project and select a GitHub repository or local folder to begin.</div>
             ) : (
               <div className="min-h-0 overflow-auto">
                 <table className="min-w-full text-left text-sm">
@@ -17188,7 +17262,8 @@ const projectHint = useMemo(() => ({
             {activeCodeArchitectureRepo && (
               <button
                 type="button"
-                onClick={() => handleBaselineRepo({ projectId: activeCodeArchitectureProject.id, repoConfig: activeCodeArchitectureRepo })}
+                disabled={cbaLoading}
+                onClick={() => handleBaselineRepo({ projectId: activeCodeArchitectureProject.id, repoConfig: activeCodeArchitectureRepo }).catch(error => { openCodeArchitectureRepoConfig(activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id); setCodeArchitectureRepoConfigMessage(error.message); })}
                 className="inline-flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Sparkles size={15} />
@@ -21270,6 +21345,12 @@ const updateRiskInProject = async (projectId, predicate) => {
                     if (newCodeArchitectureError) setNewCodeArchitectureError('');
                   }}
                   onKeyDown={(e) => {
+                    // Safari inspects the input later in this keydown event.
+                    // Keep it mounted until keyup before closing the dialog.
+                    if (!e.nativeEvent.isComposing && (e.key === 'Enter' || e.key === 'Escape')) e.preventDefault();
+                  }}
+                  onKeyUp={(e) => {
+                    if (e.nativeEvent.isComposing) return;
                     if (e.key === 'Enter') createCodeArchitectureProject();
                     if (e.key === 'Escape') {
                       setShowNewCodeArchitectureProject(false);
@@ -21368,6 +21449,21 @@ const updateRiskInProject = async (projectId, predicate) => {
                 <button className="rounded px-2 py-1 text-xs text-gray-600 hover:bg-gray-100" onClick={() => setShowCodeArchitectureRepoConfig(false)}>✕</button>
               </div>
               <div className="px-5 py-4 space-y-4">
+                <label className="block text-sm font-medium">Source
+                  <select aria-label="Code source" value={codeArchitectureRepoDraft.sourceType || "github"} disabled={isCodeArchitectureRepoVerifying || isCodeArchitectureRepoAnalyzing || isCodeArchitectureContextGenerating} onChange={event => {
+                    const sourceType = event.target.value;
+                    setCodeArchitectureRepoDraft(draft => ({ ...draft, sourceType }));
+                    setCodeArchitectureRepoConfigMessage("");
+                  }} className="ml-3 rounded border px-3 py-2">
+                    <option value="github">GitHub repository</option>
+                    <option value="local">Local project folder</option>
+                  </select>
+                </label>
+                {isLocalCodeSource(codeArchitectureRepoDraft) ? <LocalFolderChooser
+                  source={codeArchitectureRepoDraft}
+                  disabled={isCodeArchitectureRepoVerifying || isCodeArchitectureRepoAnalyzing || isCodeArchitectureContextGenerating}
+                  onChange={source => setCodeArchitectureRepoDraft(draft => ({ ...draft, ...codeSourceProvenance(source) }))}
+                /> : <>
                 <div>
                   <label className="block text-sm font-medium mb-1">Repository URL</label>
                   <input
@@ -21413,6 +21509,7 @@ const updateRiskInProject = async (projectId, predicate) => {
                   <label className="block text-sm font-medium mb-1">GitHub token</label>
                   <input type="password" className="w-full border rounded px-3 py-2 text-sm" value={codeArchitectureRepoDraft.token} onChange={(e) => setCodeArchitectureRepoDraft((draft) => ({ ...draft, token: e.target.value }))} placeholder="Optional for public repos" />
                 </div>
+                </>}
                 <div>
                   <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
                     <label className="block text-sm font-medium">Analysis context</label>
@@ -21423,14 +21520,14 @@ const updateRiskInProject = async (projectId, predicate) => {
                         isCodeArchitectureContextGenerating
                         || isCodeArchitectureRepoVerifying
                         || isCodeArchitectureRepoAnalyzing
-                        || (!parseGitHubRepoUrl(codeArchitectureRepoDraft.repoUrl)
-                          && !(codeArchitectureRepoDraft.owner.trim() && codeArchitectureRepoDraft.repo.trim()))
+                        || (isLocalCodeSource(codeArchitectureRepoDraft) ? !codeArchitectureRepoDraft.sourceId : (!parseGitHubRepoUrl(codeArchitectureRepoDraft.repoUrl)
+                          && !(codeArchitectureRepoDraft.owner.trim() && codeArchitectureRepoDraft.repo.trim())))
                       }
                       className="inline-flex items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
                       title="Generate editable analysis context from the repository README and structure using the selected AI provider and model"
                     >
                       {isCodeArchitectureContextGenerating ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Sparkles size={14} aria-hidden="true" />}
-                      {isCodeArchitectureContextGenerating ? "Generating..." : "Generate from repo"}
+                      {isCodeArchitectureContextGenerating ? "Generating..." : "Generate from source"}
                     </button>
                   </div>
                   <textarea className="min-h-24 w-full border rounded px-3 py-2 text-sm" value={codeArchitectureRepoDraft.analysisContextText} onChange={(e) => setCodeArchitectureRepoDraft((draft) => ({ ...draft, analysisContextText: e.target.value }))} placeholder="Optional context about the product, repo boundaries, terminology, or safety focus." />

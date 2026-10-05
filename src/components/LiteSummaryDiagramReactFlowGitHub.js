@@ -4797,6 +4797,13 @@ useEffect(() => {
                                       >
                                         {fn.functionName || 'source'} - {lineLabel}
                                       </a>
+                                    ) : fn.sourceType === 'local' ? (
+                                      <details key={`${ref}:${fn.filePath}:${fn.functionName}:${fn.startLine || index}`}>
+                                        <summary style={{ ...sourceItemStyle, cursor: 'pointer' }} title={label}>
+                                          {fn.functionName || 'source'} - {lineLabel} · View saved source
+                                        </summary>
+                                        <pre style={{ maxHeight: 320, overflow: 'auto', whiteSpace: 'pre', textAlign: 'left', padding: 8, background: '#f8fafc' }}>{fn.content || 'Source excerpt is unavailable. Reconnect this folder and analyze again to restore source evidence.'}</pre>
+                                      </details>
                                     ) : (
                                       <button
                                         key={`${ref}:${fn.filePath}:${fn.functionName}:${fn.startLine || index}`}

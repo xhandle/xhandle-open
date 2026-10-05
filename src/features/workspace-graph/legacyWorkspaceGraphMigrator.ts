@@ -823,8 +823,10 @@ async function migrateCodeIndex(artifacts: WorkspaceArtifact[]) {
     const key = text(record?.key);
     const value = record?.value || {};
     const path = value.path || key.split(":").slice(-1)[0] || key;
-    const repoId = key.startsWith("code:file:") ? key.replace(/^code:file:/, "").split(":").slice(0, -1).join(":") : value.repoId || "";
-    const id = stableId("artifact", "source-file", repoId, path);
+    const repoId = value.sourceType === "local" ? `local:${value.sourceId}` : key.startsWith("code:file:") ? key.replace(/^code:file:/, "").split(":").slice(0, -1).join(":") : value.repoId || "";
+    const id = value.sourceType === "local"
+      ? stableId("artifact", "source-file", repoId, value.snapshotId || "", path)
+      : stableId("artifact", "source-file", repoId, path);
     const sourceFile = {
       id,
       workspaceId: DEFAULT_WORKSPACE_ID,

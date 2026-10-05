@@ -716,3 +716,9 @@ it("keeps one external focus request across completion callback rerenders withou
     expect(mockDiagramProps.every(props => props.cleanOnceKey === key)).toBe(true);
   } finally { act(() => root.unmount()); host.remove(); jest.useRealTimers(); mockDiagramFocus.mockReset(); }
 });
+
+it('builds local source evidence with snapshot identity and no GitHub links', () => {
+  const record = buildSourceFileIndexRecord({ sourceType: 'local', sourceId: 'folder', snapshotId: 'sha', folderName: 'controller', owner: '', repo: '', path: 'control.js', content: 'function brake() { return true; }', branch: '', commitSha: '' });
+  expect(record).toMatchObject({ sourceType: 'local', sourceId: 'folder', snapshotId: 'sha' });
+  expect(record.sourceFunctions[0]).toMatchObject({ sourceType: 'local', sourceId: 'folder', snapshotId: 'sha', sourceUrl: '', functionName: 'brake' });
+});

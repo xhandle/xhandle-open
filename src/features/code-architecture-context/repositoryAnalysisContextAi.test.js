@@ -49,3 +49,12 @@ describe("repository analysis context AI", () => {
   });
 });
 
+
+it('generates local context without requiring or inventing a GitHub URL', async () => {
+  global.fetch = jest.fn(async () => ({ ok: true, json: async () => ({ content: 'Local controller.' }) }));
+  const result = await generateRepositoryAnalysisContext({ sourceName: 'controller', repositoryContext: { readmeText: 'A vehicle controller.', repoName: 'controller' } });
+  expect(result).toBe('Local controller.');
+  const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+  expect(body.messages[1].content).toContain('Local project: controller');
+  expect(body.messages[1].content).not.toContain('Repository URL:');
+});
