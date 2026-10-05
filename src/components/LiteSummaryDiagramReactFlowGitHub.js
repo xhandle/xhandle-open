@@ -27,8 +27,12 @@ import ReactFlow, {
   useReactFlow,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
+import './csuNavigation.css';
 import { toPng } from 'html-to-image';
 import { SmartBezierEdge } from '@tisoap/react-flow-smart-edge';
+import { OrthogonalFunctionEdge } from './OrthogonalFunctionEdge';
+import { orderCsuFunctions } from './csuFunctionOrdering';
+import { csuAbsolutePositions, loadCsuEdgeRouting, saveCsuEdgeRouting } from './csuEdgeRouting';
 import { downloadDrawioXml } from './utils/exportDrawio';
 import { notifyBackupDataChanged } from '../lib/localBackupEvents';
 import {
@@ -624,7 +628,7 @@ function columnsForSquareNodeGrid(count, { maxColumns = 8 } = {}) {
   return Math.max(1, Math.min(maxColumns, count, ideal));
 }
 
-function buildArchitectureLayout(elkNodes, { colorSystemElements = false, systemElementColorOverrides = new Map(), preservePositions = false } = {}) {
+function buildArchitectureLayout(elkNodes, { colorSystemElements = false, systemElementColorOverrides = new Map(), preservePositions = false, edges = [] } = {}) {
   const dims = {
     nodeGapX: CSU_FUNCTION_GAP.x,
     nodeGapY: CSU_FUNCTION_GAP.y,
@@ -687,8 +691,11 @@ function buildArchitectureLayout(elkNodes, { colorSystemElements = false, system
               const csuItems = Array.from(cscGroup.csus.values())
                 .sort((a, b) => a.label.localeCompare(b.label))
                 .map((csuGroup) => {
-                  const childNodes = [...csuGroup.nodes].sort((a, b) => String(a.data?.label || a.id).localeCompare(String(b.data?.label || b.id)));
-                  const cols = columnsForSquareNodeGrid(childNodes.length || 1, { maxColumns: 8 });
+                  const sortedNodes = [...csuGroup.nodes].sort((a, b) => String(a.data?.label || a.id).localeCompare(String(b.data?.label || b.id)) || a.id.localeCompare(b.id));
+                  const cols = columnsForSquareNodeGrid(sortedNodes.length || 1, { maxColumns: 8 });
+                  const childNodes = preservePositions ? sortedNodes : orderCsuFunctions(sortedNodes, edges, {
+                    columns: cols, stepX: THEME.node.w + dims.nodeGapX, stepY: THEME.node.h + dims.nodeGapY,
+                  });
                   const rowsCount = Math.max(1, Math.ceil((childNodes.length || 1) / cols));
                   const width = Math.max(
                     360,
@@ -1171,7 +1178,7 @@ const CommentBadge = ({ count = 0, onClick }) => {
   );
 };
 
-const BidirectionalNode = ({ data, selected }) => {
+const BidirectionalNode = React.memo(({ data, selected }) => {
   const brandColor = data.brandColor || BRAND.blue;
   const tint = data.brandTint || rgba(brandColor, 0.08);
   const border = `1px solid ${rgba(brandColor, THEME.node.borderAlpha)}`;
@@ -1184,7 +1191,8 @@ const BidirectionalNode = ({ data, selected }) => {
         padding: THEME.node.pad,
         border,
         borderRadius: THEME.radius,
-        background: tint,
+        backgroundColor: '#fff',
+        backgroundImage: `linear-gradient(${tint}, ${tint})`,
         boxShadow: selected
           ? `0 0 0 5px ${rgba(brandColor, 0.18)}, ${THEME.node.shadow}`
           : THEME.node.shadow,
@@ -1267,7 +1275,7 @@ const BidirectionalNode = ({ data, selected }) => {
       )}
     </div>
   );
-};
+});
 
 const NoteNode = ({ data, selected }) => {
   const brandColor = data.brandColor || BRAND.yellow;
@@ -2067,8 +2075,8 @@ const DiagramBody = forwardRef(function DiagramBody(
   );
 
   const edgeTypes = useMemo(() => {
-    const Smart = !hasBoxes && typeof SmartBezierEdge === "function" && SmartBezierEdge;
-    return { smartBezier: Smart, smartStep: StepEdge };
+    const Smart = !hasBoxes && typeof SmartBezierEdge === "function" ? SmartBezierEdge : BezierEdge;
+    return { smartBezier: Smart, smartStep: StepEdge, manualOrthogonal: OrthogonalFunctionEdge };
   }, [hasBoxes]);
   
   
@@ -2091,6 +2099,11 @@ const DiagramBody = forwardRef(function DiagramBody(
   const [canvasNotes, setCanvasNotes] = useState(() => loadDiagramNotes(storageKey));
   const [comments, setComments] = useState(() => loadDiagramComments(storageKey));
   const [selectedNodeIds, setSelectedNodeIds] = useState([]);
+  const handleSelectionChange = useCallback(({ nodes: selectedNodes }) => {
+    const next = (selectedNodes || []).map(node => node.id);
+    setSelectedNodeIds(previous => previous.length === next.length
+      && previous.every((id, index) => id === next[index]) ? previous : next);
+  }, []);
   const [contextMenu, setContextMenu] = useState(null);
   const [commentModal, setCommentModal] = useState(null);
   const [canvasToolbarCollapsed, setCanvasToolbarCollapsed] = useState(false);
@@ -2101,10 +2114,23 @@ const DiagramBody = forwardRef(function DiagramBody(
     bidirectionalAll: false,
     bidirectionalExceptions: new Set(),
   });
-  const [edgeRouting, setEdgeRouting] = useState({
-    defaultStyle: EDGE_ROUTING_STYLES.RECTANGULAR,
-    overrides: {},
-  });
+  const [edgeRouting, setEdgeRouting] = useState(() => loadCsuEdgeRouting(storageKey));
+  const [routingStorageKey, setRoutingStorageKey] = useState(storageKey);
+  useEffect(() => {
+    setEdgeRouting(loadCsuEdgeRouting(storageKey));
+    setRoutingStorageKey(storageKey);
+  }, [storageKey]);
+  useEffect(() => {
+    if (reviewMode || routingStorageKey !== storageKey) return;
+    saveCsuEdgeRouting(storageKey, edgeRouting);
+  }, [edgeRouting, reviewMode, routingStorageKey, storageKey]);
+  const changeCsuRoute = useCallback((edgeId, patch) => {
+    if (reviewMode || !edgeId || routingStorageKey !== storageKey) return;
+    setEdgeRouting(current => ({
+      ...current,
+      manualRoutes: { ...current.manualRoutes, [edgeId]: { ...current.manualRoutes?.[edgeId], ...patch } },
+    }));
+  }, [reviewMode, routingStorageKey, storageKey]);
 
   // -------------------- Include files normalization ---------
   // showAll: null/undefined => true; empty array => false (show none)
@@ -2203,6 +2229,7 @@ const DiagramBody = forwardRef(function DiagramBody(
           ].filter(Boolean).join(" "),
           data: {
             ...(n.data || {}),
+            detailCanvas: architectureMode && activeArchitectureAbstraction === 'detailed',
             traceActive: isTraceNode || isTraceBox,
             traceFocus: isTraceNode,
             commentCount: commentsForDiagramTarget(comments, 'node', n.id).length,
@@ -2225,7 +2252,7 @@ const DiagramBody = forwardRef(function DiagramBody(
               : n.style,
         };
       });
-  }, [nodes, edges, highlightedEdgeId, nodeVisibility, traceSets, activeArchitectureAbstraction, architectureNodePositions, comments]);
+  }, [nodes, edges, highlightedEdgeId, nodeVisibility, traceSets, architectureMode, activeArchitectureAbstraction, architectureNodePositions, comments]);
 
   const viewEdges = useMemo(() => {
     if (activeArchitectureAbstraction !== "detailed") {
@@ -2260,7 +2287,25 @@ const DiagramBody = forwardRef(function DiagramBody(
       (e) => nodeVisibility.get(e.source) && nodeVisibility.get(e.target)
     );
 
-    return bundleCodeArchitectureEdges(filtered, edgeAggregation).map((e) => {
+    const bundled = bundleCodeArchitectureEdges(filtered, edgeAggregation);
+    const bundlePositions = csuAbsolutePositions(viewNodes);
+    const occupiedSpots = new Set();
+    bundled.filter(edge => !edge.data?.aggregated).forEach(edge => {
+      const source = parseHandleId(edge.sourceHandle);
+      const target = parseHandleId(edge.targetHandle);
+      if (source) occupiedSpots.add(spotKey(edge.source, source.side, source.idx));
+      if (target) occupiedSpots.add(spotKey(edge.target, target.side, target.idx));
+    });
+    return bundled.map((edge, index) => {
+      let e = edge;
+      if (architectureMode && edge.data?.aggregated) {
+        const [sourceHandle, targetHandle] = assignHandles(edge.source, edge.target, bundlePositions, occupiedSpots, edge.label, index);
+        e = { ...edge, sourceHandle, targetHandle };
+        const source = parseHandleId(sourceHandle);
+        const target = parseHandleId(targetHandle);
+        if (source) occupiedSpots.add(spotKey(edge.source, source.side, source.idx));
+        if (target) occupiedSpots.add(spotKey(edge.target, target.side, target.idx));
+      }
       const isOn =
         e.id === highlightedEdgeId ||
         (traceSets.nodeIds.has(e.source) && traceSets.nodeIds.has(e.target));
@@ -2270,9 +2315,18 @@ const DiagramBody = forwardRef(function DiagramBody(
       const baseStroke = e.data?.aggregated ? BRAND.purple : BRAND.blue;
       return {
         ...e,
-        type: routingStyle === EDGE_ROUTING_STYLES.RECTANGULAR ? 'smartStep' : 'smartBezier',
+        // Keep route handles above intersecting edges while editing.
+        zIndex: e.id === highlightedEdgeId ? 1001 : e.zIndex,
+        type: routingStyle === EDGE_ROUTING_STYLES.RECTANGULAR ? (architectureMode ? 'manualOrthogonal' : 'smartStep') : 'smartBezier',
         label: commentCount ? `${baseLabel} · 💬 ${commentCount}` : baseLabel,
-        data: { ...(e.data || {}), baseLabel, commentCount, routingStyle },
+        data: {
+          ...(e.data || {}), baseLabel, commentCount, routingStyle,
+          routingTargetKey: e.id,
+          manualRoute: edgeRouting.manualRoutes?.[e.id] || null,
+          onRouteChange: changeCsuRoute,
+          isHighlighted: e.id === highlightedEdgeId,
+          readOnly: reviewMode,
+        },
         animated: isOn,
         style: {
           ...(e.style || {}),
@@ -2284,10 +2338,34 @@ const DiagramBody = forwardRef(function DiagramBody(
         markerEnd: { ...(e.markerEnd || {}), type: MarkerType.ArrowClosed, color: baseStroke, width: ARROW_SIZE, height: ARROW_SIZE },
       };
     });
-  }, [edges, highlightedEdgeId, nodeVisibility, traceSets, activeArchitectureAbstraction, nodes, viewNodes, rows, comments, edgeAggregation, edgeRouting]);
+  }, [edges, highlightedEdgeId, nodeVisibility, traceSets, activeArchitectureAbstraction, nodes, viewNodes, rows, comments, edgeAggregation, edgeRouting, architectureMode, changeCsuRoute, reviewMode]);
 
   // -------------------- refs / misc you already had ---------
   const diagramHostRef = useRef(null);
+  const largeCsuCanvas = architectureMode && activeArchitectureAbstraction === 'detailed'
+    && (viewNodes.length >= 250 || viewEdges.length >= 500);
+  // React Flow culls edges by endpoint bounds. A manually adjusted route can
+  // leave those bounds, so keep full rendering for diagrams with such routes.
+  const cullCsuCanvas = largeCsuCanvas && !Object.keys(edgeRouting.manualRoutes || {}).length;
+  const viewportIdleTimer = useRef(null);
+  const handleViewportMoveStart = useCallback(() => {
+    clearTimeout(viewportIdleTimer.current);
+    if (largeCsuCanvas) diagramHostRef.current?.setAttribute('data-viewport-moving', '');
+  }, [largeCsuCanvas]);
+  const handleViewportMoveEnd = useCallback(() => {
+    clearTimeout(viewportIdleTimer.current);
+    viewportIdleTimer.current = setTimeout(() => {
+      diagramHostRef.current?.removeAttribute('data-viewport-moving');
+    }, 150);
+  }, []);
+  useEffect(() => {
+    const host = diagramHostRef.current;
+    host?.removeAttribute('data-viewport-moving');
+    return () => {
+      clearTimeout(viewportIdleTimer.current);
+      host?.removeAttribute('data-viewport-moving');
+    };
+  }, [largeCsuCanvas, storageKey]);
   const nodeIdCounter = useRef(0);
   const [editModal, setEditModal] = useState(null);
   const [editModalExpanded, setEditModalExpanded] = useState(false);
@@ -2923,7 +3001,7 @@ const DiagramBody = forwardRef(function DiagramBody(
     const restore = preserveLayoutOnMount && String(cleanOnceKey).startsWith("initial-") && realNodes.every(node => restoredPositionIds.current.has(node.id));
     const elkNodes = restore ? realNodes.map(node => ({
       ...node, position: { ...posRef.current.get(node.id) }, parentNode: undefined, extent: undefined,
-    })) : await runElkLayoutOnce({
+    })) : architectureMode ? realNodes : await runElkLayoutOnce({
       nodes: realNodes,
       edges,
       groupByFile: true,
@@ -2932,7 +3010,7 @@ const DiagramBody = forwardRef(function DiagramBody(
     let groupedNodes;
     let positionedNodes = elkNodes;
     if (architectureMode) {
-      const architectureLayout = buildArchitectureLayout(elkNodes, { colorSystemElements, systemElementColorOverrides, preservePositions: restore });
+      const architectureLayout = buildArchitectureLayout(elkNodes, { colorSystemElements, systemElementColorOverrides, preservePositions: restore, edges: rowsToRawEdges(rows) });
       groupedNodes = architectureLayout.groupedNodes;
       positionedNodes = architectureLayout.absoluteNodes;
     } else {
@@ -3727,8 +3805,17 @@ useEffect(() => {
   }, [setEdges, setNodes]);
 
   const setAllEdgeRoutingStyle = useCallback((style) => {
-    setEdgeRouting({ defaultStyle: style, overrides: {} });
+    setEdgeRouting(current => ({ ...current, defaultStyle: style, overrides: {} }));
   }, []);
+
+  const resetHighlightedRoute = useCallback(() => {
+    if (reviewMode || !highlightedToolbarEdge) return;
+    setEdgeRouting(current => {
+      const manualRoutes = { ...current.manualRoutes };
+      delete manualRoutes[highlightedToolbarEdge.id];
+      return { ...current, manualRoutes };
+    });
+  }, [highlightedToolbarEdge, reviewMode]);
 
   const toggleHighlightedEdgeRoutingStyle = useCallback(() => {
     if (!highlightedToolbarEdge) return;
@@ -3964,6 +4051,9 @@ useEffect(() => {
                     <button type="button" onClick={() => setAllEdgeRoutingStyle(EDGE_ROUTING_STYLES.BEZIER)} title="Set all edges to Bezier routing" aria-label="Use Bezier routing for all edges" style={toolButtonStyle({ active: edgeRouting.defaultStyle === EDGE_ROUTING_STYLES.BEZIER && !Object.keys(edgeRouting.overrides || {}).length })}>B</button>
                     <button type="button" onClick={() => setAllEdgeRoutingStyle(EDGE_ROUTING_STYLES.RECTANGULAR)} title="Set all edges to rectangular routing" aria-label="Use rectangular routing for all edges" style={toolButtonStyle({ active: edgeRouting.defaultStyle === EDGE_ROUTING_STYLES.RECTANGULAR && !Object.keys(edgeRouting.overrides || {}).length })}>R</button>
                     <button type="button" onClick={toggleHighlightedEdgeRoutingStyle} title="Toggle routing for selected edge or bundle" aria-label="Toggle selected edge routing" disabled={!highlightedToolbarEdge} style={toolButtonStyle({ active: Boolean(highlightedToolbarEdge), disabled: !highlightedToolbarEdge, tone: BRAND.purple })}>{highlightedRoutingStyle === EDGE_ROUTING_STYLES.RECTANGULAR ? 'B' : 'R'}</button>
+                    {architectureMode && activeArchitectureAbstraction === 'detailed' && (
+                      <button type="button" onClick={resetHighlightedRoute} title="Reset selected edge to automatic routing" aria-label="Reset selected edge route" disabled={reviewMode || !edgeRouting.manualRoutes?.[highlightedToolbarEdge?.id]} style={toolButtonStyle({ disabled: reviewMode || !edgeRouting.manualRoutes?.[highlightedToolbarEdge?.id], tone: BRAND.purple })}>↺</button>
+                    )}
                   </div>
                   <div style={toolDividerStyle} />
                   <div style={toolGroupHeadingStyle}>Export</div>
@@ -3978,7 +4068,7 @@ useEffect(() => {
   );
 
   return (
-    <div ref={diagramHostRef} style={{ width: '100%', height, minHeight: height === '100%' ? 0 : undefined, position: 'relative' }}>
+    <div ref={diagramHostRef} className={largeCsuCanvas ? 'x-csu-large' : undefined} style={{ width: '100%', height, minHeight: height === '100%' ? 0 : undefined, position: 'relative' }}>
       {architectureFocus && (
         <div
           style={{
@@ -4103,6 +4193,9 @@ useEffect(() => {
           ? canvasTools
           : canvasToolsTarget ? createPortal(canvasTools, canvasToolsTarget) : null)}
         <ReactFlow
+          onlyRenderVisibleElements={cullCsuCanvas}
+          onMoveStart={handleViewportMoveStart}
+          onMoveEnd={handleViewportMoveEnd}
           nodes={initialLayoutPending ? [] : viewNodes}
           edges={initialLayoutPending ? [] : viewEdges}
           onInit={() => {
@@ -4171,9 +4264,7 @@ useEffect(() => {
               targetLabel: String(edge.data?.baseLabel || edge.label || 'Selected edge'),
             });
           }}
-          onSelectionChange={({ nodes: selectedNodes }) => {
-            setSelectedNodeIds((selectedNodes || []).map((node) => node.id));
-          }}
+          onSelectionChange={handleSelectionChange}
           nodesDraggable={!reviewMode}
           nodesConnectable={!reviewMode}
           edgesUpdatable={!reviewMode}

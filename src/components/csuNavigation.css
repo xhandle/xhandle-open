@@ -1,0 +1,23 @@
+/* Keep the graph geometry visible while the viewport is moving; restore text
+   and decoration when the gesture ends. Scoped to large CSU canvases only. */
+.x-csu-large .react-flow__viewport {
+  will-change: transform;
+}
+
+.x-csu-large[data-viewport-moving] .react-flow__edgelabel-renderer,
+.x-csu-large[data-viewport-moving] .react-flow__edge-textwrapper {
+  visibility: hidden;
+}
+
+.x-csu-large[data-viewport-moving] .react-flow__node,
+.x-csu-large[data-viewport-moving] .react-flow__edge,
+.x-csu-large[data-viewport-moving] .react-flow__edge-path {
+  filter: none !important;
+  animation: none !important;
+}
+
+.x-csu-large[data-viewport-moving] .x-node,
+.x-csu-large[data-viewport-moving] .react-flow__node-groupBox > div {
+  box-shadow: none !important;
+  transition: none !important;
+}

@@ -10,7 +10,7 @@ const hiddenHandleStyle = {
 };
 
 export default function GroupBoxNode({ data }) {
-  const { label, groupKind, traceActive, systemElementColor, commentCount = 0, onOpenComments } = data || {};
+  const { label, groupKind, traceActive, systemElementColor, detailCanvas, commentCount = 0, onOpenComments } = data || {};
   const isFunctionGroup = groupKind === 'function';
   const palette = {
     csci: {
@@ -46,6 +46,16 @@ export default function GroupBoxNode({ data }) {
         color: systemElementColor,
       }
     : null;
+  // Give each hierarchy level a visible tint, with restrained outer fills
+  // because four nested containers overlap in CSU view.
+  const detailBackground = groupKind === 'csc' ? 'rgba(20,184,166,0.08)'
+    : groupKind === 'csu' ? 'rgba(168,85,247,0.06)'
+    : groupKind === 'csci' ? 'rgba(37,99,235,0.025)'
+    : systemElementColor ? `${systemElementColor}0A` : 'rgba(122,55,255,0.035)';
+  const detailHeaderBackground = groupKind === 'csc' ? 'rgba(20,184,166,0.12)'
+    : groupKind === 'csu' ? 'rgba(168,85,247,0.12)'
+    : groupKind === 'csci' ? 'rgba(37,99,235,0.10)'
+    : systemElementStyle?.background || 'rgba(122,55,255,0.10)';
   return (
     <div
       style={{
@@ -53,7 +63,7 @@ export default function GroupBoxNode({ data }) {
         height: '100%',
         border: systemElementStyle?.border || arch?.border || (isFunctionGroup ? '1px solid #BFD6FF' : '1px solid #D5D9E0'),
         borderRadius: arch?.radius || (isFunctionGroup ? 20 : 16),
-        background: systemElementStyle?.background || arch?.background || (isFunctionGroup ? 'rgba(45, 125, 254, 0.05)' : 'rgba(122, 55, 255, 0.04)'),
+        background: detailCanvas ? detailBackground : systemElementStyle?.background || arch?.background || (isFunctionGroup ? 'rgba(45, 125, 254, 0.05)' : 'rgba(122, 55, 255, 0.04)'),
         boxShadow: traceActive
           ? 'inset 0 0 0 2px rgba(20,184,166,0.75), 0 0 0 3px rgba(20,184,166,0.18)'
           : 'inset 0 0 0 1px rgba(0,0,0,0.02)',
@@ -117,6 +127,12 @@ export default function GroupBoxNode({ data }) {
           whiteSpace: 'nowrap',
           boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
           pointerEvents: 'none',
+          ...(detailCanvas ? {
+            top: 0, left: 0, right: 0, padding: '5px 8px',
+            border: 'none', borderRadius: '8px 8px 0 0', boxShadow: 'none',
+            background: detailHeaderBackground,
+            color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis',
+          } : {}),
         }}
       >
         {label}
