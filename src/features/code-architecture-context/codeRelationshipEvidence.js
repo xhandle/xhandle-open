@@ -85,7 +85,7 @@ function sourceRow(e) {
     fromDetails:`Source-defined ${e.from}.`,
     toDetails: e.targetResolution === 'import-reference' ? `Imported callable reference ${e.to}; runtime dispatch is not proven.` : e.targetResolution === 'unresolved-runtime-target' ? `Call expression ${e.expression}; runtime target is unresolved.` : `Source-defined ${e.to}.`,
     controlActionDetails:`${member ? 'Class membership' : inheritance ? 'Base-class expression' : 'Call expression'} evidenced at ${e.fromFile}:${e.lines.join(', ')}.`,
-    canonicalRelationshipId:e.canonicalId, relationshipEvidence:e, classificationPolicyVersion:2,
+    canonicalRelationshipId:e.canonicalId, relationshipEvidence:e, classificationPolicyVersion:3,
     grounding:{evidenceConfidence:'high',relationshipType:e.kind,currentFile:e.fromFile}, evidenceGenerated:true };
 }
 export function completeSupportedRelationships(rows, inventory) {
@@ -96,8 +96,10 @@ export function completeSupportedRelationships(rows, inventory) {
     if (evidence) {
       // Model output enriches descriptions; source evidence owns identity and action.
       if (!enriched.has(evidence.canonicalId)) enriched.set(evidence.canonicalId, row);
-    } else proposals.push({ ...row, canonicalRelationshipId: undefined, classificationPolicyVersion:2,
-      relationshipEvidence:{version:2,supported:false,kind:'unresolved',textDigest:inventory.textDigest || null} });
+    } else proposals.push({ ...row, canonicalRelationshipId: undefined, classificationPolicyVersion:3,
+      relationshipEvidence:{version:2,supported:false,kind:'unresolved',textDigest:inventory.textDigest || null,
+        extractionMethod: inventory.supported ? 'unmatched-model-proposal' : 'model-only',
+        limitation: inventory.supported ? 'No matching syntax evidence.' : inventory.limitation} });
   }
   return [...(inventory.relationships || []).map(e => {
     const generated = sourceRow(e), model = enriched.get(e.canonicalId);

@@ -69,7 +69,7 @@ it('includes operational imported/receiver calls while retaining uncertainty and
     expect(classify(row).hazardAnalysisEligibility).toBe('Exclude');
   }
   const [utility]=completeSupportedRelationships([],pythonRelationshipInventory('src/utils.py','import numpy as np\ndef compute(): np.cos(1)'));
-  expect(classify(utility).hazardAnalysisEligibility).toBe('Needs Review');
+  expect(classify(utility).hazardAnalysisEligibility).toBe('Include');
 });
 it('retains trace links, row references and analyst overrides across a policy-only rerun', () => {
   const fresh=completeSupportedRelationships([],inventory());
@@ -77,7 +77,7 @@ it('retains trace links, row references and analyst overrides across a policy-on
   saved.forEach(row=>{row.classificationPolicyVersion=1;row.hazardAnalysisEligibilitySource='analyst-override';row.hazardAnalysisEligibility='Exclude';});
   const next=ensureCodeArchitectureTraceIds(reconcileArchitectureRows(fresh,saved,'scope'));
   expect(next.map(r=>[r.traceId,r.rowRef,r.edgeId,r.fromNodeId,r.toNodeId])).toEqual(saved.map(r=>[r.traceId,r.rowRef,r.edgeId,r.fromNodeId,r.toNodeId]));
-  expect(next.every(r=>r.classificationPolicyVersion===2 && classify(r).hazardAnalysisEligibility==='Exclude')).toBe(true);
+  expect(next.every(r=>r.classificationPolicyVersion===3 && classify(r).hazardAnalysisEligibility==='Exclude')).toBe(true);
 });
 
 it('reconciles imported calls proposed while analyzing the destination file', () => {

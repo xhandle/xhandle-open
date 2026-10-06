@@ -1,3 +1,6 @@
+import { functionalModelIsReady, buildFunctionalModelRows } from './features/code-architecture-context/functionalModel';
+import { parseCodeArchitectureCsv } from "./features/code-architecture-context/codeArchitectureCsvImport";
+import CodeAnalysisCoverageNotice from "./features/code-architecture-context/CodeAnalysisCoverageNotice";
 import { architectureEvidenceColumns, architectureCoverageSheets } from './features/code-architecture-assurance/codeArchitectureCoverageWorkbook';
 import ArchitectureRunRecovery from './features/code-architecture-assurance/ArchitectureRunRecovery';
 import LocalFolderChooser from "./features/code-architecture-context/LocalFolderChooser";
@@ -213,6 +216,8 @@ import {
   writeCbaRowsToIndexedDB,
   readArchitectureRunRecords,
   writeImportedArchitectureRunRecords,
+  recoverArchitecturePublication,
+  readArchitectureMetadata,
 } from "./features/code-architecture-assurance/codeArchitectureStorage";
 import {
   formatDuration,
@@ -4047,18 +4052,30 @@ const activeCodeArchitectureRowsKey = activeCodeArchitectureProject && activeCod
   ? codeArchitectureRowsKey(activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id)
   : null;
 codeArchitectureScopeRef.current = activeCodeArchitectureRowsKey;
+const [durableArchitectureMeta, setDurableArchitectureMeta] = useState(null);
+useEffect(() => {
+  let active=true;
+  setDurableArchitectureMeta(null);
+  if(activeCodeArchitectureRowsKey) readArchitectureMetadata(activeCodeArchitectureRowsKey)
+    .then(value=>{if(active)setDurableArchitectureMeta(value ? {scope:activeCodeArchitectureRowsKey,value} : null);})
+    .catch(error=>console.warn('[cba] Unable to read durable analysis metadata',error));
+  return ()=>{active=false;};
+},[activeCodeArchitectureRowsKey,activeCodeArchitectureRepo]);
 const activeCodeArchitectureStoredMeta = useMemo(() => {
   if (!activeCodeArchitectureProject || !activeCodeArchitectureRepo) return null;
+  const durable=durableArchitectureMeta?.scope===activeCodeArchitectureRowsKey ? durableArchitectureMeta.value : null;
   try {
-    return JSON.parse(localStorage.getItem(codeArchitectureMetaKey(activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id)) || "null");
+    const cached=JSON.parse(localStorage.getItem(codeArchitectureMetaKey(activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id)) || "null");
+    return durable ? {...cached,...durable} : cached;
   } catch {
-    return null;
+    return durable;
   }
-}, [activeCodeArchitectureProject, activeCodeArchitectureRepo]);
+}, [activeCodeArchitectureProject, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey, durableArchitectureMeta]);
 const activeCodeArchitectureRepoMeta = useMemo(() => {
   if (!activeCodeArchitectureRepo) return getRepoMeta();
   return {
     ...codeSourceProvenance(activeCodeArchitectureRepo),
+    functionalProcessingError: activeCodeArchitectureStoredMeta?.functionalProcessingError || "",
     owner: activeCodeArchitectureRepo.owner || "",
     repo: activeCodeArchitectureRepo.repo || "",
     repoId: activeCodeArchitectureRepo.repoId || normalizeRepoIdentity(activeCodeArchitectureRepo),
@@ -4145,7 +4162,10 @@ function codeArchitectureReviewRowsForRepo(project, repo, reviewItems = []) {
         to: row.to || row.toFunction || "",
         toFile: row.toFile || "",
         toDetails: row.toDetails || "",
-        architecture: row.architecture || {
+        system: row.system || row["System"] || "",
+    systemDetails: row.systemDetails || row["System Details"] || "",
+    subsystemDetails: row.subsystemDetails || row["Subsystem Details"] || "",
+    architecture: row.architecture || {
           subsystem: row.subsystem || "",
           csci: row.csci || "",
           csc: row.csc || "",
@@ -4460,7 +4480,7 @@ async function saveCodeArchitectureRepoConfig({ analyze = false } = {}) {
       setCodeArchitectureRepoConfigMessage("Repository saved.");
     }
   } catch (error) {
-    if (error?.code !== "SOURCE_ANALYSIS_INCOMPLETE") setShowCodeArchitectureRepoConfig(true);
+    if (!["SOURCE_ANALYSIS_INCOMPLETE", "SOURCE_PUBLICATION_PENDING", "SOURCE_PUBLICATION_CONFLICT", "SOURCE_STORAGE_FAILED", "SOURCE_ANALYSIS_CANCELLED"].includes(error?.code)) setShowCodeArchitectureRepoConfig(true);
     setCodeArchitectureRepoConfigMessage(error?.message || String(error));
   } finally {
     setIsCodeArchitectureRepoAnalyzing(false);
@@ -4476,18 +4496,22 @@ function normalizeImportedCodeArchitectureRows(value) {
         ? value.data
         : [];
   return ensureCodeArchitectureTraceIds(rawRows.map((row) => ({
+    functionalAbstraction: row.functionalAbstraction || undefined,
     lineage: row.lineage || undefined,
     canonicalRelationshipId: row.canonicalRelationshipId || undefined,
     relationshipEvidence: row.relationshipEvidence || undefined,
     classificationPolicyVersion: row.classificationPolicyVersion || undefined,
     from: row.from || row.fromFunction || row["Function (From)"] || "",
-    fromFile: row.fromFile || row.fromRelatedFiles || row["Function (From) Related File(s)"] || "",
+    fromFile: row.fromFile || row.fromRelatedFiles || row["Function (From) File(s)"] || row["Function (From) Related File(s)"] || "",
     fromDetails: row.fromDetails || row.fromFunctionDetails || row["Function (From) Details"] || "",
     action: row.action || row.controlAction || row["Control Action"] || "",
     controlActionDetails: row.controlActionDetails || row.controlDetails || row["Control Action Details"] || "",
     to: row.to || row.toFunction || row["Function (To)"] || "",
-    toFile: row.toFile || row.toRelatedFiles || row["Function (To) Related File(s)"] || "",
+    toFile: row.toFile || row.toRelatedFiles || row["Function (To) File(s)"] || row["Function (To) Related File(s)"] || "",
     toDetails: row.toDetails || row.toFunctionDetails || row["Function (To) Details"] || "",
+    system: row.system || row["System"] || "",
+    systemDetails: row.systemDetails || row["System Details"] || "",
+    subsystemDetails: row.subsystemDetails || row["Subsystem Details"] || "",
     architecture: row.architecture || {
       subsystem: row.subsystem || row["Subsystem"] || "Application Subsystem",
       csci: row.csci || row["CSCI"] || "",
@@ -4534,6 +4558,12 @@ async function saveImportedCodeArchitectureRows({ project, file, rows, repoPacka
   });
   repoConfig.repoId = repoPackage?.repo?.repoId || `${repoOwner}/${repoName}`;
   repoConfig.repoName = safeFileName;
+  // Separate CSV imports must not share downstream analysis ownership, even
+  // when the same filename is imported twice into one project.
+  if (/\.csv$/i.test(file.name) && !repoPackage) {
+    repoConfig.repoId = `manual/${repoConfig.id}`;
+    repoConfig.repoUrl = "";
+  }
   if (isLocalCodeSource(repoConfig)) {
     const existing = (project.repos || []).find(entry => codeArchitectureReposMatch(entry, repoConfig));
     if (existing) repoConfig.id = existing.id;
@@ -4779,6 +4809,8 @@ async function collectCodeArchitectureProjectExport(projectId) {
       : await readCodeArchitectureRowsForRepo(project, repo, primaryKey);
     let meta = null;
     try { meta = JSON.parse(localStorage.getItem(codeArchitectureMetaKey(project.id, repo.id)) || "null"); } catch {}
+    const durableMeta = await readArchitectureMetadata(primaryKey);
+    if (durableMeta) meta = { ...meta, ...durableMeta };
     exportedRepos.push({
       projectId: project.id,
       repo: {
@@ -4998,8 +5030,13 @@ function remediationRowsForWorkbook(remediation = {}) {
 
 function appendJsonSheet(XLSX, workbook, usedSheetNames, name, rows) {
   const normalizedRows = Array.isArray(rows) && rows.length ? rows : [{ Notice: "No rows available" }];
-  const sheet = XLSX.utils.json_to_sheet(normalizedRows);
-  XLSX.utils.book_append_sheet(workbook, sheet, codeArchitectureSheetName(name, usedSheetNames));
+  const pageSize=1048575; // XLSX allows 1,048,576 rows including the header.
+  const header=Array.from(new Set(normalizedRows.flatMap(row=>Object.keys(row))));
+  for(let offset=0;offset<normalizedRows.length;offset+=pageSize) {
+    const sheet=XLSX.utils.json_to_sheet(normalizedRows.slice(offset,offset+pageSize),{header});
+    const label=offset ? `${name} ${Math.floor(offset/pageSize)+1}` : name;
+    XLSX.utils.book_append_sheet(workbook,sheet,codeArchitectureSheetName(label,usedSheetNames));
+  }
 }
 
 async function collectCodeArchitectureWorkbookRepoData(project, repo) {
@@ -5166,10 +5203,13 @@ async function importCodeArchitectureProjectFromFile(event) {
   event.target.value = "";
   if (!file) return;
   try {
-    const parsed = JSON.parse(await file.text());
+    const csvImport = /\.csv$/i.test(file.name);
+    const targetProject = csvImport ? activeCodeArchitectureProject : null;
+    const text = await file.text();
+    const parsed = csvImport ? parseCodeArchitectureCsv(text) : JSON.parse(text);
     const now = new Date().toISOString();
     const projectName = String(parsed?.project?.name || parsed?.projectName || file.name.replace(/\.[^.]+$/, "") || "Imported Architecture").trim();
-    const project = {
+    const project = targetProject || {
       id: makeId(),
       name: projectName,
       folderId: null,
@@ -5206,11 +5246,15 @@ async function importCodeArchitectureProjectFromFile(event) {
     }
     const importedProject = {
       ...project,
-      repos: importedRepos,
+      repos: [...(targetProject?.repos || []), ...importedRepos],
       activeRepoId: importedRepos[0].id,
       updatedAt: new Date().toISOString(),
     };
-    setCodeArchitectureProjects((prev) => [importedProject, ...prev]);
+    setCodeArchitectureProjects((prev) => targetProject
+      ? prev.map(existing => existing.id === targetProject.id
+        ? { ...existing, repos: [...(existing.repos || []), ...importedRepos], activeRepoId: importedRepos[0].id, updatedAt: importedProject.updatedAt }
+        : existing)
+      : [importedProject, ...prev]);
     setActiveCodeArchitectureProjectId(importedProject.id);
     setActiveCodeArchitectureFolderId(null);
     setCbaTableData(firstRows);
@@ -5223,8 +5267,8 @@ async function importCodeArchitectureProjectFromFile(event) {
     setIsCodeArchitectureProjectsOpen(true);
     notifyBackupDataChanged("code-architecture-project-import");
   } catch (error) {
-    console.error("[cba] Failed to import code architecture project JSON", error);
-    alert(error?.message || "Failed to import code architecture project JSON.");
+    console.error("[cba] Failed to import code architecture file", error);
+    alert(error?.message || "Failed to import code architecture file.");
   }
 }
 
@@ -5236,6 +5280,7 @@ async function handleBaselineRepo({
   analysisContext,
   projectId,
   repoConfig,
+  publicationCheckpointKey,
 } = {}) {
   if (codeArchitectureAnalysisInFlightRef.current) return;
   setSection("code-architecture");
@@ -5248,14 +5293,14 @@ async function handleBaselineRepo({
   const targetProject = codeArchitectureProjects.find((entry) => entry.id === targetProjectId) || activeCodeArchitectureProject;
   const sourceRepoConfig = repoConfig || activeCodeArchitectureRepo;
   const local = isLocalCodeSource(sourceRepoConfig);
-  if (local) {
+  if (local && !publicationCheckpointKey) {
     try { await getLocalFolderSession(sourceRepoConfig); } catch (error) { openCodeArchitectureRepoConfig(targetProjectId, sourceRepoConfig.id); setCodeArchitectureRepoConfigMessage(error.message); return; }
   }
   const finalOwner = local ? "" : (owner || sourceRepoConfig?.owner || localStorage.getItem("repoOwner") || "").trim();
   const finalRepo = local ? "" : (repo || sourceRepoConfig?.repo || localStorage.getItem("repoName") || "").trim();
   const finalToken = local ? "" : (token || sourceRepoConfig?.token || localStorage.getItem("githubToken") || "").trim();
 
-  if (!local && (!finalOwner || !finalRepo)) {
+  if (!publicationCheckpointKey && !local && (!finalOwner || !finalRepo)) {
     throw new Error("Missing owner/repo. Connect a GitHub repository in Code-Based Architecture first.");
   }
 
@@ -5288,7 +5333,10 @@ async function handleBaselineRepo({
   });
 
   try {
-    const result = await generateFunctionalDecompositionFromGitHub(
+    setCbaLoading(true);
+    const result = publicationCheckpointKey
+      ? await recoverArchitecturePublication(storageKey, publicationCheckpointKey)
+      : await generateFunctionalDecompositionFromGitHub(
       rows => { if (codeArchitectureScopeRef.current === storageKey) setCbaTableData(rows); },
       setCbaLoading,
       null,
@@ -5310,6 +5358,7 @@ async function handleBaselineRepo({
       }
     );
     const resultRows = Array.isArray(result) ? result : result?.rows;
+    if (publicationCheckpointKey && codeArchitectureScopeRef.current === storageKey) setCbaTableData(resultRows);
     const resultMetadata = Array.isArray(result) ? {} : (result?.metadata || {});
     const generatedRowCount = Array.isArray(resultRows) ? resultRows.length : 0;
     const openTableFirstForLargeResult = generatedRowCount > 300;
@@ -5463,6 +5512,7 @@ useEffect(() => {
           rowCount: rowsPersisted ? cbaTableData.length : 0,
           storage: rowsPersisted ? "indexedDB" : "unavailable",
           storageError: rowsPersisted ? "" : "Code architecture rows could not be saved to browser storage.",
+          functionalProcessingError: functionalModelIsReady(cbaTableData) ? "" : activeCodeArchitectureStoredMeta?.functionalProcessingError || "",
           metrics: activeCodeArchitectureStoredMeta?.metrics || null,
           sourceAnalysis: activeCodeArchitectureStoredMeta?.sourceAnalysis || null,
           grounding: normalizeCodeArchitectureGroundingStats(activeCodeArchitectureStoredMeta?.grounding),
@@ -5482,7 +5532,7 @@ useEffect(() => {
   return () => {
     cancelled = true;
   };
-}, [activeCodeArchitectureProject, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey, activeCodeArchitectureStoredMeta?.grounding, activeCodeArchitectureStoredMeta?.metrics, activeCodeArchitectureStoredMeta?.operationalContext, activeCodeArchitectureStoredMeta?.contextSources, cbaTableData]);
+}, [activeCodeArchitectureProject, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey, activeCodeArchitectureStoredMeta?.grounding, activeCodeArchitectureStoredMeta?.functionalProcessingError, activeCodeArchitectureStoredMeta?.sourceAnalysis, activeCodeArchitectureStoredMeta?.metrics, activeCodeArchitectureStoredMeta?.operationalContext, activeCodeArchitectureStoredMeta?.contextSources, cbaTableData]);
 
 useEffect(() => {
   if (!cbaTableData?.length) {
@@ -14221,7 +14271,7 @@ Rules:
         ? `${description}\n\n${organizationCalibration.context}`
         : description,
       projectName: activeCodeArchitectureProject?.name || "Active Code-Based Architecture project",
-      functionalRows: cbaTableData.map((row) => ({
+      functionalRows: (functionalModelIsReady(cbaTableData) ? buildFunctionalModelRows(cbaTableData).filter(row => !row.functionalModel.internal) : cbaTableData).map((row) => ({
         subsystem: row?.architecture?.subsystem || row?.subsystem || "",
         fromFunction: row?.from || row?.fromFunction || "",
         controlAction: row?.action || row?.controlAction || "",
@@ -16942,7 +16992,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
     <input
       ref={codeArchitectureProjectImportInputRef}
       type="file"
-      accept=".json,application/json"
+      accept=".json,application/json,.csv,text/csv"
       className="hidden"
       onChange={importCodeArchitectureProjectFromFile}
     />
@@ -16993,7 +17043,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                   type="button"
                   onClick={() => codeArchitectureProjectImportInputRef.current?.click()}
                   className="inline-flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  title="Import a code architecture JSON file as a new project"
+                  title="Import functional decomposition CSV into this project, or JSON as a new project"
                 >
                   <FileText size={15} />
                   Import Project
@@ -17264,7 +17314,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                   type="button"
                   onClick={() => codeArchitectureProjectImportInputRef.current?.click()}
                   className="inline-flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  title="Import a code architecture JSON file as a new project"
+                  title="Import functional decomposition CSV into this project, or JSON as a new project"
                 >
                   <FileText size={15} />
                   Import
@@ -17289,7 +17339,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
               <button
                 type="button"
                 disabled={cbaLoading}
-                onClick={() => handleBaselineRepo({ projectId: activeCodeArchitectureProject.id, repoConfig: activeCodeArchitectureRepo }).catch(error => { if (error?.code !== "SOURCE_ANALYSIS_INCOMPLETE") openCodeArchitectureRepoConfig(activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id); setCodeArchitectureRepoConfigMessage(error.message); })}
+                onClick={() => handleBaselineRepo({ projectId: activeCodeArchitectureProject.id, repoConfig: activeCodeArchitectureRepo }).catch(error => { if (!["SOURCE_ANALYSIS_INCOMPLETE", "SOURCE_PUBLICATION_PENDING", "SOURCE_PUBLICATION_CONFLICT", "SOURCE_STORAGE_FAILED", "SOURCE_ANALYSIS_CANCELLED"].includes(error?.code)) openCodeArchitectureRepoConfig(activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id); setCodeArchitectureRepoConfigMessage(error.message); })}
                 className="inline-flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Sparkles size={15} />
@@ -17306,7 +17356,11 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
           scope={activeCodeArchitectureRowsKey}
           loading={cbaLoading}
           hasPublishedRows={cbaTableData.length > 0}
-          onResume={() => handleBaselineRepo({ projectId: activeCodeArchitectureProject.id, repoConfig: activeCodeArchitectureRepo })}
+          onResume={(checkpoint) => handleBaselineRepo({ projectId: activeCodeArchitectureProject.id, repoConfig: activeCodeArchitectureRepo, publicationCheckpointKey: checkpoint.publicationReady ? checkpoint.key : undefined })}
+        />}
+
+        {!cbaLoading && activeCodeArchitectureRepo && <CodeAnalysisCoverageNotice
+          coverage={activeCodeArchitectureStoredMeta?.sourceAnalysis?.coverage}
         />}
 
         {cbaLoading
@@ -17332,6 +17386,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                   projectId={activeCodeArchitectureProject.id}
                   repoMeta={activeCodeArchitectureRepoMeta}
                   onDataChange={setCbaTableData}
+                  rowsStorageKey={activeCodeArchitectureRowsKey}
                   collaboratorSelection={activeCodeArchitectureSelection}
                   onCollaboratorSelectionChange={setActiveCodeArchitectureSelection}
                   onRequestCreateProject={handleCreateProjectFromSelection}
@@ -17483,6 +17538,11 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                 </div>
                 {hazardRemediationTab === "hazard-analysis" ? (
                   <div className="min-h-0 flex-1">
+                    <div className="border-b bg-slate-50 px-3 py-2 text-sm">
+                      {functionalModelIsReady(cbaTableData)
+                        ? 'New hazard analyses use the processed Functional model. Existing runs retain their original inputs.'
+                        : 'No current Functional model. Generate it in Architecture Diagram → Functional to analyze responsibilities instead of detailed calls.'}
+                    </div>
                     <CodeArchitectureHazardPanel
                       cbaRows={cbaTableData}
                       latestRun={codeArchitectureHazardRun}
@@ -17497,6 +17557,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                           projectId={activeCodeArchitectureProject.id}
                           repoMeta={activeCodeArchitectureRepoMeta}
                           onDataChange={setCbaTableData}
+                  rowsStorageKey={activeCodeArchitectureRowsKey}
                           onRequestCreateProject={handleCreateProjectFromSelection}
                           collaboratorSelection={activeCodeArchitectureSelection}
                           onCollaboratorSelectionChange={setActiveCodeArchitectureSelection}

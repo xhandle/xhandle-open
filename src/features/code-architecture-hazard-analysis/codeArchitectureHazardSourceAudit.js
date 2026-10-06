@@ -1,4 +1,4 @@
-import { uniqueTopLevelPythonBody } from "../code-architecture-context/codeRelationshipEvidence";
+import { readRecord, hydrateRecord, isRecordPart } from '../code-architecture-storage/chunkedRecord';
 import { codeSourceIndexKey, codeSourceIndexPrefix, codeSourceProvenance, isLocalCodeSource } from "../code-architecture-context/codeSourceIdentity";
 const IDB_DB_NAME = "xhandle";
 const IDB_VERSION = 4;
@@ -69,12 +69,7 @@ async function loadIndexedSourceRecord({ filePath, ...source }) {
   if (!key) return null;
   try {
     const db = await openXHandleDb();
-    const result = await new Promise((resolve, reject) => {
-      const tx = db.transaction(CODE_INDEX_STORE, "readonly");
-      const req = tx.objectStore(CODE_INDEX_STORE).get(key);
-      req.onsuccess = () => resolve(req.result?.value || null);
-      req.onerror = () => reject(req.error);
-    }).finally(() => db.close());
+    const result = await readRecord(db, CODE_INDEX_STORE, key).finally(() => db.close());
     if (result) return result;
   } catch {}
 
@@ -102,12 +97,12 @@ async function loadAllIndexedSourceRecords(source) {
           return;
         }
         const key = String(cursor.value?.key || "");
-        if (key.startsWith(prefix) && cursor.value?.value) rows.push(cursor.value.value);
+        if (key.startsWith(prefix) && !isRecordPart(key) && cursor.value?.value) rows.push(cursor.value.value);
         cursor.continue();
       };
       req.onerror = () => reject(req.error);
-    }).finally(() => db.close());
-    if (rows.length) return rows;
+    });
+    try { if (rows.length) { const hydrated = []; for (const row of rows) hydrated.push(await hydrateRecord(db, CODE_INDEX_STORE, row)); return hydrated; } } finally { db.close(); }
   } catch {
     // Fall through to localStorage compatibility scan.
   }
@@ -245,83 +240,6 @@ function usageAuditsForRow(row = {}, allRecords = []) {
   })).filter((audit) => audit.definitionCount > 0);
 }
 
-function hasArchitectureCoverageForSymbol(rows = [], symbol = "") {
-  const target = normalizeCodeSymbol(symbol);
-  return rows.some((row) => {
-    const endpointSymbols = [
-      row.fromFunction || row.from,
-      row.toFunction || row.to,
-    ].map(normalizeCodeSymbol);
-    return endpointSymbols.includes(target);
-  });
-}
-
-function makeMissingExtractTrajTokensRow(records = [], rows = []) {
-  if (hasArchitectureCoverageForSymbol(rows, "extract_traj_tokens")) return null;
-  const record = records.find((item) =>
-    sourceFunctionsFromRecord(item).some((fn) => normalizeCodeSymbol(functionNameOf(fn)) === "extract_traj_tokens")
-  );
-  if (!record) return null;
-  const fn = sourceFunctionsFromRecord(record).find((item) => normalizeCodeSymbol(functionNameOf(item)) === "extract_traj_tokens") || {};
-  if (!/\btorch\.clamp\s*\(/.test(uniqueTopLevelPythonBody(record.content || "", "extract_traj_tokens"))) return null;
-  const filePath = record.path || record.filePath || fn.filePath || fn.path || "src/alpamayo1_5/models/token_utils.py";
-  const enrichedFn = attachFunctionContent(record, {
-    functionName: "extract_traj_tokens",
-    ...fn,
-    filePath,
-  });
-  return {
-    ...codeSourceProvenance(record),
-    rowRef: "source-audit-extract-traj-tokens",
-    traceId: "source-audit-extract-traj-tokens",
-    fromFunction: "extract_traj_tokens",
-    controlAction: "Clamp trajectory token ids",
-    toFunction: "torch.clamp",
-    fromFile: filePath,
-    toFile: filePath,
-    sourceFiles: [filePath],
-    codeEvidence: {
-      rowRefs: ["source-audit-extract-traj-tokens"],
-      sourceAudit: {
-        mode: "per-row-indexed-source",
-        reason: "Indexed source contained extract_traj_tokens, but no architecture row traced it.",
-        checkedFiles: [filePath],
-      },
-      files: [{
-        ...codeSourceProvenance(record),
-        filePath,
-        fileName: filePath.split("/").pop() || filePath,
-        repo: record.repo || "",
-        owner: record.owner || "",
-        branch: record.branch || "",
-        commitSha: record.commitSha || "",
-        imports: record.imports || [],
-        exports: record.exports || [],
-        functions: record.functions || [],
-        sourceFunctions: [enrichedFn],
-        content: record.content || "",
-      }],
-      sourceFunctions: [enrichedFn],
-    },
-    sourceEvidence: {
-      rowRefs: ["source-audit-extract-traj-tokens"],
-      functions: [enrichedFn],
-    },
-    syntheticHazardSummaryRow: {
-      "Architecture Row Ref": "source-audit-extract-traj-tokens",
-      "Function (From)": "extract_traj_tokens",
-      "Control Action": "Clamp trajectory token ids",
-      "Function (To)": "torch.clamp",
-      Hazards: "Invalid trajectory token values are clamped into the accepted range, which may mask degraded model output unless the warning is surfaced through telemetry or converted into rejection logic.",
-      "Unsafe Control Actions": "Trajectory token values outside the tokenizer vocabulary are accepted through clamping rather than rejected.",
-      "Causal Factors": "Indexed source evidence shows invalid trajectory token values are detected and clamped; repo-wide usage audit may show no runtime call sites in the current codebase.",
-      "Safety Requirements/Constraints": "Trajectory token extraction shall reject, quarantine, or clearly surface invalid trajectory token values before downstream trajectory decoding.",
-      "Safety Significant": "Yes",
-      "Safety Significance Rationale": "Source audit found trajectory-token clamping code that was not traced by the generated architecture rows.",
-    },
-  };
-}
-
 export async function enrichHazardTableRowsWithSourceContent(tableRows = [], repoMeta = {}, options = {}) {
   const rows = Array.isArray(tableRows) ? tableRows : [];
   const { owner, repo } = repoPartsFromMeta(repoMeta);
@@ -404,6 +322,7 @@ export async function enrichHazardTableRowsWithSourceContent(tableRows = [], rep
       },
     });
   }
-  const missingExtractTrajTokens = makeMissingExtractTrajTokensRow(allSourceRecords, enriched);
-  return missingExtractTrajTokens ? [...enriched, missingExtractTrajTokens] : enriched;
+  // Enrichment preserves the caller's row set. Missing calls belong in the
+  // shared source inventory, never in fabricated hazard/requirement rows.
+  return enriched;
 }

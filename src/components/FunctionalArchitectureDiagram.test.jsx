@@ -1,0 +1,24 @@
+import React, { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import { FunctionalRelationshipInspector } from './FunctionalArchitectureDiagram';
+jest.mock('./LiteSummaryDiagramReactFlowGitHub', () => ({ __esModule: true, default: () => null }));
+jest.mock('./CopyTableButton', () => ({ __esModule: true, default: () => null }));
+global.IS_REACT_ACT_ENVIRONMENT = true;
+jest.mock('reactflow', () => ({ __esModule: true, default: () => null, ReactFlowProvider: ({ children }) => children }));
+jest.mock('html-to-image', () => ({ toPng: jest.fn() }));
+let host, root;
+beforeEach(() => { host = document.createElement('div'); document.body.append(host); root = createRoot(host); });
+afterEach(() => { act(() => root.unmount()); host.remove(); });
+test('inspector opens exact source rows and CSU relationships, paginates and closes with Escape', () => {
+  const rows = Array.from({ length: 35 }, (_, i) => ({ traceId: `id-${i}`, rowRef: i + 10, from: 'caller', to: `callee${i}`, action: 'Call' }));
+  const openRow = jest.fn(), openCsu = jest.fn(), close = jest.fn();
+  act(() => root.render(<FunctionalRelationshipInspector selection={{ label: 'caller', rowIndices: rows.map((_, i) => i) }} rows={rows} onClose={close} onOpenRow={openRow} onOpenCsu={openCsu} />));
+  const click = label => act(() => [...host.querySelectorAll('button')].find(b => b.textContent === label).click());
+  click('Open in table'); expect(openRow).toHaveBeenCalledWith(rows[0], 0);
+  click('Show in CSU'); expect(openCsu).toHaveBeenCalledWith(rows[0], 0);
+  expect(host.textContent).not.toContain('callee30');
+  click('Next'); expect(host.textContent).toContain('callee30');
+  click('Open in table'); expect(openRow).toHaveBeenLastCalledWith(rows[30], 30);
+  act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })));
+  expect(close).toHaveBeenCalledTimes(1);
+});

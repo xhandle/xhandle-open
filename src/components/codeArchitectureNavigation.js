@@ -1,3 +1,4 @@
+import { functionalSourceIndex } from '../features/code-architecture-context/functionalModel';
 // Resolve persisted links against the current decomposition, never a stale row position.
 const text = value => String(value ?? '').trim();
 const unique = rows => rows.length === 1 ? rows[0] : null;
@@ -6,6 +7,10 @@ export function resolveArchitectureTarget(target, rows = []) {
   const candidates = rows.map((row, rowIndex) => ({ row, rowIndex }));
   const traceId = text(target.traceId || target.row?.traceId);
   let match = traceId ? unique(candidates.filter(({ row }) => text(row.traceId) === traceId)) : null;
+  if (traceId && !match) {
+    const sourceIndex = functionalSourceIndex(rows, traceId);
+    if (sourceIndex >= 0) match = candidates[sourceIndex];
+  }
   if (traceId && !match) return null; // An explicit missing/ambiguous identity is not a license to guess.
   const isEdge = target.type === 'edge' || target.mode === 'edge';
   const nodeKey = target.mode === 'to' ? 'toNodeId' : 'fromNodeId';

@@ -1,7 +1,6 @@
 /* global globalThis */
-import { retryAfterMilliseconds } from './functionalAnalysisResponse';
+import { retryAfterMilliseconds, retryAnalysisOperation } from './functionalAnalysisResponse';
 // Acquisition has no UI/storage side effects. All reads stay on one resolved revision.
-export const SOURCE_FILE_LIMIT = 350000;
 export const compareSourcePaths = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const enc = value => encodeURIComponent(value);
 const base = (owner, repo) => `https://api.github.com/repos/${enc(owner)}/${enc(repo)}`;
@@ -29,15 +28,34 @@ export async function resolveGitHubRevision(owner, repo, token, ref, signal) {
 }
 export async function listGitHubSnapshot(owner, repo, token, revision, signal) {
   if (!/^[a-f0-9]{40}$/i.test(revision || '')) throw new Error('An immutable GitHub commit is required.');
-  const result = await json(`${base(owner, repo)}/git/trees/${enc(revision)}?recursive=1`, token, signal);
-  if (result.truncated) throw new Error('GitHub returned an incomplete file tree. Analysis was not started; select a smaller source scope. Previous results were preserved.');
+  const tree = sha => retryAnalysisOperation(requestSignal => json(`${base(owner, repo)}/git/trees/${enc(sha)}`, token, requestSignal), {signal});
+  const result = await retryAnalysisOperation(requestSignal => json(`${base(owner, repo)}/git/trees/${enc(revision)}?recursive=1`, token, requestSignal), {signal});
   if (!Array.isArray(result.tree)) throw new Error('GitHub returned an invalid file inventory.');
-  return result.tree.filter(entry => entry.type === 'blob' || entry.type === 'commit').map(entry => ({
+  let entries = result.tree;
+  if (result.truncated) {
+    entries = [];
+    const pending = [{sha:revision, prefix:'', ancestors:[]}];
+    for (let index=0; index<pending.length; index++) {
+      if (signal?.aborted) throw new DOMException('Source acquisition cancelled.', 'AbortError');
+      const item=pending[index];
+      const subtree=await tree(item.sha);
+      if (subtree.truncated || !Array.isArray(subtree.tree)) throw new Error('GitHub returned an incomplete file tree for a subtree. Saved progress was preserved.');
+      for (const entry of subtree.tree) {
+        if (!entry.path || entry.path.split('/').some(part=>!part || part==='..' || part==='.')) throw new Error('Invalid GitHub source path.');
+        const path=item.prefix+entry.path;
+        if (entry.type==='tree') {
+          if (!/^[a-f0-9]{40}$/i.test(entry.sha || '') || item.ancestors.includes(entry.sha)) throw new Error('Invalid GitHub subtree identity.');
+          pending.push({sha:entry.sha,prefix:`${path}/`,ancestors:[...item.ancestors,item.sha]});
+        } else entries.push({...entry,path});
+      }
+    }
+  }
+  return entries.filter(entry => entry.type === 'blob' || entry.type === 'commit').map(entry => ({
     path: entry.path, name: entry.path.split('/').pop(), sha: entry.sha, size: entry.size || 0,
-    entryKind: entry.mode === '120000' ? 'symlink' : entry.type === 'commit' ? 'submodule' : 'file',
-    mode: entry.mode,
-  })).sort((a, b) => compareSourcePaths(a.path, b.path));
+    entryKind: entry.mode === '120000' ? 'symlink' : entry.type === 'commit' ? 'submodule' : 'file', mode: entry.mode,
+  })).sort((a,b)=>compareSourcePaths(a.path,b.path));
 }
+
 function base64Bytes(value) {
   const binary = atob(value.replace(/\s/g, ''));
   return Uint8Array.from(binary, ch => ch.charCodeAt(0));
@@ -60,7 +78,6 @@ export async function readGitHubSnapshotFile({ owner, repo, token, ref, sha, pat
   candidates.push(async () => {
     const response = await fetch(`https://raw.githubusercontent.com/${enc(owner)}/${enc(repo)}/${enc(ref)}/${encodedPath}`, { signal });
     if (!response.ok) throw Object.assign(new Error(`GitHub raw source unavailable (${response.status}).`), {retryable:[408,429,500,502,503,504].includes(response.status),retryAfterMs:retryAfterMilliseconds(response.headers?.get?.("Retry-After"))});
-    if (Number(response.headers?.get('content-length')) > SOURCE_FILE_LIMIT) throw new Error('Source file exceeds size limit.');
     return new Uint8Array(await response.arrayBuffer());
   });
   let lastError;
@@ -68,7 +85,6 @@ export async function readGitHubSnapshotFile({ owner, repo, token, ref, sha, pat
     if (signal?.aborted) throw new Error('Source read cancelled.');
     try {
       const bytes = await read();
-      if (bytes.length > SOURCE_FILE_LIMIT) throw new Error('Source file exceeds size limit.');
       if (sha && await gitBlobDigest(bytes) !== sha) throw new Error('Source content does not match the pinned GitHub inventory.');
       const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
       if (content.includes('\0')) throw new Error('Binary source content is unsupported.');

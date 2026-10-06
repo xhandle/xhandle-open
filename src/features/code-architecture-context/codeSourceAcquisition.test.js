@@ -59,3 +59,21 @@ it('converges fresh native-folder, FileList and GitHub blob/Contents/raw inputs 
   expect(facts(read)).toEqual(facts(results[0]));expect(facts(read)).toHaveLength(1);expect(facts(read)[0].assessment.hazardAnalysisEligibility).toBe('Include');
  }
 });
+
+it('completes a truncated inventory by walking pinned subtrees', async () => {
+ const subtree='b'.repeat(40);
+ global.fetch=jest.fn(async url=>({ok:true,json:async()=>url.includes('recursive')?{truncated:true,tree:[]}:
+  url.endsWith(subtree)?{tree:[{path:'large.py',sha:'c'.repeat(40),type:'blob',mode:'100644',size:900000}]}:
+  {tree:[{path:'src',sha:subtree,type:'tree'}]}}));
+ expect((await listGitHubSnapshot('o','r',null,revision)).map(f=>f.path)).toEqual(['src/large.py']);
+ expect(fetch.mock.calls.map(([url])=>url)).toEqual([
+  `https://api.github.com/repos/o/r/git/trees/${revision}?recursive=1`,
+  `https://api.github.com/repos/o/r/git/trees/${revision}`,
+  `https://api.github.com/repos/o/r/git/trees/${subtree}`]);
+});
+it('retains large Unicode GitHub files including the final function', async () => {
+ const content='# café 车辆\n'.repeat(50000)+'def last(): return endpoint()\n';
+ const sha=await gitBlobDigest(new TextEncoder().encode(content));
+ global.fetch=jest.fn(async()=>({ok:true,json:async()=>({encoding:'base64',content:Buffer.from(content).toString('base64')})}));
+ expect((await readGitHubSnapshotFile({owner:'o',repo:'r',ref:revision,sha,path:'large.py'})).content).toBe(content);
+});

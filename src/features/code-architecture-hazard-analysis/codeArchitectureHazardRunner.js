@@ -1,3 +1,4 @@
+import { functionalModelIsReady } from '../code-architecture-context/functionalModel';
 import { fillNotApplicableHazardSummary } from '../project-hazard-analysis/hazardNotApplicableCells';
 import { prepareCodeHazardPreprocessing, reconcileCodeHazardPreprocessing } from './codeArchitectureHazardPreprocessing';
 import { ensureHazardAnalysisRowIds } from '../project-hazard-analysis/classificationResolutionStatus';
@@ -32,6 +33,9 @@ export async function runCodeArchitectureHazardAnalysis({
     throw new Error("Generate or load a code-based functional architecture before running hazard analysis.");
   }
 
+  if (!functionalModelIsReady(cbaRows) && (cbaRows.some(row => row.functionalAbstraction) || repoMeta.functionalProcessingError)) {
+    throw new Error('Generate an up-to-date Functional model before running hazard analysis. The existing functional model is incomplete or stale.');
+  }
   const input = prepareCodeHazardPreprocessing(buildCodeArchitectureHazardInput({
     cbaRows,
     repoMeta,
@@ -43,7 +47,7 @@ export async function runCodeArchitectureHazardAnalysis({
   if (!input.tableRows.length) {
     throw new Error("No Code-Based Architecture rows are marked Include for hazard analysis. Review or override the eligibility classifications in the functional decomposition table.");
   }
-  const eligibilityMessage = `${input.eligibilitySummary.include} included, ${input.eligibilitySummary.exclude} excluded, ${input.eligibilitySummary.needsReview} need review`;
+  const eligibilityMessage = `${input.analysisAbstraction} model: ${input.eligibilitySummary.include} included, ${input.eligibilitySummary.exclude} excluded, ${input.eligibilitySummary.needsReview} need review`;
   onActivityUpdate({ step: 0, message: `Preparing code architecture hazard analysis (${eligibilityMessage})...` });
   const sourceAuditedTableRows = await enrichHazardTableRowsWithSourceContent(
     input.sourceTableRows || input.tableRows,
@@ -65,6 +69,8 @@ export async function runCodeArchitectureHazardAnalysis({
     branch: repoMeta.branch || "",
     architectureModelId: `${input.repoId || "repo"}:${input.architectureSnapshotHash}`,
     architectureSnapshotHash: input.architectureSnapshotHash,
+    analysisAbstraction: input.analysisAbstraction,
+    functionalModelSnapshotHash: input.functionalModelSnapshotHash,
     architectureRowsSnapshot: input.architectureRowsSnapshot,
     traceabilityMap: input.traceabilityMap,
     hazardEligibilitySummary: input.eligibilitySummary,
@@ -153,6 +159,8 @@ export async function runCodeArchitectureHazardAnalysis({
     branch: repoMeta.branch || "",
     architectureModelId: `${input.repoId || "repo"}:${input.architectureSnapshotHash}`,
     architectureSnapshotHash: input.architectureSnapshotHash,
+    analysisAbstraction: input.analysisAbstraction,
+    functionalModelSnapshotHash: input.functionalModelSnapshotHash,
     architectureRowsSnapshot: input.architectureRowsSnapshot,
     traceabilityMap: input.traceabilityMap,
     hazardMethod: method,

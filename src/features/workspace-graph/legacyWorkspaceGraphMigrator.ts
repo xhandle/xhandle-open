@@ -1,3 +1,4 @@
+import { hydrateRecord, isRecordPart } from '../code-architecture-storage/chunkedRecord';
 import {
   upsertArtifacts,
   upsertEvidence,
@@ -213,12 +214,24 @@ async function readStoreRows(dbName: string, storeName: string) {
   if (!db) return [];
   try {
     if (!db.objectStoreNames.contains(storeName)) return [];
-    return await new Promise<any[]>((resolve) => {
+    const records = await new Promise<any[]>((resolve) => {
       const tx = db.transaction(storeName, "readonly");
-      const req = tx.objectStore(storeName).getAll();
+      const records: any[] = [];
+      const req = tx.objectStore(storeName).openCursor();
       req.onerror = () => resolve([]);
-      req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : []);
+      req.onsuccess = () => {
+        const cursor=req.result;
+        if (!cursor) {resolve(records);return;}
+        if (!isRecordPart(cursor.key)) records.push(cursor.value);
+        cursor.continue();
+      };
     });
+    if (dbName === 'xhandle' && ['code_index','copilot_baseline'].includes(storeName)) {
+      const output = [];
+      for (const record of records) if (!isRecordPart(record.key)) output.push({...record, value:await hydrateRecord(db, storeName, record.value)});
+      return output;
+    }
+    return records;
   } catch {
     return [];
   } finally {

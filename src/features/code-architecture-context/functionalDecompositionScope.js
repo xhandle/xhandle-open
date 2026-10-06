@@ -1,7 +1,7 @@
 // Publication scope is independent of hazard eligibility. The full syntax
 // inventory remains available even when a relationship is not a diagram row.
 export const DECOMPOSITION_SCOPE_VERSION = 1;
-export const isNonProductionCallPath = path => /(^|\/)(tests?|__tests__|fixtures?|examples?|mocks?|demos?|benchmarks?)(\/|$)|(^|\/)(test_[^/]*|[^/]*_test)\.py$/i.test(String(path || '').replace(/\\/g, '/'));
+export const isNonProductionCallPath = path => /(^|\/)(tests?|__tests__|fixtures?|examples?|mocks?|demos?|benchmarks?)(\/|$)|(^|\/)(test_[^/]*|[^/]*_test)\.[a-z0-9]+$|\.(test|spec)\.[a-z0-9]+$/i.test(String(path || '').replace(/\\/g, '/'));
 
 export function decompositionDisposition(row, ledger = {}) {
   const e = row.relationshipEvidence;

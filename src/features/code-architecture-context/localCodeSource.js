@@ -3,9 +3,6 @@ import { openDB } from 'idb';
 import { localCodeSourceDescriptor } from './codeSourceIdentity';
 
 const sessions = new Map();
-export const LOCAL_FILE_LIMIT = 350000;
-export const LOCAL_TOTAL_LIMIT = 50 * 1024 * 1024;
-export const LOCAL_COUNT_LIMIT = 10000;
 const EXCLUDED_DIR = /(^|\/)(node_modules|\.git|\.svn|\.hg|\.next|dist|build|target|coverage|venv|\.venv|site-packages|__pycache__|vendor|third_party|thirdparty|external|dependencies|deps)(\/|$)/i;
 const SECRET = /(^|\/)(\.env(?:\..*)?|\.npmrc|\.pypirc|credentials(?:\..*)?|id_rsa|id_ed25519|[^/]*\.(pem|key|p12|pfx))$/i;
 const TEXT_FILE = /(?:\.(?:mjs|cjs|js|jsx|ts|tsx|py|c|cc|cp|cpp|cxx|h|hh|hpp|hxx|ipp|inl|tpp|go|rs|java|cs|swift|m|mm|scala|ino|kt|kts|rb|php|sh|bash|zsh|md|rst|txt|yaml|yml|json|toml|xml|msg|srv|action|proto|idl|ini|cfg|cmake)$|(?:^|\/)(?:README|Dockerfile|Makefile|CMakeLists\.txt|Jenkinsfile)$)/i;
@@ -22,7 +19,6 @@ export function localFileExclusion(path, size = 0) {
   if (EXCLUDED_DIR.test(path)) return 'dependency/generated directory';
   if (SECRET.test(path)) return 'credential/configuration secret';
   if (!TEXT_FILE.test(path)) return 'unsupported or binary file type';
-  if (size > LOCAL_FILE_LIMIT) return 'file size limit';
   return '';
 }
 
@@ -100,12 +96,11 @@ export async function scanLocalFolder(source, { signal } = {}) {
   let bytes = 0;
   const add = (path, file, getFile) => {
     checkAbort(signal);
-    if (++visited > LOCAL_COUNT_LIMIT) throw new Error('This folder contains too many files. Select a smaller project folder.');
+    visited++;
     path = normalizeLocalPath(path);
     const reason = localFileExclusion(path, file.size);
     if (reason) { skipped.push({ path, reason }); return; }
     bytes += file.size;
-    if (bytes > LOCAL_TOTAL_LIMIT) throw new Error('Eligible source files exceed 50 MiB. Select a smaller project folder.');
     entries.push({ path, name: file.name, size: file.size, lastModified: file.lastModified, getFile });
   };
   if (session.handle) {
@@ -115,11 +110,12 @@ export async function scanLocalFolder(source, { signal } = {}) {
         const path = normalizeLocalPath(`${prefix}${name}`);
         if (entry.kind === 'directory') {
           if (EXCLUDED_DIR.test(`${path}/`)) { skipped.push({ path, reason: 'dependency/generated directory' }); continue; }
-          if (++visited > LOCAL_COUNT_LIMIT) throw new Error('This folder contains too many entries. Select a smaller folder.');
+          visited++;
           await visit(entry, `${path}/`);
         } else {
           const file = await entry.getFile();
           add(path, file, () => entry.getFile());
+          if (visited % 128 === 0) await new Promise(resolve => setTimeout(resolve, 0));
         }
       }
     };
@@ -138,6 +134,7 @@ export async function scanLocalFolder(source, { signal } = {}) {
         continue;
       }
       add(path, file, async () => file);
+      if (visited % 128 === 0) await new Promise(resolve => setTimeout(resolve, 0));
     }
   }
   entries.sort((a, b) => a.path.localeCompare(b.path));
@@ -148,7 +145,6 @@ export async function scanLocalFolder(source, { signal } = {}) {
 async function readEntry(entry, signal) {
   checkAbort(signal);
   const file = await entry.getFile();
-  if (file.size > LOCAL_FILE_LIMIT) throw new Error(`File exceeds size limit: ${entry.path}`);
   const bytes = typeof file.arrayBuffer === 'function' ? new Uint8Array(await file.arrayBuffer()) : null;
   const text = bytes ? new TextDecoder('utf-8', { fatal: true }).decode(bytes) : await file.text();
   checkAbort(signal);

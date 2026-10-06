@@ -1,3 +1,4 @@
+import { readRecord } from '../code-architecture-storage/chunkedRecord';
 import { codeSourceIndexKey, codeSourceProvenance, isLocalCodeSource } from "../code-architecture-context/codeSourceIdentity";
 const IDB_DB_NAME = "xhandle";
 const IDB_VERSION = 4;
@@ -39,12 +40,8 @@ function openXHandleDb() {
 
 async function idbGetCodeIndex(key) {
   const db = await openXHandleDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(CODE_INDEX_STORE, "readonly");
-    const req = tx.objectStore(CODE_INDEX_STORE).get(key);
-    req.onsuccess = () => resolve(req.result?.value || null);
-    req.onerror = () => reject(req.error);
-  }).finally(() => db.close());
+  try { return await readRecord(db, CODE_INDEX_STORE, key) || null; }
+  finally { db.close(); }
 }
 
 function normalizeText(value) {

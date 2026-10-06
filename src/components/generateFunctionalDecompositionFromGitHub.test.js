@@ -42,7 +42,14 @@ const {
   buildSourceFileIndexRecord,
   groundFunctionalDecompositionRow,
   updateCodeArchitectureFunctionalCell,
+  planFunctionalAnalysisFiles,
 } = require("./generateFunctionalDecompositionFromGitHub");
+
+it('does not give robotics filenames priority over equivalent production files under a file cap', () => {
+  const files = ['src/localization.py', 'src/perception.py', 'src/planner.py', 'src/aaa.py'].map(path => ({path, size: 100}));
+  expect(planFunctionalAnalysisFiles(files, {maxFiles: 1}).files.map(file => file.path)).toEqual(['src/aaa.py']);
+  expect(planFunctionalAnalysisFiles(files).files).toHaveLength(4);
+});
 
 describe("code architecture functional split view", () => {
   let host;
@@ -509,7 +516,7 @@ describe("functional decomposition Python edge grounding", () => {
     expect(stats.accepted).toBe(1);
   });
 
-  it("normalizes extract_traj_tokens incidental tensor rows to the safety-relevant torch.clamp call", () => {
+  it("does not redirect an Alpamayo call to a different operation", () => {
     const { result, stats } = groundPythonRow({
       content: [
         "import torch",
@@ -532,9 +539,9 @@ describe("functional decomposition Python edge grounding", () => {
     });
 
     expect(result).not.toBeNull();
-    expect(result.to).toBe("torch.clamp");
-    expect(result.action).toBe("Clamp trajectory token ids");
-    expect(result.controlActionDetails).toMatch(/clamped rather than rejected/i);
+    expect(result.to).toBe("torch.where");
+    expect(result.action).not.toBe("Clamp trajectory token ids");
+    expect(result.controlActionDetails || "").not.toMatch(/clamped rather than rejected/i);
     expect(stats.accepted).toBe(1);
   });
 
@@ -742,8 +749,8 @@ describe('complete selected-file scheduling', () => {
   expect(plan.files.find(file=>file.path==='src/large.py').estimatedChunks).toBeGreaterThan(8);
   expect(plan.skippedForChunkLimit).toEqual([]);
  });
- it('retains source size and vendor protections', () => {
-  expect(planFunctionalAnalysisFiles([{path:'src/huge.py',size:350001},{path:'vendor/code.py',size:20}]).files).toEqual([]);
+ it('admits large sources while retaining vendor protections', () => {
+  expect(planFunctionalAnalysisFiles([{path:'src/huge.py',size:350001},{path:'vendor/code.py',size:20}]).files.map(file=>file.path)).toEqual(['src/huge.py']);
  });
  it('bounds long lines and preserves all source characters with overlap', () => {
   const source='a'.repeat(23000)+'\n'+'b'.repeat(17000);
@@ -764,4 +771,17 @@ it('allocates the same source rows identically regardless of repository or check
  const { inferArchitectureFallback } = require('./generateFunctionalDecompositionFromGitHub');
  const row={from:'_TinyExpert',to:'torch.nn.Module',fromFile:'tests/test_diffusion_expert_cuda_graph.py',toFile:'tests/test_diffusion_expert_cuda_graph.py'};
  expect(inferArchitectureFallback(row,{repoName:'alpamayo'})).toEqual(inferArchitectureFallback(row,{repoName:'alpamayo-main'}));
+});
+
+it('indexes the complete large source and preserves surrogate pairs in model chunks', () => {
+ const {buildSourceFileIndexRecord,chunkTextWithOverlap}=require('./generateFunctionalDecompositionFromGitHub');
+ const content='// café 车辆 🚗\n'.repeat(40000)+'function final_endpoint() { return downstream(); }\n';
+ const record=buildSourceFileIndexRecord({owner:'o',repo:'r',path:'large.js',content});
+ expect(record.content).toBe(content);
+ expect(record.functions).toContain('final_endpoint');
+ const chunks=chunkTextWithOverlap('a🚗'.repeat(500),101,12);
+ for(const chunk of chunks) {
+  expect(/^[\uDC00-\uDFFF]/.test(chunk)).toBe(false);
+  expect(/[\uD800-\uDBFF]$/.test(chunk)).toBe(false);
+ }
 });

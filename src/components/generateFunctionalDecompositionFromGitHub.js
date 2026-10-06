@@ -1,8 +1,13 @@
+import { processFunctionalModel, functionalModelIsReady } from '../features/code-architecture-context/functionalModel';
+import { writeCbaRowsToIndexedDB, readCbaRowsRevision } from '../features/code-architecture-assurance/codeArchitectureStorage';
+import { readRecord, writeRecord } from '../features/code-architecture-storage/chunkedRecord';
+import { prepareArchitecturePublication, recoverArchitecturePublication, openCbaIndexedDB } from '../features/code-architecture-assurance/codeArchitectureStorage';
+import { summarizeCodeAnalysisCoverage } from "../features/code-architecture-context/codeAnalysisCoverage";
 import { scopeFunctionalDecomposition, decompositionRowsAllowed, decompositionTableEntries } from '../features/code-architecture-context/functionalDecompositionScope';
 import { FUNCTIONAL_OUTPUT_TOKENS, FUNCTIONAL_FILE_PASSES, FUNCTIONAL_RECOVERY_POLICY } from '../features/code-architecture-context/functionalAnalysisPolicy';
 import { analyzeFunctionalSourceChunk, incompleteResponse, retryAfterMilliseconds, waitForAnalysisRetry, withAnalysisRequestDeadline, retryAnalysisOperation } from '../features/code-architecture-context/functionalAnalysisResponse';
-import { pythonRelationshipInventory, createPythonModuleIndex, isPlaceholderRelationship, updatePublishedProposalCounts, reconcileSourceProposals, completeSupportedRelationships, dedupeEvidenceRows, reconcileArchitectureRows, uniqueTopLevelPythonBody } from "../features/code-architecture-context/codeRelationshipEvidence";
-import { ANALYSIS_VERSION, createRunGuard, settingsFromAuth, runFingerprint, serializedBytes, assertStorageBudget, SOURCE_INDEX_BUDGET, ROW_HISTORY_BUDGET } from "../features/code-architecture-context/codeAnalysisRun";
+import { pythonRelationshipInventory, createPythonModuleIndex, isPlaceholderRelationship, updatePublishedProposalCounts, reconcileSourceProposals, completeSupportedRelationships, dedupeEvidenceRows, reconcileArchitectureRows } from "../features/code-architecture-context/codeRelationshipEvidence";
+import { ANALYSIS_VERSION, createRunGuard, settingsFromAuth, runFingerprint } from "../features/code-architecture-context/codeAnalysisRun";
 import { resolveGitHubRevision, listGitHubSnapshot, readGitHubSnapshotFile, compareSourcePaths, digestText } from "../features/code-architecture-context/codeSourceAcquisition";
 import { isLocalCodeSource, codeSourceProvenance, codeSourceIndexKey } from "../features/code-architecture-context/codeSourceIdentity";
 import { createLocalSourceProvider } from "../features/code-architecture-context/localCodeSource";
@@ -14,6 +19,7 @@ import CopyTableButton from './CopyTableButton';
 import React, { useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import LiteSummaryDiagramReactFlowGitHub from "./LiteSummaryDiagramReactFlowGitHub";
+import FunctionalArchitectureDiagram from './FunctionalArchitectureDiagram';
 import ArchitectureReportViewer from "./ArchitectureReportViewer";
 import { FilterableHeaderCell, useColumnFilters } from "./FilterableTableHeader";
 import { backendURL, ACCOUNT_ID, getLocalAccessToken, buildAIAuthOpts } from "./backendConfig";
@@ -44,7 +50,6 @@ import {
 
 // --- IndexedDB helpers (xHandle durable storage, unified schema) ---
 const IDB_DB_NAME = "xhandle";
-const IDB_VERSION = 4; // bump to trigger upgrade across the app
 const IDB_STORES = {
   codeIndex: "code_index",         // per-file code index
   cba: "copilot_baseline",         // Copilot Baseline Array rows
@@ -57,150 +62,17 @@ const architectureReportStorageKey = (repoName, branch) =>
 const architectureTableColumnWidthsKey = (repoName, branch) =>
   `code-architecture-table-column-widths:${repoName || "repo"}:${branch || "main"}`;
 
-function idbOpen() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(IDB_DB_NAME, IDB_VERSION);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      // Create any missing stores (idempotent)
-      if (!db.objectStoreNames.contains(IDB_STORES.codeIndex)) {
-        db.createObjectStore(IDB_STORES.codeIndex, { keyPath: "key" });
-      }
-      if (!db.objectStoreNames.contains(IDB_STORES.cba)) {
-        db.createObjectStore(IDB_STORES.cba, { keyPath: "key" });
-      }
-      if (!db.objectStoreNames.contains(IDB_STORES.positions)) {
-        db.createObjectStore(IDB_STORES.positions, { keyPath: "key" });
-      }
-    };
-    req.onblocked = () => {
-      // another tab holds old version open; refresh that tab to complete upgrade
-      console.warn("IndexedDB upgrade blocked; close other tabs using xHandle.");
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function sourceStorageBudget() {
-  // Estimates are advisory; browsers may omit them or report rounded usage.
-  // A slow estimate must not strand the analysis. IDB write failures remain fatal.
-  let available = Infinity, estimateTimer;
-  try {
-    if (typeof navigator !== "undefined" && navigator.storage?.estimate) {
-      const estimate = await Promise.race([
-        navigator.storage.estimate(),
-        new Promise(resolve => { estimateTimer = setTimeout(() => resolve(null), 1500); }),
-      ]);
-      if (estimate?.quota > 0) available = Math.max(0, estimate.quota - (estimate.usage || 0));
-    }
-  } catch {} finally { clearTimeout(estimateTimer); }
-  const db = await idbOpen();
-  const sizes = new Map();
-  await new Promise((resolve, reject) => {
-    const tx = db.transaction(IDB_STORES.codeIndex, "readonly");
-    const req = tx.objectStore(IDB_STORES.codeIndex).openCursor();
-    req.onsuccess = () => { const cursor = req.result; if (!cursor) return; sizes.set(cursor.key, serializedBytes(cursor.value)); cursor.continue(); };
-    tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
-  }).finally(() => db.close());
-  let total = [...sizes.values()].reduce((a,b) => a+b, 0);
-  const initial = total;
-  return (key, value) => {
-    const size = serializedBytes({ key, value });
-    const next = total - (sizes.get(key) || 0) + size;
-    assertStorageBudget(next, SOURCE_INDEX_BUDGET);
-    assertStorageBudget(Math.max(0, next - initial), available, "Available browser");
-    sizes.set(key, size); total = next;
-  };
-}
-
-// Atomic publication leaves the last successful rows and evidence pointer intact on failure.
-async function publishArchitectureRun(key, rows, run, checkpointKey, expectedPrevious, signal) {
-  throwIfAborted(signal);
-  const db = await idbOpen();
-  await new Promise((resolve, reject) => {
-    const tx = db.transaction(IDB_STORES.cba, "readwrite"), store = tx.objectStore(IDB_STORES.cba);
-    let failure, total = 0, previous, existingRun;
-    const abort = () => { try { tx.abort(); } catch {} };
-    signal?.addEventListener("abort", abort, { once: true });
-    const cleanup = () => signal?.removeEventListener("abort", abort);
-    const sizes = new Map();
-    const cursorRequest = store.openCursor();
-    cursorRequest.onsuccess = () => {
-      const cursor = cursorRequest.result;
-      if (cursor) {
-        const size = serializedBytes(cursor.value); total += size; sizes.set(cursor.key, size);
-        if (cursor.key === key) previous = cursor.value.value;
-        if (cursor.key === `${key}:run`) existingRun = cursor.value.value;
-        cursor.continue(); return;
-      }
-      try {
-        throwIfAborted(signal);
-        if (JSON.stringify(previous || []) !== JSON.stringify(expectedPrevious || [])) throw new Error("Architecture was edited during publication. Previous results were preserved; retry the analysis.");
-        const historyKey = `${key}:history:${existingRun?.fingerprint || 'legacy'}`;
-        const writes = [[key, rows], [`${key}:run:${run.fingerprint}`, run], [`${key}:run`, run]];
-        if (previous && !sizes.has(historyKey) && existingRun?.fingerprint !== run.fingerprint) writes.push([historyKey, previous]);
-        let projected = total - (sizes.get(checkpointKey) || 0);
-        for (const [writeKey, value] of writes) projected += serializedBytes({key:writeKey,value}) - (sizes.get(writeKey) || 0);
-        assertStorageBudget(projected, SOURCE_INDEX_BUDGET, "Architecture history and checkpoints");
-        writes.forEach(([writeKey,value]) => store.put({key:writeKey,value}));
-        store.delete(checkpointKey);
-      } catch (error) { failure=error; tx.abort(); }
-    };
-    tx.oncomplete = () => { cleanup(); notifyBackupDataChanged({ db: IDB_DB_NAME, stores: [IDB_STORES.cba] }); resolve(); };
-    tx.onabort = () => { cleanup(); reject(failure || tx.error || new Error("Architecture publication aborted.")); };
-    tx.onerror = () => { cleanup(); reject(tx.error); };
-  }).finally(() => db.close());
-}
+function idbOpen() { return openCbaIndexedDB(); }
 
 async function idbPut(storeName, key, value) {
-  assertStorageBudget(serializedBytes(value), ROW_HISTORY_BUDGET, "Analysis record");
   const db = await idbOpen();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName, "readwrite"), store = tx.objectStore(storeName);
-    let failure;
-    const write = () => store.put({ key, value });
-    if (storeName === IDB_STORES.cba) {
-      let total = serializedBytes({key,value});
-      const request = store.openCursor();
-      request.onsuccess = () => {
-        const cursor=request.result;
-        if (cursor) { if(cursor.key !== key) total += serializedBytes(cursor.value); cursor.continue(); return; }
-        try { assertStorageBudget(total, SOURCE_INDEX_BUDGET, "Analysis history and checkpoints"); write(); }
-        catch (error) { failure=error;tx.abort(); }
-      };
-    } else write();
-    tx.oncomplete = () => { notifyBackupDataChanged({ db: IDB_DB_NAME, stores: [storeName] }); resolve(); };
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(failure || tx.error || new Error("Source storage transaction aborted."));
-  }).finally(() => db.close());
+  try { await writeRecord(db, storeName, key, value); notifyBackupDataChanged({db:IDB_DB_NAME, stores:[storeName]}); }
+  finally { db.close(); }
 }
-
 async function idbGet(storeName, key) {
   const db = await idbOpen();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName, "readonly");
-    const req = tx.objectStore(storeName).get(key);
-    req.onsuccess = () => resolve(req.result?.value);
-    req.onerror = () => reject(req.error);
-  }).finally(() => db.close());
+  try { return await readRecord(db, storeName, key); } finally { db.close(); }
 }
-
-async function idbDelete(storeName, key) {
-  const db = await idbOpen();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName, "readwrite");
-    tx.objectStore(storeName).delete(key);
-    tx.oncomplete = () => {
-      notifyBackupDataChanged({ db: IDB_DB_NAME, stores: [storeName] });
-      resolve();
-    };
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error || new Error("Source storage transaction aborted."));
-  }).finally(() => db.close());
-}
-
-
 
 // --- Lightweight file indexer for Copilot grounding ---
 function detectLangFromPath(path) {
@@ -402,9 +274,9 @@ function extractSourceFunctions(source, lang, meta) {
 }
 
 export function buildSourceFileIndexRecord({ owner, repo, path, content, branch, commitSha, ...source }) {
-  // Match the existing source-file admission limit so later chunks retain grounding evidence.
+  // Preserve the entire file, including evidence after large-file section boundaries.
   const lang = detectLangFromPath(path);
-  const clipped = (content || "").slice(0, MAX_FUNCTIONAL_SOURCE_FILE_BYTES);
+  const clipped = content || "";
 
   let functions = [];
   let exportsList = [];
@@ -458,11 +330,10 @@ export function buildSourceFileIndexRecord({ owner, repo, path, content, branch,
   return record;
 }
 
-async function indexSourceFileToIDB({ owner, repo, path, content, branch, commitSha, storageBudget, ...source }) {
+async function indexSourceFileToIDB({ owner, repo, path, content, branch, commitSha,  ...source }) {
   const record = buildSourceFileIndexRecord({ owner, repo, path, content, branch, commitSha, ...source });
 
   const key = codeSourceIndexKey({ owner, repo, ...source }, path);
-  storageBudget?.(key, record);
   await idbPut(IDB_STORES.codeIndex, key, record);
   return record;
 }
@@ -510,7 +381,6 @@ function extOf(path) {
 const DEFAULT_FUNCTIONAL_ANALYSIS_BATCH_FILES = 80;
 
 const MAX_AI_ARCHITECTURE_ALLOCATION_ROWS = 300;
-const MAX_FUNCTIONAL_SOURCE_FILE_BYTES = 350000;
 const FUNCTIONAL_DECOMPOSITION_CHECKPOINT_PREFIX = "functional-decomposition-checkpoint:";
 const FUNCTIONAL_GROUNDING_VERSION = 6;
 const FUNCTIONAL_ANALYSIS_VENDOR_PATH_RE = /(^|\/)(venv|site-packages|node_modules|\.git|\.next|dist|build|target|__pycache__|coverage|thirdparty|third_party|3rdparty|vendor|external|extern|submodules|sdkclient[^/]*|[^/]*sdk|sdk[^/]*|sdk_client|sdk-client|dependencies|deps)(\/|$)/i;
@@ -529,7 +399,7 @@ function scoreFunctionalAnalysisFile(file = {}) {
   if (/(^|\/)(config|params?)\//.test(lower)) score += 8;
   if (/\.(msg|srv|action|proto|idl)$/i.test(path)) score += 30;
   if (/\.(yaml|yml|toml|json|xml)$/i.test(path)) score -= 15;
-  if (/(^|\/)(main|index|app|node|component|manager|controller|planner|perception|localization|interface|adapter)[._-]/i.test(path)) score += 20;
+  if (/(^|\/)(main|index|app|node|component|manager|interface|adapter)[._-]/i.test(path)) score += 20;
   if (/\.(cpp|cc|cxx|c|hpp|hh|h|py|js|jsx|ts|tsx|go|rs|java|kt)$/i.test(path)) score += 15;
   if (/\.(hpp|hh|h|hxx|h\+\+)$/i.test(path)) score -= 28;
   if (/(^|\/)include\//.test(lower) && !/(interface|adapter|controller|manager)/i.test(path)) score -= 35;
@@ -538,15 +408,13 @@ function scoreFunctionalAnalysisFile(file = {}) {
   if (/(^|\/)(tools?|utils?|scripts?|visuali[sz]ation|visuali[sz]er|vis|teleop)\//.test(lower)) score -= 35;
   if (/(^|\/)(build|install|log|coverage|dist|vendor|third_party|external)\//.test(lower)) score -= 80;
   if (isVendorFunctionalAnalysisPath(path)) score -= 120;
-  if (Number(file.size || 0) > MAX_FUNCTIONAL_SOURCE_FILE_BYTES) score -= 60;
   score -= Math.min(30, path.split("/").length);
   return score;
 }
 
 function prioritizeFunctionalAnalysisFiles(files = [], maxFiles = 0) {
   const filtered = (files || []).filter((file) => {
-    const size = Number(file?.size || 0);
-    return file?.path && !isVendorFunctionalAnalysisPath(file.path) && (!size || size <= MAX_FUNCTIONAL_SOURCE_FILE_BYTES);
+    return file?.path && !isVendorFunctionalAnalysisPath(file.path);
   });
   const selected = [];
   const effectiveMaxFiles = Number(maxFiles || 0);
@@ -902,9 +770,11 @@ export function chunkTextWithOverlap(text, maxLen = MAX_CHARS_PER_PROMPT, overla
       const boundary = source.lastIndexOf("\n", end - 1);
       if (boundary > start + limit / 2) end = boundary + 1;
     }
+    if (end < source.length && /[\uD800-\uDBFF]/.test(source[end-1]) && /[\uDC00-\uDFFF]/.test(source[end])) end--;
     chunks.push(source.slice(start, end));
     if (end === source.length) break;
     start = end - context;
+    if (start > 0 && /[\uDC00-\uDFFF]/.test(source[start]) && /[\uD800-\uDBFF]/.test(source[start-1])) start--;
   }
   return chunks;
 }
@@ -1032,7 +902,7 @@ function normalizeSourceSymbol(value) {
 }
 
 function sourceFunctionBody(content = "", fn = {}) {
-  const lines = String(content || "").split("\n");
+  const lines = Array.isArray(content) ? content : String(content || "").split("\n");
   const startLine = Number(fn?.startLine || 0);
   if (!startLine || !lines.length) return "";
   const endLine = Number(fn?.endLine || startLine);
@@ -1251,26 +1121,6 @@ function verifySameFilePythonRelationship(row = {}, currentFileRecord = {}) {
   };
 }
 
-function normalizeSafetyRelevantPythonRow(row = {}, currentFileRecord = {}, currentFilePath = "") {
-  if (currentFileRecord?.lang !== "py" || !currentFileRecord?.content) return row;
-  if (row?.fromFile !== currentFilePath) return row;
-  if (normalizeSourceSymbol(row?.from) !== "extract_traj_tokens") return row;
-  const sourceFunctions = currentFileRecord.sourceFunctions || [];
-  const extractFn = pythonSourceFunctionsMatching(sourceFunctions, "extract_traj_tokens")[0];
-  if (!extractFn) return row;
-  const body = sourceFunctionBody(currentFileRecord.content, extractFn);
-  if (!/\binvalid_?tokens?\b/i.test(body) || !/\btorch\.clamp\s*\(/i.test(body)) return row;
-  if (normalizeSourceSymbol(row?.to) === "clamp") return row;
-  return {
-    ...row,
-    action: "Clamp trajectory token ids",
-    controlActionDetails: "Invalid trajectory token ids are warned about and clamped rather than rejected.",
-    to: "torch.clamp",
-    toFile: row.fromFile || currentFilePath,
-    toDetails: "The implementation calls torch.clamp to force invalid trajectory token ids into the accepted vocabulary range.",
-  };
-}
-
 function verifyCurrentFilePythonRelationship(row = {}, currentFileRecord = {}, currentFilePath = "") {
   if (currentFileRecord?.lang !== "py") return { applicable: false };
   if (!currentFileRecord?.content || !currentFilePath) return { applicable: false };
@@ -1454,7 +1304,6 @@ export function groundFunctionalDecompositionRow({
     fromFile: normalizedFromFile,
     toFile: normalizedToFile,
   };
-  baseRow = normalizeSafetyRelevantPythonRow(baseRow, currentFileRecord, currentFile?.path);
 
   const sourceFunctions = currentFileRecord?.sourceFunctions || [];
   const imports = currentFileRecord?.imports || [];
@@ -2910,7 +2759,7 @@ function selectSourceFunctionsForRow(sourceFunctions, row) {
 }
 
 function sourceSnippetForFunction(content = "", fn = {}) {
-  const lines = String(content || "").split("\n");
+  const lines = Array.isArray(content) ? content : String(content || "").split("\n");
   const startLine = Number(fn?.startLine || 0);
   if (!startLine || !lines.length) return "";
   const endLine = Number(fn?.endLine || startLine);
@@ -2919,91 +2768,8 @@ function sourceSnippetForFunction(content = "", fn = {}) {
   return lines.slice(start, end).join("\n").slice(0, 12000);
 }
 
-function normalizeIndexedSymbolName(value = "") {
-  return String(value || "").split(".").pop().replace(/[^A-Za-z0-9_$]+/g, "").toLowerCase();
-}
-
-function sourceFunctionName(fn = {}) {
-  return fn.functionName || fn.name || fn.symbolName || fn.label || "";
-}
-
-function rowCoversSourceFunction(row = {}, symbolName = "") {
-  const target = normalizeIndexedSymbolName(symbolName);
-  if (!target) return false;
-  const symbols = [row.from, row.to].map(normalizeIndexedSymbolName);
-  return symbols.includes(target);
-}
-
-function findIndexedSourceFunction(record = {}, symbolName = "") {
-  const target = normalizeIndexedSymbolName(symbolName);
-  return (record.sourceFunctions || []).find((fn) => normalizeIndexedSymbolName(sourceFunctionName(fn)) === target) ||
-    (record.functions || []).find((name) => normalizeIndexedSymbolName(name) === target);
-}
-
-function makeSourceAuditArchitectureRow({ record, fn, rowRef }) {
-  const functionName = typeof fn === "string" ? fn : sourceFunctionName(fn);
-  if (!functionName) return null;
-  // Never synthesize an audit assertion from a symbol name alone.
-  const functionBody = uniqueTopLevelPythonBody(record.content || "", functionName);
-  if (!/\btorch\.clamp\s*\(/.test(functionBody)) return null;
-  const filePath = record.path || record.filePath || (typeof fn === "object" ? fn.filePath || fn.path : "") || "";
-  const sourceFunction = typeof fn === "string"
-    ? { functionName, filePath }
-    : {
-      ...fn,
-      functionName,
-      filePath: fn.filePath || fn.path || filePath,
-      content: sourceSnippetForFunction(record.content || "", fn),
-    };
-  return {
-    ...codeSourceProvenance(record),
-    rowRef,
-    traceId: `source-audit-${functionName}`,
-    from: functionName,
-    action: "Clamp trajectory token ids",
-    to: "torch.clamp",
-    fromFile: filePath,
-    toFile: filePath,
-    fromDetails: "Source audit identified a top-level trajectory-token extraction function not covered by generated architecture rows.",
-    controlDetails: "The source function calls torch.clamp; review its bounds and handling of invalid inputs.",
-    toDetails: "The source function contains a torch.clamp call. Its operational consequences and caller coverage require review.",
-    sourceAuditGenerated: true,
-    classificationPolicyVersion: 1,
-    relationshipEvidence: { version: 1, supported: false, kind: "unresolved", reason: "External API target resolution is outside the supported inventory." },
-    codeEvidence: {
-      rowRefs: [rowRef],
-      files: [{
-        filePath,
-        fileName: filePath.split("/").pop() || filePath,
-        repo: record.repo || "",
-        owner: record.owner || "",
-        branch: record.branch || "",
-        commitSha: record.commitSha || "",
-        imports: record.imports || [],
-        exports: record.exports || [],
-        functions: record.functions || [],
-        sourceFunctions: [sourceFunction],
-        sourceAudit: record.sourceAudit || {},
-      }],
-      functions: [functionName],
-      sourceFunctions: [sourceFunction],
-      sourceAudit: {
-        mode: "source-symbol-gap",
-        reason: "Indexed source contained extract_traj_tokens, but generated architecture rows did not cover it.",
-        pythonTopLevelFunctions: record.sourceAudit?.pythonTopLevelFunctions || [],
-        missingFromSourceFunctions: record.sourceAudit?.missingFromSourceFunctions || [],
-      },
-    },
-    sourceEvidence: {
-      rowRefs: [rowRef],
-      functions: [sourceFunction],
-      confidence: "source-audit",
-    },
-  };
-}
-
 async function buildCodeEvidenceForRows({ owner, repo, rows, ...source }) {
-  const cache = new Map();
+  const cache = new Map(), lineCache = new WeakMap(), evidenceCache = new WeakMap();
   async function getFileRecord(path) {
     if (!path) return null;
     if (cache.has(path)) return cache.get(path);
@@ -3018,6 +2784,7 @@ async function buildCodeEvidenceForRows({ owner, repo, rows, ...source }) {
       } catch {}
     }
     cache.set(path, record);
+    if (cache.size > 16) cache.delete(cache.keys().next().value);
     return record;
   }
 
@@ -3028,14 +2795,13 @@ async function buildCodeEvidenceForRows({ owner, repo, rows, ...source }) {
     const files = Array.from(new Set([...splitRelatedFiles(row.fromFile), ...splitRelatedFiles(row.toFile)]));
     const fileRecords = [];
     const allSourceFunctions = [];
+    const recordsByPath = new Map();
     for (const path of files) {
       const record = await getFileRecord(path);
       const sourceFunctions = record?.sourceFunctions || [];
-      allSourceFunctions.push(...sourceFunctions.map((fn) => ({
-        ...fn,
-        content: sourceSnippetForFunction(record?.content || "", fn),
-      })));
-      fileRecords.push({
+      if (record) recordsByPath.set(path, record);
+      for (const fn of sourceFunctions) allSourceFunctions.push(fn);
+      const fileEvidence = (record && evidenceCache.get(record)) || {
         ...codeSourceProvenance(source),
         filePath: path,
         fileName: path.split("/").pop() || path,
@@ -3048,9 +2814,15 @@ async function buildCodeEvidenceForRows({ owner, repo, rows, ...source }) {
         functions: record?.functions || [],
         sourceFunctions,
         sourceAudit: record?.sourceAudit || {},
-      });
+      };
+      if (record) evidenceCache.set(record, fileEvidence);
+      fileRecords.push(fileEvidence);
     }
-    const sourceFunctions = selectSourceFunctionsForRow(allSourceFunctions, row);
+    const sourceFunctions = selectSourceFunctionsForRow(allSourceFunctions, row).map(fn => {
+      const record=recordsByPath.get(fn.filePath);
+      if (record && !lineCache.has(record)) lineCache.set(record,String(record.content || '').split('\n'));
+      return {...fn,content:sourceSnippetForFunction(record ? lineCache.get(record) : '', fn)};
+    });
 
     enriched.push({
       ...row,
@@ -3070,17 +2842,6 @@ async function buildCodeEvidenceForRows({ owner, repo, rows, ...source }) {
       },
     });
   }
-  if (!enriched.some((row) => rowCoversSourceFunction(row, "extract_traj_tokens"))) {
-    const tokenRecord = Array.from(cache.values()).find((record) =>
-      record && /token_utils\.py$/i.test(record.path || record.filePath || "") &&
-      findIndexedSourceFunction(record, "extract_traj_tokens")
-    );
-    const tokenFn = tokenRecord ? findIndexedSourceFunction(tokenRecord, "extract_traj_tokens") : null;
-    const sourceAuditRow = tokenRecord && tokenFn
-      ? makeSourceAuditArchitectureRow({ record: tokenRecord, fn: tokenFn, rowRef: enriched.length + 1 })
-      : null;
-    if (sourceAuditRow) enriched.push(sourceAuditRow);
-  }
   return enriched;
 }
 
@@ -3088,7 +2849,7 @@ async function ensureCodeArchitectureTraceIdsCooperative(rows = []) {
   const safeRows = Array.isArray(rows) ? rows : [];
   const normalizeIdentity = (value) => String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
   const functionIdentityKey = (row = {}, side = "from") => {
-    if ([1, 2].includes(row.classificationPolicyVersion)) return JSON.stringify([row.relationshipEvidence?.[`${side}File`] || row[`${side}File`], row.relationshipEvidence?.[side] || row[side]]);
+    if ([1, 2, 3].includes(row.classificationPolicyVersion)) return JSON.stringify([row.relationshipEvidence?.[`${side}File`] || row[`${side}File`], row.relationshipEvidence?.[side] || row[side]]);
     const functionName = side === "to"
       ? (row.to ?? row.toFunction ?? "")
       : (row.from ?? row.fromFunction ?? "");
@@ -3238,7 +2999,7 @@ export const generateFunctionalDecompositionFromGitHub = async (
     if (!local) source = { ...source, sourceType: "github", snapshotId: commitSha, evidenceVersion: 1 };
 
     // List all repo files via GitHub Trees API (no backend state)
-    const allFiles = sourceProvider ? await sourceProvider.listFiles() : await retryAnalysisOperation(signal => listRepoFilesViaGitHub(owner, repo, token, ref, signal), {signal:opts.signal});
+    const allFiles = sourceProvider ? await sourceProvider.listFiles() : await listRepoFilesViaGitHub(owner, repo, token, ref, opts.signal);
     if (!allFiles.length) throw new Error("No files found in the selected source.");
     const repoPathResolver = createRepoPathResolver(allFiles);
     const pythonModuleIndex = createPythonModuleIndex(allFiles);
@@ -3328,6 +3089,7 @@ export const generateFunctionalDecompositionFromGitHub = async (
       const read = await readSourceFile(file,opts.signal);
       inputManifest.push({ path: file.path, entryKind: file.entryKind || "file", size: read.size ?? file.size, contentDigest: read.contentDigest || null, textDigest: read.textDigest || await digestText(read.content), decoding: read.decoding || "utf8-fatal-v1", disposition: "selected" });
     }
+    const inputManifestByPath = new Map(inputManifest.map(entry=>[entry.path,entry]));
     const planSignature = functionalAnalysisPlanSignature(validFiles);
     const fingerprint = await runFingerprint({ snapshot: local ? source.snapshotId : commitSha, planSignature, inputManifest, context: userAnalysisContext, repoContext, settings: runGuard.settings, grounding: FUNCTIONAL_GROUNDING_VERSION });
     let checkpointKey = `${FUNCTIONAL_DECOMPOSITION_CHECKPOINT_PREFIX}${outputStorageKey}:${fingerprint}`;
@@ -3337,7 +3099,7 @@ export const generateFunctionalDecompositionFromGitHub = async (
     if (checkpoint) runGuard.restore(checkpoint.actualSettings);
     const systemUnderstanding = checkpoint?.systemUnderstanding ?? await deriveSystemUnderstanding({ repoContext, userContext: userAnalysisContext, bearer, metricsRun });
     runGuard.check();
-    const checkpointContext = { version: ANALYSIS_VERSION, fingerprint, actualSettings: runGuard.actual, systemUnderstanding, scope: outputStorageKey, source: codeSourceProvenance(source), inputManifest };
+    const checkpointContext = { phase: "extraction", version: ANALYSIS_VERSION, fingerprint, actualSettings: runGuard.actual, systemUnderstanding, scope: outputStorageKey, source: codeSourceProvenance(source), inputManifest };
     await idbPut(IDB_STORES.cba, checkpointKey, { ...checkpoint, ...checkpointContext });
 
     if (systemUnderstanding) {
@@ -3372,7 +3134,7 @@ Rules:
 - For class membership, describe the relationship as defining or exposing a method/member; do not label it as a runtime call unless the method body actually calls the target.
 - Do not use instance attribute names as Function (To) endpoints unless the attribute is itself a source-defined callable or imported API being invoked in the current function body.
 - If a helper is only called inside one method, emit method -> helper, not ClassName -> helper.
-- For invalid token handling, prefer the safety-relevant validation or repair operation such as torch.clamp over incidental tensor plumbing such as torch.where or torch.zeros_like.
+- Describe the actual evidenced calls. Do not substitute a preferred safety operation for a different call or infer safety significance from a repository, filename, or function name.
 - Prefer interface-rich interactions when source evidence supports them, including APIs, callbacks, message/event flows, hardware boundaries, shared state, configuration files, protocols, imports/includes, and library/framework boundaries.
 - Analyze the current file/chunk only. README and repository context may guide terminology, but they are not evidence for rows unless the current source chunk also supports the interaction.
     `.trim();
@@ -3416,10 +3178,10 @@ Rules:
       });
     }
 
-    const persistCheckpoint = async () => {
+    const persistCheckpoint = async (phase = "extraction") => {
       try {
         await idbPut(IDB_STORES.cba, checkpointKey, {
-          ...checkpointContext, actualSettings: runGuard.actual,
+          ...checkpointContext, phase, actualSettings: runGuard.actual,
           owner, repo, ref, commitSha, groundingVersion: FUNCTIONAL_GROUNDING_VERSION,
           groundingStats, relationshipLedger, planSignature, fileProgress,
           recoveryPolicy: FUNCTIONAL_RECOVERY_POLICY,
@@ -3428,7 +3190,6 @@ Rules:
         });
       } catch (error) { error.code = "SOURCE_STORAGE_FAILED"; throw error; }
     };
-    const storageBudget = await sourceStorageBudget();
     for (let recoveryPass = 0; recoveryPass < FUNCTIONAL_FILE_PASSES; recoveryPass++) {
       if (recoveryPass > 0) {
         const retryable = failedFiles.filter(file => file.retryable);
@@ -3444,7 +3205,7 @@ Rules:
         if (completedPathSet.has(file.path)) {
           // Rebuild evidence when resuming: completed rows still need their source index.
           const got = await readSourceFile(file,opts.signal);
-          if (got.ok) await indexSourceFileToIDB({ storageBudget, owner, repo, path: file.path, content: got.content, branch: displayBranch, commitSha, ...codeSourceProvenance(source) });
+          if (got.ok) await indexSourceFileToIDB({  owner, repo, path: file.path, content: got.content, branch: displayBranch, commitSha, ...codeSourceProvenance(source) });
           else throw new Error(`Cannot restore source evidence for ${file.path}`);
           continue;
         }
@@ -3493,7 +3254,6 @@ Rules:
             if (shouldIndexFunctionalAnalysisSource(file.path)) {
               try {
                 currentFileRecord = await indexSourceFileToIDB({
-                  storageBudget,
                   owner,
                   repo,
                   path: file.path,
@@ -3508,7 +3268,7 @@ Rules:
 
             const fileBody = got.content || "";
             const textDigest = await digestText(fileBody);
-            if (textDigest !== inputManifest.find(entry => entry.path === file.path)?.textDigest) throw new Error(`Source content changed during analysis: ${file.path}`);
+            if (textDigest !== inputManifestByPath.get(file.path)?.textDigest) throw new Error(`Source content changed during analysis: ${file.path}`);
             inventory = pythonRelationshipInventory(file.path, fileBody);
             inventory.textDigest = textDigest;
             inventory.moduleIndex = pythonModuleIndex;
@@ -3634,6 +3394,7 @@ Rules:
       error.checkpointKey = checkpointKey;
       throw error;
     }
+    await persistCheckpoint("classification");
     allTableData = dedupeEvidenceRows(reconcileSourceProposals(allTableData, pythonModuleIndex));
     const decompositionRows = scopeFunctionalDecomposition(allTableData, relationshipLedger);
 
@@ -3662,51 +3423,27 @@ Rules:
     const comparisonFingerprint = await runFingerprint({ files: inputManifest.map(({path,contentDigest,textDigest,decoding})=>({path,contentDigest,textDigest,decoding})), context: userAnalysisContext, readme: repoContext.readmeText || "", generationSettings: runGuard.settings, effectiveSettings: runGuard.actual });
     updatePublishedProposalCounts(relationshipLedger, architectureRows);
     const previousRows = await idbGet(IDB_STORES.cba, outputStorageKey) || [];
-    const classifiedArchitectureRows = ensureCodeArchitectureTraceIds(reconcileArchitectureRows(architectureRows, previousRows, outputStorageKey));
+    let classifiedArchitectureRows = ensureCodeArchitectureTraceIds(reconcileArchitectureRows(architectureRows, previousRows, outputStorageKey));
+    let functionalProcessingError = '';
+    try {
+      classifiedArchitectureRows = await processFunctionalModel(classifiedArchitectureRows, {
+        signal: opts.signal,
+        onProgress: progress => opts?.onProgress?.({ phase: 'functional', completedFiles, totalFiles: validFiles.length, ...progress }),
+        request: async (prompt, signal) => (await requestOpenAIProxyJsonWithMetrics({ prompt, bearer, signal, metricsRun, label: 'Functional responsibility processing', maxTokens: 7000 })).result,
+      });
+    } catch (error) {
+      if (opts.signal?.aborted) throw error;
+      functionalProcessingError = error.message;
+      console.warn('Detailed analysis retained; functional processing did not complete.', error);
+    }
     const selectedPaths = new Set(validFiles.map(file => file.path));
     const requestedPaths = new Set(finalList.map(file => file.path));
     const selectablePaths = new Set(candidates.map(file => file.path));
     const selectionManifest = allFiles.map(file => ({ path: file.path, entryKind: file.entryKind || "file", size: file.size, disposition: selectedPaths.has(file.path) ? "analyzed" : requestedPaths.has(file.path) ? "skipped-limit" : selectablePaths.has(file.path) ? "not-selected" : "excluded-by-policy-or-entry-kind" })).sort((a,b)=>compareSourcePaths(a.path,b.path));
-    const runRecord = { version: 1, analysisVersion: ANALYSIS_VERSION, recoveryPolicy: FUNCTIONAL_RECOVERY_POLICY, generationSettings: runGuard.settings, publishedAt: new Date().toISOString(), selectionManifest, adapterExclusions: sourceProvider?.skipped || [], fingerprint: publicationFingerprint, comparisonFingerprint, inputManifest, relationshipLedger, effectiveSettings: runGuard.actual, source: codeSourceProvenance(source), scope: outputStorageKey, status: skippedForScale ? "partial-selection" : "selected-files-analyzed" };
+    const coverage = summarizeCodeAnalysisCoverage(relationshipLedger, inputManifest);
+    const runRecord = { coverage, version: 1, analysisVersion: ANALYSIS_VERSION, recoveryPolicy: FUNCTIONAL_RECOVERY_POLICY, generationSettings: runGuard.settings, publishedAt: new Date().toISOString(), selectionManifest, adapterExclusions: sourceProvider?.skipped || [], fingerprint: publicationFingerprint, comparisonFingerprint, inputManifest, relationshipLedger, effectiveSettings: runGuard.actual, source: codeSourceProvenance(source), scope: outputStorageKey, status: skippedForScale ? "partial-selection" : "selected-files-analyzed" };
     // Every published row carries the compact run reference for portable lineage.
     classifiedArchitectureRows.forEach(row => { if (row.lineage?.status === "current") row.lineage.runFingerprint = publicationFingerprint; });
-    // Publish only after rows and evidence have been saved.
-
-    // NEW: make rows available to Copilot (read via cba:owner/repo)
-    let storageSaved = false;
-    let storageError = "";
-    try {
-      assertStorageBudget(serializedBytes(runRecord), ROW_HISTORY_BUDGET, "Run manifest");
-      assertStorageBudget(serializedBytes(classifiedArchitectureRows), ROW_HISTORY_BUDGET, "Architecture and history");
-      await publishArchitectureRun(outputStorageKey, classifiedArchitectureRows, runRecord, checkpointKey, previousRows, opts.signal);
-      storageSaved = true;
-      if (failedFiles.length === 0) {
-        await idbDelete(IDB_STORES.cba, checkpointKey).catch(() => {});
-      } else {
-        await idbPut(IDB_STORES.cba, checkpointKey, {
-          ...checkpointContext, actualSettings: runGuard.actual,
-          owner,
-          repo,
-          ref,
-          commitSha,
-          groundingVersion: FUNCTIONAL_GROUNDING_VERSION,
-          groundingStats,
-          relationshipLedger,
-          planSignature,
-          totalFiles: validFiles.length,
-          completedPaths: Array.from(completedPathSet),
-          failedFiles,
-          rows: allTableData,
-          updatedAt: new Date().toISOString(),
-        }).catch(() => {});
-      }
-    } catch (error) {
-      storageError = error?.message || String(error || "IndexedDB write failed.");
-      console.warn("[cba] Failed to persist generated architecture rows", error);
-    }
-    
-    if (!storageSaved) throw new Error(`Analysis results could not be saved: ${storageError}`);
-    setTableData(classifiedArchitectureRows);
     const finalMetrics = finishFunctionalDecompositionMetricsRun(metricsRun, {
       rowCount: architectureRows.length,
       selectedFiles: validFiles.length,
@@ -3718,9 +3455,10 @@ Rules:
 
     console.log("📊 Parsed table rows:", architectureRows.length);
     const metadata = {
+      functionalProcessingError,
       ...codeSourceProvenance(source),
       excludedFiles: sourceProvider?.skipped || [],
-      sourceAnalysis: { version: 1, fingerprint: publicationFingerprint, comparisonFingerprint, scope: outputStorageKey, status: runRecord.status, effectiveSettings: runGuard.actual, manifestKey: `${outputStorageKey}:run:${publicationFingerprint}`, publishedCalls: Object.values(relationshipLedger).reduce((sum,file) => sum + (file.publishedCalls || 0), 0), reviewProposals: Object.values(relationshipLedger).reduce((sum,file) => sum + (file.reviewProposals || []).length, 0), supportedRelationships: Object.values(relationshipLedger).reduce((sum,file) => sum + file.relationships.length, 0), modelOnlyRelationships: Object.values(relationshipLedger).reduce((sum,file) => sum + file.modelOnly, 0) },
+      sourceAnalysis: { coverage, version: 1, fingerprint: publicationFingerprint, comparisonFingerprint, scope: outputStorageKey, status: runRecord.status, effectiveSettings: runGuard.actual, manifestKey: `${outputStorageKey}:run:${publicationFingerprint}`, publishedCalls: Object.values(relationshipLedger).reduce((sum,file) => sum + (file.publishedCalls || 0), 0), reviewProposals: Object.values(relationshipLedger).reduce((sum,file) => sum + (file.reviewProposals || []).length, 0), supportedRelationships: Object.values(relationshipLedger).reduce((sum,file) => sum + file.relationships.length, 0), modelOnlyRelationships: Object.values(relationshipLedger).reduce((sum,file) => sum + file.modelOnly, 0) },
       runFingerprint: publicationFingerprint,
       analysisVersion: ANALYSIS_VERSION,
       recoveryPolicy: FUNCTIONAL_RECOVERY_POLICY,
@@ -3744,8 +3482,8 @@ Rules:
       failedFileCount: failedFiles.length,
       failedFiles: failedFiles.slice(-25),
       storageKey: outputStorageKey,
-      storageSaved,
-      storageError,
+      storageSaved: false,
+      storageError: "",
       metrics: finalMetrics,
       grounding: groundingStats,
       operationalContext: systemUnderstanding || buildFallbackSystemUnderstanding(repoContext, userAnalysisContext),
@@ -3758,6 +3496,25 @@ Rules:
           .filter(Boolean),
       },
     };
+    for (let attempt=0; ; attempt++) {
+      try {
+        await prepareArchitecturePublication(outputStorageKey, classifiedArchitectureRows, runRecord, metadata, checkpointKey, previousRows, opts.signal);
+        await recoverArchitecturePublication(outputStorageKey, checkpointKey, opts.signal);
+        metadata.storageSaved = true;
+        break;
+      } catch (cause) {
+        if (cause.name === 'AbortError' && !opts.signal?.aborted && attempt < 2) {
+          await sleep(100 * (attempt + 1), opts.signal);
+          continue;
+        }
+        const error = new Error(`Analysis finished but could not be published: ${cause.message}. Completed work is retained where storage permitted; use the recovery panel to retry saving or export it.`);
+        error.code = opts.signal?.aborted ? 'SOURCE_ANALYSIS_CANCELLED' : typeof cause.code === 'string' ? cause.code : 'SOURCE_PUBLICATION_PENDING';
+        error.checkpointKey = checkpointKey;
+        error.cause = cause;
+        throw error;
+      }
+    }
+    setTableData(classifiedArchitectureRows);
     return opts?.repoConfig || opts?.storageKey
       ? { rows: classifiedArchitectureRows, metadata }
       : classifiedArchitectureRows;
@@ -3908,6 +3665,7 @@ export const FunctionalDecompositionTable = ({
   reviewMode = false,
   projectId = "",
   onDataChange,
+  rowsStorageKey = "",
   collaboratorSelection = null,
   onCollaboratorSelectionChange,
   viewMode = null,
@@ -3944,6 +3702,7 @@ export const FunctionalDecompositionTable = ({
     csci: "CSCI",
     csc: "CSC",
     detailed: "CSU",
+    functional: "Functional",
     ...(architectureLevelLabels || {}),
   };
   const abstractionLevels = architectureLevels || [
@@ -3951,6 +3710,7 @@ export const FunctionalDecompositionTable = ({
     ["csci", "CSCI"],
     ["csc", "CSC"],
     ["detailed", "CSU"],
+    ["functional", "Functional"],
   ];
 
   const storageKey = useMemo(() => `diagram:github:${repoId}:${branch}`, [repoId, branch]);
@@ -4049,6 +3809,42 @@ const repoName = useMemo(() => {
     () => ensureCodeArchitectureTraceIds(manualData || data || []),
     [manualData, data]
   );
+  const [functionalProgress, setFunctionalProgress] = useState('');
+  const [functionalError, setFunctionalError] = useState('');
+  const functionalAbort = useRef(null);
+  const functionalInputs = useRef(null);
+  functionalInputs.current = rowsWithTraceIds;
+  React.useEffect(() => {
+    setFunctionalProgress('');
+    setFunctionalError('');
+    return () => functionalAbort.current?.abort();
+  }, [data, projectId, repoId]);
+  const processCurrentFunctionalModel = async () => {
+    functionalAbort.current?.abort();
+    const controller = new AbortController();
+    functionalAbort.current = controller;
+    const input = rowsWithTraceIds;
+    setFunctionalError('');
+    setFunctionalProgress('Processing functional responsibilities…');
+    try {
+      if (!rowsStorageKey) throw new Error("Open a saved project to persist the functional model.");
+      const expectedBaseline = await readCbaRowsRevision(rowsStorageKey);
+      const result = await processFunctionalModel(input, {
+        signal: controller.signal,
+        onProgress: progress => setFunctionalProgress(progress.message),
+        request: async (prompt, signal) => (await requestOpenAIProxyJsonWithMetrics({ prompt, signal, bearer: getLocalAccessToken(), label: 'Functional responsibility processing', maxTokens: 7000 })).result,
+      });
+      if (controller.signal.aborted || functionalInputs.current !== input) return;
+      if (!rowsStorageKey) throw new Error('Open a saved project to persist the functional model.');
+      if (!await writeCbaRowsToIndexedDB(rowsStorageKey, result, { expectedBaseline, signal: controller.signal })) throw new Error('The functional model could not be saved. Detailed analysis was preserved.');
+      if (controller.signal.aborted || functionalInputs.current !== input) return;
+      if (onDataChange) onDataChange(result); else setManualData(result);
+    } catch (error) {
+      if (!controller.signal.aborted) setFunctionalError(error.message);
+    } finally {
+      if (functionalAbort.current === controller) setFunctionalProgress('');
+    }
+  };
   const isRepositoryBoundaryRow = React.useCallback((row = {}) => {
     const text = [
       row.from,
@@ -4545,7 +4341,26 @@ React.useEffect(() => {
 
       {/* Diagram surface */}
       <div className="flex-1 p-3 min-h-0">
-        <LiteSummaryDiagramReactFlowGitHub
+        {architectureAbstraction === 'functional' && (view === 'architecture' || view === 'split') ? (
+          <FunctionalArchitectureDiagram
+            ref={diagramRef}
+            rows={diagramRows}
+            ready={functionalModelIsReady(rowsWithTraceIds)}
+            progress={functionalProgress}
+            error={functionalError || repoMeta?.functionalProcessingError}
+            onProcess={reviewMode ? undefined : processCurrentFunctionalModel}
+            onCancel={() => functionalAbort.current?.abort()}
+            storageKey={JSON.stringify([projectId, repoMeta?.sourceType || '', repoMeta?.sourceId || repoMeta?.repoId || repoId, repoMeta?.branch || branch])}
+            height={diagramHeight}
+            canvasToolsTarget={canvasToolsTarget}
+            reviewMode={reviewMode}
+            onOpenRow={(row) => {
+              const rowIndex = diagramReferenceRows.indexOf(row);
+              onOpenFunctionalRow?.({ type: 'functional-row', intent: 'open-table', traceId: row.traceId, rowRef: row.rowRef, rowIndex });
+            }}
+            onOpenCsu={(row) => openCsuDiagramTarget(null, buildCsuDiagramTarget(row, diagramReferenceRows.indexOf(row), 'action'))}
+          />
+        ) : <LiteSummaryDiagramReactFlowGitHub
           ref={diagramRef}
           rows={diagramRows}
           onUpdateRows={(nextRows) => {
@@ -4596,7 +4411,7 @@ React.useEffect(() => {
           onOpenHazardRow={onOpenHazardRow}
           onOpenFunctionalRow={onOpenFunctionalRow}
           onOpenAssuranceArtifactRow={onOpenAssuranceArtifactRow}
-        />
+        />}
       </div>
     </div>
   </section>

@@ -1,3 +1,4 @@
+import { functionalSourceIndex } from '../code-architecture-context/functionalModel';
 import { codeSourceProvenance } from '../code-architecture-context/codeSourceIdentity';
 import { ARTIFACT_DEFINITIONS, ARTIFACT_KINDS } from "./artifactDefinitions";
 
@@ -527,6 +528,7 @@ export function normalizeFunctionalRowRef(value) {
 export function functionalRowIndexForTraceValue(cbaRows = [], value = "") {
   cbaRows = Array.isArray(cbaRows) ? cbaRows : [];
   const raw = cellText(value);
+  if (raw.startsWith("functional-relationship:")) return functionalSourceIndex(cbaRows, raw);
   const exact = cbaRows.map((row,index)=>({row,index})).filter(({row})=>[row.traceId,row.functionalTraceId,row.sourceTraceId].some(id=>id && cellText(id)===raw));
   if (exact.length) return exact.length === 1 ? exact[0].index : -1;
   const target = normalizeFunctionalRowRef(value);

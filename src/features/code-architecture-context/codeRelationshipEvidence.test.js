@@ -68,11 +68,11 @@ it('leaves decorated, imported and rebound call targets outside verified lexical
 });
 it('classifies labeled evidence rather than action wording across supported lifecycle cases', () => {
  const examples = [
-   ['src/__init__.py','initialize_control','configure_sensor','Include','Initialization'],
-   ['src/control.py','publish_feedback','read_sensor','Include','Runtime'],
-   ['src/control.py','protect_motion','clamp_command','Include','Runtime'],
+   ['src/__init__.py','initialize_control','configure_sensor','Include','Needs Review'],
+   ['src/control.py','publish_feedback','read_sensor','Include','Needs Review'],
+   ['src/control.py','protect_motion','clamp_command','Include','Needs Review'],
    ['tests/control.py','control_motion','validate_command','Exclude','Test/Verification'],
-   ['src/utils.py','alpha','beta','Needs Review','Needs Review'],
+   ['src/utils.py','alpha','beta','Include','Needs Review'],
  ];
  for (const [path,from,to,eligibility,lifecycle] of examples) {
    const row = completeSupportedRelationships([], pythonRelationshipInventory(path,`def ${to}(): pass\ndef ${from}(): ${to}()`))[0];

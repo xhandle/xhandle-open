@@ -1,3 +1,4 @@
+import { buildFunctionalModelRows } from '../code-architecture-context/functionalModel';
 import React, { useEffect, useMemo, useState } from "react";
 import { ARTIFACT_KINDS, TRACEABILITY_MATRIX_COLUMNS } from "./artifactDefinitions";
 import EngineeringArtifactTable from "./EngineeringArtifactTable";
@@ -214,6 +215,11 @@ function consolidateTraceRowsByArtifactChain(rows = []) {
 
 export function buildTraceabilityRows({ cbaRows, softwareRows, systemRows, subsystemRows, designRows }) {
   const artifacts = { softwareRows, systemRows, subsystemRows, designRows };
+  const functionalAliases = new Map();
+  buildFunctionalModelRows(cbaRows).forEach(model => model.functionalModel.sourceTraceIds.forEach(trace => {
+    if (!functionalAliases.has(trace)) functionalAliases.set(trace, new Set());
+    functionalAliases.get(trace).add(model.traceId);
+  }));
   const sysById = rowsById(systemRows);
   const subById = rowsById(subsystemRows);
   const rows = [];
@@ -224,6 +230,8 @@ export function buildTraceabilityRows({ cbaRows, softwareRows, systemRows, subsy
     const architectureRef = architectureRefFromFunctionalRow(functionalRow, functionalIndex, "edge");
     const swMatches = softwareRows.filter((sw) =>
       parentMatches(sw.sourceTraceId, traceId) ||
+      [...(functionalAliases.get(traceId) || [])].some(alias => parentMatches(sw.sourceTraceId, alias)
+        || (sw.sourceArchitectureRefs || []).some(ref => ref.traceId === alias)) ||
       refsMatchFunctionalRow(sw.sourceArchitectureRefs || [], traceId, functionalIndex, functionalRow)
     );
     const swList = swMatches.length ? swMatches : [null];

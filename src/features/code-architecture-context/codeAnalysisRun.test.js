@@ -1,4 +1,4 @@
-import { createRunGuard, settingsFromAuth, stableJson, assertStorageBudget } from './codeAnalysisRun';
+import { createRunGuard, settingsFromAuth, stableJson } from './codeAnalysisRun';
 it('does not fingerprint credentials and notices active preference changes',()=>{
  let model='one'; const guard=createRunGuard(()=>settingsFromAuth({headers:{'x-ai-provider':'openai','x-ai-model':model,'x-ai-api-key':'secret'}}));
  expect(stableJson(guard.settings)).not.toContain('secret'); model='two'; expect(()=>guard.check()).toThrow('settings changed');
@@ -8,8 +8,7 @@ it('rejects mixed response models and unverified provenance',()=>{
  guard.observe(response('one')); expect(()=>guard.observe(response('two'))).toThrow('differ');
  expect(()=>createRunGuard(()=>({})).observe({})).toThrow('did not identify');
 });
-it('fails before exceeding the budget and preserves stable serialization',()=>{
- expect(()=>assertStorageBudget(11,10)).toThrow('previous results');
+it('preserves stable serialization independently of object key order',()=>{
  expect(stableJson({b:2,a:1})).toBe(stableJson({a:1,b:2}));
 });
 it('rejects a response that uses a different requested effort', () => {

@@ -25,9 +25,11 @@ import ReactFlow, {
   StepEdge,
   updateEdge,
   useReactFlow,
+  useUpdateNodeInternals,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import './csuNavigation.css';
+import { withCsuVisibleHandles } from './csuVisibleHandles';
 import { toPng } from 'html-to-image';
 import { SmartBezierEdge } from '@tisoap/react-flow-smart-edge';
 import { OrthogonalFunctionEdge } from './OrthogonalFunctionEdge';
@@ -628,10 +630,10 @@ function columnsForSquareNodeGrid(count, { maxColumns = 8 } = {}) {
   return Math.max(1, Math.min(maxColumns, count, ideal));
 }
 
-function buildArchitectureLayout(elkNodes, { colorSystemElements = false, systemElementColorOverrides = new Map(), preservePositions = false, edges = [] } = {}) {
+function buildArchitectureLayout(elkNodes, { colorSystemElements = false, systemElementColorOverrides = new Map(), preservePositions = false, edges = [], functionalPresentation = false } = {}) {
   const dims = {
-    nodeGapX: CSU_FUNCTION_GAP.x,
-    nodeGapY: CSU_FUNCTION_GAP.y,
+    nodeGapX: functionalPresentation ? 72 : CSU_FUNCTION_GAP.x,
+    nodeGapY: functionalPresentation ? 54 : CSU_FUNCTION_GAP.y,
     csuPad: 20,
     csuTop: 50,
     cscPad: 26,
@@ -1178,7 +1180,19 @@ const CommentBadge = ({ count = 0, onClick }) => {
   );
 };
 
-const BidirectionalNode = React.memo(({ data, selected }) => {
+const BidirectionalNode = React.memo(({ id, data, selected }) => {
+  const [portsActive, setPortsActive] = useState(false);
+  const updateNodeInternals = useUpdateNodeInternals();
+  const idleHandles = data.idleHandleIds;
+  const showAllPorts = portsActive || selected || !idleHandles;
+  const handleSignature = showAllPorts ? '*' : idleHandles.join('|');
+  const previousHandles = useRef(handleSignature);
+  useEffect(() => {
+    // React Flow measures mounts itself. Only remeasure changed ports.
+    if (previousHandles.current !== handleSignature) updateNodeInternals(id);
+    previousHandles.current = handleSignature;
+  }, [id, handleSignature, updateNodeInternals]);
+  const showPort = name => showAllPorts || idleHandles.includes(name);
   const brandColor = data.brandColor || BRAND.blue;
   const tint = data.brandTint || rgba(brandColor, 0.08);
   const border = `1px solid ${rgba(brandColor, THEME.node.borderAlpha)}`;
@@ -1200,39 +1214,41 @@ const BidirectionalNode = React.memo(({ data, selected }) => {
         transition: 'box-shadow 150ms ease, border-color 150ms ease, transform 120ms ease',
       }}
       className="x-node"
-      onMouseEnter={(e) => e.currentTarget.querySelectorAll('.x-port').forEach((h) => (h.style.opacity = 1))}
-      onMouseLeave={(e) => e.currentTarget.querySelectorAll('.x-port').forEach((h) => (h.style.opacity = 0))}
+      onMouseEnter={() => { if (idleHandles) setPortsActive(true); }}
+      onMouseLeave={() => setPortsActive(false)}
+      onFocusCapture={() => { if (idleHandles) setPortsActive(true); }}
+      onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setPortsActive(false); }}
     >
       <CommentBadge count={data.commentCount} onClick={data.onOpenComments} />
       {/* TOP (5) */}
       {TOP_BOTTOM_PCTS.map((p, i) => (
         <React.Fragment key={`top-${i}`}>
-          <Handle className="x-port" type="target" position={Position.Top} id={`top-target-${i}`} style={{ ...portBase, left: `${p}%` }} />
-          <Handle className="x-port" type="source" position={Position.Top} id={`top-source-${i}`} style={{ ...portBase, left: `${p}%` }} />
+          {showPort(`top-target-${i}`) && <Handle className="x-port" type="target" position={Position.Top} id={`top-target-${i}`} style={{ ...portBase, left: `${p}%` }} />}
+          {showPort(`top-source-${i}`) && <Handle className="x-port" type="source" position={Position.Top} id={`top-source-${i}`} style={{ ...portBase, left: `${p}%` }} />}
         </React.Fragment>
       ))}
 
       {/* BOTTOM (5) */}
       {TOP_BOTTOM_PCTS.map((p, i) => (
         <React.Fragment key={`bottom-${i}`}>
-          <Handle className="x-port" type="target" position={Position.Bottom} id={`bottom-target-${i}`} style={{ ...portBase, left: `${p}%` }} />
-          <Handle className="x-port" type="source" position={Position.Bottom} id={`bottom-source-${i}`} style={{ ...portBase, left: `${p}%` }} />
+          {showPort(`bottom-target-${i}`) && <Handle className="x-port" type="target" position={Position.Bottom} id={`bottom-target-${i}`} style={{ ...portBase, left: `${p}%` }} />}
+          {showPort(`bottom-source-${i}`) && <Handle className="x-port" type="source" position={Position.Bottom} id={`bottom-source-${i}`} style={{ ...portBase, left: `${p}%` }} />}
         </React.Fragment>
       ))}
 
       {/* LEFT (3) */}
       {LEFT_RIGHT_PCTS.map((p, i) => (
         <React.Fragment key={`left-${i}`}>
-          <Handle className="x-port" type="target" position={Position.Left} id={`left-target-${i}`} style={{ ...portBase, top: `${p}%` }} />
-          <Handle className="x-port" type="source" position={Position.Left} id={`left-source-${i}`} style={{ ...portBase, top: `${p}%` }} />
+          {showPort(`left-target-${i}`) && <Handle className="x-port" type="target" position={Position.Left} id={`left-target-${i}`} style={{ ...portBase, top: `${p}%` }} />}
+          {showPort(`left-source-${i}`) && <Handle className="x-port" type="source" position={Position.Left} id={`left-source-${i}`} style={{ ...portBase, top: `${p}%` }} />}
         </React.Fragment>
       ))}
 
       {/* RIGHT (3) */}
       {LEFT_RIGHT_PCTS.map((p, i) => (
         <React.Fragment key={`right-${i}`}>
-          <Handle className="x-port" type="target" position={Position.Right} id={`right-target-${i}`} style={{ ...portBase, top: `${p}%` }} />
-          <Handle className="x-port" type="source" position={Position.Right} id={`right-source-${i}`} style={{ ...portBase, top: `${p}%` }} />
+          {showPort(`right-target-${i}`) && <Handle className="x-port" type="target" position={Position.Right} id={`right-target-${i}`} style={{ ...portBase, top: `${p}%` }} />}
+          {showPort(`right-source-${i}`) && <Handle className="x-port" type="source" position={Position.Right} id={`right-source-${i}`} style={{ ...portBase, top: `${p}%` }} />}
         </React.Fragment>
       ))}
 
@@ -1521,7 +1537,7 @@ function buildEdgesFromRaw(rawEdges, positions) {
 function rowsToRawEdges(rows) {
   const raw = [];
   rows.forEach((row, idx) => {
-    if (!row.toFunction) return;
+    if (!row.toFunction || row.functionalModel?.internal) return;
     const fromId = row.fromNodeId || `n:${row.fromFunction}`;
     const toId = row.toNodeId || `n:${row.toFunction}`;
     raw.push({
@@ -2044,6 +2060,8 @@ const DiagramBody = forwardRef(function DiagramBody(
     repoName = "",
     architectureMode = false,
     architectureAbstraction = "detailed",
+    functionalPresentation = false,
+    allowLayoutChanges = false,
     colorSystemElements = false,
     height = 600,
     hazardSummary = null,
@@ -2347,6 +2365,7 @@ const DiagramBody = forwardRef(function DiagramBody(
   // React Flow culls edges by endpoint bounds. A manually adjusted route can
   // leave those bounds, so keep full rendering for diagrams with such routes.
   const cullCsuCanvas = largeCsuCanvas && !Object.keys(edgeRouting.manualRoutes || {}).length;
+  const renderNodes = useMemo(() => withCsuVisibleHandles(viewNodes, viewEdges, largeCsuCanvas), [viewNodes, viewEdges, largeCsuCanvas]);
   const viewportIdleTimer = useRef(null);
   const handleViewportMoveStart = useCallback(() => {
     clearTimeout(viewportIdleTimer.current);
@@ -2940,12 +2959,12 @@ const DiagramBody = forwardRef(function DiagramBody(
     }, [annotationStorageKey, comments, reviewMode, storageKey]);
     
     const persistSoon = useCallback(() => {
-      if (reviewMode) return;
+      if (reviewMode && !allowLayoutChanges) return;
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
         idbPositionsSave(storageKey, posRef.current).catch(() => {});
       }, 120);
-    }, [storageKey, reviewMode]);
+    }, [storageKey, reviewMode, allowLayoutChanges]);
 
   useEffect(() => {
     if (!colorSystemElements) {
@@ -3010,7 +3029,7 @@ const DiagramBody = forwardRef(function DiagramBody(
     let groupedNodes;
     let positionedNodes = elkNodes;
     if (architectureMode) {
-      const architectureLayout = buildArchitectureLayout(elkNodes, { colorSystemElements, systemElementColorOverrides, preservePositions: restore, edges: rowsToRawEdges(rows) });
+      const architectureLayout = buildArchitectureLayout(elkNodes, { functionalPresentation, colorSystemElements, systemElementColorOverrides, preservePositions: restore, edges: rowsToRawEdges(rows) });
       groupedNodes = architectureLayout.groupedNodes;
       positionedNodes = architectureLayout.absoluteNodes;
     } else {
@@ -3062,7 +3081,7 @@ const DiagramBody = forwardRef(function DiagramBody(
         fitCurrentView({ duration: 600 });
       }, 0);
     }
-  }, [nodes, edges, rows, fitAfterClean, fitCurrentView, persistSoon, architectureMode, colorSystemElements, systemElementColorOverrides, shouldSuppressAutoFit, preserveLayoutOnMount, cleanOnceKey, setNodes, setEdges]);
+  }, [functionalPresentation, nodes, edges, rows, fitAfterClean, fitCurrentView, persistSoon, architectureMode, colorSystemElements, systemElementColorOverrides, shouldSuppressAutoFit, preserveLayoutOnMount, cleanOnceKey, setNodes, setEdges]);
   
   // Auto-fit when graph is (re)built or changes noticeably
 useEffect(() => {
@@ -3196,11 +3215,11 @@ const [autoSourceHandle, autoTargetHandle] = assignHandles(
       if (saveTimer.current) clearTimeout(saveTimer.current);
       // StrictMode and rapid tab switches can unmount before hydration. Never
       // overwrite saved positions with that uninitialized empty map.
-      if (!reviewMode && loadedPositionScopeRef.current === storageKey) {
+      if ((!reviewMode || allowLayoutChanges) && loadedPositionScopeRef.current === storageKey) {
         idbPositionsSave(storageKey, posRef.current).catch(() => {});
       }
     };
-  }, [storageKey, reviewMode]);
+  }, [storageKey, reviewMode, allowLayoutChanges]);
   
 
   // Extra fit when parent flips cleanOnceKey (used after prompt finishes)
@@ -3252,6 +3271,14 @@ useEffect(() => {
   const onNodesChange = useCallback(
     (changes) => {
       if (reviewMode) {
+        if (allowLayoutChanges) changes.forEach(change => {
+          if (change.type === 'position' && change.position) {
+            const node = getNodes().find(node => node.id === change.id);
+            const point = node?.positionAbsolute || change.position;
+            posRef.current.set(change.id, { x: point.x, y: point.y });
+            persistSoon();
+          }
+        });
         reactflowOnNodesChange(changes.filter((change) => change.type !== 'remove'));
         return;
       }
@@ -3304,7 +3331,7 @@ useEffect(() => {
   
       reactflowOnNodesChange(changes);
     },
-    [rows, reactflowOnNodesChange, onUpdateRows, persistSoon, getNodes, architectureMode, activeArchitectureAbstraction, reviewMode]
+    [rows, reactflowOnNodesChange, onUpdateRows, persistSoon, getNodes, architectureMode, activeArchitectureAbstraction, reviewMode, allowLayoutChanges]
   );
   
 
@@ -3463,7 +3490,7 @@ useEffect(() => {
     if (!posRef.current.has(note.id)) posRef.current.set(note.id, note.position);
   });
   const restoredNodes = architectureMode
-    ? buildArchitectureLayout(generatedNodes, { colorSystemElements, systemElementColorOverrides, preservePositions: true }).groupedNodes
+    ? buildArchitectureLayout(generatedNodes, { functionalPresentation, colorSystemElements, systemElementColorOverrides, preservePositions: true }).groupedNodes
     : generatedNodes;
   const nextNodes = [...restoredNodes, ...noteNodes];
 
@@ -3477,7 +3504,7 @@ useEffect(() => {
     structureRef.current = sig;
   }
   return () => { cancelled = true; };
-}, [rows, posLoaded, persistSoon, nodes, setNodes, setEdges, architectureMode, canvasNotes, colorSystemElements, systemElementColorOverrides]);
+}, [functionalPresentation, rows, posLoaded, persistSoon, nodes, setNodes, setEdges, architectureMode, canvasNotes, colorSystemElements, systemElementColorOverrides]);
 
 
   // Sync labels/details without moving nodes
@@ -4196,7 +4223,7 @@ useEffect(() => {
           onlyRenderVisibleElements={cullCsuCanvas}
           onMoveStart={handleViewportMoveStart}
           onMoveEnd={handleViewportMoveEnd}
-          nodes={initialLayoutPending ? [] : viewNodes}
+          nodes={initialLayoutPending ? [] : renderNodes}
           edges={initialLayoutPending ? [] : viewEdges}
           onInit={() => {
             setTimeout(() => {
@@ -4265,7 +4292,7 @@ useEffect(() => {
             });
           }}
           onSelectionChange={handleSelectionChange}
-          nodesDraggable={!reviewMode}
+          nodesDraggable={!reviewMode || allowLayoutChanges}
           nodesConnectable={!reviewMode}
           edgesUpdatable={!reviewMode}
           connectionMode={ConnectionMode.Loose}

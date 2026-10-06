@@ -1,6 +1,6 @@
 import { FUNCTIONAL_RECOVERY_POLICY, FUNCTIONAL_OUTPUT_TOKENS, FUNCTIONAL_MAX_OUTPUT_TOKENS } from './functionalAnalysisPolicy';
 import { digestText } from './codeSourceAcquisition';
-export const ANALYSIS_VERSION = 'source-equivalence-v4-call-scope';
+export const ANALYSIS_VERSION = 'source-equivalence-v5-domain-neutral';
 export function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
   if (value && typeof value === 'object') return `{${Object.keys(value).filter(k => value[k] !== undefined).sort().map(k => `${JSON.stringify(k)}:${stableJson(value[k])}`).join(',')}}`;
@@ -40,9 +40,3 @@ export function createRunGuard(readSettings) {
   };
 }
 export function runFingerprint(input) { return digestText(stableJson({ version: ANALYSIS_VERSION, ...input })); }
-export const SOURCE_INDEX_BUDGET = 128 * 1024 * 1024;
-export const ROW_HISTORY_BUDGET = 32 * 1024 * 1024;
-export function serializedBytes(value) { return new TextEncoder().encode(JSON.stringify(value)).length; }
-export function assertStorageBudget(bytes, limit, label = 'Source evidence') {
-  if (bytes > limit) { const error = new Error(`${label} storage budget exceeded. Export/clean up storage before retrying; previous results were preserved.`); error.code = 'SOURCE_STORAGE_FAILED'; throw error; }
-}

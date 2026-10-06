@@ -1,3 +1,4 @@
+import { summarizeCodeAnalysisCoverage } from '../code-architecture-context/codeAnalysisCoverage';
 // Portable provenance, separate from editable labels and descriptions.
 export function architectureEvidenceColumns(row) {
   const e = row.relationshipEvidence || {};
@@ -8,6 +9,8 @@ export function architectureEvidenceColumns(row) {
     'Run Fingerprint': row.lineage?.runFingerprint || '',
     'Evidence Status': e.supported ? 'Source syntax' : 'Unverified proposal or legacy row',
     'Evidence Version': e.version || '',
+    'Extraction Method': e.extractionMethod || (e.supported ? 'source-syntax' : ''),
+    'Evidence Limitation': e.limitation || '',
     'Relationship Kind': e.kind || '',
     'Canonical From': e.from || '',
     'Canonical To': e.to || '',
@@ -24,22 +27,29 @@ export function architectureCoverageSheets(records = []) {
   const runs = [], files = [], relationships = [], proposals = [];
   for (const run of records) {
     const ledgers = Object.values(run.relationshipLedger || {});
+    const coverage = summarizeCodeAnalysisCoverage(run.relationshipLedger, run.inputManifest);
     runs.push({
       'Run Fingerprint': run.fingerprint || '', 'Comparison Fingerprint': run.comparisonFingerprint || '',
       'Analysis Version': run.analysisVersion || 'source-equivalence-v1',
       'Source Type': run.source?.sourceType || '', 'Snapshot': run.source?.snapshotId || '',
       'Status': run.status || '', 'Published At': run.publishedAt || '',
+      'Files With Syntax Inventory': coverage.syntaxFiles,
+      'Files With Model Extraction Only': coverage.modelOnlyFiles,
+      'Model Files Without Published Relationships': coverage.emptyModelFiles,
+      'Files Without Coverage Record': coverage.unrecordedFiles,
       'Requested Settings': JSON.stringify(run.generationSettings || {}),
       'Effective Settings': JSON.stringify(run.effectiveSettings || {}),
       'Parse Errors': ledgers.reduce((n, l) => n + (l.parseErrors || []).length, 0),
       'Unresolved Call Targets': ledgers.reduce((n, l) => n + (l.unresolvedTargets || 0), 0),
       'Model-only Proposals': ledgers.reduce((n, l) => n + (l.modelOnly || 0), 0),
-      'Published Calls': ledgers.every(l => l.decompositionScopeVersion) ? ledgers.reduce((n,l) => n + l.publishedCalls, 0) : '',
+      'Published Calls': ledgers.length && ledgers.every(l => l.decompositionScopeVersion && l.supported) ? ledgers.reduce((n,l) => n + l.publishedCalls, 0) : '',
+      'Published Syntax Calls': ledgers.filter(l => l.supported).reduce((n,l) => n + (l.publishedCalls || 0), 0),
+      'Published Model Relationships': ledgers.filter(l => !l.supported).reduce((n,l) => n + (l.modelOnly || 0), 0),
       'Inventory Relationships Outside Call View': ledgers.every(l => l.decompositionScopeVersion) ? ledgers.reduce((n,l) => n + l.excludedRelationships, 0) : '',
       'Proposals Held for Review': ledgers.reduce((n,l) => n + (l.reviewProposals || []).length, 0),
       'Model-only Proposals Before Deduplication': ledgers.reduce((n, l) => n + (l.modelOnlyBeforeDedup ?? l.modelOnly ?? 0), 0),
       'Proposal Count Basis': ledgers.length && ledgers.every(l => l.proposalCountBasis === 'published-after-deduplication') ? 'Published after deduplication' : 'Legacy/pre-deduplication counts may be included',
-      'Coverage Meaning': 'Status describes selected-file processing, not a complete semantic call graph. See per-file limitations.',
+      'Coverage Meaning': `Status describes selected-file processing, not a complete semantic call graph. ${coverage.limitation}`,
     });
     const inputs = new Map((run.inputManifest || []).map(file => [file.path, file]));
     const selection = new Map((run.selectionManifest || []).map(file => [file.path, file]));
@@ -52,8 +62,9 @@ export function architectureCoverageSheets(records = []) {
         Decoding: typeof input.decoding === 'object' ? JSON.stringify(input.decoding) : input.decoding || '',
         'Inventory Version': ledger?.version || '', 'Syntax Inventory Available': ledger?.supported ? 'Yes' : 'No',
         Definitions: ledger?.definitionCount ?? '', 'Call Expressions': ledger?.callExpressionCount ?? '',
-        'Source Relationships': ledger?.relationships?.length ?? '',
-        'Published Calls': ledger?.publishedCalls ?? '',
+        'Source Relationships': ledger?.supported ? ledger.relationships?.length ?? '' : '',
+        'Published Calls': ledger?.supported ? ledger.publishedCalls ?? '' : '',
+        'Extraction Method': !ledger ? 'No coverage record' : ledger.supported ? 'Source syntax' : 'Model extraction; completeness unverified',
         'Inventory Relationships Outside Call View': ledger?.excludedRelationships ?? '',
         'Proposals Held for Review': ledger?.reviewProposals?.length ?? '',
         'Unresolved Call Targets': ledger?.unresolvedTargets ?? '', 'Model-only Proposals': ledger?.modelOnly ?? '',

@@ -94,7 +94,8 @@ function splitPosition(content, start, end) {
   const mid = start + Math.floor((end - start) / 2);
   // Prefer a nearby line boundary without allowing a very long line to prevent subdivision.
   const next = content.indexOf('\n', mid);
-  return next >= mid && next < end - (end - start) / 4 ? next + 1 : mid;
+  if (next >= mid && next < end - (end - start) / 4) return next + 1;
+  return /[\uD800-\uDBFF]/.test(content[mid-1]) && /[\uDC00-\uDFFF]/.test(content[mid]) ? mid + 1 : mid;
 }
 
 // A shared three-request budget cannot complete nested splits. Each section now

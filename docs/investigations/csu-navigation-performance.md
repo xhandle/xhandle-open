@@ -1,33 +1,17 @@
-# Large CSU canvas navigation
+# Large CSU navigation performance
 
-## Findings
+## Finding and change
 
-The 600-function / 1,200-edge development-browser fixture reproduced the reported delay. The original canvas mounted about 29,000 DOM elements regardless of viewport. Each function mounts 32 connection handles. CPU profiling also identified repeated DOM searches in React Flow's edge-label store selector and unnecessary selection-state updates.
+The CSU function renderer mounted 32 React Flow Handles per function. Each Handle installs two store subscriptions, evaluated on viewport updates. Off-screen culling does not help a fitted overview where all functions are visible. Existing motion styling and edge-label optimizations did not remove these idle subscribers.
 
-## Changes
+Large detailed architecture canvases now mount only handles referenced by the displayed graph while idle. Hovering, focusing or selecting a function restores its complete port set. Connected endpoints remain mounted, including parallel edges and self-loops. Nodes with unspecified handles keep their defaults. React Flow remeasures ports only when the port set changes; initial measurement remains its responsibility. Smaller diagrams retain their full ports.
 
-- Keep the selection callback stable and retain existing state when selected IDs have not changed.
-- Cache the orthogonal edge-label portal target per canvas; subscribe to canvas-root changes rather than searching the DOM on every store update for every edge. The cache uses weak references to canvas roots.
-- Memoize function and orthogonal edge components.
-- Enable React Flow viewport culling for CSU diagrams with at least 250 rendered nodes or 500 edges. Full node/edge state remains available for fitting, searching, exports, traceability, and persistence. Small and compact diagrams retain their existing rendering path.
-- Keep full rendering if a diagram has custom orthogonal routes: endpoint-only edge culling would incorrectly omit route segments outside the endpoint bounds.
-- Promote the large canvas viewport to a compositing layer. During viewport movement, temporarily omit edge-label painting, shadows, and filters. Geometry remains visible; decoration returns after navigation settles. This uses DOM attributes, not React state updates on every frame, and clears its timer on scope changes/unmount.
+No analysis rows, grouping, positions, routing settings, source data or persistence schemas change. Existing viewport culling and manual-route handling remain in place.
 
-## Validation
+## Verification
 
-`csu-navigation-benchmark.cjs` uses an isolated Chromium profile with API calls blocked. It checks pan and zoom in a populated region, zero repeated label-container queries, decoration restoration, all 600 functions and 1,200 edges returning after fit, compact-view behavior, and runtime errors.
-
-Final development-browser measurements (milliseconds between animation frames):
-
-| View / gesture | Median | 95th percentile |
-| --- | ---: | ---: |
-| Entire 600-function overview, pan | 46 | 63 |
-| Entire overview, pinch zoom | 132 | 613 |
-| Populated detail region, pan | 17 | 18 |
-| Populated detail region, pinch zoom | 17 | 18 |
-
-The initial reproduction measured approximately 348–464 ms median frame intervals, but used longer one-direction pan sequences. Treat those as evidence of the original slowdown, not a controlled speedup ratio. The retained benchmark uses oscillating pan and a populated detail region to avoid measuring an empty canvas. Dense overview zoom still has slow frames; this does not establish a universal frame-rate guarantee. Safari and the user's exact project were not benchmarked.
-
-The existing edge-interaction browser fixture passed, including routing edits, node movement, bundles, reopening, and read-only behavior. Its compact-view assertion now waits for the asynchronous view transition rather than assuming synchronous React rendering.
-
-All 60 targeted unit tests passed; targeted ESLint reported no errors and 11 existing warnings. The production build passed with existing warnings. `git diff --check` passed.
+- Four targeted Jest suites / nine tests passed, including connected-port preservation, fallback behavior, existing CSU routing/ordering and the Functional inspector.
+- Production build passed with existing warnings; ESLint reported zero errors and 11 existing warnings. Diff whitespace check passed.
+- `scripts/diagnostics/verify-csu-navigation.cjs` uses a fresh Chromium context and 800 synthetic relationships / 801 functions. It checks complete hover ports, unchanged route geometry within subpixel measurement tolerance, two-axis pan, pinch zoom and decoration restoration. No customer data or model calls are used.
+- Same fixture, development build: baseline (`BASELINE=1`, pruning disabled in the browser-served bundle) mounted 26,048 handles at fit; optimized mounted 2,016, about 92% fewer. The pan sample took 2,905 ms baseline versus 1,713 ms optimized; 95th-percentile animation-frame interval fell from 50 ms to 16.8 ms. These are local measurements, not a cross-device performance guarantee.
+- Test browser server was started separately on port 3001 because port 3000 was unavailable. Safari and customer-scale datasets were not tested. Extremely large graphs still incur visibility scans and browser rendering costs.

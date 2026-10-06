@@ -1,4 +1,6 @@
+import { buildFunctionalModelRows, functionalModelIsReady } from '../code-architecture-context/functionalModel';
 import { codeSourceProvenance } from '../code-architecture-context/codeSourceIdentity';
+import { maskPython } from '../code-architecture-context/codeRelationshipEvidence';
 import {
   CODE_ARCHITECTURE_HAZARD_REVIEW_STATUSES,
   CODE_ARCHITECTURE_HAZARD_SOURCE_TYPE,
@@ -46,7 +48,7 @@ function normalizeFunctionIdentity(value) {
 }
 
 function functionIdentityKey(row = {}, side = "from") {
-    if ([1, 2].includes(row.classificationPolicyVersion)) return JSON.stringify([row.relationshipEvidence?.[`${side}File`] || row[`${side}File`], row.relationshipEvidence?.[side] || row[side]]);
+    if ([1, 2, 3].includes(row.classificationPolicyVersion)) return JSON.stringify([row.relationshipEvidence?.[`${side}File`] || row[`${side}File`], row.relationshipEvidence?.[side] || row[side]]);
   const functionName = side === "to"
     ? (row.to ?? row.toFunction ?? "")
     : (row.from ?? row.fromFunction ?? "");
@@ -96,14 +98,14 @@ const SOURCE_TRACE_COLUMNS = [
   "Evidence Source Type", "Evidence Snapshot ID", "Evidence Version",
   "Local Source ID", "Local Folder Name", "Evidence Repository ID",
   "Architecture Lineage Status", "Architecture Run Fingerprint", "Architecture Scope",
-  "Classification Policy Version",
+  "Classification Policy Version", "Functional Source Trace IDs", "Functional Source Row Refs", "Functional Interaction Kind",
 ];
 function sourceTraceFields(trace = {}) {
   return Object.fromEntries(SOURCE_TRACE_COLUMNS.map((name, index) => [name, [
     trace.sourceType, trace.snapshotId, trace.evidenceVersion,
     trace.sourceId, trace.folderName, trace.repoId,
     trace.lineage?.status, trace.lineage?.runFingerprint, trace.lineage?.scope,
-    trace.classificationPolicyVersion,
+    trace.classificationPolicyVersion, normalizeText(trace.functionalSourceTraceIds), normalizeText(trace.functionalSourceRowRefs), trace.functionalInteractionKind,
   ][index] || ""]));
 }
 function readSourceTrace(get) {
@@ -114,6 +116,9 @@ function readSourceTrace(get) {
       evidenceVersion: Number(get("Evidence Version")) || undefined,
       sourceId: get("Local Source ID"), folderName: get("Local Folder Name"),
     }),
+    functionalSourceTraceIds: splitList(get("Functional Source Trace IDs")),
+    functionalSourceRowRefs: splitList(get("Functional Source Row Refs")),
+    functionalInteractionKind: get("Functional Interaction Kind"),
     repoId: get("Evidence Repository ID"),
     ...(status ? { lineage: { version: 1, status, runFingerprint: get("Architecture Run Fingerprint"), scope: get("Architecture Scope") } } : {}),
     ...(get("Classification Policy Version") ? { classificationPolicyVersion: Number(get("Classification Policy Version")) } : {}),
@@ -222,6 +227,12 @@ export function computeArchitectureSnapshotHash(cbaRows = []) {
     hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
   }
   return `cba-${compactRows.length}-${Math.abs(hash).toString(36)}`;
+}
+
+function computeFunctionalModelSnapshotHash(rows) {
+  return computeArchitectureSnapshotHash(rows.map(row => ({ ...row, architecture: {
+    ...row.architecture, functionalDescriptions: [row.fromDetails, row.controlActionDetails, row.toDetails, row.functionalModel?.kind],
+  } })));
 }
 
 function sourceSymbolsFromRow(row = {}) {
@@ -341,6 +352,9 @@ export function buildTraceabilityForArchitectureRow(row = {}, index = 0, repoMet
     toNodeId: row?.toNodeId || "",
     architectureRowRef: rowRef,
     architectureElementId: architectureElementIdForRow(row, index),
+    functionalSourceTraceIds: row.functionalModel?.sourceTraceIds || [],
+    functionalSourceRowRefs: row.functionalModel?.sourceRowRefs || [],
+    functionalInteractionKind: row.functionalModel?.kind || "",
     functionFrom: row?.from || "",
     controlAction: normalizePrimitiveCallActionText(row?.action || "", row?.to || ""),
     functionTo: row?.to || "",
@@ -557,6 +571,7 @@ export function codeArchitectureRowsToHazardTableRows(cbaRows = [], repoMeta = {
       lineage: row.lineage || null,
       classificationPolicyVersion: row.classificationPolicyVersion,
       canonicalRelationshipId: row.canonicalRelationshipId,
+      relationshipEvidence: row.relationshipEvidence || null,
       id: architectureElementIdForRow(row, index),
       traceId: row.traceId || "",
       fromNodeId: row.fromNodeId || "",
@@ -587,6 +602,7 @@ export function codeArchitectureRowsToHazardTableRows(cbaRows = [], repoMeta = {
       hazardAnalysisEligibilitySource: row?.hazardAnalysisEligibilitySource || "",
       traceability,
       affectedCodeRefs: traceability.affectedCodeRefs || [],
+      functionalModel: row.functionalModel || null,
       originalArchitectureRow: row,
     };
   });
@@ -594,6 +610,9 @@ export function codeArchitectureRowsToHazardTableRows(cbaRows = [], repoMeta = {
 
 export function buildCodeArchitectureTraceabilityMap(cbaRows = []) {
   return codeArchitectureRowsToHazardTableRows(cbaRows).map((row) => ({
+    functionalSourceTraceIds: row.traceability?.functionalSourceTraceIds || [],
+    functionalSourceRowRefs: row.traceability?.functionalSourceRowRefs || [],
+    functionalInteractionKind: row.traceability?.functionalInteractionKind || "",
     traceId: row.traceId,
     fromNodeId: row.fromNodeId,
     edgeId: row.edgeId,
@@ -623,9 +642,11 @@ export function buildCodeArchitectureHazardInput({
   operationalContexts = [],
   selectedOperationalContextId = "all",
 } = {}) {
-  const normalizedArchitectureRows = ensureCodeArchitectureTraceIds(cbaRows);
+  const functionalRows = buildFunctionalModelRows(cbaRows);
+  const analysisRows = functionalRows.length ? functionalRows : cbaRows;
+  const normalizedArchitectureRows = ensureCodeArchitectureTraceIds(analysisRows);
   const eligibilitySummary = summarizeCodeArchitectureHazardEligibility(normalizedArchitectureRows);
-  const sourceTableRows = codeArchitectureRowsToHazardTableRows(cbaRows, repoMeta);
+  const sourceTableRows = codeArchitectureRowsToHazardTableRows(analysisRows, repoMeta);
   const configuredOperationalContexts = normalizeHazardOperationalContexts(operationalContexts);
   const effectiveOperationalContexts = getEffectiveHazardOperationalContexts(configuredOperationalContexts);
   const analysisOperationalContexts = selectedOperationalContextId === "all"
@@ -684,7 +705,7 @@ export function buildCodeArchitectureHazardInput({
       ...traceabilityToSheetCells(row.traceability || {}),
     ]),
   ];
-  const architectureSnapshotHash = computeArchitectureSnapshotHash(normalizedArchitectureRows);
+  const architectureSnapshotHash = computeArchitectureSnapshotHash(ensureCodeArchitectureTraceIds(cbaRows));
   const explicitOperationalContext = buildHazardOperationalContextPrompt(contextsToAnalyze);
   const repositoryOperationalContext = String(repoMeta.operationalContext || "").trim();
   return {
@@ -694,8 +715,10 @@ export function buildCodeArchitectureHazardInput({
     sourceTableRows,
     sheets: { "Functional Decomposition": functionalDecompositionSheet },
     architectureSnapshotHash,
+    analysisAbstraction: functionalRows.length ? "functional" : "detailed",
+    functionalModelSnapshotHash: functionalRows.length ? computeFunctionalModelSnapshotHash(functionalRows) : "",
     architectureRowsSnapshot: sourceTableRows,
-    traceabilityMap: buildCodeArchitectureTraceabilityMap(cbaRows),
+    traceabilityMap: buildCodeArchitectureTraceabilityMap(analysisRows),
     eligibilitySummary,
     excludedArchitectureRows: normalizedArchitectureRows.filter((row) => row.hazardAnalysisEligibility === "Exclude"),
     needsReviewArchitectureRows: normalizedArchitectureRows.filter((row) => row.hazardAnalysisEligibility === "Needs Review"),
@@ -1111,8 +1134,7 @@ function repoWideUsageAuditForRow(sourceRow = {}) {
 }
 
 function hasNavigationFreshnessEvidence(text = "") {
-  return hasAny(text, [/\bnav_utils\.py\b/i, /\bcompare_nav_conditions\b/i, /\bget_nav_token_span\b/i, /\bremove_nav_text\b/i]) ||
-    (/\bnavigation conditions?\b/i.test(text) && hasAny(text, [/\bfresh(?:ness)?\b/i, /\bstale\b/i, /\btimestamp\b/i, /\broute\b/i]));
+  return /\b(navigation|route)\b/i.test(text) && /\b(freshness|fresh|stale|timestamp|synchronization)\b/i.test(text);
 }
 
 function hasExplicitRelationshipEvidence(evidenceText = "") {
@@ -1124,44 +1146,33 @@ function hasExplicitRelationshipEvidence(evidenceText = "") {
 }
 
 function hasTokenClampEvidence(text = "") {
-  return hasAny(text, [
-    /\bextract_traj_tokens\b/i,
-    /\btrajectory token/i,
-    /\btraj(?:ectory)?[_\s-]?tokens?\b/i,
-    /\btoken_values\b/i,
-  ]) && /\bclamp\b/i.test(text);
+  return /\btokens?\b/i.test(String(text).replace(/_/g, ' ')) && /\bclamp\b/i.test(text);
 }
 
 function hasTokenClampEndpointEvidence(sourceRow = {}, rowObject = {}) {
-  const fromSymbol = normalizeCodeSymbol(sourceRow.fromFunction || sourceRow.from || rowObject["Function (From)"]);
-  const toSymbol = normalizeCodeSymbol(sourceRow.toFunction || sourceRow.to || rowObject["Function (To)"]);
-  const rowRef = normalizeCodeSymbol(sourceRow.rowRef || rowObject["Architecture Row Ref"]);
-  const isExtractTrajAudit = rowRef.includes("sourceauditextracttrajtokens");
-  return (fromSymbol === "extract_traj_tokens" || isExtractTrajAudit) &&
-    (toSymbol === "torchclamp" || toSymbol === "clamp" || isExtractTrajAudit);
+  const target = String(sourceRow.toFunction || sourceRow.to || rowObject["Function (To)"] || "");
+  // A neighboring function or a legacy audit ID cannot establish this endpoint.
+  if (!/(?:^|[.:])clamp$/.test(target)) return false;
+  const e = sourceRow.relationshipEvidence;
+  if (e?.supported && e.to === target && ['direct_call', 'imported_call', 'call_expression'].includes(e.kind)) return true;
+  const functions = matchingFunctionsByName(sourceFunctionsForAudit(sourceRow), sourceRow.fromFunction || sourceRow.from);
+  const files = sourceFilesFromRow(sourceRow);
+  const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return functions.some(fn => {
+    if (!/\.py$/i.test(fn.filePath || fn.path || '')) return false;
+    const file = files.find(item => (item.filePath || item.path) === (fn.filePath || fn.path));
+    const body = findFunctionBodyInContent(file?.content || fn.content || '', fn.functionName);
+    return new RegExp(`(?:^|[^\\w.])${escaped}\\s*\\(`).test(maskPython(body));
+  });
 }
 
 function hasActionBoundsEvidence(text = "") {
-  return hasAny(text, [
-    /\bis_within_bounds\b/i,
-    /\baction_space(?:\.py|\/)/i,
-    /\bunicycle_accel_curvature\.py\b/i,
-    /\baction_to_traj\b/i,
-    /\btraj_to_action\b/i,
-  ]) && hasAny(text, [
-    /\baction\b/i,
-    /\bbounds?\b/i,
-    /\bcurvature\b/i,
-    /\baccel(?:eration)?\b/i,
-    /\bsampled actions?\b/i,
-  ]);
+  const words = String(text).replace(/_/g, ' ');
+  return /\b(action|command|output)\b/i.test(words) && /\b(bounds?|limits?|clamp)\b/i.test(words);
 }
 
 function hasFrameTransformEvidence(text = "") {
   return hasAny(text, [
-    /\brot_?3d_?to_?2d\b/i,
-    /\brot_?2d_?to_?3d\b/i,
-    /\bget_yaw_rotation_matrices\b/i,
     /\brotation\b/i,
     /\byaw\b/i,
     /\blocal frame\b/i,
@@ -1249,16 +1260,8 @@ function isGenericHazardText(hazardText = "") {
 
 function rewriteHazardWithEvidence(hazardText = "", sourceRow = {}, evidenceText = "", options = {}) {
   const text = normalizeText(hazardText);
-  const context = `${text} ${evidenceText}`;
-  if (options.tokenClampEndpoint && hasAny(context, [/\btokens?\b/i, /\bindex\b/i, /\bindices\b/i]) && /\bclamp\b/i.test(evidenceText)) {
-    return "Invalid trajectory token values are clamped into the accepted range, which may mask degraded model output unless the warning is surfaced through telemetry or converted into rejection logic.";
-  }
-  if (hasAny(context, [/\baction_to_traj\b/i, /\btrajectory\b/i, /\bcurvature\b/i, /\baccel(?:eration)?\b/i]) && /\bis_within_bounds\b/i.test(evidenceText)) {
-    return "Sampled actions may be converted into predicted trajectories without evidence that available acceleration and curvature bounds are enforced on the sampled output path.";
-  }
-  if (hasAny(context, [/\bnav_text\b/i, /\bcompare_nav_conditions\b/i, /\broute\b/i]) && !hasAny(evidenceText, [/\bfresh(?:ness)?\b/i, /\bstale\b/i, /\btimestamp\b/i])) {
-    return "Navigation-conditioned inference accepts route text for trajectory sampling without evidence that the route context is fresh, synchronized, or semantically consistent with the current clip.";
-  }
+  // Preserve generated/analyst hazard wording. A matching filename or source
+  // token does not justify replacing it with a canned domain-specific finding.
   if (isGenericHazardText(text) && sourceRow?.fromFunction) {
     return `${text} Evidence review found this row is better treated as a ${safetyConcernTypeForHazard(text, evidenceText).toLowerCase()} concern unless the architecture context shows a direct safety-control path.`;
   }
@@ -1269,12 +1272,12 @@ function overAppliedTokenClampHazardText(rowObject = {}, sourceRow = {}) {
   const from = normalizeText(rowObject["Function (From)"] || sourceRow.fromFunction || sourceRow.from || "the source function");
   const action = normalizeText(rowObject["Control Action"] || sourceRow.controlAction || "the generated control action");
   const to = normalizeText(rowObject["Function (To)"] || sourceRow.toFunction || sourceRow.to || "the target function");
-  return `Needs review: the ${from} -> ${to} row describes "${action}", but trajectory-token clamping evidence is only directly tied to the extract_traj_tokens -> torch.clamp endpoint.`;
+  return `Needs review: the ${from} -> ${to} row describes "${action}", but token-clamping evidence is not tied to a verified clamp call on this row.`;
 }
 
 function recommendedVerificationFor(type = "", evidenceText = "", options = {}) {
   if (options.tokenClampEndpoint) {
-    return "Add token contract tests for missing, malformed, out-of-range, clamped, and wrong-length trajectory token sequences.";
+    return "Add token contract tests for missing, malformed, out-of-range, clamped, and wrong-length token sequences.";
   }
   if (type === "Safety-critical" && hasNavigationFreshnessEvidence(evidenceText)) {
     return "Add scenario tests for stale, missing, contradictory, and direction-swapped navigation text before trajectory sampling.";
@@ -1296,7 +1299,7 @@ function recommendedVerificationFor(type = "", evidenceText = "", options = {}) 
 
 function recommendedMitigationFor(type = "", evidenceText = "", options = {}) {
   if (options.tokenClampEndpoint) {
-    return "Reject or quarantine invalid trajectory token sequences instead of silently accepting values that require clamping or shape repair.";
+    return "Define the token validity contract and verify that clamping or shape repair cannot conceal invalid inputs; assess rejection, reporting, or recovery against that contract.";
   }
   if (type === "Safety-critical" && hasNavigationFreshnessEvidence(evidenceText)) {
     return "Validate navigation freshness, route-token presence, timestamp alignment, and semantic consistency before conditioned inference.";
@@ -1319,7 +1322,37 @@ function recommendedMitigationFor(type = "", evidenceText = "", options = {}) {
   return "Document the assumption and add the narrowest runtime guard or review gate needed to prevent unsupported propagation.";
 }
 
+function evaluateDomainNeutralHazardEvidence(rowObject, sourceRow) {
+  const e = sourceRow.relationshipEvidence || {};
+  const assessment = normalizeText(rowObject['Safety Assessment'] || rowObject['Proposed Safety Assessment']);
+  const significant = normalizeText(rowObject['Safety Significant']);
+  const proposed = ['Safety', 'Mission/Reliability', 'Needs Review'].includes(assessment) ? assessment
+    : significant === 'Yes' ? 'Safety' : significant === 'No' ? 'Mission/Reliability' : 'Needs Review';
+  const limitation = e.supported
+    ? 'Call syntax is evidenced; runtime reachability, operational consequences and hazard validity require assessment in the project context.'
+    : 'Model-extracted relationship: call completeness and target resolution are unverified. Review source evidence and project context.';
+  // Names and math/library vocabulary cannot establish severity, mitigation,
+  // safety significance, or an unsafe control action in an arbitrary domain.
+  return {
+    hazardText: normalizeText(rowObject.Hazards || rowObject.Hazard || rowObject.hazard || rowObject.Effect),
+    evidenceClassification: e.supported ? 'Plausible but not evidenced' : 'Generic/low confidence',
+    proposedSafetyAssessment: proposed,
+    proposedSafetyAssessmentRationale: `Preserves the supplied assessment when present; no safety classification is inferred from source names. ${limitation}`,
+    safetyConcernType: proposed === 'Safety' ? 'Safety-critical' : proposed === 'Mission/Reliability' ? 'Mission/reliability' : 'Needs Review',
+    confidence: e.supported ? 'Medium' : 'Low',
+    safetySignificantOverride: '', safetySignificanceRationaleOverride: '',
+    relationshipAudit: e.supported ? `Source-syntax evidence: ${e.kind}; target resolution: ${e.targetResolution || 'unspecified'}.` : limitation,
+    usageAudit: 'Execution reachability has not been established by this assessment.',
+    codeEvidence: e.supported ? `Call syntax at ${e.fromFile}:${(e.lines || []).join(', ')}. This supports the relationship, not the hazard conclusion.` : limitation,
+    mitigationEvidence: 'No mitigation is inferred from a filename, function name, or nearby code. Verify any claimed control on this call path.',
+    assumptions: limitation,
+    recommendedVerification: 'Verify the stated constraint against this call and its operational context, including failure and degraded conditions.',
+    recommendedMitigation: 'Assess the stated hazard and existing controls before selecting a mitigation; trace any change to a justified requirement.',
+  };
+}
+
 function evaluateHazardEvidence({ rowObject = {}, sourceRow = {} } = {}) {
+  if (sourceRow.classificationPolicyVersion === 3) return evaluateDomainNeutralHazardEvidence(rowObject, sourceRow);
   const hazardText = normalizeText(rowObject.Hazards || rowObject.Hazard || rowObject.hazard || rowObject.Effect || "");
   const ucaText = normalizeText(rowObject["Unsafe Control Actions"] || rowObject["Functional Degradation/Loss"] || rowObject.Malfunction || "");
   const requirementText = normalizeText(rowObject["Safety Requirements/Constraints"] || rowObject["Safety Requirement"] || rowObject.safetyRequirement || "");
@@ -1361,7 +1394,7 @@ function evaluateHazardEvidence({ rowObject = {}, sourceRow = {} } = {}) {
   if (overAppliedTokenClampTheme) {
     evidenceClassification = "Generic/low confidence";
     confidence = "Low";
-    assumptions.push("Trajectory-token clamping evidence was present in nearby source context but this row is not the extract_traj_tokens -> torch.clamp endpoint.");
+    assumptions.push("Token-clamping evidence was present in nearby source context but this row is not a verified clamp-call endpoint.");
   }
 
   if (safeguards.length) {
@@ -1572,6 +1605,8 @@ export function normalizeCodeArchitectureHazardRun(raw = {}, context = {}) {
     sourceRunId: raw.sourceRunId || raw.id || makeCodeArchitectureHazardId("cba-hazard-run"),
     architectureModelId: raw.architectureModelId || `${repoId || "repo"}:${raw.architectureSnapshotHash || context.architectureSnapshotHash || "architecture"}`,
     architectureSnapshotHash: raw.architectureSnapshotHash || context.architectureSnapshotHash || "",
+    analysisAbstraction: raw.analysisAbstraction || "detailed",
+    functionalModelSnapshotHash: raw.functionalModelSnapshotHash || "",
     architectureRowsSnapshot: Array.isArray(raw.architectureRowsSnapshot) ? raw.architectureRowsSnapshot : [],
     traceabilityMap: Array.isArray(raw.traceabilityMap) ? raw.traceabilityMap : [],
     hazardEligibilitySummary: raw.hazardEligibilitySummary || context.hazardEligibilitySummary || null,
@@ -1605,6 +1640,7 @@ export function isCodeArchitectureHazardAnalysisStale({
   selectedOperationalContextId,
 }) {
   if (!run) return false;
+  if (run.analysisAbstraction === "functional" && (!functionalModelIsReady(cbaRows) || run.functionalModelSnapshotHash !== computeFunctionalModelSnapshotHash(buildFunctionalModelRows(cbaRows)))) return true;
   if (
     run.architectureSnapshotHash
     && run.architectureSnapshotHash !== computeArchitectureSnapshotHash(cbaRows || [])

@@ -1,6 +1,6 @@
 import { webcrypto } from 'crypto';
 import { TextEncoder } from 'util';
-import { registerLocalFolder, connectLocalFolder, scanLocalFolder, createLocalSourceProvider, normalizeLocalPath, LOCAL_FILE_LIMIT } from './localCodeSource';
+import { registerLocalFolder, connectLocalFolder, scanLocalFolder, createLocalSourceProvider, normalizeLocalPath } from './localCodeSource';
 import { codeSourceIndexKey, localCodeSourceDescriptor } from './codeSourceIdentity';
 
 jest.mock('idb', () => ({ openDB: jest.fn(async () => ({ get: async () => null, put: async () => {}, close() {} })) }));
@@ -16,13 +16,13 @@ it('normalizes Windows separators and rejects non-relative and traversal paths',
   expect(normalizeLocalPath('src\\main.js')).toBe('src/main.js');
   for (const path of ['/tmp/main.js', 'C:\\code\\main.js', '../key', 'a/../key', 'a//b']) expect(() => normalizeLocalPath(path)).toThrow();
 });
-it('excludes secrets, binaries, generated dependencies, and oversized sources before reading', async () => {
-  const files = [file('src/main.js'), file('.env'), file('.env.local'), file('key.pem'), file('node_modules/x/a.js'), file('build/a.js'), file('image.png'), file('huge.js', '', LOCAL_FILE_LIMIT + 1)];
+it('excludes secrets, binaries and generated dependencies before reading', async () => {
+  const files = [file('src/main.js'), file('.env'), file('.env.local'), file('key.pem'), file('node_modules/x/a.js'), file('build/a.js'), file('image.png')];
   files.slice(1).forEach(entry => { entry.text = jest.fn(() => { throw new Error('Must not read excluded content'); }); });
   const source = register(files);
   const scan = await scanLocalFolder(source);
   expect(scan.entries.map(entry => entry.path)).toEqual(['src/main.js']);
-  expect(scan.skipped).toHaveLength(7);
+  expect(scan.skipped).toHaveLength(6);
   await createLocalSourceProvider(source);
   files.slice(1).forEach(entry => expect(entry.text).not.toHaveBeenCalled());
 });
@@ -64,11 +64,20 @@ it('supports directory handles, skips binary text and honors cancellation', asyn
 it('requires reconnect for descriptors without a browser session', async () => {
   await expect(scanLocalFolder({ sourceId: 'unavailable' })).rejects.toThrow('Reconnect');
 });
-it('rejects oversized projects before reading their contents', async () => {
-  const entries = Array.from({ length: 160 }, (_, i) => file(`file${i}.js`, '', LOCAL_FILE_LIMIT));
-  entries.forEach(entry => { entry.text = jest.fn(); });
-  await expect(scanLocalFolder(register(entries))).rejects.toThrow('50 MiB');
-  entries.forEach(entry => expect(entry.text).not.toHaveBeenCalled());
+it('scans beyond the former source byte and entry ceilings for both adapters', async () => {
+  const entries = Array.from({ length: 10020 }, (_, i) => file(`file${i}.js`, '', 6000));
+  entries.push(file('large.py', 'def last(): return call()\n', 700000));
+  const uploaded = await scanLocalFolder(register(entries));
+  const handle = {name:'native-large',async *entries(){for(const entry of entries)yield [entry.name,{kind:'file',getFile:async()=>entry}];}};
+  const native = await scanLocalFolder(registerLocalFolder({handle,sourceId:'native-large',rememberHandle:false}));
+  expect(native.entries.map(e=>e.path)).toEqual(uploaded.entries.map(e=>e.path));
+  expect(uploaded.entries).toHaveLength(10021);
+  expect(uploaded.bytes).toBeGreaterThan(50*1024*1024);
+});
+it('reads large Unicode local files without clipping end-of-file evidence', async () => {
+  const text='# café 车辆\n'.repeat(50000)+'def final_call(): return endpoint()\n';
+  const provider=await createLocalSourceProvider(register([file('large.py',text)]));
+  expect((await provider.readText({path:'large.py'})).content).toBe(text);
 });
 
 it('keeps a previously connected folder when reconnect validation fails', async () => {

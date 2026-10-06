@@ -27,6 +27,20 @@ function installIndexedDbMock(databases: Record<string, Record<string, any[]>> =
         },
         transaction: (storeName: string) => ({
           objectStore: () => ({
+            get: (key: string) => {
+              const req: any = {};
+              setTimeout(()=>{req.result=(dbStores[storeName] || []).find(row=>row.key===key);req.onsuccess?.();},0);
+              return req;
+            },
+            openCursor: () => {
+              const req: any = {}; let index=0;
+              const advance=()=>setTimeout(()=>{
+                const row=(dbStores[storeName] || [])[index++];
+                req.result=row ? {key:row.key,value:row,continue:advance} : null;
+                req.onsuccess?.();
+              },0);
+              advance();return req;
+            },
             getAll: () => {
               const getAllRequest: any = {};
               setTimeout(() => {
@@ -287,4 +301,18 @@ describe("migrateLegacyStorageToWorkspaceGraph", () => {
     expect(third.skipped).toBeUndefined();
     expect(upsertArtifacts).toHaveBeenCalledTimes(2);
   });
+});
+
+it('hydrates chunked source records and excludes storage chunks from workspace artifacts', async () => {
+ jest.clearAllMocks(); localStorage.clear();
+ const key='code:local:chunked:snapshot:main.js', part=`${key}:$part:fixture`;
+ const value={sourceType:'local',sourceId:'chunked',snapshotId:'snapshot',path:'main.js',content:'function run() {}'};
+ installIndexedDbMock({xhandle:{code_index:[
+  {key,value:{format:'xhandle-json-tree-v1',root:part}},
+  {key:part,value:JSON.stringify(['object',Object.entries(value).map(([name,value])=>[name,{value}])])},
+ ]}});
+ await migrateLegacyStorageToWorkspaceGraph();
+ const files=(upsertSourceFile as jest.Mock).mock.calls.map(call=>call[0]);
+ expect(files).toHaveLength(1);
+ expect(files[0].repoId).toBe('local:chunked');
 });

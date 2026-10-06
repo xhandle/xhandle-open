@@ -1,3 +1,5 @@
+import { isNonProductionCallPath } from '../code-architecture-context/functionalDecompositionScope';
+
 export const CODE_ARCHITECTURE_LIFECYCLE_PHASES = Object.freeze([
   "Runtime",
   "Initialization",
@@ -100,6 +102,22 @@ export function classifyCodeArchitectureHazardEligibility(row = {}) {
     hazardAnalysisEligibilityRationale: row.hazardAnalysisEligibilityRationale || "Stored legacy assessment (unverified provenance).",
     hazardAnalysisEligibilitySource: row.hazardAnalysisEligibilitySource || "legacy-stored",
   };
+  if (row.classificationPolicyVersion === 3) {
+    const e = row.relationshipEvidence || {};
+    const kind = e.supported ? e.kind : row.grounding?.relationshipType;
+    const path = e.supported ? e.fromFile : row.grounding?.currentFile || row.fromFile;
+    if (["structural_inheritance", "structural_member", "inheritance"].includes(kind)) return result("Static Structure", "Structural Relationship", "Exclude", "Structural relationship, not an executable call.");
+    if (isNonProductionCallPath(path)) return result("Test/Verification", "Function Call", "Exclude", "Call originates in a test/example source path; excluded from production screening.");
+    const evidencedCall = e.supported && ["direct_call", "imported_call", "call_expression"].includes(kind);
+    const modelCall = !e.supported && e.extractionMethod === 'model-only' &&
+      (["direct_call", "constructor_body_call", "imported_call", "call_expression"].includes(kind) || /^\s*(call|invoke)\b/i.test(row.action || ''));
+    if (!evidencedCall && !modelCall) return result("Needs Review", "Needs Review", "Needs Review", "Executable call evidence has not been established. Unsupported proposals require review.");
+    // Screen all production calls consistently. Domain vocabulary is not proof
+    // of relevance (or irrelevance); hazard generation uses the project context.
+    return result("Needs Review", "Function Call", "Include", evidencedCall
+      ? `Source-supported production call included for assessment independent of domain or symbol names. ${e.targetResolution === 'unresolved-runtime-target' ? 'Receiver/runtime target remains unresolved.' : e.targetResolution === 'import-reference' ? 'Import reference is evidenced; runtime dispatch is not proven.' : 'Lexical call syntax is evidenced; execution reachability is not proven.'} Lifecycle, hazards, severity and guide-phrase applicability must be assessed in project context.`
+      : "Model-extracted production call included for assessment; no syntax inventory is available for this language. Call completeness, target resolution and lifecycle are unverified. Inclusion does not establish a hazard or guide-phrase applicability.");
+  }
   if (row.classificationPolicyVersion === 2) {
     const e = row.relationshipEvidence;
     if (!e?.supported) return result("Needs Review", "Needs Review", "Needs Review", "Model-only relationship: source-supported call evidence has not been established.");

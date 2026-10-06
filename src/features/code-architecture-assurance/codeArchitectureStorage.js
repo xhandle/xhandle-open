@@ -1,221 +1,182 @@
-import { assertStorageBudget, serializedBytes, ROW_HISTORY_BUDGET, SOURCE_INDEX_BUDGET } from '../code-architecture-context/codeAnalysisRun';
-export const XHANDLE_IDB_NAME = "xhandle";
+import { notifyBackupDataChanged } from '../../lib/localBackupEvents';
+import { readRecord, rawRecord, stageRecord, hydrateRecord, isChunkedRecord, isRecordPart, putRawRecord, transactionDone, writeRecord } from '../code-architecture-storage/chunkedRecord';
+export const XHANDLE_IDB_NAME = 'xhandle';
 export const XHANDLE_IDB_VERSION = 4;
-export const XHANDLE_IDB_CBA_STORE = "copilot_baseline";
-const XHANDLE_IDB_CODE_INDEX_STORE = "code_index";
-const XHANDLE_IDB_DIAGRAM_POSITIONS_STORE = "diagram_positions";
-
+export const XHANDLE_IDB_CBA_STORE = 'copilot_baseline';
 export const codeArchitectureRowsKey = (projectId, repoId) => `cba:${projectId}:${repoId}`;
 export const codeArchitectureMetaKey = (projectId, repoId) => `cbaMeta:${projectId}:${repoId}`;
-
-function openCbaIndexedDB() {
+export function openCbaIndexedDB() {
   return new Promise((resolve, reject) => {
-    if (typeof indexedDB === "undefined") {
-      reject(new Error("IndexedDB is unavailable."));
-      return;
-    }
     const request = indexedDB.open(XHANDLE_IDB_NAME, XHANDLE_IDB_VERSION);
+    let blocked = false;
     request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(XHANDLE_IDB_CODE_INDEX_STORE)) {
-        db.createObjectStore(XHANDLE_IDB_CODE_INDEX_STORE, { keyPath: "key" });
-      }
-      if (!db.objectStoreNames.contains(XHANDLE_IDB_CBA_STORE)) {
-        db.createObjectStore(XHANDLE_IDB_CBA_STORE, { keyPath: "key" });
-      }
-      if (!db.objectStoreNames.contains(XHANDLE_IDB_DIAGRAM_POSITIONS_STORE)) {
-        db.createObjectStore(XHANDLE_IDB_DIAGRAM_POSITIONS_STORE, { keyPath: "key" });
-      }
+      for (const name of ['code_index', 'copilot_baseline', 'diagram_positions']) if (!request.result.objectStoreNames.contains(name)) request.result.createObjectStore(name, {keyPath:'key'});
     };
-    request.onerror = () => reject(request.error || new Error("Unable to open IndexedDB."));
-    request.onsuccess = () => resolve(request.result);
+    request.onblocked = () => { blocked = true; reject(new Error('Storage upgrade blocked. Close other xHandle tabs and retry.')); };
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => { if (blocked) request.result.close(); else resolve(request.result); };
   });
 }
-
-export function readCbaRowsFromIndexedDB(key) {
-  if (typeof indexedDB === "undefined" || !key) return Promise.resolve([]);
-  return new Promise((resolve) => {
-    openCbaIndexedDB()
-      .then((db) => {
-        if (!db.objectStoreNames.contains(XHANDLE_IDB_CBA_STORE)) {
-          db.close();
-          resolve([]);
-          return;
-        }
-        const tx = db.transaction(XHANDLE_IDB_CBA_STORE, "readonly");
-        const getRequest = tx.objectStore(XHANDLE_IDB_CBA_STORE).get(key);
-        getRequest.onerror = () => resolve([]);
-        getRequest.onsuccess = () => {
-          const value = getRequest.result?.value;
-          resolve(Array.isArray(value) ? value : []);
-        };
-        tx.oncomplete = () => db.close();
-        tx.onerror = () => {
-          try { db.close(); } catch {}
-          resolve([]);
-        };
-      })
-      .catch(() => resolve([]));
-  });
+const changed = () => notifyBackupDataChanged({db:XHANDLE_IDB_NAME, stores:[XHANDLE_IDB_CBA_STORE]});
+export async function readCbaRowsFromIndexedDB(key) {
+  if (!key || typeof indexedDB === 'undefined') return [];
+  const db = await openCbaIndexedDB();
+  try { const value = await readRecord(db, XHANDLE_IDB_CBA_STORE, key); return Array.isArray(value) ? value : []; }
+  finally { db.close(); }
 }
-
-export function readFirstCbaRowsFromIndexedDB(keys = []) {
-  if (typeof indexedDB === "undefined") return Promise.resolve({ rows: [], key: "" });
-  const uniqueKeys = Array.from(new Set((Array.isArray(keys) ? keys : [keys])
-    .map((key) => String(key || "").trim())
-    .filter(Boolean)));
-  if (!uniqueKeys.length) return Promise.resolve({ rows: [], key: "" });
-
-  return new Promise((resolve) => {
-    openCbaIndexedDB()
-      .then((db) => {
-        if (!db.objectStoreNames.contains(XHANDLE_IDB_CBA_STORE)) {
-          db.close();
-          resolve({ rows: [], key: uniqueKeys[0] || "" });
-          return;
-        }
-
-        const tx = db.transaction(XHANDLE_IDB_CBA_STORE, "readonly");
-        const store = tx.objectStore(XHANDLE_IDB_CBA_STORE);
-        const results = new Map();
-        let settled = false;
-        uniqueKeys.forEach((key) => {
-          const getRequest = store.get(key);
-          getRequest.onsuccess = () => {
-            const value = getRequest.result?.value;
-            results.set(key, Array.isArray(value) ? value : []);
-          };
-          getRequest.onerror = () => {
-            results.set(key, []);
-          };
-        });
-
-        tx.oncomplete = () => {
-          if (settled) return;
-          settled = true;
-          db.close();
-          const sourceKey = uniqueKeys.find((key) => (results.get(key) || []).length > 0) || uniqueKeys[0] || "";
-          resolve({ rows: results.get(sourceKey) || [], key: sourceKey });
-        };
-        tx.onerror = () => {
-          if (settled) return;
-          settled = true;
-          try { db.close(); } catch {}
-          resolve({ rows: [], key: uniqueKeys[0] || "" });
-        };
-      })
-      .catch(() => resolve({ rows: [], key: uniqueKeys[0] || "" }));
-  });
+export async function readFirstCbaRowsFromIndexedDB(keys = []) {
+  const unique = [...new Set((Array.isArray(keys) ? keys : [keys]).filter(Boolean))];
+  for (const key of unique) { const rows = await readCbaRowsFromIndexedDB(key); if (rows.length) return {key, rows}; }
+  return {key:unique[0] || '', rows:[]};
 }
-
-export function writeCbaRowsToIndexedDB(key, rows) {
-  if (typeof indexedDB === "undefined" || !key) return Promise.resolve(false);
-  return new Promise((resolve) => {
-    openCbaIndexedDB()
-      .then((db) => {
-        if (!db.objectStoreNames.contains(XHANDLE_IDB_CBA_STORE)) {
-          db.close();
-          resolve(false);
-          return;
-        }
-        const tx = db.transaction(XHANDLE_IDB_CBA_STORE, "readwrite");
-        tx.objectStore(XHANDLE_IDB_CBA_STORE).put({ key, value: Array.isArray(rows) ? rows : [] });
-        tx.oncomplete = () => {
-          db.close();
-          resolve(true);
-        };
-        tx.onerror = () => {
-          try { db.close(); } catch {}
-          resolve(false);
-        };
-      })
-      .catch(() => resolve(false));
-  });
+export async function readCbaRowsRevision(key) {
+  const db = await openCbaIndexedDB();
+  try { const value = await rawRecord(db, XHANDLE_IDB_CBA_STORE, key); return isChunkedRecord(value) ? value.root : JSON.stringify(value); }
+  finally { db.close(); }
 }
-
-// Portable evidence is optional for old exports. Never include local handles or credentials.
+export async function writeCbaRowsToIndexedDB(key, rows, options) {
+  if (!key || typeof indexedDB === 'undefined') return false;
+  const db = await openCbaIndexedDB();
+  try { await writeRecord(db, XHANDLE_IDB_CBA_STORE, key, Array.isArray(rows) ? rows : [], options); changed(); return true; }
+  catch { return false; } finally { db.close(); }
+}
 export async function readArchitectureRunRecords(key, rows = []) {
   const db = await openCbaIndexedDB();
-  const fingerprints = [...new Set(rows.map(row => row.lineage?.runFingerprint).filter(Boolean))];
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(XHANDLE_IDB_CBA_STORE, 'readonly'), store=tx.objectStore(XHANDLE_IDB_CBA_STORE);
-    const records=[];
-    fingerprints.forEach(fingerprint => {
-      const request=store.get(`${key}:run:${fingerprint}`);
-      request.onsuccess=()=>{ if(request.result?.value) records.push(request.result.value); };
-    });
-    tx.oncomplete=()=>resolve(records);tx.onerror=()=>reject(tx.error);
-  }).finally(()=>db.close());
+  try {
+    const records = [];
+    for (const fingerprint of new Set(rows.map(row => row.lineage?.runFingerprint).filter(Boolean))) {
+      const record = await readRecord(db, XHANDLE_IDB_CBA_STORE, `${key}:run:${fingerprint}`);
+      if (record) records.push(record);
+    }
+    return records;
+  } finally { db.close(); }
 }
-
 export async function writeImportedArchitectureRunRecords(key, records = [], rows) {
-  const writes = records.filter(record => record.version === 1 && /^[a-f0-9]{64}$/.test(record.fingerprint || '')).map(record => ({
-    key: `${key}:run:${record.fingerprint}`,
-    value: {...record, originalScope: record.originalScope || record.scope, scope: key},
-  }));
-  if (Array.isArray(rows)) writes.push({key, value: rows});
-  if (!writes.length) return;
-  writes.forEach(record => assertStorageBudget(serializedBytes(record), ROW_HISTORY_BUDGET, 'Imported architecture record'));
-  const replacementKeys = new Set(writes.map(record => record.key));
   const db = await openCbaIndexedDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(XHANDLE_IDB_CBA_STORE, 'readwrite');
-    const store = tx.objectStore(XHANDLE_IDB_CBA_STORE);
-    let failure, total = writes.reduce((sum, record) => sum + serializedBytes(record), 0);
-    const request = store.openCursor();
-    request.onsuccess = () => {
-      const cursor = request.result;
-      if (cursor) {
-        if (!replacementKeys.has(cursor.key)) total += serializedBytes(cursor.value);
-        cursor.continue();
-        return;
-      }
-      try {
-        assertStorageBudget(total, SOURCE_INDEX_BUDGET, 'Architecture history and checkpoints');
-        // Rows and their portable run manifests become visible together.
-        writes.forEach(record => store.put(record));
-      } catch (error) { failure = error; tx.abort(); }
-    };
-    tx.oncomplete = resolve;
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(failure || tx.error || new Error('Architecture import aborted.'));
-  }).finally(() => db.close());
+  try {
+    const writes = [];
+    for (const record of records.filter(r => r.version === 1 && /^[a-f0-9]{64}$/.test(r.fingerprint || ''))) {
+      const recordKey = `${key}:run:${record.fingerprint}`;
+      writes.push({key:recordKey, value:await stageRecord(db, XHANDLE_IDB_CBA_STORE, recordKey, {...record, originalScope:record.originalScope || record.scope, scope:key})});
+    }
+    if (Array.isArray(rows)) writes.push({key, value:await stageRecord(db, XHANDLE_IDB_CBA_STORE, key, rows)});
+    const tx = db.transaction(XHANDLE_IDB_CBA_STORE, 'readwrite'), done = transactionDone(tx);
+    try {for (const write of writes) tx.objectStore(XHANDLE_IDB_CBA_STORE).put(write);}
+    catch(error) {tx.abort();await done.catch(()=>{});throw error;}
+    await done; changed();
+  } finally { db.close(); }
+}
+const revision = value => isChunkedRecord(value) ? value.root : JSON.stringify(value || []);
+const pendingInMemory = new Map();
+
+export async function prepareArchitecturePublication(key, rows, run, metadata, checkpointKey, previousRows, signal) {
+  const db = await openCbaIndexedDB();
+  const payload = {scope:key, rows, run, metadata, checkpointKey, previousRows};
+  try {
+    const current = await rawRecord(db, XHANDLE_IDB_CBA_STORE, key);
+    // Compare the caller's snapshot before staging; repeat the revision check at commit.
+    const expected = isChunkedRecord(current) ? await stageRecord(db, XHANDLE_IDB_CBA_STORE, key, previousRows, {signal}) : previousRows;
+    payload.expected = revision(expected);
+    if (revision(current) !== payload.expected) throw Object.assign(new Error('Architecture was edited during analysis. Previous results were preserved.'), {code:'SOURCE_PUBLICATION_CONFLICT'});
+    const rowRecord = await stageRecord(db, XHANDLE_IDB_CBA_STORE, key, rows, {signal});
+    const runRecord = await stageRecord(db, XHANDLE_IDB_CBA_STORE, `${key}:run:${run.fingerprint}`, run, {signal});
+    // The ready record references immutable chunks instead of copying the completed rows.
+    const ready = {phase:'ready-to-publish', scope:key, checkpointKey, expected:payload.expected, rowRecord, runRecord, metadata,
+      updatedAt:new Date().toISOString(), totalFiles:metadata.selectedFiles || 0};
+    await putRawRecord(db, XHANDLE_IDB_CBA_STORE, checkpointKey, ready);
+    pendingInMemory.delete(checkpointKey);
+    return ready;
+  } catch (error) {
+    if (!signal?.aborted) pendingInMemory.set(checkpointKey, payload);
+    throw error;
+  } finally { db.close(); }
 }
 
-export async function readLatestArchitectureCheckpoint(scope) {
-  if (!scope) return null;
+export async function recoverArchitecturePublication(scope, checkpointKey, signal) {
+  if (!checkpointKey.startsWith(`functional-decomposition-checkpoint:${scope}:`)) throw new Error('Checkpoint does not belong to this project.');
+  if (pendingInMemory.has(checkpointKey)) {
+    const payload = pendingInMemory.get(checkpointKey);
+    await prepareArchitecturePublication(scope, payload.rows, payload.run, payload.metadata, checkpointKey, payload.previousRows, signal);
+  }
   const db = await openCbaIndexedDB();
-  return new Promise((resolve, reject) => {
-    const store = db.transaction(XHANDLE_IDB_CBA_STORE, 'readonly').objectStore(XHANDLE_IDB_CBA_STORE);
-    let latest = null, publishedAt = '';
-    const active = store.get(`${scope}:run`);
-    active.onsuccess = () => { publishedAt = active.result?.value?.publishedAt || ''; };
-    const prefix = `functional-decomposition-checkpoint:${scope}:`;
-    const request = store.openCursor(IDBKeyRange.bound(prefix, `${prefix}\uffff`));
-    request.onsuccess = () => {
-      const cursor = request.result;
-      if (!cursor) { resolve(latest && (!publishedAt || latest.updatedAt > publishedAt) ? latest : null); return; }
-      const value = cursor.value?.value;
-      if (value?.failedFiles?.length && (!latest || (value.updatedAt || '') > latest.updatedAt)) {
-        latest = {
-          key: cursor.key, updatedAt: value.updatedAt || '',
-          completed: value.completedPaths?.length || 0, total: value.totalFiles || 0,
-          failedFiles: value.failedFiles, rowCount: value.rows?.length || 0,
-          rows: (value.rows || []).slice(0, 50),
-        };
-      }
-      cursor.continue();
-    };
-    request.onerror = () => reject(request.error);
-  }).finally(() => db.close());
+  try {
+    const ready = await rawRecord(db, XHANDLE_IDB_CBA_STORE, checkpointKey);
+    if (ready?.phase !== 'ready-to-publish' || ready.scope !== scope) throw new Error('No completed publication is available for this checkpoint.');
+    const rows = await hydrateRecord(db, XHANDLE_IDB_CBA_STORE, ready.rowRecord);
+    const run = await hydrateRecord(db, XHANDLE_IDB_CBA_STORE, ready.runRecord);
+    // Validate all chunks before changing the active pointer. Retry only transient aborts.
+    for (let attempt = 0; ; attempt++) {
+      if (signal?.aborted) throw new DOMException('Analysis cancelled.', 'AbortError');
+      const tx = db.transaction(XHANDLE_IDB_CBA_STORE, 'readwrite'), store = tx.objectStore(XHANDLE_IDB_CBA_STORE);
+      const done = transactionDone(tx); let failure;
+      const stop = () => { try { tx.abort(); } catch {} };
+      signal?.addEventListener('abort', stop, {once:true});
+      const current = store.get(scope);
+      current.onsuccess = () => {
+        try {
+          if (revision(current.result?.value) !== ready.expected) throw Object.assign(new Error('Architecture was edited before publication. Saved analysis is retained; current edits were not overwritten.'), {code:'SOURCE_PUBLICATION_CONFLICT'});
+          const oldRun = store.get(`${scope}:run`);
+          oldRun.onsuccess = () => {
+            try {
+            // Immutable pointer history reuses existing data; never duplicates the row array.
+            if (current.result) store.put({key:`${scope}:history:${oldRun.result?.value?.root?.split(':$part:').pop() || 'legacy'}`,value:current.result.value});
+            store.put({key:scope,value:ready.rowRecord});
+            store.put({key:`${scope}:metadata`,value:{...ready.metadata,storageSaved:true,storageError:''}});
+            store.put({key:`${scope}:run:${run.fingerprint}`,value:ready.runRecord});
+            store.put({key:`${scope}:run`,value:ready.runRecord});
+            store.delete(checkpointKey);
+            } catch(error) {failure=error;stop();}
+          };
+        } catch (error) { failure=error; stop(); }
+      };
+      try { await done; break; }
+      catch (error) {
+        if (failure) throw failure;
+        if (signal?.aborted || error?.name !== 'AbortError' || attempt >= 2) throw error;
+        await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+      } finally { signal?.removeEventListener('abort', stop); }
+    }
+    pendingInMemory.delete(checkpointKey); changed();
+    return {rows, metadata:{...ready.metadata, storageSaved:true, storageError:''}};
+  } finally { db.close(); }
 }
 
 export async function readArchitectureCheckpoint(key) {
   if (!String(key).startsWith('functional-decomposition-checkpoint:')) throw new Error('Invalid checkpoint.');
+  if (pendingInMemory.has(key)) return {...pendingInMemory.get(key), phase:'ready-to-publish', durable:false};
   const db = await openCbaIndexedDB();
-  return new Promise((resolve, reject) => {
-    const request = db.transaction(XHANDLE_IDB_CBA_STORE, 'readonly').objectStore(XHANDLE_IDB_CBA_STORE).get(key);
-    request.onsuccess = () => resolve(request.result?.value || null);
-    request.onerror = () => reject(request.error);
-  }).finally(() => db.close());
+  try {
+    const value = await readRecord(db, XHANDLE_IDB_CBA_STORE, key);
+    if (value?.phase === 'ready-to-publish') return {...value, rows:await hydrateRecord(db,XHANDLE_IDB_CBA_STORE,value.rowRecord), run:await hydrateRecord(db,XHANDLE_IDB_CBA_STORE,value.runRecord)};
+    return value;
+  } finally { db.close(); }
+}
+export async function readLatestArchitectureCheckpoint(scope) {
+  if (!scope) return null;
+  const db = await openCbaIndexedDB();
+  try {
+    const keys = await new Promise((resolve,reject) => {
+      const output=[], request=db.transaction(XHANDLE_IDB_CBA_STORE,'readonly').objectStore(XHANDLE_IDB_CBA_STORE).openKeyCursor(IDBKeyRange.bound(`functional-decomposition-checkpoint:${scope}:`,`functional-decomposition-checkpoint:${scope}:\uffff`));
+      request.onsuccess=()=>{const cursor=request.result;if(!cursor){resolve(output);return;}if(!isRecordPart(cursor.key))output.push(cursor.key);cursor.continue();};
+      request.onerror=()=>reject(request.error);
+    });
+    for (const [key,value] of pendingInMemory) if(value.scope===scope && !keys.includes(key))keys.push(key);
+    let latest=null;
+    const published=await readRecord(db,XHANDLE_IDB_CBA_STORE,`${scope}:run`);
+    for (const key of keys) {
+      const value=await readArchitectureCheckpoint(key);
+      if (!value)continue;
+      const completed=value.completedPaths?.length || (value.phase==='ready-to-publish' ? value.totalFiles || value.metadata?.selectedFiles || 0 : 0);
+      const updatedAt=value.updatedAt || value.run?.publishedAt || '';
+      if (value.phase!=='ready-to-publish' && (!completed && !value.failedFiles?.length))continue;
+      if (published?.publishedAt && updatedAt<=published.publishedAt)continue;
+      if (!latest || updatedAt>latest.updatedAt)latest={key,updatedAt,publicationReady:value.phase==='ready-to-publish',durable:value.durable!==false,completed,total:value.totalFiles || value.metadata?.selectedFiles || 0,failedFiles:value.failedFiles || [],rowCount:value.rows?.length || 0,rows:(value.rows || []).slice(0,50)};
+    }
+    return latest;
+  } finally {db.close();}
+}
+
+export async function readArchitectureMetadata(scope) {
+  const db=await openCbaIndexedDB();
+  try {return await readRecord(db,XHANDLE_IDB_CBA_STORE,`${scope}:metadata`) || null;} finally {db.close();}
 }

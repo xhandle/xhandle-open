@@ -34,3 +34,14 @@ test('does not read recovery data during a running analysis', async () => {
  expect(readLatestArchitectureCheckpoint).not.toHaveBeenCalled();
  expect(host.textContent).toBe('');
 });
+
+test('offers save-only recovery and identifies memory-only results', async () => {
+ readLatestArchitectureCheckpoint.mockResolvedValue({...checkpoint,publicationReady:true,durable:false,failedFiles:[]});
+ const resume=jest.fn();
+ await act(async()=>root.render(<ArchitectureRunRecovery scope="cba:test" onResume={resume}/>));
+ expect(host.textContent).toContain('Analysis complete — save pending');
+ expect(host.textContent).toContain('only in memory');
+ expect(host.textContent).not.toContain('File failure details');
+ await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='Retry save').click());
+ expect(resume).toHaveBeenCalledWith(expect.objectContaining({publicationReady:true,key:'fixture'}));
+});

@@ -21,3 +21,9 @@
   box-shadow: none !important;
   transition: none !important;
 }
+
+/* Hovered ports stay discoverable even when idle ports were not mounted. */
+.x-node:hover .x-port,
+.x-node:focus-within .x-port {
+  opacity: 1 !important;
+}

@@ -322,83 +322,19 @@ describe("code architecture hazard evidence review", () => {
     expect(row["Repo-Wide Usage Audit"]).toMatch(/zero call sites/i);
   });
 
-  it("adds a source-audit row when extract_traj_tokens exists but is not traced", async () => {
-    const content = [
-      "def extract_traj_tokens(token_values):",
-      "    invalid_tokens = (token_values < 0)",
-      "    token_values = torch.clamp(token_values, min=0)",
-      "    return token_values",
-    ].join("\n");
-    const sourceRecord = {
-      path: "src/alpamayo1_5/models/token_utils.py",
-      content,
-      sourceFunctions: [
-        { functionName: "extract_traj_tokens", filePath: "src/alpamayo1_5/models/token_utils.py", startLine: 1, endLine: 4 },
-      ],
-    };
-    const enrichedRows = await enrichHazardTableRowsWithSourceContent([], { owner: "NVlabs", repo: "alpamayo1_5" }, {
-      allSourceRecords: [sourceRecord],
-    });
-    const reviewed = ensureHazardSummaryEvidenceColumns({
-      Summary: [["Architecture Row Ref", "Function (From)", "Control Action", "Function (To)", "Hazards", "Safety Significant"]],
-    }, enrichedRows);
-    const row = rowObject(reviewed.Summary);
-
-    expect(row["Architecture Row Ref"]).toBe("source-audit-extract-traj-tokens");
-    expect(row["Function (From)"]).toBe("extract_traj_tokens");
-    expect(row["Function (To)"]).toBe("torch.clamp");
-    expect(row["Evidence Classification"]).toBe("Contradicted or mitigated by code");
-    expect(row["Recommended Mitigation"]).toMatch(/trajectory token sequences/i);
+  it.each(["extract_traj_tokens", "compute", "settle_payment"])("does not manufacture hazards for indexed function %s", async (name) => {
+    for (const path of ["src/alpamayo1_5/models/token_utils.py", "src/service/helpers.py"]) {
+      const sourceRecord = {path, content: `def ${name}(values):\n    return torch.clamp(values, min=0)`,
+        sourceFunctions: [{functionName: name, filePath: path, startLine: 1, endLine: 2}],
+        functions: [name], sourceAudit: {pythonTopLevelFunctions: [{name, line: 1}]}};
+      const enriched = await enrichHazardTableRowsWithSourceContent([], {owner: "example", repo: "service"}, {allSourceRecords: [sourceRecord]});
+      expect(enriched).toEqual([]);
+      const reviewed = ensureHazardSummaryEvidenceColumns({Summary: [["Architecture Row Ref", "Hazards"]]}, enriched);
+      expect(reviewed.Summary).toHaveLength(1);
+    }
   });
 
-  it("adds extract_traj_tokens source-audit coverage from simple indexed function names", async () => {
-    const sourceRecord = {
-      path: "src/alpamayo1_5/models/token_utils.py",
-      content: "def extract_traj_tokens(token_values):\n    return torch.clamp(token_values, min=0)",
-      functions: ["extract_text_tokens", "extract_traj_tokens"],
-    };
-    const enrichedRows = await enrichHazardTableRowsWithSourceContent([], { owner: "NVlabs", repo: "alpamayo1_5" }, {
-      allSourceRecords: [sourceRecord],
-    });
-    const reviewed = ensureHazardSummaryEvidenceColumns({
-      Summary: [["Architecture Row Ref", "Function (From)", "Control Action", "Function (To)", "Hazards", "Safety Significant"]],
-    }, enrichedRows);
-    const row = rowObject(reviewed.Summary);
-
-    expect(row["Architecture Row Ref"]).toBe("source-audit-extract-traj-tokens");
-    expect(row["Function (From)"]).toBe("extract_traj_tokens");
-    expect(row["Function (To)"]).toBe("torch.clamp");
-    expect(row["Recommended Verification"]).toMatch(/token contract tests/i);
-  });
-
-  it("adds extract_traj_tokens coverage from the Python top-level discovery audit", async () => {
-    const sourceRecord = {
-      path: "src/alpamayo1_5/models/token_utils.py",
-      content: "def extract_text_tokens(values):\n    return values\n\ndef extract_traj_tokens(token_values):\n    return torch.clamp(token_values, min=0)",
-      sourceFunctions: [{ functionName: "extract_text_tokens", filePath: "src/alpamayo1_5/models/token_utils.py", startLine: 1, endLine: 2 }],
-      sourceAudit: {
-        pythonTopLevelFunctions: [
-          { name: "extract_text_tokens", line: 1 },
-          { name: "extract_traj_tokens", line: 4 },
-        ],
-        missingFromSourceFunctions: ["extract_traj_tokens"],
-      },
-    };
-    const enrichedRows = await enrichHazardTableRowsWithSourceContent([], { owner: "NVlabs", repo: "alpamayo1_5" }, {
-      allSourceRecords: [sourceRecord],
-    });
-    const reviewed = ensureHazardSummaryEvidenceColumns({
-      Summary: [["Architecture Row Ref", "Function (From)", "Control Action", "Function (To)", "Hazards", "Safety Significant"]],
-    }, enrichedRows);
-    const row = rowObject(reviewed.Summary);
-
-    expect(row["Architecture Row Ref"]).toBe("source-audit-extract-traj-tokens");
-    expect(row["Function (From)"]).toBe("extract_traj_tokens");
-    expect(row["Function (To)"]).toBe("torch.clamp");
-    expect(row["Code Evidence"]).toMatch(/Referenced code evidence/i);
-  });
-
-  it("adds a separate extract_traj_tokens row even when the symbol appears as evidence on a neighboring token row", async () => {
+  it("preserves the hazard row set when unrelated indexed functions have no architecture row", async () => {
     const sourceRecord = {
       path: "src/alpamayo1_5/models/token_utils.py",
       content: [
@@ -461,11 +397,10 @@ describe("code architecture hazard evidence review", () => {
     const sourceAuditRow = rows.find((row) => row["Function (From)"] === "extract_traj_tokens");
 
     expect(rows.some((row) => row["Function (From)"] === "extract_text_tokens")).toBe(true);
-    expect(rows.some((row) => row["Function (From)"] === "extract_traj_tokens")).toBe(true);
+    expect(rows.some((row) => row["Function (From)"] === "extract_traj_tokens")).toBe(false);
+    expect(enrichedRows).toHaveLength(neighboringRows.length);
     expect(neighboringRow["Recommended Mitigation"]).not.toMatch(/trajectory token sequences/i);
-    expect(sourceAuditRow["Architecture Row Ref"]).toBe("source-audit-extract-traj-tokens");
-    expect(sourceAuditRow["Function (To)"]).toBe("torch.clamp");
-    expect(sourceAuditRow["Recommended Mitigation"]).toMatch(/trajectory token sequences/i);
+    expect(sourceAuditRow).toBeUndefined();
   });
 
   it("flags action-space bounds as symbol-supported when the edge direction is not explicitly verified", () => {
@@ -508,7 +443,7 @@ describe("code architecture hazard evidence review", () => {
     expect(row["Evidence Classification"]).toBe("Symbol-supported, edge unverified");
     expect(row["Safety Concern Type"]).toBe("Safety-critical");
     expect(row.Confidence).toBe("Medium");
-    expect(row.Hazards).toMatch(/without evidence.*bounds are enforced/i);
+    expect(row.Hazards).toBe(sheets.Summary[1][4]);
     expect(row["Code Evidence"]).toMatch(/does not prove the claimed edge direction/i);
     expect(row["Mitigation Evidence"]).toMatch(/No reject\/resample\/filter evidence/i);
   });
@@ -828,10 +763,10 @@ describe("code architecture hazard evidence review", () => {
     expect(row.Hazards).toMatch(/Needs review/i);
     expect(row["Code Evidence"]).not.toMatch(/Token handling evidence includes clamping/i);
     expect(row["Recommended Mitigation"]).not.toMatch(/trajectory token sequences/i);
-    expect(row.Assumptions).toMatch(/not the extract_traj_tokens -> torch.clamp endpoint/i);
+    expect(row.Assumptions).toMatch(/not a verified clamp-call endpoint/i);
   });
 
-  it("keeps trajectory-token clamping mitigation only on extract_traj_tokens to torch.clamp", () => {
+  it.each(["extract_traj_tokens", "decode_customer_tokens"])("uses actual clamp-call evidence for %s without rewriting its hazard", (caller) => {
     const sheets = {
       Summary: [[
         "Architecture Row Ref",
@@ -841,7 +776,7 @@ describe("code architecture hazard evidence review", () => {
         "Hazards",
       ], [
         "63",
-        "extract_traj_tokens",
+        caller,
         "Clamp trajectory token ids",
         "torch.clamp",
         "Invalid token values may be silently repaired.",
@@ -849,16 +784,16 @@ describe("code architecture hazard evidence review", () => {
     };
     const tableRows = [{
       rowRef: "63",
-      fromFunction: "extract_traj_tokens",
+      fromFunction: caller,
       controlAction: "Clamp trajectory token ids",
       toFunction: "torch.clamp",
       codeEvidence: {
         files: [{
           filePath: "src/alpamayo1_5/models/token_utils.py",
-          sourceFunctions: [{ functionName: "extract_traj_tokens", filePath: "src/alpamayo1_5/models/token_utils.py", startLine: 1 }],
-          content: "def extract_traj_tokens(values):\n    invalid_tokens = values < 0\n    return torch.clamp(values, min=0)",
+          sourceFunctions: [{ functionName: caller, filePath: "src/alpamayo1_5/models/token_utils.py", startLine: 1 }],
+          content: `def ${caller}(values):\n    invalid_tokens = values < 0\n    return torch.clamp(values, min=0)`,
         }],
-        sourceFunctions: [{ functionName: "extract_traj_tokens", filePath: "src/alpamayo1_5/models/token_utils.py", startLine: 1 }],
+        sourceFunctions: [{ functionName: caller, filePath: "src/alpamayo1_5/models/token_utils.py", startLine: 1 }],
       },
     }];
 
@@ -866,9 +801,9 @@ describe("code architecture hazard evidence review", () => {
     const row = rowObject(reviewed.Summary);
 
     expect(row["Evidence Classification"]).toBe("Contradicted or mitigated by code");
-    expect(row.Hazards).toMatch(/clamped into the accepted range/i);
+    expect(row.Hazards).toBe("Invalid token values may be silently repaired.");
     expect(row["Code Evidence"]).toMatch(/Token handling evidence includes clamping/i);
-    expect(row["Recommended Mitigation"]).toMatch(/trajectory token sequences/i);
+    expect(row["Recommended Mitigation"]).toMatch(/token validity contract/i);
   });
 
   it("marks navigation freshness hazards as edge-unverified when source bodies are unavailable", () => {
@@ -905,10 +840,10 @@ describe("code architecture hazard evidence review", () => {
 
     expect(row["Evidence Classification"]).toBe("Symbol-supported, edge unverified");
     expect(row["Safety Concern Type"]).toBe("Safety-critical");
-    expect(row.Hazards).toMatch(/without evidence.*fresh/i);
+    expect(row.Hazards).toBe(sheets.Summary[1][4]);
     expect(row["Code Relationship Audit"]).toMatch(/endpoint symbols are present/i);
-    expect(row["Recommended Verification"]).toMatch(/stale, missing, contradictory/i);
-    expect(row["Recommended Mitigation"]).toMatch(/navigation freshness/i);
+    expect(row["Recommended Verification"]).not.toMatch(/stale, missing, contradictory/i);
+    expect(row["Recommended Mitigation"]).not.toMatch(/navigation freshness/i);
   });
 
   it("downgrades generic helper message hazards to data integrity or reliability concerns", () => {
@@ -1075,7 +1010,7 @@ describe("code architecture hazard evidence review", () => {
     expect(row["Recommended Verification"]).not.toMatch(/stale, missing, contradictory/i);
   });
 
-  it("keeps nav freshness guidance for helper calls grounded in the nav_utils chain", () => {
+  it("uses navigation freshness guidance only when the actual concern describes freshness", () => {
     const sheets = {
       Summary: [[
         "Architecture Row Ref",
