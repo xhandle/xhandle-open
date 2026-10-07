@@ -1,0 +1,7 @@
+# Review disabled hazard analysis and inactive import
+
+Perform a read-only review of the customer's reported Code-Based Architecture failure: one project has a prior STPA; another has architecture results and a newly created scenario, but no hazard line items and a disabled Run button. Exporting decomposition and attempting import into a new code architecture project appeared to do nothing.
+
+Trace project/repository selection, saved result loading, Functional versus detailed input selection, eligibility screening, draft construction, operational contexts, run-state scope and Run-button gating. Identify inconsistencies between UI counts, drafts and the actual runner. Trace the ellipsis Import action, file input mounting/user activation, accepted formats, parsing/normalization, storage publication and navigation. Examine Functional CSV round-trip fidelity. Distinguish a picker failing to open from failure after file selection.
+
+Create isolated reproductions using synthetic data/current exported CSV where useful; no paid calls, customer storage changes or production code edits. Run existing relevant tests and report gaps they miss. Record confirmed defects with file/line references, plausible incident explanations and unconfirmed hypotheses separately. A prior completed analysis is not evidence that a current run remains active. Do not bypass eligibility indiscriminately or assume the customer's application version. Save a prioritized report and bounded remediation plan under docs/investigations.

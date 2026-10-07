@@ -1,7 +1,19 @@
+// Build once per layout; each CSU visits only edges originating in that group.
+export function indexCsuEdges(edges) {
+  const index = new Map();
+  for (const edge of edges || []) {
+    if (!index.has(edge.source)) index.set(edge.source, []);
+    index.get(edge.source).push(edge);
+  }
+  return index;
+}
+
 // Reorder functions within the existing grid, without changing its dimensions
 // or container membership. Only accept placements that shorten local calls.
 export function orderCsuFunctions(nodes, edges, { columns, stepX, stepY }) {
-  if (nodes.length < 3 || !edges?.length) return nodes;
+  if (nodes.length < 3) return nodes;
+  if (edges instanceof Map) edges = nodes.flatMap(node => edges.get(node.id) || []);
+  if (!edges?.length) return nodes;
   const index = new Map(nodes.map((node, i) => [node.id, i]));
   const weights = nodes.map(() => new Map());
   for (const edge of edges) {

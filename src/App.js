@@ -1,6 +1,6 @@
-import { functionalModelIsReady, buildFunctionalModelRows } from './features/code-architecture-context/functionalModel';
+import { createCodeArchitectureImportOperation } from './features/code-architecture-context/codeArchitectureImportOperation';
+import { restoreFunctionalCsvSnapshot, functionalModelIsReady, buildFunctionalModelRows, immutableFunctionalRows, immutableFunctionalRowsAsync } from './features/code-architecture-context/functionalModel';
 import { parseCodeArchitectureCsv } from "./features/code-architecture-context/codeArchitectureCsvImport";
-import CodeAnalysisCoverageNotice from "./features/code-architecture-context/CodeAnalysisCoverageNotice";
 import { architectureEvidenceColumns, architectureCoverageSheets } from './features/code-architecture-assurance/codeArchitectureCoverageWorkbook';
 import ArchitectureRunRecovery from './features/code-architecture-assurance/ArchitectureRunRecovery';
 import LocalFolderChooser from "./features/code-architecture-context/LocalFolderChooser";
@@ -180,6 +180,7 @@ import {
   CodeArchitectureHazardPanel,
   deleteCodeArchitectureHazardRuns,
   ensureCodeArchitectureTraceIds,
+  ensureCodeArchitectureTraceIdsAsync,
   getCodeArchitectureHazardRunById,
   getCodeArchitectureHazardRuns,
   getLatestCodeArchitectureHazardRun,
@@ -3921,6 +3922,9 @@ const [codeArchitectureProjectExportSelection, setCodeArchitectureProjectExportS
 const [isExportingCodeArchitectureProject, setIsExportingCodeArchitectureProject] = useState(false);
 const [codeArchitectureProjectExportMsg, setCodeArchitectureProjectExportMsg] = useState("");
 const [showCodeArchitectureWorkbookExport, setShowCodeArchitectureWorkbookExport] = useState(false);
+const codeArchitectureFunctionalExportRef = useRef(null);
+const [canExportCodeArchitectureCsv, setCanExportCodeArchitectureCsv] = useState(false);
+const registerCodeArchitectureFunctionalExport = useCallback((handler) => { codeArchitectureFunctionalExportRef.current = handler; setCanExportCodeArchitectureCsv(typeof handler === 'function'); }, []);
 const [codeArchitectureWorkbookExportScope, setCodeArchitectureWorkbookExportScope] = useState("project");
 const [codeArchitectureWorkbookExportSheets, setCodeArchitectureWorkbookExportSheets] = useState(
   CODE_ARCHITECTURE_WORKBOOK_SHEET_OPTIONS.map((option) => option.key)
@@ -3947,6 +3951,12 @@ const codeArchitectureProjectMenuPortalRefs = useRef({});
 const codeArchitectureFolderMenuAnchorEls = useRef({});
 const codeArchitectureFolderMenuPortalRefs = useRef({});
 const codeArchitectureProjectImportInputRef = useRef(null);
+const codeArchitectureImportRef = useRef(null);
+const codeArchitectureImportScopeRef = useRef('');
+codeArchitectureImportScopeRef.current = `${section}:${activeCodeArchitectureProjectId || ''}`;
+const [codeArchitectureImportStatus, setCodeArchitectureImportStatus] = useState(null);
+useEffect(() => { codeArchitectureImportRef.current?.cancel(); }, [section, activeCodeArchitectureProjectId]);
+
 const [showCodeArchitectureRepoConfig, setShowCodeArchitectureRepoConfig] = useState(false);
 const [codeArchitectureRepoConfigProjectId, setCodeArchitectureRepoConfigProjectId] = useState(null);
 const [codeArchitectureRepoConfigRepoId, setCodeArchitectureRepoConfigRepoId] = useState(null);
@@ -3967,7 +3977,9 @@ const [isCodeArchitectureContextGenerating, setIsCodeArchitectureContextGenerati
 const [codeArchitectureRepoFilesForModal, setCodeArchitectureRepoFilesForModal] = useState([]);
 const [codeArchitectureFileSelectorOpen, setCodeArchitectureFileSelectorOpen] = useState(false);
 const codeArchitectureFileSelectorResolver = useRef(null);
-const [cbaTableData, setCbaTableData] = useState([]);
+const [cbaTableData, setCbaTableDataState] = useState(() => immutableFunctionalRows([]));
+const setCbaTableData = useCallback(next => setCbaTableDataState(previous =>
+  immutableFunctionalRows(typeof next === 'function' ? next(previous) : next)), []);
 const [selectedCbaElement, setSelectedCbaElement] = useState(null);
 const [activeCodeArchitectureSelection, setActiveCodeArchitectureSelection] = useState(null);
 const [codeArchitectureWorkspaceTab, setCodeArchitectureWorkspaceTab] = useState("architecture");
@@ -4036,6 +4048,7 @@ function getSavedGitHubSelectedExtensions() {
   }
 }
 
+const codeHazardScopeRef = useRef('');
 const activeCodeArchitectureProject = useMemo(
   () => codeArchitectureProjects.find((project) => project.id === activeCodeArchitectureProjectId) || null,
   [codeArchitectureProjects, activeCodeArchitectureProjectId]
@@ -4090,7 +4103,7 @@ const activeCodeArchitectureRepoMeta = useMemo(() => {
 }, [activeCodeArchitectureRepo, activeCodeArchitectureStoredMeta]);
 const activeCodeArchitectureUnavailableRowCount = Number(activeCodeArchitectureStoredMeta?.rowCount || 0);
 
-async function readCodeArchitectureRowsForRepo(project, repo, primaryKey) {
+async function readCodeArchitectureRowsForRepo(project, repo, primaryKey, options) {
   if (!project || !repo || !primaryKey) return { rows: [], sourceKey: primaryKey || "" };
   const candidateKeys = [primaryKey];
   try {
@@ -4110,7 +4123,7 @@ async function readCodeArchitectureRowsForRepo(project, repo, primaryKey) {
     });
 
   const uniqueKeys = Array.from(new Set(candidateKeys.filter(Boolean)));
-  const result = await readFirstCbaRowsFromIndexedDB(uniqueKeys);
+  const result = await readFirstCbaRowsFromIndexedDB(uniqueKeys, options);
   return { rows: result.rows, sourceKey: result.key || primaryKey };
 }
 
@@ -4207,9 +4220,12 @@ useEffect(() => {
   }
   let cancelled = false;
   setCbaLoadingLabel("Loading saved analysis...");
+  setCbaLoadingProgress(0);
   setCbaLoading(true);
-  readCodeArchitectureRowsForRepo(activeCodeArchitectureProject, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey)
-    .then(({ rows, sourceKey }) => {
+  readCodeArchitectureRowsForRepo(activeCodeArchitectureProject, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey, {
+    onProgress: percent => { if (!cancelled) setCbaLoadingProgress(Math.floor(percent * 0.9)); },
+  })
+    .then(async ({ rows, sourceKey }) => {
       if (cancelled) return;
       let recoverySource = sourceKey;
       let recoveredRows = Array.isArray(rows) ? rows : [];
@@ -4224,10 +4240,24 @@ useEffect(() => {
           recoverySource = "results-review";
         }
       }
-      const rowsWithTraceIds = ensureCodeArchitectureTraceIds(recoveredRows);
+      setCbaLoadingLabel("Preparing saved analysis...");
+      setCbaLoadingProgress(90);
+      // Storage completion must paint before normalization/adoption starts.
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      if (cancelled) return;
+      const normalizedRows = await ensureCodeArchitectureTraceIdsAsync(recoveredRows, {
+        isCancelled: () => cancelled,
+        onProgress: percent => { if (!cancelled) setCbaLoadingProgress(90 + Math.floor(percent * 0.04)); },
+      });
+      if (cancelled || !normalizedRows) return;
+      const rowsWithTraceIds = await immutableFunctionalRowsAsync(normalizedRows, {
+        isCancelled: () => cancelled,
+        onProgress: percent => { if (!cancelled) setCbaLoadingProgress(94 + Math.floor(percent * 0.05)); },
+      });
+      if (cancelled || !rowsWithTraceIds) return;
       setCbaTableData(rowsWithTraceIds);
       if (rowsWithTraceIds.length && activeCodeArchitectureRowsKey) {
-        writeCbaRowsToIndexedDB(activeCodeArchitectureRowsKey, rowsWithTraceIds).catch(() => {});
+        // The cbaTableData persistence effect saves this adopted revision once.
         if (recoverySource && recoverySource !== activeCodeArchitectureRowsKey) {
           try {
             localStorage.setItem(codeArchitectureMetaKey(activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id), JSON.stringify({
@@ -4247,9 +4277,12 @@ useEffect(() => {
       setSelectedCbaElement(null);
       setActiveCodeArchitectureSelection(null);
       setCodeArchitectureHazardRun(null);
+      setCbaLoadingProgress(100);
+      // Let the completed state paint before replacing it with the workspace.
+      return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     })
     .finally(() => {
-      if (!cancelled) setCbaLoading(false);
+      if (!cancelled) { setCbaLoading(false); setCbaLoadingProgress(null); }
     });
   return () => {
     cancelled = true;
@@ -4495,7 +4528,10 @@ function normalizeImportedCodeArchitectureRows(value) {
       : Array.isArray(value?.data)
         ? value.data
         : [];
-  return ensureCodeArchitectureTraceIds(rawRows.map((row) => ({
+  return restoreFunctionalCsvSnapshot(ensureCodeArchitectureTraceIds(rawRows.map((row) => ({
+    functionalCsvSnapshot: row.functionalCsvSnapshot,
+    fromArchitecture: row.fromArchitecture,
+    toArchitecture: row.toArchitecture,
     functionalAbstraction: row.functionalAbstraction || undefined,
     lineage: row.lineage || undefined,
     canonicalRelationshipId: row.canonicalRelationshipId || undefined,
@@ -4532,10 +4568,10 @@ function normalizeImportedCodeArchitectureRows(value) {
     fromNodeId: row.fromNodeId || null,
     edgeId: row.edgeId || null,
     toNodeId: row.toNodeId || null,
-  }))).filter((row) => row.from || row.action || row.to);
+  }))).filter((row) => row.from || row.action || row.to));
 }
 
-async function saveImportedCodeArchitectureRows({ project, file, rows, repoPackage = null }) {
+async function saveImportedCodeArchitectureRows({ project, file, rows, repoPackage = null, operation }) {
   const importedAt = new Date().toISOString();
   const safeFileName = String(
     repoPackage?.repoName ||
@@ -4577,7 +4613,8 @@ async function saveImportedCodeArchitectureRows({ project, file, rows, repoPacka
   const storageKey = codeArchitectureRowsKey(project.id, repoConfig.id);
   // Explicit project import copies ownership, without changing saved trace/artifact IDs.
   rows = rows.map(row => row.lineage ? { ...row, lineage: { ...row.lineage, originalScope: row.lineage.originalScope || row.lineage.scope, scope: storageKey } } : row);
-  await writeImportedArchitectureRunRecords(storageKey, repoPackage?.runRecords || [], rows);
+  await writeImportedArchitectureRunRecords(storageKey, repoPackage?.runRecords || [], rows, { signal: operation?.signal });
+  operation?.check();
   const rowsPersisted = true;
   localStorage.setItem(codeArchitectureMetaKey(project.id, repoConfig.id), JSON.stringify({
     repoId: repoConfig.repoId,
@@ -4701,7 +4738,8 @@ function remapImportedCodeArchitectureReviewValue(value, { project, repoConfig, 
   return next;
 }
 
-async function restoreImportedCodeArchitectureRepoAnalysis({ project, repoConfig, repoPackage }) {
+async function restoreImportedCodeArchitectureRepoAnalysis({ project, repoConfig, repoPackage, operation }) {
+  operation?.check();
   const analysis = repoPackage?.analysis || {};
   const importedAt = new Date().toISOString();
   const artifactRows = analysis.artifactRows || {};
@@ -4711,18 +4749,20 @@ async function restoreImportedCodeArchitectureRepoAnalysis({ project, repoConfig
 
   const runIdMap = new Map();
   for (const run of (analysis.hazardRuns || [])) {
+    operation?.check();
     const nextId = `imported-${makeId()}`;
     if (run?.id) runIdMap.set(run.id, nextId);
     await saveCodeArchitectureHazardRun({
       ...run,
       id: nextId,
       projectId: project.id,
-      repoId: repoConfig.id,
+      repoId: repoConfig.repoId || repoConfig.repoName || repoConfig.id,
       importedFromRunId: run?.id || null,
       updatedAt: importedAt,
     });
   }
 
+  operation?.check();
   const remediation = analysis.safetyRemediation || {};
   const findingIdMap = new Map();
   const patchIdMap = new Map();
@@ -4791,6 +4831,7 @@ async function restoreImportedCodeArchitectureRepoAnalysis({ project, repoConfig
     importedFromReviewItemId: item?.id || null,
     updatedAt: importedAt,
   }));
+  operation?.check();
   if (reviewItems.length) {
     await resultsReview.createReviewItems(reviewItems);
   }
@@ -5202,10 +5243,19 @@ async function importCodeArchitectureProjectFromFile(event) {
   const file = event.target.files?.[0];
   event.target.value = "";
   if (!file) return;
+  codeArchitectureImportRef.current?.cancel();
+  const importScope = codeArchitectureImportScopeRef.current;
+  const operation = createCodeArchitectureImportOperation({
+    isCurrent: () => codeArchitectureImportRef.current === operation && codeArchitectureImportScopeRef.current === importScope,
+    onProgress: message => setCodeArchitectureImportStatus({ busy: true, message }),
+  });
+  codeArchitectureImportRef.current = operation;
   try {
+    if (!/\.(csv|json)$/i.test(file.name)) throw new Error('Select a functional decomposition CSV or project JSON file.');
     const csvImport = /\.csv$/i.test(file.name);
     const targetProject = csvImport ? activeCodeArchitectureProject : null;
-    const text = await file.text();
+    const text = await operation.wait('Reading import file', () => file.text());
+    setCodeArchitectureImportStatus({ busy: true, message: 'Validating import rows' });
     const parsed = csvImport ? parseCodeArchitectureCsv(text) : JSON.parse(text);
     const now = new Date().toISOString();
     const projectName = String(parsed?.project?.name || parsed?.projectName || file.name.replace(/\.[^.]+$/, "") || "Imported Architecture").trim();
@@ -5227,23 +5277,23 @@ async function importCodeArchitectureProjectFromFile(event) {
       for (const repoPackage of packageRepos) {
         const rows = normalizeImportedCodeArchitectureRows(repoPackage?.rows || repoPackage);
         if (!rows.length) continue;
-        const repoConfig = await saveImportedCodeArchitectureRows({ project, file, rows, repoPackage });
-        await restoreImportedCodeArchitectureRepoAnalysis({ project, repoConfig, repoPackage });
+        const repoConfig = await operation.wait('Saving imported analysis', () => saveImportedCodeArchitectureRows({ project, file, rows, repoPackage, operation }));
+        await operation.wait('Restoring associated analysis', () => restoreImportedCodeArchitectureRepoAnalysis({ project, repoConfig, repoPackage, operation }));
         importedRepos.push(repoConfig);
         if (!firstRows.length) firstRows = rows;
       }
     } else {
       const rows = normalizeImportedCodeArchitectureRows(parsed);
       if (rows.length) {
-        const repoConfig = await saveImportedCodeArchitectureRows({ project, file, rows });
+        const repoConfig = await operation.wait('Saving imported analysis', () => saveImportedCodeArchitectureRows({ project, file, rows, operation }));
         importedRepos.push(repoConfig);
         firstRows = rows;
       }
     }
     if (!importedRepos.length) {
-      alert("No code architecture rows were found in that JSON file.");
-      return;
+      throw new Error("No code architecture rows were found in that file.");
     }
+    operation.check();
     const importedProject = {
       ...project,
       repos: [...(targetProject?.repos || []), ...importedRepos],
@@ -5266,9 +5316,12 @@ async function importCodeArchitectureProjectFromFile(event) {
     setIsSidebarOpen(true);
     setIsCodeArchitectureProjectsOpen(true);
     notifyBackupDataChanged("code-architecture-project-import");
+    setCodeArchitectureImportStatus({ busy: false, message: `Imported ${firstRows.length} rows into ${project.name}.` });
   } catch (error) {
     console.error("[cba] Failed to import code architecture file", error);
-    alert(error?.message || "Failed to import code architecture file.");
+    if (codeArchitectureImportRef.current === operation) setCodeArchitectureImportStatus({ busy: false, error: true, message: error?.message || 'Failed to import code architecture file.' });
+  } finally {
+    if (codeArchitectureImportRef.current === operation) codeArchitectureImportRef.current = null;
   }
 }
 
@@ -5491,6 +5544,7 @@ async function handleBaselineRepo({
 
 const [cbaLoading, setCbaLoading] = useState(false);
 const [cbaLoadingLabel, setCbaLoadingLabel] = useState("Loading saved analysis...");
+const [cbaLoadingProgress, setCbaLoadingProgress] = useState(null);
 
 useEffect(() => {
   if (!activeCodeArchitectureProject || !activeCodeArchitectureRepo || !activeCodeArchitectureRowsKey) {
@@ -7822,24 +7876,24 @@ useEffect(() => {
 
   useEffect(() => {
     let cancelled = false;
+    let requestSequence = 0;
+    setCodeArchitectureHazardRun(null);
     async function loadCodeArchitectureHazardRun() {
+      const request = ++requestSequence;
       const repoMeta = activeCodeArchitectureRepoMeta;
       const repoId = repoMeta.repoId || repoMeta.repoName || "";
       if (!repoId) {
-        if (!cancelled) setCodeArchitectureHazardRun(null);
+        if (!cancelled && request === requestSequence) setCodeArchitectureHazardRun(null);
         return;
       }
       try {
         const filters = { repoId };
         if (activeCodeArchitectureProjectId) filters.projectId = activeCodeArchitectureProjectId;
-        let latest = await getLatestCodeArchitectureHazardRun(filters);
-        if (!latest && activeCodeArchitectureProjectId) {
-          latest = await getLatestCodeArchitectureHazardRun({ repoId });
-        }
-        if (!cancelled) setCodeArchitectureHazardRun(latest || null);
+        const latest = await getLatestCodeArchitectureHazardRun(filters);
+        if (!cancelled && request === requestSequence) setCodeArchitectureHazardRun(latest || null);
       } catch (error) {
         console.warn("[code-architecture-hazard-analysis] Failed to load latest run", error);
-        if (!cancelled) setCodeArchitectureHazardRun(null);
+        if (!cancelled && request === requestSequence) setCodeArchitectureHazardRun(null);
       }
     }
     loadCodeArchitectureHazardRun();
@@ -9848,6 +9902,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   }, [
     activeCodeArchitectureRowsKey,
     activeProjectId,
+    setCbaTableData,
     getReviewItemProjectId,
     handleOpenCodeArchitectureFunctionalRow,
     handleOpenCodeArchitectureHazardSummaryRow,
@@ -11253,7 +11308,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       nextRows,
       state: buildFunctionalVibeReviewState(nextRows),
     };
-  }, [activeCodeArchitectureProjectId, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey, activeProjectId, buildFunctionalVibeReviewState, cbaTableData, responseRows]);
+  }, [activeCodeArchitectureProjectId, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey, activeProjectId, buildFunctionalVibeReviewState, cbaTableData, responseRows, setCbaTableData]);
 
   const restoreFunctionalVibeReviewRows = useCallback(async ({ projectId, rows = [], workspaceType = "functional-project" }) => {
     if (workspaceType === "code-based-architecture") {
@@ -11330,7 +11385,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setCommittedFunctionalDiagramRows(getProjectDiagramRows(nextRows));
     setDiagramCategories((current) => mergeSubsystemDiagramCategories(current, nextRows));
     return { rowId: record.rowId, nextRows, state: buildFunctionalVibeReviewState(nextRows) };
-  }, [activeCodeArchitectureProjectId, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey, activeProjectId, buildFunctionalVibeReviewState, cbaTableData, responseRows]);
+  }, [activeCodeArchitectureProjectId, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey, activeProjectId, buildFunctionalVibeReviewState, cbaTableData, responseRows, setCbaTableData]);
 
   const openFunctionalVibeReviewRow = useCallback(({ projectId, rowId, workspaceType = "functional-project", repoId = "" }) => {
     if (workspaceType === "code-based-architecture") {
@@ -11825,11 +11880,11 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         setCbaTableData(rows);
         const repoId = repo.repoId || repo.repoName || normalizeRepoIdentity(repo);
         let latestRun = await getLatestCodeArchitectureHazardRun({ projectId: project.id, repoId });
-        if (!latestRun) latestRun = await getLatestCodeArchitectureHazardRun({ repoId });
+
         setCodeArchitectureHazardRun(latestRun || null);
       }
     }
-  }, [activeCodeArchitectureProjectId, activeProjectId, codeArchitectureProjects]);
+  }, [activeCodeArchitectureProjectId, activeProjectId, codeArchitectureProjects, setCbaTableData]);
 
   const executeCollaboratorWorkspacePlan = useCallback(async ({ plan } = {}) => {
     const result = await executeWorkspaceActionPlan(plan);
@@ -14281,6 +14336,14 @@ Rules:
     });
   };
 
+  codeHazardScopeRef.current = `${activeCodeArchitectureProjectId}:${activeCodeArchitectureRepo?.id || ''}`;
+  useEffect(() => {
+    codeArchitectureHazardAbortRef.current?.abort();
+    codeArchitectureHazardAbortRef.current = null;
+    setIsRunningCodeArchitectureHazard(false);
+    setCodeArchitectureHazardProgress({ step: 0, message: '' });
+  }, [activeCodeArchitectureProjectId, activeCodeArchitectureRepo?.id]);
+
   const handleCancelCodeArchitectureHazardAnalysis = () => {
     codeArchitectureHazardAbortRef.current?.abort();
     setCodeArchitectureHazardProgress((current) => ({
@@ -14324,10 +14387,13 @@ Rules:
       message: "Starting analysis...",
     });
 
-    const priorRunForPreprocessing = codeArchitectureHazardRunRef.current;
+    const runScope = codeHazardScopeRef.current;
+    const isCurrentRun = () => codeHazardScopeRef.current === runScope && codeArchitectureHazardAbortRef.current === abortController && !abortController.signal.aborted;
+    const candidatePriorRun = codeArchitectureHazardRunRef.current;
+    const priorRunForPreprocessing = candidatePriorRun?.projectId === cbaProjectId && candidatePriorRun?.repoId === repoId ? candidatePriorRun : null;
     try {
       const run = await runCodeArchitectureHazardAnalysis({
-        previousRun: codeArchitectureHazardRunRef.current,
+        previousRun: priorRunForPreprocessing,
         cbaRows: cbaTableData,
         method: selectedMethod,
         repoMeta,
@@ -14344,7 +14410,7 @@ Rules:
         } : null,
         signal: abortController.signal,
         onPartialRunUpdate: (partialRun) => {
-          setCodeArchitectureHazardRun(partialRun);
+          if (isCurrentRun()) setCodeArchitectureHazardRun(partialRun);
         },
         setProgress: (nextProgress) => {
           const step = nextProgress?.step || 0;
@@ -14352,7 +14418,7 @@ Rules:
           const message = nextProgress?.message
             || stepDescriptionsMap[selectedMethod]?.steps?.[step]
             || "Running code architecture hazard analysis...";
-          setCodeArchitectureHazardProgress({ step, total, message });
+          if (isCurrentRun()) setCodeArchitectureHazardProgress({ step, total, message });
           updateActivity(actId, {
             step,
             total,
@@ -14364,7 +14430,7 @@ Rules:
           const step = patch?.step ?? 0;
           const total = patch?.total || stepDescriptionsMap[selectedMethod]?.total || 9;
           const message = patch?.message || "Running code architecture hazard analysis...";
-          setCodeArchitectureHazardProgress({ step, total, message });
+          if (isCurrentRun()) setCodeArchitectureHazardProgress({ step, total, message });
           updateActivity(actId, {
             step,
             total,
@@ -14373,7 +14439,7 @@ Rules:
           });
         },
       });
-      setCodeArchitectureHazardRun(run);
+      if (isCurrentRun()) setCodeArchitectureHazardRun(run);
       if (Array.isArray(run?.generatedSheets?.Summary) && run.generatedSheets.Summary.length > 1) {
         try {
           const [columns, ...rows] = run.generatedSheets.Summary;
@@ -14393,10 +14459,10 @@ Rules:
       }
       finishActivity(actId, "success", "Code architecture hazard analysis complete");
     } catch (error) {
-      if (Object.keys(priorRunForPreprocessing?.userPreprocessing || {}).length) commitCodeArchitectureHazardRun(priorRunForPreprocessing);
+      if (isCurrentRun() && Object.keys(priorRunForPreprocessing?.userPreprocessing || {}).length) commitCodeArchitectureHazardRun(priorRunForPreprocessing);
       const canceled = abortController.signal.aborted || error?.name === "AbortError";
       console.error("[code-architecture-hazard-analysis] Run failed", error);
-      setCodeArchitectureHazardProgress((prev) => ({
+      if (codeHazardScopeRef.current === runScope && codeArchitectureHazardAbortRef.current === abortController) setCodeArchitectureHazardProgress((prev) => ({
         ...prev,
         message: canceled ? "Code architecture hazard analysis stopped." : (error?.message || "Code architecture hazard analysis failed."),
       }));
@@ -14408,8 +14474,8 @@ Rules:
     } finally {
       if (codeArchitectureHazardAbortRef.current === abortController) {
         codeArchitectureHazardAbortRef.current = null;
+        setIsRunningCodeArchitectureHazard(false);
       }
-      setIsRunningCodeArchitectureHazard(false);
     }
   };
 
@@ -16989,6 +17055,12 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
 {section === 'code-architecture' && (
   <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-white px-3 py-1 md:px-5 lg:px-7">
     <h1 className="sr-only">Code-Based Architecture</h1>
+    {codeArchitectureImportStatus && <div role={codeArchitectureImportStatus.error ? 'alert' : 'status'} className="m-2 flex items-center gap-3 rounded border p-3 text-sm">
+      <span>{codeArchitectureImportStatus.message}</span>
+      {codeArchitectureImportStatus.busy
+        ? <button onClick={() => codeArchitectureImportRef.current?.cancel()}>Cancel import</button>
+        : <button onClick={() => setCodeArchitectureImportStatus(null)}>Dismiss</button>}
+    </div>}
     <input
       ref={codeArchitectureProjectImportInputRef}
       type="file"
@@ -17298,6 +17370,16 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                 <div ref={setCodeArchitectureViewControlsTarget} />
                 <button
                   type="button"
+                  onClick={() => codeArchitectureFunctionalExportRef.current?.()}
+                  disabled={cbaLoading || codeArchitectureWorkspaceTab !== "architecture" || !canExportCodeArchitectureCsv}
+                  className="inline-flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  title="Export the current functional decomposition as CSV; table filters are respected"
+                >
+                  <Download size={15} />
+                  Export CSV
+                </button>
+                <button
+                  type="button"
                   onClick={() => {
                     setCodeArchitectureWorkbookExportScope("project");
                     setCodeArchitectureWorkbookExportSheets(CODE_ARCHITECTURE_WORKBOOK_SHEET_OPTIONS.map((option) => option.key));
@@ -17305,10 +17387,10 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                     setShowCodeArchitectureWorkbookExport(true);
                   }}
                   className="inline-flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  title="Export this Code-Based Architecture project or analysis as a workbook"
+                  title="Export project analysis sheets as an Excel workbook"
                 >
                   <Download size={15} />
-                  Export
+                  Export workbook (XLSX)
                 </button>
                 <button
                   type="button"
@@ -17359,13 +17441,12 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
           onResume={(checkpoint) => handleBaselineRepo({ projectId: activeCodeArchitectureProject.id, repoConfig: activeCodeArchitectureRepo, publicationCheckpointKey: checkpoint.publicationReady ? checkpoint.key : undefined })}
         />}
 
-        {!cbaLoading && activeCodeArchitectureRepo && <CodeAnalysisCoverageNotice
-          coverage={activeCodeArchitectureStoredMeta?.sourceAnalysis?.coverage}
-        />}
-
         {cbaLoading
           ? (
-            <div className="min-h-0 overflow-auto rounded-xl border bg-white p-8 text-gray-600 text-sm">{cbaLoadingLabel}</div>
+            <div className="min-h-0 overflow-auto rounded-xl border bg-white p-8 text-gray-600 text-sm">
+              <div>{cbaLoadingLabel}{cbaLoadingProgress !== null && ` ${cbaLoadingProgress}%`}</div>
+              {cbaLoadingProgress !== null && <progress aria-label="Loading saved analysis" className="mt-3 h-2 w-full accent-blue-600" max={100} value={cbaLoadingProgress} />}
+            </div>
           )
 	          : !activeCodeArchitectureRepo ? (
 	            <div className="min-h-0 overflow-auto rounded-xl border bg-white p-8 text-gray-600 text-sm">
@@ -17382,6 +17463,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                   viewMode={codeArchitectureFunctionalViewMode}
                   showViewControls={false}
                   viewControlsTarget={codeArchitectureViewControlsTarget}
+                  onExportTableChange={registerCodeArchitectureFunctionalExport}
                   onViewModeChange={setCodeArchitectureFunctionalViewMode}
                   projectId={activeCodeArchitectureProject.id}
                   repoMeta={activeCodeArchitectureRepoMeta}

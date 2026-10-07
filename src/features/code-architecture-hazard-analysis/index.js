@@ -38,6 +38,7 @@ export {
   ensureHazardSummaryEvidenceColumns,
   ensureHazardSummaryTraceColumns,
   ensureCodeArchitectureTraceIds,
+  ensureCodeArchitectureTraceIdsAsync,
   filterEligibleCodeArchitectureRowsForHazardAnalysis,
   getCodeArchitectureHazardGuidePhrases,
   isCodeArchitectureHazardAnalysisStale,

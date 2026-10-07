@@ -1,0 +1,170 @@
+{
+  "before800": {
+    "url": "http://localhost:3002",
+    "count": 800,
+    "firstEdgesMs": 3568.5,
+    "counts": {
+      "nodes": 853,
+      "edges": 800,
+      "handles": 26048,
+      "dom": 35891
+    },
+    "gestures": {
+      "pan": {
+        "durationMs": 20393.5,
+        "p95FrameMs": 433.40000000000146,
+        "frames": 61
+      },
+      "zoom": {
+        "durationMs": 20759.30000001192,
+        "p95FrameMs": 450,
+        "frames": 61
+      }
+    },
+    "table": {
+      "firstPaintMs": 994.3999999761581,
+      "rows": 800,
+      "dom": 59369,
+      "clickMs": 196.80000001192093
+    },
+    "errors": []
+  },
+  "current800": {
+    "url": "http://localhost:3001",
+    "count": 800,
+    "firstEdgesMs": 1507.300000011921,
+    "counts": {
+      "nodes": 853,
+      "edges": 800,
+      "handles": 2016,
+      "dom": 10261
+    },
+    "gestures": {
+      "pan": {
+        "durationMs": 1225.199999988079,
+        "p95FrameMs": 16.800000000000182,
+        "frames": 66
+      },
+      "zoom": {
+        "durationMs": 1952,
+        "p95FrameMs": 50,
+        "frames": 80
+      }
+    },
+    "table": {
+      "firstPaintMs": 888,
+      "rows": 800,
+      "dom": 59370,
+      "clickMs": 174.19999998807907
+    },
+    "errors": []
+  },
+  "current2000": {
+    "url": "http://localhost:3001",
+    "count": 2000,
+    "firstEdgesMs": 5058,
+    "counts": {
+      "nodes": 2128,
+      "edges": 2000,
+      "handles": 5016,
+      "dom": 25486
+    },
+    "gestures": {
+      "pan": {
+        "durationMs": 2112.600000023842,
+        "p95FrameMs": 100,
+        "frames": 59
+      },
+      "zoom": {
+        "durationMs": 5322.399999976158,
+        "p95FrameMs": 250,
+        "frames": 67
+      }
+    },
+    "table": {
+      "firstPaintMs": 2299.099999964237,
+      "rows": 2000,
+      "dom": 148170,
+      "clickMs": 459.5999999642372
+    },
+    "errors": []
+  },
+  "storage": {
+    "rows": 1000,
+    "payloadMiB": 1.183650016784668,
+    "legacyWriteMs": 5.099999964237213,
+    "legacyReadMs": 3.5,
+    "treeWriteMs": 149.9000000357628,
+    "treeReadMs": 90.5,
+    "records": 4069,
+    "roundTripEqual": true
+  },
+  "derivedModel": [
+    {
+      "count": 1000,
+      "rawMiB": 2.08689022064209,
+      "annotatedMiB": 2.7095460891723633,
+      "functionalRows": 200,
+      "readiness": {
+        "medianMs": 25.057000000000016,
+        "maxMs": 25.48033399999997
+      },
+      "build": {
+        "medianMs": 32.79987499999993,
+        "maxMs": 33.02516600000001
+      },
+      "singleLinkLookup": {
+        "medianMs": 31.911000000000058,
+        "maxMs": 32.99995799999999
+      },
+      "layoutScopeSerialization": {
+        "medianMs": 3.5772080000000415,
+        "maxMs": 3.7420419999999694
+      }
+    },
+    {
+      "count": 5000,
+      "rawMiB": 10.46396541595459,
+      "annotatedMiB": 13.590072631835938,
+      "functionalRows": 1000,
+      "readiness": {
+        "medianMs": 129.0799579999998,
+        "maxMs": 129.58212500000013
+      },
+      "build": {
+        "medianMs": 165.49687499999982,
+        "maxMs": 171.27591600000005
+      },
+      "singleLinkLookup": {
+        "medianMs": 166.8988330000002,
+        "maxMs": 175.23549999999977
+      },
+      "layoutScopeSerialization": {
+        "medianMs": 19.75825000000077,
+        "maxMs": 20.064624999999978
+      }
+    },
+    {
+      "count": 10000,
+      "rawMiB": 20.93531322479248,
+      "annotatedMiB": 27.171972274780273,
+      "functionalRows": 2000,
+      "readiness": {
+        "medianMs": 258.14487499999996,
+        "maxMs": 269.2697910000006
+      },
+      "build": {
+        "medianMs": 333.88187500000095,
+        "maxMs": 335.30983299999934
+      },
+      "singleLinkLookup": {
+        "medianMs": 333.7948329999999,
+        "maxMs": 347.3886250000014
+      },
+      "layoutScopeSerialization": {
+        "medianMs": 39.87983299999905,
+        "maxMs": 40.03937499999847
+      }
+    }
+  ]
+}

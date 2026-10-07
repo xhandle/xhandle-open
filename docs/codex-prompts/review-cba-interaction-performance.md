@@ -1,0 +1,7 @@
+# Read-only CBA interaction performance regression review
+
+Compare the current working tree (including uncommitted changes) with the parent of commit 561c77df01a3fa65f7a06b568b5a710287138b9b. Identify introduced changes that explain slower button clicks, scrolling, tab switching, diagram loading, panning and zooming. Distinguish larger generated datasets from per-row/per-node regressions, initial work from recurring interaction work, and measured causes from hypotheses.
+
+Inspect the source extraction expansion, React render dependencies, derived Functional models, hazard/assurance inputs, table DOM size, React Flow subscriptions, layout/routing, persistence and allocation/copying costs. Trace important findings to source lines and introducing commits. Include both ingestion paths and all abstraction views. Use synthetic fixtures and isolated browser sessions or pure-function benchmarks; never run paid analysis, alter customer browser data, or change application implementation. Preserve the working tree. Do not infer that a previous optimization proves present responsiveness.
+
+Write a report with prioritized findings, reproducible measurements, baseline comparison, limits of evidence, and a focused remediation order that preserves analysis coverage, traceability, current layouts and downstream mechanics. The requested deliverable is a review, not implementation. Do not commit or push.

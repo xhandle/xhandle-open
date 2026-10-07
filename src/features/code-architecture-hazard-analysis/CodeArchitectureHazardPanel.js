@@ -31,7 +31,7 @@ import {
 import {
   CODE_ARCHITECTURE_HAZARD_METHOD_OPTIONS,
 } from "./codeArchitectureHazardTypes";
-import { isCodeArchitectureHazardAnalysisStale } from "./codeArchitectureHazardUtils";
+import { effectiveCodeArchitectureHazardRows, isCodeArchitectureHazardAnalysisStale } from "./codeArchitectureHazardUtils";
 import { summarizeCodeArchitectureHazardEligibility } from "./codeArchitectureHazardEligibility";
 import CodeArchitectureHazardSummaryTable from "./CodeArchitectureHazardSummaryTable";
 
@@ -123,7 +123,7 @@ export default function CodeArchitectureHazardPanel({
     [operationalContexts],
   );
   const eligibilitySummary = useMemo(
-    () => summarizeCodeArchitectureHazardEligibility(cbaRows),
+    () => summarizeCodeArchitectureHazardEligibility(effectiveCodeArchitectureHazardRows(cbaRows)),
     [cbaRows],
   );
   const isStale = useMemo(
@@ -379,7 +379,9 @@ export default function CodeArchitectureHazardPanel({
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-center text-sm text-slate-500">
-            Run the code architecture hazard analysis to populate reviewable results.
+            {eligibilitySummary.include === 0
+              ? `No eligible interfaces are available: ${eligibilitySummary.exclude} excluded and ${eligibilitySummary.needsReview} need review. Open Architecture Diagram → Table to review Hazard Analysis Eligibility and its rationale, or generate the Functional model. Adding a scenario does not change eligibility.`
+              : 'Run the code architecture hazard analysis to populate reviewable results.'}
           </div>
         )}
       </div>

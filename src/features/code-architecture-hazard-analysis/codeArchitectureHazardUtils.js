@@ -61,14 +61,18 @@ function functionIdentityKey(row = {}, side = "from") {
   ].filter(Boolean).join("|") || makeCodeArchitectureTraceId("cba-node-key");
 }
 
-export function ensureCodeArchitectureTraceIds(rows = []) {
+function* prepareCodeArchitectureTraceIds(rows) {
+  rows = Array.isArray(rows) ? rows : [];
+  const result = [];
   const nodeIdsByIdentity = new Map();
-  (Array.isArray(rows) ? rows : []).forEach((row = {}) => {
+  for (const value of rows) {
+    const row = value === undefined ? {} : value;
     if (row.fromNodeId) nodeIdsByIdentity.set(functionIdentityKey(row, "from"), row.fromNodeId);
     if (row.toNodeId) nodeIdsByIdentity.set(functionIdentityKey(row, "to"), row.toNodeId);
-  });
+    yield;
+  }
 
-  const rowsWithTraceIds = (Array.isArray(rows) ? rows : []).map((row = {}, index) => {
+  for (const [index, row = {}] of rows.entries()) {
     const fromKey = functionIdentityKey(row, "from");
     const toKey = functionIdentityKey(row, "to");
     const fromNodeId = row.fromNodeId || nodeIdsByIdentity.get(fromKey) || makeCodeArchitectureTraceId("cba-node");
@@ -77,16 +81,41 @@ export function ensureCodeArchitectureTraceIds(rows = []) {
     nodeIdsByIdentity.set(toKey, toNodeId);
 
     const traceId = row.traceId || makeCodeArchitectureTraceId("cba-trace");
-    return {
+    result.push(ensureCodeArchitectureHazardEligibility([{
       ...row,
       rowRef: row.rowRef || index + 1,
       traceId,
       fromNodeId,
       toNodeId,
       edgeId: row.edgeId || makeCodeArchitectureTraceId("cba-edge"),
-    };
-  });
-  return ensureCodeArchitectureHazardEligibility(rowsWithTraceIds);
+    }])[0]);
+    yield;
+  }
+  return result;
+}
+
+export function ensureCodeArchitectureTraceIds(rows = []) {
+  const work = prepareCodeArchitectureTraceIds(rows);
+  let step;
+  do { step = work.next(); } while (!step.done);
+  return step.value;
+}
+
+export async function ensureCodeArchitectureTraceIdsAsync(rows = [], { onProgress = () => {}, isCancelled = () => false } = {}) {
+  const work = prepareCodeArchitectureTraceIds(rows);
+  let completed = 0, lastYield = Date.now();
+  onProgress(0);
+  while (true) {
+    if (isCancelled()) return null;
+    const step = work.next();
+    if (step.done) { onProgress(100); return step.value; }
+    completed++;
+    if (completed % 32 === 0 || completed === rows.length * 2) onProgress(completed / Math.max(1, rows.length * 2) * 100);
+    if (Date.now() - lastYield >= 8) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+      lastYield = Date.now();
+    }
+  }
 }
 
 export function normalizeRepoId(repoMeta = {}) {
@@ -231,7 +260,7 @@ export function computeArchitectureSnapshotHash(cbaRows = []) {
 
 function computeFunctionalModelSnapshotHash(rows) {
   return computeArchitectureSnapshotHash(rows.map(row => ({ ...row, architecture: {
-    ...row.architecture, functionalDescriptions: [row.fromDetails, row.controlActionDetails, row.toDetails, row.functionalModel?.kind],
+    ...row.architecture, functionalDestinationArchitecture: row.toArchitecture, functionalDescriptions: [row.fromDetails, row.controlActionDetails, row.toDetails, row.functionalModel?.kind],
   } })));
 }
 
@@ -634,6 +663,11 @@ export function buildCodeArchitectureTraceabilityMap(cbaRows = []) {
   }));
 }
 
+export function effectiveCodeArchitectureHazardRows(rows = []) {
+  const functionalRows = buildFunctionalModelRows(rows);
+  return functionalRows.length ? functionalRows : rows;
+}
+
 export function buildCodeArchitectureHazardInput({
   cbaRows = [],
   repoMeta = {},
@@ -643,7 +677,7 @@ export function buildCodeArchitectureHazardInput({
   selectedOperationalContextId = "all",
 } = {}) {
   const functionalRows = buildFunctionalModelRows(cbaRows);
-  const analysisRows = functionalRows.length ? functionalRows : cbaRows;
+  const analysisRows = effectiveCodeArchitectureHazardRows(cbaRows);
   const normalizedArchitectureRows = ensureCodeArchitectureTraceIds(analysisRows);
   const eligibilitySummary = summarizeCodeArchitectureHazardEligibility(normalizedArchitectureRows);
   const sourceTableRows = codeArchitectureRowsToHazardTableRows(analysisRows, repoMeta);

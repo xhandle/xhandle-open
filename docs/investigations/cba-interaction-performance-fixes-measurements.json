@@ -1,0 +1,447 @@
+{
+  "environment": {
+    "cpu": "Apple M2",
+    "memoryBytes": 8589934592,
+    "node": "20.20.2",
+    "browser": "Chrome 154.0.8037.98 headless",
+    "buildMode": "CRA development; production compilation verified separately",
+    "date": "2026-10-06"
+  },
+  "before2000": [
+    {
+      "url": "http://localhost:3001",
+      "count": 2000,
+      "firstEdgesMs": 4876,
+      "counts": {
+        "nodes": 2128,
+        "edges": 2000,
+        "handles": 5016,
+        "dom": 25486
+      },
+      "gestures": {
+        "pan": {
+          "durationMs": 2065,
+          "p95FrameMs": 83.29999999999927,
+          "frames": 55
+        },
+        "zoom": {
+          "durationMs": 5319.399999976158,
+          "p95FrameMs": 233.3000000000011,
+          "frames": 70
+        }
+      },
+      "table": {
+        "firstPaintMs": 2285.599999964237,
+        "rows": 2000,
+        "dom": 148170,
+        "clickMs": 449
+      },
+      "errors": []
+    },
+    {
+      "url": "http://localhost:3001",
+      "count": 2000,
+      "firstEdgesMs": 4988.599999964237,
+      "counts": {
+        "nodes": 2128,
+        "edges": 2000,
+        "handles": 5016,
+        "dom": 25486
+      },
+      "gestures": {
+        "pan": {
+          "durationMs": 2089.100000023842,
+          "p95FrameMs": 83.30000000000109,
+          "frames": 60
+        },
+        "zoom": {
+          "durationMs": 5441.900000035763,
+          "p95FrameMs": 250,
+          "frames": 66
+        }
+      },
+      "table": {
+        "firstPaintMs": 2231.699999988079,
+        "rows": 2000,
+        "dom": 148170,
+        "clickMs": 439.60000002384186
+      },
+      "errors": []
+    },
+    {
+      "url": "http://localhost:3001",
+      "count": 2000,
+      "firstEdgesMs": 4855.899999976158,
+      "counts": {
+        "nodes": 2128,
+        "edges": 2000,
+        "handles": 5016,
+        "dom": 25486
+      },
+      "gestures": {
+        "pan": {
+          "durationMs": 2033.199999988079,
+          "p95FrameMs": 83.29999999999927,
+          "frames": 53
+        },
+        "zoom": {
+          "durationMs": 5230,
+          "p95FrameMs": 200.10000000000036,
+          "frames": 70
+        }
+      },
+      "table": {
+        "firstPaintMs": 2193.100000023842,
+        "rows": 2000,
+        "dom": 148170,
+        "clickMs": 449.60000002384186
+      },
+      "errors": []
+    }
+  ],
+  "after2000": [
+    {
+      "count": 2000,
+      "firstEdgesMs": 4381.5,
+      "counts": {
+        "nodes": 2128,
+        "edges": 2000,
+        "handles": 5016,
+        "dom": 25486
+      },
+      "gestures": {
+        "pan": {
+          "durationMs": 1725.800000011921,
+          "p95FrameMs": 50.100000000000364,
+          "frames": 59
+        },
+        "zoom": {
+          "durationMs": 1691.8999999761581,
+          "p95FrameMs": 33.399999999999636,
+          "frames": 63
+        }
+      },
+      "table": {
+        "firstPaintMs": 128.69999998807907,
+        "rows": 13,
+        "dom": 1060,
+        "clickMs": 32.5
+      },
+      "errors": []
+    },
+    {
+      "count": 2000,
+      "firstEdgesMs": 4237.900000035763,
+      "counts": {
+        "nodes": 2128,
+        "edges": 2000,
+        "handles": 5016,
+        "dom": 25486
+      },
+      "gestures": {
+        "pan": {
+          "durationMs": 1756.3999999761581,
+          "p95FrameMs": 49.899999999999636,
+          "frames": 60
+        },
+        "zoom": {
+          "durationMs": 1707.5,
+          "p95FrameMs": 33.399999999999636,
+          "frames": 66
+        }
+      },
+      "table": {
+        "firstPaintMs": 133.19999998807907,
+        "rows": 15,
+        "dom": 1208,
+        "clickMs": 29.600000023841858
+      },
+      "errors": []
+    },
+    {
+      "count": 2000,
+      "firstEdgesMs": 4342.200000047684,
+      "counts": {
+        "nodes": 2128,
+        "edges": 2000,
+        "handles": 5016,
+        "dom": 25486
+      },
+      "gestures": {
+        "pan": {
+          "durationMs": 1747.800000011921,
+          "p95FrameMs": 50,
+          "frames": 58
+        },
+        "zoom": {
+          "durationMs": 1845.699999988079,
+          "p95FrameMs": 33.400000000001455,
+          "frames": 82
+        }
+      },
+      "table": {
+        "firstPaintMs": 195.0999999642372,
+        "rows": 13,
+        "dom": 1060,
+        "clickMs": 31
+      },
+      "errors": []
+    }
+  ],
+  "storageBeforeSingleRun": {
+    "rows": 1000,
+    "payloadMiB": 1.183650016784668,
+    "legacyWriteMs": 5.099999964237213,
+    "legacyReadMs": 3.5,
+    "treeWriteMs": 149.9000000357628,
+    "treeReadMs": 90.5,
+    "records": 4069,
+    "roundTripEqual": true
+  },
+  "storageAfter": [
+    {
+      "rows": 1000,
+      "payloadMiB": 1.183650016784668,
+      "legacyWriteMs": 4.5,
+      "legacyReadMs": 1.800000011920929,
+      "treeWriteMs": 27.69999998807907,
+      "treeReadMs": 3.800000011920929,
+      "records": 19,
+      "roundTripEqual": true
+    },
+    {
+      "rows": 1000,
+      "payloadMiB": 1.183650016784668,
+      "legacyWriteMs": 7.199999988079071,
+      "legacyReadMs": 9.399999976158142,
+      "treeWriteMs": 24.400000035762787,
+      "treeReadMs": 3,
+      "records": 19,
+      "roundTripEqual": true
+    },
+    {
+      "rows": 1000,
+      "payloadMiB": 1.183650016784668,
+      "legacyWriteMs": 9.899999976158142,
+      "legacyReadMs": 3.699999988079071,
+      "treeWriteMs": 27.30000001192093,
+      "treeReadMs": 3.600000023841858,
+      "records": 19,
+      "roundTripEqual": true
+    }
+  ],
+  "derivedBefore": [
+    {
+      "count": 1000,
+      "rawMiB": 2.08689022064209,
+      "annotatedMiB": 2.7095460891723633,
+      "functionalRows": 200,
+      "readiness": {
+        "medianMs": 25.057000000000016,
+        "maxMs": 25.48033399999997
+      },
+      "build": {
+        "medianMs": 32.79987499999993,
+        "maxMs": 33.02516600000001
+      },
+      "singleLinkLookup": {
+        "medianMs": 31.911000000000058,
+        "maxMs": 32.99995799999999
+      },
+      "layoutScopeSerialization": {
+        "medianMs": 3.5772080000000415,
+        "maxMs": 3.7420419999999694
+      }
+    },
+    {
+      "count": 5000,
+      "rawMiB": 10.46396541595459,
+      "annotatedMiB": 13.590072631835938,
+      "functionalRows": 1000,
+      "readiness": {
+        "medianMs": 129.0799579999998,
+        "maxMs": 129.58212500000013
+      },
+      "build": {
+        "medianMs": 165.49687499999982,
+        "maxMs": 171.27591600000005
+      },
+      "singleLinkLookup": {
+        "medianMs": 166.8988330000002,
+        "maxMs": 175.23549999999977
+      },
+      "layoutScopeSerialization": {
+        "medianMs": 19.75825000000077,
+        "maxMs": 20.064624999999978
+      }
+    },
+    {
+      "count": 10000,
+      "rawMiB": 20.93531322479248,
+      "annotatedMiB": 27.171972274780273,
+      "functionalRows": 2000,
+      "readiness": {
+        "medianMs": 258.14487499999996,
+        "maxMs": 269.2697910000006
+      },
+      "build": {
+        "medianMs": 333.88187500000095,
+        "maxMs": 335.30983299999934
+      },
+      "singleLinkLookup": {
+        "medianMs": 333.7948329999999,
+        "maxMs": 347.3886250000014
+      },
+      "layoutScopeSerialization": {
+        "medianMs": 39.87983299999905,
+        "maxMs": 40.03937499999847
+      }
+    }
+  ],
+  "derivedAfter": [
+    {
+      "count": 1000,
+      "coldDerivationMs": 41.617999999999995,
+      "rawMiB": 2.08689022064209,
+      "annotatedMiB": 2.7095460891723633,
+      "functionalRows": 200,
+      "readiness": {
+        "medianMs": 0.0004589999999780048,
+        "maxMs": 0.00837500000000091
+      },
+      "build": {
+        "medianMs": 0.00037500000001955414,
+        "maxMs": 0.0049579999999878055
+      },
+      "singleLinkLookup": {
+        "medianMs": 0.0007909999999924366,
+        "maxMs": 0.033749999999997726
+      },
+      "layoutScopeSerialization": {
+        "medianMs": 6.853999999999985,
+        "maxMs": 13.620291000000066
+      }
+    },
+    {
+      "count": 5000,
+      "coldDerivationMs": 139.109333,
+      "rawMiB": 10.46396541595459,
+      "annotatedMiB": 13.590072631835938,
+      "functionalRows": 1000,
+      "readiness": {
+        "medianMs": 0.00033399999995253893,
+        "maxMs": 0.00437499999998181
+      },
+      "build": {
+        "medianMs": 0.0002910000000611035,
+        "maxMs": 0.0009589999999661813
+      },
+      "singleLinkLookup": {
+        "medianMs": 0.0007500000000391083,
+        "maxMs": 0.024957999999969616
+      },
+      "layoutScopeSerialization": {
+        "medianMs": 48.0118329999998,
+        "maxMs": 78.00787500000001
+      }
+    },
+    {
+      "count": 10000,
+      "coldDerivationMs": 304.2709580000003,
+      "rawMiB": 20.93531322479248,
+      "annotatedMiB": 27.171972274780273,
+      "functionalRows": 2000,
+      "readiness": {
+        "medianMs": 0.0060840000001007866,
+        "maxMs": 0.011040999999750056
+      },
+      "build": {
+        "medianMs": 0.0009999999997489795,
+        "maxMs": 0.0013750000002801244
+      },
+      "singleLinkLookup": {
+        "medianMs": 0.0009580000000823929,
+        "maxMs": 0.2647919999999431
+      },
+      "layoutScopeSerialization": {
+        "medianMs": 50.006500000000415,
+        "maxMs": 58.99262499999986
+      }
+    }
+  ],
+  "virtualTable": {
+    "rows": 10000,
+    "mounted": 19,
+    "firstClickOffscreen": true,
+    "offscreenSearch": true,
+    "editing": true,
+    "fullCopy": true,
+    "errors": []
+  },
+  "functionalBrowser": {
+    "sourceRows": 22,
+    "functionalNodes": 3,
+    "functionalInteractions": 2,
+    "nestedContainers": true,
+    "nonOverlappingContainers": true,
+    "persistedReload": true,
+    "stalePublicationRejected": true,
+    "githubLocalParity": true,
+    "sourceCoverage": true,
+    "exactTableLink": true,
+    "csuDrillThrough": true,
+    "hazardUsesFunctionalModel": true
+  },
+  "csu800Browser": {
+    "baseline": false,
+    "initial": {
+      "nodes": 801,
+      "handles": 2016
+    },
+    "hoverPorts": 32,
+    "stableEdgePaths": true,
+    "pinchZoom": true,
+    "transform": "translate(335.555px, -506.815px) scale(0.0789823)",
+    "duration": 1784.5,
+    "frames": 99,
+    "p95": 16.799999999999272,
+    "handles": 2016,
+    "nodes": 853,
+    "edges": 800
+  },
+  "storageIntegrity": {
+    "oldTreeMigration": true,
+    "unchangedChunksReused": true,
+    "timings": [
+      {
+        "count": 50,
+        "logicalBytes": 8713181,
+        "elapsedMs": 64,
+        "chunksWritten": 60,
+        "approxBytesWritten": 268110
+      },
+      {
+        "count": 150,
+        "logicalBytes": 26139681,
+        "elapsedMs": 138,
+        "chunksWritten": 104,
+        "approxBytesWritten": 97628
+      },
+      {
+        "count": 300,
+        "logicalBytes": 52279581,
+        "elapsedMs": 323,
+        "chunksWritten": 154,
+        "approxBytesWritten": 136400
+      }
+    ],
+    "unrelatedPayloadBytes": 136314880,
+    "mutableRowsIndependent": true,
+    "atomicAbort": true,
+    "saveOnlyRetry": true,
+    "concurrentEditPreserved": true,
+    "quotaRecovery": true,
+    "legacyRecovery": true,
+    "reloadSaveRecovery": true
+  }
+}

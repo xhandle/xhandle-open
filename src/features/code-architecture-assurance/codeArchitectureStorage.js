@@ -5,28 +5,48 @@ export const XHANDLE_IDB_VERSION = 4;
 export const XHANDLE_IDB_CBA_STORE = 'copilot_baseline';
 export const codeArchitectureRowsKey = (projectId, repoId) => `cba:${projectId}:${repoId}`;
 export const codeArchitectureMetaKey = (projectId, repoId) => `cbaMeta:${projectId}:${repoId}`;
-export function openCbaIndexedDB() {
+export function openCbaIndexedDB({ signal } = {}) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(signal.reason || new Error('Storage operation cancelled.')); return; }
     const request = indexedDB.open(XHANDLE_IDB_NAME, XHANDLE_IDB_VERSION);
+    const aborted = () => reject(signal.reason || new Error('Storage operation cancelled.'));
+    signal?.addEventListener('abort', aborted, { once: true });
     let blocked = false;
     request.onupgradeneeded = () => {
       for (const name of ['code_index', 'copilot_baseline', 'diagram_positions']) if (!request.result.objectStoreNames.contains(name)) request.result.createObjectStore(name, {keyPath:'key'});
     };
     request.onblocked = () => { blocked = true; reject(new Error('Storage upgrade blocked. Close other xHandle tabs and retry.')); };
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => { if (blocked) request.result.close(); else resolve(request.result); };
+    request.onerror = () => { signal?.removeEventListener('abort', aborted); reject(request.error); };
+    request.onsuccess = () => { signal?.removeEventListener('abort', aborted); if (blocked || signal?.aborted) request.result.close(); else resolve(request.result); };
   });
 }
 const changed = () => notifyBackupDataChanged({db:XHANDLE_IDB_NAME, stores:[XHANDLE_IDB_CBA_STORE]});
-export async function readCbaRowsFromIndexedDB(key) {
+export async function readCbaRowsFromIndexedDB(key, options) {
   if (!key || typeof indexedDB === 'undefined') return [];
   const db = await openCbaIndexedDB();
-  try { const value = await readRecord(db, XHANDLE_IDB_CBA_STORE, key); return Array.isArray(value) ? value : []; }
+  try { const value = await readRecord(db, XHANDLE_IDB_CBA_STORE, key, options); return Array.isArray(value) ? value : []; }
   finally { db.close(); }
 }
-export async function readFirstCbaRowsFromIndexedDB(keys = []) {
+export async function readFirstCbaRowsFromIndexedDB(keys = [], { onProgress } = {}) {
   const unique = [...new Set((Array.isArray(keys) ? keys : [keys]).filter(Boolean))];
-  for (const key of unique) { const rows = await readCbaRowsFromIndexedDB(key); if (rows.length) return {key, rows}; }
+  let reported = 0;
+  const report = value => { reported = Math.max(reported, value); onProgress?.(reported); };
+  onProgress?.(0);
+  if (typeof indexedDB === 'undefined') { report(100); return { key: unique[0] || '', rows: [] }; }
+  const db = await openCbaIndexedDB();
+  try {
+    for (const key of unique) {
+      const value = await rawRecord(db, XHANDLE_IDB_CBA_STORE, key);
+      if (!isChunkedRecord(value) && (!Array.isArray(value) || !value.length)) continue;
+      // These keys are alternative locations, not three equal parts of a load.
+      // Give the actual record the full progress range, regardless of aliases.
+      const rows = await hydrateRecord(db, XHANDLE_IDB_CBA_STORE, value, { onProgress: percent => report(Math.min(99, percent)) });
+      if (Array.isArray(rows) && rows.length) { report(100); return {key, rows}; }
+    }
+  } finally {
+    db.close();
+  }
+  report(100);
   return {key:unique[0] || '', rows:[]};
 }
 export async function readCbaRowsRevision(key) {
@@ -51,16 +71,20 @@ export async function readArchitectureRunRecords(key, rows = []) {
     return records;
   } finally { db.close(); }
 }
-export async function writeImportedArchitectureRunRecords(key, records = [], rows) {
-  const db = await openCbaIndexedDB();
+export async function writeImportedArchitectureRunRecords(key, records = [], rows, { signal } = {}) {
+  const db = await openCbaIndexedDB({ signal });
   try {
     const writes = [];
     for (const record of records.filter(r => r.version === 1 && /^[a-f0-9]{64}$/.test(r.fingerprint || ''))) {
       const recordKey = `${key}:run:${record.fingerprint}`;
-      writes.push({key:recordKey, value:await stageRecord(db, XHANDLE_IDB_CBA_STORE, recordKey, {...record, originalScope:record.originalScope || record.scope, scope:key})});
+      writes.push({key:recordKey, value:await stageRecord(db, XHANDLE_IDB_CBA_STORE, recordKey, {...record, originalScope:record.originalScope || record.scope, scope:key}, { signal })});
     }
-    if (Array.isArray(rows)) writes.push({key, value:await stageRecord(db, XHANDLE_IDB_CBA_STORE, key, rows)});
+    if (Array.isArray(rows)) writes.push({key, value:await stageRecord(db, XHANDLE_IDB_CBA_STORE, key, rows, { signal })});
+    if (signal?.aborted) throw signal.reason || new Error('Import cancelled.');
     const tx = db.transaction(XHANDLE_IDB_CBA_STORE, 'readwrite'), done = transactionDone(tx);
+    const abort = () => { try { tx.abort(); } catch {} };
+    signal?.addEventListener('abort', abort, { once: true });
+    done.finally(() => signal?.removeEventListener('abort', abort)).catch(() => {});
     try {for (const write of writes) tx.objectStore(XHANDLE_IDB_CBA_STORE).put(write);}
     catch(error) {tx.abort();await done.catch(()=>{});throw error;}
     await done; changed();

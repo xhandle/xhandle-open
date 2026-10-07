@@ -38,3 +38,13 @@ test('never increases local call distance for cycles and parallel calls', () => 
   expect(cost(result, edges)).toBeLessThanOrEqual(cost(nodes, edges));
   expect(new Set(result)).toEqual(new Set(nodes));
 });
+
+test('the shared adjacency index preserves the complete-edge ordering result', () => {
+  const { indexCsuEdges } = require('./csuFunctionOrdering');
+  const edges = nodes.flatMap((node, i) => [
+    { source: node.id, target: nodes[(i + 5) % nodes.length].id },
+    { source: 'outside', target: node.id },
+    { source: node.id, target: 'outside' },
+  ]);
+  expect(orderCsuFunctions(nodes, indexCsuEdges(edges), grid)).toEqual(orderCsuFunctions(nodes, edges, grid));
+});

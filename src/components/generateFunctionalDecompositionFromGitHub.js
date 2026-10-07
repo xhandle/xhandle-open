@@ -1,4 +1,6 @@
-import { processFunctionalModel, functionalModelIsReady } from '../features/code-architecture-context/functionalModel';
+import { ArchitectureWorkspace, ArchitectureDivider, ArchitectureTablePane, useArchitectureColumnWidths, diagramFocusView, architectureHeaderClass, architectureCellClass, architectureLinkClass } from './ArchitectureWorkspace';
+import VirtualTableBody from './VirtualTableBody';
+import { processFunctionalModel, functionalModelIsReady, immutableFunctionalRows } from '../features/code-architecture-context/functionalModel';
 import { writeCbaRowsToIndexedDB, readCbaRowsRevision } from '../features/code-architecture-assurance/codeArchitectureStorage';
 import { readRecord, writeRecord } from '../features/code-architecture-storage/chunkedRecord';
 import { prepareArchitecturePublication, recoverArchitecturePublication, openCbaIndexedDB } from '../features/code-architecture-assurance/codeArchitectureStorage';
@@ -11,7 +13,7 @@ import { ANALYSIS_VERSION, createRunGuard, settingsFromAuth, runFingerprint } fr
 import { resolveGitHubRevision, listGitHubSnapshot, readGitHubSnapshotFile, compareSourcePaths, digestText } from "../features/code-architecture-context/codeSourceAcquisition";
 import { isLocalCodeSource, codeSourceProvenance, codeSourceIndexKey } from "../features/code-architecture-context/codeSourceIdentity";
 import { createLocalSourceProvider } from "../features/code-architecture-context/localCodeSource";
-import useTableRowFocus from "./useTableRowFocus";
+
 import { resolveArchitectureTarget, retryDiagramFocus } from "./codeArchitectureNavigation";
 import CopyTableButton from './CopyTableButton';
 // 📁 generateFunctionalDecompositionFromGitHub.js
@@ -1950,7 +1952,7 @@ function sleep(ms, signal = null) {
   return waitForAnalysisRetry(ms, signal);
 }
 
-async function requestOpenAIProxyWithRetry({ prompt, bearer, label, attempts = 3, signal = null, runGuard, maxTokens = FUNCTIONAL_OUTPUT_TOKENS }) {
+async function requestOpenAIProxyWithRetry({ prompt, bearer, label, attempts = 3, signal = null, runGuard, maxTokens = FUNCTIONAL_OUTPUT_TOKENS, jsonMode = false }) {
   let lastError = null;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     throwIfAborted(signal);
@@ -1969,6 +1971,7 @@ async function requestOpenAIProxyWithRetry({ prompt, bearer, label, attempts = 3
           model: BULK_ANALYSIS_MODEL,
           temperature: 0.2,
           max_tokens: maxTokens,
+          ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
           xhandleModelLocked: true,
         }),
         signal,
@@ -3429,7 +3432,7 @@ Rules:
       classifiedArchitectureRows = await processFunctionalModel(classifiedArchitectureRows, {
         signal: opts.signal,
         onProgress: progress => opts?.onProgress?.({ phase: 'functional', completedFiles, totalFiles: validFiles.length, ...progress }),
-        request: async (prompt, signal) => (await requestOpenAIProxyJsonWithMetrics({ prompt, bearer, signal, metricsRun, label: 'Functional responsibility processing', maxTokens: 7000 })).result,
+        request: async (prompt, signal) => (await requestOpenAIProxyJsonWithMetrics({ prompt, bearer, signal, metricsRun, label: 'Functional responsibility processing', maxTokens: 7000, jsonMode: true })).result,
       });
     } catch (error) {
       if (opts.signal?.aborted) throw error;
@@ -3630,9 +3633,7 @@ function codeArchitectureFunctionalCellRows(value, columnId) {
   return Math.min(28, Math.max(2, estimated + 1));
 }
 
-export const codeArchitectureViewModeForDiagramFocus = (currentView) => (
-  currentView === "split" ? "split" : "architecture"
-);
+export const codeArchitectureViewModeForDiagramFocus = diagramFocusView;
 
 export const codeArchitectureViewShowsDiagram = (view) => (
   view === "architecture" || view === "split"
@@ -3672,6 +3673,7 @@ export const FunctionalDecompositionTable = ({
   showViewControls = true,
   viewControlsTarget = null,
   onViewModeChange,
+  onExportTableChange,
 }) => {
   const [manualData, setManualData] = useState(null);
   const [canvasToolsTarget, setCanvasToolsTarget] = useState(null);
@@ -3687,7 +3689,17 @@ export const FunctionalDecompositionTable = ({
     onViewModeChange?.(resolvedView);
   }, [onViewModeChange]);
   const [splitDiagramPercent, setSplitDiagramPercent] = useState(50);
-  const [architectureAbstraction, setArchitectureAbstraction] = useState("subsystem");
+  const abstractionStorageKey = `${rowsStorageKey || JSON.stringify([projectId, repoId, branch])}:architecture-abstraction`;
+  const readAbstraction = (key) => {
+    try { return ['subsystem', 'csci', 'csc', 'detailed', 'functional'].includes(localStorage.getItem(key)) ? localStorage.getItem(key) : null; }
+    catch { return null; }
+  };
+  const [abstractionSelection, setAbstractionSelection] = useState(() => ({ key: abstractionStorageKey, value: readAbstraction(abstractionStorageKey) }));
+  const architectureAbstraction = (abstractionSelection.key === abstractionStorageKey ? abstractionSelection.value : readAbstraction(abstractionStorageKey)) || (functionalModelIsReady(manualData || data || []) ? 'functional' : 'subsystem');
+  const setArchitectureAbstraction = React.useCallback(value => {
+    setAbstractionSelection({ key: abstractionStorageKey, value });
+    try { localStorage.setItem(abstractionStorageKey, value); } catch {}
+  }, [abstractionStorageKey]);
   const [cleanOnceKey, setCleanOnceKey] = useState(() => `initial-${Date.now()}`); // one-time arrange on first open
   const [architectureReport, setArchitectureReport] = useState(null);
   const [selectedArchitectureRowId, setSelectedArchitectureRowId] = useState("");
@@ -3755,35 +3767,9 @@ const repoName = useMemo(() => {
 
   React.useEffect(() => {
     if (!forceTableOpenKey) return;
+    setArchitectureAbstraction('detailed');
     setView((currentView) => currentView === "split" ? currentView : "table");
-  }, [forceTableOpenKey, setView]);
-
-  const startSplitResize = React.useCallback((event) => {
-    if (view !== "split" || event.button !== 0) return;
-    event.preventDefault();
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-    const workspace = splitWorkspaceRef.current;
-    if (!workspace) return;
-
-    const update = (clientX) => {
-      const bounds = workspace.getBoundingClientRect();
-      if (!bounds.width) return;
-      const nextPercent = ((clientX - bounds.left) / bounds.width) * 100;
-      setSplitDiagramPercent(Math.min(75, Math.max(25, nextPercent)));
-    };
-    const handleMove = (moveEvent) => update(moveEvent.clientX);
-    const handleUp = () => {
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", handleUp);
-      window.requestAnimationFrame(() => {
-        try {
-          diagramRef.current?.fitViewToDiagram?.();
-        } catch {}
-      });
-    };
-    window.addEventListener("pointermove", handleMove);
-    window.addEventListener("pointerup", handleUp, { once: true });
-  }, [view]);
+  }, [forceTableOpenKey, setView, setArchitectureAbstraction]);
 
   React.useEffect(() => {
     if (!architectureRefreshKey) return;
@@ -3806,7 +3792,7 @@ const repoName = useMemo(() => {
   }, [highlightedRowIndex, forceTableOpenKey, setView]);
 
   const rowsWithTraceIds = useMemo(
-    () => ensureCodeArchitectureTraceIds(manualData || data || []),
+    () => immutableFunctionalRows(ensureCodeArchitectureTraceIds(manualData || data || [])),
     [manualData, data]
   );
   const [functionalProgress, setFunctionalProgress] = useState('');
@@ -3830,9 +3816,10 @@ const repoName = useMemo(() => {
       if (!rowsStorageKey) throw new Error("Open a saved project to persist the functional model.");
       const expectedBaseline = await readCbaRowsRevision(rowsStorageKey);
       const result = await processFunctionalModel(input, {
+        force: true,
         signal: controller.signal,
         onProgress: progress => setFunctionalProgress(progress.message),
-        request: async (prompt, signal) => (await requestOpenAIProxyJsonWithMetrics({ prompt, signal, bearer: getLocalAccessToken(), label: 'Functional responsibility processing', maxTokens: 7000 })).result,
+        request: async (prompt, signal) => (await requestOpenAIProxyJsonWithMetrics({ prompt, signal, bearer: getLocalAccessToken(), label: 'Functional responsibility processing', maxTokens: 7000, jsonMode: true })).result,
       });
       if (controller.signal.aborted || functionalInputs.current !== input) return;
       if (!rowsStorageKey) throw new Error('Open a saved project to persist the functional model.');
@@ -3893,7 +3880,7 @@ const repoName = useMemo(() => {
     }));
   }, [rowsWithTraceIds]);
 
-  const diagramRows = useMemo(() => diagramReferenceRows.filter(row => row.lineage?.status !== "historical"), [diagramReferenceRows]);
+  const diagramRows = useMemo(() => immutableFunctionalRows(diagramReferenceRows.filter(row => row.lineage?.status !== "historical")), [diagramReferenceRows]);
 
   const hasArchitecture = useMemo(
     () => diagramRows.some((row) => row.architecture?.subsystem || row.architecture?.csci || row.architecture?.csc || row.architecture?.csu),
@@ -3971,10 +3958,9 @@ React.useEffect(() => {
   return () => timers.forEach((timer) => clearTimeout(timer));
 	}, [view, architectureAbstraction, fullscreen, diagramRows.length]);
 
-  const thBase =
-    "sticky top-0 z-10 bg-indigo-50 text-slate-700 font-semibold text-[13px] uppercase tracking-wide border-b border-slate-200 px-3 py-2";
-  const tdBase = "border-b border-slate-100 px-3 py-2 align-top text-[13px] text-slate-800";
-  const traceLinkClass = "shrink-0 rounded p-1 text-[#2D7DFE] hover:bg-blue-100 hover:text-[#1E61D6]";
+  const thBase = architectureHeaderClass;
+  const tdBase = architectureCellClass;
+  const traceLinkClass = architectureLinkClass;
   const tableColumns = useMemo(() => [
     { id: "from", label: "Function (From)", defaultWidth: 220, minWidth: 150, getValue: (row) => row.from },
     { id: "fromFile", label: "Function (From) Related File(s)", defaultWidth: 300, minWidth: 180, getValue: (row) => row.fromFile },
@@ -3993,51 +3979,7 @@ React.useEffect(() => {
     { id: "hazardAnalysisEligibility", label: "Hazard Analysis Eligibility", defaultWidth: 210, minWidth: 180, getValue: (row) => row.hazardAnalysisEligibility || "Needs Review", options: Object.values(CODE_ARCHITECTURE_HAZARD_ELIGIBILITY) },
     { id: "hazardAnalysisEligibilityRationale", label: "Eligibility Rationale", defaultWidth: 440, minWidth: 260, getValue: (row) => row.hazardAnalysisEligibilityRationale || "" },
   ], []);
-  const defaultColumnWidths = useMemo(() => Object.fromEntries(tableColumns.map((column) => [column.id, column.defaultWidth])), [tableColumns]);
-  const [columnWidths, setColumnWidths] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(columnWidthsStorageKey) || "{}");
-      return { ...defaultColumnWidths, ...(saved && typeof saved === "object" ? saved : {}) };
-    } catch {
-      return defaultColumnWidths;
-    }
-  });
-  React.useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(columnWidthsStorageKey) || "{}");
-      setColumnWidths({ ...defaultColumnWidths, ...(saved && typeof saved === "object" ? saved : {}) });
-    } catch {
-      setColumnWidths(defaultColumnWidths);
-    }
-  }, [columnWidthsStorageKey, defaultColumnWidths]);
-  React.useEffect(() => {
-    if (reviewMode) return;
-    try {
-      localStorage.setItem(columnWidthsStorageKey, JSON.stringify(columnWidths));
-    } catch {}
-  }, [columnWidths, columnWidthsStorageKey, reviewMode]);
-  const handleColumnResizeStart = React.useCallback((event, columnIndex) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const column = tableColumns[columnIndex];
-    if (!column) return;
-    const startX = event.clientX;
-    const startWidth = columnWidths[column.id] || column.defaultWidth;
-    const onMouseMove = (moveEvent) => {
-      const nextWidth = Math.max(column.minWidth || 120, Math.round(startWidth + moveEvent.clientX - startX));
-      setColumnWidths((prev) => ({ ...prev, [column.id]: nextWidth }));
-    };
-    const onMouseUp = () => {
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-  }, [columnWidths, tableColumns]);
+  const [columnWidths, handleColumnResizeStart] = useArchitectureColumnWidths(tableColumns, columnWidthsStorageKey, `${columnWidthsStorageKey}:${view}:${architectureAbstraction}`, !reviewMode);
   const tablePixelWidth = useMemo(
     () => tableColumns.reduce((sum, column) => sum + (columnWidths[column.id] || column.defaultWidth), reviewItems.length > 0 ? 110 : 0),
     [columnWidths, reviewItems.length, tableColumns]
@@ -4080,9 +4022,8 @@ React.useEffect(() => {
       tableFilterState.clearAllFilters();
     }
   }, [highlightedRowIndex, forceTableOpenKey, sourceTableRows, tableFilterState]);
-  const rowFocusRevision = useMemo(() => ({ view, rows: tableFilterState.filteredRows }), [view, tableFilterState.filteredRows]);
-  useTableRowFocus({ requestKey: forceTableOpenKey, rowIndex: highlightedRowIndex,
-    rowRefs: tableRowRefs, revision: rowFocusRevision, onResolved: onRowFocusResolved });
+  const virtualRowKey = React.useCallback(item => String(item.row.traceId || item.row.rowRef || item.sourceIndex), []);
+  const virtualSearchText = React.useCallback(item => tableColumns.map(column => column.getValue(item.row) || '').join(' · '), [tableColumns]);
 
   const copyTableColumns = useMemo(() => tableColumns.map(column => ({
     key: column.id, label: column.label, getValue: ({ row }) => column.getValue(row),
@@ -4093,9 +4034,9 @@ React.useEffect(() => {
       return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
     };
     const headers = tableColumns.map((column) => column.label);
-	    const csvRows = tableRowsWithTraceIds.map(({ row }) => tableColumns.map((column) => csvEscape(column.getValue(row))).join(","));
+	    const csvRows = tableFilterState.filteredRows.map(({ row }) => tableColumns.map((column) => csvEscape(column.getValue(row))).join(","));
     const csv = [headers.map(csvEscape).join(","), ...csvRows].join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     const safeRepoName = String(repoName || "code-architecture")
@@ -4106,8 +4047,13 @@ React.useEffect(() => {
     document.body.appendChild(link);
     link.click();
     link.remove();
-    URL.revokeObjectURL(url);
-  }, [repoName, tableRowsWithTraceIds, tableColumns]);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, [repoName, tableFilterState.filteredRows, tableColumns]);
+  React.useEffect(() => {
+    if (architectureAbstraction === "functional") return;
+    onExportTableChange?.(rowsWithTraceIds.length ? exportRowsToCsv : null);
+    return () => onExportTableChange?.(null);
+  }, [architectureAbstraction, onExportTableChange, rowsWithTraceIds.length, exportRowsToCsv]);
   const focusHandledRef = useRef(onFocusTargetHandled);
   focusHandledRef.current = onFocusTargetHandled;
   const externalFocusRef = useRef(focusTarget);
@@ -4126,7 +4072,7 @@ React.useEffect(() => {
     setQueuedCsuFocusTarget(target);
     setView(codeArchitectureViewModeForDiagramFocus);
     setArchitectureAbstraction("detailed");
-  }, [setView, onOpenFunctionalRow]);
+  }, [setView, onOpenFunctionalRow, setArchitectureAbstraction]);
   const buildCsuDiagramTarget = React.useCallback((row, sourceIndex, type) => ({
     type: type === "action" ? "edge" : "node",
     mode: type === "from" ? "from" : type === "to" ? "to" : "edge",
@@ -4158,7 +4104,7 @@ React.useEffect(() => {
     setView(codeArchitectureViewModeForDiagramFocus);
     setArchitectureAbstraction("detailed");
     setQueuedCsuFocusTarget({ ...enrichedTarget, externalRequest: focusTarget });
-  }, [diagramReferenceRows, focusTarget, setView, onOpenFunctionalRow]);
+  }, [diagramReferenceRows, focusTarget, setView, onOpenFunctionalRow, setArchitectureAbstraction]);
   React.useEffect(() => {
     if (!queuedCsuFocusTarget || !codeArchitectureViewShowsDiagram(view) || architectureAbstraction !== "detailed") return undefined;
     const resolved = resolveArchitectureTarget(queuedCsuFocusTarget, diagramRows);
@@ -4171,10 +4117,7 @@ React.useEffect(() => {
 
   const selectView = (mode) => {
     setView(mode);
-    if (mode === "architecture") {
-      setArchitectureAbstraction("subsystem");
-      setCleanOnceKey(`clean-${Date.now()}`);
-    }
+
   };
 
   const menuViewControls = viewControlsTarget ? createPortal(
@@ -4204,6 +4147,36 @@ React.useEffect(() => {
     viewControlsTarget
   ) : null;
 
+  const abstractionHeader = (
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2">
+        <span className="text-xs font-semibold uppercase text-slate-500">Abstraction</span>
+        {abstractionLevels.map(([level, fallbackLabel]) => {
+          const label = levelLabels[level] || fallbackLabel;
+          return (
+          <button
+            key={level}
+            type="button"
+            onClick={() => setArchitectureAbstraction(level)}
+            className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+              architectureAbstraction === level
+                ? "bg-[#2D7DFE] text-white"
+                : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-100"
+            }`}
+          >
+            {label}
+          </button>
+        )})}
+        {fullscreen && (
+          <button
+            type="button"
+            className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800"
+            onClick={() => setFullscreen(false)}
+          >
+            Close
+          </button>
+        )}
+      </div>
+  );
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
       {menuViewControls}
@@ -4288,46 +4261,49 @@ React.useEffect(() => {
           />
         </div>
       ) : (
-        <div
+        <ArchitectureWorkspace
           ref={splitWorkspaceRef}
-          className={`flex min-h-0 flex-1 ${view === "split" ? "flex-col md:flex-row" : "flex-col"}`}
+          view={architectureAbstraction === "functional" ? "architecture" : view}
           data-testid="code-architecture-functional-workspace"
         >
-      {view !== "table" && (
+      {architectureAbstraction === "functional" ? (
+          <FunctionalArchitectureDiagram
+            ref={diagramRef}
+            viewMode={view}
+            onViewModeChange={setView}
+            repoName={repoName}
+            rows={rowsWithTraceIds}
+            ready={functionalModelIsReady(rowsWithTraceIds)}
+            progress={functionalProgress}
+            error={functionalError || repoMeta?.functionalProcessingError}
+            onExportCsvChange={onExportTableChange}
+            onProcess={reviewMode ? undefined : processCurrentFunctionalModel}
+            onCancel={() => functionalAbort.current?.abort()}
+            storageKey={JSON.stringify([projectId, repoMeta?.sourceType || '', repoMeta?.sourceId || repoMeta?.repoId || repoId, repoMeta?.branch || branch])}
+            height={diagramHeight}
+            abstractionHeader={abstractionHeader}
+            splitPercent={splitDiagramPercent}
+            onSplitPercentChange={setSplitDiagramPercent}
+            projectId={projectId}
+            collaboratorSelection={collaboratorSelection}
+            onCollaboratorSelectionChange={onCollaboratorSelectionChange}
+            reviewMode={reviewMode}
+            onOpenRow={(row) => {
+              setArchitectureAbstraction('detailed');
+              setView('table');
+              const rowIndex = rowsWithTraceIds.indexOf(row);
+              onOpenFunctionalRow?.({ type: 'functional-row', intent: 'open-table', traceId: row.traceId, rowRef: row.rowRef, rowIndex });
+            }}
+            onOpenCsu={(row) => openCsuDiagramTarget(null, buildCsuDiagramTarget(diagramReferenceRows[rowsWithTraceIds.indexOf(row)], rowsWithTraceIds.indexOf(row), 'action'))}
+          />
+      ) : view !== "table" && (
   <section
     aria-label="Code architecture diagram"
     className="flex min-h-0 min-w-0 flex-col p-0"
-    style={{ flexBasis: view === "split" ? `${splitDiagramPercent}%` : "100%" }}
+    style={{ flexBasis: view === "split" && architectureAbstraction !== "functional" ? `${splitDiagramPercent}%` : "100%" }}
   >
-    {(view === "architecture" || view === "split") && (
-      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2">
-        <span className="text-xs font-semibold uppercase text-slate-500">Abstraction</span>
-        {abstractionLevels.map(([level, fallbackLabel]) => {
-          const label = levelLabels[level] || fallbackLabel;
-          return (
-          <button
-            key={level}
-            type="button"
-            onClick={() => setArchitectureAbstraction(level)}
-            className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-              architectureAbstraction === level
-                ? "bg-[#2D7DFE] text-white"
-                : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-100"
-            }`}
-          >
-            {label}
-          </button>
-        )})}
-        {fullscreen && (
-          <button
-            type="button"
-            className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800"
-            onClick={() => setFullscreen(false)}
-          >
-            Close
-          </button>
-        )}
-      </div>
+    {(view === "architecture" || view === "split" || architectureAbstraction === "functional") && (
+      abstractionHeader
     )}
     <div className="flex min-h-0 flex-1">
       {!reviewMode && (
@@ -4341,26 +4317,7 @@ React.useEffect(() => {
 
       {/* Diagram surface */}
       <div className="flex-1 p-3 min-h-0">
-        {architectureAbstraction === 'functional' && (view === 'architecture' || view === 'split') ? (
-          <FunctionalArchitectureDiagram
-            ref={diagramRef}
-            rows={diagramRows}
-            ready={functionalModelIsReady(rowsWithTraceIds)}
-            progress={functionalProgress}
-            error={functionalError || repoMeta?.functionalProcessingError}
-            onProcess={reviewMode ? undefined : processCurrentFunctionalModel}
-            onCancel={() => functionalAbort.current?.abort()}
-            storageKey={JSON.stringify([projectId, repoMeta?.sourceType || '', repoMeta?.sourceId || repoMeta?.repoId || repoId, repoMeta?.branch || branch])}
-            height={diagramHeight}
-            canvasToolsTarget={canvasToolsTarget}
-            reviewMode={reviewMode}
-            onOpenRow={(row) => {
-              const rowIndex = diagramReferenceRows.indexOf(row);
-              onOpenFunctionalRow?.({ type: 'functional-row', intent: 'open-table', traceId: row.traceId, rowRef: row.rowRef, rowIndex });
-            }}
-            onOpenCsu={(row) => openCsuDiagramTarget(null, buildCsuDiagramTarget(row, diagramReferenceRows.indexOf(row), 'action'))}
-          />
-        ) : <LiteSummaryDiagramReactFlowGitHub
+        <LiteSummaryDiagramReactFlowGitHub
           ref={diagramRef}
           rows={diagramRows}
           onUpdateRows={(nextRows) => {
@@ -4411,51 +4368,21 @@ React.useEffect(() => {
           onOpenHazardRow={onOpenHazardRow}
           onOpenFunctionalRow={onOpenFunctionalRow}
           onOpenAssuranceArtifactRow={onOpenAssuranceArtifactRow}
-        />}
+        />
       </div>
     </div>
   </section>
       )}
 
-      {view === "split" && (
-        <div
-          role="separator"
-          aria-label="Resize code architecture diagram and functional table panes"
-          aria-orientation="vertical"
-          aria-valuemin={25}
-          aria-valuemax={75}
-          aria-valuenow={Math.round(splitDiagramPercent)}
-          tabIndex={0}
-          onPointerDown={startSplitResize}
-          onKeyDown={(event) => {
-            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-            event.preventDefault();
-            setSplitDiagramPercent((value) => Math.min(75, Math.max(25, value + (event.key === "ArrowRight" ? 5 : -5))));
-            window.requestAnimationFrame(() => {
-              try {
-                diagramRef.current?.fitViewToDiagram?.();
-              } catch {}
-            });
-          }}
-          className="group hidden w-3 shrink-0 cursor-col-resize items-stretch justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2D7DFE] md:flex"
-        >
-          <span className="w-px bg-slate-200 transition-colors group-hover:bg-[#2D7DFE]" />
-        </div>
-      )}
+      {architectureAbstraction !== 'functional' && <ArchitectureDivider view={view} scope={columnWidthsStorageKey} workspaceRef={splitWorkspaceRef} percent={splitDiagramPercent} onChange={setSplitDiagramPercent} onFit={() => diagramRef.current?.fitViewToDiagram?.()} />}
 
-      {view !== "architecture" && (
+      {view !== "architecture" && architectureAbstraction !== "functional" && (
 
-          <section
-            aria-label="Code architecture functional decomposition table"
-            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
-            style={{ flexBasis: view === "split" ? `${100 - splitDiagramPercent}%` : "100%" }}
-          >
-            <div className="flex shrink-0 justify-end border-b border-slate-100 bg-white px-3 py-2">
+          <ArchitectureTablePane label="Code architecture functional decomposition table" basis={view === "split" ? `${100 - splitDiagramPercent}%` : "100%"} toolbar={<>
               {historicalRowCount > 0 && <button type="button" aria-pressed={showArchitectureHistory} onClick={() => setShowArchitectureHistory(value => !value)} className="mr-3 text-sm text-slate-600">{showArchitectureHistory ? "Hide" : "Show"} history ({historicalRowCount})</button>}
               {navigationNotice && <span role="status" className="text-sm text-amber-800">{navigationNotice}</span>}
               <CopyTableButton label="Copy code architecture functional decomposition table" columns={copyTableColumns} rows={tableFilterState.filteredRows} />
-            </div>
-            <div className="min-h-0 flex-1 overflow-auto">
+            </>}>
             <table className="table-fixed" style={{ minWidth: tablePixelWidth }}>
               <colgroup>
                 {reviewItems.length > 0 && <col style={{ width: 110, minWidth: 110 }} />}
@@ -4469,7 +4396,7 @@ React.useEffect(() => {
                   />
                 ))}
               </colgroup>
-              <thead className="sticky top-0 z-20 bg-indigo-50 text-slate-700">
+              <thead>
                 <tr className="bg-indigo-50">
                   {reviewItems.length > 0 && (
                     <th className={thBase} style={{ width: 110, minWidth: 110 }}>
@@ -4492,8 +4419,11 @@ React.useEffect(() => {
                   ))}
                 </tr>
               </thead>
-              <tbody>
-                {tableFilterState.filteredRows.map(({ row, sourceIndex }) => {
+              <VirtualTableBody items={tableFilterState.filteredRows} getKey={virtualRowKey}
+                columns={tableColumns.length + (reviewItems.length > 0 ? 1 : 0)} revealKey={highlightedRowIndex == null ? null : String(rowsWithTraceIds[highlightedRowIndex]?.traceId || rowsWithTraceIds[highlightedRowIndex]?.rowRef || highlightedRowIndex)}
+                requestKey={forceTableOpenKey} onReveal={onRowFocusResolved} searchText={virtualSearchText}
+                label="Code architecture functional decomposition">
+                {({ row, sourceIndex }) => {
                   const i = sourceIndex;
                   const elementId = `cba-row-${row.rowRef || i + 1}`;
                   const selected = selectedArchitectureRowId === elementId;
@@ -4597,20 +4527,21 @@ React.useEffect(() => {
                       );
                     })}
                   </tr>
-                )})}
+                )}}
+              </VirtualTableBody>
                 {tableFilterState.filteredRows.length === 0 && (
+                  <tbody>
                   <tr>
                     <td className="px-3 py-8 text-center text-sm text-slate-500" colSpan={tableColumns.length + (reviewItems.length > 0 ? 1 : 0)}>
                       No rows match the active column filters.
                     </td>
                   </tr>
+                  </tbody>
                 )}
-              </tbody>
             </table>
-            </div>
-          </section>
+          </ArchitectureTablePane>
         )}
-        </div>
+        </ArchitectureWorkspace>
       )}
       </div>
     </div>

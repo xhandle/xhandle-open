@@ -36,6 +36,24 @@ async function digest(text) {
   return Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2, '0')).join('');
 }
 
+// Inline small JSON subtrees into existing value entries. Bound the inspection
+// before serializing: a large dataset still uses the existing paged tree format.
+function fitsInline(value, budget = 16384, depth = 0) {
+  if (depth > 32) return -1;
+  if (value === null || value === undefined) return budget - 4;
+  if (typeof value === 'string') return budget - value.length * 6 - 2;
+  if (typeof value !== 'object') return budget - 24;
+  if (value instanceof Date) return budget - 32;
+  budget -= 2;
+  for (const name of Object.keys(value)) {
+    budget -= name.length * 6 + 4;
+    if (budget < 0) return -1;
+    budget = fitsInline(value[name], budget, depth + 1);
+    if (budget < 0) return -1;
+  }
+  return budget;
+}
+
 export async function stageRecord(db, store, key, value, { signal } = {}) {
   const pending = new Map(), seen = new WeakMap();
   let bytesWritten = 0, chunksWritten = 0, visits = 0;
@@ -108,7 +126,10 @@ export async function stageRecord(db, store, key, value, { signal } = {}) {
     return ref;
   };
   const child = async input => {
-    // Scalars stay inline; compound objects are deduplicated by content and identity.
+    // Small row/evidence subtrees stay in the page. Larger compounds and strings
+    // retain the original tree representation and independent hydration semantics.
+    if (input && typeof input === 'object' && fitsInline(input) >= 0) return { value: input };
+    // Scalars stay inline; large compound objects are deduplicated.
     if (input == null || (typeof input !== 'object' && (typeof input !== 'string' || input.length <= STRING_PAGE))) return { value: input ?? null };
     return { ref: await encode(input) };
   };
@@ -125,9 +146,26 @@ function copyValue(value) {
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, copyValue(item)]));
   return value;
 }
-export async function hydrateRecord(db, store, value) {
-  if (!isChunkedRecord(value)) return value;
+export async function hydrateRecord(db, store, value, { onProgress } = {}) {
+  let completed = 0, reported = -1;
+  const report = percent => {
+    const next = Math.max(reported, Math.min(100, Math.floor(percent)));
+    if (next !== reported) { reported = next; onProgress?.(next); }
+  };
+  // A subtree owns a fraction of the remaining work. Splitting that fraction
+  // between children keeps progress monotonic without a second database scan.
+  const advance = weight => { completed += weight; report(Math.min(99, completed * 100)); };
+  report(0);
+  if (!isChunkedRecord(value)) { report(100); return value; }
   const cache = new Map(), waiting = [];
+  let lastYield = Date.now(), paintYield = null;
+  const yieldForProgress = async () => {
+    if (!onProgress) return;
+    if (!paintYield && Date.now() - lastYield >= 16) {
+      paintYield = pause().then(() => { lastYield = Date.now(); paintYield = null; });
+    }
+    if (paintYield) await paintYield;
+  };
   let scheduled = false;
   const readPart = key => new Promise((resolve,reject) => {
     waiting.push({key,resolve,reject});
@@ -145,21 +183,27 @@ export async function hydrateRecord(db, store, value) {
     scheduled=false;
     if (waiting.length) { scheduled=true; Promise.resolve().then(drain); }
   }
-  const decode = async key => {
-    if (cache.has(key)) return cache.get(key).then(copyValue);
+  const decode = async (key, weight = 1) => {
+    if (cache.has(key)) return cache.get(key).then(result => { advance(weight); return copyValue(result); });
     const task = (async () => {
       const text = await readPart(key);
+      await yieldForProgress();
       if (typeof text !== 'string') throw new Error('Saved analysis is missing a data chunk. Restore its complete backup.');
       const [type, data] = JSON.parse(text);
-      const child = entry => Object.prototype.hasOwnProperty.call(entry, 'ref') ? decode(entry.ref) : entry.value;
-      if (type === 'value') return data;
-      if (type === 'string') return (await decode(data)).join('');
+      const partWeight = weight / Math.max(1, data?.length || 0);
+      const child = entry => {
+        if (Object.prototype.hasOwnProperty.call(entry, 'ref')) return decode(entry.ref, partWeight);
+        advance(partWeight); return entry.value;
+      };
+      if (['array', 'object', 'pages'].includes(type) && data.length === 0) advance(weight);
+      if (type === 'value') { advance(weight); return data; }
+      if (type === 'string') return (await decode(data, weight)).join('');
       if (type === 'array') return Promise.all(data.map(child));
       if (type === 'object') { const values = await Promise.all(data.map(([, entry]) => child(entry))); const result = {}; data.forEach(([name], i) => Object.defineProperty(result, name, {value:values[i], enumerable:true, writable:true, configurable:true})); return result; }
       if (type === 'pages') {
         let result;
         for (const ref of data) {
-          const page = await decode(ref);
+          const page = await decode(ref, partWeight);
           if (Array.isArray(page)) { if (!result) result = []; for (const entry of page) result.push(entry); }
           else result = Object.assign(result || {}, page);
         }
@@ -170,9 +214,11 @@ export async function hydrateRecord(db, store, value) {
     cache.set(key, task);
     return task;
   };
-  return decode(value.root);
+  const result = await decode(value.root);
+  report(100);
+  return result;
 }
-export async function readRecord(db, store, key) { return hydrateRecord(db, store, await rawRecord(db, store, key)); }
+export async function readRecord(db, store, key, options) { return hydrateRecord(db, store, await rawRecord(db, store, key), options); }
 export async function writeRecord(db, store, key, value, options) {
   const before=await rawRecord(db,store,key);
   const baseline=isChunkedRecord(before) ? before.root : JSON.stringify(before);
@@ -188,7 +234,7 @@ export async function writeRecord(db, store, key, value, options) {
     try {
       const data=current.result?.value;
       if((isChunkedRecord(data)?data.root:JSON.stringify(data))!==baseline) throw Object.assign(new Error('Saved analysis changed during this write. Current results were preserved.'),{code:'SOURCE_PUBLICATION_CONFLICT'});
-      objectStore.put({key,value:staged});
+      if (!isChunkedRecord(data) || data.root !== staged.root) objectStore.put({key,value:staged});
     } catch(error) {failure=error;tx.abort();}
   };
   try {await done;}catch(error){throw failure || error;}

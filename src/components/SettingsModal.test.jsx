@@ -60,3 +60,21 @@ describe("browser storage capacity summary", () => {
     }));
   });
 });
+
+it('does not attribute unmeasured browser usage to xHandle categories', () => {
+  const summary = buildBrowserStorageSummary({
+    usageBytes: 682, quotaBytes: 1000,
+    items: [{ id: 'code', label: 'Code architecture', bytes: 13 }, { id: 'projects', bytes: 10 }],
+  });
+  expect(summary.usedBytes).toBe(23);
+  expect(summary.segments.reduce((total, item) => total + item.bytes, 0)).toBe(23);
+  expect(summary.segments.find(item => item.id === 'other')).toBeUndefined();
+  expect(summary.availableBytes).toBe(318);
+});
+
+it('marks incomplete scans and includes only measured uncategorized xHandle records', () => {
+  const summary = buildBrowserStorageSummary({ usageBytes: 500, items: [{ id: 'misc', bytes: 20, error: 'Timed out' }] });
+  expect(summary.partial).toBe(true);
+  expect(summary.usedBytes).toBe(20);
+  expect(summary.segments).toEqual([expect.objectContaining({ id: 'other', bytes: 20 })]);
+});

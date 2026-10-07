@@ -40,11 +40,11 @@ export function buildBrowserStorageSummary(inventory) {
   });
   const measuredBytes = items.reduce((total, item) => total + Math.max(0, Number(item?.bytes || 0)), 0);
   const reportedUsageBytes = Math.max(0, Number(inventory?.usageBytes || 0));
-  const usedBytes = Math.max(measuredBytes, reportedUsageBytes);
-  const unclassifiedBrowserBytes = Math.max(0, usedBytes - measuredBytes);
-  if (unclassifiedBrowserBytes) other.bytes += unclassifiedBrowserBytes;
+  // Browser usage includes overhead, caches and potentially other apps on the
+  // same origin. Only scanned xHandle records belong in the category chart.
+  const usedBytes = measuredBytes;
   const quotaBytes = Math.max(0, Number(inventory?.quotaBytes || 0));
-  const availableBytes = quotaBytes ? Math.max(0, quotaBytes - usedBytes) : null;
+  const availableBytes = quotaBytes ? Math.max(0, quotaBytes - Math.max(reportedUsageBytes, measuredBytes)) : null;
   const segments = [...buckets.values(), other].filter((segment) => segment.bytes > 0);
-  return { usedBytes, measuredBytes, quotaBytes, availableBytes, segments };
+  return { usedBytes, measuredBytes, quotaBytes, availableBytes, segments, partial: items.some(item => !!item.error) };
 }

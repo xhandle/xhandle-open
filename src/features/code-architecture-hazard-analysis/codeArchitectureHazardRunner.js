@@ -29,6 +29,8 @@ export async function runCodeArchitectureHazardAnalysis({
   onPartialRunUpdate = () => {},
   signal = null,
 } = {}) {
+  const checkCancelled = () => { if (signal?.aborted) throw new DOMException('Hazard analysis cancelled.', 'AbortError'); };
+  checkCancelled();
   if (!Array.isArray(cbaRows) || cbaRows.length === 0) {
     throw new Error("Generate or load a code-based functional architecture before running hazard analysis.");
   }
@@ -102,8 +104,10 @@ export async function runCodeArchitectureHazardAnalysis({
     contextSources: input.contextSources,
   });
   const setFolders = async (updater) => {
+    checkCancelled();
     const prev = { [currentFolder]: currentGeneratedSheets };
     const nextFolders = typeof updater === "function" ? await updater(prev) : prev;
+    checkCancelled();
     currentGeneratedSheets = nextFolders?.[currentFolder] || currentGeneratedSheets;
     const reviewedSheets = ensureHazardSummaryEvidenceColumns(
       ensureHazardSummaryTraceColumns(currentGeneratedSheets, sourceAuditedTableRows),
@@ -136,6 +140,7 @@ export async function runCodeArchitectureHazardAnalysis({
     contextSources: input.contextSources,
     signal,
   });
+  checkCancelled();
   let generatedSheets = ensureHazardSummaryEvidenceColumns(
     ensureHazardSummaryTraceColumns(generatedSheetsRaw, sourceAuditedTableRows),
     sourceAuditedTableRows
@@ -193,6 +198,7 @@ export async function runCodeArchitectureHazardAnalysis({
     run.userPreprocessing = { ...previousRun?.userPreprocessing, ...reconciled.ownership };
     run.userPreprocessingConflicts = reconciled.conflicts;
   }
+  checkCancelled();
   await saveCodeArchitectureHazardRun(run);
   onActivityUpdate({ step: 9, message: "Code architecture hazard analysis complete." });
   return run;

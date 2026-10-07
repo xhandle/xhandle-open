@@ -1,3 +1,4 @@
+import { inspectStorageStore } from './inspectStorageStore';
 import { SIDEBAR_AREAS } from "../lib/sidebarPreferences";
 import { useState, useEffect, useRef } from "react";
 import { storageScanTimeout } from "../lib/storageScanTimeout";
@@ -245,42 +246,7 @@ async function inspectIndexedDbStore(dbName, storeName) {
     try { db?.close(); } catch {}
     return null;
   }
-  return new Promise((resolve) => {
-    let count = 0;
-    let bytes = 0;
-    let sampleKey = "";
-    let tx;
-    let finished = false;
-    const finish = error => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timer);
-      try { db.close(); } catch {}
-      resolve({ count, bytes, sampleKey, error });
-    };
-    const timer = setTimeout(() => {
-      finish("Store scan timed out; totals may be incomplete.");
-      try { tx?.abort(); } catch {}
-    }, 5000);
-    try {
-      tx = db.transaction(storeName, "readonly");
-      const store = tx.objectStore(storeName);
-      const cursorRequest = store.openCursor();
-      cursorRequest.onsuccess = () => {
-        const cursor = cursorRequest.result;
-        if (!cursor) return;
-        count += 1;
-        if (!sampleKey) sampleKey = String(cursor.key || "");
-        try { bytes += storageByteLength(cursor.value); } catch {}
-        cursor.continue();
-      };
-      tx.oncomplete = () => finish("");
-      tx.onerror = () => finish(tx.error?.message || "Unable to inspect store.");
-      tx.onabort = () => finish(tx.error?.message || "Store scan was aborted.");
-    } catch (error) {
-      finish(error?.message || String(error));
-    }
-  });
+  return inspectStorageStore(db, storeName, storageByteLength);
 }
 
 async function clearIndexedDbStore(dbName, storeName) {
@@ -1843,12 +1809,10 @@ export default function SettingsModal({
               </p>
               <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
                 <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
-                  <span className="font-semibold text-slate-900">Browser storage</span>
+                  <span className="font-semibold text-slate-900">xHandle storage</span>
                   {storageInventory ? (
                     <span className="font-medium text-slate-700">
-                      {browserStorageSummary.quotaBytes
-                        ? `${formatStorageBytes(browserStorageSummary.usedBytes)} of ${formatStorageBytes(browserStorageSummary.quotaBytes)} used`
-                        : `${formatStorageBytes(browserStorageSummary.usedBytes)} used · capacity not reported by this browser`}
+                      {formatStorageBytes(browserStorageSummary.usedBytes)} measured xHandle data
                     </span>
                   ) : (
                     <span className="text-slate-500">{storageBusy ? "Calculating…" : "Loading…"}</span>
@@ -1857,13 +1821,11 @@ export default function SettingsModal({
                 <div
                   className="mt-3 flex h-5 w-full overflow-hidden rounded-md bg-slate-200 ring-1 ring-inset ring-slate-300"
                   role="img"
-                  aria-label={browserStorageSummary.quotaBytes
-                    ? `${formatStorageBytes(browserStorageSummary.usedBytes)} used and ${formatStorageBytes(browserStorageSummary.availableBytes)} available of ${formatStorageBytes(browserStorageSummary.quotaBytes)}`
-                    : `${formatStorageBytes(browserStorageSummary.usedBytes)} used; browser capacity unavailable`}
+                  aria-label={`xHandle storage usage by category: ${formatStorageBytes(browserStorageSummary.usedBytes)} measured`}
                 >
                   {browserStorageSummary.segments.map((segment) => {
-                    const denominator = Math.max(browserStorageSummary.quotaBytes, browserStorageSummary.usedBytes, 1);
-                    const width = Math.max(segment.bytes > 0 ? 0.35 : 0, (segment.bytes / denominator) * 100);
+                    const denominator = Math.max(browserStorageSummary.usedBytes, 1);
+                    const width = (segment.bytes / denominator) * 100;
                     return (
                       <div
                         key={segment.id}
@@ -1872,12 +1834,7 @@ export default function SettingsModal({
                       />
                     );
                   })}
-                  {browserStorageSummary.availableBytes != null && browserStorageSummary.availableBytes > 0 && (
-                    <div
-                      className="min-w-0 flex-1 bg-slate-200"
-                      title={`Available: ${formatStorageBytes(browserStorageSummary.availableBytes)}`}
-                    />
-                  )}
+
                 </div>
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600">
                   {browserStorageSummary.segments.map((segment) => (
@@ -1886,18 +1843,15 @@ export default function SettingsModal({
                       {segment.label} · {formatStorageBytes(segment.bytes)}
                     </span>
                   ))}
-                  {browserStorageSummary.availableBytes != null && (
-                    <span className="inline-flex items-center gap-1.5">
-                      <span className="h-2.5 w-2.5 rounded-full bg-slate-300" />
-                      Available · {formatStorageBytes(browserStorageSummary.availableBytes)}
-                    </span>
-                  )}
+
                 </div>
-                {!browserStorageSummary.quotaBytes && storageInventory && (
-                  <p className="mt-2 text-[11px] leading-4 text-slate-500">
-                    This browser did not expose its storage quota. The used amount is calculated from the xHandle records that can be measured here.
-                  </p>
-                )}
+                {storageInventory && <div className="mt-3 text-xs text-slate-600">
+                  {browserStorageSummary.quotaBytes ? <>
+                    <p>Estimated site storage limit: {formatStorageBytes(browserStorageSummary.quotaBytes)} · Available to this site: {formatStorageBytes(browserStorageSummary.availableBytes)}</p>
+                    <p className="mt-1 text-slate-500">The browser sets this limit for the current site; it is not reserved space exclusively allocated to xHandle. The chart shows measured xHandle records only.</p>
+                  </> : <p>The browser has not reported a storage limit for this site.</p>}
+                  {browserStorageSummary.partial && <p className="mt-1 text-amber-700">Some stores could not be fully scanned. Measured usage and the category breakdown are incomplete.</p>}
+                </div>}
               </div>
               {storageInventory?.refreshedAt && (
                 <div className="text-xs text-slate-500">

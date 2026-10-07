@@ -14,7 +14,7 @@ const code=sources.map(file=>{
   const page=await browser.newPage();
   await page.route('**/*',route=>route.fulfill({status:200,contentType:'text/html',body:'<title>Isolated capacity fixture</title>'}));
   await page.goto('http://localhost:3000/isolated-cba-capacity');
-  await page.evaluate(code=>{window.api=new Function('const notifyBackupDataChanged=()=>{};'+code+';return {openCbaIndexedDB,readRecord,rawRecord,writeRecord,stageRecord,putRawRecord,readCbaRowsFromIndexedDB,writeCbaRowsToIndexedDB,writeImportedArchitectureRunRecords,prepareArchitecturePublication,recoverArchitecturePublication,readLatestArchitectureCheckpoint,readArchitectureCheckpoint};')();},code);
+  await page.evaluate(code=>{window.api=new Function('const notifyBackupDataChanged=()=>{};'+code+';return {readFirstCbaRowsFromIndexedDB,openCbaIndexedDB,readRecord,rawRecord,writeRecord,stageRecord,putRawRecord,readCbaRowsFromIndexedDB,writeCbaRowsToIndexedDB,writeImportedArchitectureRunRecords,prepareArchitecturePublication,recoverArchitecturePublication,readLatestArchitectureCheckpoint,readArchitectureCheckpoint};')();},code);
   const result=await page.evaluate(async()=>{
    const a=window.api, db=await a.openCbaIndexedDB(), store='copilot_baseline', timings=[];
    // Shared evidence exceeds the previous logical JSON size limit; values remain fully hydrated.
@@ -78,8 +78,36 @@ const code=sources.map(file=>{
    if(!quota || (await a.readArchitectureCheckpoint(quotaCheckpoint)).durable!==false)throw new Error('Quota recovery unavailable');
    await a.recoverArchitecturePublication(quotaKey,quotaCheckpoint);
    await a.prepareArchitecturePublication('cba:reload:repo',previous,run,{selectedFiles:300},'functional-decomposition-checkpoint:cba:reload:repo:ready',[]);
+   // Read the original tree encoding (references for every small object), then
+   // migrate on write to compact inline entries without changing the manifest.
+   const oldKey='compat-old-tree';
+   await a.putRawRecord(db,store,oldKey+':leaf',JSON.stringify(['object', [['text',{value:'preserve'}]] ]));
+   await a.putRawRecord(db,store,oldKey+':root',JSON.stringify(['array',[{ref:oldKey+':leaf'},{ref:oldKey+':leaf'}]]));
+   await a.putRawRecord(db,store,oldKey,{format:'xhandle-json-tree-v1',root:oldKey+':root'});
+   const oldRows=await a.readRecord(db,store,oldKey);
+   oldRows[0].text='edited';
+   if(oldRows[1].text!=='preserve')throw new Error('Old tree hydration aliases values');
+   await a.writeRecord(db,store,oldKey,oldRows);
+   const compact=await a.readRecord(db,store,oldKey);
+   if(JSON.stringify(compact)!==JSON.stringify(oldRows))throw new Error('Old tree migration lost data');
+   const repeated=await a.writeRecord(db,store,oldKey,oldRows);
+   if(repeated.chunksWritten!==0)throw new Error('Unchanged chunks rewritten');
+   const aliasProgress=[];
+   const aliasRead=await a.readFirstCbaRowsFromIndexedDB([oldKey, 'missing-alias-one', 'missing-alias-two'], {onProgress:value=>aliasProgress.push(value)});
+   if(aliasRead.key!==oldKey || !aliasProgress.some(value=>value>33&&value<100) || aliasProgress.at(-1)!==100)throw new Error('Alias count compresses actual record progress');
+   const fallbackProgress=[];
+   const fallbackRead=await a.readFirstCbaRowsFromIndexedDB(['missing-alias',oldKey], {onProgress:value=>fallbackProgress.push(value)});
+   if(fallbackRead.key!==oldKey || fallbackProgress.some((value,i)=>value===100&&i!==fallbackProgress.length-1) || fallbackProgress.some((value,i)=>i&&value<fallbackProgress[i-1]))throw new Error('Fallback search falsely completes or regresses progress');
+   const progress=[];
+   await a.readRecord(db,store,oldKey,{onProgress:value=>progress.push(value)});
+   if(progress[0]!==0 || progress.at(-1)!==100 || !progress.some(value=>value>0&&value<100) || progress.some((value,i)=>i&&value<progress[i-1]))throw new Error('Non-monotonic or missing read progress');
+   await a.putRawRecord(db,store,'missing-chunk-fixture',{format:'xhandle-json-tree-v1',root:'does-not-exist'});
+   const failedProgress=[];
+   let readFailed=false;
+   try { await a.readRecord(db,store,'missing-chunk-fixture',{onProgress:value=>failedProgress.push(value)}); } catch { readFailed=true; }
+   if(!readFailed || failedProgress.includes(100))throw new Error('Failed read reported completion');
    db.close();
-   return {timings,unrelatedPayloadBytes:520*256*1024,mutableRowsIndependent:true,atomicAbort:true,saveOnlyRetry:true,concurrentEditPreserved:true,quotaRecovery:true,legacyRecovery:true};
+   return {readProgress:progress,failedReadDoesNotComplete:true,oldTreeMigration:true,unchangedChunksReused:true,timings,unrelatedPayloadBytes:520*256*1024,mutableRowsIndependent:true,atomicAbort:true,saveOnlyRetry:true,concurrentEditPreserved:true,quotaRecovery:true,legacyRecovery:true};
   });
   assert(result.timings.at(-1).logicalBytes>32*1024*1024);
   await page.reload();

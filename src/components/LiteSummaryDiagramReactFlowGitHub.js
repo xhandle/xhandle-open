@@ -1,3 +1,4 @@
+import { functionalGridColumns } from './functionalLayout';
 // LiteSummaryDiagramReactFlowGitHub.js — Main diagram component using layout manager
 import React, {
   useMemo,
@@ -33,7 +34,8 @@ import { withCsuVisibleHandles } from './csuVisibleHandles';
 import { toPng } from 'html-to-image';
 import { SmartBezierEdge } from '@tisoap/react-flow-smart-edge';
 import { OrthogonalFunctionEdge } from './OrthogonalFunctionEdge';
-import { orderCsuFunctions } from './csuFunctionOrdering';
+import { csuLayoutRevision } from './csuLayoutRevision';
+import { orderCsuFunctions, indexCsuEdges } from './csuFunctionOrdering';
 import { csuAbsolutePositions, loadCsuEdgeRouting, saveCsuEdgeRouting } from './csuEdgeRouting';
 import { downloadDrawioXml } from './utils/exportDrawio';
 import { notifyBackupDataChanged } from '../lib/localBackupEvents';
@@ -632,10 +634,10 @@ function columnsForSquareNodeGrid(count, { maxColumns = 8 } = {}) {
 
 function buildArchitectureLayout(elkNodes, { colorSystemElements = false, systemElementColorOverrides = new Map(), preservePositions = false, edges = [], functionalPresentation = false } = {}) {
   const dims = {
-    nodeGapX: functionalPresentation ? 72 : CSU_FUNCTION_GAP.x,
-    nodeGapY: functionalPresentation ? 54 : CSU_FUNCTION_GAP.y,
-    csuPad: 20,
-    csuTop: 50,
+    nodeGapX: CSU_FUNCTION_GAP.x,
+    nodeGapY: CSU_FUNCTION_GAP.y,
+    csuPad: functionalPresentation ? 0 : 20,
+    csuTop: functionalPresentation ? 0 : 50,
     cscPad: 26,
     cscTop: 58,
     csciPad: 32,
@@ -645,6 +647,7 @@ function buildArchitectureLayout(elkNodes, { colorSystemElements = false, system
     csciGap: 96,
   };
 
+  const edgeIndex = indexCsuEdges(edges);
   const root = new Map();
   const fallback = {
     subsystem: 'Application Subsystem',
@@ -661,7 +664,7 @@ function buildArchitectureLayout(elkNodes, { colorSystemElements = false, system
     const subsystemKey = node?.data?.subsystemKey || subsystem;
     const csciKey = node?.data?.csciKey || `${subsystem}${ARCH_KEY_SEP}${csci}`;
     const cscKey = node?.data?.cscKey || `${subsystem}${ARCH_KEY_SEP}${csci}${ARCH_KEY_SEP}${csc}`;
-    const csuKey = node?.data?.csuKey || `${subsystem}${ARCH_KEY_SEP}${csci}${ARCH_KEY_SEP}${csc}${ARCH_KEY_SEP}${csu}`;
+    const csuKey = functionalPresentation ? cscKey : node?.data?.csuKey || `${subsystem}${ARCH_KEY_SEP}${csci}${ARCH_KEY_SEP}${csc}${ARCH_KEY_SEP}${csu}`;
 
     const descriptions = node?.data?.architectureDescriptions || {};
     if (!root.has(subsystemKey)) root.set(subsystemKey, { key: subsystemKey, label: subsystem, description: descriptions.subsystem || '', nodes: [], cscis: new Map() });
@@ -694,8 +697,10 @@ function buildArchitectureLayout(elkNodes, { colorSystemElements = false, system
                 .sort((a, b) => a.label.localeCompare(b.label))
                 .map((csuGroup) => {
                   const sortedNodes = [...csuGroup.nodes].sort((a, b) => String(a.data?.label || a.id).localeCompare(String(b.data?.label || b.id)) || a.id.localeCompare(b.id));
-                  const cols = columnsForSquareNodeGrid(sortedNodes.length || 1, { maxColumns: 8 });
-                  const childNodes = preservePositions ? sortedNodes : orderCsuFunctions(sortedNodes, edges, {
+                  const cols = functionalPresentation
+                    ? functionalGridColumns(sortedNodes.length || 1, { width: THEME.node.w, height: THEME.node.h, gapX: dims.nodeGapX, gapY: dims.nodeGapY })
+                    : columnsForSquareNodeGrid(sortedNodes.length || 1, { maxColumns: 8 });
+                  const childNodes = preservePositions ? sortedNodes : orderCsuFunctions(sortedNodes, edgeIndex, {
                     columns: cols, stepX: THEME.node.w + dims.nodeGapX, stepY: THEME.node.h + dims.nodeGapY,
                   });
                   const rowsCount = Math.max(1, Math.ceil((childNodes.length || 1) / cols));
@@ -818,7 +823,7 @@ function buildArchitectureLayout(elkNodes, { colorSystemElements = false, system
         for (const csu of csc.csus) {
           const csuId = `box:csu:${csu.key}`;
           const csuPos = { x: dims.cscPad + csu.x, y: dims.cscTop + csu.y };
-          csuBoxes.push(makePackedBoxNode({
+          if (!functionalPresentation) csuBoxes.push(makePackedBoxNode({
             id: csuId,
             label: csu.label,
             groupKind: 'csu',
@@ -854,9 +859,9 @@ function buildArchitectureLayout(elkNodes, { colorSystemElements = false, system
             };
             childNodes.push({
               ...node,
-              parentNode: csuId,
+              parentNode: functionalPresentation ? cscId : csuId,
               extent: 'parent',
-              position: relativePosition,
+              position: functionalPresentation ? { x: csuPos.x + relativePosition.x, y: csuPos.y + relativePosition.y } : relativePosition,
             });
             absoluteNodes.push({
               ...node,
@@ -1270,7 +1275,7 @@ const BidirectionalNode = React.memo(({ id, data, selected }) => {
       >
         {data.label}
       </div>
-      {(data.csu || data.file) && (
+      {!data.functionalPresentation && (data.csu || data.file) && (
         <div
           style={{
             position: 'absolute',
@@ -2105,7 +2110,7 @@ const DiagramBody = forwardRef(function DiagramBody(
   const navigationReadyRef = useRef(false);
   const layoutEpochRef = useRef(0);
   const layoutScopeRef = useRef(null);
-  const layoutScope = useMemo(() => `${storageKey}:${architectureMode}:${JSON.stringify(rows)}`, [storageKey, architectureMode, rows]);
+  const layoutScope = useMemo(() => `${storageKey}:${architectureMode}:${csuLayoutRevision(rows)}`, [storageKey, architectureMode, rows]);
   if (layoutScopeRef.current !== layoutScope) {
     layoutScopeRef.current = layoutScope;
     layoutEpochRef.current += 1;
@@ -2139,16 +2144,16 @@ const DiagramBody = forwardRef(function DiagramBody(
     setRoutingStorageKey(storageKey);
   }, [storageKey]);
   useEffect(() => {
-    if (reviewMode || routingStorageKey !== storageKey) return;
+    if ((reviewMode && !allowLayoutChanges) || routingStorageKey !== storageKey) return;
     saveCsuEdgeRouting(storageKey, edgeRouting);
-  }, [edgeRouting, reviewMode, routingStorageKey, storageKey]);
+  }, [edgeRouting, reviewMode, allowLayoutChanges, routingStorageKey, storageKey]);
   const changeCsuRoute = useCallback((edgeId, patch) => {
-    if (reviewMode || !edgeId || routingStorageKey !== storageKey) return;
+    if ((reviewMode && !allowLayoutChanges) || !edgeId || routingStorageKey !== storageKey) return;
     setEdgeRouting(current => ({
       ...current,
       manualRoutes: { ...current.manualRoutes, [edgeId]: { ...current.manualRoutes?.[edgeId], ...patch } },
     }));
-  }, [reviewMode, routingStorageKey, storageKey]);
+  }, [reviewMode, allowLayoutChanges, routingStorageKey, storageKey]);
 
   // -------------------- Include files normalization ---------
   // showAll: null/undefined => true; empty array => false (show none)
@@ -2248,6 +2253,7 @@ const DiagramBody = forwardRef(function DiagramBody(
           data: {
             ...(n.data || {}),
             detailCanvas: architectureMode && activeArchitectureAbstraction === 'detailed',
+            functionalPresentation,
             traceActive: isTraceNode || isTraceBox,
             traceFocus: isTraceNode,
             commentCount: commentsForDiagramTarget(comments, 'node', n.id).length,
@@ -2270,7 +2276,7 @@ const DiagramBody = forwardRef(function DiagramBody(
               : n.style,
         };
       });
-  }, [nodes, edges, highlightedEdgeId, nodeVisibility, traceSets, architectureMode, activeArchitectureAbstraction, architectureNodePositions, comments]);
+  }, [nodes, edges, highlightedEdgeId, nodeVisibility, traceSets, architectureMode, functionalPresentation, activeArchitectureAbstraction, architectureNodePositions, comments]);
 
   const viewEdges = useMemo(() => {
     if (activeArchitectureAbstraction !== "detailed") {
@@ -2343,7 +2349,7 @@ const DiagramBody = forwardRef(function DiagramBody(
           manualRoute: edgeRouting.manualRoutes?.[e.id] || null,
           onRouteChange: changeCsuRoute,
           isHighlighted: e.id === highlightedEdgeId,
-          readOnly: reviewMode,
+          readOnly: reviewMode && !allowLayoutChanges,
         },
         animated: isOn,
         style: {
@@ -2356,15 +2362,16 @@ const DiagramBody = forwardRef(function DiagramBody(
         markerEnd: { ...(e.markerEnd || {}), type: MarkerType.ArrowClosed, color: baseStroke, width: ARROW_SIZE, height: ARROW_SIZE },
       };
     });
-  }, [edges, highlightedEdgeId, nodeVisibility, traceSets, activeArchitectureAbstraction, nodes, viewNodes, rows, comments, edgeAggregation, edgeRouting, architectureMode, changeCsuRoute, reviewMode]);
+  }, [edges, highlightedEdgeId, nodeVisibility, traceSets, activeArchitectureAbstraction, nodes, viewNodes, rows, comments, edgeAggregation, edgeRouting, architectureMode, changeCsuRoute, reviewMode, allowLayoutChanges]);
 
   // -------------------- refs / misc you already had ---------
   const diagramHostRef = useRef(null);
   const largeCsuCanvas = architectureMode && activeArchitectureAbstraction === 'detailed'
     && (viewNodes.length >= 250 || viewEdges.length >= 500);
-  // React Flow culls edges by endpoint bounds. A manually adjusted route can
-  // leave those bounds, so keep full rendering for diagrams with such routes.
-  const cullCsuCanvas = largeCsuCanvas && !Object.keys(edgeRouting.manualRoutes || {}).length;
+  // React Flow 11's visibility selector allocates/scans edges on every viewport
+  // update, including a fitted overview where nothing can be culled. Retain
+  // the complete graph and transform it without that scan. This also preserves
+  // manual routes crossing the viewport with both endpoints offscreen.
   const renderNodes = useMemo(() => withCsuVisibleHandles(viewNodes, viewEdges, largeCsuCanvas), [viewNodes, viewEdges, largeCsuCanvas]);
   const viewportIdleTimer = useRef(null);
   const handleViewportMoveStart = useCallback(() => {
@@ -2914,6 +2921,9 @@ const DiagramBody = forwardRef(function DiagramBody(
   const posRef = useRef(new Map());
   const restoredPositionIds = useRef(new Set());
   const loadedPositionScopeRef = useRef(null);
+  // Re-layout previously packed Functional diagrams once for the wider routing
+  // lanes. Keep model data, annotations, and all other abstraction layouts intact.
+  const positionStorageKey = functionalPresentation ? `${storageKey}:function-spacing-v3` : storageKey;
   const [posLoaded, setPosLoaded] = useState(false);
     const saveTimer = useRef(null);
     useEffect(() => {
@@ -2922,7 +2932,7 @@ const DiagramBody = forwardRef(function DiagramBody(
       loadedPositionScopeRef.current = null;
       (async () => {
         try {
-          const loaded = await idbPositionsLoad(storageKey);
+          const loaded = await idbPositionsLoad(positionStorageKey);
           if (!cancelled) {
             posRef.current = loaded instanceof Map ? loaded : new Map();
             restoredPositionIds.current = new Set(posRef.current.keys());
@@ -2934,7 +2944,7 @@ const DiagramBody = forwardRef(function DiagramBody(
         }
       })();
       return () => { cancelled = true; };
-    }, [storageKey]);
+    }, [storageKey, positionStorageKey]);
 
     useEffect(() => {
       setCanvasNotes(loadDiagramNotes(storageKey));
@@ -2962,9 +2972,9 @@ const DiagramBody = forwardRef(function DiagramBody(
       if (reviewMode && !allowLayoutChanges) return;
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
-        idbPositionsSave(storageKey, posRef.current).catch(() => {});
+        idbPositionsSave(positionStorageKey, posRef.current).catch(() => {});
       }, 120);
-    }, [storageKey, reviewMode, allowLayoutChanges]);
+    }, [positionStorageKey, reviewMode, allowLayoutChanges]);
 
   useEffect(() => {
     if (!colorSystemElements) {
@@ -3216,10 +3226,10 @@ const [autoSourceHandle, autoTargetHandle] = assignHandles(
       // StrictMode and rapid tab switches can unmount before hydration. Never
       // overwrite saved positions with that uninitialized empty map.
       if ((!reviewMode || allowLayoutChanges) && loadedPositionScopeRef.current === storageKey) {
-        idbPositionsSave(storageKey, posRef.current).catch(() => {});
+        idbPositionsSave(positionStorageKey, posRef.current).catch(() => {});
       }
     };
-  }, [storageKey, reviewMode, allowLayoutChanges]);
+  }, [storageKey, positionStorageKey, reviewMode, allowLayoutChanges]);
   
 
   // Extra fit when parent flips cleanOnceKey (used after prompt finishes)
@@ -3836,13 +3846,13 @@ useEffect(() => {
   }, []);
 
   const resetHighlightedRoute = useCallback(() => {
-    if (reviewMode || !highlightedToolbarEdge) return;
+    if ((reviewMode && !allowLayoutChanges) || !highlightedToolbarEdge) return;
     setEdgeRouting(current => {
       const manualRoutes = { ...current.manualRoutes };
       delete manualRoutes[highlightedToolbarEdge.id];
       return { ...current, manualRoutes };
     });
-  }, [highlightedToolbarEdge, reviewMode]);
+  }, [highlightedToolbarEdge, reviewMode, allowLayoutChanges]);
 
   const toggleHighlightedEdgeRoutingStyle = useCallback(() => {
     if (!highlightedToolbarEdge) return;
@@ -4019,17 +4029,18 @@ useEffect(() => {
                       onClick={addCanvasNote}
                       title="Drop a note on the canvas"
                       aria-label="Add canvas note"
-                      style={toolButtonStyle({ tone: BRAND.yellow })}
+                      disabled={reviewMode}
+                      style={toolButtonStyle({ tone: BRAND.yellow, disabled: reviewMode })}
                     >
                       📝
                     </button>
                     <button
                       type="button"
                       onClick={() => openCommentComposer(selectedCommentTarget)}
-                      disabled={!selectedCommentTarget}
+                      disabled={reviewMode || !selectedCommentTarget}
                       title={selectedCommentTarget ? `Add comment to ${selectedCommentTarget.targetLabel}` : 'Select one node or edge to add a comment'}
                       aria-label="Add comment to selected node or edge"
-                      style={toolButtonStyle({ active: Boolean(selectedCommentTarget), disabled: !selectedCommentTarget, tone: BRAND.purple })}
+                      style={toolButtonStyle({ active: Boolean(selectedCommentTarget), disabled: reviewMode || !selectedCommentTarget, tone: BRAND.purple })}
                     >
                       💬
                     </button>
@@ -4079,7 +4090,7 @@ useEffect(() => {
                     <button type="button" onClick={() => setAllEdgeRoutingStyle(EDGE_ROUTING_STYLES.RECTANGULAR)} title="Set all edges to rectangular routing" aria-label="Use rectangular routing for all edges" style={toolButtonStyle({ active: edgeRouting.defaultStyle === EDGE_ROUTING_STYLES.RECTANGULAR && !Object.keys(edgeRouting.overrides || {}).length })}>R</button>
                     <button type="button" onClick={toggleHighlightedEdgeRoutingStyle} title="Toggle routing for selected edge or bundle" aria-label="Toggle selected edge routing" disabled={!highlightedToolbarEdge} style={toolButtonStyle({ active: Boolean(highlightedToolbarEdge), disabled: !highlightedToolbarEdge, tone: BRAND.purple })}>{highlightedRoutingStyle === EDGE_ROUTING_STYLES.RECTANGULAR ? 'B' : 'R'}</button>
                     {architectureMode && activeArchitectureAbstraction === 'detailed' && (
-                      <button type="button" onClick={resetHighlightedRoute} title="Reset selected edge to automatic routing" aria-label="Reset selected edge route" disabled={reviewMode || !edgeRouting.manualRoutes?.[highlightedToolbarEdge?.id]} style={toolButtonStyle({ disabled: reviewMode || !edgeRouting.manualRoutes?.[highlightedToolbarEdge?.id], tone: BRAND.purple })}>↺</button>
+                      <button type="button" onClick={resetHighlightedRoute} title="Reset selected edge to automatic routing" aria-label="Reset selected edge route" disabled={(reviewMode && !allowLayoutChanges) || !edgeRouting.manualRoutes?.[highlightedToolbarEdge?.id]} style={toolButtonStyle({ disabled: (reviewMode && !allowLayoutChanges) || !edgeRouting.manualRoutes?.[highlightedToolbarEdge?.id], tone: BRAND.purple })}>↺</button>
                     )}
                   </div>
                   <div style={toolDividerStyle} />
@@ -4216,11 +4227,11 @@ useEffect(() => {
             Arranging diagram...
           </div>
         )}
-        {!reviewMode && (canvasToolsTarget === undefined
+        {(!reviewMode || allowLayoutChanges) && (canvasToolsTarget === undefined
           ? canvasTools
           : canvasToolsTarget ? createPortal(canvasTools, canvasToolsTarget) : null)}
         <ReactFlow
-          onlyRenderVisibleElements={cullCsuCanvas}
+          onlyRenderVisibleElements={false}
           onMoveStart={handleViewportMoveStart}
           onMoveEnd={handleViewportMoveEnd}
           nodes={initialLayoutPending ? [] : renderNodes}

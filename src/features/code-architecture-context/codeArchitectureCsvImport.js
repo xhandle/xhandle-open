@@ -22,6 +22,23 @@ export function parseCodeArchitectureCsv(text) {
     for (const field of ['fromFunction', 'controlAction', 'toFunction']) {
       if (!row[field]) throw new Error(`CSV record ${index + 2} is missing ${field}.`);
     }
+    if (keys.includes('interaction type') && keys.includes('supporting source trace ids')) {
+      const get = header => cells[keys.indexOf(csvHeaderKey(header))]?.trim() || '';
+      const kind = get('interaction type').toLowerCase();
+      if (!['internal operations', 'control', 'data', 'service', 'feedback', 'unknown'].includes(kind)) throw new Error(`CSV record ${index + 2} has an invalid Interaction Type.`);
+      const allocation = side => Object.fromEntries(['subsystem', 'csci', 'csc'].map(level => [level, get(`${level} (${side})`)]));
+      row.fromArchitecture = allocation('from'); row.toArchitecture = allocation('to'); row.architecture = row.fromArchitecture;
+      row.functionalCsvSnapshot = { version: 1, kind: kind === 'internal operations' ? 'internal' : kind,
+        sourceTraceIds: get('supporting source trace ids').split(',').map(value => value.trim()).filter(Boolean),
+        sourceRowRefs: get('supporting source rows').split(',').map(value => value.trim()).filter(Boolean) };
+      row.traceId = get('interaction id') || undefined;
+      row.fromNodeId = get('function (from) id') || undefined;
+      row.toNodeId = get('function (to) id') || undefined;
+      row.hazardAnalysisEligibility = get('hazard analysis eligibility') || (kind === 'internal operations' ? 'Exclude' : 'Include');
+      if (!['Include', 'Exclude', 'Needs Review'].includes(row.hazardAnalysisEligibility)) throw new Error(`CSV record ${index + 2} has an invalid Hazard Analysis Eligibility.`);
+      row.hazardAnalysisEligibilitySource = get('eligibility source') || 'functional-csv-import';
+      row.hazardAnalysisEligibilityRationale = get('eligibility rationale') || 'Imported Functional snapshot; internal operations excluded, interactions retained for assessment. Source completeness is not verified.';
+    }
     rows.push(row);
   });
   if (!rows.length) throw new Error('The CSV contains no functional decomposition rows.');

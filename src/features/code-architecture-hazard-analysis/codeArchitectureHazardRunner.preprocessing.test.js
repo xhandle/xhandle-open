@@ -65,3 +65,16 @@ test('ordinary generation still publishes intermediate output', async () => {
  await runCodeArchitectureHazardAnalysis({...options,onPartialRunUpdate});
  expect(onPartialRunUpdate).toHaveBeenCalledTimes(1);
 });
+
+test('late completion after cancellation does not save a hazard run', async () => {
+ const { saveCodeArchitectureHazardRun } = require('./codeArchitectureHazardStore');
+ const controller = new AbortController();
+ const generate = runLiteAIAnalysis.getMockImplementation();
+ runLiteAIAnalysis.mockImplementation(async request => {
+   const sheets = await generate(request);
+   controller.abort();
+   return sheets;
+ });
+ await expect(runCodeArchitectureHazardAnalysis({...options, signal:controller.signal})).rejects.toMatchObject({name:'AbortError'});
+ expect(saveCodeArchitectureHazardRun).not.toHaveBeenCalled();
+});
