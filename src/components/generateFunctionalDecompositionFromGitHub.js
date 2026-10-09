@@ -1,7 +1,7 @@
 import { ArchitectureWorkspace, ArchitectureDivider, ArchitectureTablePane, useArchitectureColumnWidths, diagramFocusView, architectureHeaderClass, architectureCellClass, architectureLinkClass } from './ArchitectureWorkspace';
 import VirtualTableBody from './VirtualTableBody';
 import { buildFunctionalModelRows, processFunctionalModel, functionalModelIsReady, immutableFunctionalRows } from '../features/code-architecture-context/functionalModel';
-import { writeCbaRowsToIndexedDB, readCbaRowsRevision } from '../features/code-architecture-assurance/codeArchitectureStorage';
+import { writeCbaRowsToIndexedDB, readCbaRowsRevision, flushArchitectureWrites } from '../features/code-architecture-assurance/codeArchitectureStorage';
 import { readRecord, writeRecord } from '../features/code-architecture-storage/chunkedRecord';
 import { prepareArchitecturePublication, recoverArchitecturePublication, openCbaIndexedDB } from '../features/code-architecture-assurance/codeArchitectureStorage';
 import { summarizeCodeAnalysisCoverage } from "../features/code-architecture-context/codeAnalysisCoverage";
@@ -3425,6 +3425,7 @@ Rules:
     const publicationFingerprint = await runFingerprint({ requestFingerprint: fingerprint, effectiveSettings: runGuard.actual });
     const comparisonFingerprint = await runFingerprint({ files: inputManifest.map(({path,contentDigest,textDigest,decoding})=>({path,contentDigest,textDigest,decoding})), context: userAnalysisContext, readme: repoContext.readmeText || "", generationSettings: runGuard.settings, effectiveSettings: runGuard.actual });
     updatePublishedProposalCounts(relationshipLedger, architectureRows);
+    await flushArchitectureWrites(outputStorageKey);
     const previousRows = await idbGet(IDB_STORES.cba, outputStorageKey) || [];
     let classifiedArchitectureRows = ensureCodeArchitectureTraceIds(reconcileArchitectureRows(architectureRows, previousRows, outputStorageKey));
     let functionalProcessingError = '';

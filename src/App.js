@@ -1,6 +1,8 @@
+import { mergeImportedCodeArchitectureRepos } from './features/code-architecture-assurance/architectureImportRefresh';
+import useScopedArchitectureRows from './features/code-architecture-assurance/useScopedArchitectureRows';
 import { assignImportedHazardContext } from './features/code-architecture-hazard-analysis/codeHazardImportContext';
 import { createCodeArchitectureImportOperation } from './features/code-architecture-context/codeArchitectureImportOperation';
-import { restoreFunctionalCsvSnapshot, functionalModelIsReady, buildFunctionalModelRows, immutableFunctionalRows, immutableFunctionalRowsAsync } from './features/code-architecture-context/functionalModel';
+import { restoreFunctionalCsvSnapshot, functionalModelIsReady, buildFunctionalModelRows, immutableFunctionalRowsAsync } from './features/code-architecture-context/functionalModel';
 import { parseCodeArchitectureCsv } from "./features/code-architecture-context/codeArchitectureCsvImport";
 import { architectureEvidenceColumns, architectureCoverageSheets } from './features/code-architecture-assurance/codeArchitectureCoverageWorkbook';
 import ArchitectureRunRecovery from './features/code-architecture-assurance/ArchitectureRunRecovery';
@@ -216,6 +218,7 @@ import {
   readCbaRowsFromIndexedDB,
   readFirstCbaRowsFromIndexedDB,
   writeCbaRowsToIndexedDB,
+  flushArchitectureWrites,
   readArchitectureRunRecords,
   writeImportedArchitectureRunRecords,
   recoverArchitecturePublication,
@@ -3975,15 +3978,13 @@ const [codeArchitectureRepoDraft, setCodeArchitectureRepoDraft] = useState({
 });
 const [codeArchitectureRepoConfigMessage, setCodeArchitectureRepoConfigMessage] = useState("");
 const codeArchitectureAnalysisInFlightRef = useRef(false);
+const codeArchitectureAnalysisScopeRef = useRef(null);
 const [isCodeArchitectureRepoVerifying, setIsCodeArchitectureRepoVerifying] = useState(false);
 const [isCodeArchitectureRepoAnalyzing, setIsCodeArchitectureRepoAnalyzing] = useState(false);
 const [isCodeArchitectureContextGenerating, setIsCodeArchitectureContextGenerating] = useState(false);
 const [codeArchitectureRepoFilesForModal, setCodeArchitectureRepoFilesForModal] = useState([]);
 const [codeArchitectureFileSelectorOpen, setCodeArchitectureFileSelectorOpen] = useState(false);
 const codeArchitectureFileSelectorResolver = useRef(null);
-const [cbaTableData, setCbaTableDataState] = useState(() => immutableFunctionalRows([]));
-const setCbaTableData = useCallback(next => setCbaTableDataState(previous =>
-  immutableFunctionalRows(typeof next === 'function' ? next(previous) : next)), []);
 const [selectedCbaElement, setSelectedCbaElement] = useState(null);
 const [activeCodeArchitectureSelection, setActiveCodeArchitectureSelection] = useState(null);
 const [codeArchitectureWorkspaceTab, setCodeArchitectureWorkspaceTab] = useState("architecture");
@@ -4070,6 +4071,14 @@ const activeCodeArchitectureRowsKey = activeCodeArchitectureProject && activeCod
   ? codeArchitectureRowsKey(activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id)
   : null;
 codeArchitectureScopeRef.current = activeCodeArchitectureRowsKey;
+const { rows: cbaTableData, snapshot: cbaOwnedSnapshot, setRows: setCbaTableData,
+  publishRows: publishCbaTableData, adoptRows: adoptCbaTableData, beginLoad: beginCbaLoad } = useScopedArchitectureRows(activeCodeArchitectureRowsKey);
+const [cbaLoadError, setCbaLoadError] = useState("");
+const [cbaReloadRequest, setCbaReloadRequest] = useState(null);
+const requestCbaReload = useCallback(scope => {
+  setCbaReloadRequest(previous => ({ scope, revision: (previous?.revision || 0) + 1 }));
+}, []);
+
 const [durableArchitectureMeta, setDurableArchitectureMeta] = useState(null);
 useEffect(() => {
   let active=true;
@@ -4111,12 +4120,6 @@ const activeCodeArchitectureUnavailableRowCount = Number(activeCodeArchitectureS
 async function readCodeArchitectureRowsForRepo(project, repo, primaryKey, options) {
   if (!project || !repo || !primaryKey) return { rows: [], sourceKey: primaryKey || "" };
   const candidateKeys = [primaryKey];
-  try {
-    const meta = JSON.parse(localStorage.getItem(codeArchitectureMetaKey(project.id, repo.id)) || "null");
-    if (meta?.indexedDB?.key) candidateKeys.push(meta.indexedDB.key);
-    if (meta?.storageKey) candidateKeys.push(meta.storageKey);
-  } catch {}
-  if (repo.owner && repo.repo) candidateKeys.push(`cba:${repo.owner}/${repo.repo}`);
   if (repo.repoId) candidateKeys.push(codeArchitectureRowsKey(project.id, repo.repoId));
   if (repo.repoName) candidateKeys.push(codeArchitectureRowsKey(project.id, repo.repoName));
   (project.repos || [])
@@ -4129,7 +4132,10 @@ async function readCodeArchitectureRowsForRepo(project, repo, primaryKey, option
 
   const uniqueKeys = Array.from(new Set(candidateKeys.filter(Boolean)));
   const result = await readFirstCbaRowsFromIndexedDB(uniqueKeys, options);
-  return { rows: result.rows, sourceKey: result.key || primaryKey };
+  const foreignRow = result.rows.find(row => row?.lineage?.scope &&
+    row.lineage.scope !== primaryKey && row.lineage.scope !== result.key);
+  if (foreignRow) throw new Error("Saved architecture contains rows owned by another project or repository. Existing data and checkpoints were preserved.");
+  return { rows: result.rows, sourceKey: result.key || primaryKey, found: result.found };
 }
 
 function codeArchitectureReviewRowsForRepo(project, repo, reviewItems = []) {
@@ -4217,24 +4223,30 @@ useEffect(() => {
 useEffect(() => {
   if (!activeCodeArchitectureRowsKey) {
     setCbaLoading(false);
-    setCbaTableData([]);
+    setCbaLoadError("");
     setSelectedCbaElement(null);
     setActiveCodeArchitectureSelection(null);
     setCodeArchitectureHazardRun(null);
     return;
   }
+  if (codeArchitectureAnalysisScopeRef.current === activeCodeArchitectureRowsKey) {
+    setCbaLoading(true);
+    return;
+  }
   let cancelled = false;
+  const currentLoad = beginCbaLoad();
+  const isCancelled = () => cancelled || !currentLoad();
+  setCbaLoadError("");
   setCbaLoadingLabel("Loading saved analysis...");
   setCbaLoadingProgress(0);
   setCbaLoading(true);
   readCodeArchitectureRowsForRepo(activeCodeArchitectureProject, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey, {
-    onProgress: percent => { if (!cancelled) setCbaLoadingProgress(Math.floor(percent * 0.9)); },
+    onProgress: percent => { if (!isCancelled()) setCbaLoadingProgress(Math.floor(percent * 0.9)); },
   })
-    .then(async ({ rows, sourceKey }) => {
-      if (cancelled) return;
-      let recoverySource = sourceKey;
+    .then(async ({ rows, found }) => {
+      if (isCancelled()) return;
       let recoveredRows = Array.isArray(rows) ? rows : [];
-      if (recoveredRows.length === 0) {
+      if (!found && recoveredRows.length === 0) {
         const reviewRows = codeArchitectureReviewRowsForRepo(
           activeCodeArchitectureProject,
           activeCodeArchitectureRepo,
@@ -4242,43 +4254,24 @@ useEffect(() => {
         );
         if (reviewRows.length) {
           recoveredRows = reviewRows;
-          recoverySource = "results-review";
         }
       }
       setCbaLoadingLabel("Preparing saved analysis...");
       setCbaLoadingProgress(90);
       // Storage completion must paint before normalization/adoption starts.
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      if (cancelled) return;
+      if (isCancelled()) return;
       const normalizedRows = await ensureCodeArchitectureTraceIdsAsync(recoveredRows, {
-        isCancelled: () => cancelled,
-        onProgress: percent => { if (!cancelled) setCbaLoadingProgress(90 + Math.floor(percent * 0.04)); },
+        isCancelled,
+        onProgress: percent => { if (!isCancelled()) setCbaLoadingProgress(90 + Math.floor(percent * 0.04)); },
       });
-      if (cancelled || !normalizedRows) return;
+      if (isCancelled() || !normalizedRows) return;
       const rowsWithTraceIds = await immutableFunctionalRowsAsync(normalizedRows, {
-        isCancelled: () => cancelled,
-        onProgress: percent => { if (!cancelled) setCbaLoadingProgress(94 + Math.floor(percent * 0.05)); },
+        isCancelled,
+        onProgress: percent => { if (!isCancelled()) setCbaLoadingProgress(94 + Math.floor(percent * 0.05)); },
       });
-      if (cancelled || !rowsWithTraceIds) return;
-      setCbaTableData(rowsWithTraceIds);
-      if (rowsWithTraceIds.length && activeCodeArchitectureRowsKey) {
-        // The cbaTableData persistence effect saves this adopted revision once.
-        if (recoverySource && recoverySource !== activeCodeArchitectureRowsKey) {
-          try {
-            localStorage.setItem(codeArchitectureMetaKey(activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id), JSON.stringify({
-              ...(activeCodeArchitectureStoredMeta || {}),
-              ...codeSourceProvenance(activeCodeArchitectureRepo),
-              repoId: activeCodeArchitectureRepo.repoId || normalizeRepoIdentity(activeCodeArchitectureRepo),
-              repoName: activeCodeArchitectureRepo.repoName || normalizeRepoIdentity(activeCodeArchitectureRepo),
-              rowCount: rowsWithTraceIds.length,
-              storage: "indexedDB",
-              indexedDB: { database: XHANDLE_IDB_NAME, store: XHANDLE_IDB_CBA_STORE, key: activeCodeArchitectureRowsKey },
-              recoveredFromKey: recoverySource,
-              updatedAt: new Date().toISOString(),
-            }));
-          } catch {}
-        }
-      }
+      if (isCancelled() || !rowsWithTraceIds) return;
+
       setSelectedCbaElement(null);
       setActiveCodeArchitectureSelection(null);
       // Architecture reloads can follow context/review updates in the same
@@ -4286,15 +4279,24 @@ useEffect(() => {
       // replaces imported preprocessing with a fresh, blank CSV draft.
       setCbaLoadingProgress(100);
       // Let the completed state paint before replacing it with the workspace.
-      return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      if (isCancelled()) return;
+      setCbaLoading(false);
+      setCbaLoadingProgress(null);
+      adoptCbaTableData(rowsWithTraceIds);
+    })
+    .catch(error => {
+      if (!isCancelled()) setCbaLoadError(error?.message || "Unable to load saved analysis.");
     })
     .finally(() => {
-      if (!cancelled) { setCbaLoading(false); setCbaLoadingProgress(null); }
+      if (!isCancelled()) { setCbaLoading(false); setCbaLoadingProgress(null); }
     });
   return () => {
     cancelled = true;
   };
-}, [activeCodeArchitectureProject, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey, activeCodeArchitectureStoredMeta, resultsReview.reviewItems]);
+// Reload only on scope changes. Review/metadata updates must not race publication.
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [activeCodeArchitectureRowsKey, beginCbaLoad, adoptCbaTableData, cbaReloadRequest]);
 
 function updateCodeArchitectureProject(projectId, updater) {
   setCodeArchitectureProjects((prev) =>
@@ -5303,18 +5305,20 @@ async function importCodeArchitectureProjectFromFile(event) {
     operation.check();
     const importedProject = {
       ...project,
-      repos: [...(targetProject?.repos || []), ...importedRepos],
+      repos: mergeImportedCodeArchitectureRepos(targetProject?.repos, importedRepos),
       activeRepoId: importedRepos[0].id,
       updatedAt: new Date().toISOString(),
     };
     setCodeArchitectureProjects((prev) => targetProject
       ? prev.map(existing => existing.id === targetProject.id
-        ? { ...existing, repos: [...(existing.repos || []), ...importedRepos], activeRepoId: importedRepos[0].id, updatedAt: importedProject.updatedAt }
+        ? { ...existing, repos: mergeImportedCodeArchitectureRepos(existing.repos, importedRepos), activeRepoId: importedRepos[0].id, updatedAt: importedProject.updatedAt }
         : existing)
       : [importedProject, ...prev]);
     setActiveCodeArchitectureProjectId(importedProject.id);
     setActiveCodeArchitectureFolderId(null);
-    setCbaTableData(firstRows);
+    // Explicitly refresh even if the target scope is unchanged. Read the saved
+    // rows so imported lineage normalization remains authoritative.
+    requestCbaReload(codeArchitectureRowsKey(importedProject.id, importedRepos[0].id));
     setSelectedCbaElement(null);
     setCodeArchitectureHazardRun(null);
     setCodeArchitectureWorkspaceTab("architecture");
@@ -5383,7 +5387,12 @@ async function handleBaselineRepo({
   const sourceRunId = `code-architecture-functional-${targetProject?.id || "default"}-${effectiveRepoConfig?.id || finalRepo}-${Date.now()}`;
   setCodeArchitectureFunctionalReviewRunId(sourceRunId);
   setCbaLoadingLabel("Analyzing repository...");
+  setCbaLoadingProgress(null);
+  setCbaLoadError("");
 
+  beginCbaLoad(); // Invalidate hydration started before this analysis.
+  codeArchitectureAnalysisScopeRef.current = storageKey;
+  const setAnalysisLoading = value => { if (codeArchitectureScopeRef.current === storageKey) setCbaLoading(value); };
   codeArchitectureAnalysisInFlightRef.current = true;
   startActivity(id, {
     title: "Generating code-based architecture",
@@ -5392,13 +5401,15 @@ async function handleBaselineRepo({
     total: 0,
   });
 
+  let published = false;
   try {
-    setCbaLoading(true);
+    setAnalysisLoading(true);
+    await flushArchitectureWrites(storageKey);
     const result = publicationCheckpointKey
       ? await recoverArchitecturePublication(storageKey, publicationCheckpointKey)
       : await generateFunctionalDecompositionFromGitHub(
-      rows => { if (codeArchitectureScopeRef.current === storageKey) setCbaTableData(rows); },
-      setCbaLoading,
+      rows => { if (codeArchitectureScopeRef.current === storageKey) { setCbaLoading(false); publishCbaTableData(storageKey, rows); } },
+      setAnalysisLoading,
       null,
       {
         repoConfig: { ...effectiveRepoConfig, owner: finalOwner, repo: finalRepo, token: finalToken },
@@ -5417,8 +5428,9 @@ async function handleBaselineRepo({
         },
       }
     );
+    published = true;
     const resultRows = Array.isArray(result) ? result : result?.rows;
-    if (publicationCheckpointKey && codeArchitectureScopeRef.current === storageKey) setCbaTableData(resultRows);
+    if (publicationCheckpointKey && codeArchitectureScopeRef.current === storageKey) { setCbaLoading(false); publishCbaTableData(storageKey, resultRows); }
     const resultMetadata = Array.isArray(result) ? {} : (result?.metadata || {});
     const generatedRowCount = Array.isArray(resultRows) ? resultRows.length : 0;
     const openTableFirstForLargeResult = generatedRowCount > 300;
@@ -5534,6 +5546,7 @@ async function handleBaselineRepo({
     } else {
       finishActivity(id, "success", `Architecture ready${metricsSuffix}`);
     }
+    if (codeArchitectureScopeRef.current !== storageKey) return;
     setSection("code-architecture");
     setCodeArchitectureWorkspaceTab("architecture");
     setCodeArchitectureFunctionalTableOpenKey(openTableFirstForLargeResult ? `generated-${Date.now()}` : null);
@@ -5544,7 +5557,9 @@ async function handleBaselineRepo({
     throw e;
   } finally {
     codeArchitectureAnalysisInFlightRef.current = false;
-    setCbaLoading(false);
+    codeArchitectureAnalysisScopeRef.current = null;
+    setAnalysisLoading(false);
+    if (!published && codeArchitectureScopeRef.current === storageKey) requestCbaReload(storageKey);
   }
 }
 
@@ -5555,16 +5570,16 @@ const [cbaLoadingProgress, setCbaLoadingProgress] = useState(null);
 
 useEffect(() => {
   if (!activeCodeArchitectureProject || !activeCodeArchitectureRepo || !activeCodeArchitectureRowsKey) {
-    setCbaLoading(false);
     return;
   }
-  if (!Array.isArray(cbaTableData) || cbaTableData.length === 0) return;
+  if (!cbaOwnedSnapshot.dirty || cbaOwnedSnapshot.scope !== activeCodeArchitectureRowsKey) return;
 
   const metaKey = codeArchitectureMetaKey(activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id);
   let cancelled = false;
   writeCbaRowsToIndexedDB(activeCodeArchitectureRowsKey, cbaTableData)
     .then((rowsPersisted) => {
       if (cancelled) return;
+      if (!rowsPersisted) setCbaLoadError("Architecture changes could not be saved.");
       try {
         localStorage.setItem(metaKey, JSON.stringify({
           ...codeSourceProvenance(activeCodeArchitectureRepo),
@@ -5589,11 +5604,15 @@ useEffect(() => {
       } catch (error) {
         console.warn("[cba] Unable to save code architecture metadata to localStorage; full rows remain in IndexedDB.", error);
       }
+    }).catch(error => {
+      if (!cancelled) setCbaLoadError(error?.message || "Unable to save architecture changes.");
     });
   return () => {
     cancelled = true;
   };
-}, [activeCodeArchitectureProject, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey, activeCodeArchitectureStoredMeta?.grounding, activeCodeArchitectureStoredMeta?.functionalProcessingError, activeCodeArchitectureStoredMeta?.sourceAnalysis, activeCodeArchitectureStoredMeta?.metrics, activeCodeArchitectureStoredMeta?.operationalContext, activeCodeArchitectureStoredMeta?.contextSources, cbaTableData]);
+// Save an owned edit once; metadata changes and hydration are not edits.
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [cbaOwnedSnapshot, activeCodeArchitectureRowsKey]);
 
 useEffect(() => {
   if (!cbaTableData?.length) {
@@ -17482,6 +17501,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
           onResume={(checkpoint) => handleBaselineRepo({ projectId: activeCodeArchitectureProject.id, repoConfig: activeCodeArchitectureRepo, publicationCheckpointKey: checkpoint.publicationReady ? checkpoint.key : undefined })}
         />}
 
+        {cbaLoadError && <div role="alert" className="rounded border border-red-200 bg-red-50 p-4 text-sm text-red-700">Unable to load or save this project: {cbaLoadError}</div>}
         {cbaLoading
           ? (
             <div className="min-h-0 overflow-auto rounded-xl border bg-white p-8 text-gray-600 text-sm">

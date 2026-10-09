@@ -21,6 +21,22 @@ export function openCbaIndexedDB({ signal } = {}) {
   });
 }
 const changed = () => notifyBackupDataChanged({db:XHANDLE_IDB_NAME, stores:[XHANDLE_IDB_CBA_STORE]});
+// Serialize mutations from this workspace before their first asynchronous read.
+// A delayed open must not let an older payload choose a newer publication as its
+// baseline. Different project/repository scopes remain independent.
+const architectureWrites = new Map();
+function queueArchitectureWrite(scope, operation) {
+  const previous = architectureWrites.get(scope) || Promise.resolve();
+  const result = previous.then(operation);
+  const settled = result.then(() => undefined, () => undefined);
+  architectureWrites.set(scope, settled);
+  settled.then(() => { if (architectureWrites.get(scope) === settled) architectureWrites.delete(scope); });
+  return result;
+}
+export async function flushArchitectureWrites(scope) {
+  while (architectureWrites.has(scope)) await architectureWrites.get(scope);
+}
+
 export async function readCbaRowsFromIndexedDB(key, options) {
   if (!key || typeof indexedDB === 'undefined') return [];
   const db = await openCbaIndexedDB();
@@ -37,24 +53,24 @@ export async function readFirstCbaRowsFromIndexedDB(keys = [], { onProgress } = 
   try {
     for (const key of unique) {
       const value = await rawRecord(db, XHANDLE_IDB_CBA_STORE, key);
-      if (!isChunkedRecord(value) && (!Array.isArray(value) || !value.length)) continue;
+      if (!isChunkedRecord(value) && !Array.isArray(value)) continue;
       // These keys are alternative locations, not three equal parts of a load.
       // Give the actual record the full progress range, regardless of aliases.
       const rows = await hydrateRecord(db, XHANDLE_IDB_CBA_STORE, value, { onProgress: percent => report(Math.min(99, percent)) });
-      if (Array.isArray(rows) && rows.length) { report(100); return {key, rows}; }
+      if (Array.isArray(rows)) { report(100); return {key, rows, found:true}; }
     }
   } finally {
     db.close();
   }
   report(100);
-  return {key:unique[0] || '', rows:[]};
+  return {key:unique[0] || '', rows:[], found:false};
 }
 export async function readCbaRowsRevision(key) {
   const db = await openCbaIndexedDB();
   try { const value = await rawRecord(db, XHANDLE_IDB_CBA_STORE, key); return isChunkedRecord(value) ? value.root : JSON.stringify(value); }
   finally { db.close(); }
 }
-export async function writeCbaRowsToIndexedDB(key, rows, options) {
+async function writeCbaRowsToIndexedDBNow(key, rows, options) {
   if (!key || typeof indexedDB === 'undefined') return false;
   const db = await openCbaIndexedDB();
   try { await writeRecord(db, XHANDLE_IDB_CBA_STORE, key, Array.isArray(rows) ? rows : [], options); changed(); return true; }
@@ -71,7 +87,7 @@ export async function readArchitectureRunRecords(key, rows = []) {
     return records;
   } finally { db.close(); }
 }
-export async function writeImportedArchitectureRunRecords(key, records = [], rows, { signal } = {}) {
+async function writeImportedArchitectureRunRecordsNow(key, records = [], rows, { signal } = {}) {
   const db = await openCbaIndexedDB({ signal });
   try {
     const writes = [];
@@ -93,7 +109,7 @@ export async function writeImportedArchitectureRunRecords(key, records = [], row
 const revision = value => isChunkedRecord(value) ? value.root : JSON.stringify(value || []);
 const pendingInMemory = new Map();
 
-export async function prepareArchitecturePublication(key, rows, run, metadata, checkpointKey, previousRows, signal) {
+async function prepareArchitecturePublicationNow(key, rows, run, metadata, checkpointKey, previousRows, signal) {
   const db = await openCbaIndexedDB();
   const payload = {scope:key, rows, run, metadata, checkpointKey, previousRows};
   let durable = false;
@@ -130,11 +146,11 @@ export async function prepareArchitecturePublication(key, rows, run, metadata, c
   } finally { db.close(); }
 }
 
-export async function recoverArchitecturePublication(scope, checkpointKey, signal) {
+async function recoverArchitecturePublicationNow(scope, checkpointKey, signal) {
   if (!checkpointKey.startsWith(`functional-decomposition-checkpoint:${scope}:`)) throw new Error('Checkpoint does not belong to this project.');
   if (pendingInMemory.has(checkpointKey)) {
     const payload = pendingInMemory.get(checkpointKey);
-    await prepareArchitecturePublication(scope, payload.rows, payload.run, payload.metadata, checkpointKey, payload.previousRows, signal);
+    await prepareArchitecturePublicationNow(scope, payload.rows, payload.run, payload.metadata, checkpointKey, payload.previousRows, signal);
   }
   const db = await openCbaIndexedDB();
   try {
@@ -217,4 +233,20 @@ export async function readLatestArchitectureCheckpoint(scope) {
 export async function readArchitectureMetadata(scope) {
   const db=await openCbaIndexedDB();
   try {return await readRecord(db,XHANDLE_IDB_CBA_STORE,`${scope}:metadata`) || null;} finally {db.close();}
+}
+
+export function writeCbaRowsToIndexedDB(...args) {
+  return queueArchitectureWrite(args[0], () => writeCbaRowsToIndexedDBNow(...args));
+}
+
+export function writeImportedArchitectureRunRecords(...args) {
+  return queueArchitectureWrite(args[0], () => writeImportedArchitectureRunRecordsNow(...args));
+}
+
+export function prepareArchitecturePublication(...args) {
+  return queueArchitectureWrite(args[0], () => prepareArchitecturePublicationNow(...args));
+}
+
+export function recoverArchitecturePublication(...args) {
+  return queueArchitectureWrite(args[0], () => recoverArchitecturePublicationNow(...args));
 }
