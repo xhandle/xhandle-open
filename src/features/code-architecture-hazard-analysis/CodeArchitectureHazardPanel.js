@@ -88,6 +88,12 @@ export default function CodeArchitectureHazardPanel({
   const summarySheet = useMemo(() => fillNotApplicableHazardSummary(ensureHazardAnalysisRowIds(
     latestRun?.generatedSheets?.Summary || draftRun?.generatedSheets?.Summary || []
   )), [latestRun, draftRun]);
+  const unresolvedApplicabilityCount = useMemo(() => {
+    const header = summarySheet[0] || [];
+    const valueIndex = header.indexOf('Guide Phrase Applicable');
+    const originIndex = header.indexOf('Guide Phrase Applicability Origin');
+    return summarySheet.slice(1).filter(row => row[valueIndex] === 'Needs Review' && row[originIndex] === 'Automatic screening').length;
+  }, [summarySheet]);
   const functionalTraceIds = useMemo(() => functionalModelIsReady(cbaRows)
     ? new Set(buildFunctionalModelRows(cbaRows).map(row => row.traceId)) : new Set(), [cbaRows]);
   const csvInputRef = useRef(null);
@@ -395,6 +401,11 @@ export default function CodeArchitectureHazardPanel({
             {isRunning && (
               <div className="shrink-0 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-800">
                 {progress?.message || "Running code architecture hazard analysis..."}
+              </div>
+            )}
+            {unresolvedApplicabilityCount > 0 && (
+              <div role="status" className="text-sm text-amber-800">
+                {unresolvedApplicabilityCount} guide-phrase decisions need review. Hazard generation was deferred for these rows; applicable rows were analyzed.
               </div>
             )}
             {!latestRun && hasSummary && <div className="text-sm text-slate-600">Incomplete hazard analysis draft. Export these rows, complete them externally, then import the CSV results.</div>}

@@ -7,7 +7,7 @@ import { toCsvText } from '../lib/csv';
 
 beforeEach(() => jest.clearAllMocks());
 
-test.each(['Yes', 'No'])('reviewed %s and rationale survive the full standard STPA pipeline', async decision => {
+test.each([['Yes', 'Reviewed', ''], ['No', 'Reviewed', ''], ['Yes', '', 'Automatic screening'], ['No', '', 'Automatic screening']])('%s with review=%s origin=%s survives the full standard STPA pipeline', async (decision, reviewStatus, origin) => {
   const rationale = `${decision} — accepted applicability assessment.`;
   const stages = [];
   // Deliberately hostile provider output: generation and later audit/repair
@@ -20,8 +20,8 @@ test.each(['Yes', 'No'])('reviewed %s and rationale survive the full standard ST
   }]));
   const sheets = await generateStandardCodeHazardAnalysisSheets({
     sheets: {'Functional Decomposition': [
-      ['Function (From)','Control Action','Function (To)','Guide Phrase','Guide Phrase Applicable','Guide Phrase Applicability Rationale','Guide Phrase Applicability Review Status'],
-      ['Planner','Command motion','Executor','Too late',decision,rationale,'Reviewed'],
+      ['Function (From)','Control Action','Function (To)','Guide Phrase','Guide Phrase Applicable','Guide Phrase Applicability Rationale','Guide Phrase Applicability Review Status', 'Guide Phrase Applicability Origin'],
+      ['Planner','Command motion','Executor','Too late',decision,rationale,reviewStatus,origin],
     ]},
     currentFolder: 'fixture', setFolders: jest.fn(), method: 'STPA',
     onStageComplete: ({stage, rows}) => {

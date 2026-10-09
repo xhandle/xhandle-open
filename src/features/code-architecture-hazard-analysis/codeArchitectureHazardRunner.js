@@ -1,3 +1,4 @@
+import { screenCodeHazardApplicability } from './codeHazardApplicabilityScreening';
 import { createCodeHazardCheckpoint } from './codeHazardGenerationCheckpoint';
 import { getStoredActiveAIProvider, getStoredAIProviderModelPreference, getStoredAIProviderEffortPreference } from '../../lib/aiProviderConfig';
 import { functionalModelIsReady } from '../code-architecture-context/functionalModel';
@@ -41,7 +42,7 @@ export async function runCodeArchitectureHazardAnalysis({
   if (!functionalModelIsReady(cbaRows) && (cbaRows.some(row => row.functionalAbstraction) || repoMeta.functionalProcessingError)) {
     throw new Error('Generate an up-to-date Functional model before running hazard analysis. The existing functional model is incomplete or stale.');
   }
-  const input = prepareCodeHazardPreprocessing(buildCodeArchitectureHazardInput({
+  let input = prepareCodeHazardPreprocessing(buildCodeArchitectureHazardInput({
     cbaRows,
     repoMeta,
     projectId,
@@ -58,6 +59,23 @@ export async function runCodeArchitectureHazardAnalysis({
     input.sourceTableRows || input.tableRows,
     repoMeta,
   );
+
+  const modelContext = {
+    provider: getStoredActiveAIProvider(),
+    model: getStoredAIProviderModelPreference(getStoredActiveAIProvider(), {includeDefault: true}),
+    effort: getStoredAIProviderEffortPreference(getStoredActiveAIProvider()),
+  };
+  const generationCheckpoint = await createCodeHazardCheckpoint({
+    projectId, repoId: input.repoId, method,
+    ...modelContext,
+    preprocessing: previousRun?.userPreprocessing || null,
+  }, {regenerate, signal, onProgress: setProgress});
+  if (['STPA-Textbook', 'STPA_TEXTBOOK', 'STPA_TEXTBOOK_APPROACH'].includes(method)) {
+    input = await screenCodeHazardApplicability(input, {sourceRows: sourceAuditedTableRows,
+      checkpoint: generationCheckpoint, modelContext, signal, onProgress: setProgress});
+    const counts = input.applicabilityScreening.counts;
+    setProgress({phase: 'hazard-generation', message: `Applicability screened: ${counts.yes} applicable, ${counts.no} excluded, ${counts.unresolved} need review. Generating applicable hazards...`});
+  }
 
   const id = makeCodeArchitectureHazardId("cba-hazard-run");
   const sourceRunId = id;
@@ -90,6 +108,7 @@ export async function runCodeArchitectureHazardAnalysis({
     selectedOperationalContextId: input.selectedOperationalContextId,
     organizationProfileProvenance,
     contextSources: input.contextSources,
+    applicabilityScreening: input.applicabilityScreening || null,
     generatedSheets,
   }, {
     projectId,
@@ -126,12 +145,6 @@ export async function runCodeArchitectureHazardAnalysis({
   };
 
   onActivityUpdate({ step: 1, message: `Generating code architecture hazard analysis from ${input.eligibilitySummary.include} eligible interface${input.eligibilitySummary.include === 1 ? "" : "s"}...` });
-  const generationCheckpoint = await createCodeHazardCheckpoint({
-    projectId, repoId: input.repoId, method,
-    model: getStoredAIProviderModelPreference(getStoredActiveAIProvider(), {includeDefault: true}),
-    effort: getStoredAIProviderEffortPreference(getStoredActiveAIProvider()),
-    preprocessing: previousRun?.userPreprocessing || null,
-  }, {regenerate, signal, onProgress: setProgress});
   const generatedSheetsRaw = await runLiteAIAnalysis({
     generationCheckpoint,
     tableRows: input.tableRows,
@@ -196,6 +209,7 @@ export async function runCodeArchitectureHazardAnalysis({
     selectedOperationalContextId: input.selectedOperationalContextId,
     organizationProfileProvenance,
     contextSources: input.contextSources,
+    applicabilityScreening: input.applicabilityScreening || null,
     generatedSheets,
   }, {
     projectId,
@@ -221,6 +235,6 @@ export async function runCodeArchitectureHazardAnalysis({
   await saveCodeArchitectureHazardRun(run);
   // Cleanup must not turn an already-published result into a failed run.
   try { await generationCheckpoint?.prune(); } catch (error) { console.warn('[hazard-checkpoint] Cleanup deferred', error); }
-  onActivityUpdate({ step: 9, message: "Code architecture hazard analysis complete." });
+  onActivityUpdate({ step: 9, message: input.applicabilityScreening?.counts.unresolved ? `Applicable rows analyzed; ${input.applicabilityScreening.counts.unresolved} guide-phrase decisions need review.` : "Code architecture hazard analysis complete." });
   return run;
 }

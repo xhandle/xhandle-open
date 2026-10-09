@@ -1,7 +1,9 @@
+jest.mock('./codeHazardApplicabilityScreening', () => ({screenCodeHazardApplicability: jest.fn(async input => ({...input, applicabilityScreening: {counts: {yes: 0, no: 0, unresolved: 0}}}))}));
 jest.mock('./codeHazardGenerationCheckpoint', () => ({createCodeHazardCheckpoint: jest.fn(async () => null)}));
 jest.mock('../../components/aiAnalysisLite', () => ({ runLiteAIAnalysis: jest.fn() }));
 jest.mock('./codeArchitectureHazardStore', () => ({ saveCodeArchitectureHazardRun: jest.fn(async run => run) }));
 jest.mock('./codeArchitectureHazardSourceAudit', () => ({ enrichHazardTableRowsWithSourceContent: jest.fn(async rows => rows) }));
+import { screenCodeHazardApplicability } from './codeHazardApplicabilityScreening';
 import { runLiteAIAnalysis } from '../../components/aiAnalysisLite';
 import { runCodeArchitectureHazardAnalysis } from './codeArchitectureHazardRunner';
 import { buildCodeArchitectureHazardCsvDraft } from './codeArchitectureHazardCsv';
@@ -11,6 +13,7 @@ const headers=['Function (From)','Control Action','Function (To)','Guide Phrase'
 const options={method:'STPA-Textbook',projectId:'p1',repoMeta:{repoId:'repo'},cbaRows:[{from:'Estimate Pose',action:'Publish pose estimate',to:'Plan Motion',traceId:'trace1',fromNodeId:'from1',toNodeId:'to1',edgeId:'edge1',hazardAnalysisEligibility:'Include',hazardAnalysisEligibilitySource:'manual'}]};
 beforeEach(()=>{
  jest.clearAllMocks();
+ screenCodeHazardApplicability.mockImplementation(async input => ({...input, applicabilityScreening: {counts: {yes: 0, no: 0, unresolved: 0}}}));
  runLiteAIAnalysis.mockImplementation(async ({tableRows})=>({Summary:[headers,...tableRows.map((row,index)=>[
  row.fromFunction,row.controlAction,row.toFunction,row.guidePhrase,row.operationalContextId,row.operationalScenario,row.operationalMode,row.operatingConditions,`AI-${index}`,'Yes','AI rationale','Completed hazard','Policy Validated',
  ])]}));

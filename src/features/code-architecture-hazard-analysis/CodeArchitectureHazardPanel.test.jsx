@@ -26,6 +26,18 @@ function renderPanel(props = {}) {
   return { host, root };
 }
 
+it('shows deferred applicability and clears the notice after an explicit review resolves it', () => {
+  const headers = ['Raw Analysis Row ID', 'Guide Phrase Applicable', 'Guide Phrase Applicability Origin', 'Hazards'];
+  const latestRun = {generatedSheets: {Summary: [headers, ['RAW-1', 'Needs Review', 'Automatic screening', 'Needs review: unresolved applicability']]}};
+  const {host, root} = renderPanel({latestRun});
+  try {
+    expect(host.textContent).toContain('1 guide-phrase decisions need review');
+    act(() => root.render(<CodeArchitectureHazardPanel method="STPA-Textbook" operationalContexts={[]} cbaRows={[]}
+      latestRun={{...latestRun, generatedSheets: {Summary: [headers, ['RAW-1', 'Yes', 'Automatic screening', 'Needs review: downstream assessment pending']]}}} />));
+    expect(host.textContent).not.toContain('guide-phrase decisions need review');
+  } finally { act(() => root.unmount()); host.remove(); }
+});
+
 describe("CodeArchitectureHazardPanel eligibility gate", () => {
   it("shows include, exclude, and review counts and runs only when rows are included", () => {
     const onRunAnalysis = jest.fn();

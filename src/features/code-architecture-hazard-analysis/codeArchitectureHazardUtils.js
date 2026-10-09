@@ -1661,6 +1661,7 @@ export function normalizeCodeArchitectureHazardRun(raw = {}, context = {}) {
     selectedOperationalContextId: raw.selectedOperationalContextId || context.selectedOperationalContextId || "all",
     organizationProfileProvenance: raw.organizationProfileProvenance || context.organizationProfileProvenance || null,
     contextSources: raw.contextSources || context.contextSources || context.repoMeta?.contextSources || null,
+    applicabilityScreening: raw.applicabilityScreening || null,
     generatedSheets: raw.generatedSheets || raw.analysisResult || {},
     summaryRows,
     reviewStatus: raw.reviewStatus || CODE_ARCHITECTURE_HAZARD_REVIEW_STATUSES.DRAFT_AI_GENERATED,

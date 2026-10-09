@@ -1,0 +1,11 @@
+# Implement automatic command/control applicability screening
+
+Implement the plan in `docs/investigations/fast-control-gated-guide-phrase-applicability-review.md` for Code-Based Architecture STPA-Textbook (GitHub, local and imported architecture inputs).
+
+Read existing code first. Add a compact automatic screening stage before full hazard generation, using the selected Functional model when ready. Qualify actual commands/controls per relationship and context, then decide each guide phrase independently. Software-only commands qualify; calls, computations, logs, and observations do not qualify merely because they are labeled Control Action. Keep feedback as supporting evidence. Use evidence, not repository names, languages or keyword rules. Separate applicability from adverse consequences and safety significance.
+
+Preserve accepted human Yes/No decisions and rationales. Record automated origin separately. No must skip downstream generation regardless of review status. Unresolved applicability must remain visible and must not silently become No or generate purported completed hazards. Downstream classification cannot overwrite resolved screening decisions. Retain excluded/unresolved rows in tables and exports.
+
+Use bounded batches, concurrency, validation, retries and cancellation; split failed batches, retaining valid completed work. Resume checkpoints must include project/repository, source/model/context/evidence and screening-policy identity. Persist screening provenance with the run. Show actual screening and generation progress separately. Never report partial applicability resolution as completed hazard analysis. Do not change Projects behavior, non-STPA methods, or downstream safety reasoning except to protect applicability ownership.
+
+Add regression tests for command/non-command/ambiguous cases, software commands, instantaneous/sustained semantics, human overrides, No skipping, unresolved handling, conflicting downstream responses, resume/regeneration, context/source/project isolation, and Functional selection. Use mocked AI; do not make paid calls or modify customer records. Run relevant tests and production build. Write an implementation report with remaining limitations and measured request counts. Do not commit or push unless requested.

@@ -1,3 +1,4 @@
+import { applicabilityIsReadOnly, SCREENING_ORIGIN, APPLICABILITY_OWNERSHIP_PROMPT } from '../features/project-hazard-analysis/applicabilityOwnership';
 import { fetchLLMResponse } from "./aiAnalysisSTPA";
 import {
   CODE_ARCHITECTURE_TRACEABILITY_COLUMNS,
@@ -79,6 +80,7 @@ function flattenDecomposition(sheets) {
   const guideApplicableIdx = findColumn(["Guide Phrase Applicable", "Guide Applicable", "Applicability", "Applicable"], -1);
   const guideRationaleIdx = findColumn(["Guide Phrase Applicability Rationale", "Applicability Rationale", "Guide Phrase Rationale"], -1);
   const guideReviewStatusIdx = findColumn(["Guide Phrase Applicability Review Status", "Applicability Review Status"], -1);
+  const guideOriginIdx = findColumn(["Guide Phrase Applicability Origin"], -1);
   const safetySignificantIdx = findColumn(["Safety Significant"], -1);
   const safetyRationaleIdx = findColumn(["Safety Significance Rationale"], -1);
   const safetyReviewStatusIdx = findColumn(["Safety Significance Review Status"], -1);
@@ -110,6 +112,7 @@ function flattenDecomposition(sheets) {
         guidePhraseApplicable: guideApplicableIdx >= 0 ? sanitizeText(getCellText(row[guideApplicableIdx])) : "",
         guidePhraseApplicabilityRationale: guideRationaleIdx >= 0 ? sanitizeText(getCellText(row[guideRationaleIdx])) : "",
         guidePhraseApplicabilityReviewStatus: guideReviewStatusIdx >= 0 ? sanitizeText(getCellText(row[guideReviewStatusIdx])) : "",
+        guidePhraseApplicabilityOrigin: guideOriginIdx >= 0 ? sanitizeText(getCellText(row[guideOriginIdx])) : "",
         safetySignificant: safetySignificantIdx >= 0 ? sanitizeText(getCellText(row[safetySignificantIdx])) : "",
         safetySignificanceRationale: safetyRationaleIdx >= 0 ? sanitizeText(getCellText(row[safetyRationaleIdx])) : "",
         safetySignificanceReviewStatus: safetyReviewStatusIdx >= 0 ? sanitizeText(getCellText(row[safetyReviewStatusIdx])) : "",
@@ -173,6 +176,7 @@ function compactPromptItem(item = {}, maxChars = 120) {
     guidePhraseApplicable: truncateForPrompt(item.guidePhraseApplicable, 24),
     guidePhraseApplicabilityRationale: truncateForPrompt(item.guidePhraseApplicabilityRationale, maxChars),
     guidePhraseApplicabilityReviewStatus: truncateForPrompt(item.guidePhraseApplicabilityReviewStatus, 32),
+    ...(item.guidePhraseApplicabilityOrigin ? {guidePhraseApplicabilityOrigin: item.guidePhraseApplicabilityOrigin} : {}),
     safetySignificant: truncateForPrompt(item.safetySignificant, 24),
     safetySignificanceRationale: truncateForPrompt(item.safetySignificanceRationale, maxChars * 2),
     safetySignificanceReviewStatus: truncateForPrompt(item.safetySignificanceReviewStatus, 32),
@@ -587,8 +591,7 @@ function buildGuidePhraseUnsafeControlAction(item = {}, generatedValue = "", gui
 }
 
 function preserveReviewedApplicability(row, item) {
-  if (!/^reviewed$/i.test(sanitizeText(item?.guidePhraseApplicabilityReviewStatus))
-      || !/^(yes|no)$/i.test(sanitizeText(item?.guidePhraseApplicable))) return row;
+  if (!applicabilityIsReadOnly(item)) return row;
   return { ...row,
     guidePhraseApplicable: item.guidePhraseApplicable,
     guidePhraseApplicabilityRationale: item.guidePhraseApplicabilityRationale || "",
@@ -1575,6 +1578,7 @@ async function requestStandardRows(config, items, contextOptions = {}) {
   const operationalContextBlock = formatHazardOperationalContext(contextOptions);
   const retryInstruction = sanitizeText(contextOptions.retryReason);
   const prompt = `
+${items.some(item => item.guidePhraseApplicabilityOrigin === SCREENING_ORIGIN) ? APPLICABILITY_OWNERSHIP_PROMPT : ""}
 You are performing ${config.analysisName} for software safety using a code-based functional decomposition.
 
 ${config.promptGuidance}
@@ -1686,6 +1690,7 @@ export async function requestStandardRowsWithRetries(config, chunk, contextOptio
 async function requestStandardRowRepairs(config, repairItems, contextOptions = {}) {
   const operationalContextBlock = formatHazardOperationalContext(contextOptions);
   const prompt = `
+${repairItems.map(({item}) => item).some(item => item.guidePhraseApplicabilityOrigin === SCREENING_ORIGIN) ? APPLICABILITY_OWNERSHIP_PROMPT : ""}
 You are repairing generated ${config.analysisName} rows that still contain generic hazard language.
 
 ${config.promptGuidance}
@@ -1771,6 +1776,7 @@ async function repairGenericStandardRows(config, rows, items, contextOptions = {
 async function requestSafetySignificanceTags(config, tagItems, contextOptions = {}) {
   const operationalContextBlock = formatHazardOperationalContext(contextOptions);
   const prompt = `
+${tagItems.map(({item}) => item).some(item => item.guidePhraseApplicabilityOrigin === SCREENING_ORIGIN) ? APPLICABILITY_OWNERSHIP_PROMPT : ""}
 You are independently auditing generated ${config.analysisName} rows for guide-phrase applicability and safety significance after candidate hazard generation.
 
 Project / operational context:
@@ -1860,8 +1866,7 @@ ${JSON.stringify(tagItems.map(({ item, row }) => ({
 }
 
 function mergeAuditTag(config, row, item, index, tag = {}, { requireChallengeEvidence = false } = {}) {
-  const reviewedApplicability = /^reviewed$/i.test(sanitizeText(item?.guidePhraseApplicabilityReviewStatus))
-    && /^(?:yes|no)$/i.test(normalizeGuidePhraseApplicability(item?.guidePhraseApplicable));
+  const reviewedApplicability = applicabilityIsReadOnly(item);
   const structuredDecision = reviewedApplicability
     ? {
         guidePhraseApplicable: normalizeGuidePhraseApplicability(item.guidePhraseApplicable),
@@ -2010,6 +2015,7 @@ async function requestApplicabilityPatternRepairs(config, repairItems, distribut
     "safeguardPrecludesPath",
   ];
   const prompt = `
+${repairItems.map(({item}) => item).some(item => item.guidePhraseApplicabilityOrigin === SCREENING_ORIGIN) ? APPLICABILITY_OWNERSHIP_PROMPT : ""}
 You are repairing a completed ${config.analysisName} decision matrix after a deterministic quality check detected a suspiciously uniform guide-phrase pattern or a causal-category mismatch.
 
 This is a focused independent reconsideration, not a request to manufacture diversity. A uniform result may be correct. Preserve it when supported, but reconsider each supplied interface independently and change it when the exact action contract and operational context support a different decision.
@@ -2569,6 +2575,9 @@ function buildStandardSheets(config, rows, items) {
     ["operatingConditions", "Operating Conditions"],
     ["contextAssumptions", "Context Assumptions"],
   ];
+  if (items.some(item => item.guidePhraseApplicabilityOrigin)) {
+    operationalContextFields.push(['guidePhraseApplicabilityOrigin', 'Guide Phrase Applicability Origin']);
+  }
   const methodSheet = [
     [
       `${config.sheetName} ID`,
@@ -2650,8 +2659,9 @@ export async function runStandardHazardAnalysisStages({
 }) {
   // An explicit No excludes this guide phrase from STPA regardless of review
   // status. Preserve the row and its rationale without sending it to the LLM.
-  if (config.rowIdSuffix === "STPA" && items.some(isExplicitlyNonApplicable)) {
-    const activeItems = items.filter((item) => !isExplicitlyNonApplicable(item));
+  const unresolvedScreening = item => item.guidePhraseApplicabilityOrigin === SCREENING_ORIGIN && item.guidePhraseApplicable === 'Needs Review';
+  if (config.rowIdSuffix === "STPA" && items.some(item => isExplicitlyNonApplicable(item) || unresolvedScreening(item))) {
+    const activeItems = items.filter(item => !isExplicitlyNonApplicable(item) && !unresolvedScreening(item));
     const mergeRows = (activeRows) => {
       let activeIndex = 0;
       return items.map((item, index) => {
@@ -2660,6 +2670,17 @@ export async function runStandardHazardAnalysisStages({
             guidePhraseApplicable: "No",
             guidePhraseApplicabilityRationale: item.guidePhraseApplicabilityRationale,
           }, item, index);
+        }
+        if (unresolvedScreening(item)) {
+          const row = normalizeRow(config, {guidePhraseApplicable: 'Needs Review',
+            guidePhraseApplicabilityRationale: item.guidePhraseApplicabilityRationale,
+            safetyClassification: 'Needs Review'}, item, index);
+          // Do not manufacture UCAs or constraints for unresolved applicability.
+          for (const [field] of config.fields) {
+            if (!['rawAnalysisRowId', 'guidePhrase', 'guidePhraseApplicable', 'guidePhraseApplicabilityRationale', 'controlActionType'].includes(field)) row[field] = '';
+          }
+          row.hazards = 'Needs review: resolve guide-phrase applicability before hazard generation.';
+          return row;
         }
         return activeRows[activeIndex++];
       });
