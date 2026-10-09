@@ -491,6 +491,7 @@ function openDb(name) {
   if (typeof indexedDB === "undefined" || !name) return Promise.resolve(null);
   return new Promise((resolve) => {
     const request = indexedDB.open(name);
+    request.onupgradeneeded = () => request.transaction?.abort();
     request.onerror = () => resolve(null);
     request.onsuccess = () => resolve(request.result);
   });

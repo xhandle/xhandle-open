@@ -79,7 +79,7 @@ export function functionalTableCsv(rows) {
 const FunctionalCanvas = React.memo(LiteSummaryDiagramReactFlowGitHub);
 
 export default forwardRef(function FunctionalArchitectureDiagram({ rows, storageKey, repoName, height, abstractionHeader, splitPercent: controlledPercent, onSplitPercentChange, projectId, collaboratorSelection, onCollaboratorSelectionChange,
-  onOpenRow, onOpenCsu, reviewMode, ready, progress, error, onProcess, onCancel, viewMode, onViewModeChange, onExportCsvChange }, ref) {
+  onOpenRow, onOpenCsu, reviewMode, ready, progress, error, onProcess, onCancel, viewMode, onViewModeChange, onExportCsvChange, focusTarget, onFocusTargetHandled }, ref) {
   const modelRows = useMemo(() => buildFunctionalModelRows(rows), [rows]);
   const hierarchyReady = useMemo(() => functionalHierarchyIsReady(rows), [rows]);
   const diagramRef = useRef(null);
@@ -125,9 +125,22 @@ export default forwardRef(function FunctionalArchitectureDiagram({ rows, storage
     setNavigationNotice(''); setHighlightedRow(row.traceId);
     setQueuedFocus(target); setView(diagramFocusView(view));
   };
+  const focusHandledRef = useRef(onFocusTargetHandled);
+  focusHandledRef.current = onFocusTargetHandled;
+  useEffect(() => {
+    if (!focusTarget || !ready) return;
+    const target = resolveArchitectureTarget(focusTarget, modelRows);
+    if (!target) return;
+    setNavigationNotice('');
+    setQueuedFocus({ ...target, externalRequest: focusTarget });
+    setView(diagramFocusView(view));
+  }, [focusTarget, modelRows, ready, setView, view]);
   useEffect(() => {
     if (!queuedFocus || view === 'table') return;
-    return retryDiagramFocus(() => diagramRef.current, queuedFocus, () => setQueuedFocus(null));
+    return retryDiagramFocus(() => diagramRef.current, queuedFocus, () => {
+      setQueuedFocus(null);
+      if (queuedFocus.externalRequest) focusHandledRef.current?.(queuedFocus.externalRequest);
+    });
   }, [queuedFocus, view, storageKey, modelRows]);
   useEffect(() => { if (view === 'table') setQueuedFocus(null); }, [view]);
   const closeInspector = useCallback(() => setSelection(null), []);
@@ -204,7 +217,7 @@ export default forwardRef(function FunctionalArchitectureDiagram({ rows, storage
     /></div></div></section>}
     <ArchitectureDivider view={view} scope={storageKey} workspaceRef={workspaceRef} percent={splitPercent} onChange={setSplitPercent} onFit={() => diagramRef.current?.fitViewToDiagram?.()} />
     {view !== 'architecture' && <ArchitectureTablePane label="Functional model table" basis={view === 'split' ? `${100 - splitPercent}%` : '100%'} toolbar={<>
-        <span className="mr-auto text-sm">{visibleRows.length} of {modelRows.length} rows shown</span>
+        <span role="status" className="mr-auto text-sm text-slate-600">{visibleRows.length} of {modelRows.length} rows match filters</span>
         {navigationNotice && <span role="status">{navigationNotice}</span>}
         <button className="text-sm text-blue-600" onClick={filters.clearAllFilters}>Clear filters</button>
         <CopyTableButton label="Copy functional model" columns={exportColumns} rows={visibleRows} />

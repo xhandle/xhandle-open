@@ -388,14 +388,6 @@ export function reconcileRegeneratedGuidePhraseReview({
   const rationaleIndex = findColumnIndex(headers, "Guide Phrase Applicability Rationale");
   const next = [...regeneratedRow];
 
-  if (changedBasisFields.length) {
-    if (decisionIndex >= 0) next[decisionIndex] = "Needs Review";
-    if (rationaleIndex >= 0) {
-      next[rationaleIndex] = `Needs review: the prior reviewed applicability decision was invalidated because the regeneration basis changed (${changedBasisFields.join(", ")}).`;
-    }
-    return { row: next, status: "basis-changed", changedBasisFields };
-  }
-
   const reviewedDecision = Array.isArray(reviewedColumns) && Array.isArray(reviewedRow)
     ? clean(cell(reviewedColumns, reviewedRow, "Guide Phrase Applicable"))
     : clean(reviewItem?.vibeReview?.decision);
@@ -420,7 +412,7 @@ export function reconcileRegeneratedGuidePhraseReview({
   return {
     row: next,
     status: "preserved",
-    changedBasisFields: [],
+    changedBasisFields,
     reviewedAt: reviewItem.reviewedAt || reviewItem.updatedAt || "",
     reviewerName: reviewItem?.vibeReview?.reviewerName || "",
   };

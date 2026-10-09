@@ -264,7 +264,7 @@ test("preserves a reviewed applicability decision when only generated hazard con
   expect(result.row[8]).toBe("New hazard");
 });
 
-test("reopens review when the applicability decision basis changes", () => {
+test("preserves accepted applicability and reports changed basis separately", () => {
   const result = reconcileRegeneratedGuidePhraseReview({
     headers,
     previousRow: reviewedItem.currentContent.row,
@@ -272,10 +272,10 @@ test("reopens review when the applicability decision basis changes", () => {
     regeneratedRow: ["RAW-1", "A", "Different command", "B", "Nominal", "Too late", "Yes", "Generated rationale", "New hazard"],
     reviewItem: reviewedItem,
   });
-  expect(result.status).toBe("basis-changed");
+  expect(result.status).toBe("preserved");
   expect(result.changedBasisFields).toEqual(["Control Action"]);
-  expect(result.row[6]).toBe("Needs Review");
-  expect(result.row[7]).toContain("Control Action");
+  expect(result.row[6]).toBe("Yes");
+  expect(result.row[7]).toBe("Reviewed rationale");
 });
 
 test("indexes only definitive guide-phrase reviews for the active project", () => {

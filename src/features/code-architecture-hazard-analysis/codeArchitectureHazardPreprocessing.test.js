@@ -27,3 +27,31 @@ test('matching by trace still flags a changed interface basis',()=>{
  const prepared=prepareCodeHazardPreprocessing(current,previous());
  expect(prepared.tableRows[0].controlDetails).toContain('basis changed');
 });
+test('a matching reviewed No reaches the sheet with its authoritative review status',()=>{
+ const prior=previous();
+ prior.generatedSheets.Summary[1][9]='No';
+ prior.userPreprocessing['RAW-1'].values['Guide Phrase Applicable']='No';
+ const current=input();
+ current.sheets['Functional Decomposition'][0].push('Guide Phrase Applicable','Guide Phrase Applicability Rationale','Guide Phrase Applicability Review Status');
+ current.sheets['Functional Decomposition'][1].push('','','');
+ const prepared=prepareCodeHazardPreprocessing(current,prior);
+ expect(prepared.tableRows[0].guidePhraseApplicabilityReviewStatus).toBe('Reviewed');
+ expect(prepared.sheets['Functional Decomposition'][1].slice(1)).toEqual(['No','','Reviewed']);
+});
+test('a No decision with a changed context basis still reaches the AI skip and remains No in output',()=>{
+ const prior=previous();
+ prior.generatedSheets.Summary[1][9]='No';
+ prior.userPreprocessing['RAW-1'].values['Guide Phrase Applicable']='No';
+ const current=input();
+ current.tableRows[0]={...source,operationalScenario:'New scenario'};
+ current.sheets['Functional Decomposition'][0].push('Guide Phrase Applicable','Guide Phrase Applicability Rationale','Guide Phrase Applicability Review Status');
+ current.sheets['Functional Decomposition'][1].push('','','');
+ const prepared=prepareCodeHazardPreprocessing(current,prior);
+ expect(prepared.tableRows[0].guidePhraseApplicabilityReviewStatus).toBe('Reviewed');
+ expect(prepared.tableRows[0].guidePhraseApplicable).toBe('No');
+ expect(prepared.sheets['Functional Decomposition'][1][1]).toBe('No');
+ const generated=[...baseline];generated[9]='No';
+ const result=reconcileCodeHazardPreprocessing({Summary:[headers,generated]},prepared.tableRows);
+ expect(result.sheets.Summary[1][9]).toBe('No');
+ expect(result.conflicts).toEqual(expect.arrayContaining([expect.stringContaining('context changed')]));
+});

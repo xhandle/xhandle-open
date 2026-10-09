@@ -78,7 +78,7 @@ test('table links focus exact Functional nodes and interactions and split divide
   const rows = await processFunctionalModel([{ from: 'caller', to: 'callee', fromFile: 'a.cpp', toFile: 'b.cpp', action: 'Send', traceId: 'link' }], {
     request: async () => ({ function: { name: 'Prepare Output', description: 'Prepare output.' }, relationships: [{ index: 0, disposition: 'interaction', significance: 'meaningful', target: { name: 'Receive Output', description: 'Receive output.' }, action: 'Send output', description: 'Output information.', kind: 'data', rationale: 'Cross-component output.' }] }),
   });
-  mockFocus.mockClear();
+  mockFocus.mockReset().mockReturnValue(true);
   function ControlledDiagram() {
     const [view, setView] = React.useState('table');
     return <><button onClick={() => setView('table')}>Fixture table</button><Diagram rows={rows} ready viewMode={view} onViewModeChange={setView} /></>;
@@ -102,6 +102,23 @@ test('table links focus exact Functional nodes and interactions and split divide
   expect(host.querySelector('[aria-label="Functional model table"]')).not.toBeNull();
   expect(host.querySelector('[aria-label="Functional model diagram"]')).not.toBeNull();
   expect(host.querySelector('tbody tr').className).toContain('bg-blue-50');
+});
+
+test('an external hazard trace focuses the matching Functional interaction', async () => {
+  const { default: Diagram } = require('./FunctionalArchitectureDiagram');
+  const { buildFunctionalModelRows } = require('../features/code-architecture-context/functionalModel');
+  const { processFunctionalModel } = require('../features/code-architecture-context/testSupport/functionalHierarchyFixture');
+  const rows = await processFunctionalModel([{ from: 'caller', to: 'callee', fromFile: 'a.cpp', toFile: 'b.cpp', action: 'Send', traceId: 'hazard-source' }], {
+    request: async () => ({ function: { name: 'Prepare Output', description: 'Prepare output.' }, relationships: [{ index: 0, disposition: 'interaction', significance: 'meaningful', target: { name: 'Receive Output', description: 'Receive output.' }, action: 'Send output', description: 'Output information.', kind: 'data', rationale: 'Cross-component output.' }] }),
+  });
+  const relationship = buildFunctionalModelRows(rows).find(row => !row.functionalModel.internal);
+  const handled = jest.fn();
+  const target = { traceId: relationship.traceId, type: 'edge', mode: 'edge' };
+  mockFocus.mockReset().mockReturnValue(true);
+  act(() => root.render(<Diagram rows={rows} ready viewMode="architecture" focusTarget={target} onFocusTargetHandled={handled} />));
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 25)); });
+  expect(mockFocus.mock.calls.at(-1)[0]).toMatchObject({ traceId: relationship.traceId, edgeId: relationship.edgeId, type: 'edge' });
+  expect(handled).toHaveBeenCalledWith(target);
 });
 
 test('pending diagram focus is cancelled when returning to table, and selection carries derived evidence', async () => {

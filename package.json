@@ -131,6 +131,7 @@
     "concurrently": "^8.2.2",
     "electron": "^31.7.7",
     "electron-builder": "^24.13.3",
+    "fake-indexeddb": "^6.2.5",
     "http-proxy-middleware": "^3.0.5",
     "node-polyfill-webpack-plugin": "^2.0.1",
     "postcss": "^8.5.1",

@@ -35,10 +35,11 @@ test('No applies existing Not Applicable policy and preserves rationale and ID',
   expect(result.row[0]).toBe('RAW-1'); expect(result.row[5]).toBe('No');
   expect(result.row[6]).toBe('Reviewed timing mechanism'); expect(result.row[7]).toBe('Not Applicable');
 });
-test('changed architecture flags review rather than accepting the prior decision', () => {
+test('changed architecture flags downstream review while preserving the accepted applicability', () => {
   const changed = [...basis]; changed[2] = 'New command';
   const result = reconcileUserPreprocessing(headers, assess(), own(assess()), changed);
-  expect(result.row[5]).toBe('Needs Review'); expect(result.conflicts[0]).toContain('changed');
+  expect(result.row[5]).toBe('Yes'); expect(result.row[9]).toBe('Needs Review'); expect(result.conflicts[0]).toContain('changed');
+  expect(constrainPreprocessedInput({}, own(assess()), headers, changed).guidePhraseApplicabilityReviewStatus).toBe('Reviewed');
 });
 test('clearing the last substantive field removes ownership', () => {
  const first = recordUserPreprocessing(null, headers, assess(), [headers[5]], basis);

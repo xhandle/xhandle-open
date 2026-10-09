@@ -1,5 +1,6 @@
-import { currentArchitectureRows } from '../code-architecture-context/codeRelationshipEvidence';
-import React, { useEffect, useMemo, useState } from "react";
+import { resolveSoftwareHazardSource } from './softwareHazardSource';
+import { softwareRequirementSource } from './softwareRequirementSource';
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ARTIFACT_DEFINITIONS, ARTIFACT_KINDS } from "./artifactDefinitions";
 import { DERIVE_BY_KIND } from "./artifactAI";
 import EngineeringArtifactTable from "./EngineeringArtifactTable";
@@ -12,6 +13,8 @@ import {
   createBaseArtifactRow,
   downstreamDesignElementIds,
   downstreamSubsystemRequirementIds,
+  ensureArtifactStorageReady,
+  getUnsavedArtifactRows,
   loadArtifactRows,
   loadArtifactRowsAsync,
   makeId,
@@ -140,7 +143,7 @@ function mergeGeneratedRows(nextRows, existingRows, kind) {
       sourceArchitectureRefs: Array.isArray(row.sourceArchitectureRefs) && row.sourceArchitectureRefs.length
         ? row.sourceArchitectureRefs
         : existing.sourceArchitectureRefs,
-      source: existing.source || row.source || merged.source,
+      source: row.source || existing.source || merged.source,
       updatedAt: existing.updatedAt || row.updatedAt,
     };
   });
@@ -188,7 +191,15 @@ export default function EngineeringArtifactPanel({
   const projectId = project?.id || "no-project";
   const repoId = repo?.id || repo?.repoId || repo?.repoName || "no-repo";
   const storageKey = useMemo(() => storageKeyFor(kind, projectId, repoId), [kind, projectId, repoId]);
-  const [rows, setRows] = useState(() => Array.isArray(initialRows) ? initialRows : loadArtifactRows(kind, projectId, repoId));
+  const rowsRevision = useRef(0);
+  const persistedRows = useRef(null);
+  const activeStorageKey = useRef(storageKey);
+  activeStorageKey.current = storageKey;
+  const [rows, setRowsState] = useState(() => Array.isArray(initialRows) ? initialRows : loadArtifactRows(kind, projectId, repoId));
+  const setRows = React.useCallback((update) => {
+    rowsRevision.current += 1;
+    setRowsState(update);
+  }, []);
   const [loadedStorageKey, setLoadedStorageKey] = useState(storageKey);
   const [parentSourceRows, setParentSourceRows] = useState(sourceRows);
   const [sourceSnapshot, setSourceSnapshot] = useState(sourceRows);
@@ -202,8 +213,8 @@ export default function EngineeringArtifactPanel({
     subsystemRows: kind === ARTIFACT_KINDS.SUBSYSTEM ? [] : loadArtifactRows(ARTIFACT_KINDS.SUBSYSTEM, projectId, repoId),
     designRows: kind === ARTIFACT_KINDS.DESIGN ? [] : loadArtifactRows(ARTIFACT_KINDS.DESIGN, projectId, repoId),
   }));
-  const activeArchitectureRows = useMemo(() => currentArchitectureRows(cbaRows), [cbaRows]);
-  const currentSourceRows = kind === ARTIFACT_KINDS.SOFTWARE ? activeArchitectureRows : parentSourceRows;
+  const softwareSource = useMemo(() => softwareRequirementSource(cbaRows), [cbaRows]);
+  const currentSourceRows = kind === ARTIFACT_KINDS.SOFTWARE ? softwareSource.rows : parentSourceRows;
   const sourceRowsSignature = useMemo(() => {
     const list = Array.isArray(sourceRows) ? sourceRows : [];
     return `${list.length}:${list[0]?.id || ""}:${list[list.length - 1]?.id || ""}`;
@@ -232,31 +243,38 @@ export default function EngineeringArtifactPanel({
 
   useEffect(() => {
     if (Array.isArray(initialRows)) {
-      setRows(rowsMatchingKind(initialRows, kind));
+      const loaded = rowsMatchingKind(initialRows, kind);
+      persistedRows.current = { key: storageKey, rows: loaded };
+      setRows(loaded);
       setLoadedStorageKey(storageKey);
       setHasLoadedRows(true);
       return undefined;
     }
     let cancelled = false;
     setHasLoadedRows(false);
-    setRows([]);
+    setRows(rowsMatchingKind(loadArtifactRows(kind, projectId, repoId), kind));
     setDeriveMessage("");
+    setIsDeriving(false);
+    const revision = rowsRevision.current;
     loadArtifactRowsAsync(kind, projectId, repoId).then((loadedRows) => {
-      if (!cancelled) {
-        setRows(rowsMatchingKind(loadedRows, kind));
-        setLoadedStorageKey(storageKey);
-        setHasLoadedRows(true);
+      if (cancelled) return;
+      if (revision === rowsRevision.current) {
+        const loaded = rowsMatchingKind(loadedRows, kind);
+        persistedRows.current = { key: storageKey, rows: loaded };
+        setRows(loaded);
       }
-    }).catch(() => {
+      setLoadedStorageKey(storageKey);
+      setHasLoadedRows(true);
+    }).catch((error) => {
       if (!cancelled) {
-        setLoadedStorageKey(storageKey);
-        setHasLoadedRows(true);
+        // A failed load is not an empty editable dataset to autosave.
+        setDeriveMessage(error?.message || "Saved requirements could not be loaded.");
       }
     });
     return () => {
       cancelled = true;
     };
-  }, [initialRows, kind, projectId, repoId, storageKey]);
+  }, [initialRows, kind, projectId, repoId, storageKey, setRows]);
 
   useEffect(() => {
     if (initialArtifactCollections) {
@@ -290,10 +308,16 @@ export default function EngineeringArtifactPanel({
         detail.projectId === projectId &&
         detail.repoId === repoId
       ) {
+        const revision = rowsRevision.current;
         loadArtifactRowsAsync(kind, projectId, repoId).then((loadedRows) => {
-          setRows(rowsMatchingKind(loadedRows, kind));
+          if (cancelled || revision !== rowsRevision.current) return;
+          const loaded = rowsMatchingKind(loadedRows, kind);
+          persistedRows.current = { key: storageKey, rows: loaded };
+          setRows(loaded);
           setHasLoadedRows(true);
-        }).catch(() => {});
+        }).catch((error) => {
+          if (!cancelled) setDeriveMessage(error?.message || "Saved requirements could not be reloaded.");
+        });
       }
     };
     window.addEventListener("xhandle:code-architecture-assurance:changed", onChanged);
@@ -301,7 +325,7 @@ export default function EngineeringArtifactPanel({
       cancelled = true;
       window.removeEventListener("xhandle:code-architecture-assurance:changed", onChanged);
     };
-  }, [initialArtifactCollections, kind, projectId, repoId]);
+  }, [initialArtifactCollections, kind, projectId, repoId, storageKey, setRows]);
 
   useEffect(() => {
     if (kind === ARTIFACT_KINDS.SOFTWARE) {
@@ -336,8 +360,14 @@ export default function EngineeringArtifactPanel({
   useEffect(() => {
     if (reviewMode) return undefined;
     if (!hasLoadedRows || loadedStorageKey !== storageKey) return undefined;
+    // Loading saved rows is not an edit. Otherwise save -> changed event ->
+    // reload -> autosave loops can race generation and overwrite its results.
+    if (persistedRows.current?.key === storageKey && persistedRows.current.rows === rows) return undefined;
     const timeout = setTimeout(() => {
-      saveArtifactRowsAsync(kind, projectId, repoId, rows);
+      persistedRows.current = { key: storageKey, rows };
+      saveArtifactRowsAsync(kind, projectId, repoId, rows).catch((error) => {
+        if (activeStorageKey.current === storageKey) setDeriveMessage(error?.message || "Requirements could not be saved.");
+      });
     }, 250);
     return () => clearTimeout(timeout);
   }, [hasLoadedRows, kind, loadedStorageKey, projectId, repoId, rows, storageKey, reviewMode]);
@@ -386,6 +416,7 @@ export default function EngineeringArtifactPanel({
       setDeriveMessage(message);
     };
     try {
+      await ensureArtifactStorageReady();
       const args = {
         projectName: project?.name || "",
         repoName: repo?.repoName || repo?.repoId || "",
@@ -393,7 +424,8 @@ export default function EngineeringArtifactPanel({
       };
       let generated = [];
       if (kind === ARTIFACT_KINDS.SOFTWARE) {
-        generated = await derive({ ...args, cbaRows: source, hazardAnalysis });
+        const savedHazardAnalysis = await resolveSoftwareHazardSource({ projectId, repo, current: hazardAnalysis });
+        generated = await derive({ ...args, cbaRows: source, hazardAnalysis: savedHazardAnalysis });
       } else if (kind === ARTIFACT_KINDS.SYSTEM) {
         generated = await derive({ ...args, softwareRequirements: source });
       } else if (kind === ARTIFACT_KINDS.SUBSYSTEM) {
@@ -401,40 +433,49 @@ export default function EngineeringArtifactPanel({
       } else {
         generated = await derive({ ...args, subsystemRequirements: source });
       }
+      if (!Array.isArray(generated) || !generated.length) {
+        throw new Error(`No ${definition.title.toLowerCase()} were generated. Existing results were preserved.`);
+      }
       const mergedRows = mergeGeneratedRows(generated, rows, kind);
-      setRows(mergedRows);
-      setHasLoadedRows(true);
+      if (activeStorageKey.current === storageKey) {
+        persistedRows.current = { key: storageKey, rows: mergedRows };
+        setRows(mergedRows);
+        setHasLoadedRows(true);
+      }
       await saveArtifactRowsAsync(kind, projectId, repoId, mergedRows);
       await clearDownstreamArtifacts(kind, projectId, repoId);
       const sourceSummary = kind === ARTIFACT_KINDS.SOFTWARE ? softwareDerivationSummary(generated) : "";
-      const doneMessage = `${generated.length} ${definition.title.toLowerCase()} row${generated.length === 1 ? "" : "s"} derived for review${sourceSummary}.`;
-      setDeriveMessage(doneMessage);
-      finishActivity(activityId, "success", doneMessage);
+      const report = generated.derivationReport;
+      const warning = report?.fallbackRows ? ` ${report.fallbackRows} functional rows are fallback drafts, not completed AI requirements. ${report.failures[0] || "AI derivation did not complete normally."}` : "";
+      const importSummary = report ? ` Hazard import: ${report.importedSafetyRows} imported, ${report.excludedSafetyRows} excluded by safety significance, ${report.missingRequirementRows} missing requirement text.${report.hazardRows ? "" : " No hazard summary rows were available."}` : "";
+      const doneMessage = `${generated.length} ${definition.title.toLowerCase()} row${generated.length === 1 ? "" : "s"} derived for review${sourceSummary}.${importSummary}${warning}`;
+      if (activeStorageKey.current === storageKey) setDeriveMessage(doneMessage);
+      finishActivity(activityId, report?.fallbackRows ? "error" : "success", doneMessage);
     } catch (error) {
       const errorMessage = error?.message || `${definition.title} derivation failed.`;
-      setDeriveMessage(errorMessage);
+      if (activeStorageKey.current === storageKey) setDeriveMessage(errorMessage);
       finishActivity(activityId, "error", errorMessage);
     } finally {
-      setIsDeriving(false);
+      if (activeStorageKey.current === storageKey) setIsDeriving(false);
     }
-  }, [currentSourceRows, definition.title, finishActivity, hazardAnalysis, kind, project?.name, projectId, repo?.repoId, repo?.repoName, repoId, rows, startActivity, updateActivity]);
+  }, [currentSourceRows, definition.title, finishActivity, hazardAnalysis, kind, project?.name, projectId, repo?.repoId, repo?.repoName, repoId, rows, startActivity, updateActivity, storageKey, setRows]);
 
   const addRow = React.useCallback(() => {
     setRows((prev) => [
       ...prev,
       createBaseArtifactRow(kind, {}, prev.length),
     ]);
-  }, [kind]);
+  }, [kind, setRows]);
 
   const updateRow = React.useCallback((id, patch) => {
     setRows((prev) => prev.map((row) => (
       row.id === id ? { ...row, ...patch, updatedAt: new Date().toISOString() } : row
     )));
-  }, []);
+  }, [setRows]);
 
   const deleteRow = React.useCallback((id) => {
     setRows((prev) => prev.filter((row) => row.id !== id));
-  }, []);
+  }, [setRows]);
 
   const clearRows = React.useCallback(async () => {
     if (!rows.length) return;
@@ -450,7 +491,7 @@ export default function EngineeringArtifactPanel({
     setHasLoadedRows(true);
     await saveArtifactRowsAsync(kind, projectId, repoId, []);
     await clearDownstreamArtifacts(kind, projectId, repoId);
-  }, [definition.title, kind, projectId, repoId, rows.length]);
+  }, [definition.title, kind, projectId, repoId, rows.length, setRows]);
 
   const sourceCount = sourceSnapshot.length;
   const affectedReferenceCount = useMemo(() => rows.filter(row =>
@@ -509,9 +550,23 @@ export default function EngineeringArtifactPanel({
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-600">
-            {definition.sourceLabel}: {sourceCount}
+            {kind === ARTIFACT_KINDS.SOFTWARE ? `${softwareSource.type} table` : definition.sourceLabel}: {sourceCount}
           </span>
         </div>
+        {getUnsavedArtifactRows(kind, projectId, repoId) && <div role="alert" className="mt-2 text-sm text-amber-800">
+          Results have not been saved. Keep this page open until saving succeeds.
+          <button type="button" disabled={isDeriving} className="ml-2 underline" onClick={async () => {
+            setIsDeriving(true);
+            try {
+              await ensureArtifactStorageReady();
+              await saveArtifactRowsAsync(kind, projectId, repoId, rows);
+              await clearDownstreamArtifacts(kind, projectId, repoId);
+              if (activeStorageKey.current === storageKey) setDeriveMessage("Requirements saved.");
+            } catch (error) {
+              if (activeStorageKey.current === storageKey) setDeriveMessage(error.message);
+            } finally { if (activeStorageKey.current === storageKey) setIsDeriving(false); }
+          }}>Retry save</button>
+        </div>}
         {deriveMessage && <div className="mt-2 text-xs font-medium text-slate-600">{deriveMessage}</div>}
       </div>
       <EngineeringArtifactTable

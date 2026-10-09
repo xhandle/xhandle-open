@@ -203,6 +203,7 @@ async function openExistingDB(name: string): Promise<IDBDatabase | null> {
   if (!(await databaseExists(name))) return null;
   return new Promise((resolve) => {
     const req = indexedDB.open(name);
+    req.onupgradeneeded = () => req.transaction?.abort();
     req.onerror = () => resolve(null);
     req.onblocked = () => resolve(null);
     req.onsuccess = () => resolve(req.result);

@@ -296,7 +296,11 @@ export function normalizeNeedsReviewClassificationDecision(update = {}, currentF
   const rationale = clean(fieldValue(update, "Safety Significance Rationale")
     || fieldValue(update, "Proposed Safety Assessment Rationale")
     || (classification === "Needs Review" ? `Needs review: ${evidenceGap || downgradeReason}.` : classificationEvidence));
-  const applicabilityRationale = clean(fieldValue(update, "Guide Phrase Applicability Rationale") || classificationEvidence);
+  // Classification/evidence review does not own an already resolved applicability.
+  const resolvedApplicability = /^(yes|no)$/i.test(clean(currentFields["Guide Phrase Applicable"]));
+  const applicabilityRationale = resolvedApplicability
+    ? currentFields["Guide Phrase Applicability Rationale"] || ""
+    : clean(fieldValue(update, "Guide Phrase Applicability Rationale") || classificationEvidence);
   const decision = {
     "Safety Classification": classification,
     "Safety Classification Rule": normalizeSafetyClassificationRule(
@@ -311,7 +315,7 @@ export function normalizeNeedsReviewClassificationDecision(update = {}, currentF
     "Protection Assessment": protectionAssessment || (protectionStatus === "Absent"
       ? "No safeguard, check, interlock, fallback, or independent protection is documented for this context."
       : protectionStatus === "Unknown" ? "Protection independence or effectiveness is not confirmed; it is not credited in this decision." : ""),
-    "Guide Phrase Applicable": defaults.applicable || clean(fieldValue(update, "Guide Phrase Applicable")) || "Needs Review",
+    "Guide Phrase Applicable": resolvedApplicability ? currentFields["Guide Phrase Applicable"] : defaults.applicable || clean(fieldValue(update, "Guide Phrase Applicable")) || "Needs Review",
     "Guide Phrase Applicability Rationale": applicabilityRationale,
     "Proposed Safety Assessment Rationale": rationale,
     "Safety Significance Rationale": rationale,
@@ -831,7 +835,6 @@ export async function resolveNeedsReviewGroupWithAI({
       updates: group.rows.map((entry) => ({
         sourceRowId: entry.sourceRowId,
         normalizedDecision: "Needs Review",
-        "Guide Phrase Applicable": "Needs Review",
         "Safety Classification": "Needs Review",
         "Safety Classification Rule": group.id,
         "Protection Status": "Unknown",

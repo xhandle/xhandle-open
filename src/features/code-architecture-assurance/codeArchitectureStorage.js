@@ -96,22 +96,36 @@ const pendingInMemory = new Map();
 export async function prepareArchitecturePublication(key, rows, run, metadata, checkpointKey, previousRows, signal) {
   const db = await openCbaIndexedDB();
   const payload = {scope:key, rows, run, metadata, checkpointKey, previousRows};
+  let durable = false;
   try {
     const current = await rawRecord(db, XHANDLE_IDB_CBA_STORE, key);
     // Compare the caller's snapshot before staging; repeat the revision check at commit.
     const expected = isChunkedRecord(current) ? await stageRecord(db, XHANDLE_IDB_CBA_STORE, key, previousRows, {signal}) : previousRows;
     payload.expected = revision(expected);
-    if (revision(current) !== payload.expected) throw Object.assign(new Error('Architecture was edited during analysis. Previous results were preserved.'), {code:'SOURCE_PUBLICATION_CONFLICT'});
+    let conflict = revision(current) !== payload.expected;
+    if (conflict && isChunkedRecord(current)) {
+      // Older encoders stored small objects as separate chunks. Re-encode both
+      // snapshots with the current encoder before interpreting a root difference
+      // as an edit. Keep the original root for the atomic commit-time guard.
+      const hydrated = await hydrateRecord(db, XHANDLE_IDB_CBA_STORE, current);
+      const comparable = await stageRecord(db, XHANDLE_IDB_CBA_STORE, key, hydrated, {signal});
+      if (revision(comparable) === payload.expected) {
+        payload.expected = revision(current);
+        conflict = false;
+      }
+    }
     const rowRecord = await stageRecord(db, XHANDLE_IDB_CBA_STORE, key, rows, {signal});
     const runRecord = await stageRecord(db, XHANDLE_IDB_CBA_STORE, `${key}:run:${run.fingerprint}`, run, {signal});
     // The ready record references immutable chunks instead of copying the completed rows.
     const ready = {phase:'ready-to-publish', scope:key, checkpointKey, expected:payload.expected, rowRecord, runRecord, metadata,
       updatedAt:new Date().toISOString(), totalFiles:metadata.selectedFiles || 0};
     await putRawRecord(db, XHANDLE_IDB_CBA_STORE, checkpointKey, ready);
+    durable = true;
     pendingInMemory.delete(checkpointKey);
+    if (conflict) throw Object.assign(new Error('Architecture was edited during analysis. Completed results are saved in a checkpoint; current edits were preserved.'), {code:'SOURCE_PUBLICATION_CONFLICT'});
     return ready;
   } catch (error) {
-    if (!signal?.aborted) pendingInMemory.set(checkpointKey, payload);
+    if (!durable && !signal?.aborted) pendingInMemory.set(checkpointKey, payload);
     throw error;
   } finally { db.close(); }
 }

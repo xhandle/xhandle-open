@@ -49,11 +49,16 @@ export function storageKeyFor(kind, projectId, repoId) {
 }
 
 const ARTIFACT_DB_NAME = "xhandle-code-architecture-assurance";
-const ARTIFACT_DB_VERSION = 1;
 const ARTIFACT_STORE = "artifactRows";
 const LOCAL_STORAGE_CACHE_MAX_CHARS = 750000;
 const INDEXED_DB_ROW_CHUNK_MAX_CHARS = 300000;
 const artifactRowsMemoryCache = new Map();
+const artifactWrites = new Map();
+const unsavedArtifactRows = new Map();
+export function getUnsavedArtifactRows(kind, projectId, repoId) {
+  return unsavedArtifactRows.get(storageKeyFor(kind, projectId, repoId));
+}
+const artifactWriteVersions = new Map();
 let persistentStorageRequestPromise = null;
 
 function emitArtifactRowsChanged(detail = {}) {
@@ -67,19 +72,63 @@ function canUseIndexedDB() {
   return typeof indexedDB !== "undefined";
 }
 
-function openArtifactDb() {
-  if (!canUseIndexedDB()) return Promise.resolve(null);
+function openArtifactConnection(version) {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(ARTIFACT_DB_NAME, ARTIFACT_DB_VERSION);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(ARTIFACT_STORE)) {
-        db.createObjectStore(ARTIFACT_STORE, { keyPath: "key" });
-      }
+    let settled = false;
+    const finish = (error, db) => {
+      if (settled) { db?.close(); return; }
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error); else resolve(db);
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    const timer = setTimeout(() => finish(new Error("Requirements storage could not open. Close other xHandle tabs and retry.")), 5000);
+    const request = version == null ? indexedDB.open(ARTIFACT_DB_NAME) : indexedDB.open(ARTIFACT_DB_NAME, version);
+    request.onupgradeneeded = () => {
+      if (settled) { request.transaction.abort(); return; }
+      const db = request.result;
+      if (!db.objectStoreNames.contains(ARTIFACT_STORE)) db.createObjectStore(ARTIFACT_STORE, { keyPath: "key" });
+    };
+    request.onblocked = () => finish(new Error("Requirements storage upgrade is blocked. Close other xHandle tabs and retry."));
+    request.onsuccess = () => {
+      request.result.onversionchange = () => request.result.close();
+      finish(null, request.result);
+    };
+    request.onerror = () => finish(request.error);
   });
+}
+
+async function openArtifactDb() {
+  if (!canUseIndexedDB()) return null;
+  // Inspect the actual version; never delete an existing database to repair it.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const db = await openArtifactConnection();
+    if (db.objectStoreNames.contains(ARTIFACT_STORE)) return db;
+    const nextVersion = db.version + 1;
+    db.close();
+    try {
+      const repaired = await openArtifactConnection(nextVersion);
+      if (repaired.objectStoreNames.contains(ARTIFACT_STORE)) return repaired;
+      repaired.close();
+    } catch (error) {
+      // Another tab may have completed a newer upgrade between our opens.
+      if (error?.name !== "VersionError") throw error;
+    }
+  }
+  throw new Error("Requirements storage schema could not be initialized.");
+}
+
+export async function ensureArtifactStorageReady() {
+  const db = await openArtifactDb();
+  if (!db) throw new Error("Requirements storage is unavailable. Enable browser database storage before generating requirements.");
+  try {
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(ARTIFACT_STORE, "readwrite");
+      tx.objectStore(ARTIFACT_STORE).count();
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Requirements storage check was aborted."));
+    });
+  } finally { db.close(); }
 }
 
 function requestPersistentBrowserStorage() {
@@ -127,35 +176,48 @@ async function readArtifactRowsFromDb(key) {
         return;
       }
       const record = request.result;
-      if (record.chunked && Array.isArray(record.chunkKeys)) {
+      const invalid = () => Object.assign(new Error("Saved requirements are incomplete or damaged. Existing results were preserved; restore a complete backup or regenerate."), { revision: record.revision || 0 });
+      if (record.chunked) {
+        if (!Array.isArray(record.chunkKeys) || !Number.isInteger(record.rowCount) || record.rowCount < 0 || record.chunkKeys.some(chunkKey => typeof chunkKey !== "string") || new Set(record.chunkKeys).size !== record.chunkKeys.length) {
+          reject(invalid()); return;
+        }
         const chunkResults = new Array(record.chunkKeys.length);
         let remaining = record.chunkKeys.length;
         if (!remaining) {
-          resolve([]);
+          if (record.rowCount !== 0) reject(invalid());
+          else resolve({ rows: [], revision: record.revision || 0 });
           return;
         }
         record.chunkKeys.forEach((chunkKey, index) => {
           const chunkRequest = store.get(chunkKey);
           chunkRequest.onsuccess = () => {
             const chunkRows = chunkRequest.result?.rows;
-            chunkResults[index] = Array.isArray(chunkRows) ? chunkRows : [];
+            if (!Array.isArray(chunkRows) || chunkRequest.result.parentKey !== key) { reject(invalid()); return; }
+            chunkResults[index] = chunkRows;
             remaining -= 1;
-            if (!remaining) resolve(chunkResults.flat());
+            if (!remaining) {
+              const rows = chunkResults.flat();
+              if (rows.length !== record.rowCount) reject(invalid());
+              else resolve({ rows, revision: record.revision || 0 });
+            }
           };
           chunkRequest.onerror = () => reject(chunkRequest.error);
         });
         return;
       }
-      resolve(Array.isArray(record.rows) ? record.rows : []);
+      if (!Array.isArray(record.rows)) reject(invalid());
+      else resolve({ rows: record.rows, revision: record.revision || 0 });
     };
     request.onerror = () => reject(request.error);
-  });
+    tx.onabort = () => reject(tx.error || new Error("Requirements load was aborted."));
+    tx.onerror = () => reject(tx.error || new Error("Requirements could not be loaded."));
+  }).finally(() => db.close?.());
 }
 
-async function writeArtifactRowsToDb(key, rows) {
+async function writeArtifactRowsToDb(key, rows, revision) {
   const db = await openArtifactDb();
   if (!db) return false;
-  await requestPersistentBrowserStorage();
+  void requestPersistentBrowserStorage();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(ARTIFACT_STORE, "readwrite");
     const store = tx.objectStore(ARTIFACT_STORE);
@@ -164,6 +226,8 @@ async function writeArtifactRowsToDb(key, rows) {
     const updatedAt = new Date().toISOString();
     const priorRequest = store.get(key);
     priorRequest.onsuccess = () => {
+      try {
+      revision.value = Math.max(revision.value, (priorRequest.result?.revision || 0) + 1);
       const priorChunkKeys = Array.isArray(priorRequest.result?.chunkKeys) ? priorRequest.result.chunkKeys : [];
       const chunkKeys = chunks.map((_, index) => `${key}:chunk:${index}`);
       chunks.forEach((chunkRows, index) => {
@@ -183,99 +247,104 @@ async function writeArtifactRowsToDb(key, rows) {
         chunked: true,
         chunkKeys,
         rowCount: safeRows.length,
+        revision: revision.value,
         updatedAt,
       });
+      } catch (error) {
+        tx.abort();
+        reject(error);
+      }
     };
     priorRequest.onerror = () => reject(priorRequest.error);
     tx.oncomplete = () => resolve(true);
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error || new Error("Artifact row save transaction aborted."));
-  });
+  }).finally(() => db.close?.());
+}
+
+function localArtifactRecord(key) {
+  const raw = localStorage.getItem(key);
+  if (raw == null) return null;
+  const parsed = JSON.parse(raw);
+  if (Array.isArray(parsed)) return { rows: parsed, revision: 0 };
+  if (parsed?.format === "artifact-rows-v1" && Array.isArray(parsed.rows) && parsed.rowCount === parsed.rows.length && Number.isFinite(parsed.revision)) return parsed;
+  throw new Error("Saved requirements fallback is incomplete or damaged.");
 }
 
 export function loadArtifactRows(kind, projectId, repoId) {
   const key = storageKeyFor(kind, projectId, repoId);
-  if (artifactRowsMemoryCache.has(key)) {
-    return artifactRowsMemoryCache.get(key) || [];
-  }
+  if (artifactRowsMemoryCache.has(key)) return artifactRowsMemoryCache.get(key);
   try {
-    const parsed = JSON.parse(localStorage.getItem(key) || "[]");
-    const rows = Array.isArray(parsed) ? parsed : [];
-    if (rows.length) artifactRowsMemoryCache.set(key, rows);
-    return rows;
-  } catch {
-    return [];
-  }
+    const record = localArtifactRecord(key);
+    if (record) artifactRowsMemoryCache.set(key, record.rows);
+    return record?.rows || [];
+  } catch { return []; }
 }
 
 export async function loadArtifactRowsAsync(kind, projectId, repoId) {
   const key = storageKeyFor(kind, projectId, repoId);
-  try {
-    const dbRows = await readArtifactRowsFromDb(key);
-    if (Array.isArray(dbRows)) {
-      artifactRowsMemoryCache.set(key, dbRows);
-      return dbRows;
-    }
-  } catch (error) {
-    console.warn("[code-architecture-assurance] IndexedDB load failed; using localStorage fallback.", error);
+  // A notification/read must observe the completed write, never an older snapshot.
+  if (unsavedArtifactRows.has(key)) return unsavedArtifactRows.get(key);
+  const pending = artifactWrites.get(key);
+  if (pending) await pending;
+  const version = artifactWriteVersions.get(key);
+  let local = null, localError = null;
+  try { local = localArtifactRecord(key); } catch (error) { localError = error; }
+  let stored;
+  try { stored = await readArtifactRowsFromDb(key); }
+  catch (error) {
+    if (!local || (error.revision != null && local.revision < error.revision)) throw error;
+    stored = null;
   }
-  const rows = loadArtifactRows(kind, projectId, repoId);
+  // Retry if a write began while the read was in flight.
+  if (artifactWrites.get(key) || version !== artifactWriteVersions.get(key)) return loadArtifactRowsAsync(kind, projectId, repoId);
+  const record = local && (!stored || local.revision > stored.revision) ? local : stored;
+  if (!record && localError) throw localError;
+  const rows = record?.rows || [];
   artifactRowsMemoryCache.set(key, rows);
   return rows;
 }
 
 export function saveArtifactRows(kind, projectId, repoId, rows) {
-  const key = storageKeyFor(kind, projectId, repoId);
-  const safeRows = Array.isArray(rows) ? rows : [];
-  artifactRowsMemoryCache.set(key, safeRows);
-  writeArtifactRowsToDb(key, safeRows).catch((error) => {
-    console.warn("[code-architecture-assurance] IndexedDB save failed.", error);
+  // Legacy fire-and-forget callers still notify only after durable completion.
+  return saveArtifactRowsAsync(kind, projectId, repoId, rows).catch(error => {
+    console.warn("[code-architecture-assurance] Save failed.", error);
   });
-
-  try {
-    const serialized = JSON.stringify(safeRows);
-    if (serialized.length <= LOCAL_STORAGE_CACHE_MAX_CHARS) {
-      localStorage.setItem(key, serialized);
-    } else {
-      localStorage.removeItem(key);
-    }
-  } catch (error) {
-    try {
-      localStorage.removeItem(key);
-    } catch {}
-  }
-  emitArtifactRowsChanged({ kind, projectId, repoId, key });
 }
 
-export async function saveArtifactRowsAsync(kind, projectId, repoId, rows) {
+export function saveArtifactRowsAsync(kind, projectId, repoId, rows) {
   const key = storageKeyFor(kind, projectId, repoId);
   const safeRows = Array.isArray(rows) ? rows : [];
-  artifactRowsMemoryCache.set(key, safeRows);
-  let persistedToIndexedDb = false;
-  try {
-    persistedToIndexedDb = await writeArtifactRowsToDb(key, safeRows);
-  } catch (error) {
-    console.warn("[code-architecture-assurance] IndexedDB save failed.", error);
-  }
-
-  let cachedToLocalStorage = false;
-  try {
-    const serialized = JSON.stringify(safeRows);
-    if (serialized.length <= LOCAL_STORAGE_CACHE_MAX_CHARS) {
-      localStorage.setItem(key, serialized);
-      cachedToLocalStorage = true;
-    } else {
-      localStorage.removeItem(key);
-    }
-  } catch {
+  artifactWriteVersions.set(key, (artifactWriteVersions.get(key) || 0) + 1);
+  const prior = artifactWrites.get(key) || Promise.resolve();
+  const operation = prior.catch(() => {}).then(async () => {
+    let local;
+    try { local = localArtifactRecord(key); } catch { /* A new complete save repairs a damaged fallback. */ }
+    const revision = { value: Math.max(Date.now(), (local?.revision || 0) + 1) };
+    let persisted = false;
+    try { persisted = await writeArtifactRowsToDb(key, safeRows, revision); }
+    catch (error) { console.warn("[code-architecture-assurance] IndexedDB save failed.", error); }
+    let cached = false;
     try {
-      localStorage.removeItem(key);
-    } catch {}
-  }
-  if (!persistedToIndexedDb && !cachedToLocalStorage && safeRows.length) {
-    throw new Error("Generated rows are too large for browser storage, and IndexedDB persistence failed. The derivation completed, but results could not be saved.");
-  }
-  emitArtifactRowsChanged({ kind, projectId, repoId, key });
+      const serialized = JSON.stringify({ format: "artifact-rows-v1", revision: revision.value, rowCount: safeRows.length, rows: safeRows });
+      if (serialized.length <= LOCAL_STORAGE_CACHE_MAX_CHARS) {
+        localStorage.setItem(key, serialized);
+        cached = true;
+      } else if (persisted) localStorage.removeItem(key);
+    } catch { /* Keep prior persisted data intact if the replacement fails. */ }
+    if (!persisted && !cached) throw new Error("Requirements could not be saved to browser storage. Generated results remain in this view; copy them before refreshing.");
+    unsavedArtifactRows.delete(key);
+    artifactRowsMemoryCache.set(key, safeRows);
+  });
+  artifactWrites.set(key, operation);
+  return operation.then(() => {
+    if (artifactWrites.get(key) === operation) artifactWrites.delete(key);
+    emitArtifactRowsChanged({ kind, projectId, repoId, key });
+  }, error => {
+    unsavedArtifactRows.set(key, safeRows);
+    if (artifactWrites.get(key) === operation) artifactWrites.delete(key);
+    throw error;
+  });
 }
 
 export function architectureLabelFromRef(ref = {}) {
@@ -324,6 +393,12 @@ export function architectureRefToFocusTarget(ref = {}) {
 export function architectureRefFromFunctionalRow(row = {}, rowIndex = 0, mode = "edge") {
   return {
     ...codeSourceProvenance(row),
+    ...(row.functionalModel ? {
+      sourceTraceIds: row.functionalModel.sourceTraceIds,
+      sourceRowRefs: row.functionalModel.sourceRowRefs,
+      sourceIndices: row.functionalModel.sourceIndices,
+      functionalModelVersion: row.functionalModel.version,
+    } : {}),
     lineage: row.lineage || null,
     canonicalRelationshipId: row.canonicalRelationshipId || "",
     rowIndex,
@@ -528,9 +603,9 @@ export function normalizeFunctionalRowRef(value) {
 export function functionalRowIndexForTraceValue(cbaRows = [], value = "") {
   cbaRows = Array.isArray(cbaRows) ? cbaRows : [];
   const raw = cellText(value);
-  if (raw.startsWith("functional-relationship:")) return functionalSourceIndex(cbaRows, raw);
   const exact = cbaRows.map((row,index)=>({row,index})).filter(({row})=>[row.traceId,row.functionalTraceId,row.sourceTraceId].some(id=>id && cellText(id)===raw));
   if (exact.length) return exact.length === 1 ? exact[0].index : -1;
+  if (raw.startsWith("functional-relationship:")) return functionalSourceIndex(cbaRows, raw);
   const target = normalizeFunctionalRowRef(value);
   if (!target) return -1;
   const explicitRefs = cbaRows.map((row,index)=>({row,index})).filter(({row})=>row.rowRef != null && normalizeFunctionalRowRef(row.rowRef) === target);

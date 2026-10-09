@@ -1,6 +1,6 @@
 import { ArchitectureWorkspace, ArchitectureDivider, ArchitectureTablePane, useArchitectureColumnWidths, diagramFocusView, architectureHeaderClass, architectureCellClass, architectureLinkClass } from './ArchitectureWorkspace';
 import VirtualTableBody from './VirtualTableBody';
-import { processFunctionalModel, functionalModelIsReady, immutableFunctionalRows } from '../features/code-architecture-context/functionalModel';
+import { buildFunctionalModelRows, processFunctionalModel, functionalModelIsReady, immutableFunctionalRows } from '../features/code-architecture-context/functionalModel';
 import { writeCbaRowsToIndexedDB, readCbaRowsRevision } from '../features/code-architecture-assurance/codeArchitectureStorage';
 import { readRecord, writeRecord } from '../features/code-architecture-storage/chunkedRecord';
 import { prepareArchitecturePublication, recoverArchitecturePublication, openCbaIndexedDB } from '../features/code-architecture-assurance/codeArchitectureStorage';
@@ -4091,6 +4091,16 @@ React.useEffect(() => {
   }), []);
   React.useEffect(() => {
     if (!focusTarget) return;
+    if (functionalModelIsReady(rowsWithTraceIds)) {
+      const functionalTarget = resolveArchitectureTarget(focusTarget, buildFunctionalModelRows(rowsWithTraceIds));
+      if (functionalTarget) {
+        setNavigationNotice("");
+        setQueuedCsuFocusTarget(null);
+        setView(codeArchitectureViewModeForDiagramFocus);
+        setArchitectureAbstraction("functional");
+        return;
+      }
+    }
     const enrichedTarget = resolveArchitectureTarget(focusTarget, diagramReferenceRows);
     if (!enrichedTarget) {
       setNavigationNotice("This architecture reference is missing or ambiguous. No replacement was selected.");
@@ -4104,7 +4114,7 @@ React.useEffect(() => {
     setView(codeArchitectureViewModeForDiagramFocus);
     setArchitectureAbstraction("detailed");
     setQueuedCsuFocusTarget({ ...enrichedTarget, externalRequest: focusTarget });
-  }, [diagramReferenceRows, focusTarget, setView, onOpenFunctionalRow, setArchitectureAbstraction]);
+  }, [diagramReferenceRows, focusTarget, rowsWithTraceIds, setView, onOpenFunctionalRow, setArchitectureAbstraction]);
   React.useEffect(() => {
     if (!queuedCsuFocusTarget || !codeArchitectureViewShowsDiagram(view) || architectureAbstraction !== "detailed") return undefined;
     const resolved = resolveArchitectureTarget(queuedCsuFocusTarget, diagramRows);
@@ -4269,6 +4279,8 @@ React.useEffect(() => {
       {architectureAbstraction === "functional" ? (
           <FunctionalArchitectureDiagram
             ref={diagramRef}
+            focusTarget={focusTarget}
+            onFocusTargetHandled={onFocusTargetHandled}
             viewMode={view}
             onViewModeChange={setView}
             repoName={repoName}
@@ -4379,6 +4391,8 @@ React.useEffect(() => {
       {view !== "architecture" && architectureAbstraction !== "functional" && (
 
           <ArchitectureTablePane label="Code architecture functional decomposition table" basis={view === "split" ? `${100 - splitDiagramPercent}%` : "100%"} toolbar={<>
+              <span role="status" className="mr-auto text-sm text-slate-600">{tableFilterState.filteredRows.length} of {sourceTableRows.length} rows match filters</span>
+              {tableFilterState.activeFilterCount > 0 && <button type="button" className="text-sm text-blue-600" onClick={tableFilterState.clearAllFilters}>Clear filters</button>}
               {historicalRowCount > 0 && <button type="button" aria-pressed={showArchitectureHistory} onClick={() => setShowArchitectureHistory(value => !value)} className="mr-3 text-sm text-slate-600">{showArchitectureHistory ? "Hide" : "Show"} history ({historicalRowCount})</button>}
               {navigationNotice && <span role="status" className="text-sm text-amber-800">{navigationNotice}</span>}
               <CopyTableButton label="Copy code architecture functional decomposition table" columns={copyTableColumns} rows={tableFilterState.filteredRows} />

@@ -1,0 +1,24 @@
+# CBA STPA performance and recovery implementation
+
+Implemented docs/codex-prompts/implement-cba-stpa-performance-parity.md against the current working tree. Earlier uncommitted fixes were preserved. No customer data, paid AI calls, commit or push were used.
+
+## Changes
+
+- Hazard storage schema v3 adds small run metadata and a separate generation-checkpoint store. Legacy records are indexed during upgrade using a cursor. Latest-run lookup reads matching metadata then one full run; ID lookup reads one record. Saves update only the run and its metadata in one transaction. Deletion removes matching runs/metadata/checkpoints. IndexedDB failures are surfaced rather than silently splitting writes into localStorage. Legacy localStorage fallback runs are migrated without overwriting newer database records.
+- App hazard reloads depend on stable project/repository identity, not full architecture arrays or metadata object identity. Save events are filtered by project/repository.
+- CBA hazard rows use the same offscreen cell deferral hook as Projects. Highlighted rows render immediately; refs remain available for focus links; copy/export/filtering still operate on all data. Like Projects, rows stay mounted after reveal to preserve edits. This is an initial-render improvement, not full row recycling or a total memory ceiling.
+- The standard generator accepts an optional checkpoint adapter; Projects keeps its existing behavior when no adapter is supplied. CBA persists successful generation batches and successful complete repair/audit stages. Exact checkpoint keys cover stage inputs, source rows/descriptions, config/prompts, contexts, organization context, provider, model/effort, preprocessing, project/repository/method and an implementation version. SHA-256 digests are used instead of weak fingerprints. Changes invalidate affected work conservatively; this is batch-level reuse, not fuzzy matching of old rows.
+- Normal Run/Continue uses matching work. An explicit Regenerate action clears matching checkpoints. Legacy results without these fingerprints are regenerated rather than presumed current. Incomplete checkpoints are never exposed as published runs or downstream inputs. Interrupted runs can reuse saved work when Run/Continue is invoked again; bounded automatic retries still occur during the run. This is not an unattended background job that restarts after browser closure.
+- Completed checkpoints survive a later batch/stage failure. Failed repair stages are not cached as successfully completed. Final classification enforcement still runs. After successful publication, unused checkpoints in the same scope are pruned. Records carry project ownership so permanent project deletion can remove them.
+- Progress distinguishes reused/generated batches and reports batch elapsed time. Concurrency stays at two. A failed worker stops queued requests; already-started work settles/checkpoints before the run reports failure.
+
+## Verification
+
+- 19 Jest suites / 181 tests passed. Coverage includes existing hazard/context/eligibility/preprocessing/storage/rendering behavior plus checkpoint reuse after failure, policy invalidation, failed-stage cache exclusion and stopping queued work after failure.
+- Native Chromium IndexedDB diagnostic: scripts/diagnostics/verify-cba-hazard-performance.cjs. Synthetic v2 record migrated successfully; eight concurrent saves all survived. Latest lookup performed exactly one full run get and no full-run getAll. Quota failure rejected. Project deletion retained unrelated runs. Checkpoints survived a new adapter instance, stayed isolated by project, missed on changed policy, and cleared on explicit regenerate.
+- Synthetic table: 1,000 rows x 44 columns. Initial rendering deferred 982 rows and produced 1,793 body cells (including placeholders/group/context cells), rather than rendering all ~44,000 data cells. This is a structural rendering measurement, not an end-to-end latency or peak-memory benchmark.
+- Production build passed with warnings; final repeat after adding checkpoint project ownership is recorded in /tmp/cba-parity-build.log. git diff --check passed.
+
+## Limits
+
+First-time STPA generation still performs all guide-phrase/context assessments and audits. No coverage was removed and no higher concurrency was introduced. Existing customer runs without checkpoint signatures cannot safely be reused automatically. IndexedDB remains the storage backend; active datasets remain in memory. Table deferral does not unmount previously visited rows. Native testing used Chromium and synthetic data, not Safari or the customer's live workload. No claim is made that all lag is eliminated. Further work for strict memory bounds remains backend jobs/storage, bounded loading, and full viewport recycling with edit preservation.

@@ -1,0 +1,22 @@
+{
+  "partialFailure": {
+    "partialError": "Synthetic late generation failure",
+    "saved": 0,
+    "hasPartial": true,
+    "partialMarkedIncomplete": false,
+    "partialStale": false
+  },
+  "contextChangePanelStale": true,
+  "contextChangeRemediationStale": false,
+  "concurrentExpected": 8,
+  "concurrentSaved": [
+    "parallel-7"
+  ],
+  "fallbackSaved": true,
+  "fallbackPresent": true,
+  "fallbackRead": null,
+  "staleFunctionalDraftRows": 7,
+  "staleFunctionalRunButtonDisabled": false,
+  "staleFunctionalRunnerError": "Generate an up-to-date Functional model before running hazard analysis. The existing functional model is incomplete or stale.",
+  "descriptionChangeDetected": false
+}

@@ -1,6 +1,8 @@
+import { reconcileStorageCleanup } from './storageCleanupWorkspace';
+import { readStoragePage, deleteStorageRecords, describeStorageItem } from './storageCategoryItems';
 import { inspectStorageStore } from './inspectStorageStore';
 import { SIDEBAR_AREAS } from "../lib/sidebarPreferences";
-import { useState, useEffect, useRef } from "react";
+import { Fragment, useState, useEffect, useRef } from "react";
 import { storageScanTimeout } from "../lib/storageScanTimeout";
 import { permanentlyDeleteStoredProject } from './permanentlyDeleteStoredProject';
 import { backendURL, ACCOUNT_ID, getLocalAccessToken } from "./backendConfig";
@@ -122,7 +124,7 @@ const LOCAL_STORAGE_CATEGORY_DETAILS = {
   },
 };
 const INDEXED_DB_STORE_DETAILS = {
-  "xhandle:copilot_baseline": ["Code architecture analysis", "Generated architecture rows derived from connected source code. Removing them clears cached analysis results, not repository files."],
+  "xhandle:copilot_baseline": ["Code architecture analysis", "Generated architecture rows derived from connected source code. Removing a decomposition also removes its repository from the workspace. Clearing this category removes all Code-Based Architecture project entries, not repository files."],
   "xhandle:code_index": ["Source-code index", "Indexed source files and symbols used by code analysis and source linking. Removing it requires the repository to be indexed again."],
   "xhandle:diagram_positions": ["Code diagram layouts", "Manually arranged positions for code-architecture diagrams. Removing them resets those layouts."],
   "xhandle-results-review:reviewItems": ["Analysis review decisions", "Review statuses, comments, and decisions recorded against generated analysis results."],
@@ -249,31 +251,6 @@ async function inspectIndexedDbStore(dbName, storeName) {
   return inspectStorageStore(db, storeName, storageByteLength);
 }
 
-async function clearIndexedDbStore(dbName, storeName) {
-  const db = await openRawIndexedDb(dbName);
-  if (!db || !db.objectStoreNames.contains(storeName)) {
-    try { db?.close(); } catch {}
-    return false;
-  }
-  return new Promise((resolve) => {
-    try {
-      const tx = db.transaction(storeName, "readwrite");
-      tx.objectStore(storeName).clear();
-      tx.oncomplete = () => {
-        try { db.close(); } catch {}
-        resolve(true);
-      };
-      tx.onerror = () => {
-        try { db.close(); } catch {}
-        resolve(false);
-      };
-    } catch {
-      try { db.close(); } catch {}
-      resolve(false);
-    }
-  });
-}
-
 function indexedDbStoreLabel(dbName, storeName) {
   const exact = INDEXED_DB_STORE_DETAILS[`${dbName}:${storeName}`];
   if (exact) return exact[0];
@@ -306,6 +283,7 @@ export default function SettingsModal({
   onBaselineRepo,
   onAIProviderSaved,
   onWorkspaceProjectRestored,
+  onStorageDeleted,
   activeProject = null,
   projectOrganizationProfile = null,
   onProjectOrganizationProfileChange,
@@ -535,6 +513,31 @@ export default function SettingsModal({
   const [storageBusy, setStorageBusy] = useState(false);
   const [storageMsg, setStorageMsg] = useState("");
   const [selectedStorageItems, setSelectedStorageItems] = useState({});
+  const [storagePages, setStoragePages] = useState({});
+  const [selectedStorageRecords, setSelectedStorageRecords] = useState({});
+  const [expandedStorage, setExpandedStorage] = useState({});
+  const [loadingStorageCategory, setLoadingStorageCategory] = useState(null);
+  const loadStoragePage = async (item, after) => {
+    setLoadingStorageCategory(item.id);
+    try {
+      let page;
+      const projects = [...readStoredProjectList(ACTIVE_CODE_ARCHITECTURE_PROJECTS_KEY), ...readStoredProjectList(ACTIVE_FUNCTIONAL_PROJECTS_KEY), ...storedWorkspaceProjects];
+      const offset = after === undefined ? 0 : (storagePages[item.id]?.offset || 0) + 50;
+      const context = {projects, category:item.label, offset};
+      if (item.kind === 'localStorage') {
+        const start = after === undefined ? 0 : Number(after);
+        const keys = item.keys.slice(start, start + 50);
+        page = { items: keys.map((key, index) => describeStorageItem(key, null, {...context, ordinal: start + index + 1})), nextKey: start + 50 < item.keys.length ? start + 50 : undefined };
+      } else {
+        const db = await openRawIndexedDb(item.dbName);
+        if (!db) throw new Error('Storage is unavailable. Refresh and retry.');
+        try { page = await readStoragePage(db, item.storeName, after, 50, context); } finally { db.close(); }
+      }
+      setStoragePages(current => ({...current, [item.id]: {...page, offset}}));
+      setExpandedStorage(current => ({...current, [item.id]: true}));
+    } catch(error) { setStorageMsg(error.message); }
+    finally { setLoadingStorageCategory(null); }
+  };
   const [storedWorkspaceProjects, setStoredWorkspaceProjects] = useState([]);
   const storageTabScanStartedRef = useRef(false);
   const fileInputRef = useRef(null);
@@ -626,6 +629,9 @@ export default function SettingsModal({
 
   const refreshStorageInventory = async () => {
     setStorageBusy(true);
+    setStoragePages({});
+    setExpandedStorage({});
+    setSelectedStorageRecords({});
     setStorageMsg("");
     try {
       const warnings = [];
@@ -866,6 +872,7 @@ export default function SettingsModal({
 
   const setAllStorageItemsSelected = (checked, { includeCredentials = false } = {}) => {
     const items = storageInventory?.items || [];
+    setSelectedStorageRecords({});
     setSelectedStorageItems(Object.fromEntries(
       items
         .filter((item) => includeCredentials || !item.dangerous)
@@ -874,13 +881,15 @@ export default function SettingsModal({
   };
 
   const deleteSelectedStorageItems = async () => {
-    const items = (storageInventory?.items || []).filter((item) => selectedStorageItems[item.id]);
+    const items = (storageInventory?.items || []).filter((item) => selectedStorageItems[item.id] || selectedStorageRecords[item.id]?.length);
     if (!items.length) {
       setStorageMsg("Select at least one storage category to delete.");
       return;
     }
     const includesCredentials = items.some((item) => item.dangerous);
-    const label = items.length === 1 ? items[0].label : `${items.length} storage categories`;
+    const label = items.map(item => selectedStorageItems[item.id]
+      ? `all of ${item.label}`
+      : `${selectedStorageRecords[item.id].length} selected item(s) in ${item.label}`).join('; ');
     const confirmed = window.confirm(
       `Delete ${label}? This removes local browser data for this xHandle installation.${includesCredentials ? "\n\nCredentials/API keys are included in this deletion." : ""}\n\nThis cannot be undone unless you have a backup.`
     );
@@ -890,17 +899,22 @@ export default function SettingsModal({
     try {
       for (const item of items) {
         if (item.kind === "localStorage") {
-          (item.keys || []).forEach((key) => {
-            try { localStorage.removeItem(key); } catch {}
-          });
+          (selectedStorageItems[item.id] ? item.keys : selectedStorageRecords[item.id]).forEach(key => localStorage.removeItem(key));
         } else if (item.kind === "indexedDB") {
-          await clearIndexedDbStore(item.dbName, item.storeName);
+          const db = await openRawIndexedDb(item.dbName);
+          if (!db) throw new Error(`Could not open ${item.label}.`);
+          try { await deleteStorageRecords(db, item.storeName, selectedStorageItems[item.id] ? null : selectedStorageRecords[item.id]); }
+          finally { db.close(); }
         }
+        const deletedKeys = selectedStorageItems[item.id] ? null : selectedStorageRecords[item.id];
+        reconcileStorageCleanup(item, deletedKeys);
+        onStorageDeleted?.({item, keys: deletedKeys});
       }
+      notifyBackupDataChanged("settings-storage-cleanup");
       window.dispatchEvent?.(new CustomEvent("xhandle:data-changed", { detail: { source: "settings-storage-cleanup" } }));
       setSelectedStorageItems({});
-      setStorageMsg(`✅ Deleted ${label}.`);
       await refreshStorageInventory();
+      setStorageMsg(`✅ Deleted ${label}.`);
     } catch (error) {
       setStorageMsg(`❌ ${error?.message || error}`);
     } finally {
@@ -1950,7 +1964,7 @@ export default function SettingsModal({
               <button
                 className="bg-red-600 hover:bg-red-700 text-white rounded px-3 py-2 disabled:opacity-50"
                 onClick={deleteSelectedStorageItems}
-                disabled={storageBusy || !Object.values(selectedStorageItems || {}).some(Boolean)}
+                disabled={storageBusy || loadingStorageCategory !== null || (!Object.values(selectedStorageItems || {}).some(Boolean) && !Object.values(selectedStorageRecords).some(keys => keys.length))}
               >
                 Delete Selected
               </button>
@@ -1970,11 +1984,13 @@ export default function SettingsModal({
                   </thead>
                   <tbody>
                     {storageInventory.items.map((item) => (
-                      <tr key={item.id} className={item.dangerous ? "bg-rose-50/60" : "bg-white"}>
+                      <Fragment key={item.id}><tr className={item.dangerous ? "bg-rose-50/60" : "bg-white"}>
                         <td className="border-b px-3 py-2 align-top">
                           <input
                             type="checkbox"
                             className="h-4 w-4"
+                            aria-label={`Delete entire ${item.label} category`}
+                            ref={element => { if(element) element.indeterminate = !selectedStorageItems[item.id] && !!selectedStorageRecords[item.id]?.length; }}
                             checked={!!selectedStorageItems[item.id]}
                             onChange={() => toggleStorageItem(item.id)}
                             disabled={storageBusy}
@@ -1982,7 +1998,11 @@ export default function SettingsModal({
                         </td>
                         <td className="border-b px-3 py-2 align-top">
                           <div className="font-medium text-slate-900">
-                            {item.label}
+                            <button type="button" disabled={storageBusy || loadingStorageCategory !== null} aria-expanded={!!expandedStorage[item.id]}
+                              onClick={() => expandedStorage[item.id] ? setExpandedStorage(current => ({...current, [item.id]: false})) : loadStoragePage(item)}>
+                              {expandedStorage[item.id] ? '▾' : '▸'} {item.label}
+                            </button>
+                            {loadingStorageCategory === item.id && <span className="ml-2 text-xs">Loading items…</span>}
                             {item.dangerous && <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-xs text-rose-700">credentials</span>}
                           </div>
                           <div className="mt-1 text-xs text-slate-500">{item.description}</div>
@@ -1991,6 +2011,27 @@ export default function SettingsModal({
                         <td className="border-b px-3 py-2 align-top text-slate-600">{Number(item.count || 0).toLocaleString()}</td>
                         <td className="border-b px-3 py-2 align-top font-medium text-slate-700">{formatStorageBytes(item.bytes)}</td>
                       </tr>
+                      {expandedStorage[item.id] && <tr><td colSpan={4} className="border-b bg-slate-50 px-6 py-3">
+                        <div className="text-xs text-slate-500 mb-2">Select individual stored items. Selecting the category deletes everything in it.</div>
+                        {storagePages[item.id]?.items.map(record => {
+                          const token = JSON.stringify(record.key);
+                          const checked = !!selectedStorageItems[item.id] || (selectedStorageRecords[item.id] || []).some(key => JSON.stringify(key) === token);
+                          return <label key={token} className="flex items-start gap-3 py-2 border-b break-all">
+                            <input type="checkbox" checked={checked} disabled={storageBusy || !!selectedStorageItems[item.id]}
+                              onChange={() => setSelectedStorageRecords(current => ({...current, [item.id]: checked
+                                ? (current[item.id] || []).filter(key => JSON.stringify(key) !== token)
+                                : [...(current[item.id] || []), record.key]}))} />
+                            <span>{record.label}{record.detail !== record.label && <span className="block text-xs text-slate-500">{record.detail}</span>}</span>
+                          </label>;
+                        })}
+                        {!storagePages[item.id]?.items.length && <div>No individual items found.</div>}
+                        <div className="flex gap-4 mt-2">
+                          <button type="button" disabled={storageBusy || loadingStorageCategory !== null} onClick={() => loadStoragePage(item)}>First page</button>
+                          {storagePages[item.id]?.nextKey !== undefined && <button type="button" disabled={storageBusy || loadingStorageCategory !== null} onClick={() => loadStoragePage(item, storagePages[item.id].nextKey)}>Next page</button>}
+                          <span>{selectedStorageRecords[item.id]?.length || 0} individual items selected</span>
+                        </div>
+                      </td></tr>}
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>

@@ -512,3 +512,36 @@ describe("code architecture assurance artifact AI helpers", () => {
     expect(designRows[0].description).not.toMatch(/satisfy __init__/i);
   });
 });
+
+test('software derivation bounds stalled requests and retains fallback requirements', async () => {
+  jest.useFakeTimers();
+  const previousFetch = global.fetch;
+  try {
+    global.fetch = jest.fn(() => new Promise(() => {}));
+    const pending = deriveSoftwareRequirements({ cbaRows: [{from:'Command manager',action:'Validated command',to:'Receiving service'}] });
+    for (let pass=0; pass<4; pass+=1) {
+      jest.advanceTimersByTime(120001);
+      for (let tick=0; tick<20; tick+=1) await Promise.resolve();
+    }
+    const rows = await pending;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].requirementText).toBeTruthy();
+    expect(global.fetch.mock.calls[0][1].signal.aborted).toBe(true);
+  } finally { global.fetch=previousFetch; jest.useRealTimers(); }
+});
+
+test('hazard import supports wrapped headers/cells and spacing variants without altering safety decisions',()=>{
+ const rows=importHazardSoftwareRequirements({hazardAnalysis:{id:'run',generatedSheets:{Summary:[
+ [{value:'Safety Requirements / Constraints'},{value:'Safety Significant'},{value:'Safety Significance Rationale'}],
+ [{value:'The software shall reject invalid commands.'},{value:'Yes'},{value:'Loss of control'}],
+ [{value:'Ignored requirement'},{value:'No'},{value:'Non-safety'}]
+ ]}}});
+ expect(rows).toHaveLength(1);
+ expect(rows[0]).toMatchObject({source:'hazard-derived',safetySignificant:'Yes',safetySignificanceRationale:'Loss of control',hazardAnalysisRunId:'run'});
+});
+test('reports fallback failures and reasons no safety requirements were imported',async()=>{
+ global.fetch=jest.fn(async()=>({ok:false,status:401,text:async()=> 'No key'}));
+ const rows=await deriveSoftwareRequirements({cbaRows:[{from:'Command source',action:'Command',to:'Receiver'}],hazardAnalysis:{id:'run',generatedSheets:{Summary:[['Safety Significant','System Requirement'],['No','Excluded'],['Yes','']]}}});
+ expect(rows.derivationReport).toMatchObject({fallbackRows:1,importedSafetyRows:0,excludedSafetyRows:1,missingRequirementRows:1});
+ expect(rows.derivationReport.failures[0]).toContain('key');
+});

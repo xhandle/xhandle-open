@@ -23,7 +23,15 @@ export function prepareCodeHazardPreprocessing(input, previousRun) {
     if (candidates.length !== 1) return row;
     const id = cell(summary, candidates[0], 'Raw Analysis Row ID');
     const preprocessing = previousRun.userPreprocessing[id];
-    return { ...constrainPreprocessedInput(row, preprocessing, headers, current),
+    const constrained = constrainPreprocessedInput(row, preprocessing, headers, current);
+    // A user-supplied No is an exclusion even when its review basis changed.
+    // Keep the basis conflict visible, but do not send this row to STPA.
+    const excluded = /^no$/i.test(String(preprocessing.values?.['Guide Phrase Applicable'] || '').trim());
+    return { ...constrained,
+      ...(excluded ? {
+        guidePhraseApplicable: 'No',
+        guidePhraseApplicabilityRationale: preprocessing.values['Guide Phrase Applicability Rationale'] || '',
+      } : {}),
       userPreprocessing: preprocessing, userPreprocessingId: id, userPreprocessingBasis: current };
   });
   const matchedIds = new Set(tableRows.map(row => row.userPreprocessingId).filter(Boolean));
@@ -45,9 +53,11 @@ export function prepareCodeHazardPreprocessing(input, previousRun) {
     });
     const applicabilityIndex = decomposition[0].indexOf('Guide Phrase Applicable');
     const rationaleIndex = decomposition[0].indexOf('Guide Phrase Applicability Rationale');
-    if (source.guidePhraseApplicabilityReviewStatus === 'Reviewed') {
+    const reviewStatusIndex = decomposition[0].indexOf('Guide Phrase Applicability Review Status');
+    if (source.guidePhraseApplicabilityReviewStatus === 'Reviewed' || source.guidePhraseApplicable === 'No') {
       if (applicabilityIndex >= 0) next[applicabilityIndex] = source.guidePhraseApplicable;
       if (rationaleIndex >= 0) next[rationaleIndex] = source.guidePhraseApplicabilityRationale;
+      if (reviewStatusIndex >= 0 && source.guidePhraseApplicabilityReviewStatus === 'Reviewed') next[reviewStatusIndex] = 'Reviewed';
     }
     return next;
   }) } };
@@ -70,6 +80,10 @@ export function reconcileCodeHazardPreprocessing(sheets, tableRows) {
     const result = reconcileUserPreprocessing(summary[0], row, source.userPreprocessing, basis);
     const idIndex = summary[0].indexOf('Raw Analysis Row ID');
     if (idIndex >= 0) result.row[idIndex] = source.userPreprocessingId;
+    if (source.guidePhraseApplicable === 'No') {
+      const applicabilityIndex = summary[0].indexOf('Guide Phrase Applicable');
+      if (applicabilityIndex >= 0) result.row[applicabilityIndex] = 'No';
+    }
     ownership[source.userPreprocessingId] = { ...source.userPreprocessing, pending: false, conflicts: result.conflicts };
     conflicts.push(...result.conflicts.map(message => `${source.userPreprocessingId}: ${message}`));
     return result.row;

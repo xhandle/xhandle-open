@@ -1,3 +1,4 @@
+jest.mock('./codeHazardGenerationCheckpoint', () => ({createCodeHazardCheckpoint: jest.fn(async () => null)}));
 jest.mock('../../components/aiAnalysisLite', () => ({ runLiteAIAnalysis: jest.fn() }));
 jest.mock('./codeArchitectureHazardStore', () => ({ saveCodeArchitectureHazardRun: jest.fn(async run => run) }));
 jest.mock('./codeArchitectureHazardSourceAudit', () => ({ enrichHazardTableRowsWithSourceContent: jest.fn(async rows => rows) }));
@@ -77,4 +78,46 @@ test('late completion after cancellation does not save a hazard run', async () =
  });
  await expect(runCodeArchitectureHazardAnalysis({...options, signal:controller.signal})).rejects.toMatchObject({name:'AbortError'});
  expect(saveCodeArchitectureHazardRun).not.toHaveBeenCalled();
+});
+
+test.each([
+ { 'Functional Decomposition': [['Function (From)'], ['Estimate Pose']] },
+ { Summary: [headers] },
+ { Summary: [headers, ['Estimate Pose','Publish pose estimate','Plan Motion','Not provided','','','','','RAW-1','','','','']] },
+])('blank or missing assessment output never saves a successful run', async sheets => {
+ const { saveCodeArchitectureHazardRun } = require('./codeArchitectureHazardStore');
+ runLiteAIAnalysis.mockResolvedValue(sheets);
+ await expect(runCodeArchitectureHazardAnalysis(options)).rejects.toThrow('did not produce completed assessment rows');
+ expect(saveCodeArchitectureHazardRun).not.toHaveBeenCalled();
+});
+
+test.each([
+ ['HARA', 'Hazard'],
+ ['FHA', 'Hazard'],
+ ['HRWhatIf', 'What-If Scenario'],
+ ['STPA-SEC', 'Unacceptable Security Condition'],
+ ['FMEA', 'Failure Mode'],
+])('completion guard accepts populated %s assessment columns', async (method, column) => {
+ runLiteAIAnalysis.mockResolvedValue({Summary:[[column],['Assessed result']]});
+ const result = await runCodeArchitectureHazardAnalysis({...options, method});
+ expect(result.generatedSheets.Summary[1][0]).toBe('Assessed result');
+});
+
+
+test.each(['Yes', 'No'])('accepted %s survives a context change and a conflicting generated result', async decision => {
+ const previous=buildCodeArchitectureHazardCsvDraft(options,headers);
+ const baseline=[...previous.generatedSheets.Summary[1]];
+ const row=previous.generatedSheets.Summary[1]; row[9]=decision; row[10]='Accepted user rationale';
+ previous.userPreprocessing={[row[8]]:recordUserPreprocessing(null,headers,row,[headers[9],headers[10]],baseline)};
+ previous.userPreprocessing[row[8]].basis['Operational Scenario']='Previously reviewed scenario';
+ const generate=runLiteAIAnalysis.getMockImplementation();
+ runLiteAIAnalysis.mockImplementation(async request=>{
+   const result=await generate(request);result.Summary[1][9]='Needs Review';return result;
+ });
+ const result=await runCodeArchitectureHazardAnalysis({...options,previousRun:previous});
+ const request=runLiteAIAnalysis.mock.calls[0][0];
+ expect(request.tableRows[0].guidePhraseApplicable).toBe(decision);
+ expect(request.tableRows[0].guidePhraseApplicabilityReviewStatus).toBe('Reviewed');
+ expect(result.generatedSheets.Summary[1][9]).toBe(decision);
+ expect(result.generatedSheets.Summary[1][10]).toBe('Accepted user rationale');
 });

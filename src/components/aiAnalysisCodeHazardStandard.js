@@ -343,15 +343,20 @@ export async function mapWithConcurrency(items = [], concurrency = 1, worker) {
   const source = Array.isArray(items) ? items : [];
   const results = new Array(source.length);
   let cursor = 0;
+  let failure = null;
   const workerCount = Math.max(1, Math.min(source.length || 1, Math.floor(concurrency) || 1));
 
   await Promise.all(Array.from({ length: workerCount }, async () => {
-    while (cursor < source.length) {
+    while (!failure && cursor < source.length) {
       const index = cursor;
       cursor += 1;
-      results[index] = await worker(source[index], index);
+      try { results[index] = await worker(source[index], index); }
+      catch (error) { failure = failure || error; }
     }
   }));
+  // Settle already-started batches (and their checkpoints) before reporting
+  // failure; do not continue launching provider calls after a failed run.
+  if (failure) throw failure;
   return results;
 }
 
@@ -581,7 +586,17 @@ function buildGuidePhraseUnsafeControlAction(item = {}, generatedValue = "", gui
   return `${requiredPrefix}: ${generated}`;
 }
 
+function preserveReviewedApplicability(row, item) {
+  if (!/^reviewed$/i.test(sanitizeText(item?.guidePhraseApplicabilityReviewStatus))
+      || !/^(yes|no)$/i.test(sanitizeText(item?.guidePhraseApplicable))) return row;
+  return { ...row,
+    guidePhraseApplicable: item.guidePhraseApplicable,
+    guidePhraseApplicabilityRationale: item.guidePhraseApplicabilityRationale || "",
+  };
+}
+
 function normalizeRow(config, row, item, index) {
+  row = preserveReviewedApplicability(row, item);
   const base = fallbackRow(config, item, index);
   const guidePhraseApplicable = normalizeGuidePhraseApplicability(
     row.guidePhraseApplicable || row["Guide Phrase Applicable"] || item?.guidePhraseApplicable,
@@ -680,9 +695,9 @@ function normalizeRow(config, row, item, index) {
       }
     }
   }
-  return normalized.guidePhraseApplicable === "No"
+  return preserveReviewedApplicability(normalized.guidePhraseApplicable === "No"
     ? normalizeNonApplicableHazardRecord(normalized, normalized.guidePhraseApplicabilityRationale)
-    : normalized;
+    : normalized, item);
 }
 
 export function materializeGeneratedHazardRows(config, generatedRows = [], items = []) {
@@ -1613,12 +1628,21 @@ ${JSON.stringify(compactPromptRows(items))}
   return extractJsonArray(response);
 }
 
-async function requestStandardRowsWithRetries(config, chunk, contextOptions = {}) {
+export function hasGeneratedHazardAssessment(row = {}) {
+  const applicability = sanitizeText(row.guidePhraseApplicable);
+  if (!/^(yes|no|needs review|uncertain|indeterminate|applicable|not applicable|true|false)\b/i.test(applicability)) return false;
+  if (!sanitizeText(row.guidePhraseApplicabilityRationale)) return false;
+  if (/^(no|not applicable|false)\b/i.test(applicability)) return true;
+  return ['hazard', 'hazards', 'loss', 'losses', 'failureMode', 'whatIfScenario', 'unsafeControlActions', 'causalScenario']
+    .some(key => sanitizeText(row[key]) && !/^needs review:.*(?:not generated|was not|were not)/i.test(sanitizeText(row[key])));
+}
+
+export async function requestStandardRowsWithRetries(config, chunk, contextOptions = {}) {
   const rowsById = new Map();
   const missingFor = (items) => items.filter((item) => !rowsById.has(String(item.id || "").toUpperCase()));
   const mergeRows = (rows) => {
     generatedRowsById(rows).forEach((row, key) => {
-      rowsById.set(key, row);
+      if (hasGeneratedHazardAssessment(row)) rowsById.set(key, row);
     });
   };
 
@@ -1626,6 +1650,7 @@ async function requestStandardRowsWithRetries(config, chunk, contextOptions = {}
     mergeRows(await requestStandardRows(config, chunk, contextOptions));
   } catch (err) {
     rethrowInterruptedRequest(err, contextOptions.signal);
+      contextOptions.onRecoverableError?.(err);
     console.warn(`⚠️ ${config.sheetName} generation failed for ${chunk.length} rows; retrying smaller subchunks.`, err);
   }
 
@@ -1647,11 +1672,14 @@ async function requestStandardRowsWithRetries(config, chunk, contextOptions = {}
         }));
       } catch (err) {
         rethrowInterruptedRequest(err, contextOptions.signal);
+      contextOptions.onRecoverableError?.(err);
         console.warn(`⚠️ ${config.sheetName} retry ${attempt + 1} failed for ${retryChunk.map((item) => item.id).join(", ")}.`, err);
       }
     }
   }
 
+  const missing = missingFor(chunk);
+  if (missing.length) throw new Error(`Hazard analysis incomplete: ${missing.length} assessment(s) were not generated after automatic retries (${missing.map(item => item.id).join(', ')}). Previous saved results were preserved.`);
   return chunk.map((item, index) => generatedRowForItem(rowsById, [], index, item));
 }
 
@@ -1725,6 +1753,7 @@ async function repairGenericStandardRows(config, rows, items, contextOptions = {
       });
     } catch (err) {
       rethrowInterruptedRequest(err, contextOptions.signal);
+      contextOptions.onRecoverableError?.(err);
       console.warn(`⚠️ ${config.sheetName} generic wording repair failed for chunk ${chunkIndex + 1}.`, err);
     } finally {
       completedRepairChunks += 1;
@@ -1753,7 +1782,7 @@ id, semanticMeaningful, receiverCanBeAffected, contextSupportsMechanism, adverse
 Applicability and safety rules:
 - If row.guidePhraseApplicabilityReviewStatus is Reviewed and row.guidePhraseApplicable is Yes or No, that is a governed human-reviewed decision. Preserve it and its rationale exactly; do not re-decide applicability. Classify the downstream safety fields consistently with that governed decision.
 - If row.safetySignificanceReviewStatus is Reviewed and row.safetySignificant is Yes or No, that is a governed human-reviewed decision. Preserve it and its rationale exactly; reconcile every downstream classification and causal-path field with it rather than re-deciding it.
-- Re-decide applicability independently; do not defer to generated.guidePhraseApplicable or let the candidate Hazard/Loss create facts that are absent from the functional row and operational context. Decide applicability from row semantics and context first, then use generated text only to classify a supported adverse path.
+- For rows without reviewed applicability, re-decide applicability independently; do not defer to generated.guidePhraseApplicable or let the candidate Hazard/Loss create facts that are absent from the functional row and operational context. Decide applicability from row semantics and context first, then use generated text only to classify a supported adverse path.
 - semanticMeaningful, receiverCanBeAffected, contextSupportsMechanism, and adverseStateSupported must each be exactly Yes or No. guidePhraseApplicable must be Yes only when all four are Yes; otherwise it must be No.
 - guidePhraseApplicable must be exactly Yes or No.
 - Mark Yes only if the exact guide-phrase deviation is semantically meaningful for the action type in the exact scenario/mode and a concrete causal path connects it to an adverse system state. A merely conceivable deviation or generic restatement is insufficient.
@@ -2096,6 +2125,7 @@ async function repairHazardAuditAnomalies(config, rows, items, contextOptions = 
       });
     } catch (err) {
       rethrowInterruptedRequest(err, contextOptions.signal);
+      contextOptions.onRecoverableError?.(err);
       console.warn(`⚠️ ${config.sheetName} applicability pattern repair failed for chunk ${chunkIndex + 1}; retaining independently audited rows.`, err);
     } finally {
       completedChunks += 1;
@@ -2464,6 +2494,7 @@ async function canonicalizeStpaRiskVocabulary(config, rows, items, contextOption
     return reconcileCanonicalVocabulary(canonicalRows);
   } catch (err) {
     rethrowInterruptedRequest(err, contextOptions.signal);
+      contextOptions.onRecoverableError?.(err);
     console.warn(`⚠️ ${config.sheetName} canonical vocabulary generation failed; retaining raw Loss and Hazard candidates.`, err);
     return reconcileCanonicalVocabulary(applyCanonicalRiskVocabulary(rows, items));
   }
@@ -2495,6 +2526,7 @@ async function tagSafetySignificanceForStandardRows(config, rows, items, context
       });
     } catch (err) {
       rethrowInterruptedRequest(err, contextOptions.signal);
+      contextOptions.onRecoverableError?.(err);
       console.warn(`⚠️ ${config.sheetName} safety significance review failed for chunk ${chunkIndex + 1}.`, err);
       tagChunk.forEach(({ row, item, index }) => {
         taggedRows[index] = normalizeRow(config, row, item, index);
@@ -2593,6 +2625,9 @@ export const HAZARD_ANALYSIS_STAGE_KEYS = [
   ...HAZARD_ANALYSIS_REPAIR_STAGES.map(([stage]) => stage),
 ];
 
+const isExplicitlyNonApplicable = (item) =>
+  normalizeGuidePhraseApplicability(item?.guidePhraseApplicable) === "No";
+
 /**
  * Runs generation followed by every repair stage and returns the final rows.
  *
@@ -2611,7 +2646,37 @@ export async function runStandardHazardAnalysisStages({
   onStageComplete = () => {},
   signal = null,
   provider = getStoredActiveAIProvider(),
+  generationCheckpoint = null,
 }) {
+  // An explicit No excludes this guide phrase from STPA regardless of review
+  // status. Preserve the row and its rationale without sending it to the LLM.
+  if (config.rowIdSuffix === "STPA" && items.some(isExplicitlyNonApplicable)) {
+    const activeItems = items.filter((item) => !isExplicitlyNonApplicable(item));
+    const mergeRows = (activeRows) => {
+      let activeIndex = 0;
+      return items.map((item, index) => {
+        if (isExplicitlyNonApplicable(item)) {
+          return normalizeRow(config, {
+            guidePhraseApplicable: "No",
+            guidePhraseApplicabilityRationale: item.guidePhraseApplicabilityRationale,
+          }, item, index);
+        }
+        return activeRows[activeIndex++];
+      });
+    };
+    if (!activeItems.length) {
+      const rows = mergeRows([]);
+      await onStageComplete({ stage: "generation", rows });
+      return rows;
+    }
+    const activeRows = await runStandardHazardAnalysisStages({
+      config, items: activeItems, operationalContext, organizationContext,
+      analysisContext, contextSources, onProgress,
+      onStageComplete: async ({ stage, rows }) => onStageComplete({ stage, rows: mergeRows(rows) }),
+      signal, provider, generationCheckpoint,
+    });
+    return mergeRows(activeRows);
+  }
   const maximumRowsPerPrompt = getStandardHazardRowsPerPrompt(provider);
   const promptChunks = items.length <= maximumRowsPerPrompt && compactPromptRowsLength(items) <= STANDARD_SINGLE_PROMPT_MAX_CHARS
     ? [items]
@@ -2635,26 +2700,20 @@ export async function runStandardHazardAnalysisStages({
     onProgress({
       step: chunkIndex + 1,
       total: totalProgressSteps,
-      message: `Generating ${config.sheetName} rows (${chunkIndex + 1}/${promptChunks.length})...`,
+      message: `Generating ${config.sheetName} batch ${chunkIndex + 1}/${promptChunks.length}...`,
     });
-    try {
-      const chunkRows = await requestStandardRowsWithRetries(config, chunk, {
-        ...contextOptions,
-        onProgress,
-      });
-      return chunkRows;
-    } catch (err) {
-      rethrowInterruptedRequest(err, signal);
-      console.warn(`⚠️ ${config.sheetName} standard generation failed for chunk ${chunkIndex + 1}; using local fallback rows for that chunk.`, err);
-      return chunk.map((item, index) => fallbackRow(config, item, chunkIndex * maximumRowsPerPrompt + index));
-    } finally {
-      completedGenerationChunks += 1;
-      onProgress({
-        step: completedGenerationChunks,
-        total: totalProgressSteps,
-        message: `Generated ${completedGenerationChunks}/${promptChunks.length} ${config.sheetName} row batches...`,
-      });
-    }
+    const basis = {stage: 'generation', config, chunk, operationalContext, organizationContext, analysisContext, contextSources, provider};
+    const started = Date.now();
+    const saved = await generationCheckpoint?.read(basis);
+    const reusable = Array.isArray(saved) && saved.length === chunk.length && saved.every(hasGeneratedHazardAssessment);
+    const chunkRows = reusable ? saved : await requestStandardRowsWithRetries(config, chunk, { ...contextOptions, onProgress });
+    if (!reusable) await generationCheckpoint?.write(basis, chunkRows);
+    completedGenerationChunks += 1;
+    onProgress({
+      step: completedGenerationChunks, total: totalProgressSteps,
+      message: `${reusable ? 'Reused' : 'Generated'} ${completedGenerationChunks}/${promptChunks.length} ${config.sheetName} batches (${Math.round((Date.now() - started) / 1000)}s for this batch)...`,
+    });
+    return chunkRows;
   });
 
   let normalizedRows = materializeGeneratedHazardRows(config, generatedChunks.flat(), items);
@@ -2662,14 +2721,21 @@ export async function runStandardHazardAnalysisStages({
 
   for (let index = 0; index < HAZARD_ANALYSIS_REPAIR_STAGES.length; index += 1) {
     const [stage, runStage] = HAZARD_ANALYSIS_REPAIR_STAGES[index];
-    normalizedRows = await runStage(config, normalizedRows, items, {
+    const stageBasis = {stage, config, rows: normalizedRows, items, operationalContext, organizationContext, analysisContext, contextSources, provider};
+    const savedStage = await generationCheckpoint?.read(stageBasis);
+    let stageFailed = false;
+    const reusableStage = Array.isArray(savedStage) && savedStage.length === items.length;
+    normalizedRows = reusableStage ? savedStage : await runStage(config, normalizedRows, items, {
       ...contextOptions,
+      onRecoverableError: () => { stageFailed = true; },
       onProgress: (patch) => onProgress({
         step: promptChunks.length + index + 1,
         total: totalProgressSteps,
         ...patch,
       }),
     });
+    normalizedRows = normalizedRows.map((row, index) => preserveReviewedApplicability(row, items[index]));
+    if (!reusableStage && !stageFailed) await generationCheckpoint?.write(stageBasis, normalizedRows);
     await onStageComplete({ stage, rows: normalizedRows });
   }
 
@@ -2679,7 +2745,8 @@ export async function runStandardHazardAnalysisStages({
   // persisted merely because a later stage reintroduced them.
   normalizedRows = normalizedRows.map((row, index) => {
     const audited = auditSafetyClassificationRecord(row, items[index]);
-    const { validationFindings, ...auditedRow } = audited;
+    const { validationFindings, ...auditResult } = audited;
+    const auditedRow = preserveReviewedApplicability(auditResult, items[index]);
     if (!validationFindings.length) return auditedRow;
     const finding = validationFindings[0];
     return {
@@ -2706,6 +2773,7 @@ export async function generateStandardCodeHazardAnalysisSheets({
   omitConsolidatedRequirement = false,
   signal = null,
   provider = getStoredActiveAIProvider(),
+  generationCheckpoint = null,
 }) {
   const items = flattenDecomposition(sheets);
   if (!items.length) return sheets;
@@ -2725,6 +2793,7 @@ export async function generateStandardCodeHazardAnalysisSheets({
     onStageComplete,
     signal,
     provider,
+    generationCheckpoint,
   });
 
   return saveSheets({

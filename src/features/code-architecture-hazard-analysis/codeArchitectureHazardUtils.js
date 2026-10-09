@@ -719,6 +719,7 @@ export function buildCodeArchitectureHazardInput({
       "Guide Phrase",
       "Guide Phrase Applicable",
       "Guide Phrase Applicability Rationale",
+      "Guide Phrase Applicability Review Status",
       ...CODE_ARCHITECTURE_TRACEABILITY_COLUMNS,
     ],
     ...tableRows.map((row) => [
@@ -736,6 +737,7 @@ export function buildCodeArchitectureHazardInput({
       row.guidePhrase || "",
       row.guidePhraseApplicable || "",
       row.guidePhraseApplicabilityRationale || "",
+      row.guidePhraseApplicabilityReviewStatus || "",
       ...traceabilityToSheetCells(row.traceability || {}),
     ]),
   ];

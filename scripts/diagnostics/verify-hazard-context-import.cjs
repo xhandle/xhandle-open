@@ -1,0 +1,35 @@
+const assert=require('assert');
+const {chromium}=require('/tmp/xhandle-hazard-review/node_modules/playwright-core');
+(async()=>{const browser=await chromium.launch({headless:true,executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'});try{
+ const page=await browser.newPage();await page.route('**/api/**',r=>r.fulfill({status:401,body:'fixture'}));await page.goto('http://localhost:3000');
+ await page.waitForFunction(()=>Object.keys(window).some(k=>k.startsWith('webpackChunk')));
+ await page.evaluate(async()=>{
+  window[Object.keys(window).find(k=>k.startsWith('webpackChunk'))].push([[Date.now()],{},r=>window.req=r]);
+  localStorage.setItem('xhandle.codeArchitectureProjects',JSON.stringify([{id:'context-test',name:'Context persistence test',repos:[{id:'repo-test',owner:'fixture',repo:'repo',repoId:'fixture/repo'}],activeRepoId:'repo-test'}]));
+  await window.req('./src/features/code-architecture-assurance/codeArchitectureStorage.js').writeCbaRowsToIndexedDB('cba:context-test:repo-test',[{id:'fixture-row',from:'Controller',action:'Command',to:'Actuator',subsystem:'Test subsystem'}]);
+  const store=window.req('./src/features/code-architecture-hazard-analysis/codeArchitectureHazardStore.js');
+  await store.saveCodeArchitectureHazardRun({id:'cba-hazard-run-context-test',csvImportPreviousSummary:[['Raw Analysis Row ID']],projectId:'context-test',repoId:'fixture/repo',hazardMethod:'STPA-Textbook',updatedAt:new Date().toISOString(),generatedSheets:{Summary:[['Raw Analysis Row ID','Function (From)','Control Action','Function (To)','Guide Phrase','Guide Phrase Applicable','Guide Phrase Applicability Rationale'],['RAW-TEST','Controller','Command','Actuator','Not providing the control action causes a hazard','','']]}});
+ });
+ await page.reload();await page.getByText('Context persistence test',{exact:true}).first().click();
+ await page.getByRole('button',{name:'Hazard & Remediation',exact:true}).click();
+ const input=page.getByLabel('Import code architecture hazard CSV');await input.waitFor({state:'attached'});
+ await input.setInputFiles({name:'review.csv',mimeType:'text/csv',buffer:Buffer.from('Raw Analysis Row ID,Guide Phrase Applicable,Guide Phrase Applicability Rationale\nRAW-TEST,No,Reviewed fixture rationale preserved')});
+ await page.getByRole('button',{name:'Apply CSV import',exact:true}).click();
+ await page.getByText('Reviewed fixture rationale preserved',{exact:true}).first().waitFor();
+ await page.getByRole('button',{name:'Manage contexts',exact:true}).click();
+ await page.getByRole('button',{name:'Add context',exact:true}).click();
+ await page.getByPlaceholder('Urban intersection approach').last().fill('Updated operating scenario');
+ await page.getByPlaceholder('Autonomous operation').last().fill('Test mode');
+ await page.getByRole('button',{name:'Save contexts',exact:true}).click();
+ await page.getByText('Updated operating scenario · Test mode',{exact:true}).last().waitFor();
+ await page.waitForTimeout(500);
+ assert(await page.getByText('Reviewed fixture rationale preserved',{exact:true}).count());
+ const saved=await page.evaluate(async()=>{window[Object.keys(window).find(k=>k.startsWith('webpackChunk'))].push([[Date.now()],{},r=>window.req=r]);const run=await window.req('./src/features/code-architecture-hazard-analysis/codeArchitectureHazardStore.js').getLatestCodeArchitectureHazardRun({projectId:'context-test',repoId:'fixture/repo'});const [headers,row]=run.generatedSheets.Summary;return Object.fromEntries(['Operational Scenario','Operational Mode','Guide Phrase Applicable','Guide Phrase Applicability Rationale'].map(name=>[name,row[headers.indexOf(name)]]));});
+ assert.equal(saved['Operational Scenario'],'Updated operating scenario');
+ assert.equal(saved['Operational Mode'],'Test mode');
+ assert.equal(saved['Guide Phrase Applicable'],'No');
+ assert.equal(saved['Guide Phrase Applicability Rationale'],'Reviewed fixture rationale preserved');
+ await page.reload();await page.getByText('Context persistence test',{exact:true}).first().click();await page.getByRole('button',{name:'Hazard & Remediation',exact:true}).click();
+ await page.getByText('Reviewed fixture rationale preserved',{exact:true}).first().waitFor();
+ console.log('PASS: CSV preprocessing survives context save and browser reload in the real App');
+}finally{await browser.close();}})().catch(e=>{console.error(e);process.exit(1)});

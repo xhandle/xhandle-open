@@ -273,6 +273,8 @@ export default function EngineeringArtifactTable({
   return (
     <div className="min-h-0 flex flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
       <div className="flex shrink-0 items-center justify-end gap-2 border-b border-slate-100 bg-white px-3 py-2">
+        <span role="status" className="mr-auto text-sm text-slate-600">{visibleRows.length} of {rows.length} rows match filters</span>
+        {filterState.activeFilterCount > 0 && <button type="button" className="text-sm font-medium text-[#2D7DFE]" onClick={filterState.clearAllFilters}>Clear filters</button>}
         <ColumnVisibilityMenu
           columns={columnOptions.map((column) => ({
             key: column.visibilityKey,
@@ -465,14 +467,7 @@ export default function EngineeringArtifactTable({
           )}
         </tbody>
       </table>
-      {filterState.activeFilterCount > 0 && visibleRows.length < rows.length && (
-        <div className="border-t border-slate-100 px-3 py-2 text-xs text-slate-500">
-          {visibleRows.length} of {rows.length} rows match active filters.
-          <button type="button" className="ml-2 font-medium text-[#2D7DFE]" onClick={filterState.clearAllFilters}>
-            Clear filters
-          </button>
-        </div>
-      )}
+
       </div>
     </div>
   );

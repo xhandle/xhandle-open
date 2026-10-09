@@ -66,6 +66,7 @@ export async function runLiteAIAnalysis({
   omitConsolidatedRequirement = false,
   signal = null,
   onStageComplete = async () => {},
+  generationCheckpoint = null,
 }) {
   const totalSteps = 9;
   let step = 0;
@@ -80,7 +81,7 @@ export async function runLiteAIAnalysis({
   const decompositionSheet = Array.isArray(existingDecomposition) && existingDecomposition.length > 1
     ? existingDecomposition
     : [
-      ["Function (From)", "Function (From) Details", "Control Action", "Control Action Details", "Function (To)", "Function (To) Details", "Guide Phrase", "Guide Phrase Applicable", "Guide Phrase Applicability Rationale", ...CODE_ARCHITECTURE_TRACEABILITY_COLUMNS],
+      ["Function (From)", "Function (From) Details", "Control Action", "Control Action Details", "Function (To)", "Function (To) Details", "Guide Phrase", "Guide Phrase Applicable", "Guide Phrase Applicability Rationale", "Guide Phrase Applicability Review Status", ...CODE_ARCHITECTURE_TRACEABILITY_COLUMNS],
       ...tableRows.map((row) => [
         getCellText(row.fromFunction),
         getCellText(row.fromDetails || row.fromFunctionDetails),
@@ -91,6 +92,7 @@ export async function runLiteAIAnalysis({
         getCellText(row.guidePhrase),
         getCellText(row.guidePhraseApplicable),
         getCellText(row.guidePhraseApplicabilityRationale),
+        getCellText(row.guidePhraseApplicabilityReviewStatus),
         ...traceabilityToSheetCells(row.traceability || {}),
       ]),
     ];
@@ -127,6 +129,7 @@ export async function runLiteAIAnalysis({
       signal,
       onProgress: updateGeneratorProgress,
       onStageComplete,
+      generationCheckpoint,
       omitConsolidatedRequirement,
     })) || updatedSheets;
     step = 9;
@@ -229,6 +232,7 @@ export async function runLiteAIAnalysis({
       signal,
       onProgress: updateGeneratorProgress,
       onStageComplete,
+      generationCheckpoint,
       omitConsolidatedRequirement,
     })) || updatedSheets;
     step = 9;
@@ -250,6 +254,7 @@ export async function runLiteAIAnalysis({
       signal,
       onProgress: updateGeneratorProgress,
       onStageComplete,
+      generationCheckpoint,
       omitConsolidatedRequirement,
     })) || updatedSheets;
     step = 9;

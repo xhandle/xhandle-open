@@ -39,7 +39,7 @@ export default function ArchitectureRunRecovery({ scope, loading, hasPublishedRo
           <button className="rounded bg-blue-600 px-3 py-1.5 text-white disabled:opacity-50" disabled={retrying} onClick={resume}>{retrying ? 'Retrying…' : (checkpoint.publicationReady ? 'Retry save' : 'Retry incomplete analysis')}</button>
         </div>
       </div>
-      {checkpoint.durable === false && <p role="alert">Completed results are only in memory. Export them before refreshing; browser storage could not retain them.</p>}
+      {checkpoint.durable === false && <p role="alert">Completed results are only in memory. Export them before refreshing; they have not been saved to browser storage.</p>}
       <p className="mt-2">{checkpoint.completed} of {checkpoint.total} files completed. {checkpoint.failedFiles.length} failed. {checkpoint.rowCount} draft relationships saved.</p>
       <p>{hasPublishedRows ? 'Your last completed architecture remains available below.' : 'No completed architecture has been published yet.'} Saved draft relationships are available for inspection; they are not used in downstream analysis.</p>
       {checkpoint.failedFiles.length > 0 && <details className="mt-2"><summary className="cursor-pointer font-semibold">File failure details</summary>

@@ -48,7 +48,7 @@ export function constrainPreprocessedInput(functionalRow, preprocessing, headers
       if (header === 'Operational Context ID') next.hazardContextId = value;
     });
   }
-  if (!changed && /^(yes|no)$/i.test(preprocessing.values['Guide Phrase Applicable'] || '')) {
+  if (/^(yes|no)$/i.test(preprocessing.values['Guide Phrase Applicable'] || '')) {
     next.guidePhraseApplicable = preprocessing.values['Guide Phrase Applicable'];
     next.guidePhraseApplicabilityRationale = preprocessing.values['Guide Phrase Applicability Rationale'] || '';
     next.guidePhraseApplicabilityReviewStatus = 'Reviewed';
@@ -72,9 +72,7 @@ export function reconcileUserPreprocessing(headers, generatedRow, preprocessing,
     row[index] = value;
   }
   const write = (header, value) => { const index = headers.indexOf(header); if (index >= 0) row[index] = value; };
-  if (changed) {
-    write('Guide Phrase Applicable', 'Needs Review');
-  } else if (/^no$/i.test(preprocessing.values['Guide Phrase Applicable'] || '')) {
+  if (/^no$/i.test(preprocessing.values['Guide Phrase Applicable'] || '')) {
     const result = reconcileRegeneratedGuidePhraseReview({ headers, previousRow: row, currentBasisRow: row, regeneratedRow: row,
       reviewItem: { currentContent: { columns: headers, row } } });
     result.row.forEach((value, index) => { row[index] = value; });

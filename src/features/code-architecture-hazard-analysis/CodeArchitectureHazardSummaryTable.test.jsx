@@ -56,6 +56,24 @@ describe("CodeArchitectureHazardSummaryTable grouping", () => {
   });
 });
 
+it('labels and opens Functional diagram links when the row has a generated Functional trace', () => {
+  const host = document.createElement('div'); document.body.appendChild(host);
+  const root = createRoot(host);
+  const open = jest.fn();
+  const summarySheet = [
+    ['Function (From)', 'Control Action', 'Function (To)', 'Trace ID'],
+    ['Prepare Output', 'Send output', 'Receive Output', 'functional-relationship:test'],
+  ];
+  try {
+    act(() => root.render(<CodeArchitectureHazardSummaryTable showReview={false} storageKey="test:functional-hazard-link" summarySheet={summarySheet}
+      functionalTraceIds={new Set(['functional-relationship:test'])} onOpenArchitectureTarget={open} />));
+    const link = host.querySelector('button[aria-label="Open Control Action in the Functional diagram view"]');
+    expect(link).not.toBeNull();
+    act(() => link.click());
+    expect(open).toHaveBeenCalledWith(expect.objectContaining({ traceId: 'functional-relationship:test', type: 'edge' }));
+  } finally { act(() => root.unmount()); host.remove(); localStorage.removeItem('test:functional-hazard-link:hidden-columns'); localStorage.removeItem('test:functional-hazard-link:column-widths'); }
+});
+
 it('copies only the selected operational context and visible hazard columns', async () => {
   const host = document.createElement('div'); document.body.appendChild(host);
   const root = createRoot(host);

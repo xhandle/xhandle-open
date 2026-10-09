@@ -1,4 +1,5 @@
 import { fillNotApplicableHazardSummary } from '../project-hazard-analysis/hazardNotApplicableCells';
+import { buildFunctionalModelRows, functionalModelIsReady } from '../code-architecture-context/functionalModel';
 import FunctionalDiagramWorkspace from '../../components/FunctionalDiagramWorkspace';
 import { filterCodeArchitectureHazardRowsByContext } from './codeArchitectureHazardGrouping';
 import HazardCsvIssuesModal from '../project-hazard-analysis/HazardCsvIssuesModal';
@@ -81,15 +82,20 @@ export default function CodeArchitectureHazardPanel({
   onClearContents,
   onDeleteSummaryRow,
   onCollaboratorSelectionChange,
+  importInputRef,
   reviewMode = false,
 }) {
   const summarySheet = useMemo(() => fillNotApplicableHazardSummary(ensureHazardAnalysisRowIds(
     latestRun?.generatedSheets?.Summary || draftRun?.generatedSheets?.Summary || []
   )), [latestRun, draftRun]);
+  const functionalTraceIds = useMemo(() => functionalModelIsReady(cbaRows)
+    ? new Set(buildFunctionalModelRows(cbaRows).map(row => row.traceId)) : new Set(), [cbaRows]);
   const csvInputRef = useRef(null);
   const visibleSummaryRef = useRef(null);
   const [csvIssues, setCsvIssues] = useState([]);
   const [importing, setImporting] = useState(false);
+  const [pendingImport, setPendingImport] = useState(null);
+  const [importStatus, setImportStatus] = useState("");
   const handleVisibleSummary = useCallback((sheet) => {
     visibleSummaryRef.current = { sheet, source: summarySheet, context: selectedOperationalContextId };
   }, [summarySheet, selectedOperationalContextId]);
@@ -104,14 +110,39 @@ export default function CodeArchitectureHazardPanel({
   const importCsv = async (file) => {
     if (!file || isRunning || importing || reviewMode) return;
     setImporting(true);
+    setPendingImport(null);
+    setImportStatus('Reading and validating CSV…');
     try {
       const plan = planHazardAnalysisCsvImport(summarySheet, await file.text());
-      if (plan.errors.length) { setCsvIssues(plan.errors); return; }
-      if (!plan.changedRowCount) { window.alert('Every row already matches. Nothing was changed.'); return; }
-      if (!window.confirm(describeHazardCsvPlan(plan))) return;
-      await onImportSummary(applyHazardAnalysisCsvImport(summarySheet, plan.updates), latestRun);
-      window.alert(`Imported updates to ${plan.changedRowCount} rows.${plan.conflicts.length ? ` ${plan.conflicts.length} classification/significance conflicts need review.` : ''}`);
-    } catch (error) { setCsvIssues([error.message || 'Import could not be saved.']); }
+      if (plan.errors.length) {
+        setCsvIssues(plan.errors);
+        setImportStatus(`Import blocked: ${plan.errors[0]}`);
+        return;
+      }
+      if (!plan.changedRowCount) {
+        setImportStatus('Every row already matches. Nothing was changed.');
+        return;
+      }
+      setPendingImport({plan, source: summarySheet, run: latestRun});
+      setImportStatus('CSV validated. Review the changes below and apply the import.');
+    } catch (error) { setImportStatus(`Import failed: ${error.message || 'The file could not be read.'}`); }
+    finally { setImporting(false); }
+  };
+  const applyPendingImport = async () => {
+    if (!pendingImport || importing || isRunning || reviewMode) return;
+    if (pendingImport.source !== summarySheet || pendingImport.run !== latestRun) {
+      setPendingImport(null);
+      setImportStatus('The analysis changed. Select the CSV again to review it against the current table.');
+      return;
+    }
+    setImporting(true);
+    setImportStatus('Saving CSV updates…');
+    try {
+      const {plan, source, run} = pendingImport;
+      await onImportSummary(applyHazardAnalysisCsvImport(source, plan.updates), run);
+      setPendingImport(null);
+      setImportStatus(`Imported updates to ${plan.changedRowCount} rows.${plan.conflicts.length ? ` ${plan.conflicts.length} classification/significance conflicts need review.` : ''}`);
+    } catch (error) { setImportStatus(`Import failed: ${error.message || 'Updates could not be saved.'}`); }
     finally { setImporting(false); }
   };
   const hasSummary = Array.isArray(summarySheet) && summarySheet.length >= 2;
@@ -164,6 +195,14 @@ export default function CodeArchitectureHazardPanel({
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col">
+    {importStatus && <div role="status" className="shrink-0 border border-slate-200 bg-slate-50 p-3 text-sm">{importStatus}</div>}
+    {pendingImport && <div className="shrink-0 border border-blue-200 bg-blue-50 p-3 text-sm">
+      <p className="whitespace-pre-line">{describeHazardCsvPlan(pendingImport.plan)}</p>
+      <div className="mt-2 flex gap-2">
+        <button type="button" className="rounded bg-blue-600 px-3 py-2 text-white" disabled={importing || isRunning || reviewMode} onClick={applyPendingImport}>Apply CSV import</button>
+        <button type="button" className="rounded border px-3 py-2" disabled={importing} onClick={() => {setPendingImport(null); setImportStatus('CSV import canceled. No changes were saved.');}}>Cancel import</button>
+      </div>
+    </div>}
     <FunctionalDiagramWorkspace
       showControls={false}
       viewMode={splitView ? 'split' : 'table'}
@@ -235,12 +274,17 @@ export default function CodeArchitectureHazardPanel({
           {!reviewMode && (
             <ProjectTabToolbarButton
               icon={isRunning ? <Loader2 size={17} className="animate-spin" /> : <Sparkles size={17} />}
-              label={isRunning ? "Running hazard analysis…" : (latestRun ? "Regenerate hazard analysis" : "Run hazard analysis")}
+              label={isRunning ? "Running hazard analysis…" : (latestRun ? "Continue hazard analysis" : "Run hazard analysis")}
               collapsed={toolbarCollapsed}
               tone="primary"
               onClick={() => onRunAnalysis?.(method)}
               disabled={isRunning || importing || eligibilitySummary.include === 0}
             />
+          )}
+          {latestRun && !isRunning && !reviewMode && (
+            <ProjectTabToolbarButton icon={<Sparkles size={17} />} label="Regenerate hazard analysis"
+              collapsed={toolbarCollapsed} onClick={() => onRunAnalysis?.(method, {regenerate: true})}
+              disabled={importing || eligibilitySummary.include === 0} />
           )}
           {isRunning && !reviewMode && (
             <ProjectTabToolbarButton
@@ -282,7 +326,8 @@ export default function CodeArchitectureHazardPanel({
               tone="success" onClick={() => csvInputRef.current?.click()}
               disabled={!hasSummary || isRunning || importing || !onImportSummary}
             />
-            <input ref={csvInputRef} type="file" accept=".csv,text/csv" className="hidden"
+            <input ref={element => { csvInputRef.current = element; if (importInputRef) importInputRef.current = element; }} type="file" accept=".csv,text/csv" className="hidden"
+              disabled={!hasSummary || isRunning || importing || !onImportSummary}
               aria-label="Import code architecture hazard CSV"
               onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; importCsv(file); }} />
             {latestRun?.csvImportPreviousSummary && <ProjectTabToolbarButton
@@ -368,6 +413,7 @@ export default function CodeArchitectureHazardPanel({
                 onSelectedOperationalContextChange={onSelectedOperationalContextChange}
                 storageKey={`code-architecture-hazard-summary:${latestRun?.repoId || "repo"}:${latestRun?.id || "latest"}`}
                 onOpenArchitectureTarget={onOpenArchitectureTarget}
+                functionalTraceIds={functionalTraceIds}
                 onDeleteRow={reviewMode || !latestRun ? undefined : onDeleteSummaryRow}
                 onCollaboratorSelectionChange={onCollaboratorSelectionChange}
                 selectedOperationalContextId={selectedOperationalContextId}

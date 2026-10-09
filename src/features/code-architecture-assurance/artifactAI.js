@@ -1,4 +1,4 @@
-import { currentArchitectureRows } from '../code-architecture-context/codeRelationshipEvidence';
+import { softwareRequirementSource } from './softwareRequirementSource';
 import { backendURL, buildAIAuthOpts } from "../../components/backendConfig";
 import {
   ARTIFACT_KINDS,
@@ -65,6 +65,7 @@ async function callAssuranceModel(payload, {
   retryDelays = [],
   markTransientUnavailable = true,
   respectUnavailable = true,
+  timeoutMs = 0,
 }) {
   if (respectUnavailable && isAssuranceAIUnavailable()) {
     throw assuranceUnavailableError(errorLabel);
@@ -81,17 +82,31 @@ async function callAssuranceModel(payload, {
   });
 
   for (let attempt = 0; attempt <= retryDelays.length; attempt += 1) {
-    const response = await fetch(`${backendURL}/api/chat`, {
-      method: "POST",
-      ...buildAIAuthOpts({ "Content-Type": "application/json" }),
-      body: requestBody,
-    });
-    if (response.ok) {
-      const data = await response.json();
-      return data.answer || data.content || data.message || data.choices?.[0]?.message?.content || "";
-    }
+    const controller = new AbortController();
+    let timer;
+    const request = async () => {
+      const response = await fetch(`${backendURL}/api/chat`, {
+        method: "POST",
+        ...buildAIAuthOpts({ "Content-Type": "application/json" }),
+        body: requestBody,
+        signal: controller.signal,
+      });
+      return { response, data: response.ok ? await response.json() : null,
+        text: response.ok ? "" : await response.text().catch(() => "") };
+    };
+    let result;
+    try {
+      result = await (timeoutMs ? Promise.race([
+        request(),
+        new Promise((_, reject) => { timer = setTimeout(() => {
+          controller.abort();
+          reject(new Error(`${errorLabel} request timed out. Continuing with recoverable fallback results.`));
+        }, timeoutMs); }),
+      ]) : request());
+    } finally { clearTimeout(timer); }
+    const { response, data, text } = result;
+    if (response.ok) return data.answer || data.content || data.message || data.choices?.[0]?.message?.content || "";
 
-    const text = await response.text().catch(() => "");
     const error = new Error(response.status === 401 ? "No AI key is configured for Collaborator." : `${errorLabel} failed (${response.status}): ${text}`);
     error.status = response.status;
     error.responseText = text;
@@ -573,8 +588,11 @@ function getSheetCellText(cell) {
 
 function summaryRowsFromHazardAnalysis(hazardAnalysis = null) {
   const summary = hazardAnalysis?.generatedSheets?.Summary || hazardAnalysis?.analysisResult?.Summary;
-  if (!Array.isArray(summary) || !Array.isArray(summary[0])) return [];
-  const headers = summary[0].map((header, index) => cellText(header || `Column ${index + 1}`));
+  if (!Array.isArray(summary) || !Array.isArray(summary[0])) {
+    const records = Array.isArray(hazardAnalysis?.summaryRows) ? hazardAnalysis.summaryRows : [];
+    return records.filter(row => row && !Array.isArray(row)).map((row, rowIndex) => ({ ...row, rowIndex }));
+  }
+  const headers = summary[0].map((header, index) => getSheetCellText(header) || `Column ${index + 1}`);
   return summary.slice(1).map((row, rowIndex) => {
     const record = { rowIndex, row };
     headers.forEach((header, index) => {
@@ -587,9 +605,10 @@ function summaryRowsFromHazardAnalysis(hazardAnalysis = null) {
 function pickField(row = {}, names = []) {
   const entries = Object.entries(row);
   for (const name of names) {
-    const normalized = cellText(name).toLowerCase();
-    const match = entries.find(([key]) => cellText(key).toLowerCase() === normalized);
-    const value = match ? cellText(match[1]) : "";
+    const normalize = value => cellText(value).toLowerCase().replace(/[^a-z0-9]/g, "");
+    const normalized = normalize(name);
+    const match = entries.find(([key]) => normalize(key) === normalized);
+    const value = match ? getSheetCellText(match[1]) : "";
     if (value && !/^\([^)]*not found[^)]*\)$/i.test(value)) return value;
   }
   return "";
@@ -874,6 +893,7 @@ async function repairCodeEchoSoftwareRequirements({ rows = [], cbaRows = [], pro
       const raw = await callAssuranceModel(payload, {
         systemPrompt,
         errorLabel: "Software requirements rewrite",
+        timeoutMs: 120000,
         retryDelays: ASSURANCE_TRANSIENT_RETRY_DELAYS_MS,
         markTransientUnavailable: false,
         respectUnavailable: false,
@@ -2293,6 +2313,7 @@ export async function deriveFunctionalSoftwareRequirements({ cbaRows = [], proje
   };
 
   const softwareRows = [];
+  const failures = [];
   for (let start = 0; start < cbaRows.length; start += ASSURANCE_PROMPT_BATCH_SIZE) {
     const batchRows = cbaRows.slice(start, start + ASSURANCE_PROMPT_BATCH_SIZE);
     const end = start + batchRows.length;
@@ -2315,6 +2336,7 @@ export async function deriveFunctionalSoftwareRequirements({ cbaRows = [], proje
       const raw = await callAssuranceModel(payload, {
         systemPrompt,
         errorLabel: "Software requirements AI",
+        timeoutMs: 120000,
         retryDelays: ASSURANCE_TRANSIENT_RETRY_DELAYS_MS,
         markTransientUnavailable: false,
         respectUnavailable: false,
@@ -2322,12 +2344,14 @@ export async function deriveFunctionalSoftwareRequirements({ cbaRows = [], proje
       console.info(`[xHandle AI] Software requirements response rows ${start + 1}-${end}/${cbaRows.length}`, raw);
       const parsed = extractJson(raw);
       const rowsForPrompt = Array.isArray(parsed.requirements) ? parsed.requirements : [];
+      if (!rowsForPrompt.some(row => cellText(row?.requirementText))) throw new Error("AI returned no usable software requirements.");
       batchRows.forEach((sourceRow, batchIndex) => {
         const rowIndex = start + batchIndex;
         const normalized = normalizeSoftwareRow(rowsForPrompt[batchIndex] || {}, rowIndex, cbaRows);
         softwareRows.push(normalized.requirementText ? normalized : fallbackSoftwareRequirement(sourceRow, rowIndex));
       });
     } catch (error) {
+      failures.push(`Rows ${start + 1}-${end}: ${error.message}`);
       console.warn(`[xHandle AI] Software requirements rows ${start + 1}-${end}/${cbaRows.length} failed; using local fallback rows.`, error);
       batchRows.forEach((sourceRow, batchIndex) => {
         softwareRows.push(fallbackSoftwareRequirement(sourceRow, start + batchIndex));
@@ -2348,7 +2372,9 @@ export async function deriveFunctionalSoftwareRequirements({ cbaRows = [], proje
     repoName,
     onProgress,
   });
-  return ensureUniqueGeneratedIds(repairedRows, "SWR");
+  const result = ensureUniqueGeneratedIds(repairedRows, "SWR");
+  result.derivationFailures = failures;
+  return result;
 }
 
 export function importHazardSoftwareRequirements({ hazardAnalysis = null } = {}) {
@@ -2356,7 +2382,7 @@ export function importHazardSoftwareRequirements({ hazardAnalysis = null } = {})
 }
 
 export async function deriveSoftwareRequirements({ cbaRows = [], projectName = "", repoName = "", hazardAnalysis = null, onProgress = null } = {}) {
-  cbaRows = currentArchitectureRows(cbaRows);
+  cbaRows = softwareRequirementSource(cbaRows).rows;
   if (!Array.isArray(cbaRows) || !cbaRows.length) {
     throw new Error("Generate or load a functional decomposition before deriving software requirements.");
   }
@@ -2381,15 +2407,20 @@ export async function deriveSoftwareRequirements({ cbaRows = [], projectName = "
       ? `Combining ${softwareRows.length} functional software requirement${softwareRows.length === 1 ? "" : "s"} with ${safetyRows.length} hazard-derived software requirement${safetyRows.length === 1 ? "" : "s"} (${combinedCount} total before merge).`
       : `Software requirements complete (${softwareRows.length} functional software requirement${softwareRows.length === 1 ? "" : "s"}).`,
   });
-  return [
-    ...softwareRows,
-    ...safetyRows,
-  ].length
-    ? ensureUniqueGeneratedIds([
-      ...softwareRows,
-      ...safetyRows,
-    ], "SWR")
-    : [];
+  const result = ensureUniqueGeneratedIds([...softwareRows, ...safetyRows], "SWR");
+  const summaryRows = summaryRowsFromHazardAnalysis(hazardAnalysis);
+  const eligible = summaryRows.filter(isSafetySignificantHazardRow);
+  result.derivationReport = {
+    functionalRows: softwareRows.length,
+    fallbackRows: softwareRows.filter(row => row.source === "functional-derived-fallback").length,
+    failures: softwareRows.derivationFailures || [],
+    hazardRunId: hazardAnalysis?.id || "",
+    hazardRows: summaryRows.length,
+    excludedSafetyRows: summaryRows.length - eligible.length,
+    missingRequirementRows: eligible.length - safetyRows.length,
+    importedSafetyRows: safetyRows.length,
+  };
+  return result;
 }
 
 async function deriveHazardSystemRequirements({ hazardRows = [], projectName = "", repoName = "", startIndex = 0, onProgress = null } = {}) {

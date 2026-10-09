@@ -1,3 +1,4 @@
+import useDeferredTableRow, { estimateTableRowHeight } from '../../components/useDeferredTableRow';
 import useTableRowFocus from "../../components/useTableRowFocus";
 import CopyTableButton from '../../components/CopyTableButton';
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -55,6 +56,7 @@ export default function CodeArchitectureHazardSummaryTable({
   onSelectedOperationalContextChange,
   storageKey = "code-architecture-hazard-summary:latest",
   onOpenArchitectureTarget,
+  functionalTraceIds,
   onDeleteRow,
   onCollaboratorSelectionChange,
   selectedOperationalContextId = "all",
@@ -396,6 +398,8 @@ export default function CodeArchitectureHazardSummaryTable({
         {visibleColumns.map(({ header, index: colIndex }) => {
           const traceType = traceColumnType(header);
           const value = String(row?.[colIndex] ?? "");
+          const diagramView = functionalTraceIds?.has(getCellByHeader(row, "Trace ID"))
+            ? "Functional" : "CSU";
           return (
             <td
               key={`${rowIndex}-${colIndex}`}
@@ -411,8 +415,8 @@ export default function CodeArchitectureHazardSummaryTable({
                   <button
                     type="button"
                     className={traceLinkClass}
-                    title="Open this trace in the CSU diagram view"
-                    aria-label={`Open ${header} in the CSU diagram view`}
+                    title={`Open this trace in the ${diagramView} diagram view`}
+                    aria-label={`Open ${header} in the ${diagramView} diagram view`}
                     onClick={(event) => {
                       event.stopPropagation();
                       onOpenArchitectureTarget?.(buildTraceTarget(row, traceType));
@@ -440,6 +444,8 @@ export default function CodeArchitectureHazardSummaryTable({
   return (
     <div className={`${className || "max-h-80"} flex min-h-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white`}>
       <div className="flex shrink-0 items-center justify-end gap-2 border-b border-slate-100 bg-white px-3 py-2">
+        <span role="status" className="mr-auto text-sm text-slate-600">{contextFilteredRowItems.length} of {rows.length} rows match filters</span>
+        {filterState.activeFilterCount > 0 && <button type="button" className="text-sm font-medium text-[#2D7DFE]" onClick={filterState.clearAllFilters}>Clear filters</button>}
         <ColumnVisibilityMenu
           columns={columnOptions.map((column) => ({ key: column.key, label: column.label }))}
           hiddenKeys={hiddenColumnKeys}
@@ -524,7 +530,9 @@ export default function CodeArchitectureHazardSummaryTable({
               </tr>,
             ];
             if (interfaceCollapsed) return groupRows;
-            groupRows.push(...group.items.map(renderHazardRow));
+            groupRows.push(...group.items.map(item => <DeferredHazardRow key={item.rowIndex}
+              item={item} renderRow={renderHazardRow} rowRefs={rowRefs} colSpan={tableColumnCount}
+              active={highlightedRowIndex === item.rowIndex} columns={visibleColumns} widths={columnWidths} />));
             return groupRows;
           })}
         </tbody>
@@ -534,15 +542,15 @@ export default function CodeArchitectureHazardSummaryTable({
           No hazard rows match the active column or operational-context filters.
         </div>
       )}
-      {(filterState.activeFilterCount > 0 || selectedOperationalContextId !== "all") && contextFilteredRowItems.length < rows.length && (
-        <div className="border-t border-slate-100 px-3 py-2 text-xs text-slate-500">
-          {contextFilteredRowItems.length} of {rows.length} rows match active filters.
-          <button type="button" className="ml-2 font-medium text-[#2D7DFE]" onClick={filterState.clearAllFilters}>
-            Clear filters
-          </button>
-        </div>
-      )}
+
       </div>
     </div>
   );
+}
+
+function DeferredHazardRow({item, renderRow, rowRefs, colSpan, active, columns, widths}) {
+  const placeholder = useDeferredTableRow({id: `cba-hazard-row-${item.rowIndex}`, index: item.rowIndex,
+    originalIndex: item.rowIndex, rowRefs, colSpan, active,
+    height: estimateTableRowHeight(item.row, widths, columns.map(column => column.index))});
+  return placeholder || renderRow(item);
 }

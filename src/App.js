@@ -1,3 +1,4 @@
+import { assignImportedHazardContext } from './features/code-architecture-hazard-analysis/codeHazardImportContext';
 import { createCodeArchitectureImportOperation } from './features/code-architecture-context/codeArchitectureImportOperation';
 import { restoreFunctionalCsvSnapshot, functionalModelIsReady, buildFunctionalModelRows, immutableFunctionalRows, immutableFunctionalRowsAsync } from './features/code-architecture-context/functionalModel';
 import { parseCodeArchitectureCsv } from "./features/code-architecture-context/codeArchitectureCsvImport";
@@ -1763,8 +1764,11 @@ function normalizeCodeArchitectureProjects(raw) {
 
 function migrateLegacyCodeArchitectureProjects() {
   try {
-    const existing = normalizeCodeArchitectureProjects(JSON.parse(localStorage.getItem(CBA_PROJECTS_KEY) || "[]"));
-    if (existing.length) return existing;
+    const savedProjects = localStorage.getItem(CBA_PROJECTS_KEY);
+    const existing = normalizeCodeArchitectureProjects(JSON.parse(savedProjects || "[]"));
+    // An explicitly empty workspace is intentional (for example after cleanup).
+    // Only migrate legacy repository settings when no project registry exists.
+    if (savedProjects !== null) return existing;
     const owner = localStorage.getItem("repoOwner") || "";
     const repo = localStorage.getItem("repoName") || "";
     if (!owner || !repo) return [];
@@ -3983,6 +3987,7 @@ const setCbaTableData = useCallback(next => setCbaTableDataState(previous =>
 const [selectedCbaElement, setSelectedCbaElement] = useState(null);
 const [activeCodeArchitectureSelection, setActiveCodeArchitectureSelection] = useState(null);
 const [codeArchitectureWorkspaceTab, setCodeArchitectureWorkspaceTab] = useState("architecture");
+const codeArchitectureHazardCsvInputRef = useRef(null);
 const [codeArchitectureHazardSplitView, setCodeArchitectureHazardSplitView] = useState(false);
 const [codeArchitectureFunctionalViewMode, setCodeArchitectureFunctionalViewMode] = useState("architecture");
 const [codeArchitectureViewControlsTarget, setCodeArchitectureViewControlsTarget] = useState(null);
@@ -4276,7 +4281,9 @@ useEffect(() => {
       }
       setSelectedCbaElement(null);
       setActiveCodeArchitectureSelection(null);
-      setCodeArchitectureHazardRun(null);
+      // Architecture reloads can follow context/review updates in the same
+      // workspace. The hazard loader owns run selection; clearing it here
+      // replaces imported preprocessing with a fresh, blank CSV draft.
       setCbaLoadingProgress(100);
       // Let the completed state paint before replacing it with the workspace.
       return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -7874,14 +7881,14 @@ useEffect(() => {
     setProgress(prev => ({ ...prev, total: stepDescriptionsMap[riskMethod]?.total || 9 }));
   }, [riskMethod]);
 
+  const hazardLoadRepoId = activeCodeArchitectureRepoMeta.repoId || activeCodeArchitectureRepoMeta.repoName || "";
   useEffect(() => {
     let cancelled = false;
     let requestSequence = 0;
     setCodeArchitectureHazardRun(null);
     async function loadCodeArchitectureHazardRun() {
       const request = ++requestSequence;
-      const repoMeta = activeCodeArchitectureRepoMeta;
-      const repoId = repoMeta.repoId || repoMeta.repoName || "";
+      const repoId = hazardLoadRepoId;
       if (!repoId) {
         if (!cancelled && request === requestSequence) setCodeArchitectureHazardRun(null);
         return;
@@ -7890,20 +7897,31 @@ useEffect(() => {
         const filters = { repoId };
         if (activeCodeArchitectureProjectId) filters.projectId = activeCodeArchitectureProjectId;
         const latest = await getLatestCodeArchitectureHazardRun(filters);
-        if (!cancelled && request === requestSequence) setCodeArchitectureHazardRun(latest || null);
+        const contexts = loadCodeArchitectureHazardContexts({
+          projectId: activeCodeArchitectureProjectId,
+          repoId: activeCodeArchitectureRepo?.id || repoId,
+        });
+        const aligned = assignImportedHazardContext(latest, contexts);
+        if (aligned !== latest) await saveCodeArchitectureHazardRun(aligned);
+        if (!cancelled && request === requestSequence) setCodeArchitectureHazardRun(aligned || null);
       } catch (error) {
         console.warn("[code-architecture-hazard-analysis] Failed to load latest run", error);
         if (!cancelled && request === requestSequence) setCodeArchitectureHazardRun(null);
       }
     }
     loadCodeArchitectureHazardRun();
-    const onChanged = () => loadCodeArchitectureHazardRun();
+    const onChanged = (event) => {
+      const detail = event.detail || {};
+      if (detail.projectId && detail.projectId !== activeCodeArchitectureProjectId) return;
+      if (detail.repoId && detail.repoId !== hazardLoadRepoId) return;
+      loadCodeArchitectureHazardRun();
+    };
     window.addEventListener("xhandle:code-architecture-hazard-analysis:changed", onChanged);
     return () => {
       cancelled = true;
       window.removeEventListener("xhandle:code-architecture-hazard-analysis:changed", onChanged);
     };
-  }, [activeCodeArchitectureProjectId, activeCodeArchitectureRepoMeta, cbaTableData]);
+  }, [activeCodeArchitectureProjectId, activeCodeArchitectureRepo?.id, hazardLoadRepoId]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -11649,6 +11667,15 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       if (!verified.ok) throw new Error(verified.error);
       const nextRun = {
         ...run,
+        ...(reviewTarget === "guidePhraseApplicable" ? {
+          userPreprocessing: {
+            ...run.userPreprocessing,
+            [sourceRowId]: recordUserPreprocessing(
+              run.userPreprocessing?.[sourceRowId], committedSummary[0], committedRow,
+              ["Guide Phrase Applicable", "Guide Phrase Applicability Rationale"], previousRow,
+            ),
+          },
+        } : {}),
         generatedSheets: { ...(run.generatedSheets || {}), Summary: committedSummary },
         updatedAt: new Date().toISOString(),
       };
@@ -14295,13 +14322,20 @@ Rules:
     URL.revokeObjectURL(url);
   };
 
-  const handleSaveCodeArchitectureHazardContexts = (contexts) => {
+  const handleSaveCodeArchitectureHazardContexts = async (contexts) => {
     const projectId = activeCodeArchitectureProject?.id || "";
     const repoId = activeCodeArchitectureRepo?.id
       || activeCodeArchitectureRepoMeta?.repoId
       || activeCodeArchitectureRepoMeta?.repoName
       || "";
     const normalized = normalizeHazardOperationalContexts(contexts);
+    const currentRun = codeArchitectureHazardRunRef.current;
+    const updatedRun = assignImportedHazardContext(currentRun, normalized);
+    if (updatedRun !== currentRun) {
+      await saveCodeArchitectureHazardRun(updatedRun);
+      if (activeCodeArchitectureProjectIdRef.current !== projectId) return;
+      commitCodeArchitectureHazardRun(updatedRun);
+    }
     setCodeArchitectureHazardContexts(normalized);
     setSelectedCodeArchitectureHazardContextId((current) => (
       current === "all" || normalized.some((context) => context.id === current) ? current : "all"
@@ -14353,7 +14387,8 @@ Rules:
   };
 
   const handleRunCodeArchitectureHazardAnalysis = async (
-    selectedMethod = codeArchitectureHazardMethod
+    selectedMethod = codeArchitectureHazardMethod,
+    options = {}
   ) => {
     const repoMeta = activeCodeArchitectureRepoMeta;
     const repoId = repoMeta.repoId || repoMeta.repoName || "repo";
@@ -14393,6 +14428,7 @@ Rules:
     const priorRunForPreprocessing = candidatePriorRun?.projectId === cbaProjectId && candidatePriorRun?.repoId === repoId ? candidatePriorRun : null;
     try {
       const run = await runCodeArchitectureHazardAnalysis({
+        regenerate: Boolean(options.regenerate),
         previousRun: priorRunForPreprocessing,
         cbaRows: cbaTableData,
         method: selectedMethod,
@@ -14459,7 +14495,7 @@ Rules:
       }
       finishActivity(actId, "success", "Code architecture hazard analysis complete");
     } catch (error) {
-      if (isCurrentRun() && Object.keys(priorRunForPreprocessing?.userPreprocessing || {}).length) commitCodeArchitectureHazardRun(priorRunForPreprocessing);
+      if (codeHazardScopeRef.current === runScope && codeArchitectureHazardAbortRef.current === abortController) commitCodeArchitectureHazardRun(priorRunForPreprocessing);
       const canceled = abortController.signal.aborted || error?.name === "AbortError";
       console.error("[code-architecture-hazard-analysis] Run failed", error);
       if (codeHazardScopeRef.current === runScope && codeArchitectureHazardAbortRef.current === abortController) setCodeArchitectureHazardProgress((prev) => ({
@@ -14539,10 +14575,11 @@ Rules:
       csvImportPreviousSummary: restore ? null : baseline.generatedSheets.Summary,
       updatedAt: new Date().toISOString(),
     };
-    await saveCodeArchitectureHazardRun(nextRun);
+    const alignedRun = assignImportedHazardContext(nextRun, codeArchitectureHazardContexts);
+    await saveCodeArchitectureHazardRun(alignedRun);
     if (codeArchitectureCsvWorkspaceRef.current.key === codeArchitectureCsvWorkspaceKey
       && activeCodeArchitectureProjectIdRef.current === activeCodeArchitectureProjectId
-      && codeArchitectureHazardRunRef.current === expectedRun) commitCodeArchitectureHazardRun(nextRun);
+      && codeArchitectureHazardRunRef.current === expectedRun) commitCodeArchitectureHazardRun(alignedRun);
   };
 
   const handleDeleteCodeArchitectureHazardSummaryRow = useCallback(async (rowIndex) => {
@@ -17394,9 +17431,13 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                 </button>
                 <button
                   type="button"
-                  onClick={() => codeArchitectureProjectImportInputRef.current?.click()}
+                  onClick={() => {
+                    if (codeArchitectureWorkspaceTab === "safety" && hazardRemediationTab === "hazard-analysis") codeArchitectureHazardCsvInputRef.current?.click();
+                    else codeArchitectureProjectImportInputRef.current?.click();
+                  }}
                   className="inline-flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  title="Import functional decomposition CSV into this project, or JSON as a new project"
+                  title={codeArchitectureWorkspaceTab === "safety" && hazardRemediationTab === "hazard-analysis"
+                    ? "Import reviewed hazard analysis CSV updates" : "Import functional decomposition CSV into this project, or JSON as a new project"}
                 >
                   <FileText size={15} />
                   Import
@@ -17626,6 +17667,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                         : 'No current Functional model. Generate it in Architecture Diagram → Functional to analyze responsibilities instead of detailed calls.'}
                     </div>
                     <CodeArchitectureHazardPanel
+                      importInputRef={codeArchitectureHazardCsvInputRef}
                       cbaRows={cbaTableData}
                       latestRun={codeArchitectureHazardRun}
                       splitView={codeArchitectureHazardSplitView}
@@ -20703,6 +20745,40 @@ const updateRiskInProject = async (projectId, predicate) => {
   }}
   onBaselineRepo={handleBaselineRepo} // ✅ runs the same analyzer as "Analyze"
   onAIProviderSaved={refreshGate}
+  onStorageDeleted={({ item, keys }) => {
+    // Storage cleanup must update the owning React state, not just broadcast a
+    // render tick: otherwise open views retain data and persistence can revive it.
+    const localKeys = item.kind === 'localStorage' ? (keys || item.keys || []) : [];
+    const architecture = item.dbName === 'xhandle' && item.storeName === XHANDLE_IDB_CBA_STORE;
+    if (architecture || localKeys.includes(CBA_PROJECTS_KEY)) {
+      const next = normalizeCodeArchitectureProjects(JSON.parse(localStorage.getItem(CBA_PROJECTS_KEY) || '[]'));
+      setCodeArchitectureProjects(next);
+      const current = next.find(project => project.id === activeCodeArchitectureProjectId);
+      if (!current || !current.repos?.some(repo => repo.id === activeCodeArchitectureRepo?.id)) {
+        codeArchitectureHazardAbortRef.current?.abort();
+        codeArchitectureHazardAbortRef.current = null;
+        codeHazardScopeRef.current = null;
+        codeArchitectureScopeRef.current = null;
+        setActiveCodeArchitectureProjectId(null);
+        setCbaTableData([]);
+        setSelectedCbaElement(null);
+        setActiveCodeArchitectureSelection(null);
+        setCodeArchitectureHazardRun(null);
+        setCodeArchitectureImportStatus(null);
+      }
+    }
+    if (localKeys.includes(PROJECTS_KEY)) {
+      const next = repairDuplicateProjectIds(JSON.parse(localStorage.getItem(PROJECTS_KEY) || '[]'));
+      setProjects(next);
+      if (!next.some(project => project.id === activeProjectId)) {
+        setActiveProjectId(null);
+        setResponseRows([]);
+      }
+    }
+    if (item.dbName === 'xhandle-code-architecture-hazard-analysis') {
+      window.dispatchEvent(new CustomEvent('xhandle:code-architecture-hazard-analysis:changed'));
+    }
+  }}
   onWorkspaceProjectRestored={({ workspaceType }) => {
     if (workspaceType === "code-architecture") {
       try {

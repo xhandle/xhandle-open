@@ -11,7 +11,7 @@ const { createRoot } = require("react-dom/client");
 const HazardOperationalContextManager = require("./HazardOperationalContextManager").default;
 
 describe("HazardOperationalContextManager", () => {
-  it("identifies and saves the owning code architecture scope", () => {
+  it("identifies and saves the owning code architecture scope", async () => {
     const onSave = jest.fn();
     const onClose = jest.fn();
     const host = document.createElement("div");
@@ -38,7 +38,7 @@ describe("HazardOperationalContextManager", () => {
 
       const saveButton = Array.from(modal.querySelectorAll("button"))
         .find((button) => button.textContent.includes("Save contexts"));
-      act(() => saveButton.click());
+      await act(async () => saveButton.click());
 
       expect(onSave).toHaveBeenCalledWith([{
         id: "normal",

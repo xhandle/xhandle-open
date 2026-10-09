@@ -169,6 +169,7 @@ const wait = (ms) => new Promise((resolve, reject) => {
 });
 
 let response;
+let json;
 for (let attempt = 1; attempt <= 5; attempt++) {
   const timeoutController = new AbortController();
   const abortFromCaller = () => timeoutController.abort();
@@ -199,11 +200,23 @@ for (let attempt = 1; attempt <= 5; attempt++) {
           : {}),
       }),
     });
+    // Keep cancellation and the deadline active until the body is consumed.
+    if (response.ok) {
+      json = await response.json();
+    } else if (response.status !== 429) {
+      const errTxt = await response.text();
+      throw new Error(`LLM proxy error (${response.status}): ${errTxt}`);
+    }
   } catch (error) {
     if (timedOut && !requestOptions.signal?.aborted) {
       const timeoutError = new Error(`Hazard analysis request timed out after ${Math.max(1, Math.round(timeoutMs / 1000))} seconds.`);
       timeoutError.name = "TimeoutError";
       throw timeoutError;
+    }
+    if (error?.name === "AbortError" && !requestOptions.signal?.aborted) {
+      const interrupted = new Error("Hazard analysis response was interrupted before it finished downloading.");
+      interrupted.name = "NetworkError";
+      throw interrupted;
     }
     throw error;
   } finally {
@@ -244,13 +257,11 @@ if (!response.ok) {
   throw new Error(`LLM proxy error (${response.status}): ${errTxt}`);
 }
 
-const json = await response.json();
-
 return json?.choices?.[0]?.message?.content?.trim() || "(empty)";
 
 
   } catch (error) {
-    if (error?.name === "AbortError" || error?.name === "TimeoutError") throw error;
+    if (error?.name === "AbortError" || error?.name === "TimeoutError" || error?.name === "NetworkError" || requestOptions.workflow === "hazard-row-generation") throw error;
     console.error("🚨 Error in fetchLLMResponse (via ClayPrompt logic):", error);
     return "(error)";
   }

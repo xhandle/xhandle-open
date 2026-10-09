@@ -55,6 +55,28 @@ const code=sources.map(file=>{
    if((await a.readCbaRowsFromIndexedDB('cba:legacy:repo'))[0].manual!=='keep')throw new Error('Legacy read failed');
    await a.writeRecord(db,store,'functional-decomposition-checkpoint:cba:old:repo:run',{completedPaths:['done.py'],totalFiles:1,failedFiles:[],rows:[{from:'legacy'}],updatedAt:new Date().toISOString()});
    if(!(await a.readLatestArchitectureCheckpoint('cba:old:repo')))throw new Error('Legacy complete extraction is invisible');
+   // Old tree encoding (separate small-object chunk) must compare equal to
+   // the new inline representation when the hydrated architecture is unchanged.
+   {
+   const oldKey='cba:old-encoding:repo', oldCheckpoint=`functional-decomposition-checkpoint:${oldKey}:run`;
+   const oldRows=[{traceId:'old-shape',from:'Read',to:'Apply',action:'Data'}];
+   const oldRowRecord=await a.stageRecord(db,store,oldKey,oldRows[0]);
+   const oldRoot=oldKey+':$part:old-array-root';
+   await a.putRawRecord(db,store,oldRoot,JSON.stringify(['array',[{ref:oldRowRecord.root}]]));
+   await a.putRawRecord(db,store,oldKey,{...oldRowRecord,root:oldRoot});
+   const replacement=[{traceId:'replacement'}], oldRun={version:1,fingerprint:'a'.repeat(64)};
+   await a.prepareArchitecturePublication(oldKey,replacement,oldRun,{},oldCheckpoint,await a.readCbaRowsFromIndexedDB(oldKey));
+   await a.recoverArchitecturePublication(oldKey,oldCheckpoint);
+   if((await a.readCbaRowsFromIndexedDB(oldKey))[0].traceId!=='replacement')throw new Error('Unchanged old encoding caused a false conflict');
+   // A real pre-staging conflict retains BOTH the edit and a durable completed checkpoint.
+   await a.writeCbaRowsToIndexedDB(oldKey,[{traceId:'manual-edit'}]);
+   let stagingConflict=false;
+   try {await a.prepareArchitecturePublication(oldKey,replacement,oldRun,{},oldCheckpoint,oldRows);}
+   catch(error){stagingConflict=error.code==='SOURCE_PUBLICATION_CONFLICT';}
+   const retained=await a.readArchitectureCheckpoint(oldCheckpoint);
+   if(!stagingConflict || retained.durable===false || retained.rows[0].traceId!=='replacement' ||
+      (await a.readCbaRowsFromIndexedDB(oldKey))[0].traceId!=='manual-edit')throw new Error('Real edit or completed checkpoint lost');
+   }
    // A reload uses only durable ready records, not in-memory run state.
    // Fail native publication transaction after some puts: no partially published pointer.
    const next=[{traceId:'next'}], run={version:1,fingerprint:'f'.repeat(64),publishedAt:new Date().toISOString()};

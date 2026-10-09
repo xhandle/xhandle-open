@@ -62,4 +62,43 @@ describe("hazard analysis LLM request lifecycle", () => {
 
     await expect(request).rejects.toMatchObject({ name: "AbortError" });
   });
+  test("keeps the timeout active while downloading the response body", async () => {
+    global.fetch = jest.fn(async (_url, options) => ({
+      ok: true,
+      json: () => new Promise((_resolve, reject) => options.signal.addEventListener("abort", () => {
+        reject(Object.assign(new Error("body aborted"), {name: "AbortError"}));
+      })),
+    }));
+    const request = fetchLLMResponse("analyze", {}, [], "", {timeoutMs: 50});
+    await Promise.resolve();
+    jest.advanceTimersByTime(51);
+    await expect(request).rejects.toMatchObject({name: "TimeoutError"});
+  });
+
+  test("an unsolicited body abort is recoverable rather than user cancellation", async () => {
+    global.fetch = jest.fn(async () => ({ok: true, json: async () => {
+      throw Object.assign(new Error("body aborted"), {name: "AbortError"});
+    }}));
+    await expect(fetchLLMResponse("analyze", {}, [], "", {})).rejects.toMatchObject({name: "NetworkError"});
+  });
+
+  test("preserves proxy failures for row generation instead of returning non-JSON placeholders", async () => {
+    global.fetch = jest.fn(async () => ({ok: false, status: 502, text: async () => "upstream unavailable"}));
+    await expect(fetchLLMResponse("analyze", {}, [], "", {workflow: "hazard-row-generation"}))
+      .rejects.toThrow("LLM proxy error (502)");
+  });
+
+  test("caller cancellation still stops a response body download", async () => {
+    const controller = new AbortController();
+    global.fetch = jest.fn(async (_url, options) => ({ok: true,
+      json: () => new Promise((_resolve, reject) => options.signal.addEventListener("abort", () => {
+        reject(Object.assign(new Error("body aborted"), {name: "AbortError"}));
+      })),
+    }));
+    const request = fetchLLMResponse("analyze", {}, [], "", {signal: controller.signal});
+    await Promise.resolve();
+    controller.abort();
+    await expect(request).rejects.toMatchObject({name: "AbortError"});
+  });
+
 });

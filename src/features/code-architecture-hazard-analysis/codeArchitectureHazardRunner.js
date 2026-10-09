@@ -1,3 +1,5 @@
+import { createCodeHazardCheckpoint } from './codeHazardGenerationCheckpoint';
+import { getStoredActiveAIProvider, getStoredAIProviderModelPreference, getStoredAIProviderEffortPreference } from '../../lib/aiProviderConfig';
 import { functionalModelIsReady } from '../code-architecture-context/functionalModel';
 import { fillNotApplicableHazardSummary } from '../project-hazard-analysis/hazardNotApplicableCells';
 import { prepareCodeHazardPreprocessing, reconcileCodeHazardPreprocessing } from './codeArchitectureHazardPreprocessing';
@@ -16,6 +18,7 @@ import {
 
 export async function runCodeArchitectureHazardAnalysis({
   previousRun = null,
+  regenerate = false,
   cbaRows = [],
   method = "STPA-Textbook",
   repoMeta = {},
@@ -123,7 +126,14 @@ export async function runCodeArchitectureHazardAnalysis({
   };
 
   onActivityUpdate({ step: 1, message: `Generating code architecture hazard analysis from ${input.eligibilitySummary.include} eligible interface${input.eligibilitySummary.include === 1 ? "" : "s"}...` });
+  const generationCheckpoint = await createCodeHazardCheckpoint({
+    projectId, repoId: input.repoId, method,
+    model: getStoredAIProviderModelPreference(getStoredActiveAIProvider(), {includeDefault: true}),
+    effort: getStoredAIProviderEffortPreference(getStoredActiveAIProvider()),
+    preprocessing: previousRun?.userPreprocessing || null,
+  }, {regenerate, signal, onProgress: setProgress});
   const generatedSheetsRaw = await runLiteAIAnalysis({
+    generationCheckpoint,
     tableRows: input.tableRows,
     sheets: input.sheets,
     setFolders,
@@ -141,6 +151,15 @@ export async function runCodeArchitectureHazardAnalysis({
     signal,
   });
   checkCancelled();
+  const summary = generatedSheetsRaw?.Summary;
+  const resultColumns = (Array.isArray(summary?.[0]) ? summary[0] : []).map(value => String(value).trim().toLowerCase());
+  const assessmentColumns = resultColumns.map((name, index) =>
+    /^(hazards?|loss(?:es)?|unsafe control actions?|failure mode|what.if scenario|causal (?:factor|scenario)s?|mitigation strateg(?:y|ies)|security loss|unacceptable security condition|vulnerable control action|security control)$/.test(name) ? index : -1).filter(index => index >= 0);
+  const applicabilityColumn = resultColumns.indexOf('guide phrase applicable');
+  const incomplete = !Array.isArray(summary) || summary.length < 2 || summary.slice(1).some(row =>
+    !Array.isArray(row) || (!assessmentColumns.some(index => String(row[index] || '').trim()) &&
+    String(row[applicabilityColumn] || '').trim().toLowerCase() !== 'no'));
+  if (incomplete) throw new Error('Hazard analysis did not produce completed assessment rows. Previous saved results were preserved; check the generation error before retrying.');
   let generatedSheets = ensureHazardSummaryEvidenceColumns(
     ensureHazardSummaryTraceColumns(generatedSheetsRaw, sourceAuditedTableRows),
     sourceAuditedTableRows
@@ -200,6 +219,8 @@ export async function runCodeArchitectureHazardAnalysis({
   }
   checkCancelled();
   await saveCodeArchitectureHazardRun(run);
+  // Cleanup must not turn an already-published result into a failed run.
+  try { await generationCheckpoint?.prune(); } catch (error) { console.warn('[hazard-checkpoint] Cleanup deferred', error); }
   onActivityUpdate({ step: 9, message: "Code architecture hazard analysis complete." });
   return run;
 }

@@ -158,6 +158,25 @@ describe("code architecture functional split view", () => {
     expect(codeArchitectureViewShowsDiagram("architecture")).toBe(true);
     expect(codeArchitectureViewShowsDiagram("table")).toBe(false);
   });
+
+  it("routes an exact hazard relationship trace to the generated Functional diagram", async () => {
+    const { act } = require('react');
+    const { processFunctionalModel } = require('../features/code-architecture-context/testSupport/functionalHierarchyFixture');
+    const { buildFunctionalModelRows } = require('../features/code-architecture-context/functionalModel');
+    const { ensureCodeArchitectureTraceIds } = require('../features/code-architecture-hazard-analysis/codeArchitectureHazardUtils');
+    const rows = await processFunctionalModel(ensureCodeArchitectureTraceIds([{ from: 'caller', to: 'callee', fromFile: 'a.cpp', toFile: 'b.cpp', action: 'Send', traceId: 'hazard-source' }]), {
+      request: async () => ({ function: { name: 'Prepare Output', description: 'Prepare output.' }, relationships: [{ index: 0, disposition: 'interaction', significance: 'meaningful', target: { name: 'Receive Output', description: 'Receive output.' }, action: 'Send output', description: 'Output information.', kind: 'data', rationale: 'Cross-component output.' }] }),
+    });
+    const traceId = buildFunctionalModelRows(rows).find(row => !row.functionalModel.internal).traceId;
+    const target = { traceId, type: 'edge', mode: 'edge' };
+    const handled = jest.fn();
+    mockDiagramFocus.mockClear().mockReturnValue(true);
+    act(() => root.render(<FunctionalDecompositionTable data={rows} repoId="repo" branch="main" focusTarget={target} onFocusTargetHandled={handled} />));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
+    expect(host.textContent).toContain('Functional');
+    expect(mockDiagramFocus.mock.calls.at(-1)[0]).toMatchObject({ traceId, type: 'edge' });
+    expect(handled).toHaveBeenCalledWith(target);
+  });
 });
 
 describe("code architecture functional table cell editing", () => {

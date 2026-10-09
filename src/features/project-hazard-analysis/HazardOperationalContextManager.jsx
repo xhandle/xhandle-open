@@ -25,6 +25,7 @@ export default function HazardOperationalContextManager({
   const [drafts, setDrafts] = useState([]);
   const [description, setDescription] = useState("");
   const [generating, setGenerating] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [generationError, setGenerationError] = useState("");
 
   useEffect(() => {
@@ -47,14 +48,20 @@ export default function HazardOperationalContextManager({
   // Markdown form so the scenarios stay enumerated in the prompt.
   const pasteDescriptionAsMarkdown = (event) => handleMarkdownPaste(event, (value) => setDescription(value));
 
-  const save = () => {
+  const save = async () => {
+    if (saving) return;
     const incomplete = drafts.some((context) => !String(context.scenario || "").trim() || !String(context.mode || "").trim());
     if (incomplete) {
       window.alert("Each operational context needs both a scenario and a mode.");
       return;
     }
-    onSave(normalizeHazardOperationalContexts(drafts));
-    onClose();
+    setSaving(true);
+    try {
+      await onSave(normalizeHazardOperationalContexts(drafts));
+      onClose();
+    } catch (error) {
+      window.alert(`Could not save operational contexts: ${error?.message || error}`);
+    } finally { setSaving(false); }
   };
 
   const generate = async () => {
@@ -181,8 +188,8 @@ export default function HazardOperationalContextManager({
         </div>
 
         <footer className="flex justify-end gap-2 border-t border-gray-200 px-6 py-4">
-          <button type="button" onClick={onClose} disabled={generating} className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60">Cancel</button>
-          <button type="button" onClick={save} disabled={generating} className="rounded-md bg-[#2D7DFE] px-4 py-2 text-sm font-medium text-white hover:bg-[#1E61D6] disabled:opacity-60">Save contexts</button>
+          <button type="button" onClick={onClose} disabled={generating || saving} className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60">Cancel</button>
+          <button type="button" onClick={save} disabled={generating || saving} className="rounded-md bg-[#2D7DFE] px-4 py-2 text-sm font-medium text-white hover:bg-[#1E61D6] disabled:opacity-60">Save contexts</button>
         </footer>
       </section>
     </div>,
