@@ -1,7 +1,10 @@
+import { mapAnalysisWork, serialAnalysisWriter, createAnalysisPacer } from '../features/code-architecture-context/functionalWorkScheduler';
+import { functionalHierarchyIsReady } from '../features/code-architecture-context/functionalHierarchy';
+import { createFunctionalRequestRuntime, createValidatedFunctionalCache } from '../features/code-architecture-context/functionalRequestRuntime';
 import { SHOW_TABLE_REVIEW_COLUMNS } from "./tablePresentation";
 import { ArchitectureWorkspace, ArchitectureDivider, ArchitectureTablePane, useArchitectureColumnWidths, diagramFocusView, architectureHeaderClass, architectureCellClass, architectureLinkClass } from './ArchitectureWorkspace';
 import VirtualTableBody from './VirtualTableBody';
-import { buildFunctionalModelRows, processFunctionalModel, functionalModelIsReady, immutableFunctionalRows } from '../features/code-architecture-context/functionalModel';
+import { buildFunctionalModelRows, processFunctionalModel, functionalModelIsReady, immutableFunctionalRows, functionalInputKey, FUNCTIONAL_MODEL_VERSION } from '../features/code-architecture-context/functionalModel';
 import { writeCbaRowsToIndexedDB, readCbaRowsRevision, flushArchitectureWrites } from '../features/code-architecture-assurance/codeArchitectureStorage';
 import { readRecord, writeRecord } from '../features/code-architecture-storage/chunkedRecord';
 import { prepareArchitecturePublication, recoverArchitecturePublication, openCbaIndexedDB } from '../features/code-architecture-assurance/codeArchitectureStorage';
@@ -1953,11 +1956,16 @@ function sleep(ms, signal = null) {
   return waitForAnalysisRetry(ms, signal);
 }
 
-async function requestOpenAIProxyWithRetry({ prompt, bearer, label, attempts = 3, signal = null, runGuard, maxTokens = FUNCTIONAL_OUTPUT_TOKENS, jsonMode = false }) {
+const paceDecompositionRequest = createAnalysisPacer();
+
+async function requestOpenAIProxyWithRetry({ prompt, bearer, label, attempts = 3, signal = null, runGuard, maxTokens = FUNCTIONAL_OUTPUT_TOKENS, jsonMode = false, onAttempt }) {
   let lastError = null;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     throwIfAborted(signal);
     runGuard?.check();
+    const queuedAt = performance.now();
+    await paceDecompositionRequest(signal);
+    onAttempt?.({ queueMs: performance.now() - queuedAt });
     let response;
     try {
       response = await fetch(`${backendURL}/api/chat`, {
@@ -1974,6 +1982,7 @@ async function requestOpenAIProxyWithRetry({ prompt, bearer, label, attempts = 3
           max_tokens: maxTokens,
           ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
           xhandleModelLocked: true,
+          xhandleWorkflow: "code-architecture-functional-decomposition",
         }),
         signal,
       });
@@ -2000,15 +2009,18 @@ async function requestOpenAIProxyWithRetry({ prompt, bearer, label, attempts = 3
     }
 
     console.info(`${label} transient HTTP ${response.status}; retrying (${attempt + 1}/${attempts}).`);
-    await sleep(700 * attempt, signal);
+    await sleep(Math.max(700 * attempt, Math.min(60000, lastError.retryAfterMs || 0)), signal);
   }
   throw lastError || new Error(`${label} failed`);
 }
 
 async function requestOpenAIProxyJsonWithMetrics({ metricsRun = null, ...params }) {
-  return withAnalysisRequestDeadline(async requestSignal => {
+  const totalStartedAt = performance.now();
+  try { return await withAnalysisRequestDeadline(async requestSignal => {
     const startedAt = performance.now();
-    const response = await requestOpenAIProxyWithRetry({ ...params, signal: requestSignal, runGuard: metricsRun ? analysisRunGuards.get(metricsRun) : null });
+    const response = await requestOpenAIProxyWithRetry({ ...params, onAttempt: ({ queueMs }) => {
+      if (metricsRun) { metricsRun.requestAttempts = (metricsRun.requestAttempts || 0) + 1; metricsRun.requestQueueMs = (metricsRun.requestQueueMs || 0) + queueMs; }
+    }, signal: requestSignal, runGuard: params.runGuard || (metricsRun ? analysisRunGuards.get(metricsRun) : null) });
     let payload;
     try { payload = await response.json(); }
     catch (error) { if (error instanceof SyntaxError) throw incompleteResponse("The model returned an invalid JSON response."); throw error; }
@@ -2023,6 +2035,43 @@ async function requestOpenAIProxyJsonWithMetrics({ metricsRun = null, ...params 
     if (payload?.choices?.some(choice => choice.finish_reason === "length") || payload?.finish_reason === "length") throw incompleteResponse("The AI response exceeded its output capacity.", "FUNCTIONAL_RESPONSE_TRUNCATED");
     return { ...payload, result };
   }, params.signal);
+  } catch (error) {
+    if (metricsRun) {
+      metricsRun.failedAiCallCount++;
+      metricsRun.calls.push({ label: params.label, status: 'failed', code: error.code || error.name,
+        durationMs: performance.now() - totalStartedAt, createdAt: new Date().toISOString() });
+    }
+    throw error;
+  }
+}
+
+async function processResumableFunctionalModel(rows, { scope, bearer, metricsRun, ...options }) {
+  const guard = analysisRunGuards.get(metricsRun) || createRunGuard(() => settingsFromAuth(buildAIAuthOpts()));
+  const revision = await digestText(JSON.stringify([FUNCTIONAL_MODEL_VERSION, rows.map(row => [functionalInputKey(row), row.traceId, row.lineage?.status])]));
+  const onEvent = event => {
+    if (!metricsRun) return;
+    const summary = metricsRun.functionalWork ||= { cacheHits: 0, checkpoints: 0, checkpointFailures: 0, requests: 0 };
+    if (event.type === 'cache-hit') summary.cacheHits++;
+    if (event.type === 'checkpoint-saved') summary.checkpoints++;
+    if (event.type === 'checkpoint-write-failed' || event.type === 'checkpoint-read-failed') summary.checkpointFailures++;
+    if (event.type === 'request') summary.requests++;
+  };
+  const freshGeneration = options.force && functionalModelIsReady(rows) && functionalHierarchyIsReady(rows);
+  const cache = createValidatedFunctionalCache({ scope, revision, settings: guard.settings,
+    read: key => { guard.check(); return freshGeneration ? null : idbGet(IDB_STORES.cba, key); },
+    write: (key, value) => { guard.check(); return idbPut(IDB_STORES.cba, key, value); }, onEvent });
+  const request = createFunctionalRequestRuntime({ cache, signal: options.signal, onEvent,
+    request: async (prompt, signal, meta) => {
+      guard.check();
+      return (await requestOpenAIProxyJsonWithMetrics({ prompt, bearer, signal, metricsRun,
+        runGuard: guard, label: `Functional ${meta?.kind || 'processing'}`, maxTokens: 7000, jsonMode: true })).result;
+    } });
+  try {
+    guard.check();
+    const result = await processFunctionalModel(rows, { ...options, concurrency: 32, request });
+    guard.check();
+    return result;
+  } finally { request.close(); }
 }
 
 export function loadGitHubAnalysisContextFromStorage() {
@@ -3082,17 +3131,15 @@ export const generateFunctionalDecompositionFromGitHub = async (
     });
 
     const bearer = getLocalAccessToken();
-    // Hash verified selected inputs one file at a time; no repository text retained.
+    // Hash a bounded number of verified inputs concurrently; retain only digests.
     const readSourceFile = (file, signal) => retryAnalysisOperation(requestSignal => sourceProvider
       ? sourceProvider.readText({ path:file.path, signal:requestSignal })
       : fetchGitHubFileSmart({owner,repo,token,ref,path:file.path,sha:file.sha,signal:requestSignal}),
       {signal,onRetry:message => opts?.onProgress?.({phase:"fetch",currentFile:file.path,message:`${file.path}: ${message}`})});
-    const inputManifest = [];
-    for (const file of validFiles) {
-      throwIfAborted(opts.signal);
-      const read = await readSourceFile(file,opts.signal);
-      inputManifest.push({ path: file.path, entryKind: file.entryKind || "file", size: read.size ?? file.size, contentDigest: read.contentDigest || null, textDigest: read.textDigest || await digestText(read.content), decoding: read.decoding || "utf8-fatal-v1", disposition: "selected" });
-    }
+    const inputManifest = await mapAnalysisWork(validFiles, async (file, index, signal) => {
+      const read = await readSourceFile(file, signal);
+      return { path: file.path, entryKind: file.entryKind || "file", size: read.size ?? file.size, contentDigest: read.contentDigest || null, textDigest: read.textDigest || await digestText(read.content), decoding: read.decoding || "utf8-fatal-v1", disposition: "selected" };
+    }, { concurrency: 4, signal: opts.signal });
     const inputManifestByPath = new Map(inputManifest.map(entry=>[entry.path,entry]));
     const planSignature = functionalAnalysisPlanSignature(validFiles);
     const fingerprint = await runFingerprint({ snapshot: local ? source.snapshotId : commitSha, planSignature, inputManifest, context: userAnalysisContext, repoContext, settings: runGuard.settings, grounding: FUNCTIONAL_GROUNDING_VERSION });
@@ -3169,6 +3216,8 @@ Rules:
     const fileProgress = { ...(checkpoint?.fileProgress || {}) };
     // A new user-started run may resume completed sections with a fresh finite request allowance.
     Object.values(fileProgress).forEach(progress => Object.values(progress.sections || {}).forEach(section => { section.requests = 0; }));
+    const rowsByPath = { ...(checkpoint?.rowsByPath || {}) };
+    const legacyCheckpointRows = checkpoint?.rowsByPath ? (checkpoint.legacyCheckpointRows || []) : checkpointRows;
     let allTableData = checkpointRows;
     let completedFiles = Math.min(completedPathSet.size, validFiles.length);
 
@@ -3182,39 +3231,35 @@ Rules:
       });
     }
 
-    const persistCheckpoint = async (phase = "extraction") => {
+    const serializeCheckpoint = serialAnalysisWriter();
+    const persistCheckpoint = (phase = "extraction") => serializeCheckpoint(async () => {
       try {
-        await idbPut(IDB_STORES.cba, checkpointKey, {
+        // Completed file rows/ledgers are immutable during extraction. Keep
+        // their shared references (chunk storage deduplicates them); clone only
+        // the bounded in-flight progress that other workers may still change.
+        const snapshot = {
           ...checkpointContext, phase, actualSettings: runGuard.actual,
           owner, repo, ref, commitSha, groundingVersion: FUNCTIONAL_GROUNDING_VERSION,
-          groundingStats, relationshipLedger, planSignature, fileProgress,
+          groundingStats: JSON.parse(JSON.stringify(groundingStats)), relationshipLedger: { ...relationshipLedger }, planSignature,
+          fileProgress: JSON.parse(JSON.stringify(fileProgress)),
           recoveryPolicy: FUNCTIONAL_RECOVERY_POLICY,
           totalFiles: validFiles.length, completedPaths: Array.from(completedPathSet),
-          failedFiles, rows: allTableData, updatedAt: new Date().toISOString(),
-        });
+          failedFiles: failedFiles.map(file => ({ ...file })), rows: allTableData, rowsByPath: { ...rowsByPath }, legacyCheckpointRows, updatedAt: new Date().toISOString(),
+        };
+        await idbPut(IDB_STORES.cba, checkpointKey, snapshot);
       } catch (error) { error.code = "SOURCE_STORAGE_FAILED"; throw error; }
-    };
-    for (let recoveryPass = 0; recoveryPass < FUNCTIONAL_FILE_PASSES; recoveryPass++) {
-      if (recoveryPass > 0) {
-        const retryable = failedFiles.filter(file => file.retryable);
-        if (!retryable.length) break;
-        const delay = retryable.reduce((delay,file) => Math.max(delay, Math.min(60000,file.retryAfterMs || 0)), 2000 * recoveryPass);
-        opts?.onProgress?.({ phase: "recovery", completedFiles: completedPathSet.size, totalFiles: validFiles.length, message: `Automatically recovering ${retryable.length} files; ${completedPathSet.size} of ${validFiles.length} complete. Recovery pass ${recoveryPass + 1}/${FUNCTIONAL_FILE_PASSES}.` });
-        await waitForAnalysisRetry(delay,opts.signal);
-      }
-      for (const file of validFiles) {
-        if (recoveryPass > 0 && !failedFiles.some(failed => failed.path === file.path && failed.retryable)) continue;
+    });
+    const analyzeFile = async (file, workerSignal, recoveryPass) => {
 
-        throwIfAborted(opts.signal);
+        throwIfAborted(workerSignal);
         if (completedPathSet.has(file.path)) {
           // Rebuild evidence when resuming: completed rows still need their source index.
-          const got = await readSourceFile(file,opts.signal);
+          const got = await readSourceFile(file,workerSignal);
           if (got.ok) await indexSourceFileToIDB({  owner, repo, path: file.path, content: got.content, branch: displayBranch, commitSha, ...codeSourceProvenance(source) });
           else throw new Error(`Cannot restore source evidence for ${file.path}`);
-          continue;
+          return;
         }
-        const completedBeforeFile = completedFiles;
-        const currentFileNumber = completedBeforeFile + 1;
+        const currentFileNumber = validFiles.findIndex(entry => entry.path === file.path) + 1;
         const totalFileCount = validFiles.length;
         const currentBatchNumber = Math.max(1, Math.ceil(currentFileNumber / DEFAULT_FUNCTIONAL_ANALYSIS_BATCH_FILES));
         let fileAnalysisSucceeded = false;
@@ -3223,10 +3268,10 @@ Rules:
           const fileTableData = [];
           let inventory;
           await (async () => {
-            const signal = opts.signal;
+            const signal = workerSignal;
             opts?.onProgress?.({
               phase: "fetch",
-              completedFiles: completedBeforeFile,
+              completedFiles: completedPathSet.size,
               totalFiles: totalFileCount,
               currentFile: file.path,
               message: `Batch ${currentBatchNumber} of ${analysisPlan.batchCount}: fetching file ${currentFileNumber} of ${totalFileCount}: ${file.path}`,
@@ -3284,7 +3329,7 @@ Rules:
             const total = chunks.length;
             opts?.onProgress?.({
               phase: "decomposition",
-              completedFiles: completedBeforeFile,
+              completedFiles: completedPathSet.size,
               totalFiles: totalFileCount,
               currentFile: file.path,
               message: `Batch ${currentBatchNumber} of ${analysisPlan.batchCount}: analyzing file ${currentFileNumber} of ${totalFileCount}: ${file.path} (${total} chunk${total === 1 ? "" : "s"})`,
@@ -3323,7 +3368,7 @@ Rules:
                 content: chunks[i], signal,
                 state: progress.sections[i] ||= {},
                 onCheckpoint: persistCheckpoint,
-                onRetry: message => opts?.onProgress?.({ phase: "decomposition", completedFiles: completedBeforeFile, totalFiles: totalFileCount, currentFile: file.path, message: `${file.path}: ${message}` }),
+                onRetry: message => opts?.onProgress?.({ phase: "decomposition", completedFiles: completedPathSet.size, totalFiles: totalFileCount, currentFile: file.path, message: `${file.path}: ${message}` }),
                 request: async (content, repair, section) => {
                   const { result } = await requestOpenAIProxyJsonWithMetrics({
                     prompt: content === chunks[i] && !repair ? filePrompt : `${prompt}\nCurrent file evidence contract:\n${JSON.stringify(sourceEvidenceContract)}\nReturn a complete eight-column Markdown table. Keep each description concise so the table fits the output limit. Escape literal pipe characters. Analyze all relationships originating in the primary section; surrounding context is provided only to understand boundaries. If this section contains no relationships, return the header and separator only.\n${header}\nContext before:\n${section.contextBefore}\nPrimary section [${section.start}, ${section.end}):\n${content}\nContext after:\n${section.contextAfter}`,
@@ -3344,17 +3389,17 @@ Rules:
               delete progress.sections[i];
               await persistCheckpoint();
 
-              // tiny throttle helps avoid transient 502/Fetch errors
-              await sleep(120, signal);
+              // Request starts are paced centrally, including retries.
             }
           })();
           const completed = completeSupportedRelationships(fileTableData, inventory);
-          allTableData.push(...completed);
+          rowsByPath[file.path] = completed;
+          allTableData = [...legacyCheckpointRows, ...validFiles.flatMap(entry => rowsByPath[entry.path] || [])];
           relationshipLedger[file.path] = { presentationExclusions: inventory.presentationExclusions || {}, version: inventory.version, supported: inventory.supported, limitation: inventory.limitation, definitionCount: inventory.definitionCount, callExpressionCount: inventory.callExpressionCount, parseErrors: inventory.parseErrors || [], unresolvedTargets: inventory.relationships.filter(e => !e.kind.startsWith("structural_") && e.targetResolution === "unresolved-runtime-target").length, relationships: inventory.relationships.map(e => ({ ...e, disposition: e.kind.startsWith("structural_") ? "represented-structural" : e.targetResolution === "unresolved-runtime-target" ? "represented-unresolved-call" : "represented-call-syntax" })), modelOnly: completed.filter(row => !row.canonicalRelationshipId).length };
           fileAnalysisSucceeded = true;
           delete fileProgress[file.path];
         } catch (e) {
-          if (opts.signal?.aborted || e.code === "SOURCE_RUN_CHANGED" || e.code === "SOURCE_STORAGE_FAILED" || /Source content changed|Local file changed|size limit|quota|storage/i.test(e?.message || "")) throw e;
+          if (workerSignal?.aborted || e.code === "SOURCE_RUN_CHANGED" || e.code === "SOURCE_STORAGE_FAILED" || /Source content changed|Local file changed|size limit|quota|storage/i.test(e?.message || "")) throw e;
           fileFailureMessage = e?.message || String(e);
           for (let i = failedFiles.length - 1; i >= 0; i -= 1) {
             if (failedFiles[i]?.path === file.path) failedFiles.splice(i, 1);
@@ -3387,7 +3432,17 @@ Rules:
           });
           await sleep(0);
         }
+    };
+    for (let recoveryPass = 0; recoveryPass < FUNCTIONAL_FILE_PASSES; recoveryPass++) {
+      if (recoveryPass > 0) {
+        const retryable = failedFiles.filter(file => file.retryable);
+        if (!retryable.length) break;
+        const delay = retryable.reduce((delay,file) => Math.max(delay, Math.min(60000,file.retryAfterMs || 0)), 2000 * recoveryPass);
+        opts?.onProgress?.({ phase: "recovery", completedFiles: completedPathSet.size, totalFiles: validFiles.length, message: `Automatically recovering ${retryable.length} files; ${completedPathSet.size} of ${validFiles.length} complete. Recovery pass ${recoveryPass + 1}/${FUNCTIONAL_FILE_PASSES}.` });
+        await waitForAnalysisRetry(delay,opts.signal);
       }
+      const passFiles = validFiles.filter(file => recoveryPass === 0 || failedFiles.some(failed => failed.path === file.path && failed.retryable));
+      await mapAnalysisWork(passFiles, (file, fileIndex, workerSignal) => analyzeFile(file, workerSignal, recoveryPass), { concurrency: 4, signal: opts.signal });
 
     } // automatic recovery passes
 
@@ -3431,10 +3486,10 @@ Rules:
     let classifiedArchitectureRows = ensureCodeArchitectureTraceIds(reconcileArchitectureRows(architectureRows, previousRows, outputStorageKey));
     let functionalProcessingError = '';
     try {
-      classifiedArchitectureRows = await processFunctionalModel(classifiedArchitectureRows, {
+      classifiedArchitectureRows = await processResumableFunctionalModel(classifiedArchitectureRows, {
+        scope: outputStorageKey, bearer, metricsRun,
         signal: opts.signal,
         onProgress: progress => opts?.onProgress?.({ phase: 'functional', completedFiles, totalFiles: validFiles.length, ...progress }),
-        request: async (prompt, signal) => (await requestOpenAIProxyJsonWithMetrics({ prompt, bearer, signal, metricsRun, label: 'Functional responsibility processing', maxTokens: 7000, jsonMode: true })).result,
       });
     } catch (error) {
       if (opts.signal?.aborted) throw error;
@@ -3812,25 +3867,30 @@ const repoName = useMemo(() => {
     const controller = new AbortController();
     functionalAbort.current = controller;
     const input = rowsWithTraceIds;
+    const metricsRun = createFunctionalDecompositionMetricsRun({ projectId, repoId });
+    if (metricsRun) analysisRunGuards.set(metricsRun, createRunGuard(() => settingsFromAuth(buildAIAuthOpts())));
+    let processingStatus = 'failed';
     setFunctionalError('');
     setFunctionalProgress('Processing functional responsibilities…');
     try {
       if (!rowsStorageKey) throw new Error("Open a saved project to persist the functional model.");
       const expectedBaseline = await readCbaRowsRevision(rowsStorageKey);
-      const result = await processFunctionalModel(input, {
+      const result = await processResumableFunctionalModel(input, {
+        scope: rowsStorageKey, bearer: getLocalAccessToken(), metricsRun,
         force: true,
         signal: controller.signal,
         onProgress: progress => setFunctionalProgress(progress.message),
-        request: async (prompt, signal) => (await requestOpenAIProxyJsonWithMetrics({ prompt, signal, bearer: getLocalAccessToken(), label: 'Functional responsibility processing', maxTokens: 7000, jsonMode: true })).result,
       });
       if (controller.signal.aborted || functionalInputs.current !== input) return;
       if (!rowsStorageKey) throw new Error('Open a saved project to persist the functional model.');
       if (!await writeCbaRowsToIndexedDB(rowsStorageKey, result, { expectedBaseline, signal: controller.signal })) throw new Error('The functional model could not be saved. Detailed analysis was preserved.');
       if (controller.signal.aborted || functionalInputs.current !== input) return;
       if (onDataChange) onDataChange(result); else setManualData(result);
+      processingStatus = 'completed';
     } catch (error) {
       if (!controller.signal.aborted) setFunctionalError(error.message);
     } finally {
+      saveFunctionalDecompositionMetricsRun(finishFunctionalDecompositionMetricsRun(metricsRun, { status: controller.signal.aborted ? 'cancelled' : processingStatus, workflow: 'functional-model' }));
       if (functionalAbort.current === controller) setFunctionalProgress('');
     }
   };

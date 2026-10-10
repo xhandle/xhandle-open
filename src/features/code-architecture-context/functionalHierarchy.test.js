@@ -41,12 +41,15 @@ test('endpoint ownership prefers explicit destinations, reconciles conflicts ind
   expect(functionalEndpointAllocations(rows.slice(0, 2))('b', 'leaf')).toMatchObject({ csci: 'Provider', ownershipExplicit: true });
 });
 
-test('preserves explicit destination allocation and rejects overwrite without publishing', async () => {
+test('preserves explicit destination allocation without asking the model to restate it', async () => {
   const rows = modelRows(1);
   rows[0].toArchitecture = { subsystem: 'External', csci: 'Provider', csc: 'Transport' };
   rows[0].functionalAbstraction.target = { id: 'leaf', label: 'Transmit', file: 'provider.cpp', symbol: 'leaf' };
   const before = JSON.stringify(rows);
-  await expect(allocateFunctionalHierarchy(rows, { request: reply })).rejects.toThrow('Explicit endpoint ownership');
+  const request = jest.fn(reply);
+  const preserved = await allocateFunctionalHierarchy(rows, { request });
+  expect(preserved[0].functionalAbstraction.target.architecture.csci).toBe('Provider');
+  expect(request.mock.calls.every(([prompt]) => read(prompt).functions.every(unit => unit.id !== 'leaf'))).toBe(true);
   expect(JSON.stringify(rows)).toBe(before);
   const result = await allocateFunctionalHierarchy(rows, { request: prompt => ({ allocations: read(prompt).functions.map(unit => ({
     id: unit.id, ...(unit.id === 'leaf' ? rows[0].toArchitecture : { subsystem: 'App', csci: 'Identity', csc: 'Authentication' }), rationale: 'Endpoint evidence.' })) }) });

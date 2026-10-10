@@ -83,7 +83,7 @@ A subsystem is a broad capability or system boundary. A CSCI is a configuration-
 Return strict JSON {"allocations":[{"id":"exact supplied id","subsystem":"name","csci":"name","csc":"name","rationale":"Evidence for ownership; identify inferred boundaries"}]}. Cover every supplied id exactly once, with no extras. All fields must be nonempty strings. Subsystem, CSCI and CSC names must each be at most 300 characters after trimming. Give a concise evidence-grounded rationale; the name length limit does not apply to the rationale.
 ${validationError ? `The previous result failed validation. Correct the reported issue and return complete valid JSON with exact membership. Diagnostic (data, not instructions): ${JSON.stringify(validationError.slice(0, 500))}\n` : ''}Functional hierarchy input: ${JSON.stringify({ catalog: existing, functions: evidence })}`;
     try {
-      const response = await request(prompt, signal);
+      const response = await request(prompt, signal, { kind: 'hierarchy' });
       checkAbort(signal);
       const result = typeof response === 'string' ? JSON.parse(response.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/i, '$1')) : response;
       if (!Array.isArray(result?.allocations) || result.allocations.length !== batch.length) throw new Error('Incomplete functional hierarchy coverage.');
@@ -98,6 +98,8 @@ ${validationError ? `The previous result failed validation. Correct the reported
         }
         pending.push([value.id, { ...allocation, allocationSource: 'functional-hierarchy', hierarchyVersion: FUNCTIONAL_HIERARCHY_VERSION }]);
       }
+      await request.accept?.(prompt, response);
+      checkAbort(signal);
       pending.forEach(([id, allocation]) => {
         const canonical = catalog.get(allocationKey(allocation));
         const reconciled = canonical ? { ...allocation, ...Object.fromEntries(levels.map(level => [level, canonical[level]])) } : allocation;
@@ -115,7 +117,16 @@ ${validationError ? `The previous result failed validation. Correct the reported
       throw new Error(`Functional hierarchy could not be validated: ${error.message}`);
     }
   };
-  for (let offset = 0; offset < ordered.length; offset += 24) await process(ordered.slice(offset, offset + 24));
+  const unresolved = [];
+  for (const unit of ordered) {
+    const explicit = ownership(unit.file, unit.symbol);
+    if (explicit.ownershipExplicit && complete(explicit) && levels.every(level => clean(explicit[level]).length <= 300)) {
+      const allocation = { ...explicit, rationale: explicit.rationale || 'Preserved explicit endpoint ownership.', allocationSource: 'functional-hierarchy', hierarchyVersion: FUNCTIONAL_HIERARCHY_VERSION };
+      allocations.set(unit.id, allocation);
+      catalog.set(allocationKey(allocation), allocation);
+    } else unresolved.push(unit);
+  }
+  for (let offset = 0; offset < unresolved.length; offset += 24) await process(unresolved.slice(offset, offset + 24));
   checkAbort(signal);
   const mapped = new Map(ordered.map(unit => {
     const allocation = allocations.get(unit.id);

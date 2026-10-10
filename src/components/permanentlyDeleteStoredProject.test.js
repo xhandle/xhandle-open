@@ -15,7 +15,7 @@ it('requires a removed project and rechecks both active workspace lists',async()
   expect(()=>assertRemovedProject(project)).toThrow(/verify/);
 });
 it('matches project key boundaries without matching another project or shared repository',()=>{
-  for (const key of ['cba:p1:repo','cba:p1:repo:run:hash','functional-decomposition-checkpoint:cba:p1:repo:hash','cbaMeta:p1:repo','diagram:positions:p1:nodes','diagram:github:p1:repo:main','xhandle:cba-software:p1:repo:chunk:0','xhandle:code-architecture-hazard-contexts:v1:p1:repo','hazard-run:p1']) expect(projectOwnsStorageKey(key,'p1')).toBe(true);
+  for (const key of ['cba:p1:repo','cba:p1:repo:run:hash','cba:p1:repo:functional-work:hash','functional-decomposition-checkpoint:cba:p1:repo:hash','cbaMeta:p1:repo','diagram:positions:p1:nodes','diagram:github:p1:repo:main','xhandle:cba-software:p1:repo:chunk:0','xhandle:code-architecture-hazard-contexts:v1:p1:repo','hazard-run:p1']) expect(projectOwnsStorageKey(key,'p1')).toBe(true);
   for (const key of ['cba:p10:repo','cba:p1-extra:repo','cba:owner/repo','code-index:owner/repo:p1','githubToken','xhandle.apiKey','diagram:positions:p10','unrelated:p1']) expect(projectOwnsStorageKey(key,'p1')).toBe(false);
 });
 it('uses ownership, never names, descriptions or incidental mentions',()=>{

@@ -12,6 +12,7 @@ export function describeStorageItem(key, record, { projects = [], category = 'Sa
   let type = category;
   if (/^cba:/.test(text)) {
     type = parts[3] === 'metadata' ? 'Analysis details'
+      : parts[3] === 'functional-work' ? 'Functional processing checkpoint'
       : parts[3] === 'run' ? (parts.length > 4 ? 'Saved analysis checkpoint' : 'Analysis run')
       : parts.length === 3 ? 'Functional decomposition' : 'Saved architecture data';
   } else if (/^cbaMeta:/.test(text)) type = 'Analysis details';
