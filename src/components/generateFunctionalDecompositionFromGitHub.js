@@ -1,3 +1,4 @@
+import { SHOW_TABLE_REVIEW_COLUMNS } from "./tablePresentation";
 import { ArchitectureWorkspace, ArchitectureDivider, ArchitectureTablePane, useArchitectureColumnWidths, diagramFocusView, architectureHeaderClass, architectureCellClass, architectureLinkClass } from './ArchitectureWorkspace';
 import VirtualTableBody from './VirtualTableBody';
 import { buildFunctionalModelRows, processFunctionalModel, functionalModelIsReady, immutableFunctionalRows } from '../features/code-architecture-context/functionalModel';
@@ -3982,7 +3983,7 @@ React.useEffect(() => {
   ], []);
   const [columnWidths, handleColumnResizeStart] = useArchitectureColumnWidths(tableColumns, columnWidthsStorageKey, `${columnWidthsStorageKey}:${view}:${architectureAbstraction}`, !reviewMode);
   const tablePixelWidth = useMemo(
-    () => tableColumns.reduce((sum, column) => sum + (columnWidths[column.id] || column.defaultWidth), reviewItems.length > 0 ? 110 : 0),
+    () => tableColumns.reduce((sum, column) => sum + (columnWidths[column.id] || column.defaultWidth), SHOW_TABLE_REVIEW_COLUMNS && reviewItems.length > 0 ? 110 : 0),
     [columnWidths, reviewItems.length, tableColumns]
   );
 
@@ -4400,7 +4401,7 @@ React.useEffect(() => {
             </>}>
             <table className="table-fixed" style={{ minWidth: tablePixelWidth }}>
               <colgroup>
-                {reviewItems.length > 0 && <col style={{ width: 110, minWidth: 110 }} />}
+                {SHOW_TABLE_REVIEW_COLUMNS && reviewItems.length > 0 && <col style={{ width: 110, minWidth: 110 }} />}
                 {tableColumns.map((column) => (
                   <col
                     key={column.id}
@@ -4413,7 +4414,7 @@ React.useEffect(() => {
               </colgroup>
               <thead>
                 <tr className="bg-indigo-50">
-                  {reviewItems.length > 0 && (
+                  {SHOW_TABLE_REVIEW_COLUMNS && reviewItems.length > 0 && (
                     <th className={thBase} style={{ width: 110, minWidth: 110 }}>
                       Review
                     </th>
@@ -4435,7 +4436,7 @@ React.useEffect(() => {
                 </tr>
               </thead>
               <VirtualTableBody items={tableFilterState.filteredRows} getKey={virtualRowKey}
-                columns={tableColumns.length + (reviewItems.length > 0 ? 1 : 0)} revealKey={highlightedRowIndex == null ? null : String(rowsWithTraceIds[highlightedRowIndex]?.traceId || rowsWithTraceIds[highlightedRowIndex]?.rowRef || highlightedRowIndex)}
+                columns={tableColumns.length + (SHOW_TABLE_REVIEW_COLUMNS && reviewItems.length > 0 ? 1 : 0)} revealKey={highlightedRowIndex == null ? null : String(rowsWithTraceIds[highlightedRowIndex]?.traceId || rowsWithTraceIds[highlightedRowIndex]?.rowRef || highlightedRowIndex)}
                 requestKey={forceTableOpenKey} onReveal={onRowFocusResolved} searchText={virtualSearchText}
                 label="Code architecture functional decomposition">
                 {({ row, sourceIndex }) => {
@@ -4473,7 +4474,7 @@ React.useEffect(() => {
                             : i % 2 ? "bg-slate-50/60 hover:bg-slate-100" : "bg-white hover:bg-slate-50"
                     }`}
                   >
-                    {reviewItems.length > 0 && (
+                    {SHOW_TABLE_REVIEW_COLUMNS && reviewItems.length > 0 && (
                       <td className={tdBase}>
                         <ReviewStatusBadge
                           reviewItem={reviewItem}
@@ -4547,7 +4548,7 @@ React.useEffect(() => {
                 {tableFilterState.filteredRows.length === 0 && (
                   <tbody>
                   <tr>
-                    <td className="px-3 py-8 text-center text-sm text-slate-500" colSpan={tableColumns.length + (reviewItems.length > 0 ? 1 : 0)}>
+                    <td className="px-3 py-8 text-center text-sm text-slate-500" colSpan={tableColumns.length + (SHOW_TABLE_REVIEW_COLUMNS && reviewItems.length > 0 ? 1 : 0)}>
                       No rows match the active column filters.
                     </td>
                   </tr>

@@ -1,3 +1,4 @@
+import { SHOW_TABLE_REVIEW_NOTICES } from "../../components/tablePresentation";
 import React from "react";
 import { REVIEW_STATUSES } from "./reviewTypes";
 import { useResultsReview } from "./ResultsReviewProvider";
@@ -5,7 +6,7 @@ import { useResultsReview } from "./ResultsReviewProvider";
 export default function ReviewBanner({ items = [], openOptions = {}, className = "" }) {
   const review = useResultsReview();
   const list = Array.isArray(items) ? items : [];
-  if (!list.length) return null;
+  if (!SHOW_TABLE_REVIEW_NOTICES || !list.length) return null;
 
   const approved = list.filter((item) =>
     [REVIEW_STATUSES.APPROVED_AS_IS, REVIEW_STATUSES.APPROVED_WITH_MODIFICATIONS].includes(item.status)

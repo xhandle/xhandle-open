@@ -1,3 +1,4 @@
+import { SHOW_TABLE_REVIEW_COLUMNS, SHOW_TABLE_REVIEW_NOTICES } from "./components/tablePresentation";
 import { mergeImportedCodeArchitectureRepos } from './features/code-architecture-assurance/architectureImportRefresh';
 import useScopedArchitectureRows from './features/code-architecture-assurance/useScopedArchitectureRows';
 import { assignImportedHazardContext } from './features/code-architecture-hazard-analysis/codeHazardImportContext';
@@ -18398,7 +18399,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                         <table className="min-w-full border-separate border-spacing-0 text-sm text-left">
                           <thead>
                             <tr className="text-[#4B5563] text-sm font-medium">
-                              {functionalReviewItems.length > 0 && (
+                              {SHOW_TABLE_REVIEW_COLUMNS && functionalReviewItems.length > 0 && (
                                 <th className="sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap">
                                   Review
                                 </th>
@@ -18529,7 +18530,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                                         : idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]"
                                   }`}
                                 >
-                                  {functionalReviewItems.length > 0 && (
+                                  {SHOW_TABLE_REVIEW_COLUMNS && functionalReviewItems.length > 0 && (
                                     <td className="px-6 py-4 align-top border-b border-gray-100">
                                       <ReviewStatusBadge
                                         reviewItem={reviewItem}
@@ -18595,7 +18596,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                             })}
                             {filteredFunctionalRows.length === 0 && (
                               <tr>
-                                <td colSpan={functionalTableColumns.length + 1 + (functionalReviewItems.length > 0 ? 1 : 0)} className="px-6 py-8 text-center text-sm text-gray-500">
+                                <td colSpan={functionalTableColumns.length + 1 + (SHOW_TABLE_REVIEW_COLUMNS && functionalReviewItems.length > 0 ? 1 : 0)} className="px-6 py-8 text-center text-sm text-gray-500">
                                   No rows match the current filters.
                                 </td>
                               </tr>
@@ -18721,7 +18722,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
     <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
     {hazardAnalysisControls}
     <div className="flex min-h-0 min-w-0 flex-1 flex-col pl-4">
-    {Object.values(draftHazardRowsByIndex).some(entry => entry?.userPreprocessing?.conflicts?.length) && (
+    {SHOW_TABLE_REVIEW_NOTICES && Object.values(draftHazardRowsByIndex).some(entry => entry?.userPreprocessing?.conflicts?.length) && (
       <details className="mb-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm">
         <summary>User preprocessing needs review</summary>
         {Object.entries(draftHazardRowsByIndex).flatMap(([key, entry]) => (entry?.userPreprocessing?.conflicts || []).map((message, index) => (
@@ -18998,7 +18999,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
               <thead>
                 <tr className="text-[#4B5563] text-sm font-medium">
                   <th className="sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap">
-                    Review
+                    {SHOW_TABLE_REVIEW_COLUMNS ? "Review" : "Actions"}
                   </th>
                   {hazardSummaryDisplayColumnIndexes.map((idx) => {
                     const header = hazardSummaryHeaders[idx];
@@ -22279,7 +22280,7 @@ const DraftHazardTableRow = React.memo(function DraftHazardTableRow({
                             >
                               {generating ? 'Generating...' : generated ? 'Regenerate' : 'Generate'}
                             </button>
-                            {reviewItem && (
+                            {SHOW_TABLE_REVIEW_COLUMNS && reviewItem && (
                               <ReviewStatusBadge
                                 reviewItem={reviewItem}
                                 openOptions={draftHazardReviewDrawerOptions}
@@ -22441,7 +22442,7 @@ const CompletedHazardTableRow = React.memo(function CompletedHazardTableRow({
                           >
                             <td className="relative px-3 py-2 align-top border-b border-gray-100">
                               <div className="flex max-w-56 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] leading-4 text-slate-600">
-                                {reviewItem && (
+                                {SHOW_TABLE_REVIEW_COLUMNS && reviewItem && (
                                   <ReviewStatusBadge
                                     reviewItem={reviewItem}
                                     openOptions={{

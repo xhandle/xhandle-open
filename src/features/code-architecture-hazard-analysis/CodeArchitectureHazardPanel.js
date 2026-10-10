@@ -1,3 +1,4 @@
+import { SHOW_TABLE_REVIEW_NOTICES } from "../../components/tablePresentation";
 import { fillNotApplicableHazardSummary } from '../project-hazard-analysis/hazardNotApplicableCells';
 import { buildFunctionalModelRows, functionalModelIsReady } from '../code-architecture-context/functionalModel';
 import FunctionalDiagramWorkspace from '../../components/FunctionalDiagramWorkspace';
@@ -382,7 +383,7 @@ export default function CodeArchitectureHazardPanel({
       </ProjectTabSideToolbar>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        {latestRun?.userPreprocessingConflicts?.length > 0 && <details className="m-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm">
+        {SHOW_TABLE_REVIEW_NOTICES && latestRun?.userPreprocessingConflicts?.length > 0 && <details className="m-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm">
           <summary>User preprocessing needs review ({latestRun.userPreprocessingConflicts.length})</summary>
           {latestRun.userPreprocessingConflicts.map((message, index) => <p key={index}>{message}</p>)}
         </details>}
@@ -403,7 +404,7 @@ export default function CodeArchitectureHazardPanel({
                 {progress?.message || "Running code architecture hazard analysis..."}
               </div>
             )}
-            {unresolvedApplicabilityCount > 0 && (
+            {SHOW_TABLE_REVIEW_NOTICES && unresolvedApplicabilityCount > 0 && (
               <div role="status" className="text-sm text-amber-800">
                 {unresolvedApplicabilityCount} guide-phrase decisions need review. Hazard generation was deferred for these rows; applicable rows were analyzed.
               </div>

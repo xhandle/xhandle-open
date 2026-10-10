@@ -1,3 +1,4 @@
+import { SHOW_TABLE_REVIEW_COLUMNS } from "../../components/tablePresentation";
 import CopyTableButton from '../../components/CopyTableButton';
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { FilterableHeaderCell, useColumnFilters } from "../../components/FilterableTableHeader";
@@ -115,7 +116,7 @@ export default function EngineeringArtifactTable({
   emptyMessage = "No rows yet.",
   noMatchMessage = "No rows match the active column filters.",
   showActions = true,
-  showReview = true,
+  showReview: requestedShowReview = true,
   readOnly = false,
   tableContext = {},
   onCollaboratorSelectionChange,
@@ -224,6 +225,7 @@ export default function EngineeringArtifactTable({
     document.addEventListener("mouseup", onMouseUp);
   }, [columnWidths, defaultColumnWidths, visibleColumns]);
 
+  const showReview = SHOW_TABLE_REVIEW_COLUMNS && requestedShowReview;
   const reviewColumnWidth = showReview && reviewItems.length > 0 ? 110 : 0;
   const actionsColumnWidth = showActions ? 110 : 0;
   const tablePixelWidth = visibleColumns.reduce(

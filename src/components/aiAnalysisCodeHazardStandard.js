@@ -378,6 +378,20 @@ function omitConsolidatedRequirementFromConfig(config) {
   };
 }
 
+const STPA_APPLICABILITY_GENERATION_GUIDANCE = `- If a Guide Phrase is supplied, first decide whether that guide phrase is applicable to the exact Function From / Control Action / Function To interface.
+- guidePhraseApplicable must be exactly Yes or No.
+- guidePhraseApplicabilityRationale must briefly explain the applicability decision for that guide phrase and interface.
+- Mark Yes only when the exact deviation described by the guide phrase is meaningful for this control-action type in the exact operational scenario/mode and has a credible causal path to an adverse state. Abstract possibility, generic failure language, or merely being able to restate the guide phrase is insufficient.
+- Mark No when the deviation has no meaningful semantics for the control-action type, is precluded by an authoritative context assumption, cannot affect the target in that mode, or has no credible adverse consequence. Normal, stationary, startup, shutdown, maintenance, degraded, and recovery contexts often differ; assess rather than assuming all seven guide phrases apply.
+- Do not force a quota or distribution, but treat an all-Yes result as a warning and re-check each interface/context combination independently.`;
+
+function generationGuidance(config, items) {
+  if (config.rowIdSuffix !== "STPA" || !items.some(applicabilityIsReadOnly)) return config.promptGuidance;
+  const unresolved = items.some(item => !applicabilityIsReadOnly(item));
+  return config.promptGuidance.replace(STPA_APPLICABILITY_GENERATION_GUIDANCE,
+    `${APPLICABILITY_OWNERSHIP_PROMPT}${unresolved ? `\nOnly for rows WITHOUT protected applicability:\n${STPA_APPLICABILITY_GENERATION_GUIDANCE}` : ""}`);
+}
+
 export function getStandardConfig(method) {
   if (method === "FMEA") {
     return {
@@ -441,12 +455,7 @@ ${SPECIFICITY_SELF_CHECK_GUIDANCE}
     rowIdSuffix: "STPA",
     promptGuidance: `
 For each functional decomposition row, identify one credible unsafe control action and the safety constraint. Be specific:
-- If a Guide Phrase is supplied, first decide whether that guide phrase is applicable to the exact Function From / Control Action / Function To interface.
-- guidePhraseApplicable must be exactly Yes or No.
-- guidePhraseApplicabilityRationale must briefly explain the applicability decision for that guide phrase and interface.
-- Mark Yes only when the exact deviation described by the guide phrase is meaningful for this control-action type in the exact operational scenario/mode and has a credible causal path to an adverse state. Abstract possibility, generic failure language, or merely being able to restate the guide phrase is insufficient.
-- Mark No when the deviation has no meaningful semantics for the control-action type, is precluded by an authoritative context assumption, cannot affect the target in that mode, or has no credible adverse consequence. Normal, stationary, startup, shutdown, maintenance, degraded, and recovery contexts often differ; assess rather than assuming all seven guide phrases apply.
-- Do not force a quota or distribution, but treat an all-Yes result as a warning and re-check each interface/context combination independently.
+${STPA_APPLICABILITY_GENERATION_GUIDANCE}
 - Only assess applicable guide phrases. If guidePhraseApplicable is No, set hazard-bearing fields to "Not applicable:" with a short reason and classify the row as Mission/Reliability during safety significance review.
 - If safetySignificanceReviewStatus is Reviewed and safetySignificant is Yes or No, treat that as an authoritative human-reviewed decision. Generate the loss, hazard, causal chain, classification, mitigations, constraints, requirements, and verification evidence consistently with it. Do not re-decide or overwrite it.
 - Losses must describe plausible adverse end states or consequences.
@@ -1473,6 +1482,26 @@ export function findCausalFactorCategoryReviewIndexes(rows = []) {
 
 export function findApplicabilityPatternRepairIndexes(rows = [], items = []) {
   if (rows.length < 6 || rows.length !== items.length) return [];
+  if (items.some(applicabilityIsReadOnly)) {
+    const unprotected = items.map((item, index) => ({ item, index })).filter(({ item }) => !applicabilityIsReadOnly(item));
+    const indexes = new Set(findApplicabilityPatternRepairIndexes(
+      unprotected.map(({ index }) => rows[index]), unprotected.map(({ item }) => item),
+    ).map(index => unprotected[index].index));
+    const causalIndexes = new Set(findCausalFactorCategoryReviewIndexes(rows));
+    items.forEach((item, index) => {
+      if (!applicabilityIsReadOnly(item)) {
+        // Keep per-row safety/causal and contradiction checks even when the
+        // remaining legacy population is too small for distribution checks.
+        if (causalIndexes.has(index) || findConsistencyReconciliationIndexes([rows[index]], [item]).length) indexes.add(index);
+        return;
+      }
+      if (normalizeGuidePhraseApplicability(item.guidePhraseApplicable) !== "Yes") return;
+      const row = rows[index];
+      if (causalIndexes.has(index) || validateSafetyClassificationRecord(row, item).findings.length
+        || (normalizeProposedSafetyAssessment(row.proposedSafetyAssessment, row.safetySignificant) === "Mission/Reliability" && hasExplicitSafetyExposure(row))) indexes.add(index);
+    });
+    return Array.from(indexes).sort((left, right) => left - right);
+  }
   const indexes = new Set([
     ...findApplicabilityCalibrationIndexes(rows, items),
     ...findConsistencyReconciliationIndexes(rows, items),
@@ -1581,7 +1610,7 @@ async function requestStandardRows(config, items, contextOptions = {}) {
 ${items.some(item => item.guidePhraseApplicabilityOrigin === SCREENING_ORIGIN) ? APPLICABILITY_OWNERSHIP_PROMPT : ""}
 You are performing ${config.analysisName} for software safety using a code-based functional decomposition.
 
-${config.promptGuidance}
+${generationGuidance(config, items)}
 
 Project / operational context:
 ${operationalContextBlock || "No explicit project or operational context was available. Infer cautiously from row evidence only."}
@@ -1693,7 +1722,7 @@ async function requestStandardRowRepairs(config, repairItems, contextOptions = {
 ${repairItems.map(({item}) => item).some(item => item.guidePhraseApplicabilityOrigin === SCREENING_ORIGIN) ? APPLICABILITY_OWNERSHIP_PROMPT : ""}
 You are repairing generated ${config.analysisName} rows that still contain generic hazard language.
 
-${config.promptGuidance}
+${generationGuidance(config, repairItems.map(({ item }) => item))}
 
 Project / operational context:
 ${operationalContextBlock || "No explicit project or operational context was available. Infer cautiously from row evidence only."}
@@ -1774,21 +1803,22 @@ async function repairGenericStandardRows(config, rows, items, contextOptions = {
 }
 
 async function requestSafetySignificanceTags(config, tagItems, contextOptions = {}) {
+  const safetyOnly = tagItems.every(({ item }) => applicabilityIsReadOnly(item));
   const operationalContextBlock = formatHazardOperationalContext(contextOptions);
   const prompt = `
 ${tagItems.map(({item}) => item).some(item => item.guidePhraseApplicabilityOrigin === SCREENING_ORIGIN) ? APPLICABILITY_OWNERSHIP_PROMPT : ""}
-You are independently auditing generated ${config.analysisName} rows for guide-phrase applicability and safety significance after candidate hazard generation.
+You are independently auditing generated ${config.analysisName} rows for ${safetyOnly ? "safety significance and evidence" : "guide-phrase applicability and safety significance"} after candidate hazard generation.
 
 Project / operational context:
 ${operationalContextBlock || "No explicit project or operational context was available. Infer cautiously from row evidence only."}
 
 Return ONLY a JSON array. Each object must include:
-id, semanticMeaningful, receiverCanBeAffected, contextSupportsMechanism, adverseStateSupported, guidePhraseApplicable, guidePhraseApplicabilityRationale, applicabilityMechanism, applicabilityEvidenceField, applicabilityEvidenceQuote, strongestReasonForNo, notApplicableReasonCode, notApplicableEvidenceField, notApplicableEvidenceQuote, proposedSafetyAssessment, proposedSafetyAssessmentRationale, safetyClassification, safetyClassificationRule, causalPathType, causalEffect, resultingSystemState, intermediateSafetyFunction, intermediateSafetyEffect, protectionAssessment, protectionStatus, physicalHarmChainTermination, classificationEvidence, classificationConfidence, safetyExposureCategory, safetyExposurePath, safetyEvidenceField, safetyEvidenceQuote, safetyContributionType, causalNecessitySupported, additionalFailureRequired, safeguardPrecludesPath, safetySignificant, safetySignificanceRationale.
+id, ${safetyOnly ? "" : "semanticMeaningful, receiverCanBeAffected, contextSupportsMechanism, adverseStateSupported, guidePhraseApplicable, guidePhraseApplicabilityRationale, applicabilityMechanism, applicabilityEvidenceField, applicabilityEvidenceQuote, strongestReasonForNo, notApplicableReasonCode, notApplicableEvidenceField, notApplicableEvidenceQuote, "}proposedSafetyAssessment, proposedSafetyAssessmentRationale, safetyClassification, safetyClassificationRule, causalPathType, causalEffect, resultingSystemState, intermediateSafetyFunction, intermediateSafetyEffect, protectionAssessment, protectionStatus, physicalHarmChainTermination, classificationEvidence, classificationConfidence, safetyExposureCategory, safetyExposurePath, safetyEvidenceField, safetyEvidenceQuote, safetyContributionType, causalNecessitySupported, additionalFailureRequired, safeguardPrecludesPath, safetySignificant, safetySignificanceRationale.
 
 Applicability and safety rules:
 - If row.guidePhraseApplicabilityReviewStatus is Reviewed and row.guidePhraseApplicable is Yes or No, that is a governed human-reviewed decision. Preserve it and its rationale exactly; do not re-decide applicability. Classify the downstream safety fields consistently with that governed decision.
 - If row.safetySignificanceReviewStatus is Reviewed and row.safetySignificant is Yes or No, that is a governed human-reviewed decision. Preserve it and its rationale exactly; reconcile every downstream classification and causal-path field with it rather than re-deciding it.
-- For rows without reviewed applicability, re-decide applicability independently; do not defer to generated.guidePhraseApplicable or let the candidate Hazard/Loss create facts that are absent from the functional row and operational context. Decide applicability from row semantics and context first, then use generated text only to classify a supported adverse path.
+${safetyOnly ? "Applicability is already resolved. Use row.guidePhraseApplicable as read-only input; return only downstream safety fields, with Needs Review confined to safety conclusions." : `- For rows without reviewed applicability, re-decide applicability independently; do not defer to generated.guidePhraseApplicable or let the candidate Hazard/Loss create facts that are absent from the functional row and operational context. Decide applicability from row semantics and context first, then use generated text only to classify a supported adverse path.
 - semanticMeaningful, receiverCanBeAffected, contextSupportsMechanism, and adverseStateSupported must each be exactly Yes or No. guidePhraseApplicable must be Yes only when all four are Yes; otherwise it must be No.
 - guidePhraseApplicable must be exactly Yes or No.
 - Mark Yes only if the exact guide-phrase deviation is semantically meaningful for the action type in the exact scenario/mode and a concrete causal path connects it to an adverse system state. A merely conceivable deviation or generic restatement is insufficient.
@@ -1815,7 +1845,7 @@ Applicability and safety rules:
 - Treat operationalScenario, operationalMode, operatingConditions, and contextAssumptions as authoritative. Do not introduce a hidden demand, update, fault, transition, or prerequisite using "if needed", "when required", or similar language.
 - If a valid configuration, map, authority, mode, or other state is already active in a steady-state scenario, do not assume that a new update is required unless the supplied row/context says so.
 - When the action type is External input / disturbance, assess the system's ability to detect and respond; do not assume the system controls the external condition.
-- Assess each context independently. Do not assume all guide phrases apply, and do not manufacture balance or satisfy a quota.
+- Assess each context independently. Do not assume all guide phrases apply, and do not manufacture balance or satisfy a quota.`}
 - If guidePhraseApplicable is No, safetyClassification must be Not Applicable, proposedSafetyAssessment must be Mission/Reliability, and safetySignificant must be No.
 - Keep each rationale to one concrete sentence of no more than 30 words so every supplied row fits in the response.
 - proposedSafetyAssessment must be exactly one of: Safety or Mission/Reliability.
@@ -1838,7 +1868,7 @@ Applicability and safety rules:
 - Classify Safety — Direct only when the interface directly creates the hazardous state, causalNecessitySupported is Yes, additionalFailureRequired is No, safeguardPrecludesPath is No, and exposure evidence is grounded.
 - Classify Safety — Related when the interface has a grounded, architecture-supported contributory path through a named intermediate safety function or causal condition to the mishap. An additional causal step is allowed only when that step is explicitly identified and supported; a theoretical downstream possibility is insufficient.
 - When the system is explicitly required to remain safe without an external report, dispatch update, remote service, or advisory input, treat loss of that interface as contained unless the supplied architecture establishes failure of the local safeguard.
-- For Safety, safetyEvidenceField must use the same allowed field names as applicabilityEvidenceField, and safetyEvidenceQuote must be an exact verbatim excerpt establishing the exposed entity, safety-critical operation, or harm-relevant operating condition. Without an exact supporting excerpt, classify Mission/Reliability.
+- For Safety, safetyEvidenceField must be exactly one of: Function From; Function From Details; Control Action; Control Action Details; Function To; Function To Details; Operational Scenario; Operational Mode; Operating Conditions; Context Assumptions, and safetyEvidenceQuote must be an exact verbatim excerpt establishing the exposed entity, safety-critical operation, or harm-relevant operating condition. Without an exact supporting excerpt, classify Mission/Reliability.
 - Mark Safety only when the row describes a complete Direct or Related path to harm involving people, operators, bystanders, environment, physical assets, loss of control, or another safety-relevant hazardous state in the stated project context.
 - If the generated Loss, Hazard, UCA, causal scenario, or exposure path explicitly reaches collision, injury, fatality, physical harm, hazardous energy, unintended physical motion, or loss of physical control, classify Safety. Do not label such a row Mission/Reliability merely because mission or availability effects also exist.
 - Mark Mission/Reliability when the row is mainly about routine reliability, mission availability/performance, developer experience, formatting, logging, non-critical latency, internal cleanup, recoverable behavior, ambiguity, insufficient support, or assumptions not present in the row/context.
@@ -1989,11 +2019,13 @@ function hasCompleteApplicableRepair(config, repair = {}) {
 }
 
 async function requestApplicabilityPatternRepairs(config, repairItems, distribution, contextOptions = {}) {
+  const safetyOnly = repairItems.every(({ item }) => applicabilityIsReadOnly(item));
   const operationalContextBlock = formatHazardOperationalContext(contextOptions);
   const fieldNames = [
     "id",
-    ...config.fields.map(([fieldName]) => fieldName).filter((fieldName) => !DERIVED_STPA_FIELDS.has(fieldName)),
+    ...config.fields.map(([fieldName]) => fieldName).filter((fieldName) => !DERIVED_STPA_FIELDS.has(fieldName) && (!safetyOnly || (!fieldName.startsWith("guidePhraseApplicability") && fieldName !== "guidePhraseApplicable"))),
     ...SAFETY_SIGNIFICANCE_FIELDS.map(([fieldName]) => fieldName),
+    ...(safetyOnly ? [] : [
     "semanticMeaningful",
     "receiverCanBeAffected",
     "contextSupportsMechanism",
@@ -2005,6 +2037,7 @@ async function requestApplicabilityPatternRepairs(config, repairItems, distribut
     "notApplicableReasonCode",
     "notApplicableEvidenceField",
     "notApplicableEvidenceQuote",
+    ]),
     "safetyExposureCategory",
     "safetyExposurePath",
     "safetyEvidenceField",
@@ -2016,21 +2049,20 @@ async function requestApplicabilityPatternRepairs(config, repairItems, distribut
   ];
   const prompt = `
 ${repairItems.map(({item}) => item).some(item => item.guidePhraseApplicabilityOrigin === SCREENING_ORIGIN) ? APPLICABILITY_OWNERSHIP_PROMPT : ""}
-You are repairing a completed ${config.analysisName} decision matrix after a deterministic quality check detected a suspiciously uniform guide-phrase pattern or a causal-category mismatch.
+${safetyOnly ? `Repair downstream safety classification, evidence, and causal-category inconsistencies in these ${config.analysisName} rows. Applicability is read-only input; do not assess or return applicability fields.` : `You are repairing a completed ${config.analysisName} decision matrix after a deterministic quality check detected a suspiciously uniform guide-phrase pattern or a causal-category mismatch.
 
-This is a focused independent reconsideration, not a request to manufacture diversity. A uniform result may be correct. Preserve it when supported, but reconsider each supplied interface independently and change it when the exact action contract and operational context support a different decision.
+This is a focused independent reconsideration, not a request to manufacture diversity. A uniform result may be correct. Preserve it when supported, but reconsider each supplied interface independently and change it when the exact action contract and operational context support a different decision.`}
 
 Project / operational context:
 ${operationalContextBlock || "No explicit project or operational context was available. Infer cautiously from the supplied functional contracts only."}
 
-Completed-run applicability distribution:
-${JSON.stringify(distribution)}
+${safetyOnly ? "" : `Completed-run applicability distribution:\n${JSON.stringify(distribution)}`}
 
 Return ONLY a JSON array with one complete object for every supplied row. Preserve each row id exactly. Each object must include:
 ${fieldNames.join(", ")}.
 
 Repair rules:
-- Evaluate the exact semantic deviation for this control-action type. Do not copy the completed-run majority decision and do not force a quota.
+${safetyOnly ? "Use the supplied interface contracts and operational context as authoritative evidence for the downstream safety assessment." : `- Evaluate the exact semantic deviation for this control-action type. Do not copy the completed-run majority decision and do not force a quota.
 - Use Function From Details, Control Action Details, and Function To Details as authoritative interface contracts when present.
 - Distinguish absence, invalid or unwanted provision, early consumption, late arrival, wrong sequence/version, premature cessation, and stale or overlong retention. Do not collapse all of them into absence.
 - "Providing causes" asks whether provision under an unsafe system condition, or provision of an incorrect, unauthorized, inconsistent, out-of-range, or unwanted command/value, can affect the receiver. Do not interpret it as provision of a correct nominal value under safe conditions.
@@ -2043,7 +2075,7 @@ Repair rules:
 - semanticMeaningful, receiverCanBeAffected, contextSupportsMechanism, and adverseStateSupported must each be Yes or No. guidePhraseApplicable is Yes only when all four are Yes.
 - For a Yes decision, applicabilityEvidenceField must name exactly one supplied field and applicabilityEvidenceQuote must be a short exact excerpt copied from it. Allowed fields: Function From; Function From Details; Control Action; Control Action Details; Function To; Function To Details; Operational Scenario; Operational Mode; Operating Conditions; Context Assumptions.
 - For a No decision, strongestReasonForNo must state the interface-specific reason. Do not use the completed distribution as evidence.
-- Every No decision must satisfy the same proof obligation as the independent audit. Set notApplicableReasonCode to exactly one of: Semantic mismatch; Receiver unaffected; Architecture precludes deviation; No adverse state in context. Cite a short exact supporting excerpt in notApplicableEvidenceField and notApplicableEvidenceQuote. Lack of literal failure wording is not proof.
+- Every No decision must satisfy the same proof obligation as the independent audit. Set notApplicableReasonCode to exactly one of: Semantic mismatch; Receiver unaffected; Architecture precludes deviation; No adverse state in context. Cite a short exact supporting excerpt in notApplicableEvidenceField and notApplicableEvidenceQuote. Lack of literal failure wording is not proof.`}
 - Set safetyContributionType to exactly one of: Direct safety control; Safety-critical feedback / constraint; Indirect safety contributor; Mission / reliability. Set causalNecessitySupported, additionalFailureRequired, and safeguardPrecludesPath to Yes or No after testing the exact receiver path and stated safeguards.
 - Set safetyClassification to exactly one of: Safety — Direct; Safety — Related; Mission/Reliability; Needs Review; Not Applicable. Set causalPathType to Direct, Contributory, None, or Uncertain and supply the matching D1-D3, R1-R4, M1-M4, N1-N4, or U1-U4 rule id.
 - Safety — Direct requires causalEffect, resultingSystemState, a grounded exposure and L1-L3 path, and no additional undocumented failure or effective independent protection.
@@ -2067,7 +2099,7 @@ ${JSON.stringify(repairItems.map(({ item, row }) => ({
   const response = await fetchLLMResponse(prompt, {}, undefined, "", {
     signal: contextOptions.signal,
     maxTokens: 10_000,
-    workflow: "hazard-applicability-pattern-repair",
+    workflow: safetyOnly ? "hazard-safety-consistency-repair" : "hazard-applicability-pattern-repair",
   });
   return extractJsonArray(response);
 }
@@ -2080,7 +2112,7 @@ async function repairHazardAuditAnomalies(config, rows, items, contextOptions = 
   const distribution = applicabilityDistributionSummary(rows, items);
   const repairGroups = new Map();
   repairIndexes.forEach((index) => {
-    const guidePhrase = sanitizeText(items[index]?.guidePhrase || rows[index]?.guidePhrase) || "Unspecified guide phrase";
+    const guidePhrase = `${applicabilityIsReadOnly(items[index]) ? "protected" : "unresolved"}:${sanitizeText(items[index]?.guidePhrase || rows[index]?.guidePhrase) || "Unspecified guide phrase"}`;
     if (!repairGroups.has(guidePhrase)) repairGroups.set(guidePhrase, []);
     repairGroups.get(guidePhrase).push({ row: rows[index], item: items[index], index });
   });
@@ -2097,7 +2129,7 @@ async function repairHazardAuditAnomalies(config, rows, items, contextOptions = 
 
   await mapWithConcurrency(repairChunks, HAZARD_LLM_CONCURRENCY, async (repairChunk, chunkIndex) => {
     contextOptions.onProgress?.({
-      message: `Repairing applicability pattern (${chunkIndex + 1}/${repairChunks.length})...`,
+      message: `Repairing ${repairChunk.every(({ item }) => applicabilityIsReadOnly(item)) ? "safety and causal consistency" : "applicability pattern"} (${chunkIndex + 1}/${repairChunks.length})...`,
       completed: completedChunks,
       total: repairChunks.length,
     });
@@ -2106,8 +2138,11 @@ async function repairHazardAuditAnomalies(config, rows, items, contextOptions = 
       const repairsById = generatedRowsById(repairs);
       repairChunk.forEach(({ row, item, index }, localIndex) => {
         const repair = generatedRowForItem(repairsById, repairs, localIndex, item);
-        if (!hasCompleteStructuredApplicabilityDecision(repair)) return;
-        const applicability = validateApplicabilityEvidence(repair, item).guidePhraseApplicable;
+        if (!repair) return;
+        const protectedDecision = applicabilityIsReadOnly(item);
+        if (protectedDecision && !sanitizeText(repair.safetyClassification)) return;
+        if (!protectedDecision && !hasCompleteStructuredApplicabilityDecision(repair)) return;
+        const applicability = protectedDecision ? normalizeGuidePhraseApplicability(item.guidePhraseApplicable) : validateApplicabilityEvidence(repair, item).guidePhraseApplicable;
         const wasApplicable = normalizeGuidePhraseApplicability(row.guidePhraseApplicable) === "Yes";
         if (applicability === "Needs Review") {
           // Preserve the pre-repair candidate evidence. A failed adjudication
@@ -2139,7 +2174,7 @@ async function repairHazardAuditAnomalies(config, rows, items, contextOptions = 
   });
 
   contextOptions.onProgress?.({
-    message: "Applicability pattern repair complete.",
+    message: "Hazard audit consistency repair complete.",
     completed: repairChunks.length,
     total: repairChunks.length,
   });
@@ -2515,11 +2550,14 @@ async function tagSafetySignificanceForStandardRows(config, rows, items, context
 
   const taggedRows = [...rows];
   const tagItems = rows.map((row, index) => ({ row, item: items[index], index }));
-  const tagChunks = chunkItemsByCount(tagItems, APPLICABILITY_REVIEW_ROWS_PER_PROMPT);
+  const tagChunks = [true, false].flatMap(protectedDecision => chunkItemsByCount(
+    tagItems.filter(({ item }) => applicabilityIsReadOnly(item) === protectedDecision),
+    APPLICABILITY_REVIEW_ROWS_PER_PROMPT,
+  ));
   let completedTagChunks = 0;
   await mapWithConcurrency(tagChunks, HAZARD_LLM_CONCURRENCY, async (tagChunk, chunkIndex) => {
     contextOptions.onProgress?.({
-      message: `Auditing guide-phrase applicability and safety significance (${chunkIndex + 1}/${tagChunks.length})...`,
+      message: `Auditing ${tagChunk.every(({ item }) => applicabilityIsReadOnly(item)) ? "safety significance and evidence" : "guide-phrase applicability and safety significance"} (${chunkIndex + 1}/${tagChunks.length})...`,
       completed: completedTagChunks,
       total: tagChunks.length,
     });
@@ -2543,7 +2581,7 @@ async function tagSafetySignificanceForStandardRows(config, rows, items, context
   });
 
   contextOptions.onProgress?.({
-    message: `${config.sheetName} applicability and safety significance review complete.`,
+    message: `${config.sheetName} safety significance and evidence review complete.`,
     completed: tagChunks.length,
     total: tagChunks.length,
   });
@@ -2742,7 +2780,7 @@ export async function runStandardHazardAnalysisStages({
 
   for (let index = 0; index < HAZARD_ANALYSIS_REPAIR_STAGES.length; index += 1) {
     const [stage, runStage] = HAZARD_ANALYSIS_REPAIR_STAGES[index];
-    const stageBasis = {stage, config, rows: normalizedRows, items, operationalContext, organizationContext, analysisContext, contextSources, provider};
+    const stageBasis = {stage, ...(items.some(applicabilityIsReadOnly) ? { applicabilityAuditPolicy: "read-only-applicability-v1" } : {}), config, rows: normalizedRows, items, operationalContext, organizationContext, analysisContext, contextSources, provider};
     const savedStage = await generationCheckpoint?.read(stageBasis);
     let stageFailed = false;
     const reusableStage = Array.isArray(savedStage) && savedStage.length === items.length;

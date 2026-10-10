@@ -1,3 +1,4 @@
+import { SHOW_TABLE_REVIEW_COLUMNS } from "../../components/tablePresentation";
 import useDeferredTableRow, { estimateTableRowHeight } from '../../components/useDeferredTableRow';
 import useTableRowFocus from "../../components/useTableRowFocus";
 import CopyTableButton from '../../components/CopyTableButton';
@@ -49,7 +50,7 @@ export default function CodeArchitectureHazardSummaryTable({
   reviewItems = [],
   reviewByRow,
   reviewDrawerOptions = {},
-  showReview = true,
+  showReview: requestedShowReview = true,
   highlightedRowIndex = null,
   focusRequestKey,
   onRowFocusResolved,
@@ -198,6 +199,7 @@ export default function CodeArchitectureHazardSummaryTable({
     document.addEventListener("mouseup", onMouseUp);
   }, [columnWidths, defaultColumnWidths, visibleColumns]);
   const actionsColumnWidth = onDeleteRow && !readOnly ? 110 : 0;
+  const showReview = SHOW_TABLE_REVIEW_COLUMNS && requestedShowReview;
   const reviewColumnWidth = showReview && reviewItems.length > 0 ? 110 : 0;
   const operationalContextColumnWidth = 220;
   const tablePixelWidth = visibleColumns.reduce(

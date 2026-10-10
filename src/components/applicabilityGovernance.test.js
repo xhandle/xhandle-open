@@ -37,6 +37,12 @@ test.each([['Yes', 'Reviewed', ''], ['No', 'Reviewed', ''], ['Yes', '', 'Automat
   else {
     expect(fetchLLMResponse).toHaveBeenCalled();
     expect(stages).toEqual(HAZARD_ANALYSIS_STAGE_KEYS);
+    // Initial generation and language repair consume the decision instead of
+    // independently screening it again.
+    fetchLLMResponse.mock.calls.forEach(([prompt]) => {
+      expect(prompt).not.toContain('first decide whether that guide phrase is applicable');
+      expect(prompt).not.toContain('re-decide applicability independently');
+    });
   }
 });
 

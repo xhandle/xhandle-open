@@ -26,12 +26,15 @@ function renderPanel(props = {}) {
   return { host, root };
 }
 
-it('shows deferred applicability and clears the notice after an explicit review resolves it', () => {
+it('hides review notices without changing unresolved applicability or preprocessing conflicts', () => {
   const headers = ['Raw Analysis Row ID', 'Guide Phrase Applicable', 'Guide Phrase Applicability Origin', 'Hazards'];
-  const latestRun = {generatedSheets: {Summary: [headers, ['RAW-1', 'Needs Review', 'Automatic screening', 'Needs review: unresolved applicability']]}};
+  const latestRun = {userPreprocessingConflicts: ['Saved assessment needs reconciling'], generatedSheets: {Summary: [headers, ['RAW-1', 'Needs Review', 'Automatic screening', 'Needs review: unresolved applicability']]}};
   const {host, root} = renderPanel({latestRun});
   try {
-    expect(host.textContent).toContain('1 guide-phrase decisions need review');
+    expect(host.textContent).not.toContain('guide-phrase decisions need review');
+    expect(host.textContent).not.toContain('User preprocessing needs review');
+    expect(latestRun.generatedSheets.Summary[1][1]).toBe('Needs Review');
+    expect(latestRun.userPreprocessingConflicts).toEqual(['Saved assessment needs reconciling']);
     act(() => root.render(<CodeArchitectureHazardPanel method="STPA-Textbook" operationalContexts={[]} cbaRows={[]}
       latestRun={{...latestRun, generatedSheets: {Summary: [headers, ['RAW-1', 'Yes', 'Automatic screening', 'Needs review: downstream assessment pending']]}}} />));
     expect(host.textContent).not.toContain('guide-phrase decisions need review');
