@@ -10,45 +10,39 @@ const cleanPromptText = (value) => String(value ?? "")
   .replace(/\r\n?/g, "\n")
   .trim();
 
-const HAZARD_PRIORITY_ORGANIZATION_SECTIONS = [
-  "Safety Significance Classification",
-  "Hazard and Loss Taxonomy",
-  "Safety Philosophy",
-  "Architecture Conventions",
-  "Operational Concepts",
-  "Known Controls and Evidence",
-];
-
-function extractTopLevelMarkdownSection(markdown = "", heading = "") {
-  const source = cleanPromptText(markdown);
-  const escaped = String(heading).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = source.match(new RegExp(`^#\\s+${escaped}\\s*\\n([\\s\\S]*?)(?=^#\\s+|(?![\\s\\S]))`, "im"));
-  return match ? `# ${heading}\n${match[1]}`.trim() : "";
-}
-
-/**
- * Long organization profiles must not lose the classification policy in a
- * generic head/tail truncation. Assemble the hazard-relevant governed sections
- * first, then use the ordinary bounded-context behavior. The project override
- * remains last so it retains precedence in the prompt.
+/** Preserve every authored top-level section, including custom policy sections.
+ * Give each section an explicit budget rather than dropping non-priority sections.
+ * Keep project overrides last; unused allocation is redistributed to long sections.
  */
 export function prioritizeHazardOrganizationContext(value, maxChars = HAZARD_ORGANIZATION_CONTEXT_CHAR_BUDGET) {
   const source = cleanPromptText(value);
   if (!source || source.length <= maxChars) return source;
-
-  const sections = HAZARD_PRIORITY_ORGANIZATION_SECTIONS
-    .map((heading) => extractTopLevelMarkdownSection(source, heading))
-    .filter(Boolean);
-  const projectOverride = extractTopLevelMarkdownSection(source, "Project Profile Override");
-  if (!sections.length) return boundHazardPromptContext(source, maxChars, "organization calibration");
-
-  const identityPreamble = source.slice(0, Math.min(source.length, 1800)).trim();
-  const prioritized = [
-    identityPreamble,
-    ...sections,
-    projectOverride,
-  ].filter(Boolean).join("\n\n");
-  return boundHazardPromptContext(prioritized, maxChars, "hazard-relevant organization calibration");
+  const sections = source.split(/(?=^#\s+)/m).filter(part => part.trim()).map(part => part.trim());
+  if (sections.length < 2) return boundHazardPromptContext(source, maxChars, "organization calibration");
+  const available = Math.max(0, maxChars - (sections.length - 1) * 2);
+  const budgets = sections.map(() => 0);
+  let remaining = available;
+  let pending = sections.map((_, index) => index);
+  while (pending.length && remaining > 0) {
+    const allocation = Math.max(1, Math.floor(remaining / pending.length));
+    const next = [];
+    for (const index of pending) {
+      const amount = Math.min(allocation, sections[index].length - budgets[index], remaining);
+      budgets[index] += amount;
+      remaining -= amount;
+      if (budgets[index] < sections[index].length) next.push(index);
+    }
+    pending = next;
+  }
+  return sections.map((section, index) => {
+    const budget = budgets[index];
+    if (section.length <= budget) return section;
+    const marker = "\n[Section shortened]\n";
+    if (budget <= marker.length) return section.slice(0, budget);
+    const length = budget - marker.length;
+    const head = Math.ceil(length * 0.7);
+    return section.slice(0, head) + marker + section.slice(-(length - head));
+  }).join("\n\n").slice(0, maxChars);
 }
 
 export function boundHazardPromptContext(value, maxChars, label = "context") {

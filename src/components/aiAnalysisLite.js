@@ -67,6 +67,7 @@ export async function runLiteAIAnalysis({
   signal = null,
   onStageComplete = async () => {},
   generationCheckpoint = null,
+  codeArchitectureWorkflow = false,
 }) {
   const totalSteps = 9;
   let step = 0;
@@ -272,6 +273,9 @@ export async function runLiteAIAnalysis({
       setFolders,
       currentFolder,
       haraGenerationMode: "standard",
+      codeArchitectureWorkflow,
+      signal,
+      generationCheckpoint,
       operationalContext,
       organizationContext,
       analysisContext,
@@ -294,6 +298,9 @@ export async function runLiteAIAnalysis({
       setFolders,
       currentFolder,
       fhaGenerationMode: "standard",
+      codeArchitectureWorkflow,
+      signal,
+      generationCheckpoint,
       operationalContext,
       organizationContext,
       analysisContext,

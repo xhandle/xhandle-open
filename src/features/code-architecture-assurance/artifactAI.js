@@ -671,7 +671,10 @@ function isSafetySignificantHazardRow(row = {}) {
 function hazardSafetyRequirementRows(hazardAnalysis = null) {
   const rows = summaryRowsFromHazardAnalysis(hazardAnalysis);
   return rows.flatMap((row, index) => {
+    if (/^no$/i.test(pickField(row, ["Guide Phrase Applicable"]))) return [];
     if (!isSafetySignificantHazardRow(row)) return [];
+    if (/^(HARA|FHA)$/i.test(hazardAnalysis?.hazardMethod || '') &&
+        ( /needs review|not generated/i.test(pickField(row, ['Safety Significance Rationale'])) || (pickField(row, ['Safety Classification']) && !pickField(row, ['Safety Significance Rationale'])))) return [];
     const requirement = normalizeSafetyRequirementText(pickField(row, [
       "Software Safety Requirement",
       "Safety Requirement",
@@ -681,15 +684,21 @@ function hazardSafetyRequirementRows(hazardAnalysis = null) {
       "Consolidated Requirement",
       "Requirement",
     ]));
-    if (!requirement) return [];
+    if (!requirement || /needs review|not generated/i.test(requirement)) return [];
+    // A HARA goal is not itself a software allocation. New CBA results explicitly carry this column.
+    if (/^HARA$/i.test(hazardAnalysis?.hazardMethod || "") &&
+        Object.prototype.hasOwnProperty.call(row, "Software Safety Requirement") &&
+        !String(row["Software Safety Requirement"] || "").trim()) return [];
 
+    if (/^(HARA|FHA)$/i.test(hazardAnalysis?.hazardMethod || "") &&
+        ["Hazard", "Severity", "Severity Category", "ASIL", "Software Criticality Index", "Verification"].some(field => /needs review|not generated/i.test(pickField(row, [field])))) return [];
     const architectureRef = architectureRefFromHazardRow(row);
     const hazardRef = `HZ-${String(Number(row.rowIndex) + 1).padStart(3, "0")}`;
     const sourceId = architectureRef?.traceId || architectureRef?.rowRef || "";
     const hazardText = pickField(row, ["Hazard", "Hazards", "Hazardous Event", "Mishap", "Loss", "Losses"]);
     const mitigation = pickField(row, ["Mitigation Strategy", "Controls / Mitigations", "Controls", "Safety Goal"]);
     const severity = pickField(row, ["Software Criticality Index", "ASIL", "Severity Category", "Severity"]);
-    const verification = pickField(row, ["Verification", "LOR Tasks"]);
+    const verification = pickField(row, ["Verification", "Verification Method", "LOR Tasks"]);
     return [createBaseArtifactRow(ARTIFACT_KINDS.SOFTWARE, {
       id: `SWR-SAFE-${String(index + 1).padStart(3, "0")}`,
       requirementText: requirement,
@@ -712,6 +721,11 @@ function hazardSafetyRequirementRows(hazardAnalysis = null) {
         ...(sourceId ? [{ targetType: "functional-row", targetId: sourceId, relationship: "traces-to" }] : []),
       ],
       sourceArchitectureRefs: architectureRef ? [architectureRef] : [],
+      operationalContextId: pickField(row, ["Operational Context ID"]),
+      operationalScenario: pickField(row, ["Operational Scenario"]),
+      operationalMode: pickField(row, ["Operational Mode"]),
+      operatingConditions: pickField(row, ["Operating Conditions"]),
+      contextAssumptions: pickField(row, ["Context Assumptions"]),
       hazardAnalysisRunId: hazardAnalysis?.id || "",
       hazardAnalysisMethod: hazardAnalysis?.hazardMethod || "",
       hazardRowIndex: row.rowIndex,

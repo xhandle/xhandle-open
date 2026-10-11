@@ -124,3 +124,48 @@ test.each(['Yes', 'No'])('accepted %s survives a context change and a conflictin
  expect(result.generatedSheets.Summary[1][9]).toBe(decision);
  expect(result.generatedSheets.Summary[1][10]).toBe('Accepted user rationale');
 });
+
+test.each(['HARA','FHA'])('switch to %s does not reinterpret or mutate STPA preprocessing',async method=>{
+ const previous=buildCodeArchitectureHazardCsvDraft(options,headers);
+ previous.hazardMethod='STPA-Textbook';
+ const baseline=[...previous.generatedSheets.Summary[1]];
+ const row=previous.generatedSheets.Summary[1];row[9]='No';
+ previous.userPreprocessing={[row[8]]:recordUserPreprocessing(null,headers,row,[headers[9]],baseline)};
+ const snapshot=JSON.stringify(previous);
+ await runCodeArchitectureHazardAnalysis({...options,method,previousRun:previous});
+ expect(runLiteAIAnalysis.mock.calls[0][0].codeArchitectureWorkflow).toBe(true);
+ expect(runLiteAIAnalysis.mock.calls[0][0].tableRows).toHaveLength(7);
+ expect(JSON.stringify(previous)).toBe(snapshot);
+});
+
+test('enabled profile reaches screening and recorded provenance includes disabled state',async()=>{
+ const result=await runCodeArchitectureHazardAnalysis({...options,organizationContext:'ORG-RULE'});
+ expect(screenCodeHazardApplicability).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({organizationContext:'ORG-RULE'}));
+ expect(runLiteAIAnalysis.mock.calls[0][0].organizationContext).toBe('ORG-RULE');
+ expect(result.organizationProfileProvenance.effectiveEnabled).toBe(true);
+ const disabled=await runCodeArchitectureHazardAnalysis(options);
+ expect(disabled.organizationProfileProvenance.effectiveEnabled).toBe(false);
+ expect(disabled.organizationProfileProvenance.effectiveContextIdentity).not.toBe(result.organizationProfileProvenance.effectiveContextIdentity);
+});
+test.each(['HRWhatIf','STPA-SEC','STPA','unknown'])('profile-enabled legacy method %s cannot silently ignore policy',async method=>{
+ await expect(runCodeArchitectureHazardAnalysis({...options,method,organizationContext:'ORG-RULE'})).rejects.toThrow('does not support organization profiles');
+ expect(runLiteAIAnalysis).not.toHaveBeenCalled();
+});
+
+test.each(['HARA','FHA'])('%s migrates legacy decisions without blocking regeneration and retains history on continuation',async method=>{
+ const previous=buildCodeArchitectureHazardCsvDraft({...options,method},headers);
+ previous.id='legacy-run';previous.hazardMethod=method;
+ const row=[...previous.generatedSheets.Summary[1]];row[3]=method==='HARA'?'Functional malfunction':'Functional degradation or loss';row[9]='No';
+ previous.generatedSheets.Summary=[headers,row];
+ previous.userPreprocessing={[row[8]]:recordUserPreprocessing(null,headers,row,[headers[9]],row)};
+ const snapshot=JSON.stringify(previous);
+ const result=await runCodeArchitectureHazardAnalysis({...options,method,previousRun:previous,regenerate:true});
+ expect(runLiteAIAnalysis.mock.calls[0][0].tableRows).toHaveLength(7);
+ expect(runLiteAIAnalysis.mock.calls[0][0].tableRows.every(row=>row.guidePhraseApplicable==='')).toBe(true);
+ expect(result.archivedUserPreprocessing[row[8]].values['Guide Phrase Applicable']).toBe('No');
+ expect(JSON.stringify(previous)).toBe(snapshot);
+ const {normalizeCodeArchitectureHazardRun}=require('./codeArchitectureHazardUtils');
+ const reloaded=normalizeCodeArchitectureHazardRun(result);
+ const next=await runCodeArchitectureHazardAnalysis({...options,method,previousRun:reloaded});
+ expect(next.archivedUserPreprocessing).toEqual(result.archivedUserPreprocessing);
+});

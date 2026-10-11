@@ -83,8 +83,10 @@ export default function CodeArchitectureHazardPanel({
   onClearContents,
   onDeleteSummaryRow,
   onCollaboratorSelectionChange,
+  collaboratorSelection,
   importInputRef,
   reviewMode = false,
+  organizationContext,
 }) {
   const summarySheet = useMemo(() => fillNotApplicableHazardSummary(ensureHazardAnalysisRowIds(
     latestRun?.generatedSheets?.Summary || draftRun?.generatedSheets?.Summary || []
@@ -167,16 +169,17 @@ export default function CodeArchitectureHazardPanel({
   const isStale = useMemo(
     () => latestRun ? isCodeArchitectureHazardAnalysisStale({
       run: latestRun,
+      organizationContext,
       cbaRows,
       operationalContexts,
       selectedOperationalContextId,
     }) : false,
-    [latestRun, cbaRows, operationalContexts, selectedOperationalContextId]
+    [latestRun, cbaRows, operationalContexts, selectedOperationalContextId, organizationContext]
   );
   const summaryCount = Math.max(0, (Array.isArray(summarySheet) ? summarySheet.length : 1) - 1);
   const statusMessage = latestRun
     ? isStale
-      ? "Architecture changed since this run. Re-run before generating new remediation findings."
+      ? "Architecture, operational context or organization guidance changed since this run. Re-run before generating new remediation findings."
       : `Latest ${latestRun.hazardMethod || "hazard"} run has ${summaryCount} summary row${summaryCount === 1 ? "" : "s"}.`
     : "Run hazard analysis first for grounded remediation recommendations.";
   const statusTone = latestRun && !isStale ? "success" : "default";
@@ -429,6 +432,7 @@ export default function CodeArchitectureHazardPanel({
                 functionalTraceIds={functionalTraceIds}
                 onDeleteRow={reviewMode || !latestRun ? undefined : onDeleteSummaryRow}
                 onCollaboratorSelectionChange={onCollaboratorSelectionChange}
+                collaboratorSelection={collaboratorSelection}
                 selectedOperationalContextId={selectedOperationalContextId}
                 collapseAllRequest={collapseAllRequest}
                 onGroupStateChange={handleGroupStateChange}

@@ -37,6 +37,26 @@ export const STPA_DEFAULT_COLUMNS = [
 ];
 const STPA_DEFAULT_COLUMN_SET = new Set(STPA_DEFAULT_COLUMNS.map(name => name.toLowerCase()));
 
+export const HARA_DEFAULT_COLUMNS = [
+  "Function", "Operational Scenario", "Operational Mode", "Operating Conditions",
+  "Guide Phrase", "Guide Phrase Applicable", "Malfunctioning Behavior", "Hazardous Event",
+  "Severity", "Exposure", "Controllability", "ASIL", "Safety Goal", "Safety Classification",
+];
+export const FHA_DEFAULT_COLUMNS = [
+  "Function (From)", "Control Action", "Function (To)", "Operational Context",
+  "Guide Phrase", "Guide Phrase Applicable", "Mishap", "Severity Category",
+  "Severity Rationale", "Software Control Category", "Software Control Category Rationale",
+  "Software Criticality Index", "SWCI Rationale / Derivation", "Safety Classification", "Verification",
+];
+const FHA_DEFAULT_COLUMN_SET = new Set(FHA_DEFAULT_COLUMNS.map(name => name.toLowerCase()));
+
+const HARA_DEFAULT_COLUMN_SET = new Set(HARA_DEFAULT_COLUMNS.map(name => name.toLowerCase()));
+
+const haraColumnLabel = header => ({
+  "item / function": "Function",
+  "malfunction": "Malfunctioning Behavior",
+}[String(header || "").trim().toLowerCase()] || header);
+
 const MIN_COLUMN_WIDTH = 120;
 const MAX_COLUMN_WIDTH = 720;
 
@@ -71,6 +91,7 @@ export default function CodeArchitectureHazardSummaryTable({
   functionalTraceIds,
   onDeleteRow,
   onCollaboratorSelectionChange,
+  collaboratorSelection,
   selectedOperationalContextId = "all",
   collapseAllRequest = null,
   onGroupStateChange,
@@ -78,20 +99,38 @@ export default function CodeArchitectureHazardSummaryTable({
   readOnly = false,
 }) {
   const isStpa = ["STPA", "STPA-TEXTBOOK", "STPA_TEXTBOOK"].includes(String(hazardMethod).toUpperCase());
-  const showCombinedContext = !isStpa;
+  const isHara = String(hazardMethod).toUpperCase() === "HARA";
+  const isFha = String(hazardMethod).toUpperCase() === "FHA";
+  const showCombinedContext = !isStpa && !isHara && !isFha;
   // New defaults apply once to existing tables; subsequent picker choices persist.
-  const visibilityStorageKey = `${storageKey}:hidden-columns${isStpa ? ":stpa-focused-v3" : ""}`;
+  const visibilityStorageKey = `${storageKey}:hidden-columns${isStpa ? ":stpa-focused-v3" : isHara ? ":hara-focused-v1" : isFha ? ":fha-focused-v1" : ""}`;
   const rowRefs = useRef({});
   const [selectedCellKey, setSelectedCellKey] = useState("");
+  React.useEffect(() => {
+    // Undefined allows standalone tables to retain their local selection behavior.
+    // Parent-owned context removal must also remove the visual selection.
+    if (collaboratorSelection === null) setSelectedCellKey("");
+  }, [collaboratorSelection]);
   const [collapsedInterfaceKeys, setCollapsedInterfaceKeys] = useState(() => new Set());
 
+  const displaySheet = React.useMemo(() => {
+    if (!isFha || !Array.isArray(summarySheet?.[0])) return summarySheet;
+    const originalHeaders = summarySheet[0];
+    const missing = FHA_DEFAULT_COLUMNS.filter(name => !originalHeaders.includes(name));
+    const cell = (row, name) => String(row[originalHeaders.indexOf(name)] ?? '').trim();
+    return [[...originalHeaders, ...missing], ...summarySheet.slice(1).map(row => [
+      ...row, ...missing.map(name => name === 'Operational Context'
+        ? `${cell(row, 'Operational Scenario') || 'Unspecified scenario'} · ${cell(row, 'Operational Mode') || 'Unspecified mode'}`
+        : ''),
+    ])];
+  }, [summarySheet, isFha]);
   const headers = React.useMemo(
-    () => (Array.isArray(summarySheet?.[0]) ? summarySheet[0] : []),
-    [summarySheet]
+    () => (Array.isArray(displaySheet?.[0]) ? displaySheet[0] : []),
+    [displaySheet]
   );
   const rows = React.useMemo(
-    () => (Array.isArray(summarySheet) ? summarySheet.slice(1) : []),
-    [summarySheet]
+    () => (Array.isArray(displaySheet) ? displaySheet.slice(1) : []),
+    [displaySheet]
   );
   const rowItems = React.useMemo(
     () => rows.map((row, rowIndex) => ({ row, rowIndex })),
@@ -112,19 +151,21 @@ export default function CodeArchitectureHazardSummaryTable({
   const columnOptions = React.useMemo(
     () => headers.map((header, index) => ({
       key: String(index),
-      header,
-      label: header || `Column ${index + 1}`,
+      header: isHara ? haraColumnLabel(header) : header,
+      label: (isHara ? haraColumnLabel(header) : header) || `Column ${index + 1}`,
       index,
     })),
-    [headers]
+    [headers, isHara]
   );
   const defaultHiddenColumnKeys = React.useMemo(
     () => columnOptions
       .filter(({ header }) => isStpa
         ? !STPA_DEFAULT_COLUMN_SET.has(String(header || "").trim().toLowerCase())
+        : isHara ? !HARA_DEFAULT_COLUMN_SET.has(String(header || "").trim().toLowerCase())
+        : isFha ? !FHA_DEFAULT_COLUMN_SET.has(String(header || "").trim().toLowerCase())
         : HIDDEN_SUMMARY_COLUMNS.has(String(header || "").trim().toLowerCase()))
       .map((column) => column.key),
-    [columnOptions, isStpa]
+    [columnOptions, isStpa, isHara, isFha]
   );
   const [hiddenColumnKeys, setHiddenColumnKeys] = useState(() => {
     try {
@@ -151,8 +192,13 @@ export default function CodeArchitectureHazardSummaryTable({
   const hiddenColumnSet = React.useMemo(() => new Set(hiddenColumnKeys), [hiddenColumnKeys]);
   const visibleColumns = React.useMemo(() => {
     const visible = columnOptions.filter((column) => !hiddenColumnSet.has(column.key));
+    if (isHara || isFha) visible.sort((a, b) => {
+      const defaults = isFha ? FHA_DEFAULT_COLUMNS : HARA_DEFAULT_COLUMNS;
+      const rank = column => { const index = defaults.indexOf(column.header); return index < 0 ? defaults.length : index; };
+      return rank(a) - rank(b);
+    });
     return visible.length ? visible : columnOptions.slice(0, 1);
-  }, [columnOptions, hiddenColumnSet]);
+  }, [columnOptions, hiddenColumnSet, isHara, isFha]);
   const getFilterCell = React.useCallback((item, columnIndex) => {
     const column = visibleColumns[columnIndex];
     return column ? item?.row?.[column.index] ?? "" : "";
@@ -274,8 +320,8 @@ export default function CodeArchitectureHazardSummaryTable({
     [filteredRowItems, headers, selectedOperationalContextId],
   );
   useEffect(() => {
-    onVisibleSummaryChange?.([headers, ...contextFilteredRowItems.map(({ row }) => row)]);
-  }, [headers, contextFilteredRowItems, onVisibleSummaryChange]);
+    onVisibleSummaryChange?.([summarySheet?.[0] || [], ...contextFilteredRowItems.map(({ rowIndex }) => summarySheet[rowIndex + 1])]);
+  }, [summarySheet, contextFilteredRowItems, onVisibleSummaryChange]);
   const hazardGroups = useMemo(
     () => buildCodeArchitectureHazardGroups(headers, contextFilteredRowItems),
     [contextFilteredRowItems, headers],

@@ -120,6 +120,7 @@ export default function EngineeringArtifactTable({
   readOnly = false,
   tableContext = {},
   onCollaboratorSelectionChange,
+  collaboratorSelection,
 }) {
   const rowRefs = useRef({});
   const highlightedSet = useMemo(
@@ -240,6 +241,11 @@ export default function EngineeringArtifactTable({
   })), [visibleColumns, tableContext]);
   const [editingCellKey, setEditingCellKey] = useState("");
   const [selectedCellKey, setSelectedCellKey] = useState("");
+  React.useEffect(() => {
+    // Undefined allows standalone tables to retain their local selection behavior.
+    // Parent-owned context removal must also remove the visual selection.
+    if (collaboratorSelection === null) setSelectedCellKey("");
+  }, [collaboratorSelection]);
   useEffect(() => {
     if (!highlightedSet.size || !filterState.activeFilterCount) return;
     const visibleMatch = visibleRows.some(({ row, rowIndex }) => rowMatchesFocus(row, rowIndex, highlightedSet));

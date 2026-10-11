@@ -1,0 +1,36 @@
+jest.mock('./aiAnalysisSTPA', () => ({fetchLLMResponse:jest.fn()}));
+jest.mock('./backendConfig', () => ({backendURL:'https://example.test',buildAuthOpts:()=>({}),buildAIAuthOpts:()=>({})}));
+const {fetchLLMResponse}=require('./aiAnalysisSTPA');
+const {generateHaraAnalysisSheets,generateFhaAnalysisSheets}=require('./aiAnalysisHaraFha');
+const {buildCodeArchitectureHazardInput}=require('../features/code-architecture-hazard-analysis/codeArchitectureHazardUtils');
+const {importHazardSoftwareRequirements}=require('../features/code-architecture-assurance/artifactAI');
+const source={from:'Validate brake command',action:'Apply brake torque',to:'Brake controller',traceId:'trace-1',rowRef:'1',hazardAnalysisEligibility:'Include'};
+const contexts=[{id:'urban',scenario:'Urban driving',mode:'Automatic'},{id:'service',scenario:'Service depot',mode:'Maintenance'}];
+const response=[1,2].map(i=>({id:`FD-${i}`,itemFunction:'Validate brake command',functionName:'Validate brake command',malfunction:'Brake torque exceeds requested torque',hazard:'Brake controller applies excess torque on a wet road and vehicle loses traction',operationalSituation:'Urban wet-road braking',hazardousEvent:'Excess brake torque locks the wheel during a turn',harm:'Vehicle occupants injured',severity:'S3',exposure:'E4',controllability:'C3',asil:'ASIL D',safetyGoal:'The system shall limit brake torque to the validated request.',functionalDegradationOrLoss:'Excess brake torque',mishap:'Vehicle collision',effect:'Wheel locks during a turn',severityCategory:'I - Catastrophic',softwareControlCategory:'1 - Autonomous',causalFactors:'Brake command limit omitted',controls:'Validate brake torque request',safetyRequirement:'The software shall validate the brake torque request.',verification:'Test brake torque limits',rationale:'Brake controller controls wheel torque',safetySignificant:'Yes',safetySignificanceRationale:'Excess brake torque can cause occupant injury',proposedSafetyAssessment:'Safety Related'}));
+beforeEach(()=>{fetchLLMResponse.mockReset();jest.spyOn(console,'warn').mockImplementation(()=>{});});
+afterEach(()=>jest.restoreAllMocks());
+
+
+const {buildEffectiveOrganizationProfileContext,createOrganizationProfileRecord}=require('../features/organization-profile/organizationProfile');
+const {formatGovernedHazardPromptContext}=require('../features/project-hazard-analysis/hazardPromptContext');
+const app=require('fs').readFileSync(require('path').join(process.cwd(),'src/App.js'),'utf8');
+const selection=app.match(/const codeHazardOrganizationCalibration = getProjectOrganizationCalibration\(cbaProjectId, \[([\s\S]*?)\]\);/)[1];
+const selected=[...selection.matchAll(/"([^"]+)"/g)].map(match=>match[1]);
+const prefix='---\norganization: Test\nprofile_version: 1\nstatus: approved\n---\n';
+test('CBA section selection omits separately authored safety classification policy',()=>{
+ const context=buildEffectiveOrganizationProfileContext({profile:createOrganizationProfileRecord({enabled:true,markdown:prefix+'# Safety Philosophy\nPHILOSOPHY\n# Safety Significance Classification\nCLASSIFICATION-RULE'}),sectionNames:selected});
+ expect(context).toContain('PHILOSOPHY');expect(context).not.toContain('CLASSIFICATION-RULE');
+});
+test('long CBA profile loses risk and engineering sections during prioritization',()=>{
+ const context=buildEffectiveOrganizationProfileContext({profile:createOrganizationProfileRecord({enabled:true,markdown:prefix+'# Safety Philosophy\n'+ 'x'.repeat(19000)+'\n# Risk Classification\nRISK-RULE\n# Engineering Rules\nENGINEERING-RULE'}),sectionNames:selected});
+ expect(context).toContain('RISK-RULE');
+ const prompt=formatGovernedHazardPromptContext({organizationContext:context});
+ expect(prompt).not.toContain('RISK-RULE');expect(prompt).not.toContain('ENGINEERING-RULE');
+});
+test.each([['HARA',generateHaraAnalysisSheets],['FHA',generateFhaAnalysisSheets]])('%s includes organization guidance in real generation and classification prompts',async(method,generate)=>{
+ fetchLLMResponse.mockResolvedValue(JSON.stringify(response));
+ const input=buildCodeArchitectureHazardInput({cbaRows:[source],method,operationalContexts:contexts});
+ await generate({sheets:input.sheets,setFolders:jest.fn(),codeArchitectureWorkflow:true,organizationContext:'ORG-POLICY-TOKEN'});
+ expect(fetchLLMResponse.mock.calls.length).toBeGreaterThan(1);
+ for(const [prompt] of fetchLLMResponse.mock.calls) expect(prompt).toContain('ORG-POLICY-TOKEN');
+});

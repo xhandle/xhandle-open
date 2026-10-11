@@ -219,3 +219,17 @@ test('phrase-heavy records respect the output decision budget', async () => {
     expect(recordsFrom(prompt).reduce((count, record) => count + record.phrases.length, 0)).toBeLessThanOrEqual(224);
   }
 });
+
+test('organization guidance reaches screening and changes checkpoint identity without overwriting decisions',async()=>{
+ const bases=[];const checkpoint={read:async basis=>{bases.push(basis);return null;},write:async()=>{}};
+ await screenCodeHazardApplicability(input(['Authorize software access']),{organizationContext:'ORG-POLICY-A',checkpoint});
+ expect(fetchLLMResponse.mock.calls[0][0]).toContain('ORG-POLICY-A');
+ await screenCodeHazardApplicability(input(['Authorize software access']),{organizationContext:'ORG-POLICY-B',checkpoint});
+ expect(bases[0].scope.organizationContext).not.toBe(bases[1].scope.organizationContext);
+ fetchLLMResponse.mockClear();
+ const reviewed=input(['Authorize software access']);
+ reviewed.tableRows.forEach((row,index)=>{row.guidePhraseApplicable=index?'No':'Yes';});
+ const result=await screenCodeHazardApplicability(reviewed,{organizationContext:'ORG-POLICY-C'});
+ expect(fetchLLMResponse).not.toHaveBeenCalled();
+ expect(result.tableRows.map(row=>row.guidePhraseApplicable)).toEqual(['Yes','No']);
+});

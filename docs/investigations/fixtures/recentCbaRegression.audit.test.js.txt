@@ -1,0 +1,37 @@
+jest.mock('./aiAnalysisSTPA', () => ({fetchLLMResponse:jest.fn()}));
+jest.mock('./backendConfig', () => ({backendURL:'https://example.test',buildAuthOpts:()=>({}),buildAIAuthOpts:()=>({})}));
+const {fetchLLMResponse}=require('./aiAnalysisSTPA');
+const {generateHaraAnalysisSheets,generateFhaAnalysisSheets}=require('./aiAnalysisHaraFha');
+const {buildCodeArchitectureHazardInput}=require('../features/code-architecture-hazard-analysis/codeArchitectureHazardUtils');
+const {importHazardSoftwareRequirements}=require('../features/code-architecture-assurance/artifactAI');
+const source={from:'Validate brake command',action:'Apply brake torque',to:'Brake controller',traceId:'trace-1',rowRef:'1',hazardAnalysisEligibility:'Include'};
+const contexts=[{id:'urban',scenario:'Urban driving',mode:'Automatic'},{id:'service',scenario:'Service depot',mode:'Maintenance'}];
+const response=[1,2].map(i=>({id:`FD-${i}`,guidePhraseApplicable:'Yes',guidePhraseApplicabilityRationale:'Brake torque deviation is meaningful',controlActionType:'Command',causalFactorCategory:'Logic',mitigationStrategy:'Validate brake torque',systemRequirement:'The system shall limit braking torque.',acceptanceCriteria:'Output torque does not exceed validated request',safetyClassification:'Safety — Related',itemFunction:'Validate brake command',functionName:'Validate brake command',malfunction:'Brake torque exceeds requested torque',hazard:'Brake controller applies excess torque on a wet road and vehicle loses traction',operationalSituation:'Urban wet-road braking',hazardousEvent:'Excess brake torque locks the wheel during a turn',harm:'Vehicle occupants injured',severity:'S3',exposure:'E4',controllability:'C3',asil:'ASIL D',safetyGoal:'The system shall limit brake torque to the validated request.',functionalDegradationOrLoss:'Excess brake torque',mishap:'Vehicle collision',effect:'Wheel locks during a turn',severityCategory:'I - Catastrophic',softwareControlCategory:'1 - Autonomous',causalFactors:'Brake command limit omitted',controls:'Validate brake torque request',safetyRequirement:'The software shall validate the brake torque request.',verification:'Test brake torque limits',rationale:'Brake controller controls wheel torque',safetySignificant:'Yes',safetySignificanceRationale:'Excess brake torque can cause occupant injury',proposedSafetyAssessment:'Safety Related'}));
+beforeEach(()=>{fetchLLMResponse.mockReset();jest.spyOn(console,'warn').mockImplementation(()=>{});});
+afterEach(()=>jest.restoreAllMocks());
+
+const methods = [['HARA',generateHaraAnalysisSheets],['FHA',generateFhaAnalysisSheets]];
+// Focused engine tests use one guide phrase across two contexts. Full expansion
+// and all-phrase publication are verified separately below.
+const inputFor = method => {
+ const input=buildCodeArchitectureHazardInput({cbaRows:[source],method,projectId:'p',repoMeta:{repoId:'repo'},operationalContexts:contexts});
+ input.tableRows=input.tableRows.slice(0,2);
+ input.sheets['Functional Decomposition']=input.sheets['Functional Decomposition'].slice(0,3);
+ return input;
+};
+
+test.each(methods)('audit: %s accepts Safety Direct without classification rationale and imports the requirement',async(method,generate)=>{
+ fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(prompt.includes('You are reviewing generated')
+   ? response.map(row=>({id:row.id,safetyClassification:'Safety — Direct'})) : response));
+ const result=await generate({sheets:inputFor(method).sheets,setFolders:jest.fn(),codeArchitectureWorkflow:true});
+ const h=result.Summary[0], row=result.Summary[1];
+ expect(row[h.indexOf('Safety Classification')]).toBe('Safety — Direct');
+ expect(row[h.indexOf('Safety Significant')]).toBe('Yes');
+ expect(row[h.indexOf('Safety Significance Rationale')]).toContain('not generated');
+ expect(importHazardSoftwareRequirements({hazardAnalysis:{hazardMethod:method,generatedSheets:result}})).toHaveLength(2);
+});
+test('audit: generated FHA does not contain the three default rationale fields',async()=>{
+ fetchLLMResponse.mockResolvedValue(JSON.stringify(response));
+ const result=await generateFhaAnalysisSheets({sheets:inputFor('FHA').sheets,setFolders:jest.fn(),codeArchitectureWorkflow:true});
+ for(const name of ['Severity Rationale','Software Control Category Rationale','SWCI Rationale / Derivation']) expect(result.Summary[0]).not.toContain(name);
+});

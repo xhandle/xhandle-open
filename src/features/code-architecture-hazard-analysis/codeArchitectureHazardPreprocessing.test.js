@@ -55,3 +55,27 @@ test('a No decision with a changed context basis still reaches the AI skip and r
  expect(result.sheets.Summary[1][9]).toBe('No');
  expect(result.conflicts).toEqual(expect.arrayContaining([expect.stringContaining('context changed')]));
 });
+
+test.each(['HARA','FHA'])('%s preserves legacy blank-guide-phrase decisions after method labels are introduced',method=>{
+ const row=[...baseline];row[3]='';row[9]='No';
+ const basis=[...baseline];basis[3]='';
+ const prior={hazardMethod:method,generatedSheets:{Summary:[headers,row]},userPreprocessing:{'RAW-1':recordUserPreprocessing(null,headers,row,['Guide Phrase Applicable'],basis)}};
+ const current=input();
+ current.tableRows=[{...source,guidePhrase:method==='HARA'?'Functional malfunction':'Functional degradation or loss'}];
+ const prepared=prepareCodeHazardPreprocessing(current,prior);
+ expect(prepared.tableRows[0].guidePhrase).toBe('');
+ expect(prepared.tableRows[0].guidePhraseApplicable).toBe('No');
+ expect(prepared.tableRows[0].userPreprocessingId).toBe('RAW-1');
+});
+
+test.each(['HARA','FHA'])('%s does not copy a legacy whole-function decision onto a new specific guide phrase',method=>{
+ const row=[...baseline];row[3]='';row[9]='No';
+ const basis=[...baseline];basis[3]='';
+ const prior={hazardMethod:method,generatedSheets:{Summary:[headers,row]},userPreprocessing:{'RAW-1':recordUserPreprocessing(null,headers,row,['Guide Phrase Applicable'],basis)}};
+ const current=input();
+ current.tableRows=[{...source,guidePhrase:'The control action is provided too late'}];
+ const prepared=prepareCodeHazardPreprocessing(current,prior);
+ expect(prepared.tableRows[0].guidePhraseApplicable).toBeUndefined();
+ expect(prepared.archivedUserPreprocessing['RAW-1'].values['Guide Phrase Applicable']).toBe('No');
+ expect(prior.generatedSheets.Summary[1][9]).toBe('No');
+});

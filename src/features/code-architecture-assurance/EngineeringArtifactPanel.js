@@ -182,10 +182,12 @@ export default function EngineeringArtifactPanel({
   onFocusResolved,
   onOpenTrace,
   hazardAnalysis = null,
+  organizationContext,
   reviewMode = false,
   initialRows = null,
   initialArtifactCollections = null,
   onCollaboratorSelectionChange,
+  collaboratorSelection,
 }) {
   const definition = ARTIFACT_DEFINITIONS[kind];
   const projectId = project?.id || "no-project";
@@ -424,7 +426,8 @@ export default function EngineeringArtifactPanel({
       };
       let generated = [];
       if (kind === ARTIFACT_KINDS.SOFTWARE) {
-        const savedHazardAnalysis = await resolveSoftwareHazardSource({ projectId, repo, current: hazardAnalysis });
+        const savedHazardAnalysis = await resolveSoftwareHazardSource({ projectId, repo, current: hazardAnalysis, cbaRows, organizationContext });
+        if (savedHazardAnalysis) onProgress({ message: `Using the latest ${savedHazardAnalysis.hazardMethod || "hazard"} analysis for safety requirements.` });
         generated = await derive({ ...args, cbaRows: source, hazardAnalysis: savedHazardAnalysis });
       } else if (kind === ARTIFACT_KINDS.SYSTEM) {
         generated = await derive({ ...args, softwareRequirements: source });
@@ -458,7 +461,7 @@ export default function EngineeringArtifactPanel({
     } finally {
       if (activeStorageKey.current === storageKey) setIsDeriving(false);
     }
-  }, [currentSourceRows, definition.title, finishActivity, hazardAnalysis, kind, project?.name, projectId, repo?.repoId, repo?.repoName, repoId, rows, startActivity, updateActivity, storageKey, setRows]);
+  }, [organizationContext, cbaRows, currentSourceRows, definition.title, finishActivity, hazardAnalysis, kind, project?.name, projectId, repo?.repoId, repo?.repoName, repoId, rows, startActivity, updateActivity, storageKey, setRows]);
 
   const addRow = React.useCallback(() => {
     setRows((prev) => [
@@ -590,6 +593,7 @@ export default function EngineeringArtifactPanel({
         tableContext={artifactContext}
         readOnly={reviewMode}
         onCollaboratorSelectionChange={onCollaboratorSelectionChange}
+                collaboratorSelection={collaboratorSelection}
       />
     </div>
   );

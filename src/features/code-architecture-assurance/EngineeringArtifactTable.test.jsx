@@ -47,3 +47,17 @@ describe('engineering table Markdown copying', () => {
     expect(host.querySelector('[aria-label="Copy table"]').disabled).toBe(true);
   });
 });
+
+it('clears the engineering cell highlight with collaborator context and allows reselection', () => {
+  const host=document.createElement('div');document.body.appendChild(host);
+  const root=createRoot(host);const onSelection=jest.fn();
+  const render=selection=>root.render(<EngineeringArtifactTable rows={[{id:'R-1',requirementText:'Limit torque'}]} columns={[{key:'requirementText',label:'Requirement'}]} showActions={false} showReview={false} collaboratorSelection={selection} onCollaboratorSelectionChange={onSelection} />);
+  const cell=()=>Array.from(host.querySelectorAll('td')).find(node=>node.textContent==='Limit torque');
+  try {
+    act(()=>render(null));act(()=>cell().click());
+    const selected=onSelection.mock.calls[0][0];expect(selected.kind).toBe('table-cell');
+    act(()=>render(selected));expect(cell().className).toContain('bg-blue-100');
+    act(()=>render(null));expect(cell().className).not.toContain('bg-blue-100');
+    act(()=>cell().click());expect(onSelection.mock.calls.at(-1)[0]).toMatchObject({kind:'table-cell'});
+  } finally {act(()=>root.unmount());host.remove();}
+});

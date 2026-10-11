@@ -38,7 +38,7 @@ export async function createCodeHazardCheckpoint(scopeParts, { regenerate = fals
       used.add(id);
       const record = await db.get(STORE, id);
       check();
-      if (record) onProgress({message: 'Reusing saved STPA work with matching inputs…'});
+      if (record) onProgress({message: 'Reusing saved hazard-analysis work with matching inputs…'});
       return record?.value;
     },
     async write(basis, value) {

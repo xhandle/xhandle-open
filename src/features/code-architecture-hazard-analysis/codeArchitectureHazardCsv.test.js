@@ -36,3 +36,12 @@ test('externally completed subset can populate the draft without deleting omitte
   expect(merged[1][5]).toBe(sheet[1][5]);
   expect(merged.slice(2)).toEqual(sheet.slice(2));
 });
+
+test.each(['HARA','FHA'])('%s CSV draft exposes all seven deviations with distinct import identities',method=>{
+ const sheet=buildCodeArchitectureHazardCsvDraft({...options,method},headers).generatedSheets.Summary;
+ expect(sheet).toHaveLength(8);
+ expect(new Set(sheet.slice(1).map(row=>row[3])).size).toBe(7);
+ expect(new Set(sheet.slice(1).map(row=>row[5])).size).toBe(7);
+ const plan=planHazardAnalysisCsvImport(sheet,toCsvText(sheet));
+ expect(plan.errors).toEqual([]);
+});

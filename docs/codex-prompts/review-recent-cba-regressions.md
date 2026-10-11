@@ -1,0 +1,5 @@
+Perform a read-only regression review of recent Code-Based Architecture changes. Do not change production code or saved user data.
+
+Start with the immutable GitHub commit contract: inspect every caller of repository context and source acquisition, local/GitHub parity, and asynchronous modal updates. Review recent HARA/FHA shared workflow and seven-guide-phrase changes, legacy saved/imported applicability, regeneration/continuation, classification and software requirements handoff. Review table defaults, CSV projection, and collaborator context removal for unintended behavior.
+
+Distinguish introduced regressions, existing risks, and intentional behavior changes. Reproduce findings using narrowly scoped mocked tests where possible; preserve reusable fixtures in docs and remove temporary test files. Run relevant existing suites. Report severity, concrete trigger, user impact, source references, recommended correction, and validation limits. Do not claim passing tests prove live-provider or browser correctness. Do not commit/push.

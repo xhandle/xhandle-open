@@ -282,3 +282,18 @@ export function buildEffectiveOrganizationProfileContext({ profile, projectProfi
     ] : []),
   ].join("\n");
 }
+
+// Stable change detector, not a cryptographic signature. Empty means disabled/no valid guidance.
+export function organizationProfileContextIdentity(context = "") {
+  const text = String(context || "");
+  let a = 2166136261, b = 5381;
+  for (let i = 0; i < text.length; i += 1) {
+    a = Math.imul(a ^ text.charCodeAt(i), 16777619);
+    b = Math.imul(b, 33) ^ text.charCodeAt(i);
+  }
+  return `org-v1:${text.length}:${a >>> 0}:${b >>> 0}`;
+}
+
+export function organizationProfileProjectScope({ section, activeProject, activeCodeArchitectureProject }) {
+  return section === "code-architecture" ? activeCodeArchitectureProject : activeProject;
+}

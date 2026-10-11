@@ -63,3 +63,11 @@ test("prioritizes the complete safety-classification section in a long organizat
   expect(prioritized).toContain("PROJECT-SAFETY-OVERRIDE");
   expect(prioritized.length).toBeLessThanOrEqual(HAZARD_ORGANIZATION_CONTEXT_CHAR_BUDGET);
 });
+
+test('long profiles retain risk, engineering, standards and custom section guidance',()=>{
+ const profile=['# Safety Philosophy','x'.repeat(25000),'# Risk Classification','RISK-RULE','# Engineering Rules','ENGINEERING-RULE','# Standards and Regulatory Context','STANDARD-RULE','# Custom Policy','CUSTOM-RULE','# Project Profile Override','OVERRIDE-RULE'].join('\n');
+ const result=prioritizeHazardOrganizationContext(profile);
+ for(const marker of ['RISK-RULE','ENGINEERING-RULE','STANDARD-RULE','CUSTOM-RULE','OVERRIDE-RULE']) expect(result).toContain(marker);
+ expect(result.length).toBeLessThanOrEqual(HAZARD_ORGANIZATION_CONTEXT_CHAR_BUDGET);
+ expect(result).toContain('[Section shortened]');
+});

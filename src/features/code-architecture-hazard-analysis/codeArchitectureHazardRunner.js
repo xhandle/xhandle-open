@@ -1,3 +1,4 @@
+import { organizationProfileContextIdentity } from '../organization-profile/organizationProfile';
 import { screenCodeHazardApplicability } from './codeHazardApplicabilityScreening';
 import { createCodeHazardCheckpoint } from './codeHazardGenerationCheckpoint';
 import { getStoredActiveAIProvider, getStoredAIProviderModelPreference, getStoredAIProviderEffortPreference } from '../../lib/aiProviderConfig';
@@ -33,6 +34,13 @@ export async function runCodeArchitectureHazardAnalysis({
   onPartialRunUpdate = () => {},
   signal = null,
 } = {}) {
+  if (organizationContext && !['STPA-Textbook', 'STPA_TEXTBOOK', 'STPA_TEXTBOOK_APPROACH', 'HARA', 'FHA', 'FMEA', 'FMEA-Textbook', 'FMEA_TEXTBOOK', 'FMEA_TEXTBOOK_APPROACH', 'WhatIf', 'WhatIf-Textbook', 'WHATIF_TEXTBOOK', 'WHAT_IF_TEXTBOOK', 'WHAT_IF_TEXTBOOK_APPROACH'].includes(method)) {
+    throw new Error("This legacy method does not support organization profiles. Select STPA, HARA or FHA from the Code-Based Architecture method menu.");
+  }
+  organizationProfileProvenance = { ...organizationProfileProvenance,
+    effectiveContextIdentity: organizationProfileContextIdentity(organizationContext),
+    effectiveEnabled: Boolean(organizationContext),
+  };
   const checkCancelled = () => { if (signal?.aborted) throw new DOMException('Hazard analysis cancelled.', 'AbortError'); };
   checkCancelled();
   if (!Array.isArray(cbaRows) || cbaRows.length === 0) {
@@ -42,6 +50,9 @@ export async function runCodeArchitectureHazardAnalysis({
   if (!functionalModelIsReady(cbaRows) && (cbaRows.some(row => row.functionalAbstraction) || repoMeta.functionalProcessingError)) {
     throw new Error('Generate an up-to-date Functional model before running hazard analysis. The existing functional model is incomplete or stale.');
   }
+  // Preprocessing belongs to the method that produced it; do not reinterpret STPA phrases as HARA/FHA rows.
+  if (previousRun?.hazardMethod && previousRun.hazardMethod !== method &&
+      [previousRun.hazardMethod, method].some(value => /^(HARA|FHA)$/i.test(value))) previousRun = null;
   let input = prepareCodeHazardPreprocessing(buildCodeArchitectureHazardInput({
     cbaRows,
     repoMeta,
@@ -71,7 +82,7 @@ export async function runCodeArchitectureHazardAnalysis({
     preprocessing: previousRun?.userPreprocessing || null,
   }, {regenerate, signal, onProgress: setProgress});
   if (['STPA-Textbook', 'STPA_TEXTBOOK', 'STPA_TEXTBOOK_APPROACH'].includes(method)) {
-    input = await screenCodeHazardApplicability(input, {sourceRows: sourceAuditedTableRows,
+    input = await screenCodeHazardApplicability(input, {organizationContext, sourceRows: sourceAuditedTableRows,
       checkpoint: generationCheckpoint, modelContext, signal, onProgress: setProgress});
     const counts = input.applicabilityScreening.counts;
     setProgress({phase: 'hazard-generation', message: `Applicability screened: ${counts.yes} applicable, ${counts.no} excluded, ${counts.unresolved} need review. Generating applicable hazards...`});
@@ -146,6 +157,7 @@ export async function runCodeArchitectureHazardAnalysis({
 
   onActivityUpdate({ step: 1, message: `Generating code architecture hazard analysis from ${input.eligibilitySummary.include} eligible interface${input.eligibilitySummary.include === 1 ? "" : "s"}...` });
   const generatedSheetsRaw = await runLiteAIAnalysis({
+    codeArchitectureWorkflow: true,
     generationCheckpoint,
     tableRows: input.tableRows,
     sheets: input.sheets,
@@ -227,8 +239,9 @@ export async function runCodeArchitectureHazardAnalysis({
     contextSources: input.contextSources,
   });
 
+  run.archivedUserPreprocessing = input.archivedUserPreprocessing || previousRun?.archivedUserPreprocessing || {};
   if (hasPreprocessing) {
-    run.userPreprocessing = { ...previousRun?.userPreprocessing, ...reconciled.ownership };
+    run.userPreprocessing = { ...Object.fromEntries(Object.entries(previousRun?.userPreprocessing || {}).filter(([key]) => !run.archivedUserPreprocessing[key])), ...reconciled.ownership };
     run.userPreprocessingConflicts = reconciled.conflicts;
   }
   checkCancelled();

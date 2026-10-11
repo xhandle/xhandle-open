@@ -8,7 +8,30 @@ export function prepareCodeHazardPreprocessing(input, previousRun) {
   if (!Object.values(previousRun?.userPreprocessing || {}).some(entry => entry?.values && Object.keys(entry.values).length)) return input;
   const summary = previousRun.generatedSheets?.Summary;
   if (!summary?.[0]) return input;
-  const tableRows = input.tableRows.map(row => {
+  const archived = {...previousRun.archivedUserPreprocessing};
+  if (/^(HARA|FHA)$/i.test(previousRun.hazardMethod || '') && input.tableRows.some(row => !['','Functional malfunction','Functional degradation or loss'].includes(row.guidePhrase || ''))) {
+    const active = {...previousRun.userPreprocessing};
+    for (const row of summary.slice(1)) {
+      const id=cell(summary,row,'Raw Analysis Row ID');
+      if (active[id] && ['','Functional malfunction','Functional degradation or loss'].includes(cell(summary,row,'Guide Phrase'))) {
+        archived[id]={...active[id], sourceRunId:previousRun.id, reason:'Legacy whole-function assessment retained; new guide phrases require independent assessment.'};
+        delete active[id];
+      }
+    }
+    previousRun={...previousRun,userPreprocessing:active};
+  }
+  const tableRows = input.tableRows.map(originalRow => {
+    // Older HARA/FHA sheets had no explicit guide phrase. Retain that identity
+    // for their owned decisions; a display-label addition must not invalidate them.
+    const legacy = /^(HARA|FHA)$/i.test(previousRun.hazardMethod || '')
+      && ["", "Functional malfunction", "Functional degradation or loss"].includes(originalRow.guidePhrase || "")
+      && summary.slice(1).some(previous => {
+      const owned = previousRun.userPreprocessing[cell(summary, previous, 'Raw Analysis Row ID')];
+      return owned && !cell(summary, previous, 'Guide Phrase')
+        && cell(summary, previous, 'Trace ID') === originalRow.traceId
+        && String(owned.basis?.['Operational Context ID'] || '') === String(originalRow.operationalContextId || '');
+    });
+    const row = legacy ? {...originalRow, guidePhrase:''} : originalRow;
     const current = values(row);
     const candidates = summary.slice(1).filter(previous => {
       const id = cell(summary, previous, 'Raw Analysis Row ID');
@@ -43,7 +66,7 @@ export function prepareCodeHazardPreprocessing(input, previousRun) {
   if (unmatched.length) throw new Error(`User preprocessing needs review: ${unmatched.length} assessment row(s) no longer match the architecture, method or context. Review or clear those assessments before generating.`);
   const decomposition = input.sheets['Functional Decomposition'];
   const detailsIndex = decomposition[0].indexOf('Control Action Details');
-  return { ...input, tableRows, sheets: { ...input.sheets, 'Functional Decomposition': decomposition.map((row, index) => {
+  return { ...input, archivedUserPreprocessing:archived, tableRows, sheets: { ...input.sheets, 'Functional Decomposition': decomposition.map((row, index) => {
     if (!index || !tableRows[index - 1]?.userPreprocessing) return row;
     const source = tableRows[index - 1];
     const next = [...row]; next[detailsIndex] = source.controlDetails;

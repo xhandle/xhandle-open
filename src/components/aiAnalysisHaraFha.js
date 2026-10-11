@@ -1,3 +1,4 @@
+import { validateMethodClassification, HARA_FHA_GENERATED_FIELDS, HARA_FHA_WORKFLOW_PROMPT, sharedWorkflowFields, appendSharedWorkflowFields } from "./haraFhaSharedWorkflow";
 import { fetchLLMResponse } from "./aiAnalysisSTPA";
 import {
   CODE_ARCHITECTURE_TRACEABILITY_COLUMNS,
@@ -7,6 +8,57 @@ import {
   traceabilityToSheetCells,
 } from "../features/code-architecture-hazard-analysis/codeArchitectureHazardUtils";
 import { formatGovernedHazardPromptContext } from "../features/project-hazard-analysis/hazardPromptContext";
+
+const OPERATIONAL_COLUMNS = ["Operational Context ID", "Operational Scenario", "Operational Mode", "Operating Conditions", "Context Assumptions"];
+
+function checkCancelled(options) {
+  if (options.signal?.aborted) throw new DOMException("Hazard analysis cancelled.", "AbortError");
+}
+
+async function requestModel(prompt, options) {
+  checkCancelled(options);
+  const result = await fetchLLMResponse(prompt, {}, undefined, "", { signal: options.signal });
+  checkCancelled(options);
+  return result;
+}
+
+function completeMethodRow(row, method) {
+  const fields = method === "HARA"
+    ? ["itemFunction", "malfunction", "hazard", "operationalSituation", "hazardousEvent", "harm", "severity", "exposure", "controllability", "asil", "safetyGoal", "rationale", "safetyRequirement", "verification"]
+    : ["functionName", "functionalDegradationOrLoss", "hazard", "mishap", "effect", "severity", "softwareControlCategory", "causalFactors", "controls", "safetyRequirement", "verification", "rationale", "severityRationale", "softwareControlCategoryRationale"];
+  if (/^no$/i.test(row?.guidePhraseApplicable || '')) return !!row.guidePhraseApplicabilityRationale;
+  if (!['Yes', 'No', 'Needs Review'].includes(row?.guidePhraseApplicable)) return false;
+  if (!row.guidePhraseApplicabilityRationale || !HARA_FHA_GENERATED_FIELDS.every(field => String(row?.[field] || '').trim())) return false;
+  const uncertain = value => /^needs review\b/i.test(String(value || ""));
+  const rating = (value, pattern) => uncertain(value) || pattern.test(String(value || "").trim());
+  const ratingsValid = method === "HARA"
+    ? rating(row?.severity, /^S[0-3]\b/i) && rating(row?.exposure, /^E[0-4]\b/i) && rating(row?.controllability, /^C[0-3]\b/i) && rating(row?.asil, /^(?:QM|ASIL [A-D])\b/i)
+    : rating(row?.severityCategory || row?.severity, /^(?:I{1,3}|IV|[1-4])\b|catastrophic|critical|marginal|negligible/i) && rating(row?.softwareControlCategory, /[1-5]|autonomous|influential|redundant|no safety impact/i);
+  return ratingsValid && fields.every(field => String(row?.[field] || (field === "severity" ? row?.severityCategory : "") || "").trim());
+}
+
+function attachOperationalContext(additions, items) {
+  return Object.fromEntries(Object.entries(additions).map(([name, sheet]) => [name, [
+    [...sheet[0], ...OPERATIONAL_COLUMNS],
+    ...sheet.slice(1).map((row, index) => [...row, ...OPERATIONAL_COLUMNS.map(column => items[index]?.operationalContext?.[column] || "")]),
+  ]]));
+}
+
+async function runChunks(chunks, process, concurrent) {
+  if (!concurrent) {
+    for (let i = 0; i < chunks.length; i += 1) await process(chunks[i], i);
+    return;
+  }
+  let next = 0;
+  let failure = null;
+  await Promise.all(Array.from({ length: Math.min(2, chunks.length) }, async () => {
+    while (!failure && next < chunks.length) {
+      const index = next++;
+      try { await process(chunks[index], index); } catch (error) { failure = failure || error; }
+    }
+  }));
+  if (failure) throw failure;
+}
 
 function getCellText(cell) {
   if (cell == null) return "";
@@ -25,7 +77,7 @@ function sanitizeText(text) {
     .trim();
 }
 
-function flattenDecomposition(sheets) {
+function flattenDecomposition(sheets, codeArchitectureWorkflow = false) {
   const decomposition = sheets["Functional Decomposition"] || [];
   const headers = decomposition[0] || [];
   return decomposition
@@ -35,6 +87,7 @@ function flattenDecomposition(sheets) {
       from: sanitizeText(getCellText(row[0])),
       controlAction: sanitizeText(getCellText(row[1])),
       to: sanitizeText(getCellText(row[2])),
+      ...(codeArchitectureWorkflow ? { details: Object.fromEntries(["Function (From) Details", "Control Action Details", "Function (To) Details"].map(column => [column, getCellText(row[headers.indexOf(column)])])), ...Object.fromEntries([['guidePhrase','Guide Phrase'],['guidePhraseApplicable','Guide Phrase Applicable'],['guidePhraseApplicabilityRationale','Guide Phrase Applicability Rationale'],['guidePhraseApplicabilityReviewStatus','Guide Phrase Applicability Review Status']].map(([key,column]) => [key, getCellText(row[headers.indexOf(column)])])), operationalContext: Object.fromEntries(OPERATIONAL_COLUMNS.map(column => [column, getCellText(row[headers.indexOf(column)])])) } : {}),
       traceability: extractFunctionalDecompositionTrace(headers, row),
     }))
     .filter((row) => row.from || row.controlAction || row.to);
@@ -57,6 +110,7 @@ function truncateForPrompt(value, maxChars = 120) {
 function compactFhaPromptItem(item = {}, maxChars = 120) {
   const trace = item.traceability || {};
   return {
+    ...(item.operationalContext ? { operationalContext: item.operationalContext, details: item.details, guidePhrase: item.guidePhrase, guidePhraseApplicable: item.guidePhraseApplicable, guidePhraseApplicabilityRationale: item.guidePhraseApplicabilityRationale } : {}),
     id: truncateForPrompt(item.id, 32),
     functionFrom: truncateForPrompt(item.from, maxChars),
     controlAction: truncateForPrompt(item.controlAction, maxChars),
@@ -460,15 +514,24 @@ function generatedRowForItem(rowsById, rows, index, item) {
 }
 
 function normalizeHaraRow(row, item, index) {
+  if (item.operationalContext && /^no$/i.test(item.guidePhraseApplicable || row.guidePhraseApplicable || '')) {
+    const excludedItem = {...item, guidePhraseApplicable:'No'};
+    const fields = ['itemFunction','functionName','malfunction','hazard','operationalSituation','hazardousEvent','harm','severity','exposure','controllability','asil','safetyGoal','safetyRequirement','verification','functionalDegradationOrLoss','mishap','effect','softwareControlCategory','softwareCriticalityIndex','lorTasks','causalFactors','controls','rationale', ...HARA_FHA_GENERATED_FIELDS];
+    return {...Object.fromEntries(fields.map(key => [key,'Not applicable'])), ...sharedWorkflowFields(row,excludedItem), id:row.id || item.id, itemFunction:item.from, functionName:item.from, safetySignificant:'No', safetyClassification:'Not Applicable'};
+  }
   const base = fallbackHazardRow(item, index);
   return {
+    ...sharedWorkflowFields(row, item),
+    ...(item.operationalContext ? {severityRationale:row.severityRationale || '', softwareControlCategoryRationale:row.softwareControlCategoryRationale || ''} : {}),
     id: sanitizeText(row.id) || base.id,
     proposedSafetyAssessment: normalizeProposedSafetyAssessment(
       row.proposedSafetyAssessment || row["Proposed Safety Assessment"] || row.safetyAssessment || row["Safety Assessment"],
       row.safetySignificant || row["Safety Significant"],
     ),
     proposedSafetyAssessmentRationale: sanitizeText(row.proposedSafetyAssessmentRationale || row["Proposed Safety Assessment Rationale"]),
-    safetySignificant: normalizeSafetySignificance(row.safetySignificant || row["Safety Significant"]),
+    safetySignificant: item.operationalContext && row.safetyClassification
+      ? (/^Safety — (Direct|Related)$/.test(row.safetyClassification) ? 'Yes' : row.safetyClassification === 'Mission/Reliability' ? 'No' : 'Needs Review')
+      : normalizeSafetySignificance(row.safetySignificant || row["Safety Significant"]),
     safetySignificanceRationale: sanitizeText(row.safetySignificanceRationale || row["Safety Significance Rationale"]),
     itemFunction: sanitizeText(row.itemFunction) || base.itemFunction,
     malfunction: sanitizeText(row.malfunction) || base.malfunction,
@@ -480,36 +543,49 @@ function normalizeHaraRow(row, item, index) {
     exposure: sanitizeText(row.exposure) || "E3",
     controllability: sanitizeText(row.controllability) || "C2",
     asil: sanitizeText(row.asil) || "ASIL B",
+    safetyRequirement: sanitizeText(row.safetyRequirement),
+    verification: sanitizeText(row.verification),
     safetyGoal: sanitizeText(row.safetyGoal) || `The system shall prevent or control ${base.hazard.toLowerCase()}.`,
     rationale: sanitizeText(row.rationale) || "Ratings are based on the stated hazardous event and operating context.",
   };
 }
 
 function normalizeFhaRow(row, item, index) {
+  if (item.operationalContext && /^no$/i.test(item.guidePhraseApplicable || row.guidePhraseApplicable || '')) {
+    const excludedItem = {...item, guidePhraseApplicable:'No'};
+    const fields = ['itemFunction','functionName','malfunction','hazard','operationalSituation','hazardousEvent','harm','severity','exposure','controllability','asil','safetyGoal','safetyRequirement','verification','functionalDegradationOrLoss','mishap','effect','softwareControlCategory','softwareCriticalityIndex','lorTasks','causalFactors','controls','rationale', ...HARA_FHA_GENERATED_FIELDS];
+    return {...Object.fromEntries(fields.map(key => [key,'Not applicable'])), ...sharedWorkflowFields(row,excludedItem), id:row.id || item.id, itemFunction:item.from, functionName:item.from, safetySignificant:'No', safetyClassification:'Not Applicable'};
+  }
   const base = fallbackHazardRow(item, index);
   const severityCategory = parseFhaSeverityCategory(row.severityCategory || row.severity);
   const softwareControlCategory = parseFhaSoftwareControlCategory(
     row.softwareControlCategory || row.controlCategory || row.scc
   );
   const swci = deriveFhaSwci(severityCategory, softwareControlCategory);
+  const unresolvedRating = item.operationalContext && [row.severityCategory || row.severity, row.softwareControlCategory].some(value => /^needs review\b/i.test(String(value || "")));
   return {
+    ...sharedWorkflowFields(row, item),
+    ...(item.operationalContext ? {severityRationale:row.severityRationale || '', softwareControlCategoryRationale:row.softwareControlCategoryRationale || ''} : {}),
     id: sanitizeText(row.id) || base.id,
     proposedSafetyAssessment: normalizeProposedSafetyAssessment(
       row.proposedSafetyAssessment || row["Proposed Safety Assessment"] || row.safetyAssessment || row["Safety Assessment"],
       row.safetySignificant || row["Safety Significant"],
     ),
     proposedSafetyAssessmentRationale: sanitizeText(row.proposedSafetyAssessmentRationale || row["Proposed Safety Assessment Rationale"]),
-    safetySignificant: normalizeSafetySignificance(row.safetySignificant || row["Safety Significant"]),
+    safetySignificant: item.operationalContext && row.safetyClassification
+      ? (/^Safety — (Direct|Related)$/.test(row.safetyClassification) ? 'Yes' : row.safetyClassification === 'Mission/Reliability' ? 'No' : 'Needs Review')
+      : normalizeSafetySignificance(row.safetySignificant || row["Safety Significant"]),
     safetySignificanceRationale: sanitizeText(row.safetySignificanceRationale || row["Safety Significance Rationale"]),
     functionName: sanitizeText(row.functionName) || base.itemFunction,
     functionalDegradationOrLoss: sanitizeText(row.functionalDegradationOrLoss || row.failureCondition) || base.malfunction,
     hazard: sanitizeText(row.hazard) || base.hazard,
     mishap: sanitizeText(row.mishap) || base.harm,
     effect: sanitizeText(row.effect) || base.hazardousEvent,
-    severity: FHA_SEVERITY_CATEGORIES[severityCategory],
-    softwareControlCategory: FHA_SOFTWARE_CONTROL_CATEGORIES[softwareControlCategory],
-    softwareCriticalityIndex: `SwCI ${swci}`,
-    lorTasks: sanitizeText(row.lorTasks) || FHA_SWCI_LOR_TASKS[swci],
+    severity: unresolvedRating ? "Needs review: unresolved severity or software control category" : FHA_SEVERITY_CATEGORIES[severityCategory],
+    softwareControlCategory: unresolvedRating ? "Needs review: unresolved severity or software control category" : FHA_SOFTWARE_CONTROL_CATEGORIES[softwareControlCategory],
+    swciRationale: unresolvedRating ? 'Needs review: severity or SCC unresolved' : `Severity ${severityCategory} and SCC ${softwareControlCategory} map to SwCI ${swci} in the software safety criticality matrix.`,
+    softwareCriticalityIndex: unresolvedRating ? "Needs review: ratings unresolved" : `SwCI ${swci}`,
+    lorTasks: unresolvedRating ? "Needs review: ratings unresolved" : sanitizeText(row.lorTasks) || FHA_SWCI_LOR_TASKS[swci],
     causalFactors: sanitizeText(row.causalFactors) || `Needs review: causal factors were not generated for ${item.id || `FD-${index + 1}`}.`,
     controls: sanitizeText(row.controls) || `Needs review: controls were not generated for ${item.id || `FD-${index + 1}`}.`,
     safetyRequirement: sanitizeText(row.safetyRequirement) || `Needs review: safety requirement was not generated for ${item.id || `FD-${index + 1}`}.`,
@@ -571,11 +647,26 @@ ${JSON.stringify(repairItems.map(({ item, row, fieldsToRepair }) => ({
 })))}
   `.trim();
 
-  const response = await fetchLLMResponse(prompt);
+  const response = await requestModel(prompt, contextOptions);
   return extractJsonArray(response);
 }
 
-async function repairGenericHazardRows({
+async function repairGenericHazardRows(args) {
+  const {contextOptions = {}} = args;
+  if (!contextOptions.codeArchitectureWorkflow || !contextOptions.generationCheckpoint) return repairGenericHazardRowsUncached(args);
+  const {onProgress, signal, generationCheckpoint, ...context} = contextOptions;
+  const basis = {workflow:'cba-hara-fha-v3', stage:'repairGenericHazardRows', method:args.analysisName, rows:args.rows, items:args.items, context};
+  checkCancelled(contextOptions);
+  const cached = await generationCheckpoint.read(basis);
+  checkCancelled(contextOptions);
+  if (Array.isArray(cached) && cached.length === args.rows.length && cached.every((row,i) => row.id === args.rows[i].id)) return cached;
+  const result = await repairGenericHazardRowsUncached(args);
+  checkCancelled(contextOptions);
+  if (!/was not generated|review failed/.test(JSON.stringify(result))) await generationCheckpoint.write(basis,result);
+  return result;
+}
+
+async function repairGenericHazardRowsUncached({
   analysisName,
   rows,
   items,
@@ -585,7 +676,7 @@ async function repairGenericHazardRows({
 }) {
   const weakRows = rows
     .map((row, index) => ({ row, item: items[index], index, fieldsToRepair: genericHazardFields(fieldNames, row) }))
-    .filter(({ fieldsToRepair }) => fieldsToRepair.length);
+    .filter(({ fieldsToRepair, row }) => fieldsToRepair.length && row.guidePhraseApplicable !== "No");
 
   if (!weakRows.length) return rows;
 
@@ -621,6 +712,8 @@ async function repairGenericHazardRows({
         repairedRows[index] = normalize(merged, item, index);
       });
     } catch (err) {
+      checkCancelled(contextOptions);
+      if (err?.name === "AbortError") throw err;
       console.warn(`⚠️ ${analysisName} generic wording repair failed for chunk ${chunkIndex + 1}.`, err);
     }
   }
@@ -648,6 +741,7 @@ ${operationalContextBlock || "No explicit project or operational context was ava
 
 Return ONLY a JSON array. Each object must include:
 id, proposedSafetyAssessment, proposedSafetyAssessmentRationale, safetySignificant, safetySignificanceRationale.
+${contextOptions.codeArchitectureWorkflow ? 'Also return causalPathType (Direct, Contributory, None, Uncertain), causalEffect, resultingSystemState, intermediateSafetyFunction, intermediateSafetyEffect, protectionAssessment, protectionStatus, physicalHarmChainTermination, safetyClassificationRule (D1-D3 direct, R1-R4 related, M1-M4 mission, U1-U4 unresolved), classificationEvidence and safetySignificanceRationale. Supply evidence for the actual harm path and credited protections; do not invent them. Also return safetyClassification: Safety — Direct, Safety — Related, Mission/Reliability, or Needs Review. Direct requires evidenced direct physical harm authority; Related requires an evidenced contributing harm path; Mission/Reliability requires evidence excluding physical harm; unresolved evidence means Needs Review. Never infer this classification from ASIL or SwCI. Do not change applicability.' : ''}
 
 Safety significance rules:
 - proposedSafetyAssessment must be exactly one of: Safety or Mission/Reliability.
@@ -668,11 +762,26 @@ ${JSON.stringify(tagItems.map(({ item, row }) => ({
 })))}
   `.trim();
 
-  const response = await fetchLLMResponse(prompt);
+  const response = await requestModel(prompt, contextOptions);
   return extractJsonArray(response);
 }
 
-async function tagSafetySignificanceForRows({
+async function tagSafetySignificanceForRows(args) {
+  const {contextOptions = {}} = args;
+  if (!contextOptions.codeArchitectureWorkflow || !contextOptions.generationCheckpoint) return tagSafetySignificanceForRowsUncached(args);
+  const {onProgress, signal, generationCheckpoint, ...context} = contextOptions;
+  const basis = {workflow:'cba-hara-fha-v3', stage:'tagSafetySignificanceForRows', method:args.analysisName, rows:args.rows, items:args.items, context};
+  checkCancelled(contextOptions);
+  const cached = await generationCheckpoint.read(basis);
+  checkCancelled(contextOptions);
+  if (Array.isArray(cached) && cached.length === args.rows.length && cached.every((row,i) => row.id === args.rows[i].id)) return cached;
+  const result = await tagSafetySignificanceForRowsUncached(args);
+  checkCancelled(contextOptions);
+  if (result.every(row => row.safetyClassification !== 'Needs Review') && !/was not generated|review failed/.test(JSON.stringify(result))) await generationCheckpoint.write(basis,result);
+  return result;
+}
+
+async function tagSafetySignificanceForRowsUncached({
   analysisName,
   rows,
   items,
@@ -685,8 +794,8 @@ async function tagSafetySignificanceForRows({
     message: `Reviewing ${analysisName} rows for safety significance...`,
   });
 
-  const taggedRows = [...rows];
-  const tagItems = rows.map((row, index) => ({ row, item: items[index], index }));
+  const taggedRows = rows.map(row => row.guidePhraseApplicable === "Needs Review" ? {...row, safetyClassification:"Needs Review", safetySignificant:"Needs Review"} : row);
+  const tagItems = rows.map((row, index) => ({ row, item: items[index], index })).filter(({row}) => row.guidePhraseApplicable !== "No" && row.guidePhraseApplicable !== "Needs Review");
   const tagChunks = chunkFhaItemsByCount(tagItems, FHA_RETRY_ROWS_PER_PROMPT);
   for (let chunkIndex = 0; chunkIndex < tagChunks.length; chunkIndex += 1) {
     const tagChunk = tagChunks[chunkIndex];
@@ -696,23 +805,36 @@ async function tagSafetySignificanceForRows({
       total: tagChunks.length,
     });
     try {
-      const tags = await requestSafetySignificanceTags({ analysisName, tagItems: tagChunk, contextOptions });
+      let tags = await requestSafetySignificanceTags({ analysisName, tagItems: tagChunk, contextOptions });
+      if (contextOptions.codeArchitectureWorkflow) {
+        const invalid = tagChunk.filter(({row,item}) => validateMethodClassification(row, tags.find(tag=>tag.id===item.id), item).validationFindings.length);
+        if (invalid.length) {
+          const retried = await requestSafetySignificanceTags({analysisName, tagItems:invalid, contextOptions});
+          const replacements = new Map(retried.map(tag=>[tag.id,tag]));
+          tags = tagChunk.map(({item}) => replacements.get(item.id) || tags.find(tag=>tag.id===item.id) || {id:item.id});
+        }
+      }
       const tagsById = generatedRowsById(tags);
       tagChunk.forEach(({ row, item, index }) => {
         const tag = generatedRowForItem(tagsById, tags, 0, item);
         taggedRows[index] = normalize({
           ...row,
+
           proposedSafetyAssessment: normalizeProposedSafetyAssessment(tag?.proposedSafetyAssessment, tag?.safetySignificant),
           proposedSafetyAssessmentRationale: sanitizeText(tag?.proposedSafetyAssessmentRationale) || sanitizeText(tag?.safetySignificanceRationale) || "Needs review: proposed safety assessment rationale was not generated.",
           safetySignificant: normalizeSafetySignificance(tag?.safetySignificant),
           safetySignificanceRationale: sanitizeText(tag?.safetySignificanceRationale) || "Needs review: safety significance rationale was not generated.",
+          ...(contextOptions.codeArchitectureWorkflow ? validateMethodClassification(row,tag,item) : {}),
         }, item, index);
       });
     } catch (err) {
+      checkCancelled(contextOptions);
+      if (err?.name === "AbortError") throw err;
       console.warn(`⚠️ ${analysisName} safety significance review failed for chunk ${chunkIndex + 1}.`, err);
       tagChunk.forEach(({ row, item, index }) => {
         taggedRows[index] = normalize({
           ...row,
+          ...(contextOptions.codeArchitectureWorkflow ? { safetyClassification: "Needs Review" } : {}),
           proposedSafetyAssessment: "Mission/Reliability",
           proposedSafetyAssessmentRationale: "Needs review: proposed safety assessment rationale was not generated.",
           safetySignificant: "Needs Review",
@@ -762,6 +884,8 @@ ${SPECIFICITY_SELF_CHECK_GUIDANCE}
 
 Return ONLY a JSON array. Each object must include:
 id, itemFunction, malfunction, hazard, operationalSituation, hazardousEvent, harm, severity, exposure, controllability, asil, safetyGoal, rationale.
+${contextOptions.codeArchitectureWorkflow ? "Also include safetyRequirement and verification: allocate the safety goal to the evidenced software responsibility as a testable software shall requirement and a concrete verification approach. Keep the system safetyGoal separate. If software allocation is unsupported, use Needs review: with a reason; do not invent allocation." : ""}
+${contextOptions.codeArchitectureWorkflow ? HARA_FHA_WORKFLOW_PROMPT : ""}
 ${retryInstruction ? `\n${retryInstruction}\n` : ""}
 
 Functional decomposition rows are compact JSON objects. Use the row id exactly as provided. Do not reorder rows or infer that a response for one id applies to another id.
@@ -782,22 +906,32 @@ Rows:
 ${JSON.stringify(compactFhaPromptRows(items))}
   `.trim();
 
-  const response = await fetchLLMResponse(prompt);
+  const response = await requestModel(prompt, contextOptions);
   return extractJsonArray(response);
 }
 
 async function requestHaraRowsWithRetries(items, contextOptions = {}) {
+  if (contextOptions.codeArchitectureWorkflow && items.some(item => /^no$/i.test(item.guidePhraseApplicable || ''))) {
+    const active = items.filter(item => !/^no$/i.test(item.guidePhraseApplicable || ''));
+    const generated = active.length ? await requestHaraRowsWithRetries(active, contextOptions) : [];
+    const byId = new Map(generated.map(row => [row.id, row]));
+    return items.map(item => byId.get(item.id) || {id:item.id, guidePhraseApplicable:'No', guidePhraseApplicabilityRationale:item.guidePhraseApplicabilityRationale || 'Explicitly excluded by applicability decision'});
+  }
   const rowsById = new Map();
   const missingFor = (targetItems) => targetItems.filter((item) => !rowsById.has(String(item.id || "").toUpperCase()));
   const mergeRows = (rows) => {
-    generatedRowsById(rows).forEach((row, key) => {
-      rowsById.set(key, row);
+    generatedRowsById(rows).forEach((raw, key) => {
+      const item = items.find(item => item.id.toUpperCase() === key);
+      const row = contextOptions.codeArchitectureWorkflow && item ? {...raw, ...sharedWorkflowFields(raw,item)} : raw;
+      if (!contextOptions.codeArchitectureWorkflow || completeMethodRow(row, "HARA")) rowsById.set(key, row);
     });
   };
 
   try {
     mergeRows(await requestHaraRows(items, contextOptions));
   } catch (err) {
+    checkCancelled(contextOptions);
+    if (err?.name === "AbortError") throw err;
     console.warn(`⚠️ HARA generation failed for ${items.length} rows; retrying smaller subchunks.`, err);
   }
 
@@ -815,11 +949,16 @@ async function requestHaraRowsWithRetries(items, contextOptions = {}) {
           retryReason: `Retry ${attempt + 1}: return exactly these missing row ids: ${retryChunk.map((item) => item.id).join(", ")}`,
         }));
       } catch (err) {
+        checkCancelled(contextOptions);
+        if (err?.name === "AbortError") throw err;
         console.warn(`⚠️ HARA retry ${attempt + 1} failed for ${retryChunk.map((item) => item.id).join(", ")}.`, err);
       }
     }
   }
 
+  if (contextOptions.codeArchitectureWorkflow && missingFor(items).length) {
+    throw new Error("HARA generation incomplete: missing or incomplete rows " + missingFor(items).map(item => item.id).join(", ") + ". Completed chunks are retained for continuation.");
+  }
   return items.map((item, index) => generatedRowForItem(rowsById, [], index, item));
 }
 
@@ -872,6 +1011,8 @@ ${SPECIFICITY_SELF_CHECK_GUIDANCE}
 
 Return ONLY a JSON array. Each object must include:
 id, functionName, functionalDegradationOrLoss, hazard, mishap, effect, severity, softwareControlCategory, softwareCriticalityIndex, lorTasks, causalFactors, controls, safetyRequirement, verification, rationale.
+${contextOptions.codeArchitectureWorkflow ? 'Also provide severityRationale (justify the consequence-based severity independently) and softwareControlCategoryRationale (justify software authority, timing and independent protections). If unsupported use Needs review with a reason.' : ''}
+${contextOptions.codeArchitectureWorkflow ? HARA_FHA_WORKFLOW_PROMPT : ""}
 ${retryInstruction ? `\n${retryInstruction}\n` : ""}
 
 Functional decomposition rows are compact JSON objects. Use the row id exactly as provided. Do not reorder rows or infer that a response for one id applies to another id.
@@ -892,22 +1033,32 @@ Rows:
 ${JSON.stringify(compactFhaPromptRows(items))}
   `.trim();
 
-  const response = await fetchLLMResponse(prompt);
+  const response = await requestModel(prompt, contextOptions);
   return extractJsonArray(response);
 }
 
 async function requestFhaRowsWithRetries(items, contextOptions = {}) {
+  if (contextOptions.codeArchitectureWorkflow && items.some(item => /^no$/i.test(item.guidePhraseApplicable || ''))) {
+    const active = items.filter(item => !/^no$/i.test(item.guidePhraseApplicable || ''));
+    const generated = active.length ? await requestFhaRowsWithRetries(active, contextOptions) : [];
+    const byId = new Map(generated.map(row => [row.id, row]));
+    return items.map(item => byId.get(item.id) || {id:item.id, guidePhraseApplicable:'No', guidePhraseApplicabilityRationale:item.guidePhraseApplicabilityRationale || 'Explicitly excluded by applicability decision'});
+  }
   const rowsById = new Map();
   const missingFor = (targetItems) => targetItems.filter((item) => !rowsById.has(String(item.id || "").toUpperCase()));
   const mergeRows = (rows) => {
-    generatedRowsById(rows).forEach((row, key) => {
-      rowsById.set(key, row);
+    generatedRowsById(rows).forEach((raw, key) => {
+      const item = items.find(item => item.id.toUpperCase() === key);
+      const row = contextOptions.codeArchitectureWorkflow && item ? {...raw, ...sharedWorkflowFields(raw,item)} : raw;
+      if (!contextOptions.codeArchitectureWorkflow || completeMethodRow(row, "FHA")) rowsById.set(key, row);
     });
   };
 
   try {
     mergeRows(await requestFhaRows(items, contextOptions));
   } catch (err) {
+    checkCancelled(contextOptions);
+    if (err?.name === "AbortError") throw err;
     console.warn(`⚠️ FHA generation failed for ${items.length} rows; retrying smaller subchunks.`, err);
   }
 
@@ -925,11 +1076,16 @@ async function requestFhaRowsWithRetries(items, contextOptions = {}) {
           retryReason: `Retry ${attempt + 1}: return exactly these missing row ids: ${retryChunk.map((item) => item.id).join(", ")}`,
         }));
       } catch (err) {
+        checkCancelled(contextOptions);
+        if (err?.name === "AbortError") throw err;
         console.warn(`⚠️ FHA retry ${attempt + 1} failed for ${retryChunk.map((item) => item.id).join(", ")}.`, err);
       }
     }
   }
 
+  if (contextOptions.codeArchitectureWorkflow && missingFor(items).length) {
+    throw new Error("FHA generation incomplete: missing or incomplete rows " + missingFor(items).map(item => item.id).join(", ") + ". Completed chunks are retained for continuation.");
+  }
   return items.map((item, index) => generatedRowForItem(rowsById, [], index, item));
 }
 
@@ -991,7 +1147,7 @@ Instructions: ${instructions}
 Return only the cell value as plain text. Do not return JSON, markdown, labels, quotes, bullets, or commentary.
   `.trim();
 
-  const response = await fetchLLMResponse(prompt);
+  const response = await requestModel(prompt, contextOptions);
   return sanitizeText(response);
 }
 
@@ -1013,6 +1169,8 @@ async function generateHaraRowCellByCell(item, index, onCellUpdate = () => {}, c
         });
         rowDraft[field.fieldName] = value || fallbackHaraField(field.fieldName, rowDraft, item, index);
       } catch (err) {
+        checkCancelled(contextOptions);
+        if (err?.name === "AbortError") throw err;
         console.warn(`⚠️ HARA cell generation failed for ${item.id || `FD-${index + 1}`} ${field.fieldName}; using fallback.`, err);
         rowDraft[field.fieldName] = fallbackHaraField(field.fieldName, rowDraft, item, index);
       }
@@ -1020,6 +1178,8 @@ async function generateHaraRowCellByCell(item, index, onCellUpdate = () => {}, c
       await onCellUpdate({ ...rowDraft });
     }
   } catch (err) {
+    checkCancelled(contextOptions);
+    if (err?.name === "AbortError") throw err;
     console.warn(`⚠️ HARA row generation failed for ${item.id || `FD-${index + 1}`}; using fallback row.`, err);
     return normalizeHaraRow({}, item, index);
   }
@@ -1095,7 +1255,7 @@ Instructions: ${instructions}
 Return only the cell value as plain text. Do not return JSON, markdown, labels, quotes, bullets, or commentary.
   `.trim();
 
-  const response = await fetchLLMResponse(prompt);
+  const response = await requestModel(prompt, contextOptions);
   return sanitizeText(response);
 }
 
@@ -1124,6 +1284,8 @@ async function generateFhaRowCellByCell(item, index, onCellUpdate = () => {}, co
         });
         rowDraft[field.fieldName] = value || fallbackFhaField(field.fieldName, rowDraft, item, index);
       } catch (err) {
+        checkCancelled(contextOptions);
+        if (err?.name === "AbortError") throw err;
         console.warn(`⚠️ FHA cell generation failed for ${item.id || `FD-${index + 1}`} ${field.fieldName}; using fallback.`, err);
         rowDraft[field.fieldName] = fallbackFhaField(field.fieldName, rowDraft, item, index);
       }
@@ -1137,6 +1299,8 @@ async function generateFhaRowCellByCell(item, index, onCellUpdate = () => {}, co
       await onCellUpdate({ ...rowDraft });
     }
   } catch (err) {
+    checkCancelled(contextOptions);
+    if (err?.name === "AbortError") throw err;
     console.warn(`⚠️ FHA row generation failed for ${item.id || `FD-${index + 1}`}; using fallback row.`, err);
     return normalizeFhaRow({}, item, index);
   }
@@ -1232,7 +1396,13 @@ function buildFhaAnalysisSheets(normalizedRows, items) {
     }),
   ];
 
-  return { FHA: fhaSheet, Summary: summary };
+  if (items.some(item => item.operationalContext)) {
+    for (const sheet of [fhaSheet, summary]) {
+      sheet[0] = [...sheet[0], 'Severity Rationale', 'Software Control Category Rationale', 'SWCI Rationale / Derivation'];
+      normalizedRows.forEach((row,index) => sheet[index+1].push(row.severityRationale || '',row.softwareControlCategoryRationale || '',row.swciRationale || ''));
+    }
+  }
+  return items.some(item => item.operationalContext) ? appendSharedWorkflowFields({ FHA: fhaSheet, Summary: summary }, normalizedRows) : { FHA: fhaSheet, Summary: summary };
 }
 
 async function saveFhaAnalysisSheets({ sheets, setFolders, currentFolder, normalizedRows, items }) {
@@ -1240,7 +1410,7 @@ async function saveFhaAnalysisSheets({ sheets, setFolders, currentFolder, normal
     sheets,
     setFolders,
     currentFolder,
-    additions: buildFhaAnalysisSheets(normalizedRows, items),
+    additions: items.some(item => item.operationalContext) ? attachOperationalContext(buildFhaAnalysisSheets(normalizedRows, items), items) : buildFhaAnalysisSheets(normalizedRows, items),
   });
 }
 
@@ -1280,7 +1450,7 @@ const HARA_SUMMARY_HEADERS = [
 
 function buildHaraAnalysisSheets(normalizedRows, items) {
   const haraSheet = [
-    HARA_SHEET_HEADERS,
+    [...HARA_SHEET_HEADERS],
     ...normalizedRows.map((row, index) => [
       row.id,
       row.itemFunction,
@@ -1301,7 +1471,7 @@ function buildHaraAnalysisSheets(normalizedRows, items) {
   ];
 
   const summary = [
-    HARA_SUMMARY_HEADERS,
+    [...HARA_SUMMARY_HEADERS],
     ...normalizedRows.map((row, index) => {
       const traceFields = traceabilityObjectToSummaryFields(items[index]?.traceability || {});
       return [
@@ -1322,7 +1492,13 @@ function buildHaraAnalysisSheets(normalizedRows, items) {
     }),
   ];
 
-  return { HARA: haraSheet, Summary: summary };
+  if (items.some(item => item.operationalContext)) {
+    for (const sheet of [haraSheet, summary]) {
+      sheet[0].push("Software Safety Requirement", "Verification");
+      normalizedRows.forEach((row, index) => sheet[index + 1].push(row.safetyRequirement || "", row.verification || ""));
+    }
+  }
+  return items.some(item => item.operationalContext) ? appendSharedWorkflowFields({ HARA: haraSheet, Summary: summary }, normalizedRows) : { HARA: haraSheet, Summary: summary };
 }
 
 async function saveHaraAnalysisSheets({ sheets, setFolders, currentFolder, normalizedRows, items }) {
@@ -1330,7 +1506,7 @@ async function saveHaraAnalysisSheets({ sheets, setFolders, currentFolder, norma
     sheets,
     setFolders,
     currentFolder,
-    additions: buildHaraAnalysisSheets(normalizedRows, items),
+    additions: items.some(item => item.operationalContext) ? attachOperationalContext(buildHaraAnalysisSheets(normalizedRows, items), items) : buildHaraAnalysisSheets(normalizedRows, items),
   });
 }
 
@@ -1344,12 +1520,16 @@ export async function generateHaraAnalysisSheets({
   analysisContext = null,
   contextSources = null,
   onProgress = () => {},
+  codeArchitectureWorkflow = false,
+  signal = null,
+  generationCheckpoint = null,
 }) {
-  const items = flattenDecomposition(sheets);
+  const items = flattenDecomposition(sheets, codeArchitectureWorkflow);
   if (!items.length) return sheets;
 
-  const mode = normalizeFhaGenerationMode(haraGenerationMode);
-  const contextOptions = { operationalContext, organizationContext, analysisContext, contextSources };
+  const mode = codeArchitectureWorkflow ? FHA_GENERATION_MODES.STANDARD : normalizeFhaGenerationMode(haraGenerationMode);
+  const contextOptions = { operationalContext, organizationContext, analysisContext, contextSources, codeArchitectureWorkflow, signal, generationCheckpoint };
+  checkCancelled(contextOptions);
 
   if (mode === FHA_GENERATION_MODES.STANDARD) {
     const promptChunks = items.length <= FHA_MAX_ROWS_PER_PROMPT && compactFhaPromptRowsLength(items) <= FHA_SINGLE_PROMPT_MAX_CHARS
@@ -1360,26 +1540,35 @@ export async function generateHaraAnalysisSheets({
     }
 
     const generatedRows = [];
-    for (let start = 0, chunkIndex = 0; chunkIndex < promptChunks.length; chunkIndex += 1) {
-      const chunk = promptChunks[chunkIndex];
+    const processChunk = async (chunk, chunkIndex) => {
+      const start = promptChunks.slice(0, chunkIndex).reduce((count, entry) => count + entry.length, 0);
       onProgress({
         step: chunkIndex + 1,
         total: promptChunks.length + 1,
         message: `Generating HARA rows (${chunkIndex + 1}/${promptChunks.length})...`,
       });
       try {
-        const chunkRows = await requestHaraRowsWithRetries(chunk, { ...contextOptions, onProgress });
+        checkCancelled(contextOptions);
+        const basis = { workflow: "cba-hara-fha-v3", method: "HARA", chunk, operationalContext, organizationContext, analysisContext, contextSources };
+        const cached = codeArchitectureWorkflow ? await generationCheckpoint?.read(basis) : null;
+        const chunkRows = Array.isArray(cached) && cached.length === chunk.length && cached.every(row => completeMethodRow(row, "HARA"))
+          ? cached : await requestHaraRowsWithRetries(chunk, { ...contextOptions, onProgress });
+        checkCancelled(contextOptions);
+        if (codeArchitectureWorkflow) await generationCheckpoint?.write(basis, chunkRows);
         chunk.forEach((item, index) => {
           generatedRows[start + index] = chunkRows[index] || {};
         });
       } catch (err) {
+        checkCancelled(contextOptions);
+        if (err?.name === "AbortError") throw err;
+        if (codeArchitectureWorkflow) throw err;
         console.warn(`⚠️ HARA generation failed for standard chunk ${chunkIndex + 1}; using local fallback rows for that chunk.`, err);
         chunk.forEach((item, index) => {
           generatedRows[start + index] = fallbackHazardRow(item, start + index);
         });
       }
-      start += chunk.length;
-    }
+    };
+    await runChunks(promptChunks, processChunk, codeArchitectureWorkflow);
 
     let normalizedRows = items.map((item, index) => normalizeHaraRow(generatedRows[index] || {}, item, index));
     normalizedRows = await repairGenericHazardRows({
@@ -1411,6 +1600,7 @@ export async function generateHaraAnalysisSheets({
         }),
       },
     });
+    checkCancelled(contextOptions);
     return saveHaraAnalysisSheets({ sheets, setFolders, currentFolder, normalizedRows, items });
   }
 
@@ -1434,6 +1624,8 @@ export async function generateHaraAnalysisSheets({
         });
       }, contextOptions);
     } catch (err) {
+      checkCancelled(contextOptions);
+      if (err?.name === "AbortError") throw err;
       console.warn(`⚠️ HARA detailed row failed for ${item.id || `FD-${index + 1}`}; using fallback row.`, err);
       normalizedRows[index] = normalizeHaraRow({}, item, index);
     }
@@ -1490,12 +1682,16 @@ export async function generateFhaAnalysisSheets({
   analysisContext = null,
   contextSources = null,
   onProgress = () => {},
+  codeArchitectureWorkflow = false,
+  signal = null,
+  generationCheckpoint = null,
 }) {
-  const items = flattenDecomposition(sheets);
+  const items = flattenDecomposition(sheets, codeArchitectureWorkflow);
   if (!items.length) return sheets;
 
-  const mode = normalizeFhaGenerationMode(fhaGenerationMode);
-  const contextOptions = { operationalContext, organizationContext, analysisContext, contextSources };
+  const mode = codeArchitectureWorkflow ? FHA_GENERATION_MODES.STANDARD : normalizeFhaGenerationMode(fhaGenerationMode);
+  const contextOptions = { operationalContext, organizationContext, analysisContext, contextSources, codeArchitectureWorkflow, signal, generationCheckpoint };
+  checkCancelled(contextOptions);
 
   if (mode === FHA_GENERATION_MODES.STANDARD) {
     const promptChunks = items.length <= FHA_MAX_ROWS_PER_PROMPT && compactFhaPromptRowsLength(items) <= FHA_SINGLE_PROMPT_MAX_CHARS
@@ -1506,26 +1702,35 @@ export async function generateFhaAnalysisSheets({
     }
 
     const generatedRows = [];
-    for (let start = 0, chunkIndex = 0; chunkIndex < promptChunks.length; chunkIndex += 1) {
-      const chunk = promptChunks[chunkIndex];
+    const processChunk = async (chunk, chunkIndex) => {
+      const start = promptChunks.slice(0, chunkIndex).reduce((count, entry) => count + entry.length, 0);
       onProgress({
         step: chunkIndex + 1,
         total: promptChunks.length + 1,
         message: `Generating FHA rows (${chunkIndex + 1}/${promptChunks.length})...`,
       });
       try {
-        const chunkRows = await requestFhaRowsWithRetries(chunk, { ...contextOptions, onProgress });
+        checkCancelled(contextOptions);
+        const basis = { workflow: "cba-hara-fha-v3", method: "FHA", chunk, operationalContext, organizationContext, analysisContext, contextSources };
+        const cached = codeArchitectureWorkflow ? await generationCheckpoint?.read(basis) : null;
+        const chunkRows = Array.isArray(cached) && cached.length === chunk.length && cached.every(row => completeMethodRow(row, "FHA"))
+          ? cached : await requestFhaRowsWithRetries(chunk, { ...contextOptions, onProgress });
+        checkCancelled(contextOptions);
+        if (codeArchitectureWorkflow) await generationCheckpoint?.write(basis, chunkRows);
         chunk.forEach((item, index) => {
           generatedRows[start + index] = chunkRows[index] || {};
         });
       } catch (err) {
+        checkCancelled(contextOptions);
+        if (err?.name === "AbortError") throw err;
+        if (codeArchitectureWorkflow) throw err;
         console.warn(`⚠️ FHA generation failed for standard chunk ${chunkIndex + 1}; using local fallback rows for that chunk.`, err);
         chunk.forEach((item, index) => {
           generatedRows[start + index] = fallbackHazardRow(item, start + index);
         });
       }
-      start += chunk.length;
-    }
+    };
+    await runChunks(promptChunks, processChunk, codeArchitectureWorkflow);
 
     let normalizedRows = items.map((item, index) => normalizeFhaRow(generatedRows[index] || {}, item, index));
     normalizedRows = await repairGenericHazardRows({
@@ -1557,6 +1762,7 @@ export async function generateFhaAnalysisSheets({
         }),
       },
     });
+    checkCancelled(contextOptions);
     return saveFhaAnalysisSheets({ sheets, setFolders, currentFolder, normalizedRows, items });
   }
 
@@ -1580,6 +1786,8 @@ export async function generateFhaAnalysisSheets({
         });
       }, contextOptions);
     } catch (err) {
+      checkCancelled(contextOptions);
+      if (err?.name === "AbortError") throw err;
       console.warn(`⚠️ FHA detailed row failed for ${item.id || `FD-${index + 1}`}; using fallback row.`, err);
       normalizedRows[index] = normalizeFhaRow({}, item, index);
     }

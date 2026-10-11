@@ -1,3 +1,4 @@
+import { formatGovernedHazardPromptContext } from '../project-hazard-analysis/hazardPromptContext';
 import { fetchLLMResponse } from '../../components/aiAnalysisSTPA';
 import { mapWithConcurrency } from '../../components/aiAnalysisCodeHazardStandard';
 import { SCREENING_ORIGIN } from '../project-hazard-analysis/applicabilityOwnership';
@@ -89,7 +90,7 @@ function unresolved(record) {
 }
 
 export async function screenCodeHazardApplicability(input, {
-  sourceRows = [], checkpoint = null, modelContext = {}, signal, onProgress = () => {},
+  organizationContext = "", sourceRows = [], checkpoint = null, modelContext = {}, signal, onProgress = () => {},
 } = {}) {
   check(signal);
   const groups = new Map();
@@ -121,7 +122,7 @@ export async function screenCodeHazardApplicability(input, {
     else last.push(entry.record);
   }
   const scope = {projectId: input.projectId, repoId: input.repoId, source: input.architectureSnapshotHash,
-    functional: input.functionalModelSnapshotHash, context: input.operationalContext, modelContext, policy: SCREENING_POLICY};
+    functional: input.functionalModelSnapshotHash, context: input.operationalContext, organizationContext, modelContext, policy: SCREENING_POLICY};
   let completed = 0;
   onProgress({phase: 'applicability-screening', completed: 0, total: entries.length,
     message: `Screening command/control applicability (0/${entries.length} relationships and contexts)...`});
@@ -135,7 +136,7 @@ export async function screenCodeHazardApplicability(input, {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       let receivedResponse = false;
       try {
-        const response = await fetchLLMResponse(`${promptInstructions}\nProject context (background only; ground decisions in each relationship):\n${input.operationalContext || 'Not supplied'}\nRecords:\n${JSON.stringify(records)}`, {}, undefined, '', {signal, maxTokens: 12000, workflow: 'hazard-row-generation'});
+        const response = await fetchLLMResponse(`${promptInstructions}\n${formatGovernedHazardPromptContext({ organizationContext })}\nOrganization guidance may clarify terminology but must not replace relationship evidence or establish control authority.\nProject context (background only; ground decisions in each relationship):\n${input.operationalContext || 'Not supplied'}\nRecords:\n${JSON.stringify(records)}`, {}, undefined, '', {signal, maxTokens: 12000, workflow: 'hazard-row-generation'});
         check(signal);
         receivedResponse = true;
         const raw = text(response).replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');

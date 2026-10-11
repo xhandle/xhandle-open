@@ -169,3 +169,78 @@ it('defaults STPA to the requested columns and retains picker customization', ()
     localStorage.removeItem(`${storageKey}:column-widths`);
   }
 });
+
+it('defaults HARA to the requested columns with legacy field labels and persistent customization', () => {
+  const { HARA_DEFAULT_COLUMNS } = require('./CodeArchitectureHazardSummaryTable');
+  const storageKey='test:hara-focused';
+  const headers=[...HARA_DEFAULT_COLUMNS].reverse().map(name=>name==='Function'?'Item / Function':name==='Malfunctioning Behavior'?'Malfunction':name).concat(['Rationale','Safety Significant']);
+  const sheet=[headers,headers.map(name=>`Value: ${name}`)];
+  localStorage.setItem(`${storageKey}:hidden-columns`,'[]');
+  const host=document.createElement('div');document.body.appendChild(host);
+  let root=createRoot(host);
+  const render=()=>root.render(<CodeArchitectureHazardSummaryTable summarySheet={sheet} hazardMethod="HARA" storageKey={storageKey} />);
+  try {
+    act(render);
+    const headings=Array.from(host.querySelectorAll('thead th'));
+    expect(headings).toHaveLength(HARA_DEFAULT_COLUMNS.length);
+    headings.forEach((heading,index)=>expect(heading.textContent).toContain(HARA_DEFAULT_COLUMNS[index]));
+    expect(host.textContent).toContain('Value: Item / Function');
+    expect(host.textContent).toContain('Value: Malfunction');
+    expect(host.querySelector('thead').textContent).not.toContain('Operational context');
+    act(()=>Array.from(host.querySelectorAll('button')).find(button=>button.title==='Show or hide table columns').click());
+    act(()=>Array.from(host.querySelectorAll('button')).find(button=>button.textContent==='Show all').click());
+    expect(host.querySelectorAll('thead th')).toHaveLength(headers.length);
+    act(()=>root.unmount());root=createRoot(host);act(render);
+    expect(host.querySelectorAll('thead th')).toHaveLength(headers.length);
+    expect(sheet[0]).toEqual(headers);
+  } finally {
+    act(()=>root.unmount());host.remove();
+    for(const suffix of [':hidden-columns',':hidden-columns:hara-focused-v1',':column-widths']) localStorage.removeItem(storageKey+suffix);
+  }
+});
+
+it('defaults FHA to the requested ordered columns without inventing missing rationales or changing saved rows', () => {
+  const { FHA_DEFAULT_COLUMNS } = require('./CodeArchitectureHazardSummaryTable');
+  const storageKey='test:fha-focused';
+  const headers=['Verification','Function (To)','Mishap','Function (From)','Control Action','Operational Scenario','Operational Mode','Rationale','Software Criticality Index'];
+  const sheet=[headers,['Test torque','Brake','Collision','Planner','Apply torque','Road driving','Automatic','General rationale','SwCI 1']];
+  const original=JSON.stringify(sheet);
+  const onVisibleSummaryChange=jest.fn();
+  localStorage.setItem(`${storageKey}:hidden-columns`,'[]');
+  const host=document.createElement('div');document.body.appendChild(host);
+  let root=createRoot(host);
+  const render=()=>root.render(<CodeArchitectureHazardSummaryTable summarySheet={sheet} hazardMethod="FHA" storageKey={storageKey} onVisibleSummaryChange={onVisibleSummaryChange} />);
+  try {
+    act(render);
+    const headings=Array.from(host.querySelectorAll('thead th'));
+    expect(headings).toHaveLength(FHA_DEFAULT_COLUMNS.length);
+    headings.forEach((heading,index)=>expect(heading.textContent).toContain(FHA_DEFAULT_COLUMNS[index]));
+    expect(host.textContent).toContain('Road driving · Automatic');
+    expect(host.textContent).not.toContain('General rationale');
+    expect(onVisibleSummaryChange).toHaveBeenLastCalledWith(sheet);
+    expect(JSON.stringify(sheet)).toBe(original);
+    act(()=>Array.from(host.querySelectorAll('button')).find(button=>button.title==='Show or hide table columns').click());
+    act(()=>Array.from(host.querySelectorAll('button')).find(button=>button.textContent==='Show all').click());
+    expect(host.querySelector('thead').textContent).toContain('Operational Scenario');
+    act(()=>root.unmount());root=createRoot(host);act(render);
+    expect(host.querySelector('thead').textContent).toContain('Operational Scenario');
+  } finally {
+    act(()=>root.unmount());host.remove();
+    for(const suffix of [':hidden-columns',':hidden-columns:fha-focused-v1',':column-widths']) localStorage.removeItem(storageKey+suffix);
+  }
+});
+
+it('clears the hazard cell highlight when collaborator context is removed and allows reselection', () => {
+  const host=document.createElement('div');document.body.appendChild(host);
+  const root=createRoot(host);const onSelection=jest.fn();
+  const sheet=[['Function (From)','Control Action','Function (To)'],['Sender','Command','Receiver']];
+  const render=selection=>root.render(<CodeArchitectureHazardSummaryTable summarySheet={sheet} collaboratorSelection={selection} onCollaboratorSelectionChange={onSelection} />);
+  const cell=()=>Array.from(host.querySelectorAll('td')).find(node=>node.textContent.startsWith('Command'));
+  try {
+    act(()=>render(null));act(()=>cell().click());
+    const selected=onSelection.mock.calls[0][0];expect(selected.kind).toBe('table-cell');
+    act(()=>render(selected));expect(cell().className).toContain('bg-blue-100');
+    act(()=>render(null));expect(cell().className).not.toContain('bg-blue-100');
+    act(()=>cell().click());expect(onSelection.mock.calls.at(-1)[0]).toMatchObject({kind:'table-cell'});
+  } finally {act(()=>root.unmount());host.remove();}
+});

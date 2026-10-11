@@ -94,3 +94,19 @@ test("adds draft front matter to a readable Markdown profile", () => {
   expect(parsed.metadata.status).toBe("draft");
   expect(parsed.metadata.profile_basis).toContain("Hypothetical information");
 });
+
+test('profile settings resolve the current workspace without falling back to another project',()=>{
+ const {organizationProfileProjectScope}=require('./organizationProfile');
+ const activeProject={id:'normal'}, activeCodeArchitectureProject={id:'cba'};
+ expect(organizationProfileProjectScope({section:'code-architecture',activeProject,activeCodeArchitectureProject}).id).toBe('cba');
+ expect(organizationProfileProjectScope({section:'projects',activeProject,activeCodeArchitectureProject}).id).toBe('normal');
+ expect(organizationProfileProjectScope({section:'code-architecture',activeProject})).toBeUndefined();
+});
+test('effective profile identity changes for policy, override and enablement changes',()=>{
+ const {organizationProfileContextIdentity}=require('./organizationProfile');
+ const profile=createOrganizationProfileRecord({enabled:true,markdown});
+ const baseline=buildEffectiveOrganizationProfileContext({profile});
+ expect(organizationProfileContextIdentity(baseline)).toBe(organizationProfileContextIdentity(baseline));
+ for(const context of ['',baseline+' change',buildEffectiveOrganizationProfileContext({profile,projectProfile:{overrideMarkdown:'Override'}})])
+  expect(organizationProfileContextIdentity(context)).not.toBe(organizationProfileContextIdentity(baseline));
+});

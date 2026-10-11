@@ -1,3 +1,4 @@
+import { organizationProfileContextIdentity } from '../organization-profile/organizationProfile';
 import { buildFunctionalModelRows, functionalModelIsReady } from '../code-architecture-context/functionalModel';
 import { codeSourceProvenance } from '../code-architecture-context/codeSourceIdentity';
 import { maskPython } from '../code-architecture-context/codeRelationshipEvidence';
@@ -28,7 +29,7 @@ export const CODE_ARCHITECTURE_STPA_GUIDE_PHRASES = Object.freeze([
 
 export function getCodeArchitectureHazardGuidePhrases(method = "STPA-Textbook") {
   const normalized = String(method || "").trim().toUpperCase();
-  return normalized === "STPA" || normalized === "STPA-TEXTBOOK" || normalized === "STPA_TEXTBOOK"
+  return ["STPA", "STPA-TEXTBOOK", "STPA_TEXTBOOK", "HARA", "FHA"].includes(normalized)
     ? CODE_ARCHITECTURE_STPA_GUIDE_PHRASES
     : [""];
 }
@@ -1667,6 +1668,7 @@ export function normalizeCodeArchitectureHazardRun(raw = {}, context = {}) {
     organizationProfileProvenance: raw.organizationProfileProvenance || context.organizationProfileProvenance || null,
     contextSources: raw.contextSources || context.contextSources || context.repoMeta?.contextSources || null,
     applicabilityScreening: raw.applicabilityScreening || null,
+    archivedUserPreprocessing: raw.archivedUserPreprocessing || {},
     generatedSheets: raw.generatedSheets || raw.analysisResult || {},
     summaryRows,
     reviewStatus: raw.reviewStatus || CODE_ARCHITECTURE_HAZARD_REVIEW_STATUSES.DRAFT_AI_GENERATED,
@@ -1677,11 +1679,17 @@ export function normalizeCodeArchitectureHazardRun(raw = {}, context = {}) {
 
 export function isCodeArchitectureHazardAnalysisStale({
   run,
+  organizationContext,
   cbaRows,
   operationalContexts,
   selectedOperationalContextId,
 }) {
   if (!run) return false;
+  if (organizationContext !== undefined) {
+    const previous = run.organizationProfileProvenance?.effectiveContextIdentity;
+    if (previous ? previous !== organizationProfileContextIdentity(organizationContext)
+      : Boolean(organizationContext || run.organizationProfileProvenance?.profileIdentity)) return true;
+  }
   if (run.analysisAbstraction === "functional" && (!functionalModelIsReady(cbaRows) || run.functionalModelSnapshotHash !== computeFunctionalModelSnapshotHash(buildFunctionalModelRows(cbaRows)))) return true;
   if (
     run.architectureSnapshotHash

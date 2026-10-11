@@ -82,18 +82,23 @@ describe("code architecture hazard evidence review", () => {
     expect(input.tableRows.every((row) => row.operationalContextId === "degraded")).toBe(true);
   });
 
-  it("uses one analysis row per context for non-STPA methods", () => {
+  it.each(["HARA", "FHA"])("expands all seven guide phrases per context for %s", (method) => {
     const input = buildCodeArchitectureHazardInput({
       cbaRows: [{ from: "Monitor", action: "Health Status", to: "Fallback" }],
-      method: "FHA",
+      method,
       operationalContexts: [
         { id: "one", scenario: "Scenario one", mode: "Automatic" },
         { id: "two", scenario: "Scenario two", mode: "Manual" },
       ],
     });
 
-    expect(input.tableRows).toHaveLength(2);
-    expect(input.tableRows.every((row) => row.guidePhrase === "")).toBe(true);
+    expect(input.tableRows).toHaveLength(14);
+    for (const contextId of ['one','two']) {
+      const rows = input.tableRows.filter(row => row.operationalContextId === contextId);
+      expect(rows).toHaveLength(7);
+      expect(new Set(rows.map(row => row.guidePhrase)).size).toBe(7);
+      expect(rows.some(row => row.guidePhrase === 'The control action is provided too late')).toBe(true);
+    }
   });
 
   it("analyzes only eligible CBA rows while preserving explicit gate counts", () => {
@@ -1210,4 +1215,14 @@ it('indexed summary headers retain the first case-insensitive match', () => {
  ]);
  expect(record.functionFrom).toBe('First');
  expect(record['Guide Phrase Applicable']).toBe('Yes');
+});
+
+test('profile state survives normalization and changed guidance makes saved runs stale',()=>{
+ const {organizationProfileContextIdentity}=require('../organization-profile/organizationProfile');
+ const {normalizeCodeArchitectureHazardRun,isCodeArchitectureHazardAnalysisStale}=require('./codeArchitectureHazardUtils');
+ const run=normalizeCodeArchitectureHazardRun({organizationProfileProvenance:{effectiveContextIdentity:organizationProfileContextIdentity('A'),effectiveEnabled:true},generatedSheets:{Summary:[]}});
+ expect(isCodeArchitectureHazardAnalysisStale({run,cbaRows:[],organizationContext:'A'})).toBe(false);
+ expect(isCodeArchitectureHazardAnalysisStale({run,cbaRows:[],organizationContext:'B'})).toBe(true);
+ expect(isCodeArchitectureHazardAnalysisStale({run,cbaRows:[],organizationContext:''})).toBe(true);
+ expect(isCodeArchitectureHazardAnalysisStale({run:{},cbaRows:[],organizationContext:'A'})).toBe(true);
 });

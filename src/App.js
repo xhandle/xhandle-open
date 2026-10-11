@@ -1,3 +1,5 @@
+import { repositoryContextRequestIsCurrent } from './features/code-architecture-context/repositoryContextRequest';
+import { getCbaMethodDraftHeaders } from "./components/haraFhaSharedWorkflow";
 import XHandleWorkingMark from "./components/XHandleWorkingMark";
 import { assertHazardContextRunScope, persistHazardContexts } from './features/code-architecture-hazard-analysis/saveHazardContexts';
 import { computeArchitectureSnapshotHash, normalizeRepoId } from './features/code-architecture-hazard-analysis/codeArchitectureHazardUtils';
@@ -111,6 +113,7 @@ import {
   FunctionalDecompositionTable,
   fetchRepositoryContext,
   getDefaultBranch,
+  getCommitShaForRef,
   listRepoFilesViaGitHub,
 } from './components/generateFunctionalDecompositionFromGitHub';
 import { generateRepositoryAnalysisContext } from './features/code-architecture-context/repositoryAnalysisContextAi';
@@ -358,6 +361,7 @@ import {
 } from "./features/project-hazard-analysis/safetyIssueReportStorage";
 import {
   buildEffectiveOrganizationProfileContext,
+  organizationProfileProjectScope,
   getOrganizationProfileIdentity,
   loadOrganizationProfile,
 } from "./features/organization-profile/organizationProfile";
@@ -3865,6 +3869,17 @@ function LiteXHandle() {
     const [aiProviderInput, setAiProviderInput] = useState('openai');
     const [providerKeyInput, setProviderKeyInput] = useState('');
     const [showSettingsModal, setShowSettingsModal] = useState(false);
+    const [organizationProfileRevision, setOrganizationProfileRevision] = useState(0);
+    useEffect(() => {
+      const changed = () => setOrganizationProfileRevision(value => value + 1);
+      const storageChanged = event => { if (!event.key || event.key === "xhandle.organizationProfile") changed(); };
+      window.addEventListener("xhandle:organization-profile-changed", changed);
+      window.addEventListener("storage", storageChanged);
+      return () => {
+        window.removeEventListener("xhandle:organization-profile-changed", changed);
+        window.removeEventListener("storage", storageChanged);
+      };
+    }, []);
 const [repoConnected, setRepoConnected] = useState(false);
 const [isGeneratingCodeArchitectureReviewApp, setIsGeneratingCodeArchitectureReviewApp] = useState(false);
 const [codeArchitectureReviewAnalysisModal, setCodeArchitectureReviewAnalysisModal] = useState(null);
@@ -3981,6 +3996,9 @@ const [codeArchitectureRepoDraft, setCodeArchitectureRepoDraft] = useState({
   analysisContextText: "",
   analysisContextFiles: [],
 });
+const repoContextRequestRef = useRef(0);
+const repoContextDraftRef = useRef(null);
+repoContextDraftRef.current = {draft:codeArchitectureRepoDraft, open:showCodeArchitectureRepoConfig, project:codeArchitectureRepoConfigProjectId, repo:codeArchitectureRepoConfigRepoId};
 const [codeArchitectureRepoConfigMessage, setCodeArchitectureRepoConfigMessage] = useState("");
 const codeArchitectureAnalysisInFlightRef = useRef(false);
 const codeArchitectureAnalysisScopeRef = useRef(null);
@@ -4420,16 +4438,23 @@ async function verifyCodeArchitectureRepo({ silent = false } = {}) {
 }
 
 async function generateCodeArchitectureRepoContext() {
+  const requestId=++repoContextRequestRef.current;
+  const started=repoContextDraftRef.current;
+  const current=()=> {
+    const now=repoContextDraftRef.current;
+    return repositoryContextRequestIsCurrent(started,now,requestId,repoContextRequestRef.current);
+  };
   if (isLocalCodeSource(codeArchitectureRepoDraft)) {
     setIsCodeArchitectureContextGenerating(true);
     try {
       const sourceProvider = await createLocalSourceProvider(codeArchitectureRepoDraft);
       const repositoryContext = await fetchRepositoryContext({ allFiles: await sourceProvider.listFiles(), sourceProvider, repo: codeArchitectureRepoDraft.folderName });
       const generated = await generateRepositoryAnalysisContext({ sourceName: codeArchitectureRepoDraft.folderName, repositoryContext, existingContext: codeArchitectureRepoDraft.analysisContextText });
+      if (!current()) return;
       setCodeArchitectureRepoDraft(draft => ({ ...draft, analysisContextText: generated }));
       setCodeArchitectureRepoConfigMessage("Analysis context generated. Review it before saving or analyzing.");
-    } catch (error) { setCodeArchitectureRepoConfigMessage(error.message); }
-    finally { setIsCodeArchitectureContextGenerating(false); }
+    } catch (error) { if (current()) setCodeArchitectureRepoConfigMessage(error.message); }
+    finally { if (requestId===repoContextRequestRef.current) setIsCodeArchitectureContextGenerating(false); }
     return;
   }
   const parsedRepoUrl = parseGitHubRepoUrl(codeArchitectureRepoDraft.repoUrl);
@@ -4445,24 +4470,28 @@ async function generateCodeArchitectureRepoContext() {
   setCodeArchitectureRepoConfigMessage("Reading repository README and structure...");
   try {
     const branch = await getDefaultBranch(owner, repo, token || undefined);
+    const revision = await getCommitShaForRef(owner, repo, token || undefined, branch);
     const repoFiles = filterSelectableRepoFiles(
-      await listRepoFilesViaGitHub(owner, repo, token || undefined, branch),
+      await listRepoFilesViaGitHub(owner, repo, token || undefined, revision),
     );
     if (!repoFiles.length) throw new Error("No readable repository files were found.");
+    if (!current()) return;
     setCodeArchitectureRepoFilesForModal(repoFiles);
     const repositoryContext = await fetchRepositoryContext({
       owner,
       repo,
       token: token || undefined,
-      ref: branch,
+      ref: revision,
       allFiles: repoFiles,
     });
+    if (!current()) return;
     setCodeArchitectureRepoConfigMessage("Generating editable analysis context with the selected AI provider and model...");
     const generated = await generateRepositoryAnalysisContext({
       repositoryUrl: parsedRepoUrl?.repoUrl || `https://github.com/${owner}/${repo}`,
       repositoryContext,
       existingContext: codeArchitectureRepoDraft.analysisContextText,
     });
+    if (!current()) return;
     setCodeArchitectureRepoDraft((draft) => ({
       ...draft,
       repoUrl: parsedRepoUrl?.repoUrl || draft.repoUrl || `https://github.com/${owner}/${repo}`,
@@ -4472,9 +4501,9 @@ async function generateCodeArchitectureRepoContext() {
     }));
     setCodeArchitectureRepoConfigMessage("Analysis context generated. Review or edit it before saving or analyzing.");
   } catch (error) {
-    setCodeArchitectureRepoConfigMessage(error?.message || "Unable to generate repository analysis context.");
+    if (current()) setCodeArchitectureRepoConfigMessage(error?.message || "Unable to generate repository analysis context.");
   } finally {
-    setIsCodeArchitectureContextGenerating(false);
+    if (requestId===repoContextRequestRef.current) setIsCodeArchitectureContextGenerating(false);
   }
 }
 
@@ -14440,16 +14469,7 @@ Rules:
     const repoId = repoMeta.repoId || repoMeta.repoName || "repo";
     const reviewRepoId = activeCodeArchitectureRepo?.id || repoId;
     const cbaProjectId = activeCodeArchitectureProjectId || activeProjectId || "";
-    const codeHazardOrganizationCalibration = getProjectOrganizationCalibration(cbaProjectId, [
-      "Safety Philosophy",
-      "Hazard and Loss Taxonomy",
-      "Risk Classification",
-      "Engineering Rules",
-      "Operational Concepts",
-      "Standards and Regulatory Context",
-      "Glossary",
-      "Known Controls and Evidence",
-    ]);
+    const codeHazardOrganizationCalibration = getProjectOrganizationCalibration(cbaProjectId);
     const actId = `cba-hazard-${cbaProjectId || "default"}-${repoId}`;
     codeArchitectureHazardAbortRef.current?.abort();
     const abortController = new AbortController();
@@ -14584,7 +14604,7 @@ Rules:
     cbaRows: cbaTableData, repoMeta: activeCodeArchitectureRepoMeta,
     projectId: activeCodeArchitectureProjectId, method: codeArchitectureHazardMethod,
     operationalContexts: codeArchitectureHazardContexts,
-  }, getProjectDraftHazardHeaders(codeArchitectureHazardMethod)), [
+  }, getCbaMethodDraftHeaders(codeArchitectureHazardMethod, getProjectDraftHazardHeaders(codeArchitectureHazardMethod))), [
     cbaTableData, activeCodeArchitectureRepoMeta, activeCodeArchitectureProjectId,
     codeArchitectureHazardMethod, codeArchitectureHazardContexts, hasCodeArchitectureHazardRun,
   ]);
@@ -14923,6 +14943,11 @@ const handleApplyTraceabilityPatches = async (suggestions) => {
 const activeProject = useMemo(
   () => projects.find(p => p.id === activeProjectId) || null,
   [projects, activeProjectId]
+);
+
+const currentCbaOrganizationContext = useMemo(
+  () => getProjectOrganizationCalibration(activeCodeArchitectureProjectId).context,
+  [activeCodeArchitectureProjectId, organizationProfileRevision, showSettingsModal]
 );
 
 const projectHazardReviewItems = useMemo(() => (resultsReview.reviewItems || []).filter((item) => {
@@ -17557,6 +17582,13 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
           </div>
         </div>
 
+        {activeCodeArchitectureSelection && (
+          <div className="flex shrink-0 items-center justify-between gap-3 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
+            <span><strong>Collaborator reference:</strong> {describeActiveSelection(activeCodeArchitectureSelection)}. This selection will be included automatically in typed and voice requests.</span>
+            <button type="button" onClick={() => clearCollaboratorActiveSelection(activeCodeArchitectureSelection)} className="shrink-0 font-semibold hover:text-indigo-950" aria-label="Clear selected code architecture context">Clear</button>
+          </div>
+        )}
+
         {activeCodeArchitectureRepo && <ArchitectureRunRecovery
           key={activeCodeArchitectureRowsKey}
           scope={activeCodeArchitectureRowsKey}
@@ -17577,7 +17609,14 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
           )
 	          : !activeCodeArchitectureRepo ? (
 	            <div className="min-h-0 overflow-auto rounded-xl border bg-white p-8 text-gray-600 text-sm">
-	              Connect a GitHub repository to start analysis.
+	              <p>Connect a GitHub repository or local folder to start analysis.</p>
+                  <button
+                    type="button"
+                    onClick={() => openCodeArchitectureRepoConfig(activeCodeArchitectureProject.id)}
+                    className="mt-4 rounded-md bg-[#2D7DFE] px-4 py-2 text-sm font-medium text-white hover:bg-[#1E61D6]"
+                  >
+                    Set up analysis
+                  </button>
 	            </div>
 	          )
           : cbaTableData.length > 0 ? (
@@ -17649,6 +17688,8 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
             ) : codeArchitectureWorkspaceTab === ARTIFACT_KINDS.SOFTWARE ? (
               <div className="min-h-0 flex-1">
                 <EngineeringArtifactPanel
+                  collaboratorSelection={activeCodeArchitectureSelection}
+                  organizationContext={currentCbaOrganizationContext}
                   key={ARTIFACT_KINDS.SOFTWARE}
                   kind={ARTIFACT_KINDS.SOFTWARE}
                   cbaRows={cbaTableData}
@@ -17665,6 +17706,8 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
             ) : codeArchitectureWorkspaceTab === ARTIFACT_KINDS.SYSTEM ? (
               <div className="min-h-0 flex-1">
                 <EngineeringArtifactPanel
+                  collaboratorSelection={activeCodeArchitectureSelection}
+                  organizationContext={currentCbaOrganizationContext}
                   key={ARTIFACT_KINDS.SYSTEM}
                   kind={ARTIFACT_KINDS.SYSTEM}
                   cbaRows={cbaTableData}
@@ -17681,6 +17724,8 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
             ) : codeArchitectureWorkspaceTab === ARTIFACT_KINDS.SUBSYSTEM ? (
               <div className="min-h-0 flex-1">
                 <EngineeringArtifactPanel
+                  collaboratorSelection={activeCodeArchitectureSelection}
+                  organizationContext={currentCbaOrganizationContext}
                   key={ARTIFACT_KINDS.SUBSYSTEM}
                   kind={ARTIFACT_KINDS.SUBSYSTEM}
                   cbaRows={cbaTableData}
@@ -17697,6 +17742,8 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
             ) : codeArchitectureWorkspaceTab === ARTIFACT_KINDS.DESIGN ? (
               <div className="min-h-0 flex-1">
                 <EngineeringArtifactPanel
+                  collaboratorSelection={activeCodeArchitectureSelection}
+                  organizationContext={currentCbaOrganizationContext}
                   key={ARTIFACT_KINDS.DESIGN}
                   kind={ARTIFACT_KINDS.DESIGN}
                   cbaRows={cbaTableData}
@@ -17753,6 +17800,8 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                         : 'No current Functional model. Generate it in Architecture Diagram → Functional to analyze responsibilities instead of detailed calls.'}
                     </div>
                     <CodeArchitectureHazardPanel
+                  collaboratorSelection={activeCodeArchitectureSelection}
+                      organizationContext={currentCbaOrganizationContext}
                       importInputRef={codeArchitectureHazardCsvInputRef}
                       cbaRows={cbaTableData}
                       latestRun={codeArchitectureHazardRun}
@@ -17818,7 +17867,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                       codeArchitectureHazardAnalysis={codeArchitectureHazardRun}
                       isCodeArchitectureHazardAnalysisStale={
                         codeArchitectureHazardRun
-                          ? isCodeArchitectureHazardAnalysisStale({ run: codeArchitectureHazardRun, cbaRows: cbaTableData })
+                          ? isCodeArchitectureHazardAnalysisStale({ run: codeArchitectureHazardRun, cbaRows: cbaTableData, organizationContext: currentCbaOrganizationContext })
                           : false
                       }
                       riskRegister={riskRegister}
@@ -17842,10 +17891,19 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
               </>
             ) : (
               <>
-                Click <span className="font-medium">Analyze</span> to fetch repo files, build a dependency graph,
+                Open <span className="font-medium">Set up analysis</span>, then click <span className="font-medium">Analyze</span> to fetch repo files, build a dependency graph,
                 and generate the functional interaction table for {activeCodeArchitectureRepo.repoName || activeCodeArchitectureRepo.repoId}.
               </>
             )}
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={() => openCodeArchitectureRepoConfig(activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id)}
+                className="rounded-md bg-[#2D7DFE] px-4 py-2 text-sm font-medium text-white hover:bg-[#1E61D6]"
+              >
+                Set up analysis
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -20818,11 +20876,13 @@ const updateRiskInProject = async (projectId, predicate) => {
   onSidebarVisibilityChange={updateSidebarVisibility}
   sidebarPreferenceError={sidebarPreferenceError}
   connected={repoConnected}
-  activeProject={activeProject}
-  projectOrganizationProfile={activeProjectId ? loadProjectData(activeProjectId)?.organizationProfile : null}
+  activeProject={organizationProfileProjectScope({ section, activeProject, activeCodeArchitectureProject })}
+  projectOrganizationProfile={loadProjectData(organizationProfileProjectScope({ section, activeProject, activeCodeArchitectureProject })?.id)?.organizationProfile || null}
   onProjectOrganizationProfileChange={(profileSettings) => {
-    if (!activeProjectId) return;
-    saveProjectPatch(activeProjectId, { organizationProfile: profileSettings });
+    const profileProject = organizationProfileProjectScope({ section, activeProject, activeCodeArchitectureProject });
+    if (!profileProject?.id) return;
+    saveProjectPatch(profileProject.id, { organizationProfile: profileSettings });
+    setOrganizationProfileRevision(value => value + 1);
     notifyBackupDataChanged("organization-profile");
   }}
   onClose={() => setShowSettingsModal(false)}
@@ -21778,14 +21838,14 @@ const updateRiskInProject = async (projectId, predicate) => {
 
         {showCodeArchitectureRepoConfig && (
           <div className="xhandle-modal-viewport fixed inset-0 z-[120] flex items-center justify-center">
-            <div className="absolute inset-0 bg-black/40" onClick={() => setShowCodeArchitectureRepoConfig(false)} />
+            <div className="absolute inset-0 bg-black/40" onClick={() => { repoContextRequestRef.current++; setIsCodeArchitectureContextGenerating(false); setShowCodeArchitectureRepoConfig(false); }} />
             <div className="relative z-[121] w-full max-w-2xl rounded-2xl border bg-white shadow-xl">
               <div className="px-5 py-4 border-b flex items-center justify-between">
                 <div>
                   <h2 className="text-base font-semibold text-slate-800">GitHub repo configuration</h2>
                   <p className="text-xs text-slate-500 mt-0.5">Connect, verify, and analyze a repository for this Code-Based Architecture project.</p>
                 </div>
-                <button className="rounded px-2 py-1 text-xs text-gray-600 hover:bg-gray-100" onClick={() => setShowCodeArchitectureRepoConfig(false)}>✕</button>
+                <button className="rounded px-2 py-1 text-xs text-gray-600 hover:bg-gray-100" onClick={() => { repoContextRequestRef.current++; setIsCodeArchitectureContextGenerating(false); setShowCodeArchitectureRepoConfig(false); }}>✕</button>
               </div>
               <div className="px-5 py-4 space-y-4">
                 <label className="block text-sm font-medium">Source
@@ -21906,7 +21966,7 @@ const updateRiskInProject = async (projectId, predicate) => {
                 )}
               </div>
               <div className="px-5 py-4 border-t flex flex-wrap items-center justify-end gap-2">
-                <button onClick={() => setShowCodeArchitectureRepoConfig(false)} className="px-3 py-2 rounded border text-sm hover:bg-gray-50">Cancel</button>
+                <button onClick={() => { repoContextRequestRef.current++; setIsCodeArchitectureContextGenerating(false); setShowCodeArchitectureRepoConfig(false); }} className="px-3 py-2 rounded border text-sm hover:bg-gray-50">Cancel</button>
                 <button onClick={() => saveCodeArchitectureRepoConfig({ analyze: false })} disabled={isCodeArchitectureContextGenerating || isCodeArchitectureRepoVerifying || isCodeArchitectureRepoAnalyzing} className="px-3 py-2 rounded border text-sm hover:bg-gray-50 disabled:opacity-60">
                   {isCodeArchitectureRepoVerifying ? "Verifying..." : "Verify & save"}
                 </button>
