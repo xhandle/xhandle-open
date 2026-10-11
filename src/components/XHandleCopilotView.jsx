@@ -1,3 +1,4 @@
+import XHandleWorkingMark from "./XHandleWorkingMark";
 import { codeSourceIndexKey, isLocalCodeSource } from "../features/code-architecture-context/codeSourceIdentity";
 import AttachmentPreview from './AttachmentPreview';
 import { buildAttachmentPreview, retainAttachmentPreviews } from '../lib/collaboratorAttachmentPreviews';
@@ -793,19 +794,6 @@ function CollaboratorMarkdownLink({ href = "", children, ...props }) {
   );
 }
 
-function XHandleWorkingMark({ className = "h-4 w-4" }) {
-  return (
-    <span className={`xhandle-working-mark inline-flex shrink-0 items-center justify-center ${className}`} aria-hidden="true">
-      <img
-        src="/favicon.png"
-        alt=""
-        draggable={false}
-        decoding="async"
-        className="h-full w-full object-contain"
-      />
-    </span>
-  );
-}
 
 function CollaboratorReasoningSummary({ summary, active = false }) {
   if (!summary && !active) return null;

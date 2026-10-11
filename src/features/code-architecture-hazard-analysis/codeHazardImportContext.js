@@ -12,22 +12,24 @@ export function assignImportedHazardContext(run, contexts) {
   const headers = [...source[0]];
   const fields = ['Operational Context ID','Operational Scenario','Operational Mode','Operating Conditions','Context Assumptions'];
   fields.forEach(header => { if (!headers.includes(header)) headers.push(header); });
+  const indices = new Map(headers.map((header, index) => [header, index]));
+  const contextsById = new Map(normalized.map(context => [context.id, context]));
   const ownership = {...run.userPreprocessing};
   let changed = false;
   const rows = source.slice(1).map(original => {
-    const row = headers.map((_, index) => original[index] ?? '');
-    const get = header => String(row[headers.indexOf(header)] || '').trim();
+    const get = header => String(original[indices.get(header)] || '').trim();
     const id = get('Operational Context ID');
     const unspecified = (!id || id === 'context-unspecified')
       && (!get('Operational Scenario') || get('Operational Scenario') === 'Unspecified scenario')
       && (!get('Operational Mode') || get('Operational Mode') === 'Unspecified mode');
     const context = unspecified && normalized.length === 1 ? normalized[0]
-      : normalized.find(entry => entry.id === id);
+      : contextsById.get(id);
     if (!context) return original;
     const values = [context.id, context.scenario, context.mode, context.conditions, context.assumptions];
     if (fields.every((field, index) => get(field) === values[index])) return original;
     changed = true;
-    fields.forEach((field, index) => {row[headers.indexOf(field)] = values[index];});
+    const row = headers.map((_, index) => original[index] ?? '');
+    fields.forEach((field, index) => {row[indices.get(field)] = values[index];});
     const rowId = get('Raw Analysis Row ID');
     const previous = ownership[rowId];
     if (previous) {

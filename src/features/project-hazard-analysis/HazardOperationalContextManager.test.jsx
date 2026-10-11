@@ -38,7 +38,7 @@ describe("HazardOperationalContextManager", () => {
 
       const saveButton = Array.from(modal.querySelectorAll("button"))
         .find((button) => button.textContent.includes("Save contexts"));
-      await act(async () => saveButton.click());
+      await act(async () => { saveButton.click(); await new Promise(resolve => setTimeout(resolve, 10)); });
 
       expect(onSave).toHaveBeenCalledWith([{
         id: "normal",

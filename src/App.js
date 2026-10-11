@@ -1,3 +1,6 @@
+import XHandleWorkingMark from "./components/XHandleWorkingMark";
+import { assertHazardContextRunScope, persistHazardContexts } from './features/code-architecture-hazard-analysis/saveHazardContexts';
+import { computeArchitectureSnapshotHash, normalizeRepoId } from './features/code-architecture-hazard-analysis/codeArchitectureHazardUtils';
 import { SHOW_TABLE_REVIEW_COLUMNS, SHOW_TABLE_REVIEW_NOTICES } from "./components/tablePresentation";
 import { mergeImportedCodeArchitectureRepos } from './features/code-architecture-assurance/architectureImportRefresh';
 import useScopedArchitectureRows from './features/code-architecture-assurance/useScopedArchitectureRows';
@@ -3953,6 +3956,7 @@ const [codeArchitectureRenameError, setCodeArchitectureRenameError] = useState("
 const [openCodeArchitectureProjectMenuId, setOpenCodeArchitectureProjectMenuId] = useState(null);
 const [openCodeArchitectureFolderMenuId, setOpenCodeArchitectureFolderMenuId] = useState(null);
 const [draggingCodeArchitectureProjectId, setDraggingCodeArchitectureProjectId] = useState(null);
+const [codeArchitectureProjectDropTarget, setCodeArchitectureProjectDropTarget] = useState(null);
 const [dragOverCodeArchitectureFolderId, setDragOverCodeArchitectureFolderId] = useState(null);
 const codeArchitectureProjectMenuAnchorEls = useRef({});
 const codeArchitectureProjectMenuPortalRefs = useRef({});
@@ -7535,6 +7539,7 @@ const moveCodeArchitectureProjectToFolder = (projectId, folderId) => {
   }
   setDraggingCodeArchitectureProjectId(null);
   setDragOverCodeArchitectureFolderId(null);
+  setCodeArchitectureProjectDropTarget(null);
 };
 
 
@@ -7901,6 +7906,10 @@ useEffect(() => {
     setProgress(prev => ({ ...prev, total: stepDescriptionsMap[riskMethod]?.total || 9 }));
   }, [riskMethod]);
 
+  const hazardContextSaveVersion = useRef(0);
+  const hazardContextSavePending = useRef(null);
+  const hazardContextScope = useRef(null);
+  hazardContextScope.current = `${activeCodeArchitectureProjectId}:${activeCodeArchitectureRepo?.id || activeCodeArchitectureRepoMeta.repoId || activeCodeArchitectureRepoMeta.repoName || ""}`;
   const hazardLoadRepoId = activeCodeArchitectureRepoMeta.repoId || activeCodeArchitectureRepoMeta.repoName || "";
   useEffect(() => {
     let cancelled = false;
@@ -7908,6 +7917,11 @@ useEffect(() => {
     setCodeArchitectureHazardRun(null);
     async function loadCodeArchitectureHazardRun() {
       const request = ++requestSequence;
+      const pending = hazardContextSavePending.current;
+      if (pending?.scope === `${activeCodeArchitectureProjectId}:${activeCodeArchitectureRepo?.id || hazardLoadRepoId}`) {
+        try { await pending.promise; } catch { /* Load the retained previous state. */ }
+      }
+      const contextVersion = hazardContextSaveVersion.current;
       const repoId = hazardLoadRepoId;
       if (!repoId) {
         if (!cancelled && request === requestSequence) setCodeArchitectureHazardRun(null);
@@ -7917,16 +7931,17 @@ useEffect(() => {
         const filters = { repoId };
         if (activeCodeArchitectureProjectId) filters.projectId = activeCodeArchitectureProjectId;
         const latest = await getLatestCodeArchitectureHazardRun(filters);
+        if (cancelled || request !== requestSequence || contextVersion !== hazardContextSaveVersion.current) return;
         const contexts = loadCodeArchitectureHazardContexts({
           projectId: activeCodeArchitectureProjectId,
           repoId: activeCodeArchitectureRepo?.id || repoId,
         });
         const aligned = assignImportedHazardContext(latest, contexts);
-        if (aligned !== latest) await saveCodeArchitectureHazardRun(aligned);
-        if (!cancelled && request === requestSequence) setCodeArchitectureHazardRun(aligned || null);
+        if (aligned !== latest) await saveCodeArchitectureHazardRun(aligned, { notify: false });
+        if (!cancelled && request === requestSequence && contextVersion === hazardContextSaveVersion.current) setCodeArchitectureHazardRun(aligned || null);
       } catch (error) {
         console.warn("[code-architecture-hazard-analysis] Failed to load latest run", error);
-        if (!cancelled && request === requestSequence) setCodeArchitectureHazardRun(null);
+        if (!cancelled && request === requestSequence && contextVersion === hazardContextSaveVersion.current) setCodeArchitectureHazardRun(null);
       }
     }
     loadCodeArchitectureHazardRun();
@@ -9463,13 +9478,17 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const summaryRows = Array.isArray(codeArchitectureHazardRun?.generatedSheets?.Summary)
       ? codeArchitectureHazardRun.generatedSheets.Summary.slice(1)
       : [];
-    const summaryRowKeys = summaryRows.map((row) => JSON.stringify(row || []));
+    const summaryRowKeys = new Map();
+    summaryRows.forEach((row, index) => {
+      const key = JSON.stringify(row || []);
+      if (!summaryRowKeys.has(key)) summaryRowKeys.set(key, index);
+    });
     codeArchitectureHazardReviewItems.forEach((item) => {
       const reviewRow = Array.isArray(item.currentContent?.row)
         ? item.currentContent.row
         : (Array.isArray(item.originalContent?.row) ? item.originalContent.row : null);
       if (reviewRow) {
-        const matchedIndex = summaryRowKeys.indexOf(JSON.stringify(reviewRow));
+        const matchedIndex = summaryRowKeys.get(JSON.stringify(reviewRow)) ?? -1;
         if (matchedIndex >= 0) {
           const existing = map.get(matchedIndex);
           const existingTime = Date.parse(existing?.updatedAt || existing?.createdAt || 0) || 0;
@@ -14349,19 +14368,26 @@ Rules:
       || activeCodeArchitectureRepoMeta?.repoName
       || "";
     const normalized = normalizeHazardOperationalContexts(contexts);
+    if (JSON.stringify(normalized) === JSON.stringify(codeArchitectureHazardContexts)) return;
+    const scope = `${projectId}:${repoId}`;
     const currentRun = codeArchitectureHazardRunRef.current;
-    const updatedRun = assignImportedHazardContext(currentRun, normalized);
-    if (updatedRun !== currentRun) {
-      await saveCodeArchitectureHazardRun(updatedRun);
-      if (activeCodeArchitectureProjectIdRef.current !== projectId) return;
-      commitCodeArchitectureHazardRun(updatedRun);
-    }
-    setCodeArchitectureHazardContexts(normalized);
-    setSelectedCodeArchitectureHazardContextId((current) => (
-      current === "all" || normalized.some((context) => context.id === current) ? current : "all"
-    ));
-    if (projectId && repoId) {
-      saveCodeArchitectureHazardContexts({ projectId, repoId, contexts: normalized });
+    assertHazardContextRunScope(currentRun, { projectId, analysisRepoId: hazardLoadRepoId });
+    hazardContextSaveVersion.current += 1;
+    const promise = persistHazardContexts({ run: currentRun, projectId, repoId, contexts: normalized });
+    hazardContextSavePending.current = { scope, promise };
+    try {
+      const updatedRun = await promise;
+      if (hazardContextScope.current !== scope) return;
+      if (codeArchitectureHazardRunRef.current !== currentRun) {
+        throw new Error("The active analysis changed while saving context. Reload the analysis before continuing.");
+      }
+      if (updatedRun !== currentRun) commitCodeArchitectureHazardRun(updatedRun);
+      setCodeArchitectureHazardContexts(normalized);
+      setSelectedCodeArchitectureHazardContextId((current) => (
+        current === "all" || normalized.some((context) => context.id === current) ? current : "all"
+      ));
+    } finally {
+      if (hazardContextSavePending.current?.promise === promise) hazardContextSavePending.current = null;
     }
   };
 
@@ -14553,16 +14579,18 @@ Rules:
     });
   };
 
-  const codeArchitectureCsvDraft = useMemo(() => buildCodeArchitectureHazardCsvDraft({
+  const hasCodeArchitectureHazardRun = Boolean(codeArchitectureHazardRun);
+  const codeArchitectureCsvDraft = useMemo(() => hasCodeArchitectureHazardRun ? null : buildCodeArchitectureHazardCsvDraft({
     cbaRows: cbaTableData, repoMeta: activeCodeArchitectureRepoMeta,
     projectId: activeCodeArchitectureProjectId, method: codeArchitectureHazardMethod,
     operationalContexts: codeArchitectureHazardContexts,
   }, getProjectDraftHazardHeaders(codeArchitectureHazardMethod)), [
     cbaTableData, activeCodeArchitectureRepoMeta, activeCodeArchitectureProjectId,
-    codeArchitectureHazardMethod, codeArchitectureHazardContexts,
+    codeArchitectureHazardMethod, codeArchitectureHazardContexts, hasCodeArchitectureHazardRun,
   ]);
 
-  const codeArchitectureCsvWorkspaceKey = `${activeCodeArchitectureProjectId}:${codeArchitectureCsvDraft.repoId}:${codeArchitectureCsvDraft.architectureSnapshotHash}:${codeArchitectureHazardMethod}`;
+  const codeArchitectureCsvSnapshotHash = useMemo(() => computeArchitectureSnapshotHash(ensureCodeArchitectureTraceIds(cbaTableData)), [cbaTableData]);
+  const codeArchitectureCsvWorkspaceKey = `${activeCodeArchitectureProjectId}:${normalizeRepoId(activeCodeArchitectureRepoMeta)}:${codeArchitectureCsvSnapshotHash}:${codeArchitectureHazardMethod}`;
   const codeArchitectureCsvWorkspaceRef = useRef(null);
   codeArchitectureCsvWorkspaceRef.current = { key: codeArchitectureCsvWorkspaceKey, running: isRunningCodeArchitectureHazard };
 
@@ -16252,6 +16280,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
         if (!draggingCodeArchitectureProjectId) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = "move";
+        setCodeArchitectureProjectDropTarget(null);
         setDragOverCodeArchitectureFolderId("__root__");
       }}
       onDragLeave={(e) => {
@@ -16282,8 +16311,40 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
           <div
             key={project.id}
             className={`group relative rounded-lg ${draggingCodeArchitectureProjectId === project.id ? 'opacity-50' : ''}`}
+            style={codeArchitectureProjectDropTarget?.id === project.id ? {
+              boxShadow: codeArchitectureProjectDropTarget.position === "before"
+                ? "inset 0 2px #2D7DFE" : "inset 0 -2px #2D7DFE"
+            } : undefined}
+            onDragOver={(e) => {
+              if (!draggingCodeArchitectureProjectId) return;
+              e.preventDefault();
+              e.stopPropagation();
+              e.dataTransfer.dropEffect = "move";
+              setDragOverCodeArchitectureFolderId(null);
+              if (draggingCodeArchitectureProjectId === project.id) { setCodeArchitectureProjectDropTarget(null); return; }
+              const bounds = e.currentTarget.getBoundingClientRect();
+              const position = e.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+              setCodeArchitectureProjectDropTarget((prev) => prev?.id === project.id && prev.position === position
+                ? prev : { id: project.id, position });
+            }}
+            onDragLeave={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget)) setCodeArchitectureProjectDropTarget(null);
+            }}
+            onDrop={(e) => {
+              if (!draggingCodeArchitectureProjectId) return;
+              e.preventDefault();
+              e.stopPropagation();
+              const projectId = e.dataTransfer.getData("application/x-xhandle-cba-project-id") || draggingCodeArchitectureProjectId;
+              const bounds = e.currentTarget.getBoundingClientRect();
+              const position = e.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+              setCodeArchitectureProjects((prev) => reorderProject(prev, projectId, project.id, position));
+              setDraggingCodeArchitectureProjectId(null);
+              setDragOverCodeArchitectureFolderId(null);
+              setCodeArchitectureProjectDropTarget(null);
+            }}
             draggable={editingCodeArchitectureProjectId !== project.id}
             onDragStart={(e) => {
+              setCodeArchitectureProjectDropTarget(null);
               setDraggingCodeArchitectureProjectId(project.id);
               setDragOverCodeArchitectureFolderId(null);
               e.dataTransfer.effectAllowed = "move";
@@ -16291,6 +16352,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
               e.dataTransfer.setData("text/plain", project.name || "Code architecture project");
             }}
             onDragEnd={() => {
+              setCodeArchitectureProjectDropTarget(null);
               setDraggingCodeArchitectureProjectId(null);
               setDragOverCodeArchitectureFolderId(null);
             }}
@@ -16372,6 +16434,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                 if (!draggingCodeArchitectureProjectId) return;
                 e.preventDefault();
                 e.stopPropagation();
+                setCodeArchitectureProjectDropTarget(null);
                 setDragOverCodeArchitectureFolderId(folder.id);
                 if (!isOpen) setOpenCodeArchitectureFolderIds((prev) => ({ ...prev, [folder.id]: true }));
               }}
@@ -17506,8 +17569,10 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
         {cbaLoading
           ? (
             <div className="min-h-0 overflow-auto rounded-xl border bg-white p-8 text-gray-600 text-sm">
-              <div>{cbaLoadingLabel}{cbaLoadingProgress !== null && ` ${cbaLoadingProgress}%`}</div>
-              {cbaLoadingProgress !== null && <progress aria-label="Loading saved analysis" className="mt-3 h-2 w-full accent-blue-600" max={100} value={cbaLoadingProgress} />}
+              <div role="status" className="flex items-center gap-3">
+                <XHandleWorkingMark className="h-6 w-6" />
+                <span>{cbaLoadingLabel}{cbaLoadingProgress !== null && ` ${cbaLoadingProgress}%`}</span>
+              </div>
             </div>
           )
 	          : !activeCodeArchitectureRepo ? (

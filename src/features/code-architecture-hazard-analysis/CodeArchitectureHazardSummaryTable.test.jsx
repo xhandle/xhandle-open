@@ -135,3 +135,37 @@ it('requests all contexts when a linked hazard is hidden by the selected context
     expect(change).toHaveBeenCalledWith('all');
   } finally { act(() => root.unmount()); host.remove(); }
 });
+
+it('defaults STPA to the requested columns and retains picker customization', () => {
+  const { STPA_DEFAULT_COLUMNS } = require('./CodeArchitectureHazardSummaryTable');
+  const storageKey = 'test:stpa-focused';
+  const headers = [...STPA_DEFAULT_COLUMNS, 'Context Assumptions', 'Protection Assessment', 'Protection Status', 'Physical-Harm Chain Termination', 'Assumptions', 'Confidence'];
+  const sheet = [headers, headers.map(() => 'Example')];
+  // Previously saved defaults must not prevent adoption of the new default view.
+  localStorage.setItem(`${storageKey}:hidden-columns`, '[]');
+  localStorage.setItem(`${storageKey}:hidden-columns:stpa-focused-v2`, '[]');
+  const host = document.createElement('div'); document.body.appendChild(host);
+  let root = createRoot(host);
+  const render = () => root.render(<CodeArchitectureHazardSummaryTable summarySheet={sheet} hazardMethod="STPA-Textbook" storageKey={storageKey} />);
+  try {
+    act(render);
+    expect(host.querySelectorAll('thead th')).toHaveLength(20);
+    const headingText = host.querySelector('thead').textContent;
+    STPA_DEFAULT_COLUMNS.forEach(name => expect(headingText).toContain(name));
+    expect(headingText).not.toContain('Operational context');
+    expect(headingText).not.toContain('Protection Assessment');
+    expect(headingText).not.toContain('Context Assumptions');
+    act(() => Array.from(host.querySelectorAll('button')).find(button => button.title === 'Show or hide table columns').click());
+    act(() => Array.from(host.querySelectorAll('button')).find(button => button.textContent === 'Show all').click());
+    expect(host.querySelectorAll('thead th')).toHaveLength(headers.length);
+    act(() => root.unmount());
+    root = createRoot(host); act(render);
+    expect(host.querySelectorAll('thead th')).toHaveLength(headers.length);
+  } finally {
+    act(() => root.unmount()); host.remove();
+    localStorage.removeItem(`${storageKey}:hidden-columns`);
+    localStorage.removeItem(`${storageKey}:hidden-columns:stpa-focused-v2`);
+    localStorage.removeItem(`${storageKey}:hidden-columns:stpa-focused-v3`);
+    localStorage.removeItem(`${storageKey}:column-widths`);
+  }
+});

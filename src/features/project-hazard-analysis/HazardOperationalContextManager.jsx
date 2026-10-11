@@ -57,6 +57,8 @@ export default function HazardOperationalContextManager({
     }
     setSaving(true);
     try {
+      // Let the saving state paint before potentially expensive row updates.
+      await new Promise(resolve => setTimeout(resolve, 0));
       await onSave(normalizeHazardOperationalContexts(drafts));
       onClose();
     } catch (error) {
@@ -189,7 +191,7 @@ export default function HazardOperationalContextManager({
 
         <footer className="flex justify-end gap-2 border-t border-gray-200 px-6 py-4">
           <button type="button" onClick={onClose} disabled={generating || saving} className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60">Cancel</button>
-          <button type="button" onClick={save} disabled={generating || saving} className="rounded-md bg-[#2D7DFE] px-4 py-2 text-sm font-medium text-white hover:bg-[#1E61D6] disabled:opacity-60">Save contexts</button>
+          <button type="button" onClick={save} disabled={generating || saving} className="rounded-md bg-[#2D7DFE] px-4 py-2 text-sm font-medium text-white hover:bg-[#1E61D6] disabled:opacity-60">{saving ? "Saving…" : "Save contexts"}</button>
         </footer>
       </section>
     </div>,

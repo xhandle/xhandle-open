@@ -770,9 +770,14 @@ export function buildCodeArchitectureHazardInput({
 export function summarySheetToHazardSummaryRows(summarySheet) {
   if (!Array.isArray(summarySheet) || !Array.isArray(summarySheet[0])) return [];
   const headers = summarySheet[0].map((header, index) => String(header || `Column ${index + 1}`));
+  const indices = new Map();
+  headers.forEach((header, index) => {
+    const key = header.toLowerCase();
+    if (!indices.has(key)) indices.set(key, index);
+  });
   return summarySheet.slice(1).map((row, rowIndex) => {
     const get = (name) => {
-      const index = headers.findIndex((header) => header.toLowerCase() === name.toLowerCase());
+      const index = indices.get(name.toLowerCase());
       return index >= 0 ? normalizeText(Array.isArray(row) ? row[index] : "") : "";
     };
     const trace = {

@@ -128,7 +128,7 @@ export async function getCodeArchitectureHazardRunById(id) {
   return db ? (await db.get(STORE_NAME, id)) || null : loadFallbackState().hazardAnalysisRuns.find(run => run.id === id) || null;
 }
 
-export async function saveCodeArchitectureHazardRun(run) {
+export async function saveCodeArchitectureHazardRun(run, { notify = true } = {}) {
   if (!run?.id) throw new Error("Cannot save code architecture hazard analysis without an id.");
   const db = await openCodeArchitectureHazardDB();
   if (db) {
@@ -139,7 +139,7 @@ export async function saveCodeArchitectureHazardRun(run) {
     saveFallbackState({hazardAnalysisRuns: [...rows.filter(row => row.id !== run.id), run]});
   }
   // Do not silently switch storage backends after a failed IndexedDB write.
-  emitChanged({storeName: STORE_NAME, projectId: run.projectId, repoId: run.repoId, runId: run.id});
+  if (notify) emitChanged({storeName: STORE_NAME, projectId: run.projectId, repoId: run.repoId, runId: run.id});
   return run;
 }
 

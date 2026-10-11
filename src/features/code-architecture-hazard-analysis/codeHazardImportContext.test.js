@@ -25,3 +25,13 @@ test('also assigns an import merged into an existing AI run',()=>{
  const existing={...run,id:'cba-hazard-run-test'};
  expect(assignImportedHazardContext(existing,[context]).generatedSheets.Summary[1][4]).toBe('Urban operation');
 });
+
+test('retains unaffected row references and both governed applicability decisions', () => {
+ const source = {...run, generatedSheets:{Summary:[headers,
+  ['RAW-1','Yes','Yes rationale','ctx-1','Old','Autonomous'],
+  ['RAW-2','No','No rationale','ctx-2','Other','Manual']]}};
+ const next = assignImportedHazardContext(source,[context]);
+ expect(next.generatedSheets.Summary[2]).toBe(source.generatedSheets.Summary[2]);
+ expect(next.generatedSheets.Summary[1].slice(0,3)).toEqual(['RAW-1','Yes','Yes rationale']);
+ expect(next.generatedSheets.Summary[2].slice(0,3)).toEqual(['RAW-2','No','No rationale']);
+});

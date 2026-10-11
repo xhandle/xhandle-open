@@ -413,6 +413,7 @@ export default function CodeArchitectureHazardPanel({
             {showSummary && (
               <CodeArchitectureHazardSummaryTable
                 summarySheet={summarySheet}
+                hazardMethod={latestRun?.hazardMethod || method}
                 className="min-h-0 flex-1"
                 reviewItems={reviewItems}
                 reviewByRow={reviewByRow}

@@ -1202,3 +1202,12 @@ describe("code architecture hazard evidence review", () => {
     expect(row.Confidence).toBe("Low");
   });
 });
+
+it('indexed summary headers retain the first case-insensitive match', () => {
+ const [record]=summarySheetToHazardSummaryRows([
+  ['Function (From)','FUNCTION (FROM)','Guide Phrase Applicable'],
+  ['First','Second','Yes'],
+ ]);
+ expect(record.functionFrom).toBe('First');
+ expect(record['Guide Phrase Applicable']).toBe('Yes');
+});

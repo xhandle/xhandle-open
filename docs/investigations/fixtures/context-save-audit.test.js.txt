@@ -1,0 +1,17 @@
+import { assignImportedHazardContext } from './codeHazardImportContext';
+import { HAZARD_SUMMARY_TRACEABILITY_COLUMNS } from './codeArchitectureHazardUtils';
+const context = {id:'ctx',scenario:'New scenario',mode:'Nominal'};
+const measure = fn => { const times=[]; for(let i=0;i<4;i++){const start=performance.now();fn();if(i)times.push(performance.now()-start);}return times.sort((a,b)=>a-b)[1].toFixed(1);};
+test('synthetic context save CPU audit',()=>{
+ const headers=[...new Set([...HAZARD_SUMMARY_TRACEABILITY_COLUMNS,'Raw Analysis Row ID','Guide Phrase Applicable','Operational Context ID','Operational Scenario','Operational Mode','Operating Conditions','Context Assumptions'])];
+ while(headers.length<76)headers.push(`Extra ${headers.length}`);
+ for(const n of [100,1000,2807,10000]){
+ const rows=Array.from({length:n},(_,i)=>headers.map(h=>h==='Raw Analysis Row ID'?`RAW-${i}`:h==='Operational Context ID'?'ctx':h==='Operational Scenario'?'Old scenario':h==='Operational Mode'?'Nominal':h==='Guide Phrase Applicable'?'Yes':`Example ${h} text describing the relationship.`));
+ const run={id:'audit',csvImportPreviousSummary:[headers,...rows],generatedSheets:{Summary:[headers,...rows]},userPreprocessing:{}};
+ const assigned=assignImportedHazardContext(run,[context]);
+ const reviewRows=rows.map(row=>[...row]);
+ const match=()=>{const keys=assigned.generatedSheets.Summary.slice(1).map(row=>JSON.stringify(row));reviewRows.forEach(row=>keys.indexOf(JSON.stringify(row)));};
+ console.log(JSON.stringify({rows:n,columns:headers.length,assignmentMs:measure(()=>assignImportedHazardContext(run,[context])),unchangedMs:measure(()=>assignImportedHazardContext(assigned,[context])),reviewMatchMs:measure(match),serializeProxyMs:measure(()=>JSON.stringify(assigned)),payloadMB:(JSON.stringify(assigned).length/1e6).toFixed(1)}));
+ expect(assigned.generatedSheets.Summary[1][headers.indexOf('Guide Phrase Applicable')]).toBe('Yes');
+ }
+},120000);

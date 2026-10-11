@@ -27,6 +27,16 @@ const HIDDEN_SUMMARY_COLUMNS = new Set([
   "context assumptions",
 ]);
 
+export const STPA_DEFAULT_COLUMNS = [
+  "Function (From)", "Control Action", "Function (To)",
+  "Operational Scenario", "Operational Mode", "Operating Conditions",
+  "Guide Phrase", "Guide Phrase Applicable", "Guide Phrase Applicability Rationale",
+  "Control Action Type", "Losses", "Causal Factors", "Causal Factor Category",
+  "Mitigation Strategy", "System Requirement", "Verification Method", "Acceptance Criteria",
+  "Safety Classification", "Recommended Verification", "Recommended Mitigation",
+];
+const STPA_DEFAULT_COLUMN_SET = new Set(STPA_DEFAULT_COLUMNS.map(name => name.toLowerCase()));
+
 const MIN_COLUMN_WIDTH = 120;
 const MAX_COLUMN_WIDTH = 720;
 
@@ -46,6 +56,7 @@ function normalizeColumnWidths(defaultWidths = {}, savedWidths = {}) {
 
 export default function CodeArchitectureHazardSummaryTable({
   summarySheet,
+  hazardMethod = "",
   className = "",
   reviewItems = [],
   reviewByRow,
@@ -66,6 +77,10 @@ export default function CodeArchitectureHazardSummaryTable({
   onVisibleSummaryChange,
   readOnly = false,
 }) {
+  const isStpa = ["STPA", "STPA-TEXTBOOK", "STPA_TEXTBOOK"].includes(String(hazardMethod).toUpperCase());
+  const showCombinedContext = !isStpa;
+  // New defaults apply once to existing tables; subsequent picker choices persist.
+  const visibilityStorageKey = `${storageKey}:hidden-columns${isStpa ? ":stpa-focused-v3" : ""}`;
   const rowRefs = useRef({});
   const [selectedCellKey, setSelectedCellKey] = useState("");
   const [collapsedInterfaceKeys, setCollapsedInterfaceKeys] = useState(() => new Set());
@@ -105,13 +120,15 @@ export default function CodeArchitectureHazardSummaryTable({
   );
   const defaultHiddenColumnKeys = React.useMemo(
     () => columnOptions
-      .filter(({ header }) => HIDDEN_SUMMARY_COLUMNS.has(String(header || "").trim().toLowerCase()))
+      .filter(({ header }) => isStpa
+        ? !STPA_DEFAULT_COLUMN_SET.has(String(header || "").trim().toLowerCase())
+        : HIDDEN_SUMMARY_COLUMNS.has(String(header || "").trim().toLowerCase()))
       .map((column) => column.key),
-    [columnOptions]
+    [columnOptions, isStpa]
   );
   const [hiddenColumnKeys, setHiddenColumnKeys] = useState(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem(`${storageKey}:hidden-columns`) || "null");
+      const saved = JSON.parse(localStorage.getItem(visibilityStorageKey) || "null");
       return Array.isArray(saved) ? saved : defaultHiddenColumnKeys;
     } catch {
       return defaultHiddenColumnKeys;
@@ -119,18 +136,18 @@ export default function CodeArchitectureHazardSummaryTable({
   });
   React.useEffect(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem(`${storageKey}:hidden-columns`) || "null");
+      const saved = JSON.parse(localStorage.getItem(visibilityStorageKey) || "null");
       setHiddenColumnKeys(Array.isArray(saved) ? saved : defaultHiddenColumnKeys);
     } catch {
       setHiddenColumnKeys(defaultHiddenColumnKeys);
     }
-  }, [defaultHiddenColumnKeys, storageKey]);
+  }, [defaultHiddenColumnKeys, visibilityStorageKey]);
   React.useEffect(() => {
     if (readOnly) return;
     try {
-      localStorage.setItem(`${storageKey}:hidden-columns`, JSON.stringify(hiddenColumnKeys));
+      localStorage.setItem(visibilityStorageKey, JSON.stringify(hiddenColumnKeys));
     } catch {}
-  }, [hiddenColumnKeys, storageKey, readOnly]);
+  }, [hiddenColumnKeys, visibilityStorageKey, readOnly]);
   const hiddenColumnSet = React.useMemo(() => new Set(hiddenColumnKeys), [hiddenColumnKeys]);
   const visibleColumns = React.useMemo(() => {
     const visible = columnOptions.filter((column) => !hiddenColumnSet.has(column.key));
@@ -201,7 +218,7 @@ export default function CodeArchitectureHazardSummaryTable({
   const actionsColumnWidth = onDeleteRow && !readOnly ? 110 : 0;
   const showReview = SHOW_TABLE_REVIEW_COLUMNS && requestedShowReview;
   const reviewColumnWidth = showReview && reviewItems.length > 0 ? 110 : 0;
-  const operationalContextColumnWidth = 220;
+  const operationalContextColumnWidth = showCombinedContext ? 220 : 0;
   const tablePixelWidth = visibleColumns.reduce(
     (sum, { key, index }) => sum + (columnWidths[key] || defaultColumnWidths[String(index)] || 180),
     actionsColumnWidth + reviewColumnWidth + operationalContextColumnWidth
@@ -243,14 +260,14 @@ export default function CodeArchitectureHazardSummaryTable({
     };
   }, [getCellByHeader]);
   const copyColumns = useMemo(() => [
-    {
+    ...(showCombinedContext ? [{
       key: 'operationalContext', label: 'Operational context',
       getValue: ({ row }) => `${getCellByHeader(row, 'Operational Scenario') || 'Unspecified scenario'} · ${getCellByHeader(row, 'Operational Mode') || 'Unspecified mode'}`,
-    },
+    }] : []),
     ...visibleColumns.map(column => ({
       key: column.key, label: column.label, getValue: ({ row }) => row[column.index],
     })),
-  ], [getCellByHeader, visibleColumns]);
+  ], [getCellByHeader, visibleColumns, showCombinedContext]);
   const filteredRowItems = filterState.filteredRows;
   const contextFilteredRowItems = useMemo(
     () => filterCodeArchitectureHazardRowsByContext(headers, filteredRowItems, selectedOperationalContextId),
@@ -301,7 +318,7 @@ export default function CodeArchitectureHazardSummaryTable({
     rowRefs, revision: rowFocusRevision, onResolved: onRowFocusResolved });
 
   const tableColumnCount = visibleColumns.length
-    + 1
+    + (showCombinedContext ? 1 : 0)
     + (onDeleteRow && !readOnly ? 1 : 0)
     + (showReview && reviewItems.length > 0 ? 1 : 0);
   const renderHazardRow = ({ row, rowIndex }) => {
@@ -389,14 +406,14 @@ export default function CodeArchitectureHazardSummaryTable({
             />
           </td>
         )}
-        <td className="px-3 py-2 align-top">
+        {showCombinedContext && <td className="px-3 py-2 align-top">
           <span
             className="inline-flex max-w-full rounded-full bg-slate-100 px-2 py-1 text-[11px] font-medium leading-4 text-slate-700"
             title={operationalContextTitle}
           >
             {operationalContextLabel}
           </span>
-        </td>
+        </td>}
         {visibleColumns.map(({ header, index: colIndex }) => {
           const traceType = traceColumnType(header);
           const value = String(row?.[colIndex] ?? "");
@@ -460,7 +477,7 @@ export default function CodeArchitectureHazardSummaryTable({
         <colgroup>
           {onDeleteRow && !readOnly && <col style={{ width: actionsColumnWidth, minWidth: actionsColumnWidth }} />}
           {showReview && reviewItems.length > 0 && <col style={{ width: reviewColumnWidth, minWidth: reviewColumnWidth }} />}
-          <col style={{ width: operationalContextColumnWidth, minWidth: operationalContextColumnWidth }} />
+          {showCombinedContext && <col style={{ width: operationalContextColumnWidth, minWidth: operationalContextColumnWidth }} />}
           {visibleColumns.map(({ key, index }) => (
             <col
               key={key}
@@ -483,12 +500,12 @@ export default function CodeArchitectureHazardSummaryTable({
                 Review
               </th>
             )}
-            <th
+            {showCombinedContext && <th
               className="border-b border-slate-200 bg-slate-50 px-3 py-2"
               style={{ width: operationalContextColumnWidth, minWidth: operationalContextColumnWidth }}
             >
               Operational context
-            </th>
+            </th>}
             {visibleColumns.map(({ header, key, index }, visibleIndex) => (
               <FilterableHeaderCell
                 key={`${header}-${index}`}
