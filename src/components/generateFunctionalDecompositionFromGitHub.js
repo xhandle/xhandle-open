@@ -4340,6 +4340,10 @@ React.useEffect(() => {
         >
       {architectureAbstraction === "functional" ? (
           <FunctionalArchitectureDiagram
+            hazardSummary={hazardSummary}
+            assuranceArtifacts={assuranceArtifacts}
+            onOpenHazardRow={onOpenHazardRow}
+            onOpenAssuranceArtifactRow={onOpenAssuranceArtifactRow}
             ref={diagramRef}
             focusTarget={focusTarget}
             onFocusTargetHandled={onFocusTargetHandled}

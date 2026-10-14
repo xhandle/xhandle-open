@@ -23,7 +23,7 @@ export function supportsAIProviderEffort(provider, model = "") {
   const normalizedProvider = normalizeAIProvider(provider);
   const normalizedModel = String(model || "").trim().toLowerCase();
   if (normalizedProvider === "anthropic") {
-    return /claude-(?:sonnet-5|opus-5|fable-5|mythos-5)/.test(normalizedModel);
+    return /claude-(?:sonnet-5|opus-5|fable-5|mythos-5|haiku-5-5)/.test(normalizedModel);
   }
   if (normalizedProvider === "openai") {
     return /^(?:gpt-(?:5|6)(?:[.-]|$)|o[1-9](?:[.-]|$))/.test(normalizedModel);

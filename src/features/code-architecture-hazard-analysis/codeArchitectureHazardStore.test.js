@@ -13,3 +13,15 @@ test('silent context-run writes remain durable without reloading the originating
   expect(changed).toHaveBeenCalledTimes(1);
  } finally {window.removeEventListener('xhandle:code-architecture-hazard-analysis:changed',changed);}
 });
+test('failed save remains accessible only within its project and reload protection clears on retry',async()=>{
+ const run={id:'unsaved-one',projectId:'unsaved-project',repoId:'repo',hazardMethod:'HARA',updatedAt:new Date().toISOString(),generatedSheets:{Summary:[['Function'],['One']]}};
+ const spy=jest.spyOn(Storage.prototype,'setItem').mockImplementation(()=>{throw new Error('Full');});
+ try{
+  await expect(saveCodeArchitectureHazardRun(run)).rejects.toThrow('Full');
+  expect(await getLatestCodeArchitectureHazardRun({projectId:'unsaved-project',repoId:'repo'})).toMatchObject({id:run.id,finalSavePending:true});
+  expect(await getLatestCodeArchitectureHazardRun({projectId:'another-project'})).toBeNull();
+  const event=new Event('beforeunload',{cancelable:true});window.dispatchEvent(event);expect(event.defaultPrevented).toBe(true);
+ }finally{spy.mockRestore();}
+ await saveCodeArchitectureHazardRun({...run,finalSavePending:false});
+ const event=new Event('beforeunload',{cancelable:true});window.dispatchEvent(event);expect(event.defaultPrevented).toBe(false);
+});

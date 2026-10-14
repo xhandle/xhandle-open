@@ -28,12 +28,8 @@ const HIDDEN_SUMMARY_COLUMNS = new Set([
 ]);
 
 export const STPA_DEFAULT_COLUMNS = [
-  "Function (From)", "Control Action", "Function (To)",
-  "Operational Scenario", "Operational Mode", "Operating Conditions",
-  "Guide Phrase", "Guide Phrase Applicable", "Guide Phrase Applicability Rationale",
-  "Control Action Type", "Losses", "Causal Factors", "Causal Factor Category",
-  "Mitigation Strategy", "System Requirement", "Verification Method", "Acceptance Criteria",
-  "Safety Classification", "Recommended Verification", "Recommended Mitigation",
+  "Function", "Operational Scenario", "Operational Mode", "Operating Conditions",
+  "Guide Phrase", "Guide Phrase Applicable", "Unsafe Control Action", "Loss", "Hazard", "Causal Scenario", "Safety Constraint", "Verification", "Safety Classification",
 ];
 const STPA_DEFAULT_COLUMN_SET = new Set(STPA_DEFAULT_COLUMNS.map(name => name.toLowerCase()));
 
@@ -44,7 +40,7 @@ export const HARA_DEFAULT_COLUMNS = [
 ];
 export const FHA_DEFAULT_COLUMNS = [
   "Function (From)", "Control Action", "Function (To)", "Operational Context",
-  "Guide Phrase", "Guide Phrase Applicable", "Mishap", "Severity Category",
+  "Guide Phrase", "Guide Phrase Applicable", "Effect", "Severity Category",
   "Severity Rationale", "Software Control Category", "Software Control Category Rationale",
   "Software Criticality Index", "SWCI Rationale / Derivation", "Safety Classification", "Verification",
 ];
@@ -103,7 +99,7 @@ export default function CodeArchitectureHazardSummaryTable({
   const isFha = String(hazardMethod).toUpperCase() === "FHA";
   const showCombinedContext = !isStpa && !isHara && !isFha;
   // New defaults apply once to existing tables; subsequent picker choices persist.
-  const visibilityStorageKey = `${storageKey}:hidden-columns${isStpa ? ":stpa-focused-v3" : isHara ? ":hara-focused-v1" : isFha ? ":fha-focused-v1" : ""}`;
+  const visibilityStorageKey = `${storageKey}:hidden-columns${isStpa ? ":stpa-focused-v5" : isHara ? ":hara-focused-v2" : isFha ? ":fha-focused-v2" : ""}`;
   const rowRefs = useRef({});
   const [selectedCellKey, setSelectedCellKey] = useState("");
   React.useEffect(() => {
@@ -116,7 +112,7 @@ export default function CodeArchitectureHazardSummaryTable({
   const displaySheet = React.useMemo(() => {
     if (!isFha || !Array.isArray(summarySheet?.[0])) return summarySheet;
     const originalHeaders = summarySheet[0];
-    const missing = FHA_DEFAULT_COLUMNS.filter(name => !originalHeaders.includes(name));
+    const missing = FHA_DEFAULT_COLUMNS.filter(name => !originalHeaders.includes(name) && !(name === 'Effect' && originalHeaders.includes('Mishap')));
     const cell = (row, name) => String(row[originalHeaders.indexOf(name)] ?? '').trim();
     return [[...originalHeaders, ...missing], ...summarySheet.slice(1).map(row => [
       ...row, ...missing.map(name => name === 'Operational Context'
@@ -148,14 +144,23 @@ export default function CodeArchitectureHazardSummaryTable({
     const index = headerIndexByName.get(String(headerName || "").trim().toLowerCase());
     return index >= 0 ? String(row?.[index] ?? "").trim() : "";
   }, [headerIndexByName]);
+  const displayColumnLabel = React.useCallback(header => {
+    if (isHara) return haraColumnLabel(header);
+    if (isFha && header === "Mishap" && !headers.includes("Effect")) return "Effect";
+    if (isStpa) {
+      const alias = {"Function (From)":"Function", "Causal Factors":"Causal Factor", "Unsafe Control Actions":"Unsafe Control Action", "Malfunctioning Behavior":"Unsafe Control Action"}[header];
+      if (alias && !headers.includes(alias)) return alias;
+    }
+    return header;
+  }, [headers,isHara,isStpa,isFha]);
   const columnOptions = React.useMemo(
     () => headers.map((header, index) => ({
       key: String(index),
-      header: isHara ? haraColumnLabel(header) : header,
-      label: (isHara ? haraColumnLabel(header) : header) || `Column ${index + 1}`,
+      header: displayColumnLabel(header),
+      label: displayColumnLabel(header) || `Column ${index + 1}`,
       index,
     })),
-    [headers, isHara]
+    [headers, displayColumnLabel]
   );
   const defaultHiddenColumnKeys = React.useMemo(
     () => columnOptions
@@ -192,13 +197,13 @@ export default function CodeArchitectureHazardSummaryTable({
   const hiddenColumnSet = React.useMemo(() => new Set(hiddenColumnKeys), [hiddenColumnKeys]);
   const visibleColumns = React.useMemo(() => {
     const visible = columnOptions.filter((column) => !hiddenColumnSet.has(column.key));
-    if (isHara || isFha) visible.sort((a, b) => {
-      const defaults = isFha ? FHA_DEFAULT_COLUMNS : HARA_DEFAULT_COLUMNS;
+    if (isHara || isFha || isStpa) visible.sort((a, b) => {
+      const defaults = isFha ? FHA_DEFAULT_COLUMNS : isStpa ? STPA_DEFAULT_COLUMNS : HARA_DEFAULT_COLUMNS;
       const rank = column => { const index = defaults.indexOf(column.header); return index < 0 ? defaults.length : index; };
       return rank(a) - rank(b);
     });
     return visible.length ? visible : columnOptions.slice(0, 1);
-  }, [columnOptions, hiddenColumnSet, isHara, isFha]);
+  }, [columnOptions, hiddenColumnSet, isHara, isFha, isStpa]);
   const getFilterCell = React.useCallback((item, columnIndex) => {
     const column = visibleColumns[columnIndex];
     return column ? item?.row?.[column.index] ?? "" : "";
@@ -272,7 +277,7 @@ export default function CodeArchitectureHazardSummaryTable({
   const traceLinkClass = "shrink-0 rounded p-1 text-[#2D7DFE] hover:bg-blue-100 hover:text-[#1E61D6]";
   const traceColumnType = React.useCallback((header) => {
     const normalized = String(header || "").trim().toLowerCase();
-    if (normalized === "function (from)") return "from";
+    if (["function (from)", "function", "item / function"].includes(normalized)) return "from";
     if (normalized === "control action") return "action";
     if (normalized === "function (to)") return "to";
     return "";

@@ -79,6 +79,7 @@ export function functionalTableCsv(rows) {
 const FunctionalCanvas = React.memo(LiteSummaryDiagramReactFlowGitHub);
 
 export default forwardRef(function FunctionalArchitectureDiagram({ rows, storageKey, repoName, height, abstractionHeader, splitPercent: controlledPercent, onSplitPercentChange, projectId, collaboratorSelection, onCollaboratorSelectionChange,
+  hazardSummary, assuranceArtifacts, onOpenHazardRow, onOpenAssuranceArtifactRow,
   onOpenRow, onOpenCsu, reviewMode, ready, progress, error, onProcess, onCancel, viewMode, onViewModeChange, onExportCsvChange, focusTarget, onFocusTargetHandled }, ref) {
   const modelRows = useMemo(() => buildFunctionalModelRows(rows), [rows]);
   const hierarchyReady = useMemo(() => functionalHierarchyIsReady(rows), [rows]);
@@ -203,6 +204,10 @@ export default forwardRef(function FunctionalArchitectureDiagram({ rows, storage
       key={`functional-v4:${storageKey}:${hierarchyRevision}`}
       ref={attachDiagram}
       rows={modelRows}
+      hazardSummary={hazardSummary}
+      assuranceArtifacts={assuranceArtifacts}
+      onOpenHazardRow={onOpenHazardRow}
+      onOpenAssuranceArtifactRow={onOpenAssuranceArtifactRow}
       storageKey={`functional-v4:${storageKey}:${hierarchyRevision}`}
       height={height}
       architectureMode

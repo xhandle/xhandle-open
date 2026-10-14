@@ -171,11 +171,21 @@ describe("code architecture functional split view", () => {
     const target = { traceId, type: 'edge', mode: 'edge' };
     const handled = jest.fn();
     mockDiagramFocus.mockClear().mockReturnValue(true);
-    act(() => root.render(<FunctionalDecompositionTable data={rows} repoId="repo" branch="main" focusTarget={target} onFocusTargetHandled={handled} />));
+    const hazardSummary=[['Trace ID','Hazard'],[traceId,'Fixture hazard']];
+    const assuranceArtifacts={softwareRequirements:[{id:'SW-1',sourceArchitectureRefs:[{traceId}]}]};
+    const onOpenHazardRow=jest.fn(),onOpenAssuranceArtifactRow=jest.fn();
+    act(() => root.render(<FunctionalDecompositionTable data={rows} repoId="repo" branch="main" focusTarget={target} onFocusTargetHandled={handled}
+      hazardSummary={hazardSummary} assuranceArtifacts={assuranceArtifacts} onOpenHazardRow={onOpenHazardRow} onOpenAssuranceArtifactRow={onOpenAssuranceArtifactRow} />));
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
     expect(host.textContent).toContain('Functional');
     expect(mockDiagramFocus.mock.calls.at(-1)[0]).toMatchObject({ traceId, type: 'edge' });
     expect(handled).toHaveBeenCalledWith(target);
+    const canvas=mockDiagramProps.at(-1);
+    expect(canvas.hazardSummary).toBe(hazardSummary);
+    expect(canvas.assuranceArtifacts).toBe(assuranceArtifacts);
+    canvas.onOpenHazardRow(0);canvas.onOpenAssuranceArtifactRow('software-requirements','SW-1');
+    expect(onOpenHazardRow).toHaveBeenCalledWith(0);
+    expect(onOpenAssuranceArtifactRow).toHaveBeenCalledWith('software-requirements','SW-1');
   });
 });
 

@@ -5,7 +5,7 @@ jest.mock('./codeArchitectureHazardStore', () => ({ saveCodeArchitectureHazardRu
 jest.mock('./codeArchitectureHazardSourceAudit', () => ({ enrichHazardTableRowsWithSourceContent: jest.fn(async rows => rows) }));
 import { screenCodeHazardApplicability } from './codeHazardApplicabilityScreening';
 import { runLiteAIAnalysis } from '../../components/aiAnalysisLite';
-import { runCodeArchitectureHazardAnalysis } from './codeArchitectureHazardRunner';
+import { runLegacyCodeArchitectureHazardAnalysis as runCodeArchitectureHazardAnalysis } from './codeArchitectureHazardRunner';
 import { buildCodeArchitectureHazardCsvDraft } from './codeArchitectureHazardCsv';
 import { recordUserPreprocessing } from '../project-hazard-analysis/hazardUserPreprocessing';
 

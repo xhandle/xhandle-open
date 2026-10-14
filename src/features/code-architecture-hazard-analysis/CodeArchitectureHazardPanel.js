@@ -1,3 +1,5 @@
+import HazardNarrativeReview from './HazardNarrativeReview';
+import HazardRunRecoveryNotice from './HazardRunRecoveryNotice';
 import { SHOW_TABLE_REVIEW_NOTICES } from "../../components/tablePresentation";
 import { fillNotApplicableHazardSummary } from '../project-hazard-analysis/hazardNotApplicableCells';
 import { buildFunctionalModelRows, functionalModelIsReady } from '../code-architecture-context/functionalModel';
@@ -64,6 +66,8 @@ export default function CodeArchitectureHazardPanel({
   method,
   onMethodChange,
   onRunAnalysis,
+  onRetrySave,
+  onNarrativeReviewUpdate,
   onCancelAnalysis,
   isRunning = false,
   progress,
@@ -177,12 +181,12 @@ export default function CodeArchitectureHazardPanel({
     [latestRun, cbaRows, operationalContexts, selectedOperationalContextId, organizationContext]
   );
   const summaryCount = Math.max(0, (Array.isArray(summarySheet) ? summarySheet.length : 1) - 1);
-  const statusMessage = latestRun
+  const statusMessage = latestRun?.runState === 'incomplete' ? 'Incomplete analysis; validated rows are available for inspection. Continue to finish.' : latestRun
     ? isStale
       ? "Architecture, operational context or organization guidance changed since this run. Re-run before generating new remediation findings."
       : `Latest ${latestRun.hazardMethod || "hazard"} run has ${summaryCount} summary row${summaryCount === 1 ? "" : "s"}.`
     : "Run hazard analysis first for grounded remediation recommendations.";
-  const statusTone = latestRun && !isStale ? "success" : "default";
+  const statusTone = latestRun && latestRun.runState !== 'incomplete' && !isStale ? "success" : "default";
 
   useEffect(() => {
     if (forceSummaryOpenKey) setShowSummary(true);
@@ -386,6 +390,9 @@ export default function CodeArchitectureHazardPanel({
       </ProjectTabSideToolbar>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <HazardNarrativeReview key={latestRun?.id} run={latestRun} onUpdate={onNarrativeReviewUpdate} disabled={isRunning} />
+        <HazardRunRecoveryNotice run={latestRun} onExport={downloadSummaryCsv} onRetrySave={onRetrySave} isRunning={isRunning} />
+        {!isRunning && progress?.error && !latestRun?.pendingAttempt && latestRun?.runState !== 'incomplete' && <div role="alert" className="m-3 text-red-700">{progress.message}</div>}
         {SHOW_TABLE_REVIEW_NOTICES && latestRun?.userPreprocessingConflicts?.length > 0 && <details className="m-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm">
           <summary>User preprocessing needs review ({latestRun.userPreprocessingConflicts.length})</summary>
           {latestRun.userPreprocessingConflicts.map((message, index) => <p key={index}>{message}</p>)}

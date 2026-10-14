@@ -6,7 +6,7 @@ import { fetchLLMResponse } from '../../components/aiAnalysisSTPA';
 import { createCodeHazardCheckpoint } from './codeHazardGenerationCheckpoint';
 import { saveCodeArchitectureHazardRun } from './codeArchitectureHazardStore';
 import { enrichHazardTableRowsWithSourceContent } from './codeArchitectureHazardSourceAudit';
-import { runCodeArchitectureHazardAnalysis } from './codeArchitectureHazardRunner';
+import { runLegacyCodeArchitectureHazardAnalysis as runCodeArchitectureHazardAnalysis } from './codeArchitectureHazardRunner';
 import { restoreFunctionalCsvSnapshot, functionalModelIsReady } from '../code-architecture-context/functionalModel';
 import { normalizeCodeArchitectureHazardRun } from './codeArchitectureHazardUtils';
 

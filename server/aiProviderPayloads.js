@@ -87,7 +87,7 @@ function normalizeClaudeConversation(conversation = [], fallbackPrompt = "Contin
 }
 
 function supportsClaudeEffort(model = "") {
-  return /claude-(?:sonnet-5|opus-5|fable-5|mythos-5)/i.test(String(model || ""));
+  return /claude-(?:sonnet-5|opus-5|fable-5|mythos-5|haiku-5-5)/i.test(String(model || ""));
 }
 
 function normalizeEffort(effort = "") {

@@ -1,0 +1,91 @@
+{
+  "haikuPayload": {
+    "model": "claude-haiku-5-5",
+    "effort": null,
+    "temperature": 0.3
+  },
+  "oversizedSharedContext": {
+    "rows": 16,
+    "generationCalls": 16,
+    "minPromptChars": 35501,
+    "batchSizes": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ]
+  },
+  "reviewFailureSingleton": {
+    "rows": 1,
+    "generation": 3,
+    "review": 6,
+    "accepted": 0
+  },
+  "reviewFailureBatch": {
+    "rows": 16,
+    "generation": 5,
+    "review": 136,
+    "accepted": 0
+  },
+  "reviewTailBarrier": {
+    "reviewCalls": 2,
+    "acceptedWhileTailWaits": 0,
+    "acceptedAfterTail": 16
+  },
+  "csv": {
+    "rows": 147,
+    "columns": 73,
+    "yes": 89,
+    "no": 58,
+    "assessmentJSONChars": {
+      "min": 3860,
+      "median": 4528,
+      "max": 5642
+    },
+    "sixteenApplicableOutputChars": 73606,
+    "first16ReviewPromptChars": 79901,
+    "emptyGenerationPromptChars": 8432,
+    "generationBatchSizes": [
+      16,
+      16,
+      16,
+      16,
+      16,
+      16,
+      16,
+      16,
+      16,
+      3
+    ],
+    "reviewBatchSizes": [
+      16,
+      12,
+      4,
+      13,
+      3,
+      12,
+      4,
+      15,
+      1,
+      16,
+      16,
+      14,
+      2,
+      16,
+      3
+    ],
+    "limitation": "Reconstruction omits original code evidence and shared organization context absent from this export. Sizes are not the live run or exact token counts."
+  }
+}

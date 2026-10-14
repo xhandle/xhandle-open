@@ -1,0 +1,33 @@
+{
+  "kind": "Offline request-count verification; no measured provider latency or SLA",
+  "haikuPayload": {
+    "effort": "medium",
+    "temperaturePresent": false,
+    "maxTokens": 24000
+  },
+  "largeSharedContext": {
+    "rows": 16,
+    "batches": [
+      {
+        "rows": 10,
+        "inputChars": 35726,
+        "maxTokens": 24000
+      },
+      {
+        "rows": 6,
+        "inputChars": 35632,
+        "maxTokens": 24000
+      }
+    ]
+  },
+  "malformedReviews": {
+    "generationRequests": 2,
+    "reviewRequests": 20,
+    "attemptsPerRow": 3,
+    "pendingCandidates": 16
+  },
+  "continue": {
+    "additionalGenerationRequests": 0,
+    "accepted": 16
+  }
+}

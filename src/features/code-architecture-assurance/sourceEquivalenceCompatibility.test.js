@@ -44,7 +44,8 @@ it('preserves the six-area chain through reordered reruns, edits, save/reload an
  expect(updated[0].traceId).toBe(trace);
  for(const [kind,rows] of [[ARTIFACT_KINDS.SOFTWARE,sw],[ARTIFACT_KINDS.SYSTEM,sys],[ARTIFACT_KINDS.SUBSYSTEM,sub],[ARTIFACT_KINDS.DESIGN,design]]) {
    await saveArtifactRowsAsync(kind,'p','repo',rows);
-   expect(await loadArtifactRowsAsync(kind,'p','repo')).toEqual(rows);
+   // Derivation attaches transient diagnostics to the array; persistence stores its rows.
+   expect(await loadArtifactRowsAsync(kind,'p','repo')).toEqual(Array.from(rows));
  }
  const restored=JSON.parse(JSON.stringify({...data,cbaRows:updated}));
  expect(restored.softwareRows[0]).toMatchObject({requirementText:'Manually reviewed requirement',reviewStatus:'approved'});

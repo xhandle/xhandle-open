@@ -149,7 +149,7 @@ it('defaults STPA to the requested columns and retains picker customization', ()
   const render = () => root.render(<CodeArchitectureHazardSummaryTable summarySheet={sheet} hazardMethod="STPA-Textbook" storageKey={storageKey} />);
   try {
     act(render);
-    expect(host.querySelectorAll('thead th')).toHaveLength(20);
+    expect(host.querySelectorAll('thead th')).toHaveLength(STPA_DEFAULT_COLUMNS.length);
     const headingText = host.querySelector('thead').textContent;
     STPA_DEFAULT_COLUMNS.forEach(name => expect(headingText).toContain(name));
     expect(headingText).not.toContain('Operational context');
@@ -165,7 +165,7 @@ it('defaults STPA to the requested columns and retains picker customization', ()
     act(() => root.unmount()); host.remove();
     localStorage.removeItem(`${storageKey}:hidden-columns`);
     localStorage.removeItem(`${storageKey}:hidden-columns:stpa-focused-v2`);
-    localStorage.removeItem(`${storageKey}:hidden-columns:stpa-focused-v3`);
+    localStorage.removeItem(`${storageKey}:hidden-columns:stpa-focused-v5`);
     localStorage.removeItem(`${storageKey}:column-widths`);
   }
 });
@@ -195,7 +195,7 @@ it('defaults HARA to the requested columns with legacy field labels and persiste
     expect(sheet[0]).toEqual(headers);
   } finally {
     act(()=>root.unmount());host.remove();
-    for(const suffix of [':hidden-columns',':hidden-columns:hara-focused-v1',':column-widths']) localStorage.removeItem(storageKey+suffix);
+    for(const suffix of [':hidden-columns',':hidden-columns:hara-focused-v2',':column-widths']) localStorage.removeItem(storageKey+suffix);
   }
 });
 
@@ -226,7 +226,7 @@ it('defaults FHA to the requested ordered columns without inventing missing rati
     expect(host.querySelector('thead').textContent).toContain('Operational Scenario');
   } finally {
     act(()=>root.unmount());host.remove();
-    for(const suffix of [':hidden-columns',':hidden-columns:fha-focused-v1',':column-widths']) localStorage.removeItem(storageKey+suffix);
+    for(const suffix of [':hidden-columns',':hidden-columns:fha-focused-v2',':column-widths']) localStorage.removeItem(storageKey+suffix);
   }
 });
 

@@ -82,9 +82,9 @@ describe("hazard analysis LLM request lifecycle", () => {
     await expect(fetchLLMResponse("analyze", {}, [], "", {})).rejects.toMatchObject({name: "NetworkError"});
   });
 
-  test("preserves proxy failures for row generation instead of returning non-JSON placeholders", async () => {
+  test.each(["hazard-row-generation", "hazard-semantic-review", "hazard-applicability-screen"])("preserves proxy failures for %s instead of returning non-JSON placeholders", async workflow => {
     global.fetch = jest.fn(async () => ({ok: false, status: 502, text: async () => "upstream unavailable"}));
-    await expect(fetchLLMResponse("analyze", {}, [], "", {workflow: "hazard-row-generation"}))
+    await expect(fetchLLMResponse("analyze", {}, [], "", {workflow}))
       .rejects.toThrow("LLM proxy error (502)");
   });
 
@@ -101,4 +101,17 @@ describe("hazard analysis LLM request lifecycle", () => {
     await expect(request).rejects.toMatchObject({name: "AbortError"});
   });
 
+});
+
+test.each(['hazard-row-generation','hazard-semantic-review','hazard-applicability-screen'])('%s propagates explicit truncation even for parseable JSON and reports actual usage',async workflow=>{
+ const metadata=jest.fn();
+ global.fetch=jest.fn(async()=>({ok:true,json:async()=>({choices:[{finish_reason:'length',message:{content:'[]'}}],raw:{usage:{output_tokens:8000,input_tokens:10000}}})}));
+ await expect(fetchLLMResponse('assess',{},[],'',{workflow,onResponseMetadata:metadata})).rejects.toHaveProperty('name','TruncatedResponseError');
+ expect(metadata).toHaveBeenCalledWith({finishReason:'length',usage:{output_tokens:8000,input_tokens:10000}});
+});
+
+test('legacy callers retain string responses; compact successful responses also return strings',async()=>{
+ global.fetch=jest.fn(async()=>({ok:true,json:async()=>({choices:[{finish_reason:'stop',message:{content:' [] '}}]})}));
+ expect(await fetchLLMResponse('assess',{},[],'',{workflow:'hazard-semantic-review'})).toBe('[]');
+ expect(await fetchLLMResponse('assess',{},[],'',{})).toBe('[]');
 });

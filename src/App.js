@@ -1,3 +1,4 @@
+import useDiagramAssuranceArtifacts from './features/code-architecture-assurance/useDiagramAssuranceArtifacts';
 import { repositoryContextRequestIsCurrent } from './features/code-architecture-context/repositoryContextRequest';
 import { getCbaMethodDraftHeaders } from "./components/haraFhaSharedWorkflow";
 import XHandleWorkingMark from "./components/XHandleWorkingMark";
@@ -7939,6 +7940,7 @@ useEffect(() => {
   const hazardContextSavePending = useRef(null);
   const hazardContextScope = useRef(null);
   hazardContextScope.current = `${activeCodeArchitectureProjectId}:${activeCodeArchitectureRepo?.id || activeCodeArchitectureRepoMeta.repoId || activeCodeArchitectureRepoMeta.repoName || ""}`;
+  const diagramAssuranceArtifacts = useDiagramAssuranceArtifacts(activeCodeArchitectureProjectId, activeCodeArchitectureRepo?.id);
   const hazardLoadRepoId = activeCodeArchitectureRepoMeta.repoId || activeCodeArchitectureRepoMeta.repoName || "";
   useEffect(() => {
     let cancelled = false;
@@ -14561,11 +14563,13 @@ Rules:
       }
       finishActivity(actId, "success", "Code architecture hazard analysis complete");
     } catch (error) {
-      if (codeHazardScopeRef.current === runScope && codeArchitectureHazardAbortRef.current === abortController) commitCodeArchitectureHazardRun(priorRunForPreprocessing);
-      const canceled = abortController.signal.aborted || error?.name === "AbortError";
-      console.error("[code-architecture-hazard-analysis] Run failed", error);
+      if (codeHazardScopeRef.current === runScope && codeArchitectureHazardAbortRef.current === abortController) commitCodeArchitectureHazardRun(error?.recoveryRun || priorRunForPreprocessing);
+      // IndexedDB may throw AbortError independently of user cancellation.
+      const canceled = abortController.signal.aborted;
+      console.error("[code-architecture-hazard-analysis] Run failed", error, JSON.stringify({errorName:error?.name,errorCode:error?.code,originalErrorName:error?.cause?.name,originalErrorCode:error?.cause?.code,findings:error?.findings,failedAssessments:error?.failedAssessments}));
       if (codeHazardScopeRef.current === runScope && codeArchitectureHazardAbortRef.current === abortController) setCodeArchitectureHazardProgress((prev) => ({
         ...prev,
+        error: true,
         message: canceled ? "Code architecture hazard analysis stopped." : (error?.message || "Code architecture hazard analysis failed."),
       }));
       finishActivity(
@@ -17645,12 +17649,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                   highlightedRowIndex={codeArchitectureRowFocusScopeRef.current.functional == null || codeArchitectureRowFocusScopeRef.current.functional === activeCodeArchitectureRowsKey ? highlightedCodeArchitectureFunctionalRowIndex : null}
                   onRowFocusResolved={handleCodeArchitectureFunctionalFocusResolved}
                   hazardSummary={codeArchitectureHazardRun?.generatedSheets?.Summary}
-                  assuranceArtifacts={{
-                    softwareRequirements: loadArtifactRows(ARTIFACT_KINDS.SOFTWARE, activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id),
-                    systemRequirements: loadArtifactRows(ARTIFACT_KINDS.SYSTEM, activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id),
-                    subsystemRequirements: loadArtifactRows(ARTIFACT_KINDS.SUBSYSTEM, activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id),
-                    designElements: loadArtifactRows(ARTIFACT_KINDS.DESIGN, activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id),
-                  }}
+                  assuranceArtifacts={diagramAssuranceArtifacts}
                   onOpenHazardRow={(rowIndex) => {
                     handleOpenCodeArchitectureHazardSummaryRow(rowIndex);
                     setHazardRemediationTab("hazard-analysis");
@@ -17831,6 +17830,19 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                       method={codeArchitectureHazardMethod}
                       onMethodChange={setCodeArchitectureHazardMethod}
                       onRunAnalysis={handleRunCodeArchitectureHazardAnalysis}
+                      onNarrativeReviewUpdate={async (reviewedRun,narrativeReview)=>{
+                        if(codeArchitectureHazardRunRef.current!==reviewedRun)return;
+                        const updated={...reviewedRun,narrativeReview,finalSavePending:false,saveFailureMessage:'',updatedAt:new Date().toISOString()};
+                        try{await saveCodeArchitectureHazardRun(updated);}catch(error){updated.finalSavePending=true;updated.saveFailureMessage=error.message;}
+                        if(codeArchitectureHazardRunRef.current===reviewedRun)commitCodeArchitectureHazardRun(updated);
+                      }}
+                      onRetrySave={async recovery=>{
+                        const scope=codeHazardScopeRef.current;
+                        const saved={...recovery,finalSavePending:false,saveFailureMessage:'',updatedAt:new Date().toISOString()};
+                        if(saved.runState==='draft')saved.runState='complete';
+                        await saveCodeArchitectureHazardRun(saved);
+                        if(codeHazardScopeRef.current===scope && codeArchitectureHazardRunRef.current===recovery)commitCodeArchitectureHazardRun(saved);
+                      }}
                       onCancelAnalysis={handleCancelCodeArchitectureHazardAnalysis}
                       onClearContents={handleClearCodeArchitectureHazardContents}
                       isRunning={isRunningCodeArchitectureHazard}

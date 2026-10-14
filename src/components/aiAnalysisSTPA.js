@@ -257,11 +257,23 @@ if (!response.ok) {
   throw new Error(`LLM proxy error (${response.status}): ${errTxt}`);
 }
 
+const finishReason = json?.choices?.[0]?.finish_reason || json?.raw?.stop_reason;
+const responseMetadata = { finishReason, usage: json?.usage || json?.raw?.usage || null };
+requestOptions.onResponseMetadata?.(responseMetadata);
+// Compact generation/review must not accept even parseable text when the
+// provider explicitly reports incomplete output. Preserve legacy callers.
+if (["hazard-row-generation", "hazard-semantic-review", "hazard-applicability-screen"].includes(requestOptions.workflow)
+    && ["length", "max_tokens", "model_context_window_exceeded"].includes(finishReason)) {
+  const error = new Error("The analysis response reached its output limit; retry with a smaller batch or a larger review allowance.");
+  error.name = "TruncatedResponseError";
+  error.responseMetadata = responseMetadata;
+  throw error;
+}
 return json?.choices?.[0]?.message?.content?.trim() || "(empty)";
 
 
   } catch (error) {
-    if (error?.name === "AbortError" || error?.name === "TimeoutError" || error?.name === "NetworkError" || requestOptions.workflow === "hazard-row-generation") throw error;
+    if (error?.name === "AbortError" || error?.name === "TimeoutError" || error?.name === "NetworkError" || ["hazard-row-generation", "hazard-semantic-review", "hazard-applicability-screen"].includes(requestOptions.workflow)) throw error;
     console.error("🚨 Error in fetchLLMResponse (via ClayPrompt logic):", error);
     return "(error)";
   }

@@ -86,3 +86,8 @@ describe("AI provider model preferences", () => {
     window.removeEventListener(AI_PROVIDER_PREFERENCE_CHANGED_EVENT, listener);
   });
 });
+
+test('Haiku 5.5 supports effort while Haiku 4.5 keeps legacy behavior',()=>{
+ expect(supportsAIProviderEffort('claude','claude-haiku-5-5')).toBe(true);
+ expect(supportsAIProviderEffort('anthropic','claude-haiku-4-5')).toBe(false);
+});

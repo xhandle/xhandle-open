@@ -1,0 +1,206 @@
+[
+  {
+    "source": {
+      "id": "53",
+      "action": "Evaluate module",
+      "to": "Elaborate listed module entity",
+      "phrase": "The control action is provided too late",
+      "context": {
+        "scenario": "Unattended batch execution of the VHDL flow compiling sources, elaborating the testbench, and running the CLOCK_TB simulation",
+        "conditions": "No engineer interaction during the run; output directory set by change-directory step; testbench and source files compiled in sequence; run may execute on a CI or shared host with no waveform display",
+        "assumptions": "Flow runs without human supervision for the duration of the batch; step outcomes are assumed to be reported through exit status or logs; no runtime FPGA behavior is exercised by this flow, so no hardware safety claims are inferred"
+      }
+    },
+    "assessment": {
+      "id": "53",
+      "uca": "The Evaluate module action provides elaboration of a listed entity (ghdl -e) too late: the elaboration is not completed before the testbench simulation step that depends on it, because the flow continues to the next step without awaiting a completion status within a bounded time.",
+      "loss": "Mission/verification loss: the unattended batch does not produce valid simulation evidence (wave.vcd for CLOCK_TB) within its run, so the verification result for the design cannot be relied on. No injury or physical harm is implied.",
+      "hazard": "Failure to perform the required elaboration in time for the subsequent simulation step, so the flow proceeds with the simulation step while the elaborated design is absent, incomplete, or not yet finished.",
+      "causalScenario": "In the sequential batch, the analysis step and the analysis-output gate are evaluated first. If the analysis step runs longer than expected on a shared CI host, the elaboration step begins late. Because the script runs steps in sequence, the elaboration delay pushes back the simulation step and the batch's verification output. The script has no supplied bounded wait or completion check on the elaboration step, so a late elaboration is not detected as a timing failure.",
+      "safetyConstraint": "The flow shall not start the testbench simulation step until the ghdl -e elaboration of every listed entity has returned a completion status. If that status is not returned within the configured elaboration time limit, the flow shall abort with a non-zero exit status and a log entry, and shall not proceed to simulation or artifact generation.",
+      "verification": "Test: run the flow with ELAB_TIME_LIMIT set to a configured value, and with an injected delay in the elaboration step (stub or wrapper) at the value below, equal to, and above the configured boundary. Verify that the simulation step does not start before a completion status is logged, that the batch aborts with a non-zero exit status when the limit is exceeded, and that it aborts before elaboration when ELAB_TIME_LIMIT is absent. Inspect run.sh to confirm the ordering of the analysis gate, elaboration, and simulation steps.",
+      "assumptions": "The flow runs unattended with no engineer interaction during the batch, so no human intervention is credited. Steps run sequentially, so a late elaboration delays later work and does not overlap with it. Step outcomes are reported through exit status or logs, as stated in the operational context. The simulation step depends on the elaborated design for the listed entities. No runtime FPGA or hardware behavior is exercised, so no hardware safety claim is made. Verification is needed to confirm that the analysis and elaboration durations and the configured ELAB_TIME_LIMIT behavior match the design intent on the target CI host.",
+      "executionDependency": "None",
+      "operatorDependency": "None",
+      "softwareRequirement": "The software shall invoke ghdl -e for each listed entity only after the analysis-output check has completed and returned empty, shall record each elaboration exit status and completion time in the log, and shall abort the batch with a non-zero exit status before the simulation step if the elaboration has not completed within the configured ELAB_TIME_LIMIT parameter. ELAB_TIME_LIMIT shall be supplied and validated before operation, and if it is absent the batch shall abort before any elaboration begins.",
+      "causalFactor": "Hypothesis: the analysis or elaboration step has unbounded or unmonitored execution time (for example, from host contention on a shared CI runner), and the script has no configured timeout that converts excessive duration into a failure status.",
+      "causalBasis": "Hypothesis",
+      "causalEvidence": "The assumed fault is that the analysis or elaboration step takes longer than expected, and no bounded completion check exists for the elaboration step. The supplied source describes sequencing and gating: the evidence shows sequencing, gating on analysis output, and artifact generation, and ghdl -e is conditioned on the analysis output being empty. The source does not show a timeout or elapsed-time check, but absence of evidence of a check is not evidence that no check exists. The delay itself is a hypothesis.",
+      "assessedAction": "Evaluate module",
+      "applicable": "Yes",
+      "applicabilityRationale": "The interface requests a build action (ghdl -e for each listed entity) and governs whether the downstream testbench simulation step proceeds. The guide phrase applies to this control action because the elaboration step is gated on the preceding analysis output and runs in sequence, so its timing and order relative to analysis and simulation are meaningful properties.",
+      "classification": "Mission/Reliability",
+      "classificationRationale": "The loss chain terminates at the simulation/verification artifact stage. The operational context states that no runtime FPGA behavior is exercised by this flow and that no hardware safety claims are inferred, and no physical actuator, person, or external system is controlled by this interface. Late elaboration can delay or invalidate the CLOCK_TB verification evidence (wave.vcd) but does not create a direct or related physical-harm path."
+    }
+  },
+  {
+    "source": {
+      "id": "60",
+      "action": "Remove files",
+      "to": "Clear stale generated artifacts",
+      "phrase": "The control action is provided too late",
+      "context": {
+        "scenario": "Unattended batch execution of the VHDL flow compiling sources, elaborating the testbench, and running the CLOCK_TB simulation",
+        "conditions": "No engineer interaction during the run; output directory set by change-directory step; testbench and source files compiled in sequence; run may execute on a CI or shared host with no waveform display",
+        "assumptions": "Flow runs without human supervision for the duration of the batch; step outcomes are assumed to be reported through exit status or logs; no runtime FPGA behavior is exercised by this flow, so no hardware safety claims are inferred"
+      }
+    },
+    "assessment": {
+      "id": "60",
+      "uca": "The Remove files control action (deletion of generated artifacts in out/) is provided too late, after the TB simulation has already written the new wave.vcd, so the clear step can remove current-run outputs or leave prior outputs in place when the new run's results are being produced.",
+      "loss": "Mission/verification outcome: a simulation run reports results that are not traceable to the current run, or the current run's waveform evidence is lost, so verification conclusions cannot be relied upon.",
+      "hazard": "Operation using invalid or stale state information: prior-run artifacts (e.g., an old wave.vcd) coexist with or replace current-run outputs in out/, so the reviewer or downstream step treats them as current results.",
+      "causalScenario": "In an unattended batch run, the flow compiles the sources, elaborates the testbench, and runs the CLOCK_TB simulation to write wave.vcd into out/. If the clear step is positioned after simulation completes or runs concurrently with output creation, the deletion either removes the fresh wave.vcd or fails to remove stale files before the output is written. No engineer observes the outputs during the run, so the discrepancy is not caught before it is used.",
+      "safetyConstraint": "The flow shall complete the clear of prior generated artifacts in out/ before the TB simulation begins writing wave.vcd, and shall not begin simulation until the clear returns a success status. If the clear fails or its completion is not confirmed, the flow shall terminate with a nonzero status and shall not report any existing out/ artifact as the result of the current run.",
+      "verification": "Test: pre-populate out/ with a stale wave.vcd and a marker file, then run ./run.sh in unattended mode. Verify from the execution log or step order that the clear completes and returns success before the simulation writes the new wave.vcd, and that the marker file is absent. Repeat with an injected clear failure (e.g., read-only out/) and verify that the flow exits nonzero before simulation and does not produce a result file. Inspect run.sh to confirm step order and the exit-status check.",
+      "assumptions": "The clear step's position relative to the TB simulation is not confirmed by the supplied evidence; the script body description lists the simulation before the clear, while the purpose statement says prior artifacts are removed before a new run. This ordering must be confirmed by inspecting run.sh and verified by the test below. The working directory at the time of the deletion is not evidenced; the wildcard deletion is assumed to target out/ only. The batch runs unattended, and step outcomes are assumed to be reported through exit status or logs, as stated in the context.",
+      "executionDependency": "None",
+      "operatorDependency": "None",
+      "softwareRequirement": "The software shall execute the out/ artifact clear step before the TB simulation step in run.sh, shall check its exit status, and shall abort the flow with a nonzero exit status without running the TB simulation if the clear fails.",
+      "causalFactor": "Hypothesis: the clear step is sequenced after the simulation or is not gated on the simulation's start, so the timing of the deletion relative to output generation is incorrect. This is an assumed sequencing fault, not an established source defect.",
+      "causalBasis": "Hypothesis",
+      "causalEvidence": "The source describes the script as running the TB simulation to produce wave.vcd and then clearing prior generated artifacts in out, but also says the clear happens before a new run and that cd ordering is unknown. The assumed fault is that the clear is placed after simulation output is generated, so the deletion can affect current results. This is assumed, not confirmed by the source.",
+      "assessedAction": "Remove files",
+      "applicable": "Yes",
+      "applicabilityRationale": "The interface requests deletion of generated files in out/ before a new simulation run, so it governs the state of the output directory. Its timing is meaningful because the phrase 'too late' depends on whether the clear completes before the TB simulation writes wave.vcd. Applicability is set by the governed input and is not a safety-significance judgment.",
+      "classification": "Mission/Reliability",
+      "classificationRationale": "The failure chain terminates in simulation verification results. A late clear can leave stale wave.vcd or other prior artifacts in out/ where they may be read as current results, or can delete fresh output after the run. No actuation, hardware control, or human-exposure path is evidenced (the context states 'no runtime FPGA behavior is exercised by this flow'), so no physical-harm path is established and the chain stops at unreliable verification evidence. No named safety function is involved."
+    }
+  },
+  {
+    "source": {
+      "id": "106",
+      "action": "View waveform on Linux",
+      "to": "Display waveform on Linux",
+      "phrase": "Not providing the control action causes a hazard",
+      "context": {
+        "scenario": "Unattended batch execution of the VHDL flow compiling sources, elaborating the testbench, and running the CLOCK_TB simulation",
+        "conditions": "No engineer interaction during the run; output directory set by change-directory step; testbench and source files compiled in sequence; run may execute on a CI or shared host with no waveform display",
+        "assumptions": "Flow runs without human supervision for the duration of the batch; step outcomes are assumed to be reported through exit status or logs; no runtime FPGA behavior is exercised by this flow, so no hardware safety claims are inferred"
+      }
+    },
+    "assessment": {
+      "id": "106",
+      "uca": "Control action not provided: the Linux branch of clock-run.sh does not launch GtkWave on wave.vcd after the CLOCK_TB simulation has written wave.vcd, and the flow reports no failure, so the waveform is not made available for review.",
+      "loss": "Mission/verification outcome: the CLOCK_TB clock design is accepted as verified without the waveform review that the script is intended to support. This describes a verification-evidence outcome only and does not involve injury.",
+      "hazard": "Verification state in which the CLOCK_TB simulation result is treated as reviewed while no waveform viewer has been presented for the wave.vcd dump.",
+      "causalScenario": "On the Linux branch, the flow compiles, elaborates, and runs CLOCK_TB and writes wave.vcd. The gtkwave call then fails or cannot be presented (for example on a host with no waveform display, as the operational context permits). The source does not show a check of that outcome, so the flow continues to its phase-status output and completes without any indication that the review step was not performed.",
+      "safetyConstraint": "Proposed constraint: on the Linux branch, the flow shall record the viewer launch outcome as launched, unavailable, or failed, and shall return a nonzero batch status with a diagnostic when the viewer cannot be launched. This constraint is not an existing safeguard.",
+      "verification": "Test: on a Linux host with gtkwave removed from PATH, and separately on a host with no display, run clock-run.sh and verify that the batch exits nonzero, that the diagnostic is emitted, and that wave.vcd is retained. Test: on a Linux host with gtkwave available and a display, verify the viewer is launched on wave.vcd and the launch outcome is recorded as launched. Inspection: confirm the viewer-outcome check is present in clock-run.sh.",
+      "assumptions": "1) Source evidence does not show whether the gtkwave call is blocking, or how a launch failure is handled; these are unverified and must be confirmed by inspection and test of clock-run.sh. 2) The Linux branch is selected by host platform detection shown in the source. 3) Unattended run: no engineer is present to observe or recover from a missing viewer, so no human recovery is credited. 4) The affected host may lack a display, which is a condition stated in the operational context, not a verified cause.",
+      "executionDependency": "None",
+      "operatorDependency": "None",
+      "softwareRequirement": "The software shall, on the Linux branch of clock-run.sh, check the outcome of the gtkwave wave.vcd invocation, return a nonzero exit status and print a diagnostic message identifying the missing waveform review when the viewer is unavailable or fails, and retain wave.vcd for later review.",
+      "causalFactor": "Hypothesis: gtkwave is unavailable or cannot open a display on the executing host, combined with no evidenced exit-status check or failure reporting around the viewer call in clock-run.sh.",
+      "causalBasis": "Hypothesis",
+      "causalEvidence": "Hypothesized fault: the gtkwave viewer is unavailable or cannot be presented on the executing host, and the script has no evidenced failure handling after the viewer call. Supporting source: the interface details state 'Runs gtkwave wave.vcd on the Linux branch... The evidence does not show whether the viewer call is blocking or how a launch failure is handled.' The operational context states the run 'may execute on a CI or shared host with no waveform display.' Absence of a shown check is not proof that no check exists.",
+      "assessedAction": "View waveform on Linux",
+      "applicable": "Yes",
+      "applicabilityRationale": "The interface action 'View waveform on Linux' requests behavior: the script launches the GtkWave viewer on wave.vcd on the Linux branch. This is a control action, not a passive read, so the 'not providing the control action' guide phrase is meaningful. Applicability is governed and is not affected by the absence of safety significance.",
+      "classification": "Mission/Reliability",
+      "classificationRationale": "The unsafe outcome is loss of a verification review step for the simulated CLOCK_TB waveform. The physical-harm chain terminates at the simulation verification record. The operational context states the project is educational and simulation-oriented, with no deployment or hardware control evidenced, and the FPGA/hardware behavior is not exercised by this flow. No named intermediate safety function is involved, so this is not Safety \u2014 Direct or Safety \u2014 Related."
+    }
+  },
+  {
+    "source": {
+      "id": "113",
+      "action": "View waveform on macOS",
+      "to": "Display waveform on macOS",
+      "phrase": "Not providing the control action causes a hazard",
+      "context": {
+        "scenario": "Unattended batch execution of the VHDL flow compiling sources, elaborating the testbench, and running the CLOCK_TB simulation",
+        "conditions": "No engineer interaction during the run; output directory set by change-directory step; testbench and source files compiled in sequence; run may execute on a CI or shared host with no waveform display",
+        "assumptions": "Flow runs without human supervision for the duration of the batch; step outcomes are assumed to be reported through exit status or logs; no runtime FPGA behavior is exercised by this flow, so no hardware safety claims are inferred"
+      }
+    },
+    "assessment": {
+      "id": "113",
+      "uca": "Control action not provided when required: the macOS branch does not successfully issue the `open -a gtkwave wave.vcd` launch request, and the run completes without a recorded launch outcome, when a waveform review display is required for the simulation result.",
+      "loss": "Mission/verification outcome: a clock design defect that is visible only in the simulated waveform is carried forward as verified without the waveform review the flow is intended to support. No injury or physical harm is implied.",
+      "hazard": "Failure to perform a required action: the simulation run reports completion while the waveform is not opened for review, so the result is treated as reviewed when it has not been.",
+      "causalScenario": "The script selects the macOS branch by host platform and issues `open -a gtkwave wave.vcd`. The launch fails because GtkWave is not installed, the open command errors, or wave.vcd is absent after a failed simulation step. The script then continues to its final phase-status echo without checking the launch's exit status, so the run still reports progress and no failure record is produced.",
+      "safetyConstraint": "The flow shall detect a failed or unconfirmed viewer launch on the macOS branch, record the failure with the wave.vcd path and the launch exit status in the run log, and withhold any success or review-complete status for the run until the launch outcome is recorded.",
+      "verification": "Test: run the macOS branch under a test harness with (a) GtkWave stubbed to exit nonzero, (b) wave.vcd absent, and (c) a successful launch stub. Verify that failures produce a nonzero return status and a log record containing the path and exit status, and that the success case returns zero with a launch-success record. Include the at, below, and above boundary of the path-existence check.",
+      "assumptions": "The flow runs unattended in batch on a host that may lack a display, as stated in the operational context. The wave.vcd file is produced by the preceding simulation step and is assumed present only if that step succeeded. GtkWave is assumed to be installed on the macOS host, and platform detection is assumed to select the mac branch correctly. Attended engineering inspection of the waveform is outside this scenario. Verification must confirm the launch-outcome logging and the nonzero-status behavior described below.",
+      "executionDependency": "None",
+      "operatorDependency": "None",
+      "softwareRequirement": "The software shall check the exit status of the `open -a gtkwave wave.vcd` command on the macOS branch, write a launch-failure record containing the wave.vcd path and exit status to the run log, and return a nonzero status to the calling flow when the launch fails or wave.vcd is absent.",
+      "causalFactor": "Hypothesis: the macOS launch failure is unhandled because the script does not check or act on the exit status of the `open` command, and no launch-outcome record is produced.",
+      "causalBasis": "Hypothesis",
+      "causalEvidence": "Hypothesis: the assumed fault is that the macOS `open -a gtkwave wave.vcd` launch fails and the failure is not checked. The source says the launch is run on the macOS branch, and it states that the evidence does not show whether the launch succeeds or how failure is handled. The absence of a shown check is not evidence that no check exists, so the unhandled-failure mechanism remains a hypothesis.",
+      "assessedAction": "View waveform on macOS",
+      "applicable": "Yes",
+      "applicabilityRationale": "The interface requests a behavior: the macOS branch runs `open -a gtkwave wave.vcd`, which launches a viewer process. The 'not provided' guide phrase is therefore meaningful for this launch request. The action is not a passive read, so the command/control guide phrase applies. This applicability decision does not imply safety significance.",
+      "classification": "Mission/Reliability",
+      "classificationRationale": "The viewer launch affects only engineering review of a simulation artifact (wave.vcd). It does not govern any actuator, physical process, or hardware state, and the flow is simulation-only with no hardware control evidenced. The physical-harm chain terminates at the verification output: a missed or unreviewed waveform can delay or mask a design defect in simulation, but no path to injury, death, or property damage is supported by the evidence."
+    }
+  },
+  {
+    "source": {
+      "id": "142",
+      "action": "Evaluate testbench",
+      "to": "Elaborate CLOCK_TB testbench",
+      "phrase": "Providing the control action causes a hazard",
+      "context": {
+        "scenario": "Unattended batch execution of the VHDL flow compiling sources, elaborating the testbench, and running the CLOCK_TB simulation",
+        "conditions": "No engineer interaction during the run; output directory set by change-directory step; testbench and source files compiled in sequence; run may execute on a CI or shared host with no waveform display",
+        "assumptions": "Flow runs without human supervision for the duration of the batch; step outcomes are assumed to be reported through exit status or logs; no runtime FPGA behavior is exercised by this flow, so no hardware safety claims are inferred"
+      }
+    },
+    "assessment": {
+      "id": "142",
+      "uca": "Evaluate testbench is provided in the wrong order: the simulation step is provided after ghdl -e CLOCK_TB without verifying that the elaboration succeeded, so the run proceeds and reports phase status on an unelaborated or missing CLOCK_TB executable.",
+      "loss": "Loss of verification integrity: a CLOCK_TB verification run is recorded as completed when the testbench was not elaborated, so design verification status is unreliable for the mission of confirming the clock design.",
+      "hazard": "The simulation phase status is reported as complete while the CLOCK_TB executable is missing or was not successfully elaborated.",
+      "causalScenario": "In an unattended batch run, the source compile step completes and ghdl -e CLOCK_TB fails, for example because a listed module or testbench source is faulty. The script has no evidenced check of that elaboration result, so it continues to the simulation and phase-status steps. The batch then reports phase completion without a verified CLOCK_TB executable having run.",
+      "safetyConstraint": "The flow shall not execute the simulation or report the testbench evaluation phase as successful unless the CLOCK_TB elaboration step returns a success status, and shall stop the flow and report failure on any non-success elaboration result.",
+      "verification": "Test: in an isolated copy of the repository, introduce a syntax error into the CLOCK_TB testbench source, run clock-run.sh in unattended mode, and verify that the flow exits nonzero, the simulation command is not executed, and no success phase status is printed. Repeat with a valid testbench and verify the success path and status output. Inspect the script to confirm that each elaboration exit status is checked before the simulation step.",
+      "assumptions": "Assumes the script behaves as summarized in the supplied interface details (sequential invocation of ghdl -e CLOCK_TB with no elaboration-result check evidenced). Assumes the complete script file was not supplied, so the presence of an unshown check is not excluded. Assumes the unattended run reports status only through exit status or logs, as stated in the operational context. Verification must confirm the actual exit-status behavior of the elaboration step on a failing and a passing input.",
+      "executionDependency": "None",
+      "operatorDependency": "None",
+      "softwareRequirement": "The software shall terminate the VHDL build flow with a nonzero exit status and shall not invoke the CLOCK_TB simulation or report the testbench evaluation phase as passed when the ghdl -e CLOCK_TB elaboration step returns a nonzero status.",
+      "causalFactor": "Hypothesis: the elaboration step lacks a gating check on its exit status, so a failed ghdl -e CLOCK_TB does not stop the flow before simulation and status reporting.",
+      "causalBasis": "Hypothesis",
+      "causalEvidence": "The interface details state that the script invokes ghdl -e CLOCK_TB and that the evidence shows no check of the elaboration result. This does not prove that no check exists in the full script. The assumed fault is that a failed elaboration is not gated before the simulation and status steps.",
+      "assessedAction": "Evaluate testbench",
+      "applicable": "Yes",
+      "applicabilityRationale": "The interface requests a build-step action: it invokes GHDL to elaborate the CLOCK_TB testbench and then runs the simulation. The guide phrase applies to this requested action. The phrase is applied only to the provision of this action in its operating context, not to the wider workflow.",
+      "classification": "Mission/Reliability",
+      "classificationRationale": "The chain terminates at simulation verification evidence and build status. The context states that no runtime FPGA behavior is exercised, no hardware control is evidenced, and the project is educational and simulation-oriented. No physical-harm path is identified, so the classification is not Safety \u2014 Direct or Safety \u2014 Related."
+    }
+  },
+  {
+    "source": {
+      "id": "144",
+      "action": "Evaluate testbench",
+      "to": "Elaborate CLOCK_TB testbench",
+      "phrase": "The control action is provided too late",
+      "context": {
+        "scenario": "Unattended batch execution of the VHDL flow compiling sources, elaborating the testbench, and running the CLOCK_TB simulation",
+        "conditions": "No engineer interaction during the run; output directory set by change-directory step; testbench and source files compiled in sequence; run may execute on a CI or shared host with no waveform display",
+        "assumptions": "Flow runs without human supervision for the duration of the batch; step outcomes are assumed to be reported through exit status or logs; no runtime FPGA behavior is exercised by this flow, so no hardware safety claims are inferred"
+      }
+    },
+    "assessment": {
+      "id": "144",
+      "uca": "The batch flow provides the `ghdl -e CLOCK_TB` elaboration action after the configured ELAB_START_DEADLINE has passed, so the CLOCK_TB elaboration is issued too late to complete within the batch verification window.",
+      "loss": "Mission/verification outcome: the unattended batch does not produce CLOCK_TB simulation and waveform results within its required window, so the design's verification evidence is not obtained for that run.",
+      "hazard": "Unsafe timing or sequencing: the CLOCK_TB elaboration step starts after the batch timing window has expired, so the testbench simulation and its verification result are not produced within the batch window.",
+      "causalScenario": "A preceding analysis step in the sequential script runs longer than expected on a shared host. The script only moves to the `ghdl -e CLOCK_TB` step after that analysis step finishes. The elaboration request is therefore issued after the batch window has already passed, and the batch reports no timely verification result.",
+      "safetyConstraint": "The batch controller shall not issue the `ghdl -e CLOCK_TB` elaboration request when the current elapsed time is above the configured ELAB_START_DEADLINE. When the deadline has been exceeded, the controller shall skip the elaboration request and record a deadline-exceeded status in the run log.",
+      "verification": "Test: configure ELAB_START_DEADLINE, then run the batch with an injected delay in an earlier analysis step. Verify that the elaboration command is issued when the elapsed time is at or below the deadline, and that it is not issued and the deadline-exceeded status is logged when the elapsed time is above it. Also verify that the batch fails before starting when the parameter is absent or invalid.",
+      "assumptions": "Assumption: the batch has a finite time window, supplied as a named configuration parameter ELAB_START_DEADLINE. This parameter must be supplied and validated before the batch runs. If it is absent, the flow must fail before starting the elaboration step. Assumption: an earlier analysis step (e.g., module analysis in module_list) may stall or run long on a shared CI host. This is a hypothesized fault, not an observed defect. Verification: inject a controlled delay into an analysis step and confirm the deadline behavior.",
+      "executionDependency": "None",
+      "operatorDependency": "None",
+      "softwareRequirement": "The software shall read ELAB_START_DEADLINE from configuration before the batch starts, shall reject the batch with a logged configuration error if the parameter is absent or invalid, and shall not issue the `ghdl -e CLOCK_TB` command when the elapsed batch time is above ELAB_START_DEADLINE.",
+      "causalFactor": "Hypothesis: a stalled or long-running earlier analysis step in the sequential flow delays the start of CLOCK_TB elaboration, and no start-time deadline or timeout gate is provided for this step.",
+      "causalBasis": "Hypothesis",
+      "causalEvidence": "The supplied source describes sequential invocation: the script runs `ghdl -e CLOCK_TB` after the testbench analysis step. The late-provision mechanism is a hypothesized fault in which an earlier analysis step delays the elaboration request. No source excerpt establishes that this delay occurs.",
+      "assessedAction": "Evaluate testbench",
+      "applicable": "Yes",
+      "applicabilityRationale": "The interface requests a build action, `ghdl -e CLOCK_TB`, that must run after the testbench analysis step. Whether that request is provided late is a meaningful ordering and timing property of the sequential flow, because later simulation and verification steps depend on it. The guide phrase is applied to this command only, not to the whole batch.",
+      "classification": "Mission/Reliability",
+      "classificationRationale": "The loss is a delayed or missing simulation-verification outcome for the CLOCK_TB testbench. The chain terminates at the build and simulation artifacts, which are not connected to actuation, hardware control, or people. The software has no physical-harm path, so this is not Safety \u2014 Direct or Safety \u2014 Related."
+    }
+  }
+]

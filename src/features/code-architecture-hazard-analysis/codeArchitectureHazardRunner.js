@@ -1,3 +1,5 @@
+import {runFastCodeArchitectureHazardAnalysis} from './fastHazardRunner';
+import {fastMethod} from './fastHazardSchema';
 import { organizationProfileContextIdentity } from '../organization-profile/organizationProfile';
 import { screenCodeHazardApplicability } from './codeHazardApplicabilityScreening';
 import { createCodeHazardCheckpoint } from './codeHazardGenerationCheckpoint';
@@ -18,7 +20,14 @@ import {
   normalizeRepoId,
 } from "./codeArchitectureHazardUtils";
 
-export async function runCodeArchitectureHazardAnalysis({
+// Keep the legacy implementation callable for comparison and rollback.
+export function runCodeArchitectureHazardAnalysis(options = {}) {
+  return fastMethod(options.method || 'STPA-Textbook')
+    ? runFastCodeArchitectureHazardAnalysis(options)
+    : runLegacyCodeArchitectureHazardAnalysis(options);
+}
+
+export async function runLegacyCodeArchitectureHazardAnalysis({
   previousRun = null,
   regenerate = false,
   cbaRows = [],

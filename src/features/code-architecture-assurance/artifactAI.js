@@ -587,6 +587,7 @@ function getSheetCellText(cell) {
 }
 
 function summaryRowsFromHazardAnalysis(hazardAnalysis = null) {
+  if(hazardAnalysis?.runState === 'incomplete' || hazardAnalysis?.finalSavePending) throw new Error('Complete and save the hazard analysis before using it to derive software requirements.');
   const summary = hazardAnalysis?.generatedSheets?.Summary || hazardAnalysis?.analysisResult?.Summary;
   if (!Array.isArray(summary) || !Array.isArray(summary[0])) {
     const records = Array.isArray(hazardAnalysis?.summaryRows) ? hazardAnalysis.summaryRows : [];
@@ -696,7 +697,7 @@ function hazardSafetyRequirementRows(hazardAnalysis = null) {
     const hazardRef = `HZ-${String(Number(row.rowIndex) + 1).padStart(3, "0")}`;
     const sourceId = architectureRef?.traceId || architectureRef?.rowRef || "";
     const hazardText = pickField(row, ["Hazard", "Hazards", "Hazardous Event", "Mishap", "Loss", "Losses"]);
-    const mitigation = pickField(row, ["Mitigation Strategy", "Controls / Mitigations", "Controls", "Safety Goal"]);
+    const mitigation = pickField(row, ["Mitigation Strategy", "Controls / Mitigations", "Controls", "Safety Goal", "Safety Constraint"]);
     const severity = pickField(row, ["Software Criticality Index", "ASIL", "Severity Category", "Severity"]);
     const verification = pickField(row, ["Verification", "Verification Method", "LOR Tasks"]);
     return [createBaseArtifactRow(ARTIFACT_KINDS.SOFTWARE, {

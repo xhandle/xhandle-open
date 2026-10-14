@@ -1,0 +1,85 @@
+{
+  "lines": 378,
+  "started": 74,
+  "finished": 80,
+  "duplicates": 0,
+  "compatibilityRetries": 74,
+  "status": {
+    "completed/stop": 77,
+    "completed/length": 3
+  },
+  "workflows": {
+    "hazard-semantic-review": {
+      "count": 40,
+      "elapsedMs": {
+        "min": 4183,
+        "median": 13110,
+        "max": 22201,
+        "mean": 12791
+      },
+      "inputChars": {
+        "min": 31539,
+        "median": 34897,
+        "max": 36207,
+        "mean": 34642
+      },
+      "outputChars": {
+        "min": 0,
+        "median": 587,
+        "max": 2204,
+        "mean": 779
+      },
+      "above32000": 36,
+      "outputsAtMost40": 8
+    },
+    "hazard-row-generation": {
+      "count": 40,
+      "elapsedMs": {
+        "min": 5948,
+        "median": 14426,
+        "max": 26282,
+        "mean": 14279
+      },
+      "inputChars": {
+        "min": 35631,
+        "median": 40033,
+        "max": 42449,
+        "mean": 38576
+      },
+      "outputChars": {
+        "min": 695,
+        "median": 4259,
+        "max": 5488,
+        "mean": 3911
+      },
+      "above32000": 40,
+      "outputsAtMost40": 0
+    }
+  },
+  "approxWindowSeconds": 184,
+  "observedMaxOverlappingRequests": 6,
+  "reviewTruncations": [
+    {
+      "requestId": "mv7ab4re-d3zndh3",
+      "workflow": "hazard-semantic-review",
+      "elapsedMs": 17302,
+      "outputTextChars": 0,
+      "maxOutputTokens": 4000
+    },
+    {
+      "requestId": "mv7abl1q-gsome8y",
+      "workflow": "hazard-semantic-review",
+      "elapsedMs": 22201,
+      "outputTextChars": 0,
+      "maxOutputTokens": 4000
+    },
+    {
+      "requestId": "mv7acha5-59fvzxu",
+      "workflow": "hazard-semantic-review",
+      "elapsedMs": 17393,
+      "outputTextChars": 639,
+      "maxOutputTokens": 4000
+    }
+  ],
+  "note": "Partial run excerpt; request counts are not row counts. No per-row response bodies or validation findings are logged."
+}

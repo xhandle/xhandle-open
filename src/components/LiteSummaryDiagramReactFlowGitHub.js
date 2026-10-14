@@ -2561,6 +2561,18 @@ const DiagramBody = forwardRef(function DiagramBody(
       ],
     },
   ]), [assuranceArtifacts]);
+  const editAnalysisGroups = useMemo(() => {
+    const mission = [], hazards = [];
+    editHazardRows.forEach(entry => {
+      const classification = getHazardCell(entry.cells, 'Safety Classification').toLowerCase().replace(/\s+/g, '');
+      if (classification === 'mission/reliability') mission.push(entry);
+      else if (/^safety[—–-](direct|related)$/.test(classification)) hazards.push(entry);
+    });
+    return [
+      { key: 'hazards', label: 'Associated Hazard Analysis', rows: hazards },
+      { key: 'mission-reliability', label: 'Mission/Reliability', rows: mission },
+    ];
+  }, [editHazardRows, getHazardCell]);
   const resolveAssuranceRefs = useCallback((row = {}, groupKey = '', visiting = new Set()) => {
     const directRefs = Array.isArray(row.sourceArchitectureRefs) ? row.sourceArchitectureRefs.filter(Boolean) : [];
     if (directRefs.length) return dedupeAssuranceRefs(directRefs);
@@ -5081,7 +5093,8 @@ useEffect(() => {
               )}
             </details>
           ))}
-          <details
+          {editAnalysisGroups.map(group => <details
+            key={group.key}
             style={{
               marginTop: 14,
               borderTop: '1px solid rgba(15,23,42,0.1)',
@@ -5100,11 +5113,11 @@ useEffect(() => {
               }}
             >
               <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A' }}>
-                Associated Hazard Analysis
+                {group.label}
               </span>
               {hazardDataRows.length > 0 && (
                 <span style={{ fontSize: 12, color: '#64748B' }}>
-                  {editHazardRows.length} result{editHazardRows.length === 1 ? '' : 's'}
+                  {group.rows.length} result{group.rows.length === 1 ? '' : 's'}
                 </span>
               )}
             </summary>
@@ -5112,9 +5125,9 @@ useEffect(() => {
               <div style={{ fontSize: 13, color: '#64748B' }}>
                 Run hazard analysis to see linked results here.
               </div>
-            ) : editHazardRows.length === 0 ? (
+            ) : group.rows.length === 0 ? (
               <div style={{ fontSize: 13, color: '#64748B' }}>
-                No hazard analysis rows are linked to this {editModal.type === 'architectureBox' ? 'architecture box' : editModal.type}.
+                No {group.key === 'mission-reliability' ? 'mission/reliability' : 'hazard analysis'} rows are linked to this {editModal.type === 'architectureBox' ? 'architecture box' : editModal.type}.
               </div>
             ) : (
               <div
@@ -5126,7 +5139,7 @@ useEffect(() => {
                   paddingRight: 4,
                 }}
               >
-                {editHazardRows.map(({ sourceIndex, cells }) => (
+                {group.rows.map(({ sourceIndex, cells }) => (
                   <div
                     key={`${sourceIndex}-${cells.join('|')}`}
                     style={{
@@ -5193,12 +5206,12 @@ useEffect(() => {
                           </div>
                         ))}
                       </div>
-                    </details>
+                    </details>)}
                   </div>
                 ))}
               </div>
             )}
-          </details>
+          </details>)}
           </div>
           <div style={{ flex: '0 0 auto', borderTop: '1px solid rgba(15,23,42,0.1)', padding: '12px 20px', display: 'flex', justifyContent: 'space-between', background: 'white' }}>
             <button onClick={() => setEditModal(null)} style={{ padding: '6px 12px', borderRadius: 8 }}>

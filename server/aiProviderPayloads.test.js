@@ -167,3 +167,11 @@ test("Gemini converts image attachments to native inline data", () => {
     },
   });
 });
+
+test("Haiku 5.5 sends selected effort and no incompatible sampling parameters on the first request", () => {
+  const payload = buildClaudeRequestPayload({model:"claude-haiku-5-5",body:{effort:"medium",temperature:0.3,top_p:0.5,top_k:5,max_tokens:24000}});
+  assert.equal(supportsClaudeEffort("claude-haiku-5-5"),true);
+  assert.deepEqual(payload.output_config,{effort:"medium"});
+  assert.equal(payload.temperature,undefined);assert.equal(payload.top_p,undefined);assert.equal(payload.top_k,undefined);
+  assert.equal(payload.max_tokens,24000);
+});
