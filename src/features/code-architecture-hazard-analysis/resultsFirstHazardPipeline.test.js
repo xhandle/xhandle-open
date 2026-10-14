@@ -26,7 +26,7 @@ test('missing cell retries only that row while valid rows are cached',async()=>{
 test('invalid ratings get targeted structural retries',async()=>{
  const request=jest.fn(async p=>rows(p).map(({id})=>({...compact('HARA',id),severity:id==='HA-2'?'S9':'S3'})));
  await expect(generateFastHazards({method:'HARA',sources:sources(4),context:{},request})).rejects.toMatchObject({partialResults:expect.any(Array),findings:{'HA-2':['Invalid S/E/C rating']}});
- expect(request).toHaveBeenCalledTimes(3);expect(rows(request.mock.calls[2][0]).map(r=>r.id)).toEqual(['HA-2']);
+ expect(request).toHaveBeenCalledTimes(9);expect(request.mock.calls.slice(1).every(([p])=>rows(p).length===1 && rows(p)[0].id==='HA-2')).toBe(true);
 });
 test('native checkpoint aborts do not cancel generation and report unsaved work',async()=>{
  const error=new DOMException('Storage aborted','AbortError'),onStorageState=jest.fn();
@@ -38,7 +38,8 @@ test('native checkpoint aborts do not cancel generation and report unsaved work'
 test('transport failure preserves successful independent batches without fabricated rows',async()=>{
  const request=jest.fn(async p=>{if(rows(p)[0].id==='HA-9')throw new Error('Provider unavailable');return rows(p).map(({id})=>compact('STPA',id));});
  await expect(generateFastHazards({method:'STPA',sources:sources(16),context:{},request})).rejects.toMatchObject({partialResults:expect.arrayContaining([expect.objectContaining({id:'HA-1'})])});
- expect(request).toHaveBeenCalledTimes(2);
+ expect(request.mock.calls.filter(([p])=>rows(p).some(r=>r.id==='HA-9'))).toHaveLength(3);
+ expect(request.mock.calls.filter(([p])=>rows(p).some(r=>r.id==='HA-1'))).toHaveLength(1);
 });
 test('prompt omits mandatory narrative flags and preserves shared method contracts',()=>{
  const prompt=resultsFirstPrompt('STPA',sources(3),{});

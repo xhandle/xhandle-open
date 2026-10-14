@@ -244,3 +244,26 @@ it('clears the hazard cell highlight when collaborator context is removed and al
     act(()=>cell().click());expect(onSelection.mock.calls.at(-1)[0]).toMatchObject({kind:'table-cell'});
   } finally {act(()=>root.unmount());host.remove();}
 });
+
+it('quick search indexes deferred hazard cells and excludes hidden columns and collapsed groups', async()=>{
+ const {tableSearchEntries,filterSearchEntries}=require('../../components/quickSearchUtils');
+ const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
+ const prior=global.IntersectionObserver;
+ global.IntersectionObserver=class {observe(){} unobserve(){} disconnect(){}};
+ const sheet=[['Function','Guide Phrase','Hazard','Private metadata'],...Array.from({length:25},(_,i)=>['Controller',`Phrase ${i}`,`Hazard token${i}`,'hidden-only-value'])];
+ try{
+  act(()=>root.render(<CodeArchitectureHazardSummaryTable hazardMethod="STPA" summarySheet={sheet} storageKey="search-deferred-hazard"/>));
+  const table=host.querySelector('table');table.getClientRects=()=>[{}];
+  const entries=tableSearchEntries(host);
+  expect(filterSearchEntries(entries,'token24')).toHaveLength(1);
+  expect(filterSearchEntries(entries,'hidden-only-value')).toHaveLength(0);
+  expect(host.querySelector('#cba-hazard-row-24').dataset.deferredRow).toBe('true');
+  const priorScroll=Element.prototype.scrollIntoView;Element.prototype.scrollIntoView=jest.fn();
+  try{
+   await act(async()=>{filterSearchEntries(entries,'token24')[0].activate('token24');await new Promise(resolve=>setTimeout(resolve,60));});
+   expect(host.querySelector('#cba-hazard-row-24').dataset.deferredRow).toBeUndefined();
+  }finally{if(priorScroll)Element.prototype.scrollIntoView=priorScroll;else delete Element.prototype.scrollIntoView;}
+  act(()=>host.querySelector('button[aria-expanded="true"]').click());
+  expect(filterSearchEntries(tableSearchEntries(host),'token24')).toHaveLength(0);
+ }finally{act(()=>root.unmount());host.remove();global.IntersectionObserver=prior;}
+});

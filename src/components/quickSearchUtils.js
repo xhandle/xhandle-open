@@ -8,12 +8,12 @@ export function registerTableSearchProvider(table, provider) {
 
 // Model-backed tables avoid thousands of computed-style/layout reads on Find.
 // Entries represent the currently expanded, filtered rows, not the entire CSV.
-export function modelTableSearchEntries({ table, label, indexes, items }) {
+export function modelTableSearchEntries({ table, label, indexes, items, getRowId = index => `hazard-source-row-${index + 1}` }) {
   const active = table.ownerDocument.activeElement;
   const activeRow = table.contains(active) ? active.closest('tr') : null;
   const activeColumn = Number(active?.closest('[data-column-index]')?.dataset.columnIndex);
   return items.map(({ row, originalIndex, searchPrefix }) => {
-    const id = `hazard-source-row-${originalIndex + 1}`;
+    const id = getRowId(originalIndex);
     const parts = indexes.map(index => activeRow?.id === id && activeColumn === index
       ? normalizeSearchText(active.value ?? active.innerText ?? active.textContent)
       : normalizeSearchText(row[index]));

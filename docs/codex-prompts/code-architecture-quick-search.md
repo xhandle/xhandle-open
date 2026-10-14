@@ -1,0 +1,3 @@
+# Code-based architecture quick search parity
+
+Review the Projects quick-search dialog, keyboard shortcuts, table providers and diagram indexing. Reuse that UI in code-based architecture. Index visible nodes, groups and connections in the active diagram; selection must focus/highlight without rearranging or editing. Search filtered visible table columns and expanded groups, including deferred/virtual rows. Preserve existing table providers, project/repository boundaries, event cleanup, and model data. Add focused tests for diagram indexing/activation/hidden content and deferred hazard rows. Run existing search and table suites. Do not create a separate global search or load unrelated projects.

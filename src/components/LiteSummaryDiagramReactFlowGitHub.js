@@ -1,3 +1,4 @@
+import useCodeArchitectureQuickSearch from './useCodeArchitectureQuickSearch';
 import { functionalGridColumns } from './functionalLayout';
 // LiteSummaryDiagramReactFlowGitHub.js — Main diagram component using layout manager
 import React, {
@@ -2649,6 +2650,7 @@ const DiagramBody = forwardRef(function DiagramBody(
       .filter((entry) => entry.row || entry.ref);
   }, [editModal, rows]);
   const { fitView, project, getNodes, getEdges, getViewport, setViewport, viewportInitialized } = useReactFlow();
+  useCodeArchitectureQuickSearch({hostRef:diagramHostRef,storageKey,getNodes,getEdges,fitView,setNodes,setEdges,setSelectedNodeIds,setHighlightedEdgeId});
   const useWindowsReviewPinchZoom = reviewMode && isWindowsReviewRuntime();
   const handleReviewWheelCapture = useCallback((event) => {
     if (!useWindowsReviewPinchZoom || !event.ctrlKey) return;

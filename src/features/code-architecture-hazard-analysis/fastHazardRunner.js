@@ -92,7 +92,7 @@ export function fastHazardSheets(method,input,assessments) {
       'Causal Evidence Quote':downstream(result.evidenceQuote || 'No source quote — causal hypothesis'),
       'Causal Assessment Basis':no?'Not applicable':result.causalBasis,
       'Causal Evidence / Assumption':no?'Not applicable':result.causalEvidence,
-      'Assumptions':downstream(result.assumptions),'Assessment Basis':downstream('AI-generated assessment; assumptions recorded separately'),
+      'Assumptions':downstream(result.assumptions),'Assessment Basis':downstream(result.evidencePreparation?.mode==='chunked'?'AI-generated assessment using chunked evidence summaries; original source retained; assumptions recorded separately':'AI-generated assessment; assumptions recorded separately'),
     };
   });
   const common=['Execution Dependency','Execution Evidence Quote','Operator Dependency','Operator Context Quote','Function (From)','Control Action','Function (To)','Operational Context ID','Operational Scenario','Operational Mode','Operating Conditions','Context Assumptions','Guide Phrase Applicability Rationale','Guide Phrase Applicability Review Status','Hazard','Safety Significant','Safety Significance Rationale','Software Safety Requirement','Verification','Assumptions','Assessment Basis','Assessed Control Action','Causal Assessment Basis','Causal Evidence / Assumption','Causal Evidence Quote','Raw Analysis Row ID'];

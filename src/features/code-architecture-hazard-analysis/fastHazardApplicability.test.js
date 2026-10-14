@@ -50,8 +50,8 @@ test('truncated screening is bounded and never silently excludes',async()=>{
 });
 test('a generated No cannot overwrite screened Yes',async()=>{
  const request=jest.fn(async()=>[{...answer('STPA','HA-1'),applicable:'No'}]);
- await expect(generateFastHazards({method:'STPA',sources:sources(1),context:{},applicabilityRequest:async()=>[{id:'HA-1',applicable:'Yes',rationale:'Meaningful command timing'}],request})).rejects.toHaveProperty('code','COMPACT_HAZARD_INCOMPLETE');
- expect(request).toHaveBeenCalledTimes(3);
+ await expect(generateFastHazards({method:'STPA',sources:sources(1),context:{},applicabilityRequest:async()=>[{id:'HA-1',applicable:'Yes',rationale:'Meaningful command timing'}],request})).rejects.toHaveProperty('code','HAZARD_DEFERRED_REMAINING');
+ expect(request).toHaveBeenCalledTimes(9);
 });
 test('governed No requires no screening and retains rationale',async()=>{
  const request=jest.fn();const source={...sources(1)[0],reviewedApplicability:'No',reviewedRationale:'Human excluded'};

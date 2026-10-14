@@ -1,3 +1,4 @@
+import {registerTableSearchProvider,modelTableSearchEntries} from '../../components/quickSearchUtils';
 import { SHOW_TABLE_REVIEW_COLUMNS } from "../../components/tablePresentation";
 import useDeferredTableRow, { estimateTableRowHeight } from '../../components/useDeferredTableRow';
 import useTableRowFocus from "../../components/useTableRowFocus";
@@ -101,6 +102,7 @@ export default function CodeArchitectureHazardSummaryTable({
   // New defaults apply once to existing tables; subsequent picker choices persist.
   const visibilityStorageKey = `${storageKey}:hidden-columns${isStpa ? ":stpa-focused-v5" : isHara ? ":hara-focused-v2" : isFha ? ":fha-focused-v2" : ""}`;
   const rowRefs = useRef({});
+  const searchTableRef = useRef(null);
   const [selectedCellKey, setSelectedCellKey] = useState("");
   React.useEffect(() => {
     // Undefined allows standalone tables to retain their local selection behavior.
@@ -331,6 +333,15 @@ export default function CodeArchitectureHazardSummaryTable({
     () => buildCodeArchitectureHazardGroups(headers, contextFilteredRowItems),
     [contextFilteredRowItems, headers],
   );
+  useEffect(() => {
+    const table=searchTableRef.current;
+    if(!table)return;
+    return registerTableSearchProvider(table,()=>modelTableSearchEntries({
+      table,label:'Code architecture hazard analysis',indexes:visibleColumns.map(column=>column.index),
+      getRowId:index=>`cba-hazard-row-${index}`,
+      items:hazardGroups.filter(group=>!collapsedInterfaceKeys.has(group.key)).flatMap(group=>group.items.map(item=>({row:item.row,originalIndex:item.rowIndex}))),
+    }));
+  },[hazardGroups,collapsedInterfaceKeys,visibleColumns]);
   const visibleInterfaceKeys = useMemo(() => hazardGroups.map((group) => group.key), [hazardGroups]);
 
   useEffect(() => {
@@ -417,6 +428,7 @@ export default function CodeArchitectureHazardSummaryTable({
     return (
       <tr
         key={rowIndex}
+        id={`cba-hazard-row-${rowIndex}`}
         ref={(el) => {
           if (el) rowRefs.current[rowIndex] = el;
           else delete rowRefs.current[rowIndex];
@@ -472,6 +484,7 @@ export default function CodeArchitectureHazardSummaryTable({
             ? "Functional" : "CSU";
           return (
             <td
+              data-column-index={colIndex}
               key={`${rowIndex}-${colIndex}`}
               className={`whitespace-pre-wrap break-words px-3 py-2 text-slate-700 ${selectedCellKey === `${rowId}:${colIndex}` ? "bg-blue-100 ring-1 ring-inset ring-blue-400" : ""} ${rejected ? "text-rose-900 line-through decoration-rose-400" : ""}`}
               onClick={(event) => {
@@ -524,7 +537,7 @@ export default function CodeArchitectureHazardSummaryTable({
         <CopyTableButton label="Copy code architecture hazard analysis table" columns={copyColumns} rows={contextFilteredRowItems} />
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
-      <table className="table-fixed text-left text-sm" style={{ minWidth: tablePixelWidth }}>
+      <table ref={searchTableRef} aria-label="Code architecture hazard analysis" className="table-fixed text-left text-sm" style={{ minWidth: tablePixelWidth }}>
         <colgroup>
           {onDeleteRow && !readOnly && <col style={{ width: actionsColumnWidth, minWidth: actionsColumnWidth }} />}
           {showReview && reviewItems.length > 0 && <col style={{ width: reviewColumnWidth, minWidth: reviewColumnWidth }} />}
