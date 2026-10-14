@@ -50,7 +50,7 @@ test('truncated screening is bounded and never silently excludes',async()=>{
 });
 test('a generated No cannot overwrite screened Yes',async()=>{
  const request=jest.fn(async()=>[{...answer('STPA','HA-1'),applicable:'No'}]);
- await expect(generateFastHazards({method:'STPA',sources:sources(1),context:{},applicabilityRequest:async()=>[{id:'HA-1',applicable:'Yes',rationale:'Meaningful command timing'}],request})).rejects.toHaveProperty('code','HAZARD_DEFERRED_REMAINING');
+ await expect(generateFastHazards({method:'STPA',sources:sources(1),context:{},applicabilityRequest:async()=>[{id:'HA-1',applicable:'Yes',rationale:'Meaningful command timing'}],request})).resolves.toMatchObject([{applicable:'Yes',applicabilityRationale:'Meaningful command timing',assessmentBasis:expect.stringContaining('Assumption-based')}]);
  expect(request).toHaveBeenCalledTimes(9);
 });
 test('governed No requires no screening and retains rationale',async()=>{
@@ -70,16 +70,16 @@ test.each(['STPA','HARA','FHA'])('%s excluded rows retain identity and mark asse
  for(const name of ['Verification','Software Safety Requirement','Safety Classification','Assumptions','Execution Evidence Quote'])expect(row[name]).toMatch(/^Not applicable/);
  for(const name of method==='STPA'?['Unsafe Control Action','Loss','Hazard']:method==='HARA'?['Severity','Exposure','Controllability','ASIL','Safety Goal']:['Mishap','Severity Category','Software Control Category','Software Criticality Index'])expect(row[name]).toMatch(/^Not applicable/);
 });
-test('screen failure retains decisions and resumes only missing work',async()=>{
+test('screen failure retains decisions and caches explicit assumption-based completion',async()=>{
  const checkpoint=cache(),request=jest.fn(async p=>{
    if(request.mock.calls.length>1)throw new Error('Provider unavailable');
    return [{id:'HA-1',applicable:'No',rationale:'Not a meaningful deviation'}];
  });
  const options={method:'STPA',sources:sources(2),context:{},checkpoint,applicabilityRequest:request};
- await expect(generateFastHazards(options)).rejects.toMatchObject({partialResults:[{id:'HA-1',applicable:'No'}]});
+ await expect(generateFastHazards(options)).resolves.toMatchObject([{id:'HA-1',applicable:'No'},{id:'HA-2',assessmentBasis:expect.stringContaining('Assumption-based')}]);
  request.mockClear();request.mockImplementation(async p=>rows(p).map(({id})=>({id,applicable:'No',rationale:'No meaningful deviation'})));
  expect(await generateFastHazards(options)).toHaveLength(2);
- expect(rows(request.mock.calls[0][0]).map(r=>r.id)).toEqual(['HA-2']);
+ expect(request).not.toHaveBeenCalled();
 });
 test.each(['STPA-Textbook','HARA','FHA'])('%s runner wires the applicability workflow and persists excluded rows',async method=>{
  fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(rows(prompt).map(({id})=>({id,applicable:'No',rationale:'Not meaningful for this action in this context.'}))));

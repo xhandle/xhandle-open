@@ -1,3 +1,4 @@
+import {hasUnresolvedHazardText,hasLockedApplicabilityRationale} from './hazardFieldContract';
 export const FAST_HAZARD_VERSION = 'compact-hazard-v7-grounded-results-first';
 export const FAST_HAZARD_COLUMNS = {
   STPA: ['Function','Operational Scenario','Operational Mode','Operating Conditions','Guide Phrase','Guide Phrase Applicable','Unsafe Control Action','Loss','Hazard','Causal Scenario','Safety Constraint','Verification','Safety Classification'],
@@ -12,7 +13,7 @@ export const ASSESSMENT_FIELDS = {
   FHA: ['mishap','severity','severityRationale','scc','sccRationale','softwareRequirement','verification'],
 };
 const text = value => typeof value === 'string' ? value.trim() : '';
-const unresolved = value => !text(value) || /\b(?:TBD|TBC|TODO|to be determined|to be confirmed|needs? review)\b/i.test(text(value)) || /^(?:needs? review|unknown|unresolved|tbd|pending|not generated|n\/a)(?:$|\s*[:—-])/i.test(text(value));
+const unresolved = hasUnresolvedHazardText;
 const evidenceStrings = value => typeof value === 'string' ? [value] : value && typeof value === 'object' ? Object.values(value).flatMap(evidenceStrings) : [];
 const normalizedQuote = value => text(value).replace(/\s+/g,' ');
 export const classificationValues = ['Safety — Direct','Safety — Related','Mission/Reliability'];
@@ -33,11 +34,18 @@ export function deriveFastSwci(severity,scc) {
 }
 export function validateFastAssessment(method,row,source,{structuralOnly=false}={}) {
   const errors=[];
+  const unresolvedAnswer=value=>{
+    let prose=value;
+    if(typeof prose==='string')for(const label of [source.action,source.from,source.to,source.phrase]){
+      if(typeof label==='string' && label)prose=prose.split(`“${label}”`).join('source element');
+    }
+    return unresolved(prose);
+  };
   if(!row || row.id!==source.id)return ['Incorrect row identity'];
   if(!['Yes','No'].includes(row.applicable))errors.push('applicable must be Yes or No');
   if(source.screenedApplicability && row.applicable!==source.screenedApplicability)errors.push('Screened applicability is read-only');
   if(source.reviewedApplicability && row.applicable!==source.reviewedApplicability)errors.push('Reviewed applicability is read-only');
-  for(const field of COMMON_FIELDS)if(unresolved(row[field]))errors.push(`Missing or unresolved ${field}`);
+  for(const field of COMMON_FIELDS)if(!(field==='applicabilityRationale' && hasLockedApplicabilityRationale(row,source)) && unresolvedAnswer(row[field]))errors.push(`Missing or unresolved ${field}`);
   if(row.applicable==='No'){
     if(row.classification!=='Not applicable')errors.push('Excluded rows require Not applicable classification');
     return errors;
@@ -73,7 +81,7 @@ export function validateFastAssessment(method,row,source,{structuralOnly=false}=
   if(classificationValues.includes(governedClassification) && governedClassification!==row.classification)errors.push('Reviewed safety classification is read-only');
   const governedSignificance=source.reviewedValues?.['Safety Significant'];
   if(['Yes','No'].includes(governedSignificance) && governedSignificance!==(row.classification==='Mission/Reliability'?'No':'Yes'))errors.push('Classification conflicts with reviewed safety significance');
-  for(const field of ASSESSMENT_FIELDS[method])if(unresolved(row[field]) || /^not applicable\b/i.test(text(row[field])))errors.push(`Missing applicable ${field}`);
+  for(const field of ASSESSMENT_FIELDS[method])if(unresolvedAnswer(row[field]) || /^not applicable\b/i.test(text(row[field])))errors.push(`Missing applicable ${field}`);
   if(method==='HARA' && !deriveFastAsil(row.severity,row.exposure,row.controllability))errors.push('Invalid S/E/C rating');
   if(method==='FHA' && !deriveFastSwci(row.severity,row.scc))errors.push('Invalid severity/SCC rating');
   if(row.applicable==='Yes' && !/\bshall\b/i.test(text(row.softwareRequirement)))errors.push('Provide a software-allocated shall requirement');

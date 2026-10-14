@@ -93,7 +93,9 @@ export function reconcileCodeHazardPreprocessing(sheets, tableRows) {
   const conflicts = [];
   const ownership = {};
   const rows = summary.slice(1).map(row => {
-    const matches = owned.filter(source => headers.slice(0, 5).every((header, index) => {
+    const rowId=row[summary[0].indexOf('Raw Analysis Row ID')];
+    const exact=owned.filter(source=>source.userPreprocessingId===rowId);
+    const matches = exact.length===1?exact:owned.filter(source => headers.slice(0, 5).every((header, index) => {
       const column = summary[0].indexOf(header);
       return column < 0 || String(row[column] || '').trim() === values(source)[index];
     }));

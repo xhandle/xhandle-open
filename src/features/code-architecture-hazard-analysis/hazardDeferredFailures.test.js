@@ -45,14 +45,14 @@ test('invalid evidence is deferred while other decisions are completed and revis
  expect(events.slice(events.indexOf('end-retry')).includes('extraction-retry')).toBe(true);
  expect(applicabilityRequest.mock.calls.filter(([p])=>batch(p).some(r=>r.id==='HA-2'))).toHaveLength(1);
 });
-test('persistent failures do not prevent other rows from being completed and remain explicitly pending',async()=>{
+test('persistent failures do not prevent other rows from being completed and finish with explicit premises',async()=>{
  const request=jest.fn(async p=>{
   const rows=batch(p);if(rows.some(r=>r.id==='HA-1'))throw new Error('Provider unavailable');
   return rows.map(({id})=>answer('STPA',id));
  });
- await expect(generateFastHazards({method:'STPA',sources:[source(1),source(2)],context:{},request,...quiet})).rejects.toMatchObject({
-  code:'HAZARD_DEFERRED_REMAINING',partialResults:[{id:'HA-2'}],failedAssessments:[{id:'HA-1'}],totalAssessments:2,
- });
+ await expect(generateFastHazards({method:'STPA',sources:[source(1),source(2)],context:{},request,...quiet})).resolves.toMatchObject([
+  {id:'HA-1',assessmentBasis:expect.stringContaining('Assumption-based')},{id:'HA-2',uca:answer('STPA','HA-2').uca},
+ ]);
  expect(request.mock.calls.filter(([p])=>batch(p).some(r=>r.id==='HA-1'))).toHaveLength(3);
  expect(request.mock.calls.filter(([p])=>batch(p).length===1 && batch(p)[0].id==='HA-2')).toHaveLength(1);
 });
@@ -63,9 +63,9 @@ test('structurally invalid rows recover in end-of-run passes without rerunning a
  expect(result).toHaveLength(2);
  expect(request.mock.calls.filter(([p])=>batch(p).some(r=>r.id==='HA-2'))).toHaveLength(1);
 });
-test.each([401,403])('authentication failure %s stops without deferred retry',async status=>{
+test.each([401,403])('authentication failure %s uses local assumptions without repeated requests',async status=>{
  const request=jest.fn(async()=>{throw new Error(`LLM proxy error (${status}): denied`);});
- await expect(generateFastHazards({method:'STPA',sources:[source(1)],context:{},request,...quiet})).rejects.toThrow('denied');
+ await expect(generateFastHazards({method:'STPA',sources:[source(1)],context:{},request,...quiet})).resolves.toMatchObject([{assessmentBasis:expect.stringContaining('Assumption-based')}]);
  expect(request).toHaveBeenCalledTimes(1);
 });
 test('explicit Stop is never deferred',async()=>{

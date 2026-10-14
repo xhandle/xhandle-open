@@ -170,6 +170,8 @@ const wait = (ms) => new Promise((resolve, reject) => {
 
 let response;
 let json;
+let rateLimitWaitMs = 0;
+const rateLimitError = () => Object.assign(new Error("LLM proxy error (429): provider rate limit retry budget exhausted."), {status: 429, code: "HAZARD_RATE_LIMIT_EXHAUSTED"});
 for (let attempt = 1; attempt <= 5; attempt++) {
   const timeoutController = new AbortController();
   const abortFromCaller = () => timeoutController.abort();
@@ -203,7 +205,10 @@ for (let attempt = 1; attempt <= 5; attempt++) {
     // Keep cancellation and the deadline active until the body is consumed.
     if (response.ok) {
       json = await response.json();
-    } else if (response.status !== 429) {
+    } else if (response.status === 429) {
+      // The status and headers suffice; release the unused body immediately.
+      timeoutController.abort();
+    } else {
       const errTxt = await response.text();
       throw new Error(`LLM proxy error (${response.status}): ${errTxt}`);
     }
@@ -237,14 +242,21 @@ for (let attempt = 1; attempt <= 5; attempt++) {
       retryAfter: response.headers.get("retry-after"),
     });
 
-    if (attempt === 5) break;
+    if (attempt === 5) throw rateLimitError();
 
-    const retryAfter = parseFloat(response.headers.get("retry-after"));
+    const retryAfterHeader = response.headers.get("retry-after");
+    const retryAfter = /^\s*\d+(?:\.\d+)?\s*$/.test(retryAfterHeader || "")
+      ? Number(retryAfterHeader)
+      : (Date.parse(retryAfterHeader) - Date.now()) / 1000;
     const backoff = Number.isFinite(retryAfter)
       ? retryAfter * 1000
       : Math.min(30_000, 500 * Math.pow(2, attempt - 1) + Math.random() * 500);
 
-    await wait(backoff);
+    // Do not retry earlier than the provider permits. Long waits relinquish
+    // remote generation to the pipeline's local completion path.
+    if (backoff > 30_000 || rateLimitWaitMs + backoff > 60_000) throw rateLimitError();
+    rateLimitWaitMs += Math.max(0, backoff);
+    await wait(Math.max(0, backoff));
     continue; // try again
   }
 
@@ -269,7 +281,13 @@ if (["hazard-row-generation", "hazard-semantic-review", "hazard-applicability-sc
   error.responseMetadata = responseMetadata;
   throw error;
 }
-return json?.choices?.[0]?.message?.content?.trim() || "(empty)";
+const content = json?.choices?.[0]?.message?.content;
+if (content != null && typeof content !== "string") {
+  const error = new Error("Provider returned unsupported message content; expected text.");
+  error.name = "ProviderResponseError";
+  throw error;
+}
+return content?.trim() || "(empty)";
 
 
   } catch (error) {

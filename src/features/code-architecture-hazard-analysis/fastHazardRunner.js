@@ -1,3 +1,4 @@
+import {safeHazardObserver,usableHazardInputs} from './hazardCompletionSupport';
 import {boundedHazardStorage} from './resilientHazardCheckpoint';
 import {compactReviewEntries} from './fastHazardSemanticReview';
 import {organizationProfileContextIdentity} from '../organization-profile/organizationProfile';
@@ -10,11 +11,11 @@ import {saveCodeArchitectureHazardRun} from './codeArchitectureHazardStore';
 import {generateFastHazards,compactHazardSources} from './fastHazardPipeline';
 import {fastMethod,FAST_HAZARD_VERSION,FAST_HAZARD_COLUMNS,deriveFastAsil,deriveFastSwci,validateFastAssessment} from './fastHazardSchema';
 
-const SUMMARY_ASSESSMENT_FIELDS=method=>({executionDependency:'Execution Dependency',executionEvidenceQuote:'Execution Evidence Quote',operatorDependency:'Operator Dependency',operatorContextQuote:'Operator Context Quote',uca:'Unsafe Control Action',loss:'Loss',causalScenario:'Causal Scenario',safetyConstraint:'Safety Constraint',evidenceQuote:'Causal Evidence Quote',assessedAction:'Assessed Control Action',causalBasis:'Causal Assessment Basis',causalEvidence:'Causal Evidence / Assumption',applicable:'Guide Phrase Applicable',applicabilityRationale:'Guide Phrase Applicability Rationale',classification:'Safety Classification',classificationRationale:'Safety Significance Rationale',assumptions:'Assumptions',malfunction:'Malfunctioning Behavior',causalFactor:'Causal Factor',hazard:'Hazard',hazardousEvent:'Hazardous Event',mishap:'Mishap',severity:method==='FHA'?'Severity Category':'Severity',exposure:'Exposure',controllability:'Controllability',ratingRationale:'Rating Rationale',safetyGoal:'Safety Goal',severityRationale:'Severity Rationale',scc:'Software Control Category',sccRationale:'Software Control Category Rationale',softwareRequirement:'Software Safety Requirement',verification:'Verification'});
+const SUMMARY_ASSESSMENT_FIELDS=method=>({assessmentBasis:'Assessment Basis',executionDependency:'Execution Dependency',executionEvidenceQuote:'Execution Evidence Quote',operatorDependency:'Operator Dependency',operatorContextQuote:'Operator Context Quote',uca:'Unsafe Control Action',loss:'Loss',causalScenario:'Causal Scenario',safetyConstraint:'Safety Constraint',evidenceQuote:'Causal Evidence Quote',assessedAction:'Assessed Control Action',causalBasis:'Causal Assessment Basis',causalEvidence:'Causal Evidence / Assumption',applicable:'Guide Phrase Applicable',applicabilityRationale:'Guide Phrase Applicability Rationale',classification:'Safety Classification',classificationRationale:'Safety Significance Rationale',assumptions:'Assumptions',malfunction:'Malfunctioning Behavior',causalFactor:'Causal Factor',hazard:'Hazard',hazardousEvent:'Hazardous Event',mishap:'Mishap',severity:method==='FHA'?'Severity Category':'Severity',exposure:'Exposure',controllability:'Controllability',ratingRationale:'Rating Rationale',safetyGoal:'Safety Goal',severityRationale:'Severity Rationale',scc:'Software Control Category',sccRationale:'Software Control Category Rationale',softwareRequirement:'Software Safety Requirement',verification:'Verification'});
 
 // Imports remain governed inputs. Validate the merged artifact, and calculate
 // dependent ratings from the final ratings rather than retaining stale indexes.
-function validateMergedSheet(method,sheet,sources) {
+function validateMergedSheet(method,sheet,sources,onInvalid) {
   const headers=sheet[0];
   const fields=SUMMARY_ASSESSMENT_FIELDS(method);
   for(let index=1;index<sheet.length;index++){
@@ -32,7 +33,12 @@ function validateMergedSheet(method,sheet,sources) {
     const assessment={id:source.id,...Object.fromEntries(Object.entries(fields).map(([key,header])=>[key,row[headers.indexOf(header)]]))};
     if(assessment.applicable==='No')assessment.classification='Not applicable';
     const errors=validateFastAssessment(method,assessment,source,{structuralOnly:true});
-    if(errors.length)throw new Error(`Imported assessment ${index} conflicts with the completed ${method} result: ${errors.join('; ')}`);
+    if(errors.length){
+      if(!onInvalid)throw new Error(`Imported assessment ${index} conflicts with the completed ${method} result: ${errors.join('; ')}`);
+      onInvalid(index,errors);
+      validateMergedSheet(method,[headers,sheet[index]],[source]);
+      continue;
+    }
     if(assessment.applicable==='Yes' && method==='HARA')row[headers.indexOf('ASIL')]=deriveFastAsil(assessment.severity,assessment.exposure,assessment.controllability);
     if(assessment.applicable==='Yes' && method==='FHA'){
       const swci=deriveFastSwci(assessment.severity,assessment.scc);
@@ -92,7 +98,7 @@ export function fastHazardSheets(method,input,assessments) {
       'Causal Evidence Quote':downstream(result.evidenceQuote || 'No source quote — causal hypothesis'),
       'Causal Assessment Basis':no?'Not applicable':result.causalBasis,
       'Causal Evidence / Assumption':no?'Not applicable':result.causalEvidence,
-      'Assumptions':downstream(result.assumptions),'Assessment Basis':downstream(result.evidencePreparation?.mode==='chunked'?'AI-generated assessment using chunked evidence summaries; original source retained; assumptions recorded separately':'AI-generated assessment; assumptions recorded separately'),
+      'Assumptions':downstream(result.assumptions),'Assessment Basis':downstream(result.assessmentBasis || (result.evidencePreparation?.mode==='chunked'?'AI-generated assessment using chunked evidence summaries; original source retained; assumptions recorded separately':'AI-generated assessment; assumptions recorded separately')),
     };
   });
   const common=['Execution Dependency','Execution Evidence Quote','Operator Dependency','Operator Context Quote','Function (From)','Control Action','Function (To)','Operational Context ID','Operational Scenario','Operational Mode','Operating Conditions','Context Assumptions','Guide Phrase Applicability Rationale','Guide Phrase Applicability Review Status','Hazard','Safety Significant','Safety Significance Rationale','Software Safety Requirement','Verification','Assumptions','Assessment Basis','Assessed Control Action','Causal Assessment Basis','Causal Evidence / Assumption','Causal Evidence Quote','Raw Analysis Row ID'];
@@ -102,6 +108,7 @@ export function fastHazardSheets(method,input,assessments) {
 }
 
 export async function runFastCodeArchitectureHazardAnalysis({previousRun=null,regenerate=false,cbaRows=[],method='STPA-Textbook',repoMeta={},projectId='',operationalContexts=[],selectedOperationalContextId='all',organizationContext='',organizationProfileProvenance=null,setProgress=()=>{},onActivityUpdate=()=>{},onPartialRunUpdate=()=>{},signal}={}) {
+  setProgress=safeHazardObserver(setProgress);onActivityUpdate=safeHazardObserver(onActivityUpdate);onPartialRunUpdate=safeHazardObserver(onPartialRunUpdate);
   const normalizedMethod=fastMethod(method);
   if(!normalizedMethod)throw new Error('Unsupported compact hazard method');
   const check=()=>{if(signal?.aborted)throw new DOMException('Hazard analysis cancelled.','AbortError');};
@@ -111,7 +118,14 @@ export async function runFastCodeArchitectureHazardAnalysis({previousRun=null,re
   if(!cbaRows.length)throw new Error('Generate or load a functional architecture before hazard analysis.');
   if(!functionalModelIsReady(cbaRows) && (cbaRows.some(row=>row.functionalAbstraction) || repoMeta.functionalProcessingError))throw new Error('Generate an up-to-date Functional model before hazard analysis.');
   if(previousRun && fastMethod(previousRun.hazardMethod)!==normalizedMethod)previousRun=null;
-  const input=prepareCodeHazardPreprocessing(buildCodeArchitectureHazardInput({cbaRows,method:normalizedMethod==='STPA'?'STPA-Textbook':normalizedMethod,repoMeta,projectId,operationalContexts,selectedOperationalContextId}),previousRun);
+  let input=prepareCodeHazardPreprocessing(buildCodeArchitectureHazardInput({cbaRows,method:normalizedMethod==='STPA'?'STPA-Textbook':normalizedMethod,repoMeta,projectId,operationalContexts,selectedOperationalContextId}),previousRun);
+  const retainedUserInputs={...previousRun?.retainedUserInputs};
+  input={...input,tableRows:input.tableRows.map((row,index)=>{
+   if(!row.userPreprocessing)return row;
+   const {usable,retained}=usableHazardInputs(row.userPreprocessing.values,normalizedMethod);
+   if(Object.keys(retained).length)retainedUserInputs[row.userPreprocessingId || `HA-${index+1}`]={...retainedUserInputs[row.userPreprocessingId || `HA-${index+1}`],...retained};
+   return {...row,userPreprocessing:{...row.userPreprocessing,values:usable}};
+  })};
   if(!input.tableRows.length)throw new Error('No architecture interfaces are included for hazard analysis.');
   const provider=getStoredActiveAIProvider();
   const context={repository:repoMeta.repoName || input.repoId,organizationProfile:organizationContext || 'No organization profile enabled.',operationalContext:input.operationalContext,analysisContext:input.analysisContext,contextSources:input.contextSources};
@@ -121,12 +135,22 @@ export async function runFastCodeArchitectureHazardAnalysis({previousRun=null,re
     {regenerate,signal,onProgress:progress}));}catch(error){check();storageWarning=error.message || 'Checkpoint storage unavailable';}
   const sources=compactHazardSources(input.tableRows);
   const buildRun=(assessments,selectedInput=input)=>{
-  const reconciled=reconcileCodeHazardPreprocessing(fastHazardSheets(normalizedMethod,selectedInput,assessments),selectedInput.tableRows);
-  if(selectedInput.tableRows.some(row=>row.userPreprocessing && !reconciled.ownership[row.userPreprocessingId]))throw new Error('Could not preserve imported assessments uniquely. Existing results remain saved.');
-  validateMergedSheet(normalizedMethod,reconciled.sheets.Summary,compactHazardSources(selectedInput.tableRows).map((source,index)=>({...source,id:assessments[index].id})));
+  const generated=fastHazardSheets(normalizedMethod,selectedInput,assessments);
+  const reconciled=reconcileCodeHazardPreprocessing(generated,selectedInput.tableRows);
+  for(const row of selectedInput.tableRows)if(row.userPreprocessing && !reconciled.ownership[row.userPreprocessingId])
+    retainedUserInputs[row.userPreprocessingId]={...row.userPreprocessing.values};
+  validateMergedSheet(normalizedMethod,reconciled.sheets.Summary,compactHazardSources(selectedInput.tableRows).map((source,index)=>({...source,id:assessments[index].id,screenedApplicability:assessments[index].applicable,screenedRationale:assessments[index].applicabilityRationale})),index=>{
+    const source=selectedInput.tableRows[index-1],id=source.userPreprocessingId || assessments[index-1].id;
+    retainedUserInputs[id]={...retainedUserInputs[id],...source.userPreprocessing?.values};
+    reconciled.sheets.Summary[index]=[...generated.Summary[index]];
+    delete reconciled.ownership[id];
+  });
+  const basisColumn=reconciled.sheets.Summary[0].indexOf('Assessment Basis');
+  const idColumn=reconciled.sheets.Summary[0].indexOf('Raw Analysis Row ID');
+  for(const row of reconciled.sheets.Summary.slice(1))if(retainedUserInputs[row[idColumn]] && basisColumn>=0)row[basisColumn]+=' Original imported values requiring normalization or replacement are retained separately; generated values use the stated assessment premises.';
   const id=makeCodeArchitectureHazardId('cba-hazard-run');
   return normalizeCodeArchitectureHazardRun({id,sourceRunId:id,projectId,repoId:input.repoId,repoName:repoMeta.repoName || input.repoId,repoUrl:repoMeta.repoUrl,repoPath:repoMeta.repoPath,branch:repoMeta.branch,
-    pipelineVersion:FAST_HAZARD_VERSION,runState:'complete',
+    pipelineVersion:FAST_HAZARD_VERSION,runState:'complete',retainedUserInputs,
     narrativeReviewInput:compactReviewEntries(compactHazardSources(selectedInput.tableRows).map((source,index)=>({source:{...source,id:assessments[index].id},assessment:{...assessments[index],...Object.fromEntries(Object.entries(SUMMARY_ASSESSMENT_FIELDS(normalizedMethod)).filter(([,header])=>reconciled.sheets.Summary[0].includes(header)).map(([field,header])=>[field,reconciled.sheets.Summary[index+1][reconciled.sheets.Summary[0].indexOf(header)]]))}}))),narrativeReviewContext:context,
 hazardMethod:method,hazardGenerationMode:'compact',
     architectureSnapshotHash:input.architectureSnapshotHash,analysisAbstraction:input.analysisAbstraction,functionalModelSnapshotHash:input.functionalModelSnapshotHash,

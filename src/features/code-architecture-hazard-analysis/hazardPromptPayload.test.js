@@ -26,9 +26,9 @@ test('oversized shared context requires valid extraction',async()=>{
  await expect(screenFastApplicability({method:'FHA',sources:[source()],context:{organizationProfile:'x'.repeat(130000)},request})).rejects.toMatchObject({code:'HAZARD_EVIDENCE_INVALID'});expect(request).toHaveBeenCalled();
  expect(request.mock.calls.every(([p])=>p.includes("Evidence pieces: "))).toBe(true);
 });
-test.each(['STPA','HARA','FHA'])('%s generation requires valid extraction even when applicability is reviewed',async method=>{
+test.each(['STPA','HARA','FHA'])('%s uses explicit assumptions when evidence extraction fails',async method=>{
  const request=jest.fn();
- await expect(generateFastHazards({method,sources:[{...source(),reviewedApplicability:'Yes',reviewedRationale:'Reviewed',evidence:'x'.repeat(130000)}],context:{},request,onDiagnostic:()=>{},onMetrics:()=>{}})).rejects.toMatchObject({code:'HAZARD_DEFERRED_REMAINING',partialResults:[]});expect(request).toHaveBeenCalled();
+ await expect(generateFastHazards({method,sources:[{...source(),reviewedApplicability:'Yes',reviewedRationale:'Reviewed',evidence:'x'.repeat(130000)}],context:{},request,onDiagnostic:()=>{},onMetrics:()=>{}})).resolves.toMatchObject([{applicable:'Yes',assessmentBasis:expect.stringContaining('Assumption-based')}]);expect(request).toHaveBeenCalled();
  expect(request.mock.calls.every(([p])=>p.includes("Evidence pieces: "))).toBe(true);
 });
 test('provider input rejection splits screening rather than repeating the same request',async()=>{
@@ -46,11 +46,11 @@ test('hard ceiling includes all characters, not just row count',()=>{
  expect(()=>assertHazardPromptFits('x'.repeat(120000))).not.toThrow();
  expect(()=>assertHazardPromptFits('x'.repeat(120001))).toThrow('too large');
 });
-test('failed extraction preserves already resolved rows in the recovery error',async()=>{
+test('failed extraction preserves resolved rows alongside assumption-based completion',async()=>{
  const request=jest.fn();
  const sources=[{...source(),reviewedApplicability:'No',reviewedRationale:'Human exclusion'},
   {...source('HA-2'),reviewedApplicability:'Yes',reviewedRationale:'Human inclusion',evidence:'x'.repeat(130000)}];
- await expect(generateFastHazards({method:'STPA',sources,context:{},request,onDiagnostic:()=>{},onMetrics:()=>{}})).rejects.toMatchObject({code:'HAZARD_DEFERRED_REMAINING',partialResults:[{id:'HA-1',applicable:'No'}]});
+ await expect(generateFastHazards({method:'STPA',sources,context:{},request,onDiagnostic:()=>{},onMetrics:()=>{}})).resolves.toMatchObject([{id:'HA-1',applicable:'No'},{id:'HA-2',applicable:'Yes',assessmentBasis:expect.stringContaining('Assumption-based')}]);
  expect(request).toHaveBeenCalled();
  expect(request.mock.calls.every(([p])=>p.includes("Evidence pieces: "))).toBe(true);
 });
@@ -88,11 +88,11 @@ describe('large individual inputs use a separate request allowance',()=>{
   await screenFastApplicability({method:'STPA',sources:[{...source(),evidence:'x'.repeat(156337)}],context:{},request}).catch(error=>expect(error.message).toContain('missing-id'));
   expect(request.mock.calls.map(([,o])=>o.maxTokens)).toEqual([8000,8000,8000]);
  });
- test('invalid extraction for oversized Claude input retains partial results',async()=>{
+ test('invalid extraction for oversized Claude input completes with explicit assumptions',async()=>{
   claude();const request=jest.fn();
   await expect(generateFastHazards({method:'STPA',sources:[{...source(),reviewedApplicability:'No'},
    {...source('HA-2'),reviewedApplicability:'Yes',evidence:'x'.repeat(210000)}],context:{},request,onDiagnostic:()=>{},onMetrics:()=>{}}))
-   .rejects.toMatchObject({code:'HAZARD_DEFERRED_REMAINING',partialResults:[{id:'HA-1',applicable:'No'}]});
+   .resolves.toMatchObject([{id:'HA-1',applicable:'No'},{id:'HA-2',applicable:'Yes',assessmentBasis:expect.stringContaining('Assumption-based')}]);
   expect(request).toHaveBeenCalled();
  expect(request.mock.calls.every(([p])=>p.includes("Evidence pieces: "))).toBe(true);
  });

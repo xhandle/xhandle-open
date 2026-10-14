@@ -1,3 +1,6 @@
+import {isAcceptedApplicabilityDecision} from './hazardFieldContract';
+import {safeHazardObserver} from './hazardCompletionSupport';
+import {assumptionHazardFallback} from './assumptionHazardFallback';
 import {canDeferHazardFailure} from './hazardDeferredFailures';
 import {createHazardEvidenceChunker} from './hazardEvidenceChunking';
 import {compactHazardPromptPayload,hazardPromptFits,assertHazardPromptFits,isHazardInputLimitError} from './hazardPromptPayload';
@@ -38,6 +41,8 @@ export async function generateFastHazards({method,sources,context,checkpoint,sig
  applicabilityRequest=(prompt,options)=>fetchLLMResponse(prompt,{},[],'',{workflow:'hazard-applicability-screen',signal,...options}),
  request=(prompt,options)=>fetchLLMResponse(prompt,{},[],'',{workflow:'hazard-row-generation',signal,...options}),
 }) {
+ onProgress=safeHazardObserver(onProgress);onStorageState=safeHazardObserver(onStorageState);
+ onMetrics=safeHazardObserver(onMetrics);onDiagnostic=safeHazardObserver(onDiagnostic);
  const check=()=>{if(signal?.aborted)throw new DOMException('Hazard analysis cancelled.','AbortError');};
  const started=Date.now(),metrics={applicability:{requests:0},generation:{requests:0},evidence:{requests:0},review:{requests:0}};
  let batchId=0;
@@ -60,14 +65,28 @@ export async function generateFastHazards({method,sources,context,checkpoint,sig
   onProgress:event=>{onDiagnostic({method,stage:'evidence',event:'progress',...event});onProgress({message:event.message});},
  });
  const informationPending=new Set();
- const results=new Map(),failures={},budget=createGenerationBudget();
+ const results=new Map(),screenedDecisions=new Map(),failures={},budget=createGenerationBudget();
  const key=source=>({pipeline:FAST_HAZARD_VERSION,method,context,source});
+ const saveAssessment=(source,value)=>cache.write(key(source),{...value,...(screenedDecisions.has(source.id)?{acceptedApplicability:screenedDecisions.get(source.id)}:{})});
  const report=()=>onProgress({step:20+75*results.size/Math.max(1,sources.length),total:100,completed:results.size,message:`Assessed ${results.size} of ${sources.length} ${method} guide-phrase rows`});
  const excluded=(source,decision)=>({id:source.id,applicable:'No',applicabilityRationale:decision.rationale,classification:'Not applicable',classificationRationale:'Guide phrase excluded.',assumptions:'Not applicable',...(decision.evidencePreparation?{evidencePreparation:decision.evidencePreparation}:{})});
+ const completeWithAssumptions=async()=>{
+  for(const source of sources){
+   check();
+   if(results.has(source.id))continue;
+   const value=assumptionHazardFallback(method,source,screenedDecisions.get(source.id));
+   results.set(source.id,value);
+   onDiagnostic({method,event:'assumption-based-completion',id:source.id,reasons:failures[source.id] || []});
+   delete failures[source.id];
+   await saveAssessment(source,value);
+   report();
+  }
+  await cache.flush();check();return sources.map(s=>results.get(s.id));
+ };
  try{
   check();
   const saved=await cache.readMany(sources.map(key));check();
-  sources.forEach((source,i)=>{if(source.reviewedApplicability==='No'){results.set(source.id,excluded(source,{rationale:source.reviewedRationale || 'User applicability decision: No.'}));return;}if(saved[i] && !validateFastAssessment(method,saved[i],source,{structuralOnly:true}).length)results.set(source.id,saved[i]);});
+  sources.forEach((source,i)=>{if(source.reviewedApplicability==='No'){results.set(source.id,excluded(source,{rationale:source.reviewedRationale || 'User applicability decision: No.'}));return;}const decision=saved[i]?.acceptedApplicability;const validationSource=isAcceptedApplicabilityDecision(decision)?{...source,screenedApplicability:decision.applicable,screenedRationale:decision.rationale}:source;if(saved[i] && !validateFastAssessment(method,saved[i],validationSource,{structuralOnly:true}).length)results.set(source.id,saved[i]);});
   // Complete independent work first, then revisit only unresolved rows twice.
   // Checkpoints and the results map prevent repeating accepted work.
   for(let pass=0;pass<3;pass++){
@@ -84,8 +103,9 @@ export async function generateFastHazards({method,sources,context,checkpoint,sig
   const decisions=await screenFastApplicability({method,sources:unknown,context,checkpoint:cache,signal,evidenceChunker,onDeferred:defer,maxBatchRows:pass?1:48,
     request:async(p,o)=>{return tracked('applicability',applicabilityRequest,p,o,o.rows,'applicability decisions');},
     onProgress:(done,total)=>onProgress({step:5+15*done/Math.max(1,total),total:100,completed:results.size,message:`Screened ${done} of ${total} ${method} guide-phrase rows`}),
-    onDecision:async(source,decision)=>{if(decision.applicable==='No'){const value=excluded(source,decision);results.set(source.id,value);delete failures[source.id];await cache.write(key(source),value);}},
+    onDecision:async(source,decision)=>{screenedDecisions.set(source.id,decision);if(decision.applicable==='No'){const value=excluded(source,decision);results.set(source.id,value);delete failures[source.id];await saveAssessment(source,value);}},
   });
+  for(const [id,decision] of decisions)screenedDecisions.set(id,decision);
   const pending=unknown.filter(s=>!results.has(s.id) && decisions.has(s.id)).map(s=>({...s,screenedApplicability:decisions.get(s.id).applicable,screenedRationale:decisions.get(s.id).rationale}));
   const originals=new Map(sources.map(s=>[s.id,s]));
   const limit=hazardInputLimit(resultsFirstPrompt(method,[],context).length,70000);
@@ -116,7 +136,7 @@ export async function generateFastHazards({method,sources,context,checkpoint,sig
       const errors=parseError?[`Response failed: ${parseError}`]:matches.length!==1?['Missing or duplicate row ID']:validateFastAssessment(method,row,source,{structuralOnly:true});
       if(errors.length){invalid.push(source);problems[source.id]=errors;continue;}
       const value={...row,applicabilityRationale:source.reviewedRationale || source.screenedRationale,...(evidenceChunker.metadataFor(source.id)?{evidencePreparation:evidenceChunker.metadataFor(source.id)}:{})};
-      results.set(source.id,value);delete failures[source.id];await cache.write(key(originals.get(source.id)),value);report();
+      results.set(source.id,value);delete failures[source.id];await saveAssessment(originals.get(source.id),value);report();
     }
     if(!invalid.length)return;
     if(attempt>=2){invalid.forEach(s=>defer(s,new Error(problems[s.id].join("; "))));return;}
@@ -133,12 +153,13 @@ export async function generateFastHazards({method,sources,context,checkpoint,sig
   }));
   check();if(stopped)throw stopped;
   }
-  if(Object.keys(failures).length){
-   await cache.flush();check();
-   throw Object.assign(new Error(informationPending.size?`${method}: ${informationPending.size} assessments need additional applicability information. Update their source/context or explicitly review applicability before retrying. Other completed work is retained.${Object.keys(failures).length>informationPending.size?" Other request/validation failures remain retryable.":""}`:`${method}: ${Object.keys(failures).length} assessments remain pending after two end-of-run retry passes. All other work was completed and retained. Continue retries only these unfinished rows.`),{code:'HAZARD_DEFERRED_REMAINING'});
-  }
-  await cache.flush();check();return sources.map(s=>results.get(s.id));
+  return await completeWithAssumptions();
  }catch(cause){
+  const providerStatus=Number(cause?.status || cause?.response?.status || cause?.message?.match(/LLM proxy error \((\d+)\)/)?.[1]);
+  if(!signal?.aborted && cause?.name!=='AbortError' && [401,402,403,404,429].includes(providerStatus)){
+   onDiagnostic({method,event:'provider-unavailable-completion',status:providerStatus});
+   return await completeWithAssumptions();
+  }
   const error=hazardRunError(cause,'COMPACT_HAZARD_INCOMPLETE');
   error.partialResults=sources.filter(s=>results.has(s.id)).map(s=>results.get(s.id));error.totalAssessments=sources.length;
   error.findings=failures;error.failedAssessments=sources.filter(s=>failures[s.id]).map(s=>({id:s.id,action:s.action,phrase:s.phrase,reasons:failures[s.id]}));throw error;

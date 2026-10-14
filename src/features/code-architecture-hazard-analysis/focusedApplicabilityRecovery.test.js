@@ -10,12 +10,12 @@ const quiet={onDiagnostic:()=>{},onMetrics:()=>{}};
 test.each(['STPA','HARA','FHA'])('%s unresolved evidence takes two calls, survives Continue, and invalidates on context changes',async method=>{
  const checkpoint=cache(),request=jest.fn(),applicabilityRequest=jest.fn(async p=>missing(p));
  const options={method,sources:[source],context:{organizationProfile:'A'},checkpoint,request,applicabilityRequest,...quiet};
- await expect(generateFastHazards(options)).rejects.toMatchObject({findings:{'HA-1':[expect.stringContaining('deadline specification')]}});
+ await expect(generateFastHazards(options)).resolves.toMatchObject([{assessmentBasis:expect.stringContaining('Assumption-based')}]);
  expect(applicabilityRequest).toHaveBeenCalledTimes(2);expect(request).not.toHaveBeenCalled();
  expect(applicabilityRequest.mock.calls[1][0]).toContain('Need the deadline specification');
- await expect(generateFastHazards(options)).rejects.toThrow('need additional applicability information');
+ await expect(generateFastHazards(options)).resolves.toMatchObject([{assessmentBasis:expect.stringContaining('Assumption-based')}]);
  expect(applicabilityRequest).toHaveBeenCalledTimes(2);
- await expect(generateFastHazards({...options,context:{organizationProfile:'B'}})).rejects.toThrow();
+ await expect(generateFastHazards({...options,context:{organizationProfile:'B'}})).resolves.toHaveLength(1);
  expect(applicabilityRequest).toHaveBeenCalledTimes(4);
  applicabilityRequest.mockImplementation(async p=>no(p));
  expect(await generateFastHazards({...options,sources:[{...source,evidence:'New specification'}]})).toHaveLength(1);
@@ -56,7 +56,7 @@ test('structural retry reports duplicate IDs without increasing the output budge
 });
 test('pending information does not prevent independent excluded rows from being retained',async()=>{
  const request=jest.fn(async p=>rows(p).map(({id})=>id==='HA-1'?{id,needsEvidence:true,rationale:'Missing deadline'}:{id,applicable:'No',rationale:'No meaningful deviation'}));
- await expect(generateFastHazards({method:'STPA',sources:[source,{...source,id:'HA-2'}],context:{},applicabilityRequest:request,...quiet})).rejects.toMatchObject({partialResults:[{id:'HA-2',applicable:'No'}]});
+ await expect(generateFastHazards({method:'STPA',sources:[source,{...source,id:'HA-2'}],context:{},applicabilityRequest:request,...quiet})).resolves.toMatchObject([{id:'HA-1',applicable:'Yes',assessmentBasis:expect.stringContaining('Assumption-based')},{id:'HA-2',applicable:'No'}]);
  expect(request).toHaveBeenCalledTimes(2);
 });
 test('oversized compact inputs and extraction share the three-request ceiling',async()=>{

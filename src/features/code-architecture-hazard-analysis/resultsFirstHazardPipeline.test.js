@@ -25,7 +25,7 @@ test('missing cell retries only that row while valid rows are cached',async()=>{
 });
 test('invalid ratings get targeted structural retries',async()=>{
  const request=jest.fn(async p=>rows(p).map(({id})=>({...compact('HARA',id),severity:id==='HA-2'?'S9':'S3'})));
- await expect(generateFastHazards({method:'HARA',sources:sources(4),context:{},request})).rejects.toMatchObject({partialResults:expect.any(Array),findings:{'HA-2':['Invalid S/E/C rating']}});
+ await expect(generateFastHazards({method:'HARA',sources:sources(4),context:{},request})).resolves.toEqual(expect.arrayContaining([expect.objectContaining({id:'HA-2',severity:'S3',assessmentBasis:expect.stringContaining('Assumption-based')})]));
  expect(request).toHaveBeenCalledTimes(9);expect(request.mock.calls.slice(1).every(([p])=>rows(p).length===1 && rows(p)[0].id==='HA-2')).toBe(true);
 });
 test('native checkpoint aborts do not cancel generation and report unsaved work',async()=>{
@@ -35,9 +35,9 @@ test('native checkpoint aborts do not cancel generation and report unsaved work'
  expect(result).toHaveLength(12);expect(onStorageState).toHaveBeenCalledWith(expect.objectContaining({unsaved:true}));
  expect(checkpoint.write.mock.calls.length).toBeLessThanOrEqual(2);
 });
-test('transport failure preserves successful independent batches without fabricated rows',async()=>{
+test('transport failure preserves successful independent batches alongside explicit assumption-based rows',async()=>{
  const request=jest.fn(async p=>{if(rows(p)[0].id==='HA-9')throw new Error('Provider unavailable');return rows(p).map(({id})=>compact('STPA',id));});
- await expect(generateFastHazards({method:'STPA',sources:sources(16),context:{},request})).rejects.toMatchObject({partialResults:expect.arrayContaining([expect.objectContaining({id:'HA-1'})])});
+ await expect(generateFastHazards({method:'STPA',sources:sources(16),context:{},request})).resolves.toEqual(expect.arrayContaining([expect.objectContaining({id:'HA-1',uca:compact('STPA','HA-1').uca}),expect.objectContaining({id:'HA-9',assessmentBasis:expect.stringContaining('Assumption-based')})]));
  expect(request.mock.calls.filter(([p])=>rows(p).some(r=>r.id==='HA-9'))).toHaveLength(3);
  expect(request.mock.calls.filter(([p])=>rows(p).some(r=>r.id==='HA-1'))).toHaveLength(1);
 });

@@ -1,3 +1,4 @@
+import {isAcceptedApplicabilityDecision} from './hazardFieldContract';
 import {canDeferHazardFailure} from './hazardDeferredFailures';
 import {createHazardEvidenceChunker} from './hazardEvidenceChunking';
 import {compactHazardPromptPayload,hazardPromptFits,assertHazardPromptFits,isHazardInputLimitError} from './hazardPromptPayload';
@@ -7,7 +8,7 @@ import {createHazardRequestScheduler} from './hazardRequestScheduler';
 const check=signal=>{if(signal?.aborted)throw new DOMException('Hazard analysis cancelled.','AbortError');};
 const SCREEN_BYTES=60000;
 const pendingError=value=>Object.assign(new Error(`Applicability needs additional information: ${value.reason}`),{code:'HAZARD_APPLICABILITY_INFORMATION_NEEDED',pendingInformation:true});
-const valid=row=>row && row.needsEvidence!==true && ['Yes','No'].includes(row.applicable) && typeof row.rationale==='string' && row.rationale.trim() && !/needs review|to be determined|^tbd$/i.test(row.rationale);
+const valid=isAcceptedApplicabilityDecision;
 // This projection is deliberately separate from the full analysis source.
 // Original evidence remains available for explicitly ambiguous decisions only.
 const screenDefinition=source=>Object.fromEntries(['from','action','to','details','interfaceType','lifecycle','context'].filter(key=>source[key]!==undefined).map(key=>[key,source[key]]));

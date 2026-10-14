@@ -4,7 +4,7 @@
 export function canDeferHazardFailure(error,signal) {
  if(signal?.aborted || error?.name==='AbortError')return false;
  const status=Number(error?.status || error?.response?.status || error?.message?.match(/LLM proxy error \((\d+)\)/)?.[1]);
- if([401,402,403,404].includes(status))return false;
+ if([401,402,403,404,429].includes(status))return false;
  if(['ReferenceError','RangeError'].includes(error?.name))return false;
  if(error?.name==='TypeError' && !/fetch|load failed|network/i.test(error.message))return false;
  return true;

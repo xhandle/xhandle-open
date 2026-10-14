@@ -69,44 +69,45 @@ test('save failure publishes complete unsaved results with truthful completion',
  expect(progress.mock.calls.at(-1)[0]).toMatchObject({step:100,message:expect.stringContaining('save pending')});
 });
 
-test('incomplete recovery survives storage reload and cannot derive software requirements',async()=>{
+test.each(['STPA-Textbook','HARA','FHA'])('%s assumption-based completion survives storage, CSV and requirements derivation',async method=>{
  const actual=jest.requireActual('./codeArchitectureHazardStore');
  saveCodeArchitectureHazardRun.mockImplementation(actual.saveCodeArchitectureHazardRun);
- fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>id==='HA-1'?{id}:answer('STPA',id))));
- let error;try{await runCodeArchitectureHazardAnalysis(base);}catch(e){error=e;}
- expect(error.recoveryRun).toMatchObject({runState:'incomplete',validatedAssessments:6,totalAssessments:7});
- const reloaded=normalizeCodeArchitectureHazardRun(await actual.getCodeArchitectureHazardRunById(error.recoveryRun.id));
- expect(reloaded.generatedSheets.Summary).toHaveLength(7);
- expect(reloaded.failedAssessments[0].id).toBe('HA-1');
- expect(()=>importHazardSoftwareRequirements({hazardAnalysis:reloaded})).toThrow('Complete and save');
+ const short=method==='STPA-Textbook'?'STPA':method;
+ fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>id==='HA-1'?{id}:answer(short,id))));
+ const run=await runCodeArchitectureHazardAnalysis({...base,method});
+ expect(run.runState).toBe('complete');
+ const reloaded=normalizeCodeArchitectureHazardRun(await actual.getCodeArchitectureHazardRunById(run.id));
+ const sheet=reloaded.generatedSheets.Summary;
+ expect(sheet).toHaveLength(8);
+ expect(sheet[1][sheet[0].indexOf('Assessment Basis')]).toContain('Assumption-based');
+ expect(sheet[1][sheet[0].indexOf('Assumptions')]).toContain('premises');
+ expect(parseCsv(toCsvText(sheet))).toEqual(sheet.map(row=>row.map(String)));
+ expect(planHazardAnalysisCsvImport(sheet,toCsvText(sheet)).changedRowCount).toBe(0);
+ expect(importHazardSoftwareRequirements({hazardAnalysis:reloaded})).toEqual(expect.arrayContaining([expect.objectContaining({source:'hazard-derived',sourceTraceId:'functional-1'})]));
  localStorage.removeItem('xhandle:code-architecture-hazard-analysis:v1');
 });
 
-test('a failed replacement is stored separately from the previous complete Summary',async()=>{
+test('a replacement completes with assumptions without modifying the prior run',async()=>{
  fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>answer('STPA',id))));
- const previous=await runCodeArchitectureHazardAnalysis(base);
+ const previous=await runCodeArchitectureHazardAnalysis(base),snapshot=JSON.stringify(previous.generatedSheets);
  fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>id==='HA-1'?{id}:answer('STPA',id))));
- let error;try{await runCodeArchitectureHazardAnalysis({...base,previousRun:previous,regenerate:true});}catch(e){error=e;}
- expect(error.recoveryRun.generatedSheets).toEqual(previous.generatedSheets);
- expect(error.recoveryRun.runState).toBe('complete');
- expect(error.recoveryRun.pendingAttempt).toMatchObject({runState:'incomplete',validatedAssessments:6});
- expect(normalizeCodeArchitectureHazardRun(error.recoveryRun).pendingAttempt).toBeDefined();
+ const next=await runCodeArchitectureHazardAnalysis({...base,previousRun:previous,regenerate:true});
+ expect(next.runState).toBe('complete');
+ expect(JSON.stringify(previous.generatedSheets)).toBe(snapshot);
+ expect(next.generatedSheets.Summary[1][next.generatedSheets.Summary[0].indexOf('Assessment Basis')]).toContain('Assumption-based');
 });
 
-test('Continue on a reloaded incomplete run requests only its unresolved assessment',async()=>{
+test('completed assumption-based rows are checkpointed without repeated provider calls',async()=>{
  const {createCodeHazardCheckpoint}=jest.requireMock('./codeHazardGenerationCheckpoint');
  const cached=new Map();
  createCodeHazardCheckpoint.mockResolvedValue({read:async key=>cached.get(JSON.stringify(key)),write:async(key,value)=>cached.set(JSON.stringify(key),value)});
  try {
   fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>id==='HA-1'?{id}:answer('STPA',id))));
-  let error;try{await runCodeArchitectureHazardAnalysis(base);}catch(e){error=e;}
-  const reloaded=normalizeCodeArchitectureHazardRun(JSON.parse(JSON.stringify(error.recoveryRun)));
+  const run=await runCodeArchitectureHazardAnalysis(base);
   fetchLLMResponse.mockClear();
-  fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>answer('STPA',id))));
-  const run=await runCodeArchitectureHazardAnalysis({...base,previousRun:reloaded});
-  expect(run.runState).toBe('complete');
-  expect(fetchLLMResponse).toHaveBeenCalledTimes(1);
-  expect(JSON.parse(fetchLLMResponse.mock.calls[0][0].split('\nRows: ')[1]).map(row=>row.id)).toEqual(['HA-1']);
+  const next=await runCodeArchitectureHazardAnalysis({...base,previousRun:normalizeCodeArchitectureHazardRun(JSON.parse(JSON.stringify(run)))});
+  expect(next.runState).toBe('complete');
+  expect(fetchLLMResponse).not.toHaveBeenCalled();
  } finally {createCodeHazardCheckpoint.mockReset();}
 });
 
@@ -117,4 +118,69 @@ test('read-only native final-save error retains the complete in-memory result fo
  const onPartialRunUpdate=jest.fn();
  await expect(runCodeArchitectureHazardAnalysis({...base,onPartialRunUpdate})).resolves.toMatchObject({runState:'complete',finalSavePending:true,saveFailureMessage:'Native save failure'});
  expect(onPartialRunUpdate.mock.calls.at(-1)[0].generatedSheets.Summary).toHaveLength(8);
+});
+
+test('completion audit: invalid imported requirement is retained and does not block publication',async()=>{
+ fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>answer('STPA',id))));
+ const previous=await runCodeArchitectureHazardAnalysis(base);
+ const sheet=previous.generatedSheets.Summary,headers=sheet[0],row=sheet[1],prior=[...row];
+ row[headers.indexOf('Software Safety Requirement')]='The software shall enforce the limit; needs review of the threshold.';
+ const id=row[headers.indexOf('Raw Analysis Row ID')];
+ previous.userPreprocessing={[id]:recordUserPreprocessing(null,headers,row,['Software Safety Requirement'],prior)};
+ saveCodeArchitectureHazardRun.mockClear();
+ const publish=jest.fn();
+ const run=await runCodeArchitectureHazardAnalysis({...base,previousRun:previous,regenerate:true,onPartialRunUpdate:publish});
+ expect(run.runState).toBe('complete');
+ expect(run.retainedUserInputs[id]['Software Safety Requirement']).toContain('needs review');
+ expect(run.generatedSheets.Summary[1][headers.indexOf('Software Safety Requirement')]).not.toContain('needs review');
+ expect(publish).toHaveBeenCalled();
+ expect(saveCodeArchitectureHazardRun).toHaveBeenCalled();
+});
+
+test('final reconciliation recovers one invalid imported row without dropping independent results',async()=>{
+ fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>answer('STPA',id))));
+ const previous=await runCodeArchitectureHazardAnalysis(base);
+ const sheet=previous.generatedSheets.Summary,headers=sheet[0],row=sheet[1],prior=[...row];
+ row[headers.indexOf('Assessed Control Action')]='A different action';
+ const id=row[headers.indexOf('Raw Analysis Row ID')];
+ previous.userPreprocessing={[id]:recordUserPreprocessing(null,headers,row,['Assessed Control Action'],prior)};
+ const run=await runCodeArchitectureHazardAnalysis({...base,previousRun:previous,regenerate:true});
+ expect(run.runState).toBe('complete');
+ expect(run.generatedSheets.Summary).toHaveLength(8);
+ expect(run.generatedSheets.Summary[1][headers.indexOf('Assessed Control Action')]).toBe('Apply torque');
+ expect(run.retainedUserInputs[id]['Assessed Control Action']).toBe('A different action');
+ for(const header of ['Unsafe Control Action','Loss','Hazard','Safety Classification','Software Safety Requirement'])expect(run.generatedSheets.Summary[2][headers.indexOf(header)]).toEqual(sheet[2][headers.indexOf(header)]);
+ expect(normalizeCodeArchitectureHazardRun(run).retainedUserInputs).toEqual(run.retainedUserInputs);
+});
+test('throwing UI observers cannot prevent final save and completion',async()=>{
+ fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>answer('STPA',id))));
+ const fail=()=>{throw new Error('UI observer failed');};
+ const run=await runCodeArchitectureHazardAnalysis({...base,setProgress:fail,onActivityUpdate:fail,onPartialRunUpdate:fail});
+ expect(run.runState).toBe('complete');expect(saveCodeArchitectureHazardRun).toHaveBeenCalledWith(run);
+});
+
+test.each(['HARA','FHA'])('%s normalizes saved ratings through fallback, final publication, reload and CSV',async method=>{
+ fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>answer(method,id))));
+ const previous=await runCodeArchitectureHazardAnalysis({...base,method});
+ const [headers,row]=previous.generatedSheets.Summary;
+ const originals=method==='HARA'?{Severity:' S1 ',Exposure:' E2 ',Controllability:' C1 '}:{'Severity Category':' III ','Software Control Category':3};
+ const id=row[headers.indexOf('Raw Analysis Row ID')];
+ const owned=recordUserPreprocessing(null,headers,row,Object.keys(originals),row);
+ previous.userPreprocessing={[id]:{...owned,values:{...owned.values,...originals}}};
+ fetchLLMResponse.mockRejectedValue(new Error('Provider unavailable'));
+ const run=await runCodeArchitectureHazardAnalysis({...base,method,previousRun:previous,regenerate:true});
+ expect(run.runState).toBe('complete');expect(run.generatedSheets.Summary).toHaveLength(8);
+ const [columns,...rows]=run.generatedSheets.Summary;
+ const result=rows.find(value=>value[columns.indexOf('Raw Analysis Row ID')]===id);
+ for(const [header,value] of Object.entries(originals)){
+  expect(result[columns.indexOf(header)]).toBe(String(value).trim());
+  expect(run.retainedUserInputs[id][header]).toBe(value);
+  expect(run.userPreprocessing[id].values[header]).toBe(String(value).trim());
+ }
+ expect(result[columns.indexOf(method==='HARA'?'ASIL':'Software Criticality Index')]).toBe(method==='HARA'?'QM':'SwCI 4');
+ expect(saveCodeArchitectureHazardRun).toHaveBeenLastCalledWith(run);
+ const reloaded=normalizeCodeArchitectureHazardRun(JSON.parse(JSON.stringify(run)));
+ expect(reloaded.retainedUserInputs).toEqual(run.retainedUserInputs);
+ expect(parseCsv(toCsvText(reloaded.generatedSheets.Summary))).toEqual(run.generatedSheets.Summary.map(row=>row.map(String)));
+ expect(importHazardSoftwareRequirements({hazardAnalysis:reloaded}).length).toBeGreaterThan(0);
 });

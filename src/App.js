@@ -1,3 +1,6 @@
+import {safeHazardObserver} from './features/code-architecture-hazard-analysis/hazardCompletionSupport';
+import {createHazardRunRegistry} from './features/code-architecture-hazard-analysis/hazardRunRegistry';
+import {boundedHazardStorage} from './features/code-architecture-hazard-analysis/resilientHazardCheckpoint';
 import useDiagramAssuranceArtifacts from './features/code-architecture-assurance/useDiagramAssuranceArtifacts';
 import { repositoryContextRequestIsCurrent } from './features/code-architecture-context/repositoryContextRequest';
 import { getCbaMethodDraftHeaders } from "./components/haraFhaSharedWorkflow";
@@ -4062,6 +4065,9 @@ const [codeArchitectureHazardToolbarCollapsed, setCodeArchitectureHazardToolbarC
   () => localStorage.getItem("xhandle.codeArchitectureHazardToolbarCollapsed") === "true",
 );
 const codeArchitectureHazardAbortRef = useRef(null);
+const codeHazardRunsRef = useRef(null);
+if(!codeHazardRunsRef.current)codeHazardRunsRef.current=createHazardRunRegistry();
+useEffect(()=>()=>codeHazardRunsRef.current.close(),[]);
 const [codeArchitectureHazardProgress, setCodeArchitectureHazardProgress] = useState({
   step: 0,
   total: 9,
@@ -7948,6 +7954,10 @@ useEffect(() => {
     setCodeArchitectureHazardRun(null);
     async function loadCodeArchitectureHazardRun() {
       const request = ++requestSequence;
+      const scope=`${activeCodeArchitectureProjectId}:${activeCodeArchitectureRepo?.id || ''}`;
+      const revision=codeHazardRunsRef.current.revision(scope);
+      const retained=codeHazardRunsRef.current.get(scope);
+      if(retained?.run){if(!cancelled)setCodeArchitectureHazardRun(retained.run);return;}
       const pending = hazardContextSavePending.current;
       if (pending?.scope === `${activeCodeArchitectureProjectId}:${activeCodeArchitectureRepo?.id || hazardLoadRepoId}`) {
         try { await pending.promise; } catch { /* Load the retained previous state. */ }
@@ -7963,15 +7973,20 @@ useEffect(() => {
         if (activeCodeArchitectureProjectId) filters.projectId = activeCodeArchitectureProjectId;
         const latest = await getLatestCodeArchitectureHazardRun(filters);
         if (cancelled || request !== requestSequence || contextVersion !== hazardContextSaveVersion.current) return;
+        if(codeHazardRunsRef.current.revision(scope)!==revision)return;
         const contexts = loadCodeArchitectureHazardContexts({
           projectId: activeCodeArchitectureProjectId,
           repoId: activeCodeArchitectureRepo?.id || repoId,
         });
-        const aligned = assignImportedHazardContext(latest, contexts);
+        const live=codeHazardRunsRef.current.get(scope);
+        if(live?.run){setCodeArchitectureHazardRun(live.run);return;}
+        const aligned = live?.running?latest:assignImportedHazardContext(latest, contexts);
         if (aligned !== latest) await saveCodeArchitectureHazardRun(aligned, { notify: false });
+        if(codeHazardRunsRef.current.revision(scope)!==revision || codeHazardRunsRef.current.get(scope)?.run)return;
         if (!cancelled && request === requestSequence && contextVersion === hazardContextSaveVersion.current) setCodeArchitectureHazardRun(aligned || null);
       } catch (error) {
         console.warn("[code-architecture-hazard-analysis] Failed to load latest run", error);
+        if(codeHazardRunsRef.current.revision(scope)!==revision || codeHazardRunsRef.current.get(scope)?.run)return;
         if (!cancelled && request === requestSequence && contextVersion === hazardContextSaveVersion.current) setCodeArchitectureHazardRun(null);
       }
     }
@@ -14449,14 +14464,15 @@ Rules:
 
   codeHazardScopeRef.current = `${activeCodeArchitectureProjectId}:${activeCodeArchitectureRepo?.id || ''}`;
   useEffect(() => {
-    codeArchitectureHazardAbortRef.current?.abort();
-    codeArchitectureHazardAbortRef.current = null;
-    setIsRunningCodeArchitectureHazard(false);
-    setCodeArchitectureHazardProgress({ step: 0, message: '' });
+    const record=codeHazardRunsRef.current.get(codeHazardScopeRef.current);
+    codeArchitectureHazardAbortRef.current=record?.running?record.controller:null;
+    setIsRunningCodeArchitectureHazard(Boolean(record?.running));
+    setCodeArchitectureHazardProgress(record?.progress || {step:0,message:''});
+    if(record?.run)setCodeArchitectureHazardRun(record.run);
   }, [activeCodeArchitectureProjectId, activeCodeArchitectureRepo?.id]);
 
   const handleCancelCodeArchitectureHazardAnalysis = () => {
-    codeArchitectureHazardAbortRef.current?.abort();
+    codeHazardRunsRef.current.stop(codeHazardScopeRef.current);
     setCodeArchitectureHazardProgress((current) => ({
       ...current,
       message: "Stopping code architecture hazard analysis…",
@@ -14467,15 +14483,18 @@ Rules:
     selectedMethod = codeArchitectureHazardMethod,
     options = {}
   ) => {
+    const reportStart=safeHazardObserver(startActivity),reportUpdate=safeHazardObserver(updateActivity),reportFinish=safeHazardObserver(finishActivity);
     const repoMeta = activeCodeArchitectureRepoMeta;
     const repoId = repoMeta.repoId || repoMeta.repoName || "repo";
     const reviewRepoId = activeCodeArchitectureRepo?.id || repoId;
     const cbaProjectId = activeCodeArchitectureProjectId || activeProjectId || "";
     const codeHazardOrganizationCalibration = getProjectOrganizationCalibration(cbaProjectId);
     const actId = `cba-hazard-${cbaProjectId || "default"}-${repoId}`;
-    codeArchitectureHazardAbortRef.current?.abort();
-    const abortController = new AbortController();
-    codeArchitectureHazardAbortRef.current = abortController;
+    const runScope=codeHazardScopeRef.current;
+    const record=codeHazardRunsRef.current.start(runScope);
+    if(!record)return;
+    const abortController=record.controller;
+    codeArchitectureHazardAbortRef.current=abortController;
     setCodeArchitectureHazardMethod(selectedMethod);
     setIsRunningCodeArchitectureHazard(true);
     setCodeArchitectureHazardProgress({
@@ -14483,15 +14502,14 @@ Rules:
       total: stepDescriptionsMap[selectedMethod]?.total || 9,
       message: "Starting code architecture hazard analysis...",
     });
-    startActivity(actId, {
+    reportStart(actId, {
       title: "Running code architecture hazard analysis",
       step: 0,
       total: stepDescriptionsMap[selectedMethod]?.total || 9,
       message: "Starting analysis...",
     });
 
-    const runScope = codeHazardScopeRef.current;
-    const isCurrentRun = () => codeHazardScopeRef.current === runScope && codeArchitectureHazardAbortRef.current === abortController && !abortController.signal.aborted;
+    const isCurrentRun = () => codeHazardScopeRef.current === runScope && codeHazardRunsRef.current.get(runScope)===record && !abortController.signal.aborted;
     const candidatePriorRun = codeArchitectureHazardRunRef.current;
     const priorRunForPreprocessing = candidatePriorRun?.projectId === cbaProjectId && candidatePriorRun?.repoId === repoId ? candidatePriorRun : null;
     try {
@@ -14514,6 +14532,7 @@ Rules:
         } : null,
         signal: abortController.signal,
         onPartialRunUpdate: (partialRun) => {
+          record.run=partialRun;
           if (isCurrentRun()) setCodeArchitectureHazardRun(partialRun);
         },
         setProgress: (nextProgress) => {
@@ -14522,8 +14541,9 @@ Rules:
           const message = nextProgress?.message
             || stepDescriptionsMap[selectedMethod]?.steps?.[step]
             || "Running code architecture hazard analysis...";
-          if (isCurrentRun()) setCodeArchitectureHazardProgress({ step, total, message });
-          updateActivity(actId, {
+          record.progress={step,total,message};
+          if (isCurrentRun()) setCodeArchitectureHazardProgress(record.progress);
+          reportUpdate(actId, {
             step,
             total,
             message,
@@ -14534,8 +14554,9 @@ Rules:
           const step = patch?.step ?? 0;
           const total = patch?.total || stepDescriptionsMap[selectedMethod]?.total || 9;
           const message = patch?.message || "Running code architecture hazard analysis...";
-          if (isCurrentRun()) setCodeArchitectureHazardProgress({ step, total, message });
-          updateActivity(actId, {
+          record.progress={step,total,message};
+          if (isCurrentRun()) setCodeArchitectureHazardProgress(record.progress);
+          reportUpdate(actId, {
             step,
             total,
             message,
@@ -14543,11 +14564,13 @@ Rules:
           });
         },
       });
+      record.run=run;
       if (isCurrentRun()) setCodeArchitectureHazardRun(run);
+      reportFinish(actId, "success", "Code architecture hazard analysis complete");
       if (Array.isArray(run?.generatedSheets?.Summary) && run.generatedSheets.Summary.length > 1) {
         try {
           const [columns, ...rows] = run.generatedSheets.Summary;
-          await resultsReview.createReviewItems(createReviewItemsFromGeneratedTable({
+          void boundedHazardStorage(Promise.resolve().then(()=>resultsReview.createReviewItems(createReviewItemsFromGeneratedTable({
             sourceFeature: "Code-Based Architecture Hazard Analysis",
             sourceMethod: selectedMethod,
             sourceRunId: run.id,
@@ -14556,12 +14579,11 @@ Rules:
             projectId: cbaProjectId || run.projectId || "default",
             rows,
             columns,
-          }));
+          }))),5000).catch(error=>console.warn("[results-review] Hazard review registration deferred",error));
         } catch (error) {
           console.warn("[results-review] Failed to register code architecture hazard Summary review items", error);
         }
       }
-      finishActivity(actId, "success", "Code architecture hazard analysis complete");
     } catch (error) {
       if (codeHazardScopeRef.current === runScope && codeArchitectureHazardAbortRef.current === abortController) commitCodeArchitectureHazardRun(error?.recoveryRun || priorRunForPreprocessing);
       // IndexedDB may throw AbortError independently of user cancellation.
@@ -14572,13 +14594,14 @@ Rules:
         error: true,
         message: canceled ? "Code architecture hazard analysis stopped." : (error?.message || "Code architecture hazard analysis failed."),
       }));
-      finishActivity(
+      reportFinish(
         actId,
         canceled ? "canceled" : "error",
         canceled ? "Code architecture hazard analysis stopped" : (error?.message || "Code architecture hazard analysis failed"),
       );
     } finally {
-      if (codeArchitectureHazardAbortRef.current === abortController) {
+      codeHazardRunsRef.current.finish(runScope,record);
+      if (codeHazardScopeRef.current===runScope && codeArchitectureHazardAbortRef.current === abortController) {
         codeArchitectureHazardAbortRef.current = null;
         setIsRunningCodeArchitectureHazard(false);
       }
@@ -14595,6 +14618,7 @@ Rules:
     );
     if (!confirmed) return;
     await deleteCodeArchitectureHazardRuns({ projectId, repoId });
+    codeHazardRunsRef.current.discard(codeHazardScopeRef.current);
     setCodeArchitectureHazardRun(null);
     setCodeArchitectureHazardProgress({
       step: 0,
@@ -17841,6 +17865,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                         const saved={...recovery,finalSavePending:false,saveFailureMessage:'',updatedAt:new Date().toISOString()};
                         if(saved.runState==='draft')saved.runState='complete';
                         await saveCodeArchitectureHazardRun(saved);
+                        codeHazardRunsRef.current.saved(scope,saved.id);
                         if(codeHazardScopeRef.current===scope && codeArchitectureHazardRunRef.current===recovery)commitCodeArchitectureHazardRun(saved);
                       }}
                       onCancelAnalysis={handleCancelCodeArchitectureHazardAnalysis}
@@ -20910,6 +20935,7 @@ const updateRiskInProject = async (projectId, predicate) => {
     const architecture = item.dbName === 'xhandle' && item.storeName === XHANDLE_IDB_CBA_STORE;
     if (architecture || localKeys.includes(CBA_PROJECTS_KEY)) {
       const next = normalizeCodeArchitectureProjects(JSON.parse(localStorage.getItem(CBA_PROJECTS_KEY) || '[]'));
+      codeHazardRunsRef.current.retainScopes(new Set(next.flatMap(project=>(project.repos || []).map(repo=>`${project.id}:${repo.id}`))));
       setCodeArchitectureProjects(next);
       const current = next.find(project => project.id === activeCodeArchitectureProjectId);
       if (!current || !current.repos?.some(repo => repo.id === activeCodeArchitectureRepo?.id)) {
