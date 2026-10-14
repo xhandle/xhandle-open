@@ -77,13 +77,16 @@ test('unknown citations are rejected even with complete coverage',async()=>{
  const chunker=createHazardEvidenceChunker({request});
  await expect(chunker.run(applicabilityPrompt('STPA',[source],{}),{maxTokens:8000},jest.fn())).rejects.toMatchObject({code:'HAZARD_EVIDENCE_INVALID'});
 });
-test('a truncated singleton extraction splits the source string and completes',async()=>{
+test('a truncated singleton extraction increases output allowance before splitting',async()=>{
  let rejected=false;
  const request=jest.fn(async p=>{if(!rejected){rejected=true;throw Object.assign(new Error('truncated'),{name:'TruncatedResponseError'});}return summary(items(p));});
  const chunker=createHazardEvidenceChunker({request});
  const send=jest.fn(async p=>{if(!p.includes('Evidence summaries:'))throw new Error('prompt is too long');return [];});
  await chunker.run(applicabilityPrompt('STPA',[{...source,evidence:'source evidence '.repeat(100)}],{}),{maxTokens:8000},send);
- expect(request.mock.calls.length).toBeGreaterThan(1);expect(send).toHaveBeenCalledTimes(2);
+ expect(request.mock.calls).toHaveLength(2);
+ expect(request.mock.calls.map(([,o])=>o.maxTokens)).toEqual([8000,16000]);
+ expect(request.mock.calls[0][0]).toBe(request.mock.calls[1][0]);
+ expect(send).toHaveBeenCalledTimes(2);
 });
 test('extraction concurrency is bounded across simultaneous preparations',async()=>{
  let active=0,peak=0;
@@ -102,4 +105,40 @@ test('completed chunks are reused after a later extraction failure',async()=>{
  const all=jest.fn(async p=>summary(items(p)));
  await createHazardEvidenceChunker({request:all}).run(applicabilityPrompt('STPA',[source],{}),{maxTokens:8000},async()=>[]);
  expect(resume.mock.calls.length).toBeLessThan(all.mock.calls.length);
+});
+test.each([7082,7686])('complete %i-character summary is accepted and reused without regeneration',async size=>{
+ const checkpoint=memory(),request=jest.fn(async p=>{const value=summary(items(p));value.facts[0].text='x'.repeat(size);return value;});
+ const prompt=applicabilityPrompt('STPA',[{...source,evidence:'small evidence'}],{});
+ const send=jest.fn(async p=>{if(!p.includes('Evidence summaries:'))throw new Error('prompt is too long');return [];});
+ await createHazardEvidenceChunker({request,checkpoint}).run(prompt,{maxTokens:8000},send);
+ expect(request).toHaveBeenCalledTimes(1);
+ expect(request.mock.calls[0][1]).toMatchObject({maxTokens:8000,workflow:'hazard-evidence-extraction'});
+ expect(send.mock.calls[1][0]).toContain('x'.repeat(size));
+ await createHazardEvidenceChunker({request,checkpoint}).run(prompt,{maxTokens:8000},send);
+ expect(request).toHaveBeenCalledTimes(1);
+});
+test('long valid extractions are checkpointed then compacted with a distinct workflow',async()=>{
+ const checkpoint=memory();
+ const request=jest.fn(async(p,options)=>{
+  const value=summary(items(p));
+  if(options.workflow==='hazard-evidence-extraction')value.facts[0].text='Preserve this qualified fact. '.repeat(260);
+  else expect(options.workflow).toBe('hazard-evidence-compaction');
+  return value;
+ });
+ await createHazardEvidenceChunker({request,checkpoint}).run(applicabilityPrompt('STPA',[source],{}),{maxTokens:8000},async()=>[]);
+ expect(request.mock.calls.some(([,o])=>o.workflow==='hazard-evidence-compaction')).toBe(true);
+ const entries=[...checkpoint.values.entries()].map(([key,value])=>({basis:JSON.parse(key),value}));
+ expect(entries.some(({basis,value})=>basis.kind==='extract' && JSON.stringify(value).length>6000)).toBe(true);
+ const lineage=entries.find(({basis})=>basis.kind==='lineage').value;
+ expect(lineage.summaries.every(item=>item.value.coveredRefs.every(ref=>lineage.lineage[ref]))).toBe(true);
+});
+test('persistent output truncation splits only after the larger allowance and children retain it',async()=>{
+ let failures=0;
+ const request=jest.fn(async p=>{if(failures++<2)throw Object.assign(new Error('truncated'),{name:'TruncatedResponseError'});return summary(items(p));});
+ const send=jest.fn(async p=>{if(!p.includes('Evidence summaries:'))throw new Error('prompt is too long');return [];});
+ await createHazardEvidenceChunker({request}).run(applicabilityPrompt('STPA',[{...source,evidence:'source evidence '.repeat(100)}],{}),{maxTokens:8000},send);
+ expect(request.mock.calls[0][0]).toBe(request.mock.calls[1][0]);
+ expect(request.mock.calls[0][1].maxTokens).toBe(8000);
+ expect(request.mock.calls.slice(1).every(([,o])=>o.maxTokens===16000)).toBe(true);
+ expect(request.mock.calls[2][0]).not.toBe(request.mock.calls[1][0]);
 });
