@@ -16,15 +16,14 @@ test('repeated multi-megabyte evidence is losslessly represented once',()=>{
  expect(expand(packed.interfaces)).toEqual(interfaces);expect(expand(packed.context)).toEqual(context);
  expect(JSON.stringify(packed).length).toBeLessThan(30000);
 });
-test('invalid chunk extraction for an oversized applicability row cannot silently become No',async()=>{
- const request=jest.fn();
+test('invalid evidence escalation cannot silently become No',async()=>{
+ const request=jest.fn(async p=>p.includes('Evidence pieces: ')?undefined:rows(p).map(({id})=>({id,needsEvidence:true,rationale:'Need implementation details'})));
  await expect(screenFastApplicability({method:'STPA',sources:[{...source(),evidence:'x'.repeat(130000)}],context:{},request})).rejects.toMatchObject({code:'HAZARD_EVIDENCE_INVALID'});
- expect(request).toHaveBeenCalled();
- expect(request.mock.calls.every(([p])=>p.includes("Evidence pieces: "))).toBe(true);
+ expect(request.mock.calls.some(([p])=>p.includes('Evidence pieces: '))).toBe(true);
 });
 test('oversized shared context requires valid extraction',async()=>{
  const request=jest.fn();
- await expect(screenFastApplicability({method:'FHA',sources:[source()],context:{profile:'x'.repeat(130000)},request})).rejects.toMatchObject({code:'HAZARD_EVIDENCE_INVALID'});expect(request).toHaveBeenCalled();
+ await expect(screenFastApplicability({method:'FHA',sources:[source()],context:{organizationProfile:'x'.repeat(130000)},request})).rejects.toMatchObject({code:'HAZARD_EVIDENCE_INVALID'});expect(request).toHaveBeenCalled();
  expect(request.mock.calls.every(([p])=>p.includes("Evidence pieces: "))).toBe(true);
 });
 test.each(['STPA','HARA','FHA'])('%s generation requires valid extraction even when applicability is reviewed',async method=>{
@@ -55,7 +54,7 @@ test('failed extraction preserves already resolved rows in the recovery error',a
  expect(request).toHaveBeenCalled();
  expect(request.mock.calls.every(([p])=>p.includes("Evidence pieces: "))).toBe(true);
 });
-test('duplicated oversized source passes screening after lossless packing',async()=>{
+test('duplicated oversized source is absent from the compact screen',async()=>{
  const fn={file:'source.py',content:'evidence '.repeat(2000)};
  const request=jest.fn(async p=>{expect(p.length).toBeLessThan(120000);return [{id:'HA-1',applicable:'No',rationale:'Not applicable'}];});
  await screenFastApplicability({method:'STPA',sources:[{...source(),evidence:{code:Array(100).fill(fn),source:Array(100).fill(fn)}}],context:{},request});
@@ -70,7 +69,7 @@ describe('large individual inputs use a separate request allowance',()=>{
   claude();
   const evidence='unique evidence '.repeat(10423).slice(0,156337);
   const applicabilityRequest=jest.fn(async p=>{
-   expect(p).toContain(evidence);
+   expect(p).not.toContain(evidence);
    return rows(p).map(({id})=>({id,applicable:'Yes',rationale:'Meaningful deviation'}));
   });
   const request=jest.fn(async p=>{expect(p).toContain(evidence);return rows(p).map(({id})=>answer(method,id));});
@@ -78,16 +77,16 @@ describe('large individual inputs use a separate request allowance',()=>{
   expect(result).toHaveLength(1);expect(result[0].applicable).toBe('Yes');
   expect(applicabilityRequest).toHaveBeenCalledTimes(1);expect(request).toHaveBeenCalledTimes(1);
  });
- test('large shared context is retained and ordinary batches still split at the scheduling target',async()=>{
+ test('large shared context is summarized with coverage before screening',async()=>{
   claude();const profile='context '.repeat(19542);
-  const request=jest.fn(async p=>{expect(p).toContain(profile);return rows(p).map(({id})=>({id,applicable:'No',rationale:'Outside scope'}));});
-  await screenFastApplicability({method:'STPA',sources:[source(),source('HA-2')],context:{profile},request});
-  expect(request.mock.calls.map(([p])=>rows(p).length)).toEqual([1,1]);
+  const request=jest.fn(async p=>{if(p.includes('Evidence pieces: ')){const refs=JSON.parse(p.split('Evidence pieces: ')[1]).map(x=>x.ref);return {coveredRefs:refs,facts:[{text:'Organization context',refs}],constraints:[],safeguards:[],conflicts:[],unknowns:[]};}expect(p).toContain('Evidence summaries:');expect(p.length).toBeLessThan(60000);return rows(p).map(({id})=>({id,applicable:'No',rationale:'Outside scope'}));});
+  await screenFastApplicability({method:'STPA',sources:[source(),source('HA-2')],context:{organizationProfile:profile},request});
+  expect(request.mock.calls.filter(([p])=>p.includes('Rows: ')).map(([p])=>rows(p).length)).toEqual([1,1]);
  });
- test('screening retries reserve the larger output allowance',async()=>{
+ test('missing IDs receive structural feedback without increasing output allowance',async()=>{
   claude();const request=jest.fn(async()=>[]);
-  await screenFastApplicability({method:'STPA',sources:[{...source(),evidence:'x'.repeat(156337)}],context:{},request}).catch(error=>expect(error.message).toContain('could not validate'));
-  expect(request.mock.calls.map(([,o])=>o.maxTokens)).toEqual([8000,16000,16000]);
+  await screenFastApplicability({method:'STPA',sources:[{...source(),evidence:'x'.repeat(156337)}],context:{},request}).catch(error=>expect(error.message).toContain('missing-id'));
+  expect(request.mock.calls.map(([,o])=>o.maxTokens)).toEqual([8000,8000,8000]);
  });
  test('invalid extraction for oversized Claude input retains partial results',async()=>{
   claude();const request=jest.fn();

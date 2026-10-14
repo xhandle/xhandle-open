@@ -4,8 +4,9 @@ import {compactHazardPromptPayload,hazardPromptFits,assertHazardPromptFits,isHaz
 import {createHazardAutomaticRecovery} from './hazardAutomaticRecovery';
 import {HAZARD_GROUNDING_RULES} from './hazardGroundingRules';
 import {fetchLLMResponse} from '../../components/aiAnalysisSTPA';
+import {createHazardRequestScheduler} from './hazardRequestScheduler';
 import {screenFastApplicability} from './fastHazardApplicability';
-import {createGenerationBudget,hazardInputLimit} from './fastHazardBudgets';
+import {createGenerationBudget,hazardInputLimit,hazardPromptBytes} from './fastHazardBudgets';
 import {FAST_HAZARD_VERSION,COMMON_FIELDS,ASSESSMENT_FIELDS,validateFastAssessment} from './fastHazardSchema';
 import {resilientHazardCheckpoint} from './resilientHazardCheckpoint';
 import {hazardRunError} from './hazardRunError';
@@ -40,15 +41,16 @@ export async function generateFastHazards({method,sources,context,checkpoint,sig
  const check=()=>{if(signal?.aborted)throw new DOMException('Hazard analysis cancelled.','AbortError');};
  const started=Date.now(),metrics={applicability:{requests:0},generation:{requests:0},evidence:{requests:0},review:{requests:0}};
  let batchId=0;
+ const screeningScheduler=createHazardRequestScheduler({limit:3,signal});
  const recover=createHazardAutomaticRecovery({signal,onRetry:event=>{
    onDiagnostic({method,event:'automatic-retry',...event});
    onProgress({total:100,message:`Temporary ${event.stage} failure; retrying ${event.rows} rows in ${event.delayMs/1000}s (attempt ${event.attempt}/${event.maxAttempts}). Completed work retained.`});
  }});
  const tracked=async(stage,fn,prompt,options,rows,retryReason)=>{
-   const startedAt=Date.now(),diagnostic={method,stage,batchId:++batchId,rows,inputChars:prompt.length,maxTokens:options.maxTokens,retryReason};
+   const startedAt=Date.now(),diagnostic={method,stage,batchId:++batchId,rows,inputChars:prompt.length,inputBytes:hazardPromptBytes(prompt),inputByteLimit:options.inputByteLimit,...(options.payloadBytes?{payloadBytes:options.payloadBytes}:{}),maxTokens:options.maxTokens,retryReason,...(options.screeningMode?{screeningMode:options.screeningMode}:{})};
    onDiagnostic({...diagnostic,event:'started'});
    try{
-     const value=await recover(()=>{metrics[stage].requests++;return fn(prompt,{...options,onResponseMetadata:metadata=>onDiagnostic({...diagnostic,event:'response',...metadata})});},{stage,rows,batchId:diagnostic.batchId});
+     const value=await recover(()=>{const send=()=>{metrics[stage].requests++;return fn(prompt,{...options,onResponseMetadata:metadata=>onDiagnostic({...diagnostic,event:'response',...metadata})});};return stage==='applicability' || stage==='evidence'?screeningScheduler.run('generation',send):send();},{stage,rows,batchId:diagnostic.batchId});
      onDiagnostic({...diagnostic,event:'finished',elapsedMs:Date.now()-startedAt});return value;
    }catch(error){onDiagnostic({...diagnostic,event:'failed',elapsedMs:Date.now()-startedAt,errorType:error.name});throw error;}
  };
@@ -57,6 +59,7 @@ export async function generateFastHazards({method,sources,context,checkpoint,sig
   request:(p,o)=>tracked('evidence',request,p,o,o.rows,'oversized evidence extraction'),
   onProgress:event=>{onDiagnostic({method,stage:'evidence',event:'progress',...event});onProgress({message:event.message});},
  });
+ const informationPending=new Set();
  const results=new Map(),failures={},budget=createGenerationBudget();
  const key=source=>({pipeline:FAST_HAZARD_VERSION,method,context,source});
  const report=()=>onProgress({step:20+75*results.size/Math.max(1,sources.length),total:100,completed:results.size,message:`Assessed ${results.size} of ${sources.length} ${method} guide-phrase rows`});
@@ -68,12 +71,13 @@ export async function generateFastHazards({method,sources,context,checkpoint,sig
   // Complete independent work first, then revisit only unresolved rows twice.
   // Checkpoints and the results map prevent repeating accepted work.
   for(let pass=0;pass<3;pass++){
-  const unknown=sources.filter(s=>!results.has(s.id));
+  const unknown=sources.filter(s=>!results.has(s.id) && !informationPending.has(s.id));
   if(!unknown.length)break;
   const defer=(source,error)=>{
    failures[source.id]=[error.message || String(error)];
-   onDiagnostic({method,event:'row-deferred',id:source.id,pass,reason:failures[source.id][0]});
-   onProgress({completed:results.size,message:`Deferred ${source.id}; continuing other assessments. ${Object.keys(failures).length} rows queued for end-of-run retry.`});
+   if(error.pendingInformation)informationPending.add(source.id);
+   onDiagnostic({method,event:'row-deferred',id:source.id,pass,reasonCode:error.code || 'HAZARD_REQUEST_FAILED',pendingInformation:!!error.pendingInformation,reason:failures[source.id][0]});
+   onProgress({completed:results.size,message:error.pendingInformation?`${source.id} needs additional applicability information; continuing other assessments.`:`Deferred ${source.id}; continuing other assessments. ${Object.keys(failures).length-informationPending.size} rows queued for end-of-run retry.`});
   };
   if(pass)onProgress({completed:results.size,message:`Revisiting ${unknown.length} deferred ${method} rows (pass ${pass} of 2)…`});
   onProgress({step:5,total:100,completed:results.size,message:`Screening applicability for ${unknown.length} ${method} guide-phrase rows…`});
@@ -131,12 +135,12 @@ export async function generateFastHazards({method,sources,context,checkpoint,sig
   }
   if(Object.keys(failures).length){
    await cache.flush();check();
-   throw Object.assign(new Error(`${method}: ${Object.keys(failures).length} assessments remain pending after two end-of-run retry passes. All other work was completed and retained. Continue retries only these unfinished rows.`),{code:'HAZARD_DEFERRED_REMAINING'});
+   throw Object.assign(new Error(informationPending.size?`${method}: ${informationPending.size} assessments need additional applicability information. Update their source/context or explicitly review applicability before retrying. Other completed work is retained.${Object.keys(failures).length>informationPending.size?" Other request/validation failures remain retryable.":""}`:`${method}: ${Object.keys(failures).length} assessments remain pending after two end-of-run retry passes. All other work was completed and retained. Continue retries only these unfinished rows.`),{code:'HAZARD_DEFERRED_REMAINING'});
   }
   await cache.flush();check();return sources.map(s=>results.get(s.id));
  }catch(cause){
   const error=hazardRunError(cause,'COMPACT_HAZARD_INCOMPLETE');
   error.partialResults=sources.filter(s=>results.has(s.id)).map(s=>results.get(s.id));error.totalAssessments=sources.length;
   error.findings=failures;error.failedAssessments=sources.filter(s=>failures[s.id]).map(s=>({id:s.id,action:s.action,phrase:s.phrase,reasons:failures[s.id]}));throw error;
- }finally{onMetrics({...metrics,newlyAccepted:results.size,elapsedMs:Date.now()-started});}
+ }finally{screeningScheduler.close();onMetrics({...metrics,newlyAccepted:results.size,elapsedMs:Date.now()-started});}
 }

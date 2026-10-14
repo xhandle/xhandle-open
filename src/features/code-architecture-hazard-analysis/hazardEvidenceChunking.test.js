@@ -1,5 +1,7 @@
 import {createHazardEvidenceChunker,evidencePieces} from './hazardEvidenceChunking';
-import {applicabilityPrompt} from './fastHazardApplicability';
+import {applicabilityPrompt as baseApplicabilityPrompt} from './fastHazardApplicability';
+// Exercise full-evidence escalation; the normal screen now excludes raw code.
+const applicabilityPrompt=(method,sources,context)=>baseApplicabilityPrompt(method,sources,context,{includeEvidence:true});
 import {resultsFirstPrompt,generateFastHazards} from './resultsFirstHazardPipeline';
 import {hazardPromptFits} from './hazardPromptPayload';
 import {answer} from './fastHazardTestFixtures';
@@ -55,12 +57,13 @@ test('stop prevents assessment and further extraction',async()=>{
  await expect(chunker.run(applicabilityPrompt('STPA',[source],{}),{maxTokens:8000},send)).rejects.toMatchObject({name:'AbortError'});
  expect(send).not.toHaveBeenCalled();expect(request.mock.calls.length).toBeLessThanOrEqual(3);
 });
-test.each(['STPA','HARA','FHA'])('%s completes oversized screening and generation using compact evidence',async method=>{
+test.each(['STPA','HARA','FHA'])('%s uses compact screening then chunks oversized generation evidence',async method=>{
  const request=jest.fn(async p=>p.includes('\nEvidence pieces: ')?summary(items(p)):JSON.parse(p.split('\nRows: ')[1]).map(({id})=>answer(method,id)));
  const applicabilityRequest=jest.fn(async p=>JSON.parse(p.split('\nRows: ')[1]).map(({id})=>({id,applicable:'Yes',rationale:'Meaningful deviation'})));
  const result=await generateFastHazards({method,sources:[source],context:{},request,applicabilityRequest,onMetrics:()=>{},onDiagnostic:()=>{}});
  expect(result).toHaveLength(1);expect(result[0].applicable).toBe('Yes');
- expect(applicabilityRequest.mock.calls[0][0]).toContain('Evidence summaries:');
+ expect(applicabilityRequest.mock.calls[0][0]).not.toContain('Evidence summaries:');
+ expect(applicabilityRequest.mock.calls[0][0]).not.toContain(source.evidence);
  expect(request.mock.calls.filter(([p])=>p.includes('\nRows: '))[0][0]).toContain('Evidence summaries:');
 });
 test('reduction retains a trace to original pieces',async()=>{

@@ -12,7 +12,8 @@ const definitions=[
 test.each(['STPA','HARA','FHA'])('%s screens and generates against the same action/context evidence without a blocking review',async method=>{
  const sources=compactHazardSources(definitions),reviewRequest=jest.fn();
  const applicabilityRequest=jest.fn(async p=>{
-  expect(p).toContain(HAZARD_GROUNDING_RULES);
+  expect(p).not.toContain(HAZARD_GROUNDING_RULES);
+  expect(p).toContain('Do not invent concurrency or an interactive operator');
   const {interfaces,rows}=payload(p);
   expect(interfaces[0]).toMatchObject({action:'Evaluate testbench',to:'Elaborate CLOCK_TB',details:['ghdl -e CLOCK_TB; elaboration only']});
   expect(interfaces[2].details[0]).toContain('distinct from completion');

@@ -45,7 +45,7 @@ test('missing decisions retry only missing IDs; profile changes invalidate cache
 });
 test('truncated screening is bounded and never silently excludes',async()=>{
  const request=jest.fn(async()=>{const e=new Error('length');e.name='TruncatedResponseError';throw e;});
- await expect(screenFastApplicability({method:'FHA',sources:sources(1),context:{},request})).rejects.toThrow('could not validate');
+ await expect(screenFastApplicability({method:'FHA',sources:sources(1),context:{},request})).rejects.toThrow('truncated-output');
  expect(request).toHaveBeenCalledTimes(3);
 });
 test('a generated No cannot overwrite screened Yes',async()=>{

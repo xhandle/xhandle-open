@@ -38,7 +38,7 @@ test('invalid evidence is deferred while other decisions are completed and revis
   }
   return batch(p).map(({id})=>answer('STPA',id));
  });
- const applicabilityRequest=jest.fn(async p=>batch(p).map(({id})=>{events.push(`screened-${id}`);return {id,applicable:'No',rationale:'Out of scope'};}));
+ const applicabilityRequest=jest.fn(async p=>batch(p).map(({id})=>{if(id==='HA-1' && !p.includes('Additional evidence was requested'))return {id,needsEvidence:true,rationale:'Need source evidence'};events.push(`screened-${id}`);return {id,applicable:'No',rationale:'Out of scope'};}));
  const result=await generateFastHazards({method:'STPA',sources:[{...source(1,false),evidence:'evidence '.repeat(30000)},source(2,false)],context:{},request,applicabilityRequest,...quiet,onProgress:patch=>{if(patch.message?.startsWith("Revisiting"))events.push("end-retry");}});
  expect(result.map(r=>r.applicable)).toEqual(['No','No']);
  expect(events.indexOf('screened-HA-2')).toBeLessThan(events.indexOf('end-retry'));
