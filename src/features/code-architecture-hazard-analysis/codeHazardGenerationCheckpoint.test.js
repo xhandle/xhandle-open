@@ -95,3 +95,42 @@ describe('checkpoint transaction failures',()=>{
   expect(db.transaction).toHaveBeenCalledTimes(1);
  });
 });
+
+test('closed connection is reopened without changing checkpoint scope',async()=>{
+ const priorCrypto=global.crypto,priorEncoder=global.TextEncoder;
+ Object.defineProperty(global,'crypto',{value:webcrypto,configurable:true});global.TextEncoder=TextEncoder;
+ const warn=jest.spyOn(console,'warn').mockImplementation(()=>{});
+ try{
+  const stale={transaction:()=>{throw new DOMException('closed','InvalidStateError');}};
+  const put=jest.fn(async()=>{}),fresh={transaction:()=>({done:Promise.resolve(),store:{put}})};
+  openCodeArchitectureHazardDB.mockResolvedValueOnce(stale).mockResolvedValueOnce(fresh);
+  const cache=await createCodeHazardCheckpoint({projectId:'reopen',repoId:'repo'});
+  await cache.write({row:1},'result');expect(put).toHaveBeenCalledWith(expect.objectContaining({projectId:'reopen',repoId:'repo',value:'result'}));
+ }finally{warn.mockRestore();Object.defineProperty(global,'crypto',{value:priorCrypto,configurable:true});global.TextEncoder=priorEncoder;}
+});
+test('bulk reads bound hashing and transaction request counts',async()=>{
+ const priorCrypto=global.crypto,priorEncoder=global.TextEncoder;
+ Object.defineProperty(global,'crypto',{value:webcrypto,configurable:true});global.TextEncoder=TextEncoder;
+ try{
+  const counts=[];
+  openCodeArchitectureHazardDB.mockResolvedValue({transaction:()=>{const i=counts.push(0)-1;return {done:Promise.resolve(),store:{get:async()=>{counts[i]++;return {value:'saved'};}}};}});
+  const cache=await createCodeHazardCheckpoint({projectId:'large'});
+  expect(await cache.readMany(Array.from({length:130},(_,row)=>({row})))).toHaveLength(130);
+  expect(counts).toEqual([48,48,34]);
+ }finally{Object.defineProperty(global,'crypto',{value:priorCrypto,configurable:true});global.TextEncoder=priorEncoder;}
+});
+test('retiring a checkpoint owner aborts its active write transaction before commit',async()=>{
+ const priorCrypto=global.crypto,priorEncoder=global.TextEncoder;
+ Object.defineProperty(global,'crypto',{value:webcrypto,configurable:true});global.TextEncoder=TextEncoder;
+ try{
+  let started,rejectRequest,rejectDone;
+  const writing=new Promise(resolve=>{started=resolve;});
+  const request=new Promise((_,reject)=>{rejectRequest=reject;});
+  const done=new Promise((_,reject)=>{rejectDone=reject;});
+  const abort=jest.fn(()=>{rejectRequest(new DOMException('retired','AbortError'));rejectDone(new DOMException('retired','AbortError'));});
+  openCodeArchitectureHazardDB.mockResolvedValue({transaction:()=>({done,abort,store:{put:()=>{started();return request;}}})});
+  const controller=new AbortController(),cache=await createCodeHazardCheckpoint({projectId:'owner'},{signal:controller.signal});
+  const result=cache.write({row:1},'old');const assertion=expect(result).rejects.toHaveProperty('name','AbortError');
+  await writing;controller.abort();await assertion;expect(abort).toHaveBeenCalled();
+ }finally{Object.defineProperty(global,'crypto',{value:priorCrypto,configurable:true});global.TextEncoder=priorEncoder;}
+});

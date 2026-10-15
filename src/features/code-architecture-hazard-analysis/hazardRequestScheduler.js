@@ -1,3 +1,4 @@
+import {abortableHazardTask} from './abortableHazardTask';
 // Shared provider budget, with alternating FIFO generation/review queues.
 // Pipeline workers may prepare/wait for review without occupying a request slot.
 export function createHazardRequestScheduler({limit=3,signal,check=()=>{}}={}) {
@@ -15,7 +16,7 @@ export function createHazardRequestScheduler({limit=3,signal,check=()=>{}}={}) {
       next=kind==='generation'?'review':'generation';
       try{if(signal?.aborted)throw abortError();check();}catch(error){job.reject(error);rejectQueued(error);return;}
       active++;
-      Promise.resolve().then(job.work).then(job.resolve,job.reject).finally(settled);
+      abortableHazardTask(job.work,signal).then(job.resolve,job.reject).finally(settled);
     }
   }
   return {

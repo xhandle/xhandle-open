@@ -26,7 +26,7 @@ export async function checkpointDigest(value) {
 }
 
 export async function createCodeHazardCheckpoint(scopeParts, { regenerate = false, signal, onProgress = () => {} } = {}) {
-  const db = await openCodeArchitectureHazardDB();
+  let db = await openCodeArchitectureHazardDB();
   if (!db || (typeof crypto === "undefined" || !crypto.subtle)) return null;
   const scope = JSON.stringify(scopeParts);
   const check = () => { if (signal?.aborted) throw new DOMException('Hazard analysis cancelled.', 'AbortError'); };
@@ -36,10 +36,13 @@ export async function createCodeHazardCheckpoint(scopeParts, { regenerate = fals
     for(let attempt=0;attempt<2;attempt++){
       check();
       let tx,done;
+      const abortTransaction=()=>{try{tx?.abort();}catch{}};
       try {
         tx=db.transaction(STORE,mode);
         done=tx.done;
         done.catch(()=>{});
+        signal?.addEventListener('abort',abortTransaction,{once:true});
+        check();
         const value=await work(tx);
         await done;
         check();
@@ -50,10 +53,11 @@ export async function createCodeHazardCheckpoint(scopeParts, { regenerate = fals
         check();
         // These operations are atomic and idempotent. Retry a transient abort
         // once in a fresh transaction; never retry cancellation or quota errors.
-        const retry=attempt===0 && ['AbortError','TransactionInactiveError'].includes(error?.name);
+        const retry=attempt===0 && ['AbortError','TransactionInactiveError','InvalidStateError'].includes(error?.name);
         console.warn('[hazard-checkpoint]',JSON.stringify({event:retry?'retry':'failed',mode,errorType:error?.name,errorCode:error?.code,attempt:attempt+1}));
         if(!retry)throw error;
-      }
+        if(error?.name==='InvalidStateError')db=await openCodeArchitectureHazardDB();
+      }finally{signal?.removeEventListener('abort',abortTransaction);}
     }
   };
   if (regenerate) {
@@ -74,11 +78,15 @@ export async function createCodeHazardCheckpoint(scopeParts, { regenerate = fals
   };
   return {
     async readMany(bases) {
-      const ids = await Promise.all(bases.map(identify));
-      check();
-      const records = await transaction('readonly',tx=>batchRequests(tx,ids.map(id => ()=>tx.store.get(id))));
-      check();
-      return records.map(record => record?.value);
+      const values=[];
+      for(let offset=0;offset<bases.length;offset+=48){
+        const ids=await Promise.all(bases.slice(offset,offset+48).map(identify));
+        check();
+        const records=await transaction('readonly',tx=>batchRequests(tx,ids.map(id=>()=>tx.store.get(id))));
+        values.push(...records.map(record=>record?.value));
+        check();
+      }
+      return values;
     },
     async writeMany(entries) {
       const ids = await Promise.all(entries.map(entry => identify(entry.basis)));

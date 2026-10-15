@@ -37,7 +37,7 @@ Interfaces: ${JSON.stringify(packed.interfaces)}
 Rows: ${JSON.stringify(rows)}`;
 }
 
-export async function generateFastHazards({method,sources,context,checkpoint,signal,onProgress=()=>{},onStorageState=()=>{},onMetrics=event=>console.info('[hazard-analysis-performance]',JSON.stringify(event)),onDiagnostic=event=>console.info('[hazard-analysis-batch]',JSON.stringify(event)),
+export async function generateFastHazards({method,sources,context,checkpoint,signal,checkpointSignal=signal,onProgress=()=>{},onStorageState=()=>{},onMetrics=event=>console.info('[hazard-analysis-performance]',JSON.stringify(event)),onDiagnostic=event=>console.info('[hazard-analysis-batch]',JSON.stringify(event)),
  applicabilityRequest=(prompt,options)=>fetchLLMResponse(prompt,{},[],'',{workflow:'hazard-applicability-screen',signal,...options}),
  request=(prompt,options)=>fetchLLMResponse(prompt,{},[],'',{workflow:'hazard-row-generation',signal,...options}),
 }) {
@@ -59,7 +59,7 @@ export async function generateFastHazards({method,sources,context,checkpoint,sig
      onDiagnostic({...diagnostic,event:'finished',elapsedMs:Date.now()-startedAt});return value;
    }catch(error){onDiagnostic({...diagnostic,event:'failed',elapsedMs:Date.now()-startedAt,errorType:error.name});throw error;}
  };
- const cache=resilientHazardCheckpoint(checkpoint,{signal,onStorageState});
+ const cache=resilientHazardCheckpoint(checkpoint,{signal:checkpointSignal,onStorageState});
  const evidenceChunker=createHazardEvidenceChunker({checkpoint:cache,signal,
   request:(p,o)=>tracked('evidence',request,p,o,o.rows,'oversized evidence extraction'),
   onProgress:event=>{onDiagnostic({method,stage:'evidence',event:'progress',...event});onProgress({message:event.message});},
@@ -94,9 +94,9 @@ export async function generateFastHazards({method,sources,context,checkpoint,sig
   if(!unknown.length)break;
   const defer=(source,error)=>{
    failures[source.id]=[error.message || String(error)];
-   if(error.pendingInformation)informationPending.add(source.id);
-   onDiagnostic({method,event:'row-deferred',id:source.id,pass,reasonCode:error.code || 'HAZARD_REQUEST_FAILED',pendingInformation:!!error.pendingInformation,reason:failures[source.id][0]});
-   onProgress({completed:results.size,message:error.pendingInformation?`${source.id} needs additional applicability information; continuing other assessments.`:`Deferred ${source.id}; continuing other assessments. ${Object.keys(failures).length-informationPending.size} rows queued for end-of-run retry.`});
+   if(error.pendingInformation || error.completionOnly || error.code==='HAZARD_EVIDENCE_INVALID')informationPending.add(source.id);
+   onDiagnostic({method,event:'row-deferred',id:source.id,pass,reasonCode:error.code || 'HAZARD_REQUEST_FAILED',pendingInformation:!!error.pendingInformation,...(error.evidenceBudget?{evidenceBudget:error.evidenceBudget}:{}),reason:failures[source.id][0]});
+   onProgress({completed:results.size,message:informationPending.has(source.id)?`Completing remaining assessments; continuing independent work for now (${source.id}).`:`Deferred ${source.id}; continuing other assessments. ${Object.keys(failures).length-informationPending.size} rows queued for end-of-run retry.`});
   };
   if(pass)onProgress({completed:results.size,message:`Revisiting ${unknown.length} deferred ${method} rows (pass ${pass} of 2)…`});
   onProgress({step:5,total:100,completed:results.size,message:`Screening applicability for ${unknown.length} ${method} guide-phrase rows…`});
@@ -107,6 +107,7 @@ export async function generateFastHazards({method,sources,context,checkpoint,sig
   });
   for(const [id,decision] of decisions)screenedDecisions.set(id,decision);
   const pending=unknown.filter(s=>!results.has(s.id) && decisions.has(s.id)).map(s=>({...s,screenedApplicability:decisions.get(s.id).applicable,screenedRationale:decisions.get(s.id).rationale}));
+  for(const source of pending)evidenceChunker.plan(resultsFirstPrompt(method,[source],context),{maxTokens:budget.maxTokens});
   const originals=new Map(sources.map(s=>[s.id,s]));
   const limit=hazardInputLimit(resultsFirstPrompt(method,[],context).length,70000);
   let next=0,stopped;

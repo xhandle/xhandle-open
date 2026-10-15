@@ -184,3 +184,39 @@ test.each(['HARA','FHA'])('%s normalizes saved ratings through fallback, final p
  expect(parseCsv(toCsvText(reloaded.generatedSheets.Summary))).toEqual(run.generatedSheets.Summary.map(row=>row.map(String)));
  expect(importHazardSoftwareRequirements({hazardAnalysis:reloaded}).length).toBeGreaterThan(0);
 });
+
+test('checkpoint recovery clears the displayed warning immediately but cannot mask final-save failure',async()=>{
+ const pipeline=require('./resultsFirstHazardPipeline');
+ const progress=jest.fn();let storageObserver;
+ const generate=jest.spyOn(pipeline,'generateFastHazards').mockImplementationOnce(async options=>{
+  storageObserver=options.onStorageState;
+  options.onProgress({step:40,message:'Assessing rows'});
+  options.onStorageState({unsaved:true,status:'failed',message:'Transient abort'});
+  expect(progress.mock.calls.at(-1)[0].message).toContain('Progress could not be saved');
+  options.onStorageState({unsaved:false,status:'saved'});
+  expect(progress.mock.calls.at(-1)[0].message).toBe('Assessing rows');
+  return options.sources.map(({id})=>answer('STPA',id));
+ });
+ saveCodeArchitectureHazardRun.mockRejectedValue(new Error('Final save failed'));
+ try{
+  const run=await runCodeArchitectureHazardAnalysis({...base,setProgress:progress});
+  expect(run.finalSavePending).toBe(true);
+  const last=progress.mock.calls.at(-1)[0];expect(last.message).toContain('save pending');
+  storageObserver({unsaved:false,status:'saved'});
+  expect(progress.mock.calls.at(-1)[0]).toBe(last);
+ }finally{generate.mockRestore();}
+});
+test.each([false,true])('standalone runner retires checkpoint work on completion (final save fails: %s)',async fails=>{
+ const pipeline=require('./resultsFirstHazardPipeline');let checkpointSignal;
+ const generate=jest.spyOn(pipeline,'generateFastHazards').mockImplementationOnce(async options=>{
+  checkpointSignal=options.checkpointSignal;
+  expect(checkpointSignal.aborted).toBe(false);
+  return options.sources.map(({id})=>answer('STPA',id));
+ });
+ if(fails)saveCodeArchitectureHazardRun.mockRejectedValue(new Error('Final save failed'));
+ try{
+  const run=await runCodeArchitectureHazardAnalysis(base);
+  expect(checkpointSignal.aborted).toBe(true);expect(run.runState).toBe('complete');
+  expect(Boolean(run.finalSavePending)).toBe(fails);
+ }finally{generate.mockRestore();}
+});

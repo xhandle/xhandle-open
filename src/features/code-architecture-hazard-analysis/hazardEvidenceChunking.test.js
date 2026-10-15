@@ -1,10 +1,12 @@
-import {createHazardEvidenceChunker,evidencePieces} from './hazardEvidenceChunking';
+import {createHazardEvidenceChunker as boundedChunker,evidencePieces} from './hazardEvidenceChunking';
 import {applicabilityPrompt as baseApplicabilityPrompt} from './fastHazardApplicability';
 // Exercise full-evidence escalation; the normal screen now excludes raw code.
 const applicabilityPrompt=(method,sources,context)=>baseApplicabilityPrompt(method,sources,context,{includeEvidence:true});
 import {resultsFirstPrompt,generateFastHazards} from './resultsFirstHazardPipeline';
 import {hazardPromptFits} from './hazardPromptPayload';
 import {answer} from './fastHazardTestFixtures';
+// Legacy provenance/splitting tests exercise deeper recovery with an explicit budget.
+const createHazardEvidenceChunker=options=>boundedChunker({maxPreparationRequests:100,...options});
 const source={id:'HA-1',action:'Apply torque',phrase:'Too late',evidence:'unique source\n'.repeat(18000)};
 const items=p=>JSON.parse(p.split('\nEvidence pieces: ')[1]);
 const summary=pieces=>({coveredRefs:pieces.map(p=>p.ref),facts:[{text:'Explicit source constraint; no concurrency established.',refs:pieces.map(p=>p.ref)}],constraints:[],safeguards:[],conflicts:[],unknowns:[]});
@@ -60,7 +62,7 @@ test('stop prevents assessment and further extraction',async()=>{
 test.each(['STPA','HARA','FHA'])('%s uses compact screening then chunks oversized generation evidence',async method=>{
  const request=jest.fn(async p=>p.includes('\nEvidence pieces: ')?summary(items(p)):JSON.parse(p.split('\nRows: ')[1]).map(({id})=>answer(method,id)));
  const applicabilityRequest=jest.fn(async p=>JSON.parse(p.split('\nRows: ')[1]).map(({id})=>({id,applicable:'Yes',rationale:'Meaningful deviation'})));
- const result=await generateFastHazards({method,sources:[source],context:{},request,applicabilityRequest,onMetrics:()=>{},onDiagnostic:()=>{}});
+ const result=await generateFastHazards({method,sources:[{...source,evidence:'unique source\n'.repeat(9000)}],context:{},request,applicabilityRequest,onMetrics:()=>{},onDiagnostic:()=>{}});
  expect(result).toHaveLength(1);expect(result[0].applicable).toBe('Yes');
  expect(applicabilityRequest.mock.calls[0][0]).not.toContain('Evidence summaries:');
  expect(applicabilityRequest.mock.calls[0][0]).not.toContain(source.evidence);
@@ -144,4 +146,123 @@ test('persistent output truncation splits only after the larger allowance and ch
  expect(request.mock.calls[0][1].maxTokens).toBe(8000);
  expect(request.mock.calls.slice(1).every(([,o])=>o.maxTokens===16000)).toBe(true);
  expect(request.mock.calls[2][0]).not.toBe(request.mock.calls[1][0]);
+});
+test('default preparation cap prevents repeated extraction across retries and target sizes',async()=>{
+ const request=jest.fn(async p=>summary(items(p))),chunker=boundedChunker({request});
+ const prompt=applicabilityPrompt('STPA',[source],{}),send=jest.fn();
+ await expect(chunker.run(prompt,{maxTokens:8000},send)).rejects.toMatchObject({code:'HAZARD_EVIDENCE_BUDGET',completionOnly:true});
+ expect(request).toHaveBeenCalledTimes(12);
+ await expect(chunker.run(prompt,{maxTokens:8000,inputByteLimit:10000},send)).rejects.toMatchObject({code:'HAZARD_EVIDENCE_BUDGET'});
+ expect(request).toHaveBeenCalledTimes(12);expect(send).not.toHaveBeenCalled();
+});
+test('independent relationships have independent budgets beyond the former run cap',async()=>{
+ const request=jest.fn(async p=>summary(items(p))),chunker=boundedChunker({request});
+ const send=async p=>{if(!p.includes('Evidence summaries:'))throw new Error('prompt is too long');return ['ok'];};
+ for(let i=0;i<30;i++)expect(await chunker.run(applicabilityPrompt('STPA',[{...source,evidence:`small ${i}`,action:`Action ${i}`}],{}),{maxTokens:8000},send)).toEqual(['ok']);
+ expect(request).toHaveBeenCalledTimes(30);
+});
+test('elapsed preparation budget stops new work after in-flight requests finish',async()=>{
+ let now=1000;const clock=jest.spyOn(Date,'now').mockImplementation(()=>now);
+ try{
+  const request=jest.fn(async p=>{now+=1000;return summary(items(p));});
+  await expect(boundedChunker({request,maxPreparationMs:500}).run(applicabilityPrompt('STPA',[source],{}),{maxTokens:8000},jest.fn())).rejects.toMatchObject({code:'HAZARD_EVIDENCE_BUDGET'});
+  expect(request).toHaveBeenCalledTimes(1);
+ }finally{clock.mockRestore();}
+});
+test('validated extraction is reused in memory without checkpoint storage',async()=>{
+ const request=jest.fn(async p=>summary(items(p))),chunker=boundedChunker({request});
+ const prompt=applicabilityPrompt('STPA',[{...source,evidence:'small'}],{});
+ let rejections=0;
+ const send=jest.fn(async()=>{if(rejections++<2)throw new Error('prompt is too long');return ['ok'];});
+ expect(await chunker.run(prompt,{maxTokens:8000},send)).toEqual(['ok']);
+ expect(request).toHaveBeenCalledTimes(1);
+});
+test.each(['STPA','HARA','FHA'])('%s completes exhausted evidence once and preserves reviewed decisions',async method=>{
+ const request=jest.fn(async p=>summary(items(p)));
+ const applicabilityRequest=jest.fn(async p=>JSON.parse(p.split('\nRows: ')[1]).map(({id})=>({id,applicable:'Yes',rationale:'Meaningful deviation'})));
+ const result=await generateFastHazards({method,sources:[{...source,reviewedApplicability:'Yes',reviewedRationale:'Accepted command deviation'},{...source,id:'HA-2',reviewedApplicability:'No'}],context:{},request,applicabilityRequest,onMetrics:()=>{},onDiagnostic:()=>{}});
+ expect(result).toHaveLength(2);
+ expect(result[0]).toMatchObject({applicable:'Yes',assessmentBasis:expect.stringContaining('Assumption-based')});
+ expect(result[1].applicable).toBe('No');
+ expect(request).toHaveBeenCalledTimes(12);expect(applicabilityRequest).not.toHaveBeenCalled();
+});
+test.each(['STPA','HARA','FHA'])('%s does not restart invalid evidence recovery on later passes',async method=>{
+ const request=jest.fn(async()=>({coveredRefs:[],facts:[],constraints:[],safeguards:[],conflicts:[],unknowns:[]}));
+ const applicabilityRequest=jest.fn(async p=>JSON.parse(p.split('\nRows: ')[1]).map(({id})=>({id,needsEvidence:true,rationale:'Need command deadline'})));
+ const result=await generateFastHazards({method,sources:[source],context:{},request,applicabilityRequest,onMetrics:()=>{},onDiagnostic:()=>{}});
+ expect(result[0].assessmentBasis).toContain('Assumption-based');
+ expect(applicabilityRequest).toHaveBeenCalledTimes(1);
+ // Three workers, at most two validation attempts per chunk, no subsequent pass.
+ expect(request.mock.calls.length).toBeLessThanOrEqual(6);
+});
+test('evidence time spent on an earlier relationship does not consume a later allowance',async()=>{
+ let now=1000;const clock=jest.spyOn(Date,'now').mockImplementation(()=>now);
+ try{
+  const request=jest.fn(async p=>{now+=1000;return summary(items(p));});
+  const chunker=boundedChunker({request,maxPreparationMs:500});
+  const send=async p=>{if(!p.includes('Evidence summaries:'))throw new Error('prompt is too long');return [];};
+  await chunker.run(applicabilityPrompt('STPA',[{...source,evidence:'small'}],{}),{maxTokens:8000},send);
+  await chunker.run(applicabilityPrompt('STPA',[{...source,evidence:'different'}],{}),{maxTokens:8000},send);
+  expect(request).toHaveBeenCalledTimes(2);
+ }finally{clock.mockRestore();}
+});
+test('an exhausted relationship cannot force an independent relationship into fallback',async()=>{
+ const request=jest.fn(async p=>summary(items(p))),chunker=boundedChunker({request});
+ await expect(chunker.run(applicabilityPrompt('STPA',[source],{}),{maxTokens:8000},jest.fn())).rejects.toMatchObject({code:'HAZARD_EVIDENCE_BUDGET',evidenceBudget:{scope:'relationship',requests:12}});
+ const send=async p=>{if(!p.includes('Evidence summaries:'))throw new Error('prompt is too long');return ['analyzed'];};
+ expect(await chunker.run(applicabilityPrompt('STPA',[{...source,id:'HA-next',action:'Independent action',evidence:'small'}],{}),{maxTokens:8000},send)).toEqual(['analyzed']);
+ expect(request).toHaveBeenCalledTimes(13);
+});
+test('guide phrases reuse matching evidence while contexts and changed evidence remain isolated',async()=>{
+ const request=jest.fn(async p=>summary(items(p))),chunker=boundedChunker({request});
+ const send=async p=>{if(!p.includes('Evidence summaries:'))throw new Error('prompt is too long');return [];};
+ const small={...source,evidence:'small'};
+ await Promise.all(['Too early','Too late'].map((phrase,i)=>chunker.run(applicabilityPrompt('STPA',[{...small,id:`HA-${i}`,phrase}],{operationalContext:'Unattended'}),{maxTokens:8000},send)));
+ expect(request).toHaveBeenCalledTimes(1);
+ await chunker.run(applicabilityPrompt('STPA',[small],{operationalContext:'Attended'}),{maxTokens:8000},send);
+ await chunker.run(applicabilityPrompt('STPA',[{...small,evidence:'changed evidence'}],{operationalContext:'Unattended'}),{maxTokens:8000},send);
+ expect(request).toHaveBeenCalledTimes(3);
+});
+test('changed applicability questions cannot reset the relationship budget or reuse a focused summary',async()=>{
+ const request=jest.fn(async p=>summary(items(p))),chunker=boundedChunker({request,maxPreparationRequests:1});
+ const prompt=applicabilityPrompt('STPA',[{...source,evidence:'small'}],{});
+ const send=async p=>{if(!p.includes('Evidence summaries:'))throw new Error('prompt is too long');return [];};
+ await chunker.run(prompt,{maxTokens:8000,evidenceFocus:'Is there a deadline?'},send);
+ await expect(chunker.run(prompt,{maxTokens:8000,evidenceFocus:'Is there a duration?'},send)).rejects.toMatchObject({code:'HAZARD_EVIDENCE_BUDGET'});
+ expect(request).toHaveBeenCalledTimes(1);
+});
+test('idle time between guide phrases does not consume relationship evidence time',async()=>{
+ let now=1000;const clock=jest.spyOn(Date,'now').mockImplementation(()=>now);
+ try{
+  const request=jest.fn(async(p,o)=>{now+=100;const value=summary(items(p));if(o.workflow==='hazard-evidence-extraction')value.facts[0].text='x'.repeat(13000);return value;});
+  const chunker=boundedChunker({request,maxPreparationMs:500});
+  const prompt=applicabilityPrompt('STPA',[{...source,evidence:'small'}],{});
+  const send=async p=>{if(!p.includes('Evidence summaries:'))throw new Error('prompt is too long');return [];};
+  await chunker.run(prompt,{maxTokens:8000},send);now+=100000;
+  await chunker.run(prompt,{maxTokens:8000,inputByteLimit:12000},send);
+  expect(request).toHaveBeenCalledTimes(2);
+ }finally{clock.mockRestore();}
+});
+test('progress shows identified evidence items as well as chunks and deduplicates guide phrases',async()=>{
+ const events=[],chunker=createHazardEvidenceChunker({request:extract,onProgress:e=>events.push(e)});
+ const options={maxTokens:8000},send=async()=>[];
+ const first=applicabilityPrompt('STPA',[source],{});
+ const second=applicabilityPrompt('STPA',[{...source,id:'HA-2',action:'Release torque'}],{});
+ chunker.plan(first,options);chunker.plan(second,options);
+ chunker.plan(applicabilityPrompt('STPA',[{...source,id:'HA-3',phrase:'Too early'}],{}),options);
+ chunker.plan(applicabilityPrompt('STPA',[{...source,evidence:'small'}],{}),options);
+ await chunker.run(first,options,send);
+ expect(events[0]).toMatchObject({completed:0,evidenceItem:1,evidenceTotal:2});
+ expect(events.every(e=>e.evidenceTotal===2)).toBe(true);
+ expect(events.at(-1).message).toMatch(/^Preparing oversized evidence: item 1 of 2 identified so far · chunk \d+ of \d+$/);
+ events.length=0;await chunker.run(second,options,send);
+ expect(events[0]).toMatchObject({evidenceItem:2,evidenceTotal:2});
+ const before=events.length;await chunker.run(first,options,send);expect(events).toHaveLength(before);
+});
+test('unexpected provider input rejection registers an additional identified evidence item',async()=>{
+ const events=[],chunker=createHazardEvidenceChunker({request:extract,onProgress:e=>events.push(e)});
+ chunker.plan(applicabilityPrompt('STPA',[source],{}),{maxTokens:8000});
+ const prompt=applicabilityPrompt('STPA',[{...source,evidence:'small'}],{});
+ await chunker.run(prompt,{maxTokens:8000},async p=>{if(!p.includes('Evidence summaries:'))throw new Error('context_length_exceeded');return [];});
+ expect(events[0]).toMatchObject({evidenceItem:2,evidenceTotal:2});
 });

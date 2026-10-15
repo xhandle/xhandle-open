@@ -13,11 +13,13 @@ test('generation and review share three slots and waiting stages alternate',asyn
  gates.forEach(g=>g.resolve());await Promise.all(jobs);expect(max).toBe(3);scheduler.close();
 });
 
-test('abort rejects queued requests without starting them',async()=>{
+test('abort settles active requests and rejects queued requests without starting them',async()=>{
  const controller=new AbortController(),scheduler=createHazardRequestScheduler({limit:1,signal:controller.signal});
  const gate=deferred(),queued=jest.fn();
- const first=scheduler.run('generation',()=>gate.promise);
+ const active=jest.fn(()=>gate.promise);
+ const first=scheduler.run('generation',active);const firstObserved=first.catch(e=>e);
  const second=scheduler.run('review',queued);const observed=second.catch(e=>e);
+ await flush();expect(active).toHaveBeenCalledTimes(1);
  controller.abort();expect((await observed).name).toBe('AbortError');expect(queued).not.toHaveBeenCalled();
- gate.resolve();await first;scheduler.close();
+ expect((await firstObserved).name).toBe('AbortError');gate.resolve();scheduler.close();
 });

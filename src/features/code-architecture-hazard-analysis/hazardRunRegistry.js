@@ -14,6 +14,7 @@ export function createHazardRunRegistry() {
   finish(scope,record){
    if(runs.get(scope)!==record)return;
    bump(scope);record.running=false;
+   record.controller.abort(); // Retire background storage work before another run starts.
    if(!record.run?.finalSavePending)runs.delete(scope);
   },
   retainScopes(scopes){

@@ -28,7 +28,7 @@ test('screening defers a failed subchunk and continues sibling rows without inve
  expect(decisions.has('HA-1')).toBe(false);expect(decisions.get('HA-2').applicable).toBe('No');
  expect(onDeferred).toHaveBeenCalledTimes(1);
 });
-test('invalid evidence is deferred while other decisions are completed and revisited at the end',async()=>{
+test('invalid evidence uses assumption completion while independent decisions remain intact',async()=>{
  const events=[];let fail=true;
  const request=jest.fn(async p=>{
   if(p.includes('\nEvidence pieces: ')){
@@ -40,9 +40,11 @@ test('invalid evidence is deferred while other decisions are completed and revis
  });
  const applicabilityRequest=jest.fn(async p=>batch(p).map(({id})=>{if(id==='HA-1' && !p.includes('Additional evidence was requested'))return {id,needsEvidence:true,rationale:'Need source evidence'};events.push(`screened-${id}`);return {id,applicable:'No',rationale:'Out of scope'};}));
  const result=await generateFastHazards({method:'STPA',sources:[{...source(1,false),evidence:'evidence '.repeat(30000)},source(2,false)],context:{},request,applicabilityRequest,...quiet,onProgress:patch=>{if(patch.message?.startsWith("Revisiting"))events.push("end-retry");}});
- expect(result.map(r=>r.applicable)).toEqual(['No','No']);
- expect(events.indexOf('screened-HA-2')).toBeLessThan(events.indexOf('end-retry'));
- expect(events.slice(events.indexOf('end-retry')).includes('extraction-retry')).toBe(true);
+ expect(result.map(r=>r.applicable)).toEqual(['Yes','No']);
+ expect(result[0].assessmentBasis).toContain('Assumption-based');
+ expect(events).toContain('screened-HA-2');
+ expect(events).not.toContain('end-retry');
+ expect(applicabilityRequest.mock.calls.filter(([p])=>batch(p).some(r=>r.id==='HA-1'))).toHaveLength(1);
  expect(applicabilityRequest.mock.calls.filter(([p])=>batch(p).some(r=>r.id==='HA-2'))).toHaveLength(1);
 });
 test('persistent failures do not prevent other rows from being completed and finish with explicit premises',async()=>{

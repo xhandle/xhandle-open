@@ -45,3 +45,10 @@ test('successful retry-save releases only the matching completed unsaved run',()
  registry.discard('A');expect(active.controller.signal.aborted).toBe(true);
  expect(registry.get('A')).toBeUndefined();
 });
+test('finishing a run retires its controller while retaining unsaved final results',()=>{
+ const registry=createHazardRunRegistry(),first=registry.start('scope');
+ first.run={id:'unsaved',finalSavePending:true};registry.finish('scope',first);
+ expect(first.controller.signal.aborted).toBe(true);expect(registry.get('scope').run.id).toBe('unsaved');
+ const second=registry.start('scope');registry.finish('scope',first);
+ expect(second.controller.signal.aborted).toBe(false);
+});

@@ -1,5 +1,4 @@
 import {safeHazardObserver,usableHazardInputs} from './hazardCompletionSupport';
-import {boundedHazardStorage} from './resilientHazardCheckpoint';
 import {compactReviewEntries} from './fastHazardSemanticReview';
 import {organizationProfileContextIdentity} from '../organization-profile/organizationProfile';
 import {functionalModelIsReady} from '../code-architecture-context/functionalModel';
@@ -129,10 +128,14 @@ export async function runFastCodeArchitectureHazardAnalysis({previousRun=null,re
   if(!input.tableRows.length)throw new Error('No architecture interfaces are included for hazard analysis.');
   const provider=getStoredActiveAIProvider();
   const context={repository:repoMeta.repoName || input.repoId,organizationProfile:organizationContext || 'No organization profile enabled.',operationalContext:input.operationalContext,analysisContext:input.analysisContext,contextSources:input.contextSources};
-  let storageWarning='';
-  let checkpoint;
-  try{checkpoint=await boundedHazardStorage(createCodeHazardCheckpoint({pipeline:FAST_HAZARD_VERSION,projectId,repoId:input.repoId,method:normalizedMethod,provider,model:getStoredAIProviderModelPreference(provider,{includeDefault:true}),effort:getStoredAIProviderEffortPreference(provider)},
-    {regenerate,signal,onProgress:progress}));}catch(error){check();storageWarning=error.message || 'Checkpoint storage unavailable';}
+  let storageWarning='',lastAssessmentProgress=null,generating=true;
+  const checkpointController=new AbortController();
+  const cancelCheckpoint=()=>checkpointController.abort();
+  signal?.addEventListener('abort',cancelCheckpoint,{once:true});
+  if(signal?.aborted)cancelCheckpoint();
+  try{
+  const checkpoint=()=>createCodeHazardCheckpoint({pipeline:FAST_HAZARD_VERSION,projectId,repoId:input.repoId,method:normalizedMethod,provider,model:getStoredAIProviderModelPreference(provider,{includeDefault:true}),effort:getStoredAIProviderEffortPreference(provider)},
+    {regenerate,signal:checkpointController.signal,onProgress:progress});
   const sources=compactHazardSources(input.tableRows);
   const buildRun=(assessments,selectedInput=input)=>{
   const generated=fastHazardSheets(normalizedMethod,selectedInput,assessments);
@@ -163,7 +166,7 @@ hazardMethod:method,hazardGenerationMode:'compact',
   };
   let assessments;
   try {
-    assessments=await generateFastHazards({method:normalizedMethod,sources,context,checkpoint,signal,onProgress:patch=>progress({...patch,message:storageWarning?`${patch.message} · Checkpoint storage unavailable; keep this page open.`:patch.message}),onStorageState:state=>{if(state.unsaved)storageWarning=state.message;}});
+    assessments=await generateFastHazards({method:normalizedMethod,sources,context,checkpoint,signal,checkpointSignal:checkpointController.signal,onProgress:patch=>{lastAssessmentProgress=patch;progress({...patch,message:storageWarning?`${patch.message} · ${storageWarning}`:patch.message});},onStorageState:state=>{storageWarning=state.unsaved?(state.status==='pending'?state.message:'Progress could not be saved. Keep this browser tab open.'):'';if(generating && lastAssessmentProgress)progress({...lastAssessmentProgress,message:storageWarning?`${lastAssessmentProgress.message} · ${storageWarning}`:lastAssessmentProgress.message});}});
   } catch(error) {
     if(Array.isArray(error.partialResults)){
       const byId=new Map(sources.map((source,index)=>[source.id,input.tableRows[index]]));
@@ -180,7 +183,7 @@ hazardMethod:method,hazardGenerationMode:'compact',
       onPartialRunUpdate(recovery);
     }
     throw error;
-  }
+  }finally{generating=false;}
   check();progress({step:96,message:'Preparing traceable hazard results...'});
   const run=buildRun(assessments);
   check();progress({step:98,message:'Saving hazard results...'});
@@ -189,4 +192,5 @@ hazardMethod:method,hazardGenerationMode:'compact',
   progress({step:100,message:run.finalSavePending?'Hazard results ready — save pending. Export before reloading.':'Hazard results saved.'});
   // Successful checkpoints stay available for a continuation; explicit regeneration clears this pipeline's scope.
   return run;
+  }finally{checkpointController.abort();signal?.removeEventListener('abort',cancelCheckpoint);}
 }

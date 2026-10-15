@@ -127,6 +127,7 @@ export async function screenFastApplicability({method,sources,context,checkpoint
     }
   }
   if(batch.length)batches.push(batch);
+  for(const source of pending)chunker.plan?.(applicabilityPrompt(method,[source],context),{maxTokens:8000,inputByteLimit:SCREEN_BYTES});
   let next=0,failure;
   await Promise.all(Array.from({length:Math.min(3,batches.length)},async()=>{
     while(!failure && next<batches.length){const index=next++;try{check(signal);await assess(batches[index]);}catch(error){failure=failure || error;}}
@@ -140,6 +141,7 @@ export async function screenFastApplicability({method,sources,context,checkpoint
     const key=JSON.stringify(identity);if(!evidenceGroups.has(key))evidenceGroups.set(key,[]);
     evidenceGroups.get(key).push(item);
   }
+  for(const group of evidenceGroups.values())chunker.plan?.(applicabilityPrompt(method,group.map(x=>x.source),context,{includeEvidence:true,questions:group.map(x=>({phrase:x.source.phrase,question:x.question}))}),{maxTokens:8000,inputByteLimit:SCREEN_BYTES});
   // One evidence group at a time; its chunk extractor has at most three workers.
   // This keeps extraction plus screening within the same three-request ceiling.
   for(const group of evidenceGroups.values()){

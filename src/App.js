@@ -1,3 +1,4 @@
+import {abortableHazardTask} from './features/code-architecture-hazard-analysis/abortableHazardTask';
 import {safeHazardObserver} from './features/code-architecture-hazard-analysis/hazardCompletionSupport';
 import {createHazardRunRegistry} from './features/code-architecture-hazard-analysis/hazardRunRegistry';
 import {boundedHazardStorage} from './features/code-architecture-hazard-analysis/resilientHazardCheckpoint';
@@ -14513,7 +14514,7 @@ Rules:
     const candidatePriorRun = codeArchitectureHazardRunRef.current;
     const priorRunForPreprocessing = candidatePriorRun?.projectId === cbaProjectId && candidatePriorRun?.repoId === repoId ? candidatePriorRun : null;
     try {
-      const run = await runCodeArchitectureHazardAnalysis({
+      const run = await abortableHazardTask(()=>runCodeArchitectureHazardAnalysis({
         regenerate: Boolean(options.regenerate),
         previousRun: priorRunForPreprocessing,
         cbaRows: cbaTableData,
@@ -14532,10 +14533,12 @@ Rules:
         } : null,
         signal: abortController.signal,
         onPartialRunUpdate: (partialRun) => {
+          if(abortController.signal.aborted)return;
           record.run=partialRun;
           if (isCurrentRun()) setCodeArchitectureHazardRun(partialRun);
         },
         setProgress: (nextProgress) => {
+          if(abortController.signal.aborted)return;
           const step = nextProgress?.step || 0;
           const total = nextProgress?.total || stepDescriptionsMap[selectedMethod]?.total || 9;
           const message = nextProgress?.message
@@ -14551,6 +14554,7 @@ Rules:
           });
         },
         onActivityUpdate: (patch) => {
+          if(abortController.signal.aborted)return;
           const step = patch?.step ?? 0;
           const total = patch?.total || stepDescriptionsMap[selectedMethod]?.total || 9;
           const message = patch?.message || "Running code architecture hazard analysis...";
@@ -14563,7 +14567,7 @@ Rules:
             completed: patch?.completed,
           });
         },
-      });
+      }),abortController.signal);
       record.run=run;
       if (isCurrentRun()) setCodeArchitectureHazardRun(run);
       reportFinish(actId, "success", "Code architecture hazard analysis complete");
@@ -14585,7 +14589,7 @@ Rules:
         }
       }
     } catch (error) {
-      if (codeHazardScopeRef.current === runScope && codeArchitectureHazardAbortRef.current === abortController) commitCodeArchitectureHazardRun(error?.recoveryRun || priorRunForPreprocessing);
+      if (codeHazardScopeRef.current === runScope && codeArchitectureHazardAbortRef.current === abortController) commitCodeArchitectureHazardRun(error?.recoveryRun || record.run || priorRunForPreprocessing);
       // IndexedDB may throw AbortError independently of user cancellation.
       const canceled = abortController.signal.aborted;
       console.error("[code-architecture-hazard-analysis] Run failed", error, JSON.stringify({errorName:error?.name,errorCode:error?.code,originalErrorName:error?.cause?.name,originalErrorCode:error?.cause?.code,findings:error?.findings,failedAssessments:error?.failedAssessments}));
