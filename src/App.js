@@ -1,3 +1,4 @@
+import useHazardDraft from './features/code-architecture-hazard-analysis/useHazardDraft';
 import {abortableHazardTask} from './features/code-architecture-hazard-analysis/abortableHazardTask';
 import {safeHazardObserver} from './features/code-architecture-hazard-analysis/hazardCompletionSupport';
 import {createHazardRunRegistry} from './features/code-architecture-hazard-analysis/hazardRunRegistry';
@@ -39,7 +40,6 @@ import { editFunctionalSystem } from './components/functionalSystemGroups';
 import { fillNotApplicableHazardCells } from './features/project-hazard-analysis/hazardNotApplicableCells';
 import { recordUserPreprocessing, constrainPreprocessedInput, reconcileUserPreprocessing, matchPreprocessedGeneratedRow, respectNewerHazardReviews, preprocessingGenerationBasis } from './features/project-hazard-analysis/hazardUserPreprocessing';
 import { identifyProjectHazardDraftRow } from './features/project-hazard-analysis/projectHazardDraftIds';
-import { buildCodeArchitectureHazardCsvDraft } from './features/code-architecture-hazard-analysis/codeArchitectureHazardCsv';
 import { summarySheetToHazardSummaryRows } from './features/code-architecture-hazard-analysis/codeArchitectureHazardUtils';
 import { useCallback, useRef, useState, useEffect, useLayoutEffect, useMemo } from 'react';
 import { FlaskConical } from 'lucide-react';
@@ -7943,6 +7943,21 @@ useEffect(() => {
     setProgress(prev => ({ ...prev, total: stepDescriptionsMap[riskMethod]?.total || 9 }));
   }, [riskMethod]);
 
+  // Saving has a lifetime separate from generation cancellation. Only the
+  // matching retained run receives its storage state; other projects stay intact.
+  useEffect(() => {
+    const onSaveState = event => {
+      const run = event.detail?.run;
+      if (!run) return;
+      const scope = codeHazardRunsRef.current.reconcileSave(run);
+      if (scope !== null && codeHazardScopeRef.current === scope && codeArchitectureHazardRunRef.current?.id === run.id) {
+        commitCodeArchitectureHazardRun(run);
+      }
+    };
+    window.addEventListener('xhandle:hazard-save-state', onSaveState);
+    return () => window.removeEventListener('xhandle:hazard-save-state', onSaveState);
+  }, []);
+
   const hazardContextSaveVersion = useRef(0);
   const hazardContextSavePending = useRef(null);
   const hazardContextScope = useRef(null);
@@ -14631,17 +14646,20 @@ Rules:
     });
   };
 
-  const hasCodeArchitectureHazardRun = Boolean(codeArchitectureHazardRun);
-  const codeArchitectureCsvDraft = useMemo(() => hasCodeArchitectureHazardRun ? null : buildCodeArchitectureHazardCsvDraft({
-    cbaRows: cbaTableData, repoMeta: activeCodeArchitectureRepoMeta,
-    projectId: activeCodeArchitectureProjectId, method: codeArchitectureHazardMethod,
-    operationalContexts: codeArchitectureHazardContexts,
-  }, getCbaMethodDraftHeaders(codeArchitectureHazardMethod, getProjectDraftHazardHeaders(codeArchitectureHazardMethod))), [
-    cbaTableData, activeCodeArchitectureRepoMeta, activeCodeArchitectureProjectId,
-    codeArchitectureHazardMethod, codeArchitectureHazardContexts, hasCodeArchitectureHazardRun,
-  ]);
-
   const codeArchitectureCsvSnapshotHash = useMemo(() => computeArchitectureSnapshotHash(ensureCodeArchitectureTraceIds(cbaTableData)), [cbaTableData]);
+  const needsCodeArchitectureCsvDraft = section === 'code-architecture' && codeArchitectureWorkspaceTab === 'safety' && hazardRemediationTab === 'hazard-analysis';
+  const hasCodeArchitectureHazardRun = Boolean(codeArchitectureHazardRun);
+  const codeArchitectureDraftInput = useMemo(() => ({options:{
+    architectureSnapshotHash:codeArchitectureCsvSnapshotHash,
+    cbaRows:cbaTableData,repoMeta:activeCodeArchitectureRepoMeta,
+    projectId:activeCodeArchitectureProjectId,method:codeArchitectureHazardMethod,
+    operationalContexts:codeArchitectureHazardContexts,
+  },headers:getCbaMethodDraftHeaders(codeArchitectureHazardMethod,getProjectDraftHazardHeaders(codeArchitectureHazardMethod))}),[
+    codeArchitectureCsvSnapshotHash,cbaTableData,activeCodeArchitectureRepoMeta,activeCodeArchitectureProjectId,
+    codeArchitectureHazardMethod,codeArchitectureHazardContexts,
+  ]);
+  const {run:codeArchitectureCsvDraft,loading:codeArchitectureDraftLoading,progress:codeArchitectureDraftProgress,error:codeArchitectureDraftError,retry:retryCodeArchitectureDraft} = useHazardDraft(!hasCodeArchitectureHazardRun && needsCodeArchitectureCsvDraft,codeArchitectureDraftInput);
+
   const codeArchitectureCsvWorkspaceKey = `${activeCodeArchitectureProjectId}:${normalizeRepoId(activeCodeArchitectureRepoMeta)}:${codeArchitectureCsvSnapshotHash}:${codeArchitectureHazardMethod}`;
   const codeArchitectureCsvWorkspaceRef = useRef(null);
   codeArchitectureCsvWorkspaceRef.current = { key: codeArchitectureCsvWorkspaceKey, running: isRunningCodeArchitectureHazard };
@@ -17854,6 +17872,10 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                         />
                       )}
                       draftRun={codeArchitectureCsvDraft}
+                      draftLoading={codeArchitectureDraftLoading}
+                      draftProgress={codeArchitectureDraftProgress}
+                      draftError={codeArchitectureDraftError}
+                      onRetryDraft={retryCodeArchitectureDraft}
                       onImportSummary={handleImportCodeArchitectureSummary}
                       method={codeArchitectureHazardMethod}
                       onMethodChange={setCodeArchitectureHazardMethod}

@@ -1,0 +1,3 @@
+# Codex prompt: Investigate large-architecture hazard-tab lag
+
+Read-only audit of switching from Architecture to Hazard Analysis. Trace work before first paint with and without an existing hazard run. Inspect draft gating/cache lifetime, guide-phrase/context expansion, fingerprinting, normalization, grouping, column filtering, deferred rows, and DOM/layout work. Use bounded synthetic measurements; no paid generation or user database writes. Separate source-confirmed work and measured Node/jsdom timing from unknown Safari timings. Identify effects of recent memory fixes and prioritize minimal safe remedies preserving table editing, CSV semantics, traceability, search, and context filtering. Do not change production code.

@@ -1,4 +1,3 @@
-import {boundedHazardStorage} from './resilientHazardCheckpoint';
 import { openDB } from "idb";
 
 const DB_NAME = "xhandle-code-architecture-hazard-analysis";
@@ -142,32 +141,90 @@ export async function getCodeArchitectureHazardRunById(id) {
   return db ? (await db.get(STORE_NAME, id)) || null : loadFallbackState().hazardAnalysisRuns.find(run => run.id === id) || null;
 }
 
-export async function saveCodeArchitectureHazardRun(run, { notify = true } = {}) {
+// One queue per record prevents slow or retried writes overtaking newer saves.
+const saveQueues = new Map();
+const saveOwners = new Map();
+const saveEpochs = new Map();
+function publishSaveState(run) {
+  try { window.dispatchEvent(new CustomEvent('xhandle:hazard-save-state', {detail:{run}})); } catch {}
+}
+const transientSaveError = error => ['AbortError', 'TransactionInactiveError', 'InvalidStateError', 'UnknownError'].includes(error?.name);
+export async function saveCodeArchitectureHazardRun(run, { notify = true, onSaveState = () => {} } = {}) {
   if (!run?.id) throw new Error("Cannot save code architecture hazard analysis without an id.");
-  let tx,expired=false;
-  try {
-    await boundedHazardStorage((async()=>{
-      const db=await openCodeArchitectureHazardDB();
-      if(expired)throw new Error('Save attempt expired');
-      if(db){
-        tx=db.transaction([STORE_NAME,META_STORE],'readwrite');
-        await Promise.all([tx.objectStore(STORE_NAME).put(run),tx.objectStore(META_STORE).put(metadata(run)),tx.done]);
-      }else{
-        const rows=loadFallbackState().hazardAnalysisRuns;
-        saveFallbackState({hazardAnalysisRuns:[...rows.filter(row=>row.id!==run.id),run]});
+  const owner = {};
+  const epoch = saveEpochs.get(run.id) || 0;
+  const checkDeleted = () => {
+    if ((saveEpochs.get(run.id) || 0) !== epoch) throw Object.assign(new Error('Hazard save canceled because the results were deleted.'), {name:'AbortError', code:'HAZARD_SAVE_DELETED'});
+  };
+  saveOwners.set(run.id, owner);
+  const current = () => saveOwners.get(run.id) === owner;
+  const state = (status, message = '') => {
+    if (!current()) return;
+    unsavedRuns.set(run.id, {...run, finalSavePending:true, finalSaveStatus:status, saveFailureMessage:message});
+    publishSaveState(unsavedRuns.get(run.id));
+    try { onSaveState({status, message}); } catch {}
+  };
+  const previous = saveQueues.get(run.id);
+  const work = (async () => {
+    await previous?.catch(() => {});
+    checkDeleted();
+    const persisted = {...run, finalSavePending:false, finalSaveStatus:'saved', saveFailureMessage:''};
+    const slow = setTimeout(() => state('slow'), 5000);
+    try {
+      for (let attempt = 0; ; attempt++) {
+        let tx;
+        try {
+          const db = await openCodeArchitectureHazardDB();
+          checkDeleted();
+          if (db) {
+            tx = db.transaction([STORE_NAME, META_STORE], 'readwrite');
+            await Promise.all([tx.objectStore(STORE_NAME).put(persisted), tx.objectStore(META_STORE).put(metadata(persisted)), tx.done]);
+          } else {
+            const rows = loadFallbackState().hazardAnalysisRuns;
+            saveFallbackState({hazardAnalysisRuns:[...rows.filter(row => row.id !== run.id), persisted]});
+          }
+          break;
+        } catch (error) {
+          // Wait for transaction retirement before opening another writer.
+          try { tx?.abort(); } catch {}
+          if (tx) await tx.done.catch(() => {});
+          checkDeleted();
+          console.warn('[hazard-final-save]', {event:'failed-attempt', attempt:attempt+1, errorName:error?.name, message:error?.message});
+          if (error.code === 'HAZARD_SAVE_DELETED' || !transientSaveError(error) || attempt >= 2) throw error;
+          state('retrying', error.message);
+          await new Promise(resolve => setTimeout(resolve, [1000, 3000][attempt]));
+          checkDeleted();
+          state('saving');
+        }
       }
-    })(),5000);
-  }catch(error){
-    expired=true;try{tx?.abort();}catch{}
-    unsavedRuns.set(run.id,{...run,finalSavePending:true,saveFailureMessage:error.message});throw error;
+      checkDeleted();
+      if (current()) {
+        unsavedRuns.delete(run.id);
+        publishSaveState(persisted);
+        try { onSaveState({status:'saved', message:''}); } catch {}
+        if (notify) emitChanged({storeName:STORE_NAME, projectId:run.projectId, repoId:run.repoId, runId:run.id});
+      }
+      return run;
+    } catch (error) {
+      state('failed', error.message || String(error));
+      throw error;
+    } finally {
+      clearTimeout(slow);
+    }
+  })();
+  saveQueues.set(run.id, work);
+  // Reserve the queue slot before synchronous events or callbacks can enqueue
+  // another revision. Work yields above before opening storage.
+  state('saving'); // Protect results from reload while queued or writing, too.
+  try { return await work; }
+  finally {
+    if (saveQueues.get(run.id) === work) saveQueues.delete(run.id);
+    if (current()) saveOwners.delete(run.id);
   }
-  unsavedRuns.delete(run.id);
-  if(notify)emitChanged({storeName:STORE_NAME,projectId:run.projectId,repoId:run.repoId,runId:run.id});
-  return run;
 }
 
 export async function deleteCodeArchitectureHazardRuns(filters = {}) {
-  for(const run of memoryMatches(filters))unsavedRuns.delete(run.id);
+  for(const run of memoryMatches(filters)){saveEpochs.set(run.id,(saveEpochs.get(run.id) || 0)+1);saveOwners.delete(run.id);unsavedRuns.delete(run.id);}
   const db = await openCodeArchitectureHazardDB();
   if (!db) {
     const rows = loadFallbackState().hazardAnalysisRuns;

@@ -20,6 +20,15 @@ export function createHazardRunRegistry() {
   retainScopes(scopes){
    for(const [scope,record] of runs)if(!scopes.has(scope)){record.controller.abort();runs.delete(scope);bump(scope);}
   },
+  reconcileSave(run){
+   for(const [scope,record] of runs){
+    if(record.run?.id!==run?.id || record.run?.projectId!==run?.projectId || record.run?.repoId!==run?.repoId)continue;
+    record.run=run;
+    if(!record.running && !run.finalSavePending){runs.delete(scope);bump(scope);}
+    return scope;
+   }
+   return null;
+  },
   saved(scope,id){
    const record=runs.get(scope);
    if(record && !record.running && record.run?.id===id){runs.delete(scope);bump(scope);}

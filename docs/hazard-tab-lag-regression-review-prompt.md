@@ -1,0 +1,3 @@
+# Review prompt: hazard tab lag fix
+
+Read-only audit of the worker draft preparation/cache and hazard row virtualization changes. Verify that Architecture-to-Hazard tab switching avoids synchronous draft creation and all-row mounting. Trace project/method/context invalidation, worker failure/cleanup, filtering, exports, collapsed groups, quick search and distant row links. Exercise realistic nonzero row heights and live data updates, not only jsdom zero-height layouts. Run the relevant regression tests and focused probes. Do not change application code. Report confirmed findings with exact source locations, distinguish residual performance costs from defects, and state browser validation limits.

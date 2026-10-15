@@ -245,10 +245,12 @@ it('clears the hazard cell highlight when collaborator context is removed and al
   } finally {act(()=>root.unmount());host.remove();}
 });
 
-it('quick search indexes deferred hazard cells and excludes hidden columns and collapsed groups', async()=>{
+it('quick search indexes unmounted hazard cells and excludes hidden columns and collapsed groups', async()=>{
  const {tableSearchEntries,filterSearchEntries}=require('../../components/quickSearchUtils');
  const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
  const prior=global.IntersectionObserver;
+ const priorRect=Element.prototype.getBoundingClientRect;
+ Element.prototype.getBoundingClientRect=function(){return {height:this.tagName==='TR'?400:800};};
  global.IntersectionObserver=class {observe(){} unobserve(){} disconnect(){}};
  const sheet=[['Function','Guide Phrase','Hazard','Private metadata'],...Array.from({length:25},(_,i)=>['Controller',`Phrase ${i}`,`Hazard token${i}`,'hidden-only-value'])];
  try{
@@ -257,13 +259,31 @@ it('quick search indexes deferred hazard cells and excludes hidden columns and c
   const entries=tableSearchEntries(host);
   expect(filterSearchEntries(entries,'token24')).toHaveLength(1);
   expect(filterSearchEntries(entries,'hidden-only-value')).toHaveLength(0);
-  expect(host.querySelector('#cba-hazard-row-24').dataset.deferredRow).toBe('true');
+  expect(host.querySelector('#cba-hazard-row-24')).toBeNull();
   const priorScroll=Element.prototype.scrollIntoView;Element.prototype.scrollIntoView=jest.fn();
   try{
    await act(async()=>{filterSearchEntries(entries,'token24')[0].activate('token24');await new Promise(resolve=>setTimeout(resolve,60));});
-   expect(host.querySelector('#cba-hazard-row-24').dataset.deferredRow).toBeUndefined();
+   expect(host.querySelector('#cba-hazard-row-24')).not.toBeNull();
   }finally{if(priorScroll)Element.prototype.scrollIntoView=priorScroll;else delete Element.prototype.scrollIntoView;}
+  await act(async()=>{table.parentElement.scrollTop=0;table.parentElement.dispatchEvent(new Event('scroll'));await new Promise(resolve=>setTimeout(resolve,60));});
   act(()=>host.querySelector('button[aria-expanded="true"]').click());
   expect(filterSearchEntries(tableSearchEntries(host),'token24')).toHaveLength(0);
- }finally{act(()=>root.unmount());host.remove();global.IntersectionObserver=prior;}
+ }finally{act(()=>root.unmount());host.remove();global.IntersectionObserver=prior;Element.prototype.getBoundingClientRect=priorRect;}
+});
+
+it('bounds mounted rows while preserving full filtered count/export model and revealing distant links',()=>{
+ const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
+ const sheet=[['Function','Control Action','Guide Phrase','Operational Context ID'],...Array.from({length:1000},(_,i)=>[`Function ${i}`,`Command ${i}`,'Not provided','one'])];
+ const priorRect=Element.prototype.getBoundingClientRect;
+ Element.prototype.getBoundingClientRect=function(){return {height:this.tagName==='TR'?400:800};};
+ const onRowFocusResolved=jest.fn();
+ const onVisibleSummaryChange=jest.fn();
+ const render=extra=>act(()=>root.render(<CodeArchitectureHazardSummaryTable summarySheet={sheet} storageKey="window-test" onVisibleSummaryChange={onVisibleSummaryChange} onRowFocusResolved={onRowFocusResolved} {...extra}/>));
+ try{
+  render({});expect(host.querySelectorAll('tbody tr').length).toBeLessThan(80);
+  expect(host.textContent).toContain('1000 of 1000');expect(onVisibleSummaryChange.mock.calls.at(-1)[0]).toHaveLength(1001);
+  render({highlightedRowIndex:999,focusRequestKey:'last'});
+  expect(onRowFocusResolved).toHaveBeenCalledWith('last');
+  expect(host.querySelector('#cba-hazard-row-999')).not.toBeNull();expect(host.querySelectorAll('tbody tr').length).toBeLessThan(80);
+ }finally{act(()=>root.unmount());host.remove();Element.prototype.getBoundingClientRect=priorRect;}
 });

@@ -1,0 +1,3 @@
+# Codex prompt: Close final-save lifecycle defects
+
+Fix the two findings in hazard-final-save-review.md. Serialize every revision and resolve its save only after its own durable commit; never return success for skipped or deletion-invalidated writes. Keep newest-owner guards for memory and notifications. Decouple storage status from generation cancellation: deliver final save success/failure to the matching retained run and visible view, even after Stop, without changing unrelated/newer runs. Preserve transient retry, slow-save UI, error reporting, and reload protection. Add regressions for delayed overlapping revisions and stop followed by both save success and failure. Run hazard/STPA/downstream regressions. Do not alter hazard reasoning.

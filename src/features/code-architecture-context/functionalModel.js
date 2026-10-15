@@ -374,9 +374,10 @@ Consolidation input: ${JSON.stringify({ functions: compact, interactions: links 
 // Ready models expose interactions plus node-only internal rows for the diagram.
 // Internal rows are excluded from hazard guide-phrase expansion, but remain
 // reachable from their function and the supporting-call table.
-export function buildFunctionalModelRows(rows = []) {
-  if (sealed.has(rows) && derived.has(rows)) return derived.get(rows);
-  const result = buildFunctionalModelRowsUncached(rows);
+export function buildFunctionalModelRows(rows = [], onProgress) {
+  if (sealed.has(rows) && derived.has(rows)) { onProgress?.(1); return derived.get(rows); }
+  const result = buildFunctionalModelRowsUncached(rows, onProgress);
+  onProgress?.(1);
   if (sealed.has(rows)) {
     immutableFunctionalRows(result);
     derived.set(rows, result);
@@ -384,7 +385,7 @@ export function buildFunctionalModelRows(rows = []) {
   }
   return result;
 }
-function buildFunctionalModelRowsUncached(rows) {
+function buildFunctionalModelRowsUncached(rows, onProgress) {
   if (!functionalModelIsReady(rows)) return [];
   const groups = new Map(), implementationByResponsibility = new Map();
   for (const { row, index } of current(rows)) {
@@ -420,7 +421,7 @@ function buildFunctionalModelRowsUncached(rows) {
       ...(row.codeEvidence?.sourceFunctions || []), ...(row.sourceEvidence?.functions || []),
       ...(row.codeEvidence?.files || []).flatMap(file => typeof file === "object" ? (file.sourceFunctions || []).map(fn => ({ ...fn, filePath: fn.filePath || file.filePath })) : []),
     ]);
-    return { ...sourceRows[0], canonicalRelationshipId: undefined, classificationPolicyVersion: undefined,
+    const result = { ...sourceRows[0], canonicalRelationshipId: undefined, classificationPolicyVersion: undefined,
       relationshipEvidence: undefined, functionalAbstraction: undefined,
       rowRef: index + 1, traceId, fromNodeId: source.id, toNodeId: target?.id || source.id, edgeId: traceId,
       from: source.label, fromFunction: source.label, to: target?.label || source.label, toFunction: target?.label || source.label,
@@ -443,6 +444,8 @@ function buildFunctionalModelRowsUncached(rows) {
         boundaryReviewSourceIndices: sourceIndices.filter(index => rows[index].functionalAbstraction.boundaryPreserved || rows[index].functionalAbstraction.significance === 'uncertain'),
         inference: 'AI-derived functional responsibility; requires engineering review.' },
     };
+    onProgress?.((index + 1) / groups.size);
+    return result;
   });
 }
 export const functionalModelLabel = row => row.functionalModel?.internal ? 'Internal operations' : human(row.functionalModel?.kind || 'interaction');

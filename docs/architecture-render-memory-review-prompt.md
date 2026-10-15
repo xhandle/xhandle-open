@@ -1,0 +1,3 @@
+# Codex prompt: Review architecture render memory fix
+
+Read-only review of incremental fingerprinting, CSV draft gating/reuse, and root render recovery. Confirm the original whole-evidence stringify/deep-copy is removed, fingerprints remain compatible with legacy canonical JSON, source evidence still affects change detection, and CSV import/export retains stable identity. Check the root boundary and publication ordering. Run relevant suites plus bounded differential hash probes; never exhaust memory or access the user's browser database. Separate confirmed regressions from remaining limits such as synchronous CPU work and real-browser peak memory. Do not modify application code.

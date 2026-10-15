@@ -1,3 +1,4 @@
+import {stableSnapshotHash} from './stableSnapshotHash';
 import { organizationProfileContextIdentity } from '../organization-profile/organizationProfile';
 import { buildFunctionalModelRows, functionalModelIsReady } from '../code-architecture-context/functionalModel';
 import { codeSourceProvenance } from '../code-architecture-context/codeSourceIdentity';
@@ -251,11 +252,7 @@ export function computeArchitectureSnapshotHash(cbaRows = []) {
     hazardAnalysisEligibilityRationale: row?.hazardAnalysisEligibilityRationale || "",
     hazardAnalysisEligibilitySource: row?.hazardAnalysisEligibilitySource || "",
   }));
-  const text = JSON.stringify(stableValue(compactRows));
-  let hash = 0;
-  for (let i = 0; i < text.length; i += 1) {
-    hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
-  }
+  const hash = stableSnapshotHash(compactRows);
   return `cba-${compactRows.length}-${Math.abs(hash).toString(36)}`;
 }
 
@@ -588,15 +585,16 @@ export function filterEligibleCodeArchitectureRowsForHazardAnalysis(cbaRows = []
     .filter(isCodeArchitectureHazardEligible);
 }
 
-export function codeArchitectureRowsToHazardTableRows(cbaRows = [], repoMeta = {}) {
+export function codeArchitectureRowsToHazardTableRows(cbaRows = [], repoMeta = {}, onProgress) {
   const repoId = normalizeRepoId(repoMeta);
-  return ensureCodeArchitectureTraceIds(filterEligibleCodeArchitectureRowsForHazardAnalysis(cbaRows)).map((row, index) => {
+  const sourceRows = ensureCodeArchitectureTraceIds(filterEligibleCodeArchitectureRowsForHazardAnalysis(cbaRows));
+  return sourceRows.map((row, index) => {
     const rowRef = row?.rowRef || index + 1;
     const sourceFiles = [row?.fromFile, row?.toFile]
       .filter(Boolean)
       .filter((value, valueIndex, arr) => arr.indexOf(value) === valueIndex);
     const traceability = buildTraceabilityForArchitectureRow(row, index, repoMeta);
-    return {
+    const result = {
       ...codeSourceProvenance(row),
       lineage: row.lineage || null,
       classificationPolicyVersion: row.classificationPolicyVersion,
@@ -635,11 +633,13 @@ export function codeArchitectureRowsToHazardTableRows(cbaRows = [], repoMeta = {
       functionalModel: row.functionalModel || null,
       originalArchitectureRow: row,
     };
+    onProgress?.((index + 1) / sourceRows.length);
+    return result;
   });
 }
 
-export function buildCodeArchitectureTraceabilityMap(cbaRows = []) {
-  return codeArchitectureRowsToHazardTableRows(cbaRows).map((row) => ({
+export function buildCodeArchitectureTraceabilityMap(cbaRows = [], onProgress) {
+  return codeArchitectureRowsToHazardTableRows(cbaRows, {}, onProgress).map((row) => ({
     functionalSourceTraceIds: row.traceability?.functionalSourceTraceIds || [],
     functionalSourceRowRefs: row.traceability?.functionalSourceRowRefs || [],
     functionalInteractionKind: row.traceability?.functionalInteractionKind || "",
@@ -670,18 +670,23 @@ export function effectiveCodeArchitectureHazardRows(rows = []) {
 }
 
 export function buildCodeArchitectureHazardInput({
+  architectureSnapshotHash: suppliedSnapshotHash,
   cbaRows = [],
   repoMeta = {},
   projectId = "",
   method = "STPA-Textbook",
   operationalContexts = [],
   selectedOperationalContextId = "all",
-} = {}) {
-  const functionalRows = buildFunctionalModelRows(cbaRows);
-  const analysisRows = effectiveCodeArchitectureHazardRows(cbaRows);
+} = {}, onProgress) {
+  onProgress?.(1);
+  const functionalRows = buildFunctionalModelRows(cbaRows, fraction => onProgress?.(1 + fraction * 19));
+  const analysisRows = functionalRows.length ? functionalRows : cbaRows;
+  onProgress?.(20);
   const normalizedArchitectureRows = ensureCodeArchitectureTraceIds(analysisRows);
   const eligibilitySummary = summarizeCodeArchitectureHazardEligibility(normalizedArchitectureRows);
-  const sourceTableRows = codeArchitectureRowsToHazardTableRows(analysisRows, repoMeta);
+  onProgress?.(25);
+  const sourceTableRows = codeArchitectureRowsToHazardTableRows(analysisRows, repoMeta, fraction => onProgress?.(25 + fraction * 25));
+  onProgress?.(50);
   const configuredOperationalContexts = normalizeHazardOperationalContexts(operationalContexts);
   const effectiveOperationalContexts = getEffectiveHazardOperationalContexts(configuredOperationalContexts);
   const analysisOperationalContexts = selectedOperationalContextId === "all"
@@ -691,8 +696,8 @@ export function buildCodeArchitectureHazardInput({
     ? analysisOperationalContexts
     : effectiveOperationalContexts;
   const guidePhrases = getCodeArchitectureHazardGuidePhrases(method);
-  const tableRows = sourceTableRows.flatMap((row) => (
-    guidePhrases.flatMap((guidePhrase) => contextsToAnalyze.map((context) => ({
+  const tableRows = sourceTableRows.flatMap((row, index) => {
+    const variants = guidePhrases.flatMap((guidePhrase) => contextsToAnalyze.map((context) => ({
       ...row,
       guidePhrase,
       guidePhraseApplicable: "",
@@ -702,8 +707,11 @@ export function buildCodeArchitectureHazardInput({
       operationalMode: context.mode,
       operatingConditions: context.conditions,
       contextAssumptions: context.assumptions,
-    })))
-  ));
+    })));
+    onProgress?.(50 + ((index + 1) / sourceTableRows.length) * 10);
+    return variants;
+  });
+  onProgress?.(60);
   const functionalDecompositionSheet = [
     [
       "Function (From)",
@@ -723,7 +731,7 @@ export function buildCodeArchitectureHazardInput({
       "Guide Phrase Applicability Review Status",
       ...CODE_ARCHITECTURE_TRACEABILITY_COLUMNS,
     ],
-    ...tableRows.map((row) => [
+    ...tableRows.map((row, index) => { const cells = [
       row.fromFunction || "",
       row.controlAction || "",
       row.toFunction || "",
@@ -740,12 +748,15 @@ export function buildCodeArchitectureHazardInput({
       row.guidePhraseApplicabilityRationale || "",
       row.guidePhraseApplicabilityReviewStatus || "",
       ...traceabilityToSheetCells(row.traceability || {}),
-    ]),
+    ]; onProgress?.(60 + ((index + 1) / tableRows.length) * 10); return cells; }),
   ];
-  const architectureSnapshotHash = computeArchitectureSnapshotHash(ensureCodeArchitectureTraceIds(cbaRows));
+  onProgress?.(70);
+  const architectureSnapshotHash = suppliedSnapshotHash || computeArchitectureSnapshotHash(ensureCodeArchitectureTraceIds(cbaRows));
   const explicitOperationalContext = buildHazardOperationalContextPrompt(contextsToAnalyze);
   const repositoryOperationalContext = String(repoMeta.operationalContext || "").trim();
-  return {
+  onProgress?.(75);
+  const traceabilityMap = buildCodeArchitectureTraceabilityMap(analysisRows, fraction => onProgress?.(75 + fraction * 24));
+  const result = {
     projectId,
     repoId: normalizeRepoId(repoMeta),
     tableRows,
@@ -755,7 +766,7 @@ export function buildCodeArchitectureHazardInput({
     analysisAbstraction: functionalRows.length ? "functional" : "detailed",
     functionalModelSnapshotHash: functionalRows.length ? computeFunctionalModelSnapshotHash(functionalRows) : "",
     architectureRowsSnapshot: sourceTableRows,
-    traceabilityMap: buildCodeArchitectureTraceabilityMap(analysisRows),
+    traceabilityMap,
     eligibilitySummary,
     excludedArchitectureRows: normalizedArchitectureRows.filter((row) => row.hazardAnalysisEligibility === "Exclude"),
     needsReviewArchitectureRows: normalizedArchitectureRows.filter((row) => row.hazardAnalysisEligibility === "Needs Review"),
@@ -766,6 +777,8 @@ export function buildCodeArchitectureHazardInput({
     analysisContext: repoMeta.analysisContext || { text: "", files: [] },
     contextSources: repoMeta.contextSources || null,
   };
+  onProgress?.(100);
+  return result;
 }
 
 export function summarySheetToHazardSummaryRows(summarySheet) {
@@ -1658,7 +1671,7 @@ export function normalizeCodeArchitectureHazardRun(raw = {}, context = {}) {
     ...(raw.pipelineVersion ? {pipelineVersion:raw.pipelineVersion,runState:raw.runState || "complete",userPreprocessing:raw.userPreprocessing || {},userPreprocessingConflicts:raw.userPreprocessingConflicts || []} : {}),
     ...(raw.pendingAttempt ? {pendingAttempt:raw.pendingAttempt} : {}),
     ...(raw.runState === 'incomplete' ? {runState:'incomplete',totalAssessments:raw.totalAssessments,validatedAssessments:raw.validatedAssessments,failedAssessments:raw.failedAssessments || [],failureMessage:raw.failureMessage || ''} : {}),
-    ...(raw.finalSavePending ? {finalSavePending:true,saveFailureMessage:raw.saveFailureMessage || ''} : {}),
+    ...(raw.finalSavePending ? {finalSavePending:true,finalSaveStatus:raw.finalSaveStatus || 'failed',saveFailureMessage:raw.saveFailureMessage || ''} : {}),
     hazardGenerationMode: raw.hazardGenerationMode || context.hazardGenerationMode || raw.fhaGenerationMode || context.fhaGenerationMode || "",
     fhaGenerationMode: raw.fhaGenerationMode || context.fhaGenerationMode || "",
     operationalContext: raw.operationalContext || context.operationalContext || context.repoMeta?.operationalContext || "",

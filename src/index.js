@@ -1,3 +1,4 @@
+import AppRecoveryBoundary from './components/AppRecoveryBoundary';
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "./index.css";
@@ -37,7 +38,7 @@ if (process.env.REACT_APP_XHANDLE_REVIEW_MODE === "true") {
   root.render(
     <React.StrictMode>
       <LicenseProvider>
-        <App />
+        <AppRecoveryBoundary><App /></AppRecoveryBoundary>
       </LicenseProvider>
     </React.StrictMode>
   );

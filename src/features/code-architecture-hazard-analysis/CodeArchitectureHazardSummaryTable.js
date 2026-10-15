@@ -1,9 +1,8 @@
 import {registerTableSearchProvider,modelTableSearchEntries} from '../../components/quickSearchUtils';
 import { SHOW_TABLE_REVIEW_COLUMNS } from "../../components/tablePresentation";
-import useDeferredTableRow, { estimateTableRowHeight } from '../../components/useDeferredTableRow';
-import useTableRowFocus from "../../components/useTableRowFocus";
+import useHazardRowWindow from './useHazardRowWindow';
 import CopyTableButton from '../../components/CopyTableButton';
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { FilterableHeaderCell, useColumnFilters } from "../../components/FilterableTableHeader";
 import { REVIEW_STATUSES } from "../results-review/reviewTypes";
@@ -101,7 +100,6 @@ export default function CodeArchitectureHazardSummaryTable({
   const showCombinedContext = !isStpa && !isHara && !isFha;
   // New defaults apply once to existing tables; subsequent picker choices persist.
   const visibilityStorageKey = `${storageKey}:hidden-columns${isStpa ? ":stpa-focused-v5" : isHara ? ":hara-focused-v2" : isFha ? ":fha-focused-v2" : ""}`;
-  const rowRefs = useRef({});
   const searchTableRef = useRef(null);
   const [selectedCellKey, setSelectedCellKey] = useState("");
   React.useEffect(() => {
@@ -333,15 +331,43 @@ export default function CodeArchitectureHazardSummaryTable({
     () => buildCodeArchitectureHazardGroups(headers, contextFilteredRowItems),
     [contextFilteredRowItems, headers],
   );
+  const rowIdentity = useCallback(item => {
+    const index = headers.indexOf('Raw Analysis Row ID');
+    return index >= 0 && item.row[index] ? item.row[index] : item.rowIndex;
+  }, [headers]);
+  const rowWindow=useHazardRowWindow(hazardGroups,collapsedInterfaceKeys,visibleColumns,columnWidths,searchTableRef,storageKey,rowIdentity);
+  const {reveal:revealHazardRow}=rowWindow;
+  const revealedRequest=useRef(null);
+  const resolvedCallback=useRef(onRowFocusResolved);
+  resolvedCallback.current=onRowFocusResolved;
+  useEffect(()=>{
+    if(highlightedRowIndex==null){revealedRequest.current=null;return;}
+    const key=`${storageKey}:${focusRequestKey}:${highlightedRowIndex}`;
+    if(revealedRequest.current?.key===key)return;
+    const request={key,completed:false};
+    revealedRequest.current=request;
+    const scheduled=revealHazardRow(highlightedRowIndex, element=>{
+      if(revealedRequest.current!==request || request.completed)return;
+      element.scrollIntoView?.({behavior:'instant',block:'nearest'});
+      request.completed=true;
+      resolvedCallback.current?.(focusRequestKey);
+    });
+    if(!scheduled)revealedRequest.current=null;
+    // StrictMode and dependency changes cancel setup before positioning can
+    // finish. Only completed requests may suppress a subsequent setup.
+    return ()=>{
+      if(revealedRequest.current===request && !request.completed)revealedRequest.current=null;
+    };
+  },[highlightedRowIndex,focusRequestKey,storageKey,revealHazardRow,hazardGroups,collapsedInterfaceKeys]);
   useEffect(() => {
     const table=searchTableRef.current;
     if(!table)return;
     return registerTableSearchProvider(table,()=>modelTableSearchEntries({
       table,label:'Code architecture hazard analysis',indexes:visibleColumns.map(column=>column.index),
-      getRowId:index=>`cba-hazard-row-${index}`,
+      getRowId:index=>`cba-hazard-row-${index}`, revealRow:revealHazardRow,
       items:hazardGroups.filter(group=>!collapsedInterfaceKeys.has(group.key)).flatMap(group=>group.items.map(item=>({row:item.row,originalIndex:item.rowIndex}))),
     }));
-  },[hazardGroups,collapsedInterfaceKeys,visibleColumns]);
+  },[hazardGroups,collapsedInterfaceKeys,visibleColumns,revealHazardRow]);
   const visibleInterfaceKeys = useMemo(() => hazardGroups.map((group) => group.key), [hazardGroups]);
 
   useEffect(() => {
@@ -375,15 +401,11 @@ export default function CodeArchitectureHazardSummaryTable({
     }
   }, [highlightedRowIndex, focusRequestKey, rowItems, filteredRowItems, contextFilteredRowItems,
     filterState, selectedOperationalContextId, onSelectedOperationalContextChange, hazardGroups, collapsedInterfaceKeys]);
-  const rowFocusRevision = useMemo(() => ({ hazardGroups, collapsedInterfaceKeys }), [hazardGroups, collapsedInterfaceKeys]);
-  useTableRowFocus({ requestKey: focusRequestKey, rowIndex: highlightedRowIndex,
-    rowRefs, revision: rowFocusRevision, onResolved: onRowFocusResolved });
-
   const tableColumnCount = visibleColumns.length
     + (showCombinedContext ? 1 : 0)
     + (onDeleteRow && !readOnly ? 1 : 0)
     + (showReview && reviewItems.length > 0 ? 1 : 0);
-  const renderHazardRow = ({ row, rowIndex }) => {
+  const renderHazardRow = ({ row, rowIndex, windowKey }) => {
     const reviewItem = reviewByRow?.get?.(rowIndex) || null;
     const rejected = reviewItem?.status === REVIEW_STATUSES.REJECTED;
     const highlighted = highlightedRowIndex === rowIndex;
@@ -427,12 +449,9 @@ export default function CodeArchitectureHazardSummaryTable({
     };
     return (
       <tr
-        key={rowIndex}
+        key={windowKey}
+        data-window-key={windowKey}
         id={`cba-hazard-row-${rowIndex}`}
-        ref={(el) => {
-          if (el) rowRefs.current[rowIndex] = el;
-          else delete rowRefs.current[rowIndex];
-        }}
         onClick={() => selectForCollaborator()}
         className={`cursor-pointer align-top transition-colors ${
           highlighted
@@ -587,37 +606,23 @@ export default function CodeArchitectureHazardSummaryTable({
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
-          {hazardGroups.flatMap((group) => {
-            const interfaceCollapsed = collapsedInterfaceKeys.has(group.key);
-            const groupRows = [
-              <tr key={`interface-${group.key}`} className="bg-blue-50 text-blue-900">
-                <td colSpan={tableColumnCount} className="border-y border-blue-100 px-3 py-2">
-                  <button
-                    type="button"
-                    className="flex w-full items-center gap-2 text-left text-sm font-semibold"
-                    onClick={() => setCollapsedInterfaceKeys((current) => {
-                      const next = new Set(current);
-                      if (next.has(group.key)) next.delete(group.key);
-                      else next.add(group.key);
-                      return next;
-                    })}
-                    aria-expanded={!interfaceCollapsed}
-                  >
-                    {interfaceCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
-                    <span className="min-w-0 flex-1">{group.label}</span>
-                    <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-blue-700">
-                      {group.rowCount} analysis variant{group.rowCount === 1 ? "" : "s"}
-                    </span>
-                  </button>
-                </td>
-              </tr>,
-            ];
-            if (interfaceCollapsed) return groupRows;
-            groupRows.push(...group.items.map(item => <DeferredHazardRow key={item.rowIndex}
-              item={item} renderRow={renderHazardRow} rowRefs={rowRefs} colSpan={tableColumnCount}
-              active={highlightedRowIndex === item.rowIndex} columns={visibleColumns} widths={columnWidths} />));
-            return groupRows;
+          {rowWindow.top>0 && <tr aria-hidden="true"><td colSpan={tableColumnCount} style={{height:rowWindow.top,padding:0,border:0}} /></tr>}
+          {rowWindow.visible.map(entry=>{
+            if(entry.item)return renderHazardRow({...entry.item,windowKey:entry.key});
+            const group=entry.group,interfaceCollapsed=collapsedInterfaceKeys.has(group.key);
+            return <tr key={entry.key} data-window-key={entry.key} className="bg-blue-50 text-blue-900">
+              <td colSpan={tableColumnCount} className="border-y border-blue-100 px-3 py-2">
+                <button type="button" className="flex w-full items-center gap-2 text-left text-sm font-semibold"
+                  onClick={()=>setCollapsedInterfaceKeys(current=>{const next=new Set(current);if(next.has(group.key))next.delete(group.key);else next.add(group.key);return next;})}
+                  aria-expanded={!interfaceCollapsed}>
+                  {interfaceCollapsed?<ChevronRight size={16}/>:<ChevronDown size={16}/>}
+                  <span className="min-w-0 flex-1">{group.label}</span>
+                  <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-blue-700">{group.rowCount} analysis variant{group.rowCount===1?'':'s'}</span>
+                </button>
+              </td>
+            </tr>;
           })}
+          {rowWindow.bottom>0 && <tr aria-hidden="true"><td colSpan={tableColumnCount} style={{height:rowWindow.bottom,padding:0,border:0}} /></tr>}
         </tbody>
       </table>
       {contextFilteredRowItems.length === 0 && (
@@ -629,11 +634,4 @@ export default function CodeArchitectureHazardSummaryTable({
       </div>
     </div>
   );
-}
-
-function DeferredHazardRow({item, renderRow, rowRefs, colSpan, active, columns, widths}) {
-  const placeholder = useDeferredTableRow({id: `cba-hazard-row-${item.rowIndex}`, index: item.rowIndex,
-    originalIndex: item.rowIndex, rowRefs, colSpan, active,
-    height: estimateTableRowHeight(item.row, widths, columns.map(column => column.index))});
-  return placeholder || renderRow(item);
 }

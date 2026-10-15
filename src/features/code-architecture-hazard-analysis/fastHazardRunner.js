@@ -187,8 +187,8 @@ hazardMethod:method,hazardGenerationMode:'compact',
   check();progress({step:96,message:'Preparing traceable hazard results...'});
   const run=buildRun(assessments);
   check();progress({step:98,message:'Saving hazard results...'});
-  onPartialRunUpdate({...run,finalSavePending:true});
-  try{await saveCodeArchitectureHazardRun(run);}catch(cause){run.finalSavePending=true;run.saveFailureMessage=cause.message;onPartialRunUpdate(run);}
+  onPartialRunUpdate({...run,finalSavePending:true,finalSaveStatus:'saving'});
+  try{await saveCodeArchitectureHazardRun(run,{onSaveState:({status,message})=>{if(!signal?.aborted && status!=='saved')onPartialRunUpdate({...run,finalSavePending:true,finalSaveStatus:status,saveFailureMessage:message});}});}catch(cause){run.finalSavePending=true;run.finalSaveStatus='failed';run.saveFailureMessage=cause.message;onPartialRunUpdate(run);}
   progress({step:100,message:run.finalSavePending?'Hazard results ready — save pending. Export before reloading.':'Hazard results saved.'});
   // Successful checkpoints stay available for a continuation; explicit regeneration clears this pipeline's scope.
   return run;

@@ -157,3 +157,14 @@ it('reports unchanged CSVs inline without a browser alert', async () => {
     expect(onImportSummary).not.toHaveBeenCalled();
   } finally {act(()=>root.unmount());host.remove();}
 });
+
+it('shows the shared working icon and preparation percentage instead of the old message',()=>{
+ const {host,root}=renderPanel({draftLoading:true,draftProgress:42});
+ try{
+  const progress=host.querySelector('[role="progressbar"]');
+  expect(progress.getAttribute('aria-valuenow')).toBe('42');
+  expect(progress.textContent).toBe('42%');
+  expect(progress.querySelector('.xhandle-working-mark img').getAttribute('src')).toBe('/favicon.png');
+  expect(host.textContent).not.toContain('Preparing hazard table…');
+ }finally{act(()=>root.unmount());host.remove();}
+});

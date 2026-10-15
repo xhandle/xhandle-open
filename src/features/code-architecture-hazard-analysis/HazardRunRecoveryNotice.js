@@ -4,6 +4,7 @@ import CodeArchitectureHazardSummaryTable from './CodeArchitectureHazardSummaryT
 export default function HazardRunRecoveryNotice({run,onExport,onRetrySave,isRunning=false}) {
   const [saving,setSaving]=useState(false);
   const [error,setError]=useState('');
+  const pendingSave=['saving','slow','retrying'].includes(run?.finalSaveStatus);
   const attempt=run?.pendingAttempt || (run?.runState==='incomplete'?run:null);
   if(!attempt && !run?.finalSavePending)return null;
   return <div role="alert" className="m-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm">
@@ -20,9 +21,10 @@ export default function HazardRunRecoveryNotice({run,onExport,onRetrySave,isRunn
       </details>}
     </>}
     {run.finalSavePending && <>
-      <p>Saving failed. Recovered results are in memory; export them before reloading.</p>
+      <p>{pendingSave ? (run.finalSaveStatus==='retrying' ? 'Retrying save automatically. Results remain available; export them before reloading.' : run.finalSaveStatus==='slow' ? 'Saving is taking longer than usual. Results remain available; export them before reloading.' : 'Saving results. Keep this page open until saving finishes.') : 'Saving failed. Recovered results are in memory; export them before reloading.'}</p>
+      {!pendingSave && run.saveFailureMessage && <p>Save error: {run.saveFailureMessage}</p>}
       {!attempt && <button type="button" onClick={()=>onExport(run.generatedSheets?.Summary,run.repoName)}>Export recovered results</button>}
-      <button type="button" disabled={saving || isRunning || !onRetrySave} onClick={async()=>{
+      <button type="button" disabled={saving || pendingSave || isRunning || !onRetrySave} onClick={async()=>{
         setSaving(true);setError('');
         try{await onRetrySave(run);}catch(err){setError(err.message || 'Saving failed.');}finally{setSaving(false);}
       }}>{saving?'Saving…':'Retry save'}</button>

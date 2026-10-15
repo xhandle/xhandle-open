@@ -1,3 +1,4 @@
+import {ensureCodeArchitectureTraceIds} from './codeArchitectureHazardUtils';
 import { buildCodeArchitectureHazardCsvDraft } from './codeArchitectureHazardCsv';
 import { applyHazardAnalysisCsvImport, planHazardAnalysisCsvImport } from '../project-hazard-analysis/hazardAnalysisCsv';
 import { toCsvText } from '../../lib/csv';
@@ -44,4 +45,23 @@ test.each(['HARA','FHA'])('%s CSV draft exposes all seven deviations with distin
  expect(new Set(sheet.slice(1).map(row=>row[5])).size).toBe(7);
  const plan=planHazardAnalysisCsvImport(sheet,toCsvText(sheet));
  expect(plan.errors).toEqual([]);
+});
+
+test('reusing the workspace fingerprint preserves draft identity and import/export rows',()=>{
+ const stableOptions={...options,cbaRows:ensureCodeArchitectureTraceIds(options.cbaRows)};
+ const original=buildCodeArchitectureHazardCsvDraft(stableOptions,headers);
+ const reused=buildCodeArchitectureHazardCsvDraft({...stableOptions,architectureSnapshotHash:original.architectureSnapshotHash},headers);
+ expect(reused.architectureSnapshotHash).toBe(original.architectureSnapshotHash);
+ expect(reused.generatedSheets).toEqual(original.generatedSheets);
+ expect(reused.traceabilityMap).toEqual(original.traceabilityMap);
+});
+
+test('draft preparation reports completed row progress and reserves 100 for delivery',()=>{
+ const progress=[];
+ const draft=buildCodeArchitectureHazardCsvDraft(options,headers,value=>progress.push(value));
+ expect(progress[0]).toBe(0);
+ expect(progress.at(-1)).toBe(99);
+ expect(progress.some(value=>value>0 && value<80)).toBe(true);
+ expect(progress.length).toBeGreaterThan(draft.generatedSheets.Summary.length);
+ expect(progress.every((value,index)=>value>=0 && value<=99 && (!index || value>=progress[index-1]))).toBe(true);
 });

@@ -1,0 +1,5 @@
+# Codex prompt: Investigate final hazard-save failure followed by successful retry
+
+Perform a read-only application-code audit of STPA/HARA/FHA final-result persistence. A 6,384-row STPA run displayed "Saving failed" but clicking Retry save succeeded. Trace the final save, IndexedDB open and transaction, timeout, error propagation, memory recovery, retry action, and checkpoint lifecycle. Distinguish verified code behavior from the unknown cause of this particular browser incident.
+
+Determine whether a slow healthy write can be aborted, whether transient failures retry automatically, whether the original error reaches the user, and whether successful retry preserves results and clears unsaved state. Reproduce the timeout path with mocked delayed storage and run relevant existing regression tests. Do not change production code. Report findings with file references, test evidence, and a minimal proposed fix that preserves unsaved results and prevents stale/overlapping writes. Do not claim the customer's exact storage error is known without runtime evidence.

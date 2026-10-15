@@ -1,3 +1,4 @@
+import XHandleWorkingMark from "../../components/XHandleWorkingMark";
 import HazardNarrativeReview from './HazardNarrativeReview';
 import HazardRunRecoveryNotice from './HazardRunRecoveryNotice';
 import { SHOW_TABLE_REVIEW_NOTICES } from "../../components/tablePresentation";
@@ -59,6 +60,7 @@ export default function CodeArchitectureHazardPanel({
   cbaRows = [],
   latestRun,
   draftRun,
+  draftLoading=false, draftProgress=0, draftError=null, onRetryDraft,
   diagram,
   splitView = false,
   onSplitViewChange,
@@ -391,6 +393,11 @@ export default function CodeArchitectureHazardPanel({
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <HazardNarrativeReview key={latestRun?.id} run={latestRun} onUpdate={onNarrativeReviewUpdate} disabled={isRunning} />
+        {draftLoading && <div role="progressbar" aria-label="Preparing hazard table" aria-valuemin={0} aria-valuemax={100} aria-valuenow={draftProgress}
+          className="flex items-center gap-2 p-3 text-sm text-slate-600">
+          <XHandleWorkingMark className="h-6 w-6" /><span>{draftProgress}%</span>
+        </div>}
+        {draftError && <div role="alert" className="p-3">Unable to prepare hazard table: {draftError} <button onClick={onRetryDraft}>Retry preparation</button></div>}
         <HazardRunRecoveryNotice run={latestRun} onExport={downloadSummaryCsv} onRetrySave={onRetrySave} isRunning={isRunning} />
         {!isRunning && progress?.error && !latestRun?.pendingAttempt && latestRun?.runState !== 'incomplete' && <div role="alert" className="m-3 text-red-700">{progress.message}</div>}
         {SHOW_TABLE_REVIEW_NOTICES && latestRun?.userPreprocessingConflicts?.length > 0 && <details className="m-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm">

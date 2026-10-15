@@ -8,7 +8,7 @@ export function registerTableSearchProvider(table, provider) {
 
 // Model-backed tables avoid thousands of computed-style/layout reads on Find.
 // Entries represent the currently expanded, filtered rows, not the entire CSV.
-export function modelTableSearchEntries({ table, label, indexes, items, getRowId = index => `hazard-source-row-${index + 1}` }) {
+export function modelTableSearchEntries({ table, label, indexes, items, revealRow, getRowId = index => `hazard-source-row-${index + 1}` }) {
   const active = table.ownerDocument.activeElement;
   const activeRow = table.contains(active) ? active.closest('tr') : null;
   const activeColumn = Number(active?.closest('[data-column-index]')?.dataset.columnIndex);
@@ -21,7 +21,7 @@ export function modelTableSearchEntries({ table, label, indexes, items, getRowId
       id, kind: 'Table row', label, text: [searchPrefix, ...parts].filter(Boolean).join(' · '),
       activate(query) {
         const targetRow = table.ownerDocument.getElementById(id);
-        if (!targetRow || !table.contains(targetRow)) return;
+        if ((!targetRow || !table.contains(targetRow)) && !revealRow) return;
         const terms = normalizeSearchText(query).toLowerCase().split(' ').filter(Boolean);
         const match = Math.max(0, parts.findIndex(part => terms.some(term => part.toLowerCase().includes(term))));
         const jump = () => {
@@ -33,7 +33,9 @@ export function modelTableSearchEntries({ table, label, indexes, items, getRowId
           void rowElement.offsetWidth;
           rowElement.classList.add('xhandle-search-hit');
         };
-        if (targetRow.dataset.deferredRow) {
+        if(!targetRow && revealRow){
+          revealRow(originalIndex,jump);
+        } else if (targetRow.dataset.deferredRow) {
           targetRow.dispatchEvent(new Event('xhandle:reveal-row'));
           requestAnimationFrame(() => requestAnimationFrame(jump));
         } else jump();

@@ -490,3 +490,18 @@ test('immutable adopted revisions share derived rows and trace lookup; edits inv
   mutable[0].architecture.csc = 'Changed allocation';
   expect(functionalModelIsReady(mutable)).toBe(false);
 });
+
+test('reports functional and input preparation progress without changing the derived model',async()=>{
+ const rows=await processFunctionalModel(input,{request});
+ const fractions=[];
+ expect(buildFunctionalModelRows(rows,value=>fractions.push(value))).toEqual(buildFunctionalModelRows(rows));
+ expect(fractions.at(-1)).toBe(1);
+ const progress=[];
+ const prepared=buildCodeArchitectureHazardInput({cbaRows:rows},value=>progress.push(value));
+ expect(prepared.tableRows.length).toBeGreaterThan(0);
+ expect(progress[0]).toBe(1);
+ expect(progress.at(-1)).toBe(100);
+ expect(progress.some(value=>value>1 && value<20)).toBe(true);
+ expect(progress.some(value=>value>25 && value<50)).toBe(true);
+ expect(progress.every((value,index)=>!index || value>=progress[index-1])).toBe(true);
+});

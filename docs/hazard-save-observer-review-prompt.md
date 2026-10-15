@@ -1,0 +1,3 @@
+# Codex prompt: Review save queue registration fix
+
+Perform a read-only audit of final hazard-result persistence and the observer-order fix. Confirm queue registration precedes synchronous notifications, save resolution follows durable commit, failed older revisions do not block newer saves, observer exceptions do not break persistence, and Stop/deletion/project isolation retain the intended semantics. Run the hazard/STPA/software-requirement regression suite and focused additional probes. Do not modify application code. Report supported findings, test evidence, and remaining browser-test limitations without claiming an absolute absence of bugs.

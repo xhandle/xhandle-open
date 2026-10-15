@@ -32,7 +32,7 @@ test.each(['STPA-Textbook','HARA','FHA'])('%s default dispatch uses new pipeline
  expect(reloaded.pipelineVersion).toBe(FAST_HAZARD_VERSION);
  expect(importHazardSoftwareRequirements({hazardAnalysis:reloaded})).toEqual(expect.arrayContaining([expect.objectContaining({source:'hazard-derived',sourceTraceId:'functional-1',hazardAnalysisRunId:run.id})]));
  if(short==='STPA')expect(importHazardSoftwareRequirements({hazardAnalysis:reloaded})[0].mitigationStrategy).toBe(answer('STPA','HA-1').safetyConstraint);
- expect(saveCodeArchitectureHazardRun).toHaveBeenCalledWith(run);
+ expect(saveCodeArchitectureHazardRun).toHaveBeenCalledWith(run,expect.objectContaining({onSaveState:expect.any(Function)}));
  expect(progress.mock.calls.at(-1)[0]).toMatchObject({step:100,total:100});
  expect(run.organizationProfileProvenance.effectiveEnabled).toBe(true);
  expect(parseCsv(toCsvText(run.generatedSheets.Summary))).toEqual(run.generatedSheets.Summary.map(row=>row.map(String)));
@@ -156,7 +156,7 @@ test('throwing UI observers cannot prevent final save and completion',async()=>{
  fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>answer('STPA',id))));
  const fail=()=>{throw new Error('UI observer failed');};
  const run=await runCodeArchitectureHazardAnalysis({...base,setProgress:fail,onActivityUpdate:fail,onPartialRunUpdate:fail});
- expect(run.runState).toBe('complete');expect(saveCodeArchitectureHazardRun).toHaveBeenCalledWith(run);
+ expect(run.runState).toBe('complete');expect(saveCodeArchitectureHazardRun).toHaveBeenCalledWith(run,expect.objectContaining({onSaveState:expect.any(Function)}));
 });
 
 test.each(['HARA','FHA'])('%s normalizes saved ratings through fallback, final publication, reload and CSV',async method=>{
@@ -178,7 +178,7 @@ test.each(['HARA','FHA'])('%s normalizes saved ratings through fallback, final p
   expect(run.userPreprocessing[id].values[header]).toBe(String(value).trim());
  }
  expect(result[columns.indexOf(method==='HARA'?'ASIL':'Software Criticality Index')]).toBe(method==='HARA'?'QM':'SwCI 4');
- expect(saveCodeArchitectureHazardRun).toHaveBeenLastCalledWith(run);
+ expect(saveCodeArchitectureHazardRun).toHaveBeenLastCalledWith(run,expect.objectContaining({onSaveState:expect.any(Function)}));
  const reloaded=normalizeCodeArchitectureHazardRun(JSON.parse(JSON.stringify(run)));
  expect(reloaded.retainedUserInputs).toEqual(run.retainedUserInputs);
  expect(parseCsv(toCsvText(reloaded.generatedSheets.Summary))).toEqual(run.generatedSheets.Summary.map(row=>row.map(String)));

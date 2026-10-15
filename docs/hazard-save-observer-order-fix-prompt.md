@@ -1,0 +1,3 @@
+# Codex prompt: Preserve save order under synchronous observers
+
+Fix the reentrancy finding in hazard-final-save-lifecycle-review.md. Reserve the per-run save queue slot before dispatching synchronous storage-state events or invoking onSaveState callbacks. A callback-triggered newer revision must wait for the older revision's transaction to settle; older completion must not clear newer unsaved memory. Preserve actual commit success semantics, bounded retries, deletion checks, and Stop-state reconciliation. Add regression tests for both callback and DOM-event reentrancy with delayed commits and verify write order [1,2]. Run the hazard/STPA/downstream suites. Do not change hazard-generation behavior.

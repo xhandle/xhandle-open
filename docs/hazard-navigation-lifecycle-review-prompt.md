@@ -1,0 +1,3 @@
+# Review navigation lifecycle and shrinking-row fixes
+
+Read-only review of the latest changes in hazard-navigation-lifecycle-fix.md. Confirm that the prior StrictMode initial-navigation and shrinking-row failures are fixed. Review pending/completed request ownership, cancellation, callback acknowledgment, anchor reconciliation and measurement invalidation. Run permanent regression suites and additional checks for asynchronous ResizeObserver height changes, repeated resize cycles, and ordinary user scrolling after navigation. Preserve application code. Report only evidenced findings, test results and limitations; do not claim universal absence of bugs or live Safari validation.
