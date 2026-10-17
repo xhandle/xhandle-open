@@ -31,6 +31,7 @@ import { registerTableSearchProvider, modelTableSearchEntries } from './componen
 import useEventCallback from './hooks/useEventCallback';
 import InlineHazardText from './components/InlineHazardText';
 import { reorderProject } from "./lib/projectOrder";
+import useSidebarFolderDrag from "./hooks/useSidebarFolderDrag";
 import { loadSidebarPreferences, SIDEBAR_PREFERENCES_KEY } from "./lib/sidebarPreferences";
 import { createProjectRunGuard } from "./lib/projectRunGuard";
 import { chooseDecompositionRecovery, nextDecompositionVersion } from "./lib/decompositionRecovery";
@@ -3975,6 +3976,7 @@ const [editingCodeArchitectureFolderName, setEditingCodeArchitectureFolderName] 
 const [codeArchitectureRenameError, setCodeArchitectureRenameError] = useState("");
 const [openCodeArchitectureProjectMenuId, setOpenCodeArchitectureProjectMenuId] = useState(null);
 const [openCodeArchitectureFolderMenuId, setOpenCodeArchitectureFolderMenuId] = useState(null);
+const cbaFolderDrag = useSidebarFolderDrag(setCodeArchitectureFolders, "cba", setOpenCodeArchitectureFolderIds);
 const [draggingCodeArchitectureProjectId, setDraggingCodeArchitectureProjectId] = useState(null);
 const [codeArchitectureProjectDropTarget, setCodeArchitectureProjectDropTarget] = useState(null);
 const [dragOverCodeArchitectureFolderId, setDragOverCodeArchitectureFolderId] = useState(null);
@@ -6368,6 +6370,8 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
     try { return JSON.parse(localStorage.getItem(PROJECT_FOLDERS_OPEN_KEY) || '{}'); }
     catch { return {}; }
   });
+  const projectFolderDrag = useSidebarFolderDrag(setProjectFolders, "project", setOpenProjectFolderIds);
+
 
   useEffect(() => {
     function handleOutside(e) {
@@ -16352,6 +16356,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
       role="list"
       aria-label="Code-Based Architecture projects"
       onDragOver={(e) => {
+        if (cbaFolderDrag.rootOver(e)) return;
         if (!draggingCodeArchitectureProjectId) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = "move";
@@ -16362,6 +16367,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
         if (!e.currentTarget.contains(e.relatedTarget)) setDragOverCodeArchitectureFolderId(null);
       }}
       onDrop={(e) => {
+        if (cbaFolderDrag.rootDrop(e)) return;
         e.preventDefault();
         const projectId = e.dataTransfer.getData("application/x-xhandle-cba-project-id") || draggingCodeArchitectureProjectId;
         moveCodeArchitectureProjectToFolder(projectId, null);
@@ -16380,7 +16386,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
           if (!projectsByFolder.has(key)) projectsByFolder.set(key, []);
           projectsByFolder.get(key).push(project);
         });
-        foldersByParent.forEach((items) => items.sort((a, b) => a.name.localeCompare(b.name)));
+
 
         const renderCbaProject = (project, depth = 0) => (
           <div
@@ -16524,7 +16530,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                 moveCodeArchitectureProjectToFolder(projectId, folder.id);
               }}
             >
-              <div className="group flex items-center justify-between" style={{ paddingLeft: depth * 12 }}>
+              <div {...cbaFolderDrag.headerProps(folder, editingCodeArchitectureFolderId === folder.id, depth)} className="group flex items-center justify-between">
                 {editingCodeArchitectureFolderId === folder.id ? (
                   <div className="flex-1 flex items-center gap-2 px-2 py-1.5">
                     <input
@@ -16543,6 +16549,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                   </div>
                 ) : (
                   <button
+                    {...cbaFolderDrag.sourceProps}
                     onClick={() => {
                       setSection('code-architecture');
                       setActiveCodeArchitectureProjectId(null);
@@ -16632,6 +16639,12 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
           </>
         );
       })()}
+      {cbaFolderDrag.isDragging && (
+        <div onDragOver={cbaFolderDrag.rootOver} onDrop={cbaFolderDrag.rootDrop}
+          className="rounded-lg border border-dashed border-blue-400 bg-blue-50 px-2 py-2 text-xs text-blue-700">
+          Move folder to top level
+        </div>
+      )}
     </div>
   )}
 </div>
@@ -16761,6 +16774,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
               role="list"
               aria-label="Projects"
               onDragOver={(e) => {
+                if (projectFolderDrag.rootOver(e)) return;
                 if (!draggingProjectId) return;
                 e.preventDefault();
                 e.dataTransfer.dropEffect = "move";
@@ -16771,12 +16785,14 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                 if (!e.currentTarget.contains(e.relatedTarget)) setDragOverProjectFolderId(null);
               }}
               onDrop={(e) => {
+                if (projectFolderDrag.rootDrop(e)) return;
                 e.preventDefault();
                 const projectId = e.dataTransfer.getData("application/x-xhandle-project-id") || draggingProjectId;
                 moveProjectToFolder(projectId, null);
               }}
             >
-{(() => {
+
+      {(() => {
   const foldersByParent = new Map();
   const projectsByFolder = new Map();
   projectFolders.forEach((folder) => {
@@ -16789,7 +16805,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
     if (!projectsByFolder.has(key)) projectsByFolder.set(key, []);
     projectsByFolder.get(key).push(project);
   });
-  foldersByParent.forEach((items) => items.sort((a, b) => a.name.localeCompare(b.name)));
+
 
   const renderProject = (p, depth = 0) => (
   <div
@@ -16955,7 +16971,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
           moveProjectToFolder(projectId, folder.id);
         }}
       >
-        <div className="group flex items-center justify-between" style={{ paddingLeft: depth * 12 }}>
+        <div {...projectFolderDrag.headerProps(folder, editingProjectFolderId === folder.id, depth)} className="group flex items-center justify-between">
           {editingProjectFolderId === folder.id ? (
             <div className="flex-1 flex items-center gap-2 px-2 py-1.5">
               <input
@@ -16978,6 +16994,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
             </div>
           ) : (
             <button
+              {...projectFolderDrag.sourceProps}
               onClick={() => {
                 setSection('projects');
                 setActiveProjectId(null);
@@ -17081,6 +17098,12 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
     ...rootProjects.map((project) => renderProject(project, 0)),
   ];
 })()}
+      {projectFolderDrag.isDragging && (
+        <div onDragOver={projectFolderDrag.rootOver} onDrop={projectFolderDrag.rootDrop}
+          className="rounded-lg border border-dashed border-blue-400 bg-blue-50 px-2 py-2 text-xs text-blue-700">
+          Move folder to top level
+        </div>
+      )}
 
 
             </div>
