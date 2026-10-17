@@ -59,6 +59,7 @@ test.each(['Publication failed', 'SOURCE_PUBLICATION_CONFLICT', 'AbortError'])('
  const scopeRef={current:A},analysisScope={current:null},inFlight={current:false};
  let rejectRun,loading=false;
  const env={
+  codeArchitectureAnalysisAbortRef:{current:null},
   codeArchitectureAnalysisInFlightRef:inFlight,codeArchitectureAnalysisScopeRef:analysisScope,codeArchitectureScopeRef:scopeRef,
   activeCodeArchitectureProjectId:'A',codeArchitectureProjects:[{id:'A'}],activeCodeArchitectureProject:{id:'A'},
   activeCodeArchitectureRepo:{id:'repoA',owner:'owner',repo:'repo',selectedExtensions:['.py']},

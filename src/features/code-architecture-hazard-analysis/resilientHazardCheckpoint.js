@@ -7,10 +7,27 @@ export async function boundedHazardStorage(promise,timeoutMs=1500) {
 const permanent=error=>['QuotaExceededError','SecurityError','NotSupportedError','DataCloneError'].includes(error?.name);
 // The writer remains attached to a slow operation until it settles. Never race
 // a second write against a timed-out first write: it could restore stale data.
-export function resilientHazardCheckpoint(backend,{signal,onStorageState=()=>{},slowMs=5000,readTimeoutMs=5000,flushMs=1500,retryDelays=[1000,3000,10000]}={}) {
+export function resilientHazardCheckpoint(backend,{signal,onStorageState=()=>{},slowMs=5000,readTimeoutMs=5000,flushMs=1500,retryDelays=[1000,3000,10000],maxCleanEntries=96}={}) {
   const values=new Map(),dirty=new Map();
   let draining=null,retryTimer=null,retries=0,stopped=false,readUnavailable=false,readEpoch=0,readRetryAt=0,readFailures=0;
-  const id=basis=>JSON.stringify(basis);
+  let writeQueue=Promise.resolve();
+  const identities=new WeakMap();
+  const id=async basis=>{
+    if(basis && typeof basis==='object' && identities.has(basis))return identities.get(basis);
+    const serialized=JSON.stringify(basis);
+    const identity=typeof crypto!=='undefined' && crypto.subtle
+      ? crypto.subtle.digest('SHA-256',new TextEncoder().encode(serialized)).then(bytes=>Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join(''))
+      : Promise.resolve(serialized);
+    if(basis && typeof basis==='object')identities.set(basis,identity);
+    return identity;
+  };
+  const trim=()=>{
+    let clean=values.size-dirty.size;
+    for(const key of values.keys()){
+      if(clean<=maxCleanEntries)break;
+      if(!dirty.has(key)){values.delete(key);clean--;}
+    }
+  };
   const failRead=(error,pending=false)=>{
     readUnavailable=true;
     readRetryAt=pending || permanent(error) || readFailures>=retryDelays.length?Infinity:Date.now()+retryDelays[readFailures++];
@@ -41,6 +58,7 @@ export function resilientHazardCheckpoint(backend,{signal,onStorageState=()=>{},
         else for(const [,entry] of batch){if(signal?.aborted)return;await connection.write(entry.basis,entry.value);}
         if(signal?.aborted)return;
         batch.forEach(([key,entry])=>{if(dirty.get(key)===entry)dirty.delete(key);});
+        trim();
         retries=0;
         // A healthy write permits an early read probe, but does not reset the
         // bounded read retry count or revive a permanent failure.
@@ -64,11 +82,13 @@ export function resilientHazardCheckpoint(backend,{signal,onStorageState=()=>{},
   return {
     async readMany(bases){
       const savedValues=new Array(bases.length);
+      const keys=[];
+      for(let offset=0;offset<bases.length;offset+=48)keys.push(...await Promise.all(bases.slice(offset,offset+48).map(id)));
       for(let offset=0;offset<bases.length;offset+=48){
         if(signal?.aborted)throw new DOMException('Hazard analysis cancelled.','AbortError');
         if(readUnavailable && Date.now()<readRetryAt)break;
         const group=bases.slice(offset,offset+48);
-        if(group.every(b=>values.has(id(b))))continue;
+        if(group.every((b,i)=>values.has(keys[offset+i])))continue;
         readUnavailable=false;
         const epoch=++readEpoch;
         const ownsReadState=()=>epoch===readEpoch && !signal?.aborted;
@@ -89,10 +109,23 @@ export function resilientHazardCheckpoint(backend,{signal,onStorageState=()=>{},
           break;
         }
       }
-      return bases.map((b,i)=>values.has(id(b))?values.get(id(b)):savedValues[i]);
+      return bases.map((b,i)=>values.has(keys[i])?values.get(keys[i]):savedValues[i]);
     },
     async read(basis){return (await this.readMany([basis]))[0];},
-    async writeMany(entries){for(const entry of entries){const key=id(entry.basis);values.set(key,entry.value);dirty.set(key,entry);}start();},
+    writeMany(entries){
+      // Digests are asynchronous: preserve call order even if hashing finishes
+      // out of order, so an older value cannot replace a newer checkpoint.
+      const operation=writeQueue.then(async()=>{
+        for(const entry of entries){
+          const key=await id(entry.basis);
+          if(signal?.aborted)return;
+          values.set(key,entry.value);dirty.set(key,entry);
+        }
+        start();
+      });
+      writeQueue=operation.catch(()=>{});
+      return operation;
+    },
     async write(basis,value){return this.writeMany([{basis,value}]);},
     async flush(){
       const pending=draining || start();

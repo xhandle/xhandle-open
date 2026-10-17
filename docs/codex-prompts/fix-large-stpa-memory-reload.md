@@ -1,0 +1,5 @@
+Implement the findings in review-large-stpa-memory-reload-results.md.
+
+Replace retained full-evidence checkpoint cache keys with compact identities, cap clean cache retention, and preserve dirty results, write ordering, cancellation and existing durable checkpoint compatibility. Make interrupted runs discoverable after page reload by saving a lightweight recovery record before provider work. Keep previous completed results intact. Resume must reuse only checkpoints whose complete inputs match; do not fabricate completion or clear customer progress. Reduce redundant source materialization during final assembly.
+
+Add regression tests for cache eviction with unsaved work, startup discovery before provider completion, and replacement of the recovery record by a completed run. Run checkpoint and runner tests, lint and a bounded synthetic workload at 26,278 rows. Preserve unrelated changes. Do not commit or push. Report limits: this reduces identified memory retention and enables continuation; browser execution itself cannot survive page termination, and recovery requires working persistent storage.

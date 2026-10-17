@@ -77,6 +77,14 @@ export async function chooseLocalFolder(sourceId) {
   return connectLocalFolder({ handle, sourceId });
 }
 
+// Rebind only after the user confirms this is an existing connection. Matching
+// folder names are not identity: two different directories may share a name.
+export async function reuseLocalFolderConnection(candidate, existing) {
+  if (!existing?.sourceId) throw new Error('Select an existing local connection.');
+  const session = await getLocalFolderSession(candidate);
+  return connectLocalFolder({ ...session, sourceId: existing.sourceId });
+}
+
 export async function getLocalFolderSession(source) {
   if (sessions.has(source.sourceId)) return sessions.get(source.sourceId);
   const handle = await readHandle(source.sourceId).catch(() => null);

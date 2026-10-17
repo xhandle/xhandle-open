@@ -175,7 +175,7 @@ async function recoverArchitecturePublicationNow(scope, checkpointKey, signal) {
             // Immutable pointer history reuses existing data; never duplicates the row array.
             if (current.result) store.put({key:`${scope}:history:${oldRun.result?.value?.root?.split(':$part:').pop() || 'legacy'}`,value:current.result.value});
             store.put({key:scope,value:ready.rowRecord});
-            store.put({key:`${scope}:metadata`,value:{...ready.metadata,storageSaved:true,storageError:''}});
+            store.put({key:`${scope}:metadata`,value:{...ready.metadata,rowCount:rows.length,updatedAt:new Date().toISOString(),storageSaved:true,storageError:''}});
             store.put({key:`${scope}:run:${run.fingerprint}`,value:ready.runRecord});
             store.put({key:`${scope}:run`,value:ready.runRecord});
             store.delete(checkpointKey);
@@ -233,6 +233,37 @@ export async function readLatestArchitectureCheckpoint(scope) {
 export async function readArchitectureMetadata(scope) {
   const db=await openCbaIndexedDB();
   try {return await readRecord(db,XHANDLE_IDB_CBA_STORE,`${scope}:metadata`) || null;} finally {db.close();}
+}
+
+// Presence checks only: do not hydrate large row trees or checkpoints. Even an
+// empty stored record is conservatively treated as work until explicitly cleared.
+export async function hasArchitectureConnectionWork(scopes) {
+  const keys = [...new Set(scopes.filter(Boolean))];
+  const memoryWork = () => keys.some(key => architectureWrites.has(key)) ||
+    [...pendingInMemory.values()].some(value => keys.includes(value.scope));
+  if (memoryWork()) return true;
+  const db = await openCbaIndexedDB();
+  try {
+    for (const key of keys) {
+      const prefixes = [key, `functional-decomposition-checkpoint:${key}:`];
+      for (const prefix of prefixes) {
+        const found = await new Promise((resolve, reject) => {
+          const tx = db.transaction(XHANDLE_IDB_CBA_STORE, 'readonly');
+          const request = tx.objectStore(XHANDLE_IDB_CBA_STORE).openKeyCursor(IDBKeyRange.bound(prefix, `${prefix}\uffff`));
+          tx.onabort = () => reject(tx.error || new Error('Unable to inspect saved work.'));
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => {
+            const cursor = request.result;
+            if (!cursor) { resolve(false); return; }
+            if (prefix.endsWith(':') || cursor.key === key || String(cursor.key).startsWith(`${key}:`)) { resolve(true); return; }
+            cursor.continue();
+          };
+        });
+        if (found) return true;
+      }
+    }
+    return memoryWork();
+  } finally { db.close(); }
 }
 
 export function writeCbaRowsToIndexedDB(...args) {

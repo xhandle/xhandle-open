@@ -1,10 +1,3 @@
-// These tests isolate detailed assessment/recovery; the real prepass is covered in fastHazardApplicability.test.js.
-jest.mock('./fastHazardApplicability',()=>({screenFastApplicability:async({sources})=>new Map(sources.map(s=>[s.id,{applicable:s.reviewedApplicability || 'Yes',rationale:s.reviewedRationale || 'Meaningful action deviation.'}]))}));
-jest.mock('./fastHazardSemanticReview',()=>({...jest.requireActual('./fastHazardSemanticReview'),createReviewBatchPolicy:()=>({rows:24,chars:60000,successes:0,epoch:0}),reviewFastHazards:async ({entries})=>Object.fromEntries(entries.map(({source})=>[source.id,[]]))}));
-jest.mock('../../components/aiAnalysisSTPA',()=>({fetchLLMResponse:jest.fn()}));
-jest.mock('./codeHazardGenerationCheckpoint',()=>({createCodeHazardCheckpoint:jest.fn()}));
-jest.mock('./codeArchitectureHazardStore',()=>({saveCodeArchitectureHazardRun:jest.fn()}));
-jest.mock('../../components/aiAnalysisLite',()=>({runLiteAIAnalysis:jest.fn()}));
 import {fetchLLMResponse} from '../../components/aiAnalysisSTPA';
 import {runLiteAIAnalysis} from '../../components/aiAnalysisLite';
 import {saveCodeArchitectureHazardRun} from './codeArchitectureHazardStore';
@@ -17,6 +10,13 @@ import {toCsvText,parseCsv} from '../../lib/csv';
 import {planHazardAnalysisCsvImport} from '../project-hazard-analysis/hazardAnalysisCsv';
 import {recordUserPreprocessing} from '../project-hazard-analysis/hazardUserPreprocessing';
 import {restoreFunctionalCsvSnapshot} from '../code-architecture-context/functionalModel';
+// These tests isolate detailed assessment/recovery; the real prepass is covered in fastHazardApplicability.test.js.
+jest.mock('./fastHazardApplicability',()=>({screenFastApplicability:async({sources})=>new Map(sources.map(s=>[s.id,{applicable:s.reviewedApplicability || 'Yes',rationale:s.reviewedRationale || 'Meaningful action deviation.'}]))}));
+jest.mock('./fastHazardSemanticReview',()=>({...jest.requireActual('./fastHazardSemanticReview'),createReviewBatchPolicy:()=>({rows:24,chars:60000,successes:0,epoch:0}),reviewFastHazards:async ({entries})=>Object.fromEntries(entries.map(({source})=>[source.id,[]]))}));
+jest.mock('../../components/aiAnalysisSTPA',()=>({fetchLLMResponse:jest.fn()}));
+jest.mock('./codeHazardGenerationCheckpoint',()=>({createCodeHazardCheckpoint:jest.fn()}));
+jest.mock('./codeArchitectureHazardStore',()=>({saveCodeArchitectureHazardRun:jest.fn()}));
+jest.mock('../../components/aiAnalysisLite',()=>({runLiteAIAnalysis:jest.fn()}));
 
 const base={projectId:'project-A',repoMeta:{repoId:'repo-A'},cbaRows:[{from:'Planner',action:'Apply torque',to:'Actuator',traceId:'functional-1',rowRef:1,hazardAnalysisEligibility:'Include',hazardAnalysisEligibilitySource:'manual'}],organizationContext:'Org requires fault injection for torque limits.',operationalContexts:[{id:'drive',scenario:'Urban driving',mode:'Automatic',conditions:'Wet road'}]};
 beforeEach(()=>{jest.clearAllMocks();saveCodeArchitectureHazardRun.mockResolvedValue(undefined);});
@@ -197,7 +197,7 @@ test('checkpoint recovery clears the displayed warning immediately but cannot ma
   expect(progress.mock.calls.at(-1)[0].message).toBe('Assessing rows');
   return options.sources.map(({id})=>answer('STPA',id));
  });
- saveCodeArchitectureHazardRun.mockRejectedValue(new Error('Final save failed'));
+ saveCodeArchitectureHazardRun.mockResolvedValueOnce(undefined).mockRejectedValue(new Error('Final save failed'));
  try{
   const run=await runCodeArchitectureHazardAnalysis({...base,setProgress:progress});
   expect(run.finalSavePending).toBe(true);
@@ -219,4 +219,130 @@ test.each([false,true])('standalone runner retires checkpoint work on completion
   expect(checkpointSignal.aborted).toBe(true);expect(run.runState).toBe('complete');
   expect(Boolean(run.finalSavePending)).toBe(fails);
  }finally{generate.mockRestore();}
+});
+
+test('durable interrupted-run record exists before provider work and final result replaces its id',async()=>{
+ let manifest;
+ fetchLLMResponse.mockImplementation(async prompt=>{
+   manifest=saveCodeArchitectureHazardRun.mock.calls[0][0];
+   expect(manifest).toMatchObject({projectId:'project-A',repoId:'repo-A',runState:'incomplete',totalAssessments:7});
+   expect(manifest.generatedSheets).toEqual({});
+   expect(manifest.architectureRowsSnapshot).toEqual([]);
+   const reloaded=normalizeCodeArchitectureHazardRun(JSON.parse(JSON.stringify(manifest)));
+   expect(reloaded.runState).toBe('incomplete');
+   return JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>answer('STPA',id)));
+ });
+ const run=await runCodeArchitectureHazardAnalysis(base);
+ expect(run.id).toBe(manifest.id);
+ expect(run.runState).toBe('complete');
+});
+
+test('startup lookup discovers an unfinished attempt before any assessment is returned',async()=>{
+ const store=jest.requireActual('./codeArchitectureHazardStore');
+ saveCodeArchitectureHazardRun.mockImplementation(store.saveCodeArchitectureHazardRun);
+ const projectId='reload-manifest-test';
+ fetchLLMResponse.mockImplementation(async prompt=>{
+   const recovered=await store.getLatestCodeArchitectureHazardRun({projectId,repoId:'repo-A'});
+   expect(recovered).toMatchObject({runState:'incomplete',totalAssessments:7});
+   expect(recovered.failureMessage).toContain('Continue');
+   return JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>answer('STPA',id)));
+ });
+ const run=await runCodeArchitectureHazardAnalysis({...base,projectId});
+ expect((await store.getLatestCodeArchitectureHazardRun({projectId,repoId:'repo-A'})).id).toBe(run.id);
+ expect((await store.getLatestCodeArchitectureHazardRun({projectId,repoId:'repo-A'})).runState).toBe('complete');
+});
+
+test('hung recovery and final storage cannot prevent generated results returning',async()=>{
+ saveCodeArchitectureHazardRun.mockImplementation(()=>new Promise(()=>{}));
+ fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>answer('STPA',id))));
+ const run=await runCodeArchitectureHazardAnalysis(base);
+ expect(fetchLLMResponse).toHaveBeenCalled();
+ expect(run).toMatchObject({runState:'complete',finalSavePending:true});
+ expect(run.generatedSheets.Summary).toHaveLength(8);
+});
+
+test('cancelling during the initial save settles without waiting for storage',async()=>{
+ saveCodeArchitectureHazardRun.mockImplementation(()=>new Promise(()=>{}));
+ const controller=new AbortController();
+ const task=runCodeArchitectureHazardAnalysis({...base,signal:controller.signal});
+ const assertion=expect(task).rejects.toMatchObject({name:'AbortError'});
+ await Promise.resolve();controller.abort();await assertion;
+ expect(fetchLLMResponse).not.toHaveBeenCalled();
+});
+
+test('manifest-only reload preserves an imported exclusion from an incomplete run',async()=>{
+ fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>answer('STPA',id))));
+ const previous=await runCodeArchitectureHazardAnalysis(base);previous.runState='incomplete';
+ const headers=previous.generatedSheets.Summary[0],row=previous.generatedSheets.Summary[1],prior=[...row];
+ row[headers.indexOf('Guide Phrase Applicable')]='No';
+ row[headers.indexOf('Guide Phrase Applicability Rationale')]='Accepted human exclusion.';
+ const id=row[headers.indexOf('Raw Analysis Row ID')];
+ previous.userPreprocessing={[id]:recordUserPreprocessing(null,headers,row,['Guide Phrase Applicable','Guide Phrase Applicability Rationale'],prior)};
+ saveCodeArchitectureHazardRun.mockClear();
+ await runCodeArchitectureHazardAnalysis({...base,previousRun:previous});
+ const manifest=normalizeCodeArchitectureHazardRun(JSON.parse(JSON.stringify(saveCodeArchitectureHazardRun.mock.calls[0][0])));
+ expect(manifest.generatedSheets).toEqual({});expect(manifest.preprocessingIdentitySheet).toHaveLength(2);
+ fetchLLMResponse.mockClear();
+ const resumed=await runCodeArchitectureHazardAnalysis({...base,previousRun:manifest});
+ expect(fetchLLMResponse.mock.calls.flatMap(([p])=>JSON.parse(p.split('\nRows: ')[1]))).toHaveLength(6);
+ expect(resumed.generatedSheets.Summary[1][headers.indexOf('Guide Phrase Applicable')]).toBe('No');
+ expect(resumed.userPreprocessing[id]).toBeDefined();
+});
+
+test.each([[],['HA-1'],['HA-2']].map(completed=>[completed]))('partial recovery preserves identities with completed rows %j',async completed=>{
+ fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>answer('STPA',id))));
+ const previous=await runCodeArchitectureHazardAnalysis(base);previous.runState='incomplete';
+ const headers=previous.generatedSheets.Summary[0],row=previous.generatedSheets.Summary[1],prior=[...row];
+ row[headers.indexOf('Guide Phrase Applicable')]='No';
+ const id=row[headers.indexOf('Raw Analysis Row ID')];
+ previous.userPreprocessing={[id]:recordUserPreprocessing(null,headers,row,['Guide Phrase Applicable'],prior)};
+ const generate=jest.spyOn(require('./resultsFirstHazardPipeline'),'generateFastHazards').mockRejectedValueOnce(Object.assign(new Error('Interrupted'),{partialResults:completed.map(id=>({...answer('STPA',id),...(id==='HA-1'?{applicable:'No',classification:'Not applicable'}:{})}))}));
+ let recovery;
+ try{await runCodeArchitectureHazardAnalysis({...base,previousRun:previous});}catch(error){if(!error.recoveryRun)throw error;recovery=error.recoveryRun;}finally{generate.mockRestore();}
+ expect(recovery.preprocessingIdentitySheet).toHaveLength(2);
+ fetchLLMResponse.mockClear();
+ const resumed=await runCodeArchitectureHazardAnalysis({...base,previousRun:normalizeCodeArchitectureHazardRun(JSON.parse(JSON.stringify(recovery)))});
+ expect(fetchLLMResponse.mock.calls.flatMap(([p])=>JSON.parse(p.split('\nRows: ')[1]))).toHaveLength(6);
+ expect(resumed.generatedSheets.Summary[1][headers.indexOf('Guide Phrase Applicable')]).toBe('No');
+});
+
+test('healthy row checkpoints cannot hide a failed manifest save',async()=>{
+ saveCodeArchitectureHazardRun.mockRejectedValueOnce(new Error('Manifest write failed'));
+ const progress=jest.fn();
+ const generate=jest.spyOn(require('./resultsFirstHazardPipeline'),'generateFastHazards').mockImplementationOnce(async options=>{
+  options.onProgress({step:40,message:'Assessing rows'});
+  options.onStorageState({unsaved:true,status:'failed'});
+  expect(progress.mock.calls.at(-1)[0].message).toContain('Progress could not be saved');
+  options.onStorageState({unsaved:false,status:'saved'});
+  expect(progress.mock.calls.at(-1)[0].message).toContain('Recovery information could not be saved');
+  expect(progress.mock.calls.at(-1)[0].message).not.toContain('Progress could not be saved');
+  return options.sources.map(({id})=>answer('STPA',id));
+ });
+ try{await runCodeArchitectureHazardAnalysis({...base,setProgress:progress});}finally{generate.mockRestore();}
+});
+
+test('late manifest success clears only its own warning during generation',async()=>{
+ let resolve;saveCodeArchitectureHazardRun.mockImplementationOnce(()=>new Promise(r=>{resolve=r;}));
+ const progress=jest.fn();
+ const generate=jest.spyOn(require('./resultsFirstHazardPipeline'),'generateFastHazards').mockImplementationOnce(async options=>{
+  options.onProgress({step:40,message:'Assessing rows'});
+  options.onStorageState({unsaved:true,status:'failed'});
+  expect(progress.mock.calls.at(-1)[0].message).toContain('Recovery information could not be saved');
+  resolve();await Promise.resolve();await Promise.resolve();
+  expect(progress.mock.calls.at(-1)[0].message).not.toContain('Recovery information could not be saved');
+  expect(progress.mock.calls.at(-1)[0].message).toContain('Progress could not be saved');
+  return options.sources.map(({id})=>answer('STPA',id));
+ });
+ try{await runCodeArchitectureHazardAnalysis({...base,setProgress:progress});}finally{generate.mockRestore();}
+});
+
+test('late manifest settlement cannot change progress after the attempt finishes',async()=>{
+ let resolve;saveCodeArchitectureHazardRun.mockImplementationOnce(()=>new Promise(r=>{resolve=r;}));
+ fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>answer('STPA',id))));
+ const progress=jest.fn();
+ await runCodeArchitectureHazardAnalysis({...base,setProgress:progress});
+ const calls=progress.mock.calls.length;
+ resolve();await Promise.resolve();await Promise.resolve();
+ expect(progress).toHaveBeenCalledTimes(calls);
+ expect(progress.mock.calls.at(-1)[0].step).toBe(100);
 });

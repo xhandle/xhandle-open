@@ -1,0 +1,5 @@
+Fix the two confirmed regressions in review-large-stpa-recovery-fix-results.md. Make initial recovery persistence bounded and cancellation-aware without abandoning the store's ordered writer or allowing late manifests to overwrite final results. Ensure a hung initial save cannot indirectly block final results through the save queue. Preserve unsaved results and truthful save-pending reporting.
+
+Persist compact identities for user-owned rows in recovery manifests and restore preprocessing from them after reload. Preserve explicit applicability exclusions, imported edits, archived preprocessing and organization context identity. Do not duplicate full evidence or narrative tables. Report missing identity data instead of silently dropping governed edits.
+
+Add regression tests for never-settling storage, cancellation, manifest serialization/reload and exclusion preservation. Run related storage, checkpoint, preprocessing and runner suites, lint and diff checks. Preserve unrelated changes. Do not commit or push.

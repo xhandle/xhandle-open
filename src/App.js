@@ -19,6 +19,7 @@ import { parseCodeArchitectureCsv } from "./features/code-architecture-context/c
 import { architectureEvidenceColumns, architectureCoverageSheets } from './features/code-architecture-assurance/codeArchitectureCoverageWorkbook';
 import ArchitectureRunRecovery from './features/code-architecture-assurance/ArchitectureRunRecovery';
 import LocalFolderChooser from "./features/code-architecture-context/LocalFolderChooser";
+import { selectLocalConnectionDraft } from "./features/code-architecture-context/localConnectionDraft";
 import { scanLocalFolder, createLocalSourceProvider, getLocalFolderSession } from "./features/code-architecture-context/localCodeSource";
 import { isLocalCodeSource, localCodeSourceDescriptor, codeSourceProvenance } from "./features/code-architecture-context/codeSourceIdentity";
 import ActionsMenu from "./components/ActionsMenu";
@@ -223,6 +224,7 @@ import {
   TRACEABILITY_MATRIX_COLUMNS,
 } from "./features/code-architecture-assurance/artifactDefinitions";
 import { buildTraceabilityRows } from "./features/code-architecture-assurance/TraceabilityMatrixPanel";
+import { architectureDashboardSummary } from "./features/code-architecture-assurance/architectureDashboardSummary";
 import {
   XHANDLE_IDB_CBA_STORE,
   XHANDLE_IDB_NAME,
@@ -236,6 +238,7 @@ import {
   writeImportedArchitectureRunRecords,
   recoverArchitecturePublication,
   readArchitectureMetadata,
+  hasArchitectureConnectionWork,
 } from "./features/code-architecture-assurance/codeArchitectureStorage";
 import {
   formatDuration,
@@ -4007,6 +4010,7 @@ const repoContextRequestRef = useRef(0);
 const repoContextDraftRef = useRef(null);
 repoContextDraftRef.current = {draft:codeArchitectureRepoDraft, open:showCodeArchitectureRepoConfig, project:codeArchitectureRepoConfigProjectId, repo:codeArchitectureRepoConfigRepoId};
 const [codeArchitectureRepoConfigMessage, setCodeArchitectureRepoConfigMessage] = useState("");
+const [localConnectionChoicePending, setLocalConnectionChoicePending] = useState(false);
 const codeArchitectureAnalysisInFlightRef = useRef(false);
 const codeArchitectureAnalysisAbortRef = useRef(null);
 useEffect(() => () => codeArchitectureAnalysisAbortRef.current?.abort(), []);
@@ -4382,17 +4386,21 @@ function openCodeArchitectureRepoConfig(projectId = activeCodeArchitectureProjec
 }
 
 async function verifyCodeArchitectureRepo({ silent = false } = {}) {
+  if (localConnectionChoicePending) {
+    setCodeArchitectureRepoConfigMessage("Choose whether to reuse the existing folder connection or add a separate source before continuing.");
+    return null;
+  }
   if (isLocalCodeSource(codeArchitectureRepoDraft)) {
     setIsCodeArchitectureRepoVerifying(true);
     try {
       const scan = await scanLocalFolder(codeArchitectureRepoDraft);
-      const repoConfig = makeRepoConfig({
+      let repoConfig = makeRepoConfig({
         ...codeArchitectureRepoDraft,
         filesFound: scan.entries.length,
         analysisContext: { text: codeArchitectureRepoDraft.analysisContextText, files: codeArchitectureRepoDraft.analysisContextFiles },
       });
-      const existing = codeArchitectureProjects.find(project => project.id === codeArchitectureRepoConfigProjectId)?.repos?.find(entry => entry.id === codeArchitectureRepoConfigRepoId);
-      if (isLocalCodeSource(existing) && existing.sourceId === repoConfig.sourceId) repoConfig.id = existing.id;
+      const existing = codeArchitectureProjects.find(project => project.id === codeArchitectureRepoConfigProjectId)?.repos?.find(entry => isLocalCodeSource(entry) && entry.sourceId === repoConfig.sourceId);
+      if (isLocalCodeSource(existing) && existing.sourceId === repoConfig.sourceId) repoConfig = { ...existing, ...repoConfig, id: existing.id, createdAt: existing.createdAt || repoConfig.createdAt };
       const repoFiles = scan.entries.map(({ path, name, size }) => ({ path, name, size }));
       setCodeArchitectureRepoFilesForModal(repoFiles);
       setCodeArchitectureRepoConfigMessage(`Folder ready. ${repoFiles.length} eligible files; ${scan.skipped.length} excluded entries.`);
@@ -15242,6 +15250,26 @@ const projectsDashboardRows = useMemo(() => {
     .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
 }, [projects, projectFolders, activeProjectId, riskRegister]);
 
+const [dashboardArchitectureMetadata, setDashboardArchitectureMetadata] = useState({});
+useEffect(() => {
+  let cancelled = false;
+  const load = async () => {
+    const entries = [];
+    // Read small metadata records sequentially, never hydrate architecture rows.
+    for (const project of codeArchitectureProjects || []) {
+      const repos = project.repos || [];
+      const repo = repos.find(entry => entry.id === project.activeRepoId) || repos[0];
+      if (!repo || cancelled) continue;
+      const key = codeArchitectureRowsKey(project.id, repo.id);
+      try { entries.push([key, await readArchitectureMetadata(key)]); }
+      catch { entries.push([key, null]); }
+    }
+    if (!cancelled) setDashboardArchitectureMetadata(Object.fromEntries(entries));
+  };
+  load();
+  return () => { cancelled = true; };
+}, [codeArchitectureProjects, activeCodeArchitectureProjectId, cbaOwnedSnapshot]);
+
 const codeArchitectureDashboardRows = useMemo(() => {
   return (codeArchitectureProjects || [])
     .map((project) => {
@@ -15253,18 +15281,24 @@ const codeArchitectureDashboardRows = useMemo(() => {
         try { return JSON.parse(localStorage.getItem(codeArchitectureMetaKey(project.id, activeRepo.id)) || "null"); }
         catch { return null; }
       })() : null;
+      const scope = activeRepo ? codeArchitectureRowsKey(project.id, activeRepo.id) : null;
+      const summary = architectureDashboardSummary({
+        cached: meta,
+        durable: dashboardArchitectureMetadata[scope],
+        liveRows: isCurrentWorkspaceRepo && cbaOwnedSnapshot.scope === scope ? cbaTableData : undefined,
+      });
       return {
         ...project,
         folderName: folder?.name || "Top level",
         repoCount: repos.length,
         activeRepoName: activeRepo?.repoName || activeRepo?.repoId || "No repo connected",
-        rowCount: isCurrentWorkspaceRepo ? cbaTableData.length : Number(meta?.rowCount || 0),
-        metricsSummary: codeArchitectureMetricsSummary(meta?.metrics),
+        rowCount: summary.rowCount,
+        metricsSummary: codeArchitectureMetricsSummary(summary.metrics),
         updatedAt: project.updatedAt || activeRepo?.updatedAt || project.createdAt || "",
       };
     })
     .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
-}, [codeArchitectureProjects, codeArchitectureFolders, activeCodeArchitectureProject, activeCodeArchitectureRepo, cbaTableData]);
+}, [codeArchitectureProjects, codeArchitectureFolders, activeCodeArchitectureProject, activeCodeArchitectureRepo, cbaTableData, cbaOwnedSnapshot, dashboardArchitectureMetadata]);
 
 const reviewCenterProjects = useMemo(() => ([
   ...projects,
@@ -17383,7 +17417,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                     <tr>
                       <th className="border-b px-3 py-2 font-medium">Project</th>
                       <th className="border-b px-3 py-2 font-medium">Folder</th>
-                      <th className="border-b px-3 py-2 font-medium">Repositories</th>
+                      <th className="border-b px-3 py-2 font-medium">Connected sources</th>
                       <th className="border-b px-3 py-2 font-medium">Active repo</th>
                       <th className="border-b px-3 py-2 font-medium">Rows</th>
                       <th className="border-b px-3 py-2 font-medium">Metrics</th>
@@ -17403,9 +17437,56 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                           </button>
                         </td>
                         <td className="border-b px-3 py-2 text-gray-600">{project.folderName}</td>
-                        <td className="border-b px-3 py-2 text-gray-600">{project.repoCount}</td>
+                        <td className="border-b px-3 py-2 text-gray-600">
+                          {project.repoCount > 0 ? (
+                            <details>
+                              <summary className="cursor-pointer" title="Saved source connections, including sources that have not been analyzed">
+                                {project.repoCount} connected
+                              </summary>
+                              <ul className="mt-2 space-y-2">
+                                {(project.repos || []).map(repo => (
+                                  <li key={repo.id}>
+                                    <div>{repo.repoName || repo.repoId || repo.folderName || "Unnamed source"}</div>
+                                    <div className="text-xs text-gray-500">
+                                      {isLocalCodeSource(repo) ? "Local folder" : "GitHub"}
+                                      {repo.id === (project.activeRepoId || project.repos?.[0]?.id) ? " · Active" : ""}
+                                      {repo.lastAnalyzedAt ? ` · Last analyzed ${new Date(repo.lastAnalyzedAt).toLocaleString()}` : ""}
+                                    </div>
+                                    {!repo.lastAnalyzedAt && repo.id !== (project.activeRepoId || project.repos?.[0]?.id) && <button
+                                      type="button" className="mt-1 text-xs text-red-700 underline"
+                                      onClick={async () => {
+                                        if (codeArchitectureAnalysisInFlightRef.current) return;
+                                        const scopes = [...new Set([repo.id, repo.repoId].filter(Boolean).map(id => codeArchitectureRowsKey(project.id, id)))];
+                                        try {
+                                          const cached = [repo.id, repo.repoId].filter(Boolean).some(id =>
+                                            localStorage.getItem(codeArchitectureMetaKey(project.id, id)) != null ||
+                                            localStorage.getItem(codeArchitectureRowsKey(project.id, id)) != null);
+                                          if (cached || await hasArchitectureConnectionWork(scopes)) {
+                                            window.alert('This connection has saved or recoverable analysis work. It has been kept so you can access or resume that work.');
+                                            return;
+                                          }
+                                        } catch {
+                                          window.alert('Saved work could not be checked. The connection has been kept.');
+                                          return;
+                                        }
+                                        if (codeArchitectureAnalysisInFlightRef.current) return;
+                                        if (!window.confirm(`Remove the inactive connection “${repo.repoName || repo.folderName || 'Local source'}” from this project? Stored analysis records will not be deleted.`)) return;
+                                        updateCodeArchitectureProject(project.id, current => {
+                                          const latest = current.repos.find(entry => entry.id === repo.id);
+                                          if (codeArchitectureAnalysisInFlightRef.current || latest !== repo || latest?.lastAnalyzedAt || repo.id === (current.activeRepoId || current.repos[0]?.id)) return {};
+                                          return { repos: current.repos.filter(entry => entry.id !== repo.id) };
+                                        });
+                                      }}>
+                                      Remove unused connection
+                                    </button>}
+                                  </li>
+                                ))}
+                              </ul>
+                            </details>
+                          ) : "0 connected"}
+                        </td>
                         <td className="border-b px-3 py-2 text-gray-600">{project.activeRepoName}</td>
-                        <td className="border-b px-3 py-2 text-gray-600">{project.rowCount}</td>
+                        <td className="border-b px-3 py-2 text-gray-600">{project.rowCount ?? "—"}</td>
                         <td className="border-b px-3 py-2 text-gray-500">{project.metricsSummary || "Not captured"}</td>
                         <td className="border-b px-3 py-2 text-gray-500">{project.updatedAt ? new Date(project.updatedAt).toLocaleString() : "Never"}</td>
                       </tr>
@@ -21965,8 +22046,11 @@ const updateRiskInProject = async (projectId, predicate) => {
                 </label>
                 {isLocalCodeSource(codeArchitectureRepoDraft) ? <LocalFolderChooser
                   source={codeArchitectureRepoDraft}
+                  connections={codeArchitectureProjects.find(project => project.id === codeArchitectureRepoConfigProjectId)?.repos || []}
+                  onPendingChange={setLocalConnectionChoicePending}
                   disabled={isCodeArchitectureRepoVerifying || isCodeArchitectureRepoAnalyzing || isCodeArchitectureContextGenerating}
-                  onChange={source => setCodeArchitectureRepoDraft(draft => ({ ...draft, ...codeSourceProvenance(source) }))}
+                  onChange={source => setCodeArchitectureRepoDraft(draft => selectLocalConnectionDraft(draft, source,
+                    codeArchitectureProjects.find(project => project.id === codeArchitectureRepoConfigProjectId)?.repos || []))}
                 /> : <>
                 <div>
                   <label className="block text-sm font-medium mb-1">Repository URL</label>

@@ -153,3 +153,19 @@ describe('overlapping checkpoint reads',()=>{
   jest.advanceTimersByTime(10000);expect(await cache.read({id:'new'})).toBe('recovered');
  });
 });
+
+test('saved cache entries are bounded while pending writes remain readable',async()=>{
+ const saved=new Map();let release;
+ const backend={read:jest.fn(async b=>saved.get(b.id)),writeMany:jest.fn(async entries=>{
+   if(entries.some(e=>e.basis.id==='pending'))await new Promise(r=>{release=r;});
+   entries.forEach(e=>saved.set(e.basis.id,e.value));
+ })};
+ const cache=resilientHazardCheckpoint(backend,{maxCleanEntries:2});
+ for(let id=0;id<8;id++){await cache.write({id,evidence:'x'.repeat(10000)},id);await tick();}
+ await cache.flush();
+ expect(await cache.read({id:0,evidence:'x'.repeat(10000)})).toBe(0);
+ expect(backend.read).toHaveBeenCalled();
+ await cache.write({id:'pending'},'protected');await tick();
+ expect(await cache.read({id:'pending'})).toBe('protected');
+ release();await tick();await cache.flush();
+});

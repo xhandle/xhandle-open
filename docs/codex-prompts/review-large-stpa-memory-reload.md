@@ -1,0 +1,5 @@
+Review the current hazard-analysis implementation without changing production code.
+
+Incident: Safari reloaded the avLocalizationWithOutHDMap STPA tab because it was using significant memory. The architecture contains 4,981 rows; the hazard draft contains 26,278 rows (3,754 included actions times seven phrases). After reload, the UI shows a draft and Run hazard analysis instead of Continue.
+
+Trace the active pipeline, memory retention, evidence expansion, checkpoint serialization, final result assembly, and startup recovery. Determine whether saved row checkpoints are discoverable without a finalized run record. Distinguish confirmed code defects from hypotheses about the exact browser failure. Preserve existing work and do not regenerate or clear customer data. Run relevant existing tests and a bounded synthetic reproduction if useful; do not call paid providers. Report prioritized findings with file references, validation, limitations, and recommended fixes. Do not claim an exact Safari heap cause without profiling evidence.

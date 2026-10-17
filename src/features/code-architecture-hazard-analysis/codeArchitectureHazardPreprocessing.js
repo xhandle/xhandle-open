@@ -4,10 +4,37 @@ const headers = ['Function (From)', 'Control Action', 'Function (To)', 'Guide Ph
 const values = row => [row.fromFunction, row.controlAction, row.toFunction, row.guidePhrase, row.operationalContextId, row.operationalScenario, row.operationalMode, row.operatingConditions].map(value => String(value || '').trim());
 const cell = (sheet, row, header) => String(row[sheet[0].indexOf(header)] || '').trim();
 
+// Persist only identity columns for owned rows; narrative cells are not needed
+// to restore governed edits after a manifest-only reload.
+export function hazardPreprocessingIdentitySheet(run) {
+  const columns=[...headers,'Raw Analysis Row ID','Trace ID'];
+  const summary=run?.generatedSheets?.Summary;
+  const retained=run?.preprocessingIdentitySheet;
+  if(!summary?.[0] && !retained?.[0])return null;
+  const ownedRows=sheet=>sheet?.[0]?sheet.slice(1)
+    .filter(row=>run.userPreprocessing?.[cell(sheet,row,'Raw Analysis Row ID')])
+    .map(row=>columns.map(header=>cell(sheet,row,header))):[];
+  const current=ownedRows(summary);
+  const idColumn=columns.indexOf('Raw Analysis Row ID');
+  const retainedRows=ownedRows(retained);
+  const retainedById=new Map(retainedRows.map(row=>[row[idColumn],row]));
+  const traceColumn=columns.indexOf('Trace ID');
+  for(const row of current){
+    // Excluded output can contain a display placeholder instead of its trace.
+    // Recover the original trace without replacing other current identity fields.
+    const saved=retainedById.get(row[idColumn]);
+    if(saved && /^(?:not applicable|n\/a)?$/i.test(row[traceColumn]))row[traceColumn]=saved[traceColumn];
+  }
+  const currentIds=new Set(current.map(row=>row[idColumn]));
+  // Partial output has identities only for completed rows. Keep the other
+  // owned identities, while allowing current output to update completed ones.
+  return [columns,...current,...retainedRows.filter(row=>!currentIds.has(row[idColumn]))];
+}
+
 export function prepareCodeHazardPreprocessing(input, previousRun) {
   if (!Object.values(previousRun?.userPreprocessing || {}).some(entry => entry?.values && Object.keys(entry.values).length)) return input;
-  const summary = previousRun.generatedSheets?.Summary;
-  if (!summary?.[0]) return input;
+  const summary = hazardPreprocessingIdentitySheet(previousRun);
+  if (!summary?.[0]) throw new Error('Saved user preprocessing is missing its row identities. Restore the prior analysis or review these edits before continuing.');
   const archived = {...previousRun.archivedUserPreprocessing};
   if (/^(HARA|FHA)$/i.test(previousRun.hazardMethod || '') && input.tableRows.some(row => !['','Functional malfunction','Functional degradation or loss'].includes(row.guidePhrase || ''))) {
     const active = {...previousRun.userPreprocessing};

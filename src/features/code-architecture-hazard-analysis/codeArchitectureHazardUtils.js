@@ -1690,6 +1690,7 @@ export function normalizeCodeArchitectureHazardRun(raw = {}, context = {}) {
     narrativeReview: raw.narrativeReview || null,
     archivedUserPreprocessing: raw.archivedUserPreprocessing || {},
     retainedUserInputs: raw.retainedUserInputs || {},
+    preprocessingIdentitySheet: raw.preprocessingIdentitySheet || null,
     generatedSheets: raw.generatedSheets || raw.analysisResult || {},
     summaryRows,
     reviewStatus: raw.reviewStatus || CODE_ARCHITECTURE_HAZARD_REVIEW_STATUSES.DRAFT_AI_GENERATED,

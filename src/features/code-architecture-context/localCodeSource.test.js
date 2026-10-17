@@ -1,6 +1,6 @@
 import { webcrypto } from 'crypto';
 import { TextEncoder } from 'util';
-import { registerLocalFolder, connectLocalFolder, scanLocalFolder, createLocalSourceProvider, normalizeLocalPath } from './localCodeSource';
+import { registerLocalFolder, connectLocalFolder, scanLocalFolder, createLocalSourceProvider, normalizeLocalPath, reuseLocalFolderConnection } from './localCodeSource';
 import { codeSourceIndexKey, localCodeSourceDescriptor } from './codeSourceIdentity';
 
 jest.mock('idb', () => ({ openDB: jest.fn(async () => ({ get: async () => null, put: async () => {}, close() {} })) }));
@@ -11,6 +11,16 @@ beforeAll(() => {
 });
 let id = 0;
 const register = files => registerLocalFolder({ files, sourceId: `test-${++id}` });
+
+it('explicit reuse keeps the source ID and replaces access without changing other same-name connections', async () => {
+  const existing = register([file('old.js')]);
+  const separate = register([file('separate.js')]);
+  const candidate = register([file('new.js')]);
+  const reused = await reuseLocalFolderConnection(candidate, existing);
+  expect(reused.source.sourceId).toBe(existing.sourceId);
+  expect(reused.scan.entries.map(entry => entry.path)).toEqual(['new.js']);
+  expect((await scanLocalFolder(separate)).entries.map(entry => entry.path)).toEqual(['separate.js']);
+});
 
 it('normalizes Windows separators and rejects non-relative and traversal paths', () => {
   expect(normalizeLocalPath('src\\main.js')).toBe('src/main.js');
