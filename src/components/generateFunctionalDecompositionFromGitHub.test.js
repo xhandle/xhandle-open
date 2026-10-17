@@ -814,3 +814,23 @@ it('indexes the complete large source and preserves surrogate pairs in model chu
   expect(/[\uD800-\uDBFF]$/.test(chunk)).toBe(false);
  }
 });
+
+it('dismisses the saved functional error on retry but displays the new attempt failure', async () => {
+  const React = require('react');
+  const { act } = React;
+  const { createRoot } = require('react-dom/client');
+  const host = document.createElement('div'), root = createRoot(host);
+  const rows = [{ from: 'caller', to: 'callee', action: 'Call' }];
+  const meta = { functionalProcessingError: 'Previous HTTP 520 error', runFingerprint: 'run-a' };
+  const render = repoMeta => root.render(<FunctionalDecompositionTable data={rows} repoId="error-test" repoMeta={repoMeta} />);
+  try {
+    act(() => render(meta));
+    act(() => [...host.querySelectorAll('button')].find(button => button.textContent.trim() === 'Functional').click());
+    expect(host.textContent).toContain('Previous HTTP 520 error');
+    await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent.trim() === 'Generate functional model').click());
+    expect(host.textContent).not.toContain('Previous HTTP 520 error');
+    expect(host.textContent).toContain('Open a saved project to persist the functional model.');
+    act(() => render({ ...meta }));
+    expect(host.textContent).not.toContain('Previous HTTP 520 error');
+  } finally { act(() => root.unmount()); }
+});

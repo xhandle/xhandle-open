@@ -35,6 +35,7 @@ const {
   pipeAnthropicSseToClient,
   requestAnthropicMessageStream,
 } = require("./server/anthropicStreaming");
+const { classifyAITransportError } = require("./server/aiTransportErrors");
 const { createAIRequestMetrics } = require("./server/aiRequestMetrics");
 const { spawn, spawnSync } = require("child_process");
 
@@ -2461,7 +2462,7 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
           message: `AI provider request timed out after ${Math.round(AI_PROVIDER_LONG_REQUEST_TIMEOUT_MS / 1000)} seconds.`,
           details: "The end-to-end AI request deadline was reached.",
         }
-      : extractProviderErrorMessage(err);
+      : (classifyAITransportError(err) || extractProviderErrorMessage(err));
     requestMetrics?.finish({
       status: requestCancellation.timedOut ? "timeout" : (requestCancellation.signal.aborted ? "canceled" : "failed"),
       finishReason: "error",
@@ -2471,6 +2472,7 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
     if (!res.headersSent) {
       res.status(extracted.status || 500).json({
         error: extracted.message || "LLM request failed",
+        ...(extracted.code ? { code: extracted.code, retryable: extracted.retryable } : {}),
         provider: normalizeAIProvider(req.header("x-ai-provider")) || req.body?.provider || "unknown",
       });
       return;

@@ -1,3 +1,4 @@
+import { isFunctionalTransportError } from './functionalTransportRecovery';
 // Functional allocation is derived metadata: it never changes source or interaction IDs.
 export const FUNCTIONAL_HIERARCHY_VERSION = 1;
 const levels = ['subsystem', 'csci', 'csc'];
@@ -108,7 +109,7 @@ ${validationError ? `The previous result failed validation. Correct the reported
       onProgress({ completed: allocations.size, total: units.size, message: `Organizing CSCI/CSC hierarchy: ${allocations.size}/${units.size} functions` });
     } catch (error) {
       checkAbort(signal);
-      if (typeof error.retryable === 'boolean' && error.code !== 'FUNCTIONAL_REQUEST_TIMEOUT') throw error;
+      if (isFunctionalTransportError(error)) throw error;
       if (attempt < 1) return process(batch, attempt + 1, error.message);
       if (batch.length > 1) {
         const middle = Math.ceil(batch.length / 2);

@@ -1,3 +1,4 @@
+import { isFunctionalTransportError } from './functionalTransportRecovery';
 import { mapAnalysisWork } from './functionalWorkScheduler';
 import { allocateFunctionalHierarchy, functionalEndpointAllocations, functionalHierarchyIsReady } from './functionalHierarchy';
 // A derived, source-addressed model. Detailed rows are never replaced.
@@ -230,7 +231,7 @@ Relationships (descriptions may be excerpts; classify only the supplied evidence
         }
         // The provider adapter already retries transport failures. Splitting the
         // evidence cannot repair a rate limit/outage and would multiply calls.
-        if (typeof error.retryable === 'boolean') throw error;
+        if (isFunctionalTransportError(error)) throw error;
         if (error instanceof SyntaxError && attempt < 2 && batch.length === 1) return process(batch, attempt + 1);
         if (attempt < 1) return process(batch, attempt + 1);
         if (batch.length > 1) {
@@ -327,7 +328,7 @@ Consolidation input: ${JSON.stringify({ functions: compact, interactions: links 
       }
       // The provider adapter already retries transport failures. Splitting the
       // evidence cannot repair a rate limit/outage and would multiply calls.
-      if (typeof error.retryable === 'boolean') throw error;
+      if (isFunctionalTransportError(error)) throw error;
       if (attempt < 1) return consolidate(batch, attempt + 1);
       if (batch.length > 2) {
         const middle = Math.ceil(batch.length / 2);

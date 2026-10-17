@@ -1,3 +1,4 @@
+import { FUNCTIONAL_RETRY_STATUSES, backendConnectionError, functionalHttpError, withFunctionalConnectivityRecovery, probeFunctionalConnectivity } from "../features/code-architecture-context/functionalTransportRecovery";
 import { mapAnalysisWork, serialAnalysisWriter, createAnalysisPacer } from '../features/code-architecture-context/functionalWorkScheduler';
 import { functionalHierarchyIsReady } from '../features/code-architecture-context/functionalHierarchy';
 import { createFunctionalRequestRuntime, createValidatedFunctionalCache } from '../features/code-architecture-context/functionalRequestRuntime';
@@ -1933,7 +1934,8 @@ function buildCoveragePayload(rows) {
 }
 
 const analysisRunGuards = new WeakMap();
-const AI_RETRY_STATUSES = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+const AI_RETRY_STATUSES = FUNCTIONAL_RETRY_STATUSES;
+const analysisRecoveryReporters = new WeakMap();
 const BULK_ANALYSIS_MODEL = "gpt-4o-mini";
 export const GITHUB_ANALYSIS_CONTEXT_TEXT_KEY = "githubAnalysisContextText";
 export const GITHUB_ANALYSIS_CONTEXT_FILES_KEY = "githubAnalysisContextFiles";
@@ -1989,7 +1991,7 @@ async function requestOpenAIProxyWithRetry({ prompt, bearer, label, attempts = 3
     } catch (error) {
       lastError = error;
       if (signal?.aborted) throw new Error(signal.reason?.message || signal.reason || `${label} timed out.`);
-      if (attempt >= attempts) throw error;
+      if (attempt >= attempts) throw backendConnectionError(error);
       console.info(`${label} network error; retrying (${attempt + 1}/${attempts}).`, error);
       await sleep(600 * attempt, signal);
       continue;
@@ -1997,13 +1999,18 @@ async function requestOpenAIProxyWithRetry({ prompt, bearer, label, attempts = 3
 
     if (response.ok) { runGuard?.observe(response); return response; }
 
-    let detail = "";
+    let detail = "", errorPayload = {};
     try {
       const text = await response.clone().text();
-      detail = text ? `: ${text.slice(0, 240)}` : "";
-    } catch {}
+      detail = text.slice(0, 240);
+      try { errorPayload = JSON.parse(text); } catch {}
+    } catch (error) { if (error instanceof TypeError) throw backendConnectionError(error); }
 
-    lastError = Object.assign(new Error(`${label} HTTP ${response.status}${detail}`), { retryable: AI_RETRY_STATUSES.has(response.status), retryAfterMs: retryAfterMilliseconds(response.headers.get("Retry-After")) });
+
+    lastError = functionalHttpError(response.status, detail, errorPayload);
+    lastError.message = `${label} ${lastError.message}`;
+    lastError.retryAfterMs = retryAfterMilliseconds(response.headers.get("Retry-After"));
+    if (lastError.connectivity) throw lastError;
     if (!AI_RETRY_STATUSES.has(response.status) || attempt >= attempts) {
       throw lastError;
     }
@@ -2016,14 +2023,14 @@ async function requestOpenAIProxyWithRetry({ prompt, bearer, label, attempts = 3
 
 async function requestOpenAIProxyJsonWithMetrics({ metricsRun = null, ...params }) {
   const totalStartedAt = performance.now();
-  try { return await withAnalysisRequestDeadline(async requestSignal => {
+  try { return await withFunctionalConnectivityRecovery(() => withAnalysisRequestDeadline(async requestSignal => {
     const startedAt = performance.now();
     const response = await requestOpenAIProxyWithRetry({ ...params, onAttempt: ({ queueMs }) => {
       if (metricsRun) { metricsRun.requestAttempts = (metricsRun.requestAttempts || 0) + 1; metricsRun.requestQueueMs = (metricsRun.requestQueueMs || 0) + queueMs; }
     }, signal: requestSignal, runGuard: params.runGuard || (metricsRun ? analysisRunGuards.get(metricsRun) : null) });
     let payload;
     try { payload = await response.json(); }
-    catch (error) { if (error instanceof SyntaxError) throw incompleteResponse("The model returned an invalid JSON response."); throw error; }
+    catch (error) { if (error instanceof SyntaxError) throw incompleteResponse("The model returned an invalid JSON response."); if (error instanceof TypeError) throw backendConnectionError(error); throw error; }
     const result = extractAITextFromPayload(payload);
     recordFunctionalDecompositionAiCall(metricsRun, {
       label: params.label,
@@ -2034,7 +2041,10 @@ async function requestOpenAIProxyJsonWithMetrics({ metricsRun = null, ...params 
     });
     if (payload?.choices?.some(choice => choice.finish_reason === "length") || payload?.finish_reason === "length") throw incompleteResponse("The AI response exceeded its output capacity.", "FUNCTIONAL_RESPONSE_TRUNCATED");
     return { ...payload, result };
-  }, params.signal);
+  }, params.signal), { signal: params.signal, probeConnectivity: signal => probeFunctionalConnectivity(`${backendURL}/api/health`, { signal }), onStatus: message => {
+    const report = analysisRecoveryReporters.get(metricsRun);
+    if (!params.signal?.aborted) report?.(message);
+  } });
   } catch (error) {
     if (metricsRun) {
       metricsRun.failedAiCallCount++;
@@ -3011,6 +3021,12 @@ export const generateFunctionalDecompositionFromGitHub = async (
 ) => {
   try {
     setLoading(true);
+    const originalProgress = opts.onProgress;
+    let lastProgress = {};
+    opts = { ...opts, onProgress: update => {
+      lastProgress = { ...lastProgress, ...update };
+      if (!opts.signal?.aborted) originalProgress?.(lastProgress);
+    } };
     console.log("🔄 Starting functional decomposition generation...");
 
     const repoConfig = opts?.repoConfig || {};
@@ -3029,7 +3045,10 @@ export const generateFunctionalDecompositionFromGitHub = async (
       repo,
     });
     const runGuard = createRunGuard(() => settingsFromAuth(buildAIAuthOpts()));
-    if (metricsRun) analysisRunGuards.set(metricsRun, runGuard);
+    if (metricsRun) {
+      analysisRunGuards.set(metricsRun, runGuard);
+      analysisRecoveryReporters.set(metricsRun, message => opts?.onProgress?.({ phase: 'recovery', message }));
+    }
     opts?.onProgress?.({
       phase: "scan",
       completedFiles: 0,
@@ -3365,7 +3384,7 @@ Rules:
   ${chunkedContent}`;
 
               const parsedRows = await analyzeFunctionalSourceChunk({
-                content: chunks[i], signal,
+                content: chunks[i], signal, requestHandlesDeadline: true,
                 state: progress.sections[i] ||= {},
                 onCheckpoint: persistCheckpoint,
                 onRetry: message => opts?.onProgress?.({ phase: "decomposition", completedFiles: completedPathSet.size, totalFiles: totalFileCount, currentFile: file.path, message: `${file.path}: ${message}` }),
@@ -3448,7 +3467,7 @@ Rules:
 
     throwIfAborted(opts.signal);
     if (failedFiles.length) {
-      const error = new Error(`Analysis is incomplete: ${completedPathSet.size} of ${validFiles.length} files completed; ${failedFiles.length} could not finish after automatic recovery. Progress is saved. ${failedFiles[0].path}: ${failedFiles[0].message}`);
+      const error = new Error(`Analysis is incomplete: ${completedPathSet.size} of ${validFiles.length} files completed; ${failedFiles.length} remain unfinished. Progress is saved; use Retry incomplete analysis to resume. ${failedFiles[0].path}: ${failedFiles[0].message}`);
       error.code = "SOURCE_ANALYSIS_INCOMPLETE";
       error.checkpointKey = checkpointKey;
       throw error;
@@ -3854,6 +3873,9 @@ const repoName = useMemo(() => {
   );
   const [functionalProgress, setFunctionalProgress] = useState('');
   const [functionalError, setFunctionalError] = useState('');
+  const [dismissedFunctionalErrorKey, setDismissedFunctionalErrorKey] = useState(null);
+  const savedFunctionalErrorKey = JSON.stringify([projectId, repoId, branch,
+    repoMeta?.runFingerprint, repoMeta?.sourceAnalysis?.fingerprint, repoMeta?.functionalProcessingError]);
   const functionalAbort = useRef(null);
   const functionalInputs = useRef(null);
   functionalInputs.current = rowsWithTraceIds;
@@ -3869,8 +3891,12 @@ const repoName = useMemo(() => {
     const input = rowsWithTraceIds;
     const metricsRun = createFunctionalDecompositionMetricsRun({ projectId, repoId });
     if (metricsRun) analysisRunGuards.set(metricsRun, createRunGuard(() => settingsFromAuth(buildAIAuthOpts())));
+    if (metricsRun) analysisRecoveryReporters.set(metricsRun, message => {
+      if (functionalAbort.current === controller && !controller.signal.aborted) setFunctionalProgress(message);
+    });
     let processingStatus = 'failed';
     setFunctionalError('');
+    setDismissedFunctionalErrorKey(savedFunctionalErrorKey);
     setFunctionalProgress('Processing functional responsibilities…');
     try {
       if (!rowsStorageKey) throw new Error("Open a saved project to persist the functional model.");
@@ -4353,7 +4379,7 @@ React.useEffect(() => {
             rows={rowsWithTraceIds}
             ready={functionalModelIsReady(rowsWithTraceIds)}
             progress={functionalProgress}
-            error={functionalError || repoMeta?.functionalProcessingError}
+            error={functionalError || (savedFunctionalErrorKey !== dismissedFunctionalErrorKey ? repoMeta?.functionalProcessingError : '')}
             onExportCsvChange={onExportTableChange}
             onProcess={reviewMode ? undefined : processCurrentFunctionalModel}
             onCancel={() => functionalAbort.current?.abort()}

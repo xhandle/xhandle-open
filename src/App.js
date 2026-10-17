@@ -4008,6 +4008,8 @@ const repoContextDraftRef = useRef(null);
 repoContextDraftRef.current = {draft:codeArchitectureRepoDraft, open:showCodeArchitectureRepoConfig, project:codeArchitectureRepoConfigProjectId, repo:codeArchitectureRepoConfigRepoId};
 const [codeArchitectureRepoConfigMessage, setCodeArchitectureRepoConfigMessage] = useState("");
 const codeArchitectureAnalysisInFlightRef = useRef(false);
+const codeArchitectureAnalysisAbortRef = useRef(null);
+useEffect(() => () => codeArchitectureAnalysisAbortRef.current?.abort(), []);
 const codeArchitectureAnalysisScopeRef = useRef(null);
 const [isCodeArchitectureRepoVerifying, setIsCodeArchitectureRepoVerifying] = useState(false);
 const [isCodeArchitectureRepoAnalyzing, setIsCodeArchitectureRepoAnalyzing] = useState(false);
@@ -5438,6 +5440,8 @@ async function handleBaselineRepo({
   codeArchitectureAnalysisScopeRef.current = storageKey;
   const setAnalysisLoading = value => { if (codeArchitectureScopeRef.current === storageKey) setCbaLoading(value); };
   codeArchitectureAnalysisInFlightRef.current = true;
+  const analysisController = new AbortController();
+  codeArchitectureAnalysisAbortRef.current = analysisController;
   startActivity(id, {
     title: "Generating code-based architecture",
     message: "Preparing repository analysis...",
@@ -5456,12 +5460,15 @@ async function handleBaselineRepo({
       setAnalysisLoading,
       null,
       {
+        signal: analysisController.signal,
         repoConfig: { ...effectiveRepoConfig, owner: finalOwner, repo: finalRepo, token: finalToken },
         projectId: targetProject?.id || "",
         storageKey,
         selectedExtensions: effectiveSelectedExtensions,
         analysisContext: analysisContext || effectiveRepoConfig.analysisContext,
         onProgress: ({ completedFiles = 0, totalFiles = 0, currentFile = "", message = "" } = {}) => {
+          if (analysisController.signal.aborted) return;
+          if (codeArchitectureScopeRef.current === storageKey && message) setCbaLoadingLabel(message);
           updateActivity(id, {
             step: completedFiles,
             total: totalFiles,
@@ -5597,9 +5604,14 @@ async function handleBaselineRepo({
     setHighlightedCodeArchitectureFunctionalRowIndex(null);
     setPendingCodeArchitectureDiagramTarget(null);
   } catch (e) {
+    if (analysisController.signal.aborted) {
+      finishActivity(id, "canceled", "Architecture analysis stopped. Saved progress is available for retry.");
+      return;
+    }
     finishActivity(id, "error", String(e?.message || e));
     throw e;
   } finally {
+    if (codeArchitectureAnalysisAbortRef.current === analysisController) codeArchitectureAnalysisAbortRef.current = null;
     codeArchitectureAnalysisInFlightRef.current = false;
     codeArchitectureAnalysisScopeRef.current = null;
     setAnalysisLoading(false);
@@ -17677,6 +17689,12 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
               <div role="status" className="flex items-center gap-3">
                 <XHandleWorkingMark className="h-6 w-6" />
                 <span>{cbaLoadingLabel}{cbaLoadingProgress !== null && ` ${cbaLoadingProgress}%`}</span>
+                {codeArchitectureAnalysisAbortRef.current && codeArchitectureAnalysisScopeRef.current === activeCodeArchitectureRowsKey && (
+                  <button type="button" className="ml-auto rounded border border-red-200 px-3 py-1.5 text-red-700"
+                    onClick={() => codeArchitectureAnalysisAbortRef.current?.abort()}>
+                    Stop analysis
+                  </button>
+                )}
               </div>
             </div>
           )

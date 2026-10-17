@@ -1,0 +1,5 @@
+# Review timeout recovery and shutdown fixes
+
+Review the current implementation without changing production code. Confirm the two previously reproduced defects are fixed in the actual call paths: stalled connectivity must be checked outside AI request deadlines, cancellation must interrupt probes and waits, and exhausted transport timeouts must not trigger semantic source or hierarchy splitting. Confirm reachable slow providers retain bounded retries, auth and model-format errors are not retried indefinitely, validated checkpoints remain reusable, and provider settings remain guarded.
+
+Inspect development launcher installation order and SIGINT/SIGTERM handling to confirm the diagnostics allow existing cleanup handlers to execute and retain termination when no other handlers exist. Run the focused frontend and Node regression suites, inspect the changed wiring, and perform lint/diff checks. Report supported regressions with source locations; distinguish limitations from bugs. Do not claim a local health check proves upstream provider connectivity or that all analyses can finish during any outage. Do not make paid provider calls or modify production code.

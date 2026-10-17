@@ -112,12 +112,13 @@ test('groups multiple CSCs within a CSCI, reuses catalog allocation, and retains
   expect(read(request.mock.calls[1][0]).catalog).toHaveLength(2);
 });
 
-test('splits timeouts without multiplying nonrecoverable transport failures', async () => {
+test('does not split exhausted timeouts or nonrecoverable transport failures', async () => {
   const request = jest.fn(prompt => {
     if (read(prompt).functions.length > 1) throw Object.assign(new Error('timeout'), { code: 'FUNCTIONAL_REQUEST_TIMEOUT', retryable: false });
     return reply(prompt);
   });
-  expect(functionalHierarchyIsReady(await allocateFunctionalHierarchy(modelRows(2), { request }))).toBe(true);
+  await expect(allocateFunctionalHierarchy(modelRows(2), { request })).rejects.toMatchObject({ code: 'FUNCTIONAL_REQUEST_TIMEOUT' });
+  expect(request).toHaveBeenCalledTimes(1);
   const unavailable = jest.fn(() => { throw Object.assign(new Error('Unauthorized'), { retryable: false }); });
   await expect(allocateFunctionalHierarchy(modelRows(2), { request: unavailable })).rejects.toThrow('Unauthorized');
   expect(unavailable).toHaveBeenCalledTimes(1);
@@ -150,4 +151,11 @@ test('trims display names before validating their length and rejects missing rat
   expect(good[0].functionalAbstraction.source.architecture.csc).toHaveLength(300);
   await expect(allocateFunctionalHierarchy(rows, { request: prompt => ({ allocations: reply(prompt).allocations.map(value => ({ ...value, rationale: '' })) }) })).rejects.toThrow('Hierarchy rationale for member f-0 must be a nonempty string');
   expect(JSON.stringify(rows)).toBe(before);
+});
+
+test('network rejection is not treated as a hierarchy validation failure or split', async () => {
+  const error = new TypeError('Failed to fetch');
+  const request = jest.fn().mockRejectedValue(error);
+  await expect(allocateFunctionalHierarchy(modelRows(24), { request })).rejects.toBe(error);
+  expect(request).toHaveBeenCalledTimes(1);
 });

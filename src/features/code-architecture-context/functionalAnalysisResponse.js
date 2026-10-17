@@ -102,7 +102,7 @@ function splitPosition(content, start, end) {
 // has its own retries, with a finite tree/request bound across automatic passes.
 // State stores only completed leaf outputs and counters, never partial responses.
 export async function analyzeFunctionalSourceChunk({ content, request, signal, onRetry, state = {}, onCheckpoint,
-  policy = {}, wait = waitForAnalysisRetry }) {
+  policy = {}, wait = waitForAnalysisRetry, requestHandlesDeadline = false }) {
   const limits = {maxDepth:5, minChars:256, maxRequests:128, attempts:3, timeoutMs:FUNCTIONAL_REQUEST_TIMEOUT_MS, initialTokens:FUNCTIONAL_OUTPUT_TOKENS, maxTokens:FUNCTIONAL_MAX_OUTPUT_TOKENS, ...policy};
   state.completed ||= {};
   state.splits ||= {};
@@ -123,16 +123,18 @@ export async function analyzeFunctionalSourceChunk({ content, request, signal, o
       let rows;
       const requestTokens = tokenBudget;
       try {
-        rows = parseFunctionalAnalysisTable(await withAnalysisRequestDeadline(requestSignal => request(content.slice(start,end), depth > 0 || attempt > 0, {
+        const perform = requestSignal => request(content.slice(start,end), depth > 0 || attempt > 0, {
           signal:requestSignal, start, end, maxTokens:requestTokens,
           contextBefore:content.slice(Math.max(0,start-400),start),
           contextAfter:content.slice(end,Math.min(content.length,end+400)),
-        }), signal, limits.timeoutMs));
+        });
+        rows = parseFunctionalAnalysisTable(await (requestHandlesDeadline ? perform(signal) : withAnalysisRequestDeadline(perform, signal, limits.timeoutMs)));
       } catch (error) {
         throwIfAnalysisAborted(signal);
         const format = error.code === 'FUNCTIONAL_RESPONSE_FORMAT';
         const truncated = error.code === 'FUNCTIONAL_RESPONSE_TRUNCATED';
         const timedOut = error.code === 'FUNCTIONAL_REQUEST_TIMEOUT';
+        if (timedOut && requestHandlesDeadline) throw error;
         if (!(format || truncated || timedOut || error.retryable || error instanceof TypeError)) throw error;
         lastError = error;
         if (truncated && tokenBudget < limits.maxTokens && attempt + 1 < limits.attempts) {
