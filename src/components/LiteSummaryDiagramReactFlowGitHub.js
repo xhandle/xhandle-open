@@ -1,3 +1,4 @@
+import { computeArchitectureByFunction, computeFunctionGroupsByFile, cleanArchLabel } from './diagramArchitectureIndexes';
 import useCodeArchitectureQuickSearch from './useCodeArchitectureQuickSearch';
 import { functionalGridColumns } from './functionalLayout';
 // LiteSummaryDiagramReactFlowGitHub.js — Main diagram component using layout manager
@@ -364,78 +365,7 @@ function computePreferredFileByFunction(rows) {
   return preferred;
 }
 
-const FUNCTION_GROUP_STOPWORDS = new Set([
-  'the', 'and', 'for', 'with', 'from', 'into', 'onto', 'this', 'that', 'these', 'those',
-  'data', 'system', 'module', 'service', 'handler', 'manager', 'process', 'control', 'action',
-  'send', 'receive', 'handle', 'update', 'processes', 'manage', 'manages', 'provide', 'provides',
-  'execute', 'executes', 'compute', 'computes', 'read', 'reads', 'write', 'writes',
-]);
 const ARCH_KEY_SEP = '::';
-
-function tokenizeFunctionLabel(value) {
-  return String(value || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9\s/-]/g, ' ')
-    .split(/[\s/-]+/)
-    .map((token) => token.trim())
-    .filter((token) => token.length >= 3 && !FUNCTION_GROUP_STOPWORDS.has(token));
-}
-
-function humanizeToken(token) {
-  return String(token || '').replace(/^\w/, (ch) => ch.toUpperCase());
-}
-
-function inferFunctionGroupForFile(file, rows) {
-  const tokenCounts = new Map();
-  const phraseCounts = new Map();
-
-  for (const row of rows || []) {
-    const associations = [
-      { file: primaryFile(row.fromFile), fn: row.fromFunction },
-      { file: primaryFile(row.toFile), fn: row.toFunction },
-    ];
-    for (const assoc of associations) {
-      if (assoc.file !== file || !assoc.fn) continue;
-      const phrase = String(assoc.fn).trim();
-      if (phrase) phraseCounts.set(phrase, (phraseCounts.get(phrase) || 0) + 1);
-      for (const token of tokenizeFunctionLabel(assoc.fn)) {
-        tokenCounts.set(token, (tokenCounts.get(token) || 0) + 1);
-      }
-    }
-  }
-
-  const topTokens = Array.from(tokenCounts.entries())
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, 2)
-    .map(([token]) => humanizeToken(token));
-
-  if (topTokens.length >= 2) return `${topTokens[0]} / ${topTokens[1]}`;
-  if (topTokens.length === 1) return topTokens[0];
-
-  const topPhrase = Array.from(phraseCounts.entries())
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0];
-  if (topPhrase) return topPhrase;
-
-  const parts = String(file || '').split('/').filter(Boolean);
-  if (parts.length > 1) return parts[parts.length - 2];
-  return 'General';
-}
-
-function cleanArchLabel(value, fallback) {
-  const text = String(value || '').trim();
-  return text || fallback;
-}
-
-function archPath(row) {
-  const arch = row?.architecture || {};
-  return {
-    subsystem: cleanArchLabel(arch.subsystem, 'Application Subsystem'),
-    csci: cleanArchLabel(arch.csci, 'Application Software'),
-    csc: cleanArchLabel(arch.csc, 'Core Components'),
-    csu: cleanArchLabel(arch.csu, cleanArchLabel(row?.fromFunction || row?.toFunction, 'Functional Unit')),
-    descriptions: arch.descriptions || {},
-  };
-}
 
 function summarizeGroupDescription(label, kind, nodes = []) {
   const rowRefs = Array.from(new Set(nodes.flatMap((node) => node?.data?.codeEvidence?.rowRefs || []))).filter(Boolean);
@@ -447,63 +377,6 @@ function summarizeGroupDescription(label, kind, nodes = []) {
   const fileText = files.length ? ` Source evidence includes ${files.slice(0, 5).join(', ')}.` : '';
   const rowText = rowRefs.length ? ` Related rows: ${rowRefs.slice(0, 10).join(', ')}.` : '';
   return `The ${label} ${kindLabel} groups ${count} code-derived functional relationship${count === 1 ? '' : 's'}.${fnText}${fileText}${rowText}`.trim();
-}
-
-function computeArchitectureByFunction(rows) {
-  const map = new Map();
-  for (const row of rows || []) {
-    const arch = archPath(row);
-    const refs = [row.rowRef].filter(Boolean);
-    const files = [
-      primaryFile(row.fromFile),
-      primaryFile(row.toFile),
-      ...(row.codeEvidence?.files || []).map((file) => file.filePath),
-    ].filter(Boolean);
-    const evidence = {
-      rowRefs: refs,
-      files: Array.from(new Set(files)),
-      imports: Array.from(new Set((row.codeEvidence?.files || []).flatMap((file) => file.imports || []))).slice(0, 8),
-      exports: Array.from(new Set((row.codeEvidence?.files || []).flatMap((file) => file.exports || []))).slice(0, 8),
-      sourceFunctions: Array.from(
-        new Map(
-          [
-            ...(row.sourceEvidence?.functions || []),
-            ...(row.codeEvidence?.sourceFunctions || []),
-            ...(row.codeEvidence?.files || []).flatMap((file) => file.sourceFunctions || []),
-          ]
-            .filter((fn) => fn?.functionName && fn?.filePath)
-            .map((fn) => [`${fn.filePath}:${fn.functionName}:${fn.startLine || ''}`, fn])
-        ).values()
-      ).slice(0, 30),
-      rationale: row.architecture?.rationale || '',
-    };
-
-    [row.fromFunction, row.toFunction].filter(Boolean).forEach((fn) => {
-      if (!map.has(fn)) {
-        map.set(fn, { ...arch, evidence });
-        return;
-      }
-      const current = map.get(fn);
-      map.set(fn, {
-        ...current,
-        evidence: {
-          rowRefs: Array.from(new Set([...(current.evidence?.rowRefs || []), ...refs])),
-          files: Array.from(new Set([...(current.evidence?.files || []), ...files])),
-          imports: Array.from(new Set([...(current.evidence?.imports || []), ...evidence.imports])).slice(0, 8),
-          exports: Array.from(new Set([...(current.evidence?.exports || []), ...evidence.exports])).slice(0, 8),
-          sourceFunctions: Array.from(
-            new Map(
-              [...(current.evidence?.sourceFunctions || []), ...evidence.sourceFunctions]
-                .filter((fn) => fn?.functionName && fn?.filePath)
-                .map((fn) => [`${fn.filePath}:${fn.functionName}:${fn.startLine || ''}`, fn])
-            ).values()
-          ).slice(0, 30),
-          rationale: current.evidence?.rationale || evidence.rationale,
-        },
-      });
-    });
-  }
-  return map;
 }
 
 function makePackedBoxNode({ id, label, groupKind, groupKey, parentGroupKey, position, width, height, parentNode, description = '', codeEvidence = null, systemElementColor = null }) {
@@ -3408,9 +3281,11 @@ useEffect(() => {
       ].filter(Boolean).join('/'))
 	    .join('|')}`;
   const structureUnchanged = builtOnceRef.current && sig === structureRef.current;
+  if (structureUnchanged) return;
   const preferredFileByFunction = computePreferredFileByFunction(rows);
   const architectureByFunction = computeArchitectureByFunction(rows);
-  if (structureUnchanged) return;
+  const functionGroupsByFile = computeFunctionGroupsByFile(rows);
+  const existingNodesById = new Map(nodes.map(node => [node.id, node]));
 
   const wantedNodeIds = new Set();
   const rowByNodeId = new Map();
@@ -3431,13 +3306,13 @@ useEffect(() => {
       posRef.current.set(id, pos);
       persistSoon(); // <-- now persists to IndexedDB
     }
-    const existing = nodes.find((n) => n.id === id);
+    const existing = existingNodesById.get(id);
     const nodeRow = rowByNodeId.get(id);
     const name = nodeRow?.side === 'to'
       ? nodeRow.row.toFunction
       : nodeRow?.row?.fromFunction || id.replace(/^n:/, '');
     const fileForFn = preferredFileByFunction.get(name) || 'Unfiled';
-	    const functionGroup = inferFunctionGroupForFile(fileForFn, rows);
+	    const functionGroup = functionGroupsByFile.get(fileForFn) || 'General';
 	    const endpointArch = nodeRow?.side === 'to'
 	      ? nodeRow?.row?.toArchitecture
 	      : nodeRow?.row?.fromArchitecture;

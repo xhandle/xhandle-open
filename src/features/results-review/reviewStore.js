@@ -69,7 +69,7 @@ export async function loadReviewItems() {
  * provider resolved normally and the UI could report evidence as saved when it
  * existed only in memory and would vanish on reload.
  */
-export async function saveReviewItems(items) {
+export async function saveReviewItems(items, previousItems = null) {
   const list = Array.isArray(items) ? items : [];
   try {
     const db = await openReviewDB();
@@ -82,10 +82,12 @@ export async function saveReviewItems(items) {
     // all, and a failure part way through leaves the store short of records that
     // nobody actually deleted.
     const nextIds = new Set(list.map((item) => item.id));
+    const previousById = previousItems ? new Map(previousItems.map(item => [item.id, item])) : null;
     const tx = db.transaction(STORE_NAME, "readwrite");
     const existingIds = await tx.store.getAllKeys();
+    const existingIdSet = new Set(existingIds);
     await Promise.all([
-      ...list.map((item) => tx.store.put(item)),
+      ...list.filter(item => !previousById || previousById.get(item.id) !== item || !existingIdSet.has(item.id)).map((item) => tx.store.put(item)),
       ...existingIds.filter((id) => !nextIds.has(id)).map((id) => tx.store.delete(id)),
     ]);
     await tx.done;

@@ -1,3 +1,4 @@
+import { createHazardReviewRowIndex } from './features/code-architecture-hazard-analysis/hazardReviewRowIndex';
 import useHazardDraft from './features/code-architecture-hazard-analysis/useHazardDraft';
 import {abortableHazardTask} from './features/code-architecture-hazard-analysis/abortableHazardTask';
 import {safeHazardObserver} from './features/code-architecture-hazard-analysis/hazardCompletionSupport';
@@ -9564,17 +9565,13 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const summaryRows = Array.isArray(codeArchitectureHazardRun?.generatedSheets?.Summary)
       ? codeArchitectureHazardRun.generatedSheets.Summary.slice(1)
       : [];
-    const summaryRowKeys = new Map();
-    summaryRows.forEach((row, index) => {
-      const key = JSON.stringify(row || []);
-      if (!summaryRowKeys.has(key)) summaryRowKeys.set(key, index);
-    });
+    const summaryRowIndex = createHazardReviewRowIndex(summaryRows, codeArchitectureHazardRun?.generatedSheets?.Summary?.[0] || []);
     codeArchitectureHazardReviewItems.forEach((item) => {
       const reviewRow = Array.isArray(item.currentContent?.row)
         ? item.currentContent.row
         : (Array.isArray(item.originalContent?.row) ? item.originalContent.row : null);
       if (reviewRow) {
-        const matchedIndex = summaryRowKeys.get(JSON.stringify(reviewRow)) ?? -1;
+        const matchedIndex = summaryRowIndex.find(reviewRow);
         if (matchedIndex >= 0) {
           const existing = map.get(matchedIndex);
           const existingTime = Date.parse(existing?.updatedAt || existing?.createdAt || 0) || 0;

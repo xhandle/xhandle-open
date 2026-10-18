@@ -1,3 +1,4 @@
+import { createReviewPersistenceWriter } from './reviewPersistenceWriter';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import ResultsReviewDrawer from "./ResultsReviewDrawer";
 import { loadReviewItems, saveReviewItems } from "./reviewStore";
@@ -38,7 +39,8 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
   const [drawerExpanded, setDrawerExpanded] = useState(false);
   const [drawerOptions, setDrawerOptions] = useState({});
   const reviewItemsRef = useRef([]);
-  const persistenceQueueRef = useRef(Promise.resolve());
+  const persistenceWriterRef = useRef(null);
+  if (!persistenceWriterRef.current) persistenceWriterRef.current = createReviewPersistenceWriter(saveReviewItems);
 
   useEffect(() => {
     let cancelled = false;
@@ -74,10 +76,7 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
     nextItems = Array.isArray(nextItems) ? nextItems : [];
     reviewItemsRef.current = nextItems;
     setReviewItems(nextItems);
-    persistenceQueueRef.current = persistenceQueueRef.current
-      .catch(() => {})
-      .then(() => saveReviewItems(nextItems));
-    const saved = await persistenceQueueRef.current;
+    const saved = await persistenceWriterRef.current(nextItems);
     // Optimistic in-memory state is kept so the reviewer does not lose their
     // work mid-session, but the failure is announced rather than swallowed:
     // this evidence will not survive a reload.

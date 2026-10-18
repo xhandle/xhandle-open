@@ -102,3 +102,27 @@ describe("review evidence persistence reporting", () => {
     await expect(saveReviewItems(items)).resolves.toMatchObject({ ok: true, durability: "local-storage" });
   });
 });
+
+it('writes only changed or missing items with a successful immutable baseline', async () => {
+  const db = workingDb();
+  const originalTransaction = db.transaction;
+  const put = jest.fn();
+  db.transaction = () => {
+    const tx = originalTransaction();
+    const originalPut = tx.store.put;
+    tx.store.put = item => { put(item.id); return originalPut(item); };
+    return tx;
+  };
+  openDB.mockResolvedValue(db);
+  await saveReviewItems(items);
+  put.mockClear();
+  const changed = [{ ...items[0], status: 'approved' }, items[1]];
+  await saveReviewItems(changed, items);
+  expect(put.mock.calls).toEqual([['review-1']]);
+  db._store.delete('review-2');
+  put.mockClear();
+  await saveReviewItems(changed, changed);
+  expect(put.mock.calls).toEqual([['review-2']]);
+  await saveReviewItems([changed[1]], changed);
+  expect([...db._store.keys()]).toEqual(['review-2']);
+});
