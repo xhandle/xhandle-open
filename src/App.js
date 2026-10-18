@@ -1,3 +1,5 @@
+import { architectureDashboardColumns, groupArchitectureDashboard } from './features/code-architecture-assurance/architectureDashboardGroups';
+import useHazardRunRestoration from './features/code-architecture-hazard-analysis/useHazardRunRestoration';
 import { createHazardReviewRowIndex } from './features/code-architecture-hazard-analysis/hazardReviewRowIndex';
 import useHazardDraft from './features/code-architecture-hazard-analysis/useHazardDraft';
 import {abortableHazardTask} from './features/code-architecture-hazard-analysis/abortableHazardTask';
@@ -7989,61 +7991,25 @@ useEffect(() => {
   hazardContextScope.current = `${activeCodeArchitectureProjectId}:${activeCodeArchitectureRepo?.id || activeCodeArchitectureRepoMeta.repoId || activeCodeArchitectureRepoMeta.repoName || ""}`;
   const diagramAssuranceArtifacts = useDiagramAssuranceArtifacts(activeCodeArchitectureProjectId, activeCodeArchitectureRepo?.id);
   const hazardLoadRepoId = activeCodeArchitectureRepoMeta.repoId || activeCodeArchitectureRepoMeta.repoName || "";
-  useEffect(() => {
-    let cancelled = false;
-    let requestSequence = 0;
-    setCodeArchitectureHazardRun(null);
-    async function loadCodeArchitectureHazardRun() {
-      const request = ++requestSequence;
-      const scope=`${activeCodeArchitectureProjectId}:${activeCodeArchitectureRepo?.id || ''}`;
-      const revision=codeHazardRunsRef.current.revision(scope);
-      const retained=codeHazardRunsRef.current.get(scope);
-      if(retained?.run){if(!cancelled)setCodeArchitectureHazardRun(retained.run);return;}
-      const pending = hazardContextSavePending.current;
-      if (pending?.scope === `${activeCodeArchitectureProjectId}:${activeCodeArchitectureRepo?.id || hazardLoadRepoId}`) {
-        try { await pending.promise; } catch { /* Load the retained previous state. */ }
-      }
-      const contextVersion = hazardContextSaveVersion.current;
-      const repoId = hazardLoadRepoId;
-      if (!repoId) {
-        if (!cancelled && request === requestSequence) setCodeArchitectureHazardRun(null);
-        return;
-      }
-      try {
-        const filters = { repoId };
-        if (activeCodeArchitectureProjectId) filters.projectId = activeCodeArchitectureProjectId;
-        const latest = await getLatestCodeArchitectureHazardRun(filters);
-        if (cancelled || request !== requestSequence || contextVersion !== hazardContextSaveVersion.current) return;
-        if(codeHazardRunsRef.current.revision(scope)!==revision)return;
-        const contexts = loadCodeArchitectureHazardContexts({
-          projectId: activeCodeArchitectureProjectId,
-          repoId: activeCodeArchitectureRepo?.id || repoId,
-        });
-        const live=codeHazardRunsRef.current.get(scope);
-        if(live?.run){setCodeArchitectureHazardRun(live.run);return;}
-        const aligned = live?.running?latest:assignImportedHazardContext(latest, contexts);
-        if (aligned !== latest) await saveCodeArchitectureHazardRun(aligned, { notify: false });
-        if(codeHazardRunsRef.current.revision(scope)!==revision || codeHazardRunsRef.current.get(scope)?.run)return;
-        if (!cancelled && request === requestSequence && contextVersion === hazardContextSaveVersion.current) setCodeArchitectureHazardRun(aligned || null);
-      } catch (error) {
-        console.warn("[code-architecture-hazard-analysis] Failed to load latest run", error);
-        if(codeHazardRunsRef.current.revision(scope)!==revision || codeHazardRunsRef.current.get(scope)?.run)return;
-        if (!cancelled && request === requestSequence && contextVersion === hazardContextSaveVersion.current) setCodeArchitectureHazardRun(null);
-      }
-    }
-    loadCodeArchitectureHazardRun();
-    const onChanged = (event) => {
-      const detail = event.detail || {};
-      if (detail.projectId && detail.projectId !== activeCodeArchitectureProjectId) return;
-      if (detail.repoId && detail.repoId !== hazardLoadRepoId) return;
-      loadCodeArchitectureHazardRun();
-    };
-    window.addEventListener("xhandle:code-architecture-hazard-analysis:changed", onChanged);
-    return () => {
-      cancelled = true;
-      window.removeEventListener("xhandle:code-architecture-hazard-analysis:changed", onChanged);
-    };
-  }, [activeCodeArchitectureProjectId, activeCodeArchitectureRepo?.id, hazardLoadRepoId]);
+  const hazardRestoration = useHazardRunRestoration({
+    projectId: activeCodeArchitectureProjectId,
+    connectionId: activeCodeArchitectureRepo?.id,
+    repoId: hazardLoadRepoId,
+    registry: codeHazardRunsRef,
+    pendingContextSave: hazardContextSavePending,
+    contextVersion: hazardContextSaveVersion,
+    read: getLatestCodeArchitectureHazardRun,
+    save: saveCodeArchitectureHazardRun,
+    getCurrentRun: () => codeArchitectureHazardRunRef.current,
+    publish: run => {
+      codeArchitectureHazardRunRef.current = run;
+      setCodeArchitectureHazardRun(run);
+    },
+    align: run => assignImportedHazardContext(run, loadCodeArchitectureHazardContexts({
+      projectId: activeCodeArchitectureProjectId,
+      repoId: activeCodeArchitectureRepo?.id || hazardLoadRepoId,
+    })),
+  });
 
   useEffect(() => {
     localStorage.setItem(
@@ -15267,6 +15233,7 @@ useEffect(() => {
   return () => { cancelled = true; };
 }, [codeArchitectureProjects, activeCodeArchitectureProjectId, cbaOwnedSnapshot]);
 
+const [architectureDashboardSort, setArchitectureDashboardSort] = useState({ key: 'updatedAt', direction: 'desc' });
 const codeArchitectureDashboardRows = useMemo(() => {
   return (codeArchitectureProjects || [])
     .map((project) => {
@@ -15290,12 +15257,17 @@ const codeArchitectureDashboardRows = useMemo(() => {
         repoCount: repos.length,
         activeRepoName: activeRepo?.repoName || activeRepo?.repoId || "No repo connected",
         rowCount: summary.rowCount,
+        metrics: summary.metrics,
         metricsSummary: codeArchitectureMetricsSummary(summary.metrics),
         updatedAt: project.updatedAt || activeRepo?.updatedAt || project.createdAt || "",
       };
     })
     .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
 }, [codeArchitectureProjects, codeArchitectureFolders, activeCodeArchitectureProject, activeCodeArchitectureRepo, cbaTableData, cbaOwnedSnapshot, dashboardArchitectureMetadata]);
+
+const architectureDashboardGroups = useMemo(() => groupArchitectureDashboard(
+  codeArchitectureDashboardRows, codeArchitectureFolders, architectureDashboardSort
+), [codeArchitectureDashboardRows, codeArchitectureFolders, architectureDashboardSort]);
 
 const reviewCenterProjects = useMemo(() => ([
   ...projects,
@@ -17412,17 +17384,26 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                 <table className="min-w-full text-left text-sm">
                   <thead className="sticky top-0 z-10 bg-white text-xs text-gray-500">
                     <tr>
-                      <th className="border-b px-3 py-2 font-medium">Project</th>
-                      <th className="border-b px-3 py-2 font-medium">Folder</th>
-                      <th className="border-b px-3 py-2 font-medium">Connected sources</th>
-                      <th className="border-b px-3 py-2 font-medium">Active repo</th>
-                      <th className="border-b px-3 py-2 font-medium">Rows</th>
-                      <th className="border-b px-3 py-2 font-medium">Metrics</th>
-                      <th className="border-b px-3 py-2 font-medium">Updated</th>
+                      {architectureDashboardColumns.map(([key, label]) => (
+                        <th key={key} scope="col" className="border-b px-3 py-2 font-medium"
+                          aria-sort={architectureDashboardSort.key === key ? (architectureDashboardSort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}>
+                          <button type="button" className="inline-flex items-center gap-1 rounded text-left hover:text-blue-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"
+                            title={key === 'metrics' ? 'Sort within folders by duration, then AI calls' : key === 'folder' ? 'Sort folder groups' : `Sort within folders by ${label.toLowerCase()}`}
+                            onClick={() => setArchitectureDashboardSort(current => ({ key, direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc' }))}>
+                            {label}<span aria-hidden="true">{architectureDashboardSort.key === key ? (architectureDashboardSort.direction === 'asc' ? '▲' : '▼') : '↕'}</span>
+                          </button>
+                        </th>
+                      ))}
                     </tr>
                   </thead>
-                  <tbody>
-                    {codeArchitectureDashboardRows.map((project) => (
+                  {architectureDashboardGroups.map(group => (
+                  <tbody key={group.id || '__top_level__'}>
+                    <tr className="bg-slate-50">
+                      <th scope="rowgroup" colSpan={7} className="border-b px-3 py-2 font-semibold text-slate-700">
+                        {group.name} <span className="ml-2 text-xs font-normal text-slate-500">{group.rows.length} project{group.rows.length === 1 ? '' : 's'}</span>
+                      </th>
+                    </tr>
+                    {group.rows.map((project) => (
                       <tr key={project.id} className="hover:bg-gray-50">
                         <td className="border-b px-3 py-2">
                           <button
@@ -17489,6 +17470,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                       </tr>
                     ))}
                   </tbody>
+                  ))}
                 </table>
               </div>
             )}
@@ -17968,7 +17950,8 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                       organizationContext={currentCbaOrganizationContext}
                       importInputRef={codeArchitectureHazardCsvInputRef}
                       cbaRows={cbaTableData}
-                      latestRun={codeArchitectureHazardRun}
+                      latestRun={hazardRestoration.scopeReady ? codeArchitectureHazardRun : null}
+                      restoration={hazardRestoration}
                       splitView={codeArchitectureHazardSplitView}
                       onSplitViewChange={setCodeArchitectureHazardSplitView}
                       diagram={(

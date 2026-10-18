@@ -168,3 +168,28 @@ it('shows the shared working icon and preparation percentage instead of the old 
   expect(host.textContent).not.toContain('Preparing hazard table…');
  }finally{act(()=>root.unmount());host.remove();}
 });
+
+it.each(['loading', 'failed'])('does not present a draft or generation action while restoration is %s', status => {
+  const retry = jest.fn(), generate = jest.fn();
+  const {host, root} = renderPanel({
+    restoration:{status, error:status==='failed'?'Storage unavailable':'',retry},
+    draftRun:{generatedSheets:{Summary:[['Function'],['Draft function']]}}, onRunAnalysis:generate,
+  });
+  try {
+    expect(host.textContent).not.toContain('Incomplete hazard analysis draft');
+    expect(host.textContent).not.toContain('Run hazard analysis');
+    expect(host.textContent).toContain(status==='loading'?'Loading saved results':'Unable to load saved results');
+    act(()=>Array.from(host.querySelectorAll('button')).find(b=>b.textContent==='Retry loading').click());
+    expect(retry).toHaveBeenCalledTimes(1);expect(generate).not.toHaveBeenCalled();
+  } finally {act(()=>root.unmount());host.remove();}
+});
+it('keeps the summary visible with a separate refresh failure notice',()=>{
+  const {host,root}=renderPanel({latestRun:{generatedSheets:{Summary:[['Function'],['Saved function']]}},restoration:{status:'failed',error:'busy',retry:jest.fn()}});
+  try {expect(host.textContent).toContain('Previously loaded results are still shown');expect(host.textContent).toContain('Summary');}
+  finally{act(()=>root.unmount());host.remove();}
+});
+it('shows a separate context save warning without hiding the summary',()=>{
+  const {host,root}=renderPanel({latestRun:{generatedSheets:{Summary:[['Function'],['Saved function']]}},restoration:{status:'loaded',contextError:'quota',retry:jest.fn()}});
+  try{expect(host.textContent).toContain('context updates could not be saved');expect(host.textContent).toContain('Summary');}
+  finally{act(()=>root.unmount());host.remove();}
+});

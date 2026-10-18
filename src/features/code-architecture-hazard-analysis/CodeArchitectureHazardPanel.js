@@ -59,6 +59,7 @@ function downloadSummaryCsv(summarySheet, repoName = "code_architecture") {
 export default function CodeArchitectureHazardPanel({
   cbaRows = [],
   latestRun,
+  restoration,
   draftRun,
   draftLoading=false, draftProgress=0, draftError=null, onRetryDraft,
   diagram,
@@ -209,8 +210,26 @@ export default function CodeArchitectureHazardPanel({
     setAllGroupsCollapsed(allCollapsed);
   }, []);
 
+  const restorationNotice = restoration && !isRunning && (
+    restoration.status === 'loading' || restoration.status === 'failed' || restoration.contextError
+  ) ? <div role={restoration.status === 'failed' || restoration.contextError ? 'alert' : 'status'} className="shrink-0 border border-slate-200 bg-slate-50 p-3 text-sm">
+    {restoration.contextError
+      ? 'Saved results are available, but context updates could not be saved.'
+      : restoration.status === 'failed'
+        ? (latestRun ? 'Could not refresh saved results. Previously loaded results are still shown.' : 'Unable to load saved results. This does not mean the analysis is missing.')
+        : (latestRun ? 'Refreshing saved results…' : 'Loading saved results…')}
+    {(restoration.error || restoration.contextError) && <details><summary>Details</summary>{restoration.error || restoration.contextError}</details>}
+    <button type="button" className="ml-3 rounded border px-3 py-1" onClick={restoration.retry}>Retry loading</button>
+  </div> : null;
+  // Do not present a draft or generation controls as an absent saved analysis
+  // until the authoritative read has completed successfully.
+  if (!latestRun && !isRunning && restoration && ['loading', 'failed'].includes(restoration.status)) {
+    return <div className="flex h-full min-h-0 flex-col">{restorationNotice}</div>;
+  }
+
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col">
+    {restorationNotice}
     {importStatus && <div role="status" className="shrink-0 border border-slate-200 bg-slate-50 p-3 text-sm">{importStatus}</div>}
     {pendingImport && <div className="shrink-0 border border-blue-200 bg-blue-50 p-3 text-sm">
       <p className="whitespace-pre-line">{describeHazardCsvPlan(pendingImport.plan)}</p>
