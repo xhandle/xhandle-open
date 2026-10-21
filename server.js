@@ -233,10 +233,10 @@ function stripAnsiCodes(value) {
 function runPackageCommand(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
-      cwd: __dirname,
+      cwd: options.cwd || __dirname,
       env: { ...process.env, CI: "false", ...options.env },
       stdio: ["ignore", "pipe", "pipe"],
-      shell: false,
+      shell: process.platform === "win32",
     });
     const chunks = [];
     const collect = (chunk) => {
@@ -361,7 +361,7 @@ function newestZipFile(directory, startedAtMs, reviewAppTarget) {
 }
 
 async function runReviewPackageJob({ jobId, reviewPackage, startedAtMs }) {
-  const packagePath = path.join(__dirname, "review-package.json");
+  const packagePath = process.env.XHANDLE_REVIEW_PACKAGE_PATH || path.join(__dirname, "review-package.json");
 
   try {
     const job = reviewPackageJobs.get(jobId);
@@ -379,8 +379,14 @@ async function runReviewPackageJob({ jobId, reviewPackage, startedAtMs }) {
       message: `Packaged ${job?.counts?.totalItems || 0} item${job?.counts?.totalItems === 1 ? "" : "s"} from ${job?.counts?.repositories || 0} repos. Starting app build...`,
     });
 
-    await runPackageCommand("npm", ["run", "package:review"], {
+    const packagerDirectory = process.env.XHANDLE_REVIEW_PACKAGER_DIR;
+    if (!packagerDirectory) {
+      throw new Error("Review app packaging requires a separate desktop packager. Set XHANDLE_REVIEW_PACKAGER_DIR to its checkout; JSON review export remains available.");
+    }
+    await runPackageCommand(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "package:review"], {
+      cwd: path.resolve(packagerDirectory),
       env: {
+        REVIEW_PACKAGE_PATH: packagePath,
         REVIEW_APP_TARGET: job?.reviewAppTarget || "mac",
         REVIEW_OUTPUT_DIR: distDir,
       },
@@ -2539,6 +2545,10 @@ app.use((err, req, res, _next) => {
 /* ----------------------------- Start ----------------------------- */
 const PORT = process.env.PORT || 5001;
 
-app.listen(PORT, () => {
-  logger.debug(`🚀 Server running at http://localhost:${PORT}`);
-});
+module.exports = app;
+
+if (require.main === module) {
+  app.listen(PORT, process.env.HOST || undefined, () => {
+    logger.debug(`🚀 Server running at http://localhost:${PORT}`);
+  });
+}

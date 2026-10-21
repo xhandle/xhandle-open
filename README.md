@@ -222,20 +222,11 @@ Repository analysis runs locally in the browser and local API server. Generated 
 
 After a code-based architecture table is generated, xHandle can package the selected architecture and assurance data into a read-only Electron review app.
 
-The review app export is local-only:
+The application and JSON review export live here. Native desktop packaging lives in a separate repository, which consumes an exact commit of this repository. This repository does not need Electron dependencies.
 
-* the browser sends the review package to the local API server on `http://localhost:5001`
-* the local server runs the review-mode React build and Electron Builder
-* the generated zip is written to the selected destination folder, or `dist-review/` by default
-* no hosted packager, Supabase service, cloud storage, signing service, or billing/license gate is used
+To enable native review app export for a local development server, set `XHANDLE_REVIEW_PACKAGER_DIR` to an installed desktop-packager checkout before running `npm run server`. The server delegates packaging to that checkout and supplies the review JSON path and output directory. Without a packager, JSON export remains available and native packaging reports a configuration error.
 
-You can also package a review app from the command line after creating `review-package.json` in the repository root:
-
-```bash
-npm run package:review
-```
-
-Platform helpers are available as `npm run package:review:mac`, `npm run package:review:win`, and `npm run package:review:linux`.
+See [desktop integration](docs/desktop-integration.md) for ownership and update rules.
 
 ### Troubleshooting
 
