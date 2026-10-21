@@ -175,7 +175,8 @@ export function deleteLocalAIProviderKey(provider) {
 
 // Debug only. Avoid persisting deployment-specific defaults into localStorage.
 if (isBrowser) {
-  window.__BACKEND_URL = backendURL;
+  // Hosts may inject a read-only runtime value through an isolated bridge.
+  if (!runtimeBackendURL) window.__BACKEND_URL = backendURL;
   logger.info("[xHandle] backendURL =", backendURL);
 }
 
