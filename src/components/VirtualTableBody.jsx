@@ -8,17 +8,18 @@ const lowerBound = (offsets, value) => {
 };
 // Native table semantics, measured row heights, bounded mounted rows. The model
 // remains complete for search, copy and export. Active editors remain mounted.
-export default function VirtualTableBody({ items, getKey, children, columns, revealKey, requestKey, onReveal, searchText, label = 'Table', estimate = 120 }) {
+export default function VirtualTableBody({ items, getKey, preparedModel, children, columns, revealKey, requestKey, onReveal, searchText, label = 'Table', estimate = 120 }) {
   const body = useRef(null), scroll = useRef(null), heights = useRef(new Map()), nodes = useRef(new Map());
   const observer = useRef(null), pending = useRef(null), handled = useRef(null), searchJump = useRef(null);
   const [viewport, setViewport] = useState({ top: 0, height: 800 });
   const [measurement, setMeasurement] = useState(0), [active, setActive] = useState(null), [jump, setJump] = useState(null);
   const virtual = items.length > 100;
-  const keys = useMemo(() => items.map(getKey), [items, getKey]);
-  const positions = useMemo(() => new Map(keys.map((key, index) => [key, index])), [keys]);
+  const model = preparedModel?.items === items ? preparedModel : null;
+  const keys = useMemo(() => model?.keys || items.map(getKey), [items, getKey, model]);
+  const positions = useMemo(() => model?.positions || new Map(keys.map((key, index) => [key, index])), [keys, model]);
   // Measurement is an explicit revision for the measured-height ref.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const offsets = useMemo(() => { const result = [0]; keys.forEach(key => result.push(result[result.length - 1] + (heights.current.get(key) || estimate))); return result; }, [keys, estimate, measurement]);
+  const offsets = useMemo(() => { if (model && model.estimate === estimate && heights.current.size === 0) return model.offsets; const result = [0]; keys.forEach(key => result.push(result[result.length - 1] + (heights.current.get(key) || estimate))); return result; }, [keys, estimate, measurement, model]);
   useEffect(() => {
     const table = body.current?.closest('table');
     table?.setAttribute('aria-rowcount', String(items.length + 1));
@@ -59,9 +60,9 @@ export default function VirtualTableBody({ items, getKey, children, columns, rev
     return () => { observer.current?.disconnect(); observer.current = null; cancelAnimationFrame(frame); };
   }, [estimate]);
   useEffect(() => {
-    const retained = new Set(keys);
+    const retained = positions;
     heights.current.forEach((_, key) => { if (!retained.has(key)) heights.current.delete(key); });
-  }, [keys]);
+  }, [positions]);
   const reveal = useCallback((key, token) => {
     const index = positions.get(String(key));
     if (index == null) return;

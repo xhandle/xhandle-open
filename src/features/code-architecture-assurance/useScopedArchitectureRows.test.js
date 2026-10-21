@@ -1,3 +1,4 @@
+import { readProjectWithRecovery } from './projectReadRecovery';
 import React, { act, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import useScopedArchitectureRows from './useScopedArchitectureRows';
@@ -25,6 +26,7 @@ function Harness({scope}) {
   api = useScopedArchitectureRows(scope);
   useEffect(() => {
     const env = {
+    cbaTableData:api.rows, readProjectWithRecovery,
       activeCodeArchitectureProject: {id:scope?.split(':')[1]},
       activeCodeArchitectureRepo: {id:scope?.split(':')[2]},
       activeCodeArchitectureRowsKey:scope,
@@ -85,6 +87,7 @@ test('failed or cancelled hydration leaves a new project empty and cannot save f
 
 function startActualLoad(read) {
   const env = {
+    cbaTableData:api.rows, readProjectWithRecovery,
     activeCodeArchitectureRowsKey:B, activeCodeArchitectureProject:{id:'B'},activeCodeArchitectureRepo:{id:'repoB'},
     codeArchitectureAnalysisScopeRef:{current:null}, beginCbaLoad:api.beginLoad, adoptCbaTableData:api.adoptRows,
     setCbaLoading:jest.fn(),setCbaLoadingProgress:jest.fn(),setCbaLoadingLabel:jest.fn(),setCbaLoadError:jest.fn(),
@@ -105,7 +108,7 @@ test('actual App load failure ends loading, reports an error and never exposes A
 });
 test('actual delayed App hydration cannot replace a newly published model', async()=>{
   await render(B);let resolve;
-  const env=startActualLoad(()=>new Promise(r=>{resolve=r;}));
+  let env; await act(async()=>{env=startActualLoad(()=>new Promise(r=>{resolve=r;}));});
   await act(async()=>api.publishRows(B,rowsB));
   await act(async()=>resolve({rows:rowsA,found:true}));
   expect(api.rows).toEqual(rowsB);expect(writes).toEqual([]);env.cancel();
@@ -123,4 +126,11 @@ test('a new visit cannot apply an updater to rows from a previous visit before h
   let received;
   await act(async()=>api.setRows(previous=>{received=previous;return [{from:'New edit'}];}));
   expect(received).toEqual([]);
+});
+
+test('same-scope refresh retains visible rows while storage is pending', async()=>{
+ await render(B);await act(async()=>api.adoptRows(rowsB));
+ let env;await act(async()=>{env=startActualLoad(()=>new Promise(()=>{}));});
+ expect(env.setCbaLoading).toHaveBeenCalledWith(false);
+ expect(api.rows).toEqual(rowsB);env.cancel();
 });

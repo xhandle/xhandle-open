@@ -1,3 +1,4 @@
+import { readArtifactRowsWithRecovery, STORAGE_RECOVERY_MESSAGE } from './artifactReadRecovery';
 import { resolveSoftwareHazardSource } from './softwareHazardSource';
 import { softwareRequirementSource } from './softwareRequirementSource';
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -9,14 +10,14 @@ import { useActivityCenter } from "../../components/activity/ActivityCenter";
 import {
   cellText,
   resolveArtifactArchitectureRefs,
-  functionalRowIndexForTraceValue,
+  createFunctionalRowLookup,
+  indexArtifactCollections,
   createBaseArtifactRow,
   downstreamDesignElementIds,
   downstreamSubsystemRequirementIds,
   ensureArtifactStorageReady,
   getUnsavedArtifactRows,
   loadArtifactRows,
-  loadArtifactRowsAsync,
   makeId,
   saveArtifactRowsAsync,
   storageKeyFor,
@@ -206,8 +207,14 @@ export default function EngineeringArtifactPanel({
   const [parentSourceRows, setParentSourceRows] = useState(sourceRows);
   const [sourceSnapshot, setSourceSnapshot] = useState(sourceRows);
   const [hasLoadedRows, setHasLoadedRows] = useState(false);
+  const [loadingRows, setLoadingRows] = useState(!Array.isArray(initialRows));
   const [isDeriving, setIsDeriving] = useState(false);
   const [deriveMessage, setDeriveMessage] = useState("");
+  const [readErrors, setReadErrors] = useState({});
+  const [readAttempt, setReadAttempt] = useState(0);
+  const readScope = useRef(null);
+  const parentScope = useRef(null);
+  const collectionsScope = useRef(null);
   const { startActivity, updateActivity, finishActivity } = useActivityCenter();
   const [artifactCollections, setArtifactCollections] = useState(() => initialArtifactCollections || ({
     softwareRows: kind === ARTIFACT_KINDS.SOFTWARE ? [] : loadArtifactRows(ARTIFACT_KINDS.SOFTWARE, projectId, repoId),
@@ -226,7 +233,7 @@ export default function EngineeringArtifactPanel({
     const systemRows = kind === ARTIFACT_KINDS.SYSTEM ? rows : artifactCollections.systemRows;
     const subsystemRows = kind === ARTIFACT_KINDS.SUBSYSTEM ? rows : artifactCollections.subsystemRows;
     const designRows = kind === ARTIFACT_KINDS.DESIGN ? rows : artifactCollections.designRows;
-    return {
+    return indexArtifactCollections({
       kind,
       softwareRows,
       systemRows,
@@ -236,7 +243,7 @@ export default function EngineeringArtifactPanel({
       systemRequirements: systemRows,
       subsystemRequirements: subsystemRows,
       designElements: designRows,
-    };
+    });
   }, [artifactCollections, kind, rows]);
   const displayColumns = useMemo(
     () => columnsForKind(kind, definition.columns),
@@ -245,6 +252,7 @@ export default function EngineeringArtifactPanel({
 
   useEffect(() => {
     if (Array.isArray(initialRows)) {
+      setLoadingRows(false);
       const loaded = rowsMatchingKind(initialRows, kind);
       persistedRows.current = { key: storageKey, rows: loaded };
       setRows(loaded);
@@ -253,13 +261,24 @@ export default function EngineeringArtifactPanel({
       return undefined;
     }
     let cancelled = false;
-    setHasLoadedRows(false);
-    setRows(rowsMatchingKind(loadArtifactRows(kind, projectId, repoId), kind));
-    setDeriveMessage("");
-    setIsDeriving(false);
+    const readController = new AbortController();
+    setLoadingRows(true);
+    if (readScope.current !== storageKey) {
+      readScope.current = storageKey;
+      setHasLoadedRows(false);
+      setRows(rowsMatchingKind(loadArtifactRows(kind, projectId, repoId), kind));
+      setDeriveMessage("");
+      setIsDeriving(false);
+    }
+    setReadErrors({});
     const revision = rowsRevision.current;
-    loadArtifactRowsAsync(kind, projectId, repoId).then((loadedRows) => {
+    readArtifactRowsWithRecovery(kind, projectId, repoId, {
+      signal: readController.signal,
+      onRetry: () => { if (!cancelled) setReadErrors(previous => ({ ...previous, rows: STORAGE_RECOVERY_MESSAGE })); },
+    }).then((loadedRows) => {
       if (cancelled) return;
+      setLoadingRows(false);
+      setReadErrors(previous => ({ ...previous, rows: null }));
       if (revision === rowsRevision.current) {
         const loaded = rowsMatchingKind(loadedRows, kind);
         persistedRows.current = { key: storageKey, rows: loaded };
@@ -269,14 +288,16 @@ export default function EngineeringArtifactPanel({
       setHasLoadedRows(true);
     }).catch((error) => {
       if (!cancelled) {
+        setLoadingRows(false);
         // A failed load is not an empty editable dataset to autosave.
-        setDeriveMessage(error?.message || "Saved requirements could not be loaded.");
+        setReadErrors(previous => ({ ...previous, rows: error?.message || "Saved requirements could not be loaded." }));
       }
     });
     return () => {
       cancelled = true;
+      readController.abort();
     };
-  }, [initialRows, kind, projectId, repoId, storageKey, setRows]);
+  }, [initialRows, kind, projectId, repoId, storageKey, setRows, readAttempt]);
 
   useEffect(() => {
     if (initialArtifactCollections) {
@@ -284,14 +305,47 @@ export default function EngineeringArtifactPanel({
       return undefined;
     }
     let cancelled = false;
+    const readController = new AbortController();
+    if (collectionsScope.current !== storageKey) {
+      collectionsScope.current = storageKey;
+      setArtifactCollections({ softwareRows: [], systemRows: [], subsystemRows: [], designRows: [] });
+    }
+    let collectionRequest = 0;
+    let collectionController;
+    let eventReadController;
     async function loadArtifactCollections() {
-      const [softwareRows, systemRows, subsystemRows, designRows] = await Promise.all([
-        loadArtifactRowsAsync(ARTIFACT_KINDS.SOFTWARE, projectId, repoId),
-        loadArtifactRowsAsync(ARTIFACT_KINDS.SYSTEM, projectId, repoId),
-        loadArtifactRowsAsync(ARTIFACT_KINDS.SUBSYSTEM, projectId, repoId),
-        loadArtifactRowsAsync(ARTIFACT_KINDS.DESIGN, projectId, repoId),
-      ]);
-      if (cancelled) return;
+      const request = ++collectionRequest;
+      collectionController?.abort();
+      const controller = new AbortController();
+      collectionController = controller;
+      let loadedCollections;
+      try {
+        loadedCollections = await Promise.all([
+          ['softwareRows', ARTIFACT_KINDS.SOFTWARE],
+          ['systemRows', ARTIFACT_KINDS.SYSTEM],
+          ['subsystemRows', ARTIFACT_KINDS.SUBSYSTEM],
+          ['designRows', ARTIFACT_KINDS.DESIGN],
+        ].map(async ([field, artifactKind]) => {
+          const loaded = await readArtifactRowsWithRecovery(artifactKind, projectId, repoId, {
+            signal: controller.signal,
+            onRetry: () => {
+              if (!cancelled && request === collectionRequest) setReadErrors(previous => ({ ...previous, links: STORAGE_RECOVERY_MESSAGE }));
+            },
+          });
+          if (!cancelled && request === collectionRequest) {
+            setArtifactCollections(previous => ({ ...previous, [field]: loaded }));
+          }
+          return loaded;
+        }));
+      } catch (error) {
+        if (!cancelled && request === collectionRequest) {
+          setReadErrors(previous => ({ ...previous, links: error?.message || "Linked requirements could not be loaded." }));
+        }
+        return;
+      }
+      const [softwareRows, systemRows, subsystemRows, designRows] = loadedCollections;
+      if (cancelled || request !== collectionRequest) return;
+      setReadErrors(previous => ({ ...previous, links: null }));
       setArtifactCollections({
         softwareRows: Array.isArray(softwareRows) ? softwareRows : [],
         systemRows: Array.isArray(systemRows) ? systemRows : [],
@@ -299,35 +353,47 @@ export default function EngineeringArtifactPanel({
         designRows: Array.isArray(designRows) ? designRows : [],
       });
     }
-    loadArtifactCollections().catch((error) => {
-      console.warn("[code-architecture-assurance] Failed to load linked artifact rows", error);
-    });
+    const reportCollectionError = error => {
+      if (!cancelled) setReadErrors(previous => ({ ...previous, links: error?.message || "Linked requirements could not be loaded." }));
+    };
+    loadArtifactCollections().catch(reportCollectionError);
     const onChanged = (event) => {
       const detail = event?.detail || {};
-      loadArtifactCollections().catch(() => {});
+      if (detail.projectId !== projectId || detail.repoId !== repoId) return;
+      loadArtifactCollections().catch(reportCollectionError);
       if (
         detail.kind === kind &&
         detail.projectId === projectId &&
         detail.repoId === repoId
       ) {
         const revision = rowsRevision.current;
-        loadArtifactRowsAsync(kind, projectId, repoId).then((loadedRows) => {
-          if (cancelled || revision !== rowsRevision.current) return;
+        eventReadController?.abort();
+        const controller = new AbortController();
+        eventReadController = controller;
+        readArtifactRowsWithRecovery(kind, projectId, repoId, {
+          signal: controller.signal,
+          onRetry: () => { if (!cancelled && !controller.signal.aborted) setReadErrors(previous => ({ ...previous, rows: STORAGE_RECOVERY_MESSAGE })); },
+        }).then((loadedRows) => {
+          if (cancelled || controller.signal.aborted || revision !== rowsRevision.current) return;
           const loaded = rowsMatchingKind(loadedRows, kind);
           persistedRows.current = { key: storageKey, rows: loaded };
           setRows(loaded);
           setHasLoadedRows(true);
+          setReadErrors(previous => ({ ...previous, rows: null }));
         }).catch((error) => {
-          if (!cancelled) setDeriveMessage(error?.message || "Saved requirements could not be reloaded.");
+          if (!cancelled && !controller.signal.aborted) setReadErrors(previous => ({ ...previous, rows: error?.message || "Saved requirements could not be reloaded." }));
         });
       }
     };
     window.addEventListener("xhandle:code-architecture-assurance:changed", onChanged);
     return () => {
       cancelled = true;
+      readController.abort();
+      collectionController?.abort();
+      eventReadController?.abort();
       window.removeEventListener("xhandle:code-architecture-assurance:changed", onChanged);
     };
-  }, [initialArtifactCollections, kind, projectId, repoId, storageKey, setRows]);
+  }, [initialArtifactCollections, kind, projectId, repoId, storageKey, setRows, readAttempt]);
 
   useEffect(() => {
     if (kind === ARTIFACT_KINDS.SOFTWARE) {
@@ -342,18 +408,29 @@ export default function EngineeringArtifactPanel({
     }
 
     let cancelled = false;
-    if (Array.isArray(sourceRows) && sourceRows.length) {
+    const readController = new AbortController();
+    if (parentScope.current !== storageKey) {
+      parentScope.current = storageKey;
+      setParentSourceRows(Array.isArray(sourceRows) ? sourceRows : []);
+    } else if (Array.isArray(sourceRows) && sourceRows.length) {
       setParentSourceRows(sourceRows);
     }
-    loadArtifactRowsAsync(sourceKind, projectId, repoId).then((loadedRows) => {
+    readArtifactRowsWithRecovery(sourceKind, projectId, repoId, {
+      signal: readController.signal,
+      onRetry: () => { if (!cancelled) setReadErrors(previous => ({ ...previous, source: STORAGE_RECOVERY_MESSAGE })); },
+    }).then((loadedRows) => {
       if (!cancelled && Array.isArray(loadedRows)) {
         setParentSourceRows(loadedRows);
+        setReadErrors(previous => ({ ...previous, source: null }));
       }
+    }).catch(error => {
+      if (!cancelled) setReadErrors(previous => ({ ...previous, source: error?.message || "Source requirements could not be loaded." }));
     });
     return () => {
       cancelled = true;
+      readController.abort();
     };
-  }, [cbaRows, definition.sourceKind, kind, projectId, repoId, sourceRowsSignature]);
+  }, [cbaRows, definition.sourceKind, kind, projectId, repoId, sourceRowsSignature, storageKey, readAttempt]);
 
   useEffect(() => {
     setSourceSnapshot(currentSourceRows);
@@ -497,13 +574,14 @@ export default function EngineeringArtifactPanel({
   }, [definition.title, kind, projectId, repoId, rows.length, setRows]);
 
   const sourceCount = sourceSnapshot.length;
+  const functionalRowLookup = useMemo(() => createFunctionalRowLookup(cbaRows), [cbaRows]);
   const affectedReferenceCount = useMemo(() => rows.filter(row =>
     resolveArtifactArchitectureRefs(row, kind, artifactContext).some(ref => {
       if (!ref.traceId) return false;
-      const index = functionalRowIndexForTraceValue(cbaRows, ref.traceId);
+      const index = functionalRowLookup(ref.traceId);
       return index < 0 || cbaRows[index]?.lineage?.status === "historical";
     })
-  ).length, [rows, kind, artifactContext, cbaRows]);
+  ).length, [rows, kind, artifactContext, cbaRows, functionalRowLookup]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
@@ -517,7 +595,7 @@ export default function EngineeringArtifactPanel({
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => setSourceSnapshot(currentSourceRows)}
+              onClick={() => { setSourceSnapshot(currentSourceRows); setReadAttempt(value => value + 1); }}
               className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             >
               Refresh Sources
@@ -570,9 +648,17 @@ export default function EngineeringArtifactPanel({
             } finally { if (activeStorageKey.current === storageKey) setIsDeriving(false); }
           }}>Retry save</button>
         </div>}
+        {Object.values(readErrors).some(Boolean) && <div role="status" className="mt-2 text-sm text-slate-600">
+          {Array.from(new Set(Object.values(readErrors).filter(Boolean))).join(" ")}
+          {Object.values(readErrors).some(message => message && message !== STORAGE_RECOVERY_MESSAGE) &&
+            <button type="button" className="ml-2 underline" onClick={() => setReadAttempt(value => value + 1)}>Retry loading</button>}
+        </div>}
         {deriveMessage && <div className="mt-2 text-xs font-medium text-slate-600">{deriveMessage}</div>}
       </div>
       <EngineeringArtifactTable
+        loading={loadingRows}
+        loadingLabel={`Loading ${definition.title.toLowerCase()} table`}
+        preparationLabel={`Preparing ${definition.title.toLowerCase()} table`}
         copyLabel={`Copy ${definition.title.toLowerCase()} table`}
         rows={rows}
         columns={displayColumns}

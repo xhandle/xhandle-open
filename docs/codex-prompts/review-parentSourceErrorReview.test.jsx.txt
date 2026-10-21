@@ -1,0 +1,39 @@
+import React from 'react';
+import {act} from 'react';
+import {createRoot} from 'react-dom/client';
+import Panel from './EngineeringArtifactPanel';
+import {loadArtifactRows,loadArtifactRowsAsync} from './artifactUtils';
+jest.mock('./artifactAI',()=>({DERIVE_BY_KIND:{}}));
+jest.mock('./artifactUtils',()=>({...jest.requireActual('./artifactUtils'),loadArtifactRows:jest.fn(()=>[]),loadArtifactRowsAsync:jest.fn()}));
+jest.mock('./useArtifactReview',()=>({useArtifactReview:()=>({reviewItems:[],reviewByRow:new Map(),reviewDrawerOptions:{}})}));
+jest.mock('../../components/activity/ActivityCenter',()=>({useActivityCenter:()=>({})}));
+jest.mock('./EngineeringArtifactTable',()=>({__esModule:true,default:({rows})=><div>{rows.map(row=>row.requirementText).join('|')}</div>}));
+global.IS_REACT_ACT_ENVIRONMENT=true;
+it.each([
+ ['system-requirements','software-requirements'],
+ ['subsystem-requirements','system-requirements'],
+ ['design-elements','subsystem-requirements'],
+])('exposes an uncaught parent-source rejection for %s',async(kind,parent)=>{
+ loadArtifactRows.mockReturnValue([]);
+ const stableRows=[];
+ let rejectSource,child,sourceReads=0;
+ const parentRead=new Promise((resolve,reject)=>{rejectSource=reject;});
+ const then=jest.fn((success,failure)=>{
+   child=parentRead.then(success,failure);
+   // Audit-only observer prevents Jest itself crashing on the demonstrated
+   // rejection. Production has no such handler on this returned promise.
+   child.catch(()=>{});return child;
+ });
+ loadArtifactRowsAsync.mockImplementation(requestKind=>{
+   if(requestKind===parent && ++sourceReads===2) return {then};
+   return Promise.resolve(requestKind===kind?[{id:'',requirementText:'Retained requirement'}]:[]);
+ });
+ const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
+ try {
+  await act(async()=>root.render(<Panel cbaRows={stableRows} sourceRows={stableRows} kind={kind} project={{id:'p'}} repo={{id:'r'}}/>));
+  expect(then).toHaveBeenCalledTimes(1);expect(then.mock.calls[0][1]).toBeUndefined();
+  await act(async()=>{rejectSource(new Error('Requirements storage could not open'));await expect(child).rejects.toThrow('could not open');});
+  expect(host.textContent).toContain('Retained requirement');
+  expect(host.textContent).not.toContain('could not open');
+ } finally {act(()=>root.unmount());host.remove();}
+});

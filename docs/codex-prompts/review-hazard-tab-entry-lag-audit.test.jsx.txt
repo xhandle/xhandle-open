@@ -1,0 +1,31 @@
+global.IS_REACT_ACT_ENVIRONMENT = true;
+jest.mock('lucide-react',()=>{const Icon=()=> <span/>;return new Proxy({},{get:()=>Icon});});
+const React=require('react');
+const {act}=React;
+const {createRoot}=require('react-dom/client');
+const Panel=require('./CodeArchitectureHazardPanel').default;
+const {ensureHazardAnalysisRowIds}=require('../project-hazard-analysis/classificationResolutionStatus');
+const {fillNotApplicableHazardSummary}=require('../project-hazard-analysis/hazardNotApplicableCells');
+const {buildCodeArchitectureHazardGroups}=require('./codeArchitectureHazardGrouping');
+it('measures saved-sheet mount and checks whether it has preparation feedback',()=>{
+ const headers=['Raw Analysis Row ID','Function (From)','Control Action','Function (To)','Guide Phrase','Guide Phrase Applicable','Hazard','Causal Scenario','Safety Constraint','Verification','Operational Scenario','Operational Mode','Operating Conditions',...Array.from({length:60},(_,i)=>'Evidence '+i)];
+ const count=26278;
+ const sheet=[headers,...Array.from({length:count},(_,i)=>headers.map((h,c)=>c===0?'HA-'+i:c===1?'Function '+Math.floor(i/7):c===2?'Command':c===3?'Target':c===5?'Yes':'Evidence for '+h+' '+('details '.repeat(12))))];
+ let t=performance.now();
+ const normalized=fillNotApplicableHazardSummary(ensureHazardAnalysisRowIds(sheet));
+ const normalizationMs=performance.now()-t;
+ t=performance.now();
+ const groups=buildCodeArchitectureHazardGroups(headers,normalized.slice(1).map((row,rowIndex)=>({row,rowIndex})));
+ const groupingMs=performance.now()-t;
+ const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
+ try {
+ t=performance.now();
+ act(()=>root.render(<Panel latestRun={{id:'audit',hazardMethod:'STPA',generatedSheets:{Summary:sheet}}} method="STPA" cbaRows={[]} operationalContexts={[]} draftLoading={false}/>));
+ const mountMs=performance.now()-t;
+ const progressBars=host.querySelectorAll('[role="progressbar"]').length;
+ const mountedRows=host.querySelectorAll('tbody tr').length;
+ console.log(JSON.stringify({count,columns:headers.length,normalizationMs,groupingMs,mountMs,groups:groups.length,progressBars,mountedRows}));
+ expect(progressBars).toBe(0);
+ expect(mountedRows).toBeLessThan(100);
+ } finally {act(()=>root.unmount());host.remove();}
+});

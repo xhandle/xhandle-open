@@ -81,7 +81,11 @@ function openArtifactConnection(version) {
       clearTimeout(timer);
       if (error) reject(error); else resolve(db);
     };
-    const timer = setTimeout(() => finish(new Error("Requirements storage could not open. Close other xHandle tabs and retry.")), 5000);
+    const timer = setTimeout(() => {
+      const error = new Error("Requirements storage did not respond in time. Retry loading.");
+      error.name = "ArtifactStorageTimeoutError";
+      finish(error);
+    }, 5000);
     const request = version == null ? indexedDB.open(ARTIFACT_DB_NAME) : indexedDB.open(ARTIFACT_DB_NAME, version);
     request.onupgradeneeded = () => {
       if (settled) { request.transaction.abort(); return; }
@@ -101,7 +105,12 @@ async function openArtifactDb() {
   if (!canUseIndexedDB()) return null;
   // Inspect the actual version; never delete an existing database to repair it.
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const db = await openArtifactConnection();
+    let db;
+    try { db = await openArtifactConnection(); }
+    catch (error) {
+      if (error?.name === "ArtifactStorageTimeoutError" && attempt < 2) continue;
+      throw error;
+    }
     if (db.objectStoreNames.contains(ARTIFACT_STORE)) return db;
     const nextVersion = db.version + 1;
     db.close();
@@ -281,7 +290,22 @@ export function loadArtifactRows(kind, projectId, repoId) {
   } catch { return []; }
 }
 
-export async function loadArtifactRowsAsync(kind, projectId, repoId) {
+const artifactReads = new Map();
+
+export function loadArtifactRowsAsync(kind, projectId, repoId) {
+  const key = storageKeyFor(kind, projectId, repoId);
+  const version = artifactWriteVersions.get(key);
+  const existing = artifactReads.get(key);
+  if (existing && existing.version === version) return existing.promise;
+  const entry = { version };
+  entry.promise = readLatestArtifactRows(kind, projectId, repoId).finally(() => {
+    if (artifactReads.get(key) === entry) artifactReads.delete(key);
+  });
+  artifactReads.set(key, entry);
+  return entry.promise;
+}
+
+async function readLatestArtifactRows(kind, projectId, repoId) {
   const key = storageKeyFor(kind, projectId, repoId);
   // A notification/read must observe the completed write, never an older snapshot.
   if (unsavedArtifactRows.has(key)) return unsavedArtifactRows.get(key);
@@ -297,7 +321,7 @@ export async function loadArtifactRowsAsync(kind, projectId, repoId) {
     stored = null;
   }
   // Retry if a write began while the read was in flight.
-  if (artifactWrites.get(key) || version !== artifactWriteVersions.get(key)) return loadArtifactRowsAsync(kind, projectId, repoId);
+  if (artifactWrites.get(key) || version !== artifactWriteVersions.get(key)) return readLatestArtifactRows(kind, projectId, repoId);
   const record = local && (!stored || local.revision > stored.revision) ? local : stored;
   if (!record && localError) throw localError;
   const rows = record?.rows || [];
@@ -519,7 +543,42 @@ export function allocatedArchitectureFromRefs(refs = []) {
   return compactList(values);
 }
 
+// Indexes belong to one immutable collection snapshot; never persist them.
+export function indexArtifactCollections(collections) {
+  const softwareRows = collections.softwareRows || collections.softwareRequirements || [];
+  const systemRows = collections.systemRows || collections.systemRequirements || [];
+  const subsystemRows = collections.subsystemRows || collections.subsystemRequirements || [];
+  const designRows = collections.designRows || collections.designElements || [];
+  const children = (rows, field, type) => {
+    const map = new Map();
+    rows.forEach(row => parentIdsFromRow(row, field, type).forEach(id => {
+      if (!map.has(id)) map.set(id, []);
+      map.get(id).push(row);
+    }));
+    return map;
+  };
+  return { ...collections, relationshipIndex: {
+    softwareById: rowsById(softwareRows), systemById: rowsById(systemRows), subsystemById: rowsById(subsystemRows),
+    systems: children(systemRows, 'parentSwRequirement', 'software-requirement'),
+    subsystems: children(subsystemRows, 'parentSystemRequirement', 'system-requirement'),
+    designs: children(designRows, 'parentRequirement', 'subsystem-requirement'),
+    designOrder: new Map(designRows.map((row, index) => [row, index])),
+    resolved: new Map(),
+  }};
+}
+
 export function resolveArtifactArchitectureRefs(row = {}, kind = "", artifactCollections = {}) {
+  const index = artifactCollections.relationshipIndex;
+  if (!index) return resolveArtifactArchitectureRefsUncached(row, kind, artifactCollections);
+  if (!index.resolved.has(kind)) index.resolved.set(kind, new WeakMap());
+  const cache = index.resolved.get(kind);
+  if (cache.has(row)) return cache.get(row);
+  const refs = resolveArtifactArchitectureRefsUncached(row, kind, artifactCollections);
+  cache.set(row, refs);
+  return refs;
+}
+
+function resolveArtifactArchitectureRefsUncached(row = {}, kind = "", artifactCollections = {}) {
   const directRefs = Array.isArray(row?.sourceArchitectureRefs) ? row.sourceArchitectureRefs : [];
   if (directRefs.length) return dedupeArchitectureRefs(directRefs);
 
@@ -528,11 +587,13 @@ export function resolveArtifactArchitectureRefs(row = {}, kind = "", artifactCol
   const subsystemRows = artifactCollections.subsystemRows || artifactCollections.subsystemRequirements || [];
 
   if (kind === ARTIFACT_KINDS.SYSTEM) {
-    return collectArchitectureRefsFromParents(parentIdsFromRow(row, "parentSwRequirement", "software-requirement"), softwareRows);
+    const ids = parentIdsFromRow(row, "parentSwRequirement", "software-requirement");
+    const byId = artifactCollections.relationshipIndex?.softwareById;
+    return byId ? dedupeArchitectureRefs(ids.flatMap(id => byId.get(id)?.sourceArchitectureRefs || [])) : collectArchitectureRefsFromParents(ids, softwareRows);
   }
 
   if (kind === ARTIFACT_KINDS.SUBSYSTEM) {
-    const systemById = rowsById(systemRows);
+    const systemById = artifactCollections.relationshipIndex?.systemById || rowsById(systemRows);
     const parentSystemRows = parentIdsFromRow(row, "parentSystemRequirement", "system-requirement").map((id) => systemById.get(id)).filter(Boolean);
     return dedupeArchitectureRefs(parentSystemRows.flatMap((parent) =>
       resolveArtifactArchitectureRefs(parent, ARTIFACT_KINDS.SYSTEM, artifactCollections)
@@ -540,7 +601,7 @@ export function resolveArtifactArchitectureRefs(row = {}, kind = "", artifactCol
   }
 
   if (kind === ARTIFACT_KINDS.DESIGN) {
-    const subsystemById = rowsById(subsystemRows);
+    const subsystemById = artifactCollections.relationshipIndex?.subsystemById || rowsById(subsystemRows);
     const parentSubsystemRows = parentIdsFromRow(row, "parentRequirement", "subsystem-requirement").map((id) => subsystemById.get(id)).filter(Boolean);
     return dedupeArchitectureRefs(parentSubsystemRows.flatMap((parent) =>
       resolveArtifactArchitectureRefs(parent, ARTIFACT_KINDS.SUBSYSTEM, artifactCollections)
@@ -553,6 +614,7 @@ export function resolveArtifactArchitectureRefs(row = {}, kind = "", artifactCol
 export function downstreamSubsystemRequirementIds(systemRow = {}, artifactCollections = {}) {
   const systemId = cellText(systemRow.id);
   const subsystemRows = artifactCollections.subsystemRows || artifactCollections.subsystemRequirements || [];
+  if (artifactCollections.relationshipIndex) return compactList((artifactCollections.relationshipIndex.subsystems.get(systemId) || []).map(row => row.id));
   return compactList(subsystemRows
     .filter((row) => parentIdsFromRow(row, "parentSystemRequirement", "system-requirement").includes(systemId))
     .map((row) => row.id));
@@ -563,6 +625,12 @@ export function downstreamDesignElementIds(row = {}, kind = "", artifactCollecti
 
   if (kind === ARTIFACT_KINDS.SYSTEM) {
     const subsystemIds = splitIds(downstreamSubsystemRequirementIds(row, artifactCollections));
+    const index = artifactCollections.relationshipIndex;
+    if (index) {
+      const matches = [...new Set(subsystemIds.flatMap(id => index.designs.get(id) || []))];
+      matches.sort((a, b) => index.designOrder.get(a) - index.designOrder.get(b));
+      return compactList(matches.map(design => design.id));
+    }
     return compactList(designRows
       .filter((design) => parentIdsFromRow(design, "parentRequirement", "subsystem-requirement").some((id) => subsystemIds.includes(id)))
       .map((design) => design.id));
@@ -570,6 +638,7 @@ export function downstreamDesignElementIds(row = {}, kind = "", artifactCollecti
 
   if (kind === ARTIFACT_KINDS.SUBSYSTEM) {
     const subsystemId = cellText(row.id);
+    if (artifactCollections.relationshipIndex) return compactList((artifactCollections.relationshipIndex.designs.get(subsystemId) || []).map(design => design.id));
     return compactList(designRows
       .filter((design) => parentIdsFromRow(design, "parentRequirement", "subsystem-requirement").includes(subsystemId))
       .map((design) => design.id));
@@ -612,4 +681,30 @@ export function functionalRowIndexForTraceValue(cbaRows = [], value = "") {
   if (explicitRefs.length) return explicitRefs.length === 1 ? explicitRefs[0].index : -1;
   const matches = cbaRows.map((row,index)=>({row,index})).filter(({row,index})=> !row.lineage && [row.traceId,row.rowRef,row.functionalTraceId,row.sourceTraceId,index+1].map(normalizeFunctionalRowRef).filter(Boolean).includes(target));
   return matches.length === 1 ? matches[0].index : -1;
+}
+
+export function createFunctionalRowLookup(cbaRows = []) {
+  const exact = new Map(), explicit = new Map(), legacy = new Map();
+  const add = (map, key, index) => {
+    if (!key) return;
+    if (!map.has(key)) map.set(key, index);
+    else if (map.get(key) !== index) map.set(key, -1);
+  };
+  cbaRows.forEach((row, index) => {
+    [row.traceId, row.functionalTraceId, row.sourceTraceId].filter(Boolean).forEach(value => add(exact, cellText(value), index));
+    if (row.rowRef != null) add(explicit, normalizeFunctionalRowRef(row.rowRef), index);
+    if (!row.lineage) [row.traceId, row.rowRef, row.functionalTraceId, row.sourceTraceId, index + 1].forEach(value => add(legacy, normalizeFunctionalRowRef(value), index));
+  });
+  const special = new Map();
+  return value => {
+    const raw = cellText(value);
+    if (exact.has(raw)) return exact.get(raw);
+    if (raw.startsWith('functional-relationship:')) {
+      if (!special.has(raw)) special.set(raw, functionalSourceIndex(cbaRows, raw));
+      return special.get(raw);
+    }
+    const target = normalizeFunctionalRowRef(value);
+    if (!target) return -1;
+    return explicit.has(target) ? explicit.get(target) : legacy.get(target) ?? -1;
+  };
 }

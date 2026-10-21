@@ -1,0 +1,31 @@
+import {runFastCodeArchitectureHazardAnalysis,fastHazardSheets} from './fastHazardRunner';
+import {buildCodeArchitectureHazardInput,summarySheetToHazardSummaryRows} from './codeArchitectureHazardUtils';
+import {saveCodeArchitectureHazardRun} from './codeArchitectureHazardStore';
+import {generateFastHazards} from './fastHazardPipeline';
+import {answer} from './fastHazardTestFixtures';
+jest.mock('./fastHazardPipeline',()=>({...jest.requireActual('./fastHazardPipeline'),generateFastHazards:jest.fn()}));
+jest.mock('./codeArchitectureHazardStore',()=>({saveCodeArchitectureHazardRun:jest.fn(async()=>{})}));
+const base={projectId:'p',repoMeta:{repoId:'r'},cbaRows:Array.from({length:160},(_,i)=>({from:'Planner',action:'Apply torque',to:'Actuator',traceId:`f-${i}`,fromNodeId:`from-${i}`,toNodeId:`to-${i}`,edgeId:`edge-${i}`,rowRef:i+1,hazardAnalysisEligibility:'Include',hazardAnalysisEligibilitySource:'manual'}))};
+beforeEach(()=>{jest.clearAllMocks();generateFastHazards.mockImplementation(async({sources})=>sources.map(s=>answer('STPA',s.id)));});
+
+const {abortableHazardTask}=require('./abortableHazardTask');
+const {createHazardRunRegistry}=require('./hazardRunRegistry');
+test('app owner retains late incomplete recovery after Stop even when saving fails',async()=>{
+ const registry=createHazardRunRegistry(),scope='p:r',record=registry.start(scope),controller=record.controller;
+ let background,recovered,visible=null;
+ saveCodeArchitectureHazardRun.mockRejectedValue(new Error('Storage unavailable'));
+ generateFastHazards.mockImplementation(async({sources})=>{throw Object.assign(new Error('Provider disconnected'),{partialResults:sources.slice(0,150).map(s=>answer('STPA',s.id))});});
+ try{
+  await abortableHazardTask(()=>{
+   background=registry.track(scope,record,()=>runFastCodeArchitectureHazardAnalysis({...base,signal:controller.signal,
+    onPartialRunUpdate:run=>{recovered=run;if(registry.acceptUpdate(scope,record,run))visible=run;},
+    setProgress:p=>{if(p.message.startsWith('Preparing traceable hazard results:'))setTimeout(()=>registry.stop(scope),0);}
+   }));return background;
+  },controller.signal);
+ }catch(error){expect(error.name).toBe('AbortError');expect(error.recoveryRun).toBeUndefined();}
+ finally{registry.finish(scope,record);}
+ await background.catch(()=>{});
+ expect(recovered).toMatchObject({runState:'incomplete',validatedAssessments:150,finalSavePending:true});
+ expect(visible).toBe(recovered);expect(record.run).toBe(recovered);expect(registry.get(scope)).toBe(record);
+ expect(registry.reconcileSave(recovered)).toBe(scope);
+});

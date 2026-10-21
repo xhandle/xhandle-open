@@ -1,0 +1,35 @@
+import {runFastCodeArchitectureHazardAnalysis,fastHazardSheets} from './fastHazardRunner';
+import {buildCodeArchitectureHazardInput,summarySheetToHazardSummaryRows} from './codeArchitectureHazardUtils';
+import {saveCodeArchitectureHazardRun} from './codeArchitectureHazardStore';
+import {generateFastHazards} from './fastHazardPipeline';
+import {answer} from './fastHazardTestFixtures';
+jest.mock('./fastHazardPipeline',()=>({...jest.requireActual('./fastHazardPipeline'),generateFastHazards:jest.fn()}));
+jest.mock('./codeArchitectureHazardStore',()=>({saveCodeArchitectureHazardRun:jest.fn(async()=>{})}));
+const base={projectId:'p',repoMeta:{repoId:'r'},cbaRows:Array.from({length:160},(_,i)=>({from:'Planner',action:'Apply torque',to:'Actuator',traceId:`f-${i}`,fromNodeId:`from-${i}`,toNodeId:`to-${i}`,edgeId:`edge-${i}`,rowRef:i+1,hazardAnalysisEligibility:'Include',hazardAnalysisEligibilitySource:'manual'}))};
+beforeEach(()=>{jest.clearAllMocks();generateFastHazards.mockImplementation(async({sources})=>sources.map(s=>answer('STPA',s.id)));});
+
+test('review: Clear during real runner partial finalization prevents persisted resurrection',async()=>{
+ const store=jest.requireActual('./codeArchitectureHazardStore');
+ saveCodeArchitectureHazardRun.mockImplementation(store.saveCodeArchitectureHazardRun);
+ const registry=require('./hazardRunRegistry').createHazardRunRegistry();
+ const scope='p:r',record=registry.start(scope),visible=jest.fn();
+ let clearing;
+ generateFastHazards.mockImplementation(async({sources})=>{throw Object.assign(new Error('Provider disconnected'),{partialResults:sources.slice(0,150).map(s=>answer('STPA',s.id))});});
+ let caught;
+ try{await registry.track(scope,record,()=>runFastCodeArchitectureHazardAnalysis({...base,signal:record.controller.signal,
+  onPartialRunUpdate:run=>{if(registry.acceptUpdate(scope,record,run))visible(run);},
+  setProgress:p=>{
+   if(!clearing && p.message.startsWith('Preparing traceable hazard results:')){
+    registry.stop(scope);
+    clearing=store.deleteCodeArchitectureHazardRuns({projectId:'p',repoId:'r'}).then(()=>registry.discard(scope));
+   }
+  }
+ }));}catch(error){caught=error;}
+ await clearing;
+ expect(caught.message).toBe('Provider disconnected');
+ expect(caught.partialResults).toHaveLength(150);
+ expect(caught.recoveryRun.finalSavePending).toBe(true);
+ expect(caught.recoveryRun.saveFailureMessage).toContain('superseded');
+ expect(await store.getLatestCodeArchitectureHazardRun({projectId:'p',repoId:'r'})).toBeNull();
+ expect(visible).not.toHaveBeenCalled();
+});

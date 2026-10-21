@@ -1,3 +1,4 @@
+import { readProjectWithRecovery } from './features/code-architecture-assurance/projectReadRecovery';
 import { architectureDashboardColumns, groupArchitectureDashboard } from './features/code-architecture-assurance/architectureDashboardGroups';
 import useHazardRunRestoration from './features/code-architecture-hazard-analysis/useHazardRunRestoration';
 import { createHazardReviewRowIndex } from './features/code-architecture-hazard-analysis/hazardReviewRowIndex';
@@ -4281,8 +4282,11 @@ useEffect(() => {
   setCbaLoadError("");
   setCbaLoadingLabel("Loading saved analysis...");
   setCbaLoadingProgress(0);
-  setCbaLoading(true);
-  readCodeArchitectureRowsForRepo(activeCodeArchitectureProject, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey, {
+  setCbaLoading(cbaTableData.length === 0);
+  const readController = new AbortController();
+  readProjectWithRecovery(options => readCodeArchitectureRowsForRepo(activeCodeArchitectureProject, activeCodeArchitectureRepo, activeCodeArchitectureRowsKey, options), {
+    signal: readController.signal,
+    onRetry: () => { if (!isCancelled()) { setCbaLoadingLabel("Reconnecting to saved analysis..."); setCbaLoadingProgress(null); } },
     onProgress: percent => { if (!isCancelled()) setCbaLoadingProgress(Math.floor(percent * 0.9)); },
   })
     .then(async ({ rows, found }) => {
@@ -4335,6 +4339,7 @@ useEffect(() => {
     });
   return () => {
     cancelled = true;
+    readController.abort();
   };
 // Reload only on scope changes. Review/metadata updates must not race publication.
 // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -14516,7 +14521,7 @@ Rules:
     const candidatePriorRun = codeArchitectureHazardRunRef.current;
     const priorRunForPreprocessing = candidatePriorRun?.projectId === cbaProjectId && candidatePriorRun?.repoId === repoId ? candidatePriorRun : null;
     try {
-      const run = await abortableHazardTask(()=>runCodeArchitectureHazardAnalysis({
+      const run = await abortableHazardTask(()=>codeHazardRunsRef.current.track(runScope,record,()=>runCodeArchitectureHazardAnalysis({
         regenerate: Boolean(options.regenerate),
         previousRun: priorRunForPreprocessing,
         cbaRows: cbaTableData,
@@ -14535,9 +14540,8 @@ Rules:
         } : null,
         signal: abortController.signal,
         onPartialRunUpdate: (partialRun) => {
-          if(abortController.signal.aborted)return;
-          record.run=partialRun;
-          if (isCurrentRun()) setCodeArchitectureHazardRun(partialRun);
+          if(!codeHazardRunsRef.current.acceptUpdate(runScope,record,partialRun))return;
+          if (codeHazardScopeRef.current === runScope) commitCodeArchitectureHazardRun(partialRun);
         },
         setProgress: (nextProgress) => {
           if(abortController.signal.aborted)return;
@@ -14569,7 +14573,7 @@ Rules:
             completed: patch?.completed,
           });
         },
-      }),abortController.signal);
+      })),abortController.signal);
       record.run=run;
       if (isCurrentRun()) setCodeArchitectureHazardRun(run);
       reportFinish(actId, "success", "Code architecture hazard analysis complete");
@@ -17940,11 +17944,6 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                 </div>
                 {hazardRemediationTab === "hazard-analysis" ? (
                   <div className="min-h-0 flex-1">
-                    <div className="border-b bg-slate-50 px-3 py-2 text-sm">
-                      {functionalModelIsReady(cbaTableData)
-                        ? 'New hazard analyses use the processed Functional model. Existing runs retain their original inputs.'
-                        : 'No current Functional model. Generate it in Architecture Diagram → Functional to analyze responsibilities instead of detailed calls.'}
-                    </div>
                     <CodeArchitectureHazardPanel
                   collaboratorSelection={activeCodeArchitectureSelection}
                       organizationContext={currentCbaOrganizationContext}

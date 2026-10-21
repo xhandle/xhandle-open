@@ -1,11 +1,12 @@
+import {claimHazardSaveAttempt} from './hazardSaveAttempt';
 import {waitForHazardSave} from './waitForHazardSave';
 import {safeHazardObserver,usableHazardInputs} from './hazardCompletionSupport';
-import {compactReviewEntries} from './fastHazardSemanticReview';
+import {createCompactReviewPacker} from './fastHazardSemanticReview';
 import {organizationProfileContextIdentity} from '../organization-profile/organizationProfile';
 import {functionalModelIsReady} from '../code-architecture-context/functionalModel';
 import {getStoredActiveAIProvider,getStoredAIProviderModelPreference,getStoredAIProviderEffortPreference} from '../../lib/aiProviderConfig';
-import {buildCodeArchitectureHazardInput,normalizeCodeArchitectureHazardRun,makeCodeArchitectureHazardId,traceabilityObjectToSummaryFields} from './codeArchitectureHazardUtils';
-import {prepareCodeHazardPreprocessing,reconcileCodeHazardPreprocessing,hazardPreprocessingIdentitySheet} from './codeArchitectureHazardPreprocessing';
+import {buildCodeArchitectureHazardInput,summarySheetToHazardSummaryRows,normalizeCodeArchitectureHazardRun,makeCodeArchitectureHazardId,traceabilityObjectToSummaryFields} from './codeArchitectureHazardUtils';
+import {prepareCodeHazardPreprocessing,createHazardPreprocessingMatcher,reconcileCodeHazardPreprocessing,hazardPreprocessingIdentitySheet} from './codeArchitectureHazardPreprocessing';
 import {createCodeHazardCheckpoint} from './codeHazardGenerationCheckpoint';
 import {saveCodeArchitectureHazardRun} from './codeArchitectureHazardStore';
 import {generateFastHazards,compactHazardSources} from './fastHazardPipeline';
@@ -162,6 +163,7 @@ export async function runFastCodeArchitectureHazardAnalysis({previousRun=null,re
   });
   const recoverable=previousRun && !['incomplete','draft'].includes(previousRun.runState)
     ? {...previousRun,pendingAttempt:interrupted,updatedAt:new Date().toISOString()} : interrupted;
+  claimHazardSaveAttempt(recoverable);
   const initialSave=saveCodeArchitectureHazardRun(recoverable,{notify:false});
   // A deadline stops waiting, not writing. Only this save's eventual success
   // clears its warning; unrelated checkpoint writes cannot do so.
@@ -173,24 +175,53 @@ export async function runFastCodeArchitectureHazardAnalysis({previousRun=null,re
   catch(error){manifestWarning='Recovery information could not be saved. Keep this browser tab open.';}
   check();
   const sourceById=new Map(sources.map(source=>[source.id,source]));
-  const buildRun=(assessments,selectedInput=input)=>{
-  const generated=fastHazardSheets(normalizedMethod,selectedInput,assessments);
-  const reconciled=reconcileCodeHazardPreprocessing(generated,selectedInput.tableRows);
-  for(const row of selectedInput.tableRows)if(row.userPreprocessing && !reconciled.ownership[row.userPreprocessingId])
-    retainedUserInputs[row.userPreprocessingId]={...row.userPreprocessing.values};
-  validateMergedSheet(normalizedMethod,reconciled.sheets.Summary,assessments.map(assessment=>({...sourceById.get(assessment.id),screenedApplicability:assessment.applicable,screenedRationale:assessment.applicabilityRationale})),index=>{
-    const source=selectedInput.tableRows[index-1],id=source.userPreprocessingId || assessments[index-1].id;
-    retainedUserInputs[id]={...retainedUserInputs[id],...source.userPreprocessing?.values};
-    reconciled.sheets.Summary[index]=[...generated.Summary[index]];
-    delete reconciled.ownership[id];
-  });
-  const basisColumn=reconciled.sheets.Summary[0].indexOf('Assessment Basis');
-  const idColumn=reconciled.sheets.Summary[0].indexOf('Raw Analysis Row ID');
-  for(const row of reconciled.sheets.Summary.slice(1))if(retainedUserInputs[row[idColumn]] && basisColumn>=0)row[basisColumn]+=' Original imported values requiring normalization or replacement are retained separately; generated values use the stated assessment premises.';
+  const buildRun=async(assessments,selectedInput=input,{preservingPartialResults=false}={})=>{
+  // Once partial recovery starts, preserve validated results even if Stop arrives
+  // during a later yield. Only normal completed-result finalization is cancellable.
+  const checkBuild=()=>{if(!preservingPartialResults)check();};
+  const reconciled={sheets:{'Functional Decomposition':selectedInput.sheets['Functional Decomposition']},ownership:{},conflicts:[]};
+  const packer=createCompactReviewPacker(),summaryRows=[];
+  let matcher,fieldColumns;
+  // Task yields let the browser paint and handle cancellation, including on resume.
+  const yieldTask=async()=>{await new Promise(resolve=>setTimeout(resolve,0));checkBuild();};
+  await yieldTask();
+  for(let offset=0;offset<Math.max(1,assessments.length);offset+=100){
+    checkBuild();
+    const batch=assessments.slice(offset,offset+100);
+    const tableRows=selectedInput.tableRows.slice(offset,offset+100);
+    const generated=fastHazardSheets(normalizedMethod,{...selectedInput,tableRows},batch);
+    const headers=generated.Summary[0];
+    if(!matcher){
+      matcher=createHazardPreprocessingMatcher(selectedInput.tableRows,headers);
+      fieldColumns=Object.entries(SUMMARY_ASSESSMENT_FIELDS(normalizedMethod)).map(([field,header])=>[field,headers.indexOf(header)]).filter(([,column])=>column>=0);
+      reconciled.sheets.Summary=[headers];
+    }
+    const part=reconcileCodeHazardPreprocessing(generated,tableRows,matcher);
+    for(const row of tableRows)if(row.userPreprocessing && !part.ownership[row.userPreprocessingId])
+      retainedUserInputs[row.userPreprocessingId]={...row.userPreprocessing.values};
+    validateMergedSheet(normalizedMethod,part.sheets.Summary,batch.map(assessment=>({...sourceById.get(assessment.id),screenedApplicability:assessment.applicable,screenedRationale:assessment.applicabilityRationale})),index=>{
+      const source=tableRows[index-1],id=source.userPreprocessingId || batch[index-1].id;
+      retainedUserInputs[id]={...retainedUserInputs[id],...source.userPreprocessing?.values};
+      part.sheets.Summary[index]=[...generated.Summary[index]];
+      delete part.ownership[id];
+    });
+    const basisColumn=headers.indexOf('Assessment Basis'),idColumn=headers.indexOf('Raw Analysis Row ID');
+    for(let index=0;index<batch.length;index++){
+      const row=part.sheets.Summary[index+1],value=batch[index];
+      if(retainedUserInputs[row[idColumn]] && basisColumn>=0)row[basisColumn]+=' Original imported values requiring normalization or replacement are retained separately; generated values use the stated assessment premises.';
+      packer.append({source:sourceById.get(value.id),assessment:{...value,...Object.fromEntries(fieldColumns.map(([field,column])=>[field,row[column]]))}});
+      reconciled.sheets.Summary.push(row);
+    }
+    Object.assign(reconciled.ownership,part.ownership);
+    reconciled.conflicts.push(...part.conflicts);
+    summaryRows.push(...summarySheetToHazardSummaryRows(part.sheets.Summary,offset));
+    if(!signal?.aborted)progress({step:96+Math.min(1,(offset+batch.length)/Math.max(1,assessments.length)),message:`Preparing traceable hazard results: ${Math.min(offset+batch.length,assessments.length)} of ${assessments.length} assessments`});
+    await yieldTask();
+  }
   const id=attemptId;
   return normalizeCodeArchitectureHazardRun({id,sourceRunId:id,projectId,repoId:input.repoId,repoName:repoMeta.repoName || input.repoId,repoUrl:repoMeta.repoUrl,repoPath:repoMeta.repoPath,branch:repoMeta.branch,
     pipelineVersion:FAST_HAZARD_VERSION,runState:'complete',retainedUserInputs,preprocessingIdentitySheet:interrupted.preprocessingIdentitySheet,
-    narrativeReviewInput:compactReviewEntries(assessments.map((value,index)=>({source:sourceById.get(value.id),assessment:{...assessments[index],...Object.fromEntries(Object.entries(SUMMARY_ASSESSMENT_FIELDS(normalizedMethod)).filter(([,header])=>reconciled.sheets.Summary[0].includes(header)).map(([field,header])=>[field,reconciled.sheets.Summary[index+1][reconciled.sheets.Summary[0].indexOf(header)]]))}}))),narrativeReviewContext:context,
+    summaryRows,narrativeReviewInput:packer.result,narrativeReviewContext:context,
 hazardMethod:method,hazardGenerationMode:'compact',
     architectureSnapshotHash:input.architectureSnapshotHash,analysisAbstraction:input.analysisAbstraction,functionalModelSnapshotHash:input.functionalModelSnapshotHash,
     architectureRowsSnapshot:input.architectureRowsSnapshot,traceabilityMap:input.traceabilityMap,hazardEligibilitySummary:input.eligibilitySummary,excludedArchitectureRows:input.excludedArchitectureRows,needsReviewArchitectureRows:input.needsReviewArchitectureRows,
@@ -209,7 +240,7 @@ hazardMethod:method,hazardGenerationMode:'compact',
   } catch(error) {
     if(Array.isArray(error.partialResults)){
       const byId=new Map(sources.map((source,index)=>[source.id,input.tableRows[index]]));
-      const partial=buildRun(error.partialResults,{...input,tableRows:error.partialResults.map(row=>byId.get(row.id))});
+      const partial=await buildRun(error.partialResults,{...input,tableRows:error.partialResults.map(row=>byId.get(row.id))},{preservingPartialResults:true});
       Object.assign(partial,{runState:'incomplete',totalAssessments:sources.length,
         validatedAssessments:error.partialResults.length,failedAssessments:error.failedAssessments || [],
         failureMessage:error.message, userPreprocessing:previousRun?.userPreprocessing || {},
@@ -225,7 +256,7 @@ hazardMethod:method,hazardGenerationMode:'compact',
     throw error;
   }finally{generating=false;}
   check();progress({step:96,message:'Preparing traceable hazard results...'});
-  const run=buildRun(assessments);
+  const run=await buildRun(assessments);
   check();progress({step:98,message:'Saving hazard results...'});
   onPartialRunUpdate({...run,finalSavePending:true,finalSaveStatus:'saving'});
   try{await waitForHazardSave(saveCodeArchitectureHazardRun(run,{onSaveState:({status,message})=>{if(!signal?.aborted && status!=='saved')onPartialRunUpdate({...run,finalSavePending:true,finalSaveStatus:status,saveFailureMessage:message});}}));}catch(cause){run.finalSavePending=true;run.finalSaveStatus='failed';run.saveFailureMessage=cause.message;onPartialRunUpdate(run);}

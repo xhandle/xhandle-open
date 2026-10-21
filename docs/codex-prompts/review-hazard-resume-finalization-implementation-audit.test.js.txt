@@ -1,0 +1,26 @@
+import {runFastCodeArchitectureHazardAnalysis,fastHazardSheets} from './fastHazardRunner';
+import {buildCodeArchitectureHazardInput,summarySheetToHazardSummaryRows} from './codeArchitectureHazardUtils';
+import {saveCodeArchitectureHazardRun} from './codeArchitectureHazardStore';
+import {generateFastHazards} from './fastHazardPipeline';
+import {answer} from './fastHazardTestFixtures';
+jest.mock('./fastHazardPipeline',()=>({...jest.requireActual('./fastHazardPipeline'),generateFastHazards:jest.fn()}));
+jest.mock('./codeArchitectureHazardStore',()=>({saveCodeArchitectureHazardRun:jest.fn(async()=>{})}));
+const base={projectId:'p',repoMeta:{repoId:'r'},cbaRows:Array.from({length:160},(_,i)=>({from:'Planner',action:'Apply torque',to:'Actuator',traceId:`f-${i}`,fromNodeId:`from-${i}`,toNodeId:`to-${i}`,edgeId:`edge-${i}`,rowRef:i+1,hazardAnalysisEligibility:'Include',hazardAnalysisEligibilitySource:'manual'}))};
+beforeEach(()=>{jest.clearAllMocks();generateFastHazards.mockImplementation(async({sources})=>sources.map(s=>answer('STPA',s.id)));});
+test('audit: Stop during partial recovery replaces the original error and skips partial saving',async()=>{
+ const controller=new AbortController();
+ const original=Object.assign(new Error('Provider disconnected'),{partialResults:[],failedAssessments:[]});
+ generateFastHazards.mockImplementation(async({sources})=>{
+  original.partialResults=sources.slice(0,150).map(s=>answer('STPA',s.id));throw original;
+ });
+ let caught;
+ try{await runFastCodeArchitectureHazardAnalysis({...base,signal:controller.signal,setProgress:p=>{
+  if(p.message.startsWith('Preparing traceable hazard results:'))setTimeout(()=>controller.abort(),0);
+ }});}catch(error){caught=error;}
+ expect(caught.name).toBe('AbortError');
+ expect(caught).not.toBe(original);
+ expect(caught.partialResults).toBeUndefined();
+ expect(caught.recoveryRun).toBeUndefined();
+ expect(saveCodeArchitectureHazardRun).toHaveBeenCalledTimes(1);
+ expect(saveCodeArchitectureHazardRun.mock.calls[0][0].validatedAssessments).toBe(0);
+});

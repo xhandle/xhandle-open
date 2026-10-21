@@ -47,29 +47,32 @@ export function prepareCodeHazardPreprocessing(input, previousRun) {
     }
     previousRun={...previousRun,userPreprocessing:active};
   }
+  const traceIndex=new Map(),nameIndex=new Map(),missingTraceIndex=new Map(),legacyIndex=new Set();
+  const previousRows=summary.slice(1);
+  const order=new Map(previousRows.map((row,index)=>[row,index]));
+  for(const previous of previousRows){
+    const preprocessing=previousRun.userPreprocessing[cell(summary,previous,'Raw Analysis Row ID')];
+    if(!preprocessing)continue;
+    const trace=cell(summary,previous,'Trace ID'),phrase=cell(summary,previous,'Guide Phrase');
+    const context=String(preprocessing.basis?.['Operational Context ID'] || '');
+    const names=headers.slice(0,3).map(header=>cell(summary,previous,header));
+    addCandidate(nameIndex,JSON.stringify([...names,phrase,context]),previous);
+    if(trace)addCandidate(traceIndex,JSON.stringify([trace,phrase,context]),previous);
+    else addCandidate(missingTraceIndex,JSON.stringify([...names,phrase,context]),previous);
+    if(!phrase)legacyIndex.add(JSON.stringify([trace,context]));
+  }
   const tableRows = input.tableRows.map(originalRow => {
     // Older HARA/FHA sheets had no explicit guide phrase. Retain that identity
     // for their owned decisions; a display-label addition must not invalidate them.
     const legacy = /^(HARA|FHA)$/i.test(previousRun.hazardMethod || '')
       && ["", "Functional malfunction", "Functional degradation or loss"].includes(originalRow.guidePhrase || "")
-      && summary.slice(1).some(previous => {
-      const owned = previousRun.userPreprocessing[cell(summary, previous, 'Raw Analysis Row ID')];
-      return owned && !cell(summary, previous, 'Guide Phrase')
-        && cell(summary, previous, 'Trace ID') === originalRow.traceId
-        && String(owned.basis?.['Operational Context ID'] || '') === String(originalRow.operationalContextId || '');
-    });
+      && legacyIndex.has(JSON.stringify([originalRow.traceId, String(originalRow.operationalContextId || '')]));
     const row = legacy ? {...originalRow, guidePhrase:''} : originalRow;
     const current = values(row);
-    const candidates = summary.slice(1).filter(previous => {
-      const id = cell(summary, previous, 'Raw Analysis Row ID');
-      const preprocessing = previousRun.userPreprocessing[id];
-      if (!preprocessing) return false;
-      const trace = cell(summary, previous, 'Trace ID');
-      const sameInterface = trace && row.traceId ? trace === row.traceId
-        : headers.slice(0, 3).every((header, index) => cell(summary, previous, header) === current[index]);
-      return sameInterface && cell(summary, previous, 'Guide Phrase') === current[3]
-        && String(preprocessing.basis?.['Operational Context ID'] || '') === current[4];
-    });
+    const nameKey=JSON.stringify([...current.slice(0,3),current[3],current[4]]);
+    const candidates=row.traceId
+      ? [...(traceIndex.get(JSON.stringify([row.traceId,current[3],current[4]])) || []),...(missingTraceIndex.get(nameKey) || [])].sort((a,b)=>order.get(a)-order.get(b))
+      : (nameIndex.get(nameKey) || []);
     if (candidates.length !== 1) return row;
     const id = cell(summary, candidates[0], 'Raw Analysis Row ID');
     const preprocessing = previousRun.userPreprocessing[id];
@@ -113,19 +116,33 @@ export function prepareCodeHazardPreprocessing(input, previousRun) {
   }) } };
 }
 
-export function reconcileCodeHazardPreprocessing(sheets, tableRows) {
+// Preserve all candidates: duplicate identities must never silently select a row.
+const addCandidate=(map,key,row)=>{const list=map.get(key);if(list)list.push(row);else map.set(key,[row]);};
+export function createHazardPreprocessingMatcher(tableRows, columns) {
+  const exact=new Map(),fallback=new Map();
+  const fields=headers.slice(0,5).map((header,index)=>({index,column:columns.indexOf(header)})).filter(field=>field.column>=0);
+  for(const source of tableRows){
+    if(!source.userPreprocessing)continue;
+    addCandidate(exact,source.userPreprocessingId,source);
+    const identity=values(source);
+    addCandidate(fallback,JSON.stringify(fields.map(field=>identity[field.index])),source);
+  }
+  const idColumn=columns.indexOf('Raw Analysis Row ID');
+  return row=>{
+    const byId=exact.get(row[idColumn]) || [];
+    return byId.length===1?byId:(fallback.get(JSON.stringify(fields.map(field=>String(row[field.column] || '').trim()))) || []);
+  };
+}
+
+export function reconcileCodeHazardPreprocessing(sheets, tableRows, matcher = null) {
   const owned = tableRows.filter(row => row.userPreprocessing);
-  if (!owned.length || !sheets?.Summary?.[0]) return { sheets, conflicts: [], ownership: {} };
+  if ((!owned.length && !matcher) || !sheets?.Summary?.[0]) return { sheets, conflicts: [], ownership: {} };
   const summary = sheets.Summary;
+  const match = matcher || createHazardPreprocessingMatcher(tableRows, summary[0]);
   const conflicts = [];
   const ownership = {};
   const rows = summary.slice(1).map(row => {
-    const rowId=row[summary[0].indexOf('Raw Analysis Row ID')];
-    const exact=owned.filter(source=>source.userPreprocessingId===rowId);
-    const matches = exact.length===1?exact:owned.filter(source => headers.slice(0, 5).every((header, index) => {
-      const column = summary[0].indexOf(header);
-      return column < 0 || String(row[column] || '').trim() === values(source)[index];
-    }));
+    const matches = match(row);
     if (matches.length !== 1) return row;
     const source = matches[0];
     const basis = summary[0].map(header => source.userPreprocessingBasis[headers.indexOf(header)] || '');

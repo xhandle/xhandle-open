@@ -1,15 +1,18 @@
 import {fetchLLMResponse} from '../../components/aiAnalysisSTPA';
 import {hazardInputLimit,REVIEW_OUTPUT_TOKENS,REVIEW_RETRY_OUTPUT_TOKENS} from './fastHazardBudgets';
 
-export function compactReviewEntries(entries) {
+export function createCompactReviewPacker() {
   const contexts=[], evidence=[], interfaces=[];
+  const indexes=new Map([[contexts,new Map()],[evidence,new Map()],[interfaces,new Map()]]);
   const intern=(pool,value)=>{
     const key=JSON.stringify(value);
-    let index=pool.findIndex(item=>JSON.stringify(item)===key);
-    if(index<0){index=pool.length;pool.push(value);}
+    const lookup=indexes.get(pool);
+    if(lookup.has(key))return lookup.get(key);
+    const index=pool.length;pool.push(value);lookup.set(key,index);
     return index;
   };
-  const assessments=entries.map(({source,assessment})=>{
+  const assessments=[];
+  const append=({source,assessment})=>{
     const {id,phrase,reviewedApplicability,reviewedRationale,reviewedValues,...definition}=source;
     if(Object.prototype.hasOwnProperty.call(definition,'context')){
       definition.contextRef=intern(contexts,definition.context);delete definition.context;
@@ -17,9 +20,15 @@ export function compactReviewEntries(entries) {
     if(Object.prototype.hasOwnProperty.call(definition,'evidence')){
       definition.evidenceRef=intern(evidence,definition.evidence);delete definition.evidence;
     }
-    return {source:{id,phrase,reviewedApplicability,reviewedRationale,reviewedValues,interfaceRef:intern(interfaces,definition)},assessment};
-  });
-  return {contexts,evidence,interfaces,assessments};
+    assessments.push({source:{id,phrase,reviewedApplicability,reviewedRationale,reviewedValues,interfaceRef:intern(interfaces,definition)},assessment});
+  };
+  return {append,result:{contexts,evidence,interfaces,assessments}};
+}
+
+export function compactReviewEntries(entries) {
+  const packer=createCompactReviewPacker();
+  entries.forEach(packer.append);
+  return packer.result;
 }
 
 export function semanticReviewPrompt(method, entries, context) {

@@ -50,9 +50,8 @@ function stableRowId(value = "") {
   return `RAW-${(hash >>> 0).toString(36).toUpperCase().padStart(7, "0")}`;
 }
 
-export function ensureHazardAnalysisRowIds(summary = []) {
-  if (!Array.isArray(summary?.[0])) return summary;
-  const sourceHeaders = summary[0].map(clean);
+export function createHazardRowNormalizer(source = []) {
+  const sourceHeaders = source.map(clean);
   const existingIndex = indexOfHeader(sourceHeaders, [
     RAW_ANALYSIS_ROW_ID_HEADER,
     "Raw Row ID",
@@ -64,7 +63,7 @@ export function ensureHazardAnalysisRowIds(summary = []) {
     : [...sourceHeaders, RAW_ANALYSIS_ROW_ID_HEADER];
   const idIndex = existingIndex >= 0 ? existingIndex : headers.length - 1;
   const used = new Set();
-  const rows = summary.slice(1).map((sourceRow, rowOffset) => {
+  const normalizeRow = (sourceRow, rowOffset) => {
     const row = Array.isArray(sourceRow) ? [...sourceRow] : [];
     while (row.length < headers.length) row.push("");
     let id = clean(row[idIndex]);
@@ -83,8 +82,14 @@ export function ensureHazardAnalysisRowIds(summary = []) {
     }
     used.add(id);
     return row;
-  });
-  return [headers, ...rows];
+  };
+  return { headers, normalizeRow };
+}
+
+export function ensureHazardAnalysisRowIds(summary = []) {
+  if (!Array.isArray(summary?.[0])) return summary;
+  const { headers, normalizeRow } = createHazardRowNormalizer(summary[0]);
+  return [headers, ...summary.slice(1).map(normalizeRow)];
 }
 
 function fieldsFromRow(headers = [], row = []) {

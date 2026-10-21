@@ -22,8 +22,18 @@ export function transactionDone(tx) {
     tx.onerror = () => {}; // Wait for rollback before returning failure.
   });
 }
-export async function rawRecord(db, store, key) {
-  return (await requestValue(db.transaction(store, 'readonly').objectStore(store).get(key)))?.value;
+export async function rawRecord(db, store, key, { signal } = {}) {
+  aborted(signal);
+  const tx = db.transaction(store, 'readonly');
+  return new Promise((resolve, reject) => {
+    const stop = () => { try { tx.abort(); } catch {} finish(signal.reason || new DOMException('Read cancelled.', 'AbortError')); };
+    const finish = (error, value) => { signal?.removeEventListener('abort', stop); error ? reject(error) : resolve(value); };
+    const request = tx.objectStore(store).get(key);
+    request.onsuccess = () => finish(null, request.result?.value);
+    request.onerror = () => finish(request.error);
+    tx.onabort = () => finish(tx.error || new DOMException('Read aborted.', 'AbortError'));
+    signal?.addEventListener('abort', stop, { once: true });
+  });
 }
 export async function putRawRecord(db, store, key, value) {
   const tx = db.transaction(store, 'readwrite');
@@ -146,7 +156,8 @@ function copyValue(value) {
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, copyValue(item)]));
   return value;
 }
-export async function hydrateRecord(db, store, value, { onProgress } = {}) {
+export async function hydrateRecord(db, store, value, { onProgress, signal } = {}) {
+  aborted(signal);
   let completed = 0, reported = -1;
   const report = percent => {
     const next = Math.max(reported, Math.min(100, Math.floor(percent)));
@@ -173,20 +184,27 @@ export async function hydrateRecord(db, store, value, { onProgress } = {}) {
   });
   function drain() {
     const batch=waiting.splice(0,PAGE);
-    const tx=db.transaction(store,'readonly'), objectStore=tx.objectStore(store);
+    let tx, objectStore;
+    try { aborted(signal); tx=db.transaction(store,'readonly'); objectStore=tx.objectStore(store); }
+    catch (error) { batch.forEach(entry=>entry.reject(error)); waiting.splice(0).forEach(entry=>entry.reject(error)); scheduled=false; return; }
+    const stop=()=>{try{tx.abort();}catch{}};
+    signal?.addEventListener('abort',stop,{once:true});
+    tx.oncomplete=()=>signal?.removeEventListener('abort',stop);
     for (const entry of batch) {
       const request=objectStore.get(entry.key);
       request.onsuccess=()=>entry.resolve(request.result?.value);
       request.onerror=()=>entry.reject(request.error);
     }
-    tx.onabort=()=>batch.forEach(entry=>entry.reject(tx.error || new Error('Storage read aborted.')));
+    tx.onabort=()=>{signal?.removeEventListener('abort',stop);batch.forEach(entry=>entry.reject(signal?.reason || tx.error || new DOMException('Storage read aborted.', 'AbortError')));};
     scheduled=false;
     if (waiting.length) { scheduled=true; Promise.resolve().then(drain); }
   }
   const decode = async (key, weight = 1) => {
+    aborted(signal);
     if (cache.has(key)) return cache.get(key).then(result => { advance(weight); return copyValue(result); });
     const task = (async () => {
       const text = await readPart(key);
+      aborted(signal);
       await yieldForProgress();
       if (typeof text !== 'string') throw new Error('Saved analysis is missing a data chunk. Restore its complete backup.');
       const [type, data] = JSON.parse(text);

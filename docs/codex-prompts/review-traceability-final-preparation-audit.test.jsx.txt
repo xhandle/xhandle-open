@@ -1,0 +1,28 @@
+import React, { act } from 'react';
+global.IS_REACT_ACT_ENVIRONMENT = true;
+import { createRoot } from 'react-dom/client';
+import VirtualTableBody from './VirtualTableBody';
+const items = Array.from({ length: 10000 }, (_, index) => ({ id: `trace-${index}`, text: `Function ${index}` }));
+const getKey = row => row.id;
+let host, root;
+beforeEach(() => { host = document.createElement('div'); document.body.append(host); root = createRoot(host); });
+afterEach(() => { act(() => root.unmount()); host.remove(); });
+const render = (props = {}) => act(() => root.render(<div style={{ overflowY: 'auto', height: 500 }}><table><VirtualTableBody items={items} getKey={getKey} columns={1} {...props}>{row => <tr><td><input defaultValue={row.text} /></td></tr>}</VirtualTableBody></table></div>));
+const makeModel = () => ({items,keys:items.map(getKey),positions:new Map(items.map((item,i)=>[item.id,i])),offsets:Array.from({length:items.length+1},(_,i)=>i*120),estimate:120});
+test('reuses matching prepared keys but falls back for filtered and reordered collections',()=>{
+ const model=makeModel(), key=jest.fn(getKey);
+ render({preparedModel:model,getKey:key});expect(key).not.toHaveBeenCalled();
+ const filtered=[items[9999],items[500],items[1]];
+ render({items:filtered,preparedModel:model,getKey:key});
+ expect([...host.querySelectorAll('[data-virtual-key]')].map(node=>node.dataset.virtualKey)).toEqual(filtered.map(getKey));
+ expect(key).toHaveBeenCalledTimes(3);
+ render({preparedModel:model,getKey:key,revealKey:'trace-9999',requestKey:'return'});
+ expect(host.querySelector('[data-virtual-key="trace-9999"] input').value).toBe('Function 9999');
+ expect(host.querySelectorAll('[data-virtual-key]').length).toBeLessThan(30);
+});
+test('prepared indexes preserve active editors during distant navigation',()=>{
+ const model=makeModel();render({preparedModel:model});
+ const input=host.querySelector('input');act(()=>input.focus());input.value='Uncommitted';
+ render({preparedModel:model,revealKey:'trace-9999',requestKey:'prepared-focus'});
+ expect(input.isConnected).toBe(true);expect(input.value).toBe('Uncommitted');
+});

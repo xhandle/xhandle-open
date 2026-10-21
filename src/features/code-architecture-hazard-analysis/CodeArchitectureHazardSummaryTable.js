@@ -1,3 +1,4 @@
+import TablePreparationProgress from '../code-architecture-assurance/TablePreparationProgress';
 import {registerTableSearchProvider,modelTableSearchEntries} from '../../components/quickSearchUtils';
 import { SHOW_TABLE_REVIEW_COLUMNS } from "../../components/tablePresentation";
 import useHazardRowWindow from './useHazardRowWindow';
@@ -72,6 +73,7 @@ function normalizeColumnWidths(defaultWidths = {}, savedWidths = {}) {
 
 export default function CodeArchitectureHazardSummaryTable({
   summarySheet,
+  preparationStart = 0,
   hazardMethod = "",
   className = "",
   reviewItems = [],
@@ -358,7 +360,7 @@ export default function CodeArchitectureHazardSummaryTable({
     return ()=>{
       if(revealedRequest.current===request && !request.completed)revealedRequest.current=null;
     };
-  },[highlightedRowIndex,focusRequestKey,storageKey,revealHazardRow,hazardGroups,collapsedInterfaceKeys]);
+  },[highlightedRowIndex,focusRequestKey,storageKey,revealHazardRow,hazardGroups,collapsedInterfaceKeys,rowWindow.preparing]);
   useEffect(() => {
     const table=searchTableRef.current;
     if(!table)return;
@@ -367,7 +369,7 @@ export default function CodeArchitectureHazardSummaryTable({
       getRowId:index=>`cba-hazard-row-${index}`, revealRow:revealHazardRow,
       items:hazardGroups.filter(group=>!collapsedInterfaceKeys.has(group.key)).flatMap(group=>group.items.map(item=>({row:item.row,originalIndex:item.rowIndex}))),
     }));
-  },[hazardGroups,collapsedInterfaceKeys,visibleColumns,revealHazardRow]);
+  },[hazardGroups,collapsedInterfaceKeys,visibleColumns,revealHazardRow,rowWindow.preparing]);
   const visibleInterfaceKeys = useMemo(() => hazardGroups.map((group) => group.key), [hazardGroups]);
 
   useEffect(() => {
@@ -534,6 +536,9 @@ export default function CodeArchitectureHazardSummaryTable({
       </tr>
     );
   };
+
+  if (rowWindow.error) return <div role="alert">Unable to prepare hazard table: {rowWindow.error.message}</div>;
+  if (rowWindow.preparing) return <TablePreparationProgress label="Preparing hazard table layout" progress={Math.floor(preparationStart + rowWindow.progress * (100 - preparationStart) / 100)} />;
 
   if (!Array.isArray(summarySheet) || summarySheet.length < 2) {
     return (

@@ -45,7 +45,7 @@ export async function generateFastHazards({method,sources,context,checkpoint,sig
  onMetrics=safeHazardObserver(onMetrics);onDiagnostic=safeHazardObserver(onDiagnostic);
  const check=()=>{if(signal?.aborted)throw new DOMException('Hazard analysis cancelled.','AbortError');};
  const started=Date.now(),metrics={applicability:{requests:0},generation:{requests:0},evidence:{requests:0},review:{requests:0}};
- let batchId=0;
+ let batchId=0,recovered=0,excludedCount=0,assessmentComplete=false;
  const screeningScheduler=createHazardRequestScheduler({limit:3,signal});
  const recover=createHazardAutomaticRecovery({signal,onRetry:event=>{
    onDiagnostic({method,event:'automatic-retry',...event});
@@ -81,12 +81,13 @@ export async function generateFastHazards({method,sources,context,checkpoint,sig
    await saveAssessment(source,value);
    report();
   }
-  await cache.flush();check();return sources.map(s=>results.get(s.id));
+  await cache.flush();check();assessmentComplete=true;return sources.map(s=>results.get(s.id));
  };
  try{
   check();
   const saved=await cache.readMany(sources.map(key));check();
-  sources.forEach((source,i)=>{if(source.reviewedApplicability==='No'){results.set(source.id,excluded(source,{rationale:source.reviewedRationale || 'User applicability decision: No.'}));return;}const decision=saved[i]?.acceptedApplicability;const validationSource=isAcceptedApplicabilityDecision(decision)?{...source,screenedApplicability:decision.applicable,screenedRationale:decision.rationale}:source;if(saved[i] && !validateFastAssessment(method,saved[i],validationSource,{structuralOnly:true}).length)results.set(source.id,saved[i]);});
+  sources.forEach((source,i)=>{if(source.reviewedApplicability==='No'){results.set(source.id,excluded(source,{rationale:source.reviewedRationale || 'User applicability decision: No.'}));excludedCount++;return;}const decision=saved[i]?.acceptedApplicability;const validationSource=isAcceptedApplicabilityDecision(decision)?{...source,screenedApplicability:decision.applicable,screenedRationale:decision.rationale}:source;if(saved[i] && !validateFastAssessment(method,saved[i],validationSource,{structuralOnly:true}).length){results.set(source.id,saved[i]);recovered++;}});
+  report();
   // Complete independent work first, then revisit only unresolved rows twice.
   // Checkpoints and the results map prevent repeating accepted work.
   for(let pass=0;pass<3;pass++){
@@ -164,5 +165,5 @@ export async function generateFastHazards({method,sources,context,checkpoint,sig
   const error=hazardRunError(cause,'COMPACT_HAZARD_INCOMPLETE');
   error.partialResults=sources.filter(s=>results.has(s.id)).map(s=>results.get(s.id));error.totalAssessments=sources.length;
   error.findings=failures;error.failedAssessments=sources.filter(s=>failures[s.id]).map(s=>({id:s.id,action:s.action,phrase:s.phrase,reasons:failures[s.id]}));throw error;
- }finally{screeningScheduler.close();onMetrics({...metrics,newlyAccepted:results.size,elapsedMs:Date.now()-started});}
+ }finally{screeningScheduler.close();onMetrics({...metrics,outcome:assessmentComplete?'assessments-ready':signal?.aborted?'cancelled':'interrupted',acceptedTotal:results.size,recovered,excluded:excludedCount,newlyAccepted:Math.max(0,results.size-recovered-excludedCount),elapsedMs:Date.now()-started});}
 }

@@ -1,3 +1,4 @@
+import {isCurrentHazardSaveAttempt,revokeHazardSaveAttempts} from './hazardSaveAttempt';
 import { openDB } from "idb";
 
 const DB_NAME = "xhandle-code-architecture-hazard-analysis";
@@ -151,13 +152,18 @@ function publishSaveState(run) {
 const transientSaveError = error => ['AbortError', 'TransactionInactiveError', 'InvalidStateError', 'UnknownError'].includes(error?.name);
 export async function saveCodeArchitectureHazardRun(run, { notify = true, onSaveState = () => {} } = {}) {
   if (!run?.id) throw new Error("Cannot save code architecture hazard analysis without an id.");
+  const checkAttempt = () => {
+    if (!isCurrentHazardSaveAttempt(run)) throw Object.assign(new Error('Hazard save superseded by a newer analysis attempt.'), {name:'AbortError', code:'HAZARD_SAVE_SUPERSEDED'});
+  };
+  checkAttempt();
   const owner = {};
   const epoch = saveEpochs.get(run.id) || 0;
   const checkDeleted = () => {
+    checkAttempt();
     if ((saveEpochs.get(run.id) || 0) !== epoch) throw Object.assign(new Error('Hazard save canceled because the results were deleted.'), {name:'AbortError', code:'HAZARD_SAVE_DELETED'});
   };
   saveOwners.set(run.id, owner);
-  const current = () => saveOwners.get(run.id) === owner;
+  const current = () => saveOwners.get(run.id) === owner && isCurrentHazardSaveAttempt(run);
   const state = (status, message = '') => {
     if (!current()) return;
     unsavedRuns.set(run.id, {...run, finalSavePending:true, finalSaveStatus:status, saveFailureMessage:message});
@@ -224,6 +230,7 @@ export async function saveCodeArchitectureHazardRun(run, { notify = true, onSave
 }
 
 export async function deleteCodeArchitectureHazardRuns(filters = {}) {
+  revokeHazardSaveAttempts(filters);
   for(const run of memoryMatches(filters)){saveEpochs.set(run.id,(saveEpochs.get(run.id) || 0)+1);saveOwners.delete(run.id);unsavedRuns.delete(run.id);}
   const db = await openCodeArchitectureHazardDB();
   if (!db) {

@@ -56,7 +56,8 @@ function downloadSummaryCsv(summarySheet, repoName = "code_architecture") {
   URL.revokeObjectURL(url);
 }
 
-export default function CodeArchitectureHazardPanel({
+export function PreparedCodeArchitectureHazardPanel({
+  preparedView,
   cbaRows = [],
   latestRun,
   restoration,
@@ -95,17 +96,17 @@ export default function CodeArchitectureHazardPanel({
   reviewMode = false,
   organizationContext,
 }) {
-  const summarySheet = useMemo(() => fillNotApplicableHazardSummary(ensureHazardAnalysisRowIds(
+  const summarySheet = useMemo(() => preparedView?.summarySheet || fillNotApplicableHazardSummary(ensureHazardAnalysisRowIds(
     latestRun?.generatedSheets?.Summary || draftRun?.generatedSheets?.Summary || []
-  )), [latestRun, draftRun]);
+  )), [latestRun?.generatedSheets?.Summary, draftRun?.generatedSheets?.Summary, preparedView]);
   const unresolvedApplicabilityCount = useMemo(() => {
     const header = summarySheet[0] || [];
     const valueIndex = header.indexOf('Guide Phrase Applicable');
     const originIndex = header.indexOf('Guide Phrase Applicability Origin');
     return summarySheet.slice(1).filter(row => row[valueIndex] === 'Needs Review' && row[originIndex] === 'Automatic screening').length;
   }, [summarySheet]);
-  const functionalTraceIds = useMemo(() => functionalModelIsReady(cbaRows)
-    ? new Set(buildFunctionalModelRows(cbaRows).map(row => row.traceId)) : new Set(), [cbaRows]);
+  const functionalTraceIds = useMemo(() => preparedView?.functionalTraceIds || (functionalModelIsReady(cbaRows)
+    ? new Set(buildFunctionalModelRows(cbaRows).map(row => row.traceId)) : new Set()), [cbaRows, preparedView]);
   const csvInputRef = useRef(null);
   const visibleSummaryRef = useRef(null);
   const [csvIssues, setCsvIssues] = useState([]);
@@ -170,18 +171,18 @@ export default function CodeArchitectureHazardPanel({
     [operationalContexts],
   );
   const eligibilitySummary = useMemo(
-    () => summarizeCodeArchitectureHazardEligibility(effectiveCodeArchitectureHazardRows(cbaRows)),
-    [cbaRows],
+    () => preparedView?.eligibilitySummary || summarizeCodeArchitectureHazardEligibility(effectiveCodeArchitectureHazardRows(cbaRows)),
+    [cbaRows, preparedView],
   );
   const isStale = useMemo(
-    () => latestRun ? isCodeArchitectureHazardAnalysisStale({
+    () => typeof preparedView?.isStale === "boolean" ? preparedView.isStale : latestRun ? isCodeArchitectureHazardAnalysisStale({
       run: latestRun,
       organizationContext,
       cbaRows,
       operationalContexts,
       selectedOperationalContextId,
     }) : false,
-    [latestRun, cbaRows, operationalContexts, selectedOperationalContextId, organizationContext]
+    [latestRun, cbaRows, operationalContexts, selectedOperationalContextId, organizationContext, preparedView]
   );
   const summaryCount = Math.max(0, (Array.isArray(summarySheet) ? summarySheet.length : 1) - 1);
   const statusMessage = latestRun?.runState === 'incomplete' ? 'Incomplete analysis; validated rows are available for inspection. Continue to finish.' : latestRun
@@ -213,6 +214,7 @@ export default function CodeArchitectureHazardPanel({
   const restorationNotice = restoration && !isRunning && (
     restoration.status === 'loading' || restoration.status === 'failed' || restoration.contextError
   ) ? <div role={restoration.status === 'failed' || restoration.contextError ? 'alert' : 'status'} className="shrink-0 border border-slate-200 bg-slate-50 p-3 text-sm">
+    {!latestRun && restoration.status === 'loading' && <XHandleWorkingMark className="mr-2 inline-block h-6 w-6" />}
     {restoration.contextError
       ? 'Saved results are available, but context updates could not be saved.'
       : restoration.status === 'failed'
@@ -229,6 +231,11 @@ export default function CodeArchitectureHazardPanel({
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col">
+    <div className="border-b bg-slate-50 px-3 py-2 text-sm">
+      {(preparedView?.functionalReady ?? functionalModelIsReady(cbaRows))
+        ? 'New hazard analyses use the processed Functional model. Existing runs retain their original inputs.'
+        : 'No current Functional model. Generate it in Architecture Diagram → Functional to analyze responsibilities instead of detailed calls.'}
+    </div>
     {restorationNotice}
     {importStatus && <div role="status" className="shrink-0 border border-slate-200 bg-slate-50 p-3 text-sm">{importStatus}</div>}
     {pendingImport && <div className="shrink-0 border border-blue-200 bg-blue-50 p-3 text-sm">
@@ -448,6 +455,7 @@ export default function CodeArchitectureHazardPanel({
             {!latestRun && hasSummary && <div className="text-sm text-slate-600">Incomplete hazard analysis draft. Export these rows, complete them externally, then import the CSV results.</div>}
             {showSummary && (
               <CodeArchitectureHazardSummaryTable
+                preparationStart={preparedView ? 70 : 0}
                 summarySheet={summarySheet}
                 hazardMethod={latestRun?.hazardMethod || method}
                 className="min-h-0 flex-1"
@@ -487,3 +495,5 @@ export default function CodeArchitectureHazardPanel({
     </div>
   );
 }
+
+export { default } from './SavedHazardPanelLoader';

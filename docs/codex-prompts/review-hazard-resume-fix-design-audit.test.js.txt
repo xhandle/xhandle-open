@@ -1,0 +1,22 @@
+import {compactReviewEntries} from './fastHazardSemanticReview';
+function indexed(entries){
+ const contexts=[],evidence=[],interfaces=[],maps=[new Map(),new Map(),new Map()];
+ const intern=(pool,map,value)=>{const key=JSON.stringify(value);if(map.has(key))return map.get(key);const index=pool.length;pool.push(value);map.set(key,index);return index;};
+ const assessments=entries.map(({source,assessment})=>{
+  const {id,phrase,reviewedApplicability,reviewedRationale,reviewedValues,...definition}=source;
+  if(Object.prototype.hasOwnProperty.call(definition,'context')){definition.contextRef=intern(contexts,maps[0],definition.context);delete definition.context;}
+  if(Object.prototype.hasOwnProperty.call(definition,'evidence')){definition.evidenceRef=intern(evidence,maps[1],definition.evidence);delete definition.evidence;}
+  return {source:{id,phrase,reviewedApplicability,reviewedRationale,reviewedValues,interfaceRef:intern(interfaces,maps[2],definition)},assessment};
+ });return {contexts,evidence,interfaces,assessments};
+}
+const entries=n=>Array.from({length:n},(_,i)=>({source:{id:`HA-${i}`,phrase:'Late',action:`Action ${i}`,context:{mode:'auto'},evidence:{text:`Evidence ${i}`}},assessment:{applicable:'Yes'}}));
+test('indexed interning preserves packing including duplicate values and undefined',()=>{
+ const data=[...entries(50),...entries(50),{source:{id:'empty',context:undefined,evidence:undefined},assessment:{}},{source:{id:'null',context:null,evidence:null},assessment:{}}];
+ expect(indexed(data)).toEqual(compactReviewEntries(data));
+});
+test('current packing repeatedly serializes pools; indexed candidate is linear',()=>{
+ const data=entries(1000),spy=jest.spyOn(JSON,'stringify');
+ compactReviewEntries(data);const originalCalls=spy.mock.calls.length;spy.mockClear();
+ indexed(data);const indexedCalls=spy.mock.calls.length;spy.mockRestore();
+ expect(originalCalls).toBe(1002999);expect(indexedCalls).toBe(3000);
+});

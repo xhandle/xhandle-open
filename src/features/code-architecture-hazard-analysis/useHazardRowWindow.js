@@ -1,15 +1,34 @@
+import useHazardPreparation from './useHazardPreparation';
 import {useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
 import {estimateTableRowHeight} from '../../components/useDeferredTableRow';
+
+const EMPTY_ENTRIES = [];
 
 // Keep the viewport attached to a row, rather than an estimated pixel offset.
 export default function useHazardRowWindow(groups,collapsed,columns,widths,tableRef,datasetKey,rowIdentity){
  const [viewport,setViewport]=useState({top:0,height:800}),[revision,setRevision]=useState(0);
  const measured=useRef(new Map()),anchor=useRef(null),pending=useRef(null);
  const current=useRef(null),measurementChanged=useRef(false);
- const entries=useMemo(()=>groups.flatMap(group=>[
-  {key:`group:${group.key}`,group,height:48},
-  ...(collapsed.has(group.key)?[]:group.items.map(item=>({key:`row:${rowIdentity?.(item) ?? item.rowIndex}`,parentKey:`group:${group.key}`,item,height:estimateTableRowHeight(item.row,widths,columns.map(c=>c.index))}))),
- ]),[groups,collapsed,columns,widths,rowIdentity]);
+ const entryJob=useMemo(()=>function* prepareEntries(){
+  const entries=[];
+  const indexes=columns.map(c=>c.index);
+  const total=groups.reduce((sum,group)=>sum+1+(collapsed.has(group.key)?0:group.items.length),0);
+  for(const group of groups){
+   entries.push({key:`group:${group.key}`,group,height:48});
+   if(!collapsed.has(group.key))for(const item of group.items){
+    entries.push({key:`row:${rowIdentity?.(item) ?? item.rowIndex}`,parentKey:`group:${group.key}`,item,height:estimateTableRowHeight(item.row,widths,indexes)});
+    if(entries.length%100===0)yield Math.floor(entries.length*100/total);
+   }
+  }
+  return entries;
+ },[groups,collapsed,columns,widths,rowIdentity]);
+ const immediateEntries=useMemo(()=>{
+  if(!(current.current?.datasetKey===datasetKey && current.current.layout.entries.length) && groups.reduce((sum,group)=>sum+1+(collapsed.has(group.key)?0:group.items.length),0)>5000)return null;
+  const iterator=entryJob();let next=iterator.next();while(!next.done)next=iterator.next();return next.value;
+ },[groups,collapsed,entryJob,datasetKey]);
+ const preparation=useHazardPreparation(entryJob,immediateEntries);
+ const preparing=!preparation.result;
+ const entries=preparation.result || EMPTY_ENTRIES;
  const layout=useMemo(()=>{
   let offset=0;
   const result=entries.map(entry=>{
@@ -70,7 +89,7 @@ export default function useHazardRowWindow(groups,collapsed,columns,widths,table
   root.addEventListener('scroll',scroll,{passive:true});
   const observer=typeof ResizeObserver==='undefined'?null:new ResizeObserver(scroll);observer?.observe(root);update();
   return ()=>{root.removeEventListener('scroll',scroll);observer?.disconnect();cancelAnimationFrame(frame);pending.current=null;};
- },[tableRef,update]);
+ },[tableRef,update,preparing]);
  const reveal=useCallback((index,onReady)=>{
   const latest=current.current,root=tableRef.current?.parentElement;
   const entry=latest?.layout.entries.find(e=>e.item?.rowIndex===index);
@@ -105,5 +124,5 @@ export default function useHazardRowWindow(groups,collapsed,columns,widths,table
   if(element){pending.current=null;request.onReady?.(element);}
  });
  const first=visible[0]?.offset||0,last=visible[visible.length-1];
- return {visible,top:first,bottom:last?Math.max(0,layout.total-last.offset-last.height):0,reveal,revision:visibleKey};
+ return {preparing:!preparation.result,progress:preparation.progress,error:preparation.error,visible,top:first,bottom:last?Math.max(0,layout.total-last.offset-last.height):0,reveal,revision:visibleKey};
 }

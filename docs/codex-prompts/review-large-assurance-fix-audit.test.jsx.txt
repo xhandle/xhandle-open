@@ -1,0 +1,32 @@
+import React from 'react';
+import {act} from 'react';
+import {createRoot} from 'react-dom/client';
+import usePreparedArtifactRows from './usePreparedArtifactRows';
+import Panel from './TraceabilityMatrixPanel';
+import {loadArtifactRowsAsync} from './artifactUtils';
+jest.mock('./artifactUtils',()=>({...jest.requireActual('./artifactUtils'),loadArtifactRowsAsync:jest.fn()}));
+jest.mock('./EngineeringArtifactTable',()=>({__esModule:true,default:({rows})=><div data-table>{rows.length} rows</div>}));
+global.IS_REACT_ACT_ENVIRONMENT=true;
+let host,root;
+beforeEach(()=>{jest.useFakeTimers();host=document.createElement('div');document.body.appendChild(host);root=createRoot(host);});
+afterEach(()=>{act(()=>root.unmount());host.remove();jest.useRealTimers();jest.clearAllMocks();});
+function Probe({rows}) {const state=usePreparedArtifactRows(rows,'same-scope');return <div data-ready={!!state.prepared}>{state.progress}</div>;}
+it('reproduces saved-data load bypassing batched preparation after initial empty rows',()=>{
+ act(()=>root.render(<Probe rows={[]}/>));
+ const large=Array.from({length:5000},(_,i)=>({id:`R-${i}`}));
+ act(()=>root.render(<Probe rows={large}/>));
+ // Defect: all rows prepared synchronously, with no pending preparation timer.
+ expect(host.firstChild.getAttribute('data-ready')).toBe('true');
+ expect(host.textContent).toBe('100');
+ expect(jest.getTimerCount()).toBe(0);
+});
+it('reproduces hiding completed traceability after a same-scope refresh fails',async()=>{
+ loadArtifactRowsAsync.mockResolvedValue([]);
+ await act(async()=>root.render(<Panel project={{id:'p'}} repo={{id:'r'}} cbaRows={[{traceId:'F',from:'A',action:'call',to:'B'}]}/>));
+ act(()=>jest.runAllTimers());
+ expect(host.querySelector('[data-table]').textContent).toBe('1 rows');
+ loadArtifactRowsAsync.mockRejectedValue(new Error('Storage timeout'));
+ await act(async()=>window.dispatchEvent(new CustomEvent('xhandle:code-architecture-assurance:changed',{detail:{projectId:'p',repoId:'r',kind:'software-requirements'}})));
+ expect(host.querySelector('[role="alert"]').textContent).toContain('Storage timeout');
+ expect(host.querySelector('[data-table]')).toBeNull();
+});

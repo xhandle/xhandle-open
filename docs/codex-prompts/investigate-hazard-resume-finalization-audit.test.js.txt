@@ -1,0 +1,13 @@
+import {generateFastHazards} from './resultsFirstHazardPipeline';
+import {answer} from './fastHazardTestFixtures';
+
+test('audit: all 27125 cached assessments return without assessment progress or provider calls',async()=>{
+ const sources=Array.from({length:27125},(_,i)=>({id:`HA-${i+1}`,action:'Apply torque',phrase:'Too late',reviewedApplicability:'Yes',reviewedRationale:'Human decision'}));
+ const checkpoint={read:async key=>answer('STPA',key.source.id),write:jest.fn()};
+ const request=jest.fn(),onProgress=jest.fn(),onMetrics=jest.fn();
+ const result=await generateFastHazards({method:'STPA',sources,context:{},checkpoint,request,onProgress,onMetrics});
+ expect(result).toHaveLength(27125);
+ expect(request).not.toHaveBeenCalled();
+ expect(onProgress.mock.calls.filter(([p])=>p.completed!==undefined)).toHaveLength(0);
+ expect(onMetrics).toHaveBeenCalledWith(expect.objectContaining({newlyAccepted:27125,generation:{requests:0}}));
+},30000);

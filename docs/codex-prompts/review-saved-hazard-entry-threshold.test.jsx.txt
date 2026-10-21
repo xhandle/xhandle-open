@@ -1,0 +1,40 @@
+global.IS_REACT_ACT_ENVIRONMENT=true;
+jest.mock('lucide-react',()=>{const Icon=()=> <span/>;return new Proxy({},{get:()=>Icon});});
+const React=require('react');
+const {act}=React;
+const {createRoot}=require('react-dom/client');
+const Panel=require('./CodeArchitectureHazardPanel').default;
+const empty=[];
+const makeRun=id=>({id,projectId:'p',repoId:'r',hazardMethod:'STPA',generatedSheets:{Summary:[
+ ['Raw Analysis Row ID','Function (From)','Control Action','Guide Phrase Applicable','Operational Context ID'],
+ ...Array.from({length:602},(_,i)=>[id+'-'+i,'Function '+Math.floor(i/7),'Command','Yes','ctx'])
+]}});
+let host,root;
+beforeEach(()=>{jest.useFakeTimers();host=document.createElement('div');document.body.appendChild(host);root=createRoot(host);});
+afterEach(()=>{act(()=>root.unmount());host.remove();jest.useRealTimers();});
+const render=props=>act(()=>root.render(<Panel method="STPA" cbaRows={empty} operationalContexts={empty} {...props}/>));
+const settle=()=>{act(()=>jest.runAllTimers());act(()=>jest.runAllTimers());};
+it('preserves an already mounted table when streaming results cross the preparation threshold',()=>{
+ const full=makeRun('threshold');
+ const small={...full,generatedSheets:{Summary:full.generatedSheets.Summary.slice(0,401)}};
+ render({latestRun:small,isRunning:true});settle();
+ act(()=>[...host.querySelectorAll('button')].find(b=>b.textContent.includes('Collapse all groups')).click());
+ const table=host.querySelector('table');
+ expect(host.querySelectorAll('tr[id^="cba-hazard-row-"]')).toHaveLength(0);
+ render({latestRun:full,isRunning:true});
+ expect(host.querySelector('table')).toBe(table);
+ settle();
+ expect(host.querySelectorAll('tr[id^="cba-hazard-row-"]')).toHaveLength(0);
+});
+it('preserves collapsed groups after crossing the preparation threshold',()=>{
+ const full=makeRun('threshold');
+ const small={...full,generatedSheets:{Summary:full.generatedSheets.Summary.slice(0,401)}};
+ render({latestRun:small,isRunning:true});settle();
+ act(()=>[...host.querySelectorAll('button')].find(b=>b.textContent.includes('Collapse all groups')).click());
+ const table=host.querySelector('table');
+ expect(host.querySelectorAll('tr[id^="cba-hazard-row-"]')).toHaveLength(0);
+ render({latestRun:full,isRunning:true});
+
+ settle();
+ expect(host.querySelectorAll('tr[id^="cba-hazard-row-"]')).toHaveLength(0);
+});

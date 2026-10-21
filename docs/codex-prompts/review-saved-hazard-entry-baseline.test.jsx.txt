@@ -1,0 +1,20 @@
+global.IS_REACT_ACT_ENVIRONMENT=true;
+jest.mock('lucide-react',()=>{const Icon=()=> <span/>;return new Proxy({},{get:()=>Icon});});
+const React=require('react');
+const {act}=React;
+const {createRoot}=require('react-dom/client');
+const {PreparedCodeArchitectureHazardPanel:Panel}=require('./CodeArchitectureHazardPanel');
+const empty=[];
+it('direct panel retains Stop and collapsed groups without the new loader wrapper',()=>{
+ const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
+ const run={id:'direct',hazardMethod:'STPA',generatedSheets:{Summary:[['Raw Analysis Row ID','Function (From)','Control Action','Guide Phrase Applicable','Operational Context ID'],...Array.from({length:602},(_,i)=>['HA-'+i,'Function '+Math.floor(i/7),'Command','Yes','ctx'])]}};
+ const render=props=>act(()=>root.render(<Panel method="STPA" cbaRows={empty} operationalContexts={empty} latestRun={run} {...props}/>));
+ try{
+  render({isRunning:true});expect(host.textContent).toContain('Stop analysis');
+  render({isRunning:false,selectedOperationalContextId:'all'});
+  act(()=>[...host.querySelectorAll('button')].find(b=>b.textContent.includes('Collapse all groups')).click());
+  expect(host.querySelectorAll('tr[id^="cba-hazard-row-"]')).toHaveLength(0);
+  render({isRunning:false,selectedOperationalContextId:'ctx'});
+  expect(host.querySelectorAll('tr[id^="cba-hazard-row-"]')).toHaveLength(0);
+ }finally{act(()=>root.unmount());host.remove();}
+});

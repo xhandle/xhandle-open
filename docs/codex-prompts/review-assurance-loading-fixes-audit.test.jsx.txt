@@ -1,0 +1,42 @@
+import React from 'react';
+import {act} from 'react';
+import {createRoot} from 'react-dom/client';
+import Panel from './TraceabilityMatrixPanel';
+import usePreparedArtifactRows from './usePreparedArtifactRows';
+import {loadArtifactRowsAsync} from './artifactUtils';
+jest.mock('./artifactUtils',()=>({...jest.requireActual('./artifactUtils'),loadArtifactRowsAsync:jest.fn()}));
+jest.mock('./EngineeringArtifactTable',()=>({__esModule:true,default:({rows})=><div data-table>{rows.map(row=>row.softwareRequirement).join('|')}</div>}));
+global.IS_REACT_ACT_ENVIRONMENT=true;
+let host,root;
+beforeEach(()=>{jest.useFakeTimers();host=document.createElement('div');document.body.appendChild(host);root=createRoot(host);});
+afterEach(()=>{act(()=>root.unmount());host.remove();jest.useRealTimers();jest.clearAllMocks();});
+function Probe({rows}) {const state=usePreparedArtifactRows(rows,'scope');return <div data-progress={state.progress}>{state.prepared?.map(item=>item.row.id).join('|') || 'preparing'}</div>;}
+it('batches empty-to-large hydration under StrictMode lifecycle replay',()=>{
+ act(()=>root.render(<React.StrictMode><Probe rows={[]}/></React.StrictMode>));
+ const rows=Array.from({length:5000},(_,i)=>({id:`R-${i}`}));
+ act(()=>root.render(<React.StrictMode><Probe rows={rows}/></React.StrictMode>));
+ expect(host.firstChild.dataset.progress).toBe('0');
+ act(()=>jest.advanceTimersToNextTimer());expect(Number(host.firstChild.dataset.progress)).toBeGreaterThan(0);
+ expect(Number(host.firstChild.dataset.progress)).toBeLessThan(100);
+ act(()=>jest.runAllTimers());expect(host.textContent).toContain('R-4999');
+});
+it('cancels preparation on unmount',()=>{
+ act(()=>root.render(<Probe rows={Array.from({length:5000},(_,i)=>({id:`R-${i}`}))}/>));
+ act(()=>jest.advanceTimersToNextTimer());
+ act(()=>root.render(null));expect(jest.getTimerCount()).toBe(0);
+ act(()=>jest.runAllTimers());expect(host.textContent).toBe('');
+});
+it('retains the latest successful same-scope matrix when an older refresh finishes late',async()=>{
+ const cbaRows=[{traceId:'F',from:'A',action:'call',to:'B'}];
+ loadArtifactRowsAsync.mockResolvedValue([]);
+ await act(async()=>root.render(<Panel project={{id:'p'}} repo={{id:'r'}} cbaRows={cbaRows}/>));
+ act(()=>jest.runAllTimers());const table=host.querySelector('[data-table]');
+ const older=[];loadArtifactRowsAsync.mockImplementation(()=>new Promise(resolve=>older.push(resolve)));
+ const change=()=>window.dispatchEvent(new CustomEvent('xhandle:code-architecture-assurance:changed',{detail:{projectId:'p',repoId:'r'}}));
+ await act(async()=>change());expect(host.querySelector('[data-table]')).toBe(table);
+ loadArtifactRowsAsync.mockImplementation(async kind=>kind==='software-requirements'?[{id:'NEW',sourceTraceId:'F'}]:[]);
+ await act(async()=>change());act(()=>jest.runAllTimers());
+ expect(host.querySelector('[data-table]')).toBe(table);expect(table.textContent).toContain('NEW');
+ await act(async()=>older.forEach((resolve,i)=>resolve(i===0?[{id:'OLD',sourceTraceId:'F'}]:[])));
+ act(()=>jest.runAllTimers());expect(table.textContent).toContain('NEW');expect(table.textContent).not.toContain('OLD');
+});

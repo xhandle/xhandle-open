@@ -1,3 +1,6 @@
+import VirtualTableBody from '../../components/VirtualTableBody';
+import TablePreparationProgress from './TablePreparationProgress';
+import usePreparedArtifactRows from './usePreparedArtifactRows';
 import { SHOW_TABLE_REVIEW_COLUMNS } from "../../components/tablePresentation";
 import CopyTableButton from '../../components/CopyTableButton';
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -8,12 +11,13 @@ import ColumnVisibilityMenu from "./ColumnVisibilityMenu";
 import {
   architectureRefsLabel,
   cellText,
-  enrichRowForDisplay,
   parentIdsFromRow,
   rowIdentity,
   splitIds,
 } from "./artifactUtils";
 
+const EMPTY_PREPARED_ROWS = [];
+const EMPTY_CONTEXT = {};
 const MIN_COLUMN_WIDTH = 120;
 const MAX_COLUMN_WIDTH = 720;
 
@@ -103,6 +107,9 @@ export default function EngineeringArtifactTable({
   rows = [],
   columns = [],
   copyLabel = "Copy table",
+  preparationLabel = "Preparing table",
+  loading = false,
+  loadingLabel = "Loading table",
   onUpdateRow,
   onDeleteRow,
   storageKey = "engineering-artifact-table:latest",
@@ -110,7 +117,7 @@ export default function EngineeringArtifactTable({
   reviewByRow,
   reviewDrawerOptions = {},
   onOpenTrace,
-  highlightedRowIds = [],
+  highlightedRowIds = EMPTY_PREPARED_ROWS,
   onFocusResolved,
   focusRequestKey,
   emptyMessage = "No rows yet.",
@@ -118,19 +125,16 @@ export default function EngineeringArtifactTable({
   showActions = true,
   showReview: requestedShowReview = true,
   readOnly = false,
-  tableContext = {},
+  tableContext = EMPTY_CONTEXT,
   onCollaboratorSelectionChange,
   collaboratorSelection,
 }) {
-  const rowRefs = useRef({});
   const highlightedSet = useMemo(
     () => new Set((Array.isArray(highlightedRowIds) ? highlightedRowIds : []).map((id) => String(id))),
     [highlightedRowIds]
   );
-  const displayRows = useMemo(
-    () => rows.map((row, rowIndex) => ({ row: enrichRowForDisplay(row), rowIndex })),
-    [rows]
-  );
+  const preparation = usePreparedArtifactRows(rows, storageKey);
+  const displayRows = preparation.prepared || EMPTY_PREPARED_ROWS;
   const columnOptions = useMemo(
     () => columns.map((column, index) => ({
       ...column,
@@ -253,20 +257,10 @@ export default function EngineeringArtifactTable({
     const hiddenMatch = displayRows.some(({ row, rowIndex }) => rowMatchesFocus(row, rowIndex, highlightedSet));
     if (hiddenMatch) filterState.clearAllFilters();
   }, [displayRows, filterState, highlightedSet, visibleRows]);
-  useEffect(() => {
-    if (!highlightedSet.size) return;
-    const target = visibleRows.find(({ row, rowIndex }) => rowMatchesFocus(row, rowIndex, highlightedSet));
-    if (!target) return;
-    const aliases = rowFocusAliases(target.row, target.rowIndex);
-    const node = aliases.map((id) => rowRefs.current[id]).find(Boolean);
-    if (!node) return;
-    const frame = requestAnimationFrame(() => {
-      if (!node.isConnected) return;
-      node.scrollIntoView?.({ behavior: "smooth", block: "center" });
-      onFocusResolved?.(focusRequestKey);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [highlightedSet, onFocusResolved, visibleRows, focusRequestKey]);
+  const revealRow = useMemo(() => highlightedSet.size ? visibleRows.find(({ row, rowIndex }) => rowMatchesFocus(row, rowIndex, highlightedSet)) : undefined, [visibleRows, highlightedSet]);
+  const virtualModel = preparation.virtualModel;
+  const virtualKey = React.useCallback(item => virtualModel?.keyByItem.get(item), [virtualModel]);
+  const searchText = React.useCallback(({row}) => visibleColumns.map(column => cellText(valueForColumn(row, column, tableContext))).join(' '), [visibleColumns, tableContext]);
   const reviewItemIds = useMemo(() => reviewItems.map((item) => item.id), [reviewItems]);
   const thBase = "border-b border-slate-200 bg-slate-50 px-3 py-2";
   const tdBase = "border-b border-slate-100 px-3 py-2 align-top text-[13px] text-slate-800";
@@ -278,8 +272,16 @@ export default function EngineeringArtifactTable({
 
   const editableCellButtonClass = "block min-h-[34px] w-full whitespace-pre-wrap break-words rounded-md border border-transparent px-2 py-1 text-left text-xs text-slate-700 hover:border-slate-200 hover:bg-slate-50 focus:border-[#2D7DFE] focus:outline-none focus:ring-2 focus:ring-blue-100";
 
+  // One owner for both storage loading and row preparation. Keep a prepared
+  // table visible while a background read is in progress.
+  const loadingIndicator = loading || !preparation.prepared
+    ? <TablePreparationProgress label={loading ? loadingLabel : preparationLabel} progress={loading ? 0 : preparation.progress} />
+    : null;
+  if (!preparation.prepared) return loadingIndicator;
+
   return (
     <div className="min-h-0 flex flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
+      {loadingIndicator}
       <div className="flex shrink-0 items-center justify-end gap-2 border-b border-slate-100 bg-white px-3 py-2">
         <span role="status" className="mr-auto text-sm text-slate-600">{visibleRows.length} of {rows.length} rows match filters</span>
         {filterState.activeFilterCount > 0 && <button type="button" className="text-sm font-medium text-[#2D7DFE]" onClick={filterState.clearAllFilters}>Clear filters</button>}
@@ -330,8 +332,11 @@ export default function EngineeringArtifactTable({
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-100">
-          {visibleRows.map(({ row, rowIndex }) => {
+        <VirtualTableBody items={visibleRows} getKey={virtualKey} preparedModel={virtualModel}
+          columns={visibleColumns.length + (showActions ? 1 : 0) + (showReview && reviewItems.length > 0 ? 1 : 0)}
+          revealKey={revealRow ? virtualKey(revealRow) : null} requestKey={focusRequestKey}
+          onReveal={onFocusResolved} searchText={searchText} label={copyLabel}>
+          {({ row, rowIndex }) => {
             const rowId = rowIdentity(row, rowIndex);
             const reviewItem = reviewByRow?.get?.(rowId) || reviewByRow?.get?.(rowIndex) || null;
             const rejected = reviewItem?.status === REVIEW_STATUSES.REJECTED;
@@ -361,13 +366,6 @@ export default function EngineeringArtifactTable({
             return (
               <tr
                 key={rowId}
-                ref={(node) => {
-                  if (node) {
-                    rowFocusAliases(row, rowIndex).forEach((id) => {
-                      rowRefs.current[id] = node;
-                    });
-                  }
-                }}
                 onClick={() => selectForCollaborator()}
                 className={`cursor-pointer align-top transition-colors ${
                   highlighted ? "bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset" : selectedCellKey === rowId || selectedCellKey.startsWith(`${rowId}:`) ? "bg-blue-50 ring-1 ring-inset ring-blue-300" : rejected ? "bg-rose-50/60" : ""
@@ -462,7 +460,9 @@ export default function EngineeringArtifactTable({
                 })}
               </tr>
             );
-          })}
+          }}
+        </VirtualTableBody>
+        {visibleRows.length === 0 && <tbody>
           {visibleRows.length === 0 && (
             <tr>
               <td
@@ -473,7 +473,7 @@ export default function EngineeringArtifactTable({
               </td>
             </tr>
           )}
-        </tbody>
+        </tbody>}
       </table>
 
       </div>

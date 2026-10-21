@@ -1,5 +1,6 @@
+import TablePreparationProgress from './TablePreparationProgress';
 import { buildFunctionalModelRows } from '../code-architecture-context/functionalModel';
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { ARTIFACT_KINDS, TRACEABILITY_MATRIX_COLUMNS } from "./artifactDefinitions";
 import EngineeringArtifactTable from "./EngineeringArtifactTable";
 import {
@@ -12,10 +13,14 @@ import {
   loadArtifactRowsAsync,
   resolveArtifactArchitectureRefs,
   rowsById,
+  indexArtifactCollections,
   sourceFilesFromRefs,
   splitIds,
   storageKeyFor,
 } from "./artifactUtils";
+
+const EMPTY_ROWS = [];
+const EMPTY_ARTIFACTS = { softwareRows: [], systemRows: [], subsystemRows: [], designRows: [] };
 
 function functionalId(row = {}, index = 0) {
   return cellText(row.traceId || row.rowRef || index + 1);
@@ -56,12 +61,6 @@ function parentIdsFor(row = {}, parentField = "", targetType = "") {
     });
   }
   return Array.from(ids).filter(Boolean);
-}
-
-function rowReferencesParent(row = {}, parentField = "", targetType = "", parentId = "") {
-  const target = cellText(parentId);
-  if (!target) return false;
-  return parentIdsFor(row, parentField, targetType).includes(target);
 }
 
 function buildIssue({ sw, sys, sub, design }) {
@@ -214,7 +213,27 @@ function consolidateTraceRowsByArtifactChain(rows = []) {
 }
 
 export function buildTraceabilityRows({ cbaRows, softwareRows, systemRows, subsystemRows, designRows }) {
-  const artifacts = { softwareRows, systemRows, subsystemRows, designRows };
+  const artifacts = indexArtifactCollections({ softwareRows, systemRows, subsystemRows, designRows });
+  const links = artifacts.relationshipIndex;
+  // Candidate indexes retain original source order. The existing matching
+  // predicate remains the authority for legacy/alias semantics.
+  const softwareTrace = new Map(), softwareRef = new Map(), softwareRowIndex = new Map();
+  const add = (map, key, index) => {
+    if (!map.has(key)) map.set(key, new Set());
+    map.get(key).add(index);
+  };
+  softwareRows.forEach((sw, index) => {
+    splitIds(sw.sourceTraceId).forEach(id => add(softwareTrace, id, index));
+    (sw.sourceArchitectureRefs || []).forEach(ref => {
+      if (cellText(ref.traceId)) add(softwareTrace, cellText(ref.traceId), index);
+      else {
+        add(softwareRef, cellText(ref.rowRef), index);
+        add(softwareRowIndex, Number(ref.rowIndex), index);
+      }
+    });
+  });
+  const softwareIds = new Set(softwareRows.map(row => row.id));
+  const coveredSoftware = new Set();
   const functionalAliases = new Map();
   buildFunctionalModelRows(cbaRows).forEach(model => model.functionalModel.sourceTraceIds.forEach(trace => {
     if (!functionalAliases.has(trace)) functionalAliases.set(trace, new Set());
@@ -228,7 +247,13 @@ export function buildTraceabilityRows({ cbaRows, softwareRows, systemRows, subsy
   cbaRows.forEach((functionalRow, functionalIndex) => {
     const traceId = functionalId(functionalRow, functionalIndex);
     const architectureRef = architectureRefFromFunctionalRow(functionalRow, functionalIndex, "edge");
-    const swMatches = softwareRows.filter((sw) =>
+    const candidateIds = new Set(softwareTrace.get(traceId) || []);
+    (functionalAliases.get(traceId) || []).forEach(alias => (softwareTrace.get(alias) || []).forEach(id => candidateIds.add(id)));
+    if (!functionalRow.lineage) {
+      (softwareRef.get(cellText(functionalRow.rowRef || functionalIndex + 1)) || []).forEach(id => candidateIds.add(id));
+      (softwareRowIndex.get(functionalIndex) || []).forEach(id => candidateIds.add(id));
+    }
+    const swMatches = [...candidateIds].sort((a, b) => a - b).map(index => softwareRows[index]).filter((sw) =>
       parentMatches(sw.sourceTraceId, traceId) ||
       [...(functionalAliases.get(traceId) || [])].some(alias => parentMatches(sw.sourceTraceId, alias)
         || (sw.sourceArchitectureRefs || []).some(ref => ref.traceId === alias)) ||
@@ -238,23 +263,24 @@ export function buildTraceabilityRows({ cbaRows, softwareRows, systemRows, subsy
 
     swList.forEach((sw) => {
       const sysMatches = sw
-        ? systemRows.filter((sys) => rowReferencesParent(sys, "parentSwRequirement", "software-requirement", sw.id))
+        ? (links.systems.get(cellText(sw.id)) || [])
         : [];
       const sysList = sysMatches.length ? sysMatches : [null];
 
       sysList.forEach((sys) => {
         const subMatches = sys
-          ? subsystemRows.filter((sub) => rowReferencesParent(sub, "parentSystemRequirement", "system-requirement", sys.id))
+          ? (links.subsystems.get(cellText(sys.id)) || [])
           : [];
         const subList = subMatches.length ? subMatches : [null];
 
         subList.forEach((sub) => {
           const designMatches = sub
-            ? designRows.filter((design) => rowReferencesParent(design, "parentRequirement", "subsystem-requirement", sub.id))
+            ? (links.designs.get(cellText(sub.id)) || [])
             : [];
           const designList = designMatches.length ? designMatches : [null];
 
           designList.forEach((design) => {
+            coveredSoftware.add(cellText(sw?.id));
             rows.push(rowForChain({
               chainIndex,
               functionalRow,
@@ -274,8 +300,9 @@ export function buildTraceabilityRows({ cbaRows, softwareRows, systemRows, subsy
   });
 
   softwareRows.forEach(sw => {
-    if (rows.some(row => row.softwareRequirement === cellText(sw.id))) return;
+    if (coveredSoftware.has(cellText(sw.id))) return;
     rows.push(missingParentRow({ chainIndex: chainIndex++, type: "Software Requirement", row: sw, parentField: "softwareRequirement", parentLabel: "unambiguous retained architecture evidence", refs: sw.sourceArchitectureRefs || [], parentId: sw.sourceTraceId || "" }));
+    coveredSoftware.add(rows[rows.length - 1].softwareRequirement);
   });
   systemRows.forEach((sys) => {
     const parents = parentIdsFor(sys, "parentSwRequirement", "software-requirement");
@@ -292,7 +319,7 @@ export function buildTraceabilityRows({ cbaRows, softwareRows, systemRows, subsy
       chainIndex += 1;
     }
     parents.forEach((parentId) => {
-      if (softwareRows.some((sw) => sw.id === parentId)) return;
+      if (softwareIds.has(parentId)) return;
       rows.push(missingParentRow({
         chainIndex,
         type: "System Requirement",
@@ -379,7 +406,7 @@ export function buildTraceabilityRows({ cbaRows, softwareRows, systemRows, subsy
 }
 
 export default function TraceabilityMatrixPanel({
-  cbaRows = [],
+  cbaRows = EMPTY_ROWS,
   project,
   repo,
   onOpenTrace,
@@ -387,7 +414,10 @@ export default function TraceabilityMatrixPanel({
 }) {
   const projectId = project?.id || "no-project";
   const repoId = repo?.id || repo?.repoId || repo?.repoName || "no-repo";
+  const scope = JSON.stringify([projectId, repoId]);
+  const [artifactScope, setArtifactScope] = useState(initialArtifacts ? scope : null);
   const [refreshToken, setRefreshToken] = useState(0);
+  const [loadState, setLoadState] = useState({ progress: 0, loading: !initialArtifacts, error: null });
   const [artifacts, setArtifacts] = useState(initialArtifacts || {
     softwareRows: [],
     systemRows: [],
@@ -397,39 +427,72 @@ export default function TraceabilityMatrixPanel({
 
   useEffect(() => {
     if (initialArtifacts) {
+      setLoadState({ progress: 100, loading: false, error: null });
       setArtifacts(initialArtifacts);
+      setArtifactScope(scope);
       return undefined;
     }
     let cancelled = false;
+    let completed = 0;
+    let failed = false;
+    setLoadState({ progress: 0, loading: true, error: null });
+    const track = (request) => request.then(value => {
+      completed += 1;
+      if (!cancelled && !failed) setLoadState({ progress: completed * 25, loading: true, error: null });
+      return value;
+    });
     Promise.all([
       loadArtifactRowsAsync(ARTIFACT_KINDS.SOFTWARE, projectId, repoId),
       loadArtifactRowsAsync(ARTIFACT_KINDS.SYSTEM, projectId, repoId),
       loadArtifactRowsAsync(ARTIFACT_KINDS.SUBSYSTEM, projectId, repoId),
       loadArtifactRowsAsync(ARTIFACT_KINDS.DESIGN, projectId, repoId),
-    ]).then(([softwareRows, systemRows, subsystemRows, designRows]) => {
+    ].map(track)).then(([softwareRows, systemRows, subsystemRows, designRows]) => {
       if (cancelled) return;
+      setLoadState({ progress: 100, loading: false, error: null });
+      setArtifactScope(scope);
       setArtifacts({
         softwareRows: Array.isArray(softwareRows) ? softwareRows : [],
         systemRows: Array.isArray(systemRows) ? systemRows : [],
         subsystemRows: Array.isArray(subsystemRows) ? subsystemRows : [],
         designRows: Array.isArray(designRows) ? designRows : [],
       });
+    }).catch(error => {
+      failed = true;
+      if (!cancelled) setLoadState({ progress: 0, loading: false, error: error.message || "Unable to load traceability data." });
     });
     return () => {
       cancelled = true;
     };
-  }, [initialArtifacts, projectId, refreshToken, repoId]);
+  }, [initialArtifacts, projectId, refreshToken, repoId, scope]);
 
   useEffect(() => {
-    const onChanged = () => setRefreshToken((value) => value + 1);
+    const onChanged = event => {
+      if (event.detail?.projectId !== projectId || event.detail?.repoId !== repoId) return;
+      setRefreshToken((value) => value + 1);
+    };
     window.addEventListener("xhandle:code-architecture-assurance:changed", onChanged);
     return () => window.removeEventListener("xhandle:code-architecture-assurance:changed", onChanged);
-  }, []);
+  }, [projectId, repoId]);
 
-  const rows = useMemo(
-    () => buildTraceabilityRows({ cbaRows, ...artifacts }),
-    [artifacts, cbaRows]
-  );
+  const [built, setBuilt] = useState(null);
+  useEffect(() => {
+    if (loadState.loading || loadState.error || artifactScope !== scope) return undefined;
+    let cancelled = false;
+    // Let the working indicator paint before synchronous chain construction.
+    const timer = setTimeout(() => {
+      try {
+        const rows = buildTraceabilityRows({ cbaRows, ...artifacts });
+        if (!cancelled) setBuilt({ artifacts, cbaRows, projectId, repoId, rows });
+      } catch (error) {
+        if (!cancelled) setLoadState({ progress: 0, loading: false, error: error.message || "Unable to prepare traceability." });
+      }
+    }, 0);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [artifacts, cbaRows, projectId, repoId, loadState.loading, loadState.error, artifactScope, scope]);
+  const ready = built?.artifacts === artifacts && built?.cbaRows === cbaRows && built?.projectId === projectId && built?.repoId === repoId;
+  const hasBuilt = built?.projectId === projectId && built?.repoId === repoId;
+  const rows = hasBuilt ? built.rows : EMPTY_ROWS;
+  const displayedArtifacts = artifactScope === scope ? artifacts : EMPTY_ARTIFACTS;
 
   const completeCount = rows.filter((row) => row.traceCompleteness === "Complete").length;
 
@@ -455,13 +518,19 @@ export default function TraceabilityMatrixPanel({
           <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-600">Chains: {rows.length}</span>
           <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700">Complete: {completeCount}</span>
           <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700">Open: {rows.length - completeCount}</span>
-          <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-700">SWR: {artifacts.softwareRows.length}</span>
-          <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-medium text-indigo-700">SYS: {artifacts.systemRows.length}</span>
-          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700">SUB: {artifacts.subsystemRows.length}</span>
-          <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700">DES: {artifacts.designRows.length}</span>
+          <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-700">SWR: {displayedArtifacts.softwareRows.length}</span>
+          <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-medium text-indigo-700">SYS: {displayedArtifacts.systemRows.length}</span>
+          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700">SUB: {displayedArtifacts.subsystemRows.length}</span>
+          <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700">DES: {displayedArtifacts.designRows.length}</span>
         </div>
       </div>
-      <EngineeringArtifactTable
+      {loadState.error ? <div role="alert">{loadState.error} <button onClick={() => setRefreshToken(value => value + 1)}>Retry loading</button></div>
+        : loadState.loading ? <TablePreparationProgress label="Loading traceability data" progress={loadState.progress} />
+        : !ready ? <TablePreparationProgress label="Building traceability chains" progress={0} />
+        : null}
+      {hasBuilt && <EngineeringArtifactTable
+        key={scope}
+        preparationLabel="Preparing traceability matrix table"
         copyLabel="Copy traceability matrix table"
         rows={rows}
         columns={TRACEABILITY_MATRIX_COLUMNS}
@@ -472,7 +541,7 @@ export default function TraceabilityMatrixPanel({
         showActions={false}
         showReview={false}
         readOnly
-      />
+      />}
     </div>
   );
 }

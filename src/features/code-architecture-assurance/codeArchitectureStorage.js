@@ -7,9 +7,9 @@ export const codeArchitectureRowsKey = (projectId, repoId) => `cba:${projectId}:
 export const codeArchitectureMetaKey = (projectId, repoId) => `cbaMeta:${projectId}:${repoId}`;
 export function openCbaIndexedDB({ signal } = {}) {
   return new Promise((resolve, reject) => {
-    if (signal?.aborted) { reject(signal.reason || new Error('Storage operation cancelled.')); return; }
+    if (signal?.aborted) { reject(signal.reason || new DOMException('Storage operation cancelled.', 'AbortError')); return; }
     const request = indexedDB.open(XHANDLE_IDB_NAME, XHANDLE_IDB_VERSION);
-    const aborted = () => reject(signal.reason || new Error('Storage operation cancelled.'));
+    const aborted = () => reject(signal.reason || new DOMException('Storage operation cancelled.', 'AbortError'));
     signal?.addEventListener('abort', aborted, { once: true });
     let blocked = false;
     request.onupgradeneeded = () => {
@@ -43,20 +43,20 @@ export async function readCbaRowsFromIndexedDB(key, options) {
   try { const value = await readRecord(db, XHANDLE_IDB_CBA_STORE, key, options); return Array.isArray(value) ? value : []; }
   finally { db.close(); }
 }
-export async function readFirstCbaRowsFromIndexedDB(keys = [], { onProgress } = {}) {
+export async function readFirstCbaRowsFromIndexedDB(keys = [], { onProgress, signal } = {}) {
   const unique = [...new Set((Array.isArray(keys) ? keys : [keys]).filter(Boolean))];
   let reported = 0;
-  const report = value => { reported = Math.max(reported, value); onProgress?.(reported); };
+  const report = value => { if (signal?.aborted) return; reported = Math.max(reported, value); onProgress?.(reported); };
   onProgress?.(0);
   if (typeof indexedDB === 'undefined') { report(100); return { key: unique[0] || '', rows: [] }; }
-  const db = await openCbaIndexedDB();
+  const db = await openCbaIndexedDB({ signal });
   try {
     for (const key of unique) {
-      const value = await rawRecord(db, XHANDLE_IDB_CBA_STORE, key);
+      const value = await rawRecord(db, XHANDLE_IDB_CBA_STORE, key, { signal });
       if (!isChunkedRecord(value) && !Array.isArray(value)) continue;
       // These keys are alternative locations, not three equal parts of a load.
       // Give the actual record the full progress range, regardless of aliases.
-      const rows = await hydrateRecord(db, XHANDLE_IDB_CBA_STORE, value, { onProgress: percent => report(Math.min(99, percent)) });
+      const rows = await hydrateRecord(db, XHANDLE_IDB_CBA_STORE, value, { signal, onProgress: percent => report(Math.min(99, percent)) });
       if (Array.isArray(rows)) { report(100); return {key, rows, found:true}; }
     }
   } finally {

@@ -1,0 +1,15 @@
+import {loadArtifactRowsAsync} from './artifactUtils';
+const original=global.indexedDB;
+beforeEach(()=>{jest.useFakeTimers();localStorage.clear();global.indexedDB={open:jest.fn(()=>({}))};});
+afterEach(()=>{global.indexedDB=original;jest.useRealTimers();});
+it('produces the screenshot message without any blocked event and does not retry',async()=>{
+ const result=loadArtifactRowsAsync('system-requirements','timeout-audit','repo');
+ const checked=expect(result).rejects.toThrow('Requirements storage could not open. Close other xHandle tabs and retry.');
+ jest.advanceTimersByTime(5000);await checked;
+ expect(indexedDB.open).toHaveBeenCalledTimes(1);
+});
+it('independent reads each open their own database connection',async()=>{
+ const reads=Array.from({length:6},()=>loadArtifactRowsAsync('system-requirements','timeout-burst','repo'));
+ const results=Promise.allSettled(reads);expect(indexedDB.open).toHaveBeenCalledTimes(6);
+ jest.advanceTimersByTime(5000);expect((await results).every(r=>r.status==='rejected')).toBe(true);
+});

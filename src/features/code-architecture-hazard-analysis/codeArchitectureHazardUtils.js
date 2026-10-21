@@ -781,7 +781,7 @@ export function buildCodeArchitectureHazardInput({
   return result;
 }
 
-export function summarySheetToHazardSummaryRows(summarySheet) {
+export function summarySheetToHazardSummaryRows(summarySheet, rowOffset = 0) {
   if (!Array.isArray(summarySheet) || !Array.isArray(summarySheet[0])) return [];
   const headers = summarySheet[0].map((header, index) => String(header || `Column ${index + 1}`));
   const indices = new Map();
@@ -789,7 +789,8 @@ export function summarySheetToHazardSummaryRows(summarySheet) {
     const key = header.toLowerCase();
     if (!indices.has(key)) indices.set(key, index);
   });
-  return summarySheet.slice(1).map((row, rowIndex) => {
+  return summarySheet.slice(1).map((row, localIndex) => {
+    const rowIndex = rowOffset + localIndex;
     const get = (name) => {
       const index = indices.get(name.toLowerCase());
       return index >= 0 ? normalizeText(Array.isArray(row) ? row[index] : "") : "";

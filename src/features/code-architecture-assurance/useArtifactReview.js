@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { REVIEW_STATUSES, REVIEW_STATUS_LABELS, REVIEW_UNIT_TYPES } from "../results-review/reviewTypes";
 import { createReviewId, normalizeReviewItem } from "../results-review/reviewUtils";
 import { useResultsReview } from "../results-review/ResultsReviewProvider";
@@ -43,46 +43,42 @@ export function useArtifactReview({
     return map;
   }, [reviewItems]);
 
+  const latestReview = useRef({ review, reviewItems });
+  latestReview.current = { review, reviewItems };
+
   useEffect(() => {
     if (!enabled) return undefined;
     if (!rows.length || !reviewColumns.length) return;
     let cancelled = false;
-    const existingIds = new Set(reviewItems.map((item) => item.id));
-    const missing = rows.flatMap((row, rowIndex) => {
-      const rowId = rowIdentity(row, rowIndex);
-      const reviewItemId = createReviewId(sourceRunId, artifactType, artifactIdRoot, "row", rowId);
-      if (existingIds.has(reviewItemId)) return [];
-      const content = { rowIndex, columns: reviewColumns, row };
-      return normalizeReviewItem({
-        id: reviewItemId,
-        artifactType,
-        artifactId: `${artifactIdRoot}:row:${rowId}`,
-        reviewUnitType: REVIEW_UNIT_TYPES.TABLE_ROW,
-        sourceFeature: definition.sourceFeature,
-        sourceMethod: definition.sourceMethod,
-        sourceRunId,
-        projectId,
-        originalContent: content,
-        currentContent: content,
-        traceLinks: [
-          { type: "table_row", rowIndex },
-          { type: "artifact_row", rowId },
-          ...(Array.isArray(row.traceLinks) ? row.traceLinks : []),
-        ],
-      });
-    });
-    if (!missing.length) return undefined;
-
-    let index = 0;
-    let timeoutId = null;
-    const createNextBatch = () => {
+    let index = 0, timeoutId = null;
+    const registered = new Set();
+    const createNextBatch = async () => {
       if (cancelled) return;
-      const batch = missing.slice(index, index + REVIEW_REGISTRATION_BATCH_SIZE);
-      index += REVIEW_REGISTRATION_BATCH_SIZE;
-      if (batch.length) review.createReviewItems(batch);
-      if (index < missing.length) {
-        timeoutId = window.setTimeout(createNextBatch, 50);
+      const existingIds = new Set(latestReview.current.reviewItems.map(item => item.id));
+      const batch = [];
+      const end = Math.min(rows.length, index + REVIEW_REGISTRATION_BATCH_SIZE);
+      for (; index < end; index++) {
+        const row = rows[index], rowIndex = index;
+        const rowId = rowIdentity(row, rowIndex);
+        const id = createReviewId(sourceRunId, artifactType, artifactIdRoot, "row", rowId);
+        if (existingIds.has(id) || registered.has(id)) continue;
+        const content = { rowIndex, columns: reviewColumns, row };
+        batch.push(normalizeReviewItem({
+          id, artifactType, artifactId: `${artifactIdRoot}:row:${rowId}`,
+          reviewUnitType: REVIEW_UNIT_TYPES.TABLE_ROW,
+          sourceFeature: definition.sourceFeature, sourceMethod: definition.sourceMethod,
+          sourceRunId, projectId, originalContent: content, currentContent: content,
+          traceLinks: [{ type: "table_row", rowIndex }, { type: "artifact_row", rowId }, ...(Array.isArray(row.traceLinks) ? row.traceLinks : [])],
+        }));
+        registered.add(id);
       }
+      try {
+        if (batch.length) await latestReview.current.review.createReviewItems(batch);
+      } catch (error) {
+        console.warn('[artifact-review] Registration failed', error);
+        return;
+      }
+      if (!cancelled && index < rows.length) timeoutId = window.setTimeout(createNextBatch, 50);
     };
 
     timeoutId = window.setTimeout(createNextBatch, 0);
@@ -97,9 +93,7 @@ export function useArtifactReview({
     definition.sourceMethod,
     enabled,
     projectId,
-    review,
     reviewColumns,
-    reviewItems,
     rows,
     sourceRunId,
   ]);
@@ -109,7 +103,7 @@ export function useArtifactReview({
     if (!artifactType || typeof window === "undefined" || typeof setRows !== "function") return undefined;
     const handleUpdated = (event) => {
       const item = event.detail?.reviewItem;
-      if (!item || item.artifactType !== artifactType) return;
+      if (!item || item.artifactType !== artifactType || !String(item.artifactId || "").startsWith(`${artifactIdRoot}:row:`)) return;
       const reviewedRow = item.currentContent?.row && typeof item.currentContent.row === "object"
         ? item.currentContent.row
         : null;
@@ -141,7 +135,7 @@ export function useArtifactReview({
     };
     window.addEventListener("xhandle:results-review:item-updated", handleUpdated);
     return () => window.removeEventListener("xhandle:results-review:item-updated", handleUpdated);
-  }, [artifactType, enabled, setRows]);
+  }, [artifactIdRoot, artifactType, enabled, setRows]);
 
   const statusCounts = useMemo(() => {
     const counts = {};

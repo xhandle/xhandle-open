@@ -1,0 +1,18 @@
+import {createHazardRunRegistry} from './hazardRunRegistry';
+test('audit: old save event can replace a newer pending attempt sharing the prior completed run ID',async()=>{
+ const registry=createHazardRunRegistry(),scope='p:r';
+ const old=registry.start(scope);let settle;
+ const work=registry.track(scope,old,()=>new Promise(resolve=>{settle=resolve;}));await Promise.resolve();
+ registry.stop(scope);registry.finish(scope,old);
+ const current=registry.start(scope);
+ const completed={id:'prior-completed',projectId:'p',repoId:'r',runState:'complete'};
+ const newer={...completed,pendingAttempt:{id:'attempt-new',runState:'incomplete'},finalSavePending:true};
+ expect(registry.acceptUpdate(scope,current,newer)).toBe(true);
+ const late={...completed,pendingAttempt:{id:'attempt-old',runState:'incomplete'},finalSavePending:false};
+ expect(registry.acceptUpdate(scope,old,late)).toBe(false);
+ // The storage-event path does not carry the producing registry record.
+ expect(registry.reconcileSave(late)).toBe(scope);
+ expect(registry.get(scope).run.pendingAttempt.id).toBe('attempt-old');
+ settle();await work;
+ expect(registry.get(scope)).toBe(current);
+});

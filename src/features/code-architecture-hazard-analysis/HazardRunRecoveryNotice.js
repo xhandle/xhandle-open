@@ -9,7 +9,7 @@ export default function HazardRunRecoveryNotice({run,onExport,onRetrySave,isRunn
   if(!attempt && !run?.finalSavePending)return null;
   return <div role="alert" className="m-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm">
     {attempt && <>
-      <p>Analysis incomplete: {attempt.validatedAssessments || 0} of {attempt.totalAssessments || 0} assessments validated. Use Continue hazard analysis to retry unresolved work.</p>
+      <p>{isRunning ? 'Previous attempt:' : 'Analysis incomplete:'} {attempt.validatedAssessments || 0} of {attempt.totalAssessments || 0} assessments validated. {isRunning ? 'Continuation is running; current progress is shown below.' : 'Use Continue hazard analysis to retry unresolved work.'}</p>
       {run.pendingAttempt && <p>The previous completed analysis remains in the main table. The incomplete attempt is separate.</p>}
       <details><summary>Failure details</summary>
         <p>{attempt.failureMessage}</p>

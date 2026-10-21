@@ -1,0 +1,27 @@
+jest.mock('./EngineeringArtifactTable',()=>()=>null);
+import {buildTraceabilityRows as before} from './TraceabilityBaselineAudit';
+import {buildTraceabilityRows as after} from './TraceabilityMatrixPanel';
+function fixture(n) {
+ const cbaRows=Array.from({length:n},(_,i)=>({traceId:`F-${i}`,from:`from${i}`,action:'call',to:`to${i}`}));
+ return {cbaRows,softwareRows:cbaRows.map((r,i)=>({id:`SW-${i}`,sourceTraceId:r.traceId})),systemRows:cbaRows.map((_,i)=>({id:`SYS-${i}`,parentSwRequirement:`SW-${i}`})),subsystemRows:cbaRows.map((_,i)=>({id:`SUB-${i}`,parentSystemRequirement:`SYS-${i}`})),designRows:cbaRows.map((_,i)=>({id:`D-${i}`,parentRequirement:`SUB-${i}`}))};
+}
+it('preserves the complete output for mixed links, aliases, missing parents and legacy refs',()=>{
+ for(let seed=0;seed<20;seed++) {
+ const data=fixture(15);
+ data.cbaRows[0].rowRef='legacy';data.cbaRows[1].lineage={status:'historical'};
+ data.softwareRows.forEach((r,i)=>{
+   if((i+seed)%3===0) {r.sourceTraceId='';r.sourceArchitectureRefs=[{rowIndex:i,rowRef:i===0?'legacy':undefined}];}
+   if((i+seed)%4===0) r.sourceTraceId=`F-${i}, F-${(i+1)%15}`;
+ });
+ data.systemRows[2].parentSwRequirement='SW-2, SW-3';data.systemRows[3].parentSwRequirement='missing';
+ data.systemRows[4].parentSwRequirement='';data.systemRows[4].traceLinks=[{targetType:'software-requirement',targetId:'SW-4'}];
+ data.subsystemRows[5].parentSystemRequirement='';data.designRows[6].parentRequirement='SUB-6; SUB-7';
+ data.designRows[7].parentRequirement='absent';
+ expect(after(data)).toEqual(before(data));
+ }
+});
+it('benchmarks one thousand complete chains with identical output',()=>{
+ const data=fixture(1000);let t=performance.now();const old=before(data);const oldMs=performance.now()-t;
+ t=performance.now();const next=after(data);const nextMs=performance.now()-t;
+ expect(next).toEqual(old);console.log('TRACE BENCHMARK', {oldMs:Math.round(oldMs),newMs:Math.round(nextMs),chains:next.length});
+},60000);

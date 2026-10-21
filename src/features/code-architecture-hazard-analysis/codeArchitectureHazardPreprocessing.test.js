@@ -1,4 +1,4 @@
-import { prepareCodeHazardPreprocessing, reconcileCodeHazardPreprocessing } from './codeArchitectureHazardPreprocessing';
+import { createHazardPreprocessingMatcher, prepareCodeHazardPreprocessing, reconcileCodeHazardPreprocessing } from './codeArchitectureHazardPreprocessing';
 import { recordUserPreprocessing } from '../project-hazard-analysis/hazardUserPreprocessing';
 const headers=['Function (From)','Control Action','Function (To)','Guide Phrase','Operational Context ID','Operational Scenario','Operational Mode','Operating Conditions','Raw Analysis Row ID','Guide Phrase Applicable','Trace ID','Hazard'];
 const baseline=['Planner','Plan','Executor','Too late','context-unspecified','Unspecified scenario','Unspecified mode','','RAW-1','','trace1',''];
@@ -78,4 +78,14 @@ test.each(['HARA','FHA'])('%s does not copy a legacy whole-function decision ont
  expect(prepared.tableRows[0].guidePhraseApplicable).toBeUndefined();
  expect(prepared.archivedUserPreprocessing['RAW-1'].values['Guide Phrase Applicable']).toBe('No');
  expect(prior.generatedSheets.Summary[1][9]).toBe('No');
+});
+
+
+test('indexed reconciliation retains ambiguous IDs and missing-column fallback semantics',()=>{
+ const rows=[{...source,userPreprocessing:{},userPreprocessingId:'same'},{...source,controlAction:'Other',userPreprocessing:{},userPreprocessingId:'same'}];
+ const columns=['Raw Analysis Row ID','Control Action'];
+ const match=createHazardPreprocessingMatcher(rows,columns);
+ expect(match(['same','Plan'])).toEqual([rows[0]]);
+ expect(match(['missing','Other'])).toEqual([rows[1]]);
+ expect(createHazardPreprocessingMatcher(rows,['Raw Analysis Row ID'])(['same'])).toHaveLength(2);
 });

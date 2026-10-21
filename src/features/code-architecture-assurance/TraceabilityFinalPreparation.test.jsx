@@ -1,0 +1,29 @@
+jest.mock('lucide-react',()=>{const Icon=()=>null;return new Proxy({},{get:()=>Icon});});
+jest.mock('./artifactUtils',()=>{const actual=jest.requireActual('./artifactUtils');return {...actual,rowIdentity:jest.fn(actual.rowIdentity)};});
+import {rowIdentity} from './artifactUtils';
+import {TRACEABILITY_MATRIX_COLUMNS} from './artifactDefinitions';
+import React, {act} from 'react';
+import {createRoot} from 'react-dom/client';
+import Table from './EngineeringArtifactTable';
+global.IS_REACT_ACT_ENVIRONMENT=true;
+it('finishes a large matrix without whole-dataset identity work after 99 percent',()=>{
+ jest.useFakeTimers();
+ const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
+ let identities=0;
+ const rows=Array.from({length:11859},(_,i)=>({get id(){identities++;return `T-${i}`;},requirementText:`Chain ${i}`}));
+ const columns=TRACEABILITY_MATRIX_COLUMNS;
+ try{
+  act(()=>root.render(<Table rows={rows} columns={columns} storageKey="audit-99"/>));
+  let steps=0;
+  while(Number(host.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow'))<99 && steps++<300)act(()=>jest.advanceTimersToNextTimer());
+  expect(host.querySelector('[role="progressbar"]').getAttribute('aria-valuenow')).toBe('99');
+  expect(host.querySelector('table')).toBeNull();
+  const before=rowIdentity.mock.calls.length;
+  while(host.querySelector('[role="progressbar"]') && steps++<310) act(()=>jest.advanceTimersToNextTimer());
+  expect(host.querySelector('table')).not.toBeNull();
+  expect(host.querySelector('[role="progressbar"]')).toBeNull();
+  expect(host.querySelectorAll('tbody tr').length).toBeLessThan(100);
+  expect(rowIdentity.mock.calls.length-before).toBeLessThan(100);
+  console.log(JSON.stringify({rows:rows.length,callbacksTo99:steps,identityReadsAfter99:rowIdentity.mock.calls.length-before,mountedRows:host.querySelectorAll('tbody tr').length}));
+ }finally{act(()=>root.unmount());host.remove();jest.useRealTimers();}
+});

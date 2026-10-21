@@ -1,0 +1,35 @@
+// Temporary read-only audit: synthetic rows, no provider calls or saved user data.
+import React from 'react';
+import {act} from 'react';
+import {createRoot} from 'react-dom/client';
+import EngineeringArtifactTable from './EngineeringArtifactTable';
+import VirtualTableBody from '../../components/VirtualTableBody';
+import {buildTraceabilityRows} from './TraceabilityMatrixPanel';
+global.IS_REACT_ACT_ENVIRONMENT = true;
+jest.mock('lucide-react', () => { const Icon=()=> <span/>; return new Proxy({}, {get:()=>Icon}); });
+it('measures mounted rows and cell evaluation on selection',()=>{
+ const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
+ const rows=Array.from({length:1000},(_,i)=>({id:`R-${i}`,requirementText:`Requirement ${i}`}));
+ let calls=0;const columns=[{key:'id',label:'ID'},{key:'requirementText',label:'Requirement',getValue:r=>{calls++;return r.requirementText;}}];
+ act(()=>root.render(<EngineeringArtifactTable rows={rows} columns={columns} showActions={false} showReview={false} readOnly/>));
+ expect(host.querySelectorAll('tbody tr')).toHaveLength(1000);
+ calls=0;act(()=>host.querySelector('tbody td').click());
+ console.log('AUDIT engineering rows=1000; value evaluations on single selection=',calls);
+ expect(calls).toBeGreaterThanOrEqual(1000);
+ act(()=>root.render(<div style={{overflowY:'auto'}}><table><VirtualTableBody items={rows} getKey={r=>r.id} columns={1}>{r=><tr><td>{r.id}</td></tr>}</VirtualTableBody></table></div>));
+ const mounted=host.querySelectorAll('[data-virtual-key]').length;
+ console.log('AUDIT VirtualTableBody same 1000 rows; mounted=',mounted);expect(mounted).toBeLessThan(30);
+ act(()=>root.unmount());host.remove();
+});
+it('measures traceability construction with one complete chain per architecture row',()=>{
+ for(const n of [100,500,1000]) {
+ const cbaRows=Array.from({length:n},(_,i)=>({traceId:`F-${i}`,from:`from${i}`,action:'call',to:`to${i}`}));
+ const softwareRows=cbaRows.map((r,i)=>({id:`SW-${i}`,sourceTraceId:r.traceId}));
+ const systemRows=cbaRows.map((_,i)=>({id:`SYS-${i}`,parentSwRequirement:`SW-${i}`}));
+ const subsystemRows=cbaRows.map((_,i)=>({id:`SUB-${i}`,parentSystemRequirement:`SYS-${i}`}));
+ const designRows=cbaRows.map((_,i)=>({id:`D-${i}`,parentRequirement:`SUB-${i}`}));
+ const start=performance.now();const rows=buildTraceabilityRows({cbaRows,softwareRows,systemRows,subsystemRows,designRows});
+ console.log('AUDIT traceability',n,'input per collection;',rows.length,'output;',Math.round(performance.now()-start),'ms');
+ expect(rows.length).toBe(n);
+ }
+},60000);

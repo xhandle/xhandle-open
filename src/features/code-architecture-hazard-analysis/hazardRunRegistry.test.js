@@ -52,3 +52,43 @@ test('finishing a run retires its controller while retaining unsaved final resul
  const second=registry.start('scope');registry.finish('scope',first);
  expect(second.controller.signal.aborted).toBe(false);
 });
+
+test('stopped owner retains recovery until work settles and retains failed save for retry',async()=>{
+ const registry=createHazardRunRegistry(),record=registry.start('A');let finish;
+ const work=registry.track('A',record,()=>new Promise(resolve=>{finish=resolve;}));await Promise.resolve();
+ registry.stop('A');registry.finish('A',record);
+ expect(registry.get('A')).toBe(record);
+ const run={id:'partial',runState:'incomplete',finalSavePending:true};
+ expect(registry.acceptUpdate('A',record,run)).toBe(true);
+ finish();await work;expect(registry.get('A').run).toBe(run);
+ registry.saved('A','partial');expect(registry.get('A')).toBeUndefined();
+});
+test('replaced and deleted attempts cannot publish late recovery or remove newer ownership',async()=>{
+ const registry=createHazardRunRegistry(),old=registry.start('A');let finish;
+ const work=registry.track('A',old,()=>new Promise(resolve=>{finish=resolve;}));await Promise.resolve();
+ registry.stop('A');registry.finish('A',old);const next=registry.start('A');
+ expect(registry.acceptUpdate('A',old,{runState:'incomplete'})).toBe(false);
+ finish();await work;expect(registry.get('A')).toBe(next);
+ registry.discard('A');expect(registry.acceptUpdate('A',next,{runState:'incomplete'})).toBe(false);
+});
+test('cancelled completed output is rejected and successful recovery releases ownership',async()=>{
+ const registry=createHazardRunRegistry(),record=registry.start('A');let finish;
+ const work=registry.track('A',record,()=>new Promise(resolve=>{finish=resolve;}));await Promise.resolve();
+ registry.stop('A');registry.finish('A',record);
+ expect(registry.acceptUpdate('A',record,{runState:'complete'})).toBe(false);
+ expect(registry.acceptUpdate('A',record,{runState:'incomplete'})).toBe(true);
+ finish();await work;expect(registry.get('A')).toBeUndefined();
+});
+
+test('save events from an older pending attempt cannot replace or release a newer stopped attempt',()=>{
+ const registry=createHazardRunRegistry(),record=registry.start('A');
+ const completed={id:'prior',projectId:'p',repoId:'r',runState:'complete'};
+ const latest={...completed,pendingAttempt:{id:'new',runState:'incomplete'},finalSavePending:true};
+ registry.acceptUpdate('A',record,latest);registry.finish('A',record);
+ for(const finalSavePending of [true,false]){
+  expect(registry.reconcileSave({...completed,pendingAttempt:{id:'old'},finalSavePending})).toBeNull();
+  expect(registry.get('A').run).toBe(latest);
+ }
+ expect(registry.reconcileSave({...latest,finalSavePending:false})).toBe('A');
+ expect(registry.get('A')).toBeUndefined();
+});

@@ -272,6 +272,7 @@ it('quick search indexes unmounted hazard cells and excludes hidden columns and 
 });
 
 it('bounds mounted rows while preserving full filtered count/export model and revealing distant links',()=>{
+ jest.useFakeTimers();
  const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
  const sheet=[['Function','Control Action','Guide Phrase','Operational Context ID'],...Array.from({length:1000},(_,i)=>[`Function ${i}`,`Command ${i}`,'Not provided','one'])];
  const priorRect=Element.prototype.getBoundingClientRect;
@@ -280,10 +281,29 @@ it('bounds mounted rows while preserving full filtered count/export model and re
  const onVisibleSummaryChange=jest.fn();
  const render=extra=>act(()=>root.render(<CodeArchitectureHazardSummaryTable summarySheet={sheet} storageKey="window-test" onVisibleSummaryChange={onVisibleSummaryChange} onRowFocusResolved={onRowFocusResolved} {...extra}/>));
  try{
-  render({});expect(host.querySelectorAll('tbody tr').length).toBeLessThan(80);
+  render({});
+  act(()=>jest.runAllTimers());
+  expect(host.querySelectorAll('tbody tr').length).toBeLessThan(80);
   expect(host.textContent).toContain('1000 of 1000');expect(onVisibleSummaryChange.mock.calls.at(-1)[0]).toHaveLength(1001);
   render({highlightedRowIndex:999,focusRequestKey:'last'});
   expect(onRowFocusResolved).toHaveBeenCalledWith('last');
   expect(host.querySelector('#cba-hazard-row-999')).not.toBeNull();expect(host.querySelectorAll('tbody tr').length).toBeLessThan(80);
- }finally{act(()=>root.unmount());host.remove();Element.prototype.getBoundingClientRect=priorRect;}
+ }finally{act(()=>root.unmount());host.remove();Element.prototype.getBoundingClientRect=priorRect;jest.useRealTimers();}
+});
+
+it('shows one progress indicator for a large saved table and resolves its initial distant focus after preparation',()=>{
+ jest.useFakeTimers();
+ const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
+ const sheet=[['Raw Analysis Row ID','Function (From)','Control Action'],...Array.from({length:6000},(_,i)=>['HA-'+i,'Function '+Math.floor(i/7),'Command'])];
+ const resolved=jest.fn();
+ try {
+  act(()=>root.render(<CodeArchitectureHazardSummaryTable summarySheet={sheet} highlightedRowIndex={5999} focusRequestKey="large-last" onRowFocusResolved={resolved}/>));
+  expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
+  expect(host.querySelector('table')).toBeNull();
+  act(()=>jest.runAllTimers());
+  expect(host.querySelector('[role="progressbar"]')).toBeNull();
+  expect(host.querySelector('#cba-hazard-row-5999')).not.toBeNull();
+  expect(resolved).toHaveBeenCalledWith('large-last');
+  expect(host.querySelectorAll('tbody tr').length).toBeLessThan(80);
+ } finally {act(()=>root.unmount());host.remove();jest.useRealTimers();}
 });

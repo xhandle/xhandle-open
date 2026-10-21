@@ -1,0 +1,12 @@
+import {claimHazardSaveAttempt} from './hazardSaveAttempt';
+import {saveCodeArchitectureHazardRun,deleteCodeArchitectureHazardRuns,getLatestCodeArchitectureHazardRun} from './codeArchitectureHazardStore';
+test('audit: a claimed recovery attempt can recreate its deleted record when its save starts after deletion',async()=>{
+ const filters={projectId:'deletion-audit-project',repoId:'deletion-audit-repo'};
+ const manifest={...filters,id:'deleted-recovery-audit',runState:'incomplete',validatedAssessments:0};
+ claimHazardSaveAttempt(manifest);await saveCodeArchitectureHazardRun(manifest);
+ await deleteCodeArchitectureHazardRuns(filters);
+ expect(await getLatestCodeArchitectureHazardRun(filters)).toBeNull();
+ await saveCodeArchitectureHazardRun({...manifest,validatedAssessments:150});
+ expect(await getLatestCodeArchitectureHazardRun(filters)).toMatchObject({id:manifest.id,validatedAssessments:150});
+ await deleteCodeArchitectureHazardRuns(filters);
+});

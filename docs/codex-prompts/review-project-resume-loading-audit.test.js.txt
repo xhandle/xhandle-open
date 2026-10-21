@@ -1,0 +1,28 @@
+import { readProjectWithRecovery } from './projectReadRecovery';
+const flush=async()=>{for(let i=0;i<6;i++)await Promise.resolve();};
+beforeEach(()=>jest.useFakeTimers());
+afterEach(()=>{jest.useRealTimers();jest.restoreAllMocks();});
+it('visibility return leaves a healthy read alone and cleans up after success',async()=>{
+ jest.spyOn(document,'visibilityState','get').mockReturnValue('visible');
+ let finish;const read=jest.fn(()=>new Promise(resolve=>{finish=resolve;}));
+ const result=readProjectWithRecovery(read,{idleMs:100});await flush();
+ document.dispatchEvent(new Event('visibilitychange'));window.dispatchEvent(new Event('pageshow'));await flush();
+ expect(read).toHaveBeenCalledTimes(1);finish('ok');expect(await result).toBe('ok');
+ jest.advanceTimersByTime(10000);document.dispatchEvent(new Event('visibilitychange'));await flush();
+ expect(read).toHaveBeenCalledTimes(1);expect(jest.getTimerCount()).toBe(0);
+});
+it('foreground recovery retries overdue work only once across both resume events',async()=>{
+ jest.spyOn(document,'visibilityState','get').mockReturnValue('visible');
+ let finish;const read=jest.fn().mockImplementationOnce(()=>new Promise(()=>{})).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+ const result=readProjectWithRecovery(read,{idleMs:100});await flush();jest.setSystemTime(Date.now()+1000);
+ document.dispatchEvent(new Event('visibilitychange'));window.dispatchEvent(new Event('pageshow'));await flush();
+ expect(read).toHaveBeenCalledTimes(2);finish('new');expect(await result).toBe('new');expect(jest.getTimerCount()).toBe(0);
+});
+it('cancellation during retry backoff removes timers and resume listeners',async()=>{
+ const controller=new AbortController();
+ const read=jest.fn(()=>Promise.reject(Object.assign(new Error('Transient'),{name:'UnknownError'})));
+ const result=readProjectWithRecovery(read,{signal:controller.signal});const check=expect(result).rejects.toMatchObject({name:'AbortError'});
+ await flush();controller.abort();await check;
+ expect(jest.getTimerCount()).toBe(0);window.dispatchEvent(new Event('pageshow'));jest.runAllTimers();await flush();
+ expect(read).toHaveBeenCalledTimes(1);
+});

@@ -1,3 +1,4 @@
+import { readProjectWithRecovery } from './projectReadRecovery';
 // Regression coverage for the lifecycle gaps found in the follow-up audit.
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -86,7 +87,7 @@ test.each(['Publication failed', 'SOURCE_PUBLICATION_CONFLICT', 'AbortError'])('
  let finishHydration;
  const hydrated=new Promise(resolve=>{finishHydration=resolve;});
  await act(async()=>{makeFunction(loadBody,{
-  ...env,activeCodeArchitectureRowsKey:A,beginCbaLoad:api.beginLoad,adoptCbaTableData:rows=>{api.adoptRows(rows);finishHydration();},
+  ...env,cbaTableData:api.rows,readProjectWithRecovery,activeCodeArchitectureRowsKey:A,beginCbaLoad:api.beginLoad,adoptCbaTableData:rows=>{api.adoptRows(rows);finishHydration();},
   readCodeArchitectureRowsForRepo:async()=>({rows:await readCbaRowsFromIndexedDB(A),found:true}),
   requestAnimationFrame:callback=>callback(),ensureCodeArchitectureTraceIdsAsync:async rows=>rows,
   immutableFunctionalRowsAsync:async rows=>rows,setSelectedCbaElement(){},setActiveCodeArchitectureSelection(){},

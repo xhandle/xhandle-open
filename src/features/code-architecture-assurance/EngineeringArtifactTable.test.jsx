@@ -61,3 +61,78 @@ it('clears the engineering cell highlight with collaborator context and allows r
     act(()=>cell().click());expect(onSelection.mock.calls.at(-1)[0]).toMatchObject({kind:'table-cell'});
   } finally {act(()=>root.unmount());host.remove();}
 });
+
+describe('large engineering table windowing', () => {
+  let host, root, rows, columns, evaluations;
+  beforeEach(() => {
+    jest.useFakeTimers();localStorage.clear();
+    host=document.createElement('div');document.body.appendChild(host);root=createRoot(host);
+    rows=Array.from({length:1000},(_,i)=>({id:`R-${i}`,requirementText:`Requirement ${i}`}));
+    evaluations=0;
+    columns=[{key:'id',label:'ID'},{key:'requirementText',label:'Requirement',getValue:row=>{evaluations++;return row.requirementText;}}];
+  });
+  afterEach(()=>{act(()=>root.unmount());host.remove();jest.useRealTimers();});
+  const render = (extra={}) => act(()=>root.render(<EngineeringArtifactTable rows={rows} columns={columns} showActions={false} showReview={false} {...extra}/>));
+  it('bounds DOM and selection work, while copying all filtered rows', async()=>{
+    const writeText=jest.fn().mockResolvedValue();Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText}});
+    render();act(()=>jest.runAllTimers());
+    expect(host.querySelectorAll('[data-virtual-key]').length).toBeLessThan(30);
+    evaluations=0;act(()=>host.querySelector('tbody td').click());
+    expect(evaluations).toBeLessThan(30);
+    await act(async()=>host.querySelector('[aria-label="Copy table"]').click());
+    expect(writeText.mock.calls[0][0]).toContain('Requirement 999');
+    expect(writeText.mock.calls[0][0].split('\n')).toHaveLength(1002);
+  });
+  it('reveals distant targets and keeps an active editor mounted',()=>{
+    columns=[{key:'requirementText',label:'Requirement',longText:true}];
+    render();act(()=>jest.runAllTimers());
+    act(()=>host.querySelector('tbody button').click());
+    const editor=host.querySelector('textarea');expect(editor).not.toBeNull();
+    render({highlightedRowIds:['R-999'],focusRequestKey:'far'});
+    expect(host.textContent).toContain('Requirement 999');
+    expect(editor.isConnected).toBe(true);
+    expect(host.querySelectorAll('[data-virtual-key]').length).toBeLessThan(30);
+  });
+  it('searches offscreen rows and reveals a matching result',()=>{
+    render();act(()=>jest.runAllTimers());
+    host.querySelector('table').getClientRects=()=>[{width:100,height:100}];
+    const {tableSearchEntries}=require('../../components/quickSearchUtils');
+    const entries=tableSearchEntries(host);
+    expect(entries).toHaveLength(1000);
+    const target=entries.find(entry=>entry.text.includes('Requirement 999'));
+    act(()=>target.activate());
+    expect(host.textContent).toContain('Requirement 999');
+    expect(host.querySelectorAll('[data-virtual-key]').length).toBeLessThan(30);
+  });
+
+});
+
+it('uses one indicator across loading and preparation and retains prepared rows during refresh', () => {
+  jest.useFakeTimers();
+  const host = document.createElement('div');
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  const rows = Array.from({ length: 250 }, (_, i) => ({ id: String(i) }));
+  const render = loading => root.render(<EngineeringArtifactTable rows={rows} columns={[{ key: 'id', label: 'ID' }]}
+    loading={loading} loadingLabel="Loading requirements" preparationLabel="Preparing requirements" />);
+  try {
+    act(() => render(true));
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
+    expect(host.querySelector('[role="progressbar"]').getAttribute('aria-label')).toBe('Loading requirements');
+    act(() => render(false));
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
+    expect(host.querySelector('[role="progressbar"]').getAttribute('aria-label')).toBe('Preparing requirements');
+    act(() => jest.runAllTimers());
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(0);
+    const table = host.querySelector('table');
+    act(() => render(true));
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
+    expect(host.querySelector('table')).toBe(table);
+    act(() => render(false));
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(0);
+  } finally {
+    act(() => root.unmount());
+    host.remove();
+    jest.useRealTimers();
+  }
+});

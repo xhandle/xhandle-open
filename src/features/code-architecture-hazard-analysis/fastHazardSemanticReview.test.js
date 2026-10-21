@@ -1,6 +1,6 @@
 // These tests isolate detailed assessment/recovery; the real prepass is covered in fastHazardApplicability.test.js.
 jest.mock('./fastHazardApplicability',()=>({screenFastApplicability:async({sources})=>new Map(sources.map(s=>[s.id,{applicable:s.reviewedApplicability || 'Yes',rationale:s.reviewedRationale || 'Meaningful action deviation.'}]))}));
-import {reviewFastHazards,semanticReviewPrompt,obviousNarrativeIssues} from './fastHazardSemanticReview';
+import {compactReviewEntries,reviewFastHazards,semanticReviewPrompt,obviousNarrativeIssues} from './fastHazardSemanticReview';
 import {generateReviewedFastHazards as generateFastHazards} from './fastHazardPipeline';
 import {answer} from './fastHazardTestFixtures';
 import fixtures from './__fixtures__/semanticContradictions.json';
@@ -89,4 +89,10 @@ test('actual CSV concurrency and Boolean-boundary contradictions are rejected lo
  expect(obviousNarrativeIssues(fixtures.find(e=>e.source.id==='113').assessment)[0]).toContain('existence check');
  expect(obviousNarrativeIssues(fixtures.find(e=>e.source.id==='144').assessment)).toEqual([]);
  expect(obviousNarrativeIssues({...answer('STPA','a'),causalScenario:'The process does not run concurrently with later work.'})).toEqual([]);
+});
+
+test('packing serializes each candidate once rather than rescanning growing pools',()=>{
+ const entries=Array.from({length:1000},(_,i)=>({source:{id:String(i),action:`Action ${i}`,context:{mode:'auto'},evidence:{text:`Evidence ${i}`}},assessment:{}}));
+ const spy=jest.spyOn(JSON,'stringify');
+ try{compactReviewEntries(entries);expect(spy).toHaveBeenCalledTimes(3000);}finally{spy.mockRestore();}
 });
