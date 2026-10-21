@@ -24,5 +24,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify development API startup
+        run: npm run test:server-startup
+
       - name: Build
         run: CI=false npm run build

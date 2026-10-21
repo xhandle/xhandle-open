@@ -99,7 +99,8 @@
     "test": "react-scripts test",
     "server": "node scripts/dev-server.js",
     "client": "node scripts/dev-client.js",
-    "dev": "concurrently -k -n API,WEB \"npm run server\" \"npm run client\""
+    "dev": "concurrently -k -n API,WEB \"npm run server\" \"npm run client\"",
+    "test:server-startup": "node --test server/serverEntrypoint.test.cjs"
   },
   "eslintConfig": {
     "extends": [
