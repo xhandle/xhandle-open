@@ -730,6 +730,8 @@ app.use((req, _res, next) => {
   next();
 });
 
+require("./server/workspaceTransfer.cjs").mountWorkspaceTransfer(app, () => db?.filename);
+
 /* ----------------------------- OpenAI key storage helpers ----------------------------- */
 function maskOpenAIKey(key) {
   if (!key || typeof key !== "string") return null;
