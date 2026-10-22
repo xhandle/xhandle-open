@@ -1,5 +1,6 @@
 import { computeArchitectureByFunction, computeFunctionGroupsByFile, cleanArchLabel } from './diagramArchitectureIndexes';
 import useCodeArchitectureQuickSearch from './useCodeArchitectureQuickSearch';
+import useDiagramResizeFit from './useDiagramResizeFit';
 import { functionalGridColumns } from './functionalLayout';
 // LiteSummaryDiagramReactFlowGitHub.js — Main diagram component using layout manager
 import React, {
@@ -2991,17 +2992,7 @@ useEffect(() => {
 }, [nodes.length, edges.length, fitCurrentView, shouldSuppressAutoFit]);
 
 // Auto-fit when the host container size changes
-useEffect(() => {
-  if (!diagramHostRef.current) return;
-  const ro = new ResizeObserver(() => {
-    setTimeout(() => {
-      if (shouldSuppressAutoFit()) return;
-      fitCurrentView({ duration: 0 });
-    }, 0);
-  });
-  ro.observe(diagramHostRef.current);
-  return () => ro.disconnect();
-}, [fitCurrentView, shouldSuppressAutoFit]);
+useDiagramResizeFit(diagramHostRef, fitCurrentView, shouldSuppressAutoFit);
 
   function findNodeUnderPointer(evt) {
     const bounds = diagramHostRef.current?.getBoundingClientRect();
