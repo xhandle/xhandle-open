@@ -1,0 +1,11 @@
+# Audit and enforce xHandle Desktop functional parity
+
+Execute this prompt, including fixes and validation. Compare /Users/Nick/xhandle-open with the pinned shared source and installed build in /Users/Nick/xhandle-desktop. Read applicable AGENTS.md first.
+
+Keep Electron code exclusively in the private desktop repository. Make shared fixes upstream, publish them, and advance the submodule pin; never fork shared application code. Preserve the application ID, stable origin and user data. Never read or copy personal projects, credentials or databases into tests or artifacts.
+
+1. Ask for examples of differences while independently auditing source provenance, build flags, backend routes, permissions, file/folder selection, backup/restore, IndexedDB persistence, downloads, clipboard, previews/external links, AI request/response streaming and cancellation, document ingestion, local/GitHub source acquisition, diagrams, hazards, requirements, traceability, safety remediation and external integrations.
+2. Reproduce differences in isolated profiles using the same source and synthetic inputs. Distinguish desktop defects from existing shared failures, missing user configuration and external services. Do not invent successful paid AI or live integration tests.
+3. Fix demonstrated host integration defects without weakening renderer isolation, granting remote frames native privileges, shipping secrets, or changing user data. Add meaningful regression coverage that runs through the real renderer and packaged app; startup alone is insufficient. Exercise HTTP status, request bodies, streaming, binary downloads and persistence.
+4. Run the shared application tests, host regression tests, development smoke and packaged smoke. Record exact results and any remaining manual/device/external-service checks in a parity report. Add ongoing CI regression checks. Functional equivalence must be supported by evidence; do not claim every feature has been exercised when it has not.
+5. Produce a versioned macOS build using the existing local signing/notarization setup if available, verify signature/tickets/Gatekeeper, and provide the installer. Do not replace a running installed application or touch its data without an explicit request. Commit coherent changes and leave an honest report of limitations.

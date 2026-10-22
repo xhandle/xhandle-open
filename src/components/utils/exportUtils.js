@@ -35,6 +35,11 @@ export async function exportReport(text, type) {
       .replace(/\n{2,}/g, '\n\n'); // preserve spacing
   
     await navigator.clipboard.writeText(markdownFormatted);
+    if (typeof window.xhandleDesktop?.openExternal === "function") {
+      await window.xhandleDesktop.openExternal("https://docs.google.com/document/u/0/create");
+      alert("Markdown copied to clipboard. Paste it and enable 'auto-detect markdown' in Docs.");
+      return;
+    }
     const win = window.open("https://docs.google.com/document/u/0/create", "_blank");
     if (!win) alert("Please enable pop-ups to paste into Google Docs.");
     else alert("Markdown copied to clipboard. Paste it and enable 'auto-detect markdown' in Docs.");
