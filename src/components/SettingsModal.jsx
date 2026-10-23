@@ -1,4 +1,3 @@
-import FullWorkspaceTransfer from './FullWorkspaceTransfer';
 import { reconcileStorageCleanup } from './storageCleanupWorkspace';
 import { readStoragePage, deleteStorageRecords, describeStorageItem } from './storageCategoryItems';
 import { inspectStorageStore } from './inspectStorageStore';
@@ -508,8 +507,6 @@ export default function SettingsModal({
   const [providerModelsByProvider, setProviderModelsByProvider] = useState({});
   const [providerModelsBusy, setProviderModelsBusy] = useState(false);
   const [providerModelsMsg, setProviderModelsMsg] = useState("");
-  const [transferBusy, setTransferBusy] = useState(false);
-  const closeSettings = () => { if (!transferBusy) onClose(); };
   const [backupState, setBackupState] = useState(getLocalBackupState());
   const [backupMsg, setBackupMsg] = useState("");
   const [storageInventory, setStorageInventory] = useState(null);
@@ -1184,19 +1181,19 @@ export default function SettingsModal({
 
   return (
     <div className="xhandle-modal-viewport fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
-      <div className="absolute inset-0 bg-black/40" onClick={closeSettings} />
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
       <div className="relative flex max-h-[calc(100dvh-2rem)] w-[920px] max-w-full flex-col overflow-hidden rounded-2xl bg-white shadow-2xl sm:max-h-[calc(100dvh-3rem)]">
         <div className="shrink-0 px-5 pt-5">
           <div className="text-lg font-semibold mb-4">Settings</div>
 
           {/* Tabs */}
           <div className="flex gap-2 mb-4 flex-wrap">
-            <TabButton disabled={transferBusy} label="AI Provider" active={tab === "openai"} onClick={() => setTab("openai")} />
-            <TabButton disabled={transferBusy} label="Organization Profile" active={tab === "organization-profile"} onClick={() => setTab("organization-profile")} />
-            <TabButton disabled={transferBusy} label="VS Code" active={tab === "vscode"} onClick={() => setTab("vscode")} />
-            <TabButton disabled={transferBusy} label="Backup" active={tab === "backup"} onClick={() => setTab("backup")} />
-            <TabButton disabled={transferBusy} label="Sidebar" active={tab === "sidebar"} onClick={() => setTab("sidebar")} />
-            <TabButton disabled={transferBusy} label="Storage" active={tab === "storage"} onClick={() => setTab("storage")} />
+            <TabButton label="AI Provider" active={tab === "openai"} onClick={() => setTab("openai")} />
+            <TabButton label="Organization Profile" active={tab === "organization-profile"} onClick={() => setTab("organization-profile")} />
+            <TabButton label="VS Code" active={tab === "vscode"} onClick={() => setTab("vscode")} />
+            <TabButton label="Backup" active={tab === "backup"} onClick={() => setTab("backup")} />
+            <TabButton label="Sidebar" active={tab === "sidebar"} onClick={() => setTab("sidebar")} />
+            <TabButton label="Storage" active={tab === "storage"} onClick={() => setTab("storage")} />
           </div>
         </div>
 
@@ -1365,7 +1362,7 @@ export default function SettingsModal({
             </div>
 
             {organizationProfileMessage && <div className="rounded-lg bg-gray-100 px-3 py-2 text-sm text-gray-700" aria-live="polite">{organizationProfileMessage}</div>}
-            <div className="flex justify-end"><button className="px-3 py-2 text-sm" onClick={closeSettings}>Close</button></div>
+            <div className="flex justify-end"><button className="px-3 py-2 text-sm" onClick={onClose}>Close</button></div>
           </section>
         )}
 
@@ -1468,7 +1465,7 @@ export default function SettingsModal({
                 </button>
               )}
 
-              <button className="ml-auto px-3 py-2" onClick={closeSettings}>
+              <button className="ml-auto px-3 py-2" onClick={onClose}>
                 Close
               </button>
             </div>
@@ -1671,7 +1668,7 @@ export default function SettingsModal({
               ) : (
                 <span className="text-xs text-gray-500">Not configured</span>
               )}
-              <button className="ml-auto px-3 py-2" onClick={closeSettings}>
+              <button className="ml-auto px-3 py-2" onClick={onClose}>
                 Close
               </button>
             </div>
@@ -1682,7 +1679,6 @@ export default function SettingsModal({
 
         {tab === "backup" && (
           <section className="space-y-4">
-            <FullWorkspaceTransfer onBusyChange={setTransferBusy} backupBusy={backupState.busy && !transferBusy} />
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-2">
               <div className="text-sm font-medium text-slate-900">Browser storage stays primary</div>
               <p className="text-sm text-slate-600">
@@ -1803,7 +1799,7 @@ export default function SettingsModal({
             )}
 
             <div className="flex items-center gap-2 pt-1">
-              <button className="ml-auto px-3 py-2" onClick={closeSettings}>
+              <button className="ml-auto px-3 py-2" onClick={onClose}>
                 Close
               </button>
             </div>
@@ -2055,7 +2051,7 @@ export default function SettingsModal({
             </div>
 
             <div className="flex items-center gap-2 pt-1">
-              <button className="ml-auto px-3 py-2" onClick={closeSettings}>
+              <button className="ml-auto px-3 py-2" onClick={onClose}>
                 Close
               </button>
             </div>
@@ -2106,7 +2102,7 @@ export default function SettingsModal({
             </div>
 
             <div className="flex items-center gap-2 pt-1">
-              <button className="ml-auto px-3 py-2" onClick={closeSettings}>
+              <button className="ml-auto px-3 py-2" onClick={onClose}>
                 Close
               </button>
             </div>
@@ -2163,11 +2159,10 @@ export default function SettingsModal({
 
 /* ---------------- UI helpers ---------------- */
 
-function TabButton({ label, active, onClick, disabled }) {
+function TabButton({ label, active, onClick }) {
   return (
     <button
       onClick={onClick}
-      disabled={disabled}
       className={
         "rounded-full px-3 py-1 text-sm transition " +
         (active

@@ -117,7 +117,6 @@ const listeners = new Set();
 let initialized = false;
 let dirtySinceLastBackup = false;
 let autoBackupTimer = null;
-let workspaceTransferPaused = false;
 let ignoreAutoBackupEventsUntil = 0;
 let state = {
   supported: false,
@@ -493,7 +492,6 @@ function markDirty() {
 }
 
 function scheduleAutoBackup(reason = "change") {
-  if (workspaceTransferPaused) { markDirty(); return; }
   if (Date.now() < ignoreAutoBackupEventsUntil) return;
   if (!state.autoBackupEnabled || !state.folderConfigured || state.permission !== "granted") {
     markDirty();
@@ -560,18 +558,6 @@ export function getLocalBackupState() {
   return { ...state };
 }
 
-export function pauseBackupsForWorkspaceTransfer() {
-  if (workspaceTransferPaused || state.busy) throw new Error('Another backup or transfer is in progress.');
-  workspaceTransferPaused = true;
-  if (autoBackupTimer) clearTimeout(autoBackupTimer);
-  updateState({ busy: true, statusMessage: 'Full workspace transfer in progress…' });
-  return () => {
-    workspaceTransferPaused = false;
-    updateState({ busy: false, statusMessage: '' });
-    if (dirtySinceLastBackup) autoBackupTimer = setTimeout(() => scheduleAutoBackup('workspace-transfer'), 300);
-  };
-}
-
 export async function initializeLocalBackupRuntime() {
   if (initialized || typeof window === "undefined") return;
   initialized = true;
@@ -629,10 +615,6 @@ export async function recheckBackupFolder() {
 
 export async function backupNow(options = {}) {
   const { source = "manual", silentIfUnavailable = false, mode = "folder" } = options;
-  if (workspaceTransferPaused) {
-    if (silentIfUnavailable) return null;
-    throw new Error('A full workspace transfer is in progress.');
-  }
   try {
     await setBusy(true, source.startsWith("auto:") ? "Saving backup…" : "Creating backup…");
     const snapshot = await buildBackupSnapshot();
@@ -706,7 +688,6 @@ export async function downloadBackupNow() {
 }
 
 export async function restoreFromConfiguredBackup() {
-  if (workspaceTransferPaused) throw new Error('A full workspace transfer is in progress.');
   const handle = await getCurrentDirectoryHandle();
   if (!handle) {
     throw new Error("Choose a backup folder first, or restore from a backup file instead.");
@@ -737,7 +718,6 @@ export async function restoreFromConfiguredBackup() {
 }
 
 export async function restoreFromBackupFile(file) {
-  if (workspaceTransferPaused) throw new Error('A full workspace transfer is in progress.');
   await setBusy(true, "Restoring from backup file…");
   try {
     const snapshot = await readJsonFile(file);

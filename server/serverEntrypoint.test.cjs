@@ -31,9 +31,6 @@ test('development launcher starts the exported API and serves requests', { timeo
     const response = await fetch(`http://127.0.0.1:${port}/api/chat/ping`);
     assert.equal(response.status, 200);
     assert.equal((await response.json()).ok, true);
-    const transfer = await fetch(`http://127.0.0.1:${port}/api/workspace-transfer/export`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-    assert.equal(transfer.status, 200);
-    assert.deepEqual((await transfer.json()).baselines, []);
   } finally {
     clearTimeout(timer);
     child.kill();

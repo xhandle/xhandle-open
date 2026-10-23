@@ -1,4 +1,3 @@
-import WorkspaceTransferGate from './components/WorkspaceTransferGate';
 import AppRecoveryBoundary from './components/AppRecoveryBoundary';
 import React from "react";
 import ReactDOM from "react-dom/client";
@@ -38,9 +37,9 @@ if (process.env.REACT_APP_XHANDLE_REVIEW_MODE === "true") {
   const root = ReactDOM.createRoot(document.getElementById("root"));
   root.render(
     <React.StrictMode>
-      <WorkspaceTransferGate><LicenseProvider>
+      <LicenseProvider>
         <AppRecoveryBoundary><App /></AppRecoveryBoundary>
-      </LicenseProvider></WorkspaceTransferGate>
+      </LicenseProvider>
     </React.StrictMode>
   );
 
