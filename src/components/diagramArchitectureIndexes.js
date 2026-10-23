@@ -87,7 +87,7 @@ export function archPath(row) {
   };
 }
 
-export function computeArchitectureByFunction(rows) {
+export function computeArchitectureByFunction(rows, { useNodeIds = false } = {}) {
   const map = new Map();
   const accumulated = new Map();
   for (const row of rows || []) {
@@ -117,7 +117,10 @@ export function computeArchitectureByFunction(rows) {
       rationale: row.architecture?.rationale || '',
     };
 
-    [row.fromFunction, row.toFunction].filter(Boolean).forEach((fn) => {
+    const endpoints = useNodeIds
+      ? [row.fromFunction && (row.fromNodeId || `n:${row.fromFunction}`), row.toFunction && (row.toNodeId || `n:${row.toFunction}`)]
+      : [row.fromFunction, row.toFunction];
+    endpoints.filter(Boolean).forEach((fn) => {
       if (!map.has(fn)) {
         accumulated.set(fn, { refs: new Set(refs), files: new Set(files) });
         map.set(fn, { ...arch, evidence });

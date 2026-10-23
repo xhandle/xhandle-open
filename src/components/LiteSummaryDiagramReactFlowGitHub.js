@@ -1,4 +1,5 @@
 import { computeArchitectureByFunction, computeFunctionGroupsByFile, cleanArchLabel } from './diagramArchitectureIndexes';
+import { resolveDiagramDetailRows, diagramDetailLinkTarget } from './diagramDetailTrace';
 import useCodeArchitectureQuickSearch from './useCodeArchitectureQuickSearch';
 import useDiagramResizeFit from './useDiagramResizeFit';
 import { functionalGridColumns } from './functionalLayout';
@@ -2269,6 +2270,8 @@ const DiagramBody = forwardRef(function DiagramBody(
   }, [largeCsuCanvas, storageKey]);
   const nodeIdCounter = useRef(0);
   const [editModal, setEditModal] = useState(null);
+  const editFunctionalTraceRows = useMemo(() => resolveDiagramDetailRows(rows, editModal), [rows, editModal]);
+  const editLinkTarget = useMemo(() => diagramDetailLinkTarget(editModal, editFunctionalTraceRows), [editModal, editFunctionalTraceRows]);
   const [editModalExpanded, setEditModalExpanded] = useState(false);
   const hazardHeaders = useMemo(() => (
     Array.isArray(hazardSummary?.[0]) ? hazardSummary[0].map((header) => String(header || '')) : []
@@ -2385,8 +2388,8 @@ const DiagramBody = forwardRef(function DiagramBody(
     return associated;
   }, [getHazardCell, hazardDataRows, normalizeAssociationText]);
   const editHazardRows = useMemo(
-    () => getAssociatedHazardRows(editModal),
-    [editModal, getAssociatedHazardRows]
+    () => getAssociatedHazardRows(editLinkTarget),
+    [editLinkTarget, getAssociatedHazardRows]
   );
   const assuranceArtifactGroups = useMemo(() => ([
     {
@@ -2501,28 +2504,9 @@ const DiagramBody = forwardRef(function DiagramBody(
           ...row,
           resolvedSourceArchitectureRefs: resolveAssuranceRefs(row, group.key),
         }))
-        .filter((row) => row.resolvedSourceArchitectureRefs.some((ref) => assuranceRefMatchesTarget(ref, editModal))),
+        .filter((row) => row.resolvedSourceArchitectureRefs.some((ref) => assuranceRefMatchesTarget(ref, editLinkTarget))),
     }));
-  }, [assuranceArtifactGroups, editModal, resolveAssuranceRefs]);
-  const editFunctionalTraceRows = useMemo(() => {
-    if (!editModal) return [];
-    const refs = Array.from(new Set([
-      ...(editModal.codeEvidence?.rowRefs || []),
-      ...(editModal.rowRefs || []),
-      editModal.rowRef,
-    ].filter((ref) => ref !== undefined && ref !== null && ref !== '')));
-    return refs
-      .map((ref) => {
-        const refText = String(ref).trim();
-        const exactIndex = rows.findIndex((row) => String(row?.rowRef || '').trim() === refText);
-        const numeric = Number(refText.replace(/^row\s*/i, ''));
-        const fallbackIndex = Number.isFinite(numeric) ? numeric - 1 : -1;
-        const rowIndex = exactIndex >= 0 ? exactIndex : fallbackIndex;
-        const row = rowIndex >= 0 ? rows[rowIndex] : null;
-        return { ref: refText, rowIndex, row };
-      })
-      .filter((entry) => entry.row || entry.ref);
-  }, [editModal, rows]);
+  }, [assuranceArtifactGroups, editModal, editLinkTarget, resolveAssuranceRefs]);
   const { fitView, project, getNodes, getEdges, getViewport, setViewport, viewportInitialized } = useReactFlow();
   useCodeArchitectureQuickSearch({hostRef:diagramHostRef,storageKey,getNodes,getEdges,fitView,setNodes,setEdges,setSelectedNodeIds,setHighlightedEdgeId});
   const useWindowsReviewPinchZoom = reviewMode && isWindowsReviewRuntime();
@@ -3274,7 +3258,7 @@ useEffect(() => {
   const structureUnchanged = builtOnceRef.current && sig === structureRef.current;
   if (structureUnchanged) return;
   const preferredFileByFunction = computePreferredFileByFunction(rows);
-  const architectureByFunction = computeArchitectureByFunction(rows);
+  const architectureByNode = computeArchitectureByFunction(rows, { useNodeIds: true });
   const functionGroupsByFile = computeFunctionGroupsByFile(rows);
   const existingNodesById = new Map(nodes.map(node => [node.id, node]));
 
@@ -3307,7 +3291,7 @@ useEffect(() => {
 	    const endpointArch = nodeRow?.side === 'to'
 	      ? nodeRow?.row?.toArchitecture
 	      : nodeRow?.row?.fromArchitecture;
-	    const arch = endpointArch || architectureByFunction.get(name) || {
+	    const arch = endpointArch || architectureByNode.get(id) || {
 	      subsystem: 'Application Subsystem',
 	      csci: 'Application Software',
 	      csc: 'Core Components',
@@ -3335,7 +3319,7 @@ useEffect(() => {
           cscKey,
           csuKey,
           architectureDescriptions: arch.descriptions || {},
-          codeEvidence: arch.evidence,
+          codeEvidence: architectureByNode.get(id)?.evidence || arch.evidence,
         },
       };
     }
@@ -3360,7 +3344,7 @@ useEffect(() => {
         cscKey,
         csuKey,
         architectureDescriptions: arch.descriptions || {},
-        codeEvidence: arch.evidence,
+        codeEvidence: architectureByNode.get(id)?.evidence || arch.evidence,
       },
     };
   });

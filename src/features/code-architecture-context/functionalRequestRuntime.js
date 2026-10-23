@@ -106,7 +106,10 @@ export function createFunctionalRequestRuntime({ request, cache, signal, concurr
       queue.push({ prompt, requestSignal, meta, resolve, reject, id: `caller-${sequence++}` }); schedule();
     });
   };
-  run.logicalConcurrency = 32;
+  // A small preparation window keeps all four network lanes supplied without
+  // retaining 32 callers' prompts, evidence and checkpoint reads at once.
+  // This bounds advance work, not the number of relationships to analyze.
+  run.logicalConcurrency = 8;
   run.accept = (prompt, response) => cache?.accept(prompt, response);
   run.close = () => { signal?.removeEventListener('abort', rejectAborted); rejectAborted(); };
   return run;

@@ -32,6 +32,26 @@ async function run(rows, request, options = {}) {
   finally { runtime.close(); }
 }
 
+test('functional preparation bounds concurrent checkpoint reads without changing the model', async () => {
+  const rows = fixtures(120);
+  const baseline = await processFunctionalModel(rows, { request: reply });
+  let activeReads = 0, peakReads = 0;
+  const cache = {
+    get: async () => {
+      activeReads++;
+      peakReads = Math.max(peakReads, activeReads);
+      try { await delay(2); return undefined; }
+      finally { activeReads--; }
+    },
+    accept: async () => {},
+  };
+  const result = await run(rows, reply, { cache });
+  expect(peakReads).toBeLessThanOrEqual(8);
+  expect(peakReads).toBeGreaterThan(1);
+  expect(result).toEqual(baseline);
+  expect(buildFunctionalModelRows(result)).toEqual(buildFunctionalModelRows(baseline));
+});
+
 test('packed mixed-language callers preserve complete output with fewer requests and bounded network concurrency', async () => {
   const rows = fixtures(120), baselineRequest = jest.fn(reply);
   const baseline = await processFunctionalModel(rows, { request: baselineRequest });
