@@ -1,7 +1,7 @@
 import {isAcceptedApplicabilityDecision} from './hazardFieldContract';
 import {safeHazardObserver} from './hazardCompletionSupport';
 import {assumptionHazardFallback} from './assumptionHazardFallback';
-import {canDeferHazardFailure} from './hazardDeferredFailures';
+import {canDeferHazardFailure,preferredHazardFailure,canCompleteHazardWithAssumptions} from './hazardDeferredFailures';
 import {createHazardEvidenceChunker} from './hazardEvidenceChunking';
 import {compactHazardPromptPayload,hazardPromptFits,assertHazardPromptFits,isHazardInputLimitError} from './hazardPromptPayload';
 import {createHazardAutomaticRecovery} from './hazardAutomaticRecovery';
@@ -59,14 +59,15 @@ export async function generateFastHazards({method,sources,context,checkpoint,sig
      onDiagnostic({...diagnostic,event:'finished',elapsedMs:Date.now()-startedAt});return value;
    }catch(error){onDiagnostic({...diagnostic,event:'failed',elapsedMs:Date.now()-startedAt,errorType:error.name});throw error;}
  };
- const cache=resilientHazardCheckpoint(checkpoint,{signal:checkpointSignal,onStorageState});
+ const cache=resilientHazardCheckpoint(checkpoint,{signal:checkpointSignal,producerSignal:signal,onStorageState});
  const evidenceChunker=createHazardEvidenceChunker({checkpoint:cache,signal,
   request:(p,o)=>tracked('evidence',request,p,o,o.rows,'oversized evidence extraction'),
   onProgress:event=>{onDiagnostic({method,stage:'evidence',event:'progress',...event});onProgress({message:event.message});},
  });
  const informationPending=new Set();
  const results=new Map(),screenedDecisions=new Map(),failures={},budget=createGenerationBudget();
- const key=source=>({pipeline:FAST_HAZARD_VERSION,method,context,source});
+ const bases=new WeakMap();
+ const key=source=>{if(!bases.has(source))bases.set(source,{pipeline:FAST_HAZARD_VERSION,method,context,source});return bases.get(source);};
  const saveAssessment=(source,value)=>cache.write(key(source),{...value,...(screenedDecisions.has(source.id)?{acceptedApplicability:screenedDecisions.get(source.id)}:{})});
  const report=()=>onProgress({step:20+75*results.size/Math.max(1,sources.length),total:100,completed:results.size,message:`Assessed ${results.size} of ${sources.length} ${method} guide-phrase rows`});
  const excluded=(source,decision)=>({id:source.id,applicable:'No',applicabilityRationale:decision.rationale,classification:'Not applicable',classificationRationale:'Guide phrase excluded.',assumptions:'Not applicable',...(decision.evidencePreparation?{evidencePreparation:decision.evidencePreparation}:{})});
@@ -85,8 +86,11 @@ export async function generateFastHazards({method,sources,context,checkpoint,sig
  };
  try{
   check();
-  const saved=await cache.readMany(sources.map(key));check();
-  sources.forEach((source,i)=>{if(source.reviewedApplicability==='No'){results.set(source.id,excluded(source,{rationale:source.reviewedRationale || 'User applicability decision: No.'}));excludedCount++;return;}const decision=saved[i]?.acceptedApplicability;const validationSource=isAcceptedApplicabilityDecision(decision)?{...source,screenedApplicability:decision.applicable,screenedRationale:decision.rationale}:source;if(saved[i] && !validateFastAssessment(method,saved[i],validationSource,{structuralOnly:true}).length){results.set(source.id,saved[i]);recovered++;}});
+  for(let offset=0;offset<sources.length;offset+=48){
+  const group=sources.slice(offset,offset+48);
+  const saved=await cache.readMany(group.map(key));check();
+  group.forEach((source,i)=>{if(source.reviewedApplicability==='No'){results.set(source.id,excluded(source,{rationale:source.reviewedRationale || 'User applicability decision: No.'}));excludedCount++;return;}const decision=saved[i]?.acceptedApplicability;const validationSource=isAcceptedApplicabilityDecision(decision)?{...source,screenedApplicability:decision.applicable,screenedRationale:decision.rationale}:source;if(saved[i] && !validateFastAssessment(method,saved[i],validationSource,{structuralOnly:true}).length){results.set(source.id,saved[i]);recovered++;}});
+  }
   report();
   // Complete independent work first, then revisit only unresolved rows twice.
   // Checkpoints and the results map prevent repeating accepted work.
@@ -150,15 +154,15 @@ export async function generateFastHazards({method,sources,context,checkpoint,sig
     while(!stopped && next<pending.length){
       const batch=[pending[next++]];
       while(next<pending.length && batch.length<batchRows && resultsFirstPrompt(method,[...batch,pending[next]],context).length<=limit)batch.push(pending[next++]);
-      try{await assess(batch,0,failures);}catch(error){stopped=error;}
+      try{await assess(batch,0,failures);}catch(error){stopped=preferredHazardFailure(stopped,error);}
     }
   }));
   check();if(stopped)throw stopped;
   }
   return await completeWithAssumptions();
  }catch(cause){
-  const providerStatus=Number(cause?.status || cause?.response?.status || cause?.message?.match(/LLM proxy error \((\d+)\)/)?.[1]);
-  if(!signal?.aborted && cause?.name!=='AbortError' && [401,402,403,404,429].includes(providerStatus)){
+  if(canCompleteHazardWithAssumptions(cause,signal)){
+   const providerStatus=Number(cause?.status || cause?.response?.status || cause?.message?.match(/LLM proxy error \((\d+)\)/)?.[1]);
    onDiagnostic({method,event:'provider-unavailable-completion',status:providerStatus});
    return await completeWithAssumptions();
   }

@@ -75,3 +75,24 @@ test('explicit Stop is never deferred',async()=>{
  await expect(generateFastHazards({method:'STPA',sources:[source(1)],context:{},request,signal:controller.signal,...quiet})).rejects.toMatchObject({name:'AbortError'});
  expect(request).toHaveBeenCalledTimes(1);
 });
+
+test.each(['screening','generation'])('%s preserves storage failure over concurrent provider failure in either order',async stage=>{
+ for(const storageFirst of [true,false]){
+  const storage=Object.assign(new Error('Required evidence unavailable'),{code:'HAZARD_EVIDENCE_STORAGE_UNAVAILABLE'});
+  const provider=Object.assign(new Error('Denied'),{status:403});
+  const pending=[];
+  const request=jest.fn(()=>new Promise((resolve,reject)=>pending.push(reject)));
+  const diagnostic=jest.fn();
+  const run=stage==='screening'
+   ?screenFastApplicability({method:'STPA',sources:[source(1,false),source(2,false)],context:{},request,maxBatchRows:1})
+   :generateFastHazards({method:'STPA',sources:Array.from({length:9},(_,i)=>source(i+1)),context:{},request,...quiet,onDiagnostic:diagnostic});
+  const outcome=run.catch(e=>e);
+  for(let i=0;i<100 && pending.length<2;i++)await new Promise(resolve=>setTimeout(resolve,0));
+  expect(pending).toHaveLength(2);
+  pending[0](storageFirst?storage:provider);
+  await new Promise(resolve=>setTimeout(resolve,0));
+  pending[1](storageFirst?provider:storage);
+  expect(await outcome).toMatchObject({code:'HAZARD_EVIDENCE_STORAGE_UNAVAILABLE'});
+  expect(diagnostic.mock.calls.some(([e])=>e.event==='assumption-based-completion')).toBe(false);
+ }
+});

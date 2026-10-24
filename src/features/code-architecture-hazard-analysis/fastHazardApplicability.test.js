@@ -31,7 +31,7 @@ test.each(['STPA','HARA','FHA'])('%s screens first and excludes No from generati
 test('147 rows use four compact screen batches and all-No makes zero detailed requests',async()=>{
  const screen=jest.fn(async p=>rows(p).map(({id})=>({id,applicable:'No',rationale:'This phrase does not describe the action.'})));
  const request=jest.fn(),reviewRequest=jest.fn();
- const result=await generateFastHazards({method:'STPA',sources:sources(147),context:{},applicabilityRequest:screen,request,reviewRequest});
+ const result=await generateFastHazards({method:'STPA',sources:sources(147),context:{},checkpoint:{writeMany:async()=>{}},applicabilityRequest:screen,request,reviewRequest});
  expect(result).toHaveLength(147);expect(screen).toHaveBeenCalledTimes(4);
  expect(request).not.toHaveBeenCalled();expect(reviewRequest).not.toHaveBeenCalled();
 });

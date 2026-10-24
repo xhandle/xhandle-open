@@ -80,7 +80,7 @@ export async function createCodeHazardCheckpoint(scopeParts, { regenerate = fals
     async readMany(bases) {
       const values=[];
       for(let offset=0;offset<bases.length;offset+=48){
-        const ids=await Promise.all(bases.slice(offset,offset+48).map(identify));
+        const ids=[];for(const basis of bases.slice(offset,offset+48))ids.push(await identify(basis));
         check();
         const records=await transaction('readonly',tx=>batchRequests(tx,ids.map(id=>()=>tx.store.get(id))));
         values.push(...records.map(record=>record?.value));
@@ -89,7 +89,7 @@ export async function createCodeHazardCheckpoint(scopeParts, { regenerate = fals
       return values;
     },
     async writeMany(entries) {
-      const ids = await Promise.all(entries.map(entry => identify(entry.basis)));
+      const ids=[];for(const entry of entries)ids.push(await identify(entry.basis));
       check();
       await transaction('readwrite',tx=>batchRequests(tx,entries.map((entry,index) => ()=>tx.store.put({id:ids[index], scope,
         projectId:scopeParts.projectId, repoId:scopeParts.repoId, value:entry.value,

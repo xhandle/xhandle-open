@@ -169,3 +169,45 @@ test('saved cache entries are bounded while pending writes remain readable',asyn
  expect(await cache.read({id:'pending'})).toBe('protected');
  release();await tick();await cache.flush();
 });
+
+test('backpressure cancellation releases the producer without discarding queued work',async()=>{
+ const controller=new AbortController();let release;
+ const backend={write:()=>new Promise(resolve=>{release=resolve;})};
+ const cache=resilientHazardCheckpoint(backend,{maxPendingEntries:1,producerSignal:controller.signal});
+ await cache.write({id:1},'saved later');await tick();
+ let settled=false;
+ const second=cache.write({id:2},'not enqueued').catch(error=>{settled=true;return error;});
+ await tick();expect(settled).toBe(false);
+ controller.abort();expect((await second).name).toBe('AbortError');
+ expect(cache.memoryStats().pending).toBe(1);
+ expect(await cache.read({id:1})).toBe('saved later');
+ release();await tick();expect(cache.memoryStats().pending).toBe(0);
+});
+
+test('byte capacity pauses below the entry limit and resumes after persistence',async()=>{
+ let release;const gate=new Promise(resolve=>{release=resolve;});
+ const cache=resilientHazardCheckpoint({write:()=>gate},{maxPendingEntries:100,maxPendingBytes:200});
+ await cache.write({id:1},'x'.repeat(60));await tick();
+ let completed=false;const second=cache.write({id:2},'x'.repeat(60)).then(()=>{completed=true;});
+ await tick();expect(completed).toBe(false);expect(cache.memoryStats().pending).toBe(1);
+ release();await second;await tick();expect(cache.memoryStats().pendingBytes).toBe(0);
+});
+
+test('one oversized checkpoint progresses alone without dropping evidence',async()=>{
+ let release;const gate=new Promise(resolve=>{release=resolve;}),persisted=[];
+ const cache=resilientHazardCheckpoint({write:async(b,v)=>{await gate;persisted.push(v);}},{maxPendingBytes:32});
+ await cache.write({id:1},'x'.repeat(100));await tick();
+ let completed=false;const second=cache.write({id:2},'small').then(()=>{completed=true;});
+ await tick();expect(completed).toBe(false);expect(cache.memoryStats().pending).toBe(1);
+ release();await second;await tick();expect(persisted).toEqual(['x'.repeat(100),'small']);
+});
+
+test('slow-storage notifications keep the analysis-paused status visible',async()=>{
+ const controller=new AbortController(),state=jest.fn();
+ const cache=resilientHazardCheckpoint({write:()=>new Promise(()=>{})},{maxPendingEntries:1,producerSignal:controller.signal,onStorageState:state});
+ await cache.write({id:1},'first');await tick();
+ const pending=cache.write({id:2},'second').catch(e=>e);
+ await tick();jest.advanceTimersByTime(5000);await tick();
+ expect(state).toHaveBeenLastCalledWith(expect.objectContaining({message:expect.stringContaining('Analysis paused')}));
+ controller.abort();expect((await pending).name).toBe('AbortError');
+});

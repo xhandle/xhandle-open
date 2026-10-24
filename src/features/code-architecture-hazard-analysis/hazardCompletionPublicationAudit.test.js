@@ -20,7 +20,9 @@ test.each(['STPA','HARA','FHA'])('%s publishes every expected row despite unavai
  expect(new Set(rows.map(row=>row[headers.indexOf('Raw Analysis Row ID')])).size).toBe(7);
  expect(rows.every(row=>row[headers.indexOf('Assessment Basis')].includes('Assumption-based'))).toBe(true);
  expect(updates.at(-1).generatedSheets.Summary).toEqual(run.generatedSheets.Summary);
- expect(saveCodeArchitectureHazardRun).toHaveBeenCalledTimes(1);
+ // Persist the recovery manifest before work, then the completed run.
+ expect(saveCodeArchitectureHazardRun).toHaveBeenCalledTimes(2);
+ expect(saveCodeArchitectureHazardRun.mock.calls[1][0].runState).toBe('complete');
  const reloaded=normalizeCodeArchitectureHazardRun(JSON.parse(JSON.stringify(run)));
  expect(parseCsv(toCsvText(reloaded.generatedSheets.Summary))).toEqual(run.generatedSheets.Summary.map(row=>row.map(String)));
  // Completion in memory is distinct from durable readiness for downstream use.

@@ -1,5 +1,5 @@
 import {isAcceptedApplicabilityDecision} from './hazardFieldContract';
-import {canDeferHazardFailure} from './hazardDeferredFailures';
+import {canDeferHazardFailure,preferredHazardFailure} from './hazardDeferredFailures';
 import {createHazardEvidenceChunker} from './hazardEvidenceChunking';
 import {compactHazardPromptPayload,hazardPromptFits,assertHazardPromptFits,isHazardInputLimitError} from './hazardPromptPayload';
 import {hazardPromptBytes,hazardInputLimit} from './fastHazardBudgets';
@@ -130,7 +130,7 @@ export async function screenFastApplicability({method,sources,context,checkpoint
   for(const source of pending)chunker.plan?.(applicabilityPrompt(method,[source],context),{maxTokens:8000,inputByteLimit:SCREEN_BYTES});
   let next=0,failure;
   await Promise.all(Array.from({length:Math.min(3,batches.length)},async()=>{
-    while(!failure && next<batches.length){const index=next++;try{check(signal);await assess(batches[index]);}catch(error){failure=failure || error;}}
+    while(!failure && next<batches.length){const index=next++;try{check(signal);await assess(batches[index]);}catch(error){failure=preferredHazardFailure(failure,error);}}
   }));
   if(failure)throw failure;
   // Finish cheap compact screening before any evidence work occupies its workers.

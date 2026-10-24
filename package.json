@@ -61,6 +61,7 @@
     "framer-motion": "^12.0.5",
     "googleapis": "^105.0.0",
     "handsontable": "^15.2.0",
+    "hash.js": "1.1.7",
     "html-to-image": "^1.11.13",
     "https-browserify": "^1.0.0",
     "iconv-lite": "^0.6.3",

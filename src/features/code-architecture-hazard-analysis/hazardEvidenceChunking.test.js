@@ -266,3 +266,14 @@ test('unexpected provider input rejection registers an additional identified evi
  await chunker.run(prompt,{maxTokens:8000},async p=>{if(!p.includes('Evidence summaries:'))throw new Error('context_length_exceeded');return [];});
  expect(events[0]).toMatchObject({evidenceItem:2,evidenceTotal:2});
 });
+
+test('evicted evidence summaries reload checkpoints without repeating provider work',async()=>{
+ const checkpoint=memory(),chunker=createHazardEvidenceChunker({request:extract,checkpoint,cacheBytes:1,cacheEntries:0});
+ const prompt=applicabilityPrompt('STPA',[source],{}),send=async()=>[];
+ await chunker.run(prompt,{maxTokens:8000},send);
+ const calls=extract.mock.calls.length;
+ expect(calls).toBeGreaterThan(0);
+ await chunker.run(prompt,{maxTokens:8000},send);
+ expect(extract).toHaveBeenCalledTimes(calls);
+ expect(chunker.memoryStats()).toEqual(expect.objectContaining({summaries:expect.objectContaining({entries:0}),prepared:expect.objectContaining({entries:0}),inFlight:0,preparationBudgets:1}));
+});

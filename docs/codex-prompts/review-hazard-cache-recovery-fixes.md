@@ -1,0 +1,5 @@
+# Review the hazard cache recovery fixes
+
+Review the current implementation of completed-evidence identity tracking, recoverable checkpoint errors, non-deferrable storage failures and capacity-wait status transitions. Verify that the previous two regressions are fixed without changing evidence budgets, discarding results, weakening citations, losing cancellation or misreporting persistence. Examine call sites and error handling, including partial preparation, late completion, concurrent capacity waits and continuation.
+
+Run the complete hazard suite and targeted independent regression probes where coverage is missing. Compare any failure with the unchanged baseline before attributing it to these changes. Review Desktop integration evidence and clearly distinguish crash recovery from crash prevention. Do not modify runtime code during this review, use paid providers, access personal databases, restart the user's app, or publish changes. Produce a concrete review report with source references, findings by severity, validation and remaining uncertainty. Do not claim zero regressions solely because tests pass.

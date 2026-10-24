@@ -1,0 +1,5 @@
+# Fix the large-hazard reliability review findings
+
+Fix the two reproduced regressions without restoring unbounded caches, resetting evidence budgets, truncating evidence or changing persisted checkpoint identities. If previously prepared evidence was evicted and cannot be retrieved, stop recoverably with an actionable storage error rather than spending provider requests again or producing assumption-based completion. Preserve saved assessments and allow continuation after storage recovery. Cover successful checkpoint reload, unavailable/missing/invalid records, partial preparation, and pipeline error propagation.
+
+Clear the analysis-paused message when capacity becomes available while still representing pending writes accurately. Preserve cancellation, write ordering and the byte/count limits. Convert the review probes to regression tests, run the complete hazard suite and production build, and document remaining large-analysis architecture limitations. Do not publish a release or interrupt the live app.
