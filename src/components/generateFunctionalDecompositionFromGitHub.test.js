@@ -834,3 +834,12 @@ it('dismisses the saved functional error on retry but displays the new attempt f
     expect(host.textContent).not.toContain('Previous HTTP 520 error');
   } finally { act(() => root.unmount()); }
 });
+
+it('preserves C++ index metadata and source links for ref-qualified functions and constructors', () => {
+  const record = buildSourceFileIndexRecord({owner:'owner',repo:'repo',path:'src/widget.cpp',branch:'main',commitSha:'abc123',content:'Widget::Widget(const Type & first, const Type & second) : member_{first} {}\nvoid Widget::run() && noexcept {}'});
+  expect(record.sourceFunctions.map(fn => ({name:fn.functionName,start:fn.startLine,end:fn.endLine,url:fn.sourceUrl}))).toEqual([
+    {name:'Widget',start:1,end:1,url:'https://github.com/owner/repo/blob/abc123/src/widget.cpp#L1'},
+    {name:'run',start:2,end:2,url:'https://github.com/owner/repo/blob/abc123/src/widget.cpp#L2'},
+  ]);
+  expect(record.sourceFunctions[0]).toMatchObject({owner:'owner',repo:'repo',filePath:'src/widget.cpp',commitSha:'abc123'});
+});

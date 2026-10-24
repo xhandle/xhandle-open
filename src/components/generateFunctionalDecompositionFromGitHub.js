@@ -1,3 +1,4 @@
+import { extractCppSourceFunctions } from "../features/code-architecture-context/cppSourceFunctions";
 import { FUNCTIONAL_RETRY_STATUSES, backendConnectionError, functionalHttpError, withFunctionalConnectivityRecovery, probeFunctionalConnectivity } from "../features/code-architecture-context/functionalTransportRecovery";
 import { mapAnalysisWork, serialAnalysisWriter, createAnalysisPacer } from '../features/code-architecture-context/functionalWorkScheduler';
 import { functionalHierarchyIsReady } from '../features/code-architecture-context/functionalHierarchy';
@@ -253,24 +254,7 @@ function extractTopLevelPythonSymbols(source) {
 }
 
 function extractFunctionRangesCpp(source, meta) {
-  const ranges = [];
-  const seen = new Set();
-  const pattern = /(?:^|\n)\s*(?:[A-Za-z_][A-Za-z0-9_:<>,*&\s~]*\s+)+([A-Za-z_][A-Za-z0-9_:~]*)\s*\([^;{}]*\)\s*(?:const\s*)?(?:noexcept\s*)?{/g;
-  const controls = new Set(["if", "for", "while", "switch", "catch"]);
-  let match;
-  while ((match = pattern.exec(source))) {
-    const functionName = match[1].split("::").pop();
-    if (!functionName || controls.has(functionName)) continue;
-    const openIndex = source.indexOf("{", match.index);
-    const closeIndex = openIndex >= 0 ? findMatchingBraceIndex(source, openIndex) : -1;
-    const startLine = lineNumberAt(source, match.index);
-    const endLine = closeIndex >= 0 ? lineNumberAt(source, closeIndex) : startLine;
-    const key = `${functionName}:${startLine}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    ranges.push(makeSourceFunction({ ...meta, functionName, startLine, endLine }));
-  }
-  return ranges;
+  return extractCppSourceFunctions(source).map(range => makeSourceFunction({ ...meta, ...range }));
 }
 
 function extractSourceFunctions(source, lang, meta) {
@@ -337,8 +321,8 @@ export function buildSourceFileIndexRecord({ owner, repo, path, content, branch,
   return record;
 }
 
-async function indexSourceFileToIDB({ owner, repo, path, content, branch, commitSha,  ...source }) {
-  const record = buildSourceFileIndexRecord({ owner, repo, path, content, branch, commitSha, ...source });
+async function indexSourceFileToIDB({ owner, repo, path, content, branch, commitSha, ...source }, existingRecord) {
+  const record = existingRecord || buildSourceFileIndexRecord({ owner, repo, path, content, branch, commitSha, ...source });
 
   const key = codeSourceIndexKey({ owner, repo, ...source }, path);
   await idbPut(IDB_STORES.codeIndex, key, record);
@@ -3329,7 +3313,7 @@ Rules:
                   ...codeSourceProvenance(source),
                   branch: displayBranch,
                   commitSha,
-                });
+                }, currentFileRecord);
               } catch (error) { error.code = "SOURCE_STORAGE_FAILED"; throw error; }
             }
             throwIfAborted(signal);
