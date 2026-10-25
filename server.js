@@ -99,6 +99,9 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options("/api/*", cors(corsOptions));
 
+// Local archive writes have their own small request limits and private disk spool.
+app.use("/api/project-transfer-files", require("./server/projectTransferFiles.cjs").createProjectTransferRouter());
+
 /* ----------------------------- Minimal GitHub diagnostics ----------------------------- */
 app.get("/api/github/status", (req, res) => {
   res.status(200).json({

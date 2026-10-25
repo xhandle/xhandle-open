@@ -1,3 +1,5 @@
+import { wrap } from 'idb';
+import { hydrateHazardRun, isChunkedHazardRun } from '../code-architecture-hazard-analysis/hazardRunChunks';
 import { hydrateRecord, isRecordPart } from '../code-architecture-storage/chunkedRecord';
 import {
   upsertArtifacts,
@@ -230,6 +232,10 @@ async function readStoreRows(dbName: string, storeName: string) {
     if (dbName === 'xhandle' && ['code_index','copilot_baseline'].includes(storeName)) {
       const output = [];
       for (const record of records) if (!isRecordPart(record.key)) output.push({...record, value:await hydrateRecord(db, storeName, record.value)});
+      return output;
+    }
+    if (dbName === 'xhandle-code-architecture-hazard-analysis' && storeName === 'hazardAnalysisRuns') {
+      const output=[];for(const record of records)output.push(isChunkedHazardRun(record)?await hydrateHazardRun(wrap(db),record):record);
       return output;
     }
     return records;

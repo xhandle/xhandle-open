@@ -67,7 +67,9 @@ export function deleteStorageRecords(db, storeName, keys) {
   return new Promise((resolve, reject) => {
     // Keep the hazard-run metadata index consistent with its payload store.
     const paired = storeName === 'hazardAnalysisRuns' ? 'runMetadata' : storeName === 'runMetadata' ? 'hazardAnalysisRuns' : null;
-    const stores = [storeName, ...(paired && db.objectStoreNames.contains(paired) ? [paired] : [])];
+    const chunkStore=paired && db.objectStoreNames.contains('hazardRunChunks') ? 'hazardRunChunks' : null;
+    const stagingStore=paired && db.objectStoreNames.contains('hazardRunStaging') ? 'hazardRunStaging' : null;
+    const stores = [storeName, ...(paired && db.objectStoreNames.contains(paired) ? [paired] : []), ...(chunkStore?[chunkStore]:[]), ...(stagingStore?[stagingStore]:[])];
     const tx = db.transaction(stores, 'readwrite');
     tx.oncomplete = resolve;
     tx.onabort = () => reject(tx.error || new Error('Storage deletion was aborted.'));
@@ -77,7 +79,9 @@ export function deleteStorageRecords(db, storeName, keys) {
     for (const name of stores) {
       const store = tx.objectStore(name);
       if (keys === null) store.clear();
-      else keys.forEach(key => store.delete(key));
+      else if(name===chunkStore || name===stagingStore){
+        for(const key of keys){const request=store.index('runId').openCursor(key);request.onsuccess=()=>{const cursor=request.result;if(cursor){cursor.delete();cursor.continue();}};}
+      }else keys.forEach(key => store.delete(key));
     }
   });
 }

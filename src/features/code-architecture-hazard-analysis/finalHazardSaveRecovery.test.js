@@ -10,7 +10,7 @@ beforeEach(()=>{original=global.indexedDB;global.indexedDB={};localStorage.clear
 afterEach(()=>{global.indexedDB=original;jest.useRealTimers();jest.clearAllMocks();});
 test('slow healthy save stays pending without abort or duplicate write and protects reload',async()=>{
  const gate=deferred(),abort=jest.fn(),put=jest.fn(async()=>{}),states=[];
- const transaction=jest.fn(()=>({objectStore:()=>({put}),done:gate.promise,abort}));openDB.mockResolvedValue({transaction});
+ const transaction=jest.fn(()=>({objectStore:()=>({get:async()=>undefined,put}),done:gate.promise,abort}));openDB.mockResolvedValue({transaction});
  const saving=saveCodeArchitectureHazardRun(run('slow'),{onSaveState:s=>states.push(s.status)});await flush();
  const event=new Event('beforeunload',{cancelable:true});window.dispatchEvent(event);expect(event.defaultPrevented).toBe(true);
  jest.advanceTimersByTime(6000);await flush();expect(states).toContain('slow');expect(abort).not.toHaveBeenCalled();expect(transaction).toHaveBeenCalledTimes(1);
@@ -19,7 +19,7 @@ test('slow healthy save stays pending without abort or duplicate write and prote
 });
 test('transient transaction failure automatically retries after retirement',async()=>{
  const error=Object.assign(new Error('temporary abort'),{name:'AbortError'});const first=deferred();let attempts=0;
- const transaction=jest.fn(()=>({objectStore:()=>({put:async()=>{}}),done:++attempts===1?first.promise:Promise.resolve(),abort:jest.fn()}));openDB.mockResolvedValue({transaction});
+ const transaction=jest.fn(()=>({objectStore:()=>({get:async()=>undefined,put:async()=>{}}),done:++attempts===1?first.promise:Promise.resolve(),abort:jest.fn()}));openDB.mockResolvedValue({transaction});
  const saving=saveCodeArchitectureHazardRun(run('retry'));await flush();first.reject(error);await flush();
  expect(transaction).toHaveBeenCalledTimes(1);jest.advanceTimersByTime(1000);await saving;expect(transaction).toHaveBeenCalledTimes(2);
 });
@@ -27,11 +27,11 @@ test('permanent failure preserves actual error without retry and manual retry cl
  const error=Object.assign(new Error('disk quota exceeded'),{name:'QuotaExceededError'});openDB.mockRejectedValue(error);
  await expect(saveCodeArchitectureHazardRun(run('quota'))).rejects.toBe(error);
  expect(openDB).toHaveBeenCalledTimes(1);expect(await getCodeArchitectureHazardRunById('quota')).toMatchObject({finalSaveStatus:'failed',saveFailureMessage:'disk quota exceeded'});
- openDB.mockResolvedValue({transaction:()=>({objectStore:()=>({put:async()=>{}}),done:Promise.resolve()})});await saveCodeArchitectureHazardRun(run('quota'));
+ openDB.mockResolvedValue({transaction:()=>({objectStore:()=>({get:async()=>undefined,put:async()=>{}}),done:Promise.resolve()})});await saveCodeArchitectureHazardRun(run('quota'));
 });
 test('older pending save cannot clear newer memory or overtake its write',async()=>{
  const gate=deferred(),writes=[];let count=0;
- openDB.mockResolvedValue({transaction:()=>({objectStore:name=>({put:async value=>{if(name==='hazardAnalysisRuns')writes.push(value.version);}}),done:++count===1?gate.promise:Promise.resolve()})});
+ openDB.mockResolvedValue({transaction:()=>({objectStore:name=>({get:async()=>undefined,put:async value=>{if(name==='hazardAnalysisRuns')writes.push(value.version);}}),done:++count===1?gate.promise:Promise.resolve()})});
  const a=saveCodeArchitectureHazardRun({...run('versions'),version:1});await flush();
  const b=saveCodeArchitectureHazardRun({...run('versions'),version:2});await flush();
  expect(writes).toEqual([1]);expect(await getCodeArchitectureHazardRunById('versions')).toMatchObject({version:2,finalSavePending:true});
@@ -42,13 +42,13 @@ test('transient failures exhaust bounded retries and retain results',async()=>{
  const observed=saveCodeArchitectureHazardRun(run('exhausted')).catch(e=>e);await flush();jest.advanceTimersByTime(1000);await flush();jest.advanceTimersByTime(3000);
  expect(await observed).toBe(error);expect(openDB).toHaveBeenCalledTimes(3);
  expect(await getCodeArchitectureHazardRunById('exhausted')).toMatchObject({finalSavePending:true,finalSaveStatus:'failed'});
- openDB.mockResolvedValue({transaction:()=>({objectStore:()=>({put:async()=>{}}),done:Promise.resolve()})});await saveCodeArchitectureHazardRun(run('exhausted'));
+ openDB.mockResolvedValue({transaction:()=>({objectStore:()=>({get:async()=>undefined,put:async()=>{}}),done:Promise.resolve()})});await saveCodeArchitectureHazardRun(run('exhausted'));
 });
 
 test('every queued save resolves only after its own revision commits',async()=>{
  const opening=deferred(),first=deferred(),second=deferred(),writes=[];let count=0;
  openDB.mockReturnValue(opening.promise);
- const db={transaction:()=>({objectStore:name=>({put:async value=>{if(name==='hazardAnalysisRuns')writes.push(value.version);}}),done:++count===1?first.promise:second.promise})};
+ const db={transaction:()=>({objectStore:name=>({get:async()=>undefined,put:async value=>{if(name==='hazardAnalysisRuns')writes.push(value.version);}}),done:++count===1?first.promise:second.promise})};
  let aDone=false,bDone=false;
  const a=saveCodeArchitectureHazardRun({...run('truthful'),version:1}).then(()=>{aDone=true;});await flush();
  const b=saveCodeArchitectureHazardRun({...run('truthful'),version:2}).then(()=>{bDone=true;});opening.resolve(db);await flush();
@@ -64,7 +64,7 @@ test.each(['saved','failed'])('stopped run receives terminal %s storage state in
  const other=registry.start('other');other.run={...run('different'),finalSavePending:true};
  const listener=event=>registry.reconcileSave(event.detail.run);
  window.addEventListener('xhandle:hazard-save-state',listener);
- openDB.mockResolvedValue({transaction:()=>({objectStore:()=>({put:async()=>{}}),done:writing.promise,abort:()=>{}})});
+ openDB.mockResolvedValue({transaction:()=>({objectStore:()=>({get:async()=>undefined,put:async()=>{}}),done:writing.promise,abort:()=>{}})});
  try{
   const result=saveCodeArchitectureHazardRun(value).catch(e=>e);await flush();registry.stop('p:r');registry.finish('p:r',record);
   if(outcome==='saved')writing.resolve();else writing.reject(Object.assign(new Error('quota'),{name:'QuotaExceededError'}));
@@ -74,14 +74,14 @@ test.each(['saved','failed'])('stopped run receives terminal %s storage state in
   expect(registry.get('other')).toBe(other);
  }finally{
   window.removeEventListener('xhandle:hazard-save-state',listener);registry.close();
-  if(outcome==='failed'){openDB.mockResolvedValue({transaction:()=>({objectStore:()=>({put:async()=>{}}),done:Promise.resolve()})});await saveCodeArchitectureHazardRun(value);}
+  if(outcome==='failed'){openDB.mockResolvedValue({transaction:()=>({objectStore:()=>({get:async()=>undefined,put:async()=>{}}),done:Promise.resolve()})});await saveCodeArchitectureHazardRun(value);}
  }
 });
 
 test.each(['callback','event'])('synchronous %s enqueues newer revision after the current save',async kind=>{
  const first=deferred(),second=deferred(),writes=[];let count=0,newer;
  const value=run(`nested-${kind}`);
- openDB.mockResolvedValue({transaction:()=>({objectStore:name=>({put:async record=>{if(name==='hazardAnalysisRuns')writes.push(record.version);}}),done:++count===1?first.promise:second.promise})});
+ openDB.mockResolvedValue({transaction:()=>({objectStore:name=>({get:async()=>undefined,put:async record=>{if(name==='hazardAnalysisRuns')writes.push(record.version);}}),done:++count===1?first.promise:second.promise})});
  const enqueue=()=>{if(!newer)newer=saveCodeArchitectureHazardRun({...value,version:2});};
  const listener=event=>{if(event.detail.run.id===value.id && event.detail.run.version===1 && event.detail.run.finalSaveStatus==='saving')enqueue();};
  if(kind==='event')window.addEventListener('xhandle:hazard-save-state',listener);

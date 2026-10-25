@@ -1,8 +1,8 @@
+import { HAZARD_CHUNKS, stageHazardRun, hydrateHazardRun, isChunkedHazardRun, removeHazardGeneration, publishHazardRun } from './hazardRunChunks';
 import {isCurrentHazardSaveAttempt,revokeHazardSaveAttempts} from './hazardSaveAttempt';
-import { openDB } from "idb";
+import { openHazardSchema, hazardMetadata, HAZARD_STAGING } from './hazardSchema';
 
 const DB_NAME = "xhandle-code-architecture-hazard-analysis";
-const DB_VERSION = 3;
 const META_STORE = "runMetadata";
 const CHECKPOINT_STORE = "generationCheckpoints";
 const STORE_NAME = "hazardAnalysisRuns";
@@ -34,47 +34,18 @@ function emitChanged(detail = {}) {
 
 export async function openCodeArchitectureHazardDB() {
   if (typeof indexedDB === "undefined") return null;
-  const db = await openDB(DB_NAME, DB_VERSION, {
-    upgrade(db, oldVersion, newVersion, tx) {
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        const store = db.createObjectStore(STORE_NAME, { keyPath: "id" });
-        store.createIndex("projectId", "projectId", { unique: false });
-        store.createIndex("repoId", "repoId", { unique: false });
-        store.createIndex("architectureSnapshotHash", "architectureSnapshotHash", { unique: false });
-        store.createIndex("hazardMethod", "hazardMethod", { unique: false });
-      }
-      if (!db.objectStoreNames.contains(META_STORE)) {
-        const meta = db.createObjectStore(META_STORE, { keyPath: "id" });
-        meta.createIndex("projectId", "projectId");
-        meta.createIndex("repoId", "repoId");
-        // Upgrade existing records once, without materializing all run payloads.
-        const copy = async () => {
-          let cursor = await tx.objectStore(STORE_NAME).openCursor();
-          while (cursor) {
-            await meta.put(metadata(cursor.value));
-            cursor = await cursor.continue();
-          }
-        };
-        copy().catch(() => tx.abort());
-      }
-      if (!db.objectStoreNames.contains(CHECKPOINT_STORE)) {
-        db.createObjectStore(CHECKPOINT_STORE, { keyPath: "id" }).createIndex("scope", "scope");
-      }
-    },
-  });
+  const db = await openHazardSchema();
   // Recover legacy fallback saves into the authoritative database once.
   const legacy = loadFallbackState().hazardAnalysisRuns || [];
   if (legacy.length) {
-    const tx = db.transaction([STORE_NAME, META_STORE], 'readwrite');
     for (const run of legacy) {
       if (!run?.id) continue;
-      const current = await tx.objectStore(META_STORE).get(run.id);
+      const current = await db.get(META_STORE,run.id);
       if (!current || newestFirst(run, current) < 0) {
-        await tx.objectStore(STORE_NAME).put(run);
-        await tx.objectStore(META_STORE).put(metadata(run));
+        const stored=await stageHazardRun(db,run);
+        await publishHazardRun(db,stored,metadata(run),()=>{},current);
       }
     }
-    await tx.done;
     localStorage.removeItem(LS_KEY);
   }
   return db;
@@ -102,10 +73,7 @@ function matchesFilters(run, filters = {}) {
   });
 }
 
-function metadata(run) {
-  const { id, projectId, repoId, architectureSnapshotHash, hazardMethod, updatedAt, createdAt } = run;
-  return { id, projectId, repoId, architectureSnapshotHash, hazardMethod, updatedAt, createdAt };
-}
+const metadata = hazardMetadata;
 const newestFirst = (a, b) => (Date.parse(b.updatedAt || b.createdAt || 0) || 0) - (Date.parse(a.updatedAt || a.createdAt || 0) || 0);
 
 async function matchingMetadata(db, filters) {
@@ -119,7 +87,7 @@ export async function getCodeArchitectureHazardRuns(filters = {}) {
   try{
     const db=await openCodeArchitectureHazardDB();
     if(!db)saved=loadFallbackState().hazardAnalysisRuns.filter(run=>matchesFilters(run,filters));
-    else saved=(await Promise.all((await matchingMetadata(db,filters)).map(run=>db.get(STORE_NAME,run.id)))).filter(Boolean);
+    else { for(const meta of await matchingMetadata(db,filters)){const run=await hydrateHazardRun(db,await db.get(STORE_NAME,meta.id));if(run)saved.push(run);} }
   }catch(error){if(!memory.length)throw error;}
   return [...new Map([...saved,...memory].map(run=>[run.id,run])).values()].sort(newestFirst);
 }
@@ -131,7 +99,7 @@ export async function getLatestCodeArchitectureHazardRun(filters = {}) {
     if(!db)return (await getCodeArchitectureHazardRuns(filters))[0] || null;
     const latest=(await matchingMetadata(db,filters))[0];
     if(memory && (!latest || memory.id===latest.id || newestFirst(memory,latest)<=0))return memory;
-    return latest?(await db.get(STORE_NAME,latest.id)) || null:memory || null;
+    return latest?(await hydrateHazardRun(db,await db.get(STORE_NAME,latest.id))) || null:memory || null;
   }catch(error){if(memory)return memory;throw error;}
 }
 
@@ -139,7 +107,7 @@ export async function getCodeArchitectureHazardRunById(id) {
   if (!id) return null;
   if(unsavedRuns.has(id))return unsavedRuns.get(id);
   const db = await openCodeArchitectureHazardDB();
-  return db ? (await db.get(STORE_NAME, id)) || null : loadFallbackState().hazardAnalysisRuns.find(run => run.id === id) || null;
+  return db ? (await hydrateHazardRun(db,await db.get(STORE_NAME, id))) || null : loadFallbackState().hazardAnalysisRuns.find(run => run.id === id) || null;
 }
 
 // One queue per record prevents slow or retried writes overtaking newer saves.
@@ -178,13 +146,14 @@ export async function saveCodeArchitectureHazardRun(run, { notify = true, onSave
     const slow = setTimeout(() => state('slow'), 5000);
     try {
       for (let attempt = 0; ; attempt++) {
-        let tx;
+        let tx,db,staged;
         try {
-          const db = await openCodeArchitectureHazardDB();
+          db = await openCodeArchitectureHazardDB();
           checkDeleted();
           if (db) {
-            tx = db.transaction([STORE_NAME, META_STORE], 'readwrite');
-            await Promise.all([tx.objectStore(STORE_NAME).put(persisted), tx.objectStore(META_STORE).put(metadata(persisted)), tx.done]);
+            staged=await stageHazardRun(db,persisted,checkDeleted);
+            checkDeleted();
+            await publishHazardRun(db,staged,metadata(persisted),checkDeleted);
           } else {
             const rows = loadFallbackState().hazardAnalysisRuns;
             saveFallbackState({hazardAnalysisRuns:[...rows.filter(row => row.id !== run.id), persisted]});
@@ -194,6 +163,7 @@ export async function saveCodeArchitectureHazardRun(run, { notify = true, onSave
           // Wait for transaction retirement before opening another writer.
           try { tx?.abort(); } catch {}
           if (tx) await tx.done.catch(() => {});
+          if(isChunkedHazardRun(staged))await removeHazardGeneration(db,staged.payload.generation).catch(()=>{});
           checkDeleted();
           console.warn('[hazard-final-save]', {event:'failed-attempt', attempt:attempt+1, errorName:error?.name, message:error?.message});
           if (error.code === 'HAZARD_SAVE_DELETED' || !transientSaveError(error) || attempt >= 2) throw error;
@@ -240,11 +210,13 @@ export async function deleteCodeArchitectureHazardRuns(filters = {}) {
     emitChanged({...filters, storeName: STORE_NAME});
     return rows.length - next.length;
   }
-  const tx = db.transaction([STORE_NAME, META_STORE, CHECKPOINT_STORE], 'readwrite');
+  const tx = db.transaction([STORE_NAME, META_STORE, CHECKPOINT_STORE, HAZARD_CHUNKS, HAZARD_STAGING], 'readwrite');
   let count = 0;
+  const deletedRunIds = new Set();
   let cursor = await tx.objectStore(META_STORE).openCursor();
   while (cursor) {
     if (matchesFilters(cursor.value, filters)) {
+      deletedRunIds.add(cursor.primaryKey);
       await tx.objectStore(STORE_NAME).delete(cursor.primaryKey);
       await cursor.delete();
       count++;
@@ -256,6 +228,15 @@ export async function deleteCodeArchitectureHazardRuns(filters = {}) {
     const scope = safeParse(checkpoint.value.scope, {});
     if (matchesFilters({...scope, hazardMethod: scope.method}, filters)) await checkpoint.delete();
     checkpoint = await checkpoint.continue();
+  }
+  let part=await tx.objectStore(HAZARD_CHUNKS).openCursor();
+  while(part){if(deletedRunIds.has(part.value.runId))await part.delete();part=await part.continue();}
+  let lease=await tx.objectStore(HAZARD_STAGING).openCursor();
+  while(lease){
+    if(matchesFilters({...lease.value,id:lease.value.runId},filters)){
+      await tx.objectStore(HAZARD_CHUNKS).delete(IDBKeyRange.bound(lease.value.id+':',lease.value.id+':\uffff'));await lease.delete();
+    }
+    lease=await lease.continue();
   }
   await tx.done;
   emitChanged({...filters, storeName: STORE_NAME});

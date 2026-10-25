@@ -1,3 +1,6 @@
+import { HAZARD_DB, HAZARD_DB_VERSION, HAZARD_SCHEMA, HAZARD_STAGING, upgradeHazardSchema, hazardMetadata } from '../code-architecture-hazard-analysis/hazardSchema';
+import { createHazardChunkIntegrityCheck } from './hazardChunkIntegrity';
+import { HAZARD_CHUNKS, chunkHazardRun, isChunkedHazardRun } from '../code-architecture-hazard-analysis/hazardRunChunks';
 /* global BigInt */
 import { flushProjectArtifactWrites } from '../code-architecture-assurance/artifactUtils';
 import { flushProjectArchitectureWrites } from '../code-architecture-assurance/codeArchitectureStorage';
@@ -18,7 +21,7 @@ const DATABASES = ['xhandle', 'xhandle-code-architecture-assurance', 'xhandle-co
 // Fixed-version application openers must never be upgraded by archive metadata.
 const SUPPORTED_VERSIONS = {
   xhandle: 4, 'xhandle-code-architecture-assurance': 1,
-  'xhandle-code-architecture-hazard-analysis': 3, 'xhandle-safety-remediation': 2,
+  'xhandle-code-architecture-hazard-analysis': HAZARD_DB_VERSION, 'xhandle-safety-remediation': 2,
   'xhandle-results-review': 1, 'xhandle-workspace-graph': 2, TraceabilityDB: 7,
   TraceabilityMeta: 1, BaselinesDB: 1, SafetyCaseEvidenceDB: 1,
   'xhandle-project-reports': 1, 'xhandle-recovery': 1,
@@ -29,14 +32,15 @@ function validateSchemaVersion(schema) {
     throw new Error(`Unsupported database version (${schema.name}). Update xHandle before importing this project.`);
   }
 }
-async function assertCompatibleSchema(db, schema) {
+async function assertCompatibleSchema(db, schema, allowHazardUpgrade = false) {
   validateSchemaVersion({name: schema.name, version: db.version});
   for (const [name, spec] of Object.entries(schema.stores)) {
+    if (!db.objectStoreNames.contains(name) && allowHazardUpgrade && HAZARD_SCHEMA[name]) continue;
     if (!db.objectStoreNames.contains(name)) throw new Error(`Incompatible destination schema (${schema.name}/${name}). Update xHandle before importing.`);
     const tx = db.transaction(name), store = tx.store;
     const matches = JSON.stringify(store.keyPath) === JSON.stringify(spec.keyPath) && store.autoIncrement === spec.autoIncrement &&
       spec.indexes.every(index => {
-        if (!store.indexNames.contains(index.name)) return false;
+        if (!store.indexNames.contains(index.name)) return allowHazardUpgrade && HAZARD_SCHEMA[name]?.indexes.some(expected => JSON.stringify(expected) === JSON.stringify(index));
         const current = store.index(index.name);
         return JSON.stringify(current.keyPath) === JSON.stringify(index.keyPath) && current.unique === index.unique && current.multiEntry === index.multiEntry;
       });
@@ -151,7 +155,11 @@ function portableProject(project) {
   });
   return {...project, folderId:null, repos};
 }
-export async function exportProjectArchive(project, {signal,onProgress=()=>{}} = {}) {
+export async function exportProjectArchive(project, options = {}) {
+  try { return await writeProjectArchive(project, options); }
+  catch(error) { try { await options.sink?.abort(); } catch {} throw error; }
+}
+async function writeProjectArchive(project, {signal,onProgress=()=>{},sink} = {}) {
   if (!project?.id) throw new Error('Select a project.');
   check(signal); onProgress('Preparing project export — saving pending edits…');
   const preparation = {projectId: project.id, tasks: []};
@@ -163,14 +171,16 @@ export async function exportProjectArchive(project, {signal,onProgress=()=>{}} =
   await flushProjectArtifactWrites(project.id);
   check(signal);
   assertProjectHazardsSaved(project.id);
-  const portable = portableProject(project), scope=ownership(portable), parts=[], hash=sha256();
+  const portable = portableProject(project), scope=ownership(portable), parts=sink?null:[], hash=sha256();
+  const write=async line=>{if(sink)await sink.write(line);else parts.push(new Blob([line]));};
   let count=0, stagePercent=0;
-  const integrity = createChunkIntegrityCheck();
+  const chunkIntegrity=createChunkIntegrityCheck(), hazardIntegrity=createHazardChunkIntegrityCheck();
+  const integrity={add:entry=>{chunkIntegrity.add(entry);hazardIntegrity.add(entry);},finish:()=>{chunkIntegrity.finish();hazardIntegrity.finish();}};
   let serializedBytes = 0, lastProgress = 0;
   const appendLine = async entry => {
     check(signal);
     const line=JSON.stringify(await encodeValue(entry))+'\n';
-    hash.update(line); parts.push(new Blob([line])); count++;
+    hash.update(line); await write(line); count++;
     serializedBytes += line.length;
     if (Date.now() - lastProgress >= 100 || count % 32 === 0) {
       onProgress(`Exporting saved project data (${stagePercent}%) — ${(serializedBytes / 1048576).toFixed(1)} MB prepared…`);
@@ -206,9 +216,25 @@ export async function exportProjectArchive(project, {signal,onProgress=()=>{}} =
           const index=store.index(name); return {name,keyPath:index.keyPath,unique:index.unique,multiEntry:index.multiEntry};
         })}; await tx.done;
       }
-      await append({kind:'database',name,version:db.version,stores:schema});
+      const hazardDB=name==='xhandle-code-architecture-hazard-analysis';
+      if(hazardDB)Object.assign(schema,HAZARD_SCHEMA);
+      await append({kind:'database',name,version:hazardDB?HAZARD_DB_VERSION:db.version,stores:schema});
+      const liveGenerations=new Set();
       for (const store of stores) for await (const {key,value} of records(db,store)) {
-        if (scope.owns(name,store,key,value)) await append({kind:'record',db:name,store,key,value});
+        check(signal);
+        if(hazardDB && ['runMetadata',HAZARD_STAGING].includes(store))continue;
+        if(!scope.owns(name,store,key,value))continue;
+        if(hazardDB && store==='hazardAnalysisRuns'){
+          // Legacy IDB values require one full read. Export converts them to small durable
+          // records without mutating the source; the destination never hydrates them on import.
+          for await(const entry of chunkHazardRun(value,{signal})){
+            if(entry.chunk)await append({kind:'record',db:name,store:HAZARD_CHUNKS,key:entry.chunk.id,value:entry.chunk});
+            else {if(isChunkedHazardRun(entry.run))liveGenerations.add(entry.run.payload.generation);await append({kind:'record',db:name,store,key,value:entry.run});}
+          }
+          await append({kind:'record',db:name,store:'runMetadata',key,value:hazardMetadata(value)});
+        }else if(!hazardDB || store!==HAZARD_CHUNKS || liveGenerations.has(value.generation)){
+          await append({kind:'record',db:name,store,key,value});
+        }
       }
     } finally {db.close();}
   }
@@ -223,9 +249,11 @@ export async function exportProjectArchive(project, {signal,onProgress=()=>{}} =
     await append({kind:'fallback',key,value});
   }
   integrity.finish();
-  parts.push(new Blob([JSON.stringify(await encodeValue({kind:'end',count,digest:hash.digest('hex')}))+'\n']));
+  await write(JSON.stringify(await encodeValue({kind:'end',count,digest:hash.digest('hex')}))+'\n');
+  check(signal); onProgress('Finalizing and verifying the project file…');
+  const result=sink?await sink.finish():new Blob(parts,{type:'application/x-xhandle-project'});
   check(signal); onProgress('100% — archive ready. Save the project file.');
-  return new Blob(parts,{type:'application/x-xhandle-project'});
+  return result;
 }
 
 async function* archiveLines(file) {
@@ -240,7 +268,8 @@ async function* archiveLines(file) {
 }
 async function visitArchive(file, visit, signal, onReadProgress=()=>{}) {
   let bytes=0, lastPercent=-1;
-  const integrity = createChunkIntegrityCheck();
+  const chunkIntegrity=createChunkIntegrityCheck(), hazardIntegrity=createHazardChunkIntegrityCheck();
+  const integrity={add:entry=>{chunkIntegrity.add(entry);hazardIntegrity.add(entry);},finish:()=>{chunkIntegrity.finish();hazardIntegrity.finish();}};
   let header,scope,end=false,count=0, assembling=null; const hash=sha256(), schemas=new Map(), seen=new Set();
   for await (const line of archiveLines(file)) {
     check(signal); bytes += new Blob([line]).size;
@@ -282,6 +311,7 @@ async function visitArchive(file, visit, signal, onReadProgress=()=>{}) {
       validateSchemaVersion(entry);
       schemas.set(entry.name,entry);
     } else if (entry.kind==='record') {
+      if(entry.db===HAZARD_DB && entry.store===HAZARD_STAGING)throw new Error('Archive contains transient hazard save state.');
       if (!Object.hasOwn(schemas.get(entry.db)?.stores || {},entry.store) || !scope.owns(entry.db,entry.store,entry.key,entry.value)) throw new Error('Archive contains records outside this project.');
       const keyPath=schemas.get(entry.db).stores[entry.store].keyPath;
       const readPath=path=>path.split('.').reduce((value,part)=>value != null && Object.hasOwn(value,part) ? value[part] : undefined,entry.value);
@@ -311,19 +341,24 @@ async function visitArchive(file, visit, signal, onReadProgress=()=>{}) {
 }
 export async function importProjectArchive(file, {signal,onProgress=()=>{}} = {}) {
   const opened=new Map(), preflight=new Map(), journal=[], localJournal=[];
+  const hazardIds=new Set(), importedMetadata=new Set();
   const connect=async schema=>{
     if (opened.has(schema.name)) return opened.get(schema.name);
     validateSchemaVersion(schema);
-    const current = await existingDB(schema.name);
+    let current = await existingDB(schema.name);
+    if (current && schema.name===HAZARD_DB && current.version<HAZARD_DB_VERSION){
+      current.close();current=await openArchiveDB(HAZARD_DB,HAZARD_DB_VERSION,upgradeHazardSchema);
+    }
     if (current) {
       try { await assertCompatibleSchema(current, schema); }
       catch (error) { current.close(); throw error; }
       opened.set(schema.name, current);
       return current;
     }
-    const version = REPAIRABLE_DATABASES.has(schema.name) ? SUPPORTED_VERSIONS[schema.name] : schema.version;
+    const version = (schema.name === 'xhandle-code-architecture-hazard-analysis' || REPAIRABLE_DATABASES.has(schema.name)) ? SUPPORTED_VERSIONS[schema.name] : schema.version;
     const db=await openArchiveDB(schema.name,version,(db,old,next,tx)=>{
       if (old !== 0) { tx.abort(); return; } // Another tab created it after preflight.
+      if(schema.name===HAZARD_DB)upgradeHazardSchema(db,old,next,tx);
       for (const [name,spec] of Object.entries(schema.stores)) {
         const store=db.objectStoreNames.contains(name)?tx.objectStore(name):db.createObjectStore(name,{keyPath:spec.keyPath,autoIncrement:spec.autoIncrement});
         for (const index of spec.indexes) if (!store.indexNames.contains(index.name)) store.createIndex(index.name,index.keyPath,{unique:index.unique,multiEntry:index.multiEntry});
@@ -341,7 +376,7 @@ export async function importProjectArchive(file, {signal,onProgress=()=>{}} = {}
       if (entry.kind==='database') {
         const db = await existingDB(entry.name);
         preflight.set(entry.name, db);
-        if (db) await assertCompatibleSchema(db, entry);
+        if (db) await assertCompatibleSchema(db, entry, entry.name===HAZARD_DB && db.version<HAZARD_DB_VERSION);
       }
       if (entry.kind==='record') {
         if (!preflight.has(entry.db)) preflight.set(entry.db,await existingDB(entry.db));
@@ -361,17 +396,23 @@ export async function importProjectArchive(file, {signal,onProgress=()=>{}} = {}
     await visitArchive(file,async(entry,header,schemas)=>{
       assertNew(header.project);
       if (entry.kind==='record') {
+        if(entry.db===HAZARD_DB && entry.store==='hazardAnalysisRuns')hazardIds.add(entry.key);
         const db=await connect(schemas.get(entry.db));
-        const tx=db.transaction(entry.store,'readwrite'); tx.done.catch(()=>{});
-        const current=await tx.store.get(entry.key);
+        const deriveMetadata=entry.db===HAZARD_DB && entry.store==='hazardAnalysisRuns' && !schemas.get(entry.db).stores.runMetadata;
+        const tx=db.transaction(deriveMetadata?[entry.store,'runMetadata']:entry.store,'readwrite'); tx.done.catch(()=>{});
+        const recordStore=tx.objectStore(entry.store);
+        const current=await recordStore.get(entry.key);
         if (current!==undefined) {
           await tx.done;
           if (await archiveValueDigest(current, signal)!==await archiveValueDigest(entry.value, signal)) throw new Error('Destination changed during import.');
           return;
         }
-        if (tx.store.keyPath===null) await tx.store.add(entry.value,entry.key); else await tx.store.add(entry.value);
+        if (recordStore.keyPath===null) await recordStore.add(entry.value,entry.key); else await recordStore.add(entry.value);
+        if(deriveMetadata)await tx.objectStore('runMetadata').add(hazardMetadata(entry.value));
         await tx.done;
         journal.push([db,entry.store,entry.key]);
+        if(entry.db===HAZARD_DB && entry.store==='runMetadata')importedMetadata.add(entry.key);
+        if(deriveMetadata){journal.push([db,'runMetadata',entry.key]);importedMetadata.add(entry.key);}
       } else if (entry.kind==='local' || entry.kind==='fallback') {
         const before=localStorage.getItem(entry.key); localJournal.push([entry.key,before]);
         if (entry.kind==='local') localStorage.setItem(entry.key,entry.value);
@@ -383,6 +424,19 @@ export async function importProjectArchive(file, {signal,onProgress=()=>{}} = {}
         }
       }
     },signal,percent=>onProgress(`Importing project records (${percent}%)…`));
+    // Older archives may declare a metadata store but omit its rows. Complete the
+    // small derived index before the project becomes visible, with rollback tracking.
+    for(const id of hazardIds){
+      check(signal);
+      const db=opened.get(HAZARD_DB),tx=db.transaction(['hazardAnalysisRuns','runMetadata'],'readwrite');tx.done.catch(()=>{});
+      try{
+        const run=await tx.objectStore('hazardAnalysisRuns').get(id),metaStore=tx.objectStore('runMetadata');
+        const expected=hazardMetadata(run),current=await metaStore.get(id);
+        if(current && JSON.stringify(hazardMetadata(current))!==JSON.stringify(expected) && !importedMetadata.has(id))throw new Error('Destination has conflicting hazard metadata.');
+        if(!current || importedMetadata.has(id))await metaStore.put(expected);
+        await tx.done;if(!current)journal.push([db,'runMetadata',id]);
+      }catch(error){try{tx.abort();}catch{}await tx.done.catch(()=>{});throw error;}
+    }
     check(signal);assertNew(header.project);
     const projects=JSON.parse(localStorage.getItem(PROJECTS)||'[]');
     const project=portableProject(header.project);

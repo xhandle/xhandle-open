@@ -93,3 +93,23 @@ test('success is reported only after project publication and complete partial-re
  const run=await getLatestCodeArchitectureHazardRun({projectId:'p1',repoId:'r1'});
  expect(run.status).toBe('partial');expect(run.summary[0].evidence).toBe('x'.repeat(2000000));
 });
+
+test('disk sink avoids the final Blob and retains resumable partial results on import',async()=>{
+ await saveCodeArchitectureHazardRun({id:'run1',projectId:'p1',repoId:'r1',status:'partial',summary:[{id:'h1',evidence:'x'.repeat(2000000)}],continuation:{next:7,pending:['h2']}});
+ const lines=[],result={url:'http://localhost/file',name:'test.xhproject'};
+ const sink={write:jest.fn(async line=>{expect(line.length).toBeLessThan(100000);lines.push(line);}),finish:jest.fn(async()=>result),abort:jest.fn()};
+ expect(await exportProjectArchive(project,{sink})).toBe(result);expect(sink.abort).not.toHaveBeenCalled();
+ const file=new Blob(lines);fresh();await importProjectArchive(file);
+ const run=await getLatestCodeArchitectureHazardRun({projectId:'p1'});expect(run.status).toBe('partial');expect(run.continuation).toEqual({next:7,pending:['h2']});expect(run.summary[0].evidence.length).toBe(2000000);
+});
+test('failed disk writes abort the spool and never report success',async()=>{
+ const progress=[],sink={write:jest.fn(async()=>{throw Error('disk full');}),abort:jest.fn(async()=>{}),finish:jest.fn()};
+ await expect(exportProjectArchive(project,{sink,onProgress:m=>progress.push(m)})).rejects.toThrow('disk full');expect(sink.abort).toHaveBeenCalledTimes(1);expect(sink.finish).not.toHaveBeenCalled();expect(progress.some(m=>m.startsWith('100%'))).toBe(false);
+});
+
+test('legacy version-three hazard archive initializes the new chunk store for later saves',async()=>{
+ await saveCodeArchitectureHazardRun({id:'small',projectId:'p1',repoId:'r1',status:'partial',summary:[]});
+ const file=await exportProjectArchive(project),legacy=await rewrite(file,entries=>{const schema=entries.find(e=>e.kind==='database' && e.name==='xhandle-code-architecture-hazard-analysis');schema.version=3;delete schema.stores.hazardRunChunks;});
+ fresh();await importProjectArchive(legacy);await saveCodeArchitectureHazardRun({id:'later',projectId:'p1',repoId:'r1',summary:[{evidence:'x'.repeat(200000)}]});
+ expect((await getLatestCodeArchitectureHazardRun({projectId:'p1',repoId:'r1'})).summary[0].evidence.length).toBe(200000);
+});

@@ -1,0 +1,5 @@
+# Review disk-backed project transfer fixes
+
+Review the current uncommitted implementation without changing production behavior. Determine whether large project export/import, partial hazard checkpoints, legacy schema migration, obsolete chunk cleanup, and malformed archive rejection are fixed. Check cancellation, concurrent save/read/delete, rollback, metadata consistency, and browser download behavior for regressions. Preserve existing user work.
+
+Inspect the actual implementation and independently exercise failure paths, rather than relying solely on passing happy-path tests. Run relevant automated suites and browser diagnostics. Distinguish pre-existing failures from newly introduced failures. Record reproducible findings with severity and source references; do not claim all crashes or regressions are eliminated. Identify remaining memory limits and any missing real-project or packaged desktop validation. Produce a review report and concise user summary. Do not commit, push, publish, or modify user databases.

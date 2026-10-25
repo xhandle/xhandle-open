@@ -1,3 +1,4 @@
+import { createDiskArchiveSink } from './features/code-architecture-transfer/diskArchiveSink';
 import { exportProjectArchive, importProjectArchive } from './features/code-architecture-transfer/projectArchive';
 import { readProjectWithRecovery } from './features/code-architecture-assurance/projectReadRecovery';
 import { architectureDashboardColumns, groupArchitectureDashboard } from './features/code-architecture-assurance/architectureDashboardGroups';
@@ -3963,7 +3964,7 @@ const [isExportingCodeArchitectureProject, setIsExportingCodeArchitectureProject
 const [codeArchitectureProjectExportMsg, setCodeArchitectureProjectExportMsg] = useState("");
 const [codeArchitectureArchiveDownload, setCodeArchitectureArchiveDownload] = useState(null);
 const codeArchitectureArchiveController = useRef(null);
-useEffect(() => () => { if (codeArchitectureArchiveDownload) URL.revokeObjectURL(codeArchitectureArchiveDownload.url); }, [codeArchitectureArchiveDownload]);
+useEffect(() => () => { if (codeArchitectureArchiveDownload?.dispose) codeArchitectureArchiveDownload.dispose().catch(() => {}); else if (codeArchitectureArchiveDownload) URL.revokeObjectURL(codeArchitectureArchiveDownload.url); }, [codeArchitectureArchiveDownload]);
 const [showCodeArchitectureWorkbookExport, setShowCodeArchitectureWorkbookExport] = useState(false);
 const codeArchitectureFunctionalExportRef = useRef(null);
 const [canExportCodeArchitectureCsv, setCanExportCodeArchitectureCsv] = useState(false);
@@ -5234,8 +5235,9 @@ async function exportSelectedCodeArchitectureProject() {
     setCodeArchitectureArchiveDownload(null);
     const controller = new AbortController();
     codeArchitectureArchiveController.current = controller;
-    const blob = await exportProjectArchive(project, { signal: controller.signal, onProgress: setCodeArchitectureProjectExportMsg });
-    setCodeArchitectureArchiveDownload({ url: URL.createObjectURL(blob), name: `${project.name.replace(/[^a-z0-9_-]/gi, '-')}.xhproject` });
+    const sink = await createDiskArchiveSink(project.name, {signal:controller.signal});
+    const download = await exportProjectArchive(project, { signal: controller.signal, onProgress: setCodeArchitectureProjectExportMsg, sink });
+    setCodeArchitectureArchiveDownload(download);
 
   } catch (error) {
     console.error("[cba] Failed to export code architecture project", error);
