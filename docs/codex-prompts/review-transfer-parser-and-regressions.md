@@ -1,0 +1,3 @@
+# Review transfer parser fix and regressions
+
+Verify the canonical ID parser fix and the previous project transfer findings. Inspect cache acceptance, imports/dependencies, complete and partial checkpoint reuse, schema protection, chunk references/ownership, publication history, and recovery. Run the relevant regression suite and inspect production integration. Distinguish confirmed defects from untested large-project/browser behavior. Add a targeted regression test if review exposes an uncovered meaningful case. Review only; do not modify production code or publish. Report evidence and limitations without claiming zero possible bugs.

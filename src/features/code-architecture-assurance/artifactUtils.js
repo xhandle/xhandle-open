@@ -708,3 +708,9 @@ export function createFunctionalRowLookup(cbaRows = []) {
     return explicit.has(target) ? explicit.get(target) : legacy.get(target) ?? -1;
   };
 }
+
+export async function flushProjectArtifactWrites(projectId) {
+  const belongs = key => key.startsWith('xhandle:cba-') && key.split(':')[2] === projectId;
+  while ([...artifactWrites.keys()].some(belongs)) await Promise.all([...artifactWrites].filter(([key])=>belongs(key)).map(([,promise])=>promise));
+  if ([...unsavedArtifactRows.keys()].some(belongs)) throw new Error('Some requirements have not been saved. Retry saving before exporting this project.');
+}

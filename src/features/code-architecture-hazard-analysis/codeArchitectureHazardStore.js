@@ -271,3 +271,7 @@ export const codeArchitectureHazardStore = {
 };
 
 export { DB_NAME as CODE_ARCHITECTURE_HAZARD_DB_NAME, STORE_NAME as CODE_ARCHITECTURE_HAZARD_STORE_NAME };
+
+export function assertProjectHazardsSaved(projectId) {
+  if (memoryMatches({projectId}).length) throw new Error('Some hazard results have not been saved. Retry saving before exporting this project.');
+}

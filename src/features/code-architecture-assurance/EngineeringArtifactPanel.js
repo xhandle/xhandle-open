@@ -1,3 +1,4 @@
+import { createRequirementCheckpoint } from '../code-architecture-transfer/requirementCheckpoint';
 import { readArtifactRowsWithRecovery, STORAGE_RECOVERY_MESSAGE } from './artifactReadRecovery';
 import { resolveSoftwareHazardSource } from './softwareHazardSource';
 import { softwareRequirementSource } from './softwareRequirementSource';
@@ -209,6 +210,7 @@ export default function EngineeringArtifactPanel({
   const [hasLoadedRows, setHasLoadedRows] = useState(false);
   const [loadingRows, setLoadingRows] = useState(!Array.isArray(initialRows));
   const [isDeriving, setIsDeriving] = useState(false);
+  const [reuseDerivationWork, setReuseDerivationWork] = useState(true);
   const [deriveMessage, setDeriveMessage] = useState("");
   const [readErrors, setReadErrors] = useState({});
   const [readAttempt, setReadAttempt] = useState(0);
@@ -465,6 +467,18 @@ export default function EngineeringArtifactPanel({
     enabled: !reviewMode,
   });
 
+  useEffect(() => {
+    const prepare = event => {
+      if (event.detail?.projectId !== projectId || reviewMode || !hasLoadedRows || loadedStorageKey !== storageKey) return;
+      if (persistedRows.current?.key === storageKey && persistedRows.current.rows === rows) return;
+      event.detail.tasks.push(saveArtifactRowsAsync(kind, projectId, repoId, rows).then(() => {
+        persistedRows.current = {key: storageKey, rows};
+      }));
+    };
+    window.addEventListener('xhandle:prepare-project-export', prepare);
+    return () => window.removeEventListener('xhandle:prepare-project-export', prepare);
+  }, [projectId, repoId, kind, rows, reviewMode, hasLoadedRows, loadedStorageKey, storageKey]);
+
   const deriveRows = React.useCallback(async () => {
     const derive = DERIVE_BY_KIND[kind];
     if (!derive) return;
@@ -496,6 +510,7 @@ export default function EngineeringArtifactPanel({
     };
     try {
       await ensureArtifactStorageReady();
+      onProgress.requestCheckpoint = createRequirementCheckpoint(projectId, repoId, kind, {reuse: reuseDerivationWork});
       const args = {
         projectName: project?.name || "",
         repoName: repo?.repoName || repo?.repoId || "",
@@ -538,7 +553,7 @@ export default function EngineeringArtifactPanel({
     } finally {
       if (activeStorageKey.current === storageKey) setIsDeriving(false);
     }
-  }, [organizationContext, cbaRows, currentSourceRows, definition.title, finishActivity, hazardAnalysis, kind, project?.name, projectId, repo?.repoId, repo?.repoName, repoId, rows, startActivity, updateActivity, storageKey, setRows]);
+  }, [reuseDerivationWork, organizationContext, cbaRows, currentSourceRows, definition.title, finishActivity, hazardAnalysis, kind, project?.name, projectId, repo?.repoId, repo?.repoName, repoId, rows, startActivity, updateActivity, storageKey, setRows]);
 
   const addRow = React.useCallback(() => {
     setRows((prev) => [
@@ -610,6 +625,7 @@ export default function EngineeringArtifactPanel({
                 >
                   {isDeriving ? "Deriving..." : definition.deriveButton}
                 </button>
+                <label className="text-xs text-slate-600"><input type="checkbox" checked={reuseDerivationWork} disabled={isDeriving} onChange={event => setReuseDerivationWork(event.target.checked)} /> Continue saved derivation work</label>
                 <button
                   type="button"
                   onClick={addRow}

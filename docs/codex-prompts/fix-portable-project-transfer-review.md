@@ -1,0 +1,5 @@
+# Fix complete project transfer review findings
+
+Implement fixes for all five findings in portable-project-transfer-review-2026-10-24.md. Prevent archive metadata from upgrading shared databases beyond supported app versions; accept compatible existing schemas without downgrades and reject incompatible schemas before writes. Include repository-and-branch diagram layouts without including unrelated layouts. Validate chunk reference completeness and content hashes on export and import without hydrating entire analyses. Reuse requirement checkpoints only when the response covers the requested sources; incomplete work must be retried after transfer. Preserve completed work and existing legacy behavior.
+
+Convert defect reproduction probes into correctness regressions, add adverse schema/chunk/coverage cases, run transfer and relevant analysis tests, and perform a production build. Preserve unrelated work. Document results and remaining manual large-project browser/desktop validation. Do not commit, push, or publish a release as part of this task.

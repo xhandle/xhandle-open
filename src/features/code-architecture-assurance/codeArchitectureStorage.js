@@ -281,3 +281,9 @@ export function prepareArchitecturePublication(...args) {
 export function recoverArchitecturePublication(...args) {
   return queueArchitectureWrite(args[0], () => recoverArchitecturePublicationNow(...args));
 }
+
+export async function flushProjectArchitectureWrites(projectId) {
+  const prefix = `cba:${projectId}:`;
+  while ([...architectureWrites.keys()].some(key=>key.startsWith(prefix))) await Promise.all([...architectureWrites].filter(([key])=>key.startsWith(prefix)).map(([,promise])=>promise));
+  if ([...pendingInMemory.values()].some(value=>value.scope.startsWith(prefix))) throw new Error('Completed architecture results are not saved yet. Retry publication before exporting.');
+}

@@ -1,0 +1,3 @@
+# Review portable project transfer fixes
+
+Review the current implementation against all five original transfer findings. Independently trace schema initialization and compatibility, complete project ownership, chunk integrity and actual reader compatibility, and partial requirement continuation. Confirm the fixes with tests and add adverse cases beyond existing happy paths. Inspect changes for regressions, data loss, and false success. Run the relevant regression suites. Report reproducible findings with severity, locations, impact, and remaining manual validation limits. Review only: do not silently fix production code or publish a release.

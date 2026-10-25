@@ -1,0 +1,3 @@
+# Fix requirement checkpoint ID parsing
+
+Resolve the separator mismatch in project-transfer-latest-review-2026-10-24.md. Use the application's canonical splitIds parser in requirement checkpoint coverage validation rather than maintaining different parsing rules. Preserve complete source coverage and ordered matching requirements. Convert the review probes into positive transfer-and-reuse regression tests for supported separators, and verify incomplete coverage still fails. Run focused and relevant broader tests plus a production build. Document results and remaining manual validation limits. Do not commit, push, or publish.

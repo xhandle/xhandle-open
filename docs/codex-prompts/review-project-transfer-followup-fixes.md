@@ -1,0 +1,3 @@
+# Review latest project transfer fixes
+
+Verify the three findings from the follow-up review against the current implementation. Independently trace real publication/history aliases, nested recovery pointers, archive ownership and integrity, and requirement continuation across all task contracts. Test adverse cases beyond prior reproductions and inspect for regressions. Run relevant automated tests. Report confirmed findings with severity and locations, distinguish limitations from reproduced defects, and do not claim absence of all bugs. Review only: do not modify production code or publish a release.

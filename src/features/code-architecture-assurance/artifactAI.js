@@ -1,3 +1,4 @@
+import { hasCompleteRequirementCoverage } from '../code-architecture-transfer/requirementCoverage';
 import { softwareRequirementSource } from './softwareRequirementSource';
 import { backendURL, buildAIAuthOpts } from "../../components/backendConfig";
 import {
@@ -59,7 +60,25 @@ function extractJson(text) {
   return JSON.parse(jsonText);
 }
 
-async function callAssuranceModel(payload, {
+async function callAssuranceModel(payload, options) {
+  const checkpoint = options.onProgress?.requestCheckpoint;
+  if (!checkpoint) return callAssuranceModelUncached(payload, options);
+  const headers = buildAIAuthOpts().headers || {};
+  const basis = { payload, systemPrompt: options.systemPrompt, model: ASSURANCE_MODEL,
+    provider: headers['x-ai-provider'] || '', selectedModel: headers['x-ai-model'] || '', effort: headers['x-ai-effort'] || '' };
+  return checkpoint(basis, () => callAssuranceModelUncached(payload, options), raw => {
+    try {
+      const parsed = extractJson(raw);
+      const rows = parsed[options.responseKey || 'requirements'];
+      if (!hasCompleteRequirementCoverage(payload, rows, options.responseKey || 'requirements')) return false;
+      return Array.isArray(rows) && rows.length > 0 && rows.every(row =>
+        ['requirementText', 'categoryName', 'description', 'designElementName'].some(key => typeof row?.[key] === 'string' && row[key].trim()));
+    }
+    catch { return false; }
+  });
+}
+
+async function callAssuranceModelUncached(payload, {
   systemPrompt,
   errorLabel,
   retryDelays = [],
@@ -297,6 +316,7 @@ async function requestAssuranceChunk({
   respectUnavailable = true,
   logPromptResponse = false,
   splitDepth = 0,
+  onProgress = null,
 }) {
   const payload = {
     ...basePayload,
@@ -316,6 +336,8 @@ async function requestAssuranceChunk({
 
   try {
     const raw = await callAssuranceModel(payload, {
+        responseKey,
+        onProgress,
       systemPrompt,
       errorLabel,
       retryDelays: retryTransient ? ASSURANCE_TRANSIENT_RETRY_DELAYS_MS : [],
@@ -329,6 +351,7 @@ async function requestAssuranceChunk({
     const rowsForChunk = Array.isArray(parsed[responseKey]) ? parsed[responseKey] : [];
     return chunk.rows.map((_, index) => rowsForChunk[index] || {});
   } catch (err) {
+    if (err?.code === 'REQUIREMENT_CHECKPOINT_FAILED') throw err;
     const splitForSize = shouldSplitFailedChunk(err);
     const splitForTransientLoad = adaptiveTransientSplit && shouldSplitTransientChunk(err, payloadLength, splitDepth);
     if (chunk.rows.length > 1 && (splitForSize || splitForTransientLoad)) {
@@ -338,6 +361,7 @@ async function requestAssuranceChunk({
       const reason = splitForSize ? "prompt was too large" : "service rejected a large chunk after retries";
       console.warn(`⚠️ ${errorLabel} ${reason} for chunk starting at row ${chunk.start + 1} (${payloadLength} chars); retrying as ${first.rows.length} and ${second.rows.length} row sub-chunks.`, err);
       const firstRows = await requestAssuranceChunk({
+        onProgress,
         basePayload,
         rowKey,
         chunk: first,
@@ -353,6 +377,7 @@ async function requestAssuranceChunk({
         splitDepth: splitDepth + 1,
       });
       const secondRows = await requestAssuranceChunk({
+        onProgress,
         basePayload,
         rowKey,
         chunk: second,
@@ -413,6 +438,7 @@ async function requestAssuranceRows({
   const generatedRows = [];
   for (const chunk of chunks) {
     const rowsForChunk = await requestAssuranceChunk({
+      onProgress,
       basePayload,
       rowKey,
       chunk,
@@ -495,6 +521,8 @@ async function requestAssuranceConsolidationRows({
 
     try {
       const raw = await callAssuranceModel(payload, {
+        responseKey,
+        onProgress,
         systemPrompt,
         errorLabel,
         retryDelays: retryTransient ? ASSURANCE_TRANSIENT_RETRY_DELAYS_MS : [],
@@ -508,6 +536,7 @@ async function requestAssuranceConsolidationRows({
       const rowsForChunk = Array.isArray(parsed[responseKey]) ? parsed[responseKey] : [];
       generatedRows.push(...rowsForChunk);
     } catch (err) {
+    if (err?.code === 'REQUIREMENT_CHECKPOINT_FAILED') throw err;
       console.warn(`⚠️ ${errorLabel} consolidation failed for chunk starting at row ${chunk.start + 1}; keeping first-pass rows for that chunk.`, err);
       generatedRows.push(...chunk.rows);
     }
@@ -906,6 +935,7 @@ async function repairCodeEchoSoftwareRequirements({ rows = [], cbaRows = [], pro
 
     try {
       const raw = await callAssuranceModel(payload, {
+        onProgress,
         systemPrompt,
         errorLabel: "Software requirements rewrite",
         timeoutMs: 120000,
@@ -926,6 +956,7 @@ async function repairCodeEchoSoftwareRequirements({ rows = [], cbaRows = [], pro
         repairedByIndex.set(index, looksLikeCodeEchoSoftwareRequirement(repaired, sourceRow) ? cleanCodeEchoSoftwareRequirement(row) : repaired);
       });
     } catch (error) {
+    if (error?.code === 'REQUIREMENT_CHECKPOINT_FAILED') throw error;
       console.warn(`[xHandle AI] Software requirements rewrite rows ${start + 1}-${start + batch.length}/${repairItems.length} failed; keeping original AI rows.`, error);
       batch.forEach(({ row, index }) => repairedByIndex.set(index, cleanCodeEchoSoftwareRequirement(row)));
     }
@@ -2349,6 +2380,7 @@ export async function deriveFunctionalSoftwareRequirements({ cbaRows = [], proje
 
     try {
       const raw = await callAssuranceModel(payload, {
+        onProgress,
         systemPrompt,
         errorLabel: "Software requirements AI",
         timeoutMs: 120000,
@@ -2366,6 +2398,7 @@ export async function deriveFunctionalSoftwareRequirements({ cbaRows = [], proje
         softwareRows.push(normalized.requirementText ? normalized : fallbackSoftwareRequirement(sourceRow, rowIndex));
       });
     } catch (error) {
+    if (error?.code === 'REQUIREMENT_CHECKPOINT_FAILED') throw error;
       failures.push(`Rows ${start + 1}-${end}: ${error.message}`);
       console.warn(`[xHandle AI] Software requirements rows ${start + 1}-${end}/${cbaRows.length} failed; using local fallback rows.`, error);
       batchRows.forEach((sourceRow, batchIndex) => {
@@ -2406,6 +2439,7 @@ export async function deriveSoftwareRequirements({ cbaRows = [], projectName = "
   try {
     softwareRows = await deriveFunctionalSoftwareRequirements({ cbaRows, projectName, repoName, onProgress });
   } catch (error) {
+    if (error?.code === 'REQUIREMENT_CHECKPOINT_FAILED') throw error;
     console.warn("⚠️ Software requirements AI phase failed; using local fallback rows and continuing hazard requirement import.", error);
     softwareRows = cbaRows
       .map((sourceRow, index) => fallbackSoftwareRequirement(sourceRow, index))

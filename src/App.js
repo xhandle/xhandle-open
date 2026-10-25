@@ -1,3 +1,4 @@
+import { exportProjectArchive, importProjectArchive } from './features/code-architecture-transfer/projectArchive';
 import { readProjectWithRecovery } from './features/code-architecture-assurance/projectReadRecovery';
 import { architectureDashboardColumns, groupArchitectureDashboard } from './features/code-architecture-assurance/architectureDashboardGroups';
 import useHazardRunRestoration from './features/code-architecture-hazard-analysis/useHazardRunRestoration';
@@ -3960,6 +3961,9 @@ const [showCodeArchitectureProjectExport, setShowCodeArchitectureProjectExport] 
 const [codeArchitectureProjectExportSelection, setCodeArchitectureProjectExportSelection] = useState("");
 const [isExportingCodeArchitectureProject, setIsExportingCodeArchitectureProject] = useState(false);
 const [codeArchitectureProjectExportMsg, setCodeArchitectureProjectExportMsg] = useState("");
+const [codeArchitectureArchiveDownload, setCodeArchitectureArchiveDownload] = useState(null);
+const codeArchitectureArchiveController = useRef(null);
+useEffect(() => () => { if (codeArchitectureArchiveDownload) URL.revokeObjectURL(codeArchitectureArchiveDownload.url); }, [codeArchitectureArchiveDownload]);
 const [showCodeArchitectureWorkbookExport, setShowCodeArchitectureWorkbookExport] = useState(false);
 const codeArchitectureFunctionalExportRef = useRef(null);
 const [canExportCodeArchitectureCsv, setCanExportCodeArchitectureCsv] = useState(false);
@@ -4711,13 +4715,6 @@ async function saveImportedCodeArchitectureRows({ project, file, rows, repoPacka
   return repoConfig;
 }
 
-function codeArchitectureExportFileName(projectName) {
-  const safeName = String(projectName || "code-architecture-project")
-    .replace(/[^a-z0-9._-]+/gi, "-")
-    .replace(/^-+|-+$/g, "") || "code-architecture-project";
-  return `${safeName}-${new Date().toISOString().slice(0, 10)}.json`;
-}
-
 function codeArchitectureRepoIdentityCandidates(repo = {}) {
   return Array.from(new Set([
     repo?.id,
@@ -4908,65 +4905,6 @@ async function restoreImportedCodeArchitectureRepoAnalysis({ project, repoConfig
   }
 }
 
-async function collectCodeArchitectureProjectExport(projectId) {
-  const project = codeArchitectureProjects.find((entry) => entry.id === projectId);
-  if (!project) throw new Error("Select a project to export.");
-  const repos = Array.isArray(project.repos) ? project.repos : [];
-  const exportedRepos = [];
-  for (const repo of repos) {
-    const primaryKey = codeArchitectureRowsKey(project.id, repo.id);
-    const isCurrentRepo = project.id === activeCodeArchitectureProject?.id && repo.id === activeCodeArchitectureRepo?.id;
-    const readResult = isCurrentRepo && Array.isArray(cbaTableData) && cbaTableData.length
-      ? { rows: cbaTableData, sourceKey: primaryKey }
-      : await readCodeArchitectureRowsForRepo(project, repo, primaryKey);
-    let meta = null;
-    try { meta = JSON.parse(localStorage.getItem(codeArchitectureMetaKey(project.id, repo.id)) || "null"); } catch {}
-    const durableMeta = await readArchitectureMetadata(primaryKey);
-    if (durableMeta) meta = { ...meta, ...durableMeta };
-    exportedRepos.push({
-      projectId: project.id,
-      repo: {
-        id: repo.id,
-        ...codeSourceProvenance(repo),
-        owner: repo.owner || "",
-        repo: repo.repo || "",
-        repoId: repo.repoId || normalizeRepoIdentity(repo),
-        repoName: repo.repoName || repo.repoId || normalizeRepoIdentity(repo),
-        repoUrl: repo.repoUrl || "",
-        selectedExtensions: repo.selectedExtensions || [],
-        analysisContext: repo.analysisContext || { text: "", files: [] },
-        operationalContext: repo.operationalContext || "",
-        contextSources: repo.contextSources || null,
-        branch: repo.branch || "",
-        commitSha: repo.commitSha || "",
-        filesFound: repo.filesFound || 0,
-        imported: !!repo.imported,
-        createdAt: repo.createdAt || null,
-        updatedAt: repo.updatedAt || null,
-        lastAnalyzedAt: repo.lastAnalyzedAt || null,
-      },
-      rows: ensureCodeArchitectureTraceIds(readResult.rows || []),
-      metadata: meta || null,
-      runRecords: await readArchitectureRunRecords(primaryKey, readResult.rows || []),
-      analysis: await collectCodeArchitectureRepoAnalysis(project, repo),
-      sourceKey: readResult.sourceKey || primaryKey,
-    });
-  }
-  return {
-    type: "xhandle-code-architecture-project",
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    project: {
-      id: project.id,
-      name: project.name || "Code Architecture Project",
-      folderId: null,
-      createdAt: project.createdAt || null,
-      updatedAt: project.updatedAt || null,
-      activeRepoName: repos.find((repo) => repo.id === project.activeRepoId)?.repoName || null,
-    },
-    repos: exportedRepos,
-  };
-}
 
 async function loadWorkbookXlsx() {
   try {
@@ -5291,21 +5229,19 @@ async function exportSelectedCodeArchitectureProject() {
   setIsExportingCodeArchitectureProject(true);
   setCodeArchitectureProjectExportMsg("");
   try {
-    const payload = await collectCodeArchitectureProjectExport(codeArchitectureProjectExportSelection);
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = codeArchitectureExportFileName(payload.project?.name);
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    setShowCodeArchitectureProjectExport(false);
+    if ([...workspaceActivities.values()].some(activity => activity.status === 'running')) throw new Error('Stop or finish running analyses before exporting. Saved partial work will be included.');
+    const project = codeArchitectureProjects.find(entry => entry.id === codeArchitectureProjectExportSelection);
+    setCodeArchitectureArchiveDownload(null);
+    const controller = new AbortController();
+    codeArchitectureArchiveController.current = controller;
+    const blob = await exportProjectArchive(project, { signal: controller.signal, onProgress: setCodeArchitectureProjectExportMsg });
+    setCodeArchitectureArchiveDownload({ url: URL.createObjectURL(blob), name: `${project.name.replace(/[^a-z0-9_-]/gi, '-')}.xhproject` });
+
   } catch (error) {
     console.error("[cba] Failed to export code architecture project", error);
     setCodeArchitectureProjectExportMsg(error?.message || "Failed to export project.");
   } finally {
+    codeArchitectureArchiveController.current = null;
     setIsExportingCodeArchitectureProject(false);
   }
 }
@@ -5322,6 +5258,16 @@ async function importCodeArchitectureProjectFromFile(event) {
   });
   codeArchitectureImportRef.current = operation;
   try {
+    if (/\.xhproject$/i.test(file.name)) {
+      if ([...workspaceActivities.values()].some(activity => activity.status === 'running')) throw new Error('Stop or finish running analyses before importing.');
+      const project = await importProjectArchive(file, {signal: operation.signal, onProgress: message => setCodeArchitectureImportStatus({busy:true,message})});
+      setCodeArchitectureProjects(JSON.parse(localStorage.getItem(CBA_PROJECTS_KEY) || '[]'));
+      setActiveCodeArchitectureProjectId(project.id);
+      setActiveCodeArchitectureFolderId(null);
+      setCodeArchitectureImportStatus({busy:false,message:'Complete project imported, including saved partial work. Reload xHandle before continuing. Configure your AI credentials and reconnect local folders to the same source revision.'});
+      notifyBackupDataChanged('code-architecture-project-import');
+      return;
+    }
     if (!/\.(csv|json)$/i.test(file.name)) throw new Error('Select a functional decomposition CSV or project JSON file.');
     const csvImport = /\.csv$/i.test(file.name);
     const targetProject = csvImport ? activeCodeArchitectureProject : null;
@@ -7950,7 +7896,7 @@ const [inboxBulk, setInboxBulk] = useState({
     }
   }, [conversationalProjectModeAvailable, promptMode]);
 
-  const { startActivity, updateActivity, finishActivity } = useActivityCenter();
+  const { activities: workspaceActivities, startActivity, updateActivity, finishActivity } = useActivityCenter();
 const [analysisActivityId, setAnalysisActivityId] = useState(null);
 useEffect(() => {
   if (!analysisActivityId || !isAnalyzing) return;
@@ -17301,7 +17247,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
     <input
       ref={codeArchitectureProjectImportInputRef}
       type="file"
-      accept=".json,application/json,.csv,text/csv"
+      accept=".xhproject,.json,application/json,.csv,text/csv"
       className="hidden"
       onChange={importCodeArchitectureProjectFromFile}
     />
@@ -17361,6 +17307,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                   type="button"
                   onClick={() => {
                     const firstProjectId = codeArchitectureDashboardRows[0]?.id || codeArchitectureProjects[0]?.id || "";
+                    setCodeArchitectureArchiveDownload(null);
                     setCodeArchitectureProjectExportSelection(firstProjectId);
                     setCodeArchitectureProjectExportMsg("");
                     setShowCodeArchitectureProjectExport(true);
@@ -17662,6 +17609,8 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                 }}
               >
                 <div ref={setCodeArchitectureViewControlsTarget} />
+                <button type="button" className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50" onClick={() => {setCodeArchitectureProjectExportSelection(activeCodeArchitectureProject.id);setCodeArchitectureProjectExportMsg('');setCodeArchitectureArchiveDownload(null);setShowCodeArchitectureProjectExport(true);}}>Export complete project</button>
+                <button type="button" className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50" onClick={() => codeArchitectureProjectImportInputRef.current?.click()}>Import project file</button>
                 <button
                   type="button"
                   onClick={() => codeArchitectureFunctionalExportRef.current?.()}
@@ -21820,7 +21769,7 @@ const updateRiskInProject = async (projectId, predicate) => {
             <div className="relative z-[101] w-full max-w-lg rounded-2xl border-2 border-[#2D7DFE] bg-white shadow-xl">
               <div className="px-5 py-4 border-b">
                 <h2 className="text-base font-semibold text-slate-800">Export Code-Based Architecture project</h2>
-                <p className="text-xs text-slate-500 mt-0.5">Choose one project to export as a JSON package.</p>
+                <p className="text-xs text-slate-500 mt-0.5">Export a complete project with saved results, source indexes and analysis checkpoints. Stop analyses, save edits and close other xHandle tabs first. Credentials and local folder permissions are not transferred.</p>
               </div>
               <div className="max-h-[55vh] overflow-auto px-5 py-4">
                 {codeArchitectureDashboardRows.length === 0 ? (
@@ -21843,7 +21792,7 @@ const updateRiskInProject = async (projectId, predicate) => {
                           name="codeArchitectureProjectExport"
                           className="mt-1"
                           checked={codeArchitectureProjectExportSelection === project.id}
-                          onChange={() => setCodeArchitectureProjectExportSelection(project.id)}
+                          onChange={() => {setCodeArchitectureProjectExportSelection(project.id);setCodeArchitectureArchiveDownload(null);setCodeArchitectureProjectExportMsg("");}}
                         />
                         <span className="min-w-0">
                           <span className="block font-medium text-gray-900">{project.name}</span>
@@ -21855,6 +21804,7 @@ const updateRiskInProject = async (projectId, predicate) => {
                     ))}
                   </div>
                 )}
+                {codeArchitectureArchiveDownload && <a className="my-3 block rounded bg-blue-600 p-3 text-white" href={codeArchitectureArchiveDownload.url} download={codeArchitectureArchiveDownload.name}>Save Complete Project File</a>}
                 {codeArchitectureProjectExportMsg && (
                   <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
                     {codeArchitectureProjectExportMsg}
@@ -21863,11 +21813,10 @@ const updateRiskInProject = async (projectId, predicate) => {
               </div>
               <div className="px-5 py-4 border-t flex items-center justify-end gap-2">
                 <button
-                  onClick={() => setShowCodeArchitectureProjectExport(false)}
-                  disabled={isExportingCodeArchitectureProject}
+                  onClick={() => {if (isExportingCodeArchitectureProject) codeArchitectureArchiveController.current?.abort();else setShowCodeArchitectureProjectExport(false);}}
                   className="px-3 py-2 rounded border text-sm hover:bg-gray-50 disabled:opacity-50"
                 >
-                  Cancel
+                  {isExportingCodeArchitectureProject ? "Stop export" : "Close"}
                 </button>
                 <button
                   onClick={exportSelectedCodeArchitectureProject}
