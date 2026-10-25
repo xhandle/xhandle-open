@@ -1,0 +1,5 @@
+Review the uncommitted large-project export fix in xhandle-open. The reported failure is “Invalid string length” when exporting a 4,792-row project with partial hazard analysis.
+
+Trace the actual export, save and import paths. Check bounded serialization, binary/text fidelity, preservation of partial work/checkpoints, backward compatibility, conflict detection, checksums, malformed frames, cancellation, transaction lifetimes and rollback. Inspect both the new token codec and its callers. Test large individual records, not merely many small records. Distinguish removal of whole-record JSON strings from genuinely bounded end-to-end memory consumption.
+
+Run focused regression tests and appropriate broader validation. Reproduce suspected findings with tests where practical. Compare unrelated failures against unchanged HEAD. Do not claim that fake-indexeddb or fault-injected limits prove packaged Electron behavior on the user's actual database. Report findings by severity with file references, tests, remaining risks, and whether this is ready for a desktop release. Do not commit, push or publish during review.

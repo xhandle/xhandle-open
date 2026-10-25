@@ -1,0 +1,5 @@
+Review the uncommitted large-record archive codec and import progress implementation, especially the fix documented in large-project-import-progress-fix-2026-10-25.md.
+
+Determine whether whole-record stringify failures and missing intermediate import progress are addressed. Trace physical-frame parsing, byte accounting, stage transitions, UI yielding, cancellation, transaction lifetimes, checksums, rollback and success publication. Verify preservation of partial architecture, hazard and requirement results/checkpoints, v1 compatibility and v2 round trips. Check that updates are bounded and no success is shown on cancellation or corruption.
+
+Run meaningful regression tests, including cancellation scheduled through the event loop rather than only synchronously inside a progress callback, and preservation of unrelated destination projects. Inspect the actual UI callers. Report concrete findings with severity and evidence; distinguish unchanged known failures and capacity limitations from regressions. Do not claim actual-project Electron verification from mocked IndexedDB tests. Do not change production code, commit, push or publish during this review.

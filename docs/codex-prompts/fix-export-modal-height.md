@@ -1,0 +1,3 @@
+Fix the P2 short-window clipping finding in docs/investigations/export-status-visibility-review-2026-10-25.md. Constrain the export modal to the available viewport height; use a flex column with a shrinking, scrolling project list and persistent header/status/download/actions. Provide a compact layout for short windows. Preserve export selection, cancellation, errors, download behavior and archive code.
+
+Verify actual rendered geometry in Chromium and WebKit for long project lists in exporting, archive-ready and error states, including 800×450 and 390×400. Turn the browser diagnostic into an assertion-based regression check. Run appropriate checks and record limitations. Do not commit, push or publish.

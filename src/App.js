@@ -5227,7 +5227,7 @@ async function exportSelectedCodeArchitectureProject() {
     return;
   }
   setIsExportingCodeArchitectureProject(true);
-  setCodeArchitectureProjectExportMsg("");
+  setCodeArchitectureProjectExportMsg("Preparing project export…");
   try {
     if ([...workspaceActivities.values()].some(activity => activity.status === 'running')) throw new Error('Stop or finish running analyses before exporting. Saved partial work will be included.');
     const project = codeArchitectureProjects.find(entry => entry.id === codeArchitectureProjectExportSelection);
@@ -21766,12 +21766,12 @@ const updateRiskInProject = async (projectId, predicate) => {
             <div className="absolute inset-0 bg-black/40" onClick={() => {
               if (!isExportingCodeArchitectureProject) setShowCodeArchitectureProjectExport(false);
             }} />
-            <div className="relative z-[101] w-full max-w-lg rounded-2xl border-2 border-[#2D7DFE] bg-white shadow-xl">
-              <div className="px-5 py-4 border-b">
+            <div className="cba-project-export-panel relative z-[101] flex min-h-0 w-full max-w-lg flex-col overflow-hidden rounded-2xl border-2 border-[#2D7DFE] bg-white shadow-xl">
+              <div className="cba-project-export-header shrink-0 px-5 py-4 border-b">
                 <h2 className="text-base font-semibold text-slate-800">Export Code-Based Architecture project</h2>
                 <p className="text-xs text-slate-500 mt-0.5">Export a complete project with saved results, source indexes and analysis checkpoints. Stop analyses, save edits and close other xHandle tabs first. Credentials and local folder permissions are not transferred.</p>
               </div>
-              <div className="max-h-[55vh] overflow-auto px-5 py-4">
+              <div className="cba-project-export-list min-h-0 overflow-auto px-5 py-4">
                 {codeArchitectureDashboardRows.length === 0 ? (
                   <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">
                     No Code-Based Architecture projects are available to export.
@@ -21790,6 +21790,7 @@ const updateRiskInProject = async (projectId, predicate) => {
                         <input
                           type="radio"
                           name="codeArchitectureProjectExport"
+                          disabled={isExportingCodeArchitectureProject}
                           className="mt-1"
                           checked={codeArchitectureProjectExportSelection === project.id}
                           onChange={() => {setCodeArchitectureProjectExportSelection(project.id);setCodeArchitectureArchiveDownload(null);setCodeArchitectureProjectExportMsg("");}}
@@ -21804,14 +21805,18 @@ const updateRiskInProject = async (projectId, predicate) => {
                     ))}
                   </div>
                 )}
-                {codeArchitectureArchiveDownload && <a className="my-3 block rounded bg-blue-600 p-3 text-white" href={codeArchitectureArchiveDownload.url} download={codeArchitectureArchiveDownload.name}>Save Complete Project File</a>}
-                {codeArchitectureProjectExportMsg && (
-                  <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                    {codeArchitectureProjectExportMsg}
-                  </div>
-                )}
               </div>
-              <div className="px-5 py-4 border-t flex items-center justify-end gap-2">
+              {(codeArchitectureProjectExportMsg || codeArchitectureArchiveDownload) && (
+                <div className="cba-project-export-status shrink-0 border-t px-5 py-3">
+                  {codeArchitectureProjectExportMsg && (
+                    <div role="status" aria-live="polite" className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                      {codeArchitectureProjectExportMsg}
+                    </div>
+                  )}
+                  {codeArchitectureArchiveDownload && <a className="mt-3 block rounded bg-blue-600 p-3 text-white" href={codeArchitectureArchiveDownload.url} download={codeArchitectureArchiveDownload.name}>Save Complete Project File</a>}
+                </div>
+              )}
+              <div className="cba-project-export-actions shrink-0 px-5 py-4 border-t flex items-center justify-end gap-2">
                 <button
                   onClick={() => {if (isExportingCodeArchitectureProject) codeArchitectureArchiveController.current?.abort();else setShowCodeArchitectureProjectExport(false);}}
                   className="px-3 py-2 rounded border text-sm hover:bg-gray-50 disabled:opacity-50"

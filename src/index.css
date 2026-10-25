@@ -426,3 +426,25 @@ html.dark .prose h1, html.dark .prose h2, html.dark .prose h3, html.dark .prose 
     transform: none;
   }
 }
+
+/* The list yields space to export feedback and controls, including short windows. */
+.cba-project-export-panel {
+  max-height: calc(100vh - 16px);
+  max-height: calc(100dvh - 16px);
+}
+.cba-project-export-list {
+  flex: 0 1 auto;
+  max-height: 55vh;
+}
+@media (max-height: 600px) {
+  .cba-project-export-header,
+  .cba-project-export-status,
+  .cba-project-export-actions {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+  .cba-project-export-list {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+}

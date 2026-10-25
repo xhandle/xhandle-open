@@ -3,6 +3,7 @@ import { flushProjectArtifactWrites } from '../code-architecture-assurance/artif
 import { flushProjectArchitectureWrites } from '../code-architecture-assurance/codeArchitectureStorage';
 import { assertProjectHazardsSaved } from '../code-architecture-hazard-analysis/codeArchitectureHazardStore';
 import { openDB } from 'idb';
+import { streamValue, createValueAssembler, fitsArchiveLine } from './archiveValueStream';
 import { createChunkIntegrityCheck } from './projectChunkIntegrity';
 import { sha256 } from 'hash.js';
 import { projectOwnsRecord, projectOwnsStorageKey } from '../../components/permanentlyDeleteStoredProject';
@@ -85,6 +86,14 @@ export function decodeValue(value) {
   if (type === 'object') return Object.fromEntries(body.map(([k,v])=>[k,decodeValue(v)]));
   throw new Error('Invalid archive value.');
 }
+async function archiveValueDigest(value, signal) {
+  const hash = sha256(); let count = 0;
+  for await (const token of streamValue(value)) {
+    check(signal); hash.update(JSON.stringify(token)); hash.update('\n');
+    if (++count % 256 === 0) await yieldTask();
+  }
+  return hash.digest('hex');
+}
 function openArchiveDB(name, version, upgrade) {
   return new Promise((resolve,reject) => {
     let settled=false;
@@ -144,23 +153,44 @@ function portableProject(project) {
 }
 export async function exportProjectArchive(project, {signal,onProgress=()=>{}} = {}) {
   if (!project?.id) throw new Error('Select a project.');
+  check(signal); onProgress('Preparing project export — saving pending edits…');
   const preparation = {projectId: project.id, tasks: []};
   window.dispatchEvent(new CustomEvent('xhandle:prepare-project-export', {detail: preparation}));
   await Promise.all(preparation.tasks);
+  check(signal); onProgress('Preparing project export — saving architecture results…');
   await flushProjectArchitectureWrites(project.id);
+  check(signal); onProgress('Preparing project export — saving requirements and design results…');
   await flushProjectArtifactWrites(project.id);
+  check(signal);
   assertProjectHazardsSaved(project.id);
   const portable = portableProject(project), scope=ownership(portable), parts=[], hash=sha256();
   let count=0, stagePercent=0;
   const integrity = createChunkIntegrityCheck();
-  const append = async entry => {
+  let serializedBytes = 0, lastProgress = 0;
+  const appendLine = async entry => {
     check(signal);
-    integrity.add(entry);
     const line=JSON.stringify(await encodeValue(entry))+'\n';
     hash.update(line); parts.push(new Blob([line])); count++;
-    if (count % 32 === 0) {onProgress(`Exporting saved project data (${stagePercent}%) — ${count} records copied…`);await yieldTask();}
+    serializedBytes += line.length;
+    if (Date.now() - lastProgress >= 100 || count % 32 === 0) {
+      onProgress(`Exporting saved project data (${stagePercent}%) — ${(serializedBytes / 1048576).toFixed(1)} MB prepared…`);
+      await yieldTask(); lastProgress = Date.now();
+    }
   };
-  await append({type:PROJECT_ARCHIVE_TYPE,version:1,project:portable,createdAt:new Date().toISOString()});
+  const append = async entry => {
+    check(signal); integrity.add(entry);
+    if (fitsArchiveLine(entry)) return appendLine(entry);
+    await appendLine({kind:'stream-start',transportVersion:2});
+    let tokens=[], size=0;
+    for await (const token of streamValue(entry)) {
+      check(signal);
+      tokens.push(token); size += JSON.stringify(token).length;
+      if (size >= 16384) { await appendLine({kind:'stream-data',tokens}); tokens=[]; size=0; }
+    }
+    if (tokens.length) await appendLine({kind:'stream-data',tokens});
+    await appendLine({kind:'stream-end'});
+  };
+  await append({type:PROJECT_ARCHIVE_TYPE,version:2,project:portable,createdAt:new Date().toISOString()});
   for (let i=0;i<DATABASES.length;i++) {
     check(signal); stagePercent=Math.round(i/DATABASES.length*95); onProgress(`Exporting saved project data (${stagePercent}%)…`);
     const name=DATABASES[i], db=await existingDB(name);
@@ -208,16 +238,41 @@ async function* archiveLines(file) {
   buffer+=decoder.decode();
   if (buffer) throw new Error('Archive is incomplete (missing final newline).');
 }
-async function visitArchive(file, visit, signal) {
-  let bytes=0;
+async function visitArchive(file, visit, signal, onReadProgress=()=>{}) {
+  let bytes=0, lastPercent=-1;
   const integrity = createChunkIntegrityCheck();
-  let header,scope,end=false,count=0; const hash=sha256(), schemas=new Map(), seen=new Set();
+  let header,scope,end=false,count=0, assembling=null; const hash=sha256(), schemas=new Map(), seen=new Set();
   for await (const line of archiveLines(file)) {
     check(signal); bytes += new Blob([line]).size;
     if (end) throw new Error('Unexpected data after archive checksum.');
-    const entry=decodeValue(JSON.parse(line));
+    // Report physical bytes even while a single large record is being assembled.
+    // Integer changes bound each pass to at most 100 updates; reserve 100% for publication.
+    const percent = Math.min(99, Math.floor(bytes / file.size * 100));
+    if (percent !== lastPercent) {
+      lastPercent = percent; onReadProgress(percent);
+      await yieldTask(); check(signal);
+    }
+    let entry=decodeValue(JSON.parse(line));
+    const framed = ['stream-start','stream-data','stream-end'].includes(entry?.kind);
+    if (framed) {
+      if (header?.version === 1) throw new Error('Unexpected streamed record in legacy archive.');
+      hash.update(line); count++;
+      if (entry.kind === 'stream-start') {
+        if (assembling || entry.transportVersion !== 2) throw new Error('Invalid streamed project record.');
+        assembling = createValueAssembler(); continue;
+      }
+      if (!assembling) throw new Error('Unexpected streamed project record.');
+      if (entry.kind === 'stream-data') {
+        if (!Array.isArray(entry.tokens)) throw new Error('Invalid streamed project record.');
+        for (const token of entry.tokens) assembling.add(token);
+        if (count % 32 === 0) { await yieldTask(); check(signal); }
+        continue;
+      }
+      entry = assembling.finish(); assembling = null;
+      if (entry?.kind === 'end') throw new Error('Invalid streamed archive footer.');
+    } else if (assembling) throw new Error('Incomplete streamed project record.');
     if (!header) {
-      if (entry?.type!==PROJECT_ARCHIVE_TYPE || entry.version!==1 || typeof entry.project?.id!=='string' || !entry.project.id || !Array.isArray(entry.project.repos)) throw new Error('Unsupported project archive.');
+      if (entry?.type!==PROJECT_ARCHIVE_TYPE || ![1,2].includes(entry.version) || typeof entry.project?.id!=='string' || !entry.project.id || !Array.isArray(entry.project.repos)) throw new Error('Unsupported project archive.');
       header=entry; scope=ownership(header.project);
     } else if (entry.kind==='end') {
       if (entry.count!==count || entry.digest!==hash.digest('hex')) throw new Error('Project archive checksum failed. No project was imported.');
@@ -246,11 +301,11 @@ async function visitArchive(file, visit, signal) {
     if (identity && seen.has(identity)) throw new Error('Duplicate archive record.');
     if (identity) seen.add(identity);
     integrity.add(entry);
-    hash.update(line); count++;
-    await visit(entry,header,schemas,count % 32 === 0 ? Math.min(99,Math.round(bytes/file.size*100)) : null);
+    if (!framed) { hash.update(line); count++; }
+    await visit(entry,header,schemas);
     if (count%32===0) await yieldTask();
   }
-  if (!end) throw new Error('Incomplete project archive.');
+  if (!end || assembling) throw new Error('Incomplete project archive.');
   integrity.finish();
   return header;
 }
@@ -281,8 +336,7 @@ export async function importProjectArchive(file, {signal,onProgress=()=>{}} = {}
   };
   try {
     onProgress('Validating project archive…');
-    const header=await visitArchive(file,async(entry,header,schemas,percent)=>{
-      if (percent !== null) onProgress(`Validating project archive (${percent}%)…`);
+    const header=await visitArchive(file,async(entry,header,schemas)=>{
       assertNew(header.project);
       if (entry.kind==='database') {
         const db = await existingDB(entry.name);
@@ -295,17 +349,16 @@ export async function importProjectArchive(file, {signal,onProgress=()=>{}} = {}
         if (db) {
           if (db.objectStoreNames.contains(entry.store)) {
             const current=await db.get(entry.store,entry.key);
-            if (current!==undefined && JSON.stringify(await encodeValue(current))!==JSON.stringify(await encodeValue(entry.value))) throw new Error(`Destination already contains different data in ${entry.store}. Nothing was imported.`);
+            if (current!==undefined && await archiveValueDigest(current, signal)!==await archiveValueDigest(entry.value, signal)) throw new Error(`Destination already contains different data in ${entry.store}. Nothing was imported.`);
           }
         }
       }
       if (entry.kind==='local' && localStorage.getItem(entry.key)!==null && localStorage.getItem(entry.key)!==entry.value) throw new Error('Destination has conflicting project settings.');
-    },signal);
+    },signal,percent=>onProgress(`Validating project archive (${percent}%)…`));
     for (const db of preflight.values()) db?.close();
     preflight.clear();
     onProgress('Importing validated project records…');
-    await visitArchive(file,async(entry,header,schemas,percent)=>{
-      if (percent !== null) onProgress(`Importing project records (${percent}%)…`);
+    await visitArchive(file,async(entry,header,schemas)=>{
       assertNew(header.project);
       if (entry.kind==='record') {
         const db=await connect(schemas.get(entry.db));
@@ -313,7 +366,7 @@ export async function importProjectArchive(file, {signal,onProgress=()=>{}} = {}
         const current=await tx.store.get(entry.key);
         if (current!==undefined) {
           await tx.done;
-          if (JSON.stringify(await encodeValue(current))!==JSON.stringify(await encodeValue(entry.value))) throw new Error('Destination changed during import.');
+          if (await archiveValueDigest(current, signal)!==await archiveValueDigest(entry.value, signal)) throw new Error('Destination changed during import.');
           return;
         }
         if (tx.store.keyPath===null) await tx.store.add(entry.value,entry.key); else await tx.store.add(entry.value);
@@ -329,7 +382,7 @@ export async function importProjectArchive(file, {signal,onProgress=()=>{}} = {}
           localStorage.setItem(entry.key,JSON.stringify(next));
         }
       }
-    },signal);
+    },signal,percent=>onProgress(`Importing project records (${percent}%)…`));
     check(signal);assertNew(header.project);
     const projects=JSON.parse(localStorage.getItem(PROJECTS)||'[]');
     const project=portableProject(header.project);

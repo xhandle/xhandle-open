@@ -5,6 +5,7 @@ import { TextEncoder, TextDecoder } from 'util';
 import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import { Blob } from 'buffer';
 import { webcrypto } from 'crypto';
+import { sha256 } from 'hash.js';
 import { openDB } from 'idb';
 import { exportProjectArchive, importProjectArchive, encodeValue, decodeValue } from './projectArchive';
 import { createRequirementCheckpoint } from './requirementCheckpoint';
@@ -130,3 +131,49 @@ test('actual software derivation reuses imported model responses without another
   expect(global.fetch).not.toHaveBeenCalled();
   expect(second.map(row=>row.requirementText)).toEqual(first.map(row=>row.requirementText));
 });
+
+test('large partial hazard records export and import under a bounded stringify budget',async()=>{
+  const run={id:'large-run',projectId:'p1',repoId:'r1',status:'partial',summary:[{id:'h1',evidence:'evidence\\"\n'.repeat(160000)}],updatedAt:'2026-10-24T00:00:00Z'};
+  await saveCodeArchitectureHazardRun(run);
+  const stringify=JSON.stringify;
+  const spy=jest.spyOn(JSON,'stringify').mockImplementation((...args)=>{
+    const result=stringify(...args);
+    if(result?.length>131072)throw new RangeError('Invalid string length');
+    return result;
+  });
+  try {
+    expect(()=>JSON.stringify(run)).toThrow('Invalid string length');
+    const archive=await exportProjectArchive(project);
+    expect(await archive.text()).toContain('stream-start');
+    fresh();await importProjectArchive(archive);
+    const restored=await getLatestCodeArchitectureHazardRun({projectId:'p1',repoId:'r1'});
+    expect(restored.status).toBe('partial');expect(restored.summary).toEqual(run.summary);
+    // The conflict checks must also compare large values without a whole-record string.
+    localStorage.removeItem('xhandle.codeArchitectureProjects');
+    await importProjectArchive(archive);
+    localStorage.removeItem('xhandle.codeArchitectureProjects');
+    await saveCodeArchitectureHazardRun({...run,summary:[{id:'changed'}]});
+    await expect(importProjectArchive(archive)).rejects.toThrow(/different data/);
+  } finally {spy.mockRestore();}
+},30000);
+
+test('large export cancellation preserves source and truncated framed import never publishes',async()=>{
+  await saveCodeArchitectureHazardRun({id:'large-run',projectId:'p1',repoId:'r1',status:'partial',summary:[{evidence:'x'.repeat(300000)}]});
+  const controller=new AbortController();
+  await expect(exportProjectArchive(project,{signal:controller.signal,onProgress:message=>{if(message.includes('MB prepared'))controller.abort();}})).rejects.toThrow(/cancelled/);
+  expect((await getLatestCodeArchitectureHazardRun({projectId:'p1',repoId:'r1'})).status).toBe('partial');
+  const archive=await exportProjectArchive(project);
+  fresh();await expect(importProjectArchive(archive.slice(0,Math.floor(archive.size/2)))).rejects.toThrow();
+  expect(localStorage.getItem('xhandle.codeArchitectureProjects')).toBeNull();
+});
+
+ test('legacy version 1 exports remain importable',async()=>{
+  const archive=await exportProjectArchive(project);
+  const entries=(await archive.text()).trim().split('\n').map(line=>decodeValue(JSON.parse(line)));
+  entries[0].version=1;entries.pop();
+  const lines=await Promise.all(entries.map(async entry=>JSON.stringify(await encodeValue(entry))+'\n'));
+  const hash=sha256();lines.forEach(line=>hash.update(line));
+  lines.push(JSON.stringify(await encodeValue({kind:'end',count:entries.length,digest:hash.digest('hex')}))+'\n');
+  fresh();await importProjectArchive(new Blob(lines));
+  expect(JSON.parse(localStorage.getItem('xhandle.codeArchitectureProjects'))[0].id).toBe('p1');
+ });
