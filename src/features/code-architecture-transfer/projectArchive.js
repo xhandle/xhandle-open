@@ -1,3 +1,5 @@
+import { portableLocalMetadata } from './portableLocalMetadata';
+import { encodeCompact, decodeCompact } from './compactArchiveCodec';
 import { exportHazardRun, portableHazardRun } from './projectHazardExport';
 import { HAZARD_DB, HAZARD_DB_VERSION, HAZARD_SCHEMA, HAZARD_STAGING, upgradeHazardSchema, hazardMetadata } from '../code-architecture-hazard-analysis/hazardSchema';
 import { createHazardChunkIntegrityCheck } from './hazardChunkIntegrity';
@@ -7,7 +9,7 @@ import { flushProjectArtifactWrites } from '../code-architecture-assurance/artif
 import { flushProjectArchitectureWrites } from '../code-architecture-assurance/codeArchitectureStorage';
 import { assertProjectHazardsSaved } from '../code-architecture-hazard-analysis/codeArchitectureHazardStore';
 import { openTransferDatabase, readTransferTransaction } from './transferDatabase';
-import { EXPORT_DATABASES, EXPORT_FALLBACKS, analysisProjectMetadata, projectExportScope } from './projectExportScope';
+import { EXPORT_FALLBACKS, selectedExportCategories, analysisProjectMetadata, projectExportScope } from './projectExportScope';
 import { streamValue, createValueAssembler, fitsArchiveLine } from './archiveValueStream';
 import { createChunkIntegrityCheck } from './projectChunkIntegrity';
 import { sha256 } from 'hash.js';
@@ -73,6 +75,7 @@ export async function encodeValue(value) {
   return ['object', entries];
 }
 export function decodeValue(value) {
+  if (Array.isArray(value) && value[0] === 'compact-v1') return decodeCompact(value);
   if (!Array.isArray(value)) return value;
   const [type, body, extra] = value;
   if (type === 'undefined') return undefined;
@@ -94,17 +97,23 @@ export function decodeValue(value) {
 }
 async function archiveValueDigest(value, signal) {
   const hash = sha256(); let count = 0;
-  for await (const token of streamValue(value)) {
-    check(signal); hash.update(JSON.stringify(token)); hash.update('\n');
-    if (++count % 256 === 0) await yieldTask();
-  }
+  const iterator=streamValue(value);
+  try {
+    for (;;) {
+      check(signal);
+      const step=await iterator.next();
+      if(step.done)break;
+      hash.update(JSON.stringify(step.value)); hash.update('\n');
+      if (++count % 256 === 0) await yieldTask();
+    }
+  } finally {iterator.return();}
   return hash.digest('hex');
 }
 const openArchiveDB=(name,version,upgrade,options)=>openTransferDatabase(name,{...options,version,upgrade});
 const existingDB=(name,options)=>openTransferDatabase(name,{...options,existingOnly:true});
 // One record per transaction: encoding/hash/file work never keeps an IDB
 // transaction alive across unrelated awaits (important in Safari).
-async function* records(db, store, scope, signal) {
+async function visitRecords(db, store, scope, signal, visit) {
   let after;
   for (;;) {
     // Inspect bounded key pages before cloning payloads. Large unrelated source
@@ -120,7 +129,7 @@ async function* records(db, store, scope, signal) {
       if(!scope.mayOwnKey(db.name,store,key))continue;
       const value=await readTransferTransaction(db,store,s=>s.get(key),{signal});
       if(value===undefined)throw new Error('Saved project data changed during export. Stop active work and retry.');
-      yield {key,value};
+      await visit({key,value});
     }
     after=keys[keys.length-1];
     await yieldTask();
@@ -163,8 +172,9 @@ export async function exportProjectArchive(project, options = {}) {
   try { return await writeProjectArchive(project, options); }
   catch(error) { try { await options.sink?.abort(); } catch {} throw error; }
 }
-async function writeProjectArchive(project, {signal,onProgress=()=>{},sink} = {}) {
+async function writeProjectArchive(project, {signal,onProgress=()=>{},sink,categories} = {}) {
   if (!project?.id) throw new Error('Select a project.');
+  const selected=selectedExportCategories(categories);
   check(signal); onProgress('Preparing project export — saving pending edits…');
   const preparation = {projectId: project.id, tasks: []};
   window.dispatchEvent(new CustomEvent('xhandle:prepare-project-export', {detail: preparation}));
@@ -174,8 +184,8 @@ async function writeProjectArchive(project, {signal,onProgress=()=>{},sink} = {}
   check(signal); onProgress('Preparing project export — saving requirements and design results…');
   await flushProjectArtifactWrites(project.id);
   check(signal);
-  assertProjectHazardsSaved(project.id);
-  const portable = analysisProjectMetadata(project), scope=projectExportScope(portable,ownership(portable)), parts=sink?null:[], hash=sha256();
+  if(selected.includes('hazard'))assertProjectHazardsSaved(project.id);
+  const portable = analysisProjectMetadata(project), scope=projectExportScope(portable,ownership(portable),selected), parts=sink?null:[], hash=sha256();
   const write=async line=>{if(sink)await sink.write(line);else parts.push(new Blob([line]));};
   let count=0, stagePercent=0;
   let pendingParts=[];
@@ -185,7 +195,7 @@ async function writeProjectArchive(project, {signal,onProgress=()=>{},sink} = {}
   const encoder=new TextEncoder();
   const appendLine = async entry => {
     check(signal);
-    const line=JSON.stringify(await encodeValue(entry))+'\n';
+    const line=JSON.stringify(await encodeCompact(entry))+'\n';
     hash.update(line); await write(line); count++;
     serializedBytes += encoder.encode(line).byteLength;
     if (Date.now() - lastProgress >= 100 || count % 32 === 0) {
@@ -196,21 +206,24 @@ async function writeProjectArchive(project, {signal,onProgress=()=>{},sink} = {}
   };
   const append = async entry => {
     check(signal); integrity.add(entry);
-    if (fitsArchiveLine(entry)) return appendLine(entry);
+    if (fitsArchiveLine(entry,262144)) return appendLine(entry);
     await appendLine({kind:'stream-start',transportVersion:2});
     let tokens=[], size=0;
-    for await (const token of streamValue(entry)) {
-      check(signal);
-      tokens.push(token); size += JSON.stringify(token).length;
-      if (size >= 16384) { await appendLine({kind:'stream-data',tokens}); tokens=[]; size=0; }
-    }
+    const iterator=streamValue(entry);
+    try {
+      for (;;) {
+        check(signal);const step=await iterator.next();if(step.done)break;
+        tokens.push(step.value); size += JSON.stringify(step.value).length;
+        if (size >= 16384) { await appendLine({kind:'stream-data',tokens}); tokens=[]; size=0; }
+      }
+    } finally {iterator.return();}
     if (tokens.length) await appendLine({kind:'stream-data',tokens});
     await appendLine({kind:'stream-end'});
   };
-  await append({type:PROJECT_ARCHIVE_TYPE,version:2,project:portable,createdAt:new Date().toISOString()});
-  for (let i=0;i<EXPORT_DATABASES.length;i++) {
-    check(signal); stagePercent=Math.round(i/EXPORT_DATABASES.length*95); onProgress(`Exporting saved analysis data (${stagePercent}%)…`);
-    const name=EXPORT_DATABASES[i], db=await existingDB(name,{signal,onProgress});
+  await append({type:PROJECT_ARCHIVE_TYPE,version:3,categories:selected,project:portable,createdAt:new Date().toISOString()});
+  for (let i=0;i<scope.databases.length;i++) {
+    check(signal); stagePercent=Math.round(i/scope.databases.length*95); onProgress(`Exporting saved analysis data (${stagePercent}%)…`);
+    const name=scope.databases[i], db=await existingDB(name,{signal,onProgress});
     category=name;
     if (!db) continue;
     try {
@@ -228,11 +241,12 @@ async function writeProjectArchive(project, {signal,onProgress=()=>{},sink} = {}
       if(hazardDB)Object.assign(schema,HAZARD_SCHEMA);
       await append({kind:'database',name,version:hazardDB?HAZARD_DB_VERSION:db.version,stores:schema});
 
-      for (const store of stores.filter(store=>scope.store(name,store) && !(hazardDB && store===HAZARD_CHUNKS))) for await (const {key,value} of records(db,store,scope,signal)) {
+      for (const store of stores.filter(store=>scope.store(name,store) && !(hazardDB && store===HAZARD_CHUNKS))) {
         category=`${name} / ${store}`;
+        await visitRecords(db,store,scope,signal,async ({key,value}) => {
         check(signal);
-        if(hazardDB && ['runMetadata',HAZARD_STAGING].includes(store))continue;
-        if(!scope.owns(name,store,key,value))continue;
+        if(hazardDB && ['runMetadata',HAZARD_STAGING].includes(store))return;
+        if(!scope.owns(name,store,key,value))return;
         if(name==='xhandle-code-architecture-assurance' && value.chunked){
           const keys=value.chunkKeys;
           if(!Array.isArray(keys) || new Set(keys).size!==keys.length || !Number.isInteger(value.rowCount) || value.rowCount<0)throw new Error('Saved requirements are incomplete. Export was not created.');
@@ -250,14 +264,15 @@ async function writeProjectArchive(project, {signal,onProgress=()=>{},sink} = {}
         if(hazardDB && store==='hazardAnalysisRuns'){
           // Legacy IDB values require one full read. Export converts them to small durable
           // records without mutating the source; the destination never hydrates them on import.
-          for await(const entry of exportHazardRun(db,value,{signal})){
+          await exportHazardRun(db,value,{signal,onEntry:async entry=>{
             if(entry.chunk)await append({kind:'record',db:name,store:HAZARD_CHUNKS,key:entry.chunk.id,value:entry.chunk});
             else {await append({kind:'record',db:name,store,key,value:entry.run});}
-          }
+          }});
           await append({kind:'record',db:name,store:'runMetadata',key,value:hazardMetadata(value)});
         }else if(!hazardDB || store!==HAZARD_CHUNKS){
           await append({kind:'record',db:name,store,key,value});
         }
+        });
       }
       // Follow only selected result roots and their incomplete checkpoints.
       // Each immutable part is emitted once; unreachable parts stay in the
@@ -277,33 +292,34 @@ async function writeProjectArchive(project, {signal,onProgress=()=>{},sink} = {}
   }
   category='analysis context and saved results';
   for (const key of Object.keys(localStorage)) {
-    if (scope.local(key)) await append({kind:'local',key,value:localStorage.getItem(key)});
+    if (scope.local(key)) await append({kind:'local',key,value:portableLocalMetadata(key,localStorage.getItem(key))});
   }
   // Legacy fallback stores hold several projects; transfer only owned entries.
-  for (const key of EXPORT_FALLBACKS) {
+  for (const key of selected.includes('hazard') ? EXPORT_FALLBACKS : []) {
     const raw=localStorage.getItem(key); if (!raw) continue;
     const state=JSON.parse(raw), filter=rows=>rows.filter(row=>scope.owns('xhandle-safety-remediation','',null,row)).map(portableHazardRun);
     const value=Array.isArray(state) ? filter(state) : Object.fromEntries(Object.entries(state).map(([k,v])=>[k,Array.isArray(v)?filter(v):[]]));
     await append({kind:'fallback',key,value});
   }
   integrity.finish();
-  await write(JSON.stringify(await encodeValue({kind:'end',count,digest:hash.digest('hex')}))+'\n');
+  await write(JSON.stringify(await encodeCompact({kind:'end',count,digest:hash.digest('hex')}))+'\n');
   check(signal); onProgress('Finalizing and verifying the project file…');
   const result=sink?await sink.finish():new Blob(parts,{type:'application/x-xhandle-project'});
   check(signal); onProgress(`100% — archive ready${typeof result?.bytes === 'number' ? ` (${(result.bytes / 1048576).toFixed(1)} MB)` : ''}. Save the project file.`);
   return result;
 }
 
-async function* archiveLines(file) {
+async function readArchiveLines(file, onLine, signal) {
   const magic=new Uint8Array(await file.slice(0,2).arrayBuffer());
   const gzip=magic[0]===0x1f && magic[1]===0x8b;
   if(gzip && typeof DecompressionStream!=='function')throw new Error('This app cannot read compressed project files. Update xHandle and retry.');
   const decoder=new TextDecoder(); let buffer='';
   if (!gzip) {
     for(let offset=0;offset<file.size;offset+=256*1024){
+      check(signal);
       buffer+=decoder.decode(await file.slice(offset,offset+256*1024).arrayBuffer(),{stream:true});
       let end;
-      while((end=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,end+1);buffer=buffer.slice(end+1);yield {line,physicalBytes:Math.min(file.size,offset+256*1024)};}
+      while((end=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,end+1);buffer=buffer.slice(end+1);check(signal);await onLine({line,physicalBytes:Math.min(file.size,offset+256*1024)});}
     }
   } else {
     let physicalBytes=0;
@@ -317,11 +333,12 @@ async function* archiveLines(file) {
     const reader=compressed.pipeThrough(new DecompressionStream('gzip')).getReader();
     try {
       for (;;) {
+        check(signal);
         const {done,value}=await reader.read();
         if(done)break;
         buffer+=decoder.decode(value,{stream:true});
         let end;
-        while ((end=buffer.indexOf('\n'))>=0) { const line=buffer.slice(0,end+1); buffer=buffer.slice(end+1); yield {line,physicalBytes}; }
+        while ((end=buffer.indexOf('\n'))>=0) { const line=buffer.slice(0,end+1); buffer=buffer.slice(end+1); check(signal);await onLine({line,physicalBytes}); }
       }
     } finally {
       await reader.cancel().catch(()=>{});
@@ -336,7 +353,7 @@ async function visitArchive(file, visit, signal, onReadProgress=()=>{}) {
   const chunkIntegrity=createChunkIntegrityCheck(), hazardIntegrity=createHazardChunkIntegrityCheck();
   const integrity={add:entry=>{chunkIntegrity.add(entry);hazardIntegrity.add(entry);},finish:()=>{chunkIntegrity.finish();hazardIntegrity.finish();}};
   let header,scope,end=false,count=0, assembling=null; const hash=sha256(), schemas=new Map(), seen=new Set();
-  for await (const {line,physicalBytes} of archiveLines(file)) {
+  await readArchiveLines(file, async ({line,physicalBytes}) => {
     check(signal); bytes = physicalBytes;
     if (end) throw new Error('Unexpected data after archive checksum.');
     // Report physical bytes even while a single large record is being assembled.
@@ -353,24 +370,24 @@ async function visitArchive(file, visit, signal, onReadProgress=()=>{}) {
       hash.update(line); count++;
       if (entry.kind === 'stream-start') {
         if (assembling || entry.transportVersion !== 2) throw new Error('Invalid streamed project record.');
-        assembling = createValueAssembler(); continue;
+        assembling = createValueAssembler(); return;
       }
       if (!assembling) throw new Error('Unexpected streamed project record.');
       if (entry.kind === 'stream-data') {
         if (!Array.isArray(entry.tokens)) throw new Error('Invalid streamed project record.');
         for (const token of entry.tokens) assembling.add(token);
         if (count % 32 === 0) { await yieldTask(); check(signal); }
-        continue;
+        return;
       }
       entry = assembling.finish(); assembling = null;
       if (entry?.kind === 'end') throw new Error('Invalid streamed archive footer.');
     } else if (assembling) throw new Error('Incomplete streamed project record.');
     if (!header) {
-      if (entry?.type!==PROJECT_ARCHIVE_TYPE || ![1,2].includes(entry.version) || typeof entry.project?.id!=='string' || !entry.project.id || !Array.isArray(entry.project.repos)) throw new Error('Unsupported project archive.');
+      if (entry?.type!==PROJECT_ARCHIVE_TYPE || ![1,2,3].includes(entry.version) || typeof entry.project?.id!=='string' || !entry.project.id || !Array.isArray(entry.project.repos)) throw new Error('Unsupported project archive.');
       header=entry; scope=ownership(header.project);
     } else if (entry.kind==='end') {
       if (entry.count!==count || entry.digest!==hash.digest('hex')) throw new Error('Project archive checksum failed. No project was imported.');
-      end=true; continue;
+      end=true; return;
     } else if (entry.kind==='database') {
       if (!DATABASES.includes(entry.name) || schemas.has(entry.name) || !Number.isInteger(entry.version) || entry.version<1) throw new Error('Invalid archive database.');
       validateSchemaVersion(entry);
@@ -399,13 +416,14 @@ async function visitArchive(file, visit, signal, onReadProgress=()=>{}) {
     if (!framed) { hash.update(line); count++; }
     await visit(entry,header,schemas);
     if (count%32===0) await yieldTask();
-  }
+  }, signal);
   if (!end || assembling) throw new Error('Incomplete project archive.');
   integrity.finish();
   return header;
 }
 export async function importProjectArchive(file, {signal,onProgress=()=>{}} = {}) {
   const opened=new Map(), preflight=new Map(), journal=[], localJournal=[];
+  let writing='project storage';
   const storageOptions={signal,onProgress};
   const hazardIds=new Set(), importedMetadata=new Set();
   const connect=async schema=>{
@@ -454,7 +472,7 @@ export async function importProjectArchive(file, {signal,onProgress=()=>{}} = {}
           }
         }
       }
-      if (entry.kind==='local' && localStorage.getItem(entry.key)!==null && localStorage.getItem(entry.key)!==entry.value) throw new Error('Destination has conflicting project settings.');
+      if (entry.kind==='local' && localStorage.getItem(entry.key)!==null && portableLocalMetadata(entry.key,localStorage.getItem(entry.key))!==portableLocalMetadata(entry.key,entry.value)) throw new Error('Destination has conflicting project settings.');
     },signal,percent=>onProgress(`Validating project archive (${percent}%)…`));
     for (const db of preflight.values()) db?.close();
     preflight.clear();
@@ -463,6 +481,7 @@ export async function importProjectArchive(file, {signal,onProgress=()=>{}} = {}
       assertNew(header.project);
       if (entry.kind==='record') {
         if(entry.db===HAZARD_DB && entry.store==='hazardAnalysisRuns')hazardIds.add(entry.key);
+        writing=`IndexedDB ${entry.db} / ${entry.store}`;
         const db=await connect(schemas.get(entry.db));
         const deriveMetadata=entry.db===HAZARD_DB && entry.store==='hazardAnalysisRuns' && !schemas.get(entry.db).stores.runMetadata;
         const tx=db.transaction(deriveMetadata?[entry.store,'runMetadata']:entry.store,'readwrite'); tx.done.catch(()=>{});
@@ -481,7 +500,8 @@ export async function importProjectArchive(file, {signal,onProgress=()=>{}} = {}
         if(deriveMetadata){journal.push([db,'runMetadata',entry.key]);importedMetadata.add(entry.key);}
       } else if (entry.kind==='local' || entry.kind==='fallback') {
         const before=localStorage.getItem(entry.key); localJournal.push([entry.key,before]);
-        if (entry.kind==='local') localStorage.setItem(entry.key,entry.value);
+        writing=`localStorage ${entry.key.startsWith('cbaMeta:') ? 'architecture metadata' : 'project settings'}`;
+        if (entry.kind==='local') localStorage.setItem(entry.key,portableLocalMetadata(entry.key,entry.value));
         else {
           const current=JSON.parse(before || (Array.isArray(entry.value)?'[]':'{}'));
           const merge=(a=[],b=[])=>{ const ids=new Set(a.map(v=>v.id)); if(b.some(v=>ids.has(v.id))) throw new Error('Conflicting fallback record.'); return [...a,...b]; };
@@ -506,6 +526,7 @@ export async function importProjectArchive(file, {signal,onProgress=()=>{}} = {}
     check(signal);assertNew(header.project);
     const projects=JSON.parse(localStorage.getItem(PROJECTS)||'[]');
     const project=portableProject(header.project);
+    writing='localStorage project list';
     localStorage.setItem(PROJECTS,JSON.stringify([...projects,project]));
     onProgress('100% — project imported. Reload to open it and continue saved analyses.');
     return project;
@@ -513,7 +534,9 @@ export async function importProjectArchive(file, {signal,onProgress=()=>{}} = {}
     const failures=[];
     for (const [db,store,key] of journal.reverse()) try {await db.delete(store,key);} catch(e){failures.push(e);}
     for (const [key,value] of localJournal.reverse()) try {if(value===null)localStorage.removeItem(key);else localStorage.setItem(key,value);}catch(e){failures.push(e);}
-    if(failures.length) throw new Error(`${error.message} Cleanup was incomplete; retry in a fresh instance.`);
+    const message=error?.name==='QuotaExceededError' ? `Browser storage quota exceeded while saving ${writing}. The compressed download size is smaller than the restored data. Existing projects were not removed.` : error.message;
+    if(failures.length) throw new Error(`${message} Cleanup was incomplete; keep the export file and contact support before retrying.`);
+    if(error?.name==='QuotaExceededError')throw new Error(`${message} This import was rolled back.`);
     throw error;
   } finally { for(const db of opened.values())db.close(); for(const db of preflight.values())db?.close(); }
 }

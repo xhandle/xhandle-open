@@ -1,0 +1,3 @@
+# Fix sparse-array corruption in compact project exports
+
+Fix the confirmed regression at compactArchiveCodec.js: byte-array packing uses Array.every, which skips holes, then Uint8Array.from converts missing entries to zero. Only pack arrays with a valid byte at every own index. Route sparse arrays through the existing ordinary-array encoding so missing values retain the previous transport's undefined semantics. Preserve dense byte-array compression, negative zero, explicit undefined, and existing archive compatibility. Add regression tests, first confirm failure, then run the transfer suite and targeted lint. Do not change unrelated production behavior, user storage, or publish a release.

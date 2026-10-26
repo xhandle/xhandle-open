@@ -1,3 +1,4 @@
+import { EXPORT_CATEGORIES } from './features/code-architecture-transfer/projectExportScope';
 import { createCompressedDiskArchiveSink } from './features/code-architecture-transfer/diskArchiveSink';
 import { exportProjectArchive, importProjectArchive } from './features/code-architecture-transfer/projectArchive';
 import { readProjectWithRecovery } from './features/code-architecture-assurance/projectReadRecovery';
@@ -3959,6 +3960,7 @@ const [openCodeArchitectureFolderIds, setOpenCodeArchitectureFolderIds] = useSta
 const [showNewCodeArchitectureProject, setShowNewCodeArchitectureProject] = useState(false);
 const [showNewCodeArchitectureFolder, setShowNewCodeArchitectureFolder] = useState(false);
 const [showCodeArchitectureProjectExport, setShowCodeArchitectureProjectExport] = useState(false);
+const [codeArchitectureExportCategories, setCodeArchitectureExportCategories] = useState(EXPORT_CATEGORIES);
 const [codeArchitectureProjectExportSelection, setCodeArchitectureProjectExportSelection] = useState("");
 const [isExportingCodeArchitectureProject, setIsExportingCodeArchitectureProject] = useState(false);
 const [codeArchitectureProjectExportMsg, setCodeArchitectureProjectExportMsg] = useState("");
@@ -5236,7 +5238,7 @@ async function exportSelectedCodeArchitectureProject() {
     const controller = new AbortController();
     codeArchitectureArchiveController.current = controller;
     const sink = await createCompressedDiskArchiveSink(project.name, {signal:controller.signal});
-    const download = await exportProjectArchive(project, { signal: controller.signal, onProgress: setCodeArchitectureProjectExportMsg, sink });
+    const download = await exportProjectArchive(project, { signal: controller.signal, onProgress: setCodeArchitectureProjectExportMsg, sink, categories: codeArchitectureExportCategories });
     setCodeArchitectureArchiveDownload(download);
 
   } catch (error) {
@@ -21771,9 +21773,20 @@ const updateRiskInProject = async (projectId, predicate) => {
             <div className="cba-project-export-panel relative z-[101] flex min-h-0 w-full max-w-lg flex-col overflow-hidden rounded-2xl border-2 border-[#2D7DFE] bg-white shadow-xl">
               <div className="cba-project-export-header shrink-0 px-5 py-4 border-b">
                 <h2 className="text-base font-semibold text-slate-800">Export Code-Based Architecture project</h2>
-                <p className="text-xs text-slate-500 mt-0.5">Export architecture decomposition plus any saved hazard analysis, software requirements, system requirements, subsystem requirements, and design. Includes partial results and analysis checkpoints. Source files, source indexes, and revision history are excluded. Reconnect the original repository or folder if needed to continue source analysis. Use the latest xHandle version on both installations. Stop analyses, save edits and close other xHandle tabs first. Credentials and local folder permissions are not transferred.</p>
+                <p className="text-xs text-slate-500 mt-0.5">Export architecture decomposition plus any saved hazard analysis, software requirements, system requirements, subsystem requirements, and design. Includes partial results and analysis checkpoints. Source files, source indexes, revision history, and per-call diagnostic logs are excluded. Reconnect the original repository or folder if needed to continue source analysis. Use the latest xHandle version on both installations. Stop analyses, save edits and close other xHandle tabs first. Credentials and local folder permissions are not transferred.</p>
               </div>
               <div className="cba-project-export-list min-h-0 overflow-auto px-5 py-4">
+                <fieldset disabled={isExportingCodeArchitectureProject} className="mb-4 rounded border p-3 text-sm">
+                  <legend className="px-1 font-medium">Include in export</legend>
+                  <label className="block"><input type="checkbox" checked disabled /> Architecture decomposition (required)</label>
+                  {Object.entries({'hazard':'Hazard analysis','software-requirements':'Software requirements','system-requirements':'System requirements','subsystem-requirements':'Subsystem requirements','design-elements':'Design'}).map(([key,label]) => (
+                    <label key={key} className="block"><input type="checkbox" checked={codeArchitectureExportCategories.includes(key)} onChange={event => {
+                      setCodeArchitectureExportCategories(current => event.target.checked ? [...current,key] : current.filter(value => value !== key));
+                      setCodeArchitectureArchiveDownload(null); setCodeArchitectureProjectExportMsg('');
+                    }} /> {label}</label>
+                  ))}
+                  <p className="mt-2 text-xs text-slate-500">Only saved results are included. Partial results and continuation checkpoints are retained for the selected analyses. Unselected analyses will be absent after import.</p>
+                </fieldset>
                 {codeArchitectureDashboardRows.length === 0 ? (
                   <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">
                     No Code-Based Architecture projects are available to export.

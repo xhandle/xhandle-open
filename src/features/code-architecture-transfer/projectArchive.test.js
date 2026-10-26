@@ -111,7 +111,7 @@ test('a failed local settings write rolls back database inserts and leaves other
   localStorage.setItem('xhandle.codeArchitectureProjects',JSON.stringify([{id:'other'}]));
   const original=Storage.prototype.setItem;
   const spy=jest.spyOn(Storage.prototype,'setItem').mockImplementation(function(key,value){if(key==='cbaMeta:p1:r1')throw new DOMException('Storage full','QuotaExceededError');return original.call(this,key,value);});
-  await expect(importProjectArchive(archive)).rejects.toThrow('Storage full');spy.mockRestore();
+  await expect(importProjectArchive(archive)).rejects.toThrow('localStorage architecture metadata');spy.mockRestore();
   expect(await readCbaRowsFromIndexedDB(scope)).toEqual([]);
   expect(JSON.parse(localStorage.getItem('xhandle.codeArchitectureProjects'))).toEqual([{id:'other'}]);
 });
@@ -149,7 +149,7 @@ test('large partial hazard records export and import under a bounded stringify b
   try {
     expect(()=>JSON.stringify(run)).toThrow('Invalid string length');
     const archive=await exportProjectArchive(project);
-    expect(await archive.text()).toContain('stream-start');
+    expect((await archive.text()).includes('hazardRunChunks')).toBe(true);
     fresh();await importProjectArchive(archive);
     const restored=await getLatestCodeArchitectureHazardRun({projectId:'p1',repoId:'r1'});
     expect(restored.status).toBe('partial');expect(restored.summary).toEqual(run.summary);
@@ -182,3 +182,17 @@ test('large export cancellation preserves source and truncated framed import nev
   fresh();await importProjectArchive(new Blob(lines));
   expect(JSON.parse(localStorage.getItem('xhandle.codeArchitectureProjects'))[0].id).toBe('p1');
  });
+
+test('imports older archives with oversized diagnostic metadata without filling localStorage',async()=>{
+ const archive=await exportProjectArchive(project);
+ const entries=(await archive.text()).trim().split('\n').map(line=>decodeValue(JSON.parse(line)));entries.pop();
+ const key='cbaMeta:p1:r1';
+ const meta={metrics:{calls:[{diagnostics:'x'.repeat(1600000)}],aiCallCount:21,durationMs:99},operationalContext:'preserved'};
+ entries.push({kind:'local',key,value:JSON.stringify(meta)});
+ const lines=await Promise.all(entries.map(async e=>JSON.stringify(await encodeValue(e))+'\n'));const hash=sha256();lines.forEach(l=>hash.update(l));
+ lines.push(JSON.stringify(await encodeValue({kind:'end',count:entries.length,digest:hash.digest('hex')}))+'\n');
+ fresh();const original=Storage.prototype.setItem;
+ const spy=jest.spyOn(Storage.prototype,'setItem').mockImplementation(function(k,v){if(v.length>100000)throw new DOMException('Quota exceeded','QuotaExceededError');return original.call(this,k,v);});
+ try{await importProjectArchive(new Blob(lines));}finally{spy.mockRestore();}
+ expect(JSON.parse(localStorage.getItem(key))).toEqual({metrics:{aiCallCount:21,durationMs:99},operationalContext:'preserved'});
+});

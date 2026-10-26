@@ -86,3 +86,24 @@ test('legacy repository aliases retain saved architecture and generated requirem
   expect(await readCbaRowsFromIndexedDB(legacy)).toEqual([{from:'Legacy'}]);
   expect((await loadArtifactRowsAsync('design-elements',project.id,'fixture/source'))[0].id).toBe('DESIGN-legacy');
 });
+
+test('category selection excludes unselected results and checkpoints before database reads',async()=>{
+ let db=await openCbaIndexedDB();await writeRecord(db,'copilot_baseline',scope,[{from:'saved architecture'}]);db.close();
+ await saveCodeArchitectureHazardRun({id:'hazard',projectId:project.id,repoId:'r1',summary:[{id:'excluded hazard'}]});
+ for(const kind of kinds){await saveArtifactRowsAsync(kind,project.id,'r1',[{id:kind}]);await createRequirementCheckpoint(project.id,'r1',kind)('batch',async()=>`checkpoint-${kind}`,Boolean);}
+ const original=indexedDB.open.bind(indexedDB);
+ const spy=jest.spyOn(indexedDB,'open').mockImplementation((name,...args)=>{if(name==='xhandle-code-architecture-hazard-analysis')throw Error('Unselected hazards were read');return original(name,...args);});
+ let archive;try{archive=await exportProjectArchive(project,{categories:['software-requirements']});}finally{spy.mockRestore();}
+ const text=await archive.text();expect(text.includes('checkpoint-system-requirements')).toBe(false);
+ fresh();await importProjectArchive(archive);
+ expect(await readCbaRowsFromIndexedDB(scope)).toEqual([{from:'saved architecture'}]);
+ expect(await loadArtifactRowsAsync('software-requirements',project.id,'r1')).toEqual([{id:'software-requirements'}]);
+ expect(await loadArtifactRowsAsync('system-requirements',project.id,'r1')).toEqual([]);
+ expect(await getLatestCodeArchitectureHazardRun({projectId:project.id,repoId:'r1'})).toBeNull();
+ const generate=jest.fn();expect(await createRequirementCheckpoint(project.id,'r1','software-requirements')('batch',generate,Boolean)).toBe('checkpoint-software-requirements');expect(generate).not.toHaveBeenCalled();
+});
+test('invalid category rejects export and architecture-only selection is supported',async()=>{
+ await expect(exportProjectArchive(project,{categories:['unknown']})).rejects.toThrow(/category/);
+ const file=await exportProjectArchive(project,{categories:[]});fresh();await importProjectArchive(file);
+ expect(JSON.parse(localStorage.getItem('xhandle.codeArchitectureProjects'))[0].id).toBe(project.id);
+});

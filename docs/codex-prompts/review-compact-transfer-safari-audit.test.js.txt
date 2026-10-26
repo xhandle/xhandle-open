@@ -1,0 +1,12 @@
+import { encodeCompact, decodeCompact } from './compactArchiveCodec';
+import { encodeValue, decodeValue } from './projectArchive';
+
+test('compact byte-array optimization preserves missing entries like the previous transport', async () => {
+  const source = Array(64);
+  source[0] = 7;
+  source[63] = 9;
+  const previous = decodeValue(JSON.parse(JSON.stringify(await encodeValue(source))));
+  const current = decodeCompact(JSON.parse(JSON.stringify(await encodeCompact(source))));
+  expect(previous[1]).toBeUndefined();
+  expect(current).toEqual(previous);
+});

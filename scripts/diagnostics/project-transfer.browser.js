@@ -33,12 +33,15 @@ window.prepare=async()=>{
   await stageRecord(db,'copilot_baseline',scope,{obsolete:'unreferenced'.repeat(100000)});
   const history=await stageRecord(db,'copilot_baseline',scope,[{from:'Historic'}]);
   await putRawRecord(db,'copilot_baseline',`${scope}:history:one`,history);
+  const sparse=Array(64);sparse[0]=7;sparse[63]=9;
   await writeRecord(db,'copilot_baseline',scope,[{from:'Current',traceId:'trace-1'}]);
+  await putRawRecord(db,'copilot_baseline',`${scope}:functional-work:sparse-fixture`,{sparse,dense:Array(64).fill(255)});
+  assert((await readRecord(db,'copilot_baseline',`${scope}:functional-work:sparse-fixture`)).sparse[1]===undefined,'Fixture did not preserve sparse source');
   await writeRecord(db,'copilot_baseline',checkpoint,{completedPaths:['one.cpp'],failedFiles:[{path:'next.cpp'}]});
   await writeRecord(db,'code_index','code:file:fixture/source:one.cpp',{content:'source file content\n'.repeat(100000)});
   await putRawRecord(db,'code_index','code:file:other/repo:unrelated.cpp',{content:'unrelated'.repeat(100000)});db.close();
   await saveCodeArchitectureHazardRun({id:'hazard',projectId:project.id,repoId:'r1',status:'partial',architectureRowsSnapshot:[{originalArchitectureRow:{content:'unused-source'.repeat(200000)}}],continuation:{pending:['next']},summary:[{id:'h1',evidence:'evidence'.repeat(250000)}]});
-  await saveArtifactRowsAsync('software-requirements',project.id,'r1',[{id:'SW-1',requirementText:'Saved requirement'}]);
+  for(const kind of ['software-requirements','system-requirements','subsystem-requirements','design-elements'])await saveArtifactRowsAsync(kind,project.id,'r1',[{id:kind,requirementText:'Saved requirement'}]);
   const controller=new AbortController();
   const cancelled=await createCompressedDiskArchiveSink('cancelled',{baseURL:window.location.origin,signal:controller.signal});
   let stopped=false;
@@ -63,16 +66,19 @@ window.restore=async()=>{
   await importProjectArchive(file,{onProgress:m=>progress.push(m)});
   const rows=await readCbaRowsFromIndexedDB(scope);assert(rows[0].from==='Current','Architecture was lost');
   const db=await openCbaIndexedDB();
+  const arrays=await readRecord(db,'copilot_baseline',`${scope}:functional-work:sparse-fixture`);
+  assert(arrays.sparse.length===64 && arrays.sparse[0]===7 && arrays.sparse[1]===undefined && arrays.sparse[63]===9,'Sparse array changed during transfer');
+  assert(arrays.dense.length===64 && arrays.dense.every(n=>n===255),'Dense byte array changed during transfer');
   assert(!(await readRecord(db,'copilot_baseline',`${scope}:history:one`)), 'History was exported');
   assert(!(await readRecord(db,'code_index','code:file:fixture/source:one.cpp')), 'Source snapshot was exported');
   assert((await readRecord(db,'copilot_baseline',checkpoint)).completedPaths[0]==='one.cpp','Continuation was lost');db.close();
   const run=await getLatestCodeArchitectureHazardRun({projectId:project.id,repoId:'r1'});
   assert(!run.architectureRowsSnapshot?.length,'Duplicate hazard snapshot was exported');
   assert(run.status==='partial' && run.continuation.pending[0]==='next' && run.summary[0].evidence.length===2000000,'Partial hazards were lost');
-  const requirements=await loadArtifactRowsAsync('software-requirements',project.id,'r1');assert(requirements[0].id==='SW-1','Requirements were lost');
+  for(const kind of ['software-requirements','system-requirements','subsystem-requirements','design-elements']){const rows=await loadArtifactRowsAsync(kind,project.id,'r1');assert(rows[0].id===kind,`${kind} was lost`);}
   await window.downloadResult.dispose();
   const connection=await openTransferDatabase('transfer-open-test',{version:1,upgrade(db){db.createObjectStore('rows');}});
   // A later schema upgrade must not be blocked by a transfer connection.
   const upgraded=await openDB('transfer-open-test',2);upgraded.close();connection.close();
-  return {architecture:true,historyExcluded:true,sourceExcluded:true,partialHazards:true,requirements:true,continuation:true,connectionReleased:true,progress:progress.length};
+  return {architecture:true,sparseArray:true,denseArray:true,historyExcluded:true,sourceExcluded:true,partialHazards:true,requirements:true,continuation:true,connectionReleased:true,progress:progress.length};
 };

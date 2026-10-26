@@ -13,6 +13,7 @@ function fresh(){global.indexedDB=new IDBFactory();localStorage.clear();}
 beforeAll(()=>{global.structuredClone=v=>deserialize(serialize(v));global.TextEncoder=TextEncoder;global.TextDecoder=TextDecoder;global.Blob=Blob;global.IDBKeyRange=IDBKeyRange;Object.defineProperty(global,'crypto',{value:webcrypto,configurable:true});});
 beforeEach(fresh);
 async function fixture(){
+ localStorage.setItem('cbaMeta:p1:r1','x'.repeat(300000));
  await saveCodeArchitectureHazardRun({id:'run1',projectId:'p1',repoId:'r1',status:'partial',summary:[{id:'h1',evidence:'x'.repeat(2000000)}]});
  return exportProjectArchive(project);
 }

@@ -12,11 +12,11 @@ test.each([false,true])('export drops only the unused duplicate snapshot (chunke
  if(chunked) for await(const e of chunkHazardRun(original)){if(e.chunk)pages.set(e.chunk.id,e.chunk);else root=e.run;}
  readTransferTransaction.mockImplementation((db,store,read)=>read({get:key=>pages.get(key)}));
  const assembler=createValueAssembler(),integrity=createHazardChunkIntegrityCheck();let result,bytes=0;
- for await(const e of exportHazardRun({},root)) {
+ await exportHazardRun({},root,{onEntry:async e => {
   bytes+=JSON.stringify(e).length;
   if(e.chunk){integrity.add({kind:'record',db:'xhandle-code-architecture-hazard-analysis',store:'hazardRunChunks',key:e.chunk.id,value:e.chunk});for(const t of e.chunk.tokens)assembler.add(t);}
   else {integrity.add({kind:'record',db:'xhandle-code-architecture-hazard-analysis',store:'hazardAnalysisRuns',key:e.run.id,value:e.run});result=e.run.payload?assembler.finish():e.run;}
- }
+ }});
  integrity.finish();
  const {architectureRowsSnapshot,...expected}=original;
  expect(result).toEqual(expected);expect(bytes).toBeLessThan(10000);
@@ -28,5 +28,14 @@ test('corruption in omitted snapshot still fails integrity validation',async()=>
  const page=[...pages.values()].find(p=>p.tokens.some(t=>t[0]==='text'&&t[1].startsWith('sourcesource')));
  page.tokens.find(t=>t[0]==='text'&&t[1].startsWith('sourcesource'))[1]='changed';
  readTransferTransaction.mockImplementation((db,store,read)=>read({get:key=>pages.get(key)}));
- await expect((async()=>{for await(const e of exportHazardRun({},root)){void e;}})()).rejects.toThrow(/checksum/);
+ await expect(exportHazardRun({},root,{onEntry:async()=>{}})).rejects.toThrow(/checksum/);
+});
+test('callback failure or cancellation stops before publishing a hazard manifest',async()=>{
+ const large={...run(),generatedSheets:{rows:[{evidence:'retained'.repeat(20000)}]}};
+ const entries=[];
+ await expect(exportHazardRun({},large,{onEntry:async e=>{entries.push(e);throw new Error('disk unavailable');}})).rejects.toThrow('disk unavailable');
+ expect(entries.length).toBe(1);expect(entries[0].chunk).toBeDefined();
+ const controller=new AbortController(),published=[];
+ await expect(exportHazardRun({},large,{signal:controller.signal,onEntry:async e=>{published.push(e);controller.abort();}})).rejects.toThrow(/cancelled/);
+ expect(published.some(e=>e.run)).toBe(false);
 });
