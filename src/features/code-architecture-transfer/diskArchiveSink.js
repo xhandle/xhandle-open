@@ -32,13 +32,15 @@ export async function createDiskArchiveSink(name, {signal, baseURL=backendURL, f
     hash.update(body);bytes+=size;chunks++;pending=[];size=0;
   };
   const dispose=async()=>{closed=true;pending=[];size=0;await request(url,{method:'DELETE'},null);};
+  const writeBytes=async data=>{
+    if(closed)throw new Error('Export file is closed.');
+    // Serialized archive lines are bounded, but split again for transport guarantees.
+    for(let offset=0;offset<data.length;offset+=262144){const part=data.subarray(offset,offset+262144);if(size+part.length>262144)await flush();pending.push(part);size+=part.length;if(size===262144)await flush();}
+  };
   return {
-    async write(text){
-      if(closed)throw new Error('Export file is closed.');
-      const data=encoder.encode(text);
-      // Serialized archive lines are bounded, but split again for transport guarantees.
-      for(let offset=0;offset<data.length;offset+=262144){const part=data.subarray(offset,offset+262144);if(size+part.length>262144)await flush();pending.push(part);size+=part.length;if(size===262144)await flush();}
-    },
+    write:text=>writeBytes(encoder.encode(text)),
+    writeBytes,
+    get bytesWritten(){return bytes+size;},
     async finish(){
       if(closed)throw new Error('Export file is closed.');await flush();
       const result=await request(url+'/finish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bytes,chunks,digest:hash.digest('hex')})});
@@ -46,5 +48,40 @@ export async function createDiskArchiveSink(name, {signal, baseURL=backendURL, f
       return {url:url+'/download',name:result.name,bytes:result.bytes,dispose};
     },
     abort:dispose,
+  };
+}
+
+// Compress as the archive is produced. The compressor and upload reader run
+// together, so neither a full project nor a full gzip member enters the renderer.
+export async function createCompressedDiskArchiveSink(name, options={}) {
+  if(typeof CompressionStream!=='function')throw new Error('This browser cannot compress project exports. Update your browser or desktop app.');
+  const sink=await createDiskArchiveSink(name,options);
+  const compressor=new CompressionStream('gzip'),writer=compressor.writable.getWriter(),reader=compressor.readable.getReader(),encoder=new TextEncoder();
+  let failure,closed=false;
+  const pump=(async()=>{
+    for(;;){const {done,value}=await reader.read();if(done)break;await sink.writeBytes(value);}
+  })().catch(error=>{failure=error;writer.abort(error).catch(()=>{});throw error;});
+  pump.catch(()=>{});
+  return {
+    async write(text){
+      if(closed)throw new Error('Export file is closed.');
+      if(failure)throw failure;
+      await writer.write(encoder.encode(text));
+      if(failure)throw failure;
+    },
+    get bytesWritten(){return sink.bytesWritten;},
+    async finish(){
+      if(closed)throw new Error('Export file is closed.');
+      closed=true;
+      await writer.close();await pump;
+      return sink.finish();
+    },
+    async abort(){
+      closed=true;
+      await writer.abort().catch(()=>{});
+      await reader.cancel().catch(()=>{});
+      await pump.catch(()=>{});
+      await sink.abort();
+    },
   };
 }

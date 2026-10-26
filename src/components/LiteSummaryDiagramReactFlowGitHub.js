@@ -111,7 +111,10 @@ function idbOpen() {
     req.onblocked = () => {
       console.warn("IndexedDB upgrade blocked; close other tabs using xHandle.");
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      req.result.onversionchange = () => req.result.close();
+      resolve(req.result);
+    };
     req.onerror = () => reject(req.error);
   });
 }
@@ -122,31 +125,37 @@ function hasDiagramPositionsStore(db) {
 
 async function idbPositionsLoad(storageKey) {
   const db = await idbOpen();
-  if (!hasDiagramPositionsStore(db)) return new Map();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(IDB_STORES.positions, "readonly");
-    const req = tx.objectStore(IDB_STORES.positions).get(storageKey);
-    req.onsuccess = () => {
-      const arr = req.result?.value || []; // [[id,{x,y}], ...]
-      resolve(new Map(arr));
-    };
-    req.onerror = () => reject(req.error);
-  });
+  try {
+    if (!hasDiagramPositionsStore(db)) return new Map();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORES.positions, "readonly");
+      const req = tx.objectStore(IDB_STORES.positions).get(storageKey);
+      req.onsuccess = () => {
+        const arr = req.result?.value || []; // [[id,{x,y}], ...]
+        resolve(new Map(arr));
+      };
+      req.onerror = () => reject(req.error);
+      tx.onabort = () => reject(tx.error || new Error('Diagram storage read aborted.'));
+    });
+  } finally { db.close(); }
 }
 
 async function idbPositionsSave(storageKey, map) {
   const db = await idbOpen();
-  if (!hasDiagramPositionsStore(db)) return;
-  const arr = Array.from(map.entries()); // [[id,{x,y}], ...]
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(IDB_STORES.positions, "readwrite");
-    tx.objectStore(IDB_STORES.positions).put({ key: storageKey, value: arr });
-    tx.oncomplete = () => {
-      notifyBackupDataChanged({ db: IDB_DB_NAME, stores: [IDB_STORES.positions], key: storageKey });
-      resolve();
-    };
-    tx.onerror = () => reject(tx.error);
-  });
+  try {
+    if (!hasDiagramPositionsStore(db)) return;
+    const arr = Array.from(map.entries()); // [[id,{x,y}], ...]
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORES.positions, "readwrite");
+      tx.objectStore(IDB_STORES.positions).put({ key: storageKey, value: arr });
+      tx.oncomplete = () => {
+        notifyBackupDataChanged({ db: IDB_DB_NAME, stores: [IDB_STORES.positions], key: storageKey });
+        resolve();
+      };
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error('Diagram storage write aborted.'));
+    });
+  } finally { db.close(); }
 }
 
 function systemElementColorStorageKey(storageKey) {

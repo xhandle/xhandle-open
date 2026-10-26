@@ -1,6 +1,6 @@
 import {TextEncoder} from 'util';
 import {sha256} from 'hash.js';
-import {createDiskArchiveSink} from './diskArchiveSink';
+import {createDiskArchiveSink,createCompressedDiskArchiveSink} from './diskArchiveSink';
 beforeAll(()=>{global.TextEncoder=TextEncoder;});
 function server(){
  const writes=[];let bytes=0;const id='a'.repeat(64);
@@ -28,4 +28,18 @@ test('cancellation cleanup uses an independent signal',async()=>{
 test('rejects incorrect upload acknowledgments',async()=>{
  const {fetchImpl}=server(),sink=await createDiskArchiveSink('test',{baseURL:'http://localhost:5001',fetchImpl});
  fetchImpl.mockResolvedValueOnce({ok:true,status:200,json:async()=>({next:9,bytes:0})});await sink.write('hello');await expect(sink.finish()).rejects.toThrow(/acknowledged/);await sink.abort();
+});
+test('streams a compressed archive without retaining its uncompressed size',async()=>{
+ const old=global.CompressionStream;
+ global.CompressionStream=require('stream/web').CompressionStream;
+ try{
+  const {fetchImpl,writes}=server(),sink=await createCompressedDiskArchiveSink('test',{baseURL:'http://localhost:5001',fetchImpl});
+  const content='repeatable saved source and hazard evidence\n'.repeat(10000);
+  await sink.write(content);
+  const result=await sink.finish();
+  const {gunzipSync}=require('zlib');
+  expect(gunzipSync(Buffer.concat(writes.map(chunk=>Buffer.from(chunk)))).toString()).toBe(content);
+  expect(result.bytes).toBeLessThan(content.length/10);
+  await result.dispose();
+ }finally{global.CompressionStream=old;}
 });

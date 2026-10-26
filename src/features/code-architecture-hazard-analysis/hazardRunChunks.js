@@ -13,8 +13,8 @@ export function validateHazardDescriptor(run) {
   return p;
 }
 // Only the current page and original caller-owned run are retained during encoding.
-export async function* chunkHazardRun(run,{signal}={}) {
-  if(isChunkedHazardRun(run) || fitsArchiveLine(run,65536)){yield {run};return;}
+export async function* chunkHazardRun(run,{signal,tokenSource}={}) {
+  if(!tokenSource && (isChunkedHazardRun(run) || fitsArchiveLine(run,65536))){yield {run};return;}
   const generation=Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join('');
   let sequence=0,tokens=[],size=0;const hash=sha256();
   const page=()=>{
@@ -22,7 +22,7 @@ export async function* chunkHazardRun(run,{signal}={}) {
     const record={id:hazardChunkKey(generation,sequence),generation,sequence,runId:run.id,projectId:run.projectId,repoId:run.repoId,hazardMethod:run.hazardMethod,architectureSnapshotHash:run.architectureSnapshotHash,tokens,digest};
     sequence++;tokens=[];size=0;return {chunk:record};
   };
-  for await(const token of streamValue(run)){
+  for await(const token of (tokenSource || streamValue(run))){
     check(signal);tokens.push(token);size+=JSON.stringify(token).length;
     if(size>=16384){yield page();await new Promise(resolve=>setTimeout(resolve,0));}
   }

@@ -59,7 +59,7 @@ test('legacy partial hazard system requirements are retried after transfer', asy
   expect(global.fetch).not.toHaveBeenCalled();
 });
 
-test('ready publication can be completed after transfer and a second publication preserves history', async()=>{
+test('ready publication resumes after transfer and local history stays local on the next export', async()=>{
   const checkpointKey=`functional-decomposition-checkpoint:${scope}:abc`;
   await prepareArchitecturePublication(scope,[{from:'First'}],{fingerprint:'abc'}, {},checkpointKey,undefined);
   const archive=await exportProjectArchive(project);fresh();await importProjectArchive(archive);
@@ -67,13 +67,14 @@ test('ready publication can be completed after transfer and a second publication
   const next=`functional-decomposition-checkpoint:${scope}:def`;
   await prepareArchitecturePublication(scope,[{from:'Second'}],{fingerprint:'def'}, {},next,[{from:'First'}]);
   await recoverArchitecturePublication(scope,next);
-  const second=await exportProjectArchive(project);fresh();await importProjectArchive(second);
-  expect(await readCbaRowsFromIndexedDB(scope)).toEqual([{from:'Second'}]);
   const db=await openDB('xhandle');
   const keys=await db.getAllKeys('copilot_baseline');db.close();
   const history=keys.find(key=>key.startsWith(`${scope}:history:`));
   expect(history).toBeDefined();
   expect(await readCbaRowsFromIndexedDB(history)).toEqual([{from:'First'}]);
+  const second=await exportProjectArchive(project);fresh();await importProjectArchive(second);
+  expect(await readCbaRowsFromIndexedDB(scope)).toEqual([{from:'Second'}]);
+  expect(await readCbaRowsFromIndexedDB(history)).toEqual([]);
 });
 
 test.each(['rowRecord','runRecord'])('missing nested %s is rejected on import before publishing', async field=>{

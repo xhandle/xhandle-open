@@ -3,7 +3,7 @@ import { deriveSoftwareRequirements } from '../code-architecture-assurance/artif
 import 'fake-indexeddb/auto';
 import { serialize, deserialize } from 'v8';
 import { TextEncoder, TextDecoder } from 'util';
-import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
+import { IDBFactory, IDBKeyRange, IDBObjectStore } from 'fake-indexeddb';
 import { Blob } from 'buffer';
 import { webcrypto } from 'crypto';
 import { openDB } from 'idb';
@@ -11,7 +11,7 @@ import { sha256 } from 'hash.js';
 import { exportProjectArchive, importProjectArchive, encodeValue, decodeValue } from './projectArchive';
 import { createRequirementCheckpoint } from './requirementCheckpoint';
 import { readCbaRowsFromIndexedDB, openCbaIndexedDB } from '../code-architecture-assurance/codeArchitectureStorage';
-import { writeRecord } from '../code-architecture-storage/chunkedRecord';
+import { writeRecord, stageRecord, putRawRecord, readRecord } from '../code-architecture-storage/chunkedRecord';
 import { saveArtifactRowsAsync, loadArtifactRowsAsync } from '../code-architecture-assurance/artifactUtils';
 
 const project={id:'p1',name:'Partial project',repos:[{id:'r1',owner:'test',repo:'source',commitSha:'abc',token:'PRIVATE'}],activeRepoId:'r1'};
@@ -19,6 +19,30 @@ const scope='cba:p1:r1';
 function fresh() { global.indexedDB=new IDBFactory(); localStorage.clear(); }
 beforeAll(()=>{global.structuredClone=value=>deserialize(serialize(value));global.TextEncoder=TextEncoder;global.TextDecoder=TextDecoder;global.Blob=Blob;global.IDBKeyRange=IDBKeyRange;Object.defineProperty(global,'crypto',{value:webcrypto,configurable:true});});
 beforeEach(fresh);
+
+test('export omits unreachable old chunks but preserves current results and checkpoints without reading unrelated payloads',async()=>{
+  const db=await openCbaIndexedDB();
+  await stageRecord(db,'copilot_baseline',scope,{obsolete:'unused data'.repeat(10000)});
+  const history=await stageRecord(db,'copilot_baseline',scope,{saved:'historical results'});
+  await putRawRecord(db,'copilot_baseline',`${scope}:history:one`,history);
+  await writeRecord(db,'copilot_baseline',scope,[{from:'Current'}]);
+  const checkpoint=`functional-decomposition-checkpoint:${scope}:partial`;
+  await writeRecord(db,'copilot_baseline',checkpoint,{completedPaths:['a.cpp'],failedFiles:[{path:'b.cpp'}]});
+  await putRawRecord(db,'code_index','code:file:other/repo:huge.cpp',{content:'unrelated payload'});db.close();
+  const get=IDBObjectStore.prototype.get;
+  const spy=jest.spyOn(IDBObjectStore.prototype,'get').mockImplementation(function(key){
+    if(key==='code:file:other/repo:huge.cpp')throw new Error('Unrelated payload was hydrated');
+    return get.call(this,key);
+  });
+  let file;try{file=await exportProjectArchive(project);}finally{spy.mockRestore();}
+  expect(file.size).toBeLessThan(20000);
+  expect(await file.text()).not.toContain('unused data');
+  fresh();await importProjectArchive(file);
+  const restored=await openCbaIndexedDB();
+  expect(await readRecord(restored,'copilot_baseline',`${scope}:history:one`)).toBeUndefined();
+  expect(await readRecord(restored,'copilot_baseline',checkpoint)).toEqual({completedPaths:['a.cpp'],failedFiles:[{path:'b.cpp'}]});restored.close();
+  expect(await readCbaRowsFromIndexedDB(scope)).toEqual([{from:'Current'}]);
+});
 
 
 test('repository-scoped diagram positions survive transfer', async()=>{

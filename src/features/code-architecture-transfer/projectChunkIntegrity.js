@@ -2,7 +2,7 @@ import { sha256 } from 'hash.js';
 
 // Keep only keys, not hydrated analysis payloads. Check every stored chunk's
 // digest and outgoing references so transport checksums cannot hide lost parts.
-export function createChunkIntegrityCheck() {
+export function createChunkIntegrityCheck(onReference = () => {}) {
   const available = new Set(), required = new Set();
   const identity = (entry, key) => JSON.stringify([entry.db, entry.store, key]);
   const invalid = () => { throw new Error('Invalid analysis data chunk. No complete project transfer was created.'); };
@@ -15,7 +15,8 @@ export function createChunkIntegrityCheck() {
         // Ownership is checked for every archive record. Requiring a matching
         // validated chunk in this database/store permits legitimate run/history aliases.
         if (typeof ref !== 'string' || !/^.+:\$part:.+$/.test(ref)) invalid();
-        required.add(identity(entry, ref));
+        const id=identity(entry,ref);
+        if(!required.has(id)){required.add(id);onReference(entry,ref);}
       };
       const pointer = value => {
         if (value?.format === 'xhandle-json-tree-v1') reference(value.root);

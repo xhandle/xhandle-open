@@ -4,6 +4,7 @@ import { TextEncoder, TextDecoder } from 'util';
 import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import { Blob } from 'buffer';
 import { webcrypto } from 'crypto';
+import { gzipSync } from 'zlib';
 import { sha256 } from 'hash.js';
 import { exportProjectArchive, importProjectArchive, encodeValue, decodeValue } from './projectArchive';
 import { saveCodeArchitectureHazardRun, getLatestCodeArchitectureHazardRun } from '../code-architecture-hazard-analysis/codeArchitectureHazardStore';
@@ -101,6 +102,21 @@ test('disk sink avoids the final Blob and retains resumable partial results on i
  expect(await exportProjectArchive(project,{sink})).toBe(result);expect(sink.abort).not.toHaveBeenCalled();
  const file=new Blob(lines);fresh();await importProjectArchive(file);
  const run=await getLatestCodeArchitectureHazardRun({projectId:'p1'});expect(run.status).toBe('partial');expect(run.continuation).toEqual({next:7,pending:['h2']});expect(run.summary[0].evidence.length).toBe(2000000);
+});
+test('compressed archive restores partial results and rejects truncated input before publication',async()=>{
+ const original=await fixture();
+ const compressed=gzipSync(Buffer.from(await original.arrayBuffer()));
+ expect(compressed.length).toBeLessThan(original.size/10);
+ const oldRead=global.ReadableStream,oldDecompress=global.DecompressionStream;
+ const streams=require('stream/web');global.ReadableStream=streams.ReadableStream;global.DecompressionStream=streams.DecompressionStream;
+ try{
+  fresh();
+  await expect(importProjectArchive(new Blob([compressed.subarray(0,compressed.length-8)]))).rejects.toThrow();
+  expect(localStorage.getItem('xhandle.codeArchitectureProjects')).toBeNull();
+  await importProjectArchive(new Blob([compressed]));
+  const run=await getLatestCodeArchitectureHazardRun({projectId:'p1',repoId:'r1'});
+  expect(run.status).toBe('partial');expect(run.summary[0].evidence.length).toBe(2000000);
+ }finally{global.ReadableStream=oldRead;global.DecompressionStream=oldDecompress;}
 });
 test('failed disk writes abort the spool and never report success',async()=>{
  const progress=[],sink={write:jest.fn(async()=>{throw Error('disk full');}),abort:jest.fn(async()=>{}),finish:jest.fn()};

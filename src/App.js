@@ -1,4 +1,4 @@
-import { createDiskArchiveSink } from './features/code-architecture-transfer/diskArchiveSink';
+import { createCompressedDiskArchiveSink } from './features/code-architecture-transfer/diskArchiveSink';
 import { exportProjectArchive, importProjectArchive } from './features/code-architecture-transfer/projectArchive';
 import { readProjectWithRecovery } from './features/code-architecture-assurance/projectReadRecovery';
 import { architectureDashboardColumns, groupArchitectureDashboard } from './features/code-architecture-assurance/architectureDashboardGroups';
@@ -5235,7 +5235,7 @@ async function exportSelectedCodeArchitectureProject() {
     setCodeArchitectureArchiveDownload(null);
     const controller = new AbortController();
     codeArchitectureArchiveController.current = controller;
-    const sink = await createDiskArchiveSink(project.name, {signal:controller.signal});
+    const sink = await createCompressedDiskArchiveSink(project.name, {signal:controller.signal});
     const download = await exportProjectArchive(project, { signal: controller.signal, onProgress: setCodeArchitectureProjectExportMsg, sink });
     setCodeArchitectureArchiveDownload(download);
 
@@ -17611,7 +17611,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                 }}
               >
                 <div ref={setCodeArchitectureViewControlsTarget} />
-                <button type="button" className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50" onClick={() => {setCodeArchitectureProjectExportSelection(activeCodeArchitectureProject.id);setCodeArchitectureProjectExportMsg('');setCodeArchitectureArchiveDownload(null);setShowCodeArchitectureProjectExport(true);}}>Export complete project</button>
+                <button type="button" className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50" onClick={() => {setCodeArchitectureProjectExportSelection(activeCodeArchitectureProject.id);setCodeArchitectureProjectExportMsg('');setCodeArchitectureArchiveDownload(null);setShowCodeArchitectureProjectExport(true);}}>Export project analyses</button>
                 <button type="button" className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50" onClick={() => codeArchitectureProjectImportInputRef.current?.click()}>Import project file</button>
                 <button
                   type="button"
@@ -21771,7 +21771,7 @@ const updateRiskInProject = async (projectId, predicate) => {
             <div className="cba-project-export-panel relative z-[101] flex min-h-0 w-full max-w-lg flex-col overflow-hidden rounded-2xl border-2 border-[#2D7DFE] bg-white shadow-xl">
               <div className="cba-project-export-header shrink-0 px-5 py-4 border-b">
                 <h2 className="text-base font-semibold text-slate-800">Export Code-Based Architecture project</h2>
-                <p className="text-xs text-slate-500 mt-0.5">Export a complete project with saved results, source indexes and analysis checkpoints. Stop analyses, save edits and close other xHandle tabs first. Credentials and local folder permissions are not transferred.</p>
+                <p className="text-xs text-slate-500 mt-0.5">Export architecture decomposition plus any saved hazard analysis, software requirements, system requirements, subsystem requirements, and design. Includes partial results and analysis checkpoints. Source files, source indexes, and revision history are excluded. Reconnect the original repository or folder if needed to continue source analysis. Use the latest xHandle version on both installations. Stop analyses, save edits and close other xHandle tabs first. Credentials and local folder permissions are not transferred.</p>
               </div>
               <div className="cba-project-export-list min-h-0 overflow-auto px-5 py-4">
                 {codeArchitectureDashboardRows.length === 0 ? (
@@ -21815,7 +21815,7 @@ const updateRiskInProject = async (projectId, predicate) => {
                       {codeArchitectureProjectExportMsg}
                     </div>
                   )}
-                  {codeArchitectureArchiveDownload && <a className="mt-3 block rounded bg-blue-600 p-3 text-white" href={codeArchitectureArchiveDownload.url} download={codeArchitectureArchiveDownload.name}>Save Complete Project File</a>}
+                  {codeArchitectureArchiveDownload && <a className="mt-3 block rounded bg-blue-600 p-3 text-white" href={codeArchitectureArchiveDownload.url} download={codeArchitectureArchiveDownload.name}>Save Project File</a>}
                 </div>
               )}
               <div className="cba-project-export-actions shrink-0 px-5 py-4 border-t flex items-center justify-end gap-2">

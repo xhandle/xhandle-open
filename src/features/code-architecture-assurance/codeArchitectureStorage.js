@@ -17,7 +17,11 @@ export function openCbaIndexedDB({ signal } = {}) {
     };
     request.onblocked = () => { blocked = true; reject(new Error('Storage upgrade blocked. Close other xHandle tabs and retry.')); };
     request.onerror = () => { signal?.removeEventListener('abort', aborted); reject(request.error); };
-    request.onsuccess = () => { signal?.removeEventListener('abort', aborted); if (blocked || signal?.aborted) request.result.close(); else resolve(request.result); };
+    request.onsuccess = () => {
+      signal?.removeEventListener('abort', aborted);
+      request.result.onversionchange = () => request.result.close();
+      if (blocked || signal?.aborted) request.result.close(); else resolve(request.result);
+    };
   });
 }
 const changed = () => notifyBackupDataChanged({db:XHANDLE_IDB_NAME, stores:[XHANDLE_IDB_CBA_STORE]});

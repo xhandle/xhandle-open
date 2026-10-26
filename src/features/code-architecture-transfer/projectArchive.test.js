@@ -6,7 +6,6 @@ import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import { Blob } from 'buffer';
 import { webcrypto } from 'crypto';
 import { sha256 } from 'hash.js';
-import { openDB } from 'idb';
 import { exportProjectArchive, importProjectArchive, encodeValue, decodeValue } from './projectArchive';
 import { createRequirementCheckpoint } from './requirementCheckpoint';
 import { readArchitectureCheckpoint, readCbaRowsFromIndexedDB, openCbaIndexedDB } from '../code-architecture-assurance/codeArchitectureStorage';
@@ -69,9 +68,15 @@ test('same project import never overwrites local results',async()=>{
   localStorage.setItem('xhandle.codeArchitectureProjects',JSON.stringify([project]));
   await expect(importProjectArchive(archive)).rejects.toThrow(/already exists/);
 });
-test('conflicting shared source indexes are rejected',async()=>{
+test('legacy broad archives still reject conflicting shared source indexes',async()=>{
   let db=await openCbaIndexedDB();await writeRecord(db,'code_index','code:file:test/source:a.cpp',{content:'original'});db.close();
-  const archive=await exportProjectArchive(project);fresh();
+  const current=await exportProjectArchive(project);
+  const entries=(await current.text()).trim().split('\n').map(line=>decodeValue(JSON.parse(line)));entries.pop();
+  entries.push({kind:'record',db:'xhandle',store:'code_index',key:'code:file:test/source:a.cpp',value:{key:'code:file:test/source:a.cpp',value:{content:'original'}}});
+  const lines=await Promise.all(entries.map(async entry=>JSON.stringify(await encodeValue(entry))+'\n'));
+  const hash=sha256();lines.forEach(line=>hash.update(line));
+  lines.push(JSON.stringify(await encodeValue({kind:'end',count:entries.length,digest:hash.digest('hex')}))+'\n');
+  const archive=new Blob(lines);fresh();
   db=await openCbaIndexedDB();await writeRecord(db,'code_index','code:file:test/source:a.cpp',{content:'different'});db.close();
   await expect(importProjectArchive(archive)).rejects.toThrow(/different data/);
   expect(localStorage.getItem('xhandle.codeArchitectureProjects')).toBeNull();
@@ -160,7 +165,7 @@ test('large partial hazard records export and import under a bounded stringify b
 test('large export cancellation preserves source and truncated framed import never publishes',async()=>{
   await saveCodeArchitectureHazardRun({id:'large-run',projectId:'p1',repoId:'r1',status:'partial',summary:[{evidence:'x'.repeat(300000)}]});
   const controller=new AbortController();
-  await expect(exportProjectArchive(project,{signal:controller.signal,onProgress:message=>{if(message.includes('MB prepared'))controller.abort();}})).rejects.toThrow(/cancelled/);
+  await expect(exportProjectArchive(project,{signal:controller.signal,onProgress:message=>{if(message.includes('MB raw data'))controller.abort();}})).rejects.toThrow(/cancelled/);
   expect((await getLatestCodeArchitectureHazardRun({projectId:'p1',repoId:'r1'})).status).toBe('partial');
   const archive=await exportProjectArchive(project);
   fresh();await expect(importProjectArchive(archive.slice(0,Math.floor(archive.size/2)))).rejects.toThrow();

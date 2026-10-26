@@ -28,3 +28,32 @@ test('rejects cycles and incomplete or malformed streams', async () => {
   const assembler=createValueAssembler();assembler.add(['object']);expect(()=>assembler.add(['value',1])).toThrow();
   expect(()=>assembler.finish()).toThrow();
 });
+
+test('pull encoder preserves the existing archive token order without async generators', async () => {
+  const iterator=streamValue({a:[1,'x'],b:new Map([[2,new Set([true])]])});
+  // Non-binary tokens are synchronous results on an asynchronous iterable.
+  expect(iterator.next()).toEqual({done:false,value:['object']});
+  const tokens=[];for await(const token of iterator)tokens.push(token);
+  expect(tokens).toEqual([
+    ['string'],['text','a'],['end'],['array'],['value',1],['string'],['text','x'],['end'],['end'],
+    ['string'],['text','b'],['end'],['map'],['value',2],['set'],['value',true],['end'],['end'],['end'],
+  ]);
+});
+
+test('deep traversal does not recurse and repeated aliases are preserved', async () => {
+  let value={leaf:'saved'};
+  for(let i=0;i<12000;i++)value={child:value};
+  expect(fitsArchiveLine(value)).toBe(false);
+  const assembler=createValueAssembler();
+  for await(const token of streamValue(value))assembler.add(token);
+  let restored=assembler.finish();for(let i=0;i<12000;i++)restored=restored.child;
+  expect(restored).toEqual({leaf:'saved'});
+  const shared={saved:true};expect(await roundTrip([shared,shared])).toEqual([shared,shared]);
+});
+
+test('closing a traversal stops reads and failed traversal cannot be resumed', async () => {
+  const iterator=streamValue(['first',new Blob(['never read'])]);
+  expect(iterator.next().value).toEqual(['array']);
+  iterator.return();expect(iterator.next().done).toBe(true);
+  const bad=streamValue(()=>{});expect(()=>bad.next()).toThrow(/Unsupported/);expect(bad.next().done).toBe(true);
+});
