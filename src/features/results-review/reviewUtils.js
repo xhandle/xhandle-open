@@ -25,6 +25,7 @@ export function normalizeReviewItem(item = {}) {
     sourceFeature: item.sourceFeature || "unknown",
     sourceMethod: item.sourceMethod || "",
     sourceRunId: item.sourceRunId || "",
+    pendingSourceCommit: item.pendingSourceCommit || null,
     originalContent: item.originalContent ?? null,
     currentContent: item.currentContent ?? item.originalContent ?? null,
     status,

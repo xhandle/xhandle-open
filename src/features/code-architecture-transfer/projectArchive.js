@@ -1,7 +1,8 @@
+import {prepareHazardTableIndex} from '../code-architecture-hazard-analysis/prepareHazardTableIndex';
 import { portableLocalMetadata } from './portableLocalMetadata';
 import { encodeCompact, decodeCompact } from './compactArchiveCodec';
 import { exportHazardRun, portableHazardRun } from './projectHazardExport';
-import { HAZARD_DB, HAZARD_DB_VERSION, HAZARD_SCHEMA, HAZARD_STAGING, upgradeHazardSchema, hazardMetadata } from '../code-architecture-hazard-analysis/hazardSchema';
+import { HAZARD_DB, HAZARD_DB_VERSION, HAZARD_SCHEMA, HAZARD_STAGING, upgradeHazardSchema, hazardMetadata, newHazardStorageRevision } from '../code-architecture-hazard-analysis/hazardSchema';
 import { createHazardChunkIntegrityCheck } from './hazardChunkIntegrity';
 import { HAZARD_CHUNKS } from '../code-architecture-hazard-analysis/hazardRunChunks';
 /* global BigInt */
@@ -421,6 +422,17 @@ async function visitArchive(file, visit, signal, onReadProgress=()=>{}) {
   integrity.finish();
   return header;
 }
+function portableRecordForComparison(entry, value) {
+  if (value === undefined || entry.db !== HAZARD_DB) return value;
+  if (entry.store === 'hazardAnalysisRuns' && (value?.payload?.tableIndex || value?.payload?.rowIndex)) {
+    const {tableIndex, rowIndex, ...payload} = value.payload;
+    return {...value, payload};
+  }
+  if (entry.store !== 'runMetadata') return value;
+  const {storageRevision, ...content} = value;
+  return content;
+}
+
 export async function importProjectArchive(file, {signal,onProgress=()=>{}} = {}) {
   const opened=new Map(), preflight=new Map(), journal=[], localJournal=[];
   let writing='project storage';
@@ -468,7 +480,11 @@ export async function importProjectArchive(file, {signal,onProgress=()=>{}} = {}
         if (db) {
           if (db.objectStoreNames.contains(entry.store)) {
             const current=await readTransferTransaction(db,entry.store,s=>s.get(entry.key),{signal});
-            if (current!==undefined && await archiveValueDigest(current, signal)!==await archiveValueDigest(entry.value, signal)) throw new Error(`Destination already contains different data in ${entry.store}. Nothing was imported.`);
+            // Storage revisions are installation-local invalidation tokens, not
+            // portable project content. Preserve comparison of all other fields.
+            const existingValue = portableRecordForComparison(entry, current);
+            const incomingValue = portableRecordForComparison(entry, entry.value);
+            if (current!==undefined && await archiveValueDigest(existingValue, signal)!==await archiveValueDigest(incomingValue, signal)) throw new Error(`Destination already contains different data in ${entry.store}. Nothing was imported.`);
           }
         }
       }
@@ -489,7 +505,7 @@ export async function importProjectArchive(file, {signal,onProgress=()=>{}} = {}
         const current=await recordStore.get(entry.key);
         if (current!==undefined) {
           await tx.done;
-          if (await archiveValueDigest(current, signal)!==await archiveValueDigest(entry.value, signal)) throw new Error('Destination changed during import.');
+          if (await archiveValueDigest(portableRecordForComparison(entry, current), signal)!==await archiveValueDigest(portableRecordForComparison(entry, entry.value), signal)) throw new Error('Destination changed during import.');
           return;
         }
         if (recordStore.keyPath===null) await recordStore.add(entry.value,entry.key); else await recordStore.add(entry.value);
@@ -519,9 +535,15 @@ export async function importProjectArchive(file, {signal,onProgress=()=>{}} = {}
         const run=await tx.objectStore('hazardAnalysisRuns').get(id),metaStore=tx.objectStore('runMetadata');
         const expected=hazardMetadata(run),current=await metaStore.get(id);
         if(current && JSON.stringify(hazardMetadata(current))!==JSON.stringify(expected) && !importedMetadata.has(id))throw new Error('Destination has conflicting hazard metadata.');
-        if(!current || importedMetadata.has(id))await metaStore.put(expected);
+        if(!current || importedMetadata.has(id))await metaStore.put({...expected, storageRevision: newHazardStorageRevision()});
         await tx.done;if(!current)journal.push([db,'runMetadata',id]);
       }catch(error){try{tx.abort();}catch{}await tx.done.catch(()=>{});throw error;}
+    }
+    // Prepare random-access table ranges before exposing the imported project.
+    // This is part of import, never an implicit cold-view hydration.
+    for(const id of hazardIds){
+      onProgress('Preparing imported hazard tables for fast opening…');
+      await prepareHazardTableIndex(opened.get(HAZARD_DB),id,{signal,onProgress:({completed,total})=>onProgress(`Preparing imported hazard tables (${Math.floor(completed*100/total)}%)…`)});
     }
     check(signal);assertNew(header.project);
     const projects=JSON.parse(localStorage.getItem(PROJECTS)||'[]');

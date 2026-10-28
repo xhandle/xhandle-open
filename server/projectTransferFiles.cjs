@@ -38,7 +38,7 @@ function createProjectTransferRouter({ directory, ttl = TTL, now = Date.now } = 
     try {
     const dir=await storage(),id=randomBytes(32).toString('hex'),temporary=path.join(dir,id+'.partial');
     const file=await fs.open(temporary,'wx',0o600);
-    const name=String(req.body?.name || 'project').replace(/[^a-zA-Z0-9._-]/g,'-').slice(0,100).replace(/\.xhproject$/i,'')+'.xhproject';
+    const name=String(req.body?.name || 'project').replace(/[^a-zA-Z0-9._-]/g,'-').slice(0,100).replace(/\.(xhproject|csv)$/i,'')+(String(req.body?.name||'').toLowerCase().endsWith('.csv')?'.csv':'.xhproject');
     sessions.set(id,{id,file,path:temporary,name,bytes:0,next:0,hash:createHash('sha256'),touched:now(),busy:false,ready:false});
     res.status(201).json({id,maxChunkBytes:MAX_CHUNK});
     } finally { creating--; }

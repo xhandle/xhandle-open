@@ -1,3 +1,4 @@
+import requestHazardRows from '../features/code-architecture-hazard-analysis/requestHazardRows';
 import { computeArchitectureByFunction, computeFunctionGroupsByFile, cleanArchLabel } from './diagramArchitectureIndexes';
 import { resolveDiagramDetailRows, diagramDetailLinkTarget } from './diagramDetailTrace';
 import useCodeArchitectureQuickSearch from './useCodeArchitectureQuickSearch';
@@ -1955,6 +1956,8 @@ const DiagramBody = forwardRef(function DiagramBody(
     colorSystemElements = false,
     height = 600,
     hazardSummary = null,
+    hazardRunDescriptor,
+    onRequestHazardDetails,
     assuranceArtifacts = null,
     onOpenHazardRow,
     onOpenFunctionalRow,
@@ -2282,12 +2285,27 @@ const DiagramBody = forwardRef(function DiagramBody(
   const editFunctionalTraceRows = useMemo(() => resolveDiagramDetailRows(rows, editModal), [rows, editModal]);
   const editLinkTarget = useMemo(() => diagramDetailLinkTarget(editModal, editFunctionalTraceRows), [editModal, editFunctionalTraceRows]);
   const [editModalExpanded, setEditModalExpanded] = useState(false);
+  const [remoteHazards,setRemoteHazards]=useState(null);
+  const [remoteHazardOffset,setRemoteHazardOffset]=useState(0);
+  const [remoteHazardError,setRemoteHazardError]=useState('');
+  useEffect(()=>{setRemoteHazardOffset(0);},[editLinkTarget,hazardRunDescriptor]);
+  useEffect(()=>{
+    if(!hazardRunDescriptor || !editLinkTarget){setRemoteHazards(null);return;}
+    const controller=new AbortController();setRemoteHazards(null);setRemoteHazardError('');
+    (async()=>{
+      const matches=await requestHazardRows(hazardRunDescriptor,{operation:'query',target:editLinkTarget,signal:controller.signal});
+      const page=await requestHazardRows(hazardRunDescriptor,{indices:matches.indices,offset:remoteHazardOffset,signal:controller.signal});
+      if(!controller.signal.aborted)setRemoteHazards(page);
+    })().catch(error=>{if(!controller.signal.aborted)setRemoteHazardError(error.message);});
+    return ()=>controller.abort();
+  },[hazardRunDescriptor,editLinkTarget,remoteHazardOffset]);
+  const displayedHazardSummary=useMemo(()=>hazardRunDescriptor ? (remoteHazards?[remoteHazards.headers,...remoteHazards.rows]:null) : hazardSummary,[hazardRunDescriptor,remoteHazards,hazardSummary]);
   const hazardHeaders = useMemo(() => (
-    Array.isArray(hazardSummary?.[0]) ? hazardSummary[0].map((header) => String(header || '')) : []
-  ), [hazardSummary]);
+    Array.isArray(displayedHazardSummary?.[0]) ? displayedHazardSummary[0].map((header) => String(header || '')) : []
+  ), [displayedHazardSummary]);
   const hazardDataRows = useMemo(() => (
-    Array.isArray(hazardSummary) ? hazardSummary.slice(1) : []
-  ), [hazardSummary]);
+    Array.isArray(displayedHazardSummary) ? displayedHazardSummary.slice(1) : []
+  ), [displayedHazardSummary]);
   const hazardHeaderIndexByName = useMemo(() => {
     const map = new Map();
     hazardHeaders.forEach((header, index) => {
@@ -2397,8 +2415,8 @@ const DiagramBody = forwardRef(function DiagramBody(
     return associated;
   }, [getHazardCell, hazardDataRows, normalizeAssociationText]);
   const editHazardRows = useMemo(
-    () => getAssociatedHazardRows(editLinkTarget),
-    [editLinkTarget, getAssociatedHazardRows]
+    () => hazardRunDescriptor ? (remoteHazards?.rows || []).map((cells,i)=>({cells,sourceIndex:remoteHazards.rowIndices[i]})) : getAssociatedHazardRows(editLinkTarget),
+    [editLinkTarget, getAssociatedHazardRows,hazardRunDescriptor,remoteHazards]
   );
   const assuranceArtifactGroups = useMemo(() => ([
     {
@@ -4190,6 +4208,7 @@ useEffect(() => {
           zoomOnDoubleClick={false}
           proOptions={{ hideAttribution: true }}
           onNodeDoubleClick={(event, node) => {
+            onRequestHazardDetails?.();
             if (node?.type === 'note') {
               event.preventDefault();
               event.stopPropagation();
@@ -4232,6 +4251,7 @@ useEffect(() => {
           }}
           
           onEdgeDoubleClick={(event, edge) => {
+            onRequestHazardDetails?.();
             event.preventDefault();
             event.stopPropagation();
             try {
@@ -4954,6 +4974,11 @@ useEffect(() => {
               )}
             </details>
           ))}
+          {hazardRunDescriptor && <div role="status">
+            {remoteHazardError || (!remoteHazards ? 'Loading associated hazards…' : `${remoteHazardOffset+1}–${remoteHazards.nextOffset} of ${remoteHazards.total} associated hazards`)}
+            <button disabled={!remoteHazardOffset} onClick={()=>setRemoteHazardOffset(0)}>First hazards</button>
+            <button disabled={!remoteHazards || remoteHazards.nextOffset>=remoteHazards.total} onClick={()=>setRemoteHazardOffset(remoteHazards.nextOffset)}>Next hazards</button>
+          </div>}
           {editAnalysisGroups.map(group => <details
             key={group.key}
             style={{

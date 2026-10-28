@@ -123,16 +123,17 @@ export default function ResultsReviewItemView({
   const [editedText, setEditedText] = useState("");
   const [editedRowValues, setEditedRowValues] = useState([]);
 
+  const editableContent = item?.pendingSourceCommit?.patch?.currentContent || item?.currentContent;
   useEffect(() => {
-    setEditedText(contentToText(item?.currentContent));
-    if (isTableRowContent(item?.currentContent)) {
-      const columns = item.currentContent.columns || [];
-      setEditedRowValues(columns.map((column, index) => String(valueForColumn(item.currentContent.row, column, index) ?? "")));
+    setEditedText(contentToText(editableContent));
+    if (isTableRowContent(editableContent)) {
+      const columns = editableContent.columns || [];
+      setEditedRowValues(columns.map((column, index) => String(valueForColumn(editableContent.row, column, index) ?? "")));
     } else {
       setEditedRowValues([]);
     }
     setFeedback(item?.reviewerFeedback || "");
-  }, [item?.id, item?.currentContent, item?.reviewerFeedback, setFeedback]);
+  }, [item?.id, editableContent, item?.reviewerFeedback, setFeedback]);
 
   if (!item) {
     return <div className="p-5 text-sm text-gray-500">No review item selected.</div>;

@@ -50,3 +50,42 @@ describe("ResultsReviewDrawer dock-aware layout", () => {
     }
   });
 });
+
+
+test("source save failure remains visible and allows retry without advancing", async () => {
+ const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
+ const content={rowIndex:0,columns:['ID','Hazard'],row:['HA-1','edited hazard']};
+ const item={id:'review',artifactType:'code_architecture_hazard_summary_table',currentContent:content,originalContent:content};
+ let rejectSave;
+ const save=jest.fn().mockImplementationOnce(()=>new Promise((resolve,reject)=>{rejectSave=reject;})).mockResolvedValue(item);
+ const props={isOpen:true,options:{},items:[item],onUpdateCurrentContent:save};
+ const button=()=>Array.from(host.querySelectorAll('button')).find(el=>el.textContent==='Update table');
+ try {
+  await act(async()=>root.render(<ResultsReviewDrawer {...props}/>));
+  await act(async()=>button().click());
+  expect(host.querySelector('[role="status"]').textContent).toContain('Saving');
+  expect(button()).toBeUndefined();
+  await act(async()=>rejectSave(Error('Storage unavailable')));
+  expect(host.querySelector('[role="alert"]').textContent).toContain('Storage unavailable');
+  expect(button()).toBeDefined();
+  await act(async()=>button().click());
+  expect(save).toHaveBeenCalledTimes(2);
+  expect(save.mock.calls[1][1].row).toEqual(content.row);
+  expect(host.querySelector('[role="alert"]')).toBeNull();
+ }finally{act(()=>root.unmount());host.remove();}
+});
+
+
+test('pending review recovered after reload exposes retry without new edits',async()=>{
+ const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
+ const content={columns:['ID','Hazard'],row:['HA-1','original']};
+ const item={id:'review',currentContent:content,originalContent:content,pendingSourceCommit:{id:'op',patch:{currentContent:{...content,row:['HA-1','pending edit']}}}};
+ const retry=jest.fn().mockResolvedValue(item);
+ try{
+  await act(async()=>root.render(<ResultsReviewDrawer isOpen options={{}} items={[item]} onRetryPending={retry}/>));
+  const buttons=Array.from(host.querySelectorAll('button'));
+  expect(buttons.find(el=>el.textContent==='Update table')).toBeUndefined();
+  await act(async()=>buttons.find(el=>el.textContent==='Retry review save').click());
+  expect(retry).toHaveBeenCalledWith('review');
+ }finally{act(()=>root.unmount());host.remove();}
+});

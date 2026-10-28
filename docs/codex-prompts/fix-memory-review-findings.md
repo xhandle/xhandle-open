@@ -1,0 +1,5 @@
+# Fix workspace memory review findings
+
+Implement the actionable findings in workspace-memory-implementation-review-2026-10-27.md. Own hazard metadata/root read transactions so abort and timeout retire them before a retry or project switch starts another read. Preserve saved results, legacy migration, chunk integrity, and stale-publication guards. Restore project/repository/date labels for hazard Storage entries by reading only small runMetadata records, never whole analysis payloads. Explicitly identify entries with unknown ownership. Bound key listing work and skip internal chunk ranges safely while preserving pagination and selective deletion keys.
+
+Convert review characterizations into regression tests, including metadata/root cancellation, timeout, retry/project switching, multiple project labels, missing metadata, and chunk pagination. Run relevant suites and the disposable Electron diagnostic. Do not touch the user's live profile, commit, publish, or claim whole-run views and legacy backups are memory bounded; those larger architectural limitations remain outside this targeted patch.

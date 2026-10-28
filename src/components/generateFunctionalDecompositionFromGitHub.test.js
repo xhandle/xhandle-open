@@ -843,3 +843,17 @@ it('preserves C++ index metadata and source links for ref-qualified functions an
   ]);
   expect(record.sourceFunctions[0]).toMatchObject({owner:'owner',repo:'repo',filePath:'src/widget.cpp',commitSha:'abc123'});
 });
+
+test('diagram forwards the on-demand hazard detail loader without eagerly invoking it',()=>{
+ const React=require('react'),{createRoot}=require('react-dom/client');
+ const host=document.createElement('div'),root=createRoot(host),request=jest.fn();
+ mockDiagramProps.length=0;
+ localStorage.setItem('hazard-details-fixture:architecture-abstraction','subsystem');
+ try {
+  React.act(()=>root.render(<FunctionalDecompositionTable rowsStorageKey="hazard-details-fixture" data={[{from:'a',to:'b',action:'Call',architecture:{subsystem:'Example',csci:'Runtime',csc:'Core',csu:'Unit'}}]} viewMode="architecture" onRequestHazardDetails={request}/>));
+  expect(request).not.toHaveBeenCalled();
+  const diagram=mockDiagramProps[mockDiagramProps.length-1];
+  expect(diagram.onRequestHazardDetails).toBe(request);
+  React.act(()=>diagram.onRequestHazardDetails());expect(request).toHaveBeenCalledTimes(1);
+ }finally{React.act(()=>root.unmount());}
+});

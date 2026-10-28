@@ -1,66 +1,39 @@
 import { inspectStorageStore } from './inspectStorageStore';
-
 function fixture() {
   const request = {};
-  const tx = { objectStore: jest.fn(() => ({ openCursor: () => request })), abort: jest.fn() };
-  const db = { transaction: jest.fn(() => tx), close: jest.fn() };
-  return { db, tx, request };
+  const store = { count: jest.fn(() => request), openCursor: () => { throw new Error('Payload access forbidden'); } };
+  const tx = { objectStore: () => store, abort: jest.fn() };
+  return { request, tx, store, db: { transaction: jest.fn(() => tx), close: jest.fn() } };
 }
-
 beforeEach(() => jest.useFakeTimers());
 afterEach(() => jest.useRealTimers());
-
-test('a queued cursor success after timeout neither continues nor changes partial totals', async () => {
-  const { db, tx, request } = fixture();
-  const scan = inspectStorageStore(db, 'rows', value => value.length);
-  const advance = jest.fn();
-  request.result = { key: 'one', value: 'abc', continue: advance };
-  request.onsuccess();
-  jest.advanceTimersByTime(5000);
-  const result = await scan;
-  expect(result).toMatchObject({ count: 1, bytes: 3, sampleKey: 'one', error: expect.stringContaining('timed out') });
-  // Reproduce Safari delivering an already queued event after abort.
-  request.result = { key: 'two', value: 'def', continue: () => { throw new DOMException('Transaction is inactive', 'TransactionInactiveError'); } };
-  expect(() => request.onsuccess()).not.toThrow();
-  tx.onabort(); tx.oncomplete();
-  expect(result.count).toBe(1);
-  expect(advance).toHaveBeenCalledTimes(1);
-  expect(tx.abort).toHaveBeenCalledTimes(1);
-  expect(db.close).toHaveBeenCalledTimes(1);
-  expect(db.transaction).toHaveBeenCalledWith('rows', 'readonly');
-});
-
-test('cursor errors are reported as partial scans instead of uncaught browser errors', async () => {
-  const { db, tx, request } = fixture();
-  const scan = inspectStorageStore(db, 'rows', () => 10);
-  request.result = { key: 'a', value: {}, continue: () => { throw new DOMException('Transaction is inactive', 'TransactionInactiveError'); } };
-  expect(() => request.onsuccess()).not.toThrow();
-  expect(await scan).toMatchObject({ count: 1, bytes: 10, error: expect.stringContaining('totals may be incomplete') });
-  expect(tx.abort).toHaveBeenCalledTimes(1);
+test('counts without reading or sizing records, and leaves byte totals unknown', async () => {
+  const f = fixture(); const result = inspectStorageStore(f.db, 'rows');
+  f.request.result = 10000; f.request.onsuccess(); f.tx.oncomplete();
+  expect(await result).toEqual({count:10000,bytes:null,error:''});
+  expect(f.db.transaction).toHaveBeenCalledWith('rows','readonly');
+  expect(f.store.count).toHaveBeenCalledTimes(1);
+  expect(f.db.close).toHaveBeenCalledTimes(1);
   expect(jest.getTimerCount()).toBe(0);
 });
-
-test('normal completion returns full totals and cancels the timeout', async () => {
-  const { db, tx, request } = fixture();
-  const scan = inspectStorageStore(db, 'rows', value => value.length);
-  const advance = jest.fn();
-  for (const [key, value] of [['a', 'abc'], ['b', 'de']]) {
-    request.result = { key, value, continue: advance }; request.onsuccess();
-  }
-  request.result = null; request.onsuccess(); tx.oncomplete();
-  expect(await scan).toEqual({ count: 2, bytes: 5, sampleKey: 'a', error: '' });
-  jest.advanceTimersByTime(5000);
-  expect(tx.abort).not.toHaveBeenCalled();
+test.each(['timeout','cancel'])('%s aborts the transaction and ignores late events', async kind => {
+  const f=fixture(), controller=new AbortController();
+  const result=inspectStorageStore(f.db,'rows',{signal:controller.signal});
+  if(kind==='timeout') jest.advanceTimersByTime(5000); else controller.abort();
+  f.request.result=500; f.request.onsuccess();f.tx.oncomplete();
+  expect(await result).toMatchObject({count:null,bytes:null,error:expect.any(String)});
+  expect((await result).error).toBeTruthy();
+  expect(f.tx.abort).toHaveBeenCalledTimes(1);
+  expect(f.db.close).toHaveBeenCalledTimes(1);
+  expect(jest.getTimerCount()).toBe(0);
 });
-
-test('transaction abort and cursor request failure settle without a later continuation', async () => {
-  for (const event of ['abort', 'error']) {
-    const { db, tx, request } = fixture();
-    const scan = inspectStorageStore(db, 'rows', () => 0);
-    if (event === 'abort') tx.onabort(); else request.onerror();
-    expect((await scan).error).toBeTruthy();
-    const advance = jest.fn(); request.result = { key: 'late', continue: advance };
-    request.onsuccess(); expect(advance).not.toHaveBeenCalled();
-    expect(jest.getTimerCount()).toBe(0);
-  }
+test('already cancelled scans do not start a transaction', async () => {
+  const f=fixture(),controller=new AbortController();controller.abort();
+  expect((await inspectStorageStore(f.db,'rows',{signal:controller.signal})).error).toBeTruthy();
+  expect(f.db.transaction).not.toHaveBeenCalled();
+});
+test('failed counts are unavailable rather than a successful empty store',async()=>{
+  const f=fixture();const result=inspectStorageStore(f.db,'rows');f.request.onerror();
+  expect(await result).toMatchObject({count:null,error:expect.any(String)});
+  expect((await result).error).toBeTruthy();
 });

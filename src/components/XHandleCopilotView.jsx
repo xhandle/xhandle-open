@@ -206,7 +206,7 @@ export async function waitForHydratedHazardReviewState({
   let latestState = null;
   do {
     const activeProvider = await waitForActionProvider("project-functional-diagram", Math.min(1800, Math.max(0, deadline - Date.now()))) || provider;
-    latestState = activeProvider?.getHazardVibeReviewState?.() || null;
+    latestState = (await activeProvider?.getHazardVibeReviewState?.()) || null;
     const headers = latestState?.summary?.[0];
     const matchesWorkspace = (
       String(latestState?.activeProjectId || "") === String(projectId || "") &&
@@ -239,7 +239,7 @@ export async function waitForCommittedHazardReviewRow({
       "project-functional-diagram",
       Math.min(1800, Math.max(0, deadline - Date.now())),
     ) || latestProvider;
-    latestState = latestProvider?.getHazardVibeReviewState?.() || null;
+    latestState = (await latestProvider?.getHazardVibeReviewState?.()) || null;
     const headers = latestState?.summary?.[0] || [];
     const idIndex = headers.findIndex((header) => /^(?:Raw Analysis Row ID|Raw Row ID|Analysis Row ID)$/i.test(String(header).trim()));
     const fieldIndex = headers.findIndex((header) => String(header).trim() === String(expectedField || "").trim());
@@ -754,11 +754,11 @@ function CollaboratorMarkdownLink({ href = "", children, ...props }) {
       const [encodedRowId, query = ""] = String(href).slice("xhandle://hazard-row/".length).split("?");
       const provider = await waitForActionProvider("project-functional-diagram", 1800);
       const metadata = new URLSearchParams(query);
-      provider?.openHazardVibeReviewRow?.({
+      try { await provider?.openHazardVibeReviewRow?.({
         sourceRowId: decodeURIComponent(encodedRowId),
         projectId: metadata.get("projectId") || "",
         workspaceType: metadata.get("workspaceType") || "functional-project",
-      });
+      }); } catch(error) { window.alert(error.message); }
       return;
     }
     const [encodedArtifactId, ...metadataParts] = String(href)
@@ -5248,7 +5248,7 @@ useEffect(() => {
     let working = session;
     while (currentVibeReviewRowId(working)) {
       const activeProvider = await waitForActionProvider("project-functional-diagram", 1800) || providerApi;
-      const state = stateOverride || activeProvider?.getHazardVibeReviewState?.();
+      const state = stateOverride || (await activeProvider?.getHazardVibeReviewState?.());
       const rowId = currentVibeReviewRowId(working);
       const headers = state?.summary?.[0] || [];
       const idIndex = headers.findIndex((header) => /^(?:Raw Analysis Row ID|Raw Row ID|Analysis Row ID)$/i.test(String(header).trim()));
@@ -5378,7 +5378,7 @@ useEffect(() => {
         return;
       }
       let providerApi = await waitForActionProvider("project-functional-diagram", 1800);
-      let state = providerApi?.getHazardVibeReviewState?.();
+      let state = (await providerApi?.getHazardVibeReviewState?.());
       const hazardWorkspaceMismatch = (
         String(state?.activeProjectId || "") !== String(session.projectId) ||
         String(state?.workspaceType || "functional-project") !== String(session.workspaceType || "functional-project")
@@ -6412,7 +6412,7 @@ useEffect(() => {
 
   async function handleOpenVibeReviewSource(card) {
     const provider = await waitForActionProvider("project-functional-diagram", 1800);
-    provider?.openHazardVibeReviewRow?.(card);
+    try { await provider?.openHazardVibeReviewRow?.(card); } catch(error) { window.alert(error.message); }
   }
 
   function completeHazardDownstreamImpactCard(card, outcome, resultSummary = "", extra = {}) {
@@ -6868,7 +6868,7 @@ useEffect(() => {
       }
       if (contextualVibeReviewIntent) {
         const focus = appFocus || enrichedContext?.focus || {};
-        const hazardState = actionProvider?.getHazardVibeReviewState?.();
+        const hazardState = (await actionProvider?.getHazardVibeReviewState?.());
         const functionalState = ["functional-project", "code-based-architecture"].includes(focus.viewedProjectType)
           ? actionProvider?.getFunctionalVibeReviewState?.()
           : null;
@@ -6997,7 +6997,7 @@ useEffect(() => {
         await handleVibeReviewAction(reviewAction, latestCard, userFeedback, true, promptSignal); return;
       }
       if (vibeReviewIntent) {
-        const state = actionProvider?.getHazardVibeReviewState?.();
+        const state = (await actionProvider?.getHazardVibeReviewState?.());
         if (!state?.activeProjectId) { appendMessage(activeId, { role: "assistant", content: "Open a project first, then ask me to vibe review its hazard analysis." }); setThreads(loadThreads()); return; }
         if (!Array.isArray(state.summary?.[0]) || state.summary.length < 2) {
           const missingSummaryMessage = state.workspaceType === "code-based-architecture"
@@ -7082,7 +7082,7 @@ useEffect(() => {
         await appendVibeReviewProposal(session, actionProvider, promptSignal); return;
       }
       if (activeReview && activeReview.state === VIBE_REVIEW_STATES.AWAITING) {
-        const state = actionProvider?.getHazardVibeReviewState?.();
+        const state = (await actionProvider?.getHazardVibeReviewState?.());
         const rowId = currentVibeReviewRowId(activeReview);
         const headers = state?.summary?.[0] || [];
         const idIndex = headers.findIndex((header) => /^(?:Raw Analysis Row ID|Raw Row ID|Analysis Row ID)$/i.test(String(header).trim()));

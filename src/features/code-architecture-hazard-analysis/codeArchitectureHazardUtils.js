@@ -1,3 +1,4 @@
+import { WORKING_SET } from './hazardWorkingSet';
 import {stableSnapshotHash} from './stableSnapshotHash';
 import { organizationProfileContextIdentity } from '../organization-profile/organizationProfile';
 import { buildFunctionalModelRows, functionalModelIsReady } from '../code-architecture-context/functionalModel';
@@ -1650,6 +1651,7 @@ export function normalizeCodeArchitectureHazardRun(raw = {}, context = {}) {
     ? raw.summaryRows
     : summarySheetToHazardSummaryRows(raw.generatedSheets?.Summary || raw.analysisResult?.Summary);
   return {
+    ...(raw[WORKING_SET] ? {[WORKING_SET]:raw[WORKING_SET]} : {}),
     id: raw.id || makeCodeArchitectureHazardId(),
     projectId: raw.projectId || context.projectId || "",
     repoId,
@@ -1663,7 +1665,7 @@ export function normalizeCodeArchitectureHazardRun(raw = {}, context = {}) {
     architectureSnapshotHash: raw.architectureSnapshotHash || context.architectureSnapshotHash || "",
     analysisAbstraction: raw.analysisAbstraction || "detailed",
     functionalModelSnapshotHash: raw.functionalModelSnapshotHash || "",
-    architectureRowsSnapshot: Array.isArray(raw.architectureRowsSnapshot) ? raw.architectureRowsSnapshot : [],
+    ...(!raw[WORKING_SET] || Object.prototype.hasOwnProperty.call(raw,'architectureRowsSnapshot') ? {architectureRowsSnapshot: Array.isArray(raw.architectureRowsSnapshot) ? raw.architectureRowsSnapshot : []} : {}),
     traceabilityMap: Array.isArray(raw.traceabilityMap) ? raw.traceabilityMap : [],
     hazardEligibilitySummary: raw.hazardEligibilitySummary || context.hazardEligibilitySummary || null,
     excludedArchitectureRows: Array.isArray(raw.excludedArchitectureRows) ? raw.excludedArchitectureRows : [],
@@ -1686,7 +1688,7 @@ export function normalizeCodeArchitectureHazardRun(raw = {}, context = {}) {
     organizationProfileProvenance: raw.organizationProfileProvenance || context.organizationProfileProvenance || null,
     contextSources: raw.contextSources || context.contextSources || context.repoMeta?.contextSources || null,
     applicabilityScreening: raw.applicabilityScreening || null,
-    narrativeReviewInput: raw.narrativeReviewInput || null,
+    ...(!raw[WORKING_SET] || Object.prototype.hasOwnProperty.call(raw,'narrativeReviewInput') ? {narrativeReviewInput:raw.narrativeReviewInput || null} : {}),
     narrativeReviewContext: raw.narrativeReviewContext || null,
     narrativeReview: raw.narrativeReview || null,
     archivedUserPreprocessing: raw.archivedUserPreprocessing || {},

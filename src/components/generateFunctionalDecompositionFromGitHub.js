@@ -3713,6 +3713,8 @@ export const FunctionalDecompositionTable = ({
   onRowFocusResolved,
   highlightedRowIndex = null,
   hazardSummary = null,
+  hazardRunDescriptor,
+  onRequestHazardDetails,
   assuranceArtifacts = null,
   onOpenHazardRow,
   onOpenFunctionalRow,
@@ -4351,6 +4353,8 @@ React.useEffect(() => {
       {architectureAbstraction === "functional" ? (
           <FunctionalArchitectureDiagram
             hazardSummary={hazardSummary}
+            hazardRunDescriptor={hazardRunDescriptor}
+            onRequestHazardDetails={onRequestHazardDetails}
             assuranceArtifacts={assuranceArtifacts}
             onOpenHazardRow={onOpenHazardRow}
             onOpenAssuranceArtifactRow={onOpenAssuranceArtifactRow}
@@ -4452,6 +4456,8 @@ React.useEffect(() => {
           architectureAbstraction={architectureAbstraction}
           colorSystemElements={colorSystemElements}
           hazardSummary={hazardSummary}
+            hazardRunDescriptor={hazardRunDescriptor}
+            onRequestHazardDetails={onRequestHazardDetails}
           assuranceArtifacts={assuranceArtifacts}
           onOpenHazardRow={onOpenHazardRow}
           onOpenFunctionalRow={onOpenFunctionalRow}

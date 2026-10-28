@@ -1,3 +1,5 @@
+import {PAGED_HAZARD} from './hazardRowIndex';
+import PagedHazardPanel from './PagedHazardPanel';
 import React, { useEffect, useMemo, useRef } from 'react';
 import { PreparedCodeArchitectureHazardPanel } from './CodeArchitectureHazardPanel';
 import TablePreparationProgress from '../code-architecture-assurance/TablePreparationProgress';
@@ -7,25 +9,26 @@ import { buildFunctionalModelRows, functionalModelIsReady } from '../code-archit
 import { effectiveCodeArchitectureHazardRows, isCodeArchitectureHazardAnalysisStale } from './codeArchitectureHazardUtils';
 import { summarizeCodeArchitectureHazardEligibility } from './codeArchitectureHazardEligibility';
 import useHazardPreparation from './useHazardPreparation';
+import { cacheableHazardPreparation, hazardPreparationInputs, samePreparationInputs } from './hazardPreparationCache';
 
 const EMPTY = [];
-// Only one completed snapshot is retained, rather than an unbounded run cache.
-let lastPrepared;
-const same = (a,b) => a?.length === b?.length && a.every((value,index) => Object.is(value,b[index]));
+const same = samePreparationInputs;
 
 export default function SavedHazardPanelLoader(props) {
+  return props.latestRun?.[PAGED_HAZARD] ? <PagedHazardPanel key={`${props.latestRun.id}:${props.latestRun[PAGED_HAZARD].revision}`} {...props} /> : <CompleteSavedHazardPanel {...props} />;
+}
+function CompleteSavedHazardPanel(props) {
   const { latestRun: run, cbaRows = EMPTY, operationalContexts = EMPTY, selectedOperationalContextId = 'all', organizationContext } = props;
   const sheet = run?.generatedSheets?.Summary;
   const mounted = useRef(null);
   // Displayed small runs have no prepared snapshot, but still own live table state.
   const displayedScope = useRef(null);
   const scope = JSON.stringify([run?.projectId, run?.repoId, run?.id]);
-  const keys = useMemo(() => [sheet, cbaRows, operationalContexts, selectedOperationalContextId, organizationContext,
-    run?.id, run?.projectId, run?.repoId, run?.analysisAbstraction, run?.functionalModelSnapshotHash,
-    run?.architectureSnapshotHash, run?.organizationProfileProvenance, run?.operationalContexts, run?.selectedOperationalContextId], [sheet, cbaRows, operationalContexts, selectedOperationalContextId, organizationContext,
-    run?.id, run?.projectId, run?.repoId, run?.analysisAbstraction, run?.functionalModelSnapshotHash,
-    run?.architectureSnapshotHash, run?.organizationProfileProvenance, run?.operationalContexts, run?.selectedOperationalContextId]);
-  const previous = mounted.current;
+  const inputs = hazardPreparationInputs(props);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const keys = useMemo(() => inputs, inputs);
+  const external = props.preparationCache?.current;
+  const previous = mounted.current || (same(external?.keys, keys) ? external : null);
   // Once displayed, preserve the panel lifecycle for every same-run update:
   // edits, context selection, metadata refresh and partial generation results.
   const updatingMountedRun = displayedScope.current === scope && !same(previous?.keys, keys);
@@ -49,12 +52,16 @@ export default function SavedHazardPanelLoader(props) {
     yield Math.floor((sheet.length + 1) * 100 / total);
     const isStale = isCodeArchitectureHazardAnalysisStale({run, cbaRows, operationalContexts, selectedOperationalContextId, organizationContext});
     const result = {summarySheet, functionalReady, functionalTraceIds, eligibilitySummary, isStale};
-    lastPrepared = {keys, result};
+    if (props.preparationCache && !props.preparationCache.retired) {
+      props.preparationCache.current = cacheableHazardPreparation(result)
+        ? {scope, sheet, keys, result} : null;
+    }
     return result;
   // Cache invalidation follows actual saved content/freshness inputs, not unrelated run metadata.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, keys);
-  const cached = large && same(lastPrepared?.keys, keys) ? lastPrepared.result : null;
+  }, [...keys, props.preparationCache]);
+  if (props.preparationCache?.current && !same(props.preparationCache.current.keys, keys)) props.preparationCache.current = null;
+  const cached = large && same(previous?.keys, keys) ? previous.result : null;
   const preparation = useHazardPreparation(job, large ? cached : EMPTY);
   useEffect(() => {
     displayedScope.current = !large || preparation.result ? scope : null;

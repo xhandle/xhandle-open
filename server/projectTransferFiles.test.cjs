@@ -37,3 +37,13 @@ test('concurrent creation respects the eight-file cap',async t=>{
  const {request}=await setup(t);const results=await Promise.all(Array.from({length:20},()=>request('','POST','{}',{'Content-Type':'application/json'})));
  assert.equal(results.filter(r=>r.status===201).length,8);assert.equal(results.filter(r=>r.status===429).length,12);
 });
+test('streamed CSV download retains its extension and exact contents',async t=>{
+ const {request}=await setup(t);
+ const created=await request('','POST',JSON.stringify({name:'hazards.csv'}),{'Content-Type':'application/json'});
+ assert.equal(created.status,201);const {id}=await created.json(),data=Buffer.from('\uFEFFHazard,Result\r\none,saved\r\n');
+ assert.equal((await request(`/${id}/chunks/0`,'PUT',data,{'Content-Type':'application/octet-stream'})).status,200);
+ assert.equal((await request(`/${id}/finish`,'POST',JSON.stringify({bytes:data.length,chunks:1,digest:createHash('sha256').update(data).digest('hex')}),{'Content-Type':'application/json'})).status,200);
+ const download=await request(`/${id}/download`);
+ assert.match(download.headers.get('content-disposition'),/hazards\.csv/);
+ assert.deepEqual(Buffer.from(await download.arrayBuffer()),data);
+});

@@ -91,3 +91,83 @@ test('unmount prevents late publication and removes the reload listener',async()
   await settle(()=>{changed();d.resolve({id:'late'});});
   expect(config.read).toHaveBeenCalledTimes(1);expect(config.publish).toHaveBeenCalledTimes(calls);
 });
+test('disabled view performs no restoration; enabling it restores saved results',async()=>{
+ config.enabled=false;config.read.mockResolvedValue({id:'saved'});await render();
+ expect(config.read).not.toHaveBeenCalled();
+ config={...config,enabled:true};await render();expect(visible.id).toBe('saved');
+});
+test('leaving a view aborts storage work without clearing a retained saved result',async()=>{
+ config.read.mockResolvedValueOnce({id:'saved'});await render();
+ const d=deferred();config.read.mockReturnValueOnce(d.promise);await settle(changed);
+ const opts=config.read.mock.calls[1][1];config={...config,enabled:false};await render();
+ expect(opts.signal.aborted).toBe(true);expect(visible.id).toBe('saved');
+ await settle(()=>d.resolve({id:'stale'}));expect(visible.id).toBe('saved');
+});
+test('restoration exposes chunk progress and ignores late updates after cancellation',async()=>{
+ const d=deferred();config.read.mockReturnValue(d.promise);await render();
+ const options=config.read.mock.calls[0][1];await settle(()=>options.onProgress({completed:2,total:4}));expect(api.progress).toBe(50);
+ config={...config,enabled:false};await render();await settle(()=>options.onProgress({completed:4,total:4}));expect(api.progress).toBe(50);
+ await settle(()=>d.resolve(null));
+});
+
+test('reentry offers the current object for revision-checked reuse', async () => {
+  const first = {id: 'saved', generatedSheets: {Summary: [['Function'], ['Existing result']]}};
+  config.read.mockResolvedValueOnce(first);
+  await render();
+  config = {...config, enabled: false}; await render();
+  config.read.mockImplementationOnce((filters, options) => Promise.resolve(options.reuseRun));
+  config = {...config, enabled: true}; await render();
+  expect(config.read.mock.calls[1][1].reuseRun).toBe(first);
+  expect(visible).toBe(first);
+});
+test('focus revalidates changes from another window and disabled tabs wait for reentry', async()=>{
+ config.read.mockResolvedValueOnce({id:'old'}).mockResolvedValueOnce({id:'external'});
+ await render();await settle(()=>window.dispatchEvent(new Event('focus')));
+ expect(visible.id).toBe('external');
+ config={...config,enabled:false};await render();
+ await settle(()=>window.dispatchEvent(new Event('focus')));
+ expect(config.read).toHaveBeenCalledTimes(2);
+});
+test('focus and visibility preserve in-flight progress and coalesce a follow-up revision check',async()=>{
+ const initial=deferred(),check=deferred(),saved={id:'saved'};
+ config.read.mockReturnValueOnce(initial.promise).mockReturnValueOnce(check.promise);
+ await render();const options=config.read.mock.calls[0][1];
+ await settle(()=>options.onProgress({completed:65,total:100}));
+ await settle(()=>{
+  window.dispatchEvent(new Event('focus'));
+  document.dispatchEvent(new Event('visibilitychange'));
+  window.dispatchEvent(new Event('focus'));
+ });
+ expect(config.read).toHaveBeenCalledTimes(1);expect(options.signal.aborted).toBe(false);expect(api.progress).toBe(65);
+ await settle(()=>initial.resolve(saved));
+ expect(config.read).toHaveBeenCalledTimes(2);expect(api.status).toBe('loaded');expect(visible).toBe(saved);
+ const refresh=config.read.mock.calls[1][1];expect(refresh.reuseRun).toBe(saved);
+ await settle(()=>refresh.onProgress({completed:1,total:10}));expect(api.status).toBe('loaded');
+ await settle(()=>check.resolve(saved));expect(visible).toBe(saved);
+});
+test('explicit saved-data changes still supersede reads and unmount discards queued focus checks',async()=>{
+ const initial=deferred(),next=deferred();config.read.mockReturnValueOnce(initial.promise).mockReturnValueOnce(next.promise);
+ await render();const original=config.read.mock.calls[0][1];
+ await settle(()=>window.dispatchEvent(new Event('focus')));
+ await settle(changed);expect(original.signal.aborted).toBe(true);
+ await settle(()=>initial.resolve({id:'obsolete'}));expect(config.read).toHaveBeenCalledTimes(2);
+ await settle(()=>window.dispatchEvent(new Event('focus')));
+ config={...config,enabled:false};await render();
+ await settle(()=>next.resolve({id:'late'}));expect(config.read).toHaveBeenCalledTimes(2);expect(visible).toBeNull();
+});
+test('legacy upgrade is explicit, focus does not interrupt it, and completion restores results',async()=>{
+ const err=Object.assign(new Error('upgrade required'),{code:'HAZARD_TABLE_UPGRADE_REQUIRED',runId:'old'});
+ config.read.mockRejectedValueOnce(err).mockResolvedValue({id:'old'});
+ const d=deferred();config.upgrade=jest.fn(()=>d.promise);
+ await render();expect(api.status).toBe('upgrade-required');expect(config.upgrade).not.toHaveBeenCalled();
+ await settle(()=>{void api.upgrade();});expect(api.status).toBe('upgrading');
+ await settle(()=>window.dispatchEvent(new Event('focus')));expect(config.read).toHaveBeenCalledTimes(1);
+ await settle(()=>d.resolve());expect(api.status).toBe('loaded');expect(visible.id).toBe('old');
+});
+test('leaving scope aborts upgrade and cannot publish its late result',async()=>{
+ config.read.mockRejectedValue(Object.assign(new Error('upgrade required'),{code:'HAZARD_TABLE_UPGRADE_REQUIRED',runId:'old'}));
+ const d=deferred();let signal;config.upgrade=jest.fn((id,options)=>{signal=options.signal;return d.promise;});
+ await render();await settle(()=>{void api.upgrade();});
+ config={...config,projectId:'b',repoId:'b',read:jest.fn().mockResolvedValue({id:'new'})};await render();
+ expect(signal.aborted).toBe(true);await settle(()=>d.resolve());expect(visible.id).toBe('new');
+});

@@ -75,7 +75,8 @@ export function streamValue(value) {
   };
 }
 
-export function createValueAssembler() {
+export function createValueAssembler({ omitField, onOmit } = {}) {
+  let skippedDepth = 0;
   const stack = []; let result, completed = false;
   const bad = () => { throw new Error('Invalid streamed project record.'); };
   const push = value => {
@@ -96,6 +97,19 @@ export function createValueAssembler() {
     add(token) {
       if (!Array.isArray(token) || typeof token[0] !== 'string' || completed) bad();
       const [type, value, mime] = token, top = stack[stack.length - 1];
+      const container = ['array','object','map','set','string','binary'].includes(type);
+      if (skippedDepth) {
+        if (container) skippedDepth++;
+        else if (type === 'end') skippedDepth--;
+        return;
+      }
+      if (omitField && top?.type === 'object' && top.hasKey && type !== 'end' && omitField(top.path || [], top.key, token)) {
+        onOmit?.([...(top.path || []), top.key]);
+        top.key = undefined; top.hasKey = false;
+        if (container) skippedDepth = 1;
+        return;
+      }
+
       if (type === 'text') { if (top?.type !== 'string' || typeof value !== 'string') bad(); top.value.push(value); return; }
       if (type === 'bytes') {
         if (top?.type !== 'binary' || !Array.isArray(value) || value.some(n => !Number.isInteger(n) || n < 0 || n > 255)) bad();
@@ -118,7 +132,8 @@ export function createValueAssembler() {
       }
       if (['array','object','map','set','string','binary'].includes(type)) {
         if (top && ['string','binary'].includes(top.type)) bad();
-        stack.push({type, name:value, mime, value:type === 'object' ? {} : type === 'map' ? new Map() : type === 'set' ? new Set() : []}); return;
+        const path = omitField ? (top ? [...(top.path || []), top.type === 'object' ? top.key : top.type === 'array' ? top.value.length : null] : []) : undefined;
+        stack.push({type, path, name:value, mime, value:type === 'object' ? {} : type === 'map' ? new Map() : type === 'set' ? new Set() : []}); return;
       }
       if (type === 'value') { if (value !== null && !['boolean','number'].includes(typeof value)) bad(); push(value); }
       else if (type === 'undefined') push(undefined);
@@ -127,7 +142,7 @@ export function createValueAssembler() {
       else if (type === 'number' && ['NaN','Infinity','-Infinity'].includes(value)) push(Number(value));
       else bad();
     },
-    finish() { if (!completed || stack.length) bad(); return result; },
+    finish() { if (!completed || stack.length || skippedDepth) bad(); return result; },
   };
 }
 

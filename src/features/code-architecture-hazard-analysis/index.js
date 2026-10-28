@@ -8,6 +8,8 @@ export {
 } from "./codeArchitectureHazardTypes";
 export {
   codeArchitectureHazardStore,
+  resolveCodeArchitectureHazardRun,
+  deletePagedHazardRow,
   deleteCodeArchitectureHazardRuns,
   getCodeArchitectureHazardRunById,
   getCodeArchitectureHazardRuns,

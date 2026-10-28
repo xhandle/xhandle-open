@@ -1,46 +1,33 @@
-// Keep all cursor advancement inside the request callback. In particular, a
-// queued success event may still arrive after our timeout has aborted the scan.
-export function inspectStorageStore(db, storeName, byteLength, timeoutMs = 5000) {
+// Inventory must never materialize analysis records just to count them.
+export function inspectStorageStore(db, storeName, { signal, timeoutMs = 5000 } = {}) {
   return new Promise(resolve => {
-    let count = 0;
-    let bytes = 0;
-    let sampleKey = '';
+    let count = null;
     let tx;
     let finished = false;
     const finish = error => {
       if (finished) return;
       finished = true;
       clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
       try { db.close(); } catch {}
-      resolve({ count, bytes, sampleKey, error });
+      resolve({ count, bytes: null, error });
     };
-    const timer = setTimeout(() => {
-      finish('Store scan timed out; totals may be incomplete.');
+    const stop = message => {
+      finish(message);
       try { tx?.abort(); } catch {}
-    }, timeoutMs);
+    };
+    const cancel = () => stop('Storage scan cancelled.');
+    const timer = setTimeout(() => stop('Store count timed out; count is unavailable.'), timeoutMs);
+    if (signal?.aborted) { cancel(); return; }
+    signal?.addEventListener('abort', cancel, { once: true });
     try {
       tx = db.transaction(storeName, 'readonly');
-      const request = tx.objectStore(storeName).openCursor();
-      request.onsuccess = () => {
-        if (finished) return;
-        try {
-          const cursor = request.result;
-          if (!cursor) return;
-          count += 1;
-          if (!sampleKey) sampleKey = String(cursor.key || '');
-          try { bytes += byteLength(cursor.value); } catch {}
-          cursor.continue();
-        } catch (error) {
-          finish(`Store scan stopped; totals may be incomplete. ${error?.message || String(error)}`);
-          try { tx.abort(); } catch {}
-        }
-      };
-      request.onerror = () => finish(request.error?.message || 'Unable to inspect store.');
+      const request = tx.objectStore(storeName).count();
+      request.onsuccess = () => { if (!finished) count = request.result; };
+      request.onerror = () => stop(request.error?.message || 'Unable to count store.');
       tx.oncomplete = () => finish('');
-      tx.onerror = () => finish(tx.error?.message || 'Unable to inspect store.');
-      tx.onabort = () => finish(tx.error?.message || 'Store scan was aborted.');
-    } catch (error) {
-      finish(error?.message || String(error));
-    }
+      tx.onerror = () => stop(tx.error?.message || 'Unable to count store.');
+      tx.onabort = () => finish(tx.error?.message || 'Store count was aborted.');
+    } catch (error) { stop(error?.message || String(error)); }
   });
 }

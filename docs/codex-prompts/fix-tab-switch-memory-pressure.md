@@ -1,0 +1,5 @@
+# Fix repeated tab-entry memory pressure
+
+Fix the reproduced rereading of unchanged saved hazard runs during tab switching. Reuse only the current loaded object after checking a lightweight, durable storage revision. Invalidate on saves, imports, deletion, scope changes and cross-window updates; do not overwrite newer edits or active generation. Keep cancellation and transaction retirement guarantees.
+
+Reduce repeated table preparation with an explicitly bounded current-project cache, never an unbounded map of visited projects. Preserve partial results and downstream diagram/requirements behavior. Add regression coverage for unchanged reentry, same-timestamp updates, imports, deletion, project switching, interrupted reads and cache lifetime. Run focused tests, a disposable Electron 100-switch diagnostic with memory measurements, and a production build. Do not touch the live profile or publish a release. Distinguish verified improvements from the still-unconfirmed cause of Chrome error 5 and remaining whole-run/backup memory risks.

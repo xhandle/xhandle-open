@@ -73,6 +73,7 @@ function normalizeColumnWidths(defaultWidths = {}, savedWidths = {}) {
 
 export default function CodeArchitectureHazardSummaryTable({
   summarySheet,
+  remotePage,
   preparationStart = 0,
   hazardMethod = "",
   className = "",
@@ -131,8 +132,8 @@ export default function CodeArchitectureHazardSummaryTable({
     [displaySheet]
   );
   const rowItems = React.useMemo(
-    () => rows.map((row, rowIndex) => ({ row, rowIndex })),
-    [rows]
+    () => rows.map((row, rowIndex) => ({ row, rowIndex:remotePage?.rowIndices?.[rowIndex] ?? rowIndex })),
+    [rows, remotePage?.rowIndices]
   );
   const headerIndexByName = React.useMemo(() => {
     const map = new Map();
@@ -210,7 +211,21 @@ export default function CodeArchitectureHazardSummaryTable({
     const column = visibleColumns[columnIndex];
     return column ? item?.row?.[column.index] ?? "" : "";
   }, [visibleColumns]);
-  const filterState = useColumnFilters(rowItems, getFilterCell);
+  const localFilterState = useColumnFilters(rowItems, getFilterCell);
+  const filterState = remotePage ? {
+    ...localFilterState, filteredRows:rowItems,
+    filters:Object.fromEntries(visibleColumns.map((c,i)=>[i,remotePage.filters[c.index] || []])),
+    activeFilterCount:Object.keys(remotePage.filters).length,
+    getOptions:()=>remotePage.options || [],
+    setFilterValues:(i,values)=>remotePage.setFilter(visibleColumns[i].index,values),
+    toggleFilterValue:(i,value)=>{const key=visibleColumns[i].index,old=remotePage.filters[key] || [];remotePage.setFilter(key,old.includes(value)?old.filter(v=>v!==value):[...old,value]);},
+    clearAllFilters:remotePage.clearFilters,
+  } : localFilterState;
+  const optionColumn=visibleColumns[localFilterState.openIndex]?.index;
+  const optionSearch=localFilterState.searches[localFilterState.openIndex] || '';
+  useEffect(()=>{
+    if(remotePage && optionColumn!=null)remotePage.requestOptions(optionColumn,optionSearch);
+  },[remotePage?.requestOptions,optionColumn,optionSearch]);
   const defaultColumnWidths = useMemo(() => {
     const widthFor = (header) => {
       const text = String(header || "").toLowerCase();
@@ -551,14 +566,14 @@ export default function CodeArchitectureHazardSummaryTable({
   return (
     <div className={`${className || "max-h-80"} flex min-h-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white`}>
       <div className="flex shrink-0 items-center justify-end gap-2 border-b border-slate-100 bg-white px-3 py-2">
-        <span role="status" className="mr-auto text-sm text-slate-600">{contextFilteredRowItems.length} of {rows.length} rows match filters</span>
+        <span role="status" className="mr-auto text-sm text-slate-600">{remotePage ? `${remotePage.total} matching rows · groups show this page` : `${contextFilteredRowItems.length} of ${rows.length} rows match filters`}</span>
         {filterState.activeFilterCount > 0 && <button type="button" className="text-sm font-medium text-[#2D7DFE]" onClick={filterState.clearAllFilters}>Clear filters</button>}
         <ColumnVisibilityMenu
           columns={columnOptions.map((column) => ({ key: column.key, label: column.label }))}
           hiddenKeys={hiddenColumnKeys}
           onChange={setHiddenColumnKeys}
         />
-        <CopyTableButton label="Copy code architecture hazard analysis table" columns={copyColumns} rows={contextFilteredRowItems} />
+        {remotePage ? <button type="button" onClick={()=>remotePage.copy(visibleColumns.map(c=>c.index))}>Copy matching rows</button> : <CopyTableButton label="Copy code architecture hazard analysis table" columns={copyColumns} rows={contextFilteredRowItems} />}
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
       <table ref={searchTableRef} aria-label="Code architecture hazard analysis" className="table-fixed text-left text-sm" style={{ minWidth: tablePixelWidth }}>

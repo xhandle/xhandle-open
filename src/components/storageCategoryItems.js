@@ -31,35 +31,71 @@ export function describeStorageItem(key, record, { projects = [], category = 'Sa
   };
 }
 
-// Read one page at a time; never hydrate analysis payloads or expose internal chunks.
+// Key cursors never clone stored payloads, including legacy whole-record analyses.
+// Project/repository labels come from the already loaded workspace metadata.
 export function readStoragePage(db, storeName, after, limit = 50, context = {}) {
   return new Promise((resolve, reject) => {
     const items = [];
-    let nextKey;
-    const tx = db.transaction(storeName, 'readonly');
-    const request = tx.objectStore(storeName).openCursor(after === undefined ? null : IDBKeyRange.lowerBound(after, true));
-    request.onsuccess = () => {
-      const cursor = request.result;
-      if (!cursor) return;
-      if (typeof cursor.primaryKey === 'string' && cursor.primaryKey.includes(':$part:')) {
-        cursor.continue(cursor.primaryKey.split(':$part:')[0] + ':$part:\uffff'); return;
-      }
-      if (items.length === limit) { nextKey = items[items.length - 1].key; return; }
-      const record = cursor.value;
-      const append = metadata => {
-        items.push(describeStorageItem(cursor.primaryKey, record, {...context, ordinal:(context.offset || 0) + items.length + 1}, metadata));
-        cursor.continue();
-      };
-      const scope = typeof cursor.primaryKey === 'string' && cursor.primaryKey.match(/^(cba:[^:]+:[^:]+)/)?.[1];
-      if (scope && cursor.primaryKey !== `${scope}:metadata`) {
-        // Read only the small sibling metadata record, never hydrate the analysis.
-        const lookup = tx.objectStore(storeName).get(`${scope}:metadata`);
-        lookup.onsuccess = () => append(lookup.result?.value || lookup.result || {});
-      } else append(record?.value || record || {});
+    let nextKey, tx, finished = false, scanned = 0;
+    const { signal } = context;
+    const finish = error => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
+      if (error) reject(error); else resolve({ items, nextKey });
     };
-    tx.oncomplete = () => resolve({ items, nextKey });
-    tx.onabort = () => reject(tx.error || new Error('Storage read was aborted.'));
-    tx.onerror = () => {};
+    const stop = message => {
+      finish(new Error(message));
+      try { tx?.abort(); } catch {}
+    };
+    const cancel = () => stop('Storage listing cancelled.');
+    const timer = setTimeout(() => stop('Storage listing timed out. Please retry.'), 5000);
+    if (signal?.aborted) { cancel(); return; }
+    signal?.addEventListener('abort', cancel, { once: true });
+    try {
+      const hazardListing = storeName === 'hazardAnalysisRuns' || storeName === 'runMetadata';
+      const hasMetadata = hazardListing && db.objectStoreNames?.contains('runMetadata');
+      tx = db.transaction(hasMetadata ? Array.from(new Set([storeName, 'runMetadata'])) : storeName, 'readonly');
+      const request = tx.objectStore(storeName).openKeyCursor(after === undefined ? null : IDBKeyRange.lowerBound(after, true));
+      request.onsuccess = () => {
+        if (finished) return;
+        try {
+          const cursor = request.result;
+          if (!cursor) return;
+          // A page bounds cursor work as well as visible entries. Preserve the
+          // last consumed key so a sparse page can continue without skipping data.
+          if (items.length === limit) { nextKey = items[items.length - 1].key; return; }
+          scanned++;
+          if (typeof cursor.primaryKey === 'string' && cursor.primaryKey.includes(':$part:')) {
+            if (scanned >= 500) { nextKey = cursor.primaryKey; return; }
+            const prefix = cursor.primaryKey.slice(0, cursor.primaryKey.indexOf(':$part:') + ':$part:'.length);
+            // ':' -> ';' is the exclusive upper bound of every suffix under
+            // this prefix, including suffixes containing U+FFFF.
+            cursor.continue(prefix.slice(0, -1) + ';'); return;
+          }
+          const append = metadata => {
+            if (finished) return;
+            const item = describeStorageItem(cursor.primaryKey, metadata, {...context, ordinal:(context.offset || 0) + items.length + 1});
+            if (hazardListing && !context.projects?.some(project => project.id === metadata?.projectId)) {
+              item.detail = [item.detail, 'Project unavailable; verify this record before deleting.'].filter(Boolean).join(' · ');
+            }
+            items.push(item);
+            if (scanned >= 500) { nextKey = cursor.primaryKey; return; }
+            cursor.continue();
+          };
+          if (hasMetadata) {
+            const lookup = tx.objectStore('runMetadata').get(cursor.primaryKey);
+            lookup.onsuccess = () => { try { append(lookup.result); } catch (error) { stop(error.message); } };
+            lookup.onerror = () => stop(lookup.error?.message || 'Unable to read saved analysis labels.');
+          } else append(null);
+        } catch (error) { stop(error?.message || 'Unable to list storage.'); }
+      };
+      request.onerror = () => stop(request.error?.message || 'Unable to list storage.');
+      tx.oncomplete = () => finish();
+      tx.onabort = () => finish(tx.error || new Error('Storage read was aborted.'));
+      tx.onerror = () => stop(tx.error?.message || 'Unable to list storage.');
+    } catch (error) { stop(error?.message || 'Unable to list storage.'); }
   });
 }
 

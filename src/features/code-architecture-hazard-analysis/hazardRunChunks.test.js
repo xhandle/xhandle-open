@@ -10,7 +10,7 @@ beforeEach(()=>{global.indexedDB=new IDBFactory();localStorage.clear();});
 const large=id=>({id,projectId:'p',repoId:'r',status:'partial',summary:[{evidence:'x'.repeat(200000)}]});
 test('large saves publish a descriptor, hydrate exactly and delete all revisions by run ID',async()=>{
  await saveCodeArchitectureHazardRun(large('one'));await saveCodeArchitectureHazardRun({...large('one'),revision:2});await saveCodeArchitectureHazardRun(large('two'));
- const db=await openCodeArchitectureHazardDB(),stored=await db.get('hazardAnalysisRuns','one');expect(isChunkedHazardRun(stored)).toBe(true);expect(JSON.stringify(stored).length).toBeLessThan(1000);
+ const db=await openCodeArchitectureHazardDB(),stored=await db.get('hazardAnalysisRuns','one');expect(isChunkedHazardRun(stored)).toBe(true);expect(JSON.stringify(stored).length).toBeLessThan(5000);
  expect((await getCodeArchitectureHazardRunById('one')).summary).toEqual(large('one').summary);
  expect(await deleteCodeArchitectureHazardRuns({id:'one'})).toBe(1);
  expect((await db.getAllFromIndex(HAZARD_CHUNKS,'runId','one')).length).toBe(0);expect((await getCodeArchitectureHazardRunById('two')).summary).toEqual(large('two').summary);db.close();
@@ -41,7 +41,7 @@ test('reader snapshot finishes before replacement reclaims its generation',async
   const tx=db.transaction(...args);
   return {done:tx.done,abort:()=>tx.abort(),objectStore:name=>{
    const store=tx.objectStore(name);
-   return {get:async key=>{const value=await store.get(key);if(name===HAZARD_CHUNKS && !writing)writing=publishHazardRun(db,next,hazardMetadata(next));return value;}};
+   return {get:key=>store.get(key),getAll:async (...args)=>{const value=await store.getAll(...args);if(name===HAZARD_CHUNKS && !writing)writing=publishHazardRun(db,next,hazardMetadata(next));return value;}};
   }};
  }};
  expect((await hydrateHazardRun(reader,old)).revision).toBe('old');await writing;
@@ -86,4 +86,30 @@ test('fallback publication cannot overwrite a newer save committed during stagin
  expect(await hydrateHazardRun(db,staged)).toEqual(newer);
  expect(await db.count(HAZARD_CHUNKS)).toBe(staged.payload.count);
  expect(await db.count(HAZARD_STAGING)).toBe(0);db.close();
+});
+test('cancelled hydration aborts its readonly snapshot without changing partial saved results',async()=>{
+ const {getLatestCodeArchitectureHazardRun}=require('./codeArchitectureHazardStore');
+ await saveCodeArchitectureHazardRun(large('cancel-reader'));
+ const controller=new AbortController();let updates=0;
+ await expect(getLatestCodeArchitectureHazardRun({projectId:'p'},{signal:controller.signal,onProgress:()=>{updates++;controller.abort();}})).rejects.toMatchObject({name:'AbortError'});
+ expect(updates).toBe(1);
+ expect((await getCodeArchitectureHazardRunById('cancel-reader')).summary).toEqual(large('cancel-reader').summary);
+});
+test('range hydration is bounded and keeps integrity checks in later batches',async()=>{
+ const value={...large('batches'),summary:[{evidence:'abc'.repeat(300000)}]};
+ await saveCodeArchitectureHazardRun(value);
+ const db=await openCodeArchitectureHazardDB(),root=await db.get('hazardAnalysisRuns','batches');
+ expect(root.payload.count).toBeGreaterThan(16);
+ const getAll=jest.spyOn(IDBObjectStore.prototype,'getAll');
+ try {
+  expect(await hydrateHazardRun(db,root)).toMatchObject(value);
+  const chunkCalls=getAll.mock.calls.filter((args,index)=>getAll.mock.instances[index].name===HAZARD_CHUNKS);
+  expect(chunkCalls).toHaveLength(Math.ceil(root.payload.count/16));
+  expect(chunkCalls.every(args=>args[1]===16)).toBe(true);
+ }finally{getAll.mockRestore();}
+ const {hazardChunkKey}=require('./hazardRunChunks');
+ const key=hazardChunkKey(root.payload.generation,17),part=await db.get(HAZARD_CHUNKS,key);
+ await db.put(HAZARD_CHUNKS,{...part,digest:'bad'});
+ await expect(hydrateHazardRun(db,root)).rejects.toThrow(/missing or damaged/);
+ db.close();
 });

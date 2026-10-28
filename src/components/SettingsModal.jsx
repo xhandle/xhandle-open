@@ -54,7 +54,6 @@ import { listProjects as listWorkspaceGraphProjects } from "../features/workspac
 import {
   ACTIVE_CODE_ARCHITECTURE_PROJECTS_KEY,
   ACTIVE_FUNCTIONAL_PROJECTS_KEY,
-  buildBrowserStorageSummary,
   classifyStoredWorkspaceProjects,
 } from "./storageWorkspaceVisibility";
 import {
@@ -183,8 +182,8 @@ function readStoredProjectList(key) {
 }
 
 function storageByteLength(value) {
-  const text = typeof value === "string" ? value : JSON.stringify(value ?? "");
-  return new Blob([text]).size;
+  // Only localStorage strings are sized. Never serialize IndexedDB payloads.
+  return new Blob([value]).size;
 }
 
 function formatStorageBytes(bytes = 0) {
@@ -216,7 +215,7 @@ function localStorageCategoryDescription(id) {
   return LOCAL_STORAGE_CATEGORY_DETAILS[id]?.description || LOCAL_STORAGE_CATEGORY_DETAILS.other.description;
 }
 
-function openRawIndexedDb(name) {
+function openRawIndexedDb(name, signal) {
   return new Promise((resolve) => {
     if (typeof indexedDB === "undefined" || !name) {
       resolve(null);
@@ -227,9 +226,13 @@ function openRawIndexedDb(name) {
       if (finished) { try { value?.close(); } catch {} return; }
       finished = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", cancel);
       resolve(value);
     };
+    const cancel = () => finish(null);
     const timer = setTimeout(() => finish(null), 5000);
+    if (signal?.aborted) { cancel(); return; }
+    signal?.addEventListener("abort", cancel, { once: true });
     try {
       const request = indexedDB.open(name);
       // Inspecting storage must not create an empty database ahead of its
@@ -242,13 +245,13 @@ function openRawIndexedDb(name) {
   });
 }
 
-async function inspectIndexedDbStore(dbName, storeName) {
-  const db = await openRawIndexedDb(dbName);
+async function inspectIndexedDbStore(dbName, storeName, signal) {
+  const db = await openRawIndexedDb(dbName, signal);
   if (!db || !db.objectStoreNames.contains(storeName)) {
     try { db?.close(); } catch {}
     return null;
   }
-  return inspectStorageStore(db, storeName, storageByteLength);
+  return inspectStorageStore(db, storeName, { signal });
 }
 
 function indexedDbStoreLabel(dbName, storeName) {
@@ -517,26 +520,33 @@ export default function SettingsModal({
   const [selectedStorageRecords, setSelectedStorageRecords] = useState({});
   const [expandedStorage, setExpandedStorage] = useState({});
   const [loadingStorageCategory, setLoadingStorageCategory] = useState(null);
+  const storageScanRef = useRef(null);
+  const storagePageRef = useRef(null);
   const loadStoragePage = async (item, after) => {
+    storagePageRef.current?.abort();
+    const controller = new AbortController();
+    storagePageRef.current = controller;
+    const { signal } = controller;
     setLoadingStorageCategory(item.id);
     try {
       let page;
       const projects = [...readStoredProjectList(ACTIVE_CODE_ARCHITECTURE_PROJECTS_KEY), ...readStoredProjectList(ACTIVE_FUNCTIONAL_PROJECTS_KEY), ...storedWorkspaceProjects];
-      const offset = after === undefined ? 0 : (storagePages[item.id]?.offset || 0) + 50;
-      const context = {projects, category:item.label, offset};
+      const offset = after === undefined ? 0 : (storagePages[item.id]?.offset || 0) + (storagePages[item.id]?.items.length || 0);
+      const context = {projects, category:item.label, offset, signal};
       if (item.kind === 'localStorage') {
         const start = after === undefined ? 0 : Number(after);
         const keys = item.keys.slice(start, start + 50);
         page = { items: keys.map((key, index) => describeStorageItem(key, null, {...context, ordinal: start + index + 1})), nextKey: start + 50 < item.keys.length ? start + 50 : undefined };
       } else {
-        const db = await openRawIndexedDb(item.dbName);
+        const db = await openRawIndexedDb(item.dbName, signal);
         if (!db) throw new Error('Storage is unavailable. Refresh and retry.');
         try { page = await readStoragePage(db, item.storeName, after, 50, context); } finally { db.close(); }
       }
+      if (signal.aborted) return;
       setStoragePages(current => ({...current, [item.id]: {...page, offset}}));
       setExpandedStorage(current => ({...current, [item.id]: true}));
-    } catch(error) { setStorageMsg(error.message); }
-    finally { setLoadingStorageCategory(null); }
+    } catch(error) { if (!signal.aborted) setStorageMsg(error.message); }
+    finally { if (!signal.aborted) setLoadingStorageCategory(null); }
   };
   const [storedWorkspaceProjects, setStoredWorkspaceProjects] = useState([]);
   const storageTabScanStartedRef = useRef(false);
@@ -546,7 +556,6 @@ export default function SettingsModal({
   );
   const selectedModelProfile = getProviderModelProfile(aiProvider, providerModel);
   const selectedModelSupportsEffort = supportsAIProviderEffort(aiProvider, providerModel);
-  const browserStorageSummary = buildBrowserStorageSummary(storageInventory);
   const providerModelOptions = (() => {
     const provider = normalizeAIProvider(aiProvider);
     const records = providerModelsByProvider[provider] || getProviderModelOptions(provider);
@@ -628,6 +637,12 @@ export default function SettingsModal({
   }, [aiProvider]);
 
   const refreshStorageInventory = async () => {
+    storageScanRef.current?.abort();
+    storagePageRef.current?.abort();
+    setLoadingStorageCategory(null);
+    const controller = new AbortController();
+    storageScanRef.current = controller;
+    const { signal } = controller;
     setStorageBusy(true);
     setStoragePages({});
     setExpandedStorage({});
@@ -638,6 +653,7 @@ export default function SettingsModal({
       const usage = typeof navigator !== "undefined" && navigator.storage?.estimate
         ? await storageScanTimeout(() => navigator.storage.estimate(), "Browser quota estimate").catch(error => { warnings.push(error.message); return null; })
         : null;
+      if (signal.aborted) return;
       const localGroups = {};
       if (typeof localStorage !== "undefined") {
         for (let index = 0; index < localStorage.length; index += 1) {
@@ -665,13 +681,15 @@ export default function SettingsModal({
       }
 
       const indexedDbItems = [];
-      await Promise.all(STORAGE_DATABASES.map(async dbName => {
-        const db = await openRawIndexedDb(dbName);
-        if (!db) { warnings.push(dbName + ": unavailable or timed out."); return; }
+      for (const dbName of STORAGE_DATABASES) {
+        if (signal.aborted) return;
+        const db = await openRawIndexedDb(dbName, signal);
+        if (!db) { warnings.push(dbName + ": unavailable or timed out."); continue; }
         const storeNames = Array.from(db.objectStoreNames || []);
         try { db.close(); } catch {}
         for (const storeName of storeNames) {
-          const inspected = await inspectIndexedDbStore(dbName, storeName);
+          if (signal.aborted) return;
+          const inspected = await inspectIndexedDbStore(dbName, storeName, signal);
           if (!inspected) continue;
           indexedDbItems.push({
             id: `indexedDB:${dbName}:${storeName}`,
@@ -680,16 +698,18 @@ export default function SettingsModal({
             storeName,
             label: indexedDbStoreLabel(dbName, storeName),
             description: indexedDbStoreDescription(dbName, storeName),
-            bytes: inspected.bytes || 0,
-            count: inspected.count || 0,
+            bytes: inspected.bytes,
+            count: inspected.count,
             error: inspected.error || "",
           });
         }
-      }));
+      }
+      if (signal.aborted) return;
 
       const functionalProjects = readStoredProjectList(ACTIVE_FUNCTIONAL_PROJECTS_KEY);
       const codeArchitectureProjects = readStoredProjectList(ACTIVE_CODE_ARCHITECTURE_PROJECTS_KEY);
       const graphProjects = await storageScanTimeout(() => listWorkspaceGraphProjects(), "Workspace visibility scan").catch(error => { warnings.push(error.message); return []; });
+      if (signal.aborted) return;
       setStoredWorkspaceProjects(classifyStoredWorkspaceProjects(
         graphProjects,
         functionalProjects,
@@ -701,7 +721,7 @@ export default function SettingsModal({
         ...indexedDbItems,
       ].sort((a, b) => Number(b.bytes || 0) - Number(a.bytes || 0));
       setStorageInventory({
-        usageBytes: usage?.usage || 0,
+        usageBytes: usage?.usage ?? null,
         quotaBytes: usage?.quota || 0,
         items,
         refreshedAt: new Date().toISOString(),
@@ -712,9 +732,9 @@ export default function SettingsModal({
         return Object.fromEntries(Object.entries(current || {}).filter(([id]) => allowedIds.has(id)));
       });
     } catch (error) {
-      setStorageMsg(`❌ ${error?.message || error}`);
+      if (!signal.aborted) setStorageMsg(`❌ ${error?.message || error}`);
     } finally {
-      setStorageBusy(false);
+      if (!signal.aborted) setStorageBusy(false);
     }
   };
 
@@ -726,6 +746,11 @@ export default function SettingsModal({
     if (storageTabScanStartedRef.current) return;
     storageTabScanStartedRef.current = true;
     refreshStorageInventory();
+    return () => {
+      storageTabScanStartedRef.current = false;
+      storageScanRef.current?.abort();
+      storagePageRef.current?.abort();
+    };
     // The scan intentionally runs once each time the Storage tab is opened.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
@@ -1821,57 +1846,12 @@ export default function SettingsModal({
               <p className="text-sm text-slate-600">
                 Review and delete xHandle data stored in this browser. Credentials and API keys are separated and are never selected by default.
               </p>
-              <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
-                <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
-                  <span className="font-semibold text-slate-900">xHandle storage</span>
-                  {storageInventory ? (
-                    <span className="font-medium text-slate-700">
-                      {formatStorageBytes(browserStorageSummary.usedBytes)} measured xHandle data
-                    </span>
-                  ) : (
-                    <span className="text-slate-500">{storageBusy ? "Calculating…" : "Loading…"}</span>
-                  )}
-                </div>
-                <div
-                  className="mt-3 flex h-5 w-full overflow-hidden rounded-md bg-slate-200 ring-1 ring-inset ring-slate-300"
-                  role="img"
-                  aria-label={`xHandle storage usage by category: ${formatStorageBytes(browserStorageSummary.usedBytes)} measured`}
-                >
-                  {browserStorageSummary.segments.map((segment) => {
-                    const denominator = Math.max(browserStorageSummary.usedBytes, 1);
-                    const width = (segment.bytes / denominator) * 100;
-                    return (
-                      <div
-                        key={segment.id}
-                        style={{ width: `${width}%`, backgroundColor: segment.color }}
-                        title={`${segment.label}: ${formatStorageBytes(segment.bytes)}`}
-                      />
-                    );
-                  })}
-
-                </div>
-                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600">
-                  {browserStorageSummary.segments.map((segment) => (
-                    <span key={segment.id} className="inline-flex items-center gap-1.5">
-                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: segment.color }} />
-                      {segment.label} · {formatStorageBytes(segment.bytes)}
-                    </span>
-                  ))}
-
-                </div>
-                {storageInventory && <div className="mt-3 text-xs text-slate-600">
-                  {browserStorageSummary.quotaBytes ? <>
-                    <p>Estimated site storage limit: {formatStorageBytes(browserStorageSummary.quotaBytes)} · Available to this site: {formatStorageBytes(browserStorageSummary.availableBytes)}</p>
-                    <p className="mt-1 text-slate-500">The browser sets this limit for the current site; it is not reserved space exclusively allocated to xHandle. The chart shows measured xHandle records only.</p>
-                  </> : <p>The browser has not reported a storage limit for this site.</p>}
-                  {browserStorageSummary.partial && <p className="mt-1 text-amber-700">Some stores could not be fully scanned. Measured usage and the category breakdown are incomplete.</p>}
-                </div>}
+              <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 text-sm space-y-2">
+                <div className="font-semibold">Estimated site storage: {storageInventory?.usageBytes != null ? formatStorageBytes(storageInventory.usageBytes) : storageBusy ? "Checking…" : "Unavailable"}</div>
+                {!!storageInventory?.quotaBytes && <div>Estimated site storage limit: {formatStorageBytes(storageInventory.quotaBytes)}</div>}
+                <p className="text-xs text-slate-500">The browser reports usage for this site, including caches and database overhead. Individual database sizes are not measured to avoid loading saved analyses. Record counts include internal storage records.</p>
               </div>
-              {storageInventory?.refreshedAt && (
-                <div className="text-xs text-slate-500">
-                  Last scanned {new Date(storageInventory.refreshedAt).toLocaleString()}. Sizes are approximate JSON payload sizes; browser overhead may differ.
-                </div>
-              )}
+              {storageInventory?.refreshedAt && <div className="text-xs text-slate-500">Last checked {new Date(storageInventory.refreshedAt).toLocaleString()}.</div>}
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white">
@@ -2008,8 +1988,8 @@ export default function SettingsModal({
                           <div className="mt-1 text-xs text-slate-500">{item.description}</div>
                           {item.error && <div className="mt-1 text-xs text-amber-700">{item.error}</div>}
                         </td>
-                        <td className="border-b px-3 py-2 align-top text-slate-600">{Number(item.count || 0).toLocaleString()}</td>
-                        <td className="border-b px-3 py-2 align-top font-medium text-slate-700">{formatStorageBytes(item.bytes)}</td>
+                        <td className="border-b px-3 py-2 align-top text-slate-600">{item.count == null ? "Unavailable" : Number(item.count).toLocaleString()}</td>
+                        <td className="border-b px-3 py-2 align-top font-medium text-slate-700">{item.bytes == null ? "Not measured" : formatStorageBytes(item.bytes)}</td>
                       </tr>
                       {expandedStorage[item.id] && <tr><td colSpan={4} className="border-b bg-slate-50 px-6 py-3">
                         <div className="text-xs text-slate-500 mb-2">Select individual stored items. Selecting the category deletes everything in it.</div>

@@ -1,3 +1,4 @@
+import { createReviewActionQueue, commitReviewSource, needsDurableReviewAction, saveDurableReviewAction } from './reviewSourceCommit';
 import { createReviewPersistenceWriter } from './reviewPersistenceWriter';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import ResultsReviewDrawer from "./ResultsReviewDrawer";
@@ -40,6 +41,7 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
   const [drawerOptions, setDrawerOptions] = useState({});
   const reviewItemsRef = useRef([]);
   const persistenceWriterRef = useRef(null);
+  const reviewActionQueue = useMemo(() => createReviewActionQueue(), []);
   if (!persistenceWriterRef.current) persistenceWriterRef.current = createReviewPersistenceWriter(saveReviewItems);
 
   useEffect(() => {
@@ -66,7 +68,7 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
 
   const [persistenceFailure, setPersistenceFailure] = useState(null);
 
-  const persist = useCallback(async (updater) => {
+  const persist = useCallback(async (updater, {requireDurable = false} = {}) => {
     const previousItems = reviewItemsRef.current;
     if (readOnly) {
       const nextItems = typeof updater === "function" ? updater(previousItems) : updater;
@@ -76,7 +78,19 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
     nextItems = Array.isArray(nextItems) ? nextItems : [];
     reviewItemsRef.current = nextItems;
     setReviewItems(nextItems);
-    const saved = await persistenceWriterRef.current(nextItems);
+    let saved;
+    try { saved = await persistenceWriterRef.current(nextItems); }
+    catch (error) { if (!requireDurable) throw error; saved = {ok:false,message:error.message}; }
+    if (requireDurable && (!saved?.ok || saved.durability !== 'indexeddb')) {
+      // Restore only this operation's optimistic replacements, preserving unrelated edits.
+      const before = new Map(previousItems.map(item => [item.id,item]));
+      const proposed = new Map(nextItems.map(item => [item.id,item]));
+      const restored = reviewItemsRef.current.map(item => proposed.get(item.id) === item && before.has(item.id) ? before.get(item.id) : item);
+      reviewItemsRef.current = restored;
+      setReviewItems(restored);
+      setPersistenceFailure({at:new Date().toISOString(),failure:saved?.failure,message:saved?.message});
+      throw Error(saved?.message || 'Review storage is unavailable. The review was not finalized. Retry saving.');
+    }
     // Optimistic in-memory state is kept so the reviewer does not lose their
     // work mid-session, but the failure is announced rather than swallowed:
     // this evidence will not survive a reload.
@@ -137,25 +151,36 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
     return recorded;
   }, [persist, readOnly]);
 
-  const updateReviewItem = useCallback(async (id, updates = {}) => {
+  const updateReviewItem = useCallback(async (id, updates = {}, action) => {
     if (readOnly) return getReviewItemById(id);
-    let updated = null;
-    await persist((prev) =>
-      prev.map((item) => {
-        if (item.id !== id) return item;
-        updated = {
-          ...item,
-          ...updates,
-          id: item.id,
-          originalContent: item.originalContent,
-          updatedAt: new Date().toISOString(),
-        };
-        return updated;
-      })
-    );
-    if (updated) dispatchReviewEvent("xhandle:results-review:item-updated", { reviewItem: updated });
-    return updated;
-  }, [persist, readOnly, getReviewItemById]);
+    return reviewActionQueue(reviewItemsRef.current.find(item => item.id === id)?.sourceRunId || id, async () => {
+      const before = reviewItemsRef.current.find(item => item.id === id);
+      if (!before) return null;
+      if (needsDurableReviewAction(before, action)) return saveDurableReviewAction({
+        item:before,updates,action,withHistory:false,persist,
+        getItem:()=>reviewItemsRef.current.find(item=>item.id===id),dispatchReviewEvent,createHistoryEntry,
+      });
+      const sourceApplied = await commitReviewSource(before, updates.currentContent || before.currentContent, action);
+      let updated = null;
+      let previousContent;
+      await persist((prev) =>
+        prev.map((item) => {
+          if (item.id !== id) return item;
+          previousContent = item.currentContent || item.originalContent;
+          updated = {
+            ...item,
+            ...updates,
+            id: item.id,
+            originalContent: item.originalContent,
+            updatedAt: new Date().toISOString(),
+          };
+          return updated;
+        })
+      );
+      if (updated) dispatchReviewEvent("xhandle:results-review:item-updated", { reviewItem: updated, previousContent, action, sourceApplied });
+      return updated;
+    });
+  }, [persist, readOnly, getReviewItemById, reviewActionQueue]);
 
   const deleteReviewItemsForProject = useCallback(async (projectId) => {
     if (readOnly) return [];
@@ -188,32 +213,43 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
 
   const applyAction = useCallback(async (id, action, updates = {}) => {
     if (readOnly) return getReviewItemById(id);
-    let updated = null;
-    await persist((prev) =>
-      prev.map((item) => {
-        if (item.id !== id) return item;
-        const { historyDetails = {}, ...itemUpdates } = updates;
-        updated = {
-          ...item,
-          ...itemUpdates,
-          originalContent: item.originalContent,
-          reviewerFeedback: itemUpdates.reviewerFeedback ?? item.reviewerFeedback,
-          reviewedAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          version: (Number(item.version) || 1) + 1,
-          history: [...(item.history || []), createHistoryEntry(action, {
-            status: itemUpdates.status,
-            reviewState: itemUpdates.reviewState,
-            feedback: itemUpdates.reviewerFeedback,
-            ...historyDetails,
-          })],
-        };
-        return updated;
-      })
-    );
-    if (updated) dispatchReviewEvent("xhandle:results-review:item-updated", { reviewItem: updated, action });
-    return updated;
-  }, [persist, readOnly, getReviewItemById]);
+    return reviewActionQueue(reviewItemsRef.current.find(item => item.id === id)?.sourceRunId || id, async () => {
+      const before = reviewItemsRef.current.find(item => item.id === id);
+      if (!before) return null;
+      if (needsDurableReviewAction(before, action)) return saveDurableReviewAction({
+        item:before,updates,action,withHistory:true,persist,
+        getItem:()=>reviewItemsRef.current.find(item=>item.id===id),dispatchReviewEvent,createHistoryEntry,
+      });
+      const sourceApplied = await commitReviewSource(before, updates.currentContent || before.currentContent, action);
+      let updated = null;
+      let previousContent;
+      await persist((prev) =>
+        prev.map((item) => {
+          if (item.id !== id) return item;
+          const { historyDetails = {}, ...itemUpdates } = updates;
+          previousContent = item.currentContent || item.originalContent;
+          updated = {
+            ...item,
+            ...itemUpdates,
+            originalContent: item.originalContent,
+            reviewerFeedback: itemUpdates.reviewerFeedback ?? item.reviewerFeedback,
+            reviewedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            version: (Number(item.version) || 1) + 1,
+            history: [...(item.history || []), createHistoryEntry(action, {
+              status: itemUpdates.status,
+              reviewState: itemUpdates.reviewState,
+              feedback: itemUpdates.reviewerFeedback,
+              ...historyDetails,
+            })],
+          };
+          return updated;
+        })
+      );
+      if (updated) dispatchReviewEvent("xhandle:results-review:item-updated", { reviewItem: updated, previousContent, action, sourceApplied });
+      return updated;
+    });
+  }, [persist, readOnly, getReviewItemById, reviewActionQueue]);
 
   const setReviewItemsState = useCallback(async (ids = [], reviewState) => {
     if (readOnly) return [];
@@ -340,14 +376,10 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
           const updated = await updateReviewItem(id, {
             currentContent: updatedContent,
             reviewerFeedback: feedback,
-          });
-          if (updated) {
-            window.dispatchEvent(new CustomEvent("xhandle:results-review:item-updated", {
-              detail: { reviewItem: updated, action: "update_current_content" },
-            }));
-          }
+          }, "update_current_content");
           return updated;
         }}
+        onRetryPending={readOnly ? undefined : id => updateReviewItem(id, {}, "resume_pending")}
         onReject={readOnly ? undefined : rejectReviewItem}
         onNeedsRegeneration={readOnly ? undefined : markNeedsRegeneration}
         onRequestRegeneration={readOnly ? undefined : requestReviewItemRegeneration}

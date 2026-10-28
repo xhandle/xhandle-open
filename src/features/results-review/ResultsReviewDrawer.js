@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Maximize2, Minimize2, X } from "lucide-react";
 import ResultsReviewItemView from "./ResultsReviewItemView";
 import { filterReviewItems, isPendingReviewStatus } from "./reviewUtils";
@@ -13,14 +13,29 @@ export default function ResultsReviewDrawer({
   onApproveAsIs,
   onApproveWithModifications,
   onUpdateCurrentContent,
+  onRetryPending,
   onReject,
   onNeedsRegeneration,
   onRequestRegeneration,
   onNeedsMoreContext,
   readOnly = false,
 }) {
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [activeItemId, setActiveItemId] = useState(null);
+  const wasOpenRef = useRef(false);
+  const previousOptionsRef = useRef(null);
   const [feedback, setFeedback] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const savingRef = useRef(false);
+  const saveReview = async (task) => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    setSaveError('');
+    try { await task(); }
+    catch (error) { setSaveError(error.message || 'The review could not be saved. Retry the action.'); }
+    finally { savingRef.current = false; setSaving(false); }
+  };
 
   const queue = useMemo(() => {
     const filtered = filterReviewItems(items, options || {});
@@ -28,16 +43,25 @@ export default function ResultsReviewDrawer({
   }, [items, options]);
 
   useEffect(() => {
-    if (!isOpen || !queue.length) return;
+    if (!isOpen) {
+      wasOpenRef.current = false;
+      return;
+    }
+    if (!queue.length) return;
+    const scopeChanged = !wasOpenRef.current || previousOptionsRef.current !== options;
+    wasOpenRef.current = true;
+    previousOptionsRef.current = options;
+    if (!scopeChanged && queue.some((entry) => entry.id === activeItemId)) return;
     const requestedIndex = options?.initialReviewItemId
       ? queue.findIndex((item) => item.id === options.initialReviewItemId)
       : -1;
     const pendingIndex = options?.startAtFirstPending
       ? queue.findIndex((item) => isPendingReviewStatus(item.status))
       : -1;
-    setActiveIndex(Math.max(0, requestedIndex >= 0 ? requestedIndex : pendingIndex >= 0 ? pendingIndex : 0));
-  }, [isOpen, options?.initialReviewItemId, options?.startAtFirstPending, queue]);
+    setActiveItemId(queue[Math.max(0, requestedIndex >= 0 ? requestedIndex : pendingIndex >= 0 ? pendingIndex : 0)].id);
+  }, [isOpen, options, queue, activeItemId]);
 
+  const activeIndex = Math.max(0, queue.findIndex((entry) => entry.id === activeItemId));
   const item = queue[activeIndex] || null;
 
   useEffect(() => {
@@ -45,9 +69,9 @@ export default function ResultsReviewDrawer({
     window.dispatchEvent(new CustomEvent("xhandle:results-review:focus", { detail: { reviewItem: item } }));
   }, [isOpen, item]);
 
-  const goPrevious = () => setActiveIndex((index) => Math.max(0, index - 1));
-  const goNext = () => setActiveIndex((index) => Math.min(queue.length - 1, index + 1));
-  const advance = () => setActiveIndex((index) => Math.min(queue.length - 1, index + 1));
+  const goPrevious = () => setActiveItemId(queue[Math.max(0, activeIndex - 1)]?.id || null);
+  const goNext = () => setActiveItemId(queue[Math.min(queue.length - 1, activeIndex + 1)]?.id || null);
+  const advance = () => setActiveItemId(queue[Math.min(queue.length - 1, activeIndex + 1)]?.id || null);
 
   const positionLabel = queue.length ? `${activeIndex + 1} of ${queue.length}` : "0 of 0";
 
@@ -85,25 +109,31 @@ export default function ResultsReviewDrawer({
           </div>
         </div>
 
+        {saving && <div role="status" className="px-5 py-2 text-sm">Saving review and source table…</div>}
+        {saveError && <div role="alert" className="px-5 py-2 text-sm text-red-700">{saveError} Your edits are still available. Resolve the issue and retry.</div>}
+        {item?.pendingSourceCommit && <div className="px-5 py-2 text-sm" role="status">
+          This review has an unfinished save. Retry to finish saving it before making further edits.
+          {!readOnly && <button type="button" disabled={saving} onClick={() => saveReview(() => onRetryPending(item.id))} className="ml-2 rounded border px-2 py-1">Retry review save</button>}
+        </div>}
         <ResultsReviewItemView
           item={item}
           positionLabel={positionLabel}
           feedback={feedback}
           setFeedback={setFeedback}
-          onApproveAsIs={async () => {
+          onApproveAsIs={() => saveReview(async () => {
             if (!item) return;
             await onApproveAsIs(item.id);
             advance();
-          }}
-          onApproveWithEdits={async (updatedContent) => {
+          })}
+          onApproveWithEdits={(updatedContent) => saveReview(async () => {
             if (!item) return;
             await onApproveWithModifications(item.id, updatedContent, feedback);
             advance();
-          }}
-          onUpdateCurrentContent={async (updatedContent) => {
+          })}
+          onUpdateCurrentContent={(updatedContent) => saveReview(async () => {
             if (!item || !onUpdateCurrentContent) return;
             await onUpdateCurrentContent(item.id, updatedContent, feedback);
-          }}
+          })}
           onReject={async () => {
             if (!item) return;
             await onReject(item.id, feedback);
@@ -122,14 +152,14 @@ export default function ResultsReviewDrawer({
             await onNeedsMoreContext(item.id, feedback);
             advance();
           }}
-          readOnly={readOnly}
+          readOnly={readOnly || saving || Boolean(item?.pendingSourceCommit)}
         />
 
         <div className="flex items-center justify-between gap-3 border-t border-gray-200 px-4 py-3">
           <button
             type="button"
             className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-            disabled={activeIndex <= 0}
+            disabled={saving || activeIndex <= 0}
             onClick={goPrevious}
           >
             <ChevronLeft size={15} /> Previous
@@ -137,7 +167,7 @@ export default function ResultsReviewDrawer({
           <button
             type="button"
             className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-            disabled={!queue.length || activeIndex >= queue.length - 1}
+            disabled={saving || !queue.length || activeIndex >= queue.length - 1}
             onClick={goNext}
           >
             Next <ChevronRight size={15} />

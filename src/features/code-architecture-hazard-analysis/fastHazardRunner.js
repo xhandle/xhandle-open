@@ -1,3 +1,4 @@
+import {saveHazardRecovery} from './saveHazardRecovery';
 import {claimHazardSaveAttempt} from './hazardSaveAttempt';
 import {waitForHazardSave} from './waitForHazardSave';
 import {safeHazardObserver,usableHazardInputs} from './hazardCompletionSupport';
@@ -249,7 +250,7 @@ hazardMethod:method,hazardGenerationMode:'compact',
       // the incomplete attempt beside it, rather than replacing its Summary.
       const priorComplete=previousRun && !['incomplete','draft'].includes(previousRun.runState);
       const recovery=priorComplete ? {...previousRun,pendingAttempt:partial,updatedAt:new Date().toISOString()} : partial;
-      try{await waitForHazardSave(saveCodeArchitectureHazardRun(recovery));}catch(saveError){recovery.finalSavePending=true;recovery.saveFailureMessage=saveError.message;}
+      try{await waitForHazardSave(saveHazardRecovery(initialSave,recoverable,recovery));}catch(saveError){recovery.finalSavePending=true;recovery.saveFailureMessage=saveError.message;}
       error.recoveryRun=recovery;
       onPartialRunUpdate(recovery);
     }

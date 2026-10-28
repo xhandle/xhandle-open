@@ -1,12 +1,18 @@
+import {webcrypto} from 'crypto';
 import {createHazardRunRegistry} from './hazardRunRegistry';
 import {openDB} from 'idb';
 import {saveCodeArchitectureHazardRun,getCodeArchitectureHazardRunById} from './codeArchitectureHazardStore';
-jest.mock('idb',()=>({openDB:jest.fn()}));
+jest.mock('idb',()=>{
+ const openDB=jest.fn();
+ const resolved=openDB.mockResolvedValue.bind(openDB);
+ openDB.mockResolvedValue=db=>resolved({...db,close:jest.fn()});
+ return {openDB};
+});
 const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
 const run=id=>({id,projectId:'p',repoId:'r',generatedSheets:{Summary:[['Function'],['A']]}});
 let original;
-beforeEach(()=>{original=global.indexedDB;global.indexedDB={};localStorage.clear();jest.useFakeTimers();});
+beforeEach(()=>{Object.defineProperty(global,'crypto',{value:webcrypto,configurable:true});original=global.indexedDB;global.indexedDB={};localStorage.clear();jest.useFakeTimers();});
 afterEach(()=>{global.indexedDB=original;jest.useRealTimers();jest.clearAllMocks();});
 test('slow healthy save stays pending without abort or duplicate write and protects reload',async()=>{
  const gate=deferred(),abort=jest.fn(),put=jest.fn(async()=>{}),states=[];
@@ -48,7 +54,7 @@ test('transient failures exhaust bounded retries and retain results',async()=>{
 test('every queued save resolves only after its own revision commits',async()=>{
  const opening=deferred(),first=deferred(),second=deferred(),writes=[];let count=0;
  openDB.mockReturnValue(opening.promise);
- const db={transaction:()=>({objectStore:name=>({get:async()=>undefined,put:async value=>{if(name==='hazardAnalysisRuns')writes.push(value.version);}}),done:++count===1?first.promise:second.promise})};
+ const db={close:jest.fn(),transaction:()=>({objectStore:name=>({get:async()=>undefined,put:async value=>{if(name==='hazardAnalysisRuns')writes.push(value.version);}}),done:++count===1?first.promise:second.promise})};
  let aDone=false,bDone=false;
  const a=saveCodeArchitectureHazardRun({...run('truthful'),version:1}).then(()=>{aDone=true;});await flush();
  const b=saveCodeArchitectureHazardRun({...run('truthful'),version:2}).then(()=>{bDone=true;});opening.resolve(db);await flush();

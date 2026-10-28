@@ -9,7 +9,7 @@ import { fillNotApplicableHazardSummary } from '../project-hazard-analysis/hazar
 import { prepareCodeHazardPreprocessing, reconcileCodeHazardPreprocessing } from './codeArchitectureHazardPreprocessing';
 import { ensureHazardAnalysisRowIds } from '../project-hazard-analysis/classificationResolutionStatus';
 import { runLiteAIAnalysis } from "../../components/aiAnalysisLite";
-import { saveCodeArchitectureHazardRun } from "./codeArchitectureHazardStore";
+import { saveCodeArchitectureHazardRun, resolveCodeArchitectureHazardRun } from "./codeArchitectureHazardStore";
 import { enrichHazardTableRowsWithSourceContent } from "./codeArchitectureHazardSourceAudit";
 import {
   buildCodeArchitectureHazardInput,
@@ -21,7 +21,8 @@ import {
 } from "./codeArchitectureHazardUtils";
 
 // Keep the legacy implementation callable for comparison and rollback.
-export function runCodeArchitectureHazardAnalysis(options = {}) {
+export async function runCodeArchitectureHazardAnalysis(options = {}) {
+  if(options.previousRun?.__xhandleHazardWorkingSet || options.previousRun?.__xhandlePagedHazard) options={...options,previousRun:await resolveCodeArchitectureHazardRun(options.previousRun,{signal:options.signal})};
   return fastMethod(options.method || 'STPA-Textbook')
     ? runFastCodeArchitectureHazardAnalysis(options)
     : runLegacyCodeArchitectureHazardAnalysis(options);

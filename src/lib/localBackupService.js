@@ -116,6 +116,9 @@ const KNOWN_DB_CONFIGS = [
 const listeners = new Set();
 let initialized = false;
 let dirtySinceLastBackup = false;
+let dirtyRevision = 0;
+let activeBackup = null;
+let activeBackupMode = null;
 let autoBackupTimer = null;
 let ignoreAutoBackupEventsUntil = 0;
 let state = {
@@ -240,7 +243,7 @@ async function getStoredDirectoryHandle() {
   if (!isFileSystemAccessSupported()) return null;
   try {
     const db = await openHandleDB();
-    return (await db.get(HANDLE_STORE, HANDLE_KEY)) || null;
+    try { return (await db.get(HANDLE_STORE, HANDLE_KEY)) || null; } finally { db.close(); }
   } catch {
     return null;
   }
@@ -266,6 +269,7 @@ async function ensureDirectoryPermission(handle, requestWrite = false) {
 
 async function exportKnownDb(config) {
   const db = await config.open();
+  try {
   const storeNames = config.stores ? Object.keys(config.stores) : Array.from(db.objectStoreNames);
   const stores = {};
   let totalRecords = 0;
@@ -301,6 +305,7 @@ async function exportKnownDb(config) {
     stores,
     totalRecords,
   };
+  } finally { db.close(); }
 }
 
 async function buildBackupSnapshot() {
@@ -483,6 +488,7 @@ async function getCurrentDirectoryHandle() {
 }
 
 function markDirty() {
+  dirtyRevision += 1;
   dirtySinceLastBackup = true;
   if (!state.pendingChanges) {
     updateState({ pendingChanges: true });
@@ -535,12 +541,9 @@ async function refreshDirectoryStatus() {
     folderName: handle.name || state.folderName || "",
   });
 
-  try {
-    const latestSnapshot = await readBackupFromDirectory(handle);
-    updateState({ latestBackupSummary: summarizeSnapshot(latestSnapshot) });
-  } catch {
-    updateState({ latestBackupSummary: null });
-  }
+  // Opening the app or checking folder permissions must not parse a potentially
+  // multi-gigabyte backup. Read it only for an explicitly requested restore.
+  updateState({ latestBackupSummary: null });
 
   return handle;
 }
@@ -570,7 +573,7 @@ export async function initializeLocalBackupRuntime() {
   window.addEventListener(BACKUP_DATA_CHANGED_EVENT, () => scheduleAutoBackup("indexeddb"));
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden" && dirtySinceLastBackup) {
-      backupNow({ source: "visibility", silentIfUnavailable: true }).catch(() => {});
+      scheduleAutoBackup("visibility");
     }
   });
 
@@ -613,30 +616,33 @@ export async function recheckBackupFolder() {
   await refreshDirectoryStatus();
 }
 
-export async function backupNow(options = {}) {
+export function backupNow(options = {}) {
+  const mode = options.mode || "folder";
+  const automatic = options.source === "visibility" || options.source?.startsWith("auto:");
+  if (automatic && (!state.autoBackupEnabled || !state.folderConfigured || state.permission !== "granted")) return Promise.resolve(null);
+  if (activeBackup) {
+    if (activeBackupMode !== mode && !automatic) return Promise.reject(new Error("A backup is already running. Wait for it to finish before starting another backup."));
+    return activeBackup;
+  }
+  activeBackupMode = mode;
+  let completed = false;
+  activeBackup = Promise.resolve().then(() => performBackup(options)).then(result => { completed = !!result; return result; }).finally(() => {
+    activeBackup = null;
+    activeBackupMode = null;
+    // New edits during a successful snapshot need one later backup, not an overlapping snapshot.
+    if (completed && dirtySinceLastBackup && state.lastBackupStatus === "success" && state.autoBackupEnabled && state.folderConfigured && state.permission === "granted") scheduleAutoBackup("pending-changes");
+  });
+  return activeBackup;
+}
+
+async function performBackup(options = {}) {
   const { source = "manual", silentIfUnavailable = false, mode = "folder" } = options;
+  if ((source === "visibility" || source.startsWith("auto:")) && (!state.autoBackupEnabled || !state.folderConfigured || state.permission !== "granted")) return null;
   try {
     await setBusy(true, source.startsWith("auto:") ? "Saving backup…" : "Creating backup…");
-    const snapshot = await buildBackupSnapshot();
-    const summary = summarizeSnapshot(snapshot);
-
-    if (mode === "download") {
-      const fileName = `${TIMESTAMP_PREFIX}${makeTimestampTag(snapshot.manifest.createdAt)}.json`;
-      downloadTextFile(fileName, JSON.stringify(snapshot, null, 2));
-      dirtySinceLastBackup = false;
-      updateState({
-        busy: false,
-        lastBackupAt: snapshot.manifest.createdAt,
-        lastBackupStatus: "success",
-        lastError: "",
-        lastBackupSummary: summary,
-        statusMessage: "Backup file downloaded.",
-        pendingChanges: false,
-      });
-      return summary;
-    }
-
-    const handle = await getStoredDirectoryHandle();
+    let handle, permission;
+    if (mode !== "download") {
+    handle = await getStoredDirectoryHandle();
     if (!handle) {
       if (silentIfUnavailable) {
         updateState({ busy: false, statusMessage: "Waiting for a backup folder." });
@@ -645,7 +651,7 @@ export async function backupNow(options = {}) {
       throw new Error("Choose a backup folder before running a folder backup.");
     }
 
-    const permission = await ensureDirectoryPermission(handle, source === "manual");
+    permission = await ensureDirectoryPermission(handle, source === "manual");
     if (permission !== "granted") {
       updateState({ permission });
       if (silentIfUnavailable) {
@@ -655,8 +661,30 @@ export async function backupNow(options = {}) {
       throw new Error("Backup folder access needs to be re-approved.");
     }
 
+    }
+    if ((source === "visibility" || source.startsWith("auto:")) && !state.autoBackupEnabled) { updateState({busy:false}); return null; }
+    const revision = dirtyRevision;
+    const snapshot = await buildBackupSnapshot();
+    const summary = summarizeSnapshot(snapshot);
+
+    if (mode === "download") {
+      const fileName = `${TIMESTAMP_PREFIX}${makeTimestampTag(snapshot.manifest.createdAt)}.json`;
+      downloadTextFile(fileName, JSON.stringify(snapshot, null, 2));
+      dirtySinceLastBackup = dirtyRevision !== revision;
+      updateState({
+        busy: false,
+        lastBackupAt: snapshot.manifest.createdAt,
+        lastBackupStatus: "success",
+        lastError: "",
+        lastBackupSummary: summary,
+        statusMessage: "Backup file downloaded.",
+        pendingChanges: dirtySinceLastBackup,
+      });
+      return summary;
+    }
+
     await writeBackupToDirectory(handle, snapshot);
-    dirtySinceLastBackup = false;
+    dirtySinceLastBackup = dirtyRevision !== revision;
     updateState({
       busy: false,
       permission,
@@ -668,7 +696,7 @@ export async function backupNow(options = {}) {
       lastBackupSummary: summary,
       latestBackupSummary: summary,
       statusMessage: "Backup saved to your computer.",
-      pendingChanges: false,
+      pendingChanges: dirtySinceLastBackup,
     });
     return summary;
   } catch (error) {

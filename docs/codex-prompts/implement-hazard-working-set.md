@@ -1,0 +1,5 @@
+Implement faster hazard-tab restoration without introducing a separate table or read-only mode. Evidence: 172,647 chunks and 145,453 ms in hydrate-and-verify; metadata reads take milliseconds. Preserve the existing table, editing, full-dataset filtering, CSV/export, trace links, partial results, and Continue action.
+
+Separate display working data from large execution-only fields. Use bounded persisted pages and revision-checked publication; never treat a display working set as a complete authoritative run. Acquire deferred data automatically at action boundaries. Keep the source intact, reject stale writes, preserve cancellation and focus coalescing, and fall back safely if disposable storage is unavailable. Legacy records may require one verified conversion; communicate that limitation. Do not claim five-second cold legacy conversion.
+
+Test complete data preservation, edits, continuation/review acquisition, stale revisions, deletion, corrupt cache, partial runs, cancellation, full-dataset table semantics and bounded page reads. Measure representative first and repeated loads. Preserve existing uncommitted work and do not publish a release.

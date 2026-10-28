@@ -1,3 +1,4 @@
+import HazardRestorationNotice from './HazardRestorationNotice';
 import XHandleWorkingMark from "../../components/XHandleWorkingMark";
 import HazardNarrativeReview from './HazardNarrativeReview';
 import HazardRunRecoveryNotice from './HazardRunRecoveryNotice';
@@ -58,6 +59,7 @@ function downloadSummaryCsv(summarySheet, repoName = "code_architecture") {
 
 export function PreparedCodeArchitectureHazardPanel({
   preparedView,
+  tablePage,
   cbaRows = [],
   latestRun,
   restoration,
@@ -117,6 +119,7 @@ export function PreparedCodeArchitectureHazardPanel({
     visibleSummaryRef.current = { sheet, source: summarySheet, context: selectedOperationalContextId };
   }, [summarySheet, selectedOperationalContextId]);
   const exportCsv = () => {
+    if(tablePage){tablePage.exportCsv();return;}
     const visible = visibleSummaryRef.current;
     const sheet = visible?.source === summarySheet && visible?.context === selectedOperationalContextId
       ? visible.sheet
@@ -130,7 +133,8 @@ export function PreparedCodeArchitectureHazardPanel({
     setPendingImport(null);
     setImportStatus('Reading and validating CSV…');
     try {
-      const plan = planHazardAnalysisCsvImport(summarySheet, await file.text());
+      const source = tablePage ? await tablePage.loadSummary() : summarySheet;
+      const plan = planHazardAnalysisCsvImport(source, await file.text());
       if (plan.errors.length) {
         setCsvIssues(plan.errors);
         setImportStatus(`Import blocked: ${plan.errors[0]}`);
@@ -140,14 +144,14 @@ export function PreparedCodeArchitectureHazardPanel({
         setImportStatus('Every row already matches. Nothing was changed.');
         return;
       }
-      setPendingImport({plan, source: summarySheet, run: latestRun});
+      setPendingImport({plan, source, view:summarySheet, run: latestRun});
       setImportStatus('CSV validated. Review the changes below and apply the import.');
     } catch (error) { setImportStatus(`Import failed: ${error.message || 'The file could not be read.'}`); }
     finally { setImporting(false); }
   };
   const applyPendingImport = async () => {
     if (!pendingImport || importing || isRunning || reviewMode) return;
-    if (pendingImport.source !== summarySheet || pendingImport.run !== latestRun) {
+    if (pendingImport.view !== summarySheet || pendingImport.run !== latestRun) {
       setPendingImport(null);
       setImportStatus('The analysis changed. Select the CSV again to review it against the current table.');
       return;
@@ -184,8 +188,8 @@ export function PreparedCodeArchitectureHazardPanel({
     }) : false,
     [latestRun, cbaRows, operationalContexts, selectedOperationalContextId, organizationContext, preparedView]
   );
-  const summaryCount = Math.max(0, (Array.isArray(summarySheet) ? summarySheet.length : 1) - 1);
-  const statusMessage = latestRun?.runState === 'incomplete' ? 'Incomplete analysis; validated rows are available for inspection. Continue to finish.' : latestRun
+  const summaryCount = tablePage?.unfilteredTotal ?? Math.max(0, (Array.isArray(summarySheet) ? summarySheet.length : 1) - 1);
+  const statusMessage = isStale ? "Architecture, operational context or organization guidance changed since this run. Re-run before generating new remediation findings." : tablePage ? `${summaryCount} saved rows. The table reads a page at a time; analysis continuation uses the complete saved run.` : latestRun?.runState === 'incomplete' ? 'Incomplete analysis; validated rows are available for inspection. Continue to finish.' : latestRun
     ? isStale
       ? "Architecture, operational context or organization guidance changed since this run. Re-run before generating new remediation findings."
       : `Latest ${latestRun.hazardMethod || "hazard"} run has ${summaryCount} summary row${summaryCount === 1 ? "" : "s"}.`
@@ -211,21 +215,10 @@ export function PreparedCodeArchitectureHazardPanel({
     setAllGroupsCollapsed(allCollapsed);
   }, []);
 
-  const restorationNotice = restoration && !isRunning && (
-    restoration.status === 'loading' || restoration.status === 'failed' || restoration.contextError
-  ) ? <div role={restoration.status === 'failed' || restoration.contextError ? 'alert' : 'status'} className="shrink-0 border border-slate-200 bg-slate-50 p-3 text-sm">
-    {!latestRun && restoration.status === 'loading' && <XHandleWorkingMark className="mr-2 inline-block h-6 w-6" />}
-    {restoration.contextError
-      ? 'Saved results are available, but context updates could not be saved.'
-      : restoration.status === 'failed'
-        ? (latestRun ? 'Could not refresh saved results. Previously loaded results are still shown.' : 'Unable to load saved results. This does not mean the analysis is missing.')
-        : (latestRun ? 'Refreshing saved results…' : 'Loading saved results…')}
-    {(restoration.error || restoration.contextError) && <details><summary>Details</summary>{restoration.error || restoration.contextError}</details>}
-    <button type="button" className="ml-3 rounded border px-3 py-1" onClick={restoration.retry}>Retry loading</button>
-  </div> : null;
+  const restorationNotice = <HazardRestorationNotice restoration={restoration} latestRun={latestRun} isRunning={isRunning} />;
   // Do not present a draft or generation controls as an absent saved analysis
   // until the authoritative read has completed successfully.
-  if (!latestRun && !isRunning && restoration && ['loading', 'failed'].includes(restoration.status)) {
+  if (!latestRun && !isRunning && restoration && ['loading', 'failed', 'upgrade-required', 'upgrading'].includes(restoration.status)) {
     return <div className="flex h-full min-h-0 flex-col">{restorationNotice}</div>;
   }
 
@@ -372,13 +365,13 @@ export function PreparedCodeArchitectureHazardPanel({
               disabled={!hasSummary || isRunning || importing || !onImportSummary}
               aria-label="Import code architecture hazard CSV"
               onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; importCsv(file); }} />
-            {latestRun?.csvImportPreviousSummary && <ProjectTabToolbarButton
+            {(latestRun?.csvImportPreviousSummary || tablePage?.hasCsvUndo) && <ProjectTabToolbarButton
               icon={<RotateCcw size={17} />} label="Undo CSV import" collapsed={toolbarCollapsed}
               disabled={isRunning || importing}
               onClick={async () => {
                 if (!window.confirm('Restore the hazard table from before the last CSV import?')) return;
                 setImporting(true);
-                try { await onImportSummary(latestRun.csvImportPreviousSummary, latestRun, true); }
+                try { await onImportSummary(tablePage ? await tablePage.loadUndo() : latestRun.csvImportPreviousSummary, latestRun, true); }
                 catch (error) { setCsvIssues([error.message]); }
                 finally { setImporting(false); }
               }}
@@ -418,13 +411,14 @@ export function PreparedCodeArchitectureHazardPanel({
       </ProjectTabSideToolbar>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <HazardNarrativeReview key={latestRun?.id} run={latestRun} onUpdate={onNarrativeReviewUpdate} disabled={isRunning} />
+        {tablePage?.controls}
+        {!tablePage?.partial && <HazardNarrativeReview key={latestRun?.id} run={latestRun} onUpdate={onNarrativeReviewUpdate} disabled={isRunning} />}
         {draftLoading && <div role="progressbar" aria-label="Preparing hazard table" aria-valuemin={0} aria-valuemax={100} aria-valuenow={draftProgress}
           className="flex items-center gap-2 p-3 text-sm text-slate-600">
           <XHandleWorkingMark className="h-6 w-6" /><span>{draftProgress}%</span>
         </div>}
         {draftError && <div role="alert" className="p-3">Unable to prepare hazard table: {draftError} <button onClick={onRetryDraft}>Retry preparation</button></div>}
-        <HazardRunRecoveryNotice run={latestRun} onExport={downloadSummaryCsv} onRetrySave={onRetrySave} isRunning={isRunning} />
+        <HazardRunRecoveryNotice run={latestRun} onExport={tablePage ? tablePage.exportCsv : downloadSummaryCsv} onRetrySave={onRetrySave} isRunning={isRunning} />
         {!isRunning && progress?.error && !latestRun?.pendingAttempt && latestRun?.runState !== 'incomplete' && <div role="alert" className="m-3 text-red-700">{progress.message}</div>}
         {SHOW_TABLE_REVIEW_NOTICES && latestRun?.userPreprocessingConflicts?.length > 0 && <details className="m-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm">
           <summary>User preprocessing needs review ({latestRun.userPreprocessingConflicts.length})</summary>
@@ -457,6 +451,7 @@ export function PreparedCodeArchitectureHazardPanel({
               <CodeArchitectureHazardSummaryTable
                 preparationStart={preparedView ? 70 : 0}
                 summarySheet={summarySheet}
+                remotePage={tablePage}
                 hazardMethod={latestRun?.hazardMethod || method}
                 className="min-h-0 flex-1"
                 reviewItems={reviewItems}
