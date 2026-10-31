@@ -1,0 +1,39 @@
+# Workspace project permanent deletion
+
+Implemented in the shared xhandle-open application. No desktop repository, installed application, personal browser profile, or user database was accessed or modified. No commit, deployment, package, or publication was made.
+
+## Evidence and scope
+
+The user's affected row is a removed project in Settings → Storage → Workspace project visibility. Its stored ID, payload and final UI message remain uninspected. None of the synthetic causes below is established as the cause for that user's data.
+
+Demonstrated reproductions:
+
+- Ran the numeric-ID integration regression against the original committed deletion helper (temporary fixture copied from `git show HEAD:src/components/permanentlyDeleteStoredProject.js`, then removed). The helper resolved, but project `123` remained in the reopened graph `projects` store. The regression failed as expected. The fixed helper passes, including numeric graph artifacts.
+- Against the starting uncommitted implementation, primary keys missing from a project index and exact scoped keys with a conflicting payload `projectId` survived cleanup. The new regression failed before the correction and passes afterward.
+- Invalid JSON in the shared results-review fallback prevented final graph deletion and returned a generic parser error. The regression initially failed its actionable-error assertion. The fixed flow identifies the exact entry, retains the project row, and succeeds after repair and retry. This failure/retry path was also exercised through the actual Settings UI.
+
+## Changes and flow review
+
+- Visibility still comes from persisted graph records classified against both active registries. Numeric/string IDs compare consistently, including zero. Deletion independently revalidates both registries before cleanup stages and final graph deletion; invalid registry JSON fails closed.
+- Confirmation and busy-state behavior remain in Settings. The result message appears beside the project list, above the scrollable storage categories. Inventory refresh precedes the success message; partial-scan messages are preserved. Rows disappear only through persisted inventory results, with no optimistic filtering.
+- Cleanup waits for architecture and requirements writes, blocks new writes for that removed identity, and drains recovery writes even when their database did not exist when deletion began. Failed cleanup releases newly applied write guards; successful cleanup clears owned artifact memory caches and rejects late writes in those producers.
+- Graph migrations and permanent cleanup share a serial gate. An already-running migration finishes before cleanup, and later migrations read the cleaned legacy sources. The wait is bounded and an expired queued operation cannot start deletion later.
+- Cleanup traverses each configured feature database, then local project maps/scoped keys/shared fallback arrays, then the graph transaction last. Failure in a prerequisite leaves the retained graph row available for retry, although earlier independent cleanup transactions may already have committed. A failure within graph cleanup rolls back that graph transaction.
+- Known key-owned stores (architecture payloads/layouts, artifact rows/chunks, recovery checkpoints, graph projects, and stores keyed by `projectId`) use primary-key cursors without hydrating their large payloads. Other stores inspect one value at a time to find explicit/scoped ownership. A project index is not treated as a complete inventory: missing entries and conflicting metadata cannot conceal an exact owned key. Scoped keys, including chunks, take precedence over conflicting payload ownership; otherwise explicit project IDs are matched as strings.
+- Database opens and final verification have 10-second bounds; feature transactions and pending-write/migration waits have 30-second bounds. Cursor callback exceptions explicitly abort transactions and preserve the useful cause. Open failures name the database; corrupt shared JSON names the localStorage key. Absent optional databases are not created; late successful opens after timeout are closed without beginning transactions.
+- A separate readonly graph transaction verifies that neither numeric nor string forms of the retained project key remain before success is returned. Graph metadata is not hidden to simulate deletion.
+- Shared repository `code_index`, other projects, credentials, arbitrary unrelated localStorage, and existing backup files are preserved. Lossy `LiteSummaryDiagram` keys cannot establish exact ownership (different IDs normalize to the same key), so those ambiguous layouts are preserved rather than risking another project's data.
+
+Application review: App project registries persist from React state only when those lists change; removed projects are already absent from them, and permanent deletion does not modify the active lists. Project maps are read from storage when patched, rather than retained as a global snapshot. The data-changed event only triggers a render tick. Startup respects an explicit empty architecture registry. Backup startup schedules backup creation; restoring a backup is an explicit operation. No automatic backup-restore cause was demonstrated. Existing category reconciliation in `storageCleanupWorkspace.js` remains unchanged because this action operates on an already-removed project.
+
+## Validation
+
+- `CI=true npm test -- --watchAll=false --runInBand src/components/permanentlyDeleteStoredProject src/components/storageCleanupWorkspace.test.js src/features/workspace-graph/legacyWorkspaceGraphMigrator.test.ts src/lib/durableRecovery src/features/code-architecture-assurance/codeArchitectureIsolationFollowupAudit.test.js`: 6 suites, 44 tests passed. Covers persisted numeric/string deletion, unrelated records, missing/incomplete indexes, conflicting metadata, key-only reads, corrupt fallback repair/retry, cursor exceptions, refusal to report success when a completed graph transaction retains the record, failed and timed-out opens, late-connection closure, queued writes/recovery, migration serialization and expiration, and existing architecture isolation/recovery behavior.
+- `PLAYWRIGHT_MODULE=/tmp/xhandle-delete-browser/node_modules/playwright-core node scripts/diagnostics/verify-workspace-project-permanent-delete.cjs`: passed in headless Chrome using a new nonpersistent context, synthetic fixtures, and blocked API calls. Exercises actual Settings confirmation/cancellation, visible cleanup failure and retry, string/numeric deletion, persisted graph artifacts/analysis chunks, unrelated active and removed projects, repository cache and credential preservation, inventory refresh, and full page reload.
+- Focused ESLint across all changed application/test files: passed with no lint findings; tooling prints an existing outdated Browserslist database notice.
+- `npm run build`: passed with existing repository lint/bundle-size/Browserslist warnings.
+- `git diff --check`: passed; final tracked and new-file diffs inspected. The pre-existing untracked Codex prompt was left untouched.
+
+## Limits
+
+Browser reload verifies the shared web application's persisted behavior, not a native desktop reset or update of the user's installed app. The user's actual data and error remain unknown. Large unindexed stores still require inspecting individual values; synchronous browser deserialization/JSON parsing cannot be interrupted by JavaScript timers. Invalid shared JSON is preserved and requires repair or restore before retry, rather than being discarded. Ambiguous layouts and records without provable ownership remain untouched. Same-runtime write guards and migration ordering do not provide a cross-tab transaction across all databases; another tab or an explicit later backup restore can write data again. Close other writing tabs before cleanup. No destructive multi-profile or real backup restoration experiment was performed.

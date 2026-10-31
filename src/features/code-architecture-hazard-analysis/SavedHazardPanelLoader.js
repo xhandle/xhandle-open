@@ -1,5 +1,6 @@
 import {PAGED_HAZARD} from './hazardRowIndex';
 import PagedHazardPanel from './PagedHazardPanel';
+import HazardRestorationNotice from './HazardRestorationNotice';
 import React, { useEffect, useMemo, useRef } from 'react';
 import { PreparedCodeArchitectureHazardPanel } from './CodeArchitectureHazardPanel';
 import TablePreparationProgress from '../code-architecture-assurance/TablePreparationProgress';
@@ -69,13 +70,14 @@ function CompleteSavedHazardPanel(props) {
   }, [preparation.result, large, scope, sheet, keys]);
   if (!large) return <PreparedCodeArchitectureHazardPanel {...props} preparedView={retainedSummary} />;
   if (preparation.error || !preparation.result) return <div className="flex h-full min-h-0 flex-col">
-    {props.isRunning && !props.reviewMode && <div className="flex items-center gap-3 p-3">
-      <span role="status">{props.progress?.message || 'Running hazard analysis…'}</span>
-      <button type="button" className="rounded border border-rose-200 px-3 py-2 text-rose-700" onClick={props.onCancelAnalysis}>Stop analysis</button>
+    <HazardRestorationNotice restoration={props.restoration} latestRun={run} isRunning={props.isRunning} showLoading={false} />
+    {props.isRunning && <div className="flex items-center gap-3 p-3">
+      <TablePreparationProgress label={props.progress?.message || 'Running hazard analysis'} className="!p-0" />
+      {!props.reviewMode && <button type="button" className="rounded border border-rose-200 px-3 py-2 text-rose-700" onClick={props.onCancelAnalysis}>Stop analysis</button>}
     </div>}
     {preparation.error
       ? <div role="alert">Unable to prepare saved hazard results: {preparation.error.message}</div>
-      : <TablePreparationProgress label="Preparing saved hazard results" progress={Math.floor(preparation.progress * 0.7)} />}
+      : !props.isRunning && props.restoration?.status !== 'upgrading' && <TablePreparationProgress label="Preparing saved hazard results" progress={preparation.progress} />}
   </div>;
   return <PreparedCodeArchitectureHazardPanel {...props} preparedView={preparation.result} />;
 }

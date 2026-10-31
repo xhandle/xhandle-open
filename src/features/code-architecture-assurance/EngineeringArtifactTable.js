@@ -3,7 +3,7 @@ import TablePreparationProgress from './TablePreparationProgress';
 import usePreparedArtifactRows from './usePreparedArtifactRows';
 import { SHOW_TABLE_REVIEW_COLUMNS } from "../../components/tablePresentation";
 import CopyTableButton from '../../components/CopyTableButton';
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { FilterableHeaderCell, useColumnFilters } from "../../components/FilterableTableHeader";
 import ReviewStatusBadge from "../results-review/ReviewStatusBadge";
 import { REVIEW_STATUSES } from "../results-review/reviewTypes";
@@ -110,6 +110,8 @@ export default function EngineeringArtifactTable({
   preparationLabel = "Preparing table",
   loading = false,
   loadingLabel = "Loading table",
+  loadingProgress = null,
+  loadingError = null,
   onUpdateRow,
   onDeleteRow,
   storageKey = "engineering-artifact-table:latest",
@@ -134,6 +136,15 @@ export default function EngineeringArtifactTable({
     [highlightedRowIds]
   );
   const preparation = usePreparedArtifactRows(rows, storageKey);
+  const lastDisplayed = useRef(null);
+  // An empty cache is not a confirmed empty saved table. Keep a previously
+  // displayed source available during refresh, but never show superseded rows.
+  const canDisplay = preparation.prepared && (preparation.prepared.length > 0 || (!loading && !loadingError)
+    || (lastDisplayed.current?.scope === storageKey && lastDisplayed.current.rows === rows));
+  useLayoutEffect(() => {
+    if (canDisplay) lastDisplayed.current = {scope: storageKey, rows};
+    else if (lastDisplayed.current?.scope !== storageKey) lastDisplayed.current = null;
+  }, [canDisplay, rows, storageKey]);
   const displayRows = preparation.prepared || EMPTY_PREPARED_ROWS;
   const columnOptions = useMemo(
     () => columns.map((column, index) => ({
@@ -274,16 +285,16 @@ export default function EngineeringArtifactTable({
 
   // One owner for both storage loading and row preparation. Keep a prepared
   // table visible while a background read is in progress.
-  const loadingIndicator = loading || !preparation.prepared
-    ? <TablePreparationProgress label={loading ? loadingLabel : preparationLabel} progress={loading ? 0 : preparation.progress} />
+  const loadingIndicator = !loadingError && (loading || !preparation.prepared)
+    ? <TablePreparationProgress label={loading ? loadingLabel : preparationLabel} progress={loading ? loadingProgress : preparation.progress} />
     : null;
-  if (!preparation.prepared) return loadingIndicator;
+  if (!canDisplay) return loadingIndicator;
 
   return (
     <div className="min-h-0 flex flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
       {loadingIndicator}
       <div className="flex shrink-0 items-center justify-end gap-2 border-b border-slate-100 bg-white px-3 py-2">
-        <span role="status" className="mr-auto text-sm text-slate-600">{visibleRows.length} of {rows.length} rows match filters</span>
+        <span role="status" className="mr-auto text-sm text-slate-600">{visibleRows.length} of {displayRows.length} rows match filters</span>
         {filterState.activeFilterCount > 0 && <button type="button" className="text-sm font-medium text-[#2D7DFE]" onClick={filterState.clearAllFilters}>Clear filters</button>}
         <ColumnVisibilityMenu
           columns={columnOptions.map((column) => ({

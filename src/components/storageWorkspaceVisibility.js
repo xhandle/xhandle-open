@@ -2,9 +2,19 @@ export const ACTIVE_FUNCTIONAL_PROJECTS_KEY = "xhandle.projects";
 export const ACTIVE_CODE_ARCHITECTURE_PROJECTS_KEY = "xhandle.codeArchitectureProjects";
 
 export function classifyStoredWorkspaceProjects(workspaceProjects = [], functionalProjects = [], codeArchitectureProjects = []) {
-  const activeFunctionalIds = new Set(functionalProjects.map((project) => String(project?.id || "")).filter(Boolean));
-  const activeCodeIds = new Set(codeArchitectureProjects.map((project) => String(project?.id || "")).filter(Boolean));
-  return (workspaceProjects || [])
+  const activeFunctionalIds = new Set(functionalProjects.map((project) => String(project?.id ?? "")).filter(Boolean));
+  const activeCodeIds = new Set(codeArchitectureProjects.map((project) => String(project?.id ?? "")).filter(Boolean));
+  const records = new Map();
+  for (const project of workspaceProjects || []) records.set(`${project.sourceStore}:${String(project.id)}`, project);
+  for (const [key, projects] of [[ACTIVE_FUNCTIONAL_PROJECTS_KEY, functionalProjects], [ACTIVE_CODE_ARCHITECTURE_PROJECTS_KEY, codeArchitectureProjects]]) {
+    for (const project of projects) {
+      if (project?.id == null) continue;
+      const sourceStore = `localStorage:${key}`;
+      const identity = `${sourceStore}:${String(project.id)}`;
+      records.set(identity, { ...project, id: records.get(identity)?.id ?? project.id, sourceStore, sourceData: project });
+    }
+  }
+  return [...records.values()]
     .filter((project) => (
       project?.sourceStore === `localStorage:${ACTIVE_FUNCTIONAL_PROJECTS_KEY}` ||
       project?.sourceStore === `localStorage:${ACTIVE_CODE_ARCHITECTURE_PROJECTS_KEY}`
@@ -16,7 +26,9 @@ export function classifyStoredWorkspaceProjects(workspaceProjects = [], function
       const active = workspaceType === "code-architecture"
         ? activeCodeIds.has(String(project.id))
         : activeFunctionalIds.has(String(project.id));
-      return { ...project, workspaceType, active, recoverable: !active && !!project.sourceData };
+      return { ...project, workspaceType, active,
+        storageOwnershipConflict: (workspaceProjects || []).some(record => String(record?.id) === String(project.id) && record?.workspaceId && record.workspaceId !== 'workspace:local'),
+        recoverable: !active && project.sourceData?.id != null && String(project.sourceData.id) === String(project.id) };
     })
     .sort((a, b) => Number(a.active) - Number(b.active) || String(a.name || "").localeCompare(String(b.name || "")));
 }

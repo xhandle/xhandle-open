@@ -762,7 +762,7 @@ function buildArchitectureLayout(elkNodes, { colorSystemElements = false, system
   const groupedNodes = [...subsystemBoxes, ...csciBoxes, ...cscBoxes, ...csuBoxes, ...childNodes];
   if (preservePositions) {
     // Recreate container bounds around saved absolute function coordinates.
-    // Only navigation restoration uses this path; explicit arrange remains unchanged.
+    // Initial restoration uses this path; explicit arrange remains unchanged.
     const bounds = new Map(elkNodes.map(node => [node.id, {
       ...node.position, width: node.width || THEME.node.w, height: node.height || THEME.node.h,
     }]));
@@ -2183,13 +2183,17 @@ const DiagramBody = forwardRef(function DiagramBody(
         const baseLabel = String(edge.data?.baseLabel || edge.label || '');
         const routingStyle = edgeRouting.overrides?.[edge.id] || edgeRouting.defaultStyle;
         const stroke = edge.data?.aggregated ? BRAND.purple : (edge.style?.stroke || BRAND.blue);
+        const paintOpacity = edge.style?.opacity ?? 1;
         return {
           ...edge,
           type: routingStyle === EDGE_ROUTING_STYLES.RECTANGULAR ? 'smartStep' : 'smartBezier',
           label: commentCount ? `${baseLabel} · 💬 ${commentCount}` : baseLabel,
           data: { ...(edge.data || {}), baseLabel, commentCount, routingStyle },
-          style: { ...(edge.style || {}), stroke, strokeWidth: edge.data?.aggregated ? 5 : edge.style?.strokeWidth },
-          markerEnd: { ...(edge.markerEnd || {}), type: MarkerType.ArrowClosed, color: stroke, width: ARROW_SIZE, height: ARROW_SIZE },
+          style: { ...(edge.style || {}), stroke, strokeOpacity: paintOpacity, opacity: 1, strokeWidth: edge.data?.aggregated ? 5 : edge.style?.strokeWidth },
+          markerStart: edge.markerStart && typeof edge.markerStart === 'object'
+            ? { ...edge.markerStart, color: rgba(edge.markerStart.color || stroke, paintOpacity) }
+            : edge.markerStart,
+          markerEnd: { ...(edge.markerEnd || {}), type: MarkerType.ArrowClosed, color: rgba(stroke, paintOpacity), width: ARROW_SIZE, height: ARROW_SIZE },
         };
       });
     }
@@ -2225,6 +2229,7 @@ const DiagramBody = forwardRef(function DiagramBody(
       const baseLabel = String(e.data?.baseLabel || e.label || '');
       const routingStyle = edgeRouting.overrides?.[e.id] || edgeRouting.defaultStyle;
       const baseStroke = e.data?.aggregated ? BRAND.purple : BRAND.blue;
+      const paintOpacity = isOn ? 1 : THEME.edge.opacity;
       return {
         ...e,
         // Keep route handles above intersecting edges while editing.
@@ -2242,12 +2247,20 @@ const DiagramBody = forwardRef(function DiagramBody(
         animated: isOn,
         style: {
           ...(e.style || {}),
+          // SVG element opacity composites the path AND its markers into an
+          // intermediate surface spanning the whole route. Long crossing
+          // routes made this the dominant pan/zoom cost. Paint alpha on the
+          // stroke/markers instead; retain every route and its interaction DOM.
           stroke: isOn && e.id !== highlightedEdgeId ? '#14B8A6' : baseStroke,
+          strokeOpacity: paintOpacity,
           strokeWidth: isOn ? 4.5 : (e.data?.aggregated ? 5 : THEME.edge.width),
-          opacity: isOn ? 1 : THEME.edge.opacity,
+          opacity: 1,
           filter: isOn ? "drop-shadow(0 0 6px rgba(45,125,254,0.45))" : undefined,
         },
-        markerEnd: { ...(e.markerEnd || {}), type: MarkerType.ArrowClosed, color: baseStroke, width: ARROW_SIZE, height: ARROW_SIZE },
+        markerStart: e.markerStart && typeof e.markerStart === 'object'
+          ? { ...e.markerStart, color: rgba(e.markerStart.color || baseStroke, paintOpacity) }
+          : e.markerStart,
+        markerEnd: { ...(e.markerEnd || {}), type: MarkerType.ArrowClosed, color: rgba(baseStroke, paintOpacity), width: ARROW_SIZE, height: ARROW_SIZE },
       };
     });
   }, [edges, highlightedEdgeId, nodeVisibility, traceSets, activeArchitectureAbstraction, nodes, viewNodes, rows, comments, edgeAggregation, edgeRouting, architectureMode, changeCsuRoute, reviewMode, allowLayoutChanges]);
@@ -2262,24 +2275,80 @@ const DiagramBody = forwardRef(function DiagramBody(
   // manual routes crossing the viewport with both endpoints offscreen.
   const renderNodes = useMemo(() => withCsuVisibleHandles(viewNodes, viewEdges, largeCsuCanvas), [viewNodes, viewEdges, largeCsuCanvas]);
   const viewportIdleTimer = useRef(null);
-  const handleViewportMoveStart = useCallback(() => {
+  const viewportGesture = useRef({ epoch: 0, startedAt: 0, active: false, pointerHeld: false });
+  const armViewportIdleFallback = useCallback((event) => {
+    const gesture = viewportGesture.current;
+    if (!gesture.active || gesture.pointerHeld
+      || (event?.timeStamp != null && event.timeStamp < gesture.startedAt)) return;
     clearTimeout(viewportIdleTimer.current);
+    // React Flow skips onMoveEnd if a wheel/pointer gesture changes no view.
+    // Wheel inactivity or a final pointer release still needs to restore detail.
+    viewportIdleTimer.current = setTimeout(() => {
+      if (viewportGesture.current.epoch !== gesture.epoch) return;
+      gesture.active = false;
+      diagramHostRef.current?.removeAttribute('data-viewport-moving');
+    }, 300);
+  }, []);
+  const handleViewportPointerRelease = useCallback((event) => {
+    const gesture = viewportGesture.current;
+    if (!gesture.pointerHeld || (event.type === 'touchend' && event.touches?.length)) return;
+    gesture.pointerHeld = false;
+    armViewportIdleFallback(event);
+  }, [armViewportIdleFallback]);
+  const handleViewportMoveStart = useCallback((event) => {
+    clearTimeout(viewportIdleTimer.current);
+    viewportGesture.current = {
+      epoch: viewportGesture.current.epoch + 1,
+      startedAt: event?.timeStamp ?? 0,
+      active: largeCsuCanvas,
+      pointerHeld: ['mousedown', 'touchstart', 'pointerdown'].includes(event?.type),
+    };
     if (largeCsuCanvas) diagramHostRef.current?.setAttribute('data-viewport-moving', '');
-  }, [largeCsuCanvas]);
-  const handleViewportMoveEnd = useCallback(() => {
+    if (event?.type === 'wheel') armViewportIdleFallback(event);
+  }, [largeCsuCanvas, armViewportIdleFallback]);
+  const handleViewportMove = useCallback((event) => {
+    if (event?.type === 'wheel') armViewportIdleFallback(event);
+  }, [armViewportIdleFallback]);
+  const handleViewportMoveEnd = useCallback((event) => {
+    const gesture = viewportGesture.current;
+    // React Flow delays onMoveEnd when panOnScroll is enabled. Its previous
+    // mouseup can arrive after the next mousedown; it must not end that gesture.
+    if (!gesture.active || (event?.timeStamp != null && event.timeStamp < gesture.startedAt)) return;
+    gesture.active = false;
+    gesture.pointerHeld = false;
     clearTimeout(viewportIdleTimer.current);
     viewportIdleTimer.current = setTimeout(() => {
-      diagramHostRef.current?.removeAttribute('data-viewport-moving');
+      if (viewportGesture.current.epoch === gesture.epoch) {
+        diagramHostRef.current?.removeAttribute('data-viewport-moving');
+      }
     }, 150);
   }, []);
   useEffect(() => {
     const host = diagramHostRef.current;
-    host?.removeAttribute('data-viewport-moving');
-    return () => {
+    const resetViewportPresentation = () => {
       clearTimeout(viewportIdleTimer.current);
+      viewportGesture.current = { epoch: viewportGesture.current.epoch + 1, startedAt: 0, active: false, pointerHeld: false };
       host?.removeAttribute('data-viewport-moving');
     };
-  }, [largeCsuCanvas, storageKey]);
+    resetViewportPresentation();
+    // A cancelled gesture or lost window focus must not retain the temporary
+    // compositor hint (or suppress labels) until another viewport gesture.
+    if (largeCsuCanvas) {
+      window.addEventListener('blur', resetViewportPresentation);
+      window.addEventListener('pointercancel', resetViewportPresentation);
+      document.addEventListener('visibilitychange', resetViewportPresentation);
+      window.addEventListener('mouseup', handleViewportPointerRelease, true);
+      window.addEventListener('touchend', handleViewportPointerRelease, true);
+    }
+    return () => {
+      resetViewportPresentation();
+      window.removeEventListener('blur', resetViewportPresentation);
+      window.removeEventListener('pointercancel', resetViewportPresentation);
+      document.removeEventListener('visibilitychange', resetViewportPresentation);
+      window.removeEventListener('mouseup', handleViewportPointerRelease, true);
+      window.removeEventListener('touchend', handleViewportPointerRelease, true);
+    };
+  }, [largeCsuCanvas, storageKey, handleViewportPointerRelease]);
   const nodeIdCounter = useRef(0);
   const [editModal, setEditModal] = useState(null);
   const editFunctionalTraceRows = useMemo(() => resolveDiagramDetailRows(rows, editModal), [rows, editModal]);
@@ -3142,6 +3211,11 @@ useEffect(() => {
     async exportAsImage() {
       const flowCanvas = diagramHostRef.current?.querySelector('.react-flow');
       if (!flowCanvas) return null;
+      // html-to-image copies computed styles. An export requested during a
+      // gesture must include the labels suppressed by the motion presentation.
+      clearTimeout(viewportIdleTimer.current);
+      viewportGesture.current = { epoch: viewportGesture.current.epoch + 1, startedAt: 0, active: false, pointerHeld: false };
+      diagramHostRef.current?.removeAttribute('data-viewport-moving');
       return await toPng(flowCanvas, { backgroundColor: '#ffffff', style: { margin: '0 auto', display: 'block' } });
     },
     async getPNG() { return this.exportAsImage(); },
@@ -4124,6 +4198,7 @@ useEffect(() => {
         <ReactFlow
           onlyRenderVisibleElements={false}
           onMoveStart={handleViewportMoveStart}
+          onMove={handleViewportMove}
           onMoveEnd={handleViewportMoveEnd}
           nodes={initialLayoutPending ? [] : renderNodes}
           edges={initialLayoutPending ? [] : viewEdges}
@@ -4208,10 +4283,13 @@ useEffect(() => {
           zoomOnDoubleClick={false}
           proOptions={{ hideAttribution: true }}
           onNodeDoubleClick={(event, node) => {
+            // A node can cover an edge at the same point. Do not let the
+            // canvas's edge hit-testing replace
+            // this node's details after the node handler has opened them.
+            event.preventDefault();
+            event.stopPropagation();
             onRequestHazardDetails?.();
             if (node?.type === 'note') {
-              event.preventDefault();
-              event.stopPropagation();
               setEditModal({
                 type: 'node',
                 nodeType: 'note',
@@ -4223,8 +4301,6 @@ useEffect(() => {
             }
             const groupKind = node?.data?.groupKind;
             if (node?.type === 'groupBox' || groupKind) {
-              event.preventDefault();
-              event.stopPropagation();
               openArchitectureBoxEditModal(architectureBoxForDoubleClickTarget(event) || node);
               return;
             }

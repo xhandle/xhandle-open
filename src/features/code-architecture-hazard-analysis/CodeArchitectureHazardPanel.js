@@ -1,5 +1,5 @@
 import HazardRestorationNotice from './HazardRestorationNotice';
-import XHandleWorkingMark from "../../components/XHandleWorkingMark";
+import TablePreparationProgress from '../code-architecture-assurance/TablePreparationProgress';
 import HazardNarrativeReview from './HazardNarrativeReview';
 import HazardRunRecoveryNotice from './HazardRunRecoveryNotice';
 import { SHOW_TABLE_REVIEW_NOTICES } from "../../components/tablePresentation";
@@ -18,7 +18,6 @@ import {
   PanelLeftOpen,
   Upload,
   RotateCcw,
-  Loader2,
   Settings,
   Sparkles,
   Trash2,
@@ -166,7 +165,7 @@ export function PreparedCodeArchitectureHazardPanel({
     } catch (error) { setImportStatus(`Import failed: ${error.message || 'Updates could not be saved.'}`); }
     finally { setImporting(false); }
   };
-  const hasSummary = Array.isArray(summarySheet) && summarySheet.length >= 2;
+  const hasSummary = tablePage ? tablePage.unfilteredTotal > 0 : Array.isArray(summarySheet) && summarySheet.length >= 2;
   const [showSummary, setShowSummary] = useState(hasSummary);
   const [allGroupsCollapsed, setAllGroupsCollapsed] = useState(false);
   const [collapseAllRequest, setCollapseAllRequest] = useState({ version: 0, collapsed: false });
@@ -189,7 +188,7 @@ export function PreparedCodeArchitectureHazardPanel({
     [latestRun, cbaRows, operationalContexts, selectedOperationalContextId, organizationContext, preparedView]
   );
   const summaryCount = tablePage?.unfilteredTotal ?? Math.max(0, (Array.isArray(summarySheet) ? summarySheet.length : 1) - 1);
-  const statusMessage = isStale ? "Architecture, operational context or organization guidance changed since this run. Re-run before generating new remediation findings." : tablePage ? `${summaryCount} saved rows. The table reads a page at a time; analysis continuation uses the complete saved run.` : latestRun?.runState === 'incomplete' ? 'Incomplete analysis; validated rows are available for inspection. Continue to finish.' : latestRun
+  const statusMessage = isStale ? "Architecture, operational context or organization guidance changed since this run. Re-run before generating new remediation findings." : tablePage ? `${summaryCount} saved rows. Scroll to explore the complete table.` : latestRun?.runState === 'incomplete' ? 'Incomplete analysis; validated rows are available for inspection. Continue to finish.' : latestRun
     ? isStale
       ? "Architecture, operational context or organization guidance changed since this run. Re-run before generating new remediation findings."
       : `Latest ${latestRun.hazardMethod || "hazard"} run has ${summaryCount} summary row${summaryCount === 1 ? "" : "s"}.`
@@ -215,7 +214,9 @@ export function PreparedCodeArchitectureHazardPanel({
     setAllGroupsCollapsed(allCollapsed);
   }, []);
 
-  const restorationNotice = <HazardRestorationNotice restoration={restoration} latestRun={latestRun} isRunning={isRunning} />;
+  const restorationNotice = <HazardRestorationNotice restoration={restoration} latestRun={latestRun} isRunning={isRunning} showLoading={!latestRun} />;
+  const upgradingSavedResults = !isRunning && restoration?.status === 'upgrading';
+  const showDraftPreparation = draftLoading && !isRunning && !upgradingSavedResults;
   // Do not present a draft or generation controls as an absent saved analysis
   // until the authoritative read has completed successfully.
   if (!latestRun && !isRunning && restoration && ['loading', 'failed', 'upgrade-required', 'upgrading'].includes(restoration.status)) {
@@ -308,8 +309,8 @@ export function PreparedCodeArchitectureHazardPanel({
           </ProjectTabToolbarStatus>
           {!reviewMode && (
             <ProjectTabToolbarButton
-              icon={isRunning ? <Loader2 size={17} className="animate-spin" /> : <Sparkles size={17} />}
-              label={isRunning ? "Running hazard analysis…" : (latestRun ? "Continue hazard analysis" : "Run hazard analysis")}
+              icon={<Sparkles size={17} />}
+              label={latestRun ? "Continue hazard analysis" : "Run hazard analysis"}
               collapsed={toolbarCollapsed}
               tone="primary"
               onClick={() => onRunAnalysis?.(method)}
@@ -329,16 +330,6 @@ export function PreparedCodeArchitectureHazardPanel({
               tone="danger"
               onClick={onCancelAnalysis}
             />
-          )}
-          {isRunning && (
-            <ProjectTabToolbarStatus
-              collapsed={toolbarCollapsed}
-              tone="info"
-              icon={<Loader2 size={15} className="animate-spin" />}
-              title={progress?.message || "Running code architecture hazard analysis…"}
-            >
-              {progress?.message || "Running code architecture hazard analysis…"}
-            </ProjectTabToolbarStatus>
           )}
           {diagram && <ProjectTabToolbarButton
             icon={<PanelLeftOpen size={17} />}
@@ -413,10 +404,7 @@ export function PreparedCodeArchitectureHazardPanel({
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {tablePage?.controls}
         {!tablePage?.partial && <HazardNarrativeReview key={latestRun?.id} run={latestRun} onUpdate={onNarrativeReviewUpdate} disabled={isRunning} />}
-        {draftLoading && <div role="progressbar" aria-label="Preparing hazard table" aria-valuemin={0} aria-valuemax={100} aria-valuenow={draftProgress}
-          className="flex items-center gap-2 p-3 text-sm text-slate-600">
-          <XHandleWorkingMark className="h-6 w-6" /><span>{draftProgress}%</span>
-        </div>}
+        {showDraftPreparation && <TablePreparationProgress label="Preparing hazard analysis" progress={draftProgress} />}
         {draftError && <div role="alert" className="p-3">Unable to prepare hazard table: {draftError} <button onClick={onRetryDraft}>Retry preparation</button></div>}
         <HazardRunRecoveryNotice run={latestRun} onExport={tablePage ? tablePage.exportCsv : downloadSummaryCsv} onRetrySave={onRetrySave} isRunning={isRunning} />
         {!isRunning && progress?.error && !latestRun?.pendingAttempt && latestRun?.runState !== 'incomplete' && <div role="alert" className="m-3 text-red-700">{progress.message}</div>}
@@ -436,11 +424,7 @@ export function PreparedCodeArchitectureHazardPanel({
         )}
         {(isRunning || showSummary) ? (
           <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-3">
-            {isRunning && (
-              <div className="shrink-0 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-800">
-                {progress?.message || "Running code architecture hazard analysis..."}
-              </div>
-            )}
+            {isRunning && <TablePreparationProgress label={progress?.message || "Running code architecture hazard analysis"} />}
             {SHOW_TABLE_REVIEW_NOTICES && unresolvedApplicabilityCount > 0 && (
               <div role="status" className="text-sm text-amber-800">
                 {unresolvedApplicabilityCount} guide-phrase decisions need review. Hazard generation was deferred for these rows; applicable rows were analyzed.
@@ -449,7 +433,7 @@ export function PreparedCodeArchitectureHazardPanel({
             {!latestRun && hasSummary && <div className="text-sm text-slate-600">Incomplete hazard analysis draft. Export these rows, complete them externally, then import the CSV results.</div>}
             {showSummary && (
               <CodeArchitectureHazardSummaryTable
-                preparationStart={preparedView ? 70 : 0}
+                suppressLoadingIndicator={showDraftPreparation || upgradingSavedResults || isRunning}
                 summarySheet={summarySheet}
                 remotePage={tablePage}
                 hazardMethod={latestRun?.hazardMethod || method}

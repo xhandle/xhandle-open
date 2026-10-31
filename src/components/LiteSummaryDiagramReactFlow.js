@@ -1,3 +1,4 @@
+import { withCsuVisibleHandles } from './csuVisibleHandles';
 import { OrthogonalFunctionEdge as OrthogonalFallbackEdge } from './OrthogonalFunctionEdge';
 import { applyTableContainerDetails, rowsWithDiagramDetails } from './functionalDiagramTableDetails';
 import { preserveGroupMetadata } from './diagramGroupMetadata';
@@ -35,9 +36,11 @@ import ReactFlow, {
   ConnectionMode,
   StepEdge,
   useReactFlow,
+  useUpdateNodeInternals,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import './functionalDiagramCursors.css';
+import './functionalViewportNavigation.css';
 import { diagramRectsOverlap, GROUP_COLLISION_CLEARANCE } from './functionalDiagramCollision';
 import { separateContainedFunctions, tightenSystemSpacing, systemForElement, tightenSystemSubsystemSpacing, separateSystemGroups, rowsWithDiagramSystems, reconcileTableSystems, absoluteElementPosition, applyGroupGeometry, canContainElement, detachDeletedSystemParents, fitSystemAncestors, isSystemGroup, orderParentElements } from './functionalSystemGroups';
 import { toPng } from 'html-to-image';
@@ -819,7 +822,18 @@ const CommentBadge = ({ count = 0, onClick }) => {
   );
 };
 
-const BidirectionalNode = React.memo(({ data, selected }) => {
+const BidirectionalNode = React.memo(({ id, data, selected }) => {
+  const [portsActive, setPortsActive] = useState(false);
+  const updateNodeInternals = useUpdateNodeInternals();
+  const idleHandles = data.idleHandleIds;
+  const showAllPorts = portsActive || selected || !idleHandles;
+  const handleSignature = showAllPorts ? '*' : idleHandles.join('|');
+  const previousHandles = useRef(handleSignature);
+  useEffect(() => {
+    if (previousHandles.current !== handleSignature) updateNodeInternals(id);
+    previousHandles.current = handleSignature;
+  }, [id, handleSignature, updateNodeInternals]);
+  const showPort = name => showAllPorts || idleHandles.includes(name);
   const brandColor = data.brandColor || BRAND.blue;
   const tint = data.brandTint || rgba(brandColor, 0.08);
   const border = `1px solid ${rgba(brandColor, THEME.node.borderAlpha)}`;
@@ -841,39 +855,41 @@ const BidirectionalNode = React.memo(({ data, selected }) => {
         transition: 'box-shadow 150ms ease, border-color 150ms ease, transform 120ms ease',
       }}
       className="x-node"
-      onMouseEnter={(e) => e.currentTarget.querySelectorAll('.x-port').forEach((h) => (h.style.opacity = 1))}
-      onMouseLeave={(e) => e.currentTarget.querySelectorAll('.x-port').forEach((h) => (h.style.opacity = 0))}
+      onMouseEnter={() => setPortsActive(true)}
+      onMouseLeave={() => setPortsActive(false)}
+      onFocusCapture={() => setPortsActive(true)}
+      onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setPortsActive(false); }}
     >
       <CommentBadge count={data.commentCount} onClick={data.onOpenComments} />
       {/* TOP (5) */}
       {TOP_BOTTOM_PCTS.map((p, i) => (
         <React.Fragment key={`top-${i}`}>
-          <Handle className="x-port" type="target" position={Position.Top} id={`top-target-${i}`} style={{ ...portBase, left: `${p}%` }} />
-          <Handle className="x-port" type="source" position={Position.Top} id={`top-source-${i}`} style={{ ...portBase, left: `${p}%` }} />
+          {showPort(`top-target-${i}`) && <Handle className="x-port" type="target" position={Position.Top} id={`top-target-${i}`} style={{ ...portBase, opacity: portsActive ? 1 : 0, left: `${p}%` }} />}
+          {showPort(`top-source-${i}`) && <Handle className="x-port" type="source" position={Position.Top} id={`top-source-${i}`} style={{ ...portBase, opacity: portsActive ? 1 : 0, left: `${p}%` }} />}
         </React.Fragment>
       ))}
 
       {/* BOTTOM (5) */}
       {TOP_BOTTOM_PCTS.map((p, i) => (
         <React.Fragment key={`bottom-${i}`}>
-          <Handle className="x-port" type="target" position={Position.Bottom} id={`bottom-target-${i}`} style={{ ...portBase, left: `${p}%` }} />
-          <Handle className="x-port" type="source" position={Position.Bottom} id={`bottom-source-${i}`} style={{ ...portBase, left: `${p}%` }} />
+          {showPort(`bottom-target-${i}`) && <Handle className="x-port" type="target" position={Position.Bottom} id={`bottom-target-${i}`} style={{ ...portBase, opacity: portsActive ? 1 : 0, left: `${p}%` }} />}
+          {showPort(`bottom-source-${i}`) && <Handle className="x-port" type="source" position={Position.Bottom} id={`bottom-source-${i}`} style={{ ...portBase, opacity: portsActive ? 1 : 0, left: `${p}%` }} />}
         </React.Fragment>
       ))}
 
       {/* LEFT (3) */}
       {LEFT_RIGHT_PCTS.map((p, i) => (
         <React.Fragment key={`left-${i}`}>
-          <Handle className="x-port" type="target" position={Position.Left} id={`left-target-${i}`} style={{ ...portBase, top: `${p}%` }} />
-          <Handle className="x-port" type="source" position={Position.Left} id={`left-source-${i}`} style={{ ...portBase, top: `${p}%` }} />
+          {showPort(`left-target-${i}`) && <Handle className="x-port" type="target" position={Position.Left} id={`left-target-${i}`} style={{ ...portBase, opacity: portsActive ? 1 : 0, top: `${p}%` }} />}
+          {showPort(`left-source-${i}`) && <Handle className="x-port" type="source" position={Position.Left} id={`left-source-${i}`} style={{ ...portBase, opacity: portsActive ? 1 : 0, top: `${p}%` }} />}
         </React.Fragment>
       ))}
 
       {/* RIGHT (3) */}
       {LEFT_RIGHT_PCTS.map((p, i) => (
         <React.Fragment key={`right-${i}`}>
-          <Handle className="x-port" type="target" position={Position.Right} id={`right-target-${i}`} style={{ ...portBase, top: `${p}%` }} />
-          <Handle className="x-port" type="source" position={Position.Right} id={`right-source-${i}`} style={{ ...portBase, top: `${p}%` }} />
+          {showPort(`right-target-${i}`) && <Handle className="x-port" type="target" position={Position.Right} id={`right-target-${i}`} style={{ ...portBase, opacity: portsActive ? 1 : 0, top: `${p}%` }} />}
+          {showPort(`right-source-${i}`) && <Handle className="x-port" type="source" position={Position.Right} id={`right-source-${i}`} style={{ ...portBase, opacity: portsActive ? 1 : 0, top: `${p}%` }} />}
         </React.Fragment>
       ))}
 
@@ -2297,6 +2313,16 @@ const DiagramBody = forwardRef(function DiagramBody(
 
   const presentEdge = useMemo(() => createPresentationCache((e, isOn) => {
         const stroke = e.style?.stroke || (e.data?.aggregated ? BRAND.purple : BRAND.blue);
+        const opacity = isOn ? 1 : THEME.edge.opacity;
+        const markerEnd = e.markerEnd ?? { type: MarkerType.ArrowClosed, color: stroke, width: ARROW_SIZE, height: ARROW_SIZE };
+        // Built-in marker colors can carry paint alpha without compositing a
+        // surface spanning the whole route. Preserve custom URL markers and
+        // unfamiliar colors/alpha styles with their original presentation.
+        const paintAlpha = e.style?.strokeOpacity == null && [e.markerStart, markerEnd].every(marker =>
+          !marker || (typeof marker === 'object' && /^#[\da-f]{6}$/i.test(marker.color || '')));
+        const paintedMarker = marker => paintAlpha && marker && typeof marker === 'object'
+          ? { ...marker, color: rgba(marker.color, opacity) }
+          : marker;
         const commentCount = commentsForDiagramTarget(comments, 'edge', e.id).length;
         return {
           ...e,
@@ -2307,16 +2333,116 @@ const DiagramBody = forwardRef(function DiagramBody(
             ...(e.style || {}),
             stroke,
             strokeWidth: isOn ? (e.data?.aggregated ? 6 : 4.5) : (e.data?.aggregated ? 5 : THEME.edge.width),
-            opacity: isOn ? 1 : THEME.edge.opacity,
+            ...(paintAlpha ? { strokeOpacity: opacity } : {}),
+            opacity: paintAlpha ? 1 : opacity,
             filter: isOn ? `drop-shadow(0 0 6px ${rgba(stroke, 0.45)})` : undefined,
           },
-          markerEnd: e.markerEnd ?? { type: MarkerType.ArrowClosed, color: stroke, width: ARROW_SIZE, height: ARROW_SIZE },
+          markerStart: paintedMarker(e.markerStart),
+          markerEnd: paintedMarker(markerEnd),
         };
   }), [comments]);
   const viewEdges = useMemo(() => edges.map(edge => presentEdge(edge, edge.id === highlightedEdgeId)),
     [edges, highlightedEdgeId, presentEdge]);
 
+  // Preserve every connected endpoint; expose all other ports on hover/focus/selection.
+  const largeFunctionalCanvas = viewNodes.length >= 250 || viewEdges.length >= 500;
+  const renderNodes = useMemo(() => withCsuVisibleHandles(viewNodes, viewEdges,
+    largeFunctionalCanvas), [viewNodes, viewEdges, largeFunctionalCanvas]);
+
   const diagramHostRef = useRef(null);
+  const viewportIdleTimer = useRef(null);
+  const viewportGesture = useRef({ epoch: 0, startedAt: 0, active: false, pointerHeld: false, zoom: null, promoted: false });
+  const resetViewportPresentation = useCallback(() => {
+    clearTimeout(viewportIdleTimer.current);
+    viewportGesture.current = { epoch: viewportGesture.current.epoch + 1, startedAt: 0, active: false, pointerHeld: false, zoom: null, promoted: false };
+    diagramHostRef.current?.removeAttribute('data-viewport-moving');
+  }, []);
+  const armViewportIdleFallback = useCallback((event) => {
+    const gesture = viewportGesture.current;
+    if (!gesture.active || gesture.pointerHeld
+      || (event?.timeStamp != null && event.timeStamp < gesture.startedAt)) return;
+    clearTimeout(viewportIdleTimer.current);
+    // React Flow omits onMoveEnd when a gesture leaves the transform unchanged
+    // (for example another pinch at a zoom bound). Retire on input inactivity.
+    viewportIdleTimer.current = setTimeout(() => {
+      if (viewportGesture.current.epoch !== gesture.epoch) return;
+      gesture.active = false;
+      gesture.promoted = false;
+      diagramHostRef.current?.removeAttribute('data-viewport-moving');
+    }, 300);
+  }, []);
+  const handleViewportPointerRelease = useCallback((event) => {
+    const gesture = viewportGesture.current;
+    if (!gesture.pointerHeld || (event.type === 'touchend' && event.touches?.length)) return;
+    gesture.pointerHeld = false;
+    armViewportIdleFallback(event);
+  }, [armViewportIdleFallback]);
+  const handleViewportMoveStart = useCallback((event, viewport) => {
+    clearTimeout(viewportIdleTimer.current);
+    const promoted = largeFunctionalCanvas && (
+      (event?.type === 'wheel' && (event.ctrlKey || event.metaKey)) || event?.touches?.length > 1
+    );
+    viewportGesture.current = {
+      epoch: viewportGesture.current.epoch + 1,
+      startedAt: event?.timeStamp ?? 0,
+      active: largeFunctionalCanvas,
+      pointerHeld: ['mousedown', 'touchstart', 'pointerdown'].includes(event?.type),
+      zoom: viewport?.zoom ?? null,
+      promoted,
+    };
+    const host = diagramHostRef.current;
+    // React Flow starts a separate D3 gesture for each pinch-wheel event.
+    // Keep its existing layer between scale starts; a new pan retires it.
+    if (promoted) {
+      if (!host?.hasAttribute('data-viewport-moving')) host?.setAttribute('data-viewport-moving', '');
+    } else {
+      host?.removeAttribute('data-viewport-moving');
+    }
+    if (event?.type === 'wheel') armViewportIdleFallback(event);
+  }, [largeFunctionalCanvas, armViewportIdleFallback]);
+  const handleViewportMove = useCallback((event, viewport) => {
+    if (event?.type === 'wheel') armViewportIdleFallback(event);
+    const gesture = viewportGesture.current;
+    if (!gesture.active || gesture.promoted || !Number.isFinite(viewport?.zoom)) return;
+    if (gesture.zoom == null) gesture.zoom = viewport.zoom;
+    // Scaling benefits from promotion; translation alone does not. Inspect the
+    // actual transform so wheel, touch and programmatic zoom share this path.
+    if (viewport.zoom !== gesture.zoom) {
+      gesture.promoted = true;
+      diagramHostRef.current?.setAttribute('data-viewport-moving', '');
+    }
+  }, [armViewportIdleFallback]);
+  const handleViewportMoveEnd = useCallback((event) => {
+    const gesture = viewportGesture.current;
+    // React Flow may deliver the previous end after a newer start.
+    if (!gesture.active || (event?.timeStamp != null && event.timeStamp < gesture.startedAt)) return;
+    gesture.active = false;
+    gesture.pointerHeld = false;
+    clearTimeout(viewportIdleTimer.current);
+    viewportIdleTimer.current = setTimeout(() => {
+      if (viewportGesture.current.epoch === gesture.epoch) diagramHostRef.current?.removeAttribute('data-viewport-moving');
+    }, 150);
+  }, []);
+  useEffect(() => {
+    const host = diagramHostRef.current;
+    resetViewportPresentation();
+    if (largeFunctionalCanvas) {
+      window.addEventListener('blur', resetViewportPresentation);
+      window.addEventListener('pointercancel', resetViewportPresentation);
+      document.addEventListener('visibilitychange', resetViewportPresentation);
+      window.addEventListener('mouseup', handleViewportPointerRelease, true);
+      window.addEventListener('touchend', handleViewportPointerRelease, true);
+    }
+    return () => {
+      resetViewportPresentation();
+      host?.removeAttribute('data-viewport-moving');
+      window.removeEventListener('blur', resetViewportPresentation);
+      window.removeEventListener('pointercancel', resetViewportPresentation);
+      document.removeEventListener('visibilitychange', resetViewportPresentation);
+      window.removeEventListener('mouseup', handleViewportPointerRelease, true);
+      window.removeEventListener('touchend', handleViewportPointerRelease, true);
+    };
+  }, [largeFunctionalCanvas, storageKey, resetViewportPresentation, handleViewportPointerRelease]);
   const flowCanvasHostRef = useRef(null);
   const toolbarDragRef = useRef(null);
   const nodeIdCounter = useRef(0);
@@ -2892,10 +3018,20 @@ const DiagramBody = forwardRef(function DiagramBody(
     });
   }, []);
 
-  const createDiagramHistorySnapshot = useCallback(() => ({
+  const createDiagramHistorySnapshot = useCallback(() => {
+    const baseEdgesById = new Map(edges.map(edge => [edge.id, edge]));
+    return {
     rows: cloneDiagramRowsForHistory(rows),
     nodes: (getNodes().length ? getNodes() : nodes).map(cloneDiagramNodeForHistory),
-    edges: (getEdges().length ? getEdges() : edges).map(cloneDiagramEdgeForHistory),
+    edges: (getEdges().length ? getEdges() : edges).map(edge => {
+      // React Flow exposes the derived presentation. Keep its current topology
+      // and handles, but snapshot base paint so undo cannot attenuate it twice.
+      const base = baseEdgesById.get(edge.id) || edge;
+      return cloneDiagramEdgeForHistory({
+        ...edge, style: base.style, markerStart: base.markerStart,
+        markerEnd: base.markerEnd, animated: base.animated,
+      });
+    }),
     groupBoxes: cloneGroupBoxesForHistory(groupBoxesRef.current.length ? groupBoxesRef.current : groupBoxes),
     manualNodesStore: cloneManualNodesForHistory(manualNodesStore),
     comments: comments.map((comment) => ({ ...comment })),
@@ -2904,7 +3040,8 @@ const DiagramBody = forwardRef(function DiagramBody(
     edgeAggregation: cloneEdgeAggregationForHistory(edgeAggregationRef.current),
     edgeRouting: cloneEdgeRoutingForHistory(edgeRoutingRef.current),
     positions: clonePositionEntriesForHistory(posRef.current),
-  }), [comments, edges, getEdges, getNodes, groupBoxes, manualNodesStore, nodes, rows]);
+    };
+  }, [comments, edges, getEdges, getNodes, groupBoxes, manualNodesStore, nodes, rows]);
 
   const captureDiagramHistoryCheckpoint = useCallback(() => {
     if (historyRestoringRef.current) return;
@@ -4155,6 +4292,7 @@ useEffect(() => {
     async exportAsImage() {
       const flowCanvas = diagramHostRef.current?.querySelector('.react-flow');
       if (!flowCanvas) return null;
+      resetViewportPresentation();
       return await toPng(flowCanvas, { backgroundColor: '#ffffff', style: { margin: '0 auto', display: 'block' } });
     },
     async getPNG() { return this.exportAsImage(); },
@@ -5482,10 +5620,13 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
           onDrop={onToolbarDrop}
           style={{ visibility: initialLayoutReady ? 'visible' : 'hidden' }}
           defaultViewport={savedViewport || { x: 0, y: 0, zoom: 1 }}
+          onMoveStart={handleViewportMoveStart}
+          onMove={handleViewportMove}
           onMoveEnd={(_event, viewport) => {
+            handleViewportMoveEnd(_event);
             try { localStorage.setItem(storageKey + ':viewport:v1', JSON.stringify(viewport)); } catch {}
           }}
-          nodes={viewNodes}
+          nodes={renderNodes}
           edges={viewEdges}
           elevateEdgesOnSelect={false}
           onInit={(instance) => {

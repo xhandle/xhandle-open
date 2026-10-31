@@ -7,7 +7,7 @@ jest.mock('./artifactAI',()=>({DERIVE_BY_KIND:{}}));
 jest.mock('./artifactUtils',()=>({...jest.requireActual('./artifactUtils'),loadArtifactRows:jest.fn(()=>[]),loadArtifactRowsAsync:jest.fn()}));
 jest.mock('./useArtifactReview',()=>({useArtifactReview:()=>({reviewItems:[],reviewByRow:new Map(),reviewDrawerOptions:{}})}));
 jest.mock('../../components/activity/ActivityCenter',()=>({useActivityCenter:()=>({})}));
-jest.mock('./EngineeringArtifactTable',()=>({__esModule:true,default:({rows})=><div>{rows.map(row=>row.requirementText).join('|')}</div>}));
+jest.mock('lucide-react',()=>{const Icon=()=>null;return new Proxy({},{get:()=>Icon});});
 global.IS_REACT_ACT_ENVIRONMENT=true;
 
 let host,root;
@@ -25,7 +25,7 @@ it.each([
  let failed=true;
  loadArtifactRowsAsync.mockImplementation(requestKind=>requestKind===parent && failed
    ? Promise.reject(new Error('Source storage timeout'))
-   : Promise.resolve(requestKind===kind?[{id:'',requirementText:'Retained requirement'}]:[]));
+   : Promise.resolve(requestKind===kind?[{id:'',requirementText:'Retained requirement',designElementName:'Retained requirement'}]:[]));
  await act(async()=>root.render(<Panel cbaRows={stableRows} sourceRows={stableRows} kind={kind} project={{id:'p'}} repo={{id:'r'}}/>));
  expect(host.textContent).toContain('Retained requirement');
  expect(host.textContent).toContain('Source storage timeout');
@@ -59,10 +59,28 @@ it('automatically recovers a transient read while retaining visible rows',async(
   await act(async()=>root.render(<Panel cbaRows={stableRows} sourceRows={stableRows} kind="system-requirements" project={{id:'p'}} repo={{id:'r'}}/>));
   expect(host.textContent).toContain('Visible cached result');
   expect(host.textContent).toContain('Retrying automatically');
+  expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
+  expect(host.querySelector('[role="progressbar"]').textContent).toContain('Retrying automatically');
+  expect(host.querySelector('[role="progressbar"]').hasAttribute('aria-valuenow')).toBe(false);
+  expect(host.querySelectorAll('[role="alert"]')).toHaveLength(0);
   expect(host.textContent).not.toContain('Retry loading');
   failing=false;
   await act(async()=>jest.advanceTimersByTime(2000));
   expect(host.textContent).toContain('Recovered saved result');
   expect(host.textContent).not.toContain('Retrying automatically');
  } finally {jest.useRealTimers();}
+});
+
+it('shows one loading state for an unknown saved table, and exposes a terminal error without an empty table',async()=>{
+ const pending=[];
+ loadArtifactRowsAsync.mockImplementation(()=>new Promise((resolve,reject)=>pending.push({resolve,reject})));
+ await act(async()=>root.render(<Panel cbaRows={stableRows} sourceRows={stableRows} kind="system-requirements" project={{id:'cold'}} repo={{id:'r'}}/>));
+ expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
+ expect(host.querySelector('table')).toBeNull();
+ expect(host.textContent).not.toContain('0 of 0 rows');
+ await act(async()=>pending.forEach(({reject})=>reject(new Error('Saved rows unavailable'))));
+ expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(0);
+ expect(host.querySelector('table')).toBeNull();
+ expect(host.querySelector('[role="alert"]').textContent).toContain('Saved rows unavailable');
+ expect(host.textContent).toContain('Retry loading');
 });

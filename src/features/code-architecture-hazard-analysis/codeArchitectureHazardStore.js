@@ -103,7 +103,7 @@ function saveFallbackState(state) {
 function matchesFilters(run, filters = {}) {
   return Object.entries(filters).every(([key, value]) => {
     if (value == null || value === "") return true;
-    return String(run?.[key] || "") === String(value);
+    return String(run?.[key] ?? "") === String(value);
   });
 }
 
@@ -239,6 +239,16 @@ export async function resolveCodeArchitectureHazardRun(run, options={}) {
 
 // One queue per record prevents slow or retried writes overtaking newer saves.
 const saveQueues = new Map();
+const cleaningHazardScopes = new Set();
+const hazardStorageScope = (projectId,repoId) => JSON.stringify([String(projectId),String(repoId)]);
+export const hazardStorageBusy = (projectId,repoId) => memoryMatches({projectId,repoId}).length > 0 || saveQueues.size > 0;
+export async function withHazardStorageCleanup(projectId,repoId,operation) {
+  const scope = hazardStorageScope(projectId,repoId);
+  if (cleaningHazardScopes.has(scope) || hazardStorageBusy(projectId,repoId)) throw new Error('Hazard analysis is running or has unsaved results. Finish or save it before cleanup.');
+  cleaningHazardScopes.add(scope);
+  try { return await operation(); } finally { cleaningHazardScopes.delete(scope); }
+}
+
 const queuedSourceRevisions = new Map();
 const saveOwners = new Map();
 const saveEpochs = new Map();
@@ -247,6 +257,8 @@ function publishSaveState(run) {
 }
 const transientSaveError = error => ['AbortError', 'TransactionInactiveError', 'InvalidStateError', 'UnknownError'].includes(error?.name);
 export async function saveCodeArchitectureHazardRun(run, { notify = true, onSaveState = () => {} } = {}) {
+  if (cleaningHazardScopes.has(hazardStorageScope(run?.projectId,run?.repoId))) throw new Error('Hazard cleanup is in progress. Retry saving later.');
+
   if(run?.[PAGED_HAZARD])throw new Error('Resolve the saved analysis before editing it. A paged table descriptor cannot be saved.');
   if (!run?.id) throw new Error("Cannot save code architecture hazard analysis without an id.");
   const checkAttempt = () => {

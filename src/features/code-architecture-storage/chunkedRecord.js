@@ -253,6 +253,7 @@ export async function writeRecord(db, store, key, value, options) {
       const data=current.result?.value;
       if((isChunkedRecord(data)?data.root:JSON.stringify(data))!==baseline) throw Object.assign(new Error('Saved analysis changed during this write. Current results were preserved.'),{code:'SOURCE_PUBLICATION_CONFLICT'});
       if (!isChunkedRecord(data) || data.root !== staged.root) objectStore.put({key,value:staged});
+      for (const removeKey of options?.removeKeys || []) objectStore.delete(removeKey);
     } catch(error) {failure=error;tx.abort();}
   };
   try {await done;}catch(error){throw failure || error;}

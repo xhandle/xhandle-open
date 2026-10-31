@@ -1313,7 +1313,32 @@ async function migrateTraceabilityDB(artifacts: WorkspaceArtifact[], relationshi
   });
 }
 
-export async function migrateLegacyStorageToWorkspaceGraph(_options: MigrationOptions = {}) {
+// Serialize migration snapshots with permanent cleanup so an in-flight snapshot
+// cannot restore a project after its retained row has been deleted.
+let graphStorageMutation: Promise<unknown> = Promise.resolve();
+export function withWorkspaceGraphMigrationPaused<T>(operation: () => Promise<T>, waitTimeoutMs?: number): Promise<T> {
+  let expired = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = waitTimeoutMs ? new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      expired = true;
+      reject(new Error("Workspace graph migration is still busy. Wait for analysis to finish and retry cleanup."));
+    }, waitTimeoutMs);
+  }) : null;
+  const result = graphStorageMutation.then(() => {
+    clearTimeout(timer);
+    if (expired) throw new Error("Workspace cleanup wait expired; no delayed cleanup was started.");
+    return operation();
+  });
+  graphStorageMutation = result.then(() => undefined, () => undefined);
+  return timeout ? Promise.race([result, timeout]) : result;
+}
+
+export function migrateLegacyStorageToWorkspaceGraph(options: MigrationOptions = {}) {
+  return withWorkspaceGraphMigrationPaused(() => migrateLegacyStorageToWorkspaceGraphNow(options));
+}
+
+async function migrateLegacyStorageToWorkspaceGraphNow(_options: MigrationOptions = {}) {
   const startedAt = Date.now();
   const artifacts: WorkspaceArtifact[] = [];
   const relationships: WorkspaceRelationship[] = [];

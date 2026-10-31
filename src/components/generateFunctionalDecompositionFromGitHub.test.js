@@ -63,6 +63,7 @@ describe("code architecture functional split view", () => {
     document.body.appendChild(host);
     root = createRoot(host);
     const { act } = React;
+    mockDiagramProps.length = 0;
     act(() => root.render(
       <FunctionalDecompositionTable
         data={[{
@@ -95,6 +96,14 @@ describe("code architecture functional split view", () => {
     expect(host.querySelector('[aria-label="Code architecture functional decomposition table"]')).toBeTruthy();
     expect(host.querySelector('[aria-label="Resize code architecture diagram and functional table panes"]')).toBeTruthy();
     expect(host.querySelector('[data-testid="code-architecture-diagram"]')).toBeTruthy();
+  });
+
+  it("preserves saved CBA layout on ordinary opening without a focus target", () => {
+    expect(mockDiagramProps.length).toBeGreaterThan(0);
+    const props = mockDiagramProps.at(-1);
+    expect(props.preserveLayoutOnMount).toBe(true);
+    expect(props.cleanOnceKey).toMatch(/^initial-/);
+    expect(props.storageKey).toBe('diagram:github:repo:main');
   });
 
   it("keeps a controlled table view selected when reviewed row data refreshes", () => {

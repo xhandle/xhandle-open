@@ -119,6 +119,7 @@ it('uses one indicator across loading and preparation and retains prepared rows 
     act(() => render(true));
     expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
     expect(host.querySelector('[role="progressbar"]').getAttribute('aria-label')).toBe('Loading requirements');
+    expect(host.querySelector('[role="progressbar"]').hasAttribute('aria-valuenow')).toBe(false);
     act(() => render(false));
     expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
     expect(host.querySelector('[role="progressbar"]').getAttribute('aria-label')).toBe('Preparing requirements');
@@ -135,4 +136,38 @@ it('uses one indicator across loading and preparation and retains prepared rows 
     host.remove();
     jest.useRealTimers();
   }
+});
+
+it('keeps refresh errors on the current source and does not expose superseded rows or focus during replacement preparation', () => {
+  jest.useFakeTimers();
+  const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
+  const columns=[{key:'id',label:'ID'}],onFocusResolved=jest.fn(),onDeleteRow=jest.fn();
+  const original=Array.from({length:250},(_,index)=>({id:`Old-${index}`}));
+  const replacement=Array.from({length:250},(_,index)=>({id:`New-${index}`}));
+  const render=(rows,extra={})=>root.render(<EngineeringArtifactTable rows={rows} columns={columns} storageKey="one" onFocusResolved={onFocusResolved} onDeleteRow={onDeleteRow} {...extra}/>);
+  try {
+    act(()=>render([], {loading:true}));
+    expect(host.querySelector('table')).toBeNull();
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
+    act(()=>render(original));act(()=>jest.runAllTimers());
+    const table=host.querySelector('table');expect(table).not.toBeNull();
+    act(()=>render(original,{loadingError:'Refresh unavailable'}));
+    expect(host.querySelector('table')).toBe(table);
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(0);
+    act(()=>render(replacement,{highlightedRowIds:['New-0'],focusRequestKey:'new-source'}));
+    expect(host.querySelector('table')).toBeNull();
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
+    expect(host.textContent).not.toContain('Old-0');
+    expect(onFocusResolved).not.toHaveBeenCalled();
+    expect([...host.querySelectorAll('button')].some(button=>button.textContent==='Delete')).toBe(false);
+    act(()=>jest.runAllTimers());
+    expect(host.querySelector('table').textContent).toContain('New-0');
+    act(()=>jest.advanceTimersByTime(20));
+    expect(onFocusResolved).toHaveBeenCalledWith('new-source');
+    expect(onDeleteRow).not.toHaveBeenCalled();
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(0);
+    act(()=>render([], {storageKey:'two',loading:true}));
+    expect(host.querySelector('table')).toBeNull();
+    expect(host.textContent).not.toContain('New-0');
+  } finally {act(()=>root.unmount());host.remove();jest.useRealTimers();}
 });

@@ -8,6 +8,7 @@ import Diagram from './LiteSummaryDiagramReactFlow';
 let mockFlowProps;
 let mockNodes = [];
 let mockEdges = [];
+const mockUpdateNodeInternals = jest.fn();
 const mockApi = { getNodes: () => mockNodes, getEdges: () => mockEdges, getViewport: () => ({ x: 0, y: 0, zoom: 1 }), fitView: jest.fn(), project: position => position };
 jest.mock('reactflow', () => {
   const React = require('react');
@@ -16,6 +17,8 @@ jest.mock('reactflow', () => {
     default: props => { mockFlowProps = props; return <div className="react-flow" />; },
     ReactFlowProvider: ({ children }) => children,
     useReactFlow: () => mockApi,
+    useUpdateNodeInternals: () => mockUpdateNodeInternals,
+    Handle: ({ id }) => <span data-handle={id} />,
     useNodesInitialized: () => true,
     useNodesState: initial => {
       const [nodes, setNodes] = React.useState(initial);
@@ -825,6 +828,14 @@ test('saved system/subsystem descriptions populate table rows and table edits re
   expect(publications).toBeLessThan(10);
 });
 
+function expectEdgePaint(edge, hex, alpha = 0.92) {
+  const channels = [1, 3, 5].map(offset => parseInt(hex.slice(offset, offset + 2), 16));
+  const expectedMarker = `rgba(${channels.join(',')},${alpha})`;
+  expect(edge.style).toMatchObject({ stroke: hex, opacity: 1, strokeOpacity: alpha });
+  expect(edge.markerEnd.color.replace(/\s+/g, '')).toBe(expectedMarker);
+  if (edge.markerStart) expect(edge.markerStart.color.replace(/\s+/g, '')).toBe(expectedMarker);
+}
+
 test('edge colors match arrowheads and survive routing, auto arrange, undo/redo, and reload', async () => {
   mount(); await tick();
   const open = () => act(() => mockFlowProps.onEdgeDoubleClick({ preventDefault() {}, stopPropagation() {} }, mockFlowProps.edges[0]));
@@ -842,12 +853,14 @@ test('edge colors match arrowheads and survive routing, auto arrange, undo/redo,
   });
   clickText('Save'); await tick();
   expect(stroke()).toBe('#123456');
-  expect(mockFlowProps.edges[0].markerEnd.color).toBe('#123456');
+  expectEdgePaint(mockFlowProps.edges[0], '#123456');
   const clickTitle = title => act(() => container.querySelector(`button[title="${title}"]`).click());
   clickTitle('Undo last diagram change'); await tick();
   expect(stroke()).toBe(original);
+  expectEdgePaint(mockFlowProps.edges[0], original);
   clickTitle('Redo diagram change'); await tick();
   expect(stroke()).toBe('#123456');
+  expectEdgePaint(mockFlowProps.edges[0], '#123456');
   clickTitle('Set all edges to Bezier routing'); await tick();
   expect(stroke()).toBe('#123456');
   clickTitle('Auto arrange'); await tick();
@@ -857,7 +870,8 @@ test('edge colors match arrowheads and survive routing, auto arrange, undo/redo,
   act(() => root.unmount()); root = createRoot(container);
   mount(); await tick();
   expect(stroke()).toBe('#123456');
-  expect(mockFlowProps.edges[0].markerEnd.color).toBe('#123456');
+  expectEdgePaint(mockFlowProps.edges[0], '#123456');
+  expect(JSON.parse(localStorage.getItem(`${key}:edge-routing:v1`)).colors[mockFlowProps.edges[0].id]).toBe('#123456');
 });
 
 test('coloring a bidirectional bundle colors both arrowheads and its expanded edges', async () => {
@@ -872,12 +886,40 @@ test('coloring a bidirectional bundle colors both arrowheads and its expanded ed
   const chosen = buttons[2].getAttribute('aria-label').replace('Choose color ', '');
   clickText('Save'); await tick();
   expect(mockFlowProps.edges[0].style.stroke).toBe(chosen);
-  expect(mockFlowProps.edges[0].markerStart.color).toBe(chosen);
-  expect(mockFlowProps.edges[0].markerEnd.color).toBe(chosen);
+  expectEdgePaint(mockFlowProps.edges[0], chosen);
   act(() => container.querySelector('button[title="Expand all bidirectional bundles"]').click()); await tick();
   expect(mockFlowProps.edges).toHaveLength(2);
   mockFlowProps.edges.forEach(edge => {
     expect(edge.style.stroke).toBe(chosen);
-    expect(edge.markerEnd.color).toBe(chosen);
+    expectEdgePaint(edge, chosen);
   });
+});
+
+
+test('large project function preserves connected ports and restores every port on interaction', async () => {
+  mount(); await tick();
+  const Node = mockFlowProps.nodeTypes.bidirectional;
+  mockUpdateNodeInternals.mockClear();
+  const data = { label: 'Plan', idleHandleIds: ['right-source-2', 'left-target-1'] };
+  act(() => root.render(<Node id="n:Plan" data={data} selected={false} />));
+  expect(container.querySelectorAll('[data-handle]').length).toBe(2);
+  expect(mockUpdateNodeInternals).not.toHaveBeenCalled();
+  act(() => container.querySelector('.x-node').dispatchEvent(new MouseEvent('mouseover', { bubbles: true })));
+  expect(container.querySelectorAll('[data-handle]').length).toBe(32);
+  expect(mockUpdateNodeInternals).toHaveBeenCalledWith('n:Plan');
+  act(() => container.querySelector('.x-node').dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body })));
+  expect(container.querySelectorAll('[data-handle]').length).toBe(2);
+  act(() => root.render(<Node id="n:Plan" data={data} selected />));
+  expect(container.querySelectorAll('[data-handle]').length).toBe(32);
+});
+
+test('project function retains default ports and keyboard focus exposes unused ports', async () => {
+  mount(); await tick();
+  const Node = mockFlowProps.nodeTypes.bidirectional;
+  act(() => root.render(<Node id="n:Plan" data={{ label: 'Plan' }} selected={false} />));
+  expect(container.querySelectorAll('[data-handle]').length).toBe(32);
+  act(() => root.render(<Node id="n:Plan" data={{ label: 'Plan', idleHandleIds: [] }} selected={false} />));
+  expect(container.querySelectorAll('[data-handle]').length).toBe(0);
+  act(() => container.querySelector('.x-node').dispatchEvent(new FocusEvent('focusin', { bubbles: true })));
+  expect(container.querySelectorAll('[data-handle]').length).toBe(32);
 });

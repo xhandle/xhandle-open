@@ -1,0 +1,16 @@
+# Code-Based Architecture review-registration changes
+
+The review investigation found that automatic review registration published batches of 50 rows every 50 ms. Each publication rebuilt the global review collection and persisted a snapshot. The implementation now prepares rows in groups of 250, publishes the first 50 promptly, and publishes subsequent groups of at most 1,000. It waits until saved review items have loaded before registering and preserves an existing review if registration races another update.
+
+This retains the existing review records, Review Center queue, and table interactions. It reduces repeated whole-collection work; it does not eliminate the memory cost of retaining a review record for every row. Existing records are not migrated or deleted. A sparse review representation, delta-oriented storage, and narrower application subscriptions remain further work, including compatibility with Review Center, history, export and import.
+
+## Verification
+
+- Production build succeeded with existing repository lint warnings.
+- Ten targeted suites and 45 tests passed, including a 15,000-row registration test, cancellation, concurrent registration, persistence failures, virtual table behavior, and review controls.
+- An IndexedDB integration test saves 120 review entries, records a rejection with feedback, reopens the provider, and verifies the complete queue and review decision remain present. During development this exposed an initialization race, fixed by waiting for the provider to load persisted reviews before automatic registration.
+- An intermediate Chrome experiment with an unbounded publication batch settled the idle update pattern but raised peak heap to roughly 1.42 GB; the implementation was changed to bound publication size. That intermediate result does not validate the final build.
+- The final Electron production-build stress run completed 105 tab transitions and rapid scrolling with 15,000 rows per artifact type, with no captured page errors, console errors or renderer crash. During five seconds after scrolling stopped, the four artifact tabs recorded zero commits, compared with 78–119 in the prior run. The Electron tab's reported peak working set was about 1.76 GiB versus 2.20 GiB in the previous run; its sampled JavaScript heap during tab cycling peaked at about 1.48 GiB versus 1.28 GiB previously. These single-run, garbage-collection-sensitive measurements are mixed and do not establish a memory reduction. Raw output: `/tmp/xhandle-cba-review-ready-electron.json`.
+- The final Chrome run also completed 105 transitions with no captured page errors, console errors, or renderer crash. The four artifact tabs recorded zero idle commits over five seconds, compared with 93–127 before the change. Sampled peak JavaScript heap during tab cycling was about 1.47 GiB versus 0.86 GiB in the prior run. This possible memory regression needs further investigation. Raw output: `/tmp/xhandle-cba-review-ready-chrome.json`.
+
+The customer crash has not been reproduced. A synthetic workload and a real customer project can differ in data shape, existing review history, operating-system memory pressure and hardware. The possible peak-memory regression and remaining full review collection make this work incomplete; do not treat it as release-ready or as proof that the customer's crash is fixed.

@@ -5,48 +5,73 @@ import React,{useState,useEffect,useCallback,useRef,useMemo} from 'react';
 import {PreparedCodeArchitectureHazardPanel} from './CodeArchitectureHazardPanel';
 import {PAGED_HAZARD} from './hazardRowIndex';
 import requestHazardRows from './requestHazardRows';
+import useContinuousHazardRows from './useContinuousHazardRows';
 import {createDiskArchiveSink} from '../code-architecture-transfer/diskArchiveSink';
 import {effectiveCodeArchitectureHazardRows,isCodeArchitectureHazardAnalysisStale} from './codeArchitectureHazardUtils';
 import {summarizeCodeArchitectureHazardEligibility} from './codeArchitectureHazardEligibility';
 import {functionalModelIsReady,buildFunctionalModelRows} from '../code-architecture-context/functionalModel';
 const EMPTY=[];
+// Reuse only lightweight ordering metadata for this workspace's current run.
+// The existing workspace owner retires this one cache on project/input changes.
+function cacheableLayout(layout){
+ if(Number.isFinite(layout.metadataBytes))return layout.metadataBytes<=8*1024*1024;
+ let bytes=(layout.indices?.length || 0)*16+1024;
+ for(const header of layout.headers || [])bytes+=String(header).length*2+32;
+ for(const group of layout.groups || []){
+  bytes+=256+String(group.key).length*2+String(group.label).length*2+group.rowIndices.length*16;
+  if(bytes>8*1024*1024)return false;
+ }
+ return bytes<=8*1024*1024;
+}
 export default function PagedHazardPanel(props){
  const {latestRun:run,cbaRows=EMPTY,selectedOperationalContextId='all'}=props,descriptor=run[PAGED_HAZARD];
  const [partial,setPartial]=useState(false);
- const [page,setPage]=useState(null),[offset,setOffset]=useState(0),[back,setBack]=useState([]),[filters,setFilters]=useState({}),[search,setSearch]=useState(''),[indices,setIndices]=useState(null),[options,setOptions]=useState([]),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[error,setError]=useState(''),[attempt,setAttempt]=useState(0);
- const pendingFocus=useRef(null);
+ const [layoutProgress,setLayoutProgress]=useState(null);
+ const [layout,setLayout]=useState(null),[requestedRowIndices,setRequestedRowIndices]=useState(EMPTY),[requiredRowIndices,setRequiredRowIndices]=useState(EMPTY),[filters,setFilters]=useState({}),[search,setSearch]=useState(''),[indices,setIndices]=useState(null),[options,setOptions]=useState([]),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[error,setError]=useState(''),[attempt,setAttempt]=useState(0);
  const optionsAbort=useRef(),actionsAbort=useRef(),optionsSequence=useRef(0);
- const scope=`${run.id}:${descriptor.revision}`;
+ const scope=JSON.stringify([run.projectId,run.repoId,run.id,descriptor.generation,descriptor.revision]);
  useEffect(()=>()=>{optionsAbort.current?.abort();actionsAbort.current?.abort();},[scope]);
  const filtered=Boolean(search.trim()||Object.keys(filters).length||selectedOperationalContextId!=='all');
  const queryKey=JSON.stringify([scope,partial,filters,search,selectedOperationalContextId]);
  const [resolvedQuery,setResolvedQuery]=useState(null);
  useEffect(()=>{
-  const controller=new AbortController();setOffset(pendingFocus.current ?? 0);pendingFocus.current=null;setBack([]);setIndices(null);setPage(null);setResolvedQuery(null);setError('');
-  if(!filtered){setResolvedQuery(queryKey);return ()=>controller.abort();}
-  setBusy(true);setMessage('Searching all saved rows…');
-  const timer=setTimeout(()=>requestHazardRows(run,{operation:'query',partial,filters,search,context:selectedOperationalContextId,signal:controller.signal,onProgress:({completed,total})=>setMessage(`Searching all saved rows… ${Math.floor(completed*100/total)}%`)}).then(result=>{
-   if(controller.signal.aborted)return;setIndices(result.indices);setResolvedQuery(queryKey);
-  }).catch(err=>{if(!controller.signal.aborted){setError(err.message);setBusy(false);}}),180);
+  const controller=new AbortController();setIndices(null);setLayout(null);setLayoutProgress(null);setRequestedRowIndices(EMPTY);setRequiredRowIndices(EMPTY);setResolvedQuery(null);setError('');
+  optionsAbort.current?.abort();actionsAbort.current?.abort();
+  const savedLayout=props.preparationCache?.current;
+  if(!props.preparationCache?.retired && savedLayout?.kind==='continuous-hazard-layout' && savedLayout.queryKey===queryKey){
+   setLayout(savedLayout.layout);setIndices(filtered?savedLayout.layout.indices:null);setResolvedQuery(queryKey);setBusy(false);setMessage('');
+   return ()=>controller.abort();
+  }
+  if(props.preparationCache)props.preparationCache.current=null;
+  setBusy(true);setMessage('');
+  const timer=setTimeout(()=>requestHazardRows(run,{operation:'layout',partial,filters,search,context:selectedOperationalContextId,signal:controller.signal,onProgress:({completed,total})=>{if(!controller.signal.aborted)setLayoutProgress(total>0?Math.floor(completed*100/total):null);}}).then(result=>{
+   if(controller.signal.aborted)return;
+   setLayout(result);setIndices(filtered?result.indices:null);setResolvedQuery(queryKey);setMessage('');setBusy(false);
+  }).catch(err=>{if(!controller.signal.aborted){setError(err.message);setBusy(false);}}),filtered?180:0);
   return ()=>{clearTimeout(timer);controller.abort();};
  // queryKey includes immutable filter and source identity.
  // eslint-disable-next-line react-hooks/exhaustive-deps
  },[queryKey,attempt]);
+ const activeLayout=resolvedQuery===queryKey?layout:null;
  useEffect(()=>{
-  if(resolvedQuery!==queryKey)return;
-  const controller=new AbortController();setBusy(true);setError('');setMessage('Loading saved rows…');
-  requestHazardRows(run,{partial,offset,indices,signal:controller.signal}).then(result=>{
-   if(controller.signal.aborted)return;setPage(result);setMessage('');setBusy(false);
-  }).catch(err=>{if(!controller.signal.aborted){setError(err.message);setBusy(false);}});
-  return ()=>controller.abort();
- // eslint-disable-next-line react-hooks/exhaustive-deps
- },[resolvedQuery,queryKey,offset,indices,attempt]);
+  const cache=props.preparationCache;
+  if(activeLayout && cache && !cache.retired && cacheableLayout(activeLayout))cache.current={kind:'continuous-hazard-layout',queryKey,layout:activeLayout};
+ },[activeLayout,queryKey,props.preparationCache]);
+ const rowCache=useContinuousHazardRows({run,partial,queryKey,layout:activeLayout,requestedRowIndices,requiredRowIndices});
+ const requestRows=useCallback((indices,required=EMPTY)=>{
+  setRequestedRowIndices(previous=>previous.length===indices.length && previous.every((value,index)=>value===indices[index])?previous:indices);
+  setRequiredRowIndices(previous=>previous.length===required.length && previous.every((value,index)=>value===required[index])?previous:required);
+ },[]);
+ const page=useMemo(()=>{
+  if(!activeLayout)return null;
+  const rowIndices=[...rowCache.rowsByIndex.keys()].sort((a,b)=>a-b);
+  return {headers:activeLayout.headers,rows:rowIndices.map(index=>rowCache.rowsByIndex.get(index)),rowIndices,total:activeLayout.total};
+ },[activeLayout,rowCache.rowsByIndex]);
  useEffect(()=>{
   if(props.highlightedRowIndex==null)return;
-  pendingFocus.current=(filtered || partial)?props.highlightedRowIndex:null;
-  setPartial(false);setFilters({});setSearch('');setBack([]);setOffset(props.highlightedRowIndex);
+  setPartial(false);setFilters({});setSearch('');
   if(selectedOperationalContextId!=='all')props.onSelectedOperationalContextChange?.('all');
- // Only explicit row-focus requests move the page.
+ // Explicit row focus clears restrictions; the virtual viewport reveals the source row.
  // eslint-disable-next-line react-hooks/exhaustive-deps
  },[props.highlightedRowIndex,props.forceSummaryOpenKey]);
  const requestOptions=useCallback((column,optionSearch)=>{
@@ -87,35 +112,43 @@ export default function PagedHazardPanel(props){
  const controls=<div className="shrink-0 space-y-2 border-b p-3 text-sm">
   <div className="flex flex-wrap items-center gap-2">
    <input aria-label="Search all saved hazard rows" placeholder="Search all saved rows" value={search} onChange={event=>setSearch(event.target.value)} className="rounded border px-2 py-1" />
-   <button disabled={busy||!back.length} onClick={()=>{setOffset(back[back.length-1]);setBack(old=>old.slice(0,-1));}}>Previous rows</button>
-   <span>{page ? `${page.total?offset+1:0}–${page.nextOffset} of ${page.total} matching rows`:'Loading saved rows…'}</span>
-   <button disabled={busy||!page||page.nextOffset>=page.total} onClick={()=>{setBack(old=>[...old,offset]);setOffset(page.nextOffset);}}>Next rows</button>
+   {activeLayout && <span>{activeLayout.total.toLocaleString()} matching rows</span>}
   </div>
   {message && <div role="status">{message}</div>}
-  {error && <div role="alert">{error} <button onClick={()=>{props.restoration?.retry();setAttempt(n=>n+1);}}>Retry rows</button></div>}
+  {(error || rowCache.error) && <div role="alert">{error || rowCache.error?.message || String(rowCache.error)} <button onClick={()=>{if(props.preparationCache)props.preparationCache.current=null;props.restoration?.retry();if(error)setAttempt(n=>n+1);else rowCache.retry();}}>Retry rows</button></div>}
   {descriptor.pending && <div><p>An incomplete attempt is saved ({descriptor.partialCount} rows). Continue analysis retries unresolved work.</p>{descriptor.partialMetadata?.failureMessage && <details><summary>Failure details</summary><p>{descriptor.partialMetadata.failureMessage}</p></details>}<button onClick={()=>{setPartial(value=>!value);setFilters({});setSearch('');}}>{partial?'View published results':'Inspect validated partial results'}</button></div>}
   {partial && <p>Viewing the incomplete attempt. Export CSV includes its matching rows. Published results remain unchanged.</p>}
  </div>;
- const tablePage={...page,partial,hasCsvUndo:!partial && descriptor.details?.includes('csvImportPreviousSummary'),loadUndo:()=>perform(async signal=>(await requestHazardRows(run,{operation:'detail',field:'csvImportPreviousSummary',signal})).value),filters,options,setFilter,requestOptions,clearFilters:()=>{setFilters({});setSearch('');},copy,exportCsv,loadSummary,controls,unfilteredTotal:partial?descriptor.partialCount:descriptor.total};
- const summarySheet=useMemo(()=>page?[page.headers,...page.rows]:[descriptor.headers], [page,descriptor.headers]);
+ const loadState={status:activeLayout?'ready':error?'failed':'preparing',progress:layoutProgress};
+ const tablePage={...page,continuous:true,queryKey,layout:activeLayout,loadState,rowError:rowCache.error,rowsByIndex:rowCache.rowsByIndex,requestRows,cacheStats:rowCache.cacheStats,loading:busy||rowCache.loading,partial,hasCsvUndo:!partial && descriptor.details?.includes('csvImportPreviousSummary'),loadUndo:()=>perform(async signal=>(await requestHazardRows(run,{operation:'detail',field:'csvImportPreviousSummary',signal})).value),filters,options,setFilter,requestOptions,clearFilters:()=>{setFilters({});setSearch('');},copy,exportCsv,loadSummary,controls,unfilteredTotal:partial?descriptor.partialCount:descriptor.total};
+ // A viewport fill is not a new editable summary revision (e.g. during CSV validation).
+ const summarySheet=useMemo(()=>[activeLayout?.headers || descriptor.headers], [activeLayout?.headers,descriptor.headers]);
  const functionalReady=useMemo(()=>functionalModelIsReady(cbaRows),[cbaRows]);
  const functionalTraceIds=useMemo(()=>functionalReady?new Set(buildFunctionalModelRows(cbaRows).map(row=>row.traceId)):new Set(),[cbaRows,functionalReady]);
  const isStale=useMemo(()=>Boolean(descriptor.omittedMetadata?.length)||isCodeArchitectureHazardAnalysisStale({run,cbaRows,operationalContexts:props.operationalContexts,selectedOperationalContextId,organizationContext:props.organizationContext}),[run,cbaRows,props.operationalContexts,selectedOperationalContextId,props.organizationContext,descriptor.omittedMetadata]);
 
- const pageReviews=useMemo(()=>{
-  const result=new Map();if(partial||!page)return result;
-  const index=createHazardReviewRowIndex(page.rows,page.headers);
-  const normalizer=createHazardRowNormalizer(descriptor.headers);
-  for(const item of props.reviewItems || []){
+ // Normalize/index review content once per review revision. Scroll/cache fills
+ // only compare the bounded loaded rows, not every historical review narrative.
+ const reviewLookup=useMemo(()=>{
+  if(partial || !props.reviewItems?.length)return null;
+  const normalizer=createHazardRowNormalizer(descriptor.headers),entries=[];
+  props.reviewItems.forEach((item,position)=>{
    const row=item.currentContent?.row || item.originalContent?.row;
-   if(!Array.isArray(row))continue;
-   const local=index.find(fillNotApplicableHazardCells(normalizer.headers,normalizer.normalizeRow(row,item.currentContent?.rowIndex ?? item.originalContent?.rowIndex ?? 0)));
-   if(local<0)continue;
-   const absolute=page.rowIndices[local],previous=result.get(absolute);
-   if(!previous || (Date.parse(item.updatedAt||item.createdAt)||0)>=(Date.parse(previous.updatedAt||previous.createdAt)||0))result.set(absolute,item);
-  }
+   if(!Array.isArray(row))return;
+   entries.push({item,position,time:Date.parse(item.updatedAt||item.createdAt)||0,row:fillNotApplicableHazardCells(normalizer.headers,normalizer.normalizeRow(row,item.currentContent?.rowIndex ?? item.originalContent?.rowIndex ?? 0))});
+  });
+  entries.sort((a,b)=>b.time-a.time || b.position-a.position);
+  return {entries,index:createHazardReviewRowIndex(entries.map(entry=>entry.row),normalizer.headers)};
+ },[partial,descriptor.headers,props.reviewItems]);
+ const pageReviews=useMemo(()=>{
+  const result=new Map(),used=new Set();if(!page || !reviewLookup)return result;
+  page.rows.forEach((row,local)=>{
+   const match=reviewLookup.index.find(row);
+   if(match<0 || used.has(match))return;
+   used.add(match);result.set(page.rowIndices[local],reviewLookup.entries[match].item);
+  });
   return result;
- },[partial,page,descriptor.headers,props.reviewItems]);
+ },[page,reviewLookup]);
  const preparedView={summarySheet,eligibilitySummary,functionalReady,functionalTraceIds,isStale};
  return <PreparedCodeArchitectureHazardPanel {...props} tablePage={tablePage} preparedView={preparedView}
   reviewMode={partial || props.reviewMode}

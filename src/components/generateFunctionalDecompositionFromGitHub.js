@@ -1,3 +1,4 @@
+import { beginArchitectureStorageWork } from '../features/code-architecture-assurance/codeArchitectureStorage';
 import { extractCppSourceFunctions } from "../features/code-architecture-context/cppSourceFunctions";
 import { FUNCTIONAL_RETRY_STATUSES, backendConnectionError, functionalHttpError, withFunctionalConnectivityRecovery, probeFunctionalConnectivity } from "../features/code-architecture-context/functionalTransportRecovery";
 import { mapAnalysisWork, serialAnalysisWriter, createAnalysisPacer } from '../features/code-architecture-context/functionalWorkScheduler';
@@ -3003,7 +3004,9 @@ export const generateFunctionalDecompositionFromGitHub = async (
   filterFiles = null,
   opts = {}
 ) => {
+  let finishStorageWork;
   try {
+    if (opts.storageKey) finishStorageWork = beginArchitectureStorageWork(opts.storageKey);
     setLoading(true);
     const originalProgress = opts.onProgress;
     let lastProgress = {};
@@ -3587,6 +3590,7 @@ Rules:
     // Preserve last successful rows on acquisition, model or storage failure.
     throw error;
   } finally {
+    finishStorageWork?.();
     setLoading(false);
   }
 };
@@ -4446,7 +4450,7 @@ React.useEffect(() => {
           repoName={repoName}
           storageKey={storageKey}
           canvasToolsTarget={canvasToolsTarget}
-          preserveLayoutOnMount={!!focusTarget || !!queuedCsuFocusTarget}
+          preserveLayoutOnMount
           cleanOnceKey={cleanOnceKey}
           height={diagramHeight}
           onCleanApplied={() => setCleanOnceKey(null)}

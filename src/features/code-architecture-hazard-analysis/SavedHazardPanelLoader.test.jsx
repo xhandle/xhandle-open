@@ -38,6 +38,32 @@ it('never publishes a superseded project and cancels unmounted work',()=>{
  act(()=>root.render(null));
  expect(jest.getTimerCount()).toBe(0);
 });
+it.each([false,true])('shows one active-analysis indicator while large saved rows prepare (review mode %s)',reviewMode=>{
+ const stop=jest.fn();
+ act(()=>root.render(<Loader {...props} latestRun={makeRun('running')} isRunning reviewMode={reviewMode} onCancelAnalysis={stop} progress={{message:'Analyzing scenarios'}}/>));
+ expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
+ expect(host.querySelector('[role="progressbar"]').getAttribute('aria-label')).toBe('Analyzing scenarios');
+ expect(host.textContent).not.toContain('Preparing saved hazard results');
+ const button=[...host.querySelectorAll('button')].find(button=>button.textContent==='Stop analysis');
+ if(reviewMode)expect(button).toBeUndefined();
+ else {act(()=>button.click());expect(stop).toHaveBeenCalledTimes(1);}
+});
+it('keeps upgrade cancellation visible during large saved-result preparation without a competing loader',()=>{
+ const cancelUpgrade=jest.fn();
+ act(()=>root.render(<Loader {...props} latestRun={makeRun('upgrading')} restoration={{status:'upgrading',progress:40,cancelUpgrade}}/>));
+ expect(host.textContent).toContain('Upgrading saved table storage… 40%');
+ expect(host.querySelector('[role="progressbar"]')).toBeNull();
+ act(()=>[...host.querySelectorAll('button')].find(button=>button.textContent==='Cancel upgrade').click());
+ expect(cancelUpgrade).toHaveBeenCalledTimes(1);
+});
+it('retains restoration error and retry while preparing existing large results',()=>{
+ const retry=jest.fn();
+ act(()=>root.render(<Loader {...props} latestRun={makeRun('existing')} restoration={{status:'failed',error:'Storage temporarily unavailable',retry}}/>));
+ expect(host.querySelector('[role="alert"]').textContent).toContain('Previously loaded results are still shown');
+ expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
+ act(()=>[...host.querySelectorAll('button')].find(button=>button.textContent==='Retry loading').click());
+ expect(retry).toHaveBeenCalledTimes(1);
+});
 it('incremental normalization preserves the legacy row IDs including missing and repeated IDs',()=>{
  const sheet=[['Raw Analysis Row ID','Hazard'],['','one'],['same','two'],['same','three'],['','four']];
  const normalizer=createHazardRowNormalizer(sheet[0]);
@@ -123,4 +149,15 @@ it('preserves cache for unrelated run metadata updates while hidden',()=>{
  const before=cache,snapshot=cache.current;
  act(()=>root.render(<Workspace visible={false} value={{...run,updatedAt:'new timestamp',narrativeReview:{status:'done'}}}/>));
  expect(cache).toBe(before);expect(cache.current).toBe(snapshot);
+});
+
+it.each(['generation','revision'])('retires hidden continuous layout metadata when its saved %s changes',field=>{
+ const {PAGED_HAZARD}=require('./hazardRowIndex');
+ let cache;
+ const run={id:'saved',projectId:'p',repoId:'r',[PAGED_HAZARD]:{generation:'one',revision:'one'}};
+ function Workspace({value}){cache=useHazardPreparationCache({latestRun:value},'p');return null;}
+ act(()=>root.render(<Workspace value={run}/>));
+ const previous=cache;previous.current={kind:'continuous-hazard-layout',layout:{groups:[]}};
+ act(()=>root.render(<Workspace value={{...run,[PAGED_HAZARD]:{...run[PAGED_HAZARD],[field]:'two'}}}/>));
+ expect(previous.retired).toBe(true);expect(previous.current).toBeNull();expect(cache).not.toBe(previous);
 });

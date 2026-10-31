@@ -5,6 +5,11 @@ import { useResultsReview } from "../results-review/ResultsReviewProvider";
 import { rowIdentity } from "./artifactUtils";
 
 const REVIEW_REGISTRATION_BATCH_SIZE = 50;
+// Yield while constructing large queues, and publish bounded groups.
+// Publishing every small batch repeatedly copied and persisted the entire
+// global review collection, keeping the application busy for minutes.
+const REVIEW_PREPARATION_BATCH_SIZE = 250;
+const REVIEW_PUBLISH_BATCH_SIZE = 1000;
 
 export function useArtifactReview({
   rows = [],
@@ -47,16 +52,17 @@ export function useArtifactReview({
   latestReview.current = { review, reviewItems };
 
   useEffect(() => {
-    if (!enabled) return undefined;
+    if (!enabled || review.reviewReady === false) return undefined;
     if (!rows.length || !reviewColumns.length) return;
     let cancelled = false;
     let index = 0, timeoutId = null;
     const registered = new Set();
+    const pending = [];
     const createNextBatch = async () => {
       if (cancelled) return;
       const existingIds = new Set(latestReview.current.reviewItems.map(item => item.id));
       const batch = [];
-      const end = Math.min(rows.length, index + REVIEW_REGISTRATION_BATCH_SIZE);
+      const end = Math.min(rows.length, index + (index === 0 ? REVIEW_REGISTRATION_BATCH_SIZE : REVIEW_PREPARATION_BATCH_SIZE));
       for (; index < end; index++) {
         const row = rows[index], rowIndex = index;
         const rowId = rowIdentity(row, rowIndex);
@@ -72,13 +78,21 @@ export function useArtifactReview({
         }));
         registered.add(id);
       }
-      try {
-        if (batch.length) await latestReview.current.review.createReviewItems(batch);
-      } catch (error) {
-        console.warn('[artifact-review] Registration failed', error);
-        return;
+      pending.push(...batch);
+      // Make the first visible rows available promptly, then register bounded
+      // groups. Recheck existing IDs before publishing so a
+      // review added while preparation was yielding is never overwritten.
+      if (index === Math.min(rows.length, REVIEW_REGISTRATION_BATCH_SIZE) || pending.length >= REVIEW_PUBLISH_BATCH_SIZE || index === rows.length) {
+        const currentIds = new Set(latestReview.current.reviewItems.map(item => item.id));
+        const additions = pending.splice(0).filter(item => !currentIds.has(item.id));
+        try {
+          if (additions.length) await latestReview.current.review.createReviewItems(additions, { preserveExisting: true });
+        } catch (error) {
+          console.warn('[artifact-review] Registration failed', error);
+          return;
+        }
       }
-      if (!cancelled && index < rows.length) timeoutId = window.setTimeout(createNextBatch, 50);
+      if (!cancelled && index < rows.length) timeoutId = window.setTimeout(createNextBatch, 0);
     };
 
     timeoutId = window.setTimeout(createNextBatch, 0);
@@ -94,6 +108,7 @@ export function useArtifactReview({
     enabled,
     projectId,
     reviewColumns,
+    review.reviewReady,
     rows,
     sourceRunId,
   ]);

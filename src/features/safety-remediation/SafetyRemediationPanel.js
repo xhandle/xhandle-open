@@ -101,6 +101,7 @@ export default function SafetyRemediationPanel({
   selectedElement,
   hazardSummarySheet,
   codeArchitectureHazardAnalysis = null,
+  hazardAnalysisReady = true,
   isCodeArchitectureHazardAnalysisStale = false,
   riskRegister = [],
   repoMeta = {},
@@ -769,7 +770,7 @@ export default function SafetyRemediationPanel({
           </button>
         )}
       </div>
-      {!codeArchitectureHazardAnalysis && (
+      {hazardAnalysisReady && !codeArchitectureHazardAnalysis && (
         <div className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
           Run hazard analysis for this code architecture before generating remediation findings.
         </div>

@@ -186,6 +186,11 @@ export default function useHazardRunRestoration(options) {
     };
   }, [scope, projectId, connectionId, repoId, attempt, retry, enabled]);
 
-  return { ...(state.scope === scope ? state : { scope, status: 'loading', error: '', contextError: '' }),
-    scopeReady: state.scope === scope, retry, upgrade, cancelUpgrade };
+  // Disabled views intentionally do not read saved hazards. Mask a pending or
+  // failed read immediately when navigating away, without discarding its run.
+  const visibleState = !enabled
+    ? { scope, status: 'idle', progress: null, error: '', contextError: '' }
+    : state.scope === scope ? state : { scope, status: 'loading', error: '', contextError: '' };
+  return { ...visibleState,
+    scopeReady: enabled && state.scope === scope, retry, upgrade, cancelUpgrade };
 }

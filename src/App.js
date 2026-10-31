@@ -1,3 +1,5 @@
+import VirtualTableBody from "./components/VirtualTableBody";
+import { retainWorkspaceProject, persistWorkspaceProjectRemoval } from "./components/retainWorkspaceProject";
 import {readHazardReviewSummary} from './features/code-architecture-hazard-analysis/readHazardReviewSummary';
 import HazardRestorationNotice from './features/code-architecture-hazard-analysis/HazardRestorationNotice';
 import {PAGED_HAZARD} from './features/code-architecture-hazard-analysis/hazardRowIndex';
@@ -48,7 +50,7 @@ import useSidebarFolderDrag from "./hooks/useSidebarFolderDrag";
 import { loadSidebarPreferences, SIDEBAR_PREFERENCES_KEY } from "./lib/sidebarPreferences";
 import { createProjectRunGuard } from "./lib/projectRunGuard";
 import { chooseDecompositionRecovery, nextDecompositionVersion } from "./lib/decompositionRecovery";
-import { recoveryRecord, saveRecoveryRecord, flushRecoveryRecord, deleteProjectRecovery } from "./lib/durableRecovery";
+import { recoveryRecord, saveRecoveryRecord, flushRecoveryRecord } from "./lib/durableRecovery";
 import { functionalColumnFilterOptions } from './features/functional-decomposition/columnFilterOptions';
 import { editFunctionalSystem } from './components/functionalSystemGroups';
 import { fillNotApplicableHazardCells } from './features/project-hazard-analysis/hazardNotApplicableCells';
@@ -394,7 +396,6 @@ import {
   saveHazardAnalysisResetSnapshot,
 } from "./features/project-hazard-analysis/hazardAnalysisResetStorage";
 import {
-  deleteProjectHazardAnalysisRecord,
   loadProjectHazardAnalysisRecord,
   loadProjectHazardAnalysisRecordState,
   saveProjectHazardAnalysisRecord,
@@ -1752,7 +1753,7 @@ function makeRepoConfig({
 function normalizeCodeArchitectureProjects(raw) {
   if (!Array.isArray(raw)) return [];
   return raw
-    .filter((project) => project && project.id)
+    .filter((project) => project && ['string', 'number'].includes(typeof project.id) && String(project.id) !== '' && (typeof project.id !== 'number' || Number.isFinite(project.id)))
     .map((project) => {
       const repos = Array.isArray(project.repos) ? project.repos : [];
       const normalizedRepos = repos
@@ -1762,7 +1763,7 @@ function normalizeCodeArchitectureProjects(raw) {
           const name = String(repo.repo || repo.repoName || "").replace(/^.*\//, "").trim();
           const repoId = repo.repoId || normalizeRepoIdentity({ owner, repo: name });
           return {
-            id: repo.id || makeId(),
+            id: repo.id ?? makeId(),
             owner,
             repo: name,
             repoId,
@@ -1789,7 +1790,7 @@ function normalizeCodeArchitectureProjects(raw) {
         name: project.name || "Code architecture project",
         folderId: project.folderId || null,
         repos: normalizedRepos,
-        activeRepoId: project.activeRepoId || normalizedRepos[0]?.id || null,
+        activeRepoId: project.activeRepoId ?? normalizedRepos[0]?.id ?? null,
         createdAt: project.createdAt || new Date().toISOString(),
         updatedAt: project.updatedAt || project.createdAt || new Date().toISOString(),
       };
@@ -3780,13 +3781,6 @@ ${JSON.stringify(compactRows, null, 2)}
     };
   }
 }
-function removeProjectData(projectId) {
-  const map = readProjectMap();
-  if (map && Object.prototype.hasOwnProperty.call(map, projectId)) {
-    delete map[projectId];
-    writeProjectMap(map);
-  }
-}
 
 function repairDuplicateProjectIds(rawProjects) {
   const list = Array.isArray(rawProjects) ? rawProjects : [];
@@ -3948,6 +3942,8 @@ const [section, setSection] = useState(DEFAULT_START_SECTION); // 'projects' | '
   );
   const [dockExpanded, setDockExpanded] = useState(false);
 const [codeArchitectureProjects, setCodeArchitectureProjects] = useState(() => migrateLegacyCodeArchitectureProjects());
+const codeArchitectureProjectsForRemovalRef = useRef(codeArchitectureProjects);
+codeArchitectureProjectsForRemovalRef.current = codeArchitectureProjects;
 const [codeArchitectureFolders, setCodeArchitectureFolders] = useState(() => {
   try { return normalizeProjectFolders(JSON.parse(localStorage.getItem(CBA_FOLDERS_KEY) || "[]")); }
   catch { return []; }
@@ -5881,6 +5877,8 @@ Output: clean Markdown only (no surrounding backticks).
     try { return repairDuplicateProjectIds(JSON.parse(localStorage.getItem(PROJECTS_KEY) || '[]')); }
     catch { return []; }
   });
+  const projectsForRemovalRef = useRef(projects);
+  projectsForRemovalRef.current = projects;
   const [projectFolders, setProjectFolders] = useState(() => {
     try { return normalizeProjectFolders(JSON.parse(localStorage.getItem(PROJECT_FOLDERS_KEY) || '[]')); }
     catch { return []; }
@@ -6674,15 +6672,19 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
   };
 
   // Delete a project (with confirmation and cleanup)
-  const deleteProject = (projectId) => {
+  const deleteProject = async (projectId) => {
     const proj = projects.find(p => p.id === projectId);
     if (!proj) return;
-    if (!window.confirm(`Delete project "${proj.name}"? This will remove its locally stored data.`)) return;
+    if (!window.confirm(`Delete project "${proj.name}"? It will remain available to Restore or permanently delete in Settings → Storage.`)) return;
 
-    const remaining = projects.filter(p => p.id !== projectId);
-    setProjects(remaining);
+    try { await retainWorkspaceProject(proj, "xhandle.projects"); }
+    catch (error) { window.alert(`Project was not removed: ${error.message}`); return; }
+    let remaining;
+    try { remaining = persistWorkspaceProjectRemoval(proj, projectsForRemovalRef.current, PROJECTS_KEY); }
+    catch (error) { window.alert(`Project was not removed: ${error.message}`); return; }
+    setProjects(current => current.filter(entry => entry.id !== projectId));
 
-    if (activeProjectId === projectId) {
+    if (activeProjectIdRef.current === projectId) {
       const nextId = remaining[0]?.id || null;
       setActiveProjectId(nextId);
       setActiveProjectFolderId(null);
@@ -6695,16 +6697,8 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
         setShowPromptWizard(true);
       }
     }
-    deleteProjectRecovery(projectId).catch(error => {
-      window.alert(`Project removed, but recovery cleanup failed: ${error.message}. Retry cleanup from Storage settings.`);
-    });
-    removeProjectData(projectId);
-    deleteProjectHazardAnalysisRecord(projectId).catch((error) => {
-      console.warn("[project-hazard-storage] Failed to remove hazard artifacts for deleted project", error);
-    });
-    resultsReview.deleteReviewItemsForProject(projectId).catch((error) => {
-      console.warn("[results-review] Failed to remove review items for deleted project", error);
-    });
+    // Normal removal keeps project data available for faithful Storage restore.
+    // Destructive cleanup belongs to permanent deletion in Storage.
   };
 
   // Legacy Collaborator fallback only. Native LLM grounding is built from
@@ -7521,13 +7515,16 @@ const cancelCodeArchitectureRename = () => {
   setCodeArchitectureRenameError("");
 };
 
-const deleteCodeArchitectureProject = (projectId) => {
+const deleteCodeArchitectureProject = async (projectId) => {
   const project = codeArchitectureProjects.find((entry) => entry.id === projectId);
   if (!project) return;
   if (!window.confirm(`Delete Code-Based Architecture project "${project.name}"? This will remove the local project entry.`)) return;
-  const remaining = codeArchitectureProjects.filter((entry) => entry.id !== projectId);
-  setCodeArchitectureProjects(remaining);
-  if (activeCodeArchitectureProjectId === projectId) {
+  try { await retainWorkspaceProject(project, CBA_PROJECTS_KEY); }
+  catch (error) { window.alert(`Project was not removed: ${error.message}`); return; }
+  try { persistWorkspaceProjectRemoval(project, codeArchitectureProjectsForRemovalRef.current, CBA_PROJECTS_KEY); }
+  catch (error) { window.alert(`Project was not removed: ${error.message}`); return; }
+  setCodeArchitectureProjects(current => current.filter(entry => entry.id !== projectId));
+  if (activeCodeArchitectureProjectIdRef.current === projectId) {
     setActiveCodeArchitectureProjectId(null);
     setCbaTableData([]);
     setSelectedCbaElement(null);
@@ -7803,6 +7800,7 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const functionalDropdownRefs = useRef({});
   const functionalRowRefs = useRef({});
   const [highlightedFunctionalRowIndex, setHighlightedFunctionalRowIndex] = useState(null);
+  const [functionalRowFocusRequest, setFunctionalRowFocusRequest] = useState(0);
   const [functionalReviewRunId, setFunctionalReviewRunId] = useState(null);
   const [functionalFilterColumn, setFunctionalFilterColumn] = useState(null);
   const [functionalColumnFilters, setFunctionalColumnFilters] = useState({});
@@ -9576,6 +9574,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setFunctionalColumnFilters({});
     setFunctionalFilterColumn(null);
     setHighlightedFunctionalRowIndex(targetIndex);
+    setFunctionalRowFocusRequest(value => value + 1);
 
     setTimeout(() => {
       const rowEl = functionalRowRefs.current[targetIndex];
@@ -12177,13 +12176,17 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   };
   const activeFunctionalFilterCount = Object.values(functionalColumnFilters)
     .reduce((count, values) => count + (Array.isArray(values) ? values.length : 0), 0);
-  const filteredFunctionalRows = responseRows
+  const filteredFunctionalRows = useMemo(() => responseRows
     .map((row, originalIndex) => ({ row, originalIndex }))
     .filter(({ row }) =>
       Object.entries(functionalColumnFilters).every(([field, allowed]) =>
-        !allowed?.length || allowed.includes(getFunctionalCellValue(row, field))
+        !allowed?.length || allowed.includes(String(row?.[field] ?? '').trim())
       )
-    );
+    ), [responseRows, functionalColumnFilters]);
+  const functionalVirtualRowKey = useCallback(({ originalIndex }) => String(originalIndex), []);
+  const functionalVirtualSearchText = useCallback(({ row }) => (
+    functionalTableColumns.map(column => String(row[column.key] ?? '')).join(' ')
+  ), [functionalTableColumns]);
   const activeProjectDiagramKey = activeProjectId
     ? `diagram:${activeProjectId}:${loadedProjectId === activeProjectId && projectLoaded ? "ready" : "loading"}:${functionalDiagramImportVersion}`
     : "diagram:none";
@@ -17785,7 +17788,9 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
 	          )
           : cbaTableData.length > 0 ? (
           <div className="flex min-h-0 flex-1 flex-col gap-2">
-            {!hazardPagedView && <HazardRestorationNotice restoration={hazardRestoration} latestRun={codeArchitectureHazardRun} isRunning={isRunningCodeArchitectureHazard} />}
+            {/* Each tab owns its loading UI. Background hazard reads only surface
+                actionable failures here; loading and upgrades belong to Hazards. */}
+            {!hazardPagedView && (hazardRestoration.status === 'failed' || hazardRestoration.contextError) && <HazardRestorationNotice restoration={hazardRestoration} latestRun={codeArchitectureHazardRun} isRunning={isRunningCodeArchitectureHazard} />}
             {codeArchitectureWorkspaceTab === "architecture" ? (
               <div className="min-h-0 flex-1 overflow-hidden rounded-xl border bg-white p-3">
                 <FunctionalDecompositionTable
@@ -18045,6 +18050,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                       selectedElement={selectedCbaElement}
                       hazardSummarySheet={codeArchitectureHazardRun?.generatedSheets?.Summary}
                       codeArchitectureHazardAnalysis={codeArchitectureHazardRun}
+                      hazardAnalysisReady={Boolean(codeArchitectureHazardRun) || hazardRestoration.status === 'empty'}
                       isCodeArchitectureHazardAnalysisStale={
                         codeArchitectureHazardRun
                           ? isCodeArchitectureHazardAnalysisStale({ run: codeArchitectureHazardRun, cbaRows: cbaTableData, organizationContext: currentCbaOrganizationContext })
@@ -18699,7 +18705,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                             </button>
                           )}
                         </div>
-                        <table className="min-w-full border-separate border-spacing-0 text-sm text-left">
+                        <table className="min-w-full border-separate border-spacing-0 text-sm text-left text-[#374151]">
                           <thead>
                             <tr className="text-[#4B5563] text-sm font-medium">
                               {SHOW_TABLE_REVIEW_COLUMNS && functionalReviewItems.length > 0 && (
@@ -18808,8 +18814,14 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                               </th>
                             </tr>
                           </thead>
-                          <tbody className="text-[#374151] text-sm">
-                            {functionalViewMode !== 'diagram' && filteredFunctionalRows.map(({ row, originalIndex }, idx) => {
+                          {functionalViewMode !== 'diagram' && filteredFunctionalRows.length > 0 ? (
+                          <VirtualTableBody key={activeProjectId} items={filteredFunctionalRows}
+                            getKey={functionalVirtualRowKey}
+                            columns={functionalTableColumns.length + 1 + (SHOW_TABLE_REVIEW_COLUMNS && functionalReviewItems.length > 0 ? 1 : 0)}
+                            revealKey={highlightedFunctionalRowIndex == null ? null : String(highlightedFunctionalRowIndex)}
+                            requestKey={functionalRowFocusRequest}
+                            searchText={functionalVirtualSearchText} label="Functional Decomposition">
+                            {({ row, originalIndex }, idx) => {
                               const reviewItem = functionalReviewByRow.get(originalIndex);
                               const rejected = reviewItem?.status === REVIEW_STATUSES.REJECTED;
                               const highlighted = highlightedFunctionalRowIndex === originalIndex;
@@ -18896,7 +18908,9 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                                   </td>
                                 </tr>
                               );
-                            })}
+                            }}
+                          </VirtualTableBody>
+                          ) : <tbody className="text-[#374151] text-sm">
                             {filteredFunctionalRows.length === 0 && (
                               <tr>
                                 <td colSpan={functionalTableColumns.length + 1 + (SHOW_TABLE_REVIEW_COLUMNS && functionalReviewItems.length > 0 ? 1 : 0)} className="px-6 py-8 text-center text-sm text-gray-500">
@@ -18904,7 +18918,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                                 </td>
                               </tr>
                             )}
-                          </tbody>
+                          </tbody>}
                         </table>
                         </div>
                       </div>
@@ -21071,6 +21085,27 @@ const updateRiskInProject = async (projectId, predicate) => {
   }}
   onBaselineRepo={handleBaselineRepo} // ✅ runs the same analyzer as "Analyze"
   onAIProviderSaved={refreshGate}
+  isLogicalStorageBusy={scope => codeArchitectureAnalysisInFlightRef.current ||
+    codeArchitectureAnalysisScopeRef.current === scope ||
+    !!codeArchitectureHazardAbortRef.current || !!hazardContextSavePending.current ||
+    !!codeHazardRunsRef.current.get(scope.replace(/^cba:/, ''))?.running ||
+    !!codeHazardRunsRef.current.get(scope.replace(/^cba:/, ''))?.workPending}
+  onLogicalStorageDeleted={item => {
+    if (item.type === 'hazards') {
+      codeHazardRunsRef.current.discard(`${item.projectId}:${item.repoId}`);
+      if (item.scope === activeCodeArchitectureRowsKey) commitCodeArchitectureHazardRun(null);
+    }
+    if (item.type === 'architecture' && item.scope === activeCodeArchitectureRowsKey) {
+      publishCbaTableData(item.scope, []);
+      setDurableArchitectureMeta(null);
+      setSelectedCbaElement(null);
+      setActiveCodeArchitectureSelection(null);
+      setCbaLoading(false);
+      setCbaLoadingProgress(null);
+      setCbaLoadError('');
+    }
+    window.dispatchEvent(new CustomEvent('xhandle:data-changed', {detail:{source:'whole-item-storage-cleanup'}}));
+  }}
   onStorageDeleted={({ item, keys }) => {
     // Storage cleanup must update the owning React state, not just broadcast a
     // render tick: otherwise open views retain data and persistence can revive it.

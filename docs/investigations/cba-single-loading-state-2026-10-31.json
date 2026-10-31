@@ -1,0 +1,436 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-31",
+  "status": "Chrome and Electron passed all 11 UI phases: at most one visible loading indicator, zero when ready, populated hazard rows and working scroll.",
+  "methodology": {
+    "application": "Actual frozen production App, synthetic saved 15,000-row hazard run, 100 graph nodes and 1,000 rows per engineering artifact collection, disposable browser profiles and real IndexedDB/worker data.",
+    "observation": "Visible progressbars, working marks and loading text sampled each animation frame. Nested parts of the same loader are deduplicated; elements outside clipped/hidden content are excluded.",
+    "slowTransitions": "Fourfold main-thread CPU throttling makes short preparation transitions observable. No timings here are production performance measurements.",
+    "progressScreenshot": "Deliver genuine hazard worker progress through 11,400/15,000 rows = 76%, queue subsequent real messages while taking the screenshot, then release them unchanged. The image shows real progress, not a fabricated percentage or mocked loader.",
+    "readiness": "For asynchronous phases, first require an observed loading frame, then populated target content and at least four consecutive frames with no visible indicator or active hazard worker.",
+    "scroll": "Twelve trusted wheel inputs move the real hazard scroller after readiness."
+  },
+  "build": {
+    "path": "/tmp/xhandle-single-loading-20261031/build",
+    "assetManifestSha256": "a90c66bac31141ce4a5ea11282f5838d581c836589f803b7c5063b64c91cb43a",
+    "sourceManifest": {
+      "path": "/tmp/xhandle-single-loading-20261031/final-source-sha256.json",
+      "sha256": "10362bb04bcd33133d09fd38449e8591e3e77b5622ce712c1119908585e1e03f",
+      "bytes": 103223
+    },
+    "testedSourceManifest": {
+      "path": "/tmp/xhandle-single-loading-20261031/final-tested-source-sha256.json",
+      "sha256": "c6e34fb9c8b8061c0801cf6870109dcb5000fc7e2e02ced593c2653d19daedd0",
+      "bytes": 103223
+    }
+  },
+  "runs": {
+    "chrome": {
+      "raw": {
+        "path": "/tmp/xhandle-single-loading-20261031/chrome-checked.json",
+        "sha256": "f9dd87860ae1db221968d84f72c1cb1183c7f97dad504ee69ba9f68a9300fc63",
+        "bytes": 72524
+      },
+      "log": {
+        "path": "/tmp/xhandle-single-loading-20261031/chrome-checked.log",
+        "sha256": "bf8a2046c329e50513c490351296b06367bbe10fd4e1e61ba1e01bc1d40badce",
+        "bytes": 615
+      },
+      "runtime": {
+        "chrome": "156.0.8078.79"
+      },
+      "hardware": {
+        "cpu": "Apple M2",
+        "ram": 8589934592,
+        "arch": "arm64"
+      },
+      "entryAssetHashes": {
+        "static/css/main.356b585e.css": "a957371c332bee1550cd0c40f62e32c3a93034b1fef687344a7f9a8ee02bc83f",
+        "static/js/main.ac6db4f0.js": "8866b41e2f9d6172b79eb15ca70e3ebe1b24d27135707e14c9bf857f0b0af8df"
+      },
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "3111392488e9a3b11b07fc3e7877bd8e1c64d089655c1ee667db6d959d80ea86",
+        "desktop-performance-cba-scenario.cjs": "c59fcfb2277372e0d8cc58b8213bd2103a139477680a94f5476ea711172713ab",
+        "cba-rendering-regression.cjs": "2ecd712ab5a2ce124b7baf1cb37d22faa4cbd8d5ae2c5bf108c48ac4d45a204c",
+        "verify-cba-tab-loading.cjs": "269ac4b38d8a4f61117e649346310adc4636d26f11220952e89cea5f2319650e"
+      },
+      "seederSha256": "8dd4325e720497ca074eff033f90156f4aca661b6cc5d2b0edacc17b65543cbe",
+      "phases": [
+        {
+          "name": "Architecture Diagram",
+          "observedFrames": 35,
+          "loadingFrames": 17,
+          "maximumVisibleIndicators": 1,
+          "readyVisibleIndicators": 0,
+          "readyActiveHazardWorkers": 0,
+          "observedLoadingLabels": [
+            "Arranging diagram...",
+            "Loading saved analysis... 0%",
+            "Loading saved analysis... 21%",
+            "Loading saved analysis... 44%",
+            "Loading saved analysis... 50%",
+            "Loading saved analysis... 70%",
+            "Preparing saved analysis... 100%",
+            "Preparing saved analysis... 90%"
+          ]
+        },
+        {
+          "name": "Architecture Table",
+          "observedFrames": 19,
+          "loadingFrames": 0,
+          "maximumVisibleIndicators": 0,
+          "readyVisibleIndicators": 0,
+          "readyActiveHazardWorkers": 0,
+          "observedLoadingLabels": []
+        },
+        {
+          "name": "Software Requirements",
+          "observedFrames": 50,
+          "loadingFrames": 34,
+          "maximumVisibleIndicators": 1,
+          "readyVisibleIndicators": 0,
+          "readyActiveHazardWorkers": 0,
+          "observedLoadingLabels": [
+            "Loading software requirements table"
+          ]
+        },
+        {
+          "name": "System Requirements",
+          "observedFrames": 52,
+          "loadingFrames": 34,
+          "maximumVisibleIndicators": 1,
+          "readyVisibleIndicators": 0,
+          "readyActiveHazardWorkers": 0,
+          "observedLoadingLabels": [
+            "Loading system requirements table"
+          ]
+        },
+        {
+          "name": "Subsystem Requirements",
+          "observedFrames": 33,
+          "loadingFrames": 18,
+          "maximumVisibleIndicators": 1,
+          "readyVisibleIndicators": 0,
+          "readyActiveHazardWorkers": 0,
+          "observedLoadingLabels": [
+            "Loading subsystem requirements table"
+          ]
+        },
+        {
+          "name": "System / Subsystem Design",
+          "observedFrames": 22,
+          "loadingFrames": 12,
+          "maximumVisibleIndicators": 1,
+          "readyVisibleIndicators": 0,
+          "readyActiveHazardWorkers": 0,
+          "observedLoadingLabels": [
+            "Loading system / subsystem design table"
+          ]
+        },
+        {
+          "name": "Traceability Matrix",
+          "observedFrames": 20,
+          "loadingFrames": 8,
+          "maximumVisibleIndicators": 1,
+          "readyVisibleIndicators": 0,
+          "readyActiveHazardWorkers": 0,
+          "observedLoadingLabels": [
+            "Loading traceability matrix"
+          ]
+        },
+        {
+          "name": "Traceability refresh",
+          "observedFrames": 18,
+          "loadingFrames": 8,
+          "maximumVisibleIndicators": 1,
+          "readyVisibleIndicators": 0,
+          "readyActiveHazardWorkers": 0,
+          "observedLoadingLabels": [
+            "Loading traceability matrix"
+          ]
+        },
+        {
+          "name": "Hazard cold load",
+          "observedFrames": 81,
+          "loadingFrames": 64,
+          "maximumVisibleIndicators": 1,
+          "readyVisibleIndicators": 0,
+          "readyActiveHazardWorkers": 0,
+          "observedLoadingLabels": [
+            "Loading hazard rows",
+            "Loading saved results\u2026Retry loading",
+            "Preparing hazard analysis"
+          ]
+        },
+        {
+          "name": "Hazard short scroll",
+          "observedFrames": 18,
+          "loadingFrames": 0,
+          "maximumVisibleIndicators": 0,
+          "readyVisibleIndicators": 0,
+          "readyActiveHazardWorkers": 2,
+          "observedLoadingLabels": []
+        },
+        {
+          "name": "Safety Remediation",
+          "observedFrames": 12,
+          "loadingFrames": 0,
+          "maximumVisibleIndicators": 0,
+          "readyVisibleIndicators": 0,
+          "readyActiveHazardWorkers": 0,
+          "observedLoadingLabels": []
+        }
+      ],
+      "hazardProgressState": {
+        "progress": {
+          "completed": 11400,
+          "total": 15000
+        },
+        "count": 1,
+        "indicators": [
+          {
+            "role": "progressbar",
+            "label": "Preparing hazard analysis",
+            "text": "Preparing hazard analysis\u2026 76%",
+            "value": "76",
+            "marks": 1
+          }
+        ],
+        "activeHazardWorkers": 1
+      },
+      "screenshots": {
+        "hazardPreparing": {
+          "path": "/tmp/xhandle-single-loading-20261031/chrome-checked.json.hazard-preparing.png",
+          "sha256": "f84e226bc27a8982820678ec90e5170ba44bb032e081bdc04e3f7d283d29c759",
+          "bytes": 220180
+        },
+        "hazardReady": {
+          "path": "/tmp/xhandle-single-loading-20261031/chrome-checked.json.hazard-ready.png",
+          "sha256": "bba4771367b924bbb92086240b2e9bbac751f70aabaa1a86a5150ce3924e8027",
+          "bytes": 297276
+        }
+      },
+      "hazardScroll": {
+        "before": 0,
+        "after": 7200,
+        "renderedRows": 19
+      },
+      "pageErrors": []
+    },
+    "electron": {
+      "raw": {
+        "path": "/tmp/xhandle-single-loading-20261031/electron-checked.json",
+        "sha256": "9acfc9740bb45e4c858499d3ed4fe0b8d041515a19abdaccd3cf7aae8a0f8438",
+        "bytes": 67615
+      },
+      "log": {
+        "path": "/tmp/xhandle-single-loading-20261031/electron-checked.log",
+        "sha256": "d568f80287314d5b50df0e55e09d20bded55801e20abef7e322eb9497182bd15",
+        "bytes": 609
+      },
+      "runtime": {
+        "electron": "45.0.0",
+        "chrome": "156.0.8078.48",
+        "node": "24.22.0",
+        "v8": "15.6.75.19-electron.0"
+      },
+      "hardware": {
+        "cpu": "Apple M2",
+        "ram": 8589934592,
+        "arch": "arm64"
+      },
+      "entryAssetHashes": {
+        "static/css/main.356b585e.css": "a957371c332bee1550cd0c40f62e32c3a93034b1fef687344a7f9a8ee02bc83f",
+        "static/js/main.ac6db4f0.js": "8866b41e2f9d6172b79eb15ca70e3ebe1b24d27135707e14c9bf857f0b0af8df"
+      },
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "3111392488e9a3b11b07fc3e7877bd8e1c64d089655c1ee667db6d959d80ea86",
+        "desktop-performance-cba-scenario.cjs": "c59fcfb2277372e0d8cc58b8213bd2103a139477680a94f5476ea711172713ab",
+        "cba-rendering-regression.cjs": "2ecd712ab5a2ce124b7baf1cb37d22faa4cbd8d5ae2c5bf108c48ac4d45a204c",
+        "verify-cba-tab-loading.cjs": "269ac4b38d8a4f61117e649346310adc4636d26f11220952e89cea5f2319650e"
+      },
+      "seederSha256": "8dd4325e720497ca074eff033f90156f4aca661b6cc5d2b0edacc17b65543cbe",
+      "phases": [
+        {
+          "name": "Architecture Diagram",
+          "observedFrames": 37,
+          "loadingFrames": 16,
+          "maximumVisibleIndicators": 1,
+          "readyVisibleIndicators": 0,
+          "readyActiveHazardWorkers": 0,
+          "observedLoadingLabels": [
+            "Arranging diagram...",
+            "Loading saved analysis... 0%",
+            "Loading saved analysis... 21%",
+            "Loading saved analysis... 44%",
+            "Loading saved analysis... 72%",
+            "Preparing saved analysis... 100%",
+            "Preparing saved analysis... 90%"
+          ]
+        },
+        {
+          "name": "Architecture Table",
+          "observedFrames": 20,
+          "loadingFrames": 0,
+          "maximumVisibleIndicators": 0,
+          "readyVisibleIndicators": 0,
+          "readyActiveHazardWorkers": 0,
+          "observedLoadingLabels": []
+        },
+        {
+          "name": "Software Requirements",
+          "observedFrames": 51,
+          "loadingFrames": 32,
+          "maximumVisibleIndicators": 1,
+          "readyVisibleIndicators": 0,
+          "readyActiveHazardWorkers": 0,
+          "observedLoadingLabels": [
+            "Loading software requirements table"
+          ]
+        },
+        {
+          "name": "System Requirements",
+          "observedFrames": 54,
+          "loadingFrames": 34,
+          "maximumVisibleIndicators": 1,
+          "readyVisibleIndicators": 0,
+          "readyActiveHazardWorkers": 0,
+          "observedLoadingLabels": [
+            "Loading system requirements table"
+          ]
+        },
+        {
+          "name": "Subsystem Requirements",
+          "observedFrames": 34,
+          "loadingFrames": 19,
+          "maximumVisibleIndicators": 1,
+          "readyVisibleIndicators": 0,
+          "readyActiveHazardWorkers": 0,
+          "observedLoadingLabels": [
+            "Loading subsystem requirements table"
+          ]
+        },
+        {
+          "name": "System / Subsystem Design",
+          "observedFrames": 22,
+          "loadingFrames": 12,
+          "maximumVisibleIndicators": 1,
+          "readyVisibleIndicators": 0,
+          "readyActiveHazardWorkers": 0,
+          "observedLoadingLabels": [
+            "Loading system / subsystem design table"
+          ]
+        },
+        {
+          "name": "Traceability Matrix",
+          "observedFrames": 21,
+          "loadingFrames": 9,
+          "maximumVisibleIndicators": 1,
+          "readyVisibleIndicators": 0,
+          "readyActiveHazardWorkers": 0,
+          "observedLoadingLabels": [
+            "Loading traceability matrix"
+          ]
+        },
+        {
+          "name": "Traceability refresh",
+          "observedFrames": 18,
+          "loadingFrames": 8,
+          "maximumVisibleIndicators": 1,
+          "readyVisibleIndicators": 0,
+          "readyActiveHazardWorkers": 0,
+          "observedLoadingLabels": [
+            "Loading traceability matrix"
+          ]
+        },
+        {
+          "name": "Hazard cold load",
+          "observedFrames": 83,
+          "loadingFrames": 66,
+          "maximumVisibleIndicators": 1,
+          "readyVisibleIndicators": 0,
+          "readyActiveHazardWorkers": 0,
+          "observedLoadingLabels": [
+            "Loading hazard rows",
+            "Loading saved results\u2026Retry loading",
+            "Preparing hazard analysis"
+          ]
+        },
+        {
+          "name": "Hazard short scroll",
+          "observedFrames": 16,
+          "loadingFrames": 0,
+          "maximumVisibleIndicators": 0,
+          "readyVisibleIndicators": 0,
+          "readyActiveHazardWorkers": 2,
+          "observedLoadingLabels": []
+        },
+        {
+          "name": "Safety Remediation",
+          "observedFrames": 12,
+          "loadingFrames": 0,
+          "maximumVisibleIndicators": 0,
+          "readyVisibleIndicators": 0,
+          "readyActiveHazardWorkers": 0,
+          "observedLoadingLabels": []
+        }
+      ],
+      "hazardProgressState": {
+        "progress": {
+          "completed": 11400,
+          "total": 15000
+        },
+        "count": 1,
+        "indicators": [
+          {
+            "role": "progressbar",
+            "label": "Preparing hazard analysis",
+            "text": "Preparing hazard analysis\u2026 76%",
+            "value": "76",
+            "marks": 1
+          }
+        ],
+        "activeHazardWorkers": 1
+      },
+      "screenshots": {
+        "hazardPreparing": {
+          "path": "/tmp/xhandle-single-loading-20261031/electron-checked.json.hazard-preparing.png",
+          "sha256": "3256a76096185e32df38c127f8fcb9a9d45b97e4a8c777f38941bdd02e8fc63f",
+          "bytes": 208307
+        },
+        "hazardReady": {
+          "path": "/tmp/xhandle-single-loading-20261031/electron-checked.json.hazard-ready.png",
+          "sha256": "20b4b4f6a2c5879ca0deddd7686efa078b55e500fb443ff0638a3cde68b9f5ff",
+          "bytes": 260936
+        }
+      },
+      "hazardScroll": {
+        "before": 0,
+        "after": 7200,
+        "renderedRows": 19
+      },
+      "pageErrors": []
+    }
+  },
+  "initialHarnessFailure": {
+    "rawPartial": {
+      "path": "/tmp/xhandle-single-loading-20261031/chrome.json.loading-partial.json",
+      "sha256": "78f85f9f67f639647a434bf311954422f69055e4da5846c32f1a8727b2516478",
+      "bytes": 55898
+    },
+    "log": {
+      "path": "/tmp/xhandle-single-loading-20261031/chrome.log",
+      "sha256": "51d0e14807c68205ecf54b8ec72d97827ab5de0b0a6a8740ecdae3979d88f710",
+      "bytes": 1040
+    },
+    "reason": "The initial refresh check saw stale Traceability rows and a momentary idle gap before its refresh started. It stopped while the single refresh loader was becoming visible. No competing loaders were observed. The checked runs require observing loading and four consecutive idle frames."
+  },
+  "limits": [
+    "This verifies visible loading ownership in an isolated production App fixture; it does not measure loading performance or use the user's actual project.",
+    "Engineering reads remain real and are not intercepted; CPU throttling exposes their loading/preparation transitions. Only subsequent hazard worker messages are briefly delayed for the screenshot.",
+    "Architecture Table, short hazard scroll and Safety Remediation were ready without an observed loader in this fixture. Their ready state was checked, but a delayed loading transition on those paths was not exercised.",
+    "Storage-failure/retry and upgrade paths are covered by focused regression tests elsewhere, not fault-injected here.",
+    "Electron uses a disposable diagnostic BrowserWindow, not the installed native backend/updater or live user profile."
+  ],
+  "matchingBuildAssetsHarnessAndSeeder": true
+}

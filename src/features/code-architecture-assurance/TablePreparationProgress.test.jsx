@@ -12,6 +12,19 @@ function Probe({rows,scope}) {
 let root,host;
 beforeEach(()=>{jest.useFakeTimers();host=document.createElement('div');document.body.appendChild(host);root=createRoot(host);});
 afterEach(()=>{act(()=>root.unmount());host.remove();jest.useRealTimers();});
+it('does not announce a made-up percentage when completion is unknown',()=>{
+ act(()=>root.render(<TablePreparationProgress label="Loading saved results"/>));
+ const indicator=host.querySelector('[role="progressbar"]');
+ expect(indicator.getAttribute('aria-label')).toBe('Loading saved results');
+ expect(indicator.hasAttribute('aria-valuenow')).toBe(false);
+ expect(indicator.textContent).toBe('Loading saved results…');
+ act(()=>root.render(<TablePreparationProgress label="Loading saved results" progress={76.8}/>));
+ expect(indicator.getAttribute('aria-valuenow')).toBe('76');
+ expect(indicator.textContent).toBe('Loading saved results… 76%');
+ act(()=>root.render(<TablePreparationProgress label="Loading saved results" progress={null}/>));
+ expect(indicator.hasAttribute('aria-valuenow')).toBe(false);
+ expect(indicator.textContent).not.toContain('%');
+});
 const rows=prefix=>Array.from({length:250},(_,i)=>({id:`${prefix}-${i}`}));
 it('reports real chunk completion and finishes with every row',()=>{
  act(()=>root.render(<Probe rows={rows('A')} scope="a"/>));

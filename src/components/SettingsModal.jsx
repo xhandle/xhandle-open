@@ -1,3 +1,4 @@
+import { inventoryLogicalStorage, deleteLogicalStorageItem, logicalItemConfirmation } from './logicalStorageItems';
 import { reconcileStorageCleanup } from './storageCleanupWorkspace';
 import { readStoragePage, deleteStorageRecords, describeStorageItem } from './storageCategoryItems';
 import { inspectStorageStore } from './inspectStorageStore';
@@ -172,11 +173,13 @@ const CREDENTIAL_STORAGE_KEYS = new Set([
   "xhandle.localAIProviderSettings",
   "xhandle.aiProvider.keys",
 ]);
-function readStoredProjectList(key) {
+function readStoredProjectList(key, strict = false) {
   try {
     const parsed = JSON.parse(localStorage.getItem(key) || "[]");
+    if (!Array.isArray(parsed) && strict) throw new Error(`${key}: active project registry is not a list`);
     return Array.isArray(parsed) ? parsed : [];
-  } catch {
+  } catch (error) {
+    if (strict) throw error;
     return [];
   }
 }
@@ -287,6 +290,8 @@ export default function SettingsModal({
   onAIProviderSaved,
   onWorkspaceProjectRestored,
   onStorageDeleted,
+  onLogicalStorageDeleted,
+  isLogicalStorageBusy,
   activeProject = null,
   projectOrganizationProfile = null,
   onProjectOrganizationProfileChange,
@@ -512,9 +517,13 @@ export default function SettingsModal({
   const [providerModelsMsg, setProviderModelsMsg] = useState("");
   const [backupState, setBackupState] = useState(getLocalBackupState());
   const [backupMsg, setBackupMsg] = useState("");
+  const [logicalInventory, setLogicalInventory] = useState(null);
+  const [advancedStorage, setAdvancedStorage] = useState(false);
+  const [logicalProgress, setLogicalProgress] = useState("");
   const [storageInventory, setStorageInventory] = useState(null);
   const [storageBusy, setStorageBusy] = useState(false);
   const [storageMsg, setStorageMsg] = useState("");
+  const [projectDeletionProgress, setProjectDeletionProgress] = useState(null);
   const [selectedStorageItems, setSelectedStorageItems] = useState({});
   const [storagePages, setStoragePages] = useState({});
   const [selectedStorageRecords, setSelectedStorageRecords] = useState({});
@@ -549,6 +558,7 @@ export default function SettingsModal({
     finally { if (!signal.aborted) setLoadingStorageCategory(null); }
   };
   const [storedWorkspaceProjects, setStoredWorkspaceProjects] = useState([]);
+  const [projectInventoryError, setProjectInventoryError] = useState("");
   const storageTabScanStartedRef = useRef(false);
   const fileInputRef = useRef(null);
   const selectedSavedProvider = providerStatus?.savedProviders?.find(
@@ -644,12 +654,29 @@ export default function SettingsModal({
     storageScanRef.current = controller;
     const { signal } = controller;
     setStorageBusy(true);
+    setLogicalInventory(null);
     setStoragePages({});
     setExpandedStorage({});
     setSelectedStorageRecords({});
     setStorageMsg("");
     try {
       const warnings = [];
+      const functionalProjects = readStoredProjectList(ACTIVE_FUNCTIONAL_PROJECTS_KEY, true);
+      const codeArchitectureProjects = readStoredProjectList(ACTIVE_CODE_ARCHITECTURE_PROJECTS_KEY, true);
+      setProjectInventoryError("");
+      setStoredWorkspaceProjects(classifyStoredWorkspaceProjects([], functionalProjects, codeArchitectureProjects));
+      const graphProjects = await storageScanTimeout(() => listWorkspaceGraphProjects(), "Workspace visibility scan").catch(error => { if (!signal.aborted) setProjectInventoryError(`Retained project records unavailable: ${error.message}. Use Refresh to retry.`); return []; });
+      if (signal.aborted) return;
+      const mergedProjects = classifyStoredWorkspaceProjects(graphProjects, functionalProjects, codeArchitectureProjects);
+      setStoredWorkspaceProjects(mergedProjects);
+      try {
+        const logical = await inventoryLogicalStorage(mergedProjects);
+        if (!signal.aborted) setLogicalInventory(logical);
+      } catch (error) {
+        if (!signal.aborted) setLogicalInventory({ items: [], error: error.message });
+      }
+
+
       const usage = typeof navigator !== "undefined" && navigator.storage?.estimate
         ? await storageScanTimeout(() => navigator.storage.estimate(), "Browser quota estimate").catch(error => { warnings.push(error.message); return null; })
         : null;
@@ -706,15 +733,6 @@ export default function SettingsModal({
       }
       if (signal.aborted) return;
 
-      const functionalProjects = readStoredProjectList(ACTIVE_FUNCTIONAL_PROJECTS_KEY);
-      const codeArchitectureProjects = readStoredProjectList(ACTIVE_CODE_ARCHITECTURE_PROJECTS_KEY);
-      const graphProjects = await storageScanTimeout(() => listWorkspaceGraphProjects(), "Workspace visibility scan").catch(error => { warnings.push(error.message); return []; });
-      if (signal.aborted) return;
-      setStoredWorkspaceProjects(classifyStoredWorkspaceProjects(
-        graphProjects,
-        functionalProjects,
-        codeArchitectureProjects,
-      ));
 
       const items = [
         ...Object.values(localGroups),
@@ -732,7 +750,10 @@ export default function SettingsModal({
         return Object.fromEntries(Object.entries(current || {}).filter(([id]) => allowedIds.has(id)));
       });
     } catch (error) {
-      if (!signal.aborted) setStorageMsg(`❌ ${error?.message || error}`);
+      if (!signal.aborted) {
+        setProjectInventoryError(`Workspace inventory unavailable: ${error?.message || error}. Use Refresh to retry.`);
+        setStorageMsg(`❌ ${error?.message || error}`);
+      }
     } finally {
       if (!signal.aborted) setStorageBusy(false);
     }
@@ -888,6 +909,35 @@ export default function SettingsModal({
     }
   };
 
+  const deleteWholeItem = async item => {
+    if (storageBusy || !item.eligible || !window.confirm(logicalItemConfirmation(item))) return;
+    setStorageBusy(true);
+    setStorageMsg("");
+    try {
+      const pendingSaves = [];
+      window.dispatchEvent(new CustomEvent('xhandle:prepare-project-export', {detail:{projectId:item.projectId,tasks:pendingSaves}}));
+      await storageScanTimeout(() => Promise.all(pendingSaves), 'Saving pending edits');
+      const result = await deleteLogicalStorageItem(item, {
+        getProjects: async () => classifyStoredWorkspaceProjects(await storageScanTimeout(() => listWorkspaceGraphProjects(), "Project ownership check"),
+          readStoredProjectList(ACTIVE_FUNCTIONAL_PROJECTS_KEY, true),
+          readStoredProjectList(ACTIVE_CODE_ARCHITECTURE_PROJECTS_KEY, true)),
+        isBusy: scope => isLogicalStorageBusy?.(scope),
+        reconcile: deleted => onLogicalStorageDeleted?.(deleted),
+        onProgress: setLogicalProgress,
+      });
+      notifyBackupDataChanged('whole-item-storage-cleanup');
+      if (item.type === 'hazards') window.dispatchEvent(new CustomEvent('xhandle:code-architecture-hazard-analysis:changed'));
+      if (item.type === 'artifact') window.dispatchEvent(new CustomEvent('xhandle:code-architecture-assurance:changed', {detail:{kind:item.kind, projectId:item.projectId, repoId:item.repoId}}));
+      setLogicalProgress('Refreshing saved work');
+      await refreshStorageInventory();
+      setStorageMsg(`✅ ${item.type === 'temporary' ? 'Temporary data cleaned' : 'Saved work deleted'}. ${result.limitation}`);
+    } catch (error) {
+      await refreshStorageInventory();
+      if (item.type === 'artifact') window.dispatchEvent(new CustomEvent('xhandle:code-architecture-assurance:changed', {detail:{kind:item.kind, projectId:item.projectId, repoId:item.repoId}}));
+      setStorageMsg(`Cleanup did not complete: ${error.message} Some steps may have completed. Refresh and retry.`);
+    } finally { setLogicalProgress(''); setStorageBusy(false); }
+  };
+
   const toggleStorageItem = (itemId) => {
     setSelectedStorageItems((current) => ({
       ...current,
@@ -906,6 +956,7 @@ export default function SettingsModal({
   };
 
   const deleteSelectedStorageItems = async () => {
+    if (!advancedStorage) return;
     const items = (storageInventory?.items || []).filter((item) => selectedStorageItems[item.id] || selectedStorageRecords[item.id]?.length);
     if (!items.length) {
       setStorageMsg("Select at least one storage category to delete.");
@@ -948,11 +999,13 @@ export default function SettingsModal({
   };
 
   const restoreStoredWorkspaceProject = async (project) => {
-    if (!project?.recoverable || !project?.sourceData) return;
+    if (storageBusy || !project?.recoverable || !project?.sourceData) return;
     const storageKey = project.workspaceType === "code-architecture"
       ? ACTIVE_CODE_ARCHITECTURE_PROJECTS_KEY
       : ACTIVE_FUNCTIONAL_PROJECTS_KEY;
-    const projects = readStoredProjectList(storageKey);
+    let projects;
+    try { projects = readStoredProjectList(storageKey, true); }
+    catch (error) { setStorageMsg(`❌ Restore did not complete: ${error.message}. Repair the active registry and retry.`); return; }
     if (projects.some((entry) => String(entry?.id) === String(project.id))) {
       setStorageMsg(`ℹ️ ${project.name || "Project"} is already visible in the active workspace.`);
       await refreshStorageInventory();
@@ -960,7 +1013,7 @@ export default function SettingsModal({
     }
     const restored = {
       ...project.sourceData,
-      id: project.id,
+      id: project.sourceData.id ?? project.id,
       name: project.sourceData?.name || project.name || "Restored project",
       restoredAt: new Date().toISOString(),
     };
@@ -988,16 +1041,23 @@ export default function SettingsModal({
     setStorageBusy(true);
     setStorageMsg("");
     try {
-      await permanentlyDeleteStoredProject(project);
+      await permanentlyDeleteStoredProject(project, {
+        onProgress: progress => setProjectDeletionProgress({
+          ...progress, total: progress.total + 1, projectId: project.id,
+          workspaceType: project.workspaceType, name: project.name || "Unnamed project",
+        }),
+      });
       window.dispatchEvent?.(new CustomEvent("xhandle:data-changed", {
         detail: {source:"settings-project-permanent-delete",projectId:project.id},
       }));
       notifyBackupDataChanged("storage-project-permanent-delete");
-      setStorageMsg(`✅ Permanently deleted ${project.name || "project"}.`);
+      setProjectDeletionProgress(current => current && { ...current, label: "Refreshing the project list" });
       await refreshStorageInventory();
+      setStorageMsg(current => `✅ Permanently deleted ${project.name || "project"}.${current ? ` Inventory refresh: ${current}` : ""}`);
     } catch (error) {
       setStorageMsg(`❌ Cleanup did not complete: ${error?.message || error}. Some records may already have been removed. Refresh and retry cleanup.`);
     } finally {
+      setProjectDeletionProgress(null);
       setStorageBusy(false);
     }
   };
@@ -1849,7 +1909,7 @@ export default function SettingsModal({
               <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 text-sm space-y-2">
                 <div className="font-semibold">Estimated site storage: {storageInventory?.usageBytes != null ? formatStorageBytes(storageInventory.usageBytes) : storageBusy ? "Checking…" : "Unavailable"}</div>
                 {!!storageInventory?.quotaBytes && <div>Estimated site storage limit: {formatStorageBytes(storageInventory.quotaBytes)}</div>}
-                <p className="text-xs text-slate-500">The browser reports usage for this site, including caches and database overhead. Individual database sizes are not measured to avoid loading saved analyses. Record counts include internal storage records.</p>
+                <p className="text-xs text-slate-500">The browser reports usage for this site, including caches and database overhead. Saved item sizes are not measured to avoid loading large analyses.</p>
               </div>
               {storageInventory?.refreshedAt && <div className="text-xs text-slate-500">Last checked {new Date(storageInventory.refreshedAt).toLocaleString()}.</div>}
             </div>
@@ -1867,14 +1927,29 @@ export default function SettingsModal({
                     {storedWorkspaceProjects.filter((project) => project.active).length} active
                   </span>
                   <span className="rounded-full bg-amber-100 px-2 py-1 font-medium text-amber-800">
-                    {storedWorkspaceProjects.filter((project) => !project.active).length} removed
+                    {projectInventoryError ? "Removed inventory unavailable" : `${storedWorkspaceProjects.filter((project) => !project.active).length} removed`}
                   </span>
                 </div>
               </div>
+              {projectDeletionProgress && (
+                <div role="status" aria-live="polite" className="border-b border-blue-100 bg-blue-50 px-4 py-3">
+                  <div className="text-sm font-medium text-blue-950">Deleting {projectDeletionProgress.name}…</div>
+                  <div className="mt-1 text-xs text-blue-800">{projectDeletionProgress.label}</div>
+                  <progress
+                    aria-label={`Deletion progress for ${projectDeletionProgress.name}`}
+                    className="mt-2 h-2 w-full accent-blue-600"
+                    value={projectDeletionProgress.completed}
+                    max={projectDeletionProgress.total}
+                  />
+                  <div className="mt-1 text-xs text-blue-800">{projectDeletionProgress.completed} of {projectDeletionProgress.total} cleanup steps completed</div>
+                </div>
+              )}
+              {!!storageMsg && <div role="status" className="px-4 py-3 text-sm">{storageMsg}</div>}
+              {projectInventoryError && <div role="alert" className="px-4 py-3 text-sm text-amber-800">{projectInventoryError}</div>}
               {storedWorkspaceProjects.length ? (
-                <div className="max-h-48 divide-y divide-slate-100 overflow-auto">
+                <div className="divide-y divide-slate-100">
                   {storedWorkspaceProjects.map((project) => (
-                    <div key={`${project.workspaceType}:${project.id}`} className={`flex items-center gap-3 px-4 py-3 ${project.active ? "bg-white" : "bg-amber-50/50"}`}>
+                    <div key={`${project.workspaceType}:${project.id}`} className={`flex flex-wrap items-center gap-3 px-4 py-3 ${project.active ? "bg-white" : "bg-amber-50/50"}`}>
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="truncate text-sm font-medium text-slate-900">{project.name || "Unnamed project"}</span>
@@ -1886,6 +1961,22 @@ export default function SettingsModal({
                           {project.workspaceType === "code-architecture" ? "Code-Based Architecture" : "Projects"} workspace
                           {project.updatedAt ? ` · Stored ${new Date(project.updatedAt).toLocaleString()}` : ""}
                         </div>
+                      </div>
+                      <div className="order-last w-full space-y-2 pl-2" aria-label={`Saved work for ${project.name || 'project'}`}>
+                        {!logicalInventory ? <p className="text-xs text-slate-500">Checking saved work…</p>
+                          : logicalInventory.error ? <p role="alert">Saved work unavailable: {logicalInventory.error}</p>
+                          : logicalInventory.items.filter(item => item.workspaceType === project.workspaceType && String(item.projectId) === String(project.id)).map(item => (
+                            <div key={item.id} className="rounded-lg border p-3 text-sm">
+                              <div className="font-medium">{item.label} · {item.repository}</div>
+                              <p className="text-xs text-slate-500">{item.state}{item.savedAt && !Number.isNaN(Date.parse(item.savedAt)) ? ` · Saved ${new Date(item.savedAt).toLocaleString()}` : ''}</p>
+                              {item.reason && <p className="text-xs text-amber-800">{item.reason}</p>}
+                              <button type="button" className="mt-2 rounded border px-3 py-1 disabled:opacity-50"
+                                disabled={storageBusy || !item.eligible || isLogicalStorageBusy?.(item.scope)} onClick={() => deleteWholeItem(item)}>
+                                {item.type === 'legacy' ? 'Cleanup unavailable' : item.type === 'temporary' ? 'Clean temporary data' : item.type === 'history' ? 'Delete previous versions' : item.type === 'artifact' ? 'Delete saved collection' : item.type === 'hazards' ? 'Delete saved hazard analyses' : 'Delete saved analysis'}
+                              </button>
+                            </div>
+                          ))}
+                        {logicalInventory && !logicalInventory.error && !logicalInventory.items.some(item => item.workspaceType === project.workspaceType && String(item.projectId) === String(project.id)) && <p className="text-xs text-slate-500">No supported saved items found. Older project formats and other saved work require Advanced storage details to inspect; their availability has not been established.</p>}
                       </div>
                       {!project.active && (
                         <div className="flex shrink-0 flex-wrap gap-2">
@@ -1905,7 +1996,7 @@ export default function SettingsModal({
                           onClick={() => permanentlyDeleteWorkspaceProject(project)}
                           aria-label={`Permanently delete ${project.name || "project"}`}
                         >
-                          Permanently delete
+                          {projectDeletionProgress?.workspaceType === project.workspaceType && String(projectDeletionProgress.projectId) === String(project.id) ? "Deleting…" : "Permanently delete"}
                         </button>
                         </div>
                       )}
@@ -1914,11 +2005,21 @@ export default function SettingsModal({
                 </div>
               ) : (
                 <div className="px-4 py-5 text-sm text-slate-500">
-                  {storageBusy ? "Checking workspace visibility…" : "No recoverable workspace project records were found."}
+                  {storageBusy ? "Checking workspace visibility…" : projectInventoryError ? "Workspace retained inventory could not be checked." : "No recoverable workspace project records were found."}
                 </div>
               )}
             </div>
 
+            {logicalProgress && <div role="status" aria-live="polite">{logicalProgress}</div>}
+            {logicalInventory?.warnings?.map(warning => <p key={warning} role="alert" className="text-sm text-amber-800">{warning}</p>)}
+            {logicalInventory?.unassigned && <p className="text-sm text-amber-800">Additional internal or unassigned data is available in Advanced storage details. Ownership has not been assumed.</p>}
+            <button type="button" onClick={refreshStorageInventory} disabled={storageBusy} className="rounded border px-3 py-2">Refresh saved work</button>
+            <details open={advancedStorage} onToggle={event => {
+              setAdvancedStorage(event.currentTarget.open);
+              if (!event.currentTarget.open) { setSelectedStorageItems({}); setSelectedStorageRecords({}); }
+            }}>
+              <summary className="cursor-pointer font-semibold">Advanced storage details</summary>
+              <p className="my-3 text-sm text-amber-800">Diagnostic tools: raw records may be parts of larger saved items. Deleting them individually can damage saved work or recovery. Credentials are separate and require explicit selection.</p>
             <div className="flex flex-wrap items-center gap-2">
               <button
                 className="bg-slate-900 hover:bg-slate-800 text-white rounded px-3 py-2 disabled:opacity-50"
@@ -2024,12 +2125,11 @@ export default function SettingsModal({
               </div>
             )}
 
-            {!!storageMsg && <div className="text-sm">{storageMsg}</div>}
-
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
               Deleting browser data may remove projects, generated analyses, review decisions, diagram layouts, and cached source indexes. Use Backup first if you may need this data later.
             </div>
 
+            </details>
             <div className="flex items-center gap-2 pt-1">
               <button className="ml-auto px-3 py-2" onClick={onClose}>
                 Close

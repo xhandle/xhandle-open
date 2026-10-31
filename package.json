@@ -86,6 +86,7 @@
     "rehype-raw": "^7.0.0",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
+    "sha.js": "^2.4.12",
     "sqlite3": "^5.1.7",
     "stream-http": "^3.2.0",
     "url": "^0.11.0",

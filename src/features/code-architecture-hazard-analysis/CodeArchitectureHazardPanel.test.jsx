@@ -163,7 +163,7 @@ it('shows the shared working icon and preparation percentage instead of the old 
  try{
   const progress=host.querySelector('[role="progressbar"]');
   expect(progress.getAttribute('aria-valuenow')).toBe('42');
-  expect(progress.textContent).toBe('42%');
+  expect(progress.textContent).toBe('Preparing hazard analysis… 42%');
   expect(progress.querySelector('.xhandle-working-mark img').getAttribute('src')).toBe('/favicon.png');
   expect(host.textContent).not.toContain('Preparing hazard table…');
  }finally{act(()=>root.unmount());host.remove();}
@@ -187,6 +187,21 @@ it('keeps the summary visible with a separate refresh failure notice',()=>{
   const {host,root}=renderPanel({latestRun:{generatedSheets:{Summary:[['Function'],['Saved function']]}},restoration:{status:'failed',error:'busy',retry:jest.fn()}});
   try {expect(host.textContent).toContain('Previously loaded results are still shown');expect(host.textContent).toContain('Summary');}
   finally{act(()=>root.unmount());host.remove();}
+});
+it('does not show a routine restoration loader beside already available results',()=>{
+ const {host,root}=renderPanel({latestRun:{generatedSheets:{Summary:[['Function'],['Saved function']]}},restoration:{status:'loading',progress:25,retry:jest.fn()}});
+ try{expect(host.textContent).toContain('Summary');expect(host.textContent).not.toMatch(/Refreshing saved results|Retry loading|25%/);}
+ finally{act(()=>root.unmount());host.remove();}
+});
+it('preserves the upgrade cancellation control while suppressing draft preparation',()=>{
+ const cancelUpgrade=jest.fn();
+ const {host,root}=renderPanel({latestRun:{generatedSheets:{Summary:[['Function'],['Saved function']]}},draftLoading:true,draftProgress:80,restoration:{status:'upgrading',progress:31,cancelUpgrade}});
+ try{
+  expect(host.textContent).toContain('Upgrading saved table storage… 31%');
+  expect(host.textContent).not.toContain('80%');
+  act(()=>[...host.querySelectorAll('button')].find(button=>button.textContent==='Cancel upgrade').click());
+  expect(cancelUpgrade).toHaveBeenCalledTimes(1);
+ }finally{act(()=>root.unmount());host.remove();}
 });
 it('shows a separate context save warning without hiding the summary',()=>{
   const {host,root}=renderPanel({latestRun:{generatedSheets:{Summary:[['Function'],['Saved function']]}},restoration:{status:'loaded',contextError:'quota',retry:jest.fn()}});

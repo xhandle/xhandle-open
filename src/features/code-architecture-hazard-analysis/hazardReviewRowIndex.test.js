@@ -19,3 +19,9 @@ test('an index belongs to its supplied snapshot', () => {
   expect(createHazardReviewRowIndex([['HA-1']], headers).find(['HA-2'])).toBe(-1);
   expect(createHazardReviewRowIndex([['HA-2']], headers).find(['HA-2'])).toBe(0);
 });
+
+test('an absent stable row ID never scans or hashes unrelated review narratives',()=>{
+ const expensive={toJSON:()=>{throw Error('Unrelated narrative was scanned');}};
+ const index=createHazardReviewRowIndex([['reviewed',expensive]],['Raw Analysis Row ID','Hazard']);
+ expect(index.find(['different','Other hazard'])).toBe(-1);
+});

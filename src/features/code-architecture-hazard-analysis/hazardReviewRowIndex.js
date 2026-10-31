@@ -33,7 +33,10 @@ export function createHazardReviewRowIndex(rows, headers = []) {
   return {
     find(row) {
       const id = idColumn >= 0 ? row[idColumn] : null;
-      if (id && byId.has(id)) {
+      if (id) {
+        // Exact row equality includes the stable ID; a missing ID cannot match
+        // another row and must not trigger hashing all unrelated narratives.
+        if (!byId.has(id)) return -1;
         const match = byId.get(id).find(index => equalRows(rows[index], row));
         if (match !== undefined) return match;
         return -1;

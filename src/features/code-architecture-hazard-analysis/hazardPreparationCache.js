@@ -1,4 +1,5 @@
 import { useRef } from 'react';
+import {PAGED_HAZARD} from './hazardRowIndex';
 
 const EMPTY = [];
 export const samePreparationInputs = (a, b) => Boolean(a && b && a.length === b.length && a.every((value, index) => Object.is(value, b[index])));
@@ -6,7 +7,8 @@ export const samePreparationInputs = (a, b) => Boolean(a && b && a.length === b.
 export function hazardPreparationInputs({ latestRun: run, cbaRows = EMPTY, operationalContexts = EMPTY, selectedOperationalContextId = 'all', organizationContext }) {
   return [run?.generatedSheets?.Summary, cbaRows, operationalContexts, selectedOperationalContextId, organizationContext,
     run?.id, run?.projectId, run?.repoId, run?.analysisAbstraction, run?.functionalModelSnapshotHash,
-    run?.architectureSnapshotHash, run?.organizationProfileProvenance, run?.operationalContexts, run?.selectedOperationalContextId];
+    run?.architectureSnapshotHash, run?.organizationProfileProvenance, run?.operationalContexts, run?.selectedOperationalContextId,
+    run?.[PAGED_HAZARD]?.generation, run?.[PAGED_HAZARD]?.revision];
 }
 
 // Owned by the workspace, so hidden panels cannot retain replaced inputs.

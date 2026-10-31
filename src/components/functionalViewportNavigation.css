@@ -1,0 +1,11 @@
+/* Promote the complete large project scene only while its scale changes.
+   Text, ports and interaction elements keep their usual presentation. */
+.project-functional-diagram[data-viewport-moving] .react-flow__viewport {
+  will-change: transform;
+}
+
+@media print {
+  .project-functional-diagram[data-viewport-moving] .react-flow__viewport {
+    will-change: auto;
+  }
+}

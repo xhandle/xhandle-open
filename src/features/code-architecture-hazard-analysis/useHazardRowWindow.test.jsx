@@ -5,6 +5,9 @@ global.IS_REACT_ACT_ENVIRONMENT=true;
 const columns=[{index:0}],widths={},collapsed=new Set();
 const makeGroups=()=>[{key:'group',items:Array.from({length:1000},(_,i)=>({rowIndex:i,row:['short']}))}];
 let windowResult;
+beforeEach(()=>jest.useFakeTimers());
+afterEach(()=>jest.useRealTimers());
+const flushFrames=(count=8)=>{for(let i=0;i<count;i++)act(()=>jest.advanceTimersByTime(17));};
 function Probe({groups,hidden=collapsed,columnWidths=widths,datasetKey='one',rowIdentity}){
  const tableRef=useRef();
  windowResult=useHazardRowWindow(groups,hidden,columns,columnWidths,tableRef,datasetKey,rowIdentity);
@@ -18,6 +21,7 @@ test('reveals distant rows through measured height changes',()=>{
   act(()=>root.render(<Probe groups={makeGroups()}/>));
   const ready=jest.fn();
   act(()=>windowResult.reveal(999,ready));
+  flushFrames();
   expect(ready).toHaveBeenCalledTimes(1);
   expect(ready.mock.calls[0][0].dataset.windowKey).toBe('row:999');
   expect(host.querySelector('[data-window-key="row:999"]')).not.toBeNull();
@@ -45,9 +49,11 @@ test('keeps a row and relative offset through resize, and resets for another dat
   act(()=>root.render(<Probe groups={groups}/>));
   act(()=>windowResult.reveal(500));
   const scroller=host.querySelector('table').parentElement;
-  await act(async()=>{scroller.scrollTop+=37;scroller.dispatchEvent(new Event('scroll'));await new Promise(r=>setTimeout(r,30));});
+  await act(async()=>{scroller.scrollTop+=37;scroller.dispatchEvent(new Event('scroll'));jest.advanceTimersByTime(30);});
+  flushFrames();
   height=600;
   act(()=>root.render(<Probe groups={groups} columnWidths={{0:120}}/>));
+  flushFrames();
   expect(host.querySelector('[data-window-key="row:500"]')).not.toBeNull();
   expect(scroller.scrollTop).toBeGreaterThan(10000);
   const anchored=scroller.scrollTop;
@@ -91,6 +97,7 @@ test('retains a stable row ID when deletion renumbers row indexes',()=>{
   expect(target).not.toBeNull();
   const ready=jest.fn();
   act(()=>windowResult.reveal(499,ready));
+  flushFrames();
   expect(ready).toHaveBeenCalledWith(target);
  }finally{act(()=>root.unmount());host.remove();}
 });

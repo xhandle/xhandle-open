@@ -1,6 +1,7 @@
 import React from "react";
 import XHandleWorkingMark from "../../components/XHandleWorkingMark";
-export default function HazardRestorationNotice({restoration,latestRun,isRunning=false}){
+export default function HazardRestorationNotice({restoration,latestRun,isRunning=false,showLoading=true}){
+  if(!showLoading && restoration?.status==='loading' && !restoration.contextError)return null;
   return restoration && !isRunning && (
     ['loading', 'failed', 'upgrade-required', 'upgrading'].includes(restoration.status) || restoration.contextError
   ) ? <div role={restoration.status === 'failed' || restoration.contextError ? 'alert' : 'status'} className="shrink-0 border border-slate-200 bg-slate-50 p-3 text-sm">

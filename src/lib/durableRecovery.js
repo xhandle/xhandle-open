@@ -86,11 +86,18 @@ export function flushRecoveryRecord(key) {
 
 // Block late producers immediately, then drain any in-flight transaction before
 // deleting. IDs are unique; a newly created project has a different identity.
-export async function deleteProjectRecovery(projectId) {
+export async function quiesceProjectRecovery(projectId) {
   const keys = ['decomposition', 'decomposition-candidate', 'hazard-run'].map(prefix => `${prefix}:${projectId}`);
+  const newlyBlocked = keys.filter(key => !deletedKeys.has(key));
   keys.forEach(key => deletedKeys.add(key));
   await Promise.all(keys.map(async key => {
     try { await flushRecoveryRecord(key); } catch {}
-    await recoveryRecord(key, undefined, true);
   }));
+  return () => newlyBlocked.forEach(key => deletedKeys.delete(key));
+}
+
+export async function deleteProjectRecovery(projectId) {
+  await quiesceProjectRecovery(projectId);
+  const keys = ['decomposition', 'decomposition-candidate', 'hazard-run'].map(prefix => `${prefix}:${projectId}`);
+  await Promise.all(keys.map(key => recoveryRecord(key, undefined, true)));
 }

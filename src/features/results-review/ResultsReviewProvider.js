@@ -36,6 +36,7 @@ function reviewItemBelongsToProject(item = {}, projectId) {
 
 export function ResultsReviewProvider({ children, readOnly = false, initialReviewItems = null }) {
   const [reviewItems, setReviewItems] = useState([]);
+  const [reviewReady, setReviewReady] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerExpanded, setDrawerExpanded] = useState(false);
   const [drawerOptions, setDrawerOptions] = useState({});
@@ -46,6 +47,7 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
 
   useEffect(() => {
     let cancelled = false;
+    setReviewReady(false);
     const loader = Array.isArray(initialReviewItems)
       ? Promise.resolve(initialReviewItems)
       : loadReviewItems();
@@ -55,11 +57,12 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
           const nextItems = Array.isArray(items) ? items : [];
           reviewItemsRef.current = nextItems;
           setReviewItems(nextItems);
+          setReviewReady(true);
         }
       })
       .catch((error) => {
         console.warn("[results-review] failed to initialize", error);
-        if (!cancelled) setReviewItems([]);
+        if (!cancelled) { setReviewItems([]); setReviewReady(true); }
       });
     return () => {
       cancelled = true;
@@ -125,13 +128,14 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
     setDrawerOpen((open) => !open);
   }, []);
 
-  const createReviewItems = useCallback(async (items = []) => {
+  const createReviewItems = useCallback(async (items = [], { preserveExisting = false } = {}) => {
     if (readOnly) return [];
     const normalized = (Array.isArray(items) ? items : []).map(normalizeReviewItem);
     await persist((prev) => {
       const byId = new Map(prev.map((item) => [item.id, item]));
       normalized.forEach((item) => {
         const existing = byId.get(item.id);
+        if (existing && preserveExisting) return;
         byId.set(item.id, existing ? { ...existing, ...item, originalContent: existing.originalContent } : item);
       });
       return Array.from(byId.values());
@@ -316,6 +320,7 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
 
   const value = useMemo(() => ({
     reviewItems,
+    reviewReady,
     /** Non-null when review evidence is in memory only and will not survive a reload. */
     persistenceFailure,
     openResultsReviewDrawer,
@@ -338,6 +343,7 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
     supersedeReviewItem,
   }), [
     reviewItems,
+    reviewReady,
     openResultsReviewDrawer,
     closeResultsReviewDrawer,
     toggleResultsReviewDrawer,

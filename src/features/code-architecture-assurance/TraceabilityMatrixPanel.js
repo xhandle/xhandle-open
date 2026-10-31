@@ -1,4 +1,3 @@
-import TablePreparationProgress from './TablePreparationProgress';
 import { buildFunctionalModelRows } from '../code-architecture-context/functionalModel';
 import React, { useEffect, useState } from "react";
 import { ARTIFACT_KINDS, TRACEABILITY_MATRIX_COLUMNS } from "./artifactDefinitions";
@@ -524,13 +523,13 @@ export default function TraceabilityMatrixPanel({
           <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700">DES: {displayedArtifacts.designRows.length}</span>
         </div>
       </div>
-      {loadState.error ? <div role="alert">{loadState.error} <button onClick={() => setRefreshToken(value => value + 1)}>Retry loading</button></div>
-        : loadState.loading ? <TablePreparationProgress label="Loading traceability data" progress={loadState.progress} />
-        : !ready ? <TablePreparationProgress label="Building traceability chains" progress={0} />
-        : null}
-      {hasBuilt && <EngineeringArtifactTable
+      {loadState.error && <div role="alert">{loadState.error} <button onClick={() => setRefreshToken(value => value + 1)}>Retry loading</button></div>}
+      <EngineeringArtifactTable
         key={scope}
-        preparationLabel="Preparing traceability matrix table"
+        loading={!loadState.error && (loadState.loading || !ready)}
+        loadingLabel="Loading traceability matrix"
+        preparationLabel="Loading traceability matrix"
+        loadingError={loadState.error}
         copyLabel="Copy traceability matrix table"
         rows={rows}
         columns={TRACEABILITY_MATRIX_COLUMNS}
@@ -541,7 +540,7 @@ export default function TraceabilityMatrixPanel({
         showActions={false}
         showReview={false}
         readOnly
-      />}
+      />
     </div>
   );
 }

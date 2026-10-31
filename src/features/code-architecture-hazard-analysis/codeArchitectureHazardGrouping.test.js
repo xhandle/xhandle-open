@@ -1,5 +1,7 @@
 const {
   buildCodeArchitectureHazardGroups,
+  createCodeArchitectureHazardLayout,
+  HAZARD_LAYOUT_LIMIT_BYTES,
   filterCodeArchitectureHazardRowsByContext,
 } = require("./codeArchitectureHazardGrouping");
 
@@ -47,5 +49,35 @@ describe("code architecture hazard grouping", () => {
   it("keeps all rows for the all-context selection and fails closed for legacy rows", () => {
     expect(filterCodeArchitectureHazardRowsByContext(headers, rows, "all")).toBe(rows);
     expect(filterCodeArchitectureHazardRowsByContext(headers.slice(0, 4), rows, "normal")).toEqual([]);
+  });
+
+  it("bounds remote group metadata without retaining long row text or merging suffix differences", () => {
+    const layout = createCodeArchitectureHazardLayout(headers);
+    const action = "X".repeat(50000);
+    for (let index = 0; index < 100; index++) layout.addRow(index, ["Plan", `${action}${index}`, "Control"]);
+    layout.addRow(100, [" plan ", `${action.toLowerCase()}0`, "control"]);
+    const result = layout.finish();
+    expect(result.groups).toHaveLength(100);
+    expect(result.groups[0].rowIndices).toEqual([0, 100]);
+    expect(result.indices).toEqual(Array.from({length: 101}, (_, index) => index));
+    expect(result.groups.every(group => group.label.length <= 512 && group.key.length === 64)).toBe(true);
+    expect(JSON.stringify(result)).not.toContain(action);
+    expect(result.metadataBytes).toBeLessThan(160000);
+  });
+
+  it("rejects oversized headers, groups and numeric row coordinates before exceeding the outline budget", () => {
+    expect(HAZARD_LAYOUT_LIMIT_BYTES).toBe(32 * 1024 * 1024);
+    expect(() => createCodeArchitectureHazardLayout(["x".repeat(HAZARD_LAYOUT_LIMIT_BYTES / 2)]))
+      .toThrow("Narrow the table filters");
+    for (const distinct of [false, true]) {
+      const layout = createCodeArchitectureHazardLayout(headers, {maxBytes: 4096});
+      expect(() => {
+        for (let index = 0; index < 200; index++) layout.addRow(index, ["Plan", distinct ? `Action ${index}` : "Command", "Control"]);
+      }).toThrow("Narrow the table filters");
+      const result = layout.finish();
+      expect(result.metadataBytes).toBeLessThanOrEqual(4096);
+      expect(result.indices.length).toBeLessThan(200);
+      expect(result.groups.reduce((total, group) => total + group.rowCount, 0)).toBe(result.total);
+    }
   });
 });

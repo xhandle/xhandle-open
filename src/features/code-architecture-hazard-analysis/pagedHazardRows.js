@@ -6,6 +6,7 @@ import {validateHazardRowIndex,PAGED_HAZARD} from './hazardRowIndex';
 import {createValueAssembler} from '../code-architecture-transfer/archiveValueStream';
 import {createHazardRowNormalizer} from '../project-hazard-analysis/classificationResolutionStatus';
 import {fillNotApplicableHazardCells} from '../project-hazard-analysis/hazardNotApplicableCells';
+import {createCodeArchitectureHazardLayout} from './codeArchitectureHazardGrouping';
 const check=signal=>{if(signal?.aborted)throw new DOMException('Table read cancelled.','AbortError');};
 export async function queryHazardRows(run,{operation='page',raw=false,field,target,partial=false,offset=0,limit=100,indices,filters={},search='',context='all',column=0,optionSearch='',signal,onProgress=()=>{}}={}){
  const descriptor=run[PAGED_HAZARD];if(!descriptor)throw Error('This run has no saved row provider.');
@@ -45,8 +46,9 @@ export async function queryHazardRows(run,{operation='page',raw=false,field,targ
   const contextIndex=headers.findIndex(h=>['operational context id','context id'].includes(String(h).toLowerCase()));
   const matchesTarget=createHazardAssociationMatcher(headers,target);
   const text=v=>String(v??'').trim();
-  if(operation==='query' || operation==='options'){
+  if(operation==='query' || operation==='options' || operation==='layout'){
    let optionBytes=0,truncated=false;const matches=[],options=new Set(),needle=search.trim().toLowerCase(),optionNeedle=optionSearch.trim().toLowerCase();
+   const layout=operation==='layout'?createCodeArchitectureHazardLayout(headers):null;
    for(let i=0;i<index.spans.length;i++){
     check(signal);const cells=await row(i);
     if(operation==='options'){
@@ -56,19 +58,21 @@ export async function queryHazardRows(run,{operation='page',raw=false,field,targ
      }
      // Keep only the first 500 sorted options, with bounded option memory.
      if(options.size>500){const sorted=[...options].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'}));const removed=sorted[sorted.length-1];options.delete(removed);optionBytes-=removed.length*2;truncated=true;}
-    }else if((!target||matchesTarget(cells)) && (context==='all'||text(cells[contextIndex])===context) && (!needle||cells.some(v=>text(v).toLowerCase().includes(needle))) && Object.entries(filters).every(([key,values])=>!values.length||values.includes(text(cells[Number(key)])||'(blank)')))matches.push(i);
+    }else if((!target||matchesTarget(cells)) && (context==='all'||text(cells[contextIndex])===context) && (!needle||cells.some(v=>text(v).toLowerCase().includes(needle))) && Object.entries(filters).every(([key,values])=>!values.length||values.includes(text(cells[Number(key)])||'(blank)'))){
+     if(layout)layout.addRow(i,cells);else matches.push(i);
+    }
     if(i%100===0)onProgress({completed:i,total:index.spans.length});
    }
    await tx.done;check(signal);
-   return operation==='options'?{options:[...options].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'})),truncated}:{indices:matches,total:matches.length};
+   return operation==='options'?{options:[...options].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'})),truncated}:layout?layout.finish():{indices:matches,total:matches.length};
   }
-  const total=indices?indices.length:index.spans.length,rows=[],rowIndices=[];let bytes=0;
+  const total=indices?indices.length:index.spans.length,rows=[],rowIndices=[],rowBytes=[];let bytes=0;
   for(let i=offset;i<Math.min(total,offset+Math.min(limit,100));i++){
    check(signal);const n=indices?indices[i]:i,cells=await row(n);const size=JSON.stringify(cells).length*2;
    if(rows.length && bytes+size>1024*1024)break;
-   rows.push(cells);rowIndices.push(n);bytes+=size;
+   rows.push(cells);rowIndices.push(n);rowBytes.push(size);bytes+=size;
   }
-  await tx.done;check(signal);return {headers,rows,rowIndices,total,offset,nextOffset:offset+rows.length};
+  await tx.done;check(signal);return {headers,rows,rowIndices,rowBytes,total,offset,nextOffset:offset+rows.length};
  }catch(error){abort();await tx.done.catch(()=>{});throw error;}
  finally{signal?.removeEventListener('abort',abort);db.close();}
 }

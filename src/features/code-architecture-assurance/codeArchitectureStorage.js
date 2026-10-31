@@ -29,7 +29,29 @@ const changed = () => notifyBackupDataChanged({db:XHANDLE_IDB_NAME, stores:[XHAN
 // A delayed open must not let an older payload choose a newer publication as its
 // baseline. Different project/repository scopes remain independent.
 const architectureWrites = new Map();
+const deletingProjects = new Set();
+const cleaningScopes = new Set();
+const runningScopes = new Set();
+export function beginArchitectureStorageWork(scope) {
+  if (cleaningScopes.has(scope) || runningScopes.has(scope)) throw new Error('Storage cleanup is in progress. Retry analysis when it finishes.');
+  runningScopes.add(scope);
+  return () => runningScopes.delete(scope);
+}
+export const architectureStorageBusy = scope => runningScopes.has(scope) || architectureWrites.has(scope) || [...pendingInMemory.values()].some(value => value.scope === scope);
+export async function withArchitectureStorageCleanup(scope, operation) {
+  if (cleaningScopes.has(scope) || architectureStorageBusy(scope)) throw new Error('Analysis or saving is in progress. Wait for it to finish.');
+  cleaningScopes.add(scope);
+  try { return await operation(); } finally { cleaningScopes.delete(scope); }
+}
+
+export function blockDeletedProjectArchitectureWrites(projectId, blocked = true) {
+  const newlyBlocked = !deletingProjects.has(String(projectId));
+  if (blocked) deletingProjects.add(String(projectId)); else deletingProjects.delete(String(projectId));
+  return newlyBlocked;
+}
 function queueArchitectureWrite(scope, operation) {
+  if (cleaningScopes.has(scope)) return Promise.reject(new Error('Saved analysis cleanup is in progress; write discarded.'));
+  if ([...deletingProjects].some(id => scope.startsWith(`cba:${id}:`))) return Promise.reject(new Error('Project deletion is in progress or completed; architecture write discarded.'));
   const previous = architectureWrites.get(scope) || Promise.resolve();
   const result = previous.then(operation);
   const settled = result.then(() => undefined, () => undefined);
@@ -55,6 +77,7 @@ export async function readFirstCbaRowsFromIndexedDB(keys = [], { onProgress, sig
   if (typeof indexedDB === 'undefined') { report(100); return { key: unique[0] || '', rows: [] }; }
   const db = await openCbaIndexedDB({ signal });
   try {
+    if (unique.length && await rawRecord(db, XHANDLE_IDB_CBA_STORE, `${unique[0]}:storage-deleted`, { signal })) { report(100); return {key:unique[0], rows:[], found:true}; }
     for (const key of unique) {
       const value = await rawRecord(db, XHANDLE_IDB_CBA_STORE, key, { signal });
       if (!isChunkedRecord(value) && !Array.isArray(value)) continue;
@@ -77,7 +100,7 @@ export async function readCbaRowsRevision(key) {
 async function writeCbaRowsToIndexedDBNow(key, rows, options) {
   if (!key || typeof indexedDB === 'undefined') return false;
   const db = await openCbaIndexedDB();
-  try { await writeRecord(db, XHANDLE_IDB_CBA_STORE, key, Array.isArray(rows) ? rows : [], options); changed(); return true; }
+  try { await writeRecord(db, XHANDLE_IDB_CBA_STORE, key, Array.isArray(rows) ? rows : [], {...options,removeKeys:[`${key}:storage-deleted`,`${key}:storage-cleanup-pending`]}); changed(); return true; }
   catch { return false; } finally { db.close(); }
 }
 export async function readArchitectureRunRecords(key, rows = []) {
@@ -105,7 +128,11 @@ async function writeImportedArchitectureRunRecordsNow(key, records = [], rows, {
     const abort = () => { try { tx.abort(); } catch {} };
     signal?.addEventListener('abort', abort, { once: true });
     done.finally(() => signal?.removeEventListener('abort', abort)).catch(() => {});
-    try {for (const write of writes) tx.objectStore(XHANDLE_IDB_CBA_STORE).put(write);}
+    try {for (const write of writes) tx.objectStore(XHANDLE_IDB_CBA_STORE).put(write);
+      if (Array.isArray(rows)) {
+        tx.objectStore(XHANDLE_IDB_CBA_STORE).delete(`${key}:storage-deleted`);
+        tx.objectStore(XHANDLE_IDB_CBA_STORE).delete(`${key}:storage-cleanup-pending`);
+      }}
     catch(error) {tx.abort();await done.catch(()=>{});throw error;}
     await done; changed();
   } finally { db.close(); }
@@ -179,6 +206,8 @@ async function recoverArchitecturePublicationNow(scope, checkpointKey, signal) {
             // Immutable pointer history reuses existing data; never duplicates the row array.
             if (current.result) store.put({key:`${scope}:history:${oldRun.result?.value?.root?.split(':$part:').pop() || 'legacy'}`,value:current.result.value});
             store.put({key:scope,value:ready.rowRecord});
+            store.delete(`${scope}:storage-deleted`);
+            store.delete(`${scope}:storage-cleanup-pending`);
             store.put({key:`${scope}:metadata`,value:{...ready.metadata,rowCount:rows.length,updatedAt:new Date().toISOString(),storageSaved:true,storageError:''}});
             store.put({key:`${scope}:run:${run.fingerprint}`,value:ready.runRecord});
             store.put({key:`${scope}:run`,value:ready.runRecord});

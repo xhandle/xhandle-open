@@ -1,20 +1,21 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import useHazardRunRestoration from './useHazardRunRestoration';
+import HazardRestorationNotice from './HazardRestorationNotice';
 import { createHazardRunRegistry } from './hazardRunRegistry';
 global.IS_REACT_ACT_ENVIRONMENT = true;
-let root, api, config, visible, frames;
+let root, host, api, config, visible, frames;
 const deferred = () => { let resolve, reject; const promise = new Promise((a,b) => {resolve=a;reject=b;}); return {promise,resolve,reject}; };
 function Harness() {
   api = useHazardRunRestoration(config);
   frames.push({ state: api.status, run: api.scopeReady ? visible : null });
-  return null;
+  return <HazardRestorationNotice restoration={api} latestRun={visible} />;
 }
 const render = () => act(async () => root.render(<Harness/>));
 const settle = callback => act(async () => { callback(); await Promise.resolve(); });
 const changed = () => window.dispatchEvent(new CustomEvent('xhandle:code-architecture-hazard-analysis:changed', {detail:{projectId:config.projectId,repoId:config.repoId}}));
 beforeEach(() => {
-  root=createRoot(document.createElement('div'));visible=null;frames=[];
+  host=document.createElement('div');root=createRoot(host);visible=null;frames=[];
   config={projectId:'p',connectionId:'c',repoId:'r',registry:{current:createHazardRunRegistry()},pendingContextSave:{current:null},contextVersion:{current:0},
     read:jest.fn().mockResolvedValue(null),save:jest.fn().mockResolvedValue(),align:run=>run,
     publish:jest.fn(run=>{visible=run;}),getCurrentRun:()=>visible};
@@ -106,7 +107,8 @@ test('leaving a view aborts storage work without clearing a retained saved resul
 test('restoration exposes chunk progress and ignores late updates after cancellation',async()=>{
  const d=deferred();config.read.mockReturnValue(d.promise);await render();
  const options=config.read.mock.calls[0][1];await settle(()=>options.onProgress({completed:2,total:4}));expect(api.progress).toBe(50);
- config={...config,enabled:false};await render();await settle(()=>options.onProgress({completed:4,total:4}));expect(api.progress).toBe(50);
+ config={...config,enabled:false};await render();await settle(()=>options.onProgress({completed:4,total:4}));expect(api.progress).toBeNull();
+ expect(api.status).toBe('idle');
  await settle(()=>d.resolve(null));
 });
 
@@ -170,4 +172,26 @@ test('leaving scope aborts upgrade and cannot publish its late result',async()=>
  await render();await settle(()=>{void api.upgrade();});
  config={...config,projectId:'b',repoId:'b',read:jest.fn().mockResolvedValue({id:'new'})};await render();
  expect(signal.aborted).toBe(true);await settle(()=>d.resolve());expect(visible.id).toBe('new');
+});
+
+test('architecture-only navigation is idle without a phantom loading or retry notice',async()=>{
+ config.enabled=false;await render();
+ expect(api.status).toBe('idle');
+ expect(api.scopeReady).toBe(false);
+ expect(host.textContent).not.toContain('Loading saved results');
+ expect(host.textContent).not.toContain('Retry loading');
+ expect(config.read).not.toHaveBeenCalled();
+ const pending=deferred();config={...config,enabled:true,read:jest.fn(()=>pending.promise)};
+ await render();expect(host.textContent).toContain('Loading saved results');
+ await settle(()=>pending.resolve({id:'saved'}));
+ expect(api.status).toBe('loaded');expect(host.textContent).toBe('');
+});
+
+test('leaving the hazard view hides a pending notice and ignores a late failed read',async()=>{
+ const pending=deferred();config.read.mockReturnValue(pending.promise);
+ await render();expect(host.textContent).toContain('Loading saved results');
+ config={...config,enabled:false};await render();
+ expect(api.status).toBe('idle');expect(host.textContent).toBe('');
+ await settle(()=>pending.reject(new Error('late read failure')));
+ expect(api.status).toBe('idle');expect(host.textContent).toBe('');
 });

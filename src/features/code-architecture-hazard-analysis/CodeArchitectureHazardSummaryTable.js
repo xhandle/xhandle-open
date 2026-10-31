@@ -2,6 +2,7 @@ import TablePreparationProgress from '../code-architecture-assurance/TablePrepar
 import {registerTableSearchProvider,modelTableSearchEntries} from '../../components/quickSearchUtils';
 import { SHOW_TABLE_REVIEW_COLUMNS } from "../../components/tablePresentation";
 import useHazardRowWindow from './useHazardRowWindow';
+import useContinuousHazardRowWindow from './useContinuousHazardRowWindow';
 import CopyTableButton from '../../components/CopyTableButton';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
@@ -13,6 +14,9 @@ import {
   buildCodeArchitectureHazardGroups,
   filterCodeArchitectureHazardRowsByContext,
 } from "./codeArchitectureHazardGrouping";
+
+const EMPTY_GROUPS = [];
+const EMPTY_LOADED_ROWS = new Map();
 
 const HIDDEN_SUMMARY_COLUMNS = new Set([
   "from node id",
@@ -74,7 +78,7 @@ function normalizeColumnWidths(defaultWidths = {}, savedWidths = {}) {
 export default function CodeArchitectureHazardSummaryTable({
   summarySheet,
   remotePage,
-  preparationStart = 0,
+  suppressLoadingIndicator = false,
   hazardMethod = "",
   className = "",
   reviewItems = [],
@@ -97,6 +101,7 @@ export default function CodeArchitectureHazardSummaryTable({
   onVisibleSummaryChange,
   readOnly = false,
 }) {
+  const continuous = Boolean(remotePage?.continuous);
   const isStpa = ["STPA", "STPA-TEXTBOOK", "STPA_TEXTBOOK"].includes(String(hazardMethod).toUpperCase());
   const isHara = String(hazardMethod).toUpperCase() === "HARA";
   const isFha = String(hazardMethod).toUpperCase() === "FHA";
@@ -342,17 +347,30 @@ export default function CodeArchitectureHazardSummaryTable({
     [filteredRowItems, headers, selectedOperationalContextId],
   );
   useEffect(() => {
+    if (remotePage) return;
     onVisibleSummaryChange?.([summarySheet?.[0] || [], ...contextFilteredRowItems.map(({ rowIndex }) => summarySheet[rowIndex + 1])]);
-  }, [summarySheet, contextFilteredRowItems, onVisibleSummaryChange]);
-  const hazardGroups = useMemo(
-    () => buildCodeArchitectureHazardGroups(headers, contextFilteredRowItems),
-    [contextFilteredRowItems, headers],
+  }, [summarySheet, contextFilteredRowItems, onVisibleSummaryChange, remotePage]);
+  const remoteGroups = useMemo(
+    () => (remotePage?.layout?.groups || EMPTY_GROUPS).map(group=>({...group,items:group.rowIndices.map(rowIndex=>({rowIndex}))})),
+    [remotePage?.layout],
   );
+  const localGroups = useMemo(
+    () => continuous ? EMPTY_GROUPS : buildCodeArchitectureHazardGroups(headers, contextFilteredRowItems),
+    [continuous,contextFilteredRowItems,headers],
+  );
+  const hazardGroups=continuous?remoteGroups:localGroups;
+  const remoteGroupByRow = useMemo(()=>new Map(remoteGroups.flatMap(group=>group.items.map(item=>[item.rowIndex,group.key]))),[remoteGroups]);
   const rowIdentity = useCallback(item => {
     const index = headers.indexOf('Raw Analysis Row ID');
-    return index >= 0 && item.row[index] ? item.row[index] : item.rowIndex;
+    return index >= 0 && item.row?.[index] ? item.row[index] : item.rowIndex;
   }, [headers]);
-  const rowWindow=useHazardRowWindow(hazardGroups,collapsedInterfaceKeys,visibleColumns,columnWidths,searchTableRef,storageKey,rowIdentity);
+  const localWindow=useHazardRowWindow(continuous?EMPTY_GROUPS:hazardGroups,collapsedInterfaceKeys,visibleColumns,columnWidths,searchTableRef,storageKey,rowIdentity,!continuous);
+  const continuousWindow=useContinuousHazardRowWindow(continuous?hazardGroups:EMPTY_GROUPS,collapsedInterfaceKeys,visibleColumns,columnWidths,searchTableRef,remotePage?.queryKey || storageKey,{enabled:continuous,rowsByIndex:remotePage?.rowsByIndex || EMPTY_LOADED_ROWS});
+  const rowWindow=continuous?continuousWindow:localWindow;
+  const requestRemoteRows=remotePage?.requestRows;
+  useEffect(()=>{
+    if(continuous)requestRemoteRows(continuousWindow.requestedRowIndices,continuousWindow.viewportRowIndices);
+  },[continuous,requestRemoteRows,continuousWindow.requestedRowIndices,continuousWindow.viewportRowIndices]);
   const {reveal:revealHazardRow}=rowWindow;
   const revealedRequest=useRef(null);
   const resolvedCallback=useRef(onRowFocusResolved);
@@ -382,9 +400,11 @@ export default function CodeArchitectureHazardSummaryTable({
     return registerTableSearchProvider(table,()=>modelTableSearchEntries({
       table,label:'Code architecture hazard analysis',indexes:visibleColumns.map(column=>column.index),
       getRowId:index=>`cba-hazard-row-${index}`, revealRow:revealHazardRow,
-      items:hazardGroups.filter(group=>!collapsedInterfaceKeys.has(group.key)).flatMap(group=>group.items.map(item=>({row:item.row,originalIndex:item.rowIndex}))),
+      items:continuous
+        ? [...remotePage.rowsByIndex].filter(([index])=>remoteGroupByRow.has(index)&&!collapsedInterfaceKeys.has(remoteGroupByRow.get(index))).map(([originalIndex,row])=>({row,originalIndex}))
+        : hazardGroups.filter(group=>!collapsedInterfaceKeys.has(group.key)).flatMap(group=>group.items.map(item=>({row:item.row,originalIndex:item.rowIndex}))),
     }));
-  },[hazardGroups,collapsedInterfaceKeys,visibleColumns,revealHazardRow,rowWindow.preparing]);
+  },[hazardGroups,collapsedInterfaceKeys,visibleColumns,revealHazardRow,rowWindow.preparing,continuous,remotePage?.rowsByIndex,remoteGroupByRow]);
   const visibleInterfaceKeys = useMemo(() => hazardGroups.map((group) => group.key), [hazardGroups]);
 
   useEffect(() => {
@@ -407,7 +427,13 @@ export default function CodeArchitectureHazardSummaryTable({
   }, [collapsedInterfaceKeys, onGroupStateChange, visibleInterfaceKeys]);
 
   useEffect(() => {
-    if (highlightedRowIndex == null || !rowItems.some(item => item.rowIndex === highlightedRowIndex)) return;
+    if (highlightedRowIndex == null) return;
+    if (continuous) {
+      const group=hazardGroups.find(item=>item.items.some(row=>row.rowIndex===highlightedRowIndex));
+      if(group && collapsedInterfaceKeys.has(group.key))setCollapsedInterfaceKeys(current=>{const next=new Set(current);next.delete(group.key);return next;});
+      return;
+    }
+    if (!rowItems.some(item => item.rowIndex === highlightedRowIndex)) return;
     if (!filteredRowItems.some(item => item.rowIndex === highlightedRowIndex)) filterState.clearAllFilters();
     if (!contextFilteredRowItems.some(item => item.rowIndex === highlightedRowIndex) && selectedOperationalContextId !== "all") {
       onSelectedOperationalContextChange?.("all");
@@ -417,12 +443,12 @@ export default function CodeArchitectureHazardSummaryTable({
       setCollapsedInterfaceKeys(current => { const next = new Set(current); next.delete(group.key); return next; });
     }
   }, [highlightedRowIndex, focusRequestKey, rowItems, filteredRowItems, contextFilteredRowItems,
-    filterState, selectedOperationalContextId, onSelectedOperationalContextChange, hazardGroups, collapsedInterfaceKeys]);
+    filterState, selectedOperationalContextId, onSelectedOperationalContextChange, hazardGroups, collapsedInterfaceKeys, continuous]);
   const tableColumnCount = visibleColumns.length
     + (showCombinedContext ? 1 : 0)
     + (onDeleteRow && !readOnly ? 1 : 0)
     + (showReview && reviewItems.length > 0 ? 1 : 0);
-  const renderHazardRow = ({ row, rowIndex, windowKey }) => {
+  const renderHazardRow = ({ row, rowIndex, windowKey, entryIndex }) => {
     const reviewItem = reviewByRow?.get?.(rowIndex) || null;
     const rejected = reviewItem?.status === REVIEW_STATUSES.REJECTED;
     const highlighted = highlightedRowIndex === rowIndex;
@@ -468,6 +494,8 @@ export default function CodeArchitectureHazardSummaryTable({
       <tr
         key={windowKey}
         data-window-key={windowKey}
+        data-hazard-row-index={rowIndex}
+        aria-rowindex={entryIndex == null ? undefined : entryIndex + 2}
         id={`cba-hazard-row-${rowIndex}`}
         onClick={() => selectForCollaborator()}
         className={`cursor-pointer align-top transition-colors ${
@@ -553,9 +581,12 @@ export default function CodeArchitectureHazardSummaryTable({
   };
 
   if (rowWindow.error) return <div role="alert">Unable to prepare hazard table: {rowWindow.error.message}</div>;
-  if (rowWindow.preparing) return <TablePreparationProgress label="Preparing hazard table layout" progress={Math.floor(preparationStart + rowWindow.progress * (100 - preparationStart) / 100)} />;
+  if (continuous && !remotePage.layout) return remotePage.loadState?.status === 'failed' || suppressLoadingIndicator
+    ? null : <TablePreparationProgress label="Preparing hazard analysis" progress={remotePage.loadState?.progress} />;
+  if (rowWindow.preparing) return suppressLoadingIndicator ? null
+    : <TablePreparationProgress label="Preparing hazard table" progress={rowWindow.progress} />;
 
-  if (!Array.isArray(summarySheet) || summarySheet.length < 2) {
+  if (!continuous && (!Array.isArray(summarySheet) || summarySheet.length < 2)) {
     return (
       <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500">
         No code architecture hazard summary has been generated yet.
@@ -563,10 +594,15 @@ export default function CodeArchitectureHazardSummaryTable({
     );
   }
 
+  const viewportLoading=continuous && !remotePage.rowError && continuousWindow.viewportRowIndices.some(index=>!remotePage.rowsByIndex.has(index));
   return (
     <div className={`${className || "max-h-80"} flex min-h-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white`}>
       <div className="flex shrink-0 items-center justify-end gap-2 border-b border-slate-100 bg-white px-3 py-2">
-        <span role="status" className="mr-auto text-sm text-slate-600">{remotePage ? `${remotePage.total} matching rows · groups show this page` : `${contextFilteredRowItems.length} of ${rows.length} rows match filters`}</span>
+        <div className="mr-auto flex h-6 min-w-0 items-center whitespace-nowrap text-sm text-slate-600">
+          {viewportLoading && !suppressLoadingIndicator
+            ? <TablePreparationProgress label="Loading hazard rows" progress={null} className="!p-0" />
+            : <span role="status">{remotePage ? `${remotePage.total} matching rows` : `${contextFilteredRowItems.length} of ${rows.length} rows match filters`}</span>}
+        </div>
         {filterState.activeFilterCount > 0 && <button type="button" className="text-sm font-medium text-[#2D7DFE]" onClick={filterState.clearAllFilters}>Clear filters</button>}
         <ColumnVisibilityMenu
           columns={columnOptions.map((column) => ({ key: column.key, label: column.label }))}
@@ -575,8 +611,8 @@ export default function CodeArchitectureHazardSummaryTable({
         />
         {remotePage ? <button type="button" onClick={()=>remotePage.copy(visibleColumns.map(c=>c.index))}>Copy matching rows</button> : <CopyTableButton label="Copy code architecture hazard analysis table" columns={copyColumns} rows={contextFilteredRowItems} />}
       </div>
-      <div className="min-h-0 flex-1 overflow-auto">
-      <table ref={searchTableRef} aria-label="Code architecture hazard analysis" className="table-fixed text-left text-sm" style={{ minWidth: tablePixelWidth }}>
+      <div className="min-h-0 flex-1 overflow-auto" data-hazard-scroll={continuous ? "true" : undefined} style={continuous ? {overflowAnchor:"none"} : undefined}>
+      <table data-hazard-total={remotePage?.total} data-hazard-cache-rows={remotePage?.cacheStats?.rows} data-hazard-cache-bytes={remotePage?.cacheStats?.bytes} aria-busy={viewportLoading || undefined} aria-rowcount={continuous ? rowWindow.totalEntries + 1 : undefined} ref={searchTableRef} aria-label="Code architecture hazard analysis" className="table-fixed text-left text-sm" style={{ width: tablePixelWidth, minWidth: tablePixelWidth }}>
         <colgroup>
           {onDeleteRow && !readOnly && <col style={{ width: actionsColumnWidth, minWidth: actionsColumnWidth }} />}
           {showReview && reviewItems.length > 0 && <col style={{ width: reviewColumnWidth, minWidth: reviewColumnWidth }} />}
@@ -628,9 +664,18 @@ export default function CodeArchitectureHazardSummaryTable({
         <tbody className="divide-y divide-slate-100">
           {rowWindow.top>0 && <tr aria-hidden="true"><td colSpan={tableColumnCount} style={{height:rowWindow.top,padding:0,border:0}} /></tr>}
           {rowWindow.visible.map(entry=>{
-            if(entry.item)return renderHazardRow({...entry.item,windowKey:entry.key});
+            if(entry.item){
+              let row=continuous?remotePage.rowsByIndex.get(entry.item.rowIndex):entry.item.row;
+              if(!row)return <tr key={entry.key} data-window-key={entry.key} data-hazard-loading-row="true" aria-rowindex={entry.index+2} aria-busy="true"><td colSpan={tableColumnCount} style={{height:entry.height,padding:0}} /></tr>;
+              if(continuous && isFha){
+                const originalHeaders=summarySheet[0];
+                const cell=name=>String(row[originalHeaders.indexOf(name)]??'').trim();
+                row=[...row,...headers.slice(originalHeaders.length).map(name=>name==='Operational Context'?`${cell('Operational Scenario') || 'Unspecified scenario'} · ${cell('Operational Mode') || 'Unspecified mode'}`:'')];
+              }
+              return renderHazardRow({...entry.item,row,windowKey:entry.key,entryIndex:entry.index});
+            }
             const group=entry.group,interfaceCollapsed=collapsedInterfaceKeys.has(group.key);
-            return <tr key={entry.key} data-window-key={entry.key} className="bg-blue-50 text-blue-900">
+            return <tr key={entry.key} data-window-key={entry.key} aria-rowindex={entry.index == null ? undefined : entry.index+2} className="bg-blue-50 text-blue-900">
               <td colSpan={tableColumnCount} className="border-y border-blue-100 px-3 py-2">
                 <button type="button" className="flex w-full items-center gap-2 text-left text-sm font-semibold"
                   onClick={()=>setCollapsedInterfaceKeys(current=>{const next=new Set(current);if(next.has(group.key))next.delete(group.key);else next.add(group.key);return next;})}
@@ -645,7 +690,7 @@ export default function CodeArchitectureHazardSummaryTable({
           {rowWindow.bottom>0 && <tr aria-hidden="true"><td colSpan={tableColumnCount} style={{height:rowWindow.bottom,padding:0,border:0}} /></tr>}
         </tbody>
       </table>
-      {contextFilteredRowItems.length === 0 && (
+      {(continuous ? remotePage.total === 0 : contextFilteredRowItems.length === 0) && (
         <div className="border-t border-slate-100 px-3 py-6 text-center text-sm text-slate-500">
           No hazard rows match the active column or operational-context filters.
         </div>

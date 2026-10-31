@@ -286,6 +286,7 @@ it('bounds mounted rows while preserving full filtered count/export model and re
   expect(host.querySelectorAll('tbody tr').length).toBeLessThan(80);
   expect(host.textContent).toContain('1000 of 1000');expect(onVisibleSummaryChange.mock.calls.at(-1)[0]).toHaveLength(1001);
   render({highlightedRowIndex:999,focusRequestKey:'last'});
+  for(let frame=0;frame<8 && !onRowFocusResolved.mock.calls.length;frame++)act(()=>jest.advanceTimersByTime(16));
   expect(onRowFocusResolved).toHaveBeenCalledWith('last');
   expect(host.querySelector('#cba-hazard-row-999')).not.toBeNull();expect(host.querySelectorAll('tbody tr').length).toBeLessThan(80);
  }finally{act(()=>root.unmount());host.remove();Element.prototype.getBoundingClientRect=priorRect;jest.useRealTimers();}
@@ -303,6 +304,7 @@ it('shows one progress indicator for a large saved table and resolves its initia
   act(()=>jest.runAllTimers());
   expect(host.querySelector('[role="progressbar"]')).toBeNull();
   expect(host.querySelector('#cba-hazard-row-5999')).not.toBeNull();
+  for(let frame=0;frame<8 && !resolved.mock.calls.length;frame++)act(()=>jest.advanceTimersByTime(16));
   expect(resolved).toHaveBeenCalledWith('large-last');
   expect(host.querySelectorAll('tbody tr').length).toBeLessThan(80);
  } finally {act(()=>root.unmount());host.remove();jest.useRealTimers();}

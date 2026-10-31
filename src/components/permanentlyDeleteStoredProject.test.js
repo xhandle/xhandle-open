@@ -1,3 +1,4 @@
+import { classifyStoredWorkspaceProjects } from './storageWorkspaceVisibility';
 import { assertRemovedProject, deleteProjectLocalRecords, projectOwnsRecord, projectOwnsStorageKey, permanentlyDeleteStoredProject } from './permanentlyDeleteStoredProject';
 
 beforeEach(()=>localStorage.clear());
@@ -21,7 +22,8 @@ it('matches project key boundaries without matching another project or shared re
 it('uses ownership, never names, descriptions or incidental mentions',()=>{
   expect(projectOwnsRecord('random',{projectId:'p1'},'p1','db','rows')).toBe(true);
   expect(projectOwnsRecord('random',{value:{projectId:'p1'}},'p1','db','rows')).toBe(true);
-  expect(projectOwnsRecord('cba:p1:repo',{projectId:'p2'},'p1','db','rows')).toBe(false);
+  expect(projectOwnsRecord('cba:p1:repo',{projectId:'p2'},'p1','db','rows')).toBe(true);
+  expect(projectOwnsRecord('random',{projectId:['p1']},'p1','db','rows')).toBe(false);
   expect(projectOwnsRecord('random',{description:'p1',repoId:'p1'},'p1','db','rows')).toBe(false);
   expect(projectOwnsRecord('p1',{id:'p1'},'p1','xhandle-workspace-graph','projects')).toBe(true);
   expect(projectOwnsRecord('p1',{id:'p1'},'p1','xhandle-workspace-graph','folders')).toBe(false);
@@ -41,4 +43,24 @@ it('cleans project-specific local data and shared fallback entries without clear
   expect(JSON.parse(localStorage.getItem('xhandle:results-review:items'))).toEqual([{id:'b',projectId:'p2'}]);
   expect(JSON.parse(localStorage.getItem('xhandle:safety-remediation:v1'))).toEqual({safetyFindings:[{projectId:'p2'}],other:'keep'});
   expect(deleteProjectLocalRecords('p1')).toBe(0);
+});
+
+it('classifies numeric and string active IDs consistently, including zero',()=>{
+  const rows=classifyStoredWorkspaceProjects([
+    {id:0,sourceStore:'localStorage:xhandle.projects'},
+    {id:123,sourceStore:'localStorage:xhandle.codeArchitectureProjects'},
+    {id:'removed',sourceStore:'localStorage:xhandle.projects'},
+  ],[{id:'0'}],[{id:'123'}]);
+  expect(rows.find(row=>row.id===0).active).toBe(true);
+  expect(rows.find(row=>row.id===123).active).toBe(true);
+  expect(rows.find(row=>row.id==='removed').active).toBe(false);
+  localStorage.setItem('xhandle.projects',JSON.stringify([{id:123}]));
+  expect(()=>assertRemovedProject({...project,id:'123'})).toThrow(/active/);
+});
+it('preserves ambiguous diagram IDs and unrelated invalid JSON',()=>{
+  localStorage.setItem('unrelated-setting','not JSON');
+  localStorage.setItem('LiteSummaryDiagram::proj_p_1::view','keep ambiguous ID');
+  deleteProjectLocalRecords('p-1');
+  expect(localStorage.getItem('unrelated-setting')).toBe('not JSON');
+  expect(localStorage.getItem('LiteSummaryDiagram::proj_p_1::view')).toBe('keep ambiguous ID');
 });

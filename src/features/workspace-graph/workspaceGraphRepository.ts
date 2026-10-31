@@ -141,9 +141,10 @@ export async function upsertSummary(summary: WorkspaceSummary) {
 
 export async function listProjects() {
   const db = await openWorkspaceGraphDB();
-  const rows = await db.getAll(WORKSPACE_GRAPH_STORES.projects);
-  db.close();
-  return rows.sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+  try {
+    const rows = await db.getAll(WORKSPACE_GRAPH_STORES.projects);
+    return rows.sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+  } finally { db.close(); }
 }
 
 export async function listArtifacts(filters: ArtifactFilters = {}) {

@@ -45,7 +45,7 @@ export function compactList(values = []) {
 }
 
 export function storageKeyFor(kind, projectId, repoId) {
-  return `xhandle:cba-${kind}:${projectId || "no-project"}:${repoId || "no-repo"}`;
+  return `xhandle:cba-${kind}:${projectId ?? "no-project"}:${repoId ?? "no-repo"}`;
 }
 
 const ARTIFACT_DB_NAME = "xhandle-code-architecture-assurance";
@@ -54,6 +54,33 @@ const LOCAL_STORAGE_CACHE_MAX_CHARS = 750000;
 const INDEXED_DB_ROW_CHUNK_MAX_CHARS = 300000;
 const artifactRowsMemoryCache = new Map();
 const artifactWrites = new Map();
+const cleaningArtifactKeys = new Set();
+const generatingArtifactKeys = new Map();
+export function beginArtifactStorageWork(projectId,repoId) {
+  const keys=Object.values(ARTIFACT_KINDS).map(kind=>storageKeyFor(kind,projectId,repoId));
+  if(keys.some(key=>cleaningArtifactKeys.has(key))) throw new Error('Requirements cleanup is in progress. Retry derivation after cleanup.');
+  keys.forEach(key=>generatingArtifactKeys.set(key,(generatingArtifactKeys.get(key)||0)+1));
+  return ()=>keys.forEach(key=>{const count=generatingArtifactKeys.get(key)||0;if(count<=1)generatingArtifactKeys.delete(key);else generatingArtifactKeys.set(key,count-1);});
+}
+
+export const artifactStorageBusy = key => artifactWrites.has(key) || unsavedArtifactRows.has(key) || generatingArtifactKeys.has(key);
+export async function withArtifactStorageCleanup(key, operation) {
+  if (cleaningArtifactKeys.has(key) || artifactStorageBusy(key)) throw new Error('Requirements are still being saved. Wait for saving to finish.');
+  cleaningArtifactKeys.add(key);
+  try { return await operation(); }
+  finally {
+    artifactWriteVersions.set(key, (artifactWriteVersions.get(key) || 0) + 1);
+    artifactRowsMemoryCache.delete(key); artifactReads.delete(key);
+    cleaningArtifactKeys.delete(key);
+  }
+}
+
+const deletingProjects = new Set();
+export function blockDeletedProjectArtifactWrites(projectId, blocked = true) {
+  const newlyBlocked = !deletingProjects.has(String(projectId));
+  if (blocked) deletingProjects.add(String(projectId)); else deletingProjects.delete(String(projectId));
+  return newlyBlocked;
+}
 const unsavedArtifactRows = new Map();
 export function getUnsavedArtifactRows(kind, projectId, repoId) {
   return unsavedArtifactRows.get(storageKeyFor(kind, projectId, repoId));
@@ -325,7 +352,7 @@ async function readLatestArtifactRows(kind, projectId, repoId) {
   const record = local && (!stored || local.revision > stored.revision) ? local : stored;
   if (!record && localError) throw localError;
   const rows = record?.rows || [];
-  artifactRowsMemoryCache.set(key, rows);
+  if (!deletingProjects.has(String(projectId))) artifactRowsMemoryCache.set(key, rows);
   return rows;
 }
 
@@ -337,7 +364,9 @@ export function saveArtifactRows(kind, projectId, repoId, rows) {
 }
 
 export function saveArtifactRowsAsync(kind, projectId, repoId, rows) {
+  if (deletingProjects.has(String(projectId))) return Promise.reject(new Error('Project deletion is in progress or completed; requirements write discarded.'));
   const key = storageKeyFor(kind, projectId, repoId);
+  if (cleaningArtifactKeys.has(key)) return Promise.reject(new Error('Requirements cleanup is in progress. Retry after cleanup.'));
   const safeRows = Array.isArray(rows) ? rows : [];
   artifactWriteVersions.set(key, (artifactWriteVersions.get(key) || 0) + 1);
   const prior = artifactWrites.get(key) || Promise.resolve();
@@ -710,7 +739,15 @@ export function createFunctionalRowLookup(cbaRows = []) {
 }
 
 export async function flushProjectArtifactWrites(projectId) {
-  const belongs = key => key.startsWith('xhandle:cba-') && key.split(':')[2] === projectId;
+  const belongs = key => key.startsWith('xhandle:cba-') && key.split(':')[2] === String(projectId);
   while ([...artifactWrites.keys()].some(belongs)) await Promise.all([...artifactWrites].filter(([key])=>belongs(key)).map(([,promise])=>promise));
   if ([...unsavedArtifactRows.keys()].some(belongs)) throw new Error('Some requirements have not been saved. Retry saving before exporting this project.');
+}
+
+// Drop only this removed project's cached rows after persisted deletion.
+export function clearProjectArtifactCache(projectId) {
+  const belongs = key => key.startsWith('xhandle:cba-') && key.split(':')[2] === String(projectId);
+  for (const cache of [artifactRowsMemoryCache, unsavedArtifactRows, artifactReads, artifactWriteVersions]) {
+    for (const key of cache.keys()) if (belongs(key)) cache.delete(key);
+  }
 }

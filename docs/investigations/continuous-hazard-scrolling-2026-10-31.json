@@ -1,0 +1,862 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-31",
+  "task": "Continuous saved hazard analysis scrolling",
+  "status": "Both production-App browser scenarios passed all harness assertions",
+  "build": {
+    "path": "/tmp/xhandle-hazard-scroll-20261031/final-build",
+    "assetManifestSha256": "c4e34a96a316d95603cd33b3588a947e2649dbc1f9a835b4c2ed09cdb7e5d96c",
+    "sourceManifests": {
+      "build-source-sha256.json": {
+        "path": "/tmp/xhandle-hazard-scroll-20261031/build-source-sha256.json",
+        "sha256": "4e5166d3fe62e14deb60fd88d48b30c56262657913d6f34da0680a2f7f11f030",
+        "bytes": 102825
+      },
+      "final-source-sha256.json": {
+        "path": "/tmp/xhandle-hazard-scroll-20261031/final-source-sha256.json",
+        "sha256": "38f85d75d8269811b5746edd2b59af5f801b8f37bcf4c3ecd34bba60203e6830",
+        "bytes": 102825
+      },
+      "source-whitespace-normalization.json": {
+        "path": "/tmp/xhandle-hazard-scroll-20261031/source-whitespace-normalization.json",
+        "sha256": "e0e0f05b26f75926652161a1b04b7dd92a847d2333047377a8a4c13f6db59bfa",
+        "bytes": 361
+      }
+    },
+    "entryAssetHashesMatch": true,
+    "harnessHashesMatch": true,
+    "seederHashesMatch": true
+  },
+  "methodology": {
+    "application": "Actual production App with real saved IndexedDB rows and real hazard row workers; no fixture-only React components or mocked row loader",
+    "order": [
+      "Chrome",
+      "Electron"
+    ],
+    "samples": "One warmup then three forward/reverse pairs in each runtime; 120 trusted wheel attempts per sample with deltaY +/-600 and 16ms controller delay",
+    "frames": "rAF intervals wholly within first and last observed trusted wheel input. No setup/settle idle frames in p95. Per-frame visible row/placeholder rectangle reads add bounded diagnostic overhead.",
+    "loading": "Visible loading and empty content sampled each rAF during input and through readiness. Rectangles intersect the scroller below its header. This is visual content availability, not just eventual settled completeness.",
+    "navigation": "Whole-result jumps at fractions 0.1,0.35,0.7,1,0.7,0.35,0.1,0; final source row must actually be visible; far-source-ID search and selection; service/all context switching; cancel in-flight search by leaving; return at first row six times.",
+    "memory": "Six equivalent first-row states with explicit diagnostic GC; renderer audit arrays are drained to controller before samples. Browser heap and DOM/listener measurements are separate from conservative application cell-cache byte accounting.",
+    "cacheBounds": "Sampled at settled initial, wheel, jump, filter, and repeated-entry states, not a continuous heap upper-bound proof.",
+    "comparison": "Same production build, fixture, harness, and scenario. Actual inner viewport sizes differ due native Electron window sizing; numbers demonstrate each runtime independently, not a controlled browser speed comparison."
+  },
+  "runs": {
+    "chrome": {
+      "artifacts": {
+        "raw": {
+          "path": "/tmp/xhandle-hazard-scroll-20261031/chrome-final.json",
+          "sha256": "9ca9b51fb516a4549f9f8cde6e2c10317d3350d3ed865bb98955799ee2088238",
+          "bytes": 1372255
+        },
+        "log": {
+          "path": "/tmp/xhandle-hazard-scroll-20261031/chrome-final.log",
+          "sha256": "6a672831fc679af975905b1b8aa52998cc99932733692d5fee15440275d6cfcc",
+          "bytes": 612
+        }
+      },
+      "buildAssetManifestSha256": "c4e34a96a316d95603cd33b3588a947e2649dbc1f9a835b4c2ed09cdb7e5d96c",
+      "entryAssetHashes": {
+        "static/css/main.3002dd5b.css": "f85f6910d0c308e717933ecc711be2fdbda65fb4a47d4faf7c83a5792d2a7fd3",
+        "static/js/main.1162746a.js": "e1cde6848c16c82f0423cfcedd16695c5ae8915e145c97ba3d23beb4df722993"
+      },
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "da352e397e8748f4f422f11db4278090917db97a9c184679679f62db87acb33b",
+        "desktop-performance-cba-scenario.cjs": "a0f72a79b9886981dd5d51ad9c71f8c26bc8d57987ac869ff23dd20a5192a67e",
+        "cba-rendering-regression.cjs": "2ecd712ab5a2ce124b7baf1cb37d22faa4cbd8d5ae2c5bf108c48ac4d45a204c",
+        "continuous-hazard-scrolling.cjs": "8c975239b5c78c2f32e39fa77f30bf6ef30d7809f34425da8cb62566a68397e1"
+      },
+      "seederSha256": "8dd4325e720497ca074eff033f90156f4aca661b6cc5d2b0edacc17b65543cbe",
+      "runtime": {
+        "versions": {
+          "chrome": "156.0.8078.79"
+        },
+        "hardware": {
+          "cpu": "Apple M2",
+          "ram": 8589934592,
+          "arch": "arm64"
+        },
+        "innerViewport": {
+          "width": 1440,
+          "height": 920
+        },
+        "devicePixelRatio": 2,
+        "scrollerHeight": 539,
+        "gpuCompositing": null,
+        "platform": "Darwin",
+        "architecture": "arm64"
+      },
+      "fixture": {
+        "nodes": 100,
+        "relationships": 200,
+        "hazardRows": 15000,
+        "seed": 30,
+        "rows": 15000,
+        "graphNodes": 100,
+        "artifactRowsPerCollection": 1000,
+        "functionalModelReady": true,
+        "architectureRows": 200,
+        "summaryUTF8Bytes": 10632458,
+        "evidenceCharacters": 12432743,
+        "checkpointCharacters": 12432743,
+        "estimate": {
+          "quota": 10742009856,
+          "usage": 4591616,
+          "usageDetails": {
+            "indexedDB": 4591616
+          }
+        },
+        "hazardScrollFixture": {
+          "groupRows": 137,
+          "contexts": [
+            "scroll-normal",
+            "scroll-service"
+          ],
+          "wideRows": 30
+        }
+      },
+      "firstUsableMs": 1741,
+      "firstUsableDefinition": "Project-open click through stable usable hazard table; includes project/navigation startup, not only table work",
+      "wheelSamples": [
+        {
+          "label": "forward-0",
+          "requestedInputs": 120,
+          "observedTrustedInputs": 120,
+          "activeInputMs": 3966.5,
+          "activeFrames": 237,
+          "p95Ms": 17,
+          "maximumMs": 17.6,
+          "framesOver25ms": 0,
+          "startScrollTop": 7200,
+          "endScrollTop": 79200,
+          "endVisibleSourceIds": [
+            860,
+            861,
+            862,
+            863,
+            864,
+            865,
+            866,
+            867
+          ],
+          "visibleLoading": {
+            "activeFrames": 237,
+            "loadingFrames": 0,
+            "whollyLoadingFrames": 0,
+            "emptyFrames": 0,
+            "maximumVisiblePlaceholders": 0,
+            "maximumContiguousMs": 0,
+            "postInputLoadingTailMs": 0
+          }
+        },
+        {
+          "label": "reverse-0",
+          "requestedInputs": 120,
+          "observedTrustedInputs": 120,
+          "activeInputMs": 4832.8,
+          "activeFrames": 289,
+          "p95Ms": 16.8,
+          "maximumMs": 17.7,
+          "framesOver25ms": 0,
+          "startScrollTop": 79200,
+          "endScrollTop": 7200,
+          "endVisibleSourceIds": [
+            77,
+            78,
+            79,
+            80,
+            81,
+            82
+          ],
+          "visibleLoading": {
+            "activeFrames": 289,
+            "loadingFrames": 0,
+            "whollyLoadingFrames": 0,
+            "emptyFrames": 0,
+            "maximumVisiblePlaceholders": 0,
+            "maximumContiguousMs": 0,
+            "postInputLoadingTailMs": 0
+          }
+        },
+        {
+          "label": "forward-1",
+          "requestedInputs": 120,
+          "observedTrustedInputs": 120,
+          "activeInputMs": 3966.6,
+          "activeFrames": 237,
+          "p95Ms": 16.8,
+          "maximumMs": 17.5,
+          "framesOver25ms": 0,
+          "startScrollTop": 7200,
+          "endScrollTop": 79200,
+          "endVisibleSourceIds": [
+            860,
+            861,
+            862,
+            863,
+            864,
+            865,
+            866,
+            867
+          ],
+          "visibleLoading": {
+            "activeFrames": 237,
+            "loadingFrames": 0,
+            "whollyLoadingFrames": 0,
+            "emptyFrames": 0,
+            "maximumVisiblePlaceholders": 0,
+            "maximumContiguousMs": 0,
+            "postInputLoadingTailMs": 0
+          }
+        },
+        {
+          "label": "reverse-1",
+          "requestedInputs": 120,
+          "observedTrustedInputs": 120,
+          "activeInputMs": 4966.7,
+          "activeFrames": 297,
+          "p95Ms": 17,
+          "maximumMs": 17.7,
+          "framesOver25ms": 0,
+          "startScrollTop": 79200,
+          "endScrollTop": 7200,
+          "endVisibleSourceIds": [
+            77,
+            78,
+            79,
+            80,
+            81,
+            82
+          ],
+          "visibleLoading": {
+            "activeFrames": 297,
+            "loadingFrames": 0,
+            "whollyLoadingFrames": 0,
+            "emptyFrames": 0,
+            "maximumVisiblePlaceholders": 0,
+            "maximumContiguousMs": 0,
+            "postInputLoadingTailMs": 0
+          }
+        },
+        {
+          "label": "forward-2",
+          "requestedInputs": 120,
+          "observedTrustedInputs": 120,
+          "activeInputMs": 3966.6,
+          "activeFrames": 237,
+          "p95Ms": 16.8,
+          "maximumMs": 17.5,
+          "framesOver25ms": 0,
+          "startScrollTop": 7200,
+          "endScrollTop": 79200,
+          "endVisibleSourceIds": [
+            860,
+            861,
+            862,
+            863,
+            864,
+            865,
+            866,
+            867
+          ],
+          "visibleLoading": {
+            "activeFrames": 237,
+            "loadingFrames": 0,
+            "whollyLoadingFrames": 0,
+            "emptyFrames": 0,
+            "maximumVisiblePlaceholders": 0,
+            "maximumContiguousMs": 0,
+            "postInputLoadingTailMs": 0
+          }
+        },
+        {
+          "label": "reverse-2",
+          "requestedInputs": 120,
+          "observedTrustedInputs": 120,
+          "activeInputMs": 4833.3,
+          "activeFrames": 289,
+          "p95Ms": 16.8,
+          "maximumMs": 17.8,
+          "framesOver25ms": 0,
+          "startScrollTop": 79200,
+          "endScrollTop": 7200,
+          "endVisibleSourceIds": [
+            77,
+            78,
+            79,
+            80,
+            81,
+            82
+          ],
+          "visibleLoading": {
+            "activeFrames": 289,
+            "loadingFrames": 0,
+            "whollyLoadingFrames": 0,
+            "emptyFrames": 0,
+            "maximumVisiblePlaceholders": 0,
+            "maximumContiguousMs": 0,
+            "postInputLoadingTailMs": 0
+          }
+        }
+      ],
+      "visibleLoadingTotals": {
+        "activeFrames": 1586,
+        "loadingFrames": 0,
+        "whollyLoadingFrames": 0,
+        "emptyFrames": 0,
+        "maximumVisiblePlaceholders": 0,
+        "maximumContiguousLoadingMs": 0,
+        "maximumPostInputLoadingTailMs": 0
+      },
+      "wholeTableJumps": [
+        {
+          "fraction": 0.1,
+          "settledMs": 204,
+          "finalWheelInputs": 0,
+          "first": 1835,
+          "last": 1839
+        },
+        {
+          "fraction": 0.35,
+          "settledMs": 202,
+          "finalWheelInputs": 0,
+          "first": 5497,
+          "last": 5501
+        },
+        {
+          "fraction": 0.7,
+          "settledMs": 198,
+          "finalWheelInputs": 0,
+          "first": 10615,
+          "last": 10619
+        },
+        {
+          "fraction": 1,
+          "settledMs": 168,
+          "finalWheelInputs": 0,
+          "first": 14993,
+          "last": 14999
+        },
+        {
+          "fraction": 0.7,
+          "settledMs": 166,
+          "finalWheelInputs": 0,
+          "first": 10604,
+          "last": 10610
+        },
+        {
+          "fraction": 0.35,
+          "settledMs": 218,
+          "finalWheelInputs": 0,
+          "first": 5487,
+          "last": 5491
+        },
+        {
+          "fraction": 0.1,
+          "settledMs": 167,
+          "finalWheelInputs": 0,
+          "first": 1833,
+          "last": 1837
+        },
+        {
+          "fraction": 0,
+          "settledMs": 299,
+          "finalWheelInputs": 0,
+          "first": 0,
+          "last": 3
+        }
+      ],
+      "sampledBounds": {
+        "maximumCellCacheRows": 400,
+        "maximumConservativeCellCacheBytes": 6269914,
+        "configuredCellCacheRowCap": 400,
+        "configuredConservativeCellCacheByteCap": 16777216,
+        "maximumMountedTbodyRows": 24,
+        "initialAriaRowCountIncludingGroupsAndHeader": 15111,
+        "initialMatchingSourceRows": 15000
+      },
+      "workers": {
+        "requests": 612,
+        "maximumActive": 2,
+        "remainingActive": 0,
+        "abortedRequestsOnNavigation": 1,
+        "maximumReturnedRows": 100,
+        "genuineShortBoundedResponses": 32
+      },
+      "repeatedEntryMemory": {
+        "equivalentStates": 6,
+        "heapBytes": [
+          39508452,
+          39722380,
+          39794784,
+          39955864,
+          39997652,
+          40136516
+        ],
+        "retainedGrowthBytes": 628064,
+        "leastSquaresBytesPerReentry": 117920.46,
+        "measurementSpanSeconds": 8.276,
+        "domCounters": [
+          {
+            "documents": 1,
+            "nodes": 1022,
+            "jsEventListeners": 693
+          },
+          {
+            "documents": 1,
+            "nodes": 1022,
+            "jsEventListeners": 693
+          },
+          {
+            "documents": 1,
+            "nodes": 1022,
+            "jsEventListeners": 693
+          },
+          {
+            "documents": 1,
+            "nodes": 1022,
+            "jsEventListeners": 693
+          },
+          {
+            "documents": 1,
+            "nodes": 1022,
+            "jsEventListeners": 693
+          },
+          {
+            "documents": 1,
+            "nodes": 1022,
+            "jsEventListeners": 693
+          }
+        ],
+        "domAndListenerCountsStable": true
+      },
+      "passedAssertions": {
+        "noNextOrPreviousChunkButtons": true,
+        "initialScrollExtentCoversUnloadedRows": true,
+        "renderedCellsMatchAbsoluteSourceIds": true,
+        "noMissingOrDuplicateRowsAtCrossedBoundaries": true,
+        "finalSourceRowVisible": true,
+        "extraWheelInputsNeededAtBottom": 0,
+        "lastRowSearchAndSelection": 14999,
+        "serviceContextMatchesExpectedAbsoluteOddSourceIds": true,
+        "clearSearchAndContextRestores15000Rows": true,
+        "activeWorkerTerminatedOnLeaving": true,
+        "workerPagesAtMost100Rows": true,
+        "shortByteBoundedPagesContinueWithoutMissingRows": true,
+        "cellCacheAndMountedDOMStayWithinHarnessBounds": true,
+        "equivalentReentryHeapGrowthWithinHarnessTolerance": true
+      },
+      "errors": []
+    },
+    "electron": {
+      "artifacts": {
+        "raw": {
+          "path": "/tmp/xhandle-hazard-scroll-20261031/electron-final.json",
+          "sha256": "0f99535fa39f3e36ea8ad2554231a91d1c2ef4f7557e79344b1902334b02e2c5",
+          "bytes": 1370566
+        },
+        "log": {
+          "path": "/tmp/xhandle-hazard-scroll-20261031/electron-final.log",
+          "sha256": "6b3ecfef187d6881f49c147f94a81459df2c5f503cf77d5be6126449dd52797f",
+          "bytes": 606
+        }
+      },
+      "buildAssetManifestSha256": "c4e34a96a316d95603cd33b3588a947e2649dbc1f9a835b4c2ed09cdb7e5d96c",
+      "entryAssetHashes": {
+        "static/css/main.3002dd5b.css": "f85f6910d0c308e717933ecc711be2fdbda65fb4a47d4faf7c83a5792d2a7fd3",
+        "static/js/main.1162746a.js": "e1cde6848c16c82f0423cfcedd16695c5ae8915e145c97ba3d23beb4df722993"
+      },
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "da352e397e8748f4f422f11db4278090917db97a9c184679679f62db87acb33b",
+        "desktop-performance-cba-scenario.cjs": "a0f72a79b9886981dd5d51ad9c71f8c26bc8d57987ac869ff23dd20a5192a67e",
+        "cba-rendering-regression.cjs": "2ecd712ab5a2ce124b7baf1cb37d22faa4cbd8d5ae2c5bf108c48ac4d45a204c",
+        "continuous-hazard-scrolling.cjs": "8c975239b5c78c2f32e39fa77f30bf6ef30d7809f34425da8cb62566a68397e1"
+      },
+      "seederSha256": "8dd4325e720497ca074eff033f90156f4aca661b6cc5d2b0edacc17b65543cbe",
+      "runtime": {
+        "versions": {
+          "electron": "45.0.0",
+          "chrome": "156.0.8078.48",
+          "node": "24.22.0",
+          "v8": "15.6.75.19-electron.0"
+        },
+        "hardware": {
+          "cpu": "Apple M2",
+          "ram": 8589934592,
+          "arch": "arm64"
+        },
+        "innerViewport": {
+          "width": 1440,
+          "height": 804
+        },
+        "devicePixelRatio": 2,
+        "scrollerHeight": 423,
+        "gpuCompositing": "enabled",
+        "platform": "Darwin",
+        "architecture": "arm64"
+      },
+      "fixture": {
+        "nodes": 100,
+        "relationships": 200,
+        "hazardRows": 15000,
+        "seed": 30,
+        "rows": 15000,
+        "graphNodes": 100,
+        "artifactRowsPerCollection": 1000,
+        "functionalModelReady": true,
+        "architectureRows": 200,
+        "summaryUTF8Bytes": 10632458,
+        "evidenceCharacters": 12432743,
+        "checkpointCharacters": 12432743,
+        "estimate": {
+          "quota": 92629266951,
+          "usage": 5607943,
+          "usageDetails": {
+            "indexedDB": 5607943
+          }
+        },
+        "hazardScrollFixture": {
+          "groupRows": 137,
+          "contexts": [
+            "scroll-normal",
+            "scroll-service"
+          ],
+          "wideRows": 30
+        }
+      },
+      "firstUsableMs": 2567,
+      "firstUsableDefinition": "Project-open click through stable usable hazard table; includes project/navigation startup, not only table work",
+      "wheelSamples": [
+        {
+          "label": "forward-0",
+          "requestedInputs": 120,
+          "observedTrustedInputs": 120,
+          "activeInputMs": 3966.7,
+          "activeFrames": 237,
+          "p95Ms": 17.7,
+          "maximumMs": 17.8,
+          "framesOver25ms": 0,
+          "startScrollTop": 7200,
+          "endScrollTop": 79200,
+          "endVisibleSourceIds": [
+            860,
+            861,
+            862,
+            863,
+            864,
+            865
+          ],
+          "visibleLoading": {
+            "activeFrames": 237,
+            "loadingFrames": 0,
+            "whollyLoadingFrames": 0,
+            "emptyFrames": 0,
+            "maximumVisiblePlaceholders": 0,
+            "maximumContiguousMs": 0,
+            "postInputLoadingTailMs": 0
+          }
+        },
+        {
+          "label": "reverse-0",
+          "requestedInputs": 120,
+          "observedTrustedInputs": 120,
+          "activeInputMs": 4932.3,
+          "activeFrames": 295,
+          "p95Ms": 17.7,
+          "maximumMs": 17.7,
+          "framesOver25ms": 0,
+          "startScrollTop": 79200,
+          "endScrollTop": 7200,
+          "endVisibleSourceIds": [
+            77,
+            78,
+            79,
+            80,
+            81
+          ],
+          "visibleLoading": {
+            "activeFrames": 295,
+            "loadingFrames": 0,
+            "whollyLoadingFrames": 0,
+            "emptyFrames": 0,
+            "maximumVisiblePlaceholders": 0,
+            "maximumContiguousMs": 0,
+            "postInputLoadingTailMs": 0
+          }
+        },
+        {
+          "label": "forward-1",
+          "requestedInputs": 120,
+          "observedTrustedInputs": 120,
+          "activeInputMs": 3965.7,
+          "activeFrames": 237,
+          "p95Ms": 17.7,
+          "maximumMs": 17.8,
+          "framesOver25ms": 0,
+          "startScrollTop": 7200,
+          "endScrollTop": 79200,
+          "endVisibleSourceIds": [
+            860,
+            861,
+            862,
+            863,
+            864,
+            865
+          ],
+          "visibleLoading": {
+            "activeFrames": 237,
+            "loadingFrames": 0,
+            "whollyLoadingFrames": 0,
+            "emptyFrames": 0,
+            "maximumVisiblePlaceholders": 0,
+            "maximumContiguousMs": 0,
+            "postInputLoadingTailMs": 0
+          }
+        },
+        {
+          "label": "reverse-1",
+          "requestedInputs": 120,
+          "observedTrustedInputs": 120,
+          "activeInputMs": 4983.3,
+          "activeFrames": 298,
+          "p95Ms": 17.6,
+          "maximumMs": 17.8,
+          "framesOver25ms": 0,
+          "startScrollTop": 79200,
+          "endScrollTop": 7200,
+          "endVisibleSourceIds": [
+            77,
+            78,
+            79,
+            80,
+            81
+          ],
+          "visibleLoading": {
+            "activeFrames": 298,
+            "loadingFrames": 0,
+            "whollyLoadingFrames": 0,
+            "emptyFrames": 0,
+            "maximumVisiblePlaceholders": 0,
+            "maximumContiguousMs": 0,
+            "postInputLoadingTailMs": 0
+          }
+        },
+        {
+          "label": "forward-2",
+          "requestedInputs": 120,
+          "observedTrustedInputs": 120,
+          "activeInputMs": 4099.8,
+          "activeFrames": 245,
+          "p95Ms": 17.7,
+          "maximumMs": 17.7,
+          "framesOver25ms": 0,
+          "startScrollTop": 7200,
+          "endScrollTop": 79200,
+          "endVisibleSourceIds": [
+            860,
+            861,
+            862,
+            863,
+            864,
+            865
+          ],
+          "visibleLoading": {
+            "activeFrames": 245,
+            "loadingFrames": 0,
+            "whollyLoadingFrames": 0,
+            "emptyFrames": 0,
+            "maximumVisiblePlaceholders": 0,
+            "maximumContiguousMs": 0,
+            "postInputLoadingTailMs": 0
+          }
+        },
+        {
+          "label": "reverse-2",
+          "requestedInputs": 120,
+          "observedTrustedInputs": 120,
+          "activeInputMs": 4933.4,
+          "activeFrames": 295,
+          "p95Ms": 17.6,
+          "maximumMs": 17.7,
+          "framesOver25ms": 0,
+          "startScrollTop": 79200,
+          "endScrollTop": 7200,
+          "endVisibleSourceIds": [
+            77,
+            78,
+            79,
+            80,
+            81
+          ],
+          "visibleLoading": {
+            "activeFrames": 295,
+            "loadingFrames": 0,
+            "whollyLoadingFrames": 0,
+            "emptyFrames": 0,
+            "maximumVisiblePlaceholders": 0,
+            "maximumContiguousMs": 0,
+            "postInputLoadingTailMs": 0
+          }
+        }
+      ],
+      "visibleLoadingTotals": {
+        "activeFrames": 1607,
+        "loadingFrames": 0,
+        "whollyLoadingFrames": 0,
+        "emptyFrames": 0,
+        "maximumVisiblePlaceholders": 0,
+        "maximumContiguousLoadingMs": 0,
+        "maximumPostInputLoadingTailMs": 0
+      },
+      "wholeTableJumps": [
+        {
+          "fraction": 0.1,
+          "settledMs": 206,
+          "finalWheelInputs": 0,
+          "first": 1834,
+          "last": 1837
+        },
+        {
+          "fraction": 0.35,
+          "settledMs": 199,
+          "finalWheelInputs": 0,
+          "first": 5496,
+          "last": 5500
+        },
+        {
+          "fraction": 0.7,
+          "settledMs": 202,
+          "finalWheelInputs": 0,
+          "first": 10615,
+          "last": 10618
+        },
+        {
+          "fraction": 1,
+          "settledMs": 165,
+          "finalWheelInputs": 0,
+          "first": 14994,
+          "last": 14999
+        },
+        {
+          "fraction": 0.7,
+          "settledMs": 151,
+          "finalWheelInputs": 0,
+          "first": 10604,
+          "last": 10609
+        },
+        {
+          "fraction": 0.35,
+          "settledMs": 216,
+          "finalWheelInputs": 0,
+          "first": 5487,
+          "last": 5490
+        },
+        {
+          "fraction": 0.1,
+          "settledMs": 166,
+          "finalWheelInputs": 0,
+          "first": 1832,
+          "last": 1837
+        },
+        {
+          "fraction": 0,
+          "settledMs": 318,
+          "finalWheelInputs": 0,
+          "first": 0,
+          "last": 2
+        }
+      ],
+      "sampledBounds": {
+        "maximumCellCacheRows": 400,
+        "maximumConservativeCellCacheBytes": 6269902,
+        "configuredCellCacheRowCap": 400,
+        "configuredConservativeCellCacheByteCap": 16777216,
+        "maximumMountedTbodyRows": 23,
+        "initialAriaRowCountIncludingGroupsAndHeader": 15111,
+        "initialMatchingSourceRows": 15000
+      },
+      "workers": {
+        "requests": 613,
+        "maximumActive": 2,
+        "remainingActive": 0,
+        "abortedRequestsOnNavigation": 1,
+        "maximumReturnedRows": 100,
+        "genuineShortBoundedResponses": 32
+      },
+      "repeatedEntryMemory": {
+        "equivalentStates": 6,
+        "heapBytes": [
+          39617401,
+          39668435,
+          39810283,
+          39927207,
+          39992335,
+          40125655
+        ],
+        "retainedGrowthBytes": 508254,
+        "leastSquaresBytesPerReentry": 103711.26,
+        "measurementSpanSeconds": 9.042,
+        "domCounters": [
+          {
+            "documents": 1,
+            "nodes": 1000,
+            "jsEventListeners": 683
+          },
+          {
+            "documents": 1,
+            "nodes": 1000,
+            "jsEventListeners": 683
+          },
+          {
+            "documents": 1,
+            "nodes": 1000,
+            "jsEventListeners": 683
+          },
+          {
+            "documents": 1,
+            "nodes": 1000,
+            "jsEventListeners": 683
+          },
+          {
+            "documents": 1,
+            "nodes": 1000,
+            "jsEventListeners": 683
+          },
+          {
+            "documents": 1,
+            "nodes": 1000,
+            "jsEventListeners": 683
+          }
+        ],
+        "domAndListenerCountsStable": true
+      },
+      "passedAssertions": {
+        "noNextOrPreviousChunkButtons": true,
+        "initialScrollExtentCoversUnloadedRows": true,
+        "renderedCellsMatchAbsoluteSourceIds": true,
+        "noMissingOrDuplicateRowsAtCrossedBoundaries": true,
+        "finalSourceRowVisible": true,
+        "extraWheelInputsNeededAtBottom": 0,
+        "lastRowSearchAndSelection": 14999,
+        "serviceContextMatchesExpectedAbsoluteOddSourceIds": true,
+        "clearSearchAndContextRestores15000Rows": true,
+        "activeWorkerTerminatedOnLeaving": true,
+        "workerPagesAtMost100Rows": true,
+        "shortByteBoundedPagesContinueWithoutMissingRows": true,
+        "cellCacheAndMountedDOMStayWithinHarnessBounds": true,
+        "equivalentReentryHeapGrowthWithinHarnessTolerance": true
+      },
+      "errors": []
+    }
+  },
+  "limitations": [
+    "Synthetic 15,000-row fixture is not the user's actual 634MB saved project; measured fixture sizes are recorded per run.",
+    "Electron 45 runs the shared production App in a disposable sandboxed BrowserWindow with xhandle://app. Packaged native backend, updater, installer, and production profile were not exercised.",
+    "Fixture-only network responses avoid external APIs and credentials; real IndexedDB row workers remain active.",
+    "Each browser has three forward/reverse samples and five repeated reentries after the first memory state. Small measured heap growth is reported; this does not establish indefinite zero-growth behavior.",
+    "Active layout metadata is guarded in production and covered separately by tests; this browser scenario does not claim a direct measurement of that cache's 32MiB bound.",
+    "Browser scenario selects the correct distant absolute source row after search. External programmatic focus-jump behavior and focused-editor virtualization are tested separately, not exercised here.",
+    "Diagnostic GC excludes a full process/GPU/OS memory proof. Main-thread IDB instrumentation does not count worker transactions.",
+    "Programmatic far jumps measure settle latency separately from trusted wheel frame timings. No matched manual-pagination baseline performance claim is made."
+  ]
+}

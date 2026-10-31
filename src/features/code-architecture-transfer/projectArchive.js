@@ -174,7 +174,7 @@ export async function exportProjectArchive(project, options = {}) {
   catch(error) { try { await options.sink?.abort(); } catch {} throw error; }
 }
 async function writeProjectArchive(project, {signal,onProgress=()=>{},sink,categories} = {}) {
-  if (!project?.id) throw new Error('Select a project.');
+  if (!['string','number'].includes(typeof project?.id) || String(project.id)==='' || (typeof project.id==='number' && !Number.isFinite(project.id))) throw new Error('Select a project.');
   const selected=selectedExportCategories(categories);
   check(signal); onProgress('Preparing project export — saving pending edits…');
   const preparation = {projectId: project.id, tasks: []};
@@ -384,7 +384,7 @@ async function visitArchive(file, visit, signal, onReadProgress=()=>{}) {
       if (entry?.kind === 'end') throw new Error('Invalid streamed archive footer.');
     } else if (assembling) throw new Error('Incomplete streamed project record.');
     if (!header) {
-      if (entry?.type!==PROJECT_ARCHIVE_TYPE || ![1,2,3].includes(entry.version) || typeof entry.project?.id!=='string' || !entry.project.id || !Array.isArray(entry.project.repos)) throw new Error('Unsupported project archive.');
+      if (entry?.type!==PROJECT_ARCHIVE_TYPE || ![1,2,3].includes(entry.version) || !['string','number'].includes(typeof entry.project?.id) || String(entry.project.id)==='' || (typeof entry.project.id==='number' && !Number.isFinite(entry.project.id)) || !Array.isArray(entry.project.repos)) throw new Error('Unsupported project archive.');
       header=entry; scope=ownership(header.project);
     } else if (entry.kind==='end') {
       if (entry.count!==count || entry.digest!==hash.digest('hex')) throw new Error('Project archive checksum failed. No project was imported.');
@@ -463,7 +463,7 @@ export async function importProjectArchive(file, {signal,onProgress=()=>{}} = {}
     opened.set(schema.name,db);return db;
   };
   const assertNew=project=>{
-    if (JSON.parse(localStorage.getItem(PROJECTS)||'[]').some(p=>p.id===project.id)) throw new Error('This project already exists here. Import into another instance to preserve its original analysis identity.');
+    if (JSON.parse(localStorage.getItem(PROJECTS)||'[]').some(p=>String(p.id)===String(project.id))) throw new Error('This project already exists here. Import into another instance to preserve its original analysis identity.');
   };
   try {
     onProgress('Validating project archive…');

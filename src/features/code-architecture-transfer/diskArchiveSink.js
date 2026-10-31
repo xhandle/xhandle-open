@@ -1,4 +1,4 @@
-import { sha256 } from 'hash.js';
+import shajs from 'sha.js';
 import { backendURL } from '../../lib/api/backendConfig';
 
 // A single bounded upload is outstanding at a time. The complete file never becomes a renderer Blob.
@@ -22,7 +22,8 @@ export async function createDiskArchiveSink(name, {signal, baseURL=backendURL, f
   };
   const session=await request(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
   if(!/^[a-f0-9]{64}$/.test(session.id))throw new Error('Invalid local export session.');
-  const url=endpoint+'/'+session.id,encoder=new TextEncoder(),hash=sha256();
+  // Match the Node crypto server: hash.js produces incorrect SHA-256 lengths at 512 MiB and above.
+  const url=endpoint+'/'+session.id,encoder=new TextEncoder(),hash=shajs('sha256');
   let pending=[],size=0,bytes=0,chunks=0,closed=false;
   const flush=async()=>{
     if(!size)return;

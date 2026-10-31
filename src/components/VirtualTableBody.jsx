@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { registerTableSearchProvider } from './quickSearchUtils';
+import { registerTableSearchProvider, searchCellText, normalizeSearchText } from './quickSearchUtils';
 
 const lowerBound = (offsets, value) => {
   let lo = 0, hi = offsets.length - 1;
@@ -88,7 +88,13 @@ export default function VirtualTableBody({ items, getKey, preparedModel, childre
       if (!node.isConnected) return;
       node.scrollIntoView?.({ block: 'center', inline: 'nearest', behavior: 'instant' });
       handled.current = request.token; pending.current = null;
-      if (searchJump.current === request.token) {
+      if (searchJump.current?.token === request.token) {
+        const terms = normalizeSearchText(searchJump.current.query).toLowerCase().split(' ').filter(Boolean);
+        const cell = Array.from(node.querySelectorAll('td')).find(element => {
+          const text = searchCellText(element).toLowerCase();
+          return terms.some(term => text.includes(term));
+        });
+        (cell || node).scrollIntoView?.({ block: 'center', inline: 'center', behavior: 'instant' });
         node.classList.add('xhandle-search-hit'); node.focus?.({ preventScroll: true }); searchJump.current = null;
       } else onReveal?.(requestKey);
       update(); setJump(null);
@@ -100,7 +106,7 @@ export default function VirtualTableBody({ items, getKey, preparedModel, childre
     if (!table || !searchText) return;
     return registerTableSearchProvider(table, () => items.map((item, index) => ({
       id: `${label}:${keys[index]}`, kind: 'Table row', label, text: searchText(item),
-      activate() { const token = `search:${performance.now()}`; searchJump.current = token; reveal(keys[index], token); },
+      activate(query) { const token = `search:${performance.now()}`; searchJump.current = { token, query }; reveal(keys[index], token); },
     })));
   }, [items, keys, label, searchText, reveal]);
   const start = virtual ? Math.max(0, lowerBound(offsets, viewport.top) - 5) : 0;

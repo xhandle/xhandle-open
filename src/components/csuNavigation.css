@@ -1,7 +1,12 @@
 /* Keep the graph geometry visible while the viewport is moving; restore text
    and decoration when the gesture ends. Scoped to large CSU canvases only. */
-/* Let Chromium manage viewport compositing. A permanently promoted layer for
-   a very large graph can require enormous raster surfaces on desktop GPUs. */
+/* Limit viewport promotion to motion. A permanently promoted layer for a
+   very large graph can retain enormous raster surfaces on desktop GPUs. */
+.x-csu-large[data-viewport-moving] .react-flow__viewport {
+  /* Reuse the scene while transforming it instead of rerasterizing every
+     pinch step. Release the hint with the existing motion idle boundary. */
+  will-change: transform;
+}
 
 .x-csu-large[data-viewport-moving] .react-flow__edgelabel-renderer,
 .x-csu-large[data-viewport-moving] .react-flow__edge-textwrapper {
@@ -19,6 +24,19 @@
 .x-csu-large[data-viewport-moving] .react-flow__node-groupBox > div {
   box-shadow: none !important;
   transition: none !important;
+}
+
+/* Printing may begin before the gesture's idle callback. Include all text and
+   avoid carrying a temporary compositor hint into the print snapshot. */
+@media print {
+  .x-csu-large[data-viewport-moving] .react-flow__viewport {
+    will-change: auto;
+  }
+
+  .x-csu-large[data-viewport-moving] .react-flow__edgelabel-renderer,
+  .x-csu-large[data-viewport-moving] .react-flow__edge-textwrapper {
+    visibility: visible;
+  }
 }
 
 /* Hovered ports stay discoverable even when idle ports were not mounted. */

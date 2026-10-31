@@ -9,6 +9,7 @@ import EngineeringArtifactTable from "./EngineeringArtifactTable";
 import { useArtifactReview } from "./useArtifactReview";
 import { useActivityCenter } from "../../components/activity/ActivityCenter";
 import {
+  beginArtifactStorageWork,
   cellText,
   resolveArtifactArchitectureRefs,
   createFunctionalRowLookup,
@@ -508,7 +509,9 @@ export default function EngineeringArtifactPanel({
       });
       setDeriveMessage(message);
     };
+    let finishStorageWork;
     try {
+      finishStorageWork=beginArtifactStorageWork(projectId,repoId);
       await ensureArtifactStorageReady();
       onProgress.requestCheckpoint = createRequirementCheckpoint(projectId, repoId, kind, {reuse: reuseDerivationWork});
       const args = {
@@ -551,6 +554,7 @@ export default function EngineeringArtifactPanel({
       if (activeStorageKey.current === storageKey) setDeriveMessage(errorMessage);
       finishActivity(activityId, "error", errorMessage);
     } finally {
+      finishStorageWork?.();
       if (activeStorageKey.current === storageKey) setIsDeriving(false);
     }
   }, [reuseDerivationWork, organizationContext, cbaRows, currentSourceRows, definition.title, finishActivity, hazardAnalysis, kind, project?.name, projectId, repo?.repoId, repo?.repoName, repoId, rows, startActivity, updateActivity, storageKey, setRows]);
@@ -597,6 +601,10 @@ export default function EngineeringArtifactPanel({
       return index < 0 || cbaRows[index]?.lineage?.status === "historical";
     })
   ).length, [rows, kind, artifactContext, cbaRows, functionalRowLookup]);
+
+  const readFailureMessages = Array.from(new Set(Object.values(readErrors).filter(message => message && message !== STORAGE_RECOVERY_MESSAGE)));
+  const retryingRead = Object.values(readErrors).includes(STORAGE_RECOVERY_MESSAGE);
+  const tableLoadingLabel = `Loading ${definition.title.toLowerCase()} table`;
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
@@ -664,17 +672,17 @@ export default function EngineeringArtifactPanel({
             } finally { if (activeStorageKey.current === storageKey) setIsDeriving(false); }
           }}>Retry save</button>
         </div>}
-        {Object.values(readErrors).some(Boolean) && <div role="status" className="mt-2 text-sm text-slate-600">
-          {Array.from(new Set(Object.values(readErrors).filter(Boolean))).join(" ")}
-          {Object.values(readErrors).some(message => message && message !== STORAGE_RECOVERY_MESSAGE) &&
-            <button type="button" className="ml-2 underline" onClick={() => setReadAttempt(value => value + 1)}>Retry loading</button>}
+        {readFailureMessages.length > 0 && <div role="alert" className="mt-2 text-sm text-slate-600">
+          {readFailureMessages.join(" ")}
+          <button type="button" className="ml-2 underline" onClick={() => setReadAttempt(value => value + 1)}>Retry loading</button>
         </div>}
         {deriveMessage && <div className="mt-2 text-xs font-medium text-slate-600">{deriveMessage}</div>}
       </div>
       <EngineeringArtifactTable
-        loading={loadingRows}
-        loadingLabel={`Loading ${definition.title.toLowerCase()} table`}
-        preparationLabel={`Preparing ${definition.title.toLowerCase()} table`}
+        loading={loadingRows || retryingRead}
+        loadingLabel={retryingRead ? `${tableLoadingLabel}. ${STORAGE_RECOVERY_MESSAGE}` : tableLoadingLabel}
+        preparationLabel={tableLoadingLabel}
+        loadingError={readErrors.rows && readErrors.rows !== STORAGE_RECOVERY_MESSAGE ? readErrors.rows : null}
         copyLabel={`Copy ${definition.title.toLowerCase()} table`}
         rows={rows}
         columns={displayColumns}

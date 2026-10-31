@@ -14,16 +14,24 @@ beforeEach(()=>{jest.useFakeTimers();host=document.createElement('div');document
 afterEach(()=>{act(()=>root.unmount());host.remove();jest.useRealTimers();});
 const render=props=>act(()=>root.render(<Panel method="STPA" cbaRows={empty} operationalContexts={empty} {...props}/>));
 const settle=()=>{act(()=>jest.runAllTimers());act(()=>jest.runAllTimers());};
+const expectActiveAnalysisOnly=()=>{
+ const indicators=host.querySelectorAll('[role="progressbar"]');
+ expect(indicators).toHaveLength(1);
+ expect(indicators[0].getAttribute('aria-label')).toMatch(/^Running (?:code architecture )?hazard analysis$/);
+ expect(indicators[0].hasAttribute('aria-valuenow')).toBe(false);
+ expect(host.textContent).not.toMatch(/Preparing saved hazard results|Preparing hazard table|Preparing hazard analysis/);
+ const stop=[...host.querySelectorAll('button')].find(button=>button.textContent==='Stop analysis');
+ expect(stop).toBeDefined();expect(stop.disabled).toBe(false);
+};
 it('cold entry keeps an actionable Stop control throughout preparation',()=>{
  const run=makeRun('running');
  const cancel=jest.fn();
  render({latestRun:run,isRunning:true,onCancelAnalysis:cancel});
- expect(host.querySelector('[role="progressbar"]')).not.toBeNull();
- expect(host.textContent).toContain('Stop analysis');
+ expectActiveAnalysisOnly();
  act(()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='Stop analysis').click());
  expect(cancel).toHaveBeenCalledTimes(1);
  settle();
- expect(host.textContent).toContain('Stop analysis');
+ expectActiveAnalysisOnly();
 });
 it('changing context for the same saved run retains the table and collapsed groups',()=>{
  const run=makeRun('context');
@@ -46,10 +54,9 @@ it('partial snapshots arriving before preparation completes never remove active-
   act(()=>jest.advanceTimersToNextTimer());
   run={...run,generatedSheets:{Summary:[...run.generatedSheets.Summary]}};
   render({latestRun:run,isRunning:true});
-  expect(host.querySelector('[role="progressbar"]').getAttribute('aria-valuenow')).toBe('0');
-  expect(host.textContent).toContain('Stop analysis');
+  expectActiveAnalysisOnly();
  }
- settle();expect(host.textContent).toContain('Stop analysis');
+ settle();expectActiveAnalysisOnly();
 });
 it('recomputes freshness for same-run context changes without replacing normalized rows or the table',()=>{
  const run=makeRun('freshness');
@@ -77,11 +84,11 @@ it('does not restart preparation or remove the mounted table for a partial resul
  let run=makeRun('mounted-stream');
  render({latestRun:run,isRunning:true});settle();
  const table=host.querySelector('table');
+ expect(table).not.toBeNull();
  run={...run,generatedSheets:{Summary:run.generatedSheets.Summary.slice(0,-1)}};
  render({latestRun:run,isRunning:true});
  expect(host.querySelector('table')).toBe(table);
- expect(host.querySelector('[role="progressbar"]')).toBeNull();
- expect(host.textContent).toContain('Stop analysis');
+ expectActiveAnalysisOnly();
  expect(host.textContent).toContain('601 of 601');
 });
 
@@ -102,17 +109,17 @@ it('keeps same-run threshold updates mounted but prepares a different large run'
  const small={...full,generatedSheets:{Summary:full.generatedSheets.Summary.slice(0,501)}};
  render({latestRun:small,isRunning:true});settle();
  const table=host.querySelector('table');
+ expect(table).not.toBeNull();
  for(const run of [full, {...full}, small, full]) {
   render({latestRun:run,isRunning:true});
   expect(host.querySelector('table')).toBe(table);
-  expect(host.querySelector('[role="progressbar"]')).toBeNull();
-  expect(host.textContent).toContain('Stop analysis');
+  expectActiveAnalysisOnly();
  }
  const other=makeRun('other-large');
  other.projectId='other-project';
  render({latestRun:other,isRunning:true});
  expect(host.querySelector('table')).toBeNull();
- expect(host.querySelector('[role="progressbar"]')).not.toBeNull();
+ expectActiveAnalysisOnly();
  settle();
  expect(host.querySelector('table')).not.toBe(table);
  expect(host.querySelector('[data-window-key="row:other-large-0"]')).not.toBeNull();

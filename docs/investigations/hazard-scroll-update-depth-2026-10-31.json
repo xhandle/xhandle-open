@@ -1,0 +1,1275 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-31",
+  "issue": "Maximum update depth during fast hazard-table scrolling",
+  "status": "Exact update-depth and resize-anchor regressions fail before the fix and pass after; final development navigation and production App checks pass in Chrome and Electron.",
+  "exactFailureReproduction": {
+    "mechanism": "Mounted rows change measured table geometry; synchronous layout-effect measurement publishes another React state update, which changes the mounted window and measures again. Both alternating geometry and successive tiny-row expansion reproduce nested-update exhaustion.",
+    "baseline": {
+      "log": {
+        "path": "/tmp/xhandle-hazard-depth-20261031/baseline-measurement-regression.log",
+        "sha256": "b9fa38116928145129857664f082725834c4f16af1879500f2db742a578f84aa",
+        "bytes": 15660
+      },
+      "suitesFailed": 1,
+      "testsFailed": 4,
+      "error": "Maximum update depth exceeded",
+      "remoteStack": "useContinuousHazardRowWindow.js:220, measure",
+      "localStack": "useHazardRowWindow.js:118, measure"
+    },
+    "after": {
+      "log": {
+        "path": "/tmp/xhandle-hazard-depth-20261031/final-measurement-regression.log",
+        "sha256": "367aa684f461e9475db99e194f4d57513627f2854b0e4a625f62bec3aecab8cf",
+        "bytes": 1249
+      },
+      "suitesPassed": 4,
+      "testsPassed": 29
+    },
+    "resizeAnchorBefore": {
+      "log": {
+        "path": "/tmp/xhandle-hazard-depth-20261031/baseline-resize-anchor.log",
+        "sha256": "a4956b28411718ed2f4ab7d68319f7b34b22cf9daf1f6e54d5f206ed67f9e7c7",
+        "bytes": 2245
+      },
+      "finding": "Temporary estimated row heights clamped a retained tall-row offset to 63px or 159px instead of its measured 399px limit; final native-scroll resize regressions pass."
+    }
+  },
+  "browserMethodology": {
+    "developmentReact": true,
+    "strictMode": true,
+    "rowsPerScenario": 15000,
+    "scenarios": [
+      "local resident rows / mixed six-column content",
+      "local resident rows / few columns",
+      "remote saved rows / mixed six-column content",
+      "remote saved rows / few columns"
+    ],
+    "realComponents": "Actual CodeArchitectureHazardSummaryTable and local/continuous hooks. Remote cases use actual IndexedDB storage, layout workers and useContinuousHazardRows bounded cache.",
+    "styles": "Actual production CSS from the prior frozen build; changed table-width behavior is inline in the compiled current source.",
+    "inputs": "Each case has three sets of 160 rapid trusted wheel attempts, forward/reverse directions, whole-range jumps and three host resizes. Final remote mixed case adds 640 sustained downward wheel attempts with no intermediate jump.",
+    "idle": "Wait for active workers to reach zero plus four animation frames, then compare geometry and commit count over 250ms. Require same visible IDs, row heights/width/scroll position within 1px and at most two additional commits.",
+    "width": "Final runs require actual table width within 2px of configured explicit width in every sampled window.",
+    "focus": "Each case clears prior acknowledgements, reveals source row 14999 and requires its actual callback plus real loaded row.",
+    "baselineDifference": "Checked browser baseline used the same four content modes, three sets of 160 wheel sets, jumps and resizing. The final harness adds the 640-input sustained segment and explicit idle/width assertions; this is regression coverage, not a matched speed comparison."
+  },
+  "browserBaseline": {
+    "raw": {
+      "path": "/tmp/xhandle-hazard-depth-20261031/chrome-before-checked.json",
+      "sha256": "9f2962b4791c08b894f44f4adbcc83bcfda860b0f8a6021d92e62082243e2376",
+      "bytes": 426283
+    },
+    "log": {
+      "path": "/tmp/xhandle-hazard-depth-20261031/chrome-before-checked.log",
+      "sha256": "7f6f45373615284284dd3cb8233da0631c42adade70883bdc629ea8813592aa2",
+      "bytes": 192
+    },
+    "runtime": "156.0.8078.79",
+    "sourceHashes": {
+      "CodeArchitectureHazardSummaryTable.js": "e404afdefa95ae409bc8806881d1328ae3016491cd552c46f22910b2b58b8450",
+      "useHazardRowWindow.js": "a8934e74be583cc94493b61b652dcac512c285d9ef9c6988d54ab534555308b0",
+      "useContinuousHazardRowWindow.js": "930de1bb429e7ccaec4beed5c91dc65476ad9928506d088d85eb0d8b40bc95b8",
+      "useContinuousHazardRows.js": "ddaac04b65c8d8bb97f8a522b252c932b1a2fea6ae984219a5eb83fd0a9dea3e"
+    },
+    "harnessSha256": "67d02ec4f719f450539e479d036152e92be683b6fdee27aca823280cdd2bcf1d",
+    "actualBrowserCrashReproduced": false,
+    "scenarios": [
+      {
+        "mode": "local",
+        "pattern": "mixed",
+        "configuredMinWidth": "1780px",
+        "actualWidthRangePx": [
+          1780,
+          10183.2578125
+        ],
+        "maximumCommitsInFrame": 6,
+        "farRowFocusAcknowledged": true
+      },
+      {
+        "mode": "local",
+        "pattern": "few",
+        "configuredMinWidth": "640px",
+        "actualWidthRangePx": [
+          640,
+          7151.265625
+        ],
+        "maximumCommitsInFrame": 8,
+        "farRowFocusAcknowledged": true
+      },
+      {
+        "mode": "remote",
+        "pattern": "mixed",
+        "configuredMinWidth": "1780px",
+        "actualWidthRangePx": [
+          1780,
+          10183.2578125
+        ],
+        "maximumCommitsInFrame": 11,
+        "farRowFocusAcknowledged": true
+      },
+      {
+        "mode": "remote",
+        "pattern": "few",
+        "configuredMinWidth": "640px",
+        "actualWidthRangePx": [
+          640,
+          7151.265625
+        ],
+        "maximumCommitsInFrame": 12,
+        "farRowFocusAcknowledged": true
+      }
+    ]
+  },
+  "browserAfter": {
+    "chrome": {
+      "raw": {
+        "path": "/tmp/xhandle-hazard-depth-20261031/chrome-after.json",
+        "sha256": "af4ba03b34dde0f78792415d2a6f64051e2948e7f7d0547e1cfa8c05a37ae7f3",
+        "bytes": 348126
+      },
+      "log": {
+        "path": "/tmp/xhandle-hazard-depth-20261031/chrome-after.log",
+        "sha256": "7f6f45373615284284dd3cb8233da0631c42adade70883bdc629ea8813592aa2",
+        "bytes": 192
+      },
+      "runtime": "156.0.8078.79",
+      "sourceHashes": {
+        "CodeArchitectureHazardSummaryTable.js": "67a29ae697c15ad7cc9c0f5b2aa3c99f63d64c9cee0bb746eeb6a30aa30c255c",
+        "useHazardRowWindow.js": "73635b9a8c52d326ea2eae77d4aa6c5f4ee354e4ac0c65d4aec75ed5c92234d6",
+        "useContinuousHazardRowWindow.js": "6ec7318c10d11b10867c2e3ae324b5e7f1b697ae22fe5d8c5a0f8d55b862a258",
+        "useContinuousHazardRows.js": "ddaac04b65c8d8bb97f8a522b252c932b1a2fea6ae984219a5eb83fd0a9dea3e"
+      },
+      "harnessSha256": "b5c74d29c1b5726b190c89badb27e44af40cd17e77273e8e5310465d6fe2647b",
+      "cssSha256": "f85f6910d0c308e717933ecc711be2fdbda65fb4a47d4faf7c83a5792d2a7fd3",
+      "trustedWheelInputsObserved": 2560,
+      "totalReactCommits": 6151,
+      "maximumConcurrentWorkers": 2,
+      "remainingActiveWorkers": 0,
+      "pageConsoleAndReactErrors": 0,
+      "scenarios": [
+        {
+          "mode": "local",
+          "pattern": "mixed",
+          "geometrySamples": 48,
+          "configuredWidth": "1780px",
+          "actualWidthRangePx": [
+            1780,
+            1780
+          ],
+          "maximumMountedTbodyRows": 33,
+          "maximumHydratedCacheRows": 0,
+          "maximumConservativeCacheBytes": 0,
+          "maximumCommitsInFrame": 7,
+          "idleCommitsOver250ms": 0,
+          "idleVisibleIdsHeightsWidthAndScrollStable": true,
+          "farRowFocusAcknowledgedAndLoaded": true
+        },
+        {
+          "mode": "local",
+          "pattern": "few",
+          "geometrySamples": 48,
+          "configuredWidth": "640px",
+          "actualWidthRangePx": [
+            640,
+            640
+          ],
+          "maximumMountedTbodyRows": 32,
+          "maximumHydratedCacheRows": 0,
+          "maximumConservativeCacheBytes": 0,
+          "maximumCommitsInFrame": 9,
+          "idleCommitsOver250ms": 0,
+          "idleVisibleIdsHeightsWidthAndScrollStable": true,
+          "farRowFocusAcknowledgedAndLoaded": true
+        },
+        {
+          "mode": "remote",
+          "pattern": "mixed",
+          "geometrySamples": 64,
+          "configuredWidth": "1780px",
+          "actualWidthRangePx": [
+            1780,
+            1780
+          ],
+          "maximumMountedTbodyRows": 27,
+          "maximumHydratedCacheRows": 400,
+          "maximumConservativeCacheBytes": 675578,
+          "maximumCommitsInFrame": 7,
+          "idleCommitsOver250ms": 0,
+          "idleVisibleIdsHeightsWidthAndScrollStable": true,
+          "farRowFocusAcknowledgedAndLoaded": true,
+          "sustainedDown": {
+            "requestedInputs": 640,
+            "durationMs": 12718,
+            "trustedInputs": 639,
+            "inputCountNote": "639 events observed immediately at loop end; all 2,560 wheel events were observed by final settled audit."
+          }
+        },
+        {
+          "mode": "remote",
+          "pattern": "few",
+          "geometrySamples": 48,
+          "configuredWidth": "640px",
+          "actualWidthRangePx": [
+            640,
+            640
+          ],
+          "maximumMountedTbodyRows": 26,
+          "maximumHydratedCacheRows": 400,
+          "maximumConservativeCacheBytes": 192280,
+          "maximumCommitsInFrame": 7,
+          "idleCommitsOver250ms": 0,
+          "idleVisibleIdsHeightsWidthAndScrollStable": true,
+          "farRowFocusAcknowledgedAndLoaded": true
+        }
+      ]
+    },
+    "electron": {
+      "raw": {
+        "path": "/tmp/xhandle-hazard-depth-20261031/electron-after.json",
+        "sha256": "d888bc2a43c4cce6ab29b4aa10a2438eabff1c948672333638245938e3bf0220",
+        "bytes": 351062
+      },
+      "log": {
+        "path": "/tmp/xhandle-hazard-depth-20261031/electron-after.log",
+        "sha256": "7f6f45373615284284dd3cb8233da0631c42adade70883bdc629ea8813592aa2",
+        "bytes": 192
+      },
+      "runtime": {
+        "electron": "45.0.0",
+        "chrome": "156.0.8078.48",
+        "node": "24.22.0",
+        "v8": "15.6.75.19-electron.0"
+      },
+      "sourceHashes": {
+        "CodeArchitectureHazardSummaryTable.js": "67a29ae697c15ad7cc9c0f5b2aa3c99f63d64c9cee0bb746eeb6a30aa30c255c",
+        "useHazardRowWindow.js": "73635b9a8c52d326ea2eae77d4aa6c5f4ee354e4ac0c65d4aec75ed5c92234d6",
+        "useContinuousHazardRowWindow.js": "6ec7318c10d11b10867c2e3ae324b5e7f1b697ae22fe5d8c5a0f8d55b862a258",
+        "useContinuousHazardRows.js": "ddaac04b65c8d8bb97f8a522b252c932b1a2fea6ae984219a5eb83fd0a9dea3e"
+      },
+      "harnessSha256": "b5c74d29c1b5726b190c89badb27e44af40cd17e77273e8e5310465d6fe2647b",
+      "cssSha256": "f85f6910d0c308e717933ecc711be2fdbda65fb4a47d4faf7c83a5792d2a7fd3",
+      "trustedWheelInputsObserved": 2560,
+      "totalReactCommits": 6283,
+      "maximumConcurrentWorkers": 2,
+      "remainingActiveWorkers": 0,
+      "pageConsoleAndReactErrors": 0,
+      "scenarios": [
+        {
+          "mode": "local",
+          "pattern": "mixed",
+          "geometrySamples": 48,
+          "configuredWidth": "1780px",
+          "actualWidthRangePx": [
+            1780,
+            1780
+          ],
+          "maximumMountedTbodyRows": 36,
+          "maximumHydratedCacheRows": 0,
+          "maximumConservativeCacheBytes": 0,
+          "maximumCommitsInFrame": 4,
+          "idleCommitsOver250ms": 0,
+          "idleVisibleIdsHeightsWidthAndScrollStable": true,
+          "farRowFocusAcknowledgedAndLoaded": true
+        },
+        {
+          "mode": "local",
+          "pattern": "few",
+          "geometrySamples": 48,
+          "configuredWidth": "640px",
+          "actualWidthRangePx": [
+            640,
+            640
+          ],
+          "maximumMountedTbodyRows": 32,
+          "maximumHydratedCacheRows": 0,
+          "maximumConservativeCacheBytes": 0,
+          "maximumCommitsInFrame": 9,
+          "idleCommitsOver250ms": 0,
+          "idleVisibleIdsHeightsWidthAndScrollStable": true,
+          "farRowFocusAcknowledgedAndLoaded": true
+        },
+        {
+          "mode": "remote",
+          "pattern": "mixed",
+          "geometrySamples": 64,
+          "configuredWidth": "1780px",
+          "actualWidthRangePx": [
+            1780,
+            1780
+          ],
+          "maximumMountedTbodyRows": 32,
+          "maximumHydratedCacheRows": 400,
+          "maximumConservativeCacheBytes": 708336,
+          "maximumCommitsInFrame": 7,
+          "idleCommitsOver250ms": 0,
+          "idleVisibleIdsHeightsWidthAndScrollStable": true,
+          "farRowFocusAcknowledgedAndLoaded": true,
+          "sustainedDown": {
+            "requestedInputs": 640,
+            "durationMs": 10886,
+            "trustedInputs": 639,
+            "inputCountNote": "639 events observed immediately at loop end; all 2,560 wheel events were observed by final settled audit."
+          }
+        },
+        {
+          "mode": "remote",
+          "pattern": "few",
+          "geometrySamples": 48,
+          "configuredWidth": "640px",
+          "actualWidthRangePx": [
+            640,
+            640
+          ],
+          "maximumMountedTbodyRows": 27,
+          "maximumHydratedCacheRows": 400,
+          "maximumConservativeCacheBytes": 191262,
+          "maximumCommitsInFrame": 7,
+          "idleCommitsOver250ms": 0,
+          "idleVisibleIdsHeightsWidthAndScrollStable": true,
+          "farRowFocusAcknowledgedAndLoaded": true
+        }
+      ]
+    },
+    "matchingRuntimeSourceHashes": true,
+    "matchingHarnessHashes": true,
+    "runtimeRevisionNote": "The full 2,560-wheel stress matrix validates animation-frame measurement and fixed table width before the final tall-row resize-anchor correction. Final navigation/geometry verification below uses the final runtime revision; production reruns also use it."
+  },
+  "limitations": [
+    "The real-browser baseline did not reproduce a React crash. It did reproduce mounted-window-dependent intrinsic width changes in both paths. Exact Maximum update depth fail-before evidence comes from the focused hook regressions.",
+    "Synthetic content and isolated table hosts do not reproduce every property of the user's actual saved project or the complete localhost App. Final production full-App reruns are recorded below.",
+    "Remote fixtures use real workers and cache, but the diagnostic retains its generated input sheet for setup. Cache counts are checked; no total heap or process-memory bound is claimed here.",
+    "Electron uses a disposable diagnostic BrowserWindow; installed native backend/updater and user profile are not used.",
+    "Development commit counts are recorded for recurrence/convergence checks, not presented as production frame-rate performance."
+  ],
+  "testValidation": {
+    "hazardRegression": {
+      "log": {
+        "path": "/tmp/xhandle-hazard-depth-20261031/final-hazard-regression.log",
+        "sha256": "a06531730045f595d3574d2b6f8b07b36ddbabe2dd0125329d942f0bb49b568c",
+        "bytes": 852001
+      },
+      "suitesPassed": 96,
+      "testsPassed": 850
+    },
+    "productionBuild": {
+      "log": {
+        "path": "/tmp/xhandle-hazard-depth-20261031/final-build.log",
+        "sha256": "c456d0d7f98c60bb68b77bfef08af0404a1c48bf51ee9cc4ac19e8c2916621d8",
+        "bytes": 38041
+      },
+      "sourceManifest": {
+        "path": "/tmp/xhandle-hazard-depth-20261031/final-source-sha256.json",
+        "sha256": "051bd5ab88e2b89b8a102724635adbcfeca003d4b69e4777a9700eebf6573bbf",
+        "bytes": 103075
+      },
+      "path": "/tmp/xhandle-hazard-depth-20261031/final-build",
+      "assetManifestSha256": "a55061e1985c7639ff303dc3f305252f6e4dab8e8e050315c4524e181674b7fb"
+    }
+  },
+  "finalNavigationVerification": {
+    "methodology": "Development React with StrictMode; actual SummaryTable and real saved-row workers. Focus a tall row, trusted-wheel up to 1,200px into it, drag its actual column resize button -160px then +220px, require unchanged first visible source ID and offset within 2px, then verify far-row focus and 250ms idle geometry convergence.",
+    "fixtureGutter": "A 24px right padding on the isolated scroller keeps the last column handle clear of the macOS overlay-scrollbar hit region. Hit testing must identify the real resize BUTTON and mousedown must activate col-resize cursor. This is diagnostic-host styling only.",
+    "driverFailures": {
+      "artifacts": [
+        {
+          "path": "/tmp/xhandle-hazard-depth-20261031/chrome-navigation-final.json",
+          "sha256": "e22991a6e3d9da4fb76984bbdfed381c07c1a9d85148dc2033c73345c3b97ab9",
+          "bytes": 12893
+        },
+        {
+          "path": "/tmp/xhandle-hazard-depth-20261031/chrome-navigation-probe.json",
+          "sha256": "b9aca601f5e330c609c78c58504a1b098ae54bea41e49b346d80d8ef7072da92",
+          "bytes": 38751
+        }
+      ],
+      "cause": "The first drag probes hit the native scrollbar/scroller instead of the resize button. The configured width never changed; no React error or anchor mismatch occurred. These are preserved harness failures, not runtime failures."
+    },
+    "runs": {
+      "chrome": {
+        "raw": {
+          "path": "/tmp/xhandle-hazard-depth-20261031/chrome-navigation-checked.json",
+          "sha256": "f1c42c965d114db34e93cb63b2c0f676b856e8e4a8f8ddec4d3d27e5d9739ab8",
+          "bytes": 74137
+        },
+        "log": {
+          "path": "/tmp/xhandle-hazard-depth-20261031/chrome-navigation-checked.log",
+          "sha256": "7f6f45373615284284dd3cb8233da0631c42adade70883bdc629ea8813592aa2",
+          "bytes": 192
+        },
+        "sourceHashes": {
+          "CodeArchitectureHazardSummaryTable.js": "67a29ae697c15ad7cc9c0f5b2aa3c99f63d64c9cee0bb746eeb6a30aa30c255c",
+          "useHazardRowWindow.js": "feecc731a8bef0726d22fb440d40cb6314e164c75e46d52f9612290244ad0e70",
+          "useContinuousHazardRowWindow.js": "e4465c52c5895e33d4d7f1c60a0c7629e93e80a6cfeb199ff055a11c24ee38dd",
+          "useContinuousHazardRows.js": "ddaac04b65c8d8bb97f8a522b252c932b1a2fea6ae984219a5eb83fd0a9dea3e"
+        },
+        "harnessSha256": "80539e30c37cfdbbc179a8d26ba5426290000e617fa352e2ea378d5ce4ca11d3",
+        "pageConsoleAndReactErrors": 0,
+        "remainingActiveWorkers": 0,
+        "scenarios": [
+          {
+            "mode": "local",
+            "pattern": "mixed",
+            "resizes": [
+              {
+                "dragDeltaPx": -160,
+                "button": "Resize Causal Scenario",
+                "beforeAnchor": {
+                  "id": 714,
+                  "height": 1817,
+                  "viewportOffset": -1152.5,
+                  "visible": true
+                },
+                "afterAnchor": {
+                  "id": 714,
+                  "height": 3617,
+                  "viewportOffset": -1152.5,
+                  "visible": true
+                },
+                "beforeConfiguredWidth": "1780px",
+                "afterConfiguredWidth": "1620px"
+              },
+              {
+                "dragDeltaPx": 220,
+                "button": "Resize Causal Scenario",
+                "beforeAnchor": {
+                  "id": 714,
+                  "height": 3617,
+                  "viewportOffset": -1152.5,
+                  "visible": true
+                },
+                "afterAnchor": {
+                  "id": 714,
+                  "height": 1817,
+                  "viewportOffset": -1152.5,
+                  "visible": true
+                },
+                "beforeConfiguredWidth": "1620px",
+                "afterConfiguredWidth": "1840px"
+              }
+            ],
+            "farRowFocusAcknowledgedAndLoaded": true,
+            "idleCommitsOver250ms": 0,
+            "idleGeometryStable": true
+          },
+          {
+            "mode": "local",
+            "pattern": "few",
+            "resizes": [
+              {
+                "dragDeltaPx": -160,
+                "button": "Resize Hazard",
+                "beforeAnchor": {
+                  "id": 725,
+                  "height": 3057,
+                  "viewportOffset": -1262.5,
+                  "visible": true
+                },
+                "afterAnchor": {
+                  "id": 725,
+                  "height": 8657,
+                  "viewportOffset": -1262.5,
+                  "visible": true
+                },
+                "beforeConfiguredWidth": "640px",
+                "afterConfiguredWidth": "520px"
+              },
+              {
+                "dragDeltaPx": 220,
+                "button": "Resize Hazard",
+                "beforeAnchor": {
+                  "id": 725,
+                  "height": 8657,
+                  "viewportOffset": -1262.5,
+                  "visible": true
+                },
+                "afterAnchor": {
+                  "id": 725,
+                  "height": 1897,
+                  "viewportOffset": -1262.5,
+                  "visible": true
+                },
+                "beforeConfiguredWidth": "520px",
+                "afterConfiguredWidth": "740px"
+              }
+            ],
+            "farRowFocusAcknowledgedAndLoaded": true,
+            "idleCommitsOver250ms": 0,
+            "idleGeometryStable": true
+          },
+          {
+            "mode": "remote",
+            "pattern": "mixed",
+            "resizes": [
+              {
+                "dragDeltaPx": -160,
+                "button": "Resize Causal Scenario",
+                "beforeAnchor": {
+                  "id": 714,
+                  "height": 1817,
+                  "viewportOffset": -1152.5,
+                  "visible": true
+                },
+                "afterAnchor": {
+                  "id": 714,
+                  "height": 3617,
+                  "viewportOffset": -1152.5,
+                  "visible": true
+                },
+                "beforeConfiguredWidth": "1780px",
+                "afterConfiguredWidth": "1620px"
+              },
+              {
+                "dragDeltaPx": 220,
+                "button": "Resize Causal Scenario",
+                "beforeAnchor": {
+                  "id": 714,
+                  "height": 3617,
+                  "viewportOffset": -1152.5,
+                  "visible": true
+                },
+                "afterAnchor": {
+                  "id": 714,
+                  "height": 1817,
+                  "viewportOffset": -1152.5,
+                  "visible": true
+                },
+                "beforeConfiguredWidth": "1620px",
+                "afterConfiguredWidth": "1840px"
+              }
+            ],
+            "farRowFocusAcknowledgedAndLoaded": true,
+            "idleCommitsOver250ms": 0,
+            "idleGeometryStable": true
+          },
+          {
+            "mode": "remote",
+            "pattern": "few",
+            "resizes": [
+              {
+                "dragDeltaPx": -160,
+                "button": "Resize Hazard",
+                "beforeAnchor": {
+                  "id": 725,
+                  "height": 3057,
+                  "viewportOffset": -1262.5,
+                  "visible": true
+                },
+                "afterAnchor": {
+                  "id": 725,
+                  "height": 8657,
+                  "viewportOffset": -1262.5,
+                  "visible": true
+                },
+                "beforeConfiguredWidth": "640px",
+                "afterConfiguredWidth": "520px"
+              },
+              {
+                "dragDeltaPx": 220,
+                "button": "Resize Hazard",
+                "beforeAnchor": {
+                  "id": 725,
+                  "height": 8657,
+                  "viewportOffset": -1262.5,
+                  "visible": true
+                },
+                "afterAnchor": {
+                  "id": 725,
+                  "height": 1897,
+                  "viewportOffset": -1262.5,
+                  "visible": true
+                },
+                "beforeConfiguredWidth": "520px",
+                "afterConfiguredWidth": "740px"
+              }
+            ],
+            "farRowFocusAcknowledgedAndLoaded": true,
+            "idleCommitsOver250ms": 0,
+            "idleGeometryStable": true
+          }
+        ]
+      },
+      "electron": {
+        "raw": {
+          "path": "/tmp/xhandle-hazard-depth-20261031/electron-navigation-checked.json",
+          "sha256": "022cd377db66ab896a21ed01914976d366673ed66da02df14c8b7d159e98d503",
+          "bytes": 75122
+        },
+        "log": {
+          "path": "/tmp/xhandle-hazard-depth-20261031/electron-navigation-checked.log",
+          "sha256": "7f6f45373615284284dd3cb8233da0631c42adade70883bdc629ea8813592aa2",
+          "bytes": 192
+        },
+        "sourceHashes": {
+          "CodeArchitectureHazardSummaryTable.js": "67a29ae697c15ad7cc9c0f5b2aa3c99f63d64c9cee0bb746eeb6a30aa30c255c",
+          "useHazardRowWindow.js": "feecc731a8bef0726d22fb440d40cb6314e164c75e46d52f9612290244ad0e70",
+          "useContinuousHazardRowWindow.js": "e4465c52c5895e33d4d7f1c60a0c7629e93e80a6cfeb199ff055a11c24ee38dd",
+          "useContinuousHazardRows.js": "ddaac04b65c8d8bb97f8a522b252c932b1a2fea6ae984219a5eb83fd0a9dea3e"
+        },
+        "harnessSha256": "80539e30c37cfdbbc179a8d26ba5426290000e617fa352e2ea378d5ce4ca11d3",
+        "pageConsoleAndReactErrors": 0,
+        "remainingActiveWorkers": 0,
+        "scenarios": [
+          {
+            "mode": "local",
+            "pattern": "mixed",
+            "resizes": [
+              {
+                "dragDeltaPx": -160,
+                "button": "Resize Causal Scenario",
+                "beforeAnchor": {
+                  "id": 714,
+                  "height": 1817,
+                  "viewportOffset": -1152.5,
+                  "visible": true
+                },
+                "afterAnchor": {
+                  "id": 714,
+                  "height": 3617,
+                  "viewportOffset": -1152.5,
+                  "visible": true
+                },
+                "beforeConfiguredWidth": "1780px",
+                "afterConfiguredWidth": "1620px"
+              },
+              {
+                "dragDeltaPx": 220,
+                "button": "Resize Causal Scenario",
+                "beforeAnchor": {
+                  "id": 714,
+                  "height": 3617,
+                  "viewportOffset": -1152.5,
+                  "visible": true
+                },
+                "afterAnchor": {
+                  "id": 714,
+                  "height": 1817,
+                  "viewportOffset": -1152.5,
+                  "visible": true
+                },
+                "beforeConfiguredWidth": "1620px",
+                "afterConfiguredWidth": "1840px"
+              }
+            ],
+            "farRowFocusAcknowledgedAndLoaded": true,
+            "idleCommitsOver250ms": 0,
+            "idleGeometryStable": true
+          },
+          {
+            "mode": "local",
+            "pattern": "few",
+            "resizes": [
+              {
+                "dragDeltaPx": -160,
+                "button": "Resize Hazard",
+                "beforeAnchor": {
+                  "id": 725,
+                  "height": 3057,
+                  "viewportOffset": -1262.5,
+                  "visible": true
+                },
+                "afterAnchor": {
+                  "id": 725,
+                  "height": 8657,
+                  "viewportOffset": -1262.5,
+                  "visible": true
+                },
+                "beforeConfiguredWidth": "640px",
+                "afterConfiguredWidth": "520px"
+              },
+              {
+                "dragDeltaPx": 220,
+                "button": "Resize Hazard",
+                "beforeAnchor": {
+                  "id": 725,
+                  "height": 8657,
+                  "viewportOffset": -1262.5,
+                  "visible": true
+                },
+                "afterAnchor": {
+                  "id": 725,
+                  "height": 1897,
+                  "viewportOffset": -1262.5,
+                  "visible": true
+                },
+                "beforeConfiguredWidth": "520px",
+                "afterConfiguredWidth": "740px"
+              }
+            ],
+            "farRowFocusAcknowledgedAndLoaded": true,
+            "idleCommitsOver250ms": 0,
+            "idleGeometryStable": true
+          },
+          {
+            "mode": "remote",
+            "pattern": "mixed",
+            "resizes": [
+              {
+                "dragDeltaPx": -160,
+                "button": "Resize Causal Scenario",
+                "beforeAnchor": {
+                  "id": 714,
+                  "height": 1817,
+                  "viewportOffset": -1152.5,
+                  "visible": true
+                },
+                "afterAnchor": {
+                  "id": 714,
+                  "height": 3617,
+                  "viewportOffset": -1152.5,
+                  "visible": true
+                },
+                "beforeConfiguredWidth": "1780px",
+                "afterConfiguredWidth": "1620px"
+              },
+              {
+                "dragDeltaPx": 220,
+                "button": "Resize Causal Scenario",
+                "beforeAnchor": {
+                  "id": 714,
+                  "height": 3617,
+                  "viewportOffset": -1152.5,
+                  "visible": true
+                },
+                "afterAnchor": {
+                  "id": 714,
+                  "height": 1817,
+                  "viewportOffset": -1152.5,
+                  "visible": true
+                },
+                "beforeConfiguredWidth": "1620px",
+                "afterConfiguredWidth": "1840px"
+              }
+            ],
+            "farRowFocusAcknowledgedAndLoaded": true,
+            "idleCommitsOver250ms": 0,
+            "idleGeometryStable": true
+          },
+          {
+            "mode": "remote",
+            "pattern": "few",
+            "resizes": [
+              {
+                "dragDeltaPx": -160,
+                "button": "Resize Hazard",
+                "beforeAnchor": {
+                  "id": 725,
+                  "height": 3057,
+                  "viewportOffset": -1262.5,
+                  "visible": true
+                },
+                "afterAnchor": {
+                  "id": 725,
+                  "height": 8657,
+                  "viewportOffset": -1262.5,
+                  "visible": true
+                },
+                "beforeConfiguredWidth": "640px",
+                "afterConfiguredWidth": "520px"
+              },
+              {
+                "dragDeltaPx": 220,
+                "button": "Resize Hazard",
+                "beforeAnchor": {
+                  "id": 725,
+                  "height": 8657,
+                  "viewportOffset": -1262.5,
+                  "visible": true
+                },
+                "afterAnchor": {
+                  "id": 725,
+                  "height": 1897,
+                  "viewportOffset": -1262.5,
+                  "visible": true
+                },
+                "beforeConfiguredWidth": "520px",
+                "afterConfiguredWidth": "740px"
+              }
+            ],
+            "farRowFocusAcknowledgedAndLoaded": true,
+            "idleCommitsOver250ms": 0,
+            "idleGeometryStable": true
+          }
+        ]
+      }
+    },
+    "sourceHashesMatchFinalProductionSourceManifest": true
+  },
+  "productionFinalVerification": {
+    "build": "/tmp/xhandle-hazard-depth-20261031/final-build",
+    "assetManifestSha256": "a55061e1985c7639ff303dc3f305252f6e4dab8e8e050315c4524e181674b7fb",
+    "methodology": "Same existing full production App diagnostic and 15,000-row saved fixture as the continuous-scrolling acceptance. One warmup, three forward/reverse pairs, trusted-input-only rAF intervals, visible placeholders/empty-content samples through readiness, distant jumps/search/selection/context changes, worker cancellation and six equivalent explicit-GC entry states.",
+    "limits": "Synthetic fixture is not the actual 634MB user project. Electron uses a disposable BrowserWindow rather than the installed native backend. Actual viewport dimensions differ and are reported; this is independent runtime verification, not a controlled speed comparison. Sampled cache byte accounting is not a total-process memory bound.",
+    "runs": {
+      "chrome": {
+        "raw": {
+          "path": "/tmp/xhandle-hazard-depth-20261031/chrome-production-final.json",
+          "sha256": "01916df2afb54912323c35244cc9039f68ba3e8ec699c716b194756b34b6a442",
+          "bytes": 1382300
+        },
+        "log": {
+          "path": "/tmp/xhandle-hazard-depth-20261031/chrome-production-final.log",
+          "sha256": "873ae6e0002a28c4b40c07b727d7b0e902d43c606ff1c74db1bee7710f0f1a85",
+          "bytes": 622
+        },
+        "hardware": {
+          "cpu": "Apple M2",
+          "ram": 8589934592,
+          "arch": "arm64"
+        },
+        "runtime": {
+          "chrome": "156.0.8078.79"
+        },
+        "viewport": {
+          "width": 1440,
+          "height": 920
+        },
+        "devicePixelRatio": 2,
+        "entryAssetHashes": {
+          "static/css/main.3002dd5b.css": "f85f6910d0c308e717933ecc711be2fdbda65fb4a47d4faf7c83a5792d2a7fd3",
+          "static/js/main.1dfe6d57.js": "437c849bff5c99848c4598da2b7fec6b2ab2f9a1e93b1b231d88313c6c8cde99"
+        },
+        "harnessHashes": {
+          "desktop-interaction-performance.cjs": "da352e397e8748f4f422f11db4278090917db97a9c184679679f62db87acb33b",
+          "desktop-performance-cba-scenario.cjs": "a0f72a79b9886981dd5d51ad9c71f8c26bc8d57987ac869ff23dd20a5192a67e",
+          "cba-rendering-regression.cjs": "2ecd712ab5a2ce124b7baf1cb37d22faa4cbd8d5ae2c5bf108c48ac4d45a204c",
+          "continuous-hazard-scrolling.cjs": "8c975239b5c78c2f32e39fa77f30bf6ef30d7809f34425da8cb62566a68397e1"
+        },
+        "seederSha256": "8dd4325e720497ca074eff033f90156f4aca661b6cc5d2b0edacc17b65543cbe",
+        "fixture": {
+          "rows": 15000,
+          "graphNodes": 100,
+          "artifactRowsPerCollection": 1000,
+          "functionalModelReady": true,
+          "architectureRows": 200,
+          "summaryUTF8Bytes": 10632458,
+          "evidenceCharacters": 12432743,
+          "checkpointCharacters": 12432743,
+          "estimate": {
+            "quota": 10742009856,
+            "usage": 4591616,
+            "usageDetails": {
+              "indexedDB": 4591616
+            }
+          },
+          "hazardScrollFixture": {
+            "groupRows": 137,
+            "contexts": [
+              "scroll-normal",
+              "scroll-service"
+            ],
+            "wideRows": 30
+          }
+        },
+        "firstUsableMs": 1787,
+        "wheelSamples": [
+          {
+            "name": "forward-0",
+            "trustedInputs": 120,
+            "activeFrames": 237,
+            "p95Ms": 17.5,
+            "maximumMs": 17.7,
+            "framesOver25ms": 0,
+            "loadingFrames": 0,
+            "emptyFrames": 0
+          },
+          {
+            "name": "reverse-0",
+            "trustedInputs": 120,
+            "activeFrames": 288,
+            "p95Ms": 16.8,
+            "maximumMs": 17.3,
+            "framesOver25ms": 0,
+            "loadingFrames": 0,
+            "emptyFrames": 0
+          },
+          {
+            "name": "forward-1",
+            "trustedInputs": 120,
+            "activeFrames": 237,
+            "p95Ms": 16.8,
+            "maximumMs": 17.5,
+            "framesOver25ms": 0,
+            "loadingFrames": 0,
+            "emptyFrames": 0
+          },
+          {
+            "name": "reverse-1",
+            "trustedInputs": 120,
+            "activeFrames": 289,
+            "p95Ms": 16.8,
+            "maximumMs": 17.7,
+            "framesOver25ms": 0,
+            "loadingFrames": 0,
+            "emptyFrames": 0
+          },
+          {
+            "name": "forward-2",
+            "trustedInputs": 120,
+            "activeFrames": 238,
+            "p95Ms": 16.8,
+            "maximumMs": 17.6,
+            "framesOver25ms": 0,
+            "loadingFrames": 0,
+            "emptyFrames": 0
+          },
+          {
+            "name": "reverse-2",
+            "trustedInputs": 120,
+            "activeFrames": 290,
+            "p95Ms": 16.8,
+            "maximumMs": 17.1,
+            "framesOver25ms": 0,
+            "loadingFrames": 0,
+            "emptyFrames": 0
+          }
+        ],
+        "loading": {
+          "activeFrames": 1579,
+          "visibleLoadingFrames": 0,
+          "whollyLoadingFrames": 0,
+          "emptyFrames": 0,
+          "maximumContiguousLoadingMs": 0,
+          "maximumPostInputLoadingTailMs": 0
+        },
+        "jumps": [
+          {
+            "fraction": 0.1,
+            "settledMs": 239,
+            "finalWheelInputs": 0,
+            "first": 1835,
+            "last": 1839
+          },
+          {
+            "fraction": 0.35,
+            "settledMs": 233,
+            "finalWheelInputs": 0,
+            "first": 5497,
+            "last": 5501
+          },
+          {
+            "fraction": 0.7,
+            "settledMs": 217,
+            "finalWheelInputs": 0,
+            "first": 10615,
+            "last": 10619
+          },
+          {
+            "fraction": 1,
+            "settledMs": 218,
+            "finalWheelInputs": 0,
+            "first": 14993,
+            "last": 14999
+          },
+          {
+            "fraction": 0.7,
+            "settledMs": 181,
+            "finalWheelInputs": 0,
+            "first": 10604,
+            "last": 10610
+          },
+          {
+            "fraction": 0.35,
+            "settledMs": 234,
+            "finalWheelInputs": 0,
+            "first": 5487,
+            "last": 5491
+          },
+          {
+            "fraction": 0.1,
+            "settledMs": 166,
+            "finalWheelInputs": 0,
+            "first": 1833,
+            "last": 1837
+          },
+          {
+            "fraction": 0,
+            "settledMs": 300,
+            "finalWheelInputs": 0,
+            "first": 0,
+            "last": 3
+          }
+        ],
+        "sampledBounds": {
+          "maximumCacheRows": 400,
+          "maximumConservativeCacheBytes": 6269914,
+          "maximumMountedTbodyRows": 24,
+          "configuredCacheRowCap": 400,
+          "configuredConservativeCacheByteCap": 16777216
+        },
+        "workers": {
+          "requests": 669,
+          "maximumActive": 2,
+          "remainingActive": 0,
+          "abortedOnNavigation": 1,
+          "genuineShortBoundedResponses": 32
+        },
+        "memory": {
+          "equivalentEntryStates": 6,
+          "explicitGCHeapBytes": [
+            39475025,
+            39715417,
+            39811717,
+            39941973,
+            39992065,
+            40135133
+          ],
+          "retainedGrowthBytes": 660108,
+          "leastSquaresGrowthBytesPerReentry": 121735.43,
+          "domCountersEachEntry": {
+            "documents": 1,
+            "nodes": 1022,
+            "jsEventListeners": 693
+          },
+          "domAndListenerCountsExactlyStable": true
+        },
+        "semanticChecks": {
+          "noChunkNavigationButtons": true,
+          "allRenderedCellsMatchAbsoluteIds": true,
+          "correctLastRowSearchAndSelection": true,
+          "contextFiltersRetainOriginalSourceIds": true,
+          "allRowsRestoredAfterClearingFilters": true,
+          "farEndVisibleWithoutExtraWheelInput": true,
+          "navigationCancelsActiveWorker": true,
+          "noPageOrRuntimeErrors": true
+        }
+      },
+      "electron": {
+        "raw": {
+          "path": "/tmp/xhandle-hazard-depth-20261031/electron-production-final.json",
+          "sha256": "279976b83d5a725767ad05dfac0aa060f33fa8670fde07637eda75209b3a1442",
+          "bytes": 1376677
+        },
+        "log": {
+          "path": "/tmp/xhandle-hazard-depth-20261031/electron-production-final.log",
+          "sha256": "520cccf895e4fa8290ef693647118736a04ab8d4eef5d7bd0d1be482c83f5580",
+          "bytes": 616
+        },
+        "hardware": {
+          "cpu": "Apple M2",
+          "ram": 8589934592,
+          "arch": "arm64"
+        },
+        "runtime": {
+          "electron": "45.0.0",
+          "chrome": "156.0.8078.48",
+          "node": "24.22.0",
+          "v8": "15.6.75.19-electron.0"
+        },
+        "viewport": {
+          "width": 1440,
+          "height": 804
+        },
+        "devicePixelRatio": 2,
+        "entryAssetHashes": {
+          "static/css/main.3002dd5b.css": "f85f6910d0c308e717933ecc711be2fdbda65fb4a47d4faf7c83a5792d2a7fd3",
+          "static/js/main.1dfe6d57.js": "437c849bff5c99848c4598da2b7fec6b2ab2f9a1e93b1b231d88313c6c8cde99"
+        },
+        "harnessHashes": {
+          "desktop-interaction-performance.cjs": "da352e397e8748f4f422f11db4278090917db97a9c184679679f62db87acb33b",
+          "desktop-performance-cba-scenario.cjs": "a0f72a79b9886981dd5d51ad9c71f8c26bc8d57987ac869ff23dd20a5192a67e",
+          "cba-rendering-regression.cjs": "2ecd712ab5a2ce124b7baf1cb37d22faa4cbd8d5ae2c5bf108c48ac4d45a204c",
+          "continuous-hazard-scrolling.cjs": "8c975239b5c78c2f32e39fa77f30bf6ef30d7809f34425da8cb62566a68397e1"
+        },
+        "seederSha256": "8dd4325e720497ca074eff033f90156f4aca661b6cc5d2b0edacc17b65543cbe",
+        "fixture": {
+          "rows": 15000,
+          "graphNodes": 100,
+          "artifactRowsPerCollection": 1000,
+          "functionalModelReady": true,
+          "architectureRows": 200,
+          "summaryUTF8Bytes": 10632458,
+          "evidenceCharacters": 12432743,
+          "checkpointCharacters": 12432743,
+          "estimate": {
+            "quota": 89116289922,
+            "usage": 5630850,
+            "usageDetails": {
+              "indexedDB": 5630850
+            }
+          },
+          "hazardScrollFixture": {
+            "groupRows": 137,
+            "contexts": [
+              "scroll-normal",
+              "scroll-service"
+            ],
+            "wideRows": 30
+          }
+        },
+        "firstUsableMs": 1739,
+        "wheelSamples": [
+          {
+            "name": "forward-0",
+            "trustedInputs": 120,
+            "activeFrames": 237,
+            "p95Ms": 17.3,
+            "maximumMs": 17.7,
+            "framesOver25ms": 0,
+            "loadingFrames": 0,
+            "emptyFrames": 0
+          },
+          {
+            "name": "reverse-0",
+            "trustedInputs": 120,
+            "activeFrames": 295,
+            "p95Ms": 16.8,
+            "maximumMs": 17.6,
+            "framesOver25ms": 0,
+            "loadingFrames": 0,
+            "emptyFrames": 0
+          },
+          {
+            "name": "forward-1",
+            "trustedInputs": 120,
+            "activeFrames": 237,
+            "p95Ms": 16.8,
+            "maximumMs": 17.7,
+            "framesOver25ms": 0,
+            "loadingFrames": 0,
+            "emptyFrames": 0
+          },
+          {
+            "name": "reverse-1",
+            "trustedInputs": 120,
+            "activeFrames": 295,
+            "p95Ms": 16.8,
+            "maximumMs": 17.6,
+            "framesOver25ms": 0,
+            "loadingFrames": 0,
+            "emptyFrames": 0
+          },
+          {
+            "name": "forward-2",
+            "trustedInputs": 120,
+            "activeFrames": 237,
+            "p95Ms": 16.8,
+            "maximumMs": 17.5,
+            "framesOver25ms": 0,
+            "loadingFrames": 0,
+            "emptyFrames": 0
+          },
+          {
+            "name": "reverse-2",
+            "trustedInputs": 120,
+            "activeFrames": 295,
+            "p95Ms": 16.8,
+            "maximumMs": 17.8,
+            "framesOver25ms": 0,
+            "loadingFrames": 0,
+            "emptyFrames": 0
+          }
+        ],
+        "loading": {
+          "activeFrames": 1596,
+          "visibleLoadingFrames": 0,
+          "whollyLoadingFrames": 0,
+          "emptyFrames": 0,
+          "maximumContiguousLoadingMs": 0,
+          "maximumPostInputLoadingTailMs": 0
+        },
+        "jumps": [
+          {
+            "fraction": 0.1,
+            "settledMs": 224,
+            "finalWheelInputs": 0,
+            "first": 1834,
+            "last": 1837
+          },
+          {
+            "fraction": 0.35,
+            "settledMs": 216,
+            "finalWheelInputs": 0,
+            "first": 5496,
+            "last": 5500
+          },
+          {
+            "fraction": 0.7,
+            "settledMs": 234,
+            "finalWheelInputs": 0,
+            "first": 10615,
+            "last": 10618
+          },
+          {
+            "fraction": 1,
+            "settledMs": 218,
+            "finalWheelInputs": 0,
+            "first": 14994,
+            "last": 14999
+          },
+          {
+            "fraction": 0.7,
+            "settledMs": 165,
+            "finalWheelInputs": 0,
+            "first": 10604,
+            "last": 10609
+          },
+          {
+            "fraction": 0.35,
+            "settledMs": 234,
+            "finalWheelInputs": 0,
+            "first": 5487,
+            "last": 5490
+          },
+          {
+            "fraction": 0.1,
+            "settledMs": 166,
+            "finalWheelInputs": 0,
+            "first": 1832,
+            "last": 1837
+          },
+          {
+            "fraction": 0,
+            "settledMs": 283,
+            "finalWheelInputs": 0,
+            "first": 0,
+            "last": 2
+          }
+        ],
+        "sampledBounds": {
+          "maximumCacheRows": 400,
+          "maximumConservativeCacheBytes": 6269902,
+          "maximumMountedTbodyRows": 23,
+          "configuredCacheRowCap": 400,
+          "configuredConservativeCacheByteCap": 16777216
+        },
+        "workers": {
+          "requests": 679,
+          "maximumActive": 2,
+          "remainingActive": 0,
+          "abortedOnNavigation": 1,
+          "genuineShortBoundedResponses": 32
+        },
+        "memory": {
+          "equivalentEntryStates": 6,
+          "explicitGCHeapBytes": [
+            39391195,
+            39643479,
+            39717135,
+            39834163,
+            39910455,
+            39941207
+          ],
+          "retainedGrowthBytes": 550012,
+          "leastSquaresGrowthBytesPerReentry": 104800.46,
+          "domCountersEachEntry": {
+            "documents": 1,
+            "nodes": 1000,
+            "jsEventListeners": 683
+          },
+          "domAndListenerCountsExactlyStable": true
+        },
+        "semanticChecks": {
+          "noChunkNavigationButtons": true,
+          "allRenderedCellsMatchAbsoluteIds": true,
+          "correctLastRowSearchAndSelection": true,
+          "contextFiltersRetainOriginalSourceIds": true,
+          "allRowsRestoredAfterClearingFilters": true,
+          "farEndVisibleWithoutExtraWheelInput": true,
+          "navigationCancelsActiveWorker": true,
+          "noPageOrRuntimeErrors": true
+        }
+      }
+    },
+    "matchingBuildAssetsHarnessAndSeeder": true
+  }
+}

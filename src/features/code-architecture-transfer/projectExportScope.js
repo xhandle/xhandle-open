@@ -27,7 +27,7 @@ export function projectExportScope(project, ownership, categories) {
   const selected = selectedExportCategories(categories), selectedKinds = kinds.filter(kind => selected.includes(kind));
   // Older projects use the repository identity/name where newer ones use its
   // generated ID. Match the same aliases used by the architecture reader.
-  const repoIds = [...new Set((project.repos || []).flatMap(repo => [repo.id, repo.repoId, repo.repoName]).filter(Boolean))];
+  const repoIds = [...new Set((project.repos || []).flatMap(repo => [repo.id, repo.repoId, repo.repoName]).filter(id=>id != null && String(id)!==''))];
   const scopes = repoIds.map(id => `cba:${project.id}:${id}`);
   const metadata = repoIds.map(id => `cbaMeta:${project.id}:${id}`);
   const artifacts = repoIds.flatMap(id => selectedKinds.map(kind => `xhandle:cba-${kind}:${project.id}:${id}`));
@@ -35,7 +35,7 @@ export function projectExportScope(project, ownership, categories) {
   const layouts = (project.repos || []).flatMap(repo => [repo.id, repo.repoId, repo.repoName, repo.owner && repo.repo && `${repo.owner}/${repo.repo}`]
     .filter(Boolean).flatMap(id => { const key = `diagram:github:${id}:${repo.branch || 'main'}`; return [key, `${key}:function-spacing-v3`]; }));
   const architecture = key => metadata.includes(key) || scopes.some(scope =>
-    key === scope || key === `${scope}:metadata` || key === `${scope}:run` || key.startsWith(`${scope}:run:`) ||
+    key === scope || key === `${scope}:storage-deleted` || key === `${scope}:storage-cleanup-pending` || key === `${scope}:metadata` || key === `${scope}:run` || key.startsWith(`${scope}:run:`) ||
     key.startsWith(`functional-decomposition-checkpoint:${scope}:`) || key.startsWith(`${scope}:functional-work:`) ||
     selectedKinds.some(kind => key.startsWith(`${scope}:requirements-work:${kind}:`)));
   const stores = {

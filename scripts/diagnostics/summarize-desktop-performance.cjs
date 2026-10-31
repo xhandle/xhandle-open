@@ -1,0 +1,19 @@
+// Compact, synthetic-only results. Raw CPU profiles/traces stay outside the repo.
+// node scripts/diagnostics/summarize-desktop-performance.cjs /tmp/results /absolute/summary.json
+const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+const dir=path.resolve(process.argv[2]),target=path.resolve(process.argv[3]);
+const names=process.env.PERF_RUNS?.split(',')||['release-500','current-100','current-500','current-500-repeat','current-1500','before-500-validated','after-500-validated','after-100','after-1500','cba-before-100','cba-before-500','cba-after-100','cba-after-500','cba-after-50k','chrome-after-500','before-1500-validated','cba-before-500-validated','final-500','final-cba-500','final-cba-semantics','chrome-cba-500','chrome-cba-500-validated','profile-cba'];
+const hash=p=>crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+const phase=s=>s&&({elapsedMs:s.elapsed,dom:s.dom,rows:s.rows,accessibleRowCount:s.accessibleRowCount,viewport:s.viewport,nodes:s.nodes,edges:s.edges,handles:s.handles,dpr:s.dpr,heapBytes:s.heap,commits:s.commits?.length,commitDurationsMs:s.commits?.map(c=>c.duration).filter(n=>n!=null),longTasks:s.long,rendererReadRequests:s.reads?.length,rendererWrites:s.writes?.length,events:s.events?.length,storageReadChars:s.storage?.filter(v=>v.name==='getItem').reduce((n,v)=>n+v.chars,0),storageWriteChars:s.storage?.filter(v=>v.name==='setItem').reduce((n,v)=>n+v.chars,0),frames:s.frames,over25ms:s.over25ms,viewportChanged:s.transformChanged,zoomScaleChanges:s.zoomScaleChanges,traceCostsMs:s.traceCostsMs,scrollBefore:s.before,scrollAfter:s.after});
+const result={description:'Actual full production App, deterministic disposable fixtures. Includes explicitly identified exploratory/partial runs. Duration fields are diagnostic samples, not customer guarantees.',generatedAt:new Date().toISOString(),runs:{}};
+const identity=path.join(dir,'source-identity.json');if(fs.existsSync(identity))result.sourceIdentity=JSON.parse(fs.readFileSync(identity));
+for(const name of names){
+ const full=path.join(dir,name+'.json'),partial=full+'.partial.json';if(!fs.existsSync(full)&&!fs.existsSync(partial))continue;
+ const file=fs.existsSync(full)?full:partial,r=JSON.parse(fs.readFileSync(file));const buildManifest=path.join(r.build,'asset-manifest.json');
+ const run={rawFile:file,rawSHA256:hash(file),partial:!fs.existsSync(full),hardware:r.hardware,runtime:r.runtime?.versions||r.runtime,seederHash:r.seederHash,build:r.build,buildHash:r.buildHash,gpu:r.runtime?.gpu,fixture:r.fixture,cbaFixture:r.cbaFixture,fixtureStorage:r.fixtureStorage,errors:r.errors,verification:r.verification,ports:r.portVerification,cbaSemantics:r.cbaSemantics,cold:phase(r.cold),tableEntry:phase(r.openFunctionalTable),scroll:phase(r.tableScroll),switchSummary:r.switchSummary&&Object.fromEntries(Object.entries(r.switchSummary).map(([k,v])=>[k,Object.fromEntries(Object.entries(v).filter(([key])=>key!=='p95'||v.n>=5))])),heapBeforeGC:r.navigationHeapBeforeGC,heapAfterNavigationGC:r.navigationHeapAfterGC,heapAfterFinalGC:r.heapAfterDiagnosticGC,idleMemory:r.idleMemory,processMetrics:r.processMetrics?.map(({type,memory})=>({type,memory})),gestures:{}};
+ if(fs.existsSync(buildManifest)){const manifest=JSON.parse(fs.readFileSync(buildManifest));run.entrypointFiles=manifest.entrypoints?.filter(f=>f.endsWith('.js')).map(f=>({file:f,sha256:hash(path.join(r.build,f))}));}
+ for(const [k,s] of Object.entries(r))if(/^(pan|zoom|cbaPan|cbaZoom)\d+$/.test(k))run.gestures[k]=phase(s);
+ if(r.switches)run.switches=r.switches.map(s=>({view:s.tab,...phase(s)}));if(r.cbaSwitches)run.cbaSwitches=r.cbaSwitches.map(s=>({view:s.view,...phase(s)}));if(r.cbaScroll)run.cbaScroll=Object.fromEntries(Object.entries(r.cbaScroll).map(([k,s])=>[k,phase(s)]));
+ result.runs[name]=run;
+}
+fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,JSON.stringify(result,null,2)+'\n');console.log(target);
