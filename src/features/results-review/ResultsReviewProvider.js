@@ -9,6 +9,7 @@ import {
   reviewLifecycleStateForItem,
 } from "./reviewTypes";
 import { createHistoryEntry, filterReviewItems, mergeVibeReviewEvidenceItems, normalizeReviewItem } from "./reviewUtils";
+import { deleteStoredReviewItems, putStoredReviewItems, readStoredReviewItems, saveCollaboratorReviewEvidence } from './collaboratorReviewStore';
 
 const ResultsReviewContext = createContext(null);
 
@@ -34,7 +35,59 @@ function reviewItemBelongsToProject(item = {}, projectId) {
   ].filter(Boolean).some((value) => String(value).includes(projectId));
 }
 
-export function ResultsReviewProvider({ children, readOnly = false, initialReviewItems = null }) {
+const EMPTY_REVIEW_ITEMS = Object.freeze([]);
+const noReviewAction = () => {};
+
+function CollaboratorReviewProvider({ children }) {
+  const [persistenceFailure, setPersistenceFailure] = useState(null);
+  const recordVibeReviewEvidence = useCallback(async item => {
+    try {
+      const recorded = await saveCollaboratorReviewEvidence(item);
+      setPersistenceFailure(null);
+      if (recorded) dispatchReviewEvent('xhandle:collaborator-review:evidence-saved', { reviewItem: recorded });
+      return recorded;
+    } catch (error) {
+      setPersistenceFailure(error.message || 'Review evidence could not be saved.');
+      throw error;
+    }
+  }, []);
+  const value = useMemo(() => ({
+    legacyReviewEnabled: false,
+    reviewReady: true,
+    reviewItems: EMPTY_REVIEW_ITEMS,
+    persistenceFailure,
+    openResultsReviewDrawer: noReviewAction,
+    closeResultsReviewDrawer: noReviewAction,
+    toggleResultsReviewDrawer: noReviewAction,
+    getReviewItems: () => EMPTY_REVIEW_ITEMS,
+    getReviewItemById: () => null,
+    // Only explicit import/undo may use this. Generation is gated at the
+    // callers so retired payloads are never constructed in the first place.
+    createReviewItems: putStoredReviewItems,
+    readStoredReviewItems,
+    recordVibeReviewEvidence,
+    deleteReviewItemsByIds: deleteStoredReviewItems,
+    deleteReviewItemsForProject: async projectId => {
+      if (!projectId) return [];
+      const items = await readStoredReviewItems(item => reviewItemBelongsToProject(item, projectId));
+      return deleteStoredReviewItems(items.map(item => item.id));
+    },
+  }), [persistenceFailure, recordVibeReviewEvidence]);
+  return <ResultsReviewContext.Provider value={value}>
+    {persistenceFailure && <div role="alert" className="border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+      Collaborator review evidence could not be saved: {persistenceFailure} Your table changes may have been saved, but the review history needs to be retried.
+    </div>}
+    <div className="results-review-app-frame">{children}</div>
+  </ResultsReviewContext.Provider>;
+}
+
+export function ResultsReviewProvider({ mode = 'legacy', ...props }) {
+  return mode === 'collaborator'
+    ? <CollaboratorReviewProvider {...props} />
+    : <LegacyResultsReviewProvider {...props} />;
+}
+
+function LegacyResultsReviewProvider({ children, readOnly = false, initialReviewItems = null }) {
   const [reviewItems, setReviewItems] = useState([]);
   const [reviewReady, setReviewReady] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -319,6 +372,8 @@ export function ResultsReviewProvider({ children, readOnly = false, initialRevie
     applyAction(id, "supersede", { status: REVIEW_STATUSES.SUPERSEDED, reviewState: REVIEW_LIFECYCLE_STATES.CLOSED, replacementItemId }), [applyAction]);
 
   const value = useMemo(() => ({
+    legacyReviewEnabled: true,
+    readStoredReviewItems,
     reviewItems,
     reviewReady,
     /** Non-null when review evidence is in memory only and will not survive a reload. */

@@ -1,0 +1,5761 @@
+{
+  "date": "2026-10-31",
+  "scope": "User confirmed both first-pinch pause and continuous choppiness; trackpad controls must pan with ordinary two-finger scroll and zoom with pinch in/out, retaining existing buttons.",
+  "buildHash": "447c3ae27601632b9f776589da3071e093f3c0c4ffa1349b9caddfe2cfb17559",
+  "rawDirectory": "/private/tmp/xhandle-pinch-followup-20261031",
+  "appSourceUnchanged": true,
+  "acceptedNewApplicationChanges": [],
+  "runs": [
+    {
+      "name": "chrome-functional-confirmed",
+      "rawHash": "867e68f860d7d836d356e0522f0add56e9da7bf610827e207a1767ee387ff6c3",
+      "buildHash": "447c3ae27601632b9f776589da3071e093f3c0c4ffa1349b9caddfe2cfb17559",
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "cce1520cf70c92cf9c37361d88e0d59c07eeca0023f3a654146ba6caaf6769e9",
+        "desktop-performance-cba-scenario.cjs": "3b7ae9b195df1e6aa831d551b0c25deb78f0b47e9012080390253b8be3223b91",
+        "cba-rendering-regression.cjs": "0bf47e8c6c9217dbd8c756859c7e8c58f6dafbf99fe9f6b5a611b3fd18366a59",
+        "diagram-overview-scenario.cjs": "8ee614228fed48062dc1ef26dc5001636c5eb17b80d73add812bdd3ff3844b40",
+        "diagram-overview-visual.cjs": "34c60f1006de6306d9965a2fa330e30e46c080c1c694e31e0b3c768f15591645",
+        "diagram-overview-sweep.cjs": "0ff949cf75931f0b81a4ba9f6e46332819ab79c8a3c8252067b89de7ef4460ac",
+        "diagram-pinch-comparison.cjs": "25bb420ae35e4797028fb9be8cbeeadbc4960a21087e0cc0dbaaed72b5ad6619",
+        "diagram-pinch-burst.cjs": "ab1405fc201959a4346e9890b8257c6a9207a32ceab92c02dc426b41c9b4f9f4",
+        "diagram-pinch-trace.cjs": "cd9273fc941f699b4b9c3d1018535954a68fe05832c9f3708bc91f478b383d38",
+        "diagram-trackpad-pan.cjs": "a78c952fdc2e0c1acc2782166f2127a2ef135b6cdf839773ac77b9c3b00c80fc"
+      },
+      "hardware": {
+        "cpu": "Apple M2",
+        "ram": 8589934592,
+        "arch": "arm64"
+      },
+      "runtime": {
+        "chrome": "156.0.8078.79"
+      },
+      "fixture": {
+        "nodes": 1500,
+        "relationships": 3000,
+        "hazardRows": 1000,
+        "seed": 30
+      },
+      "seederHash": "782d3cb7a0d3c6c46c3d2246eb81f90867267954f5175dd667e0410bf12fef75",
+      "entryAssetHashes": {
+        "static/css/main.8e8c2860.css": "84444d9bda11f9f1abb4071103398ed08ce7a7ca5a02d369a504e80c0ac23f2d",
+        "static/js/main.ab7f0cb5.js": "a2ffaaeff42ff66fda230cdbdb8d01f66817ed524b2bad84f29c691c8ad865bb"
+      },
+      "level": "Functional",
+      "counts": {
+        "nodes": 1584,
+        "edges": 3000
+      },
+      "singleZoomInputs": [
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.106px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 13.300000011920929,
+          "changedFrameMs": 18.099999994039536,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.206px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 15.900000005960464,
+          "changedFrameMs": 140.6999999999971,
+          "movingFrames": 12,
+          "frames": 17
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.087px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 12.799999982118607,
+          "changedFrameMs": 15.999999982115696,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.004px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 14.700000017881393,
+          "changedFrameMs": 124.69999999403808,
+          "movingFrames": 13,
+          "frames": 18
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.2px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 13.800000011920929,
+          "changedFrameMs": 28.69999999403808,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.1px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 18.399999976158142,
+          "changedFrameMs": 120.49999997616396,
+          "movingFrames": 13,
+          "frames": 18
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.46px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 12.400000005960464,
+          "changedFrameMs": 13.499999988081981,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.54px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 21.19999998807907,
+          "changedFrameMs": 133.7999999880849,
+          "movingFrames": 13,
+          "frames": 17
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.106px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 13.099999994039536,
+          "changedFrameMs": 32.799999994036625,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.206px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 28.5,
+          "changedFrameMs": 205.79999999403663,
+          "movingFrames": 11,
+          "frames": 14
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.087px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 16.5,
+          "changedFrameMs": 26.299999982118607,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.004px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 26.30000001192093,
+          "changedFrameMs": 151,
+          "movingFrames": 12,
+          "frames": 16
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.2px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 19.69999998807907,
+          "changedFrameMs": 23.49999998808198,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.1px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 21.5,
+          "changedFrameMs": 133.79999999403663,
+          "movingFrames": 13,
+          "frames": 17
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.46px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 12.599999994039536,
+          "changedFrameMs": 14.199999982112786,
+          "movingFrames": 0,
+          "frames": 37
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.54px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 21.599999994039536,
+          "changedFrameMs": 136.4999999821157,
+          "movingFrames": 12,
+          "frames": 18
+        }
+      ],
+      "pinchBursts": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "producerMs": 1065.156916,
+          "completionMs": 1161.6866249999985,
+          "backlogMs": 96.52970899999855,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 56.2009169999983,
+            "p95": 238.52566600000137,
+            "max": 288.5184169999993
+          },
+          "deliveryEndMs": 1719.0999999940395,
+          "idleMs": 703.0999999940395,
+          "movingElements": [],
+          "received": 62,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 1684.5,
+          "frames": {
+            "n": 56,
+            "median": 16.700000000000728,
+            "p95": 66.80000000000291,
+            "max": 166.60000000000036
+          },
+          "changedFrameIntervals": {
+            "n": 46,
+            "median": 33.29999999999927,
+            "p95": 66.80000000000291,
+            "max": 166.60000000000036
+          },
+          "changedFrames": 47,
+          "cameraBefore": {
+            "k": 0.0363457979352019,
+            "x": 241.0047160345174,
+            "y": 29.636363636363683
+          },
+          "cameraAfter": {
+            "k": 0.03634579793520182,
+            "x": 241.0047160345182,
+            "y": 29.636363636364422
+          },
+          "firstChangedFrameMs": 183.2999999821186,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "producerMs": 1061.0952499999985,
+          "completionMs": 1095.8247089999968,
+          "backlogMs": 34.729458999998315,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 67.6027920000015,
+            "p95": 199.95041700000002,
+            "max": 234.29345900000044
+          },
+          "deliveryEndMs": 1711.7999999821186,
+          "idleMs": 664.4000000059605,
+          "movingElements": [],
+          "received": 61,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 1671.5,
+          "frames": {
+            "n": 58,
+            "median": 16.900000000001455,
+            "p95": 34.29999999999927,
+            "max": 150
+          },
+          "changedFrameIntervals": {
+            "n": 56,
+            "median": 17,
+            "p95": 34.29999999999927,
+            "max": 166.70000000000073
+          },
+          "changedFrames": 57,
+          "cameraBefore": {
+            "k": 1.0000009735225865,
+            "x": -8349.25192975089,
+            "y": -7828.007938103171
+          },
+          "cameraAfter": {
+            "k": 1.0000009735225832,
+            "x": -8349.25192975086,
+            "y": -7828.007938103143
+          },
+          "firstChangedFrameMs": 148.79999999999927,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-8349.25px, -7828.01px) scale(1)",
+          "moving": false
+        }
+      ],
+      "trackpadPan": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "before": {
+            "k": 0.0363457979352019,
+            "x": 241.0047160345174,
+            "y": 29.636363636363683
+          },
+          "forward": {
+            "k": 0.0363457979352019,
+            "x": 61.0047160345174,
+            "y": -90.36363636363632
+          },
+          "after": {
+            "k": 0.0363457979352019,
+            "x": 241.0047160345174,
+            "y": 29.636363636363683
+          },
+          "received": 64,
+          "trusted": true,
+          "deltaX": 0,
+          "deltaY": 0,
+          "zoomUnchanged": true,
+          "pageScrollUnchanged": true,
+          "inputMs": 1584.300000011921,
+          "frames": {
+            "n": 65,
+            "median": 16.69999999999709,
+            "p95": 33.400000000001455,
+            "max": 166.6999999999971
+          },
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "before": {
+            "k": 1.0000009735225865,
+            "x": -8349.25192975089,
+            "y": -7828.007938103171
+          },
+          "forward": {
+            "k": 1.0000009735225865,
+            "x": -8529.25192975089,
+            "y": -7948.007938103171
+          },
+          "after": {
+            "k": 1.0000009735225865,
+            "x": -8349.25192975089,
+            "y": -7828.007938103171
+          },
+          "received": 63,
+          "trusted": true,
+          "deltaX": 0,
+          "deltaY": 0,
+          "zoomUnchanged": true,
+          "pageScrollUnchanged": true,
+          "inputMs": 1418.9000000059605,
+          "frames": {
+            "n": 63,
+            "median": 16.69999999999709,
+            "p95": 33.400000000001455,
+            "max": 34.299999999995634
+          },
+          "moving": false
+        }
+      ],
+      "startupTraces": [
+        {
+          "scale": "overview",
+          "kind": "button",
+          "trusted": true,
+          "commitMs": 20,
+          "firstChangedFrameMs": 35.699999976157414,
+          "filename": "/private/tmp/xhandle-pinch-followup-20261031/chrome-functional-confirmed.json.startup-overview-button",
+          "tasks": [
+            {
+              "name": "FunctionCall",
+              "startMs": 2.561,
+              "durationMs": 8.056,
+              "main": true
+            },
+            {
+              "name": "FunctionCall",
+              "startMs": 10.622,
+              "durationMs": 9.27,
+              "main": true
+            },
+            {
+              "name": "PrePaint",
+              "startMs": 20.59,
+              "durationMs": 7.252,
+              "main": true
+            },
+            {
+              "name": "Layerize",
+              "startMs": 29.755,
+              "durationMs": 13.339,
+              "main": true
+            }
+          ],
+          "note": "Inclusive overlapping trace tasks, not independent sums or presentation FPS."
+        },
+        {
+          "scale": "overview",
+          "kind": "pinch",
+          "trusted": true,
+          "commitMs": 15.5,
+          "firstChangedFrameMs": 259.1999999940381,
+          "filename": "/private/tmp/xhandle-pinch-followup-20261031/chrome-functional-confirmed.json.startup-overview-pinch",
+          "tasks": [
+            {
+              "name": "FunctionCall",
+              "startMs": 0.093,
+              "durationMs": 9.201,
+              "main": true
+            },
+            {
+              "name": "FunctionCall",
+              "startMs": 9.3,
+              "durationMs": 5.617,
+              "main": true
+            },
+            {
+              "name": "UpdateLayoutTree",
+              "startMs": 15.825,
+              "durationMs": 220.759,
+              "main": true
+            },
+            {
+              "name": "PrePaint",
+              "startMs": 236.62,
+              "durationMs": 7.71,
+              "main": true
+            },
+            {
+              "name": "Paint",
+              "startMs": 245.4,
+              "durationMs": 14.257,
+              "main": true
+            },
+            {
+              "name": "Paint",
+              "startMs": 245.908,
+              "durationMs": 2.126,
+              "main": true
+            },
+            {
+              "name": "Layerize",
+              "startMs": 260.885,
+              "durationMs": 5.222,
+              "main": true
+            },
+            {
+              "name": "HitTest",
+              "startMs": 267.035,
+              "durationMs": 5.05,
+              "main": true
+            },
+            {
+              "name": "HitTest",
+              "startMs": 272.199,
+              "durationMs": 3.477,
+              "main": true
+            }
+          ],
+          "note": "Inclusive overlapping trace tasks, not independent sums or presentation FPS."
+        },
+        {
+          "scale": "close",
+          "kind": "button",
+          "trusted": true,
+          "commitMs": 11.700000017881393,
+          "firstChangedFrameMs": 16.400000000001455,
+          "filename": "/private/tmp/xhandle-pinch-followup-20261031/chrome-functional-confirmed.json.startup-close-button",
+          "tasks": [
+            {
+              "name": "FunctionCall",
+              "startMs": 0.446,
+              "durationMs": 4.887,
+              "main": true
+            },
+            {
+              "name": "FunctionCall",
+              "startMs": 5.336,
+              "durationMs": 6.379,
+              "main": true
+            },
+            {
+              "name": "PrePaint",
+              "startMs": 11.907,
+              "durationMs": 4.019,
+              "main": true
+            },
+            {
+              "name": "Paint",
+              "startMs": 16.763,
+              "durationMs": 2.128,
+              "main": true
+            },
+            {
+              "name": "Layerize",
+              "startMs": 19.102,
+              "durationMs": 9.241,
+              "main": true
+            }
+          ],
+          "note": "Inclusive overlapping trace tasks, not independent sums or presentation FPS."
+        },
+        {
+          "scale": "close",
+          "kind": "pinch",
+          "trusted": true,
+          "commitMs": 14.099999994039536,
+          "firstChangedFrameMs": 194.999999994041,
+          "filename": "/private/tmp/xhandle-pinch-followup-20261031/chrome-functional-confirmed.json.startup-close-pinch",
+          "tasks": [
+            {
+              "name": "FunctionCall",
+              "startMs": 0.092,
+              "durationMs": 8.29,
+              "main": true
+            },
+            {
+              "name": "FunctionCall",
+              "startMs": 8.387,
+              "durationMs": 5.57,
+              "main": true
+            },
+            {
+              "name": "UpdateLayoutTree",
+              "startMs": 14.377,
+              "durationMs": 167.253,
+              "main": true
+            },
+            {
+              "name": "PrePaint",
+              "startMs": 181.669,
+              "durationMs": 7.242,
+              "main": true
+            },
+            {
+              "name": "Paint",
+              "startMs": 190.004,
+              "durationMs": 11.894,
+              "main": true
+            },
+            {
+              "name": "Layerize",
+              "startMs": 202.079,
+              "durationMs": 8.062,
+              "main": true
+            },
+            {
+              "name": "HitTest",
+              "startMs": 211.057,
+              "durationMs": 4.666,
+              "main": true
+            }
+          ],
+          "note": "Inclusive overlapping trace tasks, not independent sums or presentation FPS."
+        }
+      ],
+      "errors": []
+    },
+    {
+      "name": "chrome-csu-confirmed",
+      "rawHash": "ce26d7b2950aefb2d64925fe48c63dd36f4b145c5cc0398c36880fbeedafea71",
+      "buildHash": "447c3ae27601632b9f776589da3071e093f3c0c4ffa1349b9caddfe2cfb17559",
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "cce1520cf70c92cf9c37361d88e0d59c07eeca0023f3a654146ba6caaf6769e9",
+        "desktop-performance-cba-scenario.cjs": "3b7ae9b195df1e6aa831d551b0c25deb78f0b47e9012080390253b8be3223b91",
+        "cba-rendering-regression.cjs": "0bf47e8c6c9217dbd8c756859c7e8c58f6dafbf99fe9f6b5a611b3fd18366a59",
+        "diagram-overview-scenario.cjs": "8ee614228fed48062dc1ef26dc5001636c5eb17b80d73add812bdd3ff3844b40",
+        "diagram-overview-visual.cjs": "34c60f1006de6306d9965a2fa330e30e46c080c1c694e31e0b3c768f15591645",
+        "diagram-overview-sweep.cjs": "0ff949cf75931f0b81a4ba9f6e46332819ab79c8a3c8252067b89de7ef4460ac",
+        "diagram-pinch-comparison.cjs": "25bb420ae35e4797028fb9be8cbeeadbc4960a21087e0cc0dbaaed72b5ad6619",
+        "diagram-pinch-burst.cjs": "ab1405fc201959a4346e9890b8257c6a9207a32ceab92c02dc426b41c9b4f9f4",
+        "diagram-pinch-trace.cjs": "cd9273fc941f699b4b9c3d1018535954a68fe05832c9f3708bc91f478b383d38",
+        "diagram-trackpad-pan.cjs": "a78c952fdc2e0c1acc2782166f2127a2ef135b6cdf839773ac77b9c3b00c80fc"
+      },
+      "hardware": {
+        "cpu": "Apple M2",
+        "ram": 8589934592,
+        "arch": "arm64"
+      },
+      "runtime": {
+        "chrome": "156.0.8078.79"
+      },
+      "fixture": {
+        "nodes": 1500,
+        "relationships": 3000,
+        "hazardRows": 1000,
+        "seed": 30
+      },
+      "seederHash": "782d3cb7a0d3c6c46c3d2246eb81f90867267954f5175dd667e0410bf12fef75",
+      "entryAssetHashes": {
+        "static/css/main.8e8c2860.css": "84444d9bda11f9f1abb4071103398ed08ce7a7ca5a02d369a504e80c0ac23f2d",
+        "static/js/main.ab7f0cb5.js": "a2ffaaeff42ff66fda230cdbdb8d01f66817ed524b2bad84f29c691c8ad865bb"
+      },
+      "level": "CSU",
+      "counts": {
+        "nodes": 1884,
+        "edges": 3000
+      },
+      "singleZoomInputs": [
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(268.234px, 29.6364px) scale(0.0300633)",
+          "after": "translate(208.781px, -29.6364px) scale(0.0360759)",
+          "trusted": true,
+          "commitMs": 10.5,
+          "changedFrameMs": 32.600000005957554,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(268.234px, 29.6364px) scale(0.0300633)",
+          "after": "translate(208.881px, -29.6364px) scale(0.0360759)",
+          "trusted": true,
+          "commitMs": 17.599999994039536,
+          "changedFrameMs": 155.30000001192093,
+          "movingFrames": 11,
+          "frames": 15
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(268.234px, 29.6364px) scale(0.0300633)",
+          "after": "translate(317.779px, 79.0303px) scale(0.0250527)",
+          "trusted": true,
+          "commitMs": 15.099999994039536,
+          "changedFrameMs": 27.200000017881393,
+          "movingFrames": 0,
+          "frames": 37
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(268.234px, 29.6364px) scale(0.0300633)",
+          "after": "translate(317.695px, 79.0303px) scale(0.0250527)",
+          "trusted": true,
+          "commitMs": 26,
+          "changedFrameMs": 162.60000001788285,
+          "movingFrames": 11,
+          "frames": 14
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-9306.37px, -9532px) scale(1)",
+          "after": "translate(-11280.7px, -11503.6px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 13.599999994039536,
+          "changedFrameMs": 27.30000001192093,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-9306.37px, -9532px) scale(1)",
+          "after": "translate(-11280.6px, -11503.6px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 19.400000005960464,
+          "changedFrameMs": 136.40000001192675,
+          "movingFrames": 12,
+          "frames": 16
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-9306.37px, -9532px) scale(1)",
+          "after": "translate(-7661.06px, -7889px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 16.69999998807907,
+          "changedFrameMs": 26.60000001192384,
+          "movingFrames": 0,
+          "frames": 37
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-9306.37px, -9532px) scale(1)",
+          "after": "translate(-7661.14px, -7889px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 19.900000005960464,
+          "changedFrameMs": 160.60000000595755,
+          "movingFrames": 11,
+          "frames": 16
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(268.234px, 29.6364px) scale(0.0300633)",
+          "after": "translate(208.781px, -29.6364px) scale(0.0360759)",
+          "trusted": true,
+          "commitMs": 20.400000005960464,
+          "changedFrameMs": 46.50000001191802,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(268.234px, 29.6364px) scale(0.0300633)",
+          "after": "translate(208.881px, -29.6364px) scale(0.0360759)",
+          "trusted": true,
+          "commitMs": 17,
+          "changedFrameMs": 155.20000002384768,
+          "movingFrames": 11,
+          "frames": 15
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(268.234px, 29.6364px) scale(0.0300633)",
+          "after": "translate(317.779px, 79.0303px) scale(0.0250527)",
+          "trusted": true,
+          "commitMs": 13.900000005960464,
+          "changedFrameMs": 29.600000017875573,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(268.234px, 29.6364px) scale(0.0300633)",
+          "after": "translate(317.695px, 79.0303px) scale(0.0250527)",
+          "trusted": true,
+          "commitMs": 25,
+          "changedFrameMs": 148.3000000000029,
+          "movingFrames": 12,
+          "frames": 16
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-9306.37px, -9532px) scale(1)",
+          "after": "translate(-11280.7px, -11503.6px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 14.299999982118607,
+          "changedFrameMs": 27.300000005954644,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-9306.37px, -9532px) scale(1)",
+          "after": "translate(-11280.6px, -11503.6px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 25.200000017881393,
+          "changedFrameMs": 147.2000000178814,
+          "movingFrames": 12,
+          "frames": 16
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-9306.37px, -9532px) scale(1)",
+          "after": "translate(-7661.06px, -7889px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 15.399999976158142,
+          "changedFrameMs": 25.89999999999418,
+          "movingFrames": 0,
+          "frames": 37
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-9306.37px, -9532px) scale(1)",
+          "after": "translate(-7661.14px, -7889px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 16.900000005960464,
+          "changedFrameMs": 139.50000000596629,
+          "movingFrames": 12,
+          "frames": 16
+        }
+      ],
+      "pinchBursts": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "producerMs": 1066.616833,
+          "completionMs": 1139.9970829999984,
+          "backlogMs": 73.38024999999834,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 122.15024999999878,
+            "p95": 293.6904170000016,
+            "max": 329.1180420000019
+          },
+          "deliveryEndMs": 1885.4000000059605,
+          "idleMs": 728.4000000059605,
+          "movingElements": [],
+          "received": 62,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 1862,
+          "frames": {
+            "n": 59,
+            "median": 33.29999999999927,
+            "p95": 50,
+            "max": 183.29999999999927
+          },
+          "changedFrameIntervals": {
+            "n": 50,
+            "median": 33.30000000000109,
+            "p95": 50.100000000000364,
+            "max": 183.39999999999964
+          },
+          "changedFrames": 51,
+          "cameraBefore": {
+            "k": 0.030063261956140834,
+            "x": 268.2344657776794,
+            "y": 29.636363636363683
+          },
+          "cameraAfter": {
+            "k": 0.030063261956140765,
+            "x": 268.23446577768016,
+            "y": 29.636363636364365
+          },
+          "firstChangedFrameMs": 5.200000011920565,
+          "before": "translate(268.234px, 29.6364px) scale(0.0300633)",
+          "after": "translate(268.234px, 29.6364px) scale(0.0300633)",
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "producerMs": 1061.0586670000012,
+          "completionMs": 1200.8355420000007,
+          "backlogMs": 139.77687499999956,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 161.70850000000064,
+            "p95": 307.9290000000001,
+            "max": 329.5947090000009
+          },
+          "deliveryEndMs": 1994.300000011921,
+          "idleMs": 663.4000000059605,
+          "movingElements": [],
+          "received": 62,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 1952.9000000059605,
+          "frames": {
+            "n": 58,
+            "median": 33.29999999999927,
+            "p95": 50,
+            "max": 100
+          },
+          "changedFrameIntervals": {
+            "n": 49,
+            "median": 33.29999999999927,
+            "p95": 50,
+            "max": 133.29999999999927
+          },
+          "changedFrames": 50,
+          "cameraBefore": {
+            "k": 1.0000002181757814,
+            "x": -9306.370558601493,
+            "y": -9532.002150776854
+          },
+          "cameraAfter": {
+            "k": 1.0000002181757788,
+            "x": -9306.370558601466,
+            "y": -9532.002150776827
+          },
+          "firstChangedFrameMs": 147.50000001192166,
+          "before": "translate(-9306.37px, -9532px) scale(1)",
+          "after": "translate(-9306.37px, -9532px) scale(1)",
+          "moving": false
+        }
+      ],
+      "trackpadPan": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "before": {
+            "k": 0.030063261956140834,
+            "x": 268.2344657776794,
+            "y": 29.636363636363683
+          },
+          "forward": {
+            "k": 0.030063261956140834,
+            "x": 88.23446577767942,
+            "y": -90.3636363636363
+          },
+          "after": {
+            "k": 0.030063261956140834,
+            "x": 268.2344657776794,
+            "y": 29.636363636363694
+          },
+          "received": 63,
+          "trusted": true,
+          "deltaX": 0,
+          "deltaY": 0,
+          "zoomUnchanged": true,
+          "pageScrollUnchanged": true,
+          "inputMs": 1821.199999988079,
+          "frames": {
+            "n": 63,
+            "median": 16.700000000004366,
+            "p95": 33.400000000001455,
+            "max": 166.59999999999854
+          },
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "before": {
+            "k": 1.0000002181757814,
+            "x": -9306.370558601493,
+            "y": -9532.002150776854
+          },
+          "forward": {
+            "k": 1.0000002181757814,
+            "x": -9486.370558601493,
+            "y": -9652.002150776854
+          },
+          "after": {
+            "k": 1.0000002181757814,
+            "x": -9306.370558601493,
+            "y": -9532.002150776854
+          },
+          "received": 63,
+          "trusted": true,
+          "deltaX": 0,
+          "deltaY": 0,
+          "zoomUnchanged": true,
+          "pageScrollUnchanged": true,
+          "inputMs": 1854.199999988079,
+          "frames": {
+            "n": 65,
+            "median": 33.19999999999709,
+            "p95": 33.80000000000291,
+            "max": 150
+          },
+          "moving": false
+        }
+      ],
+      "startupTraces": [
+        {
+          "scale": "overview",
+          "kind": "button",
+          "trusted": true,
+          "commitMs": 15.900000005960464,
+          "firstChangedFrameMs": 28.00000000595901,
+          "filename": "/private/tmp/xhandle-pinch-followup-20261031/chrome-csu-confirmed.json.startup-overview-button",
+          "tasks": [
+            {
+              "name": "FunctionCall",
+              "startMs": 1.316,
+              "durationMs": 6.497,
+              "main": true
+            },
+            {
+              "name": "FunctionCall",
+              "startMs": 7.818,
+              "durationMs": 8.013,
+              "main": true
+            },
+            {
+              "name": "PrePaint",
+              "startMs": 16.354,
+              "durationMs": 5.562,
+              "main": true
+            },
+            {
+              "name": "Paint",
+              "startMs": 23.433,
+              "durationMs": 1.14,
+              "main": true
+            },
+            {
+              "name": "Layerize",
+              "startMs": 24.62,
+              "durationMs": 18.108,
+              "main": true
+            }
+          ],
+          "note": "Inclusive overlapping trace tasks, not independent sums or presentation FPS."
+        },
+        {
+          "scale": "overview",
+          "kind": "pinch",
+          "trusted": true,
+          "commitMs": 17.099999994039536,
+          "firstChangedFrameMs": 273.70000000595974,
+          "filename": "/private/tmp/xhandle-pinch-followup-20261031/chrome-csu-confirmed.json.startup-overview-pinch",
+          "tasks": [
+            {
+              "name": "FunctionCall",
+              "startMs": 0.101,
+              "durationMs": 10.878,
+              "main": true
+            },
+            {
+              "name": "FunctionCall",
+              "startMs": 10.985,
+              "durationMs": 5.64,
+              "main": true
+            },
+            {
+              "name": "UpdateLayoutTree",
+              "startMs": 17.286,
+              "durationMs": 229.552,
+              "main": true
+            },
+            {
+              "name": "PrePaint",
+              "startMs": 246.876,
+              "durationMs": 9.989,
+              "main": true
+            },
+            {
+              "name": "Paint",
+              "startMs": 258.661,
+              "durationMs": 16.103,
+              "main": true
+            },
+            {
+              "name": "Paint",
+              "startMs": 259.158,
+              "durationMs": 2.081,
+              "main": true
+            },
+            {
+              "name": "Layerize",
+              "startMs": 275.836,
+              "durationMs": 7.481,
+              "main": true
+            },
+            {
+              "name": "HitTest",
+              "startMs": 284.088,
+              "durationMs": 7.264,
+              "main": true
+            },
+            {
+              "name": "HitTest",
+              "startMs": 291.476,
+              "durationMs": 5.294,
+              "main": true
+            }
+          ],
+          "note": "Inclusive overlapping trace tasks, not independent sums or presentation FPS."
+        },
+        {
+          "scale": "close",
+          "kind": "button",
+          "trusted": true,
+          "commitMs": 14.5,
+          "firstChangedFrameMs": 29.500000023843313,
+          "filename": "/private/tmp/xhandle-pinch-followup-20261031/chrome-csu-confirmed.json.startup-close-button",
+          "tasks": [
+            {
+              "name": "FunctionCall",
+              "startMs": 0.707,
+              "durationMs": 5.689,
+              "main": true
+            },
+            {
+              "name": "FunctionCall",
+              "startMs": 6.4,
+              "durationMs": 8.027,
+              "main": true
+            },
+            {
+              "name": "PrePaint",
+              "startMs": 14.839,
+              "durationMs": 4.936,
+              "main": true
+            },
+            {
+              "name": "Paint",
+              "startMs": 20.81,
+              "durationMs": 2.437,
+              "main": true
+            },
+            {
+              "name": "Layerize",
+              "startMs": 23.603,
+              "durationMs": 11.343,
+              "main": true
+            }
+          ],
+          "note": "Inclusive overlapping trace tasks, not independent sums or presentation FPS."
+        },
+        {
+          "scale": "close",
+          "kind": "pinch",
+          "trusted": true,
+          "commitMs": 16.900000005960464,
+          "firstChangedFrameMs": 239.5000000238433,
+          "filename": "/private/tmp/xhandle-pinch-followup-20261031/chrome-csu-confirmed.json.startup-close-pinch",
+          "tasks": [
+            {
+              "name": "FunctionCall",
+              "startMs": 0.107,
+              "durationMs": 10.04,
+              "main": true
+            },
+            {
+              "name": "FunctionCall",
+              "startMs": 10.153,
+              "durationMs": 6.19,
+              "main": true
+            },
+            {
+              "name": "UpdateLayoutTree",
+              "startMs": 17.146,
+              "durationMs": 196.785,
+              "main": true
+            },
+            {
+              "name": "PrePaint",
+              "startMs": 213.968,
+              "durationMs": 8.186,
+              "main": true
+            },
+            {
+              "name": "Paint",
+              "startMs": 223.979,
+              "durationMs": 15.108,
+              "main": true
+            },
+            {
+              "name": "Paint",
+              "startMs": 224.46,
+              "durationMs": 1.054,
+              "main": true
+            },
+            {
+              "name": "Layerize",
+              "startMs": 240.225,
+              "durationMs": 11.011,
+              "main": true
+            },
+            {
+              "name": "HitTest",
+              "startMs": 252.28,
+              "durationMs": 6.743,
+              "main": true
+            },
+            {
+              "name": "MinorGC",
+              "startMs": 261.49,
+              "durationMs": 8.42,
+              "main": true
+            }
+          ],
+          "note": "Inclusive overlapping trace tasks, not independent sums or presentation FPS."
+        }
+      ],
+      "errors": []
+    },
+    {
+      "name": "electron-functional-confirmed",
+      "rawHash": "49ba85057598330744793eddb3c706bb3bfaa07ea705a1c05d7bd0b11412224d",
+      "buildHash": "447c3ae27601632b9f776589da3071e093f3c0c4ffa1349b9caddfe2cfb17559",
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "cce1520cf70c92cf9c37361d88e0d59c07eeca0023f3a654146ba6caaf6769e9",
+        "desktop-performance-cba-scenario.cjs": "3b7ae9b195df1e6aa831d551b0c25deb78f0b47e9012080390253b8be3223b91",
+        "cba-rendering-regression.cjs": "0bf47e8c6c9217dbd8c756859c7e8c58f6dafbf99fe9f6b5a611b3fd18366a59",
+        "diagram-overview-scenario.cjs": "8ee614228fed48062dc1ef26dc5001636c5eb17b80d73add812bdd3ff3844b40",
+        "diagram-overview-visual.cjs": "34c60f1006de6306d9965a2fa330e30e46c080c1c694e31e0b3c768f15591645",
+        "diagram-overview-sweep.cjs": "0ff949cf75931f0b81a4ba9f6e46332819ab79c8a3c8252067b89de7ef4460ac",
+        "diagram-pinch-comparison.cjs": "25bb420ae35e4797028fb9be8cbeeadbc4960a21087e0cc0dbaaed72b5ad6619",
+        "diagram-pinch-burst.cjs": "ab1405fc201959a4346e9890b8257c6a9207a32ceab92c02dc426b41c9b4f9f4",
+        "diagram-pinch-trace.cjs": "cd9273fc941f699b4b9c3d1018535954a68fe05832c9f3708bc91f478b383d38",
+        "diagram-trackpad-pan.cjs": "a78c952fdc2e0c1acc2782166f2127a2ef135b6cdf839773ac77b9c3b00c80fc"
+      },
+      "hardware": {
+        "cpu": "Apple M2",
+        "ram": 8589934592,
+        "arch": "arm64"
+      },
+      "runtime": {
+        "versions": {
+          "node": "24.22.0",
+          "acorn": "8.18.0",
+          "ada": "4.0.0",
+          "amaro": "1.1.11",
+          "ares": "1.34.8",
+          "brotli": "1.2.0",
+          "cldr": "48.0",
+          "icu": "78.2",
+          "llhttp": "9.4.3",
+          "merve": "1.2.2",
+          "modules": "150",
+          "napi": "10",
+          "nbytes": "0.1.4",
+          "ncrypto": "0.0.1",
+          "nghttp2": "1.70.0",
+          "nghttp3": "",
+          "ngtcp2": "",
+          "openssl": "0.0.0",
+          "simdjson": "4.6.11",
+          "simdutf": "7.7.0",
+          "sqlite": "3.53.4",
+          "tz": "2026e",
+          "undici": "7.29.1",
+          "unicode": "17.0",
+          "uv": "1.52.1",
+          "uvwasi": "0.0.23",
+          "v8": "15.6.75.19-electron.0",
+          "zlib": "1.3.2.1-motley",
+          "zstd": "1.6.0",
+          "electron": "45.0.0",
+          "chrome": "156.0.8078.48"
+        },
+        "gpu": {
+          "2d_canvas": "enabled",
+          "direct_rendering_display_compositor": "disabled_off_ok",
+          "gpu_compositing": "enabled",
+          "multiple_raster_threads": "enabled_on",
+          "opengl": "enabled_on",
+          "rasterization": "enabled",
+          "raw_draw": "disabled_off_ok",
+          "skia_graphite": "enabled_on",
+          "trees_in_viz": "disabled_off",
+          "video_decode": "enabled",
+          "video_encode": "enabled",
+          "webgl": "enabled",
+          "webgpu": "enabled",
+          "webnn": "disabled_off"
+        }
+      },
+      "fixture": {
+        "nodes": 1500,
+        "relationships": 3000,
+        "hazardRows": 1000,
+        "seed": 30
+      },
+      "seederHash": "782d3cb7a0d3c6c46c3d2246eb81f90867267954f5175dd667e0410bf12fef75",
+      "entryAssetHashes": {
+        "static/css/main.8e8c2860.css": "84444d9bda11f9f1abb4071103398ed08ce7a7ca5a02d369a504e80c0ac23f2d",
+        "static/js/main.ab7f0cb5.js": "a2ffaaeff42ff66fda230cdbdb8d01f66817ed524b2bad84f29c691c8ad865bb"
+      },
+      "level": "Functional",
+      "counts": {
+        "nodes": 1584,
+        "edges": 3000
+      },
+      "singleZoomInputs": [
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(300.23px, 24.2273px) scale(0.0297121)",
+          "after": "translate(247.176px, -24.2273px) scale(0.0356546)",
+          "trusted": true,
+          "commitMs": 12.299999982118607,
+          "changedFrameMs": 20.49999998808198,
+          "movingFrames": 0,
+          "frames": 34
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(300.23px, 24.2273px) scale(0.0297121)",
+          "after": "translate(247.276px, -24.1273px) scale(0.0356546)",
+          "trusted": true,
+          "commitMs": 13.699999988079071,
+          "changedFrameMs": 153.39999998807616,
+          "movingFrames": 11,
+          "frames": 15
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(300.23px, 24.2273px) scale(0.0297121)",
+          "after": "translate(344.442px, 64.6061px) scale(0.0247601)",
+          "trusted": true,
+          "commitMs": 23.5,
+          "changedFrameMs": 32.299999994036625,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(300.23px, 24.2273px) scale(0.0297121)",
+          "after": "translate(344.358px, 64.5227px) scale(0.0247601)",
+          "trusted": true,
+          "commitMs": 21.900000005960464,
+          "changedFrameMs": 149.499999994041,
+          "movingFrames": 12,
+          "frames": 16
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-8346.18px, -7871.18px) scale(1)",
+          "after": "translate(-10128.5px, -9498.72px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 19.200000017881393,
+          "changedFrameMs": 33.200000011922384,
+          "movingFrames": 0,
+          "frames": 37
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-8346.18px, -7871.18px) scale(1)",
+          "after": "translate(-10128.4px, -9498.62px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 17.600000023841858,
+          "changedFrameMs": 138.00000001191802,
+          "movingFrames": 12,
+          "frames": 17
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-8346.18px, -7871.18px) scale(1)",
+          "after": "translate(-6860.9px, -6514.9px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 20.80000001192093,
+          "changedFrameMs": 38.90000001192675,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-8346.18px, -7871.18px) scale(1)",
+          "after": "translate(-6860.98px, -6514.98px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 28.599999994039536,
+          "changedFrameMs": 138.69999998807907,
+          "movingFrames": 12,
+          "frames": 18
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(300.23px, 24.2273px) scale(0.0297121)",
+          "after": "translate(247.176px, -24.2273px) scale(0.0356546)",
+          "trusted": true,
+          "commitMs": 12.300000011920929,
+          "changedFrameMs": 32.20000001191511,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(300.23px, 24.2273px) scale(0.0297121)",
+          "after": "translate(247.276px, -24.1273px) scale(0.0356546)",
+          "trusted": true,
+          "commitMs": 51.900000005960464,
+          "changedFrameMs": 345.1000000000058,
+          "movingFrames": 11,
+          "frames": 14
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(300.23px, 24.2273px) scale(0.0297121)",
+          "after": "translate(344.442px, 64.6061px) scale(0.0247601)",
+          "trusted": true,
+          "commitMs": 36.69999998807907,
+          "changedFrameMs": 58.299999994036625,
+          "movingFrames": 0,
+          "frames": 50
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(300.23px, 24.2273px) scale(0.0297121)",
+          "after": "translate(344.358px, 64.5227px) scale(0.0247601)",
+          "trusted": true,
+          "commitMs": 55.70000001788139,
+          "changedFrameMs": 340.7000000119151,
+          "movingFrames": 10,
+          "frames": 13
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-8346.18px, -7871.18px) scale(1)",
+          "after": "translate(-10128.5px, -9498.72px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 16.400000005960464,
+          "changedFrameMs": 30.299999994036625,
+          "movingFrames": 0,
+          "frames": 37
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-8346.18px, -7871.18px) scale(1)",
+          "after": "translate(-10128.4px, -9498.62px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 23.400000005960464,
+          "changedFrameMs": 170.59999999403954,
+          "movingFrames": 11,
+          "frames": 15
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-8346.18px, -7871.18px) scale(1)",
+          "after": "translate(-6860.9px, -6514.9px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 56.099999994039536,
+          "changedFrameMs": 70.19999999404536,
+          "movingFrames": 0,
+          "frames": 32
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-8346.18px, -7871.18px) scale(1)",
+          "after": "translate(-6860.98px, -6514.98px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 20.19999998807907,
+          "changedFrameMs": 141.19999998807907,
+          "movingFrames": 12,
+          "frames": 17
+        }
+      ],
+      "pinchBursts": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "producerMs": 1054.9050000000025,
+          "completionMs": 1070.698708,
+          "backlogMs": 15.793707999997423,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 50.56895900000018,
+            "p95": 240.31466700000237,
+            "max": 292.49579200000153
+          },
+          "deliveryEndMs": 1508.6000000238419,
+          "idleMs": 688.1999999880791,
+          "movingElements": [],
+          "received": 62,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 1474.5,
+          "frames": {
+            "n": 60,
+            "median": 16.700000000000728,
+            "p95": 33.39999999999782,
+            "max": 166.60000000000036
+          },
+          "changedFrameIntervals": {
+            "n": 49,
+            "median": 16.700000000000728,
+            "p95": 33.5,
+            "max": 166.60000000000036
+          },
+          "changedFrames": 50,
+          "cameraBefore": {
+            "k": 0.02971213236113898,
+            "x": 300.2300822797512,
+            "y": 24.227272727272776
+          },
+          "cameraAfter": {
+            "k": 0.029712132361138895,
+            "x": 300.23008227975197,
+            "y": 24.227272727273487
+          },
+          "firstChangedFrameMs": 183.0999999880787,
+          "before": "translate(300.23px, 24.2273px) scale(0.0297121)",
+          "after": "translate(300.23px, 24.2273px) scale(0.0297121)",
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "producerMs": 1048.9564580000006,
+          "completionMs": 1085.3723750000026,
+          "backlogMs": 36.41591700000208,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 45.52400000000125,
+            "p95": 170.1306250000016,
+            "max": 201.4975000000013
+          },
+          "deliveryEndMs": 1549.3999999761581,
+          "idleMs": 660.4000000059605,
+          "movingElements": [],
+          "received": 61,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 1506.199999988079,
+          "frames": {
+            "n": 59,
+            "median": 16.700000000000728,
+            "p95": 33.39999999999782,
+            "max": 50
+          },
+          "changedFrameIntervals": {
+            "n": 58,
+            "median": 16.799999999999272,
+            "p95": 33.39999999999782,
+            "max": 50
+          },
+          "changedFrames": 59,
+          "cameraBefore": {
+            "k": 1.0000009970772759,
+            "x": -8346.180742537843,
+            "y": -7871.179970800031
+          },
+          "cameraAfter": {
+            "k": 1.000000997077272,
+            "x": -8346.180742537808,
+            "y": -7871.179970799998
+          },
+          "firstChangedFrameMs": 147.79999999999927,
+          "before": "translate(-8346.18px, -7871.18px) scale(1)",
+          "after": "translate(-8346.18px, -7871.18px) scale(1)",
+          "moving": false
+        }
+      ],
+      "trackpadPan": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "before": {
+            "k": 0.02971213236113898,
+            "x": 300.2300822797512,
+            "y": 24.227272727272776
+          },
+          "forward": {
+            "k": 0.02971213236113898,
+            "x": 120.23008227975117,
+            "y": -95.77272727272722
+          },
+          "after": {
+            "k": 0.02971213236113898,
+            "x": 300.2300822797512,
+            "y": 24.227272727272776
+          },
+          "received": 64,
+          "trusted": true,
+          "deltaX": 0,
+          "deltaY": 0,
+          "zoomUnchanged": true,
+          "pageScrollUnchanged": true,
+          "inputMs": 1572.800000011921,
+          "frames": {
+            "n": 65,
+            "median": 16.69999999999709,
+            "p95": 33.5,
+            "max": 183.39999999999418
+          },
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "before": {
+            "k": 1.0000009970772759,
+            "x": -8346.180742537843,
+            "y": -7871.179970800031
+          },
+          "forward": {
+            "k": 1.0000009970772759,
+            "x": -8526.180742537843,
+            "y": -7991.179970800031
+          },
+          "after": {
+            "k": 1.0000009970772759,
+            "x": -8346.180742537843,
+            "y": -7871.179970800031
+          },
+          "received": 64,
+          "trusted": true,
+          "deltaX": 0,
+          "deltaY": 0,
+          "zoomUnchanged": true,
+          "pageScrollUnchanged": true,
+          "inputMs": 1448.8999999761581,
+          "frames": {
+            "n": 64,
+            "median": 16.69999999999709,
+            "p95": 33.30000000000291,
+            "max": 33.400000000001455
+          },
+          "moving": false
+        }
+      ],
+      "startupTraces": [
+        {
+          "scale": "overview",
+          "kind": "button",
+          "trusted": true,
+          "commitMs": 13.799999982118607,
+          "firstChangedFrameMs": 34.69999998807907,
+          "filename": "/private/tmp/xhandle-pinch-followup-20261031/electron-functional-confirmed.json.startup-overview-button",
+          "tasks": [
+            {
+              "name": "FunctionCall",
+              "startMs": 2.11,
+              "durationMs": 4.621,
+              "main": true
+            },
+            {
+              "name": "FunctionCall",
+              "startMs": 6.735,
+              "durationMs": 7.036,
+              "main": true
+            },
+            {
+              "name": "PrePaint",
+              "startMs": 14.107,
+              "durationMs": 7.865,
+              "main": true
+            },
+            {
+              "name": "Layerize",
+              "startMs": 24.548,
+              "durationMs": 14.288,
+              "main": true
+            }
+          ],
+          "note": "Inclusive overlapping trace tasks, not independent sums or presentation FPS."
+        },
+        {
+          "scale": "overview",
+          "kind": "pinch",
+          "trusted": true,
+          "commitMs": 13.299999982118607,
+          "firstChangedFrameMs": 258.5999999880805,
+          "filename": "/private/tmp/xhandle-pinch-followup-20261031/electron-functional-confirmed.json.startup-overview-pinch",
+          "tasks": [
+            {
+              "name": "FunctionCall",
+              "startMs": 0.095,
+              "durationMs": 7.243,
+              "main": true
+            },
+            {
+              "name": "FunctionCall",
+              "startMs": 7.343,
+              "durationMs": 5.548,
+              "main": true
+            },
+            {
+              "name": "UpdateLayoutTree",
+              "startMs": 13.406,
+              "durationMs": 225.645,
+              "main": true
+            },
+            {
+              "name": "PrePaint",
+              "startMs": 239.095,
+              "durationMs": 10,
+              "main": true
+            },
+            {
+              "name": "Paint",
+              "startMs": 250.248,
+              "durationMs": 16.016,
+              "main": true
+            },
+            {
+              "name": "Paint",
+              "startMs": 250.737,
+              "durationMs": 1.964,
+              "main": true
+            },
+            {
+              "name": "Layerize",
+              "startMs": 266.451,
+              "durationMs": 4.985,
+              "main": true
+            },
+            {
+              "name": "HitTest",
+              "startMs": 272.232,
+              "durationMs": 5.478,
+              "main": true
+            },
+            {
+              "name": "HitTest",
+              "startMs": 277.825,
+              "durationMs": 3.652,
+              "main": true
+            }
+          ],
+          "note": "Inclusive overlapping trace tasks, not independent sums or presentation FPS."
+        },
+        {
+          "scale": "close",
+          "kind": "button",
+          "trusted": true,
+          "commitMs": 11.200000017881393,
+          "firstChangedFrameMs": 16.100000005957554,
+          "filename": "/private/tmp/xhandle-pinch-followup-20261031/electron-functional-confirmed.json.startup-close-button",
+          "tasks": [
+            {
+              "name": "FunctionCall",
+              "startMs": 0.818,
+              "durationMs": 3.873,
+              "main": true
+            },
+            {
+              "name": "FunctionCall",
+              "startMs": 4.694,
+              "durationMs": 6.469,
+              "main": true
+            },
+            {
+              "name": "PrePaint",
+              "startMs": 11.35,
+              "durationMs": 4.099,
+              "main": true
+            },
+            {
+              "name": "Paint",
+              "startMs": 16.262,
+              "durationMs": 2.169,
+              "main": true
+            },
+            {
+              "name": "Layerize",
+              "startMs": 18.651,
+              "durationMs": 8.269,
+              "main": true
+            }
+          ],
+          "note": "Inclusive overlapping trace tasks, not independent sums or presentation FPS."
+        },
+        {
+          "scale": "close",
+          "kind": "pinch",
+          "trusted": true,
+          "commitMs": 13.699999988079071,
+          "firstChangedFrameMs": 210.09999999999854,
+          "filename": "/private/tmp/xhandle-pinch-followup-20261031/electron-functional-confirmed.json.startup-close-pinch",
+          "tasks": [
+            {
+              "name": "FunctionCall",
+              "startMs": 0.094,
+              "durationMs": 7.486,
+              "main": true
+            },
+            {
+              "name": "FunctionCall",
+              "startMs": 7.584,
+              "durationMs": 5.677,
+              "main": true
+            },
+            {
+              "name": "UpdateLayoutTree",
+              "startMs": 13.91,
+              "durationMs": 180.302,
+              "main": true
+            },
+            {
+              "name": "PrePaint",
+              "startMs": 194.255,
+              "durationMs": 7.576,
+              "main": true
+            },
+            {
+              "name": "Paint",
+              "startMs": 203.028,
+              "durationMs": 12.394,
+              "main": true
+            },
+            {
+              "name": "Layerize",
+              "startMs": 215.608,
+              "durationMs": 8.594,
+              "main": true
+            },
+            {
+              "name": "HitTest",
+              "startMs": 225.408,
+              "durationMs": 4.844,
+              "main": true
+            }
+          ],
+          "note": "Inclusive overlapping trace tasks, not independent sums or presentation FPS."
+        }
+      ],
+      "errors": []
+    },
+    {
+      "name": "electron-csu-confirmed",
+      "rawHash": "5f67a39e2e682d8c109d4b03bb35ae5da6913d98239ac3953d2b4eaae2cb51fb",
+      "buildHash": "447c3ae27601632b9f776589da3071e093f3c0c4ffa1349b9caddfe2cfb17559",
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "cce1520cf70c92cf9c37361d88e0d59c07eeca0023f3a654146ba6caaf6769e9",
+        "desktop-performance-cba-scenario.cjs": "3b7ae9b195df1e6aa831d551b0c25deb78f0b47e9012080390253b8be3223b91",
+        "cba-rendering-regression.cjs": "0bf47e8c6c9217dbd8c756859c7e8c58f6dafbf99fe9f6b5a611b3fd18366a59",
+        "diagram-overview-scenario.cjs": "8ee614228fed48062dc1ef26dc5001636c5eb17b80d73add812bdd3ff3844b40",
+        "diagram-overview-visual.cjs": "34c60f1006de6306d9965a2fa330e30e46c080c1c694e31e0b3c768f15591645",
+        "diagram-overview-sweep.cjs": "0ff949cf75931f0b81a4ba9f6e46332819ab79c8a3c8252067b89de7ef4460ac",
+        "diagram-pinch-comparison.cjs": "25bb420ae35e4797028fb9be8cbeeadbc4960a21087e0cc0dbaaed72b5ad6619",
+        "diagram-pinch-burst.cjs": "ab1405fc201959a4346e9890b8257c6a9207a32ceab92c02dc426b41c9b4f9f4",
+        "diagram-pinch-trace.cjs": "cd9273fc941f699b4b9c3d1018535954a68fe05832c9f3708bc91f478b383d38",
+        "diagram-trackpad-pan.cjs": "a78c952fdc2e0c1acc2782166f2127a2ef135b6cdf839773ac77b9c3b00c80fc"
+      },
+      "hardware": {
+        "cpu": "Apple M2",
+        "ram": 8589934592,
+        "arch": "arm64"
+      },
+      "runtime": {
+        "versions": {
+          "node": "24.22.0",
+          "acorn": "8.18.0",
+          "ada": "4.0.0",
+          "amaro": "1.1.11",
+          "ares": "1.34.8",
+          "brotli": "1.2.0",
+          "cldr": "48.0",
+          "icu": "78.2",
+          "llhttp": "9.4.3",
+          "merve": "1.2.2",
+          "modules": "150",
+          "napi": "10",
+          "nbytes": "0.1.4",
+          "ncrypto": "0.0.1",
+          "nghttp2": "1.70.0",
+          "nghttp3": "",
+          "ngtcp2": "",
+          "openssl": "0.0.0",
+          "simdjson": "4.6.11",
+          "simdutf": "7.7.0",
+          "sqlite": "3.53.4",
+          "tz": "2026e",
+          "undici": "7.29.1",
+          "unicode": "17.0",
+          "uv": "1.52.1",
+          "uvwasi": "0.0.23",
+          "v8": "15.6.75.19-electron.0",
+          "zlib": "1.3.2.1-motley",
+          "zstd": "1.6.0",
+          "electron": "45.0.0",
+          "chrome": "156.0.8078.48"
+        },
+        "gpu": {
+          "2d_canvas": "enabled",
+          "direct_rendering_display_compositor": "disabled_off_ok",
+          "gpu_compositing": "enabled",
+          "multiple_raster_threads": "enabled_on",
+          "opengl": "enabled_on",
+          "rasterization": "enabled",
+          "raw_draw": "disabled_off_ok",
+          "skia_graphite": "enabled_on",
+          "trees_in_viz": "disabled_off",
+          "video_decode": "enabled",
+          "video_encode": "enabled",
+          "webgl": "enabled",
+          "webgpu": "enabled",
+          "webnn": "disabled_off"
+        }
+      },
+      "fixture": {
+        "nodes": 1500,
+        "relationships": 3000,
+        "hazardRows": 1000,
+        "seed": 30
+      },
+      "seederHash": "782d3cb7a0d3c6c46c3d2246eb81f90867267954f5175dd667e0410bf12fef75",
+      "entryAssetHashes": {
+        "static/css/main.8e8c2860.css": "84444d9bda11f9f1abb4071103398ed08ce7a7ca5a02d369a504e80c0ac23f2d",
+        "static/js/main.ab7f0cb5.js": "a2ffaaeff42ff66fda230cdbdb8d01f66817ed524b2bad84f29c691c8ad865bb"
+      },
+      "level": "CSU",
+      "counts": {
+        "nodes": 1884,
+        "edges": 3000
+      },
+      "singleZoomInputs": [
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(322.49px, 24.2273px) scale(0.0245763)",
+          "after": "translate(273.888px, -24.2273px) scale(0.0294915)",
+          "trusted": true,
+          "commitMs": 13.099999994039536,
+          "changedFrameMs": 34.80000001787994,
+          "movingFrames": 0,
+          "frames": 33
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(322.49px, 24.2273px) scale(0.0245763)",
+          "after": "translate(273.988px, -24.1273px) scale(0.0294915)",
+          "trusted": true,
+          "commitMs": 17.100000023841858,
+          "changedFrameMs": 136.90000002384477,
+          "movingFrames": 12,
+          "frames": 16
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(322.49px, 24.2273px) scale(0.0245763)",
+          "after": "translate(362.992px, 64.6061px) scale(0.0204802)",
+          "trusted": true,
+          "commitMs": 12.800000011920929,
+          "changedFrameMs": 32.30000001192093,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(322.49px, 24.2273px) scale(0.0245763)",
+          "after": "translate(362.908px, 64.5227px) scale(0.0204802)",
+          "trusted": true,
+          "commitMs": 18.400000005960464,
+          "changedFrameMs": 188.30000002383895,
+          "movingFrames": 11,
+          "frames": 14
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-9302.66px, -9571.66px) scale(1)",
+          "after": "translate(-11276.3px, -11539.3px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 14,
+          "changedFrameMs": 27.000000017884304,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-9302.66px, -9571.66px) scale(1)",
+          "after": "translate(-11276.2px, -11539.2px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 24.69999998807907,
+          "changedFrameMs": 146.39999999999418,
+          "movingFrames": 12,
+          "frames": 16
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-9302.66px, -9571.66px) scale(1)",
+          "after": "translate(-7657.97px, -7931.97px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 13.5,
+          "changedFrameMs": 27.300000005954644,
+          "movingFrames": 0,
+          "frames": 37
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-9302.66px, -9571.66px) scale(1)",
+          "after": "translate(-7658.05px, -7932.05px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 26.099999994039536,
+          "changedFrameMs": 161.8000000178872,
+          "movingFrames": 11,
+          "frames": 15
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(322.49px, 24.2273px) scale(0.0245763)",
+          "after": "translate(273.888px, -24.2273px) scale(0.0294915)",
+          "trusted": true,
+          "commitMs": 14.900000005960464,
+          "changedFrameMs": 27.700000005963375,
+          "movingFrames": 0,
+          "frames": 37
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(322.49px, 24.2273px) scale(0.0245763)",
+          "after": "translate(273.988px, -24.1273px) scale(0.0294915)",
+          "trusted": true,
+          "commitMs": 17.69999998807907,
+          "changedFrameMs": 154.39999999999418,
+          "movingFrames": 11,
+          "frames": 15
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(322.49px, 24.2273px) scale(0.0245763)",
+          "after": "translate(362.992px, 64.6061px) scale(0.0204802)",
+          "trusted": true,
+          "commitMs": 15.200000017881393,
+          "changedFrameMs": 28.600000017875573,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(322.49px, 24.2273px) scale(0.0245763)",
+          "after": "translate(362.908px, 64.5227px) scale(0.0204802)",
+          "trusted": true,
+          "commitMs": 26.5,
+          "changedFrameMs": 163.90000002384477,
+          "movingFrames": 11,
+          "frames": 14
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-9302.66px, -9571.66px) scale(1)",
+          "after": "translate(-11276.3px, -11539.3px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 16,
+          "changedFrameMs": 35.00000001191802,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-9302.66px, -9571.66px) scale(1)",
+          "after": "translate(-11276.2px, -11539.2px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 24.900000005960464,
+          "changedFrameMs": 146.10000001787557,
+          "movingFrames": 12,
+          "frames": 16
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-9302.66px, -9571.66px) scale(1)",
+          "after": "translate(-7657.97px, -7931.97px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 14.100000023841858,
+          "changedFrameMs": 26.20000002384768,
+          "movingFrames": 0,
+          "frames": 37
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-9302.66px, -9571.66px) scale(1)",
+          "after": "translate(-7658.05px, -7932.05px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 31.600000023841858,
+          "changedFrameMs": 163.80000002383895,
+          "movingFrames": 11,
+          "frames": 15
+        }
+      ],
+      "pinchBursts": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "producerMs": 1062.1049999999996,
+          "completionMs": 1161.5596669999977,
+          "backlogMs": 99.45466699999815,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 143.45429199999853,
+            "p95": 326.6966250000005,
+            "max": 361.6441670000022
+          },
+          "deliveryEndMs": 2040.9000000059605,
+          "idleMs": 742.6999999880791,
+          "movingElements": [],
+          "received": 62,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 2010.6000000238419,
+          "frames": {
+            "n": 57,
+            "median": 33.29999999999927,
+            "p95": 49.99999999999818,
+            "max": 200.40000000000146
+          },
+          "changedFrameIntervals": {
+            "n": 47,
+            "median": 33.30000000000109,
+            "p95": 50.100000000000364,
+            "max": 200.40000000000146
+          },
+          "changedFrames": 48,
+          "cameraBefore": {
+            "k": 0.024576255556170344,
+            "x": 322.4899850605876,
+            "y": 24.227272727272748
+          },
+          "cameraAfter": {
+            "k": 0.02457625555617028,
+            "x": 322.4899850605883,
+            "y": 24.227272727273373
+          },
+          "firstChangedFrameMs": 199.40000002384113,
+          "before": "translate(322.49px, 24.2273px) scale(0.0245763)",
+          "after": "translate(322.49px, 24.2273px) scale(0.0245763)",
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "producerMs": 1050.5296659999985,
+          "completionMs": 1164.841166000002,
+          "backlogMs": 114.31150000000343,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 136.10520899999756,
+            "p95": 206.75737500000105,
+            "max": 218.54066600000078
+          },
+          "deliveryEndMs": 2112.899999976158,
+          "idleMs": 664,
+          "movingElements": [],
+          "received": 61,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 2071,
+          "frames": {
+            "n": 60,
+            "median": 33.29999999999927,
+            "p95": 34.29999999999927,
+            "max": 50
+          },
+          "changedFrameIntervals": {
+            "n": 59,
+            "median": 33.29999999999927,
+            "p95": 34.39999999999782,
+            "max": 50
+          },
+          "changedFrames": 60,
+          "cameraBefore": {
+            "k": 1.0000002946134001,
+            "x": -9302.65806661811,
+            "y": -9571.658057779709
+          },
+          "cameraAfter": {
+            "k": 1.0000002946133975,
+            "x": -9302.658066618083,
+            "y": -9571.658057779681
+          },
+          "firstChangedFrameMs": 166.0000000238433,
+          "before": "translate(-9302.66px, -9571.66px) scale(1)",
+          "after": "translate(-9302.66px, -9571.66px) scale(1)",
+          "moving": false
+        }
+      ],
+      "trackpadPan": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "before": {
+            "k": 0.024576255556170344,
+            "x": 322.4899850605876,
+            "y": 24.227272727272748
+          },
+          "forward": {
+            "k": 0.024576255556170344,
+            "x": 142.48998506058763,
+            "y": -95.77272727272725
+          },
+          "after": {
+            "k": 0.024576255556170344,
+            "x": 322.4899850605876,
+            "y": 24.227272727272748
+          },
+          "received": 63,
+          "trusted": true,
+          "deltaX": 0,
+          "deltaY": 0,
+          "zoomUnchanged": true,
+          "pageScrollUnchanged": true,
+          "inputMs": 1857.0999999940395,
+          "frames": {
+            "n": 65,
+            "median": 16.700000000004366,
+            "p95": 33.400000000001455,
+            "max": 166.8000000000029
+          },
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "before": {
+            "k": 1.0000002946134001,
+            "x": -9302.65806661811,
+            "y": -9571.658057779709
+          },
+          "forward": {
+            "k": 1.0000002946134001,
+            "x": -9482.65806661811,
+            "y": -9691.658057779709
+          },
+          "after": {
+            "k": 1.0000002946134001,
+            "x": -9302.65806661811,
+            "y": -9571.658057779709
+          },
+          "received": 63,
+          "trusted": true,
+          "deltaX": 0,
+          "deltaY": 0,
+          "zoomUnchanged": true,
+          "pageScrollUnchanged": true,
+          "inputMs": 1955.0999999940395,
+          "frames": {
+            "n": 64,
+            "median": 33.299999999995634,
+            "p95": 33.799999999995634,
+            "max": 34.30000000000291
+          },
+          "moving": false
+        }
+      ],
+      "startupTraces": [
+        {
+          "scale": "overview",
+          "kind": "button",
+          "trusted": true,
+          "commitMs": 14.5,
+          "firstChangedFrameMs": 33.70000001788139,
+          "filename": "/private/tmp/xhandle-pinch-followup-20261031/electron-csu-confirmed.json.startup-overview-button",
+          "tasks": [
+            {
+              "name": "FunctionCall",
+              "startMs": 0.823,
+              "durationMs": 6.413,
+              "main": true
+            },
+            {
+              "name": "FunctionCall",
+              "startMs": 7.239,
+              "durationMs": 7.174,
+              "main": true
+            },
+            {
+              "name": "PrePaint",
+              "startMs": 14.653,
+              "durationMs": 4.449,
+              "main": true
+            },
+            {
+              "name": "Layerize",
+              "startMs": 20.965,
+              "durationMs": 15.863,
+              "main": true
+            }
+          ],
+          "note": "Inclusive overlapping trace tasks, not independent sums or presentation FPS."
+        },
+        {
+          "scale": "overview",
+          "kind": "pinch",
+          "trusted": true,
+          "commitMs": 16.19999998807907,
+          "firstChangedFrameMs": 241.00000001192166,
+          "filename": "/private/tmp/xhandle-pinch-followup-20261031/electron-csu-confirmed.json.startup-overview-pinch",
+          "tasks": [
+            {
+              "name": "FunctionCall",
+              "startMs": 0.085,
+              "durationMs": 10.188,
+              "main": true
+            },
+            {
+              "name": "FunctionCall",
+              "startMs": 10.277,
+              "durationMs": 5.105,
+              "main": true
+            },
+            {
+              "name": "UpdateLayoutTree",
+              "startMs": 16.4,
+              "durationMs": 205.556,
+              "main": true
+            },
+            {
+              "name": "PrePaint",
+              "startMs": 221.997,
+              "durationMs": 8.115,
+              "main": true
+            },
+            {
+              "name": "Paint",
+              "startMs": 231.86,
+              "durationMs": 16.389,
+              "main": true
+            },
+            {
+              "name": "Paint",
+              "startMs": 232.344,
+              "durationMs": 1.837,
+              "main": true
+            },
+            {
+              "name": "Layerize",
+              "startMs": 248.529,
+              "durationMs": 7.683,
+              "main": true
+            },
+            {
+              "name": "HitTest",
+              "startMs": 257.002,
+              "durationMs": 6.674,
+              "main": true
+            },
+            {
+              "name": "HitTest",
+              "startMs": 263.782,
+              "durationMs": 4.921,
+              "main": true
+            }
+          ],
+          "note": "Inclusive overlapping trace tasks, not independent sums or presentation FPS."
+        },
+        {
+          "scale": "close",
+          "kind": "button",
+          "trusted": true,
+          "commitMs": 13.100000023841858,
+          "firstChangedFrameMs": 30.800000023838948,
+          "filename": "/private/tmp/xhandle-pinch-followup-20261031/electron-csu-confirmed.json.startup-close-button",
+          "tasks": [
+            {
+              "name": "FunctionCall",
+              "startMs": 0.373,
+              "durationMs": 6.284,
+              "main": true
+            },
+            {
+              "name": "FunctionCall",
+              "startMs": 6.661,
+              "durationMs": 6.425,
+              "main": true
+            },
+            {
+              "name": "PrePaint",
+              "startMs": 13.272,
+              "durationMs": 4.919,
+              "main": true
+            },
+            {
+              "name": "Paint",
+              "startMs": 19.21,
+              "durationMs": 2.472,
+              "main": true
+            },
+            {
+              "name": "Layerize",
+              "startMs": 21.976,
+              "durationMs": 11.052,
+              "main": true
+            }
+          ],
+          "note": "Inclusive overlapping trace tasks, not independent sums or presentation FPS."
+        },
+        {
+          "scale": "close",
+          "kind": "pinch",
+          "trusted": true,
+          "commitMs": 17.900000005960464,
+          "firstChangedFrameMs": 242.90000001787848,
+          "filename": "/private/tmp/xhandle-pinch-followup-20261031/electron-csu-confirmed.json.startup-close-pinch",
+          "tasks": [
+            {
+              "name": "FunctionCall",
+              "startMs": 0.118,
+              "durationMs": 11.497,
+              "main": true
+            },
+            {
+              "name": "FunctionCall",
+              "startMs": 11.619,
+              "durationMs": 6.106,
+              "main": true
+            },
+            {
+              "name": "UpdateLayoutTree",
+              "startMs": 18.015,
+              "durationMs": 201.194,
+              "main": true
+            },
+            {
+              "name": "PrePaint",
+              "startMs": 219.252,
+              "durationMs": 7.8,
+              "main": true
+            },
+            {
+              "name": "Paint",
+              "startMs": 228.84,
+              "durationMs": 15.027,
+              "main": true
+            },
+            {
+              "name": "Paint",
+              "startMs": 229.315,
+              "durationMs": 1.019,
+              "main": true
+            },
+            {
+              "name": "Layerize",
+              "startMs": 244.164,
+              "durationMs": 11.059,
+              "main": true
+            },
+            {
+              "name": "HitTest",
+              "startMs": 255.996,
+              "durationMs": 7.3,
+              "main": true
+            },
+            {
+              "name": "MinorGC",
+              "startMs": 264.795,
+              "durationMs": 9.737,
+              "main": true
+            }
+          ],
+          "note": "Inclusive overlapping trace tasks, not independent sums or presentation FPS."
+        }
+      ],
+      "errors": []
+    }
+  ],
+  "experiments": [
+    {
+      "name": "chrome-opacity-edges",
+      "rawHash": "b4a1b8753b81fe3af1dace268fc8b35d6a9c85ec63d22e7a99533270e6b6c5b6",
+      "buildHash": "447c3ae27601632b9f776589da3071e093f3c0c4ffa1349b9caddfe2cfb17559",
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "c71aced09bdb71467f94afac5d72475c74a4156376fbd658ef077decea9be93f",
+        "desktop-performance-cba-scenario.cjs": "3b7ae9b195df1e6aa831d551b0c25deb78f0b47e9012080390253b8be3223b91",
+        "cba-rendering-regression.cjs": "0bf47e8c6c9217dbd8c756859c7e8c58f6dafbf99fe9f6b5a611b3fd18366a59",
+        "diagram-overview-scenario.cjs": "eaf53f5d5a99fc497e8477f917d1beae2c14065d43a63fa3800dfba576bb600e",
+        "diagram-overview-visual.cjs": "34c60f1006de6306d9965a2fa330e30e46c080c1c694e31e0b3c768f15591645",
+        "diagram-overview-sweep.cjs": "0ff949cf75931f0b81a4ba9f6e46332819ab79c8a3c8252067b89de7ef4460ac",
+        "diagram-pinch-comparison.cjs": "25bb420ae35e4797028fb9be8cbeeadbc4960a21087e0cc0dbaaed72b5ad6619",
+        "diagram-pinch-burst.cjs": "ab1405fc201959a4346e9890b8257c6a9207a32ceab92c02dc426b41c9b4f9f4"
+      },
+      "hardware": {
+        "cpu": "Apple M2",
+        "ram": 8589934592,
+        "arch": "arm64"
+      },
+      "runtime": {
+        "chrome": "156.0.8078.79"
+      },
+      "fixture": {
+        "nodes": 1500,
+        "relationships": 3000,
+        "hazardRows": 1000,
+        "seed": 30
+      },
+      "seederHash": "782d3cb7a0d3c6c46c3d2246eb81f90867267954f5175dd667e0410bf12fef75",
+      "entryAssetHashes": {
+        "static/css/main.8e8c2860.css": "84444d9bda11f9f1abb4071103398ed08ce7a7ca5a02d369a504e80c0ac23f2d",
+        "static/js/main.ab7f0cb5.js": "a2ffaaeff42ff66fda230cdbdb8d01f66817ed524b2bad84f29c691c8ad865bb"
+      },
+      "level": "Functional",
+      "counts": {
+        "nodes": 1584,
+        "edges": 3000
+      },
+      "singleZoomInputs": [
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.106px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 15.5,
+          "changedFrameMs": 30.89999998211715,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.206px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 11.599999994039536,
+          "changedFrameMs": 141.99999998807834,
+          "movingFrames": 12,
+          "frames": 17
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.087px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 17.19999998807907,
+          "changedFrameMs": 30.19999998807907,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.004px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 22.099999994039536,
+          "changedFrameMs": 171.59999998808053,
+          "movingFrames": 11,
+          "frames": 16
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.2px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 11.699999988079071,
+          "changedFrameMs": 30.099999994039536,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.1px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 18.80000001192093,
+          "changedFrameMs": 116.69999999999709,
+          "movingFrames": 13,
+          "frames": 18
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.46px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 11.199999988079071,
+          "changedFrameMs": 14.599999988080526,
+          "movingFrames": 0,
+          "frames": 37
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.54px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 15.900000005960464,
+          "changedFrameMs": 123.19999999999709,
+          "movingFrames": 13,
+          "frames": 18
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.106px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 14.700000017881393,
+          "changedFrameMs": 32.19999999999709,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.206px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 20.399999976158142,
+          "changedFrameMs": 173.69999998212006,
+          "movingFrames": 11,
+          "frames": 15
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.087px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 16.099999994039536,
+          "changedFrameMs": 30.599999988080526,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.004px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 18.19999998807907,
+          "changedFrameMs": 171.4999999821157,
+          "movingFrames": 11,
+          "frames": 15
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.2px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 16,
+          "changedFrameMs": 21.599999988080526,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.1px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 15.699999988079071,
+          "changedFrameMs": 122.89999998211715,
+          "movingFrames": 13,
+          "frames": 17
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.46px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 11.099999994039536,
+          "changedFrameMs": 15.499999982115696,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.54px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 19.799999982118607,
+          "changedFrameMs": 131.49999998808198,
+          "movingFrames": 13,
+          "frames": 17
+        }
+      ],
+      "pinchBursts": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "producerMs": 1059.4322909999973,
+          "completionMs": 1423.1908750000002,
+          "backlogMs": 363.7585840000029,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 191.9534160000003,
+            "p95": 360.8461669999997,
+            "max": 380.44629200000054
+          },
+          "deliveryEndMs": 2672.7999999821186,
+          "idleMs": 698.6000000238419,
+          "movingElements": [],
+          "received": 62,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 2641.7999999821186,
+          "frames": {
+            "n": 58,
+            "median": 49.399999999999636,
+            "p95": 67.29999999999927,
+            "max": 149.90000000000146
+          },
+          "changedFrameIntervals": {
+            "n": 48,
+            "median": 50,
+            "p95": 67.29999999999927,
+            "max": 149.90000000000146
+          },
+          "changedFrames": 49,
+          "cameraBefore": {
+            "k": 0.0363457979352019,
+            "x": 241.0047160345174,
+            "y": 29.636363636363683
+          },
+          "cameraAfter": {
+            "k": 0.03634579793520182,
+            "x": 241.0047160345182,
+            "y": 29.636363636364422
+          },
+          "firstChangedFrameMs": 215.5999999880787,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "producerMs": 1058.5283329999984,
+          "completionMs": 1074.0137079999986,
+          "backlogMs": 15.485375000000204,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 53.809957999998005,
+            "p95": 170.04904199999874,
+            "max": 203.02970800000185
+          },
+          "deliveryEndMs": 1579.0999999940395,
+          "idleMs": 669.6999999880791,
+          "movingElements": [],
+          "received": 62,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 1549.4000000059605,
+          "frames": {
+            "n": 57,
+            "median": 16.700000000000728,
+            "p95": 49.599999999998545,
+            "max": 50
+          },
+          "changedFrameIntervals": {
+            "n": 47,
+            "median": 33.20000000000073,
+            "p95": 50.10000000000218,
+            "max": 83.29999999999927
+          },
+          "changedFrames": 48,
+          "cameraBefore": {
+            "k": 1.0000009735225865,
+            "x": -8349.25192975089,
+            "y": -7828.007938103171
+          },
+          "cameraAfter": {
+            "k": 1.000000973522585,
+            "x": -8349.251929750875,
+            "y": -7828.007938103156
+          },
+          "firstChangedFrameMs": 182.29999999999927,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-8349.25px, -7828.01px) scale(1)",
+          "moving": false
+        }
+      ],
+      "errors": [],
+      "experimentalOnly": true,
+      "logHash": "50a79a1d7e4536ce7f39bf03630d2883d97ca28d57ed325d74c2134789f49349"
+    },
+    {
+      "name": "chrome-opacity-labels",
+      "rawHash": "b5ab7369fc14227b422c3a0a28bec1b29db5572498d19d6d6d45c10eaa5da4ff",
+      "buildHash": "447c3ae27601632b9f776589da3071e093f3c0c4ffa1349b9caddfe2cfb17559",
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "c71aced09bdb71467f94afac5d72475c74a4156376fbd658ef077decea9be93f",
+        "desktop-performance-cba-scenario.cjs": "3b7ae9b195df1e6aa831d551b0c25deb78f0b47e9012080390253b8be3223b91",
+        "cba-rendering-regression.cjs": "0bf47e8c6c9217dbd8c756859c7e8c58f6dafbf99fe9f6b5a611b3fd18366a59",
+        "diagram-overview-scenario.cjs": "eaf53f5d5a99fc497e8477f917d1beae2c14065d43a63fa3800dfba576bb600e",
+        "diagram-overview-visual.cjs": "34c60f1006de6306d9965a2fa330e30e46c080c1c694e31e0b3c768f15591645",
+        "diagram-overview-sweep.cjs": "0ff949cf75931f0b81a4ba9f6e46332819ab79c8a3c8252067b89de7ef4460ac",
+        "diagram-pinch-comparison.cjs": "25bb420ae35e4797028fb9be8cbeeadbc4960a21087e0cc0dbaaed72b5ad6619",
+        "diagram-pinch-burst.cjs": "ab1405fc201959a4346e9890b8257c6a9207a32ceab92c02dc426b41c9b4f9f4"
+      },
+      "hardware": {
+        "cpu": "Apple M2",
+        "ram": 8589934592,
+        "arch": "arm64"
+      },
+      "runtime": {
+        "chrome": "156.0.8078.79"
+      },
+      "fixture": {
+        "nodes": 1500,
+        "relationships": 3000,
+        "hazardRows": 1000,
+        "seed": 30
+      },
+      "seederHash": "782d3cb7a0d3c6c46c3d2246eb81f90867267954f5175dd667e0410bf12fef75",
+      "entryAssetHashes": {
+        "static/css/main.8e8c2860.css": "84444d9bda11f9f1abb4071103398ed08ce7a7ca5a02d369a504e80c0ac23f2d",
+        "static/js/main.ab7f0cb5.js": "a2ffaaeff42ff66fda230cdbdb8d01f66817ed524b2bad84f29c691c8ad865bb"
+      },
+      "level": "Functional",
+      "counts": {
+        "nodes": 1584,
+        "edges": 3000
+      },
+      "singleZoomInputs": [
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.106px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 19.30000001192093,
+          "changedFrameMs": 32.30000001192093,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.206px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 19.099999994039536,
+          "changedFrameMs": 324.2000000059634,
+          "movingFrames": 11,
+          "frames": 14
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.087px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 14,
+          "changedFrameMs": 30.00000001191802,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.004px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 22.099999994039536,
+          "changedFrameMs": 322.39999999404245,
+          "movingFrames": 12,
+          "frames": 15
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.2px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 12.300000011920929,
+          "changedFrameMs": 24.700000011922384,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.1px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 23.700000017881393,
+          "changedFrameMs": 331.500000011918,
+          "movingFrames": 11,
+          "frames": 14
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.46px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 15.800000011920929,
+          "changedFrameMs": 30.599999999998545,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.54px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 22.899999976158142,
+          "changedFrameMs": 298.39999998807616,
+          "movingFrames": 11,
+          "frames": 14
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.106px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 17.899999976158142,
+          "changedFrameMs": 31.99999998808198,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.206px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 21.099999994039536,
+          "changedFrameMs": 337.5,
+          "movingFrames": 11,
+          "frames": 14
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.087px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 14.300000011920929,
+          "changedFrameMs": 31.80000000000291,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.004px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 16.899999976158142,
+          "changedFrameMs": 302.09999998807325,
+          "movingFrames": 12,
+          "frames": 15
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.2px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 11.599999994039536,
+          "changedFrameMs": 13.799999994036625,
+          "movingFrames": 0,
+          "frames": 37
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.1px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 19.799999982118607,
+          "changedFrameMs": 281.999999988082,
+          "movingFrames": 12,
+          "frames": 15
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.46px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 13.100000023841858,
+          "changedFrameMs": 29.200000011915108,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.54px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 22.69999998807907,
+          "changedFrameMs": 281.4999999940337,
+          "movingFrames": 12,
+          "frames": 15
+        }
+      ],
+      "pinchBursts": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "producerMs": 1054.2590420000015,
+          "completionMs": 4942.821208000001,
+          "backlogMs": 3888.5621659999997,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 393.56974999999875,
+            "p95": 3469.0421659999993,
+            "max": 3907.024416
+          },
+          "deliveryEndMs": 9372.299999982119,
+          "idleMs": 721.9000000059605,
+          "movingElements": [],
+          "received": 62,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 9341.299999982119,
+          "frames": {
+            "n": 63,
+            "median": 166.70000000000073,
+            "p95": 200,
+            "max": 366.6999999999989
+          },
+          "changedFrameIntervals": {
+            "n": 51,
+            "median": 183.29999999999927,
+            "p95": 216.60000000000218,
+            "max": 400
+          },
+          "changedFrames": 52,
+          "cameraBefore": {
+            "k": 0.0363457979352019,
+            "x": 241.0047160345174,
+            "y": 29.636363636363683
+          },
+          "cameraAfter": {
+            "k": 0.03634579793520182,
+            "x": 241.0047160345182,
+            "y": 29.636363636364422
+          },
+          "firstChangedFrameMs": 1.6999999940398993,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "producerMs": 1074.6853330000013,
+          "completionMs": 4933.692582999996,
+          "backlogMs": 3859.007249999995,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 434.7242499999993,
+            "p95": 3447.043375000001,
+            "max": 3877.6698749999996
+          },
+          "deliveryEndMs": 9370.799999982119,
+          "idleMs": 656.7000000178814,
+          "movingElements": [],
+          "received": 62,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 9345.5,
+          "frames": {
+            "n": 60,
+            "median": 166.79999999999563,
+            "p95": 200,
+            "max": 300
+          },
+          "changedFrameIntervals": {
+            "n": 51,
+            "median": 183.29999999999927,
+            "p95": 233.3000000000029,
+            "max": 316.59999999999854
+          },
+          "changedFrames": 52,
+          "cameraBefore": {
+            "k": 1.0000009735225865,
+            "x": -8349.25192975089,
+            "y": -7828.007938103171
+          },
+          "cameraAfter": {
+            "k": 1.000000973522585,
+            "x": -8349.251929750875,
+            "y": -7828.007938103156
+          },
+          "firstChangedFrameMs": 8.700000011922384,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-8349.25px, -7828.01px) scale(1)",
+          "moving": false
+        }
+      ],
+      "errors": [],
+      "experimentalOnly": true,
+      "logHash": "a2c5933254ef31b9f6c2053f14467cfaa1241c79cfd3fada9e383bd72044c577"
+    },
+    {
+      "name": "chrome-batch",
+      "rawHash": "ffa0fccd738b045df03f818f9e7f7cb8a4c32420f4b63fdacbdaaec2e9fae706",
+      "buildHash": "447c3ae27601632b9f776589da3071e093f3c0c4ffa1349b9caddfe2cfb17559",
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "c71aced09bdb71467f94afac5d72475c74a4156376fbd658ef077decea9be93f",
+        "desktop-performance-cba-scenario.cjs": "3b7ae9b195df1e6aa831d551b0c25deb78f0b47e9012080390253b8be3223b91",
+        "cba-rendering-regression.cjs": "0bf47e8c6c9217dbd8c756859c7e8c58f6dafbf99fe9f6b5a611b3fd18366a59",
+        "diagram-overview-scenario.cjs": "eaf53f5d5a99fc497e8477f917d1beae2c14065d43a63fa3800dfba576bb600e",
+        "diagram-overview-visual.cjs": "34c60f1006de6306d9965a2fa330e30e46c080c1c694e31e0b3c768f15591645",
+        "diagram-overview-sweep.cjs": "0ff949cf75931f0b81a4ba9f6e46332819ab79c8a3c8252067b89de7ef4460ac",
+        "diagram-pinch-comparison.cjs": "25bb420ae35e4797028fb9be8cbeeadbc4960a21087e0cc0dbaaed72b5ad6619",
+        "diagram-pinch-burst.cjs": "ab1405fc201959a4346e9890b8257c6a9207a32ceab92c02dc426b41c9b4f9f4"
+      },
+      "hardware": {
+        "cpu": "Apple M2",
+        "ram": 8589934592,
+        "arch": "arm64"
+      },
+      "runtime": {
+        "chrome": "156.0.8078.79"
+      },
+      "fixture": {
+        "nodes": 1500,
+        "relationships": 3000,
+        "hazardRows": 1000,
+        "seed": 30
+      },
+      "seederHash": "782d3cb7a0d3c6c46c3d2246eb81f90867267954f5175dd667e0410bf12fef75",
+      "entryAssetHashes": {
+        "static/css/main.8e8c2860.css": "84444d9bda11f9f1abb4071103398ed08ce7a7ca5a02d369a504e80c0ac23f2d",
+        "static/js/main.ab7f0cb5.js": "a2ffaaeff42ff66fda230cdbdb8d01f66817ed524b2bad84f29c691c8ad865bb"
+      },
+      "level": "Functional",
+      "counts": {
+        "nodes": 1584,
+        "edges": 3000
+      },
+      "singleZoomInputs": [
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.106px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 18.19999998807907,
+          "changedFrameMs": 44.09999998211788,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.206px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 19.69999998807907,
+          "changedFrameMs": 170.8999999940388,
+          "movingFrames": 10,
+          "frames": 15
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.087px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 14.900000005960464,
+          "changedFrameMs": 31.69999999403808,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.004px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 20,
+          "changedFrameMs": 141.70000000595974,
+          "movingFrames": 11,
+          "frames": 16
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.2px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 13.099999994039536,
+          "changedFrameMs": 29.19999999403808,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.1px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 13.900000005960464,
+          "changedFrameMs": 126.19999999999709,
+          "movingFrames": 12,
+          "frames": 17
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.46px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 12.300000011920929,
+          "changedFrameMs": 14.19999999999709,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.54px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 23.200000017881393,
+          "changedFrameMs": 132.500000005959,
+          "movingFrames": 12,
+          "frames": 17
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.106px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 19.100000023841858,
+          "changedFrameMs": 44.700000005963375,
+          "movingFrames": 0,
+          "frames": 34
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.206px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 17.600000023841858,
+          "changedFrameMs": 174.70000000596337,
+          "movingFrames": 10,
+          "frames": 15
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.087px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 18.099999994039536,
+          "changedFrameMs": 32.79999998211861,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.004px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 22.299999982118607,
+          "changedFrameMs": 183.39999998807616,
+          "movingFrames": 10,
+          "frames": 14
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.2px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 12.900000005960464,
+          "changedFrameMs": 28.39999998807616,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.1px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 23.700000017881393,
+          "changedFrameMs": 132.000000005959,
+          "movingFrames": 12,
+          "frames": 17
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.46px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 13.400000005960464,
+          "changedFrameMs": 29.69999999403808,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.54px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 24,
+          "changedFrameMs": 134.59999999403954,
+          "movingFrames": 12,
+          "frames": 17
+        }
+      ],
+      "pinchBursts": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "producerMs": 1173.9095000000016,
+          "completionMs": 1221.4553750000014,
+          "backlogMs": 47.545874999999796,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 59.211458000001585,
+            "p95": 205.00404200000048,
+            "max": 247.390625
+          },
+          "deliveryEndMs": 1839.800000011921,
+          "idleMs": 734.5,
+          "movingElements": [],
+          "received": 61,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 1801.5999999940395,
+          "frames": {
+            "n": 60,
+            "median": 18.600000000002183,
+            "p95": 35.30000000000291,
+            "max": 166.70000000000073
+          },
+          "changedFrameIntervals": {
+            "n": 58,
+            "median": 31.5,
+            "p95": 50,
+            "max": 166.70000000000073
+          },
+          "changedFrames": 59,
+          "cameraBefore": {
+            "k": 0.0363457979352019,
+            "x": 241.0047160345174,
+            "y": 29.636363636363683
+          },
+          "cameraAfter": {
+            "k": 0.03634579793520179,
+            "x": 241.00471603451842,
+            "y": 29.63636363636465
+          },
+          "firstChangedFrameMs": 134.19999998211824,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "producerMs": 1131.055166000002,
+          "completionMs": 1152.134833,
+          "backlogMs": 21.079666999998153,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 49.41700000000128,
+            "p95": 180.47045799999978,
+            "max": 200.75966699999844
+          },
+          "deliveryEndMs": 1670.4000000059605,
+          "idleMs": 654.5999999940395,
+          "movingElements": [],
+          "received": 62,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 1630.300000011921,
+          "frames": {
+            "n": 59,
+            "median": 16.700000000000728,
+            "p95": 35.29999999999927,
+            "max": 100.40000000000146
+          },
+          "changedFrameIntervals": {
+            "n": 50,
+            "median": 33.29999999999927,
+            "p95": 35.29999999999927,
+            "max": 116.70000000000073
+          },
+          "changedFrames": 51,
+          "cameraBefore": {
+            "k": 1.0000009735225865,
+            "x": -8349.25192975089,
+            "y": -7828.007938103171
+          },
+          "cameraAfter": {
+            "k": 1.000000973522585,
+            "x": -8349.251929750875,
+            "y": -7828.007938103156
+          },
+          "firstChangedFrameMs": 132.29999999999927,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-8349.25px, -7828.01px) scale(1)",
+          "moving": false
+        }
+      ],
+      "errors": [],
+      "experimentalOnly": true,
+      "logHash": "444dae1744c84374cee172be27e8dd38838493151cf25d0ed8b68237c77395af"
+    },
+    {
+      "name": "chrome-effect-rules",
+      "rawHash": "ab71af459dc8c6185d8d7953be9a1f1db9a5d8bdf50586c3be65bf9f3210cfc9",
+      "buildHash": "447c3ae27601632b9f776589da3071e093f3c0c4ffa1349b9caddfe2cfb17559",
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "c71aced09bdb71467f94afac5d72475c74a4156376fbd658ef077decea9be93f",
+        "desktop-performance-cba-scenario.cjs": "3b7ae9b195df1e6aa831d551b0c25deb78f0b47e9012080390253b8be3223b91",
+        "cba-rendering-regression.cjs": "0bf47e8c6c9217dbd8c756859c7e8c58f6dafbf99fe9f6b5a611b3fd18366a59",
+        "diagram-overview-scenario.cjs": "eaf53f5d5a99fc497e8477f917d1beae2c14065d43a63fa3800dfba576bb600e",
+        "diagram-overview-visual.cjs": "34c60f1006de6306d9965a2fa330e30e46c080c1c694e31e0b3c768f15591645",
+        "diagram-overview-sweep.cjs": "0ff949cf75931f0b81a4ba9f6e46332819ab79c8a3c8252067b89de7ef4460ac",
+        "diagram-pinch-comparison.cjs": "25bb420ae35e4797028fb9be8cbeeadbc4960a21087e0cc0dbaaed72b5ad6619",
+        "diagram-pinch-burst.cjs": "ab1405fc201959a4346e9890b8257c6a9207a32ceab92c02dc426b41c9b4f9f4"
+      },
+      "hardware": {
+        "cpu": "Apple M2",
+        "ram": 8589934592,
+        "arch": "arm64"
+      },
+      "runtime": {
+        "chrome": "156.0.8078.79"
+      },
+      "fixture": {
+        "nodes": 1500,
+        "relationships": 3000,
+        "hazardRows": 1000,
+        "seed": 30
+      },
+      "seederHash": "782d3cb7a0d3c6c46c3d2246eb81f90867267954f5175dd667e0410bf12fef75",
+      "entryAssetHashes": {
+        "static/css/main.8e8c2860.css": "84444d9bda11f9f1abb4071103398ed08ce7a7ca5a02d369a504e80c0ac23f2d",
+        "static/js/main.ab7f0cb5.js": "a2ffaaeff42ff66fda230cdbdb8d01f66817ed524b2bad84f29c691c8ad865bb"
+      },
+      "level": "Functional",
+      "counts": {
+        "nodes": 1584,
+        "edges": 3000
+      },
+      "singleZoomInputs": [
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.106px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 12.699999988079071,
+          "changedFrameMs": 30.19999999403808,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.206px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 20.5,
+          "changedFrameMs": 120.09999998211788,
+          "movingFrames": 13,
+          "frames": 19
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.087px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 16.400000005960464,
+          "changedFrameMs": 30.599999994039536,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.004px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 17.19999998807907,
+          "changedFrameMs": 90.19999999403808,
+          "movingFrames": 15,
+          "frames": 20
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.2px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 13.599999994039536,
+          "changedFrameMs": 18.099999994039536,
+          "movingFrames": 0,
+          "frames": 34
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.1px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 23,
+          "changedFrameMs": 68.7999999821186,
+          "movingFrames": 17,
+          "frames": 26
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.46px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 11.800000011920929,
+          "changedFrameMs": 14.799999994036625,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.54px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 21.69999998807907,
+          "changedFrameMs": 67.89999998807616,
+          "movingFrames": 17,
+          "frames": 27
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.106px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 15.300000011920929,
+          "changedFrameMs": 18.00000000595901,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.206px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 18,
+          "changedFrameMs": 73.59999998212152,
+          "movingFrames": 16,
+          "frames": 24
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.087px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 13.199999988079071,
+          "changedFrameMs": 16.299999982118607,
+          "movingFrames": 0,
+          "frames": 37
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.004px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 17.900000005960464,
+          "changedFrameMs": 71.69999999403808,
+          "movingFrames": 16,
+          "frames": 23
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.2px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 11.900000005960464,
+          "changedFrameMs": 25.200000005963375,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.1px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 23.5,
+          "changedFrameMs": 67.79999998807762,
+          "movingFrames": 17,
+          "frames": 27
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.46px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 11.099999994039536,
+          "changedFrameMs": 14.80000000000291,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.54px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 21.900000005960464,
+          "changedFrameMs": 67.49999999403371,
+          "movingFrames": 17,
+          "frames": 26
+        }
+      ],
+      "pinchBursts": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "producerMs": 1176.6620839999996,
+          "completionMs": 2460.998792000002,
+          "backlogMs": 1284.3367080000025,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 608.1041670000013,
+            "p95": 1524.500333,
+            "max": 1567.3189590000002
+          },
+          "deliveryEndMs": 3116.800000011921,
+          "idleMs": 659.9000000059605,
+          "movingElements": [],
+          "received": 61,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 3077.9000000059605,
+          "frames": {
+            "n": 59,
+            "median": 16.80000000000109,
+            "p95": 366.8000000000029,
+            "max": 516.7000000000007
+          },
+          "changedFrameIntervals": {
+            "n": 57,
+            "median": 16.80000000000291,
+            "p95": 366.8000000000029,
+            "max": 516.7000000000007
+          },
+          "changedFrames": 58,
+          "cameraBefore": {
+            "k": 0.0363457979352019,
+            "x": 241.0047160345174,
+            "y": 29.636363636363683
+          },
+          "cameraAfter": {
+            "k": 0.03634579793520179,
+            "x": 241.00471603451842,
+            "y": 29.63636363636465
+          },
+          "firstChangedFrameMs": 200.3999999940388,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "producerMs": 1133.9247090000026,
+          "completionMs": 1168.0938750000023,
+          "backlogMs": 34.16916599999968,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 57.73687499999869,
+            "p95": 115.17129099999875,
+            "max": 135.88850000000093
+          },
+          "deliveryEndMs": 1651.1000000238419,
+          "idleMs": 671.6999999880791,
+          "movingElements": [],
+          "received": 62,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 1616,
+          "frames": {
+            "n": 56,
+            "median": 16.799999999999272,
+            "p95": 66.69999999999709,
+            "max": 100
+          },
+          "changedFrameIntervals": {
+            "n": 46,
+            "median": 33.29999999999927,
+            "p95": 83.30000000000291,
+            "max": 100
+          },
+          "changedFrames": 47,
+          "cameraBefore": {
+            "k": 1.0000009735225865,
+            "x": -8349.25192975089,
+            "y": -7828.007938103171
+          },
+          "cameraAfter": {
+            "k": 1.000000973522585,
+            "x": -8349.251929750875,
+            "y": -7828.007938103156
+          },
+          "firstChangedFrameMs": 114.59999998211788,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-8349.25px, -7828.01px) scale(1)",
+          "moving": false
+        }
+      ],
+      "errors": [],
+      "experimentalOnly": true,
+      "logHash": "9c2acc984578cbd2067bea3dc6a6556d2bb2f9979daad65c294f4bb286f96988"
+    },
+    {
+      "name": "chrome-contained-labels",
+      "rawHash": "c774a171a024da8a6753db13394f8665d7670fda66cf8afcc063b2f715685779",
+      "buildHash": "447c3ae27601632b9f776589da3071e093f3c0c4ffa1349b9caddfe2cfb17559",
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "c71aced09bdb71467f94afac5d72475c74a4156376fbd658ef077decea9be93f",
+        "desktop-performance-cba-scenario.cjs": "3b7ae9b195df1e6aa831d551b0c25deb78f0b47e9012080390253b8be3223b91",
+        "cba-rendering-regression.cjs": "0bf47e8c6c9217dbd8c756859c7e8c58f6dafbf99fe9f6b5a611b3fd18366a59",
+        "diagram-overview-scenario.cjs": "eaf53f5d5a99fc497e8477f917d1beae2c14065d43a63fa3800dfba576bb600e",
+        "diagram-overview-visual.cjs": "34c60f1006de6306d9965a2fa330e30e46c080c1c694e31e0b3c768f15591645",
+        "diagram-overview-sweep.cjs": "0ff949cf75931f0b81a4ba9f6e46332819ab79c8a3c8252067b89de7ef4460ac",
+        "diagram-pinch-comparison.cjs": "25bb420ae35e4797028fb9be8cbeeadbc4960a21087e0cc0dbaaed72b5ad6619",
+        "diagram-pinch-burst.cjs": "ab1405fc201959a4346e9890b8257c6a9207a32ceab92c02dc426b41c9b4f9f4"
+      },
+      "hardware": {
+        "cpu": "Apple M2",
+        "ram": 8589934592,
+        "arch": "arm64"
+      },
+      "runtime": {
+        "chrome": "156.0.8078.79"
+      },
+      "fixture": {
+        "nodes": 1500,
+        "relationships": 3000,
+        "hazardRows": 1000,
+        "seed": 30
+      },
+      "seederHash": "782d3cb7a0d3c6c46c3d2246eb81f90867267954f5175dd667e0410bf12fef75",
+      "entryAssetHashes": {
+        "static/css/main.8e8c2860.css": "84444d9bda11f9f1abb4071103398ed08ce7a7ca5a02d369a504e80c0ac23f2d",
+        "static/js/main.ab7f0cb5.js": "a2ffaaeff42ff66fda230cdbdb8d01f66817ed524b2bad84f29c691c8ad865bb"
+      },
+      "level": "Functional",
+      "counts": {
+        "nodes": 1584,
+        "edges": 3000
+      },
+      "singleZoomInputs": [
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.106px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 29.80000001192093,
+          "changedFrameMs": 44.60000001788285,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.206px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 18,
+          "changedFrameMs": 155.2000000178814,
+          "movingFrames": 11,
+          "frames": 15
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.087px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 22.5,
+          "changedFrameMs": 41.900000000001455,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.004px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 25.80000001192093,
+          "changedFrameMs": 180.60000001788285,
+          "movingFrames": 11,
+          "frames": 14
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.2px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 13.299999982118607,
+          "changedFrameMs": 28.399999994042446,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.1px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 18.69999998807907,
+          "changedFrameMs": 120.00000000595901,
+          "movingFrames": 13,
+          "frames": 17
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.46px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 12.799999982118607,
+          "changedFrameMs": 28.599999999998545,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.54px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 22.30000001192093,
+          "changedFrameMs": 131.40000000596046,
+          "movingFrames": 13,
+          "frames": 17
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.106px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 23.30000001192093,
+          "changedFrameMs": 31.900000017878483,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.206px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 16.299999982118607,
+          "changedFrameMs": 157.29999999403663,
+          "movingFrames": 12,
+          "frames": 15
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.087px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 12.599999994039536,
+          "changedFrameMs": 30.60000001192384,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.004px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 18.80000001192093,
+          "changedFrameMs": 136.60000001788285,
+          "movingFrames": 12,
+          "frames": 17
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.2px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 14.400000005960464,
+          "changedFrameMs": 29.400000011919474,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.1px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 23.299999982118607,
+          "changedFrameMs": 133.40000000000146,
+          "movingFrames": 13,
+          "frames": 17
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.46px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 13,
+          "changedFrameMs": 27.700000005963375,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.54px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 27.19999998807907,
+          "changedFrameMs": 139.09999999403954,
+          "movingFrames": 12,
+          "frames": 17
+        }
+      ],
+      "pinchBursts": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "producerMs": 1136.8312910000022,
+          "completionMs": 1164.5556250000009,
+          "backlogMs": 27.724333999998635,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 65.77895799999897,
+            "p95": 278.02837499999805,
+            "max": 335.66504200000054
+          },
+          "deliveryEndMs": 1754.5,
+          "idleMs": 694.5999999940395,
+          "movingElements": [],
+          "received": 61,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 1712.300000011921,
+          "frames": {
+            "n": 59,
+            "median": 17.099999999998545,
+            "p95": 33.5,
+            "max": 183.39999999999964
+          },
+          "changedFrameIntervals": {
+            "n": 57,
+            "median": 17.900000000001455,
+            "p95": 33.5,
+            "max": 183.39999999999964
+          },
+          "changedFrames": 58,
+          "cameraBefore": {
+            "k": 0.0363457979352019,
+            "x": 241.0047160345174,
+            "y": 29.636363636363683
+          },
+          "cameraAfter": {
+            "k": 0.03634579793520179,
+            "x": 241.00471603451842,
+            "y": 29.63636363636465
+          },
+          "firstChangedFrameMs": 201.1000000059612,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "producerMs": 1145.7282919999998,
+          "completionMs": 1189.1207500000019,
+          "backlogMs": 43.39245800000208,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 68.02729200000249,
+            "p95": 199.1469160000015,
+            "max": 233.6942080000008
+          },
+          "deliveryEndMs": 1880.2000000178814,
+          "idleMs": 663.6999999880791,
+          "movingElements": [],
+          "received": 61,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 1838.300000011921,
+          "frames": {
+            "n": 58,
+            "median": 33.29999999999927,
+            "p95": 50,
+            "max": 83.30000000000291
+          },
+          "changedFrameIntervals": {
+            "n": 57,
+            "median": 33.29999999999927,
+            "p95": 50,
+            "max": 83.30000000000291
+          },
+          "changedFrames": 58,
+          "cameraBefore": {
+            "k": 1.0000009735225865,
+            "x": -8349.25192975089,
+            "y": -7828.007938103171
+          },
+          "cameraAfter": {
+            "k": 1.0000009735225832,
+            "x": -8349.25192975086,
+            "y": -7828.007938103143
+          },
+          "firstChangedFrameMs": 150.1000000119202,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-8349.25px, -7828.01px) scale(1)",
+          "moving": false
+        }
+      ],
+      "errors": [],
+      "experimentalOnly": true,
+      "logHash": "fb10194df870946b8dbe65274176488f6d53e38eb239a5a420f3ee1e049eb730"
+    },
+    {
+      "name": "chrome-idle-cache",
+      "rawHash": "080c5cf1a9202f1d33feecdb12d7d962380dac5b9ed37088a02d0c2a5c56dd15",
+      "buildHash": "447c3ae27601632b9f776589da3071e093f3c0c4ffa1349b9caddfe2cfb17559",
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "c71aced09bdb71467f94afac5d72475c74a4156376fbd658ef077decea9be93f",
+        "desktop-performance-cba-scenario.cjs": "3b7ae9b195df1e6aa831d551b0c25deb78f0b47e9012080390253b8be3223b91",
+        "cba-rendering-regression.cjs": "0bf47e8c6c9217dbd8c756859c7e8c58f6dafbf99fe9f6b5a611b3fd18366a59",
+        "diagram-overview-scenario.cjs": "eaf53f5d5a99fc497e8477f917d1beae2c14065d43a63fa3800dfba576bb600e",
+        "diagram-overview-visual.cjs": "34c60f1006de6306d9965a2fa330e30e46c080c1c694e31e0b3c768f15591645",
+        "diagram-overview-sweep.cjs": "0ff949cf75931f0b81a4ba9f6e46332819ab79c8a3c8252067b89de7ef4460ac",
+        "diagram-pinch-comparison.cjs": "25bb420ae35e4797028fb9be8cbeeadbc4960a21087e0cc0dbaaed72b5ad6619",
+        "diagram-pinch-burst.cjs": "ab1405fc201959a4346e9890b8257c6a9207a32ceab92c02dc426b41c9b4f9f4"
+      },
+      "hardware": {
+        "cpu": "Apple M2",
+        "ram": 8589934592,
+        "arch": "arm64"
+      },
+      "runtime": {
+        "chrome": "156.0.8078.79"
+      },
+      "fixture": {
+        "nodes": 1500,
+        "relationships": 3000,
+        "hazardRows": 1000,
+        "seed": 30
+      },
+      "seederHash": "782d3cb7a0d3c6c46c3d2246eb81f90867267954f5175dd667e0410bf12fef75",
+      "entryAssetHashes": {
+        "static/css/main.8e8c2860.css": "84444d9bda11f9f1abb4071103398ed08ce7a7ca5a02d369a504e80c0ac23f2d",
+        "static/js/main.ab7f0cb5.js": "a2ffaaeff42ff66fda230cdbdb8d01f66817ed524b2bad84f29c691c8ad865bb"
+      },
+      "level": "Functional",
+      "counts": {
+        "nodes": 1584,
+        "edges": 3000
+      },
+      "singleZoomInputs": [
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.106px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 18.299999982118607,
+          "changedFrameMs": 35.19999999403808,
+          "movingFrames": 0,
+          "frames": 34
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.206px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 18.5,
+          "changedFrameMs": 142.40000001191947,
+          "movingFrames": 12,
+          "frames": 17
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.087px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 18.69999998807907,
+          "changedFrameMs": 20.19999999403808,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.004px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 14.800000011920929,
+          "changedFrameMs": 142.40000000000146,
+          "movingFrames": 12,
+          "frames": 17
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.2px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 12.099999994039536,
+          "changedFrameMs": 16.799999988077616,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.1px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 19.599999994039536,
+          "changedFrameMs": 124.79999998807762,
+          "movingFrames": 13,
+          "frames": 18
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.46px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 12.900000005960464,
+          "changedFrameMs": 16.99999999404099,
+          "movingFrames": 0,
+          "frames": 34
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.54px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 20.600000023841858,
+          "changedFrameMs": 122.70000001192238,
+          "movingFrames": 13,
+          "frames": 18
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.106px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 23.69999998807907,
+          "changedFrameMs": 34.99999999404099,
+          "movingFrames": 0,
+          "frames": 34
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.206px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 14.700000017881393,
+          "changedFrameMs": 159.60000000595755,
+          "movingFrames": 11,
+          "frames": 15
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.087px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 18,
+          "changedFrameMs": 32.69999999999709,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.004px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 16,
+          "changedFrameMs": 157.39999998807616,
+          "movingFrames": 11,
+          "frames": 16
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.2px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 13.899999976158142,
+          "changedFrameMs": 14.09999998807325,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.1px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 15.599999994039536,
+          "changedFrameMs": 109.09999998807325,
+          "movingFrames": 14,
+          "frames": 19
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.46px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 11,
+          "changedFrameMs": 17.799999994036625,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.54px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 21,
+          "changedFrameMs": 124.39999999999418,
+          "movingFrames": 14,
+          "frames": 18
+        }
+      ],
+      "pinchBursts": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "producerMs": 1166.2152910000004,
+          "completionMs": 1245.3948750000018,
+          "backlogMs": 79.17958400000134,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 63.82308399999965,
+            "p95": 191.58745799999815,
+            "max": 237.19437500000276
+          },
+          "deliveryEndMs": 1670.4000000059605,
+          "idleMs": 683.8000000119209,
+          "movingElements": [],
+          "received": 61,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 1635.7999999821186,
+          "frames": {
+            "n": 55,
+            "median": 16.80000000000291,
+            "p95": 50,
+            "max": 166.70000000000073
+          },
+          "changedFrameIntervals": {
+            "n": 52,
+            "median": 16.80000000000291,
+            "p95": 64.89999999999782,
+            "max": 166.70000000000073
+          },
+          "changedFrames": 53,
+          "cameraBefore": {
+            "k": 0.0363457979352019,
+            "x": 241.0047160345174,
+            "y": 29.636363636363683
+          },
+          "cameraAfter": {
+            "k": 0.03634579793520179,
+            "x": 241.00471603451842,
+            "y": 29.63636363636465
+          },
+          "firstChangedFrameMs": 150.8999999880798,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "producerMs": 1131.4467499999992,
+          "completionMs": 1161.86175,
+          "backlogMs": 30.415000000000873,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 45.77870800000164,
+            "p95": 119.48720800000228,
+            "max": 165.14016699999775
+          },
+          "deliveryEndMs": 1576.699999988079,
+          "idleMs": 664.4000000059605,
+          "movingElements": [],
+          "received": 61,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 1547.0999999940395,
+          "frames": {
+            "n": 57,
+            "median": 17.19999999999709,
+            "p95": 34.79999999999927,
+            "max": 66.70000000000073
+          },
+          "changedFrameIntervals": {
+            "n": 56,
+            "median": 17.19999999999709,
+            "p95": 34.79999999999927,
+            "max": 66.70000000000073
+          },
+          "changedFrames": 57,
+          "cameraBefore": {
+            "k": 1.0000009735225865,
+            "x": -8349.25192975089,
+            "y": -7828.007938103171
+          },
+          "cameraAfter": {
+            "k": 1.0000009735225832,
+            "x": -8349.25192975086,
+            "y": -7828.007938103143
+          },
+          "firstChangedFrameMs": 126,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-8349.25px, -7828.01px) scale(1)",
+          "moving": false
+        }
+      ],
+      "errors": [],
+      "experimentalOnly": true,
+      "logHash": "aa5698e74e0e63241dee6baca579068bce2d6b4a968946b6fd321250bea30ae4"
+    },
+    {
+      "name": "chrome-selectors",
+      "rawHash": "41c42d4bd4bf58febab9eb22f5c27b2202a962931e9a61d93812ba1fe634b413",
+      "buildHash": "447c3ae27601632b9f776589da3071e093f3c0c4ffa1349b9caddfe2cfb17559",
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "c71aced09bdb71467f94afac5d72475c74a4156376fbd658ef077decea9be93f",
+        "desktop-performance-cba-scenario.cjs": "3b7ae9b195df1e6aa831d551b0c25deb78f0b47e9012080390253b8be3223b91",
+        "cba-rendering-regression.cjs": "0bf47e8c6c9217dbd8c756859c7e8c58f6dafbf99fe9f6b5a611b3fd18366a59",
+        "diagram-overview-scenario.cjs": "eaf53f5d5a99fc497e8477f917d1beae2c14065d43a63fa3800dfba576bb600e",
+        "diagram-overview-visual.cjs": "34c60f1006de6306d9965a2fa330e30e46c080c1c694e31e0b3c768f15591645",
+        "diagram-overview-sweep.cjs": "0ff949cf75931f0b81a4ba9f6e46332819ab79c8a3c8252067b89de7ef4460ac",
+        "diagram-pinch-comparison.cjs": "25bb420ae35e4797028fb9be8cbeeadbc4960a21087e0cc0dbaaed72b5ad6619",
+        "diagram-pinch-burst.cjs": "ab1405fc201959a4346e9890b8257c6a9207a32ceab92c02dc426b41c9b4f9f4"
+      },
+      "hardware": {
+        "cpu": "Apple M2",
+        "ram": 8589934592,
+        "arch": "arm64"
+      },
+      "runtime": {
+        "chrome": "156.0.8078.79"
+      },
+      "fixture": {
+        "nodes": 1500,
+        "relationships": 3000,
+        "hazardRows": 1000,
+        "seed": 30
+      },
+      "seederHash": "782d3cb7a0d3c6c46c3d2246eb81f90867267954f5175dd667e0410bf12fef75",
+      "entryAssetHashes": {
+        "static/css/main.8e8c2860.css": "84444d9bda11f9f1abb4071103398ed08ce7a7ca5a02d369a504e80c0ac23f2d",
+        "static/js/main.ab7f0cb5.js": "a2ffaaeff42ff66fda230cdbdb8d01f66817ed524b2bad84f29c691c8ad865bb"
+      },
+      "level": "Functional",
+      "counts": {
+        "nodes": 1584,
+        "edges": 3000
+      },
+      "singleZoomInputs": [
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.106px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 24,
+          "changedFrameMs": 45.29999998211861,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.206px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 17.099999994039536,
+          "changedFrameMs": 140.09999999403954,
+          "movingFrames": 12,
+          "frames": 17
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.087px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 13.300000011920929,
+          "changedFrameMs": 30.99999999404099,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.004px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 28.700000017881393,
+          "changedFrameMs": 165.29999999404026,
+          "movingFrames": 11,
+          "frames": 15
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.2px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 12.899999976158142,
+          "changedFrameMs": 26.999999976156687,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.1px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 23.5,
+          "changedFrameMs": 113.59999997615523,
+          "movingFrames": 14,
+          "frames": 19
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.46px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 12.599999994039536,
+          "changedFrameMs": 27.69999999403808,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.54px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 22.30000001192093,
+          "changedFrameMs": 116.30000000000291,
+          "movingFrames": 14,
+          "frames": 19
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.106px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 12.800000011920929,
+          "changedFrameMs": 34,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.206px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 17.5,
+          "changedFrameMs": 122.49999997615669,
+          "movingFrames": 13,
+          "frames": 18
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.087px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 15.900000005960464,
+          "changedFrameMs": 33.899999994042446,
+          "movingFrames": 0,
+          "frames": 33
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.004px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 16.599999994039536,
+          "changedFrameMs": 155.7999999761596,
+          "movingFrames": 11,
+          "frames": 15
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.2px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 13.300000011920929,
+          "changedFrameMs": 28.400000000001455,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.1px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 20.899999976158142,
+          "changedFrameMs": 117.49999997615669,
+          "movingFrames": 14,
+          "frames": 19
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.46px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 12.699999988079071,
+          "changedFrameMs": 29.99999998808198,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.54px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 27,
+          "changedFrameMs": 114.69999998807907,
+          "movingFrames": 14,
+          "frames": 19
+        }
+      ],
+      "pinchBursts": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "producerMs": 1146.7100419999988,
+          "completionMs": 1178.3025000000016,
+          "backlogMs": 31.592458000002807,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 81.33683299999757,
+            "p95": 275.4761660000004,
+            "max": 329.56624999999985
+          },
+          "deliveryEndMs": 1830.5999999940395,
+          "idleMs": 671.4000000059605,
+          "movingElements": [],
+          "received": 61,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 1788.2999999821186,
+          "frames": {
+            "n": 59,
+            "median": 18.600000000002183,
+            "p95": 35,
+            "max": 150.00000000000182
+          },
+          "changedFrameIntervals": {
+            "n": 56,
+            "median": 31.399999999997817,
+            "p95": 35,
+            "max": 150.00000000000182
+          },
+          "changedFrames": 57,
+          "cameraBefore": {
+            "k": 0.0363457979352019,
+            "x": 241.0047160345174,
+            "y": 29.636363636363683
+          },
+          "cameraAfter": {
+            "k": 0.03634579793520179,
+            "x": 241.00471603451842,
+            "y": 29.63636363636465
+          },
+          "firstChangedFrameMs": 217.19999998211824,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "producerMs": 1136.6522909999985,
+          "completionMs": 1174.2679580000004,
+          "backlogMs": 37.61566700000185,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 65.24104199999783,
+            "p95": 175.5103339999987,
+            "max": 208.9070419999989
+          },
+          "deliveryEndMs": 1881.7999999821186,
+          "idleMs": 658.4000000059605,
+          "movingElements": [],
+          "received": 61,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 1841.0999999940395,
+          "frames": {
+            "n": 58,
+            "median": 33.29999999999927,
+            "p95": 52,
+            "max": 83.20000000000073
+          },
+          "changedFrameIntervals": {
+            "n": 57,
+            "median": 33.29999999999927,
+            "p95": 52,
+            "max": 83.20000000000073
+          },
+          "changedFrames": 58,
+          "cameraBefore": {
+            "k": 1.0000009735225865,
+            "x": -8349.25192975089,
+            "y": -7828.007938103171
+          },
+          "cameraAfter": {
+            "k": 1.0000009735225832,
+            "x": -8349.25192975086,
+            "y": -7828.007938103143
+          },
+          "firstChangedFrameMs": 130.29999999404026,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-8349.25px, -7828.01px) scale(1)",
+          "moving": false
+        }
+      ],
+      "errors": [],
+      "experimentalOnly": true,
+      "logHash": "1a8a144119f8afe87ffc29909305de1f181d23b80e11250bdaaefbea5e6af2f4"
+    },
+    {
+      "name": "chrome-filter-rules",
+      "rawHash": "06eff66def089af7a26972978964375ec310b29b144297bb2c1012a7a34bf8bd",
+      "buildHash": "447c3ae27601632b9f776589da3071e093f3c0c4ffa1349b9caddfe2cfb17559",
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "c71aced09bdb71467f94afac5d72475c74a4156376fbd658ef077decea9be93f",
+        "desktop-performance-cba-scenario.cjs": "3b7ae9b195df1e6aa831d551b0c25deb78f0b47e9012080390253b8be3223b91",
+        "cba-rendering-regression.cjs": "0bf47e8c6c9217dbd8c756859c7e8c58f6dafbf99fe9f6b5a611b3fd18366a59",
+        "diagram-overview-scenario.cjs": "eaf53f5d5a99fc497e8477f917d1beae2c14065d43a63fa3800dfba576bb600e",
+        "diagram-overview-visual.cjs": "34c60f1006de6306d9965a2fa330e30e46c080c1c694e31e0b3c768f15591645",
+        "diagram-overview-sweep.cjs": "0ff949cf75931f0b81a4ba9f6e46332819ab79c8a3c8252067b89de7ef4460ac",
+        "diagram-pinch-comparison.cjs": "25bb420ae35e4797028fb9be8cbeeadbc4960a21087e0cc0dbaaed72b5ad6619",
+        "diagram-pinch-burst.cjs": "ab1405fc201959a4346e9890b8257c6a9207a32ceab92c02dc426b41c9b4f9f4"
+      },
+      "hardware": {
+        "cpu": "Apple M2",
+        "ram": 8589934592,
+        "arch": "arm64"
+      },
+      "runtime": {
+        "chrome": "156.0.8078.79"
+      },
+      "fixture": {
+        "nodes": 1500,
+        "relationships": 3000,
+        "hazardRows": 1000,
+        "seed": 30
+      },
+      "seederHash": "782d3cb7a0d3c6c46c3d2246eb81f90867267954f5175dd667e0410bf12fef75",
+      "entryAssetHashes": {
+        "static/css/main.8e8c2860.css": "84444d9bda11f9f1abb4071103398ed08ce7a7ca5a02d369a504e80c0ac23f2d",
+        "static/js/main.ab7f0cb5.js": "a2ffaaeff42ff66fda230cdbdb8d01f66817ed524b2bad84f29c691c8ad865bb"
+      },
+      "level": "Functional",
+      "counts": {
+        "nodes": 1584,
+        "edges": 3000
+      },
+      "singleZoomInputs": [
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.106px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 14.300000011920929,
+          "changedFrameMs": 39.50000002384331,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.206px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 16.69999998807907,
+          "changedFrameMs": 207.30000001192093,
+          "movingFrames": 11,
+          "frames": 14
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.087px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 23.299999982118607,
+          "changedFrameMs": 35.900000005960464,
+          "movingFrames": 0,
+          "frames": 32
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.004px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 12.400000005960464,
+          "changedFrameMs": 139.90000001787848,
+          "movingFrames": 12,
+          "frames": 17
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.2px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 11,
+          "changedFrameMs": 14.50000000595901,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.1px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 21.30000001192093,
+          "changedFrameMs": 169.80000001787994,
+          "movingFrames": 11,
+          "frames": 15
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.46px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 31.80000001192093,
+          "changedFrameMs": 40.10000001788285,
+          "movingFrames": 0,
+          "frames": 37
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.54px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 21.5,
+          "changedFrameMs": 125.90000001787848,
+          "movingFrames": 13,
+          "frames": 18
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.106px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 23.599999994039536,
+          "changedFrameMs": 46.00000000595901,
+          "movingFrames": 0,
+          "frames": 37
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.206px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 32.29999998211861,
+          "changedFrameMs": 261.60000000595755,
+          "movingFrames": 12,
+          "frames": 15
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.087px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 32.79999998211861,
+          "changedFrameMs": 57.5,
+          "movingFrames": 0,
+          "frames": 33
+        },
+        {
+          "repeat": 1,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.004px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 39.5,
+          "changedFrameMs": 221.5000000178843,
+          "movingFrames": 12,
+          "frames": 15
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.2px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 27.700000017881393,
+          "changedFrameMs": 30.200000017881393,
+          "movingFrames": 0,
+          "frames": 37
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.1px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 20.19999998807907,
+          "changedFrameMs": 140.70000001192238,
+          "movingFrames": 12,
+          "frames": 16
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.46px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 24.19999998807907,
+          "changedFrameMs": 41.10000000000582,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 1,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.54px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 20,
+          "changedFrameMs": 170.39999999999418,
+          "movingFrames": 11,
+          "frames": 14
+        }
+      ],
+      "pinchBursts": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "producerMs": 1100.0440830000007,
+          "completionMs": 1147.8958329999987,
+          "backlogMs": 47.85174999999799,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 106.5301670000008,
+            "p95": 297.4374579999967,
+            "max": 357.8065000000024
+          },
+          "deliveryEndMs": 1942.4000000059605,
+          "idleMs": 717.6999999880791,
+          "movingElements": [],
+          "received": 61,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 1915.9000000059605,
+          "frames": {
+            "n": 59,
+            "median": 17.700000000000728,
+            "p95": 82.29999999999927,
+            "max": 165.6999999999989
+          },
+          "changedFrameIntervals": {
+            "n": 56,
+            "median": 32.39999999999782,
+            "p95": 82.29999999999927,
+            "max": 165.6999999999989
+          },
+          "changedFrames": 57,
+          "cameraBefore": {
+            "k": 0.0363457979352019,
+            "x": 241.0047160345174,
+            "y": 29.636363636363683
+          },
+          "cameraAfter": {
+            "k": 0.03634579793520179,
+            "x": 241.00471603451842,
+            "y": 29.63636363636465
+          },
+          "firstChangedFrameMs": 225.20000001192057,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "producerMs": 1074.654125000001,
+          "completionMs": 1099.0482919999995,
+          "backlogMs": 24.39416699999856,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 98.1163340000021,
+            "p95": 270.29679100000067,
+            "max": 295.91829099999813
+          },
+          "deliveryEndMs": 1716.199999988079,
+          "idleMs": 667.4000000059605,
+          "movingElements": [],
+          "received": 62,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 1703.2999999821186,
+          "frames": {
+            "n": 57,
+            "median": 16.700000000000728,
+            "p95": 83.39999999999782,
+            "max": 200.09999999999854
+          },
+          "changedFrameIntervals": {
+            "n": 48,
+            "median": 33.29999999999927,
+            "p95": 100,
+            "max": 216.70000000000073
+          },
+          "changedFrames": 49,
+          "cameraBefore": {
+            "k": 1.0000009735225865,
+            "x": -8349.25192975089,
+            "y": -7828.007938103171
+          },
+          "cameraAfter": {
+            "k": 1.000000973522585,
+            "x": -8349.251929750875,
+            "y": -7828.007938103156
+          },
+          "firstChangedFrameMs": 15.400000005960464,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-8349.25px, -7828.01px) scale(1)",
+          "moving": false
+        }
+      ],
+      "errors": [],
+      "experimentalOnly": true,
+      "logHash": "fb35fce2bbfaacf3451308e3c934e82675196e4452677157c0df0742a7464112"
+    }
+  ],
+  "limitations": [
+    "Synthetic 1500-function/3000-connection fixtures on Apple M2/8 GiB; no customer M4 project or physical-trackpad acceptance test.",
+    "Trusted CDP wheel input models Chromium trackpad event semantics. It is not hardware input-to-display latency.",
+    "rAF timestamps measure renderer scheduling rather than display presentation. Trace runs include instrumentation overhead and are not performance acceptance results.",
+    "The first Chrome startup trace had a rAF timestamp filter bug and was superseded by the confirmed runs.",
+    "Prototype timings are exploratory, with no visual correctness claim; none was adopted. The idle-cache prototype overlapped the subsequent test process startup near its final samples and is not acceptance evidence."
+  ]
+}

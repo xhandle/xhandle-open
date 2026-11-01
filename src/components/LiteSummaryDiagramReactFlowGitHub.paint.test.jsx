@@ -425,6 +425,55 @@ function renderedViewport(viewport) {
   return { x: Number(match[1]), y: Number(match[2]), zoom: Number(match[3]) };
 }
 
+test('CBA pinch reads the viewport extent before changing motion styles', async () => {
+  const modelRows = Array.from({ length: 500 }, (_, index) => ({ ...rows[index % rows.length], edgeId: `paint-pinch-${index}` }));
+  await mount('detailed', undefined, { rows: modelRows, expectedEdges: 500 });
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 200)); });
+  const canvas = host.querySelector('.x-csu-large');
+  const viewport = canvas.querySelector('.react-flow__viewport');
+  const renderer = canvas.querySelector('.react-flow__renderer');
+  const reads = [];
+  jest.spyOn(Element.prototype, 'clientWidth', 'get').mockImplementation(function () {
+    if (this === renderer) reads.push(canvas.hasAttribute('data-viewport-moving'));
+    return bounds(this).width;
+  });
+  const before = renderedViewport(viewport);
+  viewportWheel(canvas.querySelector('.react-flow__pane'), true);
+  expect(renderedViewport(viewport).zoom).toBeGreaterThan(before.zoom);
+  expect(reads.length).toBeGreaterThan(0);
+  expect(reads).not.toContain(true);
+  expect(canvas.hasAttribute('data-viewport-moving')).toBe(true);
+});
+
+test('overview pinch animates the actual React Flow camera without repeated motion-time extent reads', async () => {
+  const modelRows = Array.from({ length: 500 }, (_, index) => ({ ...rows[index % rows.length], edgeId: `smooth-pinch-${index}` }));
+  await mount('detailed', undefined, { rows: modelRows, expectedEdges: 500 });
+  const canvas = host.querySelector('.x-csu-large'), pane = canvas.querySelector('.react-flow__pane');
+  const viewport = canvas.querySelector('.react-flow__viewport'), renderer = canvas.querySelector('.react-flow__renderer');
+  viewportWheel(pane, true, 10000);
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 500)); });
+  expect(renderedViewport(viewport).zoom).toBeCloseTo(.02, 8);
+  const reads = [];
+  jest.spyOn(Element.prototype, 'clientWidth', 'get').mockImplementation(function () {
+    if (this === renderer) reads.push(canvas.hasAttribute('data-viewport-moving'));
+    return bounds(this).width;
+  });
+  jest.useFakeTimers();
+  try {
+    const before = renderedViewport(viewport);
+    viewportWheel(pane, true, -100);
+    await advancePanTimers(20);
+    const intermediate = renderedViewport(viewport);
+    expect(intermediate.zoom).toBeGreaterThan(before.zoom);
+    expect(canvas.hasAttribute('data-pinch-animating')).toBe(true);
+    await advancePanTimers(600);
+    expect(renderedViewport(viewport).zoom).toBeGreaterThan(intermediate.zoom);
+    expect(reads.length).toBeGreaterThan(0); expect(reads).not.toContain(true);
+    expect(canvas.hasAttribute('data-pinch-animating')).toBe(false);
+    expect(canvas.hasAttribute('data-viewport-moving')).toBe(false);
+  } finally { jest.useRealTimers(); }
+});
+
 test.each([
   ['Functional', 'minimum', 0.1, 10000],
   ['Functional', 'maximum', 1.8, -10000],

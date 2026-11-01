@@ -21,6 +21,7 @@ export function useArtifactReview({
   enabled = true,
 }) {
   const review = useResultsReview();
+  enabled = enabled && review.legacyReviewEnabled !== false;
   const artifactType = definition.artifactType;
   const artifactIdRoot = `code-architecture-${definition.key}:${projectId || "default"}:${repoId || "repo"}`;
   const sourceRunId = `${artifactType}:${projectId || "default"}:${repoId || "repo"}`;

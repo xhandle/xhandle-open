@@ -1,6 +1,5 @@
 import HazardRestorationNotice from './HazardRestorationNotice';
 import TablePreparationProgress from '../code-architecture-assurance/TablePreparationProgress';
-import HazardNarrativeReview from './HazardNarrativeReview';
 import HazardRunRecoveryNotice from './HazardRunRecoveryNotice';
 import { SHOW_TABLE_REVIEW_NOTICES } from "../../components/tablePresentation";
 import { fillNotApplicableHazardSummary } from '../project-hazard-analysis/hazardNotApplicableCells';
@@ -72,7 +71,6 @@ export function PreparedCodeArchitectureHazardPanel({
   onMethodChange,
   onRunAnalysis,
   onRetrySave,
-  onNarrativeReviewUpdate,
   onCancelAnalysis,
   isRunning = false,
   progress,
@@ -403,7 +401,6 @@ export function PreparedCodeArchitectureHazardPanel({
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {tablePage?.controls}
-        {!tablePage?.partial && <HazardNarrativeReview key={latestRun?.id} run={latestRun} onUpdate={onNarrativeReviewUpdate} disabled={isRunning} />}
         {showDraftPreparation && <TablePreparationProgress label="Preparing hazard analysis" progress={draftProgress} />}
         {draftError && <div role="alert" className="p-3">Unable to prepare hazard table: {draftError} <button onClick={onRetryDraft}>Retry preparation</button></div>}
         <HazardRunRecoveryNotice run={latestRun} onExport={tablePage ? tablePage.exportCsv : downloadSummaryCsv} onRetrySave={onRetrySave} isRunning={isRunning} />

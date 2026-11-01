@@ -2,7 +2,7 @@
    and decoration when the gesture ends. Scoped to large CSU canvases only. */
 /* Limit viewport promotion to motion. A permanently promoted layer for a
    very large graph can retain enormous raster surfaces on desktop GPUs. */
-.x-csu-large[data-viewport-moving] .react-flow__viewport {
+.x-architecture-motion[data-viewport-moving] .react-flow__viewport {
   /* Reuse the scene while transforming it instead of rerasterizing every
      pinch step. Release the hint with the existing motion idle boundary. */
   will-change: transform;
@@ -29,7 +29,7 @@
 /* Printing may begin before the gesture's idle callback. Include all text and
    avoid carrying a temporary compositor hint into the print snapshot. */
 @media print {
-  .x-csu-large[data-viewport-moving] .react-flow__viewport {
+  .x-architecture-motion[data-viewport-moving] .react-flow__viewport {
     will-change: auto;
   }
 
@@ -37,6 +37,21 @@
   .x-csu-large[data-viewport-moving] .react-flow__edge-textwrapper {
     visibility: visible;
   }
+}
+
+/* Cached vector paint is enabled only after decoding, and only while it covers
+   every visible connection within the pixel budget. Native edges stay mounted. */
+.x-edge-motion-image { visibility: hidden; pointer-events: none; }
+.x-architecture-motion[data-viewport-moving] svg[data-edge-image-active] > g { visibility: hidden; }
+.x-architecture-motion[data-viewport-moving] svg[data-edge-image-active] .react-flow__edge-textwrapper { visibility: hidden; }
+.x-architecture-motion[data-viewport-moving] .x-edge-motion-image[data-edge-image-active] { visibility: visible; }
+/* SVG 'stroke' hit testing includes hidden geometry. Keep the original hit
+   targets; pointer-down or keyboard input restores native paint immediately. */
+.x-architecture-motion svg[data-edge-image-active] .react-flow__edge:not(.inactive) .react-flow__edge-interaction { pointer-events: stroke; }
+@media print {
+  .x-edge-motion-image { display: none !important; }
+  .x-architecture-motion svg[data-edge-image-active] > g { visibility: visible !important; }
+  .x-architecture-motion svg[data-edge-image-active] .react-flow__edge-textwrapper { visibility: visible !important; }
 }
 
 /* Hovered ports stay discoverable even when idle ports were not mounted. */

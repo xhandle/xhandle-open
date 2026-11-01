@@ -1,0 +1,5356 @@
+{
+  "status": "Large overview pinch steps interpolate; dense-graph frame pacing remains variable.",
+  "build": "/private/tmp/xhandle-pinch-continuity-20261031/build-confirmed",
+  "buildHash": "21f2807dcc70b7102123d9254c7120fa01d7b3e40cfb6db552f7a5c689ddd201",
+  "sourceHashes": {
+    "src/components/architecturePinchZoom.js": "2990d011a19f0c54c681069b135b7e8edc36f061f7e4004ba812caabd08cd90e",
+    "src/components/architecturePinchZoom.test.js": "afedee8ccfefd95a87125ce956be39f9e937a8bab3a168fd0685d74c94e2755e",
+    "src/components/ArchitectureEdgeMotionLayer.jsx": "f9bbbe513691b4566dac00f4f061eaf3c81d1c5433103e6462ced85f471be12e",
+    "src/components/LiteSummaryDiagramReactFlowGitHub.js": "e9cb62efb5b98f7107c4e62b61a6b379400923e856adcbeeb19465af3df420fe",
+    "src/components/LiteSummaryDiagramReactFlowGitHub.paint.test.jsx": "78086e7de58498265bf8b367771ea09b53de0beeb9d913173ff7fb96c87a2d8f"
+  },
+  "tests": {
+    "suites": 8,
+    "passed": 84
+  },
+  "rawArtifacts": "/private/tmp/xhandle-pinch-continuity-20261031",
+  "cases": {
+    "chrome-functional-before": {
+      "buildHash": "5748e90fd7b168a6de2b6fd60dac60619b7d877f3ec5d48ef40ec90b811da916",
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "02220a4a18f469cf599192487453c572d8ac0dd21323921f00960d4c86518fb4",
+        "desktop-performance-cba-scenario.cjs": "3b7ae9b195df1e6aa831d551b0c25deb78f0b47e9012080390253b8be3223b91",
+        "cba-rendering-regression.cjs": "0bf47e8c6c9217dbd8c756859c7e8c58f6dafbf99fe9f6b5a611b3fd18366a59",
+        "diagram-overview-scenario.cjs": "ddb1fbd75f296d46bdb5f940ab23ccd050612f0b1c2269acb0c243e2bbe5898d",
+        "diagram-overview-visual.cjs": "74bc53bc6ad81007be31a51b1588dc2ecb5f5db209519d155c37eae830fd38c2",
+        "diagram-overview-sweep.cjs": "0ff949cf75931f0b81a4ba9f6e46332819ab79c8a3c8252067b89de7ef4460ac",
+        "diagram-pinch-comparison.cjs": "85fb9647575afc91f4512d127fcd27bf07dc78b92c235b65ac46f0d8856d60cf",
+        "diagram-pinch-continuity.cjs": "85c16810a2b9f4c8180866d92613937c4dde9acb5c654bca868190f3a2b59de9"
+      },
+      "hardware": {
+        "cpu": "Apple M2",
+        "ram": 8589934592,
+        "arch": "arm64"
+      },
+      "runtime": {
+        "chrome": "156.0.8078.79",
+        "headless": false,
+        "systemInfo": {
+          "gpu": {
+            "devices": [
+              {
+                "vendorId": 4203,
+                "deviceId": 0,
+                "vendorString": "Google Inc. (Apple)",
+                "deviceString": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2, Version 27.0 (Build 26A428))",
+                "driverVendor": "Apple",
+                "driverVersion": "27.0"
+              }
+            ],
+            "auxAttributes": {
+              "amdSwitchable": false,
+              "canSupportThreadedTextureMailbox": false,
+              "directRenderingVersion": "",
+              "displayType": "ANGLE_METAL",
+              "glExtensions": "GL_AMD_performance_monitor GL_ANGLE_base_vertex_base_instance_shader_builtin GL_ANGLE_blob_cache GL_ANGLE_client_arrays GL_ANGLE_clip_cull_distance GL_ANGLE_compressed_texture_etc GL_ANGLE_depth_texture GL_ANGLE_framebuffer_blit GL_ANGLE_framebuffer_multisample GL_ANGLE_get_serialized_context_string GL_ANGLE_get_tex_level_parameter GL_ANGLE_instanced_arrays GL_ANGLE_memory_size GL_ANGLE_pack_reverse_row_order GL_ANGLE_polygon_mode GL_ANGLE_program_binary_readiness_query GL_ANGLE_program_cache_control GL_ANGLE_provoking_vertex GL_ANGLE_renderability_validation GL_ANGLE_request_extension GL_ANGLE_rgbx_internal_format GL_ANGLE_robust_client_memory GL_ANGLE_shader_pixel_local_storage GL_ANGLE_shader_pixel_local_storage_coherent GL_ANGLE_stencil_texturing GL_ANGLE_texture_compression_dxt3 GL_ANGLE_texture_compression_dxt5 GL_ANGLE_texture_multisample GL_ANGLE_translated_shader_source GL_APPLE_clip_distance GL_ARM_rgba8 GL_CHROMIUM_bind_generates_resource GL_CHROMIUM_bind_uniform_location GL_CHROMIUM_copy_texture GL_CHROMIUM_lose_context GL_EXT_base_instance GL_EXT_blend_func_extended GL_EXT_blend_minmax GL_EXT_clip_control GL_EXT_color_buffer_float GL_EXT_color_buffer_half_float GL_EXT_compressed_ETC1_RGB8_sub_texture GL_EXT_conservative_depth GL_EXT_debug_label GL_EXT_debug_marker GL_EXT_depth_clamp GL_EXT_discard_framebuffer GL_EXT_disjoint_timer_query GL_EXT_draw_buffers GL_EXT_draw_buffers_indexed GL_EXT_draw_elements_base_vertex GL_EXT_float_blend GL_EXT_frag_depth GL_EXT_instanced_arrays GL_EXT_map_buffer_range GL_EXT_multisampled_render_to_texture GL_EXT_occlusion_query_boolean GL_EXT_polygon_offset_clamp GL_EXT_pvrtc_sRGB GL_EXT_read_format_bgra GL_EXT_render_snorm GL_EXT_robustness GL_EXT_sRGB GL_EXT_shader_texture_lod GL_EXT_texture_compression_bptc GL_EXT_texture_compression_dxt1 GL_EXT_texture_compression_rgtc GL_EXT_texture_compression_s3tc_srgb GL_EXT_texture_filter_anisotropic GL_EXT_texture_format_BGRA8888 GL_EXT_texture_mirror_clamp_to_edge GL_EXT_texture_norm16 GL_EXT_texture_rg GL_EXT_texture_sRGB_R8 GL_EXT_texture_sRGB_RG8 GL_EXT_texture_shadow_lod GL_EXT_texture_storage GL_IMG_texture_compression_pvrtc GL_KHR_debug GL_KHR_parallel_shader_compile GL_KHR_robustness GL_KHR_texture_compression_astc_hdr GL_KHR_texture_compression_astc_ldr GL_KHR_texture_compression_astc_sliced_3d GL_MESA_framebuffer_flip_y GL_NV_fence GL_NV_framebuffer_blit GL_NV_pixel_buffer_object GL_NV_shader_noperspective_interpolation GL_OES_EGL_image GL_OES_EGL_sync GL_OES_compressed_ETC1_RGB8_texture GL_OES_depth24 GL_OES_depth32 GL_OES_depth_texture GL_OES_draw_buffers_indexed GL_OES_draw_elements_base_vertex GL_OES_element_index_uint GL_OES_fbo_render_mipmap GL_OES_get_program_binary GL_OES_mapbuffer GL_OES_packed_depth_stencil GL_OES_required_internalformat GL_OES_rgb8_rgba8 GL_OES_sample_variables GL_OES_shader_multisample_interpolation GL_OES_standard_derivatives GL_OES_surfaceless_context GL_OES_texture_3D GL_OES_texture_float GL_OES_texture_float_linear GL_OES_texture_half_float GL_OES_texture_half_float_linear GL_OES_texture_npot GL_OES_texture_stencil8 GL_OES_vertex_array_object GL_QCOM_render_shared_exponent ",
+              "glImplementationParts": "(gl=egl-angle,angle=metal)",
+              "glRenderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2, Version 27.0 (Build 26A428))",
+              "glResetNotificationStrategy": 33362,
+              "glVendor": "Google Inc. (Apple)",
+              "glVersion": "OpenGL ES 3.0 (ANGLE 2.1.28975 git hash: 127e783de334)",
+              "glWsExtensions": "",
+              "glWsVendor": "",
+              "glWsVersion": "",
+              "inProcessGpu": false,
+              "initializationTime": 0.093023,
+              "isAsan": false,
+              "isClangCoverage": false,
+              "jpegDecodeAcceleratorSupported": false,
+              "maxMsaaSamples": "4",
+              "optimus": false,
+              "passthroughCmdDecoder": true,
+              "pixelShaderVersion": "3.00",
+              "processCrashCount": 0,
+              "sandboxed": false,
+              "skiaBackendType": "GraphiteDawnMetal",
+              "subpixelFontRendering": true,
+              "targetCpuBits": 64,
+              "vertexShaderVersion": "3.00",
+              "visibilityCallbackCallCount": 0
+            },
+            "featureStatus": {
+              "2d_canvas": "enabled",
+              "direct_rendering_display_compositor": "disabled_off_ok",
+              "gpu_compositing": "enabled",
+              "multiple_raster_threads": "enabled_on",
+              "opengl": "enabled_on",
+              "rasterization": "enabled",
+              "raw_draw": "disabled_off_ok",
+              "skia_graphite": "enabled_on",
+              "trees_in_viz": "disabled_off",
+              "video_decode": "enabled",
+              "video_encode": "enabled",
+              "webgl": "enabled",
+              "webgpu": "enabled",
+              "webnn": "disabled_off"
+            },
+            "driverBugWorkarounds": [
+              "disable_2d_canvas_auto_flush",
+              "enable_webgl_timer_query_extensions",
+              "disabled_extension_GL_KHR_blend_equation_advanced",
+              "disabled_extension_GL_KHR_blend_equation_advanced_coherent"
+            ],
+            "videoDecoding": [],
+            "videoEncoding": []
+          },
+          "modelName": "Mac",
+          "modelVersion": "14.2",
+          "commandLine": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --disable-field-trial-config --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-back-forward-cache --disable-breakpad --disable-client-side-phishing-detection --disable-component-extensions-with-background-pages --disable-component-update --no-default-browser-check --disable-default-apps --disable-dev-shm-usage --disable-edgeupdater --disable-extensions --disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,DestroyProfileOnBrowserClose,DialMediaRouteProvider,GlobalMediaControls,HttpsUpgrades,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,BlockOriginHeaderModificationOnRedirect,AvoidCorsURLLoaderRestartOnRedirect,Translate,AutoDeElevate,OptimizationHints,NetworkTimeServiceQuerying,AimEnabled,msForceBrowserSignIn,msEdgeUpdateLaunchServicesPreferredVersion --enable-features=CDPScreenshotNewSurface --allow-pre-commit-input --disable-hang-monitor --disable-ipc-flooding-protection --disable-popup-blocking --disable-prompt-on-repost --disable-renderer-backgrounding --disable-updater-scheduler --force-color-profile=srgb --metrics-recording-only --no-first-run --password-store=basic --use-mock-keychain --no-service-autorun --export-tagged-pdf --disable-search-engine-choice-screen --unsafely-disable-devtools-self-xss-warnings --edge-skip-compat-layer-relaunch --disable-infobars --disable-search-engine-choice-screen --disable-sync --enable-unsafe-swiftshader --no-sandbox --user-data-dir=/var/folders/67/8rby79hs1xq1fvs4f925m8600000gp/T/playwright_chromiumdev_profile-GZ9clf --remote-debugging-pipe --no-startup-window --flag-switches-begin --flag-switches-end --enable-unsafe-swiftshader"
+        }
+      },
+      "fixture": {
+        "nodes": 1500,
+        "relationships": 3000,
+        "hazardRows": 1000,
+        "seed": 30
+      },
+      "preserved": {
+        "nodeLayout": true,
+        "edgeIds": true
+      },
+      "errors": [],
+      "pinchContinuity": [
+        {
+          "repeat": 0,
+          "kind": "single",
+          "before": {
+            "k": 0.0363457979352019,
+            "x": 241.0047160345174,
+            "y": 29.636363636363683
+          },
+          "after": {
+            "k": 0.06542243609793211,
+            "x": -18.191509484888797,
+            "y": -207.4545439425384
+          },
+          "events": [
+            {
+              "time": 8308.199999988079,
+              "delta": -42.399845123291016,
+              "trusted": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 8490.7,
+              "k": 0.06542243609793211,
+              "x": -18.191509484888797,
+              "y": -207.4545439425384,
+              "logStep": 0.5877866620677501
+            }
+          ],
+          "firstChangedFrameMs": 182.50000001192166,
+          "completeMs": 182.50000001192166,
+          "anchorError": 0,
+          "maximumStepFraction": 0.9999999951778951
+        },
+        {
+          "repeat": 0,
+          "kind": "clustered",
+          "before": {
+            "k": 0.0363457979352019,
+            "x": 241.0047160345174,
+            "y": 29.636363636363683
+          },
+          "after": {
+            "k": 0.06542243609793214,
+            "x": -18.191509484889025,
+            "y": -207.45454394253863
+          },
+          "events": [
+            {
+              "time": 10999.299999982119,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 11122.299999982119,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 11212.40000000596,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 11235.90000000596,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 11311.59999999404,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 11341.299999982119,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 11394.90000000596,
+              "delta": -4.239984512329102,
+              "trusted": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 11007.3,
+              "k": 0.040879794933492634,
+              "x": 200.58756389003003,
+              "y": -7.333847887698937,
+              "logStep": 0.11755733241355025
+            },
+            {
+              "time": 11207.2,
+              "k": 0.048763004858643606,
+              "x": 130.31471301432913,
+              "y": -71.61354161737995,
+              "logStep": 0.1763359986203251
+            },
+            {
+              "time": 11290.6,
+              "k": 0.05484600014879772,
+              "x": 76.08941329996128,
+              "y": -121.21428521329665,
+              "logStep": 0.11755733241355004
+            },
+            {
+              "time": 11324,
+              "k": 0.061687825453781785,
+              "x": 15.0997182468343,
+              "y": -177.00252875013666,
+              "logStep": 0.11755733241355004
+            },
+            {
+              "time": 11373.9,
+              "k": 0.06542243609793214,
+              "x": -18.191509484889025,
+              "y": -207.45454394253863,
+              "logStep": 0.05877866620677507
+            }
+          ],
+          "firstChangedFrameMs": 8.000000017880666,
+          "completeMs": 374.60000001788103,
+          "anchorError": 0,
+          "maximumStepFraction": 0.2999999985533686
+        },
+        {
+          "repeat": 1,
+          "kind": "single",
+          "before": {
+            "k": 0.0363457979352019,
+            "x": 241.0047160345174,
+            "y": 29.636363636363683
+          },
+          "after": {
+            "k": 0.06542243609793211,
+            "x": -18.191509484888797,
+            "y": -207.4545439425384
+          },
+          "events": [
+            {
+              "time": 16383.90000000596,
+              "delta": -42.399845123291016,
+              "trusted": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 16523.9,
+              "k": 0.06542243609793211,
+              "x": -18.191509484888797,
+              "y": -207.4545439425384,
+              "logStep": 0.5877866620677501
+            }
+          ],
+          "firstChangedFrameMs": 139.999999994041,
+          "completeMs": 139.999999994041,
+          "anchorError": 0,
+          "maximumStepFraction": 0.9999999951778951
+        },
+        {
+          "repeat": 1,
+          "kind": "clustered",
+          "before": {
+            "k": 0.0363457979352019,
+            "x": 241.0047160345174,
+            "y": 29.636363636363683
+          },
+          "after": {
+            "k": 0.06542243609793214,
+            "x": -18.191509484889025,
+            "y": -207.45454394253863
+          },
+          "events": [
+            {
+              "time": 21535,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 21676.29999998212,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 21740.40000000596,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 21766,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 21792.79999998212,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 21922.59999999404,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 21950.09999999404,
+              "delta": -4.239984512329102,
+              "trusted": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 21540.6,
+              "k": 0.040879794933492634,
+              "x": 200.58756389003003,
+              "y": -7.333847887698937,
+              "logStep": 0.11755733241355025
+            },
+            {
+              "time": 21740.6,
+              "k": 0.04335467739476029,
+              "x": 178.5258596113356,
+              "y": -27.514039476875382,
+              "logStep": 0.05877866620677507
+            },
+            {
+              "time": 21756.7,
+              "k": 0.048763004858643606,
+              "x": 130.31471301432913,
+              "y": -71.61354161737995,
+              "logStep": 0.11755733241355004
+            },
+            {
+              "time": 21773.9,
+              "k": 0.05484600014879772,
+              "x": 76.08941329996128,
+              "y": -121.21428521329665,
+              "logStep": 0.11755733241355004
+            },
+            {
+              "time": 21907.2,
+              "k": 0.061687825453781785,
+              "x": 15.0997182468343,
+              "y": -177.00252875013666,
+              "logStep": 0.11755733241355004
+            },
+            {
+              "time": 21940.5,
+              "k": 0.06542243609793214,
+              "x": -18.191509484889025,
+              "y": -207.45454394253863,
+              "logStep": 0.05877866620677507
+            }
+          ],
+          "firstChangedFrameMs": 5.599999999998545,
+          "completeMs": 405.5,
+          "anchorError": 0,
+          "maximumStepFraction": 0.1999999990355794
+        }
+      ]
+    },
+    "chrome-functional-confirmed": {
+      "buildHash": "21f2807dcc70b7102123d9254c7120fa01d7b3e40cfb6db552f7a5c689ddd201",
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "02220a4a18f469cf599192487453c572d8ac0dd21323921f00960d4c86518fb4",
+        "desktop-performance-cba-scenario.cjs": "3b7ae9b195df1e6aa831d551b0c25deb78f0b47e9012080390253b8be3223b91",
+        "cba-rendering-regression.cjs": "0bf47e8c6c9217dbd8c756859c7e8c58f6dafbf99fe9f6b5a611b3fd18366a59",
+        "diagram-overview-scenario.cjs": "dd4508a22ed3a5b2673ad8011c2cec343e3e82837d36cf69ac6259d48d5d2342",
+        "diagram-overview-visual.cjs": "74bc53bc6ad81007be31a51b1588dc2ecb5f5db209519d155c37eae830fd38c2",
+        "diagram-overview-sweep.cjs": "0ff949cf75931f0b81a4ba9f6e46332819ab79c8a3c8252067b89de7ef4460ac",
+        "diagram-pinch-comparison.cjs": "85fb9647575afc91f4512d127fcd27bf07dc78b92c235b65ac46f0d8856d60cf",
+        "diagram-pinch-burst.cjs": "ab1405fc201959a4346e9890b8257c6a9207a32ceab92c02dc426b41c9b4f9f4",
+        "diagram-pinch-continuity.cjs": "c433587c2d30f5a1f6bfea6a75af8ea2f3fbde16973ba8332c831b58b0f771b9",
+        "diagram-trackpad-pan.cjs": "a78c952fdc2e0c1acc2782166f2127a2ef135b6cdf839773ac77b9c3b00c80fc"
+      },
+      "hardware": {
+        "cpu": "Apple M2",
+        "ram": 8589934592,
+        "arch": "arm64"
+      },
+      "runtime": {
+        "chrome": "156.0.8078.79",
+        "headless": false,
+        "systemInfo": {
+          "gpu": {
+            "devices": [
+              {
+                "vendorId": 4203,
+                "deviceId": 0,
+                "vendorString": "Google Inc. (Apple)",
+                "deviceString": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2, Version 27.0 (Build 26A428))",
+                "driverVendor": "Apple",
+                "driverVersion": "27.0"
+              }
+            ],
+            "auxAttributes": {
+              "amdSwitchable": false,
+              "canSupportThreadedTextureMailbox": false,
+              "directRenderingVersion": "",
+              "displayType": "ANGLE_METAL",
+              "glExtensions": "GL_AMD_performance_monitor GL_ANGLE_base_vertex_base_instance_shader_builtin GL_ANGLE_blob_cache GL_ANGLE_client_arrays GL_ANGLE_clip_cull_distance GL_ANGLE_compressed_texture_etc GL_ANGLE_depth_texture GL_ANGLE_framebuffer_blit GL_ANGLE_framebuffer_multisample GL_ANGLE_get_serialized_context_string GL_ANGLE_get_tex_level_parameter GL_ANGLE_instanced_arrays GL_ANGLE_memory_size GL_ANGLE_pack_reverse_row_order GL_ANGLE_polygon_mode GL_ANGLE_program_binary_readiness_query GL_ANGLE_program_cache_control GL_ANGLE_provoking_vertex GL_ANGLE_renderability_validation GL_ANGLE_request_extension GL_ANGLE_rgbx_internal_format GL_ANGLE_robust_client_memory GL_ANGLE_shader_pixel_local_storage GL_ANGLE_shader_pixel_local_storage_coherent GL_ANGLE_stencil_texturing GL_ANGLE_texture_compression_dxt3 GL_ANGLE_texture_compression_dxt5 GL_ANGLE_texture_multisample GL_ANGLE_translated_shader_source GL_APPLE_clip_distance GL_ARM_rgba8 GL_CHROMIUM_bind_generates_resource GL_CHROMIUM_bind_uniform_location GL_CHROMIUM_copy_texture GL_CHROMIUM_lose_context GL_EXT_base_instance GL_EXT_blend_func_extended GL_EXT_blend_minmax GL_EXT_clip_control GL_EXT_color_buffer_float GL_EXT_color_buffer_half_float GL_EXT_compressed_ETC1_RGB8_sub_texture GL_EXT_conservative_depth GL_EXT_debug_label GL_EXT_debug_marker GL_EXT_depth_clamp GL_EXT_discard_framebuffer GL_EXT_disjoint_timer_query GL_EXT_draw_buffers GL_EXT_draw_buffers_indexed GL_EXT_draw_elements_base_vertex GL_EXT_float_blend GL_EXT_frag_depth GL_EXT_instanced_arrays GL_EXT_map_buffer_range GL_EXT_multisampled_render_to_texture GL_EXT_occlusion_query_boolean GL_EXT_polygon_offset_clamp GL_EXT_pvrtc_sRGB GL_EXT_read_format_bgra GL_EXT_render_snorm GL_EXT_robustness GL_EXT_sRGB GL_EXT_shader_texture_lod GL_EXT_texture_compression_bptc GL_EXT_texture_compression_dxt1 GL_EXT_texture_compression_rgtc GL_EXT_texture_compression_s3tc_srgb GL_EXT_texture_filter_anisotropic GL_EXT_texture_format_BGRA8888 GL_EXT_texture_mirror_clamp_to_edge GL_EXT_texture_norm16 GL_EXT_texture_rg GL_EXT_texture_sRGB_R8 GL_EXT_texture_sRGB_RG8 GL_EXT_texture_shadow_lod GL_EXT_texture_storage GL_IMG_texture_compression_pvrtc GL_KHR_debug GL_KHR_parallel_shader_compile GL_KHR_robustness GL_KHR_texture_compression_astc_hdr GL_KHR_texture_compression_astc_ldr GL_KHR_texture_compression_astc_sliced_3d GL_MESA_framebuffer_flip_y GL_NV_fence GL_NV_framebuffer_blit GL_NV_pixel_buffer_object GL_NV_shader_noperspective_interpolation GL_OES_EGL_image GL_OES_EGL_sync GL_OES_compressed_ETC1_RGB8_texture GL_OES_depth24 GL_OES_depth32 GL_OES_depth_texture GL_OES_draw_buffers_indexed GL_OES_draw_elements_base_vertex GL_OES_element_index_uint GL_OES_fbo_render_mipmap GL_OES_get_program_binary GL_OES_mapbuffer GL_OES_packed_depth_stencil GL_OES_required_internalformat GL_OES_rgb8_rgba8 GL_OES_sample_variables GL_OES_shader_multisample_interpolation GL_OES_standard_derivatives GL_OES_surfaceless_context GL_OES_texture_3D GL_OES_texture_float GL_OES_texture_float_linear GL_OES_texture_half_float GL_OES_texture_half_float_linear GL_OES_texture_npot GL_OES_texture_stencil8 GL_OES_vertex_array_object GL_QCOM_render_shared_exponent ",
+              "glImplementationParts": "(gl=egl-angle,angle=metal)",
+              "glRenderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2, Version 27.0 (Build 26A428))",
+              "glResetNotificationStrategy": 33362,
+              "glVendor": "Google Inc. (Apple)",
+              "glVersion": "OpenGL ES 3.0 (ANGLE 2.1.28975 git hash: 127e783de334)",
+              "glWsExtensions": "",
+              "glWsVendor": "",
+              "glWsVersion": "",
+              "inProcessGpu": false,
+              "initializationTime": 0.094066,
+              "isAsan": false,
+              "isClangCoverage": false,
+              "jpegDecodeAcceleratorSupported": false,
+              "maxMsaaSamples": "4",
+              "optimus": false,
+              "passthroughCmdDecoder": true,
+              "pixelShaderVersion": "3.00",
+              "processCrashCount": 0,
+              "sandboxed": false,
+              "skiaBackendType": "GraphiteDawnMetal",
+              "subpixelFontRendering": true,
+              "targetCpuBits": 64,
+              "vertexShaderVersion": "3.00",
+              "visibilityCallbackCallCount": 0
+            },
+            "featureStatus": {
+              "2d_canvas": "enabled",
+              "direct_rendering_display_compositor": "disabled_off_ok",
+              "gpu_compositing": "enabled",
+              "multiple_raster_threads": "enabled_on",
+              "opengl": "enabled_on",
+              "rasterization": "enabled",
+              "raw_draw": "disabled_off_ok",
+              "skia_graphite": "enabled_on",
+              "trees_in_viz": "disabled_off",
+              "video_decode": "enabled",
+              "video_encode": "enabled",
+              "webgl": "enabled",
+              "webgpu": "enabled",
+              "webnn": "disabled_off"
+            },
+            "driverBugWorkarounds": [
+              "disable_2d_canvas_auto_flush",
+              "enable_webgl_timer_query_extensions",
+              "disabled_extension_GL_KHR_blend_equation_advanced",
+              "disabled_extension_GL_KHR_blend_equation_advanced_coherent"
+            ],
+            "videoDecoding": [],
+            "videoEncoding": []
+          },
+          "modelName": "Mac",
+          "modelVersion": "14.2",
+          "commandLine": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --disable-field-trial-config --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-back-forward-cache --disable-breakpad --disable-client-side-phishing-detection --disable-component-extensions-with-background-pages --disable-component-update --no-default-browser-check --disable-default-apps --disable-dev-shm-usage --disable-edgeupdater --disable-extensions --disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,DestroyProfileOnBrowserClose,DialMediaRouteProvider,GlobalMediaControls,HttpsUpgrades,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,BlockOriginHeaderModificationOnRedirect,AvoidCorsURLLoaderRestartOnRedirect,Translate,AutoDeElevate,OptimizationHints,NetworkTimeServiceQuerying,AimEnabled,msForceBrowserSignIn,msEdgeUpdateLaunchServicesPreferredVersion --enable-features=CDPScreenshotNewSurface --allow-pre-commit-input --disable-hang-monitor --disable-ipc-flooding-protection --disable-popup-blocking --disable-prompt-on-repost --disable-renderer-backgrounding --disable-updater-scheduler --force-color-profile=srgb --metrics-recording-only --no-first-run --password-store=basic --use-mock-keychain --no-service-autorun --export-tagged-pdf --disable-search-engine-choice-screen --unsafely-disable-devtools-self-xss-warnings --edge-skip-compat-layer-relaunch --disable-infobars --disable-search-engine-choice-screen --disable-sync --enable-unsafe-swiftshader --no-sandbox --user-data-dir=/var/folders/67/8rby79hs1xq1fvs4f925m8600000gp/T/playwright_chromiumdev_profile-TYHKfL --remote-debugging-pipe --no-startup-window --flag-switches-begin --flag-switches-end --enable-unsafe-swiftshader"
+        }
+      },
+      "fixture": {
+        "nodes": 1500,
+        "relationships": 3000,
+        "hazardRows": 1000,
+        "seed": 30
+      },
+      "preserved": {
+        "nodeLayout": true,
+        "edgeIds": true
+      },
+      "errors": [],
+      "pinchContinuity": [
+        {
+          "repeat": 0,
+          "kind": "single",
+          "before": {
+            "k": 0.0363457979352019,
+            "x": 241.0047160345174,
+            "y": 29.636363636363683
+          },
+          "after": {
+            "k": 0.06542243609793211,
+            "x": -18.191509484888797,
+            "y": -207.4545439425384
+          },
+          "events": [
+            {
+              "time": 8400.90000000596,
+              "delta": -42.399845123291016,
+              "trusted": true
+            }
+          ],
+          "motionChanges": [
+            {
+              "time": 8422.199999988079,
+              "moving": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 8599.4,
+              "k": 0.04008663715888085,
+              "x": 207.6579652297646,
+              "y": -0.8664393935144439,
+              "moving": true,
+              "logStep": 0.09796444367795837
+            },
+            {
+              "time": 8632.7,
+              "k": 0.04838233523912417,
+              "x": 133.70809460119418,
+              "y": -68.50956153981849,
+              "moving": true,
+              "logStep": 0.18809173186168
+            },
+            {
+              "time": 8649.4,
+              "k": 0.0583947801336686,
+              "x": 44.454725268648076,
+              "y": -150.15103720993375,
+              "moving": true,
+              "logStep": 0.18809173186168
+            },
+            {
+              "time": 8799.4,
+              "k": 0.06441759931933846,
+              "x": -9.234150012417501,
+              "y": -199.26110484988584,
+              "moving": true,
+              "logStep": 0.09816037256530771
+            },
+            {
+              "time": 8832.7,
+              "k": 0.06542243609793211,
+              "x": -18.191509484888797,
+              "y": -207.4545439425384,
+              "moving": true,
+              "logStep": 0.015478382101123808
+            }
+          ],
+          "firstChangedFrameMs": 198.49999999403917,
+          "completeMs": 431.79999999404026,
+          "anchorError": 5.684341886080802e-14,
+          "maximumStepFraction": 0.31999999845692634
+        },
+        {
+          "repeat": 0,
+          "kind": "clustered",
+          "before": {
+            "k": 0.0363457979352019,
+            "x": 241.0047160345174,
+            "y": 29.636363636363683
+          },
+          "after": {
+            "k": 0.06542243609793214,
+            "x": -18.191509484889025,
+            "y": -207.45454394253852
+          },
+          "events": [
+            {
+              "time": 11170.90000000596,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 11343.59999999404,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 11372.40000000596,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 11585.299999982119,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 11617.699999988079,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 11642.59999999404,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 11666.90000000596,
+              "delta": -4.239984512329102,
+              "trusted": true
+            }
+          ],
+          "motionChanges": [
+            {
+              "time": 11204.59999999404,
+              "moving": true
+            },
+            {
+              "time": 12078.699999988079,
+              "moving": false
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 11332.8,
+              "k": 0.03854619003591942,
+              "x": 221.38988559996807,
+              "y": 11.694366447112998,
+              "moving": true,
+              "logStep": 0.05877866620677507
+            },
+            {
+              "time": 11366.1,
+              "k": 0.040879794933492634,
+              "x": 200.58756389002997,
+              "y": -7.333847887698994,
+              "moving": true,
+              "logStep": 0.05877866620677507
+            },
+            {
+              "time": 11566.1,
+              "k": 0.04335467739476029,
+              "x": 178.52585961133553,
+              "y": -27.51403947687544,
+              "moving": true,
+              "logStep": 0.05877866620677507
+            },
+            {
+              "time": 11599.3,
+              "k": 0.04421249690466701,
+              "x": 170.87904783411554,
+              "y": -34.508699760654864,
+              "moving": true,
+              "logStep": 0.0195928887355917
+            },
+            {
+              "time": 11632.7,
+              "k": 0.04582949046560087,
+              "x": 156.46477389578737,
+              "y": -47.69366525650955,
+              "moving": true,
+              "logStep": 0.03592029601525139
+            },
+            {
+              "time": 11649.4,
+              "k": 0.04815640972320058,
+              "x": 135.72204960686528,
+              "y": -66.66736488297757,
+              "moving": true,
+              "logStep": 0.0495264687483013
+            },
+            {
+              "time": 11682.7,
+              "k": 0.050679563925304184,
+              "x": 113.23003928818423,
+              "y": -87.24116424693034,
+              "moving": true,
+              "logStep": 0.05106850165804679
+            },
+            {
+              "time": 11699.4,
+              "k": 0.055900553075392614,
+              "x": 66.68887199067758,
+              "y": -129.81310977675136,
+              "moving": true,
+              "logStep": 0.09805152318344992
+            },
+            {
+              "time": 11716,
+              "k": 0.058835470497830944,
+              "x": 40.526304163897905,
+              "y": -153.7444264393135,
+              "moving": true,
+              "logStep": 0.05117063866135984
+            },
+            {
+              "time": 11732.7,
+              "k": 0.06190550691527892,
+              "x": 13.15925274769944,
+              "y": -178.77750338718425,
+              "moving": true,
+              "logStep": 0.05086422765141563
+            },
+            {
+              "time": 11766.1,
+              "k": 0.06515569928002186,
+              "x": -15.81375260589681,
+              "y": -205.27957192929819,
+              "moving": true,
+              "logStep": 0.05117063866136533
+            },
+            {
+              "time": 11782.8,
+              "k": 0.06542243609793214,
+              "x": -18.191509484889025,
+              "y": -207.45454394253852,
+              "moving": true,
+              "logStep": 0.004085480132643559
+            }
+          ],
+          "firstChangedFrameMs": 161.8999999940388,
+          "completeMs": 611.8999999940388,
+          "anchorError": 1.2710574864626038e-13,
+          "maximumStepFraction": 0.16681481401041637
+        },
+        {
+          "repeat": 1,
+          "kind": "single",
+          "before": {
+            "k": 0.0363457979352019,
+            "x": 241.0047160345174,
+            "y": 29.636363636363683
+          },
+          "after": {
+            "k": 0.06542243609793211,
+            "x": -18.191509484888797,
+            "y": -207.4545439425384
+          },
+          "events": [
+            {
+              "time": 16901.09999999404,
+              "delta": -42.399845123291016,
+              "trusted": true
+            }
+          ],
+          "motionChanges": [
+            {
+              "time": 16935,
+              "moving": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 17066,
+              "k": 0.04008663715888085,
+              "x": 207.6579652297646,
+              "y": -0.8664393935144439,
+              "moving": true,
+              "logStep": 0.09796444367795837
+            },
+            {
+              "time": 17099.3,
+              "k": 0.04838233523912417,
+              "x": 133.70809460119418,
+              "y": -68.50956153981849,
+              "moving": true,
+              "logStep": 0.18809173186168
+            },
+            {
+              "time": 17116,
+              "k": 0.0583947801336686,
+              "x": 44.454725268648076,
+              "y": -150.15103720993375,
+              "moving": true,
+              "logStep": 0.18809173186168
+            },
+            {
+              "time": 17316,
+              "k": 0.06441759931933916,
+              "x": -9.234150012423669,
+              "y": -199.2611048498915,
+              "moving": true,
+              "logStep": 0.09816037256531858
+            },
+            {
+              "time": 17349.3,
+              "k": 0.06542243609793211,
+              "x": -18.191509484888797,
+              "y": -207.4545439425384,
+              "moving": true,
+              "logStep": 0.015478382101113096
+            }
+          ],
+          "firstChangedFrameMs": 164.90000000596046,
+          "completeMs": 448.20000000595974,
+          "anchorError": 0,
+          "maximumStepFraction": 0.31999999845692634
+        },
+        {
+          "repeat": 1,
+          "kind": "clustered",
+          "before": {
+            "k": 0.0363457979352019,
+            "x": 241.0047160345174,
+            "y": 29.636363636363683
+          },
+          "after": {
+            "k": 0.06542243609793211,
+            "x": -18.19150948488891,
+            "y": -207.45454394253852
+          },
+          "events": [
+            {
+              "time": 22170.09999999404,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 22318.59999999404,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 22344.5,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 22369.29999998212,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 22560.59999999404,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 22592,
+              "delta": -8.479969024658203,
+              "trusted": true
+            }
+          ],
+          "motionChanges": [
+            {
+              "time": 22194.09999999404,
+              "moving": true
+            },
+            {
+              "time": 23001.29999998212,
+              "moving": false
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 22299.3,
+              "k": 0.03854619003591942,
+              "x": 221.38988559996807,
+              "y": 11.694366447112998,
+              "moving": true,
+              "logStep": 0.05877866620677507
+            },
+            {
+              "time": 22332.7,
+              "k": 0.039308868386499884,
+              "x": 214.59118526021527,
+              "y": 5.475487176479899,
+              "moving": true,
+              "logStep": 0.0195928887355917
+            },
+            {
+              "time": 22349.3,
+              "k": 0.04034929828083293,
+              "x": 205.31654009596295,
+              "y": -3.0081781819117674,
+              "moving": true,
+              "logStep": 0.026123851647455607
+            },
+            {
+              "time": 22549.3,
+              "k": 0.04205325405769969,
+              "x": 190.1270638111165,
+              "y": -16.90223358648332,
+              "moving": true,
+              "logStep": 0.041362765108471256
+            },
+            {
+              "time": 22582.6,
+              "k": 0.044389307950956164,
+              "x": 169.30291115793585,
+              "y": -35.95041703209661,
+              "moving": true,
+              "logStep": 0.05406185965931778
+            },
+            {
+              "time": 22599.3,
+              "k": 0.04735361044931086,
+              "x": 142.8783976164729,
+              "y": -60.12133960368078,
+              "moving": true,
+              "logStep": 0.0646444384516898
+            },
+            {
+              "time": 22616,
+              "k": 0.050522399596379414,
+              "x": 114.63104034668365,
+              "y": -85.95964630887781,
+              "moving": true,
+              "logStep": 0.06477372732859595
+            },
+            {
+              "time": 22649.3,
+              "k": 0.05390323645350228,
+              "x": 84.49343820853962,
+              "y": -113.52699004185766,
+              "moving": true,
+              "logStep": 0.06477372732859615
+            },
+            {
+              "time": 22666,
+              "k": 0.061026478481571264,
+              "x": 20.995126030784093,
+              "y": -171.60990553873222,
+              "moving": true,
+              "logStep": 0.12411732182724423
+            },
+            {
+              "time": 22682.7,
+              "k": 0.06511022290699829,
+              "x": -15.408365154567349,
+              "y": -204.90875758366417,
+              "moving": true,
+              "logStep": 0.06477372732859615
+            },
+            {
+              "time": 22699.3,
+              "k": 0.06542243609793211,
+              "x": -18.19150948488891,
+              "y": -207.45454394253852,
+              "moving": true,
+              "logStep": 0.00478368844541646
+            }
+          ],
+          "firstChangedFrameMs": 129.20000000595974,
+          "completeMs": 529.2000000059597,
+          "anchorError": 2.5421149729252077e-13,
+          "maximumStepFraction": 0.21116049280892213
+        }
+      ],
+      "pinchBursts": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "producerMs": 1050.7070000000022,
+          "completionMs": 1086.3581660000018,
+          "backlogMs": 35.65116599999965,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 81.51166699999885,
+            "p95": 245.8306249999987,
+            "max": 279.3287500000006
+          },
+          "deliveryEndMs": 1774.699999988079,
+          "idleMs": 790.8000000119209,
+          "movingElements": [],
+          "received": 61,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 1743.199999988079,
+          "frames": {
+            "n": 60,
+            "median": 16.799999999999272,
+            "p95": 33.60000000000218,
+            "max": 183.29999999999927
+          },
+          "changedFrameIntervals": {
+            "n": 58,
+            "median": 16.799999999999272,
+            "p95": 34,
+            "max": 183.29999999999927
+          },
+          "changedFrames": 59,
+          "cameraBefore": {
+            "k": 0.0363457979352019,
+            "x": 241.0047160345174,
+            "y": 29.636363636363683
+          },
+          "cameraAfter": {
+            "k": 0.03634579793520179,
+            "x": 241.00471603451848,
+            "y": 29.63636363636465
+          },
+          "firstChangedFrameMs": 123.29999999999927,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "producerMs": 1122.533083000002,
+          "completionMs": 1210.754792000007,
+          "backlogMs": 88.22170900000492,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 125.51783299999806,
+            "p95": 207.1584589999984,
+            "max": 232.22291699999914
+          },
+          "deliveryEndMs": 1997.9000000059605,
+          "idleMs": 660.2999999821186,
+          "movingElements": [],
+          "received": 61,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 1957.4000000059605,
+          "frames": {
+            "n": 55,
+            "median": 33.30000000000291,
+            "p95": 83.39999999999782,
+            "max": 100
+          },
+          "changedFrameIntervals": {
+            "n": 53,
+            "median": 33.30000000000291,
+            "p95": 99.90000000000146,
+            "max": 100
+          },
+          "changedFrames": 54,
+          "cameraBefore": {
+            "k": 1.0000009735225865,
+            "x": -8349.251929750892,
+            "y": -7828.007938103172
+          },
+          "cameraAfter": {
+            "k": 1.0000009735225832,
+            "x": -8349.251929750862,
+            "y": -7828.007938103148
+          },
+          "firstChangedFrameMs": 148.70000000595974,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-8349.25px, -7828.01px) scale(1)",
+          "moving": false
+        }
+      ],
+      "trackpadPan": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "before": {
+            "k": 0.0363457979352019,
+            "x": 241.0047160345174,
+            "y": 29.636363636363683
+          },
+          "forward": {
+            "k": 0.0363457979352019,
+            "x": 61.0047160345174,
+            "y": -90.36363636363632
+          },
+          "after": {
+            "k": 0.0363457979352019,
+            "x": 241.0047160345174,
+            "y": 29.636363636363683
+          },
+          "received": 63,
+          "trusted": true,
+          "deltaX": 0,
+          "deltaY": 0,
+          "zoomUnchanged": true,
+          "pageScrollUnchanged": true,
+          "inputMs": 1677,
+          "frames": {
+            "n": 64,
+            "median": 16.69999999999709,
+            "p95": 33.400000000001455,
+            "max": 165.6999999999971
+          },
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "before": {
+            "k": 1.0000009735225865,
+            "x": -8349.251929750892,
+            "y": -7828.007938103172
+          },
+          "forward": {
+            "k": 1.0000009735225865,
+            "x": -8529.251929750892,
+            "y": -7948.007938103172
+          },
+          "after": {
+            "k": 1.0000009735225865,
+            "x": -8349.251929750892,
+            "y": -7828.007938103172
+          },
+          "received": 62,
+          "trusted": true,
+          "deltaX": 0,
+          "deltaY": 0,
+          "zoomUnchanged": true,
+          "pageScrollUnchanged": true,
+          "inputMs": 1511.699999988079,
+          "frames": {
+            "n": 63,
+            "median": 16.69999999999709,
+            "p95": 33.400000000001455,
+            "max": 33.5
+          },
+          "moving": false
+        }
+      ],
+      "singleZoomInputs": [
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "expectedRatio": 1.2,
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.106px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 12.300000011920929,
+          "changedFrameMs": 33.00000000595901,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "expectedRatio": 1.2,
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(176.206px, -29.6364px) scale(0.043615)",
+          "trusted": true,
+          "commitMs": 18.400000005960464,
+          "changedFrameMs": 189.5,
+          "movingFrames": 7,
+          "frames": 10
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "expectedRatio": 0.8333333333333334,
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.087px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 21,
+          "changedFrameMs": 49.100000005957554,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "expectedRatio": 0.8333333333333334,
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(241.005px, 29.6364px) scale(0.0363458)",
+          "after": "translate(295.004px, 79.0303px) scale(0.0302882)",
+          "trusted": true,
+          "commitMs": 14.100000023841858,
+          "changedFrameMs": 158.60000001788285,
+          "movingFrames": 9,
+          "frames": 13
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "expectedRatio": 1.2,
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.2px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 12.099999994039536,
+          "changedFrameMs": 28.69999999403808,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "expectedRatio": 1.2,
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-10132.1px, -9458.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 16,
+          "changedFrameMs": 123.19999999999709,
+          "movingFrames": 13,
+          "frames": 18
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "expectedRatio": 0.8333333333333334,
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.46px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 12,
+          "changedFrameMs": 29.600000005957554,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "expectedRatio": 0.8333333333333334,
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-8349.25px, -7828.01px) scale(1)",
+          "after": "translate(-6863.54px, -6469.01px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 30,
+          "changedFrameMs": 175.10000001192384,
+          "movingFrames": 12,
+          "frames": 15
+        }
+      ]
+    },
+    "chrome-csu-before": {
+      "buildHash": "5748e90fd7b168a6de2b6fd60dac60619b7d877f3ec5d48ef40ec90b811da916",
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "02220a4a18f469cf599192487453c572d8ac0dd21323921f00960d4c86518fb4",
+        "desktop-performance-cba-scenario.cjs": "3b7ae9b195df1e6aa831d551b0c25deb78f0b47e9012080390253b8be3223b91",
+        "cba-rendering-regression.cjs": "0bf47e8c6c9217dbd8c756859c7e8c58f6dafbf99fe9f6b5a611b3fd18366a59",
+        "diagram-overview-scenario.cjs": "ddb1fbd75f296d46bdb5f940ab23ccd050612f0b1c2269acb0c243e2bbe5898d",
+        "diagram-overview-visual.cjs": "74bc53bc6ad81007be31a51b1588dc2ecb5f5db209519d155c37eae830fd38c2",
+        "diagram-overview-sweep.cjs": "0ff949cf75931f0b81a4ba9f6e46332819ab79c8a3c8252067b89de7ef4460ac",
+        "diagram-pinch-comparison.cjs": "85fb9647575afc91f4512d127fcd27bf07dc78b92c235b65ac46f0d8856d60cf",
+        "diagram-pinch-continuity.cjs": "85c16810a2b9f4c8180866d92613937c4dde9acb5c654bca868190f3a2b59de9"
+      },
+      "hardware": {
+        "cpu": "Apple M2",
+        "ram": 8589934592,
+        "arch": "arm64"
+      },
+      "runtime": {
+        "chrome": "156.0.8078.79",
+        "headless": false,
+        "systemInfo": {
+          "gpu": {
+            "devices": [
+              {
+                "vendorId": 4203,
+                "deviceId": 0,
+                "vendorString": "Google Inc. (Apple)",
+                "deviceString": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2, Version 27.0 (Build 26A428))",
+                "driverVendor": "Apple",
+                "driverVersion": "27.0"
+              }
+            ],
+            "auxAttributes": {
+              "amdSwitchable": false,
+              "canSupportThreadedTextureMailbox": false,
+              "directRenderingVersion": "",
+              "displayType": "ANGLE_METAL",
+              "glExtensions": "GL_AMD_performance_monitor GL_ANGLE_base_vertex_base_instance_shader_builtin GL_ANGLE_blob_cache GL_ANGLE_client_arrays GL_ANGLE_clip_cull_distance GL_ANGLE_compressed_texture_etc GL_ANGLE_depth_texture GL_ANGLE_framebuffer_blit GL_ANGLE_framebuffer_multisample GL_ANGLE_get_serialized_context_string GL_ANGLE_get_tex_level_parameter GL_ANGLE_instanced_arrays GL_ANGLE_memory_size GL_ANGLE_pack_reverse_row_order GL_ANGLE_polygon_mode GL_ANGLE_program_binary_readiness_query GL_ANGLE_program_cache_control GL_ANGLE_provoking_vertex GL_ANGLE_renderability_validation GL_ANGLE_request_extension GL_ANGLE_rgbx_internal_format GL_ANGLE_robust_client_memory GL_ANGLE_shader_pixel_local_storage GL_ANGLE_shader_pixel_local_storage_coherent GL_ANGLE_stencil_texturing GL_ANGLE_texture_compression_dxt3 GL_ANGLE_texture_compression_dxt5 GL_ANGLE_texture_multisample GL_ANGLE_translated_shader_source GL_APPLE_clip_distance GL_ARM_rgba8 GL_CHROMIUM_bind_generates_resource GL_CHROMIUM_bind_uniform_location GL_CHROMIUM_copy_texture GL_CHROMIUM_lose_context GL_EXT_base_instance GL_EXT_blend_func_extended GL_EXT_blend_minmax GL_EXT_clip_control GL_EXT_color_buffer_float GL_EXT_color_buffer_half_float GL_EXT_compressed_ETC1_RGB8_sub_texture GL_EXT_conservative_depth GL_EXT_debug_label GL_EXT_debug_marker GL_EXT_depth_clamp GL_EXT_discard_framebuffer GL_EXT_disjoint_timer_query GL_EXT_draw_buffers GL_EXT_draw_buffers_indexed GL_EXT_draw_elements_base_vertex GL_EXT_float_blend GL_EXT_frag_depth GL_EXT_instanced_arrays GL_EXT_map_buffer_range GL_EXT_multisampled_render_to_texture GL_EXT_occlusion_query_boolean GL_EXT_polygon_offset_clamp GL_EXT_pvrtc_sRGB GL_EXT_read_format_bgra GL_EXT_render_snorm GL_EXT_robustness GL_EXT_sRGB GL_EXT_shader_texture_lod GL_EXT_texture_compression_bptc GL_EXT_texture_compression_dxt1 GL_EXT_texture_compression_rgtc GL_EXT_texture_compression_s3tc_srgb GL_EXT_texture_filter_anisotropic GL_EXT_texture_format_BGRA8888 GL_EXT_texture_mirror_clamp_to_edge GL_EXT_texture_norm16 GL_EXT_texture_rg GL_EXT_texture_sRGB_R8 GL_EXT_texture_sRGB_RG8 GL_EXT_texture_shadow_lod GL_EXT_texture_storage GL_IMG_texture_compression_pvrtc GL_KHR_debug GL_KHR_parallel_shader_compile GL_KHR_robustness GL_KHR_texture_compression_astc_hdr GL_KHR_texture_compression_astc_ldr GL_KHR_texture_compression_astc_sliced_3d GL_MESA_framebuffer_flip_y GL_NV_fence GL_NV_framebuffer_blit GL_NV_pixel_buffer_object GL_NV_shader_noperspective_interpolation GL_OES_EGL_image GL_OES_EGL_sync GL_OES_compressed_ETC1_RGB8_texture GL_OES_depth24 GL_OES_depth32 GL_OES_depth_texture GL_OES_draw_buffers_indexed GL_OES_draw_elements_base_vertex GL_OES_element_index_uint GL_OES_fbo_render_mipmap GL_OES_get_program_binary GL_OES_mapbuffer GL_OES_packed_depth_stencil GL_OES_required_internalformat GL_OES_rgb8_rgba8 GL_OES_sample_variables GL_OES_shader_multisample_interpolation GL_OES_standard_derivatives GL_OES_surfaceless_context GL_OES_texture_3D GL_OES_texture_float GL_OES_texture_float_linear GL_OES_texture_half_float GL_OES_texture_half_float_linear GL_OES_texture_npot GL_OES_texture_stencil8 GL_OES_vertex_array_object GL_QCOM_render_shared_exponent ",
+              "glImplementationParts": "(gl=egl-angle,angle=metal)",
+              "glRenderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2, Version 27.0 (Build 26A428))",
+              "glResetNotificationStrategy": 33362,
+              "glVendor": "Google Inc. (Apple)",
+              "glVersion": "OpenGL ES 3.0 (ANGLE 2.1.28975 git hash: 127e783de334)",
+              "glWsExtensions": "",
+              "glWsVendor": "",
+              "glWsVersion": "",
+              "inProcessGpu": false,
+              "initializationTime": 0.054758,
+              "isAsan": false,
+              "isClangCoverage": false,
+              "jpegDecodeAcceleratorSupported": false,
+              "maxMsaaSamples": "4",
+              "optimus": false,
+              "passthroughCmdDecoder": true,
+              "pixelShaderVersion": "3.00",
+              "processCrashCount": 0,
+              "sandboxed": false,
+              "skiaBackendType": "GraphiteDawnMetal",
+              "subpixelFontRendering": true,
+              "targetCpuBits": 64,
+              "vertexShaderVersion": "3.00",
+              "visibilityCallbackCallCount": 0
+            },
+            "featureStatus": {
+              "2d_canvas": "enabled",
+              "direct_rendering_display_compositor": "disabled_off_ok",
+              "gpu_compositing": "enabled",
+              "multiple_raster_threads": "enabled_on",
+              "opengl": "enabled_on",
+              "rasterization": "enabled",
+              "raw_draw": "disabled_off_ok",
+              "skia_graphite": "enabled_on",
+              "trees_in_viz": "disabled_off",
+              "video_decode": "enabled",
+              "video_encode": "enabled",
+              "webgl": "enabled",
+              "webgpu": "enabled",
+              "webnn": "disabled_off"
+            },
+            "driverBugWorkarounds": [
+              "disable_2d_canvas_auto_flush",
+              "enable_webgl_timer_query_extensions",
+              "disabled_extension_GL_KHR_blend_equation_advanced",
+              "disabled_extension_GL_KHR_blend_equation_advanced_coherent"
+            ],
+            "videoDecoding": [],
+            "videoEncoding": []
+          },
+          "modelName": "Mac",
+          "modelVersion": "14.2",
+          "commandLine": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --disable-field-trial-config --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-back-forward-cache --disable-breakpad --disable-client-side-phishing-detection --disable-component-extensions-with-background-pages --disable-component-update --no-default-browser-check --disable-default-apps --disable-dev-shm-usage --disable-edgeupdater --disable-extensions --disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,DestroyProfileOnBrowserClose,DialMediaRouteProvider,GlobalMediaControls,HttpsUpgrades,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,BlockOriginHeaderModificationOnRedirect,AvoidCorsURLLoaderRestartOnRedirect,Translate,AutoDeElevate,OptimizationHints,NetworkTimeServiceQuerying,AimEnabled,msForceBrowserSignIn,msEdgeUpdateLaunchServicesPreferredVersion --enable-features=CDPScreenshotNewSurface --allow-pre-commit-input --disable-hang-monitor --disable-ipc-flooding-protection --disable-popup-blocking --disable-prompt-on-repost --disable-renderer-backgrounding --disable-updater-scheduler --force-color-profile=srgb --metrics-recording-only --no-first-run --password-store=basic --use-mock-keychain --no-service-autorun --export-tagged-pdf --disable-search-engine-choice-screen --unsafely-disable-devtools-self-xss-warnings --edge-skip-compat-layer-relaunch --disable-infobars --disable-search-engine-choice-screen --disable-sync --enable-unsafe-swiftshader --no-sandbox --user-data-dir=/var/folders/67/8rby79hs1xq1fvs4f925m8600000gp/T/playwright_chromiumdev_profile-NvEVm9 --remote-debugging-pipe --no-startup-window --flag-switches-begin --flag-switches-end --enable-unsafe-swiftshader"
+        }
+      },
+      "fixture": {
+        "nodes": 1500,
+        "relationships": 3000,
+        "hazardRows": 1000,
+        "seed": 30
+      },
+      "preserved": {
+        "nodeLayout": true,
+        "edgeIds": true
+      },
+      "errors": [],
+      "pinchContinuity": [
+        {
+          "repeat": 0,
+          "kind": "single",
+          "before": {
+            "k": 0.030063261956140834,
+            "x": 268.2344657776794,
+            "y": 29.636363636363683
+          },
+          "after": {
+            "k": 0.054113871367674836,
+            "x": 30.82203991388019,
+            "y": -207.45454394253852
+          },
+          "events": [
+            {
+              "time": 7416,
+              "delta": -42.399845123291016,
+              "trusted": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 7605.7,
+              "k": 0.054113871367674836,
+              "x": 30.82203991388019,
+              "y": -207.45454394253852,
+              "logStep": 0.5877866620677502
+            }
+          ],
+          "firstChangedFrameMs": 189.69999999999982,
+          "completeMs": 189.69999999999982,
+          "anchorError": 0,
+          "maximumStepFraction": 0.9999999951778953
+        },
+        {
+          "repeat": 0,
+          "kind": "clustered",
+          "before": {
+            "k": 0.030063261956140834,
+            "x": 268.2344657776794,
+            "y": 29.636363636363683
+          },
+          "after": {
+            "k": 0.054113871367674836,
+            "x": 30.82203991388019,
+            "y": -207.45454394253852
+          },
+          "events": [
+            {
+              "time": 9924.300000011921,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 10067.200000017881,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 10131.40000000596,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 10153,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 10201.100000023842,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 10343.90000000596,
+              "delta": -8.479969024658203,
+              "trusted": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 10106.6,
+              "k": 0.035860624820133434,
+              "x": 211.00656117027603,
+              "y": -27.514039476875382,
+              "logStep": 0.1763359986203251
+            },
+            {
+              "time": 10123.3,
+              "k": 0.0427759440863898,
+              "x": 142.7428970555015,
+              "y": -95.68525680363064,
+              "logStep": 0.1763359986203251
+            },
+            {
+              "time": 10189.9,
+              "k": 0.04811207681987703,
+              "x": 90.06796498576045,
+              "y": -148.2888532903478,
+              "logStep": 0.11755733241355004
+            },
+            {
+              "time": 10323.3,
+              "k": 0.054113871367674836,
+              "x": 30.82203991388019,
+              "y": -207.45454394253852,
+              "logStep": 0.11755733241355004
+            }
+          ],
+          "firstChangedFrameMs": 182.29999998807943,
+          "completeMs": 398.99999998807834,
+          "anchorError": 0,
+          "maximumStepFraction": 0.2999999985533686
+        },
+        {
+          "repeat": 1,
+          "kind": "single",
+          "before": {
+            "k": 0.030063261956140834,
+            "x": 268.2344657776794,
+            "y": 29.636363636363683
+          },
+          "after": {
+            "k": 0.054113871367674836,
+            "x": 30.82203991388019,
+            "y": -207.45454394253852
+          },
+          "events": [
+            {
+              "time": 15419.100000023842,
+              "delta": -42.399845123291016,
+              "trusted": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 15606.6,
+              "k": 0.054113871367674836,
+              "x": 30.82203991388019,
+              "y": -207.45454394253852,
+              "logStep": 0.5877866620677502
+            }
+          ],
+          "firstChangedFrameMs": 187.4999999761585,
+          "completeMs": 187.4999999761585,
+          "anchorError": 0,
+          "maximumStepFraction": 0.9999999951778953
+        },
+        {
+          "repeat": 1,
+          "kind": "clustered",
+          "before": {
+            "k": 0.030063261956140834,
+            "x": 268.2344657776794,
+            "y": 29.636363636363683
+          },
+          "after": {
+            "k": 0.054113871367674836,
+            "x": 30.82203991388019,
+            "y": -207.45454394253852
+          },
+          "events": [
+            {
+              "time": 20486.600000023842,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 20655.80000001192,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 20718.30000001192,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 20740.40000000596,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 20773.20000001788,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 20935.20000001788,
+              "delta": -8.479969024658203,
+              "trusted": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 20689.9,
+              "k": 0.035860624820133434,
+              "x": 211.00656117027603,
+              "y": -27.514039476875382,
+              "logStep": 0.1763359986203251
+            },
+            {
+              "time": 20723.3,
+              "k": 0.0427759440863898,
+              "x": 142.7428970555015,
+              "y": -95.68525680363064,
+              "logStep": 0.1763359986203251
+            },
+            {
+              "time": 20756.5,
+              "k": 0.04811207681987703,
+              "x": 90.06796498576045,
+              "y": -148.2888532903478,
+              "logStep": 0.11755733241355004
+            },
+            {
+              "time": 20923.2,
+              "k": 0.054113871367674836,
+              "x": 30.82203991388019,
+              "y": -207.45454394253852,
+              "logStep": 0.11755733241355004
+            }
+          ],
+          "firstChangedFrameMs": 203.2999999761596,
+          "completeMs": 436.59999997615887,
+          "anchorError": 0,
+          "maximumStepFraction": 0.2999999985533686
+        }
+      ]
+    },
+    "chrome-csu-confirmed": {
+      "buildHash": "21f2807dcc70b7102123d9254c7120fa01d7b3e40cfb6db552f7a5c689ddd201",
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "02220a4a18f469cf599192487453c572d8ac0dd21323921f00960d4c86518fb4",
+        "desktop-performance-cba-scenario.cjs": "3b7ae9b195df1e6aa831d551b0c25deb78f0b47e9012080390253b8be3223b91",
+        "cba-rendering-regression.cjs": "0bf47e8c6c9217dbd8c756859c7e8c58f6dafbf99fe9f6b5a611b3fd18366a59",
+        "diagram-overview-scenario.cjs": "dd4508a22ed3a5b2673ad8011c2cec343e3e82837d36cf69ac6259d48d5d2342",
+        "diagram-overview-visual.cjs": "74bc53bc6ad81007be31a51b1588dc2ecb5f5db209519d155c37eae830fd38c2",
+        "diagram-overview-sweep.cjs": "0ff949cf75931f0b81a4ba9f6e46332819ab79c8a3c8252067b89de7ef4460ac",
+        "diagram-pinch-comparison.cjs": "85fb9647575afc91f4512d127fcd27bf07dc78b92c235b65ac46f0d8856d60cf",
+        "diagram-pinch-burst.cjs": "ab1405fc201959a4346e9890b8257c6a9207a32ceab92c02dc426b41c9b4f9f4",
+        "diagram-pinch-continuity.cjs": "c433587c2d30f5a1f6bfea6a75af8ea2f3fbde16973ba8332c831b58b0f771b9",
+        "diagram-trackpad-pan.cjs": "a78c952fdc2e0c1acc2782166f2127a2ef135b6cdf839773ac77b9c3b00c80fc"
+      },
+      "hardware": {
+        "cpu": "Apple M2",
+        "ram": 8589934592,
+        "arch": "arm64"
+      },
+      "runtime": {
+        "chrome": "156.0.8078.79",
+        "headless": false,
+        "systemInfo": {
+          "gpu": {
+            "devices": [
+              {
+                "vendorId": 4203,
+                "deviceId": 0,
+                "vendorString": "Google Inc. (Apple)",
+                "deviceString": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2, Version 27.0 (Build 26A428))",
+                "driverVendor": "Apple",
+                "driverVersion": "27.0"
+              }
+            ],
+            "auxAttributes": {
+              "amdSwitchable": false,
+              "canSupportThreadedTextureMailbox": false,
+              "directRenderingVersion": "",
+              "displayType": "ANGLE_METAL",
+              "glExtensions": "GL_AMD_performance_monitor GL_ANGLE_base_vertex_base_instance_shader_builtin GL_ANGLE_blob_cache GL_ANGLE_client_arrays GL_ANGLE_clip_cull_distance GL_ANGLE_compressed_texture_etc GL_ANGLE_depth_texture GL_ANGLE_framebuffer_blit GL_ANGLE_framebuffer_multisample GL_ANGLE_get_serialized_context_string GL_ANGLE_get_tex_level_parameter GL_ANGLE_instanced_arrays GL_ANGLE_memory_size GL_ANGLE_pack_reverse_row_order GL_ANGLE_polygon_mode GL_ANGLE_program_binary_readiness_query GL_ANGLE_program_cache_control GL_ANGLE_provoking_vertex GL_ANGLE_renderability_validation GL_ANGLE_request_extension GL_ANGLE_rgbx_internal_format GL_ANGLE_robust_client_memory GL_ANGLE_shader_pixel_local_storage GL_ANGLE_shader_pixel_local_storage_coherent GL_ANGLE_stencil_texturing GL_ANGLE_texture_compression_dxt3 GL_ANGLE_texture_compression_dxt5 GL_ANGLE_texture_multisample GL_ANGLE_translated_shader_source GL_APPLE_clip_distance GL_ARM_rgba8 GL_CHROMIUM_bind_generates_resource GL_CHROMIUM_bind_uniform_location GL_CHROMIUM_copy_texture GL_CHROMIUM_lose_context GL_EXT_base_instance GL_EXT_blend_func_extended GL_EXT_blend_minmax GL_EXT_clip_control GL_EXT_color_buffer_float GL_EXT_color_buffer_half_float GL_EXT_compressed_ETC1_RGB8_sub_texture GL_EXT_conservative_depth GL_EXT_debug_label GL_EXT_debug_marker GL_EXT_depth_clamp GL_EXT_discard_framebuffer GL_EXT_disjoint_timer_query GL_EXT_draw_buffers GL_EXT_draw_buffers_indexed GL_EXT_draw_elements_base_vertex GL_EXT_float_blend GL_EXT_frag_depth GL_EXT_instanced_arrays GL_EXT_map_buffer_range GL_EXT_multisampled_render_to_texture GL_EXT_occlusion_query_boolean GL_EXT_polygon_offset_clamp GL_EXT_pvrtc_sRGB GL_EXT_read_format_bgra GL_EXT_render_snorm GL_EXT_robustness GL_EXT_sRGB GL_EXT_shader_texture_lod GL_EXT_texture_compression_bptc GL_EXT_texture_compression_dxt1 GL_EXT_texture_compression_rgtc GL_EXT_texture_compression_s3tc_srgb GL_EXT_texture_filter_anisotropic GL_EXT_texture_format_BGRA8888 GL_EXT_texture_mirror_clamp_to_edge GL_EXT_texture_norm16 GL_EXT_texture_rg GL_EXT_texture_sRGB_R8 GL_EXT_texture_sRGB_RG8 GL_EXT_texture_shadow_lod GL_EXT_texture_storage GL_IMG_texture_compression_pvrtc GL_KHR_debug GL_KHR_parallel_shader_compile GL_KHR_robustness GL_KHR_texture_compression_astc_hdr GL_KHR_texture_compression_astc_ldr GL_KHR_texture_compression_astc_sliced_3d GL_MESA_framebuffer_flip_y GL_NV_fence GL_NV_framebuffer_blit GL_NV_pixel_buffer_object GL_NV_shader_noperspective_interpolation GL_OES_EGL_image GL_OES_EGL_sync GL_OES_compressed_ETC1_RGB8_texture GL_OES_depth24 GL_OES_depth32 GL_OES_depth_texture GL_OES_draw_buffers_indexed GL_OES_draw_elements_base_vertex GL_OES_element_index_uint GL_OES_fbo_render_mipmap GL_OES_get_program_binary GL_OES_mapbuffer GL_OES_packed_depth_stencil GL_OES_required_internalformat GL_OES_rgb8_rgba8 GL_OES_sample_variables GL_OES_shader_multisample_interpolation GL_OES_standard_derivatives GL_OES_surfaceless_context GL_OES_texture_3D GL_OES_texture_float GL_OES_texture_float_linear GL_OES_texture_half_float GL_OES_texture_half_float_linear GL_OES_texture_npot GL_OES_texture_stencil8 GL_OES_vertex_array_object GL_QCOM_render_shared_exponent ",
+              "glImplementationParts": "(gl=egl-angle,angle=metal)",
+              "glRenderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2, Version 27.0 (Build 26A428))",
+              "glResetNotificationStrategy": 33362,
+              "glVendor": "Google Inc. (Apple)",
+              "glVersion": "OpenGL ES 3.0 (ANGLE 2.1.28975 git hash: 127e783de334)",
+              "glWsExtensions": "",
+              "glWsVendor": "",
+              "glWsVersion": "",
+              "inProcessGpu": false,
+              "initializationTime": 0.066855,
+              "isAsan": false,
+              "isClangCoverage": false,
+              "jpegDecodeAcceleratorSupported": false,
+              "maxMsaaSamples": "4",
+              "optimus": false,
+              "passthroughCmdDecoder": true,
+              "pixelShaderVersion": "3.00",
+              "processCrashCount": 0,
+              "sandboxed": false,
+              "skiaBackendType": "GraphiteDawnMetal",
+              "subpixelFontRendering": true,
+              "targetCpuBits": 64,
+              "vertexShaderVersion": "3.00",
+              "visibilityCallbackCallCount": 0
+            },
+            "featureStatus": {
+              "2d_canvas": "enabled",
+              "direct_rendering_display_compositor": "disabled_off_ok",
+              "gpu_compositing": "enabled",
+              "multiple_raster_threads": "enabled_on",
+              "opengl": "enabled_on",
+              "rasterization": "enabled",
+              "raw_draw": "disabled_off_ok",
+              "skia_graphite": "enabled_on",
+              "trees_in_viz": "disabled_off",
+              "video_decode": "enabled",
+              "video_encode": "enabled",
+              "webgl": "enabled",
+              "webgpu": "enabled",
+              "webnn": "disabled_off"
+            },
+            "driverBugWorkarounds": [
+              "disable_2d_canvas_auto_flush",
+              "enable_webgl_timer_query_extensions",
+              "disabled_extension_GL_KHR_blend_equation_advanced",
+              "disabled_extension_GL_KHR_blend_equation_advanced_coherent"
+            ],
+            "videoDecoding": [],
+            "videoEncoding": []
+          },
+          "modelName": "Mac",
+          "modelVersion": "14.2",
+          "commandLine": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --disable-field-trial-config --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-back-forward-cache --disable-breakpad --disable-client-side-phishing-detection --disable-component-extensions-with-background-pages --disable-component-update --no-default-browser-check --disable-default-apps --disable-dev-shm-usage --disable-edgeupdater --disable-extensions --disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,DestroyProfileOnBrowserClose,DialMediaRouteProvider,GlobalMediaControls,HttpsUpgrades,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,BlockOriginHeaderModificationOnRedirect,AvoidCorsURLLoaderRestartOnRedirect,Translate,AutoDeElevate,OptimizationHints,NetworkTimeServiceQuerying,AimEnabled,msForceBrowserSignIn,msEdgeUpdateLaunchServicesPreferredVersion --enable-features=CDPScreenshotNewSurface --allow-pre-commit-input --disable-hang-monitor --disable-ipc-flooding-protection --disable-popup-blocking --disable-prompt-on-repost --disable-renderer-backgrounding --disable-updater-scheduler --force-color-profile=srgb --metrics-recording-only --no-first-run --password-store=basic --use-mock-keychain --no-service-autorun --export-tagged-pdf --disable-search-engine-choice-screen --unsafely-disable-devtools-self-xss-warnings --edge-skip-compat-layer-relaunch --disable-infobars --disable-search-engine-choice-screen --disable-sync --enable-unsafe-swiftshader --no-sandbox --user-data-dir=/var/folders/67/8rby79hs1xq1fvs4f925m8600000gp/T/playwright_chromiumdev_profile-iRvIrC --remote-debugging-pipe --no-startup-window --flag-switches-begin --flag-switches-end --enable-unsafe-swiftshader"
+        }
+      },
+      "fixture": {
+        "nodes": 1500,
+        "relationships": 3000,
+        "hazardRows": 1000,
+        "seed": 30
+      },
+      "preserved": {
+        "nodeLayout": true,
+        "edgeIds": true
+      },
+      "errors": [],
+      "pinchContinuity": [
+        {
+          "repeat": 0,
+          "kind": "single",
+          "before": {
+            "k": 0.030063261956140834,
+            "x": 268.2344657776794,
+            "y": 29.636363636363683
+          },
+          "after": {
+            "k": 0.054113871367674836,
+            "x": 30.822039913880303,
+            "y": -207.45454394253852
+          },
+          "events": [
+            {
+              "time": 7559.5999999940395,
+              "delta": -42.399845123291016,
+              "trusted": true
+            }
+          ],
+          "motionChanges": [
+            {
+              "time": 7586.299999982119,
+              "moving": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 7754,
+              "k": 0.033157480157589216,
+              "x": 237.69029798601068,
+              "y": -0.8664393935144652,
+              "moving": true,
+              "logStep": 0.09796444367795837
+            },
+            {
+              "time": 7787.4,
+              "k": 0.04001922920874605,
+              "x": 169.95544520001383,
+              "y": -68.50956153981856,
+              "moving": true,
+              "logStep": 0.18809173186168
+            },
+            {
+              "time": 7804,
+              "k": 0.048300977602955354,
+              "x": 88.20325576401876,
+              "y": -150.15103720993386,
+              "moving": true,
+              "logStep": 0.18809173186168016
+            },
+            {
+              "time": 8004.1,
+              "k": 0.05325141551000617,
+              "x": 39.33565941789854,
+              "y": -198.95245409764084,
+              "moving": true,
+              "logStep": 0.09757258590324858
+            },
+            {
+              "time": 8037.4,
+              "k": 0.054113871367674836,
+              "x": 30.822039913880303,
+              "y": -207.45454394253852,
+              "moving": true,
+              "logStep": 0.016066168763183092
+            }
+          ],
+          "firstChangedFrameMs": 194.40000000596046,
+          "completeMs": 477.8000000059601,
+          "anchorError": 1.1368683772161603e-13,
+          "maximumStepFraction": 0.3199999984569266
+        },
+        {
+          "repeat": 0,
+          "kind": "clustered",
+          "before": {
+            "k": 0.030063261956140834,
+            "x": 268.2344657776794,
+            "y": 29.636363636363683
+          },
+          "after": {
+            "k": 0.054113871367674836,
+            "x": 30.82203991388019,
+            "y": -207.45454394253852
+          },
+          "events": [
+            {
+              "time": 10393.299999982119,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 10551.799999982119,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 10582.899999976158,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 10779.5,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 10815,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 10846.399999976158,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 10876.399999976158,
+              "delta": -4.239984512329102,
+              "trusted": true
+            }
+          ],
+          "motionChanges": [
+            {
+              "time": 10415,
+              "moving": true
+            },
+            {
+              "time": 11287.299999982119,
+              "moving": false
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 10537.4,
+              "k": 0.0318833063048171,
+              "x": 250.26813749862515,
+              "y": 11.694366447112998,
+              "moving": true,
+              "logStep": 0.05877866620677507
+            },
+            {
+              "time": 10570.8,
+              "k": 0.03381353701437401,
+              "x": 231.21411905812204,
+              "y": -7.333847887698994,
+              "moving": true,
+              "logStep": 0.05877866620677507
+            },
+            {
+              "time": 10754.1,
+              "k": 0.035860624820133434,
+              "x": 211.00656117027603,
+              "y": -27.51403947687544,
+              "moving": true,
+              "logStep": 0.05877866620677507
+            },
+            {
+              "time": 10804.1,
+              "k": 0.03657016633806602,
+              "x": 204.00241544818584,
+              "y": -34.50869976065488,
+              "moving": true,
+              "logStep": 0.0195928887355917
+            },
+            {
+              "time": 10837.4,
+              "k": 0.03790765522991576,
+              "x": 190.79956985926495,
+              "y": -47.6936652565096,
+              "moving": true,
+              "logStep": 0.03592029601525139
+            },
+            {
+              "time": 10854.1,
+              "k": 0.03983235594268386,
+              "x": 171.80014005434202,
+              "y": -66.66736488297755,
+              "moving": true,
+              "logStep": 0.04952646874830109
+            },
+            {
+              "time": 10887.4,
+              "k": 0.04191937149999293,
+              "x": 151.19844062136985,
+              "y": -87.24116424693037,
+              "moving": true,
+              "logStep": 0.05106850165804679
+            },
+            {
+              "time": 10920.7,
+              "k": 0.046237889001496384,
+              "x": 108.56876340098654,
+              "y": -129.81310977675136,
+              "moving": true,
+              "logStep": 0.09805152318344992
+            },
+            {
+              "time": 10937.4,
+              "k": 0.05100129851219408,
+              "x": 61.547393257447126,
+              "y": -176.77080073320923,
+              "moving": true,
+              "logStep": 0.09805152318344992
+            },
+            {
+              "time": 10970.7,
+              "k": 0.05367899294159511,
+              "x": 35.11488506905971,
+              "y": -203.16751241824457,
+              "moving": true,
+              "logStep": 0.051170638661359416
+            },
+            {
+              "time": 10987.4,
+              "k": 0.054113871367674836,
+              "x": 30.82203991388019,
+              "y": -207.45454394253852,
+              "moving": true,
+              "logStep": 0.008068823261974752
+            }
+          ],
+          "firstChangedFrameMs": 144.10000001788103,
+          "completeMs": 594.100000017881,
+          "anchorError": 1.1368683772161603e-13,
+          "maximumStepFraction": 0.16681481401041637
+        },
+        {
+          "repeat": 1,
+          "kind": "single",
+          "before": {
+            "k": 0.030063261956140834,
+            "x": 268.2344657776794,
+            "y": 29.636363636363683
+          },
+          "after": {
+            "k": 0.054113871367674836,
+            "x": 30.822039913880303,
+            "y": -207.45454394253852
+          },
+          "events": [
+            {
+              "time": 16060.5,
+              "delta": -42.399845123291016,
+              "trusted": true
+            }
+          ],
+          "motionChanges": [
+            {
+              "time": 16104.399999976158,
+              "moving": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 16237.3,
+              "k": 0.033157480157589216,
+              "x": 237.69029798601068,
+              "y": -0.8664393935144652,
+              "moving": true,
+              "logStep": 0.09796444367795837
+            },
+            {
+              "time": 16270.7,
+              "k": 0.04001922920874605,
+              "x": 169.95544520001383,
+              "y": -68.50956153981856,
+              "moving": true,
+              "logStep": 0.18809173186168
+            },
+            {
+              "time": 16287.3,
+              "k": 0.048300977602955354,
+              "x": 88.20325576401876,
+              "y": -150.15103720993386,
+              "moving": true,
+              "logStep": 0.18809173186168016
+            },
+            {
+              "time": 16537.4,
+              "k": 0.053251415510005604,
+              "x": 39.33565941790417,
+              "y": -198.95245409763524,
+              "moving": true,
+              "logStep": 0.0975725859032379
+            },
+            {
+              "time": 16554,
+              "k": 0.054113871367674836,
+              "x": 30.822039913880303,
+              "y": -207.45454394253852,
+              "moving": true,
+              "logStep": 0.0160661687631938
+            }
+          ],
+          "firstChangedFrameMs": 176.79999999999927,
+          "completeMs": 493.5,
+          "anchorError": 1.1368683772161603e-13,
+          "maximumStepFraction": 0.3199999984569266
+        },
+        {
+          "repeat": 1,
+          "kind": "clustered",
+          "before": {
+            "k": 0.030063261956140834,
+            "x": 268.2344657776794,
+            "y": 29.636363636363683
+          },
+          "after": {
+            "k": 0.054113871367674836,
+            "x": 30.82203991388019,
+            "y": -207.45454394253852
+          },
+          "events": [
+            {
+              "time": 21524.79999998212,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 21750,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 21783,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 21995.399999976158,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 22033.69999998808,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 22063.79999998212,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 22093.69999998808,
+              "delta": -4.239984512329102,
+              "trusted": true
+            }
+          ],
+          "motionChanges": [
+            {
+              "time": 21566,
+              "moving": true
+            },
+            {
+              "time": 22504.29999998212,
+              "moving": false
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 21737.3,
+              "k": 0.0318833063048171,
+              "x": 250.26813749862515,
+              "y": 11.694366447112998,
+              "moving": true,
+              "logStep": 0.05877866620677507
+            },
+            {
+              "time": 21770.6,
+              "k": 0.03381353701437401,
+              "x": 231.21411905812204,
+              "y": -7.333847887698994,
+              "moving": true,
+              "logStep": 0.05877866620677507
+            },
+            {
+              "time": 21970.7,
+              "k": 0.035860624820133434,
+              "x": 211.00656117027603,
+              "y": -27.51403947687544,
+              "moving": true,
+              "logStep": 0.05877866620677507
+            },
+            {
+              "time": 22020.6,
+              "k": 0.03657016633806602,
+              "x": 204.00241544818584,
+              "y": -34.50869976065488,
+              "moving": true,
+              "logStep": 0.0195928887355917
+            },
+            {
+              "time": 22053.9,
+              "k": 0.03790765522991576,
+              "x": 190.79956985926495,
+              "y": -47.6936652565096,
+              "moving": true,
+              "logStep": 0.03592029601525139
+            },
+            {
+              "time": 22070.7,
+              "k": 0.03983235594268386,
+              "x": 171.80014005434202,
+              "y": -66.66736488297755,
+              "moving": true,
+              "logStep": 0.04952646874830109
+            },
+            {
+              "time": 22104,
+              "k": 0.04191937149999293,
+              "x": 151.19844062136985,
+              "y": -87.24116424693037,
+              "moving": true,
+              "logStep": 0.05106850165804679
+            },
+            {
+              "time": 22137.4,
+              "k": 0.046237889001496384,
+              "x": 108.56876340098654,
+              "y": -129.81310977675136,
+              "moving": true,
+              "logStep": 0.09805152318344992
+            },
+            {
+              "time": 22154,
+              "k": 0.05100129851219408,
+              "x": 61.547393257447126,
+              "y": -176.77080073320923,
+              "moving": true,
+              "logStep": 0.09805152318344992
+            },
+            {
+              "time": 22187.3,
+              "k": 0.05366254762679623,
+              "x": 35.277222829974136,
+              "y": -203.00539450495722,
+              "moving": true,
+              "logStep": 0.05086422765140993
+            },
+            {
+              "time": 22203.9,
+              "k": 0.054113871367674836,
+              "x": 30.82203991388019,
+              "y": -207.45454394253852,
+              "moving": true,
+              "logStep": 0.008375234271924199
+            }
+          ],
+          "firstChangedFrameMs": 212.50000001788067,
+          "completeMs": 679.1000000178828,
+          "anchorError": 1.2710574864626038e-13,
+          "maximumStepFraction": 0.16681481401041637
+        }
+      ],
+      "pinchBursts": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "producerMs": 1056.2781250000007,
+          "completionMs": 1325.3092079999988,
+          "backlogMs": 269.03108299999803,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 221.20741700000144,
+            "p95": 377.78216599999723,
+            "max": 399.5342920000003
+          },
+          "deliveryEndMs": 2235.0999999940395,
+          "idleMs": 721.0999999940395,
+          "movingElements": [],
+          "received": 62,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 2204.300000011921,
+          "frames": {
+            "n": 60,
+            "median": 33.29999999999927,
+            "p95": 50,
+            "max": 183.29999999999927
+          },
+          "changedFrameIntervals": {
+            "n": 51,
+            "median": 33.39999999999782,
+            "p95": 50.099999999998545,
+            "max": 183.29999999999927
+          },
+          "changedFrames": 52,
+          "cameraBefore": {
+            "k": 0.030063261956140834,
+            "x": 268.2344657776794,
+            "y": 29.636363636363683
+          },
+          "cameraAfter": {
+            "k": 0.030063261956140765,
+            "x": 268.23446577768027,
+            "y": 29.636363636364365
+          },
+          "firstChangedFrameMs": 147.60000001788285,
+          "before": "translate(268.234px, 29.6364px) scale(0.0300633)",
+          "after": "translate(268.234px, 29.6364px) scale(0.0300633)",
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "producerMs": 1062.7069160000028,
+          "completionMs": 1194.7555829999983,
+          "backlogMs": 132.04866699999548,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 150.0935829999944,
+            "p95": 283.49891700000444,
+            "max": 303.2024999999994
+          },
+          "deliveryEndMs": 2044.2999999821186,
+          "idleMs": 655.7000000178814,
+          "movingElements": [],
+          "received": 62,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 2011.5999999940395,
+          "frames": {
+            "n": 55,
+            "median": 33.30000000000291,
+            "p95": 50.70000000000073,
+            "max": 100
+          },
+          "changedFrameIntervals": {
+            "n": 46,
+            "median": 33.39999999999782,
+            "p95": 67.30000000000291,
+            "max": 100
+          },
+          "changedFrames": 47,
+          "cameraBefore": {
+            "k": 1.0000002181757814,
+            "x": -9306.370558601491,
+            "y": -9532.002150776852
+          },
+          "cameraAfter": {
+            "k": 1.0000002181757788,
+            "x": -9306.370558601464,
+            "y": -9532.002150776825
+          },
+          "firstChangedFrameMs": 198.90000001788212,
+          "before": "translate(-9306.37px, -9532px) scale(1)",
+          "after": "translate(-9306.37px, -9532px) scale(1)",
+          "moving": false
+        }
+      ],
+      "trackpadPan": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "before": {
+            "k": 0.030063261956140834,
+            "x": 268.2344657776794,
+            "y": 29.636363636363683
+          },
+          "forward": {
+            "k": 0.030063261956140834,
+            "x": 88.23446577767942,
+            "y": -90.3636363636363
+          },
+          "after": {
+            "k": 0.030063261956140834,
+            "x": 268.2344657776794,
+            "y": 29.636363636363694
+          },
+          "received": 63,
+          "trusted": true,
+          "deltaX": 0,
+          "deltaY": 0,
+          "zoomUnchanged": true,
+          "pageScrollUnchanged": true,
+          "inputMs": 1958.4000000059605,
+          "frames": {
+            "n": 64,
+            "median": 17.599999999998545,
+            "p95": 34.400000000001455,
+            "max": 183.3000000000029
+          },
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "before": {
+            "k": 1.0000002181757814,
+            "x": -9306.370558601491,
+            "y": -9532.002150776852
+          },
+          "forward": {
+            "k": 1.0000002181757814,
+            "x": -9486.370558601491,
+            "y": -9652.002150776852
+          },
+          "after": {
+            "k": 1.0000002181757814,
+            "x": -9306.370558601491,
+            "y": -9532.002150776852
+          },
+          "received": 63,
+          "trusted": true,
+          "deltaX": 0,
+          "deltaY": 0,
+          "zoomUnchanged": true,
+          "pageScrollUnchanged": true,
+          "inputMs": 1917.5999999940395,
+          "frames": {
+            "n": 63,
+            "median": 33.299999999995634,
+            "p95": 33.69999999999709,
+            "max": 50
+          },
+          "moving": false
+        }
+      ],
+      "singleZoomInputs": [
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "expectedRatio": 1.2,
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(268.234px, 29.6364px) scale(0.0300633)",
+          "after": "translate(208.781px, -29.6364px) scale(0.0360759)",
+          "trusted": true,
+          "commitMs": 13.800000011920929,
+          "changedFrameMs": 31.900000011919474,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "expectedRatio": 1.2,
+          "anchorError": 5.684341886080802e-14,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(268.234px, 29.6364px) scale(0.0300633)",
+          "after": "translate(208.881px, -29.6364px) scale(0.0360759)",
+          "trusted": true,
+          "commitMs": 15.400000005960464,
+          "changedFrameMs": 141.20000001192238,
+          "movingFrames": 9,
+          "frames": 12
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "expectedRatio": 0.8333333333333334,
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(268.234px, 29.6364px) scale(0.0300633)",
+          "after": "translate(317.779px, 79.0303px) scale(0.0250527)",
+          "trusted": true,
+          "commitMs": 26.399999976158142,
+          "changedFrameMs": 42.80000000000291,
+          "movingFrames": 0,
+          "frames": 37
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "expectedRatio": 0.8333333333333334,
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(268.234px, 29.6364px) scale(0.0300633)",
+          "after": "translate(317.695px, 79.0303px) scale(0.0250527)",
+          "trusted": true,
+          "commitMs": 16.400000005960464,
+          "changedFrameMs": 174.60000001192384,
+          "movingFrames": 5,
+          "frames": 8
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "expectedRatio": 1.2,
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-9306.37px, -9532px) scale(1)",
+          "after": "translate(-11280.7px, -11503.6px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 22.099999994039536,
+          "changedFrameMs": 30.30000001787994,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "expectedRatio": 1.2,
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-9306.37px, -9532px) scale(1)",
+          "after": "translate(-11280.6px, -11503.6px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 27.899999976158142,
+          "changedFrameMs": 148.5,
+          "movingFrames": 12,
+          "frames": 17
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "expectedRatio": 0.8333333333333334,
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-9306.37px, -9532px) scale(1)",
+          "after": "translate(-7661.06px, -7889px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 14.299999982118607,
+          "changedFrameMs": 29.5,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "expectedRatio": 0.8333333333333334,
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-9306.37px, -9532px) scale(1)",
+          "after": "translate(-7661.14px, -7889px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 29.099999994039536,
+          "changedFrameMs": 146.00000000596629,
+          "movingFrames": 12,
+          "frames": 16
+        }
+      ]
+    },
+    "electron-functional-before": {
+      "buildHash": "5748e90fd7b168a6de2b6fd60dac60619b7d877f3ec5d48ef40ec90b811da916",
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "02220a4a18f469cf599192487453c572d8ac0dd21323921f00960d4c86518fb4",
+        "desktop-performance-cba-scenario.cjs": "3b7ae9b195df1e6aa831d551b0c25deb78f0b47e9012080390253b8be3223b91",
+        "cba-rendering-regression.cjs": "0bf47e8c6c9217dbd8c756859c7e8c58f6dafbf99fe9f6b5a611b3fd18366a59",
+        "diagram-overview-scenario.cjs": "ddb1fbd75f296d46bdb5f940ab23ccd050612f0b1c2269acb0c243e2bbe5898d",
+        "diagram-overview-visual.cjs": "74bc53bc6ad81007be31a51b1588dc2ecb5f5db209519d155c37eae830fd38c2",
+        "diagram-overview-sweep.cjs": "0ff949cf75931f0b81a4ba9f6e46332819ab79c8a3c8252067b89de7ef4460ac",
+        "diagram-pinch-comparison.cjs": "85fb9647575afc91f4512d127fcd27bf07dc78b92c235b65ac46f0d8856d60cf",
+        "diagram-pinch-continuity.cjs": "85c16810a2b9f4c8180866d92613937c4dde9acb5c654bca868190f3a2b59de9"
+      },
+      "hardware": {
+        "cpu": "Apple M2",
+        "ram": 8589934592,
+        "arch": "arm64"
+      },
+      "runtime": {
+        "versions": {
+          "node": "24.22.0",
+          "acorn": "8.18.0",
+          "ada": "4.0.0",
+          "amaro": "1.1.11",
+          "ares": "1.34.8",
+          "brotli": "1.2.0",
+          "cldr": "48.0",
+          "icu": "78.2",
+          "llhttp": "9.4.3",
+          "merve": "1.2.2",
+          "modules": "150",
+          "napi": "10",
+          "nbytes": "0.1.4",
+          "ncrypto": "0.0.1",
+          "nghttp2": "1.70.0",
+          "nghttp3": "",
+          "ngtcp2": "",
+          "openssl": "0.0.0",
+          "simdjson": "4.6.11",
+          "simdutf": "7.7.0",
+          "sqlite": "3.53.4",
+          "tz": "2026e",
+          "undici": "7.29.1",
+          "unicode": "17.0",
+          "uv": "1.52.1",
+          "uvwasi": "0.0.23",
+          "v8": "15.6.75.19-electron.0",
+          "zlib": "1.3.2.1-motley",
+          "zstd": "1.6.0",
+          "electron": "45.0.0",
+          "chrome": "156.0.8078.48"
+        },
+        "gpu": {
+          "2d_canvas": "enabled",
+          "direct_rendering_display_compositor": "disabled_off_ok",
+          "gpu_compositing": "enabled",
+          "multiple_raster_threads": "enabled_on",
+          "opengl": "enabled_on",
+          "rasterization": "enabled",
+          "raw_draw": "disabled_off_ok",
+          "skia_graphite": "enabled_on",
+          "trees_in_viz": "disabled_off",
+          "video_decode": "enabled",
+          "video_encode": "enabled",
+          "webgl": "enabled",
+          "webgpu": "enabled",
+          "webnn": "disabled_off"
+        },
+        "gpuInfo": {
+          "auxAttributes": {
+            "amdSwitchable": false,
+            "canSupportThreadedTextureMailbox": false,
+            "glImplementationParts": "(gl=none,angle=none)",
+            "glResetNotificationStrategy": 0,
+            "inProcessGpu": true,
+            "initializationTime": 0,
+            "isAsan": false,
+            "isClangCoverage": false,
+            "jpegDecodeAcceleratorSupported": false,
+            "optimus": false,
+            "passthroughCmdDecoder": false,
+            "sandboxed": false,
+            "skiaBackendType": "None",
+            "subpixelFontRendering": true,
+            "targetCpuBits": 64,
+            "visibilityCallbackCallCount": 0
+          },
+          "gpuDevice": [
+            {
+              "active": true,
+              "deviceId": 0,
+              "gpuPreference": 0,
+              "vendorId": 4203
+            }
+          ],
+          "machineModelName": "Mac",
+          "machineModelVersion": "14.2"
+        },
+        "flags": [
+          "/Users/Nick/xhandle-desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+          "--inspect=0",
+          "--remote-debugging-port=0",
+          "/var/folders/67/8rby79hs1xq1fvs4f925m8600000gp/T/xhandle-full-app-perf-jnXTqa/main.cjs"
+        ]
+      },
+      "fixture": {
+        "nodes": 1500,
+        "relationships": 3000,
+        "hazardRows": 1000,
+        "seed": 30
+      },
+      "preserved": {
+        "nodeLayout": true,
+        "edgeIds": true
+      },
+      "errors": [],
+      "pinchContinuity": [
+        {
+          "repeat": 0,
+          "kind": "single",
+          "before": {
+            "k": 0.02971213236113898,
+            "x": 300.2300822797512,
+            "y": 24.227272727272776
+          },
+          "after": {
+            "k": 0.05348183809846291,
+            "x": 88.41414945437225,
+            "y": -169.19090785741747
+          },
+          "events": [
+            {
+              "time": 8269.90000000596,
+              "delta": -42.399845123291016,
+              "trusted": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 8467.3,
+              "k": 0.05348183809846291,
+              "x": 88.41414945437225,
+              "y": -169.19090785741747,
+              "logStep": 0.5877866620677502
+            }
+          ],
+          "firstChangedFrameMs": 197.3999999940388,
+          "completeMs": 197.3999999940388,
+          "anchorError": 0,
+          "maximumStepFraction": 0.9999999951778953
+        },
+        {
+          "repeat": 0,
+          "kind": "clustered",
+          "before": {
+            "k": 0.02971213236113898,
+            "x": 300.2300822797512,
+            "y": 24.227272727272776
+          },
+          "after": {
+            "k": 0.05348183809846293,
+            "x": 88.41414945437202,
+            "y": -169.19090785741759
+          },
+          "events": [
+            {
+              "time": 10817.800000011921,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 10940.700000017881,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 10992.40000000596,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 11023.09999999404,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 11228.200000017881,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 11262.800000011921,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 11288.700000017881,
+              "delta": -4.239984512329102,
+              "trusted": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 10967.3,
+              "k": 0.03341860536741039,
+              "x": 267.2010643360123,
+              "y": -5.93293510961206,
+              "logStep": 0.11755733241355025
+            },
+            {
+              "time": 11000.3,
+              "k": 0.03544178382117674,
+              "x": 249.17217343628948,
+              "y": -22.395885886119686,
+              "logStep": 0.05877866620677507
+            },
+            {
+              "time": 11017.4,
+              "k": 0.039863008573093626,
+              "x": 209.77387985171936,
+              "y": -58.37215151270618,
+              "logStep": 0.11755733241355004
+            },
+            {
+              "time": 11217.3,
+              "k": 0.04483576392532084,
+              "x": 165.4608023031629,
+              "y": -98.83631641863877,
+              "logStep": 0.11755733241355004
+            },
+            {
+              "time": 11250.7,
+              "k": 0.05042885117617438,
+              "x": 115.61984059731327,
+              "y": -144.34822859232776,
+              "logStep": 0.11755733241355004
+            },
+            {
+              "time": 11267.3,
+              "k": 0.05348183809846293,
+              "x": 88.41414945437202,
+              "y": -169.19090785741759,
+              "logStep": 0.05877866620677507
+            }
+          ],
+          "firstChangedFrameMs": 149.49999998807834,
+          "completeMs": 449.49999998807834,
+          "anchorError": 5.684341886080802e-14,
+          "maximumStepFraction": 0.1999999990355794
+        },
+        {
+          "repeat": 1,
+          "kind": "single",
+          "before": {
+            "k": 0.02971213236113898,
+            "x": 300.2300822797512,
+            "y": 24.227272727272776
+          },
+          "after": {
+            "k": 0.05348183809846291,
+            "x": 88.41414945437225,
+            "y": -169.19090785741747
+          },
+          "events": [
+            {
+              "time": 16294.90000000596,
+              "delta": -42.399845123291016,
+              "trusted": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 16484,
+              "k": 0.05348183809846291,
+              "x": 88.41414945437225,
+              "y": -169.19090785741747,
+              "logStep": 0.5877866620677502
+            }
+          ],
+          "firstChangedFrameMs": 189.09999999403954,
+          "completeMs": 189.09999999403954,
+          "anchorError": 0,
+          "maximumStepFraction": 0.9999999951778953
+        },
+        {
+          "repeat": 1,
+          "kind": "clustered",
+          "before": {
+            "k": 0.02971213236113898,
+            "x": 300.2300822797512,
+            "y": 24.227272727272776
+          },
+          "after": {
+            "k": 0.05348183809846291,
+            "x": 88.41414945437225,
+            "y": -169.19090785741753
+          },
+          "events": [
+            {
+              "time": 21317.40000000596,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 21495.90000000596,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 21573.20000001788,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 21601.80000001192,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 21799.20000001788,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 21829.90000000596,
+              "delta": -8.479969024658203,
+              "trusted": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 21533.9,
+              "k": 0.035441783821176735,
+              "x": 249.1721734362896,
+              "y": -22.39588588611963,
+              "logStep": 0.1763359986203251
+            },
+            {
+              "time": 21567.3,
+              "k": 0.03758744647231704,
+              "x": 230.05180480395046,
+              "y": -39.855511626476186,
+              "logStep": 0.05877866620677507
+            },
+            {
+              "time": 21583.9,
+              "k": 0.04227633429870979,
+              "x": 188.26831956284292,
+              "y": -78.00979768995575,
+              "logStep": 0.11755733241355004
+            },
+            {
+              "time": 21783.9,
+              "k": 0.047550142653414736,
+              "x": 141.27250697101783,
+              "y": -120.92368261523922,
+              "logStep": 0.11755733241355004
+            },
+            {
+              "time": 21817.3,
+              "k": 0.05348183809846291,
+              "x": 88.41414945437225,
+              "y": -169.19090785741753,
+              "logStep": 0.11755733241355004
+            }
+          ],
+          "firstChangedFrameMs": 216.499999994041,
+          "completeMs": 499.8999999940388,
+          "anchorError": 5.684341886080802e-14,
+          "maximumStepFraction": 0.2999999985533686
+        }
+      ]
+    },
+    "electron-functional-confirmed": {
+      "buildHash": "21f2807dcc70b7102123d9254c7120fa01d7b3e40cfb6db552f7a5c689ddd201",
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "02220a4a18f469cf599192487453c572d8ac0dd21323921f00960d4c86518fb4",
+        "desktop-performance-cba-scenario.cjs": "3b7ae9b195df1e6aa831d551b0c25deb78f0b47e9012080390253b8be3223b91",
+        "cba-rendering-regression.cjs": "0bf47e8c6c9217dbd8c756859c7e8c58f6dafbf99fe9f6b5a611b3fd18366a59",
+        "diagram-overview-scenario.cjs": "dd4508a22ed3a5b2673ad8011c2cec343e3e82837d36cf69ac6259d48d5d2342",
+        "diagram-overview-visual.cjs": "74bc53bc6ad81007be31a51b1588dc2ecb5f5db209519d155c37eae830fd38c2",
+        "diagram-overview-sweep.cjs": "0ff949cf75931f0b81a4ba9f6e46332819ab79c8a3c8252067b89de7ef4460ac",
+        "diagram-pinch-comparison.cjs": "85fb9647575afc91f4512d127fcd27bf07dc78b92c235b65ac46f0d8856d60cf",
+        "diagram-pinch-burst.cjs": "ab1405fc201959a4346e9890b8257c6a9207a32ceab92c02dc426b41c9b4f9f4",
+        "diagram-pinch-continuity.cjs": "c433587c2d30f5a1f6bfea6a75af8ea2f3fbde16973ba8332c831b58b0f771b9",
+        "diagram-trackpad-pan.cjs": "a78c952fdc2e0c1acc2782166f2127a2ef135b6cdf839773ac77b9c3b00c80fc"
+      },
+      "hardware": {
+        "cpu": "Apple M2",
+        "ram": 8589934592,
+        "arch": "arm64"
+      },
+      "runtime": {
+        "versions": {
+          "node": "24.22.0",
+          "acorn": "8.18.0",
+          "ada": "4.0.0",
+          "amaro": "1.1.11",
+          "ares": "1.34.8",
+          "brotli": "1.2.0",
+          "cldr": "48.0",
+          "icu": "78.2",
+          "llhttp": "9.4.3",
+          "merve": "1.2.2",
+          "modules": "150",
+          "napi": "10",
+          "nbytes": "0.1.4",
+          "ncrypto": "0.0.1",
+          "nghttp2": "1.70.0",
+          "nghttp3": "",
+          "ngtcp2": "",
+          "openssl": "0.0.0",
+          "simdjson": "4.6.11",
+          "simdutf": "7.7.0",
+          "sqlite": "3.53.4",
+          "tz": "2026e",
+          "undici": "7.29.1",
+          "unicode": "17.0",
+          "uv": "1.52.1",
+          "uvwasi": "0.0.23",
+          "v8": "15.6.75.19-electron.0",
+          "zlib": "1.3.2.1-motley",
+          "zstd": "1.6.0",
+          "electron": "45.0.0",
+          "chrome": "156.0.8078.48"
+        },
+        "gpu": {
+          "2d_canvas": "enabled",
+          "direct_rendering_display_compositor": "disabled_off_ok",
+          "gpu_compositing": "enabled",
+          "multiple_raster_threads": "enabled_on",
+          "opengl": "enabled_on",
+          "rasterization": "enabled",
+          "raw_draw": "disabled_off_ok",
+          "skia_graphite": "enabled_on",
+          "trees_in_viz": "disabled_off",
+          "video_decode": "enabled",
+          "video_encode": "enabled",
+          "webgl": "enabled",
+          "webgpu": "enabled",
+          "webnn": "disabled_off"
+        },
+        "gpuInfo": {
+          "auxAttributes": {
+            "amdSwitchable": false,
+            "canSupportThreadedTextureMailbox": false,
+            "glImplementationParts": "(gl=none,angle=none)",
+            "glResetNotificationStrategy": 0,
+            "inProcessGpu": true,
+            "initializationTime": 0,
+            "isAsan": false,
+            "isClangCoverage": false,
+            "jpegDecodeAcceleratorSupported": false,
+            "optimus": false,
+            "passthroughCmdDecoder": false,
+            "sandboxed": false,
+            "skiaBackendType": "None",
+            "subpixelFontRendering": true,
+            "targetCpuBits": 64,
+            "visibilityCallbackCallCount": 0
+          },
+          "gpuDevice": [
+            {
+              "active": true,
+              "deviceId": 0,
+              "gpuPreference": 0,
+              "vendorId": 4203
+            }
+          ],
+          "machineModelName": "Mac",
+          "machineModelVersion": "14.2"
+        },
+        "flags": [
+          "/Users/Nick/xhandle-desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+          "--inspect=0",
+          "--remote-debugging-port=0",
+          "/var/folders/67/8rby79hs1xq1fvs4f925m8600000gp/T/xhandle-full-app-perf-jU3uYA/main.cjs"
+        ]
+      },
+      "fixture": {
+        "nodes": 1500,
+        "relationships": 3000,
+        "hazardRows": 1000,
+        "seed": 30
+      },
+      "preserved": {
+        "nodeLayout": true,
+        "edgeIds": true
+      },
+      "errors": [],
+      "pinchContinuity": [
+        {
+          "repeat": 0,
+          "kind": "single",
+          "before": {
+            "k": 0.029879367627711994,
+            "x": 298.7370058197873,
+            "y": 24.363636363636402
+          },
+          "after": {
+            "k": 0.053782861577441124,
+            "x": 85.72661183405472,
+            "y": -170.54545330245492
+          },
+          "events": [
+            {
+              "time": 8315.700000017881,
+              "delta": -42.399845123291016,
+              "trusted": true
+            }
+          ],
+          "motionChanges": [
+            {
+              "time": 8337.90000000596,
+              "moving": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 8513.9,
+              "k": 0.03295465876865051,
+              "x": 271.3322682977411,
+              "y": -0.7122875995762463,
+              "moving": true,
+              "logStep": 0.09796444367795817
+            },
+            {
+              "time": 8530.5,
+              "k": 0.039774435104556076,
+              "x": 210.55942700261815,
+              "y": -56.32074384255024,
+              "moving": true,
+              "logStep": 0.18809173186168035
+            },
+            {
+              "time": 8547.2,
+              "k": 0.043850975188106676,
+              "x": 174.23229377590488,
+              "y": -89.56085168382182,
+              "moving": true,
+              "logStep": 0.09757258590324858
+            },
+            {
+              "time": 8747.2,
+              "k": 0.04837375092369022,
+              "x": 133.9286359352619,
+              "y": -126.43956503177006,
+              "moving": true,
+              "logStep": 0.09816037256531858
+            },
+            {
+              "time": 8780.5,
+              "k": 0.053782861577441124,
+              "x": 85.72661183405472,
+              "y": -170.54545330245492,
+              "moving": true,
+              "logStep": 0.1059975280595445
+            }
+          ],
+          "firstChangedFrameMs": 198.19999998211824,
+          "completeMs": 464.7999999821186,
+          "anchorError": 0,
+          "maximumStepFraction": 0.31999999845692695
+        },
+        {
+          "repeat": 0,
+          "kind": "clustered",
+          "before": {
+            "k": 0.029879367627711994,
+            "x": 298.7370058197873,
+            "y": 24.363636363636402
+          },
+          "after": {
+            "k": 0.053782861577441124,
+            "x": 85.72661183405455,
+            "y": -170.54545330245503
+          },
+          "events": [
+            {
+              "time": 11098.100000023842,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 11259,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 11269.700000017881,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 11296.200000017881,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 11481.600000023842,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 11510.600000023842,
+              "delta": -8.479969024658203,
+              "trusted": true
+            }
+          ],
+          "motionChanges": [
+            {
+              "time": 11118.90000000596,
+              "moving": true
+            },
+            {
+              "time": 11928,
+              "moving": false
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 11230.5,
+              "k": 0.031688278925234376,
+              "x": 282.6173159961642,
+              "y": 9.613773643638922,
+              "moving": true,
+              "logStep": 0.05877866620677507
+            },
+            {
+              "time": 11281.5,
+              "k": 0.03263339647077777,
+              "x": 274.1951221042412,
+              "y": 1.9072851772780535,
+              "moving": true,
+              "logStep": 0.029389333103387538
+            },
+            {
+              "time": 11464.9,
+              "k": 0.034104188111764584,
+              "x": 261.08850649497487,
+              "y": -10.085549863328415,
+              "moving": true,
+              "logStep": 0.044083999655081335
+            },
+            {
+              "time": 11498.2,
+              "k": 0.036080398873644635,
+              "x": 243.47796663531201,
+              "y": -26.199572415698363,
+              "moving": true,
+              "logStep": 0.056329555114825985
+            },
+            {
+              "time": 11531.5,
+              "k": 0.03856264011280038,
+              "x": 221.3580545658804,
+              "y": -46.43976747977434,
+              "moving": true,
+              "logStep": 0.06653418466461343
+            },
+            {
+              "time": 11548.2,
+              "k": 0.04381733737800481,
+              "x": 174.53204925088616,
+              "y": -89.2865689802513,
+              "moving": true,
+              "logStep": 0.12774563455605759
+            },
+            {
+              "time": 11564.8,
+              "k": 0.04683809289738688,
+              "x": 147.61329316144668,
+              "y": -113.91780948529268,
+              "moving": true,
+              "logStep": 0.06666725303394548
+            },
+            {
+              "time": 11581.5,
+              "k": 0.05004711544181108,
+              "x": 119.01683952439824,
+              "y": -140.08417931252762,
+              "moving": true,
+              "logStep": 0.06626804792594908
+            },
+            {
+              "time": 11598.2,
+              "k": 0.0534973501946852,
+              "x": 88.27087972460453,
+              "y": -168.2173934874632,
+              "moving": true,
+              "logStep": 0.06666725303394548
+            },
+            {
+              "time": 11631.5,
+              "k": 0.053782861577441124,
+              "x": 85.72661183405455,
+              "y": -170.54545330245503,
+              "moving": true,
+              "logStep": 0.005322734773168979
+            }
+          ],
+          "firstChangedFrameMs": 132.39999997615814,
+          "completeMs": 533.3999999761581,
+          "anchorError": 2.5421149729252077e-13,
+          "maximumStepFraction": 0.21733333228532903
+        },
+        {
+          "repeat": 1,
+          "kind": "single",
+          "before": {
+            "k": 0.029879367627711994,
+            "x": 298.7370058197873,
+            "y": 24.363636363636402
+          },
+          "after": {
+            "k": 0.053782861577441124,
+            "x": 85.72661183405472,
+            "y": -170.54545330245492
+          },
+          "events": [
+            {
+              "time": 16584.80000001192,
+              "delta": -42.399845123291016,
+              "trusted": true
+            }
+          ],
+          "motionChanges": [
+            {
+              "time": 16614.100000023842,
+              "moving": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 16748.1,
+              "k": 0.03295465876865051,
+              "x": 271.3322682977411,
+              "y": -0.7122875995762463,
+              "moving": true,
+              "logStep": 0.09796444367795817
+            },
+            {
+              "time": 16781.5,
+              "k": 0.039774435104556076,
+              "x": 210.55942700261815,
+              "y": -56.32074384255024,
+              "moving": true,
+              "logStep": 0.18809173186168035
+            },
+            {
+              "time": 16798.1,
+              "k": 0.04800552477246376,
+              "x": 137.20999713348488,
+              "y": -123.43704899466948,
+              "moving": true,
+              "logStep": 0.18809173186168
+            },
+            {
+              "time": 16981.4,
+              "k": 0.05292568128637465,
+              "x": 93.3651734560867,
+              "y": -163.55600520909888,
+              "moving": true,
+              "logStep": 0.0975725859032381
+            },
+            {
+              "time": 16998.1,
+              "k": 0.053782861577441124,
+              "x": 85.72661183405472,
+              "y": -170.54545330245492,
+              "moving": true,
+              "logStep": 0.01606616876319358
+            }
+          ],
+          "firstChangedFrameMs": 163.29999998807762,
+          "completeMs": 413.2999999880776,
+          "anchorError": 0,
+          "maximumStepFraction": 0.31999999845692695
+        },
+        {
+          "repeat": 1,
+          "kind": "clustered",
+          "before": {
+            "k": 0.029879367627711994,
+            "x": 298.7370058197873,
+            "y": 24.363636363636402
+          },
+          "after": {
+            "k": 0.053782861577441145,
+            "x": 85.72661183405455,
+            "y": -170.5454533024551
+          },
+          "events": [
+            {
+              "time": 22092.20000001788,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 22105.80000001192,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 22318.100000023842,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 22352.30000001192,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 22559.40000000596,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 22594,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 22619.20000001788,
+              "delta": -4.239984512329102,
+              "trusted": true
+            }
+          ],
+          "motionChanges": [
+            {
+              "time": 22134.80000001192,
+              "moving": true
+            },
+            {
+              "time": 23016.20000001788,
+              "moving": false
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 22281.4,
+              "k": 0.03047056345789535,
+              "x": 293.46870249246115,
+              "y": 19.543025564321326,
+              "moving": true,
+              "logStep": 0.0195928887355917
+            },
+            {
+              "time": 22314.7,
+              "k": 0.031638648637567324,
+              "x": 283.0595846934441,
+              "y": 10.01845900927605,
+              "moving": true,
+              "logStep": 0.037618346372336124
+            },
+            {
+              "time": 22329.8,
+              "k": 0.0322730836299046,
+              "x": 277.4059656886111,
+              "y": 4.8452760817578895,
+              "moving": true,
+              "logStep": 0.019854127252066284
+            },
+            {
+              "time": 22548.1,
+              "k": 0.03346069791227005,
+              "x": 266.82281885987675,
+              "y": -4.838530776649963,
+              "moving": true,
+              "logStep": 0.036137994778980095
+            },
+            {
+              "time": 22581.4,
+              "k": 0.03516599054424503,
+              "x": 251.62650253215116,
+              "y": -18.743486897773977,
+              "moving": true,
+              "logStep": 0.049707884384741774
+            },
+            {
+              "time": 22598.1,
+              "k": 0.037378495916202,
+              "x": 231.91027853714627,
+              "y": -36.7842557007111,
+              "moving": true,
+              "logStep": 0.06101612572287651
+            },
+            {
+              "time": 22631.4,
+              "k": 0.03971539037155504,
+              "x": 211.08559032693316,
+              "y": -55.83929308965978,
+              "moving": true,
+              "logStep": 0.06064321580352626
+            },
+            {
+              "time": 22648.1,
+              "k": 0.04461962361841101,
+              "x": 167.38266311856344,
+              "y": -95.82841098452334,
+              "moving": true,
+              "logStep": 0.11643497434277073
+            },
+            {
+              "time": 22681.4,
+              "k": 0.04741498205825235,
+              "x": 142.47248037062695,
+              "y": -118.62176370298964,
+              "moving": true,
+              "logStep": 0.060764502235122926
+            },
+            {
+              "time": 22698.1,
+              "k": 0.053269995171146375,
+              "x": 90.29690082597548,
+              "y": -166.36354062552755,
+              "moving": true,
+              "logStep": 0.11643497434277053
+            },
+            {
+              "time": 22714.8,
+              "k": 0.053782861577441145,
+              "x": 85.72661183405455,
+              "y": -170.5454533024551,
+              "moving": true,
+              "logStep": 0.009581628096967604
+            }
+          ],
+          "firstChangedFrameMs": 189.19999998212006,
+          "completeMs": 622.5999999821179,
+          "anchorError": 0,
+          "maximumStepFraction": 0.198090534024211
+        }
+      ],
+      "pinchBursts": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "producerMs": 1123.1475829999981,
+          "completionMs": 1151.4276249999966,
+          "backlogMs": 28.280041999998502,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 62.931917000001704,
+            "p95": 255.24079100000017,
+            "max": 295.4088330000013
+          },
+          "deliveryEndMs": 1801.0999999940395,
+          "idleMs": 653.2000000178814,
+          "movingElements": [],
+          "received": 61,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 1763.9000000059605,
+          "frames": {
+            "n": 60,
+            "median": 17.700000000000728,
+            "p95": 34.599999999998545,
+            "max": 183.40000000000146
+          },
+          "changedFrameIntervals": {
+            "n": 58,
+            "median": 31.799999999999272,
+            "p95": 35.29999999999927,
+            "max": 183.40000000000146
+          },
+          "changedFrames": 59,
+          "cameraBefore": {
+            "k": 0.029879367627711994,
+            "x": 298.7370058197873,
+            "y": 24.363636363636402
+          },
+          "cameraAfter": {
+            "k": 0.029879367627711907,
+            "x": 298.7370058197882,
+            "y": 24.3636363636368
+          },
+          "firstChangedFrameMs": 131.59999999999854,
+          "before": "translate(298.737px, 24.3636px) scale(0.0298794)",
+          "after": "translate(298.737px, 24.3636px) scale(0.0298794)",
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "producerMs": 1126.2871670000022,
+          "completionMs": 1165.2823750000025,
+          "backlogMs": 38.995208000000275,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 51.23587499999849,
+            "p95": 157.3495419999963,
+            "max": 202.92262499999924
+          },
+          "deliveryEndMs": 1770.800000011921,
+          "idleMs": 653.5,
+          "movingElements": [],
+          "received": 61,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 1730.0999999940395,
+          "frames": {
+            "n": 59,
+            "median": 33.29999999999927,
+            "p95": 34.39999999999782,
+            "max": 34.60000000000218
+          },
+          "changedFrameIntervals": {
+            "n": 58,
+            "median": 33.29999999999927,
+            "p95": 34.39999999999782,
+            "max": 34.60000000000218
+          },
+          "changedFrames": 59,
+          "cameraBefore": {
+            "k": 1.0000006336982006,
+            "x": -8346.271691829377,
+            "y": -7886.005167175127
+          },
+          "cameraAfter": {
+            "k": 1.0000006336981986,
+            "x": -8346.271691829359,
+            "y": -7886.005167175112
+          },
+          "firstChangedFrameMs": 164.39999997615814,
+          "before": "translate(-8346.27px, -7886.01px) scale(1)",
+          "after": "translate(-8346.27px, -7886.01px) scale(1)",
+          "moving": false
+        }
+      ],
+      "trackpadPan": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "before": {
+            "k": 0.029879367627711994,
+            "x": 298.7370058197873,
+            "y": 24.363636363636402
+          },
+          "forward": {
+            "k": 0.029879367627711994,
+            "x": 118.73700581978733,
+            "y": -95.6363636363636
+          },
+          "after": {
+            "k": 0.029879367627711994,
+            "x": 298.7370058197873,
+            "y": 24.363636363636402
+          },
+          "received": 63,
+          "trusted": true,
+          "deltaX": 0,
+          "deltaY": 0,
+          "zoomUnchanged": true,
+          "pageScrollUnchanged": true,
+          "inputMs": 1690.199999988079,
+          "frames": {
+            "n": 65,
+            "median": 16.69999999999709,
+            "p95": 33.400000000001455,
+            "max": 181.6999999999971
+          },
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "before": {
+            "k": 1.0000006336982006,
+            "x": -8346.271691829377,
+            "y": -7886.005167175127
+          },
+          "forward": {
+            "k": 1.0000006336982006,
+            "x": -8526.271691829377,
+            "y": -8006.005167175127
+          },
+          "after": {
+            "k": 1.0000006336982006,
+            "x": -8346.271691829377,
+            "y": -7886.005167175127
+          },
+          "received": 64,
+          "trusted": true,
+          "deltaX": 0,
+          "deltaY": 0,
+          "zoomUnchanged": true,
+          "pageScrollUnchanged": true,
+          "inputMs": 1607.0999999940395,
+          "frames": {
+            "n": 65,
+            "median": 16.700000000004366,
+            "p95": 33.400000000001455,
+            "max": 35.19999999999709
+          },
+          "moving": false
+        }
+      ],
+      "singleZoomInputs": [
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "expectedRatio": 1.2,
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(298.737px, 24.3636px) scale(0.0298794)",
+          "after": "translate(245.384px, -24.3636px) scale(0.0358552)",
+          "trusted": true,
+          "commitMs": 12.5,
+          "changedFrameMs": 17.199999976161052,
+          "movingFrames": 0,
+          "frames": 37
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "expectedRatio": 1.2,
+          "anchorError": 5.684341886080802e-14,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(298.737px, 24.3636px) scale(0.0298794)",
+          "after": "translate(245.484px, -24.3636px) scale(0.0358552)",
+          "trusted": true,
+          "commitMs": 15.399999976158142,
+          "changedFrameMs": 139.2999999761596,
+          "movingFrames": 10,
+          "frames": 13
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "expectedRatio": 0.8333333333333334,
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333333,
+          "before": "translate(298.737px, 24.3636px) scale(0.0298794)",
+          "after": "translate(343.198px, 64.9697px) scale(0.0248995)",
+          "trusted": true,
+          "commitMs": 14.700000017881393,
+          "changedFrameMs": 30.400000000001455,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "expectedRatio": 0.8333333333333334,
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(298.737px, 24.3636px) scale(0.0298794)",
+          "after": "translate(343.114px, 64.9697px) scale(0.0248995)",
+          "trusted": true,
+          "commitMs": 12.300000011920929,
+          "changedFrameMs": 125.5,
+          "movingFrames": 10,
+          "frames": 13
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "expectedRatio": 1.2,
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-8346.27px, -7886.01px) scale(1)",
+          "after": "translate(-10128.6px, -9516.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 22.900000005960464,
+          "changedFrameMs": 39.80000000000291,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "expectedRatio": 1.2,
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-8346.27px, -7886.01px) scale(1)",
+          "after": "translate(-10128.5px, -9516.81px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 17,
+          "changedFrameMs": 139.2999999821186,
+          "movingFrames": 12,
+          "frames": 16
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "expectedRatio": 0.8333333333333334,
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-8346.27px, -7886.01px) scale(1)",
+          "after": "translate(-6860.98px, -6527px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 12.900000005960464,
+          "changedFrameMs": 29.19999999999709,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "expectedRatio": 0.8333333333333334,
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-8346.27px, -7886.01px) scale(1)",
+          "after": "translate(-6861.06px, -6527px) scale(0.833334)",
+          "trusted": true,
+          "commitMs": 21.400000005960464,
+          "changedFrameMs": 139.99999999403371,
+          "movingFrames": 12,
+          "frames": 18
+        }
+      ]
+    },
+    "electron-csu-before": {
+      "buildHash": "5748e90fd7b168a6de2b6fd60dac60619b7d877f3ec5d48ef40ec90b811da916",
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "02220a4a18f469cf599192487453c572d8ac0dd21323921f00960d4c86518fb4",
+        "desktop-performance-cba-scenario.cjs": "3b7ae9b195df1e6aa831d551b0c25deb78f0b47e9012080390253b8be3223b91",
+        "cba-rendering-regression.cjs": "0bf47e8c6c9217dbd8c756859c7e8c58f6dafbf99fe9f6b5a611b3fd18366a59",
+        "diagram-overview-scenario.cjs": "ddb1fbd75f296d46bdb5f940ab23ccd050612f0b1c2269acb0c243e2bbe5898d",
+        "diagram-overview-visual.cjs": "74bc53bc6ad81007be31a51b1588dc2ecb5f5db209519d155c37eae830fd38c2",
+        "diagram-overview-sweep.cjs": "0ff949cf75931f0b81a4ba9f6e46332819ab79c8a3c8252067b89de7ef4460ac",
+        "diagram-pinch-comparison.cjs": "85fb9647575afc91f4512d127fcd27bf07dc78b92c235b65ac46f0d8856d60cf",
+        "diagram-pinch-continuity.cjs": "85c16810a2b9f4c8180866d92613937c4dde9acb5c654bca868190f3a2b59de9"
+      },
+      "hardware": {
+        "cpu": "Apple M2",
+        "ram": 8589934592,
+        "arch": "arm64"
+      },
+      "runtime": {
+        "versions": {
+          "node": "24.22.0",
+          "acorn": "8.18.0",
+          "ada": "4.0.0",
+          "amaro": "1.1.11",
+          "ares": "1.34.8",
+          "brotli": "1.2.0",
+          "cldr": "48.0",
+          "icu": "78.2",
+          "llhttp": "9.4.3",
+          "merve": "1.2.2",
+          "modules": "150",
+          "napi": "10",
+          "nbytes": "0.1.4",
+          "ncrypto": "0.0.1",
+          "nghttp2": "1.70.0",
+          "nghttp3": "",
+          "ngtcp2": "",
+          "openssl": "0.0.0",
+          "simdjson": "4.6.11",
+          "simdutf": "7.7.0",
+          "sqlite": "3.53.4",
+          "tz": "2026e",
+          "undici": "7.29.1",
+          "unicode": "17.0",
+          "uv": "1.52.1",
+          "uvwasi": "0.0.23",
+          "v8": "15.6.75.19-electron.0",
+          "zlib": "1.3.2.1-motley",
+          "zstd": "1.6.0",
+          "electron": "45.0.0",
+          "chrome": "156.0.8078.48"
+        },
+        "gpu": {
+          "2d_canvas": "enabled",
+          "direct_rendering_display_compositor": "disabled_off_ok",
+          "gpu_compositing": "enabled",
+          "multiple_raster_threads": "enabled_on",
+          "opengl": "enabled_on",
+          "rasterization": "enabled",
+          "raw_draw": "disabled_off_ok",
+          "skia_graphite": "enabled_on",
+          "trees_in_viz": "disabled_off",
+          "video_decode": "enabled",
+          "video_encode": "enabled",
+          "webgl": "enabled",
+          "webgpu": "enabled",
+          "webnn": "disabled_off"
+        },
+        "gpuInfo": {
+          "auxAttributes": {
+            "amdSwitchable": false,
+            "canSupportThreadedTextureMailbox": false,
+            "glImplementationParts": "(gl=none,angle=none)",
+            "glResetNotificationStrategy": 0,
+            "inProcessGpu": true,
+            "initializationTime": 0,
+            "isAsan": false,
+            "isClangCoverage": false,
+            "jpegDecodeAcceleratorSupported": false,
+            "optimus": false,
+            "passthroughCmdDecoder": false,
+            "sandboxed": false,
+            "skiaBackendType": "None",
+            "subpixelFontRendering": true,
+            "targetCpuBits": 64,
+            "visibilityCallbackCallCount": 0
+          },
+          "gpuDevice": [
+            {
+              "active": true,
+              "deviceId": 0,
+              "gpuPreference": 0,
+              "vendorId": 4203
+            }
+          ],
+          "machineModelName": "Mac",
+          "machineModelVersion": "14.2"
+        },
+        "flags": [
+          "/Users/Nick/xhandle-desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+          "--inspect=0",
+          "--remote-debugging-port=0",
+          "/var/folders/67/8rby79hs1xq1fvs4f925m8600000gp/T/xhandle-full-app-perf-3pLLMy/main.cjs"
+        ]
+      },
+      "fixture": {
+        "nodes": 1500,
+        "relationships": 3000,
+        "hazardRows": 1000,
+        "seed": 30
+      },
+      "preserved": {
+        "nodeLayout": true,
+        "edgeIds": true
+      },
+      "errors": [],
+      "pinchContinuity": [
+        {
+          "repeat": 0,
+          "kind": "single",
+          "before": {
+            "k": 0.024576255556170344,
+            "x": 322.4899850605876,
+            "y": 24.227272727272748
+          },
+          "after": {
+            "k": 0.04423725987572191,
+            "x": 128.48197434631078,
+            "y": -169.19090785741759
+          },
+          "events": [
+            {
+              "time": 7501.0999999940395,
+              "delta": -42.399845123291016,
+              "trusted": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 7702.6,
+              "k": 0.04423725987572191,
+              "x": 128.48197434631078,
+              "y": -169.19090785741759,
+              "logStep": 0.5877866620677502
+            }
+          ],
+          "firstChangedFrameMs": 201.50000000596083,
+          "completeMs": 201.50000000596083,
+          "anchorError": 0,
+          "maximumStepFraction": 0.9999999951778953
+        },
+        {
+          "repeat": 0,
+          "kind": "clustered",
+          "before": {
+            "k": 0.024576255556170344,
+            "x": 322.4899850605876,
+            "y": 24.227272727272748
+          },
+          "after": {
+            "k": 0.044237259875721927,
+            "x": 128.4819743463106,
+            "y": -169.1909078574177
+          },
+          "events": [
+            {
+              "time": 10015.800000011921,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 10142.90000000596,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 10201.90000000596,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 10232.40000000596,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 10451.300000011921,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 10489.40000000596,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 10517.700000017881,
+              "delta": -4.239984512329102,
+              "trusted": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 10019.3,
+              "k": 0.027642047896719858,
+              "x": 292.23780345348626,
+              "y": -5.932935109612117,
+              "logStep": 0.11755733241355025
+            },
+            {
+              "time": 10202.6,
+              "k": 0.029315510780875957,
+              "x": 275.72464879045395,
+              "y": -22.395885886119743,
+              "logStep": 0.05877866620677507
+            },
+            {
+              "time": 10219.2,
+              "k": 0.03297250678687416,
+              "x": 239.63867328368752,
+              "y": -58.37215151270624,
+              "logStep": 0.11755733241355004
+            },
+            {
+              "time": 10435.9,
+              "k": 0.037085698828065145,
+              "x": 199.05111261651916,
+              "y": -98.83631641863889,
+              "logStep": 0.11755733241355004
+            },
+            {
+              "time": 10469.2,
+              "k": 0.041711995586379176,
+              "x": 153.40041154008077,
+              "y": -144.34822859232787,
+              "logStep": 0.11755733241355004
+            },
+            {
+              "time": 10502.6,
+              "k": 0.044237259875721927,
+              "x": 128.4819743463106,
+              "y": -169.1909078574177,
+              "logStep": 0.05877866620677507
+            }
+          ],
+          "firstChangedFrameMs": 3.4999999880783434,
+          "completeMs": 486.79999998807943,
+          "anchorError": 0,
+          "maximumStepFraction": 0.1999999990355794
+        },
+        {
+          "repeat": 1,
+          "kind": "single",
+          "before": {
+            "k": 0.024576255556170344,
+            "x": 322.4899850605876,
+            "y": 24.227272727272748
+          },
+          "after": {
+            "k": 0.04423725987572191,
+            "x": 128.48197434631078,
+            "y": -169.19090785741759
+          },
+          "events": [
+            {
+              "time": 15547.5,
+              "delta": -42.399845123291016,
+              "trusted": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 15702.5,
+              "k": 0.04423725987572191,
+              "x": 128.48197434631078,
+              "y": -169.19090785741759,
+              "logStep": 0.5877866620677502
+            }
+          ],
+          "firstChangedFrameMs": 155,
+          "completeMs": 155,
+          "anchorError": 0,
+          "maximumStepFraction": 0.9999999951778953
+        },
+        {
+          "repeat": 1,
+          "kind": "clustered",
+          "before": {
+            "k": 0.024576255556170344,
+            "x": 322.4899850605876,
+            "y": 24.227272727272748
+          },
+          "after": {
+            "k": 0.04423725987572192,
+            "x": 128.48197434631066,
+            "y": -169.19090785741764
+          },
+          "events": [
+            {
+              "time": 20638.90000000596,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 20797.70000001788,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 20862.20000001788,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 20892.90000000596,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 21085.80000001192,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 21122.90000000596,
+              "delta": -8.479969024658203,
+              "trusted": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 20835.8,
+              "k": 0.029315510780875954,
+              "x": 275.724648790454,
+              "y": -22.395885886119686,
+              "logStep": 0.17633599862032526
+            },
+            {
+              "time": 20869.2,
+              "k": 0.03109028591349901,
+              "x": 258.2117797961188,
+              "y": -39.8555116264763,
+              "logStep": 0.05877866620677507
+            },
+            {
+              "time": 20885.8,
+              "k": 0.03496867821786161,
+              "x": 219.9411419635083,
+              "y": -78.0097976899558,
+              "logStep": 0.11755733241355004
+            },
+            {
+              "time": 21069.1,
+              "k": 0.03933088488496083,
+              "x": 176.89639083821186,
+              "y": -120.92368261523933,
+              "logStep": 0.11755733241355004
+            },
+            {
+              "time": 21102.5,
+              "k": 0.04423725987572192,
+              "x": 128.48197434631066,
+              "y": -169.19090785741764,
+              "logStep": 0.11755733241355004
+            }
+          ],
+          "firstChangedFrameMs": 196.8999999940388,
+          "completeMs": 463.59999999403954,
+          "anchorError": 0,
+          "maximumStepFraction": 0.2999999985533689
+        }
+      ]
+    },
+    "electron-csu-confirmed": {
+      "buildHash": "21f2807dcc70b7102123d9254c7120fa01d7b3e40cfb6db552f7a5c689ddd201",
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "02220a4a18f469cf599192487453c572d8ac0dd21323921f00960d4c86518fb4",
+        "desktop-performance-cba-scenario.cjs": "3b7ae9b195df1e6aa831d551b0c25deb78f0b47e9012080390253b8be3223b91",
+        "cba-rendering-regression.cjs": "0bf47e8c6c9217dbd8c756859c7e8c58f6dafbf99fe9f6b5a611b3fd18366a59",
+        "diagram-overview-scenario.cjs": "dd4508a22ed3a5b2673ad8011c2cec343e3e82837d36cf69ac6259d48d5d2342",
+        "diagram-overview-visual.cjs": "74bc53bc6ad81007be31a51b1588dc2ecb5f5db209519d155c37eae830fd38c2",
+        "diagram-overview-sweep.cjs": "0ff949cf75931f0b81a4ba9f6e46332819ab79c8a3c8252067b89de7ef4460ac",
+        "diagram-pinch-comparison.cjs": "85fb9647575afc91f4512d127fcd27bf07dc78b92c235b65ac46f0d8856d60cf",
+        "diagram-pinch-burst.cjs": "ab1405fc201959a4346e9890b8257c6a9207a32ceab92c02dc426b41c9b4f9f4",
+        "diagram-pinch-continuity.cjs": "c433587c2d30f5a1f6bfea6a75af8ea2f3fbde16973ba8332c831b58b0f771b9",
+        "diagram-trackpad-pan.cjs": "a78c952fdc2e0c1acc2782166f2127a2ef135b6cdf839773ac77b9c3b00c80fc"
+      },
+      "hardware": {
+        "cpu": "Apple M2",
+        "ram": 8589934592,
+        "arch": "arm64"
+      },
+      "runtime": {
+        "versions": {
+          "node": "24.22.0",
+          "acorn": "8.18.0",
+          "ada": "4.0.0",
+          "amaro": "1.1.11",
+          "ares": "1.34.8",
+          "brotli": "1.2.0",
+          "cldr": "48.0",
+          "icu": "78.2",
+          "llhttp": "9.4.3",
+          "merve": "1.2.2",
+          "modules": "150",
+          "napi": "10",
+          "nbytes": "0.1.4",
+          "ncrypto": "0.0.1",
+          "nghttp2": "1.70.0",
+          "nghttp3": "",
+          "ngtcp2": "",
+          "openssl": "0.0.0",
+          "simdjson": "4.6.11",
+          "simdutf": "7.7.0",
+          "sqlite": "3.53.4",
+          "tz": "2026e",
+          "undici": "7.29.1",
+          "unicode": "17.0",
+          "uv": "1.52.1",
+          "uvwasi": "0.0.23",
+          "v8": "15.6.75.19-electron.0",
+          "zlib": "1.3.2.1-motley",
+          "zstd": "1.6.0",
+          "electron": "45.0.0",
+          "chrome": "156.0.8078.48"
+        },
+        "gpu": {
+          "2d_canvas": "enabled",
+          "direct_rendering_display_compositor": "disabled_off_ok",
+          "gpu_compositing": "enabled",
+          "multiple_raster_threads": "enabled_on",
+          "opengl": "enabled_on",
+          "rasterization": "enabled",
+          "raw_draw": "disabled_off_ok",
+          "skia_graphite": "enabled_on",
+          "trees_in_viz": "disabled_off",
+          "video_decode": "enabled",
+          "video_encode": "enabled",
+          "webgl": "enabled",
+          "webgpu": "enabled",
+          "webnn": "disabled_off"
+        },
+        "gpuInfo": {
+          "auxAttributes": {
+            "amdSwitchable": false,
+            "canSupportThreadedTextureMailbox": false,
+            "glImplementationParts": "(gl=none,angle=none)",
+            "glResetNotificationStrategy": 0,
+            "inProcessGpu": true,
+            "initializationTime": 0,
+            "isAsan": false,
+            "isClangCoverage": false,
+            "jpegDecodeAcceleratorSupported": false,
+            "optimus": false,
+            "passthroughCmdDecoder": false,
+            "sandboxed": false,
+            "skiaBackendType": "None",
+            "subpixelFontRendering": true,
+            "targetCpuBits": 64,
+            "visibilityCallbackCallCount": 0
+          },
+          "gpuDevice": [
+            {
+              "active": true,
+              "deviceId": 0,
+              "gpuPreference": 0,
+              "vendorId": 4203
+            }
+          ],
+          "machineModelName": "Mac",
+          "machineModelVersion": "14.2"
+        },
+        "flags": [
+          "/Users/Nick/xhandle-desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+          "--inspect=0",
+          "--remote-debugging-port=0",
+          "/var/folders/67/8rby79hs1xq1fvs4f925m8600000gp/T/xhandle-full-app-perf-GGD9u6/main.cjs"
+        ]
+      },
+      "fixture": {
+        "nodes": 1500,
+        "relationships": 3000,
+        "hazardRows": 1000,
+        "seed": 30
+      },
+      "preserved": {
+        "nodeLayout": true,
+        "edgeIds": true
+      },
+      "errors": [],
+      "pinchContinuity": [
+        {
+          "repeat": 0,
+          "kind": "single",
+          "before": {
+            "k": 0.02480680204356406,
+            "x": 320.21034139323854,
+            "y": 24.454545454545496
+          },
+          "after": {
+            "k": 0.04465224355185438,
+            "x": 124.37861575671292,
+            "y": -171.18181693418046
+          },
+          "events": [
+            {
+              "time": 7599,
+              "delta": -42.399845123291016,
+              "trusted": true
+            }
+          ],
+          "motionChanges": [
+            {
+              "time": 7619.0999999940395,
+              "moving": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 7800.9,
+              "k": 0.027360006633102753,
+              "x": 295.0157161961328,
+              "y": -0.7149453891269246,
+              "moving": true,
+              "logStep": 0.09796444367795837
+            },
+            {
+              "time": 7834.2,
+              "k": 0.03302200201580578,
+              "x": 239.1440276838072,
+              "y": -56.53089587181337,
+              "moving": true,
+              "logStep": 0.18809173186168
+            },
+            {
+              "time": 7851,
+              "k": 0.03985571464783738,
+              "x": 171.71001586422526,
+              "y": -123.89763499838088,
+              "moving": true,
+              "logStep": 0.18809173186168016
+            },
+            {
+              "time": 8050.9,
+              "k": 0.043992270944813575,
+              "x": 130.89112264428442,
+              "y": -164.6758069739722,
+              "moving": true,
+              "logStep": 0.09874815922738327
+            },
+            {
+              "time": 8084.3,
+              "k": 0.04465224355185438,
+              "x": 124.37861575671292,
+              "y": -171.18181693418046,
+              "moving": true,
+              "logStep": 0.0148905954390486
+            }
+          ],
+          "firstChangedFrameMs": 201.89999999999964,
+          "completeMs": 485.3000000000002,
+          "anchorError": 5.684341886080802e-14,
+          "maximumStepFraction": 0.3199999984569266
+        },
+        {
+          "repeat": 0,
+          "kind": "clustered",
+          "before": {
+            "k": 0.02480680204356406,
+            "x": 320.21034139323854,
+            "y": 24.454545454545496
+          },
+          "after": {
+            "k": 0.04465224355185439,
+            "x": 124.37861575671275,
+            "y": -171.18181693418063
+          },
+          "events": [
+            {
+              "time": 10405.09999999404,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 10571.09999999404,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 10605.399999976158,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 10812.399999976158,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 10847.799999982119,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 10880.899999976158,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 10909.899999976158,
+              "delta": -4.239984512329102,
+              "trusted": true
+            }
+          ],
+          "motionChanges": [
+            {
+              "time": 10435.199999988079,
+              "moving": true
+            },
+            {
+              "time": 11314.399999976158,
+              "moving": false
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 10550.9,
+              "k": 0.026308617779128223,
+              "x": 305.39065764063685,
+              "y": 9.64964593335401,
+              "moving": true,
+              "logStep": 0.05877866620677507
+            },
+            {
+              "time": 10584.3,
+              "k": 0.02790135416216751,
+              "x": 289.6737831007399,
+              "y": -6.051549330647276,
+              "moving": true,
+              "logStep": 0.05877866620677507
+            },
+            {
+              "time": 10800.9,
+              "k": 0.029590515572441394,
+              "x": 273.00540141145495,
+              "y": -22.703302513127255,
+              "moving": true,
+              "logStep": 0.05877866620677507
+            },
+            {
+              "time": 10834.2,
+              "k": 0.030175996150121964,
+              "x": 267.22797026657673,
+              "y": -28.474970047902314,
+              "moving": true,
+              "logStep": 0.0195928887355917
+            },
+            {
+              "time": 10867.6,
+              "k": 0.0312796296222311,
+              "x": 256.33748706805085,
+              "y": -39.354588815954216,
+              "moving": true,
+              "logStep": 0.03592029601525139
+            },
+            {
+              "time": 10901,
+              "k": 0.03286780290976061,
+              "x": 240.66564044388718,
+              "y": -55.01080108442009,
+              "moving": true,
+              "logStep": 0.04952646874830109
+            },
+            {
+              "time": 10917.6,
+              "k": 0.03458991083895122,
+              "x": 223.6721476377503,
+              "y": -71.98734105038116,
+              "moving": true,
+              "logStep": 0.05106850165804679
+            },
+            {
+              "time": 10950.9,
+              "k": 0.03639481330770558,
+              "x": 205.86165121144822,
+              "y": -89.78006958736165,
+              "moving": true,
+              "logStep": 0.050864227651415836
+            },
+            {
+              "time": 10967.6,
+              "k": 0.04014419295270583,
+              "x": 168.86335688576463,
+              "y": -126.74145412777415,
+              "moving": true,
+              "logStep": 0.09805152318344992
+            },
+            {
+              "time": 11001,
+              "k": 0.042251862462660994,
+              "x": 148.06520245651768,
+              "y": -147.51886015691213,
+              "moving": true,
+              "logStep": 0.05117063866136533
+            },
+            {
+              "time": 11017.6,
+              "k": 0.04465224355185439,
+              "x": 124.37861575671275,
+              "y": -171.18181693418063,
+              "moving": true,
+              "logStep": 0.055256118794003155
+            }
+          ],
+          "firstChangedFrameMs": 145.8000000059601,
+          "completeMs": 612.5000000059608,
+          "anchorError": 1.2710574864626038e-13,
+          "maximumStepFraction": 0.16681481401041637
+        },
+        {
+          "repeat": 1,
+          "kind": "single",
+          "before": {
+            "k": 0.02480680204356406,
+            "x": 320.21034139323854,
+            "y": 24.454545454545496
+          },
+          "after": {
+            "k": 0.04465224355185438,
+            "x": 124.37861575671292,
+            "y": -171.18181693418046
+          },
+          "events": [
+            {
+              "time": 16148.399999976158,
+              "delta": -42.399845123291016,
+              "trusted": true
+            }
+          ],
+          "motionChanges": [
+            {
+              "time": 16175.5,
+              "moving": true
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 16317.5,
+              "k": 0.027360006633102753,
+              "x": 295.0157161961328,
+              "y": -0.7149453891269246,
+              "moving": true,
+              "logStep": 0.09796444367795837
+            },
+            {
+              "time": 16350.9,
+              "k": 0.03302200201580578,
+              "x": 239.1440276838072,
+              "y": -56.53089587181337,
+              "moving": true,
+              "logStep": 0.18809173186168
+            },
+            {
+              "time": 16367.5,
+              "k": 0.03985571464783738,
+              "x": 171.71001586422526,
+              "y": -123.89763499838088,
+              "moving": true,
+              "logStep": 0.18809173186168016
+            },
+            {
+              "time": 16634.2,
+              "k": 0.04394058519077196,
+              "x": 131.40114961448643,
+              "y": -164.16628881062994,
+              "moving": true,
+              "logStep": 0.09757258590324877
+            },
+            {
+              "time": 16667.6,
+              "k": 0.04465224355185438,
+              "x": 124.37861575671292,
+              "y": -171.18181693418046,
+              "moving": true,
+              "logStep": 0.016066168763183092
+            }
+          ],
+          "firstChangedFrameMs": 169.10000002384186,
+          "completeMs": 519.2000000238404,
+          "anchorError": 5.684341886080802e-14,
+          "maximumStepFraction": 0.3199999984569266
+        },
+        {
+          "repeat": 1,
+          "kind": "clustered",
+          "before": {
+            "k": 0.02480680204356406,
+            "x": 320.21034139323854,
+            "y": 24.454545454545496
+          },
+          "after": {
+            "k": 0.04465224355185439,
+            "x": 124.37861575671292,
+            "y": -171.18181693418052
+          },
+          "events": [
+            {
+              "time": 21573.69999998808,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 21762.899999976158,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 21799.09999999404,
+              "delta": -4.239984512329102,
+              "trusted": true
+            },
+            {
+              "time": 22018.899999976158,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 22057.19999998808,
+              "delta": -8.479969024658203,
+              "trusted": true
+            },
+            {
+              "time": 22086.399999976158,
+              "delta": -8.479969024658203,
+              "trusted": true
+            }
+          ],
+          "motionChanges": [
+            {
+              "time": 21603.59999999404,
+              "moving": true
+            },
+            {
+              "time": 22493,
+              "moving": false
+            }
+          ],
+          "changedFrames": [
+            {
+              "time": 21750.8,
+              "k": 0.026308617779128223,
+              "x": 305.39065764063685,
+              "y": 9.64964593335401,
+              "moving": true,
+              "logStep": 0.05877866620677507
+            },
+            {
+              "time": 21784.1,
+              "k": 0.026829162434647738,
+              "x": 300.25400406108946,
+              "y": 4.518116719242633,
+              "moving": true,
+              "logStep": 0.0195928887355917
+            },
+            {
+              "time": 22000.8,
+              "k": 0.027539278593741025,
+              "x": 293.2466884123281,
+              "y": -2.482208377099001,
+              "moving": true,
+              "logStep": 0.026123851647455607
+            },
+            {
+              "time": 22034.2,
+              "k": 0.02870226568025596,
+              "x": 281.77051299188844,
+              "y": -13.946935075963228,
+              "moving": true,
+              "logStep": 0.041362765108471256
+            },
+            {
+              "time": 22067.5,
+              "k": 0.03029667355641334,
+              "x": 266.03714441825747,
+              "y": -29.664607919122663,
+              "moving": true,
+              "logStep": 0.05406185965931778
+            },
+            {
+              "time": 22100.8,
+              "k": 0.032319874846560466,
+              "x": 246.07250922513043,
+              "y": -49.60932623739304,
+              "moving": true,
+              "logStep": 0.0646444384516898
+            },
+            {
+              "time": 22117.5,
+              "k": 0.036590903934907375,
+              "x": 203.92665944570533,
+              "y": -91.71313099031686,
+              "moving": true,
+              "logStep": 0.12411732182724443
+            },
+            {
+              "time": 22150.9,
+              "k": 0.03903947877788537,
+              "x": 179.76450429031343,
+              "y": -115.85118179239393,
+              "moving": true,
+              "logStep": 0.06477372732859595
+            },
+            {
+              "time": 22167.2,
+              "k": 0.04419849471609204,
+              "x": 128.85613859115253,
+              "y": -166.70876091123526,
+              "moving": true,
+              "logStep": 0.12411732182724443
+            },
+            {
+              "time": 22200.9,
+              "k": 0.04465224355185439,
+              "x": 124.37861575671292,
+              "y": -171.18181693418052,
+              "moving": true,
+              "logStep": 0.010213821275364202
+            }
+          ],
+          "firstChangedFrameMs": 177.1000000119202,
+          "completeMs": 627.2000000119224,
+          "anchorError": 1.1368683772161603e-13,
+          "maximumStepFraction": 0.21116049280892246
+        }
+      ],
+      "pinchBursts": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "producerMs": 1144.9202079999995,
+          "completionMs": 1242.822333,
+          "backlogMs": 97.90212500000052,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 140.83887499999764,
+            "p95": 283.9077499999985,
+            "max": 316.4797080000026
+          },
+          "deliveryEndMs": 2258.699999988079,
+          "idleMs": 699.2000000178814,
+          "movingElements": [],
+          "received": 61,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 2221.7999999821186,
+          "frames": {
+            "n": 60,
+            "median": 33.29999999999927,
+            "p95": 50,
+            "max": 183.39999999999782
+          },
+          "changedFrameIntervals": {
+            "n": 58,
+            "median": 33.29999999999927,
+            "p95": 51.900000000001455,
+            "max": 183.39999999999782
+          },
+          "changedFrames": 59,
+          "cameraBefore": {
+            "k": 0.02480680204356406,
+            "x": 320.21034139323854,
+            "y": 24.454545454545496
+          },
+          "cameraAfter": {
+            "k": 0.02480680204356397,
+            "x": 320.2103413932392,
+            "y": 24.454545454546263
+          },
+          "firstChangedFrameMs": 146.90000000596046,
+          "before": "translate(320.21px, 24.4545px) scale(0.0248068)",
+          "after": "translate(320.21px, 24.4545px) scale(0.0248068)",
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "producerMs": 1135.0947910000032,
+          "completionMs": 1209.2089160000032,
+          "backlogMs": 74.11412500000006,
+          "dispatchLatency": {
+            "n": 120,
+            "median": 77.15824999999313,
+            "p95": 172.04220799999894,
+            "max": 210.83787500000471
+          },
+          "deliveryEndMs": 2144.7000000178814,
+          "idleMs": 662.7999999821186,
+          "movingElements": [],
+          "received": 61,
+          "trusted": true,
+          "deltaSum": 0,
+          "inputMs": 2115.7000000178814,
+          "frames": {
+            "n": 57,
+            "median": 33.30000000000291,
+            "p95": 49.89999999999418,
+            "max": 66.60000000000218
+          },
+          "changedFrameIntervals": {
+            "n": 56,
+            "median": 33.30000000000291,
+            "p95": 49.89999999999418,
+            "max": 66.60000000000218
+          },
+          "changedFrames": 57,
+          "cameraBefore": {
+            "k": 0.9999988334561163,
+            "x": -9302.832726644874,
+            "y": -9588.988500210393
+          },
+          "cameraAfter": {
+            "k": 0.999998833456113,
+            "x": -9302.832726644841,
+            "y": -9588.98850021036
+          },
+          "firstChangedFrameMs": 192.90000002384113,
+          "before": "translate(-9302.83px, -9588.99px) scale(0.999999)",
+          "after": "translate(-9302.83px, -9588.99px) scale(0.999999)",
+          "moving": false
+        }
+      ],
+      "trackpadPan": [
+        {
+          "scale": "overview",
+          "sent": 120,
+          "before": {
+            "k": 0.02480680204356406,
+            "x": 320.21034139323854,
+            "y": 24.454545454545496
+          },
+          "forward": {
+            "k": 0.02480680204356406,
+            "x": 140.21034139323854,
+            "y": -95.5454545454545
+          },
+          "after": {
+            "k": 0.02480680204356406,
+            "x": 320.21034139323854,
+            "y": 24.454545454545496
+          },
+          "received": 62,
+          "trusted": true,
+          "deltaX": 0,
+          "deltaY": 0,
+          "zoomUnchanged": true,
+          "pageScrollUnchanged": true,
+          "inputMs": 2053.899999976158,
+          "frames": {
+            "n": 63,
+            "median": 18.400000000001455,
+            "p95": 50,
+            "max": 185.40000000000146
+          },
+          "moving": false
+        },
+        {
+          "scale": "close",
+          "sent": 120,
+          "before": {
+            "k": 0.9999988334561163,
+            "x": -9302.832726644874,
+            "y": -9588.988500210393
+          },
+          "forward": {
+            "k": 0.9999988334561163,
+            "x": -9482.832726644874,
+            "y": -9708.988500210393
+          },
+          "after": {
+            "k": 0.9999988334561163,
+            "x": -9302.832726644874,
+            "y": -9588.988500210393
+          },
+          "received": 63,
+          "trusted": true,
+          "deltaX": 0,
+          "deltaY": 0,
+          "zoomUnchanged": true,
+          "pageScrollUnchanged": true,
+          "inputMs": 1933.7000000178814,
+          "frames": {
+            "n": 63,
+            "median": 33.299999999995634,
+            "p95": 33.5,
+            "max": 34.39999999999418
+          },
+          "moving": false
+        }
+      ],
+      "singleZoomInputs": [
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "button",
+          "expectedRatio": 1.2,
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(320.21px, 24.4545px) scale(0.0248068)",
+          "after": "translate(271.152px, -24.4545px) scale(0.0297682)",
+          "trusted": true,
+          "commitMs": 14,
+          "changedFrameMs": 32.80000001787994,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "in",
+          "kind": "pinch",
+          "expectedRatio": 1.2,
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(320.21px, 24.4545px) scale(0.0248068)",
+          "after": "translate(271.252px, -24.4545px) scale(0.0297682)",
+          "trusted": true,
+          "commitMs": 15.700000017881393,
+          "changedFrameMs": 139.5000000238433,
+          "movingFrames": 9,
+          "frames": 11
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "button",
+          "expectedRatio": 0.8333333333333334,
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333333,
+          "before": "translate(320.21px, 24.4545px) scale(0.0248068)",
+          "after": "translate(361.092px, 65.2121px) scale(0.0206723)",
+          "trusted": true,
+          "commitMs": 14.199999988079071,
+          "changedFrameMs": 28.30000000000291,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "overview",
+          "direction": "out",
+          "kind": "pinch",
+          "expectedRatio": 0.8333333333333334,
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601333,
+          "before": "translate(320.21px, 24.4545px) scale(0.0248068)",
+          "after": "translate(361.009px, 65.2121px) scale(0.0206723)",
+          "trusted": true,
+          "commitMs": 14.699999988079071,
+          "changedFrameMs": 174.20000001192238,
+          "movingFrames": 6,
+          "frames": 9
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "button",
+          "expectedRatio": 1.2,
+          "anchorError": 0,
+          "zoomRatio": 1.2,
+          "before": "translate(-9302.83px, -9588.99px) scale(0.999999)",
+          "after": "translate(-11276.5px, -11560.6px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 16.30000001192093,
+          "changedFrameMs": 26.200000023840403,
+          "movingFrames": 0,
+          "frames": 35
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "in",
+          "kind": "pinch",
+          "expectedRatio": 1.2,
+          "anchorError": 0,
+          "zoomRatio": 1.199999995929408,
+          "before": "translate(-9302.83px, -9588.99px) scale(0.999999)",
+          "after": "translate(-11276.4px, -11560.6px) scale(1.2)",
+          "trusted": true,
+          "commitMs": 35.30000001192093,
+          "changedFrameMs": 162.80000002383895,
+          "movingFrames": 11,
+          "frames": 15
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "button",
+          "expectedRatio": 0.8333333333333334,
+          "anchorError": 0,
+          "zoomRatio": 0.8333333333333334,
+          "before": "translate(-9302.83px, -9588.99px) scale(0.999999)",
+          "after": "translate(-7658.11px, -7945.99px) scale(0.833332)",
+          "trusted": true,
+          "commitMs": 20.399999976158142,
+          "changedFrameMs": 41.599999999998545,
+          "movingFrames": 0,
+          "frames": 36
+        },
+        {
+          "repeat": 0,
+          "scale": "close",
+          "direction": "out",
+          "kind": "pinch",
+          "expectedRatio": 0.8333333333333334,
+          "anchorError": 0,
+          "zoomRatio": 0.8333333361601334,
+          "before": "translate(-9302.83px, -9588.99px) scale(0.999999)",
+          "after": "translate(-7658.19px, -7945.99px) scale(0.833332)",
+          "trusted": true,
+          "commitMs": 20.5,
+          "changedFrameMs": 189.60000001192384,
+          "movingFrames": 11,
+          "frames": 14
+        }
+      ]
+    },
+    "chrome-semantics-confirmed": {
+      "buildHash": "21f2807dcc70b7102123d9254c7120fa01d7b3e40cfb6db552f7a5c689ddd201",
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "02220a4a18f469cf599192487453c572d8ac0dd21323921f00960d4c86518fb4",
+        "desktop-performance-cba-scenario.cjs": "3b7ae9b195df1e6aa831d551b0c25deb78f0b47e9012080390253b8be3223b91",
+        "cba-rendering-regression.cjs": "0bf47e8c6c9217dbd8c756859c7e8c58f6dafbf99fe9f6b5a611b3fd18366a59"
+      },
+      "errors": [],
+      "renderingChecks": {
+        "lightPaint": {
+          "opacity": "1",
+          "strokeOpacity": "0.92",
+          "stroke": "rgb(45, 125, 254)",
+          "markerFill": "rgba(45, 125, 254, 0.92)"
+        },
+        "darkPaint": {
+          "opacity": "1",
+          "strokeOpacity": "0.92",
+          "stroke": "rgb(106, 168, 255)",
+          "markerFill": "rgba(45, 125, 254, 0.92)"
+        },
+        "motionPresentation": [
+          "blur",
+          "pointercancel",
+          "visibilitychange",
+          "rapid-restart",
+          "no-motion-release"
+        ],
+        "completeExports": {
+          "nodes": 628,
+          "edges": 1000,
+          "rows": 1000
+        },
+        "pngExport": {
+          "width": 2262,
+          "height": 1304,
+          "actualApplicationMethod": true,
+          "labelsAtCapture": "visible"
+        },
+        "printPDFBytes": 936196,
+        "resizeAndDprRestoration": true,
+        "crossingRoute": {
+          "endpointsVisible": [
+            false,
+            false
+          ],
+          "visibleSamples": 21,
+          "hit": {
+            "x": 820.2421875,
+            "y": 556.0982666015625
+          },
+          "path": "M 696,355 L 696,395 L 696,-605 L -2000,-605 L -2000,1469 L 696,1469 L 696,469 L 696,509"
+        },
+        "manualRouteEditRestored": {
+          "model": "segment-v2",
+          "axis": "x",
+          "corridor": -1968.989901294771,
+          "sourceOffset": -1000,
+          "targetOffset": 1000
+        },
+        "zoomBounds": {
+          "minimum": {
+            "zoom": 0.02,
+            "disabled": true,
+            "events": [
+              {
+                "trusted": true,
+                "ctrlKey": true,
+                "target": "react-flow__pane"
+              },
+              {
+                "trusted": true,
+                "ctrlKey": true,
+                "target": "react-flow__pane"
+              }
+            ],
+            "idleAfterNoop": true
+          },
+          "maximum": {
+            "zoom": 1.8,
+            "disabled": true,
+            "events": [
+              {
+                "trusted": true,
+                "ctrlKey": true,
+                "target": "react-flow__pane"
+              }
+            ],
+            "idleAfterNoop": true
+          }
+        },
+        "sourceTraceViewport": {
+          "zoom": 0.366803,
+          "nodeVisible": true,
+          "file": "src/unit_10.cpp"
+        },
+        "sourceTraceAndKeyboardPorts": true,
+        "nodeDragBeforeReload": {
+          "before": {
+            "x": 2134,
+            "y": 244
+          },
+          "after": {
+            "x": 2134,
+            "y": 256.17391304347825
+          },
+          "stored": {
+            "x": 2134,
+            "y": 256.17391304347825
+          }
+        },
+        "nodeDragRestored": {
+          "before": {
+            "x": 2134,
+            "y": 244
+          },
+          "after": {
+            "x": 2134,
+            "y": 256.17391304347825
+          },
+          "stored": {
+            "x": 2134,
+            "y": 256.17391304347825
+          }
+        },
+        "noteRestoration": true,
+        "memoryCycles": [
+          {
+            "cycle": 1,
+            "cacheImages": 1,
+            "heap": 88095770,
+            "cdpHeap": 78948504,
+            "documents": 2,
+            "nodes": 17913,
+            "jsEventListeners": 6111
+          },
+          {
+            "cycle": 2,
+            "cacheImages": 1,
+            "heap": 88388947,
+            "cdpHeap": 79241684,
+            "documents": 2,
+            "nodes": 17913,
+            "jsEventListeners": 6111
+          },
+          {
+            "cycle": 3,
+            "cacheImages": 1,
+            "heap": 88497295,
+            "cdpHeap": 79347136,
+            "documents": 2,
+            "nodes": 17913,
+            "jsEventListeners": 6111
+          },
+          {
+            "cycle": 4,
+            "cacheImages": 1,
+            "heap": 88596123,
+            "cdpHeap": 79444904,
+            "documents": 2,
+            "nodes": 17913,
+            "jsEventListeners": 6111
+          },
+          {
+            "cycle": 5,
+            "cacheImages": 1,
+            "heap": 88700499,
+            "cdpHeap": 79553828,
+            "documents": 2,
+            "nodes": 17913,
+            "jsEventListeners": 6111
+          },
+          {
+            "cycle": 6,
+            "cacheImages": 1,
+            "heap": 88732847,
+            "cdpHeap": 79586356,
+            "documents": 2,
+            "nodes": 17913,
+            "jsEventListeners": 6111
+          },
+          {
+            "cycle": 7,
+            "cacheImages": 1,
+            "heap": 88766479,
+            "cdpHeap": 79619972,
+            "documents": 2,
+            "nodes": 17913,
+            "jsEventListeners": 6111
+          },
+          {
+            "cycle": 8,
+            "cacheImages": 1,
+            "heap": 88973767,
+            "cdpHeap": 79827260,
+            "documents": 2,
+            "nodes": 17913,
+            "jsEventListeners": 6111
+          },
+          {
+            "cycle": 9,
+            "cacheImages": 1,
+            "heap": 89083319,
+            "cdpHeap": 79936812,
+            "documents": 2,
+            "nodes": 17913,
+            "jsEventListeners": 6111
+          },
+          {
+            "cycle": 10,
+            "cacheImages": 1,
+            "heap": 89081791,
+            "cdpHeap": 79935228,
+            "documents": 2,
+            "nodes": 17913,
+            "jsEventListeners": 6111
+          }
+        ],
+        "memoryGrowth": {
+          "nodes": 0,
+          "documents": 0,
+          "heap": 693544
+        },
+        "complete": true
+      }
+    },
+    "electron-semantics-confirmed": {
+      "buildHash": "21f2807dcc70b7102123d9254c7120fa01d7b3e40cfb6db552f7a5c689ddd201",
+      "harnessHashes": {
+        "desktop-interaction-performance.cjs": "02220a4a18f469cf599192487453c572d8ac0dd21323921f00960d4c86518fb4",
+        "desktop-performance-cba-scenario.cjs": "3b7ae9b195df1e6aa831d551b0c25deb78f0b47e9012080390253b8be3223b91",
+        "cba-rendering-regression.cjs": "0bf47e8c6c9217dbd8c756859c7e8c58f6dafbf99fe9f6b5a611b3fd18366a59"
+      },
+      "errors": [],
+      "renderingChecks": {
+        "lightPaint": {
+          "opacity": "1",
+          "strokeOpacity": "0.92",
+          "stroke": "rgb(45, 125, 254)",
+          "markerFill": "rgba(45, 125, 254, 0.92)"
+        },
+        "darkPaint": {
+          "opacity": "1",
+          "strokeOpacity": "0.92",
+          "stroke": "rgb(106, 168, 255)",
+          "markerFill": "rgba(45, 125, 254, 0.92)"
+        },
+        "motionPresentation": [
+          "blur",
+          "pointercancel",
+          "visibilitychange",
+          "rapid-restart",
+          "no-motion-release"
+        ],
+        "exportTransport": "Electron session DownloadItem with task-only save path",
+        "completeExports": {
+          "nodes": 628,
+          "edges": 1000,
+          "rows": 1000
+        },
+        "pngExport": {
+          "width": 2262,
+          "height": 1072,
+          "actualApplicationMethod": true,
+          "labelsAtCapture": "visible"
+        },
+        "printPDFBytes": 242886,
+        "crossingRoute": {
+          "endpointsVisible": [
+            false,
+            false
+          ],
+          "visibleSamples": 22,
+          "hit": {
+            "x": 820.4414672851562,
+            "y": 506.7548828125
+          },
+          "path": "M 696,355 L 696,395 L 696,-605 L -2000,-605 L -2000,1469 L 696,1469 L 696,469 L 696,509"
+        },
+        "manualRouteEditRestored": {
+          "model": "segment-v2",
+          "axis": "x",
+          "corridor": -1962.2787605302065,
+          "sourceOffset": -1000,
+          "targetOffset": 1000
+        },
+        "zoomBounds": {
+          "minimum": {
+            "zoom": 0.02,
+            "disabled": true,
+            "events": [
+              {
+                "trusted": true,
+                "ctrlKey": true,
+                "target": "react-flow__pane"
+              },
+              {
+                "trusted": true,
+                "ctrlKey": true,
+                "target": "react-flow__pane"
+              }
+            ],
+            "idleAfterNoop": true
+          },
+          "maximum": {
+            "zoom": 1.8,
+            "disabled": true,
+            "events": [
+              {
+                "trusted": true,
+                "ctrlKey": true,
+                "target": "react-flow__pane"
+              }
+            ],
+            "idleAfterNoop": true
+          }
+        },
+        "sourceTraceViewport": {
+          "zoom": 0.358985,
+          "nodeVisible": true,
+          "file": "src/unit_10.cpp"
+        },
+        "sourceTraceAndKeyboardPorts": true,
+        "nodeDragBeforeReload": {
+          "before": {
+            "x": 2134,
+            "y": 244
+          },
+          "after": {
+            "x": 2134,
+            "y": 256.17391304347825
+          },
+          "stored": {
+            "x": 2134,
+            "y": 256.17391304347825
+          }
+        },
+        "nodeDragRestored": {
+          "before": {
+            "x": 2134,
+            "y": 244
+          },
+          "after": {
+            "x": 2134,
+            "y": 256.17391304347825
+          },
+          "stored": {
+            "x": 2134,
+            "y": 256.17391304347825
+          }
+        },
+        "noteRestoration": true,
+        "memoryCycles": [
+          {
+            "cycle": 1,
+            "cacheImages": 1,
+            "heap": 88087894,
+            "cdpHeap": 78940796,
+            "documents": 2,
+            "nodes": 17913,
+            "jsEventListeners": 6111
+          },
+          {
+            "cycle": 2,
+            "cacheImages": 1,
+            "heap": 88312018,
+            "cdpHeap": 79164876,
+            "documents": 2,
+            "nodes": 17913,
+            "jsEventListeners": 6111
+          },
+          {
+            "cycle": 3,
+            "cacheImages": 1,
+            "heap": 88401230,
+            "cdpHeap": 79254484,
+            "documents": 2,
+            "nodes": 17913,
+            "jsEventListeners": 6111
+          },
+          {
+            "cycle": 4,
+            "cacheImages": 1,
+            "heap": 88514490,
+            "cdpHeap": 79363392,
+            "documents": 2,
+            "nodes": 17913,
+            "jsEventListeners": 6111
+          },
+          {
+            "cycle": 5,
+            "cacheImages": 1,
+            "heap": 88608670,
+            "cdpHeap": 79462120,
+            "documents": 2,
+            "nodes": 17913,
+            "jsEventListeners": 6111
+          },
+          {
+            "cycle": 6,
+            "cacheImages": 1,
+            "heap": 88634178,
+            "cdpHeap": 79487808,
+            "documents": 2,
+            "nodes": 17913,
+            "jsEventListeners": 6111
+          },
+          {
+            "cycle": 7,
+            "cacheImages": 1,
+            "heap": 88652402,
+            "cdpHeap": 79506016,
+            "documents": 2,
+            "nodes": 17913,
+            "jsEventListeners": 6111
+          },
+          {
+            "cycle": 8,
+            "cacheImages": 1,
+            "heap": 88839082,
+            "cdpHeap": 79692696,
+            "documents": 2,
+            "nodes": 17913,
+            "jsEventListeners": 6111
+          },
+          {
+            "cycle": 9,
+            "cacheImages": 1,
+            "heap": 88953030,
+            "cdpHeap": 79806644,
+            "documents": 2,
+            "nodes": 17913,
+            "jsEventListeners": 6111
+          },
+          {
+            "cycle": 10,
+            "cacheImages": 1,
+            "heap": 88971538,
+            "cdpHeap": 79825096,
+            "documents": 2,
+            "nodes": 17913,
+            "jsEventListeners": 6111
+          }
+        ],
+        "memoryGrowth": {
+          "nodes": 0,
+          "documents": 0,
+          "heap": 660220
+        },
+        "complete": true
+      }
+    }
+  },
+  "limitations": [
+    "Trusted CDP input and rAF camera samples are not physical-trackpad presentation latency.",
+    "Synthetic Apple M2/8 GiB fixtures; customer M4 project unavailable.",
+    "Some dense-graph frames still stall; do not claim uniformly smooth frame pacing."
+  ]
+}

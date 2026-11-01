@@ -8,6 +8,12 @@ module.exports = async function checkCbaRendering({ page, cdp, app, result, args
   const checks = result.cbaRenderingChecks = {};
   const save = () => fs.writeFileSync(out + '.rendering-checks.json', JSON.stringify(checks, null, 2));
   const settle = () => page.waitForTimeout(350);
+  const cacheReady = async () => {
+    if (args.motionCache !== '1') return;
+    // Return a primitive: an undisposed Playwright element handle would retain
+    // the entire old diagram and invalidate the navigation memory measurement.
+    await page.waitForFunction(() => !!document.querySelector('.x-architecture-motion[data-edge-images-ready]'), undefined, { timeout: 30000 });
+  };
   const edge = id => page.locator(`[data-testid="rf__edge-${id}"]`);
   const path = id => edge(id).locator('.react-flow__edge-path');
   const viewport = () => page.evaluate(() => {
@@ -117,10 +123,27 @@ module.exports = async function checkCbaRendering({ page, cdp, app, result, args
       await page.getByRole('button', { name: 'Software Requirements', exact: true }).click();
       await page.locator('tbody').filter({ hasText: 'SWR-0' }).waitFor();
       await page.getByRole('button', { name: 'Architecture Diagram', exact: true }).click();
-      await ready(); await settle(); await cdp.send('HeapProfiler.collectGarbage');
+      await ready(); await settle(); await cacheReady(); await cdp.send('HeapProfiler.collectGarbage');
       const metrics = (await cdp.send('Performance.getMetrics')).metrics;
-      checks.memoryCycles.push({ cycle: i + 1, heap: await page.evaluate(() => performance.memory?.usedJSHeapSize), cdpHeap: metrics.find(metric => metric.name === 'JSHeapUsedSize')?.value, ...await cdp.send('Memory.getDOMCounters') });
+      const cacheImages = await page.locator('.x-edge-motion-image').count();
+      assert.ok(cacheImages <= 16, 'Navigation must not accumulate motion images');
+      checks.memoryCycles.push({ cycle: i + 1, cacheImages, heap: await page.evaluate(() => performance.memory?.usedJSHeapSize), cdpHeap: metrics.find(metric => metric.name === 'JSHeapUsedSize')?.value, ...await cdp.send('Memory.getDOMCounters') });
       save();
+    }
+    if(args.motionCache==='1'&&count>=5){
+      const warm=checks.memoryCycles[1],last=checks.memoryCycles.at(-1);
+      checks.memoryGrowth={nodes:last.nodes-warm.nodes,documents:last.documents-warm.documents,heap:last.cdpHeap-warm.cdpHeap};
+      assert.ok(checks.memoryGrowth.nodes<=250,'Equivalent tab cycles must not retain detached diagram trees');
+      assert.ok(checks.memoryGrowth.documents<=2,'Equivalent tab cycles must not accumulate SVG documents');
+      assert.ok(checks.memoryGrowth.heap<=Math.max(8*1024*1024,warm.cdpHeap*.15),'Heap must plateau after warm navigation');
+      save();
+    }
+    if(args.captureHeap==='1'){
+      const chunks=[];const chunk=event=>chunks.push(event.chunk);
+      cdp.on('HeapProfiler.addHeapSnapshotChunk',chunk);
+      await cdp.send('HeapProfiler.takeHeapSnapshot',{reportProgress:false});
+      cdp.off('HeapProfiler.addHeapSnapshotChunk',chunk);
+      fs.writeFileSync(out+'.heapsnapshot',chunks.join(''));
     }
   }
   if (args.renderingChecks === 'memory') {
@@ -221,6 +244,7 @@ module.exports = async function checkCbaRendering({ page, cdp, app, result, args
   await page.emulateMedia({ media: 'print' });
   assert.equal(Number((await paint()).strokeOpacity), 0.92);
   assert.equal(await page.locator('.react-flow__edgelabel-renderer').evaluate(e => getComputedStyle(e).visibility), 'visible', 'Print must include labels even during a gesture');
+  assert.equal(await page.locator('.react-flow__edge-textwrapper').evaluateAll(es=>es.filter(e=>getComputedStyle(e).visibility==='hidden').length),0,'Print must also restore native SVG labels');
   const pdf = app
     ? await app.evaluate(async ({ BrowserWindow }) => ({ data: (await BrowserWindow.getAllWindows()[0].webContents.printToPDF({ printBackground: true, preferCSSPageSize: true })).toString('base64') }))
     : await cdp.send('Page.printToPDF', { printBackground: true, preferCSSPageSize: true });

@@ -2,7 +2,6 @@ export const SIDEBAR_AREAS = [
   ['code-architecture', 'Code-Based Architecture'],
   ['projects', 'Projects'],
   ['safety-case', 'Safety Case'],
-  ['review-center', 'Review Center'],
   ['reports', 'Reports'],
   ['requirements', 'Design Management'],
   ['vnv', 'System Test'],

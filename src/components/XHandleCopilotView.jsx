@@ -2721,7 +2721,7 @@ function CollaboratorChoicePrompt({ message, disabled = false, onContinue }) {
     return (
       <fieldset className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50/60 p-3" disabled={disabled || completed}>
         <legend className="text-sm font-semibold text-neutral-900">Name this vibe review</legend>
-        <p className="mt-1 text-xs text-neutral-600">This name will identify the review in the Review Center.</p>
+        <p className="mt-1 text-xs text-neutral-600">This name will identify the review in its saved Collaborator history.</p>
         <input
           type="text"
           value={displayedName}

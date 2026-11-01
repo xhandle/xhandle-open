@@ -16,7 +16,7 @@ const safeParse = (raw, fallback) => {
   }
 };
 
-async function openReviewDB() {
+export async function openReviewDB() {
   if (typeof indexedDB === "undefined") return null;
   return openDB(DB_NAME, DB_VERSION, {
     upgrade(db) {

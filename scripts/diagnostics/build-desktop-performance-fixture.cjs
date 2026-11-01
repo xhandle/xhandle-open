@@ -4,6 +4,8 @@ const fs=require('node:fs'),path=require('node:path'),webpack=require('webpack')
 const source=path.resolve(process.env.PERF_SOURCE_ROOT||path.join(__dirname,'../..'));
 const out=path.resolve(process.argv[2]);fs.mkdirSync(out,{recursive:true});
 const relationshipsPerNode=Number(process.env.PERF_RELATIONSHIPS_PER_NODE||2);
+const cscGroupSize=Number(process.env.PERF_CSC_GROUP_SIZE||25),csciGroupSize=Number(process.env.PERF_CSCI_GROUP_SIZE||100);
+if(![cscGroupSize,csciGroupSize].every(n=>Number.isInteger(n)&&n>0))throw Error('Architecture group sizes must be positive integers');
 const hazardScrollFixture=process.env.PERF_HAZARD_SCROLL_FIXTURE==='1';
 if(!Number.isInteger(relationshipsPerNode)||relationshipsPerNode<2)throw Error('PERF_RELATIONSHIPS_PER_NODE must be an integer >= 2');
 const modulePath=p=>JSON.stringify(path.join(source,'src',p));
@@ -16,7 +18,7 @@ import {ensureCodeArchitectureHazardEligibility} from ${modulePath('features/cod
 import {processFunctionalModel,functionalModelIsReady} from ${modulePath('features/code-architecture-context/functionalModel.js')};
 ${hazardScrollFixture ? `import {saveCodeArchitectureHazardContexts} from ${modulePath('features/code-architecture-hazard-analysis/codeArchitectureHazardContextStore.js')};` : ''}
 window.seedCbaPerformance=async(count,nodeCount=100,artifactCount=1000)=>{
- const arch=i=>({subsystem:'Control '+Math.floor(i/250),csci:'Application '+Math.floor(i/100),csc:'Controller '+Math.floor(i/25),csu:'Unit '+Math.floor(i/5)});
+ const arch=i=>({subsystem:'Control '+Math.floor(i/250),csci:'Application '+Math.floor(i/${csciGroupSize}),csc:'Controller '+Math.floor(i/${cscGroupSize}),csu:'Unit '+Math.floor(i/5)});
  let rows=Array.from({length:nodeCount*${relationshipsPerNode}},(_,i)=>{const from=i%nodeCount,to=(i+(i<nodeCount?1:7*Math.floor(i/nodeCount)))%nodeCount;return {traceId:'FD-'+i,rowRef:i+1,fromNodeId:'perf-node-'+from,toNodeId:'perf-node-'+to,edgeId:'perf-edge-'+i,from:'Function '+from,to:'Function '+to,action:'Command '+i,fromDetails:'Validates current sensor state and operating context. '.repeat(4),toDetails:'Handles requested actuation with freshness checks. '.repeat(3),controlActionDetails:'Requires sequence, timestamp, acknowledgement and expiration. '.repeat(3),fromFile:'src/unit_'+from+'.cpp',toFile:'src/unit_'+to+'.cpp',architecture:arch(from),fromArchitecture:arch(from),toArchitecture:arch(to),interfaceType:'Control',hazardAnalysisEligibility:'Include',hazardAnalysisEligibilitySource:'user',lifecyclePhase:'Runtime',sourceEvidence:{functions:[{filePath:'src/unit_'+from+'.cpp',functionName:'Function '+from,startLine:from+1}],excerpt:'Recorded source evidence. '.repeat(12)}};});
  // Offline deterministic fixture responses only. This never invokes a provider.
  const request=async prompt=>{

@@ -718,7 +718,7 @@ export default function CrossRepoArchitecturePanel({
         repoCount: repoContexts.length,
         projectCount: projectsWithRepos.length,
       });
-      if (resultsReview?.createReviewItems && normalized.length) {
+      if (resultsReview?.legacyReviewEnabled && resultsReview?.createReviewItems && normalized.length) {
         updateActivity(activityId, {
           step: progress.completed,
           total: progress.total,

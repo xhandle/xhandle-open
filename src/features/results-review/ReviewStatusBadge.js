@@ -20,6 +20,7 @@ export default function ReviewStatusBadge({
   variant = "badge",
 }) {
   const review = useResultsReview();
+  if (review.legacyReviewEnabled === false) return null;
   const item = reviewItem || (reviewItemId ? review.getReviewItemById(reviewItemId) : null);
   if (!item) return null;
 

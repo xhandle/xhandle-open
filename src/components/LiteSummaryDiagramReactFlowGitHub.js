@@ -11,6 +11,7 @@ import React, {
   useEffect,
   useState,
   useRef,
+  useId,
   forwardRef,
   useImperativeHandle,
 } from 'react';
@@ -36,6 +37,9 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import './csuNavigation.css';
 import { withCsuVisibleHandles } from './csuVisibleHandles';
+import ArchitectureEdgeMotionLayer from './ArchitectureEdgeMotionLayer';
+import { PINCH_ANIMATING } from './architecturePinchZoom';
+import { ArchitectureMarkers, compileArchitectureMarkers } from './ArchitectureMarkers';
 import { toPng } from 'html-to-image';
 import { SmartBezierEdge } from '@tisoap/react-flow-smart-edge';
 import { OrthogonalFunctionEdge } from './OrthogonalFunctionEdge';
@@ -2267,8 +2271,12 @@ const DiagramBody = forwardRef(function DiagramBody(
 
   // -------------------- refs / misc you already had ---------
   const diagramHostRef = useRef(null);
-  const largeCsuCanvas = architectureMode && activeArchitectureAbstraction === 'detailed'
-    && (viewNodes.length >= 250 || viewEdges.length >= 500);
+  const largeArchitectureCanvas = architectureMode && (viewNodes.length >= 250 || viewEdges.length >= 500);
+  const largeCsuCanvas = largeArchitectureCanvas && activeArchitectureAbstraction === 'detailed';
+  const markerScope = useId();
+  const preparedMarkers = useMemo(() => largeArchitectureCanvas
+    ? compileArchitectureMarkers(viewEdges, `xh-marker-${markerScope.replace(/:/g, '')}`)
+    : { edges: viewEdges, definitions: [] }, [viewEdges, largeArchitectureCanvas, markerScope]);
   // React Flow 11's visibility selector allocates/scans edges on every viewport
   // update, including a fitted overview where nothing can be culled. Retain
   // the complete graph and transform it without that scan. This also preserves
@@ -2285,6 +2293,7 @@ const DiagramBody = forwardRef(function DiagramBody(
     // Wheel inactivity or a final pointer release still needs to restore detail.
     viewportIdleTimer.current = setTimeout(() => {
       if (viewportGesture.current.epoch !== gesture.epoch) return;
+      if (diagramHostRef.current?.hasAttribute(PINCH_ANIMATING)) return;
       gesture.active = false;
       diagramHostRef.current?.removeAttribute('data-viewport-moving');
     }, 300);
@@ -2300,13 +2309,28 @@ const DiagramBody = forwardRef(function DiagramBody(
     viewportGesture.current = {
       epoch: viewportGesture.current.epoch + 1,
       startedAt: event?.timeStamp ?? 0,
-      active: largeCsuCanvas,
+      active: largeArchitectureCanvas,
       pointerHeld: ['mousedown', 'touchstart', 'pointerdown'].includes(event?.type),
     };
-    if (largeCsuCanvas) diagramHostRef.current?.setAttribute('data-viewport-moving', '');
+    // Preserve pan's early preparation. Only scaleTo's ctrl-wheel path reads
+    // layout after this callback and needs the presentation change deferred.
+    if (largeArchitectureCanvas && !(event?.type === 'wheel' && event.ctrlKey)) {
+      const host = diagramHostRef.current;
+      if (host && !host.hasAttribute('data-viewport-moving')) host.setAttribute('data-viewport-moving', '');
+    }
     if (event?.type === 'wheel') armViewportIdleFallback(event);
-  }, [largeCsuCanvas, armViewportIdleFallback]);
+  }, [largeArchitectureCanvas, armViewportIdleFallback]);
   const handleViewportMove = useCallback((event) => {
+    // d3's pinch scaleTo reads the viewport extent AFTER onMoveStart. Changing
+    // motion styles there forces a synchronous layout of the whole diagram.
+    // onMove runs after those reads, before paint, so native/cache presentation
+    // and the new camera transform can be committed together.
+    const gesture = viewportGesture.current;
+    const host = diagramHostRef.current;
+    if (gesture.active && event && event.timeStamp >= gesture.startedAt
+      && host && !host.hasAttribute('data-viewport-moving')) {
+      host.setAttribute('data-viewport-moving', '');
+    }
     if (event?.type === 'wheel') armViewportIdleFallback(event);
   }, [armViewportIdleFallback]);
   const handleViewportMoveEnd = useCallback((event) => {
@@ -2314,6 +2338,7 @@ const DiagramBody = forwardRef(function DiagramBody(
     // React Flow delays onMoveEnd when panOnScroll is enabled. Its previous
     // mouseup can arrive after the next mousedown; it must not end that gesture.
     if (!gesture.active || (event?.timeStamp != null && event.timeStamp < gesture.startedAt)) return;
+    if (diagramHostRef.current?.hasAttribute(PINCH_ANIMATING)) return;
     gesture.active = false;
     gesture.pointerHeld = false;
     clearTimeout(viewportIdleTimer.current);
@@ -2333,7 +2358,7 @@ const DiagramBody = forwardRef(function DiagramBody(
     resetViewportPresentation();
     // A cancelled gesture or lost window focus must not retain the temporary
     // compositor hint (or suppress labels) until another viewport gesture.
-    if (largeCsuCanvas) {
+    if (largeArchitectureCanvas) {
       window.addEventListener('blur', resetViewportPresentation);
       window.addEventListener('pointercancel', resetViewportPresentation);
       document.addEventListener('visibilitychange', resetViewportPresentation);
@@ -2348,7 +2373,7 @@ const DiagramBody = forwardRef(function DiagramBody(
       window.removeEventListener('mouseup', handleViewportPointerRelease, true);
       window.removeEventListener('touchend', handleViewportPointerRelease, true);
     };
-  }, [largeCsuCanvas, storageKey, handleViewportPointerRelease]);
+  }, [largeArchitectureCanvas, activeArchitectureAbstraction, storageKey, handleViewportPointerRelease]);
   const nodeIdCounter = useRef(0);
   const [editModal, setEditModal] = useState(null);
   const editFunctionalTraceRows = useMemo(() => resolveDiagramDetailRows(rows, editModal), [rows, editModal]);
@@ -3216,7 +3241,7 @@ useEffect(() => {
       clearTimeout(viewportIdleTimer.current);
       viewportGesture.current = { epoch: viewportGesture.current.epoch + 1, startedAt: 0, active: false, pointerHeld: false };
       diagramHostRef.current?.removeAttribute('data-viewport-moving');
-      return await toPng(flowCanvas, { backgroundColor: '#ffffff', style: { margin: '0 auto', display: 'block' } });
+      return await toPng(flowCanvas, { backgroundColor: '#ffffff', filter: node => !node.classList?.contains('x-edge-motion-image'), style: { margin: '0 auto', display: 'block' } });
     },
     async getPNG() { return this.exportAsImage(); },
 	    isReady() { return !!diagramHostRef.current?.querySelector('.react-flow'); },
@@ -3228,7 +3253,7 @@ useEffect(() => {
       focusArchitectureTarget,
 	        exportDrawio() {
       const n = getNodes();
-      const e = getEdges();
+      const e = viewEdges;
       downloadDrawioXml(n, e, 'xHandle-diagram.drawio.xml', {
         pageWidth: 1920,
         pageHeight: 1080,
@@ -4071,7 +4096,7 @@ useEffect(() => {
   );
 
   return (
-    <div ref={diagramHostRef} className={largeCsuCanvas ? 'x-csu-large' : undefined} style={{ width: '100%', height, minHeight: height === '100%' ? 0 : undefined, position: 'relative' }}>
+    <div ref={diagramHostRef} className={[largeCsuCanvas && 'x-csu-large', largeArchitectureCanvas && 'x-architecture-motion'].filter(Boolean).join(' ') || undefined} style={{ width: '100%', height, minHeight: height === '100%' ? 0 : undefined, position: 'relative' }}>
       {architectureFocus && (
         <div
           style={{
@@ -4201,7 +4226,7 @@ useEffect(() => {
           onMove={handleViewportMove}
           onMoveEnd={handleViewportMoveEnd}
           nodes={initialLayoutPending ? [] : renderNodes}
-          edges={initialLayoutPending ? [] : viewEdges}
+          edges={initialLayoutPending ? [] : preparedMarkers.edges}
           onInit={() => {
             setTimeout(() => {
               try {
@@ -4468,6 +4493,8 @@ useEffect(() => {
           }}
           
         >
+          <ArchitectureMarkers definitions={preparedMarkers.definitions} />
+          <ArchitectureEdgeMotionLayer hostRef={diagramHostRef} enabled={largeArchitectureCanvas} scope={`${storageKey}:${activeArchitectureAbstraction}`} />
           <Background variant="dots" gap={18} size={1} />
           <Controls showInteractive={false} position="bottom-right" />
         </ReactFlow>

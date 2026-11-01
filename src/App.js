@@ -320,6 +320,8 @@ import {
 } from "./features/project-hazard-analysis/governedDecisionCommit";
 import { indexVibeReviewHeaders } from "./features/project-hazard-analysis/vibeReviewScope";
 import { loadVibeReviewAudit } from "./features/project-hazard-analysis/vibeReviewSession";
+import { useHazardDecisionEvidence } from "./features/results-review/useHazardDecisionEvidence";
+import { readHazardDecisionEvidence } from "./features/results-review/collaboratorReviewStore";
 import {
   applyReviewedApplicabilityToGenerationInput,
   applyReviewedSafetySignificanceToGenerationInput,
@@ -4307,7 +4309,9 @@ useEffect(() => {
         const reviewRows = codeArchitectureReviewRowsForRepo(
           activeCodeArchitectureProject,
           activeCodeArchitectureRepo,
-          resultsReview.reviewItems
+          await resultsReview.readStoredReviewItems(() => true, { artifactPrefixes: [
+            ...codeArchitectureRepoIdentityCandidates(activeCodeArchitectureRepo), 'repo',
+          ].map(repoId => `code-architecture-functional-decomposition:${activeCodeArchitectureProject.id}:${repoId}:row:`) })
         );
         if (reviewRows.length) {
           recoveredRows = reviewRows;
@@ -4735,13 +4739,13 @@ function escapeRegExp(value) {
   return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function filterCodeArchitectureReviewItemsForRepo(project, repo) {
+function filterCodeArchitectureReviewItemsForRepo(project, repo, items = resultsReview.reviewItems) {
   const repoIds = codeArchitectureRepoIdentityCandidates(repo);
   const prefixes = repoIds.flatMap((repoId) => [
     `code-architecture-functional-decomposition:${project.id}:${repoId}`,
     `code-architecture-hazard-summary:${project.id}:${repoId}`,
   ]);
-  return (resultsReview.reviewItems || []).filter((item) => {
+  return (items || []).filter((item) => {
     if (item.projectId && item.projectId !== project.id) return false;
     const text = [item.artifactId, item.sourceRunId].filter(Boolean).join(" ");
     return prefixes.some((prefix) => text.includes(prefix));
@@ -4793,7 +4797,7 @@ async function collectCodeArchitectureRepoAnalysis(project, repo) {
       verificationRuns,
       safetyRemediationEvidence,
     },
-    reviewItems: filterCodeArchitectureReviewItemsForRepo(project, repo),
+    reviewItems: await resultsReview.readStoredReviewItems(item => filterCodeArchitectureReviewItemsForRepo(project, repo, [item]).length > 0),
   };
 }
 
@@ -5500,7 +5504,7 @@ async function handleBaselineRepo({
           updatedAt: new Date().toISOString(),
         }));
       } catch {}
-      if (Array.isArray(rows) && rows.length > 0) {
+      if (resultsReview.legacyReviewEnabled && Array.isArray(rows) && rows.length > 0) {
         try {
           const reviewRows = rows.map((row) => ({
             from: row.from || "",
@@ -5649,7 +5653,10 @@ useEffect(() => {
 }, [cbaTableData]);
 
 const [lastNonCopilotSection, setLastNonCopilotSection] = useState(
-  () => localStorage.getItem('xhandle.lastNonCopilotSection') || DEFAULT_START_SECTION
+  () => {
+    const saved = localStorage.getItem('xhandle.lastNonCopilotSection');
+    return saved && saved !== 'review-center' ? saved : DEFAULT_START_SECTION;
+  }
 );
 
     const refreshGate = async () => {
@@ -6514,7 +6521,7 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
           ?? "",
       },
       localStorageEntries: collectProjectLocalStorageEntries(project.id),
-      reviewItems: (resultsReview.reviewItems || []).filter((item) => item.projectId === project.id),
+      reviewItems: await resultsReview.readStoredReviewItems(item => item.projectId === project.id),
     };
   }
 
@@ -9222,18 +9229,12 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     return map;
   }, [draftHazardReviewItems]);
 
+  const { items: collaboratorHazardEvidence, error: collaboratorHazardEvidenceError } = useHazardDecisionEvidence(activeProjectId);
+  useEffect(() => {
+    if (collaboratorHazardEvidenceError) console.error('[collaborator-review] Unable to load saved decision bases; regeneration will retry before proceeding.', collaboratorHazardEvidenceError);
+  }, [collaboratorHazardEvidenceError]);
   const guidePhraseVibeReviewByRowId = latestGuidePhraseReviewByRowId(
-    resultsReview.reviewItems,
-    activeProjectId,
-    loadVibeReviewAudit(activeProjectId)
-  );
-  const safetySignificanceVibeReviewByRowId = latestSafetySignificanceReviewByRowId(
-    resultsReview.reviewItems,
-    activeProjectId,
-    loadVibeReviewAudit(activeProjectId)
-  );
-  const safetyClassificationVibeReviewByRowId = latestSafetyClassificationReviewByRowId(
-    resultsReview.reviewItems,
+    collaboratorHazardEvidence,
     activeProjectId,
     loadVibeReviewAudit(activeProjectId)
   );
@@ -9258,7 +9259,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     restoredGuidePhraseReviewsRef.current = restorationKey;
 
     const restorationMap = latestGuidePhraseReviewByRowId(
-      resultsReview.reviewItems,
+      collaboratorHazardEvidence,
       activeProjectId,
       loadVibeReviewAudit(activeProjectId)
     );
@@ -9294,7 +9295,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     guidePhraseReviewEvidenceSignature,
     loadedProjectId,
     projectLoaded,
-    resultsReview.reviewItems,
+    collaboratorHazardEvidence,
     riskRegister,
   ]);
 
@@ -9309,9 +9310,16 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   useEffect(() => {
     if (!activeProjectId || !projectLoaded || loadedProjectId !== activeProjectId) return;
     if (Object.keys(draftHazardRowsByIndex || {}).length > 0) return;
-    if (!draftHazardReviewItems.length) return;
+    let cancelled = false;
+    // Historical review rows remain an explicit recovery source when the
+    // primary draft data is absent; they are not loaded into global context.
+    resultsReview.readStoredReviewItems(item => item.sourceFeature === 'AI Hazard Analysis' &&
+      item.artifactType === 'hazard_summary_draft_table' &&
+      String(item.artifactId || '').startsWith(`hazard-summary-draft:${activeProjectId}:row:`),
+      { artifactPrefixes: [`hazard-summary-draft:${activeProjectId}:row:`] }).then(items => {
+    if (cancelled || !items.length) return;
     const restored = {};
-    draftHazardReviewItems.forEach((item) => {
+    items.forEach((item) => {
       const rowIndex = Number(item.currentContent?.rowIndex ?? item.originalContent?.rowIndex);
       const rowKey = item.currentContent?.rowKey ?? item.originalContent?.rowKey;
       if ((!Number.isFinite(rowIndex) && !rowKey) || !Array.isArray(item.currentContent?.row)) return;
@@ -9322,15 +9330,17 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     });
     if (!Object.keys(restored).length) return;
     setDraftHazardRowsByIndex(restored);
-    const restoredHeaders = draftHazardReviewItems.find((item) => Array.isArray(item.currentContent?.columns))?.currentContent.columns;
+    const restoredHeaders = items.find((item) => Array.isArray(item.currentContent?.columns))?.currentContent.columns;
     saveProjectPatch(activeProjectId, {
       hazardAnalysisStorage: "artifact-store",
       draftHazardRowsByIndex: undefined,
       ...(restoredHeaders ? { draftHazardHeaders: restoredHeaders } : {}),
     });
+    }).catch(error => console.warn('[hazard-review] Draft recovery unavailable; stored evidence was preserved.', error));
+    return () => { cancelled = true; };
   }, [
     activeProjectId,
-    draftHazardReviewItems,
+    resultsReview.readStoredReviewItems,
     draftHazardRowsByIndex,
     loadedProjectId,
     projectLoaded,
@@ -10094,7 +10104,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         finishActivity(activityId, "error", "Project changed before generation completed");
         return;
       }
-      if (parsedRows.length > 0) {
+      if (resultsReview.legacyReviewEnabled && parsedRows.length > 0) {
         try {
           await resultsReview.createReviewItems(createReviewItemsFromGeneratedTable({
             sourceFeature: "Prompt Wizard",
@@ -12212,7 +12222,19 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     return () => timers.forEach((timer) => window.clearTimeout(timer));
   }, [activeProjectDiagramReady, activeProjectDiagramKey, activeTab, functionalViewMode, hazardViewMode, pendingFunctionalDiagramFocus]);
 
+  const hazardDecisionLoadPendingRef = useRef(false);
   const handleRunAnalysis = async (selectedMethod, options = {}) => {
+    if (hazardDecisionLoadPendingRef.current) return;
+    hazardDecisionLoadPendingRef.current = true;
+    let decisionEvidence;
+    try { decisionEvidence = await readHazardDecisionEvidence(activeProjectId); }
+    catch (error) { window.alert(`Saved Collaborator decisions could not be loaded. Retry before regenerating: ${error.message}`); return; }
+    finally { hazardDecisionLoadPendingRef.current = false; }
+    if (activeProjectIdRef.current !== activeProjectId) return;
+    const audit = loadVibeReviewAudit(activeProjectId);
+    const guidePhraseVibeReviewByRowId = latestGuidePhraseReviewByRowId(decisionEvidence, activeProjectId, audit);
+    const safetySignificanceVibeReviewByRowId = latestSafetySignificanceReviewByRowId(decisionEvidence, activeProjectId, audit);
+    const safetyClassificationVibeReviewByRowId = latestSafetyClassificationReviewByRowId(decisionEvidence, activeProjectId, audit);
     const shouldRegenerate = Boolean(options.regenerate);
     const sourceRunId = `hazard-${activeProjectId || "default"}-${Date.now()}`;
     const targetHeaders = getProjectDraftHazardHeaders(selectedMethod);
@@ -12580,7 +12602,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         if (runIsVisible()) setHazardResetStatus(null);
       }
     }
-    if (Array.isArray(finalSheets?.Summary) && finalSheets.Summary.length > 1) {
+    if (resultsReview.legacyReviewEnabled && Array.isArray(finalSheets?.Summary) && finalSheets.Summary.length > 1) {
       try {
         const [columns, ...rows] = finalSheets.Summary;
         await resultsReview.createReviewItems(createReviewItemsFromGeneratedTable({
@@ -12647,7 +12669,21 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   };
 
   const handleGenerateDraftHazardRow = useEventCallback(async (hazardTargetIndex, options = {}) => {
-    if (draftHazardGeneratingIndex !== null || isAnalyzing) return;
+    if (draftHazardGeneratingIndex !== null || isAnalyzing || hazardDecisionLoadPendingRef.current) return;
+    hazardDecisionLoadPendingRef.current = true;
+    let decisionEvidence;
+    try { decisionEvidence = await readHazardDecisionEvidence(activeProjectId); }
+    catch (error) {
+      if (options.throwOnError) throw error;
+      window.alert(`Saved Collaborator decisions could not be loaded. Retry before regenerating: ${error.message}`);
+      return;
+    }
+    finally { hazardDecisionLoadPendingRef.current = false; }
+    if (activeProjectIdRef.current !== activeProjectId) return;
+    const audit = loadVibeReviewAudit(activeProjectId);
+    const guidePhraseVibeReviewByRowId = latestGuidePhraseReviewByRowId(decisionEvidence, activeProjectId, audit);
+    const safetySignificanceVibeReviewByRowId = latestSafetySignificanceReviewByRowId(decisionEvidence, activeProjectId, audit);
+    const safetyClassificationVibeReviewByRowId = latestSafetyClassificationReviewByRowId(decisionEvidence, activeProjectId, audit);
     const target = draftHazardTargets[hazardTargetIndex];
     const functionalRow = target?.analysisRow;
     if (!target || !functionalRow) return;
@@ -12906,6 +12942,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
           } : {}),
         });
       }
+      if (resultsReview.legacyReviewEnabled || options.reviewTarget) {
       const regenerationRecordedAt = new Date().toISOString();
       const regenerationAuditSuffix = options.reviewTarget
         ? `:regeneration:${regenerationRecordedAt}`
@@ -12941,6 +12978,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         traceLinks: [{ type: "table_row", rowIndex: hazardTargetIndex, rowKey }],
       });
       await resultsReview.createReviewItems([reviewItem]);
+      }
       const changedFields = targetHeaders.filter((header, index) => String(previousRow?.[index] ?? "") !== String(nextRow?.[index] ?? ""));
       const changes = changedFields.map((field) => {
         const index = targetHeaders.indexOf(field);
@@ -14573,7 +14611,7 @@ Rules:
       record.run=run;
       if (isCurrentRun()) setCodeArchitectureHazardRun(run);
       reportFinish(actId, "success", "Code architecture hazard analysis complete");
-      if (Array.isArray(run?.generatedSheets?.Summary) && run.generatedSheets.Summary.length > 1) {
+      if (resultsReview.legacyReviewEnabled && Array.isArray(run?.generatedSheets?.Summary) && run.generatedSheets.Summary.length > 1) {
         try {
           const [columns, ...rows] = run.generatedSheets.Summary;
           void boundedHazardStorage(Promise.resolve().then(()=>resultsReview.createReviewItems(createReviewItemsFromGeneratedTable({
@@ -15000,7 +15038,7 @@ const hazardPreparedViewRef = useHazardPreparationCache({
   organizationContext: currentCbaOrganizationContext,
 }, activeCodeArchitectureRowsKey);
 
-const projectHazardReviewItems = useMemo(() => (resultsReview.reviewItems || []).filter((item) => {
+const isProjectHazardReviewItem = useCallback((item) => {
   const artifactId = String(item?.artifactId || "");
   const belongsToProject = item?.projectId === activeProjectId ||
     artifactId.startsWith(`hazard-summary:${activeProjectId}:`) ||
@@ -15013,16 +15051,27 @@ const projectHazardReviewItems = useMemo(() => (resultsReview.reviewItems || [])
     artifactId.startsWith(`hazard-summary:${activeProjectId}:`) ||
     artifactId.startsWith(`hazard-summary-draft:${activeProjectId}:`)
   );
-}), [activeProjectId, resultsReview.reviewItems]);
+}, [activeProjectId]);
+const [hazardReviewCount, setHazardReviewCount] = useState(null);
+useEffect(() => {
+  if (!showHazardResetModal || !activeProjectId) return undefined;
+  let cancelled = false;
+  setHazardReviewCount(null);
+  // Count only for the explicit reset dialog; release payloads immediately.
+  resultsReview.readStoredReviewItems(isProjectHazardReviewItem).then(items => {
+    if (!cancelled) setHazardReviewCount(items.length);
+  }).catch(() => { if (!cancelled) setHazardReviewCount('Unavailable'); });
+  return () => { cancelled = true; };
+}, [showHazardResetModal, activeProjectId, isProjectHazardReviewItem, resultsReview.readStoredReviewItems]);
 
 const hazardResetCounts = useMemo(() => ({
   rawRows: Math.max(0, (analysisResult?.Summary?.length || 1) - 1),
   draftRows: Object.keys(draftHazardRowsByIndex || {}).length,
   safetyIssues: riskRegister.length,
   reports: (riskAssessmentReportMarkdown.match(/SAFETY_ISSUE_REPORT_START/g) || []).length + (agentReportResult ? 1 : 0),
-  reviewItems: projectHazardReviewItems.length,
+  reviewItems: hazardReviewCount ?? 'Loading…',
   contexts: hazardOperationalContexts.length,
-}), [analysisResult, draftHazardRowsByIndex, riskRegister.length, riskAssessmentReportMarkdown, agentReportResult, projectHazardReviewItems.length, hazardOperationalContexts.length]);
+}), [analysisResult, draftHazardRowsByIndex, riskRegister.length, riskAssessmentReportMarkdown, agentReportResult, hazardReviewCount, hazardOperationalContexts.length]);
 
 useEffect(() => {
   let cancelled = false;
@@ -15040,6 +15089,8 @@ const handleClearHazardAnalysis = async (scope = "results") => {
   if (!activeProjectId || isResettingHazardAnalysis) return;
   setIsResettingHazardAnalysis(true);
   try {
+    const projectHazardReviewItems = await resultsReview.readStoredReviewItems(isProjectHazardReviewItem);
+    if (activeProjectIdRef.current !== activeProjectId) throw new Error('The active project changed. Reopen the reset dialog.');
     const snapshot = {
       analysisResult,
       draftHazardRowsByIndex,
@@ -15533,7 +15584,7 @@ const handleExportCodeArchitectureReviewPackage = useCallback(async () => {
     const selectedFolderIds = new Set(selectedTargets
       .filter((target) => target.type === "cross-repo" && target.folder?.id)
       .map((target) => target.folder.id));
-    const relevantReviewItems = (resultsReview.reviewItems || []).filter((item) => {
+    const relevantReviewItems = await resultsReview.readStoredReviewItems((item) => {
       const text = [item.id, item.artifactId, item.sourceRunId, item.projectId]
         .filter(Boolean)
         .join(" ");
@@ -15621,7 +15672,7 @@ const handleExportCodeArchitectureReviewPackage = useCallback(async () => {
   hazardRemediationTab,
   isGeneratingCodeArchitectureReviewApp,
   requestCodeArchitectureReviewAnalysisSelection,
-  resultsReview.reviewItems,
+  resultsReview.readStoredReviewItems,
   startActivity,
   updateActivity,
 ]);
@@ -16301,14 +16352,14 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
         </div>
 
         <div className="px-3 py-2 flex flex-col gap-1">
-<div className="order-3" hidden={sidebarVisibility["review-center"] === false}>
+{resultsReview.legacyReviewEnabled && <div className="order-3" hidden={sidebarVisibility["review-center"] === false}>
   <NavItem
     icon={ClipboardCheck}
     label="Review Center"
     active={section === 'review-center'}
     onClick={() => setSection('review-center')}
   />
-</div>
+</div>}
 
 <div className="order-4" hidden={sidebarVisibility["reports"] === false}>
   <NavItem
@@ -17164,7 +17215,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
 
 
 
-{section === 'review-center' && React.createElement(ReviewCenter, {
+{resultsReview.legacyReviewEnabled && section === 'review-center' && React.createElement(ReviewCenter, {
   activeProjectId,
   projects: reviewCenterProjects,
   onOpenSource: jumpToReviewSource,
@@ -22928,7 +22979,7 @@ const CompletedHazardTableRow = React.memo(function CompletedHazardTableRow({
 function App() {
   return (
     <ActivityProvider>
-      <ResultsReviewProvider>
+      <ResultsReviewProvider mode="collaborator">
         <LiteXHandle />
       </ResultsReviewProvider>
     </ActivityProvider>

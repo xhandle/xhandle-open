@@ -1,6 +1,7 @@
 // Actual-App CBA scenario. Used by desktop-interaction-performance.cjs.
 const fs=require('node:fs'),assert=require('node:assert/strict');
 module.exports=async({page,cdp,reset,collect,interaction,prepareInteractions,finishGraphOnly,result,args,out,quant,app})=>{
+ if(args.reviewMemory==='1')return require('./verify-collaborator-review-memory.cjs')({page,cdp,result,args,out,app});
  if(args.loadingUi==='1')return require('./verify-cba-tab-loading.cjs')({page,cdp,result,args,out,app,collect});
  if(args.hazardScroll==='1')return require('./continuous-hazard-scrolling.cjs')({page,cdp,result,args,out,app,collect});
  const frame=()=>page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
