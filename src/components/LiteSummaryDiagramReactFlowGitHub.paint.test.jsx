@@ -97,7 +97,7 @@ async function mount(abstraction = 'detailed', onOuterDoubleClick, options = {})
   const modelRows = options.rows || rows;
   const expectedEdges = options.expectedEdges ?? 2;
   await act(async () => {
-    root.render(<div onDoubleClick={onOuterDoubleClick}><Diagram rows={modelRows} storageKey={options.storageKey || storageKey} architectureMode architectureAbstraction={abstraction} preserveLayoutOnMount={options.preserveLayoutOnMount} cleanOnceKey={options.cleanOnceKey} onCleanApplied={options.onCleanApplied} /></div>);
+    root.render(<div onDoubleClick={onOuterDoubleClick}><Diagram rows={modelRows} storageKey={options.storageKey || storageKey} architectureMode architectureAbstraction={abstraction} onNavigateAbstraction={options.onNavigateAbstraction} includeFiles={options.includeFiles} preserveLayoutOnMount={options.preserveLayoutOnMount} cleanOnceKey={options.cleanOnceKey} onCleanApplied={options.onCleanApplied} /></div>);
   });
   // IndexedDB and React Flow dimension observation settle asynchronously.
   for (let attempt = 0; attempt < 30 && host.querySelectorAll('.react-flow__edge-path').length !== expectedEdges; attempt += 1) {
@@ -108,6 +108,36 @@ async function mount(abstraction = 'detailed', onOuterDoubleClick, options = {})
 
 const paths = () => [...host.querySelectorAll('.react-flow__edge-path')];
 const geometry = () => [...host.querySelectorAll('.react-flow__node')].map(node => [node.dataset.id, node.style.transform]).sort();
+
+test.each([['Functions', 'detailed'], ['CSCI', 'csci']])('navigator reveals a %s target from the subsystem abstraction', async (group, level) => {
+  jest.spyOn(Element.prototype, 'getClientRects').mockImplementation(function () { return [bounds(this)]; });
+  const navigate = jest.fn();
+  await mount('subsystem', undefined, { expectedEdges: 0, onNavigateAbstraction: navigate });
+  for (let attempt = 0; attempt < 30 && !host.querySelector('.react-flow__node'); attempt += 1) {
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+  }
+  const entries = [];
+  act(() => window.dispatchEvent(new CustomEvent('xhandle:quick-search-collect', { detail: { entries } })));
+  const target = entries.find(entry => entry.navigator?.group === group);
+  expect(target).toBeTruthy();
+  act(() => target.activate());
+  expect(navigate).toHaveBeenCalledWith(level);
+  await mount(level, undefined, { expectedEdges: level === 'detailed' ? 2 : 0, onNavigateAbstraction: navigate });
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 150)); });
+  const node = [...host.querySelectorAll('.react-flow__node')].find(item => item.dataset.id === target.navigator.identity);
+  expect(node).toBeTruthy();
+  expect(node.classList.contains('selected')).toBe(true);
+});
+
+test('navigator respects CBA file filters while exposing finer abstraction levels', async () => {
+  jest.spyOn(Element.prototype, 'getClientRects').mockImplementation(function () { return [bounds(this)]; });
+  await mount('subsystem', undefined, { expectedEdges: 0, onNavigateAbstraction: jest.fn(), includeFiles: ['plan.cpp'] });
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 100)); });
+  const entries = [];
+  act(() => window.dispatchEvent(new CustomEvent('xhandle:quick-search-collect', { detail: { entries } })));
+  const functions = entries.filter(entry => entry.navigator?.group === 'Functions');
+  expect(functions.map(entry => entry.label)).toEqual(['Plan']);
+});
 const paint = path => ({ opacity: Number(getComputedStyle(path).opacity), strokeOpacity: Number(getComputedStyle(path).strokeOpacity) });
 const color = value => {
   const channels = String(value).match(/[\d.]+/g)?.map(Number);
@@ -452,7 +482,7 @@ test('overview pinch animates the actual React Flow camera without repeated moti
   const viewport = canvas.querySelector('.react-flow__viewport'), renderer = canvas.querySelector('.react-flow__renderer');
   viewportWheel(pane, true, 10000);
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 500)); });
-  expect(renderedViewport(viewport).zoom).toBeCloseTo(.02, 8);
+  expect(renderedViewport(viewport).zoom).toBeCloseTo(.15, 8);
   const reads = [];
   jest.spyOn(Element.prototype, 'clientWidth', 'get').mockImplementation(function () {
     if (this === renderer) reads.push(canvas.hasAttribute('data-viewport-moving'));
@@ -475,9 +505,9 @@ test('overview pinch animates the actual React Flow camera without repeated moti
 });
 
 test.each([
-  ['Functional', 'minimum', 0.1, 10000],
+  ['Functional', 'minimum', 0.15, 10000],
   ['Functional', 'maximum', 1.8, -10000],
-  ['CBA', 'minimum', 0.02, 10000],
+  ['CBA', 'minimum', 0.15, 10000],
   ['CBA', 'maximum', 1.8, -10000],
 ])('%s no-op wheel at the %s zoom limit restores idle presentation', async (kind, _limit, zoom, deltaY) => {
   if (kind === 'Functional') {
@@ -498,13 +528,15 @@ test.each([
   };
   jest.useFakeTimers();
   try {
-    expect(renderedViewport(viewport).zoom).not.toBe(zoom);
-    viewportWheel(pane, true, deltaY);
-    expect(renderedViewport(viewport).zoom).toBe(zoom);
-    expect(canvas.hasAttribute('data-viewport-moving')).toBe(true);
-    expect(getComputedStyle(viewport).willChange).toBe('transform');
-    await advancePanTimers(350);
-    expectIdle();
+    const initial = renderedViewport(viewport);
+    if (initial.zoom !== zoom) {
+      viewportWheel(pane, true, deltaY);
+      expect(renderedViewport(viewport).zoom).toBe(zoom);
+      expect(canvas.hasAttribute('data-viewport-moving')).toBe(true);
+      expect(getComputedStyle(viewport).willChange).toBe('transform');
+      await advancePanTimers(350);
+      expectIdle();
+    }
     const atLimit = renderedViewport(viewport);
     // D3 still emits start/zoom/end at this limit. React Flow suppresses
     // onMoveEnd when the resulting transform is unchanged.

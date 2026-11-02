@@ -1,8 +1,10 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Search } from 'lucide-react';
 import { QUICK_SEARCH_COLLECT, filterSearchEntries, tableSearchEntries } from './quickSearchUtils';
 import './quickSearch.css';
+import QuickSearchResults from './QuickSearchResults';
+import { diagramNavigatorGroups, diagramNavigatorRows } from './diagramNavigator';
 
 const isFindShortcut = event => (event.metaKey || event.ctrlKey)
   && !event.shiftKey && !event.altKey && event.key?.toLowerCase() === 'f';
@@ -12,16 +14,18 @@ export default function QuickSearch() {
   const [entries, setEntries] = useState([]);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
+  const [expanded, setExpanded] = useState(() => new Set());
   const inputRef = useRef(null);
   const returnFocus = useRef(null);
   const dialogRef = useRef(null);
-  const resultsRef = useRef(null);
   const pendingKeyAction = useRef(null);
   const findTimer = useRef(null);
   const mac = /Mac|iPhone|iPad/.test(navigator.platform);
   const shortcut = mac ? '⌘F' : 'Ctrl+F';
   const matches = useMemo(() => filterSearchEntries(entries, query), [entries, query]);
-  const results = matches.slice(0, 100);
+  const groups = useMemo(() => diagramNavigatorGroups(entries), [entries]);
+  const browse = !query.trim() && groups.length > 0;
+  const results = useMemo(() => browse ? diagramNavigatorRows(groups, expanded) : matches, [browse, groups, expanded, matches]);
   const close = () => {
     pendingKeyAction.current = null;
     clearTimeout(findTimer.current);
@@ -35,6 +39,7 @@ export default function QuickSearch() {
     const collected = tableSearchEntries();
     window.dispatchEvent(new CustomEvent(QUICK_SEARCH_COLLECT, { detail: { entries: collected } }));
     setEntries(collected);
+    setExpanded(new Set());
     setQuery('');
     setActive(0);
     setOpen(true);
@@ -69,22 +74,18 @@ export default function QuickSearch() {
     };
   }, [scheduleFind]);
   useEffect(() => { if (open) inputRef.current?.focus(); }, [open]);
-  useLayoutEffect(() => {
-    if (resultsRef.current) resultsRef.current.scrollTop = 0;
-  }, [query, open]);
-  useLayoutEffect(() => {
-    const list = resultsRef.current;
-    const option = list?.querySelector('[aria-selected="true"]');
-    if (!option) return;
-    const bounds = list.getBoundingClientRect();
-    const item = option.getBoundingClientRect();
-    // scrollIntoView may scroll ancestors, including the page behind the modal.
-    // Adjust only this list so search navigation cannot move the canvas/page.
-    if (item.top < bounds.top) list.scrollTop -= bounds.top - item.top;
-    else if (item.bottom > bounds.bottom) list.scrollTop += item.bottom - bounds.bottom;
-  }, [active, matches, open]);
-
-  const choose = entry => { close(); entry.activate(query); };
+  const toggleGroup = (entry, index) => {
+    setActive(index);
+    setExpanded(current => {
+      const next = new Set(current);
+      if (next.has(entry.id)) next.delete(entry.id); else next.add(entry.id);
+      return next;
+    });
+  };
+  const choose = (entry, index = active) => {
+    if (entry.group) { toggleGroup(entry, index); return; }
+    close(); entry.activate(query);
+  };
   return <>
     <button type="button" onClick={show} title={`Quick search (${shortcut})`}
       aria-label="Quick search" aria-keyshortcuts="Meta+F Control+F"
@@ -144,6 +145,18 @@ export default function QuickSearch() {
                   event.preventDefault();
                   setActive(index => results.length ? (index + (event.key === 'ArrowDown' ? 1 : -1) + results.length) % results.length : 0);
                 }
+                if (['Home', 'End'].includes(event.key) && !query && results.length) {
+                  event.preventDefault();
+                  setActive(event.key === 'Home' ? 0 : results.length - 1);
+                }
+                if (browse && ['ArrowLeft', 'ArrowRight'].includes(event.key) && results[active]) {
+                  event.preventDefault();
+                  const entry = results[active];
+                  if (entry.group) {
+                    if (entry.expanded !== (event.key === 'ArrowRight')) toggleGroup(entry, active);
+                    else if (entry.expanded && event.key === 'ArrowRight') setActive(active + 1);
+                  } else if (event.key === 'ArrowLeft') setActive(results.findIndex(row => row.id === entry.parentId));
+                }
                 if (event.key === 'Enter' && results[active]) {
                   event.preventDefault();
                   const entry = results[active];
@@ -151,24 +164,17 @@ export default function QuickSearch() {
                 }
               }}
               role="combobox" aria-label="Search current view" aria-expanded="true"
+              aria-haspopup={browse ? 'tree' : 'listbox'}
               aria-controls="quick-search-results" aria-autocomplete="list"
               aria-activedescendant={results[active] ? `quick-search-result-${active}` : undefined}
               placeholder="Search tables and diagram elements…"
               className="w-full rounded-lg border px-3 py-2 bg-transparent" />
-            <p className="mt-2 text-xs text-gray-500">Search the current view. Table filters and collapsed groups are respected. ↑ ↓ to navigate; Enter to jump.</p>
+            <p className="mt-2 text-xs text-gray-500">{groups.length ? 'Browse diagram elements or type to search. ← → expand or collapse. ' : 'Search the current view. Table filters and collapsed groups are respected. '}↑ ↓ to navigate; Enter to jump.</p>
           </div>
           <div role="status" className="px-4 py-2 text-xs text-gray-500">
-            {!query.trim() ? 'Type to search.' : `${matches.length} matches${matches.length > 100 ? ' — showing the first 100; refine your search for more.' : ''}`}
+            {browse ? `Diagram navigator · ${groups.reduce((count, group) => count + group.entries.length, 0)} elements` : !query.trim() ? 'Type to search.' : `${matches.length} matches`}
           </div>
-          <ul ref={resultsRef} id="quick-search-results" role="listbox" aria-label="Search results" className="max-h-[50vh] overflow-auto p-2">
-            {results.map((entry, index) => <li key={entry.id} id={`quick-search-result-${index}`}
-              role="option" aria-selected={index === active}
-              onMouseDown={event => event.preventDefault()} onClick={() => choose(entry)}
-              className={`cursor-pointer rounded-lg p-3 ${index === active ? 'bg-blue-50 text-blue-900 dark:bg-blue-950 dark:text-blue-100' : ''}`}>
-              <div className="text-xs font-semibold">{entry.kind} · {entry.label}</div>
-              <div className="mt-1 text-sm line-clamp-2">{entry.text.slice(0, 600)}</div>
-            </li>)}
-          </ul>
+          <QuickSearchResults rows={results} active={active} browse={browse} onChoose={choose} resetKey={query} />
         </div>
       </div>, document.body)}
   </>;

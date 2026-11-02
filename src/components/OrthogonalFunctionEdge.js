@@ -198,7 +198,7 @@ export const OrthogonalFunctionEdge = React.memo(function OrthogonalFunctionEdge
         </circle>
       )) : null}
       <FunctionEdgeLabel>
-        {label ? <div className="nodrag nopan" style={{ position: 'absolute', transform: `translate(-50%, -50%) translate(${middlePoint.x}px,${middlePoint.y - 14}px)`, fontSize: 11, color: BRAND.dark, background: 'rgba(255,255,255,0.9)', padding: '2px 5px', borderRadius: 4, pointerEvents: 'none' }}>{label}</div> : null}
+        {label ? <div data-diagram-edge-label={id} className="nodrag nopan" style={{ position: 'absolute', transform: `translate(-50%, -50%) translate(${middlePoint.x}px,${middlePoint.y - 14}px)`, fontSize: 11, color: BRAND.dark, background: 'rgba(255,255,255,0.9)', padding: '2px 5px', borderRadius: 4, pointerEvents: 'none' }}>{label}</div> : null}
       </FunctionEdgeLabel>
     </>
   );

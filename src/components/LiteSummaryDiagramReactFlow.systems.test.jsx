@@ -669,6 +669,7 @@ test('quick search indexes diagram nodes and connections and focuses without rea
   act(() => window.dispatchEvent(new CustomEvent('xhandle:quick-search-collect', { detail: { entries } })));
   const entry = entries.find(item => item.label === 'Plan');
   expect(entry).toBeTruthy();
+  expect(entry.navigator.group).toBe('Functions');
   expect(entries.some(item => item.kind === 'Diagram connection')).toBe(true);
   const positions = mockNodes.map(node => ({ id: node.id, position: node.position }));
   act(() => entry.activate());

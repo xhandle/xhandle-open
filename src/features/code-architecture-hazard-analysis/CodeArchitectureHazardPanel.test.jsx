@@ -179,8 +179,14 @@ it.each(['loading', 'failed'])('does not present a draft or generation action wh
     expect(host.textContent).not.toContain('Incomplete hazard analysis draft');
     expect(host.textContent).not.toContain('Run hazard analysis');
     expect(host.textContent).toContain(status==='loading'?'Loading saved results':'Unable to load saved results');
-    act(()=>Array.from(host.querySelectorAll('button')).find(b=>b.textContent==='Retry loading').click());
-    expect(retry).toHaveBeenCalledTimes(1);expect(generate).not.toHaveBeenCalled();
+    if (status === 'loading') {
+      expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
+      expect(host.querySelector('button')).toBeNull();
+    } else {
+      act(()=>Array.from(host.querySelectorAll('button')).find(b=>b.textContent==='Retry loading').click());
+      expect(retry).toHaveBeenCalledTimes(1);
+    }
+    expect(generate).not.toHaveBeenCalled();
   } finally {act(()=>root.unmount());host.remove();}
 });
 it('keeps the summary visible with a separate refresh failure notice',()=>{

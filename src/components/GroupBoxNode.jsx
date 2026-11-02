@@ -135,7 +135,7 @@ export default function GroupBoxNode({ data }) {
           } : {}),
         }}
       >
-        {label}
+        <span data-diagram-label>{label}</span>
       </div>
     </div>
   );

@@ -43,7 +43,7 @@ it.each([false,true])('shows one active-analysis indicator while large saved row
  act(()=>root.render(<Loader {...props} latestRun={makeRun('running')} isRunning reviewMode={reviewMode} onCancelAnalysis={stop} progress={{message:'Analyzing scenarios'}}/>));
  expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
  expect(host.querySelector('[role="progressbar"]').getAttribute('aria-label')).toBe('Analyzing scenarios');
- expect(host.textContent).not.toContain('Preparing saved hazard results');
+ expect(host.textContent).not.toContain('Loading saved results');
  const button=[...host.querySelectorAll('button')].find(button=>button.textContent==='Stop analysis');
  if(reviewMode)expect(button).toBeUndefined();
  else {act(()=>button.click());expect(stop).toHaveBeenCalledTimes(1);}

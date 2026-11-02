@@ -77,7 +77,7 @@ function CompleteSavedHazardPanel(props) {
     </div>}
     {preparation.error
       ? <div role="alert">Unable to prepare saved hazard results: {preparation.error.message}</div>
-      : !props.isRunning && props.restoration?.status !== 'upgrading' && <TablePreparationProgress label="Preparing saved hazard results" progress={preparation.progress} />}
+      : !props.isRunning && props.restoration?.status !== 'upgrading' && <TablePreparationProgress label="Loading saved results" progress={preparation.progress} />}
   </div>;
   return <PreparedCodeArchitectureHazardPanel {...props} preparedView={preparation.result} />;
 }

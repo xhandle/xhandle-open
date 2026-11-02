@@ -218,6 +218,12 @@ export function PreparedCodeArchitectureHazardPanel({
   // Do not present a draft or generation controls as an absent saved analysis
   // until the authoritative read has completed successfully.
   if (!latestRun && !isRunning && restoration && ['loading', 'failed', 'upgrade-required', 'upgrading'].includes(restoration.status)) {
+    // Storage restoration and table preparation are one opening flow. Keep a
+    // single primary, inline indicator as the saved result advances through
+    // both stages instead of introducing a second centered loader.
+    if (restoration.status === 'loading') return <div className="flex h-full min-h-0 flex-col">
+      <TablePreparationProgress label="Loading saved results" progress={restoration.progress} />
+    </div>;
     return <div className="flex h-full min-h-0 flex-col">{restorationNotice}</div>;
   }
 

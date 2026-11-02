@@ -174,11 +174,101 @@ test('arrow navigation scrolls only the result list', () => {
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
   const list = document.querySelector('[role="listbox"]');
-  list.getBoundingClientRect = () => ({ top: 100, bottom: 300 });
-  list.children[1].getBoundingClientRect = () => ({ top: 290, bottom: 350 });
+  Object.defineProperty(list, 'clientHeight', { value: 78 });
   act(() => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })));
   expect(list.scrollTop).toBe(50);
   expect(scroll).not.toHaveBeenCalled();
+});
+
+function typeSearch(value) {
+  const input = document.querySelector('[role="combobox"]');
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  return input;
+}
+
+function diagramEntries(count = 2) {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `function:${index}`, kind: 'Diagram node', label: `Function ${index}`, text: 'Description',
+    navigator: { group: 'Functions', context: index % 2 ? 'Controls › Actuation' : 'Controls › Planning', identity: `n:${index}` },
+    activate: jest.fn(),
+  }));
+}
+
+test.each(['button', 'ctrlKey', 'metaKey'])('%s opens a clickable diagram glossary before typing', trigger => {
+  jest.useFakeTimers();
+  const entries = diagramEntries();
+  const collect = event => event.detail.entries.push(...entries);
+  window.addEventListener(QUICK_SEARCH_COLLECT, collect);
+  try {
+    act(() => root.render(<QuickSearch />));
+    if (trigger === 'button') act(() => host.querySelector('button').click());
+    else {
+      act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', [trigger]: true, bubbles: true, cancelable: true })));
+      act(() => jest.runOnlyPendingTimers());
+    }
+    expect(document.querySelector('[role="tree"]')).toBeTruthy();
+    expect(document.querySelector('[role="combobox"]').value).toBe('');
+    expect(document.querySelector('[role="status"]').textContent).toContain('2 elements');
+    const group = document.querySelector('[role="treeitem"]');
+    expect(group.getAttribute('aria-expanded')).toBe('false');
+    expect(document.querySelectorAll('[role="treeitem"]')).toHaveLength(1);
+    act(() => group.click());
+    const entry = [...document.querySelectorAll('[role="treeitem"]')].find(item => item.textContent.includes('Function 1'));
+    expect(entry.textContent).toContain('Controls › Actuation');
+    act(() => entry.click());
+    expect(entries[1].activate).toHaveBeenCalledWith('');
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  } finally { window.removeEventListener(QUICK_SEARCH_COLLECT, collect); }
+});
+
+test('glossary sections expand with the keyboard; parent context filters duplicate names', () => {
+  const entries = diagramEntries();
+  entries.forEach(entry => { entry.label = 'Controller'; });
+  const collect = event => event.detail.entries.push(...entries);
+  window.addEventListener(QUICK_SEARCH_COLLECT, collect);
+  try {
+    act(() => root.render(<QuickSearch />));
+    act(() => host.querySelector('button').click());
+    const input = document.querySelector('[role="combobox"]');
+    const key = name => act(() => input.dispatchEvent(new KeyboardEvent('keydown', { key: name, bubbles: true })));
+    expect(document.querySelectorAll('[role="treeitem"]')).toHaveLength(1);
+    key('ArrowRight'); key('ArrowRight');
+    expect(document.getElementById(input.getAttribute('aria-activedescendant')).textContent).toContain('Controller');
+    typeSearch('controller actuation');
+    expect(document.querySelectorAll('[role="option"]')).toHaveLength(1);
+    act(() => document.querySelector('[role="option"]').click());
+    expect(entries[1].activate).toHaveBeenCalledWith('controller actuation');
+    expect(entries[0].activate).not.toHaveBeenCalled();
+  } finally { window.removeEventListener(QUICK_SEARCH_COLLECT, collect); }
+});
+
+test('10,000 diagram elements stay bounded and the last item is reachable by scrolling and keyboard', () => {
+  const entries = diagramEntries(10000);
+  const collect = event => event.detail.entries.push(...entries);
+  window.addEventListener(QUICK_SEARCH_COLLECT, collect);
+  try {
+    act(() => root.render(<QuickSearch />));
+    act(() => host.querySelector('button').click());
+    expect(document.querySelectorAll('[role="treeitem"]')).toHaveLength(1);
+    act(() => document.querySelector('[role="treeitem"]').click());
+    expect(document.querySelectorAll('[role="treeitem"]').length).toBeLessThan(25);
+    const input = document.querySelector('[role="combobox"]');
+    act(() => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true })));
+    expect(document.getElementById(input.getAttribute('aria-activedescendant')).textContent).toContain('Function 9999');
+    expect(document.querySelectorAll('[role="treeitem"]').length).toBeLessThan(25);
+    typeSearch('function');
+    const list = document.querySelector('[role="listbox"]');
+    act(() => { list.scrollTop = 9995 * 64; list.dispatchEvent(new Event('scroll', { bubbles: true })); });
+    const last = [...list.querySelectorAll('[role="option"]')].find(item => item.textContent.includes('Function 9999'));
+    expect(last).toBeTruthy();
+    expect(list.querySelectorAll('[role="option"]').length).toBeLessThan(25);
+    expect(document.querySelector('[role="status"]').textContent).toBe('10000 matches');
+    act(() => last.click());
+    expect(entries[9999].activate).toHaveBeenCalled();
+  } finally { window.removeEventListener(QUICK_SEARCH_COLLECT, collect); }
 });
 
 

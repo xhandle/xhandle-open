@@ -4,7 +4,7 @@ import { applyTableContainerDetails, rowsWithDiagramDetails } from './functional
 import { preserveGroupMetadata } from './diagramGroupMetadata';
 import { expandManualAncestorsForDrag, manualDropTarget, reparentManualElements, resizeManualContainer, rowsWithManualSubsystem } from './manualDiagramEditing';
 import { createPresentationCache, clearEdgeSelection, indexNodesByParent } from './diagramPresentationCache';
-import { QUICK_SEARCH_COLLECT, isSearchVisible } from './quickSearchUtils';
+import useCodeArchitectureQuickSearch from './useCodeArchitectureQuickSearch';
 import { classifyAssociatedHazard } from './associatedHazardClassification';
 import { initialDiagramLayoutPending, readDiagramViewport } from './functionalDiagramInitialization';
 // LiteSummaryDiagramReactFlow.js — xHandle look, NO AUTO LAYOUT + ONE-TIME CLEAN & SPREAD
@@ -95,7 +95,9 @@ const THEME = {
   canvas: {
     padX: 80,
     padY: 60,
-    minZoom: 0.1,
+    // Keep very large diagrams out of the expensive, all-nodes overview state.
+    // The complete model remains navigable by panning, but zoom stops at 15%.
+    minZoom: 0.15,
     maxZoom: 1.8,
   },
 };
@@ -909,7 +911,7 @@ const BidirectionalNode = React.memo(({ id, data, selected }) => {
           padding: 4,
         }}
       >
-        {data.label}
+        <span data-diagram-label>{data.label}</span>
       </div>
     </div>
   );
@@ -966,7 +968,7 @@ const GroupBoxNode = React.memo(({ data, selected }) => {
 	          cursor: 'default',
 	        }}
       >
-        {data.label || 'Group'}
+        <span data-diagram-label>{data.label || 'Group'}</span>
         {data.elementType === 'system' && <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 500 }}>System</span>}
       </div>
     </div>
@@ -994,7 +996,7 @@ const NoteNode = React.memo(({ data, selected }) => {
       }}
     >
       <div style={{ fontSize: 14, fontWeight: 700, lineHeight: 1.2, wordBreak: 'break-word' }}>
-        {data.label || 'Note'}
+        <span data-diagram-label>{data.label || 'Note'}</span>
       </div>
       <div style={{ fontSize: 13, lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
         {data.description || 'Add a note'}
@@ -2970,40 +2972,9 @@ const DiagramBody = forwardRef(function DiagramBody(
   const suppressedEdgeRemovalIdsRef = useRef(new Set());
   const pendingEdgeUpdateRowsRef = useRef(null);
 
-  const { fitView, project, getNodes, getEdges, getViewport } = useReactFlow();
-  useEffect(() => {
-    const collect = event => {
-      if (!isSearchVisible(diagramHostRef.current)) return;
-      const currentNodes = getNodes();
-      const focus = (targetNodes, nodeId, edgeId) => {
-        setSelectedNodeIds(nodeId ? [nodeId] : []);
-        setHighlightedEdgeId(edgeId || null);
-        setNodes(all => all.map(node => ({ ...node, selected: node.id === nodeId })));
-        setEdges(all => all.map(edge => ({ ...edge, selected: edge.id === edgeId })));
-        fitView({ nodes: targetNodes, padding: 0.45, duration: 250, maxZoom: 1.15 });
-      };
-      currentNodes.filter(node => !node.hidden).forEach(node => {
-        event.detail.entries.push({
-          id: storageKey + ':node:' + node.id,
-          kind: node.type === 'groupBox' ? (isSystemGroup(node) ? 'System' : 'Subsystem') : 'Diagram node',
-          label: String(node.data?.label || node.id),
-          text: String(node.data?.description || ''),
-          activate: () => focus([node], node.id, null),
-        });
-      });
-      getEdges().filter(edge => !edge.hidden).forEach(edge => {
-        const endpoints = currentNodes.filter(node => node.id === edge.source || node.id === edge.target);
-        event.detail.entries.push({
-          id: storageKey + ':edge:' + edge.id, kind: 'Diagram connection',
-          label: String(edge.data?.label || edge.label || 'Connection'),
-          text: endpoints.map(node => node.data?.label || node.id).join(' → ') + ' ' + String(edge.data?.description || ''),
-          activate: () => focus(endpoints, null, edge.id),
-        });
-      });
-    };
-    window.addEventListener(QUICK_SEARCH_COLLECT, collect);
-    return () => window.removeEventListener(QUICK_SEARCH_COLLECT, collect);
-  }, [fitView, getNodes, getEdges, setNodes, setEdges, storageKey]);
+  const { fitView, project, getNodes, getEdges, getViewport, screenToFlowPosition, setCenter } = useReactFlow();
+  useCodeArchitectureQuickSearch({ hostRef: diagramHostRef, storageKey, getNodes, getEdges,
+    fitView, screenToFlowPosition, setCenter, setNodes, setEdges, setSelectedNodeIds, setHighlightedEdgeId, minZoom: THEME.canvas.minZoom });
 
   const undoStackRef = useRef([]);
   const redoStackRef = useRef([]);

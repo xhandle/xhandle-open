@@ -125,7 +125,7 @@ export function filterSearchEntries(entries, query) {
   const terms = normalizeSearchText(query).toLowerCase().split(' ').filter(Boolean);
   if (!terms.length) return [];
   return entries.filter(entry => {
-    const text = `${entry.label} ${entry.text}`.toLowerCase();
+    const text = `${entry.label} ${entry.text} ${entry.navigator?.group || ''} ${entry.navigator?.context || ''}`.toLowerCase();
     return terms.every(term => text.includes(term));
   });
 }

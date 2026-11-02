@@ -302,7 +302,9 @@ const THEME = {
   canvas: {
     padX: 80,
     padY: 60,
-    minZoom: 0.02,
+    // Keep very large diagrams out of the expensive, all-nodes overview state.
+    // The complete model remains navigable by panning, but zoom stops at 15%.
+    minZoom: 0.15,
     maxZoom: 1.8,
   },
 };
@@ -1163,7 +1165,7 @@ const BidirectionalNode = React.memo(({ id, data, selected }) => {
           padding: 4,
         }}
       >
-        {data.label}
+        <span data-diagram-label>{data.label}</span>
       </div>
       {!data.functionalPresentation && (data.csu || data.file) && (
         <div
@@ -1210,7 +1212,7 @@ const NoteNode = ({ data, selected }) => {
       }}
     >
       <div style={{ fontSize: 14, fontWeight: 700, lineHeight: 1.2, wordBreak: 'break-word' }}>
-        {data.label || 'Note'}
+        <span data-diagram-label>{data.label || 'Note'}</span>
       </div>
       <div style={{ fontSize: 13, lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
         {data.description || 'Add a note'}
@@ -1955,6 +1957,7 @@ const DiagramBody = forwardRef(function DiagramBody(
     repoName = "",
     architectureMode = false,
     architectureAbstraction = "detailed",
+    onNavigateAbstraction,
     functionalPresentation = false,
     allowLayoutChanges = false,
     colorSystemElements = false,
@@ -2628,8 +2631,13 @@ const DiagramBody = forwardRef(function DiagramBody(
         .filter((row) => row.resolvedSourceArchitectureRefs.some((ref) => assuranceRefMatchesTarget(ref, editLinkTarget))),
     }));
   }, [assuranceArtifactGroups, editModal, editLinkTarget, resolveAssuranceRefs]);
-  const { fitView, project, getNodes, getEdges, getViewport, setViewport, viewportInitialized } = useReactFlow();
-  useCodeArchitectureQuickSearch({hostRef:diagramHostRef,storageKey,getNodes,getEdges,fitView,setNodes,setEdges,setSelectedNodeIds,setHighlightedEdgeId});
+  const { fitView, project, getNodes, getEdges, getViewport, screenToFlowPosition, setCenter, setViewport, viewportInitialized } = useReactFlow();
+  useCodeArchitectureQuickSearch({ hostRef: diagramHostRef, storageKey, getNodes, getEdges,
+    fitView, screenToFlowPosition, setCenter, setNodes, setEdges, setSelectedNodeIds, setHighlightedEdgeId, minZoom: THEME.canvas.minZoom,
+    getNavigatorNodes: onNavigateAbstraction ? () => nodes.filter(node => nodeVisibility.get(node.id)) : undefined,
+    revealNode: node => onNavigateAbstraction?.(['subsystem', 'csci', 'csc'].includes(node.data?.groupKind) ? node.data.groupKind : 'detailed'),
+    onBeforeNavigate: () => { suppressAutoFitUntilRef.current = Date.now() + 1800; setSelectedTrace(null); },
+  });
   const useWindowsReviewPinchZoom = reviewMode && isWindowsReviewRuntime();
   const handleReviewWheelCapture = useCallback((event) => {
     if (!useWindowsReviewPinchZoom || !event.ctrlKey) return;

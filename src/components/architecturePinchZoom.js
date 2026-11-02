@@ -61,10 +61,15 @@ export function createArchitecturePinchZoom(host, store) {
     const renderer = selection?.node();
     if (!renderer || !zoom || state.userSelectionActive || state.paneDragging || !renderer.contains(event.target)) return;
     const current = selection.property('__zoom');
-    if (!current || (!pending && current.k > .2)) return;
+    if (!current) return;
+    const [minimum, maximum] = zoom.scaleExtent();
+    // Treat the lower portion of every configured zoom range as the overview.
+    // This keeps the smoothed trackpad path active when a diagram raises its
+    // minimum zoom to protect performance.
+    const overviewThreshold = Math.min(maximum, minimum + .18);
+    if (!pending && current.k > overviewThreshold) return;
     const delta = zoom.wheelDelta().call(renderer, event);
     if (!Number.isFinite(delta) || delta === 0) return;
-    const [minimum, maximum] = zoom.scaleExtent();
     const base = pending?.target || current;
     const k = Math.max(minimum, Math.min(maximum, base.k * Math.pow(2, delta)));
     const box = renderer.getBoundingClientRect();

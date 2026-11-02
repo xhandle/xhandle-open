@@ -4458,6 +4458,7 @@ React.useEffect(() => {
           reviewMode={reviewMode}
           architectureMode={view === "architecture" || view === "split"}
           architectureAbstraction={architectureAbstraction}
+          onNavigateAbstraction={setArchitectureAbstraction}
           colorSystemElements={colorSystemElements}
           hazardSummary={hazardSummary}
             hazardRunDescriptor={hazardRunDescriptor}
