@@ -1,4 +1,5 @@
 import HazardRestorationNotice from './HazardRestorationNotice';
+import { HAZARD_SOURCE_INCOMPLETE } from './hazardSourceIntegrity';
 import TablePreparationProgress from '../code-architecture-assurance/TablePreparationProgress';
 import HazardRunRecoveryNotice from './HazardRunRecoveryNotice';
 import { SHOW_TABLE_REVIEW_NOTICES } from "../../components/tablePresentation";
@@ -224,7 +225,15 @@ export function PreparedCodeArchitectureHazardPanel({
     if (restoration.status === 'loading') return <div className="flex h-full min-h-0 flex-col">
       <TablePreparationProgress label="Loading saved results" progress={restoration.progress} />
     </div>;
-    return <div className="flex h-full min-h-0 flex-col">{restorationNotice}</div>;
+    return <div className="flex h-full min-h-0 flex-col">
+      {restorationNotice}
+      {restoration.errorCode === HAZARD_SOURCE_INCOMPLETE && !reviewMode && <div className="p-3">
+        <button type="button" className="rounded bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-50"
+          disabled={!onRunAnalysis || eligibilitySummary.include === 0}
+          onClick={() => onRunAnalysis?.(method, {regenerate:true})}>Start a new hazard analysis</button>
+        <p className="mt-2 text-sm text-slate-600">This creates a new analysis from the current architecture. Existing saved records are retained.</p>
+      </div>}
+    </div>;
   }
 
   return (

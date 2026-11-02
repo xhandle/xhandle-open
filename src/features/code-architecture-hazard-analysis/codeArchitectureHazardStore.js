@@ -1,5 +1,6 @@
 import {sha256} from 'hash.js';
-import {hazardChunkKey,hazardChunkDigest} from './hazardRunChunks';
+import {hazardChunkKey,hazardChunkDigest,validateHazardDescriptor} from './hazardRunChunks';
+import {incompleteHazardSource} from './hazardSourceIntegrity';
 import {PAGED_HAZARD,validateHazardRowIndex} from './hazardRowIndex';
 import { WORKING_SET, compactHazardRun, restoreDeferredHazardFields } from './hazardWorkingSet';
 import {validateHazardTableIndex} from './hazardTableIndex';
@@ -128,6 +129,12 @@ export async function getCodeArchitectureHazardRuns(filters = {}) {
 }
 
 const checkRead = signal => { if(signal?.aborted) throw new DOMException('Hazard loading cancelled.', 'AbortError'); };
+async function requireUpgradeableSource(db, root, options) {
+  const payload = validateHazardDescriptor(root);
+  const range = IDBKeyRange.bound(hazardChunkKey(payload.generation, 0), hazardChunkKey(payload.generation, payload.count - 1));
+  const found = await readHazardTransaction(db, HAZARD_CHUNKS, store => store.count(range), options);
+  if (found !== payload.count) throw incompleteHazardSource(root.id, { found, expected: payload.count });
+}
 export async function getLatestCodeArchitectureHazardRun(filters = {}, options = {}) {
   const {signal}=options;
   checkRead(signal);
@@ -152,7 +159,7 @@ export async function getLatestCodeArchitectureHazardRun(filters = {}, options =
     if(options.paged && isChunkedHazardRun(root)){
       let index;
       try{index=validateHazardRowIndex(root.payload);}
-      catch(error){throw Object.assign(new Error('This saved analysis needs a one-time row storage upgrade.'),{code:'HAZARD_TABLE_UPGRADE_REQUIRED',runId:root.id});}
+      catch(error){await requireUpgradeableSource(db, root, options);throw Object.assign(new Error('This saved analysis needs a one-time row storage upgrade.'),{code:'HAZARD_TABLE_UPGRADE_REQUIRED',runId:root.id});}
       const result={...index.metadata,id:root.id,projectId:root.projectId,repoId:root.repoId,
         [PAGED_HAZARD]:{revision:latest.storageRevision,generation:root.payload.generation,total:index.spans.length,pending:index.pending,partialMetadata:index.partial?.metadata || {},partialCount:index.partial?.spans.length || 0,narrative:index.narrative,headers:index.headers,details:Object.keys(index.details || {}),omittedMetadata:index.omittedMetadata || []}};
       const after=await readHazardTransaction(db,META_STORE,store=>store.get(latest.id),options);
@@ -165,7 +172,7 @@ export async function getLatestCodeArchitectureHazardRun(filters = {}, options =
     let paths=[];
     if(useWorkingSet && isChunkedHazardRun(root)){
       try{paths=validateHazardTableIndex(root.payload).paths;}
-      catch(error){throw Object.assign(new Error('This analysis needs a one-time table storage upgrade before its first fast opening. Original results are unchanged.'),{code:'HAZARD_TABLE_UPGRADE_REQUIRED',runId:root.id});}
+      catch(error){await requireUpgradeableSource(db, root, options);throw Object.assign(new Error('This analysis needs a one-time table storage upgrade before its first fast opening. Original results are unchanged.'),{code:'HAZARD_TABLE_UPGRADE_REQUIRED',runId:root.id});}
     }
     diagnostic.phase(useWorkingSet ? 'read-indexed-table' : 'hydrate-and-verify');
     let result=latest ? await hydrateHazardRun(db,root,{...options,tableOnly:useWorkingSet,onProgress:progress=>{

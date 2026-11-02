@@ -14,7 +14,8 @@ export default function upgradeHazardTable(runId, {signal, onProgress} = {}) {
     worker.onerror = event => finish(new Error(event.message || 'Unable to upgrade saved table storage.'));
     worker.onmessage = ({data}) => {
       if (data.type === 'progress') onProgress?.(data.progress);
-      else finish(data.type === 'error' ? new Error(data.message) : undefined);
+      else if (data.type === 'error') finish(Object.assign(new Error(data.message || 'Unable to upgrade saved table storage.'), {code:data.code}));
+      else if (data.type === 'done') finish();
     };
     worker.postMessage({runId});
   });

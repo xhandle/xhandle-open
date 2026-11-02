@@ -10,6 +10,6 @@ globalThis.onmessage = async ({data}) => {
     });
     globalThis.postMessage({type:'done'});
   } catch (error) {
-    globalThis.postMessage({type:'error', message:error.message});
+    globalThis.postMessage({type:'error', message:error.message, code:error.code});
   } finally { db?.close(); }
 };

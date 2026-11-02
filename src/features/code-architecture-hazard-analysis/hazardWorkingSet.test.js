@@ -47,6 +47,17 @@ test('legacy chunked run requires explicit upgrade, then cold reads skip evidenc
  const spy=jest.spyOn(IDBObjectStore.prototype,'getAll');
  try{expect((await read()).generatedSheets).toEqual(first.generatedSheets);expect(spy.mock.instances.some(s=>s.name==='hazardRunChunks')).toBe(false);}finally{spy.mockRestore();}
 });
+test.each([false,true])('missing legacy source chunks are not presented as an upgrade (paged=%s)',async paged=>{
+ await saveCodeArchitectureHazardRun(fixture());const db=await openCodeArchitectureHazardDB();
+ const root=await db.get('hazardAnalysisRuns','working');delete root.payload.tableIndex;delete root.payload.rowIndex;await db.put('hazardAnalysisRuns',root);
+ const page=(await db.getAll('hazardRunChunks'))[0];await db.delete('hazardRunChunks',page.id);
+ const before=await db.count('hazardRunChunks');
+ await expect(getLatestCodeArchitectureHazardRun({projectId:'p',repoId:'r'},{workingSet:true,paged})).rejects.toMatchObject({
+  code:'HAZARD_SOURCE_INCOMPLETE',message:expect.stringContaining('storage upgrade cannot restore missing data'),
+ });
+ await expect(prepareHazardTableIndex(db,'working')).rejects.toMatchObject({code:'HAZARD_SOURCE_INCOMPLETE'});
+ expect(await db.get('hazardAnalysisRuns','working')).toEqual(root);expect(await db.count('hazardRunChunks')).toBe(before);db.close();
+});
 test('edit and normalization preserve deferred fields and later edits use the new revision',async()=>{
  const run=fixture();await saveCodeArchitectureHazardRun(run);const working=await read();
  const normalized=normalizeCodeArchitectureHazardRun(working);

@@ -26,6 +26,20 @@ function renderPanel(props = {}) {
   return { host, root };
 }
 
+it('offers explicit regeneration for missing source data without treating it as an absent saved analysis',()=>{
+  const onRunAnalysis=jest.fn();
+  const {host,root}=renderPanel({onRunAnalysis,cbaRows:[{from:'Estimate Pose',action:'Publish pose estimate',to:'Plan Motion'}],
+    restoration:{status:'failed',errorCode:'HAZARD_SOURCE_INCOMPLETE',error:'Saved hazard results are incomplete.'}});
+  try {
+    const button=[...host.querySelectorAll('button')].find(item=>item.textContent==='Start a new hazard analysis');
+    expect(button).toBeTruthy();expect(button.disabled).toBe(false);
+    expect(onRunAnalysis).not.toHaveBeenCalled();act(()=>button.click());
+    expect(onRunAnalysis).toHaveBeenCalledWith('STPA-Textbook',{regenerate:true});
+    expect(host.textContent).toContain('Existing saved records are retained');
+    expect(host.textContent).not.toContain('Upgrade saved table storage');
+  } finally {act(()=>root.unmount());host.remove();}
+});
+
 it('hides review notices without changing unresolved applicability or preprocessing conflicts', () => {
   const headers = ['Raw Analysis Row ID', 'Guide Phrase Applicable', 'Guide Phrase Applicability Origin', 'Hazards'];
   const latestRun = {userPreprocessingConflicts: ['Saved assessment needs reconciling'], generatedSheets: {Summary: [headers, ['RAW-1', 'Needs Review', 'Automatic screening', 'Needs review: unresolved applicability']]}};

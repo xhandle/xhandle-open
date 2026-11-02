@@ -3,6 +3,7 @@ import {sha256} from 'hash.js';
 import {createHazardTableIndex,validateHazardTableIndex} from './hazardTableIndex';
 import {isChunkedHazardRun,validateHazardDescriptor,hazardChunkKey,hazardChunkDigest,HAZARD_CHUNKS} from './hazardRunChunks';
 import {createHazardTokenValidator} from '../code-architecture-transfer/hazardTokenValidator';
+import {incompleteHazardSource} from './hazardSourceIntegrity';
 const check=signal=>{if(signal?.aborted)throw new DOMException('Table storage upgrade cancelled.','AbortError');};
 // Explicit upgrade/import preparation. Original pages are never changed. A
 // cancelled or interrupted scan leaves the original run available for retry.
@@ -22,7 +23,7 @@ export async function prepareHazardTableIndex(db,id,{signal,onProgress=()=>{}}={
     for(let start=0;start<p.count;start+=16){
       check(signal);const end=Math.min(start+16,p.count);
       const pages=await tx.objectStore(HAZARD_CHUNKS).getAll(IDBKeyRange.bound(hazardChunkKey(p.generation,start),hazardChunkKey(p.generation,end-1)),16);
-      if(pages.length!==end-start)throw Error('Saved analysis has missing chunks. Upgrade did not change the analysis.');
+      if(pages.length!==end-start)throw incompleteHazardSource(id);
       for(let i=0;i<pages.length;i++){
         const page=pages[i];check(signal);
         if(page.sequence!==start+i || page.generation!==p.generation || page.runId!==id || page.projectId!==root.projectId || page.repoId!==root.repoId || page.digest!==hazardChunkDigest(page.tokens))throw Error('Saved analysis has a damaged chunk. Upgrade did not change the analysis.');
@@ -32,7 +33,8 @@ export async function prepareHazardTableIndex(db,id,{signal,onProgress=()=>{}}={
       onProgress({completed:end,total:p.count});
     }
     validator.finish();if(hash.digest('hex')!==p.digest)throw Error('Saved analysis failed integrity verification.');
-    index=builder.finish(p.digest);rows=rowBuilder.finish(p.digest);await tx.done;
+    index=builder.finish(p.digest);rows=rowBuilder.finish(p.digest);
+    validateHazardTableIndex({...p,tableIndex:index});validateHazardRowIndex({...p,rowIndex:rows});await tx.done;
   }catch(error){abort();await tx.done.catch(()=>{});throw error;}
   finally{signal?.removeEventListener('abort',abort);}
   check(signal);

@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import useHazardRunRestoration from './useHazardRunRestoration';
 import HazardRestorationNotice from './HazardRestorationNotice';
 import { createHazardRunRegistry } from './hazardRunRegistry';
+import { incompleteHazardSource } from './hazardSourceIntegrity';
 global.IS_REACT_ACT_ENVIRONMENT = true;
 let root, host, api, config, visible, frames;
 const deferred = () => { let resolve, reject; const promise = new Promise((a,b) => {resolve=a;reject=b;}); return {promise,resolve,reject}; };
@@ -165,6 +166,28 @@ test('legacy upgrade is explicit, focus does not interrupt it, and completion re
  await settle(()=>{void api.upgrade();});expect(api.status).toBe('upgrading');
  await settle(()=>window.dispatchEvent(new Event('focus')));expect(config.read).toHaveBeenCalledTimes(1);
  await settle(()=>d.resolve());expect(api.status).toBe('loaded');expect(visible.id).toBe('old');
+});
+test('incomplete saved source shows recovery guidance instead of an upgrade loop',async()=>{
+ config.read.mockRejectedValue(incompleteHazardSource('old',{found:0,expected:78131}));
+ await render();expect(api.status).toBe('failed');expect(host.textContent).toContain('78,131');
+ expect(host.textContent).toContain('Restore a backup containing hazard results');
+ expect(host.textContent).not.toContain('Upgrade saved table storage');
+ expect(host.querySelector('details')).toBeNull();
+});
+test('missing source discovered by the upgrade worker becomes a load failure with recovery guidance',async()=>{
+ config.read.mockRejectedValue(Object.assign(new Error('upgrade required'),{code:'HAZARD_TABLE_UPGRADE_REQUIRED',runId:'old'}));
+ config.upgrade=jest.fn().mockRejectedValue(incompleteHazardSource('old'));
+ await render();await settle(()=>{void api.upgrade();});
+ expect(api.status).toBe('failed');expect(host.textContent).toContain('cannot restore missing data');
+ expect(host.textContent).not.toContain('Older saved results need');
+});
+test.each([new Error(''),Object.assign(new Error('Storage transaction aborted'),{name:'AbortError'})])('upgrade failures show a nonempty reason even when details would previously be blank',async error=>{
+ config.read.mockRejectedValue(Object.assign(new Error('upgrade required'),{code:'HAZARD_TABLE_UPGRADE_REQUIRED',runId:'old'}));
+ config.upgrade=jest.fn().mockRejectedValue(error);
+ await render();await settle(()=>{void api.upgrade();});
+ expect(api.status).toBe('upgrade-required');expect(api.error).toBeTruthy();
+ expect(host.textContent).toContain('Saved table storage could not be upgraded');
+ expect(host.querySelector('[role="alert"]').textContent).toBe(api.error);
 });
 test('leaving scope aborts upgrade and cannot publish its late result',async()=>{
  config.read.mockRejectedValue(Object.assign(new Error('upgrade required'),{code:'HAZARD_TABLE_UPGRADE_REQUIRED',runId:'old'}));

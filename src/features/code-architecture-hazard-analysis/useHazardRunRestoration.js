@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { HAZARD_SOURCE_INCOMPLETE } from './hazardSourceIntegrity';
 
 // Storage restoration has its own lifecycle; it never starts generation.
 export default function useHazardRunRestoration(options) {
@@ -16,7 +17,7 @@ export default function useHazardRunRestoration(options) {
     if (!state.upgradeRunId || upgradeController.current || !current.current.upgrade) return;
     const controller = new AbortController();
     upgradeController.current = controller;
-    setState(previous => ({...previous, status:'upgrading', progress:0, error:''}));
+    setState(previous => ({...previous, status:'upgrading', progress:0, error:'', errorCode:'', upgradeError:false}));
     try {
       await current.current.upgrade(state.upgradeRunId, {
         signal:controller.signal,
@@ -26,7 +27,11 @@ export default function useHazardRunRestoration(options) {
       });
       if (!controller.signal.aborted) retry();
     } catch (error) {
-      if (upgradeController.current === controller) setState(previous => ({...previous, status:'upgrade-required', error:error.name === 'AbortError' ? '' : error.message}));
+      if (upgradeController.current === controller) setState(previous => ({...previous,
+        status:error.code === HAZARD_SOURCE_INCOMPLETE ? 'failed' : 'upgrade-required',
+        error:controller.signal.aborted ? '' : error.message || 'Unable to upgrade saved table storage. Retry the upgrade.',
+        errorCode:error.code || '', upgradeError:!controller.signal.aborted,
+      }));
     } finally {
       if (upgradeController.current === controller) upgradeController.current = null;
     }
@@ -141,7 +146,7 @@ export default function useHazardRunRestoration(options) {
       } catch (error) {
         if (superseded()) return;
         // Never erase an existing completed result because a refresh failed.
-        set({ status: error?.code === 'HAZARD_TABLE_UPGRADE_REQUIRED' ? 'upgrade-required' : 'failed', upgradeRunId:error?.runId, error: error?.message || 'Unable to read saved results.' });
+        set({ status: error?.code === 'HAZARD_TABLE_UPGRADE_REQUIRED' ? 'upgrade-required' : 'failed', upgradeRunId:error?.runId, errorCode:error?.code || '', error: error?.message || 'Unable to read saved results.' });
         return;
       }
       if (superseded()) return;
