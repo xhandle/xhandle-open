@@ -9,14 +9,60 @@ import {
   allocatedArchitectureFromRefs,
   allocatedFunctionFromRefs,
   cellText,
-  collectArchitectureRefsFromParents,
+  collectArchitectureRefsFromParents as collectParentRefs,
   compactList,
   createBaseArtifactRow,
-  findFunctionalRowIndexByTrace,
+  createFunctionalRowLookup,
   makeId,
   sourceFilesFromRefs,
   splitIds,
 } from "./artifactUtils";
+
+// Keys are per-derivation array snapshots. Completed jobs and their indexes can
+// be collected together; no project-sized global cache survives a job.
+const sourceIndexes = new WeakMap();
+function sourceIndex(rows) {
+  let index = sourceIndexes.get(rows);
+  if (!index) {
+    index = { byId: new Map(rows.map(row => [cellText(row.id), row]).filter(([id]) => id)) };
+    sourceIndexes.set(rows, index);
+  }
+  return index;
+}
+function collectArchitectureRefsFromParents(ids, rows) {
+  return collectParentRefs(ids, rows, sourceIndex(rows).byId);
+}
+
+function recordDerivationFailure(onProgress, label, error) {
+  const evidence = onProgress?.derivationEvidence;
+  if (!evidence) return;
+  evidence.failedBatches += 1;
+  if (evidence.failures.length < 20) evidence.failures.push(`${label}: ${error?.message || 'Incomplete AI response'}`.slice(0, 512));
+}
+
+function normalizedProvenance(raw) {
+  return raw.derivationStatus === 'local-fallback' || /fallback|^code-derived$/.test(raw.source || '')
+    ? 'local-derived-fallback' : 'ai-generated';
+}
+
+function hasGeneratedContent(row, responseKey) {
+  if (!row || typeof row !== 'object') return false;
+  if (responseKey === 'categories') return Boolean(cellText(row.categoryName));
+  if (responseKey === 'designElements') return Boolean(cellText(row.description || row.designDescription));
+  return Boolean(cellText(row.requirementText));
+}
+
+async function deriveWithEvidence(derive, args = {}) {
+  const evidence = { failedBatches: 0, failures: [] };
+  const progress = value => args.onProgress?.(value);
+  Object.assign(progress, { requestCheckpoint: args.onProgress?.requestCheckpoint, signal: args.onProgress?.signal, derivationEvidence: evidence });
+  const rows = await derive({ ...args, onProgress: progress });
+  rows.derivationReport = { ...evidence,
+    fallbackRows: rows.filter(row => /fallback/.test(row.source || '')).length,
+    partialRows: rows.filter(row => row.derivationStatus === 'partial').length,
+  };
+  return rows;
+}
 
 const ASSURANCE_MODEL = "gpt-4o-mini";
 const ASSURANCE_AI_COOLDOWN_MS = 120000;
@@ -84,7 +130,7 @@ async function callAssuranceModelUncached(payload, {
   retryDelays = [],
   markTransientUnavailable = true,
   respectUnavailable = true,
-  timeoutMs = 0,
+  timeoutMs = 300000,
 }) {
   if (respectUnavailable && isAssuranceAIUnavailable()) {
     throw assuranceUnavailableError(errorLabel);
@@ -349,7 +395,10 @@ async function requestAssuranceChunk({
     }
     const parsed = extractJson(raw);
     const rowsForChunk = Array.isArray(parsed[responseKey]) ? parsed[responseKey] : [];
-    return chunk.rows.map((_, index) => rowsForChunk[index] || {});
+    const complete = rowsForChunk.length === chunk.rows.length && rowsForChunk.every(row => hasGeneratedContent(row, responseKey));
+    if (!complete) recordDerivationFailure(onProgress, errorLabel, new Error('AI returned missing or empty rows.'));
+    return chunk.rows.map((_, index) => hasGeneratedContent(rowsForChunk[index], responseKey)
+      ? rowsForChunk[index] : { derivationStatus: 'local-fallback' });
   } catch (err) {
     if (err?.code === 'REQUIREMENT_CHECKPOINT_FAILED') throw err;
     const splitForSize = shouldSplitFailedChunk(err);
@@ -397,7 +446,8 @@ async function requestAssuranceChunk({
 
     if (adaptiveTransientSplit && markTransientUnavailable) markAssuranceAIUnavailable(err);
     console.warn(`⚠️ ${errorLabel} failed for chunk starting at row ${chunk.start + 1}; using local fallback rows for that chunk.`, err);
-    return chunk.rows.map(() => ({}));
+    recordDerivationFailure(onProgress, errorLabel, err);
+    return chunk.rows.map(() => ({ derivationStatus: 'local-fallback' }));
   }
 }
 
@@ -421,9 +471,10 @@ async function requestAssuranceRows({
 }) {
   if (respectUnavailable && isAssuranceAIUnavailable()) {
     console.warn(`⚠️ ${errorLabel} skipped; using local fallback rows while the AI service is temporarily unavailable.`);
-    return rows.map(() => ({}));
+    recordDerivationFailure(onProgress, errorLabel, assuranceUnavailableError(errorLabel));
+    return rows.map(() => ({ derivationStatus: 'local-fallback' }));
   }
-  const singlePromptLength = assurancePayloadLength(basePayload, rowKey, rows, compactRow);
+  const singlePromptLength = fixedBatchSize ? 0 : assurancePayloadLength(basePayload, rowKey, rows, compactRow);
   const chunks = fixedBatchSize
     ? chunkRowsByCount(rows, fixedBatchSize)
     : (singlePromptLength <= singlePromptMaxChars
@@ -483,7 +534,8 @@ async function requestAssuranceConsolidationRows({
 }) {
   if (respectUnavailable && isAssuranceAIUnavailable()) {
     console.warn(`⚠️ ${errorLabel} consolidation skipped; keeping local first-pass rows while the AI service is temporarily unavailable.`);
-    return rows;
+    recordDerivationFailure(onProgress, errorLabel, assuranceUnavailableError(errorLabel));
+    return rows.map(row => ({ ...row, derivationStatus: row.derivationStatus || 'partial' }));
   }
   const chunks = fixedBatchSize
     ? chunkRowsByCount(rows, fixedBatchSize)
@@ -534,11 +586,15 @@ async function requestAssuranceConsolidationRows({
       }
       const parsed = extractJson(raw);
       const rowsForChunk = Array.isArray(parsed[responseKey]) ? parsed[responseKey] : [];
+      if (!rowsForChunk.length || !rowsForChunk.every(row => hasGeneratedContent(row, responseKey))) {
+        throw new Error('AI returned empty or invalid consolidation rows.');
+      }
       generatedRows.push(...rowsForChunk);
     } catch (err) {
     if (err?.code === 'REQUIREMENT_CHECKPOINT_FAILED') throw err;
       console.warn(`⚠️ ${errorLabel} consolidation failed for chunk starting at row ${chunk.start + 1}; keeping first-pass rows for that chunk.`, err);
-      generatedRows.push(...chunk.rows);
+      recordDerivationFailure(onProgress, errorLabel, err);
+      generatedRows.push(...chunk.rows.map(row => ({ ...row, derivationStatus: row.derivationStatus || 'partial' })));
     }
     onProgress?.({
       phase: errorLabel,
@@ -620,11 +676,11 @@ function summaryRowsFromHazardAnalysis(hazardAnalysis = null) {
   const summary = hazardAnalysis?.generatedSheets?.Summary || hazardAnalysis?.analysisResult?.Summary;
   if (!Array.isArray(summary) || !Array.isArray(summary[0])) {
     const records = Array.isArray(hazardAnalysis?.summaryRows) ? hazardAnalysis.summaryRows : [];
-    return records.filter(row => row && !Array.isArray(row)).map((row, rowIndex) => ({ ...row, rowIndex }));
+    return records.filter(row => row && !Array.isArray(row)).map((row, rowIndex) => ({ ...row, rowIndex: rowIndex + (hazardAnalysis.summaryOffset || 0) }));
   }
   const headers = summary[0].map((header, index) => getSheetCellText(header) || `Column ${index + 1}`);
   return summary.slice(1).map((row, rowIndex) => {
-    const record = { rowIndex, row };
+    const record = { rowIndex: rowIndex + (hazardAnalysis.summaryOffset || 0), row };
     headers.forEach((header, index) => {
       record[header] = getSheetCellText(Array.isArray(row) ? row[index] : "");
     });
@@ -768,10 +824,12 @@ function hazardSafetyRequirementRows(hazardAnalysis = null) {
 
 function normalizeSoftwareRow(raw = {}, index, cbaRows = []) {
   const sourceTraceId = cellText(raw.sourceTraceId || raw.traceId || raw.sourceRowRef || raw.architectureRowRef);
-  const sourceIndex = findFunctionalRowIndexByTrace(cbaRows, sourceTraceId);
-  const sourceRow = sourceIndex >= 0 ? cbaRows[sourceIndex] : cbaRows[index] || {};
+  const lookup = sourceIndex(cbaRows);
+  if (!lookup.functional) lookup.functional = createFunctionalRowLookup(cbaRows);
+  const sourceIndexValue = lookup.functional(sourceTraceId);
+  const sourceRow = sourceIndexValue >= 0 ? cbaRows[sourceIndexValue] : cbaRows[index] || {};
   const sourceId = sourceTraceId || sourceRow.traceId || sourceRow.rowRef || String(index + 1);
-  const rowIndex = sourceIndex >= 0 ? sourceIndex : index;
+  const rowIndex = sourceIndexValue >= 0 ? sourceIndexValue : index;
   const architectureRef = architectureRefFromFunctionalRow(sourceRow, rowIndex, raw.architectureMode || "edge");
   return createBaseArtifactRow(ARTIFACT_KINDS.SOFTWARE, {
     id: generatedIdFor("SWR", raw.id, index),
@@ -1046,7 +1104,7 @@ function requirementSimilarity(left = "", right = "") {
 }
 
 function parentRowsForGeneratedRow(row = {}, parentKey = "", sourceRows = []) {
-  const sourceById = new Map(sourceRows.map((sourceRow) => [cellText(sourceRow.id), sourceRow]).filter(([id]) => id));
+  const sourceById = sourceIndex(sourceRows).byId;
   return splitIds(row?.[parentKey]).map((id) => sourceById.get(id)).filter(Boolean);
 }
 
@@ -1283,7 +1341,7 @@ function normalizeSystemRow(raw = {}, index, sourceRows = []) {
   ]);
   const parentTokens = splitIds(parentIds || sourceRows[index]?.id || "");
   const architectureRefs = collectArchitectureRefsFromParents(parentTokens, sourceRows);
-  const sourceById = new Map(sourceRows.map((row) => [cellText(row.id), row]).filter(([id]) => id));
+  const sourceById = sourceIndex(sourceRows).byId;
   const parentRows = parentTokens.map((id) => sourceById.get(id)).filter(Boolean);
   const safetyContext = safetyContextFromParents(parentRows);
   const rawRequirementText = cellText(raw.requirementText);
@@ -1301,7 +1359,8 @@ function normalizeSystemRow(raw = {}, index, sourceRows = []) {
     traceLinks: parentTokens.map((id) => ({ targetType: "software-requirement", targetId: id, relationship: "consolidates" })),
     sourceArchitectureRefs: architectureRefs,
     ...safetyContext,
-    source: "ai-generated",
+    source: normalizedProvenance(raw),
+    derivationStatus: raw.derivationStatus || '',
   }, index);
 }
 
@@ -1316,7 +1375,7 @@ function normalizeSubsystemRow(raw = {}, index, sourceRows = []) {
   ]);
   const parentTokens = splitIds(parentIds || sourceRows[index]?.id || "");
   const architectureRefs = collectArchitectureRefsFromParents(parentTokens, sourceRows);
-  const sourceById = new Map(sourceRows.map((row) => [cellText(row.id), row]).filter(([id]) => id));
+  const sourceById = sourceIndex(sourceRows).byId;
   const parentRows = parentTokens.map((id) => sourceById.get(id)).filter(Boolean);
   const safetyContext = safetyContextFromParents(parentRows);
   const inheritedFunction = allocatedFunctionFromRefs(architectureRefs);
@@ -1339,7 +1398,8 @@ function normalizeSubsystemRow(raw = {}, index, sourceRows = []) {
     traceLinks: parentTokens.map((id) => ({ targetType: "system-requirement", targetId: id, relationship: "allocates" })),
     sourceArchitectureRefs: architectureRefs,
     ...safetyContext,
-    source: "ai-generated",
+    source: normalizedProvenance(raw),
+    derivationStatus: raw.derivationStatus || '',
   }, index);
 }
 
@@ -1354,7 +1414,7 @@ function normalizeDesignRow(raw = {}, index, sourceRows = []) {
   ]);
   const parentTokens = splitIds(parentIds || sourceRows[index]?.id || "");
   const architectureRefs = collectArchitectureRefsFromParents(parentTokens, sourceRows);
-  const parentRowsById = new Map(sourceRows.map((row) => [cellText(row.id), row]).filter(([id]) => id));
+  const parentRowsById = sourceIndex(sourceRows).byId;
   const parentRows = parentTokens.map((id) => parentRowsById.get(id)).filter(Boolean);
   const safetyContext = safetyContextFromParents(parentRows);
   const parentAllocatedFunction = compactList(parentRows.map((row) => row.allocatedFunction));
@@ -1396,7 +1456,8 @@ function normalizeDesignRow(raw = {}, index, sourceRows = []) {
     traceLinks: parentTokens.map((id) => ({ targetType: "subsystem-requirement", targetId: id, relationship: "satisfies" })),
     sourceArchitectureRefs: architectureRefs,
     ...safetyContext,
-    source: "ai-generated",
+    source: normalizedProvenance(raw),
+    derivationStatus: raw.derivationStatus || '',
   }, index);
 }
 
@@ -1596,7 +1657,7 @@ function normalizeRequirementCategory(raw = {}, index = 0, targetKind = "", sour
     raw.sourceIds,
   ]);
   const parentIds = compactList(splitIds(explicitParents || sourceRows[index]?.id || ""));
-  const parentRowsById = new Map(sourceRows.map((row) => [cellText(row.id), row]).filter(([id]) => id));
+  const parentRowsById = sourceIndex(sourceRows).byId;
   const parentRows = splitIds(parentIds).map((id) => parentRowsById.get(id)).filter(Boolean);
   const safetyContext = safetyContextFromParents(parentRows);
   const architectureRefs = collectArchitectureRefsFromParents(splitIds(parentIds), sourceRows);
@@ -1605,6 +1666,7 @@ function normalizeRequirementCategory(raw = {}, index = 0, targetKind = "", sour
     `Consolidates related ${categorySourceLabelForTarget(targetKind)} into ${categoryTargetLabel(targetKind)}.`;
   return {
     id: cellText(raw.id) || `${categoryPrefixForTarget(targetKind)}-${String(index + 1).padStart(3, "0")}`,
+    derivationStatus: raw.derivationStatus || '',
     categoryName,
     categoryDescription,
     requirementIntent: inferCapabilityFromIntent(cellText(raw.requirementIntent || raw.intent || raw.text) || categoryDescription, categoryDescription),
@@ -1661,7 +1723,7 @@ function ensureUniqueCategoryIds(categories = [], targetKind = "") {
 
 function pruneDuplicateCategoryParents(categories = [], sourceRows = [], targetKind = "") {
   const parentField = categoryParentFieldForTarget(targetKind);
-  const sourceById = new Map(sourceRows.map((row) => [cellText(row.id), row]).filter(([id]) => id));
+  const sourceById = sourceIndex(sourceRows).byId;
   const assigned = new Set();
   return categories.flatMap((category) => {
     const parentIds = splitIds(category?.[parentField])
@@ -1695,7 +1757,7 @@ function ensureCategoryCoverage(categories = [], sourceRows = [], targetKind = "
     ]
     : prunedCategories;
   const resized = enforceMaxRows(repaired, targetCount, (rows, count) => locallyCategorizeRequirementRows(rows.flatMap((row) => {
-    const parentRowsById = new Map(sourceRows.map((sourceRow) => [cellText(sourceRow.id), sourceRow]).filter(([id]) => id));
+    const parentRowsById = sourceIndex(sourceRows).byId;
     return splitIds(row?.[parentField]).map((id) => parentRowsById.get(id)).filter(Boolean);
   }), targetKind, count));
   const finalPruned = pruneDuplicateCategoryParents(resized, sourceRows, targetKind);
@@ -1728,6 +1790,7 @@ async function requestRequirementCategories({
     : compactArtifactRowForPrompt;
   if (isAssuranceAIUnavailable()) {
     console.warn(`⚠️ ${targetLabel} category AI skipped; using local requirement categories while the AI service is temporarily unavailable.`);
+    recordDerivationFailure(onProgress, `${targetLabel} categories`, assuranceUnavailableError(targetLabel));
     return locallyCategorizeRequirementRows(sourceRows, targetKind, targetCount);
   }
   const categorySchema = {
@@ -1944,14 +2007,6 @@ function duplicateScanParentField(kind = "") {
   return "";
 }
 
-function shouldMergeArtifactRows(kind = "", left = {}, right = {}) {
-  const leftKey = canonicalArtifactText(kind, left);
-  const rightKey = canonicalArtifactText(kind, right);
-  if (!leftKey || !rightKey) return false;
-  if (leftKey === rightKey) return true;
-  return requirementSimilarity(leftKey, rightKey) >= 0.92;
-}
-
 function mergeArtifactRows(kind = "", left = {}, right = {}) {
   const parentField = duplicateScanParentField(kind);
   const merged = {
@@ -1999,20 +2054,53 @@ function mergeArtifactRows(kind = "", left = {}, right = {}) {
   return merged;
 }
 
-function finalDeduplicateArtifactRows(rows = [], kind = "", minimumRows = 1) {
+export async function finalDeduplicateArtifactRows(rows = [], kind = "", minimumRows = 1) {
   const safeRows = rows.filter(Boolean);
   if (safeRows.length <= minimumRows) return safeRows;
-  const mergedRows = [];
-  safeRows.forEach((row, index) => {
-    const matchIndex = mergedRows.findIndex((candidate) => shouldMergeArtifactRows(kind, candidate, row));
+  const prepared = [], frequency = new Map();
+  for (let i = 0; i < safeRows.length; i += 1) {
+    const key = canonicalArtifactText(kind, safeRows[i]);
+    const words = normalizedRequirementWords(key);
+    prepared.push({ key, words });
+    words.forEach(word => frequency.set(word, (frequency.get(word) || 0) + 1));
+    if (i && i % 250 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  const mergedRows = [], candidates = [], exact = new Map(), prefixes = new Map();
+  for (let index = 0; index < safeRows.length; index += 1) {
+    const row = safeRows[index], current = prepared[index], possible = new Set();
+    if (current.key && exact.has(current.key)) possible.add(exact.get(current.key));
+    current.words.forEach(word => prefixes.get(word)?.forEach(value => possible.add(value)));
+    let matchIndex = -1;
+    for (const candidateIndex of [...possible].sort((a, b) => a - b)) {
+      const candidate = candidates[candidateIndex];
+      if (!current.key || !candidate.key) continue;
+      if (candidate.key === current.key) { matchIndex = candidateIndex; break; }
+      const small = Math.min(candidate.words.size, current.words.size), large = Math.max(candidate.words.size, current.words.size);
+      if (!large || small / large < 0.92) continue;
+      let intersection = 0;
+      current.words.forEach(word => { if (candidate.words.has(word)) intersection += 1; });
+      if (intersection / (candidate.words.size + current.words.size - intersection) >= 0.92) { matchIndex = candidateIndex; break; }
+    }
     const remainingRows = safeRows.length - index - 1;
     const canMergeWithoutOverCompressing = mergedRows.length + remainingRows >= minimumRows;
     if (matchIndex >= 0 && canMergeWithoutOverCompressing) {
       mergedRows[matchIndex] = mergeArtifactRows(kind, mergedRows[matchIndex], row);
     } else {
+      const candidateIndex = mergedRows.length;
       mergedRows.push(row);
+      candidates.push(current);
+      if (current.key && !exact.has(current.key)) exact.set(current.key, candidateIndex);
+      // Any Jaccard >= .92 match must contain at least one of these prefix
+      // tokens. Rare tokens avoid scanning every row sharing generic wording.
+      const prefixLength = current.words.size - Math.ceil(0.92 * current.words.size - 1e-10) + 1;
+      [...current.words].sort((a, b) => frequency.get(a) - frequency.get(b) || a.localeCompare(b))
+        .slice(0, prefixLength).forEach(word => {
+          if (!prefixes.has(word)) prefixes.set(word, []);
+          prefixes.get(word).push(candidateIndex);
+        });
     }
-  });
+    if (index && index % 250 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+  }
   return mergedRows;
 }
 
@@ -2324,6 +2412,7 @@ export async function deriveFunctionalSoftwareRequirements({ cbaRows = [], proje
   if (!Array.isArray(cbaRows) || !cbaRows.length) {
     return [];
   }
+  cbaRows = cbaRows.slice();
   const systemPrompt = "You are a senior software requirements engineer. Derive externally reviewable, black-box software requirements from code-based functional decomposition rows. Translate implementation names into domain behavior. Return only valid JSON matching the requested schema.";
   const basePayload = {
     task: "derive_software_requirements_from_functional_decomposition_batch",
@@ -2399,7 +2488,7 @@ export async function deriveFunctionalSoftwareRequirements({ cbaRows = [], proje
       });
     } catch (error) {
     if (error?.code === 'REQUIREMENT_CHECKPOINT_FAILED') throw error;
-      failures.push(`Rows ${start + 1}-${end}: ${error.message}`);
+      if (failures.length < 20) failures.push(`Rows ${start + 1}-${end}: ${error.message}`.slice(0, 512));
       console.warn(`[xHandle AI] Software requirements rows ${start + 1}-${end}/${cbaRows.length} failed; using local fallback rows.`, error);
       batchRows.forEach((sourceRow, batchIndex) => {
         softwareRows.push(fallbackSoftwareRequirement(sourceRow, start + batchIndex));
@@ -2430,6 +2519,7 @@ export function importHazardSoftwareRequirements({ hazardAnalysis = null } = {})
 }
 
 export async function deriveSoftwareRequirements({ cbaRows = [], projectName = "", repoName = "", hazardAnalysis = null, onProgress = null } = {}) {
+  summaryRowsFromHazardAnalysis(hazardAnalysis);
   cbaRows = softwareRequirementSource(cbaRows).rows;
   if (!Array.isArray(cbaRows) || !cbaRows.length) {
     throw new Error("Generate or load a functional decomposition before deriving software requirements.");
@@ -2444,9 +2534,29 @@ export async function deriveSoftwareRequirements({ cbaRows = [], projectName = "
     softwareRows = cbaRows
       .map((sourceRow, index) => fallbackSoftwareRequirement(sourceRow, index))
       .filter((row) => row.requirementText);
+    softwareRows.derivationFailures = [String(error?.message || 'AI derivation failed').slice(0, 512)];
   }
 
-  const safetyRows = importHazardSoftwareRequirements({ hazardAnalysis });
+  const safetyRows = [];
+  let hazardRows = 0, eligibleRows = 0;
+  const importBatch = batch => {
+    const summary = summaryRowsFromHazardAnalysis(batch);
+    hazardRows += summary.length;
+    eligibleRows += summary.filter(isSafetySignificantHazardRow).length;
+    for (const row of importHazardSoftwareRequirements({ hazardAnalysis: batch })) {
+      row.id = `SWR-SAFE-${String(Number(row.hazardRowIndex) + 1).padStart(3, '0')}`;
+      safetyRows.push(row);
+    }
+  };
+  if (hazardAnalysis?.readSummaryBatches) {
+    // Check completion before any paged read, including an empty Summary.
+    summaryRowsFromHazardAnalysis(hazardAnalysis);
+    for await (const page of hazardAnalysis.readSummaryBatches(onProgress?.signal)) {
+      importBatch({ ...hazardAnalysis,
+        generatedSheets: page.records ? undefined : { Summary: [page.headers, ...page.rows] },
+        summaryRows: page.records ? page.rows : undefined, summaryOffset: page.offset });
+    }
+  } else importBatch(hazardAnalysis);
   const combinedCount = softwareRows.length + safetyRows.length;
   onProgress?.({
     phase: "Hazard requirement import",
@@ -2457,16 +2567,14 @@ export async function deriveSoftwareRequirements({ cbaRows = [], projectName = "
       : `Software requirements complete (${softwareRows.length} functional software requirement${softwareRows.length === 1 ? "" : "s"}).`,
   });
   const result = ensureUniqueGeneratedIds([...softwareRows, ...safetyRows], "SWR");
-  const summaryRows = summaryRowsFromHazardAnalysis(hazardAnalysis);
-  const eligible = summaryRows.filter(isSafetySignificantHazardRow);
   result.derivationReport = {
     functionalRows: softwareRows.length,
     fallbackRows: softwareRows.filter(row => row.source === "functional-derived-fallback").length,
     failures: softwareRows.derivationFailures || [],
     hazardRunId: hazardAnalysis?.id || "",
-    hazardRows: summaryRows.length,
-    excludedSafetyRows: summaryRows.length - eligible.length,
-    missingRequirementRows: eligible.length - safetyRows.length,
+    hazardRows,
+    excludedSafetyRows: hazardRows - eligibleRows,
+    missingRequirementRows: eligibleRows - safetyRows.length,
     importedSafetyRows: safetyRows.length,
   };
   return result;
@@ -2520,7 +2628,10 @@ async function deriveHazardSystemRequirements({ hazardRows = [], projectName = "
   return hazardRows
     .map((sourceRow, index) => {
       const raw = rows[index] || {};
-      if (!cellText(raw.requirementText)) return null;
+      if (!cellText(raw.requirementText)) return {
+        ...fallbackSystemRequirementFromSafetySw(sourceRow, startIndex + index),
+        source: 'local-derived-fallback', derivationStatus: 'local-fallback',
+      };
       const normalizedRow = normalizeSystemRow({
         ...raw,
         id: raw.id || `SYS-SAFE-${String(startIndex + index + 1).padStart(3, "0")}`,
@@ -2535,10 +2646,11 @@ async function deriveHazardSystemRequirements({ hazardRows = [], projectName = "
     .filter((row) => row?.requirementText);
 }
 
-export async function deriveSystemRequirements({ softwareRequirements = [], projectName = "", repoName = "", onProgress = null } = {}) {
+async function deriveSystemRequirementsImpl({ softwareRequirements = [], projectName = "", repoName = "", onProgress = null } = {}) {
   if (!Array.isArray(softwareRequirements) || !softwareRequirements.length) {
     throw new Error("Derive or add software requirements before deriving system requirements.");
   }
+  softwareRequirements = softwareRequirements.slice();
   const { functionalRows, hazardRows } = splitSoftwareRequirementsBySource(softwareRequirements);
   const categories = functionalRows.length
     ? await requestRequirementCategories({
@@ -2665,10 +2777,11 @@ export async function deriveSystemRequirements({ softwareRequirements = [], proj
   );
 }
 
-export async function deriveSubsystemRequirements({ systemRequirements = [], projectName = "", repoName = "", onProgress = null } = {}) {
+async function deriveSubsystemRequirementsImpl({ systemRequirements = [], projectName = "", repoName = "", onProgress = null } = {}) {
   if (!Array.isArray(systemRequirements) || !systemRequirements.length) {
     throw new Error("Derive or add system requirements before deriving subsystem requirements.");
   }
+  systemRequirements = systemRequirements.slice();
   const categories = await requestRequirementCategories({
     sourceRows: systemRequirements,
     targetKind: ARTIFACT_KINDS.SUBSYSTEM,
@@ -2776,10 +2889,11 @@ export async function deriveSubsystemRequirements({ systemRequirements = [], pro
   );
 }
 
-export async function deriveDesignElements({ subsystemRequirements = [], projectName = "", repoName = "", onProgress = null } = {}) {
+async function deriveDesignElementsImpl({ subsystemRequirements = [], projectName = "", repoName = "", onProgress = null } = {}) {
   if (!Array.isArray(subsystemRequirements) || !subsystemRequirements.length) {
     throw new Error("Derive or add subsystem requirements before deriving design elements.");
   }
+  subsystemRequirements = subsystemRequirements.slice();
   const categories = await requestRequirementCategories({
     sourceRows: subsystemRequirements,
     targetKind: ARTIFACT_KINDS.DESIGN,
@@ -2885,6 +2999,10 @@ export async function deriveDesignElements({ subsystemRequirements = [], project
     minimumRowsForTarget(subsystemRequirements.length, ARTIFACT_KINDS.DESIGN)
   );
 }
+
+export const deriveSystemRequirements = args => deriveWithEvidence(deriveSystemRequirementsImpl, args);
+export const deriveSubsystemRequirements = args => deriveWithEvidence(deriveSubsystemRequirementsImpl, args);
+export const deriveDesignElements = args => deriveWithEvidence(deriveDesignElementsImpl, args);
 
 export const DERIVE_BY_KIND = {
   [ARTIFACT_KINDS.SOFTWARE]: deriveSoftwareRequirements,

@@ -1,0 +1,9 @@
+# Fix Code-Based Architecture derivation reliability/scaling findings
+
+Implement the four findings in `docs/investigations/code-architecture-derivation-crash-review-2026-11-03.md`: avoid full hazard-run hydration for software safety import, reuse source indexes across all four derivation stages, prevent duplicate/conflicting jobs across tab remounts while preserving useful background work/navigation, and expose accurate fallback/partial provenance and completion status.
+
+Preserve source selection, trace ambiguity/history semantics, complete safety coverage, staleness/identity/revision checks, valid checkpoints/resume, committed results, existing table/diagram interactions, Collaborator prompts and the fatal-focused debug log. Do not simply omit safety input, cancel work on every tab switch, or mark all successful AI output as wholly local because another pass failed. Keep queues, progress, job retention and memory bounded. Treat the customer's generic crash as unexplained until actual termination evidence exists.
+
+Add focused regressions for summary-only reads/legacy data, indexed scaling and trace semantics, job lifecycle/concurrency/publication, and failed/partial AI responses across software/system/subsystem/design. Run appropriate existing suites and deterministic scaled browser/Electron checks with local AI mocks. Preserve the running preview, installed data and all existing working changes. No agents, paid AI calls, commits, pushes, source-pin changes or desktop update publication are authorized by this task. Keep native code private; shared implementation belongs here. The general Chrome/Electron responsiveness gap remains separate work waived for this release.
+
+Report actual fixes, tests/scaled measurements, remaining limits and release status. Do not claim Offer's exact crash is resolved solely because synthetic tests pass.

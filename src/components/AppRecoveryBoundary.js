@@ -1,9 +1,10 @@
 import React from 'react';
+import {diagnosticCheckpoint} from '../lib/diagnosticOperations';
 
 export default class AppRecoveryBoundary extends React.Component {
  state={failed:false};
  static getDerivedStateFromError(){return {failed:true};}
- componentDidCatch(error,info){console.error('[app-render-failure]',error,info.componentStack);}
+ componentDidCatch(error,info){diagnosticCheckpoint('workspace.render','error',{},{error});console.error('[app-render-failure]',error,info.componentStack);}
  render(){
   if(!this.state.failed)return this.props.children;
   return <main role="alert" className="m-8 rounded border border-amber-300 bg-amber-50 p-6">

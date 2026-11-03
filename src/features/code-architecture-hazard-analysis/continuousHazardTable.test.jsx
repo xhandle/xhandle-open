@@ -78,3 +78,14 @@ test('a query with no matches retains filters and column controls',()=>{
  act(()=>clear.click());
  expect(remote.clearFilters).toHaveBeenCalled();
 });
+
+test('remote filters show loading immediately and never display choices from a different column',()=>{
+ remote={...remote,optionsSourceKey:'saved-source',optionsRequest:null,cancelOptions:jest.fn()};
+ render();const button=host.querySelector('button[title="Filter Hazard"]');expect(button).toBeTruthy();
+ act(()=>button.click());expect(host.textContent).toContain('Loading filter values');expect(host.textContent).not.toContain('No matching values');
+ remote={...remote,options:['Wrong column value'],optionsRequest:{column:0,search:'',sourceKey:'saved-source'}};render();
+ expect(host.textContent).not.toContain('Wrong column value');
+ remote={...remote,options:['Available hazard'],optionsRequest:{column:4,search:'',sourceKey:'saved-source'},optionsLoading:true};render();
+ expect(host.textContent).toContain('Available hazard');expect(host.textContent).toContain('Loading more filter values');
+ act(()=>button.click());expect(remote.cancelOptions).toHaveBeenCalled();
+});

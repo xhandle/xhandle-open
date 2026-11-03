@@ -1,52 +1,55 @@
 import { normalizeHazardOperationalContexts } from '../project-hazard-analysis/hazardOperationalContexts';
 import { summarySheetToHazardSummaryRows } from './codeArchitectureHazardUtils';
 
-// Imported preprocessing can belong to a draft or an existing analysis.
-// Attach its unassigned rows only when the
-// user's configured context is unambiguous; leave unimported AI runs alone.
-export function assignImportedHazardContext(run, contexts) {
-  if (!run?.csvImportPreviousSummary) return run;
+// A reusable row transform lets streaming imports share the same context policy
+// without retaining the full table or rebuilding context indexes per row.
+export function createImportedHazardContextAssigner(sourceHeaders, contexts) {
   const normalized = normalizeHazardOperationalContexts(contexts);
-  const source = run.generatedSheets?.Summary;
-  if (!source?.length) return run;
-  const headers = [...source[0]];
   const fields = ['Operational Context ID','Operational Scenario','Operational Mode','Operating Conditions','Context Assumptions'];
+  const headers = [...sourceHeaders];
   fields.forEach(header => { if (!headers.includes(header)) headers.push(header); });
   const indices = new Map(headers.map((header, index) => [header, index]));
   const contextsById = new Map(normalized.map(context => [context.id, context]));
-  const ownership = {...run.userPreprocessing};
-  let changed = false;
-  const rows = source.slice(1).map(original => {
+  return {headers, contexts:normalized, assign(original, previous) {
     const get = header => String(original[indices.get(header)] || '').trim();
     const id = get('Operational Context ID');
     const unspecified = (!id || id === 'context-unspecified')
       && (!get('Operational Scenario') || get('Operational Scenario') === 'Unspecified scenario')
       && (!get('Operational Mode') || get('Operational Mode') === 'Unspecified mode');
-    const context = unspecified && normalized.length === 1 ? normalized[0]
-      : contextsById.get(id);
-    if (!context) return original;
+    const context = unspecified && normalized.length === 1 ? normalized[0] : contextsById.get(id);
+    if (!context) return {row:original, preprocessing:previous, changed:false};
     const values = [context.id, context.scenario, context.mode, context.conditions, context.assumptions];
-    if (fields.every((field, index) => get(field) === values[index])) return original;
-    changed = true;
+    if (fields.every((field, index) => get(field) === values[index])) return {row:original, preprocessing:previous, changed:false};
     const row = headers.map((_, index) => original[index] ?? '');
     fields.forEach((field, index) => {row[indices.get(field)] = values[index];});
-    const rowId = get('Raw Analysis Row ID');
-    const previous = ownership[rowId];
-    if (previous) {
-      ownership[rowId] = {...previous,
-        // Keep the old scenario/mode basis: the decision is retained, not
-        // silently certified for a newly supplied operational scenario.
-        basis: {...previous.basis, 'Operational Context ID':context.id},
-        context: {...previous.context, ...Object.fromEntries(fields.map((field,i)=>[field,values[i]]))},
-        conflicts:[...new Set([...(previous.conflicts || []),'Operational context changed; imported assessments require review.'])],
-      };
-    }
-    return row;
+    return {row, changed:true, preprocessing:previous && {...previous,
+      // Retain the scenario/mode basis so reassignment requires review.
+      basis:{...previous.basis, 'Operational Context ID':context.id},
+      context:{...previous.context, ...Object.fromEntries(fields.map((field,i)=>[field,values[i]]))},
+      conflicts:[...new Set([...(previous.conflicts || []),'Operational context changed; imported assessments require review.'])],
+    }};
+  }};
+}
+
+export function assignImportedHazardContext(run, contexts) {
+  if (!run?.csvImportPreviousSummary) return run;
+  const source = run.generatedSheets?.Summary;
+  if (!source?.length) return run;
+  const assigner = createImportedHazardContextAssigner(source[0], contexts);
+  const ownership = {...run.userPreprocessing};
+  const idColumn = source[0].indexOf('Raw Analysis Row ID');
+  let changed = false;
+  const rows = source.slice(1).map(original => {
+    const rowId = String(original[idColumn] || '').trim();
+    const result = assigner.assign(original, ownership[rowId]);
+    changed ||= result.changed;
+    if (result.preprocessing) ownership[rowId] = result.preprocessing;
+    return result.row;
   });
   if (!changed) return run;
-  const summary = [headers,...rows];
+  const summary = [assigner.headers,...rows];
   return {...run, userPreprocessing:ownership,
     userPreprocessingConflicts:Object.entries(ownership).flatMap(([id,item])=>(item.conflicts || []).map(message=>`${id}: ${message}`)),
     generatedSheets:{...run.generatedSheets,Summary:summary}, summaryRows:summarySheetToHazardSummaryRows(summary),
-    operationalContexts:normalized, analysisOperationalContexts:normalized, updatedAt:new Date().toISOString()};
+    operationalContexts:assigner.contexts, analysisOperationalContexts:assigner.contexts, updatedAt:new Date().toISOString()};
 }

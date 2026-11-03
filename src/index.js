@@ -1,10 +1,12 @@
 import AppRecoveryBoundary from './components/AppRecoveryBoundary';
+import { installDiagnosticErrorCapture } from './lib/diagnosticOperations';
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "./index.css";
 import { installDeferredResizeObserver } from "./lib/deferredResizeObserver";
 import { installAIRequestAuthShim } from "./lib/installAIRequestAuthShim";
 
+installDiagnosticErrorCapture();
 installAIRequestAuthShim();
 
 if (typeof window !== "undefined" && typeof window.ResizeObserver === "function") {

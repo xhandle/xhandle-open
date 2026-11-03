@@ -1,0 +1,13 @@
+# Fatal failures as the default desktop log view
+
+The supplied example contained 42 records: one session marker, 27 operation events and 14 navigation/activity events. It contained no error, warning or fatal-crash event. The previous viewer nevertheless formatted every event as a diagnostic error report and copied the full stream, making routine activity appear alarming.
+
+The desktop viewer now defaults to **Crashes and fatal errors**. Both reading the list and copying shown reports apply the same native-side filter. **All errors** exposes nonfatal application failures, and **All diagnostic activity** exposes warnings and routine context when explicitly requested. Routine records remain bounded in storage and are still included as supporting recent events/breadcrumbs in actual crash reports. Normal activity is labeled as context rather than being described as a recorded error.
+
+The default includes renderer/process crashes, uncaught main-process exceptions, terminal desktop startup errors, and the root workspace rendering boundary's failure. A caught console exception, failed analysis/save, temporary unresponsiveness or unclean shutdown marker does not by itself prove a fatal crash. Those remain available in the appropriate broader view. Process crashes are labeled as crashes without claiming that the entire app terminated.
+
+Existing journal records are classified on read; no migration or deletion is required. Refreshes ignore obsolete filter responses. The default no longer formats every activity record every two seconds. Clipboard copying preserves redaction and the crash's surrounding evidence. No project data, diagram/table behavior or release feed was changed.
+
+Verification: all **40 desktop tests passed**. Matching unpackaged and packaged smoke checks passed in separate disposable profiles. They verified the default empty fatal view despite recorded nonfatal errors/activity, disabled copying when no fatal report exists, explicit nonfatal filtering and clipboard redaction, a genuine sandboxed native renderer crash, and fatal-only copied reports that retained preceding workload/error stacks. A simulated root rendering-boundary failure remained visible alongside the native crash. Real minidumps and reload recovery passed. Relevant JavaScript syntax and repository whitespace checks passed. Shared runtime code was unchanged, so no shared frontend rebuild was required.
+
+Evidence: `/private/tmp/xhandle-fatal-log-tests.log`, `/private/tmp/xhandle-fatal-log-unpackaged-smoke.log`, `/private/tmp/xhandle-fatal-log-packaged-smoke.log`. The validation app is explicitly unsigned and unreleased. No update was committed or published. The currently open preview uses a separate older fixture and has not been restarted or altered.

@@ -20,6 +20,24 @@ beforeEach(()=>{
 });
 afterEach(()=>{act(()=>root.unmount());host.remove();});
 async function generate(){await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='Derive from Functional Decomposition').click());}
+test('leaving and reopening a running derivation keeps the button disabled and publishes saved results', async () => {
+ let release;
+ DERIVE_BY_KIND['software-requirements'].mockImplementation(() => new Promise(resolve => { release = resolve; }));
+ await act(async () => root.render(<Panel {...props}/>));
+ await generate();
+ await act(async () => root.render(null));
+ await act(async () => root.render(<Panel {...props}/>));
+ const button = [...host.querySelectorAll('button')].find(b => b.textContent === 'Deriving...');
+ expect(button.disabled).toBe(true);
+ await act(async () => button.click());
+ expect(DERIVE_BY_KIND['software-requirements']).toHaveBeenCalledTimes(1);
+ loadArtifactRowsAsync.mockImplementation(async kind => kind === props.kind ? [{id:'SWR-001',requirementText:'Saved in background'}] : []);
+ await act(async () => release([{id:'SWR-001',requirementText:'Saved in background'}]));
+ // Real storage dispatches this after committing, even if the original panel unmounted.
+ await act(async () => window.dispatchEvent(new CustomEvent('xhandle:code-architecture-assurance:changed', {detail:{kind:props.kind,projectId:'p',repoId:'r'}})));
+ expect(host.textContent).toContain('Saved in background');
+ expect([...host.querySelectorAll('button')].find(b => b.textContent === 'Derive from Functional Decomposition').disabled).toBe(false);
+});
 test('a delayed initial storage read cannot erase newly generated requirements',async()=>{
  let release;loadArtifactRowsAsync.mockImplementationOnce(()=>new Promise(resolve=>{release=resolve;}));
  await act(async()=>root.render(<Panel {...props}/>));

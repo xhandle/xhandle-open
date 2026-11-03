@@ -1,0 +1,57 @@
+{
+  "cases": 10,
+  "workload": {
+    "functionalRows": 5000,
+    "diagramRows": 500,
+    "scrollUpdates": 120,
+    "wheelEvents": 360
+  },
+  "medians": {
+    "elapsedMs": {
+      "disabled": 15323.79999999702,
+      "enabled": 15315.60000000894,
+      "delta": -8.199999988079071,
+      "percent": -0.05351153100459083
+    },
+    "cpuSeconds": {
+      "disabled": 11.041936000000002,
+      "enabled": 10.921368999999999,
+      "delta": -0.12056700000000298,
+      "percent": -1.0919009130283208
+    },
+    "rendererRetainedHeapMiB": {
+      "disabled": 24.197805404663086,
+      "enabled": 24.26022243499756,
+      "delta": 0.062417030334472656,
+      "percent": 0.2579450048905807
+    },
+    "maxEventLoopDelayMs": {
+      "disabled": 96.1000000089407,
+      "enabled": 90.30000001192093,
+      "delta": -5.799999997019768,
+      "percent": -6.035379809032426
+    },
+    "diagramFrameP95Ms": {
+      "disabled": 19.700000002980232,
+      "enabled": 19.700000002980232,
+      "delta": 0
+    },
+    "nativeFootprintMiB": {
+      "disabled": 536.3028030395508,
+      "enabled": 555.7564086914062,
+      "delta": 19.45360565185547
+    },
+    "diagnosticBytesWritten": {
+      "disabled": 0,
+      "enabled": 217320,
+      "delta": 217320
+    }
+  },
+  "sourceUnchanged": true,
+  "gates": {
+    "elapsedUnderFivePercent": true,
+    "retainedHeapIncreaseUnder16MiB": true,
+    "nativeFootprintIncreaseUnder16MiB": false,
+    "frameP95IncreaseUnder5ms": true
+  }
+}

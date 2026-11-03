@@ -29,7 +29,10 @@ export default function PagedHazardPanel(props){
  const [layoutProgress,setLayoutProgress]=useState(null);
  const [layout,setLayout]=useState(null),[requestedRowIndices,setRequestedRowIndices]=useState(EMPTY),[requiredRowIndices,setRequiredRowIndices]=useState(EMPTY),[filters,setFilters]=useState({}),[search,setSearch]=useState(''),[indices,setIndices]=useState(null),[options,setOptions]=useState([]),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[error,setError]=useState(''),[attempt,setAttempt]=useState(0);
  const optionsAbort=useRef(),actionsAbort=useRef(),optionsSequence=useRef(0);
+ const [optionsLoading,setOptionsLoading]=useState(false),[optionsError,setOptionsError]=useState(''),[optionsTruncated,setOptionsTruncated]=useState(false);
+ const [optionsRequest,setOptionsRequest]=useState(null);
  const scope=JSON.stringify([run.projectId,run.repoId,run.id,descriptor.generation,descriptor.revision]);
+ const optionsSourceKey=JSON.stringify([scope,partial]);
  useEffect(()=>()=>{optionsAbort.current?.abort();actionsAbort.current?.abort();},[scope]);
  const filtered=Boolean(search.trim()||Object.keys(filters).length||selectedOperationalContextId!=='all');
  const queryKey=JSON.stringify([scope,partial,filters,search,selectedOperationalContextId]);
@@ -75,9 +78,16 @@ export default function PagedHazardPanel(props){
  // eslint-disable-next-line react-hooks/exhaustive-deps
  },[props.highlightedRowIndex,props.forceSummaryOpenKey]);
  const requestOptions=useCallback((column,optionSearch)=>{
-  optionsAbort.current?.abort();const controller=new AbortController();optionsAbort.current=controller;const sequence=++optionsSequence.current;setOptions([]);
-  requestHazardRows(run,{operation:'options',partial,column,optionSearch,signal:controller.signal}).then(result=>{if(sequence!==optionsSequence.current||controller.signal.aborted)return;setOptions(result.options);if(result.truncated)setMessage('Some filter values are too long or numerous to list. Use Search all saved rows to find them.');}).catch(err=>{if(!controller.signal.aborted)setError(err.message);});
- },[run,partial]);
+  optionsAbort.current?.abort();const controller=new AbortController();optionsAbort.current=controller;const sequence=++optionsSequence.current;
+  setOptionsRequest({column,search:optionSearch,sourceKey:optionsSourceKey});
+  setOptionsError('');setOptionsTruncated(false);setOptions([]);setOptionsLoading(true);
+  const current=()=>sequence===optionsSequence.current&&!controller.signal.aborted;
+  requestHazardRows(run,{operation:'options',partial,column,optionSearch,signal:controller.signal}).then(result=>{
+   if(!current())return;setOptions(result.options);setOptionsTruncated(Boolean(result.truncated));
+  }).catch(err=>{if(current())setOptionsError(err.message||'Unable to load filter values.');})
+   .finally(()=>{if(sequence===optionsSequence.current)setOptionsLoading(false);});
+ },[run,partial,optionsSourceKey]);
+ const cancelOptions=useCallback(()=>{++optionsSequence.current;optionsAbort.current?.abort();setOptionsLoading(false);},[]);
  const setFilter=useCallback((column,values)=>setFilters(old=>{const next={...old};if(values.length)next[column]=values;else delete next[column];return next;}),[]);
  const perform=async work=>{
   if(actionsAbort.current)throw Error('Another table operation is still running.');
@@ -120,7 +130,7 @@ export default function PagedHazardPanel(props){
   {partial && <p>Viewing the incomplete attempt. Export CSV includes its matching rows. Published results remain unchanged.</p>}
  </div>;
  const loadState={status:activeLayout?'ready':error?'failed':'preparing',progress:layoutProgress};
- const tablePage={...page,continuous:true,queryKey,layout:activeLayout,loadState,rowError:rowCache.error,rowsByIndex:rowCache.rowsByIndex,requestRows,cacheStats:rowCache.cacheStats,loading:busy||rowCache.loading,partial,hasCsvUndo:!partial && descriptor.details?.includes('csvImportPreviousSummary'),loadUndo:()=>perform(async signal=>(await requestHazardRows(run,{operation:'detail',field:'csvImportPreviousSummary',signal})).value),filters,options,setFilter,requestOptions,clearFilters:()=>{setFilters({});setSearch('');},copy,exportCsv,loadSummary,controls,unfilteredTotal:partial?descriptor.partialCount:descriptor.total};
+ const tablePage={...page,continuous:true,queryKey,layout:activeLayout,loadState,rowError:rowCache.error,rowsByIndex:rowCache.rowsByIndex,requestRows,cacheStats:rowCache.cacheStats,loading:busy||rowCache.loading,partial,hasCsvUndo:!partial && descriptor.details?.includes('csvImportPreviousSummary'),loadUndo:()=>perform(async signal=>(await requestHazardRows(run,{operation:'detail',field:'csvImportPreviousSummary',signal})).value),filters,options,optionsLoading,optionsError,optionsTruncated,optionsRequest,optionsSourceKey,setFilter,requestOptions,cancelOptions,clearFilters:()=>{setFilters({});setSearch('');},copy,exportCsv,loadSummary,controls,unfilteredTotal:partial?descriptor.partialCount:descriptor.total};
  // A viewport fill is not a new editable summary revision (e.g. during CSV validation).
  const summarySheet=useMemo(()=>[activeLayout?.headers || descriptor.headers], [activeLayout?.headers,descriptor.headers]);
  const functionalReady=useMemo(()=>functionalModelIsReady(cbaRows),[cbaRows]);

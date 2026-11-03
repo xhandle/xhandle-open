@@ -109,3 +109,22 @@ test('review normalization is reused as scrolling loads other source ranges',asy
   expect(normalize.mock.calls.length).toBe(calls);
  }finally{normalize.mockRestore();}
 });
+
+test('filter options distinguish loading, ignore stale searches and keep filter failures local',async()=>{
+ const fallback=requestHazardRows.getMockImplementation(),pending=[];
+ requestHazardRows.mockImplementation((value,options)=>options.operation==='options'?new Promise((resolve,reject)=>pending.push({options,resolve,reject})):fallback(value,options));
+ await act(async()=>root.render(<PagedHazardPanel latestRun={run}/>));await flush();
+ act(()=>mockPanel.tablePage.requestOptions(0,''));
+ expect(mockPanel.tablePage.optionsLoading).toBe(true);expect(mockPanel.tablePage.options).toEqual([]);
+ act(()=>mockPanel.tablePage.requestOptions(0,'later'));expect(pending[0].options.signal.aborted).toBe(true);
+ await act(async()=>pending[0].resolve({options:['Stale value']}));expect(mockPanel.tablePage.options).toEqual([]);expect(mockPanel.tablePage.optionsLoading).toBe(true);
+ await act(async()=>pending[1].reject(Error('Filter read failed')));
+ expect(mockPanel.tablePage.optionsError).toBe('Filter read failed');expect(mockPanel.tablePage.optionsLoading).toBe(false);
+ expect(host.querySelector('[role="alert"]')).toBeNull();
+ act(()=>mockPanel.tablePage.requestOptions(0,'later'));
+ await act(async()=>pending[2].resolve({options:['Later value'],truncated:false}));
+ expect(mockPanel.tablePage.options).toEqual(['Later value']);expect(mockPanel.tablePage.optionsLoading).toBe(false);
+ act(()=>mockPanel.tablePage.requestOptions(0,'new'));
+ act(()=>mockPanel.tablePage.cancelOptions());expect(pending[3].options.signal.aborted).toBe(true);expect(mockPanel.tablePage.optionsLoading).toBe(false);
+ await act(async()=>pending[3].resolve({options:['Canceled value']}));expect(mockPanel.tablePage.options).toEqual([]);
+});

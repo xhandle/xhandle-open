@@ -1,0 +1,12 @@
+# Fix the four pending desktop release review findings
+
+Implement and verify the findings in the private desktop review `docs/reviews/pending-release-review-2026-11-03.md`. Preserve existing working changes, the user's installed app and running preview/profile, native/private versus shared/public ownership, the approved fatal-default log view, and all useful crash evidence. Do not commit, push, change source pins, sign or publish an update. The Chrome/Electron performance gap remains separate work, explicitly waived for this release.
+
+1. Preserve root `workspace.render` failures independently of ordinary error sampling. Record the first fatal incident promptly; bound/coalesce repeated fatal reports without letting a later ordinary error replace them. Flush retained fatal evidence on crash/disposal/normal shutdown before the final journal flush. Keep trusted-frame checks and ordinary error/traffic limits.
+2. Recover validated recorded operation, breadcrumb and heartbeat timestamps from the persisted flight recorder. Do not fabricate missing times or allow live renderer packets to override main-recorded observation times. Preserve numeric/field limits and legacy compatibility.
+3. Include recorded child-process exit codes in displayed/copied crash reports, including zero where supplied. Keep redaction and the distinction between a child crash and a whole-workspace crash; an exit code is evidence, not a proven cause.
+4. Use the conventional median for even-sized groups and native sample sets. Add focused statistical regressions. Recalculate the affected summaries and documentation from the retained original cases, preserving provenance, raw measurements and uncertainty. Do not rerun the benchmark matrix or claim diagnostics save memory.
+
+Add focused regressions reproducing each finding, verify failure against the previous implementation when practical, then run the full native suite and relevant public tests. Run matching full/packaged smoke checks with fatal/error bursts, filtered copied reports, genuine native-crash evidence and recovery; test restart timestamp recovery. Use new temporary validation fixtures so the user's open preview is untouched. Shared UI code need not be rebuilt if unchanged and its existing build correspondence is verified.
+
+Report fixes, test outcomes, corrected statistics, remaining release preparation and actual publication status. Do not claim signing/notarization or an installed update occurred.

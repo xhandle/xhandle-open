@@ -1,4 +1,5 @@
 import requestHazardRows from '../features/code-architecture-hazard-analysis/requestHazardRows';
+import { diagnosticCheckpoint } from '../lib/diagnosticOperations';
 import { computeArchitectureByFunction, computeFunctionGroupsByFile, cleanArchLabel } from './diagramArchitectureIndexes';
 import { resolveDiagramDetailRows, diagramDetailLinkTarget } from './diagramDetailTrace';
 import useCodeArchitectureQuickSearch from './useCodeArchitectureQuickSearch';
@@ -1976,6 +1977,12 @@ const DiagramBody = forwardRef(function DiagramBody(
   // -------------------- React Flow state --------------------
   const [nodes, setNodes, reactflowOnNodesChange] = useNodesState([]);
   const [edges, setEdges, reactflowOnEdgesChange] = useEdgesState([]);
+  useEffect(() => {
+    diagnosticCheckpoint('diagram.prepare','start',{sourceRows:rows.length});
+  }, [rows, architectureMode, functionalPresentation]);
+  useEffect(() => {
+    diagnosticCheckpoint('diagram.scene','ready',{nodes:nodes.length,edges:edges.length,sourceRows:rows.length});
+  }, [nodes.length, edges.length, rows.length]);
 
   // -------------------- Node / Edge types -------------------
   const nodeTypes = useMemo(

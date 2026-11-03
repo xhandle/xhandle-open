@@ -96,12 +96,15 @@ function hasUnspecifiedContext(headers, row) {
  * contradicts; those are surfaced, never silently reconciled.
  */
 export function planHazardAnalysisCsvImport(summary = [], text = "", { draftHeaders = [], draftRows = {} } = {}) {
+  return planHazardAnalysisCsvRows(summary, parseCsv(text), {draftHeaders, draftRows});
+}
+
+export function planHazardAnalysisCsvRows(summary = [], grid = [], { draftHeaders = [], draftRows = {} } = {}) {
   const headers = Array.isArray(summary?.[0]) ? summary[0] : null;
   if (!headers) {
     return emptyPlan(["This project has no hazard analysis table to merge into."]);
   }
 
-  const grid = parseCsv(text);
   if (!grid.length) return emptyPlan(["The file is empty."]);
 
   const csvHeaders = grid[0];
@@ -208,6 +211,10 @@ export function planHazardAnalysisCsvImport(summary = [], text = "", { draftHead
 
     const current = summary[rowIndex] || [];
     const changes = mapped
+      // Resolution is calculated from the engineering evidence, never adopted
+      // from a CSV cell. Counting its old exported value as an edit made an
+      // identical repeat import appear to change every previously imported row.
+      .filter(({header}) => csvHeaderKey(header) !== csvHeaderKey('Classification Resolution Status'))
       .map(({ csvIndex, summaryIndex, header }) => ({
         summaryIndex,
         header,
@@ -346,10 +353,11 @@ export function describeHazardCsvPlan(plan, limit = 8) {
   if (plan.unknownColumns.length) {
     lines.push("", `Ignored columns this analysis does not have: ${plan.unknownColumns.join(", ")}.`);
   }
-  if (plan.conflicts.length) {
-    lines.push("", `${plan.conflicts.length} row${plan.conflicts.length === 1 ? "" : "s"} will need a significance re-review afterwards:`);
+  const conflictCount=plan.conflictCount ?? plan.conflicts.length;
+  if (conflictCount) {
+    lines.push("", `${conflictCount} row${conflictCount === 1 ? "" : "s"} will need a significance re-review afterwards:`);
     plan.conflicts.slice(0, 3).forEach((conflict) => lines.push(`• ${conflict}`));
-    if (plan.conflicts.length > 3) lines.push(`…and ${plan.conflicts.length - 3} more.`);
+    if (conflictCount > 3) lines.push(`…and ${conflictCount - 3} more.`);
   }
   lines.push("", "Rows not listed in the file are left unchanged. The previous version stays restorable.");
   return lines.join("\n");

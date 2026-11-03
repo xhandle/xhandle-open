@@ -1,0 +1,10 @@
+# Resolve the remaining desktop diagnostic memory check
+
+Investigate the measured 19.45 MiB aggregate native-footprint increase before deployment. Preserve crash evidence, existing UI behavior, working changes and user data. Do not commit, push, sign or publish a desktop update.
+
+1. Inspect the actual collectors and previous raw measurements. Distinguish diagnostic allocations, the native crash handler, GPU/renderer variation, and benchmark artifacts. Do not treat an arbitrary threshold or a noisy point estimate as proof of a regression or its absence.
+2. Improve the disposable-profile benchmark to record a pre-workload baseline, repeated settled native samples, reliable Electron process roles, and paired differences. Exercise a larger actual requirements/storage/table/Functional-diagram workload with deterministic AI responses. Keep measurement overhead identical across modes. Preserve raw results and source fingerprints.
+3. Report paired estimates and uncertainty for aggregate native footprint and its process components. Measure elapsed time, responsiveness, retained JS heap and diagnostic writes. Investigate sustained growth with repeated workload/retention checks. Avoid collecting customer content or touching the installed workspace.
+4. Fix demonstrated avoidable overhead or measurement errors. Preserve local-only crash dumps, bounded resource/operation history, error stacks, restart reconstruction, copy and recovery. Do not remove useful crash evidence merely to pass a benchmark.
+5. Run proportional regressions and any required desktop checks. For runtime changes, repeat native crash/restart and full/packaged smoke validation. Clearly separate previously passed checks from newly executed ones.
+6. Document whether the native-memory concern is resolved, the evidence and remaining limits. If customer hardware/data is unavailable, state that limit. Deployment requires normal review/publication/pinning/signing/update validation separately; this task does not authorize release.

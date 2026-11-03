@@ -1,7 +1,9 @@
+import { withDiagnosticOperation, withDiagnosticSync } from '../../lib/diagnosticOperations';
 import { createRequirementCheckpoint } from '../code-architecture-transfer/requirementCheckpoint';
 import { readArtifactRowsWithRecovery, STORAGE_RECOVERY_MESSAGE } from './artifactReadRecovery';
 import { resolveSoftwareHazardSource } from './softwareHazardSource';
 import { softwareRequirementSource } from './softwareRequirementSource';
+import { artifactDerivationScope, getArtifactDerivationJob, subscribeArtifactDerivations, runArtifactDerivation } from './artifactDerivationJobs';
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ARTIFACT_DEFINITIONS, ARTIFACT_KINDS } from "./artifactDefinitions";
 import { DERIVE_BY_KIND } from "./artifactAI";
@@ -210,9 +212,16 @@ export default function EngineeringArtifactPanel({
   const [sourceSnapshot, setSourceSnapshot] = useState(sourceRows);
   const [hasLoadedRows, setHasLoadedRows] = useState(false);
   const [loadingRows, setLoadingRows] = useState(!Array.isArray(initialRows));
-  const [isDeriving, setIsDeriving] = useState(false);
+  const [localBusy, setIsDeriving] = useState(false);
+  const derivationScope = artifactDerivationScope(projectId, repoId);
+  const derivationJob = React.useSyncExternalStore(subscribeArtifactDerivations,
+    React.useCallback(() => getArtifactDerivationJob(derivationScope), [derivationScope]));
+  const isDeriving = localBusy || derivationJob.running;
   const [reuseDerivationWork, setReuseDerivationWork] = useState(true);
   const [deriveMessage, setDeriveMessage] = useState("");
+  useEffect(() => {
+    if (derivationJob.message) setDeriveMessage(derivationJob.message);
+  }, [derivationJob]);
   const [readErrors, setReadErrors] = useState({});
   const [readAttempt, setReadAttempt] = useState(0);
   const readScope = useRef(null);
@@ -480,7 +489,7 @@ export default function EngineeringArtifactPanel({
     return () => window.removeEventListener('xhandle:prepare-project-export', prepare);
   }, [projectId, repoId, kind, rows, reviewMode, hasLoadedRows, loadedStorageKey, storageKey]);
 
-  const deriveRows = React.useCallback(async () => {
+  const deriveRows = React.useCallback(() => runArtifactDerivation(derivationScope, async publishProgress => {
     const derive = DERIVE_BY_KIND[kind];
     if (!derive) return;
     const source = currentSourceRows;
@@ -492,6 +501,7 @@ export default function EngineeringArtifactPanel({
       ? "Deriving software requirements from functional decomposition, then importing hazard-analysis requirements..."
       : `Deriving ${definition.title.toLowerCase()} with AI...`;
     setDeriveMessage(initialMessage);
+    publishProgress(initialMessage);
     startActivity(activityId, {
       title: definition.title,
       step: 0,
@@ -508,11 +518,12 @@ export default function EngineeringArtifactPanel({
         message,
       });
       setDeriveMessage(message);
+      publishProgress(message);
     };
     let finishStorageWork;
     try {
       finishStorageWork=beginArtifactStorageWork(projectId,repoId);
-      await ensureArtifactStorageReady();
+      await withDiagnosticOperation('requirements.storage-ready', {sourceRows:sourceTotal}, () => ensureArtifactStorageReady());
       onProgress.requestCheckpoint = createRequirementCheckpoint(projectId, repoId, kind, {reuse: reuseDerivationWork});
       const args = {
         projectName: project?.name || "",
@@ -521,43 +532,46 @@ export default function EngineeringArtifactPanel({
       };
       let generated = [];
       if (kind === ARTIFACT_KINDS.SOFTWARE) {
-        const savedHazardAnalysis = await resolveSoftwareHazardSource({ projectId, repo, current: hazardAnalysis, cbaRows, organizationContext });
+        const savedHazardAnalysis = await withDiagnosticOperation('requirements.hazard-source', {sourceRows:sourceTotal}, () => resolveSoftwareHazardSource({ projectId, repo, current: hazardAnalysis, cbaRows, organizationContext }));
         if (savedHazardAnalysis) onProgress({ message: `Using the latest ${savedHazardAnalysis.hazardMethod || "hazard"} analysis for safety requirements.` });
-        generated = await derive({ ...args, cbaRows: source, hazardAnalysis: savedHazardAnalysis });
+        generated = await withDiagnosticOperation('requirements.derive-software', {sourceRows:sourceTotal}, () => derive({ ...args, cbaRows: source, hazardAnalysis: savedHazardAnalysis }));
       } else if (kind === ARTIFACT_KINDS.SYSTEM) {
-        generated = await derive({ ...args, softwareRequirements: source });
+        generated = await withDiagnosticOperation('requirements.derive-system', {sourceRows:sourceTotal}, () => derive({ ...args, softwareRequirements: source }));
       } else if (kind === ARTIFACT_KINDS.SUBSYSTEM) {
-        generated = await derive({ ...args, systemRequirements: source });
+        generated = await withDiagnosticOperation('requirements.derive-subsystem', {sourceRows:sourceTotal}, () => derive({ ...args, systemRequirements: source }));
       } else {
-        generated = await derive({ ...args, subsystemRequirements: source });
+        generated = await withDiagnosticOperation('requirements.derive-design', {sourceRows:sourceTotal}, () => derive({ ...args, subsystemRequirements: source }));
       }
       if (!Array.isArray(generated) || !generated.length) {
         throw new Error(`No ${definition.title.toLowerCase()} were generated. Existing results were preserved.`);
       }
-      const mergedRows = mergeGeneratedRows(generated, rows, kind);
+      const mergedRows = withDiagnosticSync('requirements.merge', {sourceRows:sourceTotal,resultRows:generated.length}, () => mergeGeneratedRows(generated, rows, kind));
       if (activeStorageKey.current === storageKey) {
         persistedRows.current = { key: storageKey, rows: mergedRows };
         setRows(mergedRows);
         setHasLoadedRows(true);
       }
-      await saveArtifactRowsAsync(kind, projectId, repoId, mergedRows);
-      await clearDownstreamArtifacts(kind, projectId, repoId);
+      await withDiagnosticOperation('requirements.save', {resultRows:mergedRows.length}, () => saveArtifactRowsAsync(kind, projectId, repoId, mergedRows));
+      await withDiagnosticOperation('requirements.clear-downstream', {resultRows:mergedRows.length}, () => clearDownstreamArtifacts(kind, projectId, repoId));
       const sourceSummary = kind === ARTIFACT_KINDS.SOFTWARE ? softwareDerivationSummary(generated) : "";
       const report = generated.derivationReport;
-      const warning = report?.fallbackRows ? ` ${report.fallbackRows} functional rows are fallback drafts, not completed AI requirements. ${report.failures[0] || "AI derivation did not complete normally."}` : "";
-      const importSummary = report ? ` Hazard import: ${report.importedSafetyRows} imported, ${report.excludedSafetyRows} excluded by safety significance, ${report.missingRequirementRows} missing requirement text.${report.hazardRows ? "" : " No hazard summary rows were available."}` : "";
+      const incomplete = report && (report.fallbackRows || report.failedBatches || report.partialRows);
+      const warning = incomplete ? ` AI derivation is incomplete. ${report.fallbackRows || 0} rows are fallback drafts, not completed AI requirements. ${report.failures?.[0] || "Some AI passes did not complete normally."}` : "";
+      const importSummary = report && kind === ARTIFACT_KINDS.SOFTWARE ? ` Hazard import: ${report.importedSafetyRows} imported, ${report.excludedSafetyRows} excluded by safety significance, ${report.missingRequirementRows} missing requirement text.${report.hazardRows ? "" : " No hazard summary rows were available."}` : "";
       const doneMessage = `${generated.length} ${definition.title.toLowerCase()} row${generated.length === 1 ? "" : "s"} derived for review${sourceSummary}.${importSummary}${warning}`;
       if (activeStorageKey.current === storageKey) setDeriveMessage(doneMessage);
-      finishActivity(activityId, report?.fallbackRows ? "error" : "success", doneMessage);
+      publishProgress(doneMessage);
+      finishActivity(activityId, incomplete ? "error" : "success", doneMessage);
     } catch (error) {
       const errorMessage = error?.message || `${definition.title} derivation failed.`;
       if (activeStorageKey.current === storageKey) setDeriveMessage(errorMessage);
+      publishProgress(errorMessage);
       finishActivity(activityId, "error", errorMessage);
     } finally {
       finishStorageWork?.();
       if (activeStorageKey.current === storageKey) setIsDeriving(false);
     }
-  }, [reuseDerivationWork, organizationContext, cbaRows, currentSourceRows, definition.title, finishActivity, hazardAnalysis, kind, project?.name, projectId, repo?.repoId, repo?.repoName, repoId, rows, startActivity, updateActivity, storageKey, setRows]);
+  }), [derivationScope, reuseDerivationWork, organizationContext, cbaRows, currentSourceRows, definition.title, finishActivity, hazardAnalysis, kind, project?.name, projectId, repo, repoId, rows, startActivity, updateActivity, storageKey, setRows]);
 
   const addRow = React.useCallback(() => {
     setRows((prev) => [

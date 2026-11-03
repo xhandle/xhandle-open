@@ -1,0 +1,7 @@
+# Review hazard CSV import changes for bugs and regressions
+
+Review the current pending Code-Based Architecture hazard CSV implementation and its shared storage/row-index changes. Cover worker/client lifecycle, real App integration, partial-file matching, context assignment, cancellation and concurrency, preservation of evidence and other sheets, preprocessing and undo, source integrity and revision checks, temporary-storage lifecycle, memory bounds, and interactions with requirements derivation and archive/legacy readers.
+
+Examine the actual code and diffs rather than relying on the previous passing counts. Add observational reproductions outside production source where needed. Run relevant regression suites and distinguish confirmed bugs from unproven risks. Prioritize concrete data-loss, incorrect-success and broken-workflow findings with file/line references, triggers, expected/actual behavior and useful fixes. State validation limits; passing synthetic tests alone do not establish absence of regressions.
+
+This is a review task: do not implement production fixes, commit, push, publish updates, change pins or modify the original CSV, installed data, or the running diagnostics.6 preview/pending import. Use disposable profiles and synthetic fixtures; customer source/CSV contents must not enter repository artifacts. No paid AI calls or agent delegation. Save a concise review report and summarize findings first.

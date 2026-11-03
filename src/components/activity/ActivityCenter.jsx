@@ -7,6 +7,24 @@ export const visibleActivityEntries = (activities) => Array.from(activities?.ent
 
 export function ActivityProvider({ children }) {
   const [activities, setActivities] = useState(new Map()); // id -> {title, status, step, total, message, createdAt}
+  const reportedActivities = useRef(new Map());
+
+  useEffect(() => {
+    const report = window.xhandleDesktop?.diagnosticsEnabled === false ? null : window.xhandleDesktop?.reportActivity;
+    if (typeof report !== 'function') return;
+    const now = Date.now();
+    for (const [id, activity] of activities) {
+      const previous = reportedActivities.current.get(id);
+      const transition = !previous || previous.status !== activity.status;
+      if (!transition && now - previous.at < 1000) continue;
+      reportedActivities.current.set(id, {status: activity.status, at: now});
+      try {
+        report({phase: activity.title, status: activity.status, completed: activity.step, total: activity.total,
+          transition, ...(activity.status === 'error' ? {message: activity.message} : {})});
+      } catch {} // Diagnostic failures must never interrupt an analysis.
+    }
+    for (const id of reportedActivities.current.keys()) if (!activities.has(id)) reportedActivities.current.delete(id);
+  }, [activities]);
 
   const startActivity = useCallback((id, payload) => {
     setActivities(prev => {

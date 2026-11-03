@@ -15,7 +15,7 @@ export function validateHazardDescriptor(run) {
   return p;
 }
 // Only the current page and original caller-owned run are retained during encoding.
-export async function* chunkHazardRun(run,{signal,tokenSource}={}) {
+export async function* chunkHazardRun(run,{signal,tokenSource,yieldEveryPages=1}={}) {
   if(!tokenSource && (isChunkedHazardRun(run) || fitsArchiveLine(run,65536))){yield {run};return;}
   const generation=Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join('');
   let sequence=0,tokens=[],size=0;const hash=sha256(),tableIndex=createHazardTableIndex(),rowIndex=createHazardRowIndex();
@@ -26,7 +26,7 @@ export async function* chunkHazardRun(run,{signal,tokenSource}={}) {
   };
   for await(const token of (tokenSource || streamValue(run))){
     check(signal);rowIndex.add(token,sequence,tokens.length);tableIndex.add(token,sequence,tokens.length);tokens.push(token);size+=JSON.stringify(token).length;
-    if(size>=16384){yield page();await new Promise(resolve=>setTimeout(resolve,0));}
+    if(size>=16384){yield page();if(sequence%Math.max(1,Math.min(1024,Math.floor(Number(yieldEveryPages))||1))===0)await new Promise(resolve=>setTimeout(resolve,0));}
   }
   if(tokens.length)yield page();
   const digest=hash.digest('hex');
@@ -65,7 +65,7 @@ export async function stageHazardRun(db,run,assertCurrent=()=>{},options={}) {
           const leases=tx.objectStore(HAZARD_STAGING),lease=await leases.get(generation);
           if(entry.chunk.sequence>0 && !lease)throw new Error('Hazard save staging expired. Retry saving.');
           await leases.put({id:generation,runId:run.id,projectId:run.projectId,repoId:run.repoId,hazardMethod:run.hazardMethod,architectureSnapshotHash:run.architectureSnapshotHash,touched:Date.now()});
-          await tx.objectStore(HAZARD_CHUNKS).put(entry.chunk);await tx.done;
+          await tx.objectStore(HAZARD_CHUNKS).put(entry.chunk);await tx.done;options.onProgress?.({completed:entry.chunk.sequence+1,total:0});
         }catch(error){try{tx.abort();}catch{}await tx.done.catch(()=>{});throw error;}
       }else staged=entry.run;
     }
@@ -77,8 +77,9 @@ export async function removeHazardGeneration(db,generation) {
   await tx.objectStore(HAZARD_CHUNKS).delete(IDBKeyRange.bound(generation+':',generation+':\uffff'));
   await tx.objectStore(HAZARD_STAGING).delete(generation);await tx.done;
 }
-export async function publishHazardRun(db,run,metadata,assertCurrent=()=>{},expectedLegacy,expectedRevision) {
+export async function publishHazardRun(db,run,metadata,assertCurrent=()=>{},expectedLegacy,expectedRevision,signal) {
   const tx=db.transaction(['hazardAnalysisRuns','runMetadata',HAZARD_CHUNKS,HAZARD_STAGING],'readwrite');tx.done.catch(()=>{});
+  const abort=()=>{try{tx.abort();}catch{}};signal?.addEventListener('abort',abort,{once:true});
   try{
     const roots=tx.objectStore('hazardAnalysisRuns'),old=await roots.get(run.id);
     // A fallback migration must not overwrite a save committed while its pages were staged.
@@ -92,6 +93,7 @@ export async function publishHazardRun(db,run,metadata,assertCurrent=()=>{},expe
       const lease=await tx.objectStore(HAZARD_STAGING).get(run.payload.generation);
       if(!lease)throw new Error('Hazard save staging expired. Retry saving.');
     }
+    if(expectedRevision === null && old)throw Object.assign(Error('Saved analysis changed. Reload it before importing.'),{code:'HAZARD_REVISION_CONFLICT'});
     if(expectedRevision){
       const current=await tx.objectStore('runMetadata').get(run.id);
       if(current?.storageRevision!==expectedRevision)throw Object.assign(Error('Saved analysis changed. Reload it before saving edits.'),{code:'HAZARD_REVISION_CONFLICT'});
@@ -105,6 +107,7 @@ export async function publishHazardRun(db,run,metadata,assertCurrent=()=>{},expe
     if(isChunkedHazardRun(run))await tx.objectStore(HAZARD_STAGING).delete(run.payload.generation);
     await tx.done;return storageRevision;
   }catch(error){try{tx.abort();}catch{}await tx.done.catch(()=>{});throw error;}
+  finally{signal?.removeEventListener('abort',abort);}
 }
 export async function hydrateHazardRun(db,run,{signal,onProgress,assemblerFactory=createValueAssembler,tableOnly=false}={}) {
   check(signal);

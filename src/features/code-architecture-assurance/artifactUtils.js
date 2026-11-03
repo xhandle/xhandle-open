@@ -512,8 +512,7 @@ export function rowsById(rows = []) {
   return new Map((Array.isArray(rows) ? rows : []).map((row) => [cellText(row.id), row]).filter(([id]) => id));
 }
 
-export function collectArchitectureRefsFromParents(parentIds = [], parentRows = []) {
-  const byParentId = rowsById(parentRows);
+export function collectArchitectureRefsFromParents(parentIds = [], parentRows = [], byParentId = rowsById(parentRows)) {
   const refs = [];
   parentIds.forEach((id) => {
     const parent = byParentId.get(id);

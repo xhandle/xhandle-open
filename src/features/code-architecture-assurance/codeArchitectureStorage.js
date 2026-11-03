@@ -1,4 +1,5 @@
 import { notifyBackupDataChanged } from '../../lib/localBackupEvents';
+import { withDiagnosticOperation } from '../../lib/diagnosticOperations';
 import { readRecord, rawRecord, stageRecord, hydrateRecord, isChunkedRecord, isRecordPart, putRawRecord, transactionDone, writeRecord } from '../code-architecture-storage/chunkedRecord';
 export const XHANDLE_IDB_NAME = 'xhandle';
 export const XHANDLE_IDB_VERSION = 4;
@@ -65,9 +66,11 @@ export async function flushArchitectureWrites(scope) {
 
 export async function readCbaRowsFromIndexedDB(key, options) {
   if (!key || typeof indexedDB === 'undefined') return [];
-  const db = await openCbaIndexedDB();
-  try { const value = await readRecord(db, XHANDLE_IDB_CBA_STORE, key, options); return Array.isArray(value) ? value : []; }
-  finally { db.close(); }
+  return withDiagnosticOperation('architecture.read',{},async()=>{
+    const db = await openCbaIndexedDB();
+    try { const value = await readRecord(db, XHANDLE_IDB_CBA_STORE, key, options); return Array.isArray(value) ? value : []; }
+    finally { db.close(); }
+  });
 }
 export async function readFirstCbaRowsFromIndexedDB(keys = [], { onProgress, signal } = {}) {
   const unique = [...new Set((Array.isArray(keys) ? keys : [keys]).filter(Boolean))];

@@ -7,6 +7,9 @@ import {validateHazardTableIndex} from './hazardTableIndex';
 import {deleteWorkingSets} from './hazardWorkingSetCache';
 import { beginHazardLoadDiagnostic } from './hazardLoadDiagnostics';
 import { readHazardTransaction } from './readHazardTransaction';
+import { projectHazardRequirementSummary } from './hazardRequirementSummary';
+import { prepareHazardTableIndex } from './prepareHazardTableIndex';
+import {isHazardCsvImportBusy} from './hazardCsvActivity';
 import { HAZARD_CHUNKS, stageHazardRun, hydrateHazardRun, isChunkedHazardRun, removeHazardGeneration, publishHazardRun } from './hazardRunChunks';
 import {isCurrentHazardSaveAttempt,revokeHazardSaveAttempts} from './hazardSaveAttempt';
 import { openHazardSchema, hazardMetadata, newHazardStorageRevision, HAZARD_STAGING } from './hazardSchema';
@@ -145,23 +148,40 @@ export async function getLatestCodeArchitectureHazardRun(filters = {}, options =
   try{
     db=await openCodeArchitectureHazardDB(options);
     checkRead(signal);
-    if(!db)return (await getCodeArchitectureHazardRuns(filters))[0] || null;
+    if(!db){
+      const legacy = (await getCodeArchitectureHazardRuns(filters))[0] || null;
+      return options.metadataOnly ? legacy && hazardMetadata(legacy) : options.summaryOnly ? projectHazardRequirementSummary(legacy) : legacy;
+    }
     diagnostic.phase('read-metadata');
     const latest=await latestRevision(db,filters,options);
     checkRead(signal);
+    if(options.expectedRevision && latest?.storageRevision !== options.expectedRevision) throw Error('Saved hazard analysis changed. Refresh sources and retry derivation.');
+    if(options.metadataOnly) return memory && (!latest || memory.id===latest.id || newestFirst(memory,latest)<=0) ? hazardMetadata(memory) : latest || null;
     const useWorkingSet=Boolean(options.workingSet && latest?.storageRevision);
-    if(memory && (!latest || memory.id===latest.id || newestFirst(memory,latest)<=0))return options.workingSet ? memory : resolveCodeArchitectureHazardRun(memory,options);
+    if(memory && (!latest || memory.id===latest.id || newestFirst(memory,latest)<=0))return options.summaryOnly ? projectHazardRequirementSummary(memory) : options.workingSet ? memory : resolveCodeArchitectureHazardRun(memory,options);
     const reuse = options.reuseRun;
     if (reuse && latest?.storageRevision && reuse.id === latest.id && reuse.projectId === latest.projectId && reuse.repoId === latest.repoId &&
       loadedRevisions.get(reuse) === latest.storageRevision && (Boolean(reuse[PAGED_HAZARD]) === Boolean(options.paged)) && (options.workingSet || !reuse[WORKING_SET])) return reuse;
     diagnostic.phase('read-root');
     const root=latest ? await readHazardTransaction(db, STORE_NAME, store => store.get(latest.id), options) : null;
+    if(options.summaryOnly && !isChunkedHazardRun(root)) return projectHazardRequirementSummary(root);
     if(options.paged && isChunkedHazardRun(root)){
       let index;
-      try{index=validateHazardRowIndex(root.payload);}
-      catch(error){await requireUpgradeableSource(db, root, options);throw Object.assign(new Error('This saved analysis needs a one-time row storage upgrade.'),{code:'HAZARD_TABLE_UPGRADE_REQUIRED',runId:root.id});}
+      try{
+        index=validateHazardRowIndex(root.payload);
+        if(options.summaryOnly && !index.headers.length && !index.summarySource)throw Error('Legacy Summary coordinates need preparation.');
+      }
+      catch(error){
+        await requireUpgradeableSource(db, root, options);
+        if (options.summaryOnly && !options.summaryIndexRetry) {
+          await prepareHazardTableIndex(db, root.id, { ...options, force: true });
+          return getLatestCodeArchitectureHazardRun(filters, { ...options, summaryIndexRetry: true });
+        }
+        throw Object.assign(new Error('This saved analysis needs a one-time row storage upgrade.'),{code:'HAZARD_TABLE_UPGRADE_REQUIRED',runId:root.id});
+      }
+      const records=Boolean(options.summaryOnly && !index.headers.length && index.hasLegacySummaryRows);
       const result={...index.metadata,id:root.id,projectId:root.projectId,repoId:root.repoId,
-        [PAGED_HAZARD]:{revision:latest.storageRevision,generation:root.payload.generation,total:index.spans.length,pending:index.pending,partialMetadata:index.partial?.metadata || {},partialCount:index.partial?.spans.length || 0,narrative:index.narrative,headers:index.headers,details:Object.keys(index.details || {}),omittedMetadata:index.omittedMetadata || []}};
+        [PAGED_HAZARD]:{revision:latest.storageRevision,generation:root.payload.generation,total:records?index.recordSummarySpans.length:index.spans.length,records,pending:index.pending,partialMetadata:index.partial?.metadata || {},partialCount:index.partial?.spans.length || 0,narrative:index.narrative,headers:index.headers,details:Object.keys(index.details || {}),omittedMetadata:index.omittedMetadata || []}};
       const after=await readHazardTransaction(db,META_STORE,store=>store.get(latest.id),options);
       if(after?.storageRevision!==latest.storageRevision){
         if(options.revisionRetry)throw Error('Saved analysis changed while loading. Retry loading.');
@@ -195,7 +215,7 @@ export async function getLatestCodeArchitectureHazardRun(filters = {}, options =
 
     }
     return result || null;
-  }catch(error){outcome=signal?.aborted?'cancelled':memory?'memory-fallback':'failed';checkRead(signal);if(memory)return options.workingSet ? memory : resolveCodeArchitectureHazardRun(memory,options);throw error;}
+  }catch(error){outcome=signal?.aborted?'cancelled':memory?'memory-fallback':'failed';checkRead(signal);if(memory && !options.expectedRevision)return options.metadataOnly ? hazardMetadata(memory) : options.summaryOnly ? projectHazardRequirementSummary(memory) : options.workingSet ? memory : resolveCodeArchitectureHazardRun(memory,options);throw error;}
   finally{db?.close();diagnostic.finish(outcome);}
 }
 
@@ -248,7 +268,7 @@ export async function resolveCodeArchitectureHazardRun(run, options={}) {
 const saveQueues = new Map();
 const cleaningHazardScopes = new Set();
 const hazardStorageScope = (projectId,repoId) => JSON.stringify([String(projectId),String(repoId)]);
-export const hazardStorageBusy = (projectId,repoId) => memoryMatches({projectId,repoId}).length > 0 || saveQueues.size > 0;
+export const hazardStorageBusy = (projectId,repoId) => isHazardCsvImportBusy(projectId,repoId) || memoryMatches({projectId,repoId}).length > 0 || saveQueues.size > 0;
 export async function withHazardStorageCleanup(projectId,repoId,operation) {
   const scope = hazardStorageScope(projectId,repoId);
   if (cleaningHazardScopes.has(scope) || hazardStorageBusy(projectId,repoId)) throw new Error('Hazard analysis is running or has unsaved results. Finish or save it before cleanup.');

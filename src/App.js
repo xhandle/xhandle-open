@@ -13,6 +13,7 @@ import { architectureDashboardColumns, groupArchitectureDashboard } from './feat
 import useHazardRunRestoration from './features/code-architecture-hazard-analysis/useHazardRunRestoration';
 import { createHazardReviewRowIndex } from './features/code-architecture-hazard-analysis/hazardReviewRowIndex';
 import useHazardDraft from './features/code-architecture-hazard-analysis/useHazardDraft';
+import {useHazardCsvImportOwner} from './features/code-architecture-hazard-analysis/useHazardCsvImport';
 import {abortableHazardTask} from './features/code-architecture-hazard-analysis/abortableHazardTask';
 import {safeHazardObserver} from './features/code-architecture-hazard-analysis/hazardCompletionSupport';
 import {createHazardRunRegistry} from './features/code-architecture-hazard-analysis/hazardRunRegistry';
@@ -27,6 +28,7 @@ import { SHOW_TABLE_REVIEW_COLUMNS, SHOW_TABLE_REVIEW_NOTICES } from "./componen
 import { mergeImportedCodeArchitectureRepos } from './features/code-architecture-assurance/architectureImportRefresh';
 import useScopedArchitectureRows from './features/code-architecture-assurance/useScopedArchitectureRows';
 import { assignImportedHazardContext } from './features/code-architecture-hazard-analysis/codeHazardImportContext';
+import { isHazardCsvImportBusy } from './features/code-architecture-hazard-analysis/hazardCsvActivity';
 import { createCodeArchitectureImportOperation } from './features/code-architecture-context/codeArchitectureImportOperation';
 import { restoreFunctionalCsvSnapshot, functionalModelIsReady, buildFunctionalModelRows, immutableFunctionalRowsAsync } from './features/code-architecture-context/functionalModel';
 import { parseCodeArchitectureCsv } from "./features/code-architecture-context/codeArchitectureCsvImport";
@@ -14530,6 +14532,9 @@ Rules:
     const repoId = repoMeta.repoId || repoMeta.repoName || "repo";
     const reviewRepoId = activeCodeArchitectureRepo?.id || repoId;
     const cbaProjectId = activeCodeArchitectureProjectId || activeProjectId || "";
+    if(isHazardCsvImportBusy(cbaProjectId,repoId)){
+      setCodeArchitectureHazardProgress(previous=>({...previous,error:true,message:'Finish or cancel the CSV import before starting hazard analysis.'}));return;
+    }
     const codeHazardOrganizationCalibration = getProjectOrganizationCalibration(cbaProjectId);
     const actId = `cba-hazard-${cbaProjectId || "default"}-${repoId}`;
     const runScope=codeHazardScopeRef.current;
@@ -14672,7 +14677,9 @@ Rules:
   };
 
   const codeArchitectureCsvSnapshotHash = useMemo(() => computeArchitectureSnapshotHash(ensureCodeArchitectureTraceIds(cbaTableData)), [cbaTableData]);
+  const codeArchitectureCsvRepoId=normalizeRepoId(activeCodeArchitectureRepoMeta);
   const needsCodeArchitectureCsvDraft = section === 'code-architecture' && codeArchitectureWorkspaceTab === 'safety' && hazardRemediationTab === 'hazard-analysis';
+  useHazardCsvImportOwner(needsCodeArchitectureCsvDraft?activeCodeArchitectureProjectId:null,codeArchitectureCsvRepoId);
   const hasCodeArchitectureHazardRun = Boolean(codeArchitectureHazardRun);
   const codeArchitectureDraftInput = useMemo(() => ({options:{
     architectureSnapshotHash:codeArchitectureCsvSnapshotHash,
@@ -14690,6 +14697,18 @@ Rules:
   codeArchitectureCsvWorkspaceRef.current = { key: codeArchitectureCsvWorkspaceKey, running: isRunningCodeArchitectureHazard };
 
   const handleImportCodeArchitectureSummary = async (summary, expectedRun, restore = false) => {
+    if(summary?.csvImport){
+      const scope=codeArchitectureCsvWorkspaceKey;
+      const live=codeArchitectureHazardRunRef.current;
+      if(codeArchitectureCsvWorkspaceRef.current.running || codeArchitectureCsvWorkspaceRef.current.key!==scope || activeCodeArchitectureProjectIdRef.current!==activeCodeArchitectureProjectId || (live?.id||null)!==(expectedRun?.id||null))throw Error('The active analysis changed. Select the CSV again.');
+      const result=await summary.apply(live || codeArchitectureCsvDraft, codeArchitectureHazardContexts);
+      if(codeArchitectureCsvWorkspaceRef.current.key!==scope || activeCodeArchitectureProjectIdRef.current!==activeCodeArchitectureProjectId) return {message:'The CSV was saved to its original project. Open that project to view the results.'};
+      const current=codeArchitectureHazardRunRef.current;
+      if(current && current.id!==result.run.id) return {message:'The CSV was saved. A different analysis is now open; reopen the imported results to view them.'};
+      commitCodeArchitectureHazardRun(result.run);
+      window.dispatchEvent(new CustomEvent('xhandle:code-architecture-hazard-analysis:changed',{detail:{projectId:result.run.projectId,repoId:result.run.repoId,runId:result.run.id}}));
+      return result;
+    }
     if (codeArchitectureCsvWorkspaceRef.current.running || codeArchitectureCsvWorkspaceRef.current.key !== codeArchitectureCsvWorkspaceKey
       || codeArchitectureHazardRunRef.current !== expectedRun
       || activeCodeArchitectureProjectIdRef.current !== activeCodeArchitectureProjectId) {
@@ -14702,9 +14721,11 @@ Rules:
       const headers = summary[0];
       const idIndex = headers.indexOf('Raw Analysis Row ID');
       const oldSummary = ensureHazardAnalysisRowIds(baseline.generatedSheets.Summary);
+      const oldIdIndex=oldSummary[0].indexOf('Raw Analysis Row ID');
+      const oldRowsById=new Map(oldSummary.slice(1).map(row=>[row[oldIdIndex],row]));
       summary.slice(1).forEach(row => {
         const id = row[idIndex];
-        const old = oldSummary.slice(1).find(candidate => candidate[oldSummary[0].indexOf("Raw Analysis Row ID")] === id);
+        const old = oldRowsById.get(id);
         const changed = headers.filter((header, index) => String(row[index] || '') !== String(old?.[index] || ''));
         if (changed.length) userPreprocessing[id] = recordUserPreprocessing(userPreprocessing[id], headers, row, changed, old || row);
       });
@@ -18042,12 +18063,15 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                           onFocusTargetHandled={handleCodeArchitectureDiagramFocusHandled}
                         />
                       )}
+                      csvProjectId={activeCodeArchitectureProjectId}
+                      csvRepoId={codeArchitectureCsvRepoId}
                       draftRun={codeArchitectureCsvDraft}
                       draftLoading={codeArchitectureDraftLoading}
                       draftProgress={codeArchitectureDraftProgress}
                       draftError={codeArchitectureDraftError}
                       onRetryDraft={retryCodeArchitectureDraft}
                       onImportSummary={handleImportCodeArchitectureSummary}
+                      streamingCsvImport
                       method={codeArchitectureHazardMethod}
                       onMethodChange={setCodeArchitectureHazardMethod}
                       onRunAnalysis={handleRunCodeArchitectureHazardAnalysis}

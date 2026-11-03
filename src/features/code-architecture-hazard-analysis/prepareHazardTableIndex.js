@@ -7,7 +7,7 @@ import {incompleteHazardSource} from './hazardSourceIntegrity';
 const check=signal=>{if(signal?.aborted)throw new DOMException('Table storage upgrade cancelled.','AbortError');};
 // Explicit upgrade/import preparation. Original pages are never changed. A
 // cancelled or interrupted scan leaves the original run available for retry.
-export async function prepareHazardTableIndex(db,id,{signal,onProgress=()=>{}}={}) {
+export async function prepareHazardTableIndex(db,id,{signal,onProgress=()=>{},force=false}={}) {
   check(signal);
   const tx=db.transaction(['hazardAnalysisRuns',HAZARD_CHUNKS]);tx.done.catch(()=>{});
   const abort=()=>{try{tx.abort();}catch{}};
@@ -17,7 +17,7 @@ export async function prepareHazardTableIndex(db,id,{signal,onProgress=()=>{}}={
     root=await tx.objectStore('hazardAnalysisRuns').get(id);
     if(!root)throw Error('Saved analysis no longer exists.');
     if(!isChunkedHazardRun(root)){await tx.done;return;}
-    try{validateHazardTableIndex(root.payload);validateHazardRowIndex(root.payload);await tx.done;return;}catch{/* Build or repair a derived index. */}
+    if(!force)try{validateHazardTableIndex(root.payload);validateHazardRowIndex(root.payload);await tx.done;return;}catch{/* Build or repair a derived index. */}
     const p=validateHazardDescriptor(root),builder=createHazardTableIndex(),rowBuilder=createHazardRowIndex(),hash=sha256();
     const validator=createHazardTokenValidator({id:root.id,projectId:root.projectId,repoId:root.repoId});
     for(let start=0;start<p.count;start+=16){

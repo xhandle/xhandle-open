@@ -15,7 +15,9 @@ export async function queryHazardRows(run,{operation='page',raw=false,field,targ
  try{
   check(signal);const root=await tx.objectStore('hazardAnalysisRuns').get(run.id),meta=await tx.objectStore('runMetadata').get(run.id);
   if(meta?.storageRevision!==descriptor.revision || root?.payload?.generation!==descriptor.generation)throw Error('Saved results changed. Reload the table before continuing.');
-  const rootIndex=validateHazardRowIndex(root.payload),index=partial?rootIndex.partial:rootIndex;
+  const rootIndex=validateHazardRowIndex(root.payload);
+  if(descriptor.records && (!raw || operation!=='page' || partial))throw Error('Legacy requirement summaries support raw page reads only.');
+  const index=descriptor.records?{headers:[],spans:rootIndex.recordSummarySpans}:partial?rootIndex.partial:rootIndex;
   if(!index?.headers && operation!=='detail')throw Error('This run has no saved partial table.');
   const normalizer=createHazardRowNormalizer(index?.headers || []),headers=raw && operation==='page'?index.headers:normalizer.headers;
   const pageDigests=new Map(validateHazardTableIndex(root.payload).pages.map(p=>[p.sequence,p.digest]));

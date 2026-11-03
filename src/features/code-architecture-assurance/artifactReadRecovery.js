@@ -1,4 +1,5 @@
 import { loadArtifactRowsAsync } from './artifactUtils';
+import { withDiagnosticOperation } from '../../lib/diagnosticOperations';
 
 export const STORAGE_RECOVERY_MESSAGE = 'Saved data is taking longer to load. Retrying automatically; available results remain visible.';
 
@@ -31,7 +32,7 @@ export async function readArtifactRowsWithRecovery(kind, projectId, repoId, { si
   let attempt = 0;
   while (!signal?.aborted) {
     try {
-      const rows = await loadArtifactRowsAsync(kind, projectId, repoId);
+      const rows = await withDiagnosticOperation('requirements.read',{},()=>loadArtifactRowsAsync(kind, projectId, repoId),{sampled:true});
       if (signal?.aborted) throw aborted();
       return rows;
     } catch (error) {

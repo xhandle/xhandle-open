@@ -1,5 +1,6 @@
 // nodeLayoutManager.js — Dedicated node positioning and layout logic
 import ELK from 'elkjs/lib/elk.bundled.js';
+import { withDiagnosticOperation } from '../lib/diagnosticOperations';
 
 /* ================================
  * Theme constants for layout
@@ -290,7 +291,7 @@ export async function runElkLayoutOnce({
   const useGroups = groupByFile && anyHasFile;
 
   const graph = toElkGraph({ nodes, edges, groupByFile: useGroups });
-  const laidOut = await elk.layout(graph);
+  const laidOut = await withDiagnosticOperation('diagram.elk-layout',{nodes:nodes.length,edges:edges.length},()=>elk.layout(graph));
 
   // ELK children positions are relative to their parent; convert to absolute
   const posById = new Map();

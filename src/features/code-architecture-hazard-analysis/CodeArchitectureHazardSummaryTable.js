@@ -217,20 +217,24 @@ export default function CodeArchitectureHazardSummaryTable({
     return column ? item?.row?.[column.index] ?? "" : "";
   }, [visibleColumns]);
   const localFilterState = useColumnFilters(rowItems, getFilterCell);
+  const optionColumn=visibleColumns[localFilterState.openIndex]?.index;
+  const optionSearch=localFilterState.searches[localFilterState.openIndex] || '';
+  const optionsMatch=remotePage?.optionsRequest===undefined || (remotePage.optionsRequest?.column===optionColumn && remotePage.optionsRequest?.search===optionSearch && remotePage.optionsRequest?.sourceKey===remotePage.optionsSourceKey);
   const filterState = remotePage ? {
     ...localFilterState, filteredRows:rowItems,
     filters:Object.fromEntries(visibleColumns.map((c,i)=>[i,remotePage.filters[c.index] || []])),
     activeFilterCount:Object.keys(remotePage.filters).length,
-    getOptions:()=>remotePage.options || [],
+    getOptions:()=>optionsMatch?(remotePage.options || []):[],
+    optionsLoading:optionColumn!=null && (!optionsMatch || remotePage.optionsLoading),optionsError:optionsMatch?remotePage.optionsError:null,optionsTruncated:optionsMatch && remotePage.optionsTruncated,
+    retryOptions:()=>remotePage.requestOptions(optionColumn,optionSearch),
     setFilterValues:(i,values)=>remotePage.setFilter(visibleColumns[i].index,values),
     toggleFilterValue:(i,value)=>{const key=visibleColumns[i].index,old=remotePage.filters[key] || [];remotePage.setFilter(key,old.includes(value)?old.filter(v=>v!==value):[...old,value]);},
     clearAllFilters:remotePage.clearFilters,
   } : localFilterState;
-  const optionColumn=visibleColumns[localFilterState.openIndex]?.index;
-  const optionSearch=localFilterState.searches[localFilterState.openIndex] || '';
+  const requestFilterOptions=remotePage?.requestOptions,cancelFilterOptions=remotePage?.cancelOptions;
   useEffect(()=>{
-    if(remotePage && optionColumn!=null)remotePage.requestOptions(optionColumn,optionSearch);
-  },[remotePage?.requestOptions,optionColumn,optionSearch]);
+    if(requestFilterOptions && optionColumn!=null){requestFilterOptions(optionColumn,optionSearch);return()=>cancelFilterOptions?.();}
+  },[requestFilterOptions,cancelFilterOptions,optionColumn,optionSearch]);
   const defaultColumnWidths = useMemo(() => {
     const widthFor = (header) => {
       const text = String(header || "").toLowerCase();

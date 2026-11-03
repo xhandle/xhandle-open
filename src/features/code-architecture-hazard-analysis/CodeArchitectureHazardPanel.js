@@ -1,4 +1,6 @@
 import HazardRestorationNotice from './HazardRestorationNotice';
+import useHazardCsvImport from './useHazardCsvImport';
+import XHandleWorkingMark from '../../components/XHandleWorkingMark';
 import { HAZARD_SOURCE_INCOMPLETE } from './hazardSourceIntegrity';
 import TablePreparationProgress from '../code-architecture-assurance/TablePreparationProgress';
 import HazardRunRecoveryNotice from './HazardRunRecoveryNotice';
@@ -63,6 +65,7 @@ export function PreparedCodeArchitectureHazardPanel({
   latestRun,
   restoration,
   draftRun,
+  csvProjectId, csvRepoId,
   draftLoading=false, draftProgress=0, draftError=null, onRetryDraft,
   diagram,
   splitView = false,
@@ -95,6 +98,7 @@ export function PreparedCodeArchitectureHazardPanel({
   importInputRef,
   reviewMode = false,
   organizationContext,
+  streamingCsvImport = false,
 }) {
   const summarySheet = useMemo(() => preparedView?.summarySheet || fillNotApplicableHazardSummary(ensureHazardAnalysisRowIds(
     latestRun?.generatedSheets?.Summary || draftRun?.generatedSheets?.Summary || []
@@ -110,7 +114,10 @@ export function PreparedCodeArchitectureHazardPanel({
   const csvInputRef = useRef(null);
   const visibleSummaryRef = useRef(null);
   const [csvIssues, setCsvIssues] = useState([]);
-  const [importing, setImporting] = useState(false);
+  const [legacyImporting, setImporting] = useState(false);
+  const csvSource = latestRun || draftRun;
+  const csvImport = useHazardCsvImport(csvProjectId ?? csvSource?.projectId, csvRepoId ?? csvSource?.repoId, operationalContexts);
+  const importing = legacyImporting || (streamingCsvImport && csvImport.active);
   const [pendingImport, setPendingImport] = useState(null);
   const [importStatus, setImportStatus] = useState("");
   const handleVisibleSummary = useCallback((sheet) => {
@@ -127,6 +134,7 @@ export function PreparedCodeArchitectureHazardPanel({
   };
   const importCsv = async (file) => {
     if (!file || isRunning || importing || reviewMode) return;
+    if (streamingCsvImport) { await csvImport.prepare(file,csvSource); return; }
     setImporting(true);
     setPendingImport(null);
     setImportStatus('Reading and validating CSV…');
@@ -148,6 +156,7 @@ export function PreparedCodeArchitectureHazardPanel({
     finally { setImporting(false); }
   };
   const applyPendingImport = async () => {
+    if (streamingCsvImport) { if(!isRunning && !reviewMode && csvSource && !draftLoading)await csvImport.apply(csvSource,onImportSummary,latestRun); return; }
     if (!pendingImport || importing || isRunning || reviewMode) return;
     if (pendingImport.view !== summarySheet || pendingImport.run !== latestRun) {
       setPendingImport(null);
@@ -244,7 +253,20 @@ export function PreparedCodeArchitectureHazardPanel({
         : 'No current Functional model. Generate it in Architecture Diagram → Functional to analyze responsibilities instead of detailed calls.'}
     </div>
     {restorationNotice}
-    {importStatus && <div role="status" className="shrink-0 border border-slate-200 bg-slate-50 p-3 text-sm">{importStatus}</div>}
+    {(streamingCsvImport ? csvImport.message : importStatus) && <div role={csvImport.status==='error'?'alert':'status'} className="shrink-0 border border-slate-200 bg-slate-50 p-3 text-sm">
+      {streamingCsvImport && csvImport.busy && <XHandleWorkingMark className="mr-2 inline-block h-5 w-5 align-middle" />}
+      {streamingCsvImport ? csvImport.message : importStatus}
+      {streamingCsvImport && csvImport.sourceFile && <div className="mt-1 break-words text-slate-600">
+        Selected file: {csvImport.sourceFile.name}
+        {Number.isFinite(csvImport.sourceFile.bytes) && ` (${(csvImport.sourceFile.bytes/1000000).toLocaleString(undefined,{maximumFractionDigits:1})} MB)`}
+      </div>}
+      {streamingCsvImport && csvImport.progress?.total>0 && <span> {Math.min(100,Math.floor(csvImport.progress.completed*100/csvImport.progress.total))}%</span>}
+      {streamingCsvImport && csvImport.active && <button className="ml-3 underline" disabled={csvImport.status==='canceling'} onClick={()=>csvImport.cancel()}>Cancel import</button>}
+    </div>}
+    {streamingCsvImport && csvImport.status==='ready' && <div className="shrink-0 border border-blue-200 bg-blue-50 p-3 text-sm">
+      <p className="whitespace-pre-line">{describeHazardCsvPlan(csvImport.plan)}</p>
+      <button type="button" className="mt-2 rounded bg-blue-600 px-3 py-2 text-white" disabled={isRunning || reviewMode || draftLoading || !csvSource} onClick={applyPendingImport}>Apply CSV import</button>
+    </div>}
     {pendingImport && <div className="shrink-0 border border-blue-200 bg-blue-50 p-3 text-sm">
       <p className="whitespace-pre-line">{describeHazardCsvPlan(pendingImport.plan)}</p>
       <div className="mt-2 flex gap-2">
@@ -374,6 +396,7 @@ export function PreparedCodeArchitectureHazardPanel({
               disabled={isRunning || importing}
               onClick={async () => {
                 if (!window.confirm('Restore the hazard table from before the last CSV import?')) return;
+                if(streamingCsvImport){const plan=await csvImport.prepare(null,csvSource,true);if(plan)await csvImport.apply(csvSource,onImportSummary,latestRun);return;}
                 setImporting(true);
                 try { await onImportSummary(tablePage ? await tablePage.loadUndo() : latestRun.csvImportPreviousSummary, latestRun, true); }
                 catch (error) { setCsvIssues([error.message]); }
@@ -442,7 +465,7 @@ export function PreparedCodeArchitectureHazardPanel({
                 {unresolvedApplicabilityCount} guide-phrase decisions need review. Hazard generation was deferred for these rows; applicable rows were analyzed.
               </div>
             )}
-            {!latestRun && hasSummary && <div className="text-sm text-slate-600">Incomplete hazard analysis draft. Export these rows, complete them externally, then import the CSV results.</div>}
+            {!latestRun && hasSummary && <div className="text-sm text-slate-600">{streamingCsvImport ? 'Hazard analysis draft. Import your completed CSV, then click Apply CSV import to save its results.' : 'Incomplete hazard analysis draft. Export these rows, complete them externally, then import the CSV results.'}</div>}
             {showSummary && (
               <CodeArchitectureHazardSummaryTable
                 suppressLoadingIndicator={showDraftPreparation || upgradingSavedResults || isRunning}
@@ -468,7 +491,7 @@ export function PreparedCodeArchitectureHazardPanel({
                 selectedOperationalContextId={selectedOperationalContextId}
                 collapseAllRequest={collapseAllRequest}
                 onGroupStateChange={handleGroupStateChange}
-                readOnly={reviewMode}
+                readOnly={reviewMode || importing}
               />
             )}
           </div>

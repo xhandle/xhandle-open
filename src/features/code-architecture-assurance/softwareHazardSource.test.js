@@ -4,8 +4,9 @@ import {resolveSoftwareHazardSource} from './softwareHazardSource';
 test('loads saved hazards when the panel has not loaded them yet, using repo aliases',async()=>{
  const run={id:'saved',projectId:'p',repoId:'owner/repo',updatedAt:'2026-10-09'};
  getLatestCodeArchitectureHazardRun.mockImplementation(async({repoId})=>repoId==='owner/repo'?run:null);
- expect(await resolveSoftwareHazardSource({projectId:'p',repo:{id:'uuid',repoId:'owner/repo'}})).toBe(run);
- expect(getLatestCodeArchitectureHazardRun).toHaveBeenCalledWith({projectId:'p',repoId:'uuid'});
+ expect(await resolveSoftwareHazardSource({projectId:'p',repo:{id:'uuid',repoId:'owner/repo'}})).toEqual(run);
+ expect(getLatestCodeArchitectureHazardRun).toHaveBeenCalledWith({projectId:'p',repoId:'uuid'}, {metadataOnly:true});
+ expect(getLatestCodeArchitectureHazardRun).toHaveBeenCalledWith({projectId:'p',repoId:'owner/repo'}, expect.objectContaining({summaryOnly:true,paged:true}));
 });
 test('does not import a different project and reports load failures',async()=>{
  getLatestCodeArchitectureHazardRun.mockResolvedValue(null);

@@ -113,6 +113,10 @@ export function FilterableHeaderCell({
     getOptions,
     setFilterValues,
     toggleFilterValue,
+    optionsLoading,
+    optionsError,
+    optionsTruncated,
+    retryOptions,
   } = filterState;
   const selectedValues = filters[index] || [];
   const search = searches[index] || "";
@@ -167,6 +171,7 @@ export function FilterableHeaderCell({
                 <button
                   type="button"
                   onClick={() => setFilterValues(index, options)}
+                  disabled={Boolean(optionsLoading && !options.length)}
                   className="rounded border border-slate-200 px-2 py-1 text-[11px] hover:bg-slate-50"
                 >
                   Select visible
@@ -181,7 +186,11 @@ export function FilterableHeaderCell({
               </div>
             </div>
             <div className="max-h-72 overflow-y-auto p-2">
-              {options.length === 0 ? (
+              {optionsError && <div role="alert" className="px-2 py-3 text-xs text-amber-800">
+                {optionsError}{typeof retryOptions==='function' && <button type="button" className="ml-2 underline" onClick={retryOptions}>Retry</button>}
+              </div>}
+              {optionsLoading && <div role="status" className="px-2 py-2 text-xs text-slate-500">{options.length?'Loading more filter values…':'Loading filter values…'}</div>}
+              {options.length === 0 && !optionsLoading && !optionsError && !optionsTruncated ? (
                 <div className="px-2 py-3 text-xs text-slate-500">No matching values</div>
               ) : options.map((value) => (
                 <label key={value} className="flex items-start gap-2 rounded-md px-2 py-2 text-xs hover:bg-slate-50">
@@ -194,6 +203,7 @@ export function FilterableHeaderCell({
                   <span className="break-words">{value}</span>
                 </label>
               ))}
+              {optionsTruncated && <div className="px-2 py-2 text-xs text-slate-500">Some values are too long or numerous to list. Use Search all saved rows for additional matches.</div>}
             </div>
           </div>
         )}

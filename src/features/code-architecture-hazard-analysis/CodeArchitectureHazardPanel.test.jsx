@@ -228,3 +228,27 @@ it('shows a separate context save warning without hiding the summary',()=>{
   try{expect(host.textContent).toContain('context updates could not be saved');expect(host.textContent).toContain('Summary');}
   finally{act(()=>root.unmount());host.remove();}
 });
+
+it('keeps a validated import visible when the draft temporarily reloads, and waits before Apply',async()=>{
+ const {useHazardCsvImportOwner}=require('./useHazardCsvImport');
+ const worker={terminated:false,postMessage:message=>{
+  if(message.operation==='cancel')return;
+  queueMicrotask(()=>worker.onmessage?.({data:{id:message.id,type:'result',result:message.operation==='prepare'?{changedRowCount:1,changedColumns:['Hazard'],governedColumns:[],unknownColumns:[],conflicts:[],conflictCount:0}: {}}}));
+ },terminate:()=>{worker.terminated=true;}};
+ const factory=jest.spyOn(require('./createHazardCsvImportWorker'),'default').mockReturnValue(worker);
+ const draft={id:'pending-draft',projectId:'stable-project',repoId:'stable-repo',generatedSheets:{Summary:[['Raw Analysis Row ID','Hazard'],['one','']]}};
+ function Workspace({loading=false}){useHazardCsvImportOwner(draft.projectId,draft.repoId);return <CodeArchitectureHazardPanel csvProjectId={draft.projectId} csvRepoId={draft.repoId} streamingCsvImport draftRun={loading?null:draft} draftLoading={loading} method="STPA-Textbook" onImportSummary={jest.fn()}/>;}
+ const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
+ try{
+  await act(async()=>root.render(<Workspace/>));
+  const input=host.querySelector('input[aria-label="Import code architecture hazard CSV"]');
+  Object.defineProperty(input,'files',{configurable:true,value:[new File(['Raw Analysis Row ID,Hazard\none,Completed'],'completed.csv')]});
+  await act(async()=>input.dispatchEvent(new Event('change',{bubbles:true})));
+  const apply=()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='Apply CSV import');
+  expect(apply().disabled).toBe(false);
+  await act(async()=>root.render(<Workspace loading/>));
+  await act(async()=>new Promise(resolve=>setTimeout(resolve,30)));
+  expect(host.textContent).toContain('CSV validated');expect(apply().disabled).toBe(true);expect(worker.terminated).toBe(false);
+  await act(async()=>root.render(<Workspace/>));expect(apply().disabled).toBe(false);
+ }finally{await act(async()=>{root.unmount();await new Promise(resolve=>setTimeout(resolve,10));});host.remove();factory.mockRestore();}
+});
