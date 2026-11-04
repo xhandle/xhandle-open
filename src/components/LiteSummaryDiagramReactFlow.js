@@ -4527,9 +4527,16 @@ posRef.current.forEach((saved, nodeId) => {
   }
 });
 
+// A hierarchy rebuild must not make already measured containers uninitialized.
+// React Flow hides nodes without dimensions until ResizeObserver delivers again;
+// that delivery may lag behind a drag/drop or context-menu membership change.
+const measuredGroupSizes = new Map(nodes.filter(node => node.type === 'groupBox')
+  .map(({ id, width, height }) => [id, { width, height }]));
 const renderGroupNode = (box) => ({
   id: box.id,
   type: 'groupBox',
+  width: measuredGroupSizes.get(box.id)?.width,
+  height: measuredGroupSizes.get(box.id)?.height,
   parentNode: box.parentNode || undefined,
   position: box.position,
   data: {

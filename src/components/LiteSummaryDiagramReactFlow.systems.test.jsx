@@ -142,6 +142,58 @@ test('toolbar drops nest new subsystems and functions at the destination, ignori
   expect(mockNodes.find(node=>node.id===originalPlan.id)).toMatchObject({parentNode:originalPlan.parentNode,position:originalPlan.position});
 });
 
+test('systems and nested subsystems remain rendered during controlled Strict Mode edits', async () => {
+  function Controlled() {
+    const [data,setData] = React.useState(rows);
+    return <Diagram rows={data} onUpdateRows={setData} storageKey={key}/>;
+  }
+  act(()=>root.render(<React.StrictMode><Controlled/></React.StrictMode>));
+  await tick();
+  toolbarDrag('Add system (group selected functions or subsystems)');
+  toolbarDrop({x:1000,y:1000}); await tick();
+  const system=mockNodes.find(node=>node.data.elementType==='system');
+  expect(system).toBeTruthy();
+  toolbarDrag('Group selected nodes');
+  toolbarDrop({x:1070,y:1080}); await tick(); await tick();
+  const saved=JSON.parse(localStorage.getItem(`${key}:groups:v1`));
+  expect(saved.some(box=>box.parentNode===system.id)).toBe(true);
+  expect(mockNodes.filter(node=>node.type==='groupBox').map(node=>node.id).sort())
+    .toEqual(saved.map(box=>box.id).sort());
+  expect(mockFlowProps.nodes.filter(node=>node.type==='groupBox')).toHaveLength(saved.length);
+});
+
+test.each(['menu','drag'])('moving a measured subsystem by %s retains initialized container sizes while resize delivery is pending', async method => {
+  const groups=JSON.parse(localStorage.getItem(`${key}:groups:v1`));
+  groups.push({id:'g:system',elementType:'system',label:'Container',position:{x:1000,y:1000},width:420,height:280});
+  localStorage.setItem(`${key}:groups:v1`,JSON.stringify(groups));
+  mount();await tick();
+  // Real React Flow publishes these measurements after initial DOM layout.
+  // Do not send another measurement after reparenting: resize delivery may lag.
+  act(()=>mockFlowProps.onNodesChange(mockNodes.filter(node=>node.type==='groupBox').map(node=>({
+    id:node.id,type:'dimensions',dimensions:{width:node.style.width,height:node.style.height},
+  }))));
+  expect(mockNodes.filter(node=>node.type==='groupBox').every(node=>node.width>0&&node.height>0)).toBe(true);
+  mockApi.fitView.mockClear();
+  if(method==='menu'){
+    openGroupMenu('g:planning');clickText('Container (System)');
+  }else{
+    const subsystem=mockNodes.find(node=>node.id==='g:planning');
+    act(()=>mockFlowProps.onNodeDragStart({clientX:120,clientY:120},subsystem));
+    act(()=>mockFlowProps.onNodeDragStop({clientX:1070,clientY:1080},
+      {...subsystem,position:{x:1050,y:1060}}));
+  }
+  await tick();
+  expect(mockNodes.find(node=>node.id==='g:planning').parentNode).toBe('g:system');
+  expect(mockNodes.filter(node=>node.type==='groupBox').every(node=>node.width>0&&node.height>0)).toBe(true);
+  expect(mockApi.fitView).not.toHaveBeenCalled();
+  // Fresh measurements must still replace the retained sizes after growth.
+  const measured=mockNodes.filter(node=>node.type==='groupBox').map(node=>({
+    id:node.id,type:'dimensions',dimensions:{width:node.style.width,height:node.style.height},
+  }));
+  act(()=>mockFlowProps.onNodesChange(measured));
+  measured.forEach(({id,dimensions})=>expect(mockNodes.find(node=>node.id===id)).toMatchObject(dimensions));
+});
+
 test('cancelled toolbar drags and unrelated drops create nothing', async () => {
   mount(); await tick();
   const ids = mockNodes.map(node=>node.id);
