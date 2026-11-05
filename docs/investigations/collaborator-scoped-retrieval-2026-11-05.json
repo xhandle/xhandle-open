@@ -1,0 +1,52 @@
+{
+  "smallProjectProbe": {
+    "environment": "Electron, disposable preview-profile clone, external requests blocked",
+    "artifactCountBefore": 19611,
+    "projectionCountBefore": 1728,
+    "runs": [
+      {
+        "elapsedMs": 823.8000000119209,
+        "selectedCorrectProject": true,
+        "evidenceCount": 24,
+        "evidenceTypes": [
+          "project",
+          "functional_decomposition_row"
+        ],
+        "migrationErrors": []
+      },
+      {
+        "elapsedMs": 14.099999994039536,
+        "selectedCorrectProject": true,
+        "evidenceCount": 24,
+        "evidenceTypes": [
+          "project",
+          "functional_decomposition_row"
+        ],
+        "migrationErrors": []
+      }
+    ]
+  },
+  "largeProjectProbe": {
+    "status": "not resolved",
+    "deadlineMs": 90000,
+    "stage": "codeArchitecture",
+    "completed": false
+  },
+  "regression": {
+    "suites": 17,
+    "tests": 262,
+    "passed": true
+  },
+  "nativeChecks": {
+    "chrome": {
+      "passed": true,
+      "scenarios": 13,
+      "runtimeErrors": []
+    },
+    "electron": {
+      "passed": true,
+      "scenarios": 13,
+      "runtimeErrors": []
+    }
+  }
+}

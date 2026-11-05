@@ -1,5 +1,5 @@
-jest.mock('../../components/backendConfig', () => ({ backendURL:'https://synthetic.invalid', buildAIAuthOpts:()=>({headers:{}}) }));
 import { deriveFunctionalSoftwareRequirements, deriveSoftwareRequirements, deriveSystemRequirements, deriveSubsystemRequirements, deriveDesignElements, finalDeduplicateArtifactRows } from './artifactAI';
+jest.mock('../../components/backendConfig', () => ({ backendURL:'https://synthetic.invalid', buildAIAuthOpts:()=>({headers:{}}) }));
 
 const definitions = [
   ['software', deriveFunctionalSoftwareRequirements, 'cbaRows'],
@@ -36,6 +36,16 @@ beforeEach(() => {
   global.fetch = jest.fn(async (_url, options) => successfulResponse(options));
 });
 afterEach(() => jest.restoreAllMocks());
+
+test.each(definitions)('%s console diagnostics retain only bounded batch metadata', async (kind, derive, key) => {
+  await derive({[key]:input(kind,12)});
+  expect(console.info).toHaveBeenCalled();
+  for (const [label, details] of console.info.mock.calls) {
+    expect(label.length).toBeLessThan(250);
+    expect(Object.keys(details).every(key => ['rowCount', 'promptChars', 'responseChars'].includes(key))).toBe(true);
+    expect(Object.values(details).every(value => typeof value === 'number')).toBe(true);
+  }
+});
 
 test.each(definitions)('%s reuses source indexes as input grows by 50 percent', async (kind, derive, key) => {
   const reads = [];

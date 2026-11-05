@@ -1,5 +1,5 @@
 export const WORKSPACE_GRAPH_DB_NAME = "xhandle-workspace-graph";
-export const WORKSPACE_GRAPH_DB_VERSION = 2;
+export const WORKSPACE_GRAPH_DB_VERSION = 3;
 export const DEFAULT_WORKSPACE_ID = "workspace:local";
 
 export const WORKSPACE_GRAPH_STORES = {
@@ -7,6 +7,7 @@ export const WORKSPACE_GRAPH_STORES = {
   projects: "projects",
   folders: "folders",
   artifacts: "artifacts",
+  artifactIndex: "artifactIndex",
   relationships: "relationships",
   runs: "runs",
   reviews: "reviews",
@@ -161,8 +162,8 @@ export type WorkspaceLLMContext = {
   };
   workspaceSummary: {
     projectCount: number;
-    artifactCount: number;
-    relationshipCount: number;
+    artifactCount: number | null;
+    relationshipCount: number | null;
     relevantArtifactCount: number;
   };
   projects: WorkspaceProject[];

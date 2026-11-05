@@ -27,6 +27,23 @@ test('permanently deletes a retained project with absent optional databases', as
   reopened.close();
 });
 
+test('permanent cleanup removes a project report library and its images while preserving other projects', async () => {
+  const reports = await openDB('xhandle-generated-reports', 1, { upgrade(db) {
+    db.createObjectStore('metadata', { keyPath: 'id' });
+    db.createObjectStore('reports', { keyPath: 'id' });
+  } });
+  for (const projectId of ['reports-remove', 'reports-keep']) {
+    await reports.put('metadata', { id: projectId, projectId, title: 'Report' });
+    await reports.put('reports', { id: projectId, projectId, report: 'Saved report', functionalDiagramImage: 'large saved image' });
+  }
+  reports.close();
+  await permanentlyDeleteStoredProject({ id: 'reports-remove', workspaceType: 'functional', active: false });
+  const remaining = await openDB('xhandle-generated-reports');
+  expect(await remaining.getAllKeys('metadata')).toEqual(['reports-keep']);
+  expect(await remaining.getAllKeys('reports')).toEqual(['reports-keep']);
+  remaining.close();
+});
+
 test('deletes chunked analysis without hydrating stores whose keys encode ownership', async () => {
   const architecture = await openDB('xhandle', 1, {upgrade(db) {
     db.createObjectStore('copilot_baseline', {keyPath:'key'});

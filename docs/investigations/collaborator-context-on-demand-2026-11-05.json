@@ -1,0 +1,698 @@
+{
+  "date": "2026-11-05",
+  "environment": "Optimized shared App; disposable profiles; synthetic records; local mock AI; external requests blocked",
+  "limitations": "Native timings include deliberate sampling/lock waits and are not live provider latency measurements. Model decisions are mocked.",
+  "jest": {
+    "suites": 12,
+    "passed": 239
+  },
+  "native": [
+    {
+      "journey": "chrome-project",
+      "ok": true,
+      "checks": [
+        "direct/invalid requests complete with blocked storage and no fresh record bodies; scoped reads still wait for evidence; selected model settings preserved"
+      ],
+      "runtimeErrors": [],
+      "cases": [
+        {
+          "id": "greeting",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "openai",
+              "model": "gpt-5",
+              "effort": "high"
+            }
+          ]
+        },
+        {
+          "id": "weather",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "openai",
+              "model": "gpt-5",
+              "effort": "high"
+            }
+          ]
+        },
+        {
+          "id": "visible-screen",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "openai",
+              "model": "gpt-5",
+              "effort": "high"
+            }
+          ]
+        },
+        {
+          "id": "general-non-engineering",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "openai",
+              "model": "gpt-5",
+              "effort": "high"
+            }
+          ]
+        },
+        {
+          "id": "general-engineering",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "openai",
+              "model": "gpt-5",
+              "effort": "high"
+            }
+          ]
+        },
+        {
+          "id": "thread-transform",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "openai",
+              "model": "gpt-5",
+              "effort": "high"
+            }
+          ]
+        },
+        {
+          "id": "thread-shortening",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "openai",
+              "model": "gpt-5",
+              "effort": "high"
+            }
+          ]
+        },
+        {
+          "id": "named-function",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": true,
+            "busy": true
+          },
+          "workflows": [
+            "collaborator.context-turn",
+            "collaborator.read-plan",
+            "collaborator.answer"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "openai",
+              "model": "gpt-5",
+              "effort": "high"
+            }
+          ]
+        },
+        {
+          "id": "invalid-context",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "openai",
+              "model": "gpt-5",
+              "effort": "high"
+            }
+          ]
+        },
+        {
+          "id": "saved-count",
+          "blockedSample": {
+            "lock": "released",
+            "retrieval": true,
+            "busy": true
+          },
+          "workflows": [
+            "collaborator.answer"
+          ],
+          "freshRecordMarkerIncluded": true,
+          "completeCountEvidence": true,
+          "preferences": [
+            {
+              "provider": "openai",
+              "model": "gpt-5",
+              "effort": "high"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "journey": "electron-dashboard",
+      "ok": true,
+      "checks": [
+        "direct/invalid requests complete with blocked storage and no fresh record bodies; scoped reads still wait for evidence; selected model settings preserved"
+      ],
+      "runtimeErrors": [],
+      "cases": [
+        {
+          "id": "greeting",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "claude",
+              "model": "claude-haiku-5-5",
+              "effort": "medium"
+            }
+          ]
+        },
+        {
+          "id": "weather",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "claude",
+              "model": "claude-haiku-5-5",
+              "effort": "medium"
+            }
+          ]
+        },
+        {
+          "id": "visible-screen",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "claude",
+              "model": "claude-haiku-5-5",
+              "effort": "medium"
+            }
+          ]
+        },
+        {
+          "id": "general-non-engineering",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "claude",
+              "model": "claude-haiku-5-5",
+              "effort": "medium"
+            }
+          ]
+        },
+        {
+          "id": "general-engineering",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "claude",
+              "model": "claude-haiku-5-5",
+              "effort": "medium"
+            }
+          ]
+        },
+        {
+          "id": "thread-transform",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "claude",
+              "model": "claude-haiku-5-5",
+              "effort": "medium"
+            }
+          ]
+        },
+        {
+          "id": "thread-shortening",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "claude",
+              "model": "claude-haiku-5-5",
+              "effort": "medium"
+            }
+          ]
+        },
+        {
+          "id": "named-function",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": true,
+            "busy": true
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "claude",
+              "model": "claude-haiku-5-5",
+              "effort": "medium"
+            }
+          ]
+        },
+        {
+          "id": "invalid-context",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "claude",
+              "model": "claude-haiku-5-5",
+              "effort": "medium"
+            }
+          ]
+        },
+        {
+          "id": "saved-count",
+          "blockedSample": {
+            "lock": "released",
+            "retrieval": true,
+            "busy": true
+          },
+          "workflows": [
+            "collaborator.answer"
+          ],
+          "freshRecordMarkerIncluded": true,
+          "completeCountEvidence": true,
+          "preferences": [
+            {
+              "provider": "claude",
+              "model": "claude-haiku-5-5",
+              "effort": "medium"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "journey": "chrome-full-page",
+      "ok": true,
+      "checks": [
+        "direct/invalid requests complete with blocked storage and no fresh record bodies; scoped reads still wait for evidence; selected model settings preserved"
+      ],
+      "runtimeErrors": [],
+      "cases": [
+        {
+          "id": "greeting",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "openai",
+              "model": "gpt-5",
+              "effort": "high"
+            }
+          ]
+        },
+        {
+          "id": "weather",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "openai",
+              "model": "gpt-5",
+              "effort": "high"
+            }
+          ]
+        },
+        {
+          "id": "visible-screen",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "openai",
+              "model": "gpt-5",
+              "effort": "high"
+            }
+          ]
+        },
+        {
+          "id": "general-non-engineering",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "openai",
+              "model": "gpt-5",
+              "effort": "high"
+            }
+          ]
+        },
+        {
+          "id": "general-engineering",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "openai",
+              "model": "gpt-5",
+              "effort": "high"
+            }
+          ]
+        },
+        {
+          "id": "thread-transform",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "openai",
+              "model": "gpt-5",
+              "effort": "high"
+            }
+          ]
+        },
+        {
+          "id": "thread-shortening",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "openai",
+              "model": "gpt-5",
+              "effort": "high"
+            }
+          ]
+        },
+        {
+          "id": "named-function",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": true,
+            "busy": true
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "openai",
+              "model": "gpt-5",
+              "effort": "high"
+            }
+          ]
+        },
+        {
+          "id": "invalid-context",
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "workflows": [
+            "collaborator.context-turn"
+          ],
+          "freshRecordMarkerIncluded": false,
+          "completeCountEvidence": false,
+          "preferences": [
+            {
+              "provider": "openai",
+              "model": "gpt-5",
+              "effort": "high"
+            }
+          ]
+        },
+        {
+          "id": "saved-count",
+          "blockedSample": {
+            "lock": "released",
+            "retrieval": true,
+            "busy": true
+          },
+          "workflows": [
+            "collaborator.answer"
+          ],
+          "freshRecordMarkerIncluded": true,
+          "completeCountEvidence": true,
+          "preferences": [
+            {
+              "provider": "openai",
+              "model": "gpt-5",
+              "effort": "high"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "journey": "electron-confirmation",
+      "ok": true,
+      "checks": [
+        "unrelated yes leaves an older proposal unapplied",
+        "explicit Apply on the exact card still performs the validated saved edit",
+        "current proposal can still be cancelled by its immediate confirmation reply"
+      ],
+      "runtimeErrors": [],
+      "confirmation": {
+        "planCreatedThroughActualApp": true,
+        "proposalInitiallyUnapplied": true,
+        "latestQuestion": "Should I keep my next response concise?",
+        "reply": "yes",
+        "changedFixtureRequirement": false,
+        "productBehaviorIncorrect": false,
+        "requestsAfterYes": [
+          "collaborator.context-turn"
+        ]
+      }
+    },
+    {
+      "journey": "chrome-full-app",
+      "ok": true,
+      "checks": [
+        "greeting bypasses blocked workspace indexing",
+        "general explanation bypasses blocked indexing",
+        "ordinary saved-report list skips serial model planning",
+        "ordinary answer in actual App",
+        "automatic thread title waits for answer completion",
+        "citation opens correct saved report",
+        "Stop while switching threads does not write into new thread",
+        "new thread remains usable after Stop",
+        "report library and body survive full reload",
+        "confirmed report deletion persists after reload"
+      ],
+      "runtimeErrors": []
+    },
+    {
+      "journey": "electron-full-app",
+      "ok": true,
+      "checks": [
+        "greeting bypasses blocked workspace indexing",
+        "general explanation bypasses blocked indexing",
+        "ordinary saved-report list skips serial model planning",
+        "ordinary answer in actual App",
+        "automatic thread title waits for answer completion",
+        "citation opens correct saved report",
+        "Stop while switching threads does not write into new thread",
+        "new thread remains usable after Stop",
+        "report library and body survive full reload",
+        "confirmed report deletion persists after reload"
+      ],
+      "runtimeErrors": []
+    }
+  ]
+}

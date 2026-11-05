@@ -184,8 +184,8 @@ test('large export cancellation preserves source and truncated framed import nev
  });
 
 test('imports older archives with oversized diagnostic metadata without filling localStorage',async()=>{
- const archive=await exportProjectArchive(project);
- const entries=(await archive.text()).trim().split('\n').map(line=>decodeValue(JSON.parse(line)));entries.pop();
+ const current=await exportProjectArchive(project);
+ const entries=(await current.text()).trim().split('\n').map(line=>decodeValue(JSON.parse(line)));entries.pop();
  const key='cbaMeta:p1:r1';
  const meta={metrics:{calls:[{diagnostics:'x'.repeat(1600000)}],aiCallCount:21,durationMs:99},operationalContext:'preserved'};
  entries.push({kind:'local',key,value:JSON.stringify(meta)});
@@ -195,4 +195,24 @@ test('imports older archives with oversized diagnostic metadata without filling 
  const spy=jest.spyOn(Storage.prototype,'setItem').mockImplementation(function(k,v){if(v.length>100000)throw new DOMException('Quota exceeded','QuotaExceededError');return original.call(this,k,v);});
  try{await importProjectArchive(new Blob(lines));}finally{spy.mockRestore();}
  expect(JSON.parse(localStorage.getItem(key))).toEqual({metrics:{aiCallCount:21,durationMs:99},operationalContext:'preserved'});
+});
+
+test('workspace graph archive rebuilds derived query indexes after import',async()=>{
+ const {getArtifact}=require('../workspace-graph/workspaceGraphRepository');
+ const {openWorkspaceGraphDB}=require('../workspace-graph/workspaceGraphDb');
+ const {ensureWorkspaceProjection,queryWorkspaceCandidates}=require('../workspace-graph/workspaceGraphQueries');
+ const current=await exportProjectArchive(project);
+ const entries=(await current.text()).trim().split('\n').map(line=>decodeValue(JSON.parse(line)));
+ entries.pop();
+ // Older broad archives contain graph v2 records; current analysis exports omit them.
+ entries.push({kind:'database',name:'xhandle-workspace-graph',version:2,stores:{artifacts:{keyPath:'id',autoIncrement:false,indexes:[]}}});
+ entries.push({kind:'record',db:'xhandle-workspace-graph',store:'artifacts',key:'portable-graph',value:{id:'portable-graph',type:'note',projectId:'p1',title:'Portable note',content:'Retained body',createdAt:'2026-11-04',updatedAt:'2026-11-04'}});
+ const lines=await Promise.all(entries.map(async entry=>JSON.stringify(await encodeValue(entry))+'\n'));
+ const hash=sha256();lines.forEach(line=>hash.update(line));lines.push(JSON.stringify(await encodeValue({kind:'end',count:entries.length,digest:hash.digest('hex')}))+'\n');
+ const archive=new Blob(lines);
+ fresh();const changed=jest.fn();window.addEventListener('xhandle:workspace-authoritative-data-changed',changed);
+ try{await importProjectArchive(archive);expect(changed).toHaveBeenCalled();}finally{window.removeEventListener('xhandle:workspace-authoritative-data-changed',changed);}
+ const db=await openWorkspaceGraphDB();expect(db.version).toBe(3);db.close();
+ expect((await getArtifact('portable-graph')).content).toBe('Retained body');
+ await ensureWorkspaceProjection();expect((await queryWorkspaceCandidates('portable',{projectId:'p1'})).rows[0].id).toBe('portable-graph');
 });

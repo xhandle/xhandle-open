@@ -1,0 +1,14 @@
+{
+  "electron": {
+    "passed": true,
+    "scenarios": 13,
+    "errors": [],
+    "storageWaitProgressVerified": true
+  },
+  "chrome": {
+    "passed": true,
+    "scenarios": 13,
+    "errors": [],
+    "storageWaitProgressVerified": true
+  }
+}

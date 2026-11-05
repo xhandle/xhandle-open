@@ -1,5 +1,17 @@
+import CollaboratorElapsedTime from './CollaboratorElapsedTime';
+import { formatRetrievalProgress } from '../features/collaborator-performance/retrievalProgress';
+import {contextTurnMessages, resolveContextResponse, streamedContextAnswer, overlayStreamingMessage, compactViewDescriptor, currentDecisionEntry, validatePlanCard, explicitReadAreas} from '../features/collaborator-performance/contextOnDemand';
+import {quickWorkspaceReadPlan} from '../features/workspace-graph/workspaceReadPlanner';
+import {directProjectOverviewAreas} from '../features/workspace-graph/workspaceOverview';
+import {scheduleIdleTitle} from '../features/collaborator-performance/titleScheduler';
+import {CASUAL_CONVERSATION_CONTEXT,GENERAL_KNOWLEDGE_CONTEXT} from '../features/collaborator-performance/conversationRouting';
+import {createCollaboratorPerformanceTrace} from '../features/collaborator-performance/performanceTrace';
+import {pauseBackgroundWorkspaceIndexing} from '../features/workspace-graph/legacyWorkspaceGraphMigrator';
+import {requestCollaboratorChat,addCollaboratorMetadata} from '../features/collaborator-performance/chatTransport';
+import {prepareWorkspaceReadEvidence,fitWorkspaceReadEvidence,renderFittedWorkspaceReadEvidence,restrictContextToReadPolicy,compactAggregateContext} from '../features/workspace-graph/workspaceReadSession';
+import { SCOPE_ARTIFACT_TYPES, artifactTypesForAreas } from "../features/workspace-graph/workspaceGraphCapabilities";
+import { fitWorkspacePromptSample, deduplicateWorkspacePromptSample } from "../features/workspace-graph/workspacePromptBudget";
 import XHandleWorkingMark from "./XHandleWorkingMark";
-import { codeSourceIndexKey, isLocalCodeSource } from "../features/code-architecture-context/codeSourceIdentity";
 import AttachmentPreview from './AttachmentPreview';
 import { buildAttachmentPreview, retainAttachmentPreviews } from '../lib/collaboratorAttachmentPreviews';
 // src/components/XHandleCopilotView.jsx
@@ -795,7 +807,7 @@ function CollaboratorMarkdownLink({ href = "", children, ...props }) {
 }
 
 
-function CollaboratorReasoningSummary({ summary, active = false }) {
+function CollaboratorReasoningSummary({ summary, active = false, startedAt }) {
   if (!summary && !active) return null;
   const displayedSummary = active
     ? selectCurrentCollaboratorReasoningStep(summary)
@@ -804,16 +816,15 @@ function CollaboratorReasoningSummary({ summary, active = false }) {
     <details
       className={`mb-3 rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 ${active ? "xhandle-reasoning-strobe" : ""}`}
       open={active}
-      aria-live={active ? "polite" : undefined}
-      aria-atomic={active ? "true" : undefined}
     >
       <summary className="cursor-pointer select-none text-xs font-semibold text-indigo-800">
         <span className="inline-flex items-center gap-2">
           {active && <XHandleWorkingMark />}
           {active ? "Working…" : "Reasoning summary"}
+          {active && startedAt && <CollaboratorElapsedTime startedAt={startedAt} />}
         </span>
       </summary>
-      <div className="mt-2 text-xs leading-relaxed text-neutral-700">
+      <div className="mt-2 text-xs leading-relaxed text-neutral-700" role={active ? "status" : undefined}>
         {displayedSummary ? (
           <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[[rehypeSanitize, sanitizedSchema]]}>
             {displayedSummary}
@@ -843,7 +854,7 @@ function boundedJson(value, max = 14000) {
 }
 
 function compactPromptArtifact(artifact) {
-  const hazardFocused = artifact?.type === "hazard_analysis_row" || artifact?.type === "risk";
+  const hazardFocused = ["hazard_analysis_row", "code_architecture_hazard_row", "risk"].includes(artifact?.type);
   return {
     id: artifact.id,
     type: artifact.type,
@@ -1163,8 +1174,9 @@ export function compactPromptHistory(messages = [], {
   }));
 }
 
-export function renderCopilotContext(ctx) {
-  if (!ctx) return "You are xHandle Collaborator. Reason across the complete local xHandle workspace by default.";
+export function renderCopilotContext(ctx, fittedReadEvidence = null) {
+  if (ctx?.conversationOnly) return ctx.generalKnowledge ? GENERAL_KNOWLEDGE_CONTEXT : CASUAL_CONVERSATION_CONTEXT;
+  if (!ctx) return "You are xHandle Collaborator. Request saved evidence only when needed to answer the user.";
   const functionalRows = Array.isArray(ctx.functionalDecomposition) ? ctx.functionalDecomposition : [];
   const functionalConnectivity = functionalRows.length ? buildFunctionalGraphConnectivity(functionalRows) : null;
   if (Array.isArray(ctx.relevantArtifacts) || Array.isArray(ctx.relationships)) {
@@ -1218,7 +1230,7 @@ export function renderCopilotContext(ctx) {
         symbols: file.symbols,
         sourceStore: file.sourceStore,
       })),
-      citations: (ctx.citations || []).slice(0, 30),
+      citations: ctx.citations || [],
       diagnostics: ctx.diagnostics || {},
     };
 
@@ -1239,17 +1251,21 @@ export function renderCopilotContext(ctx) {
 	      ctx.scope?.activeView?.activeSelections?.length
 	        ? `Active user selections. These are the primary referents for words such as "this", "that", "it", "this row", "this cell", "this function", "this edge", or "the selected item". Prefer them over general workspace matches unless the user names another target: ${boundedJson(ctx.scope.activeView.activeSelections, 10000)}`
 	        : null,
-	      `Workspace graph counts => Projects: ${summary.projectCount || projects.length || 0}, Artifacts: ${summary.artifactCount || artifacts.length || 0}, Relationships: ${summary.relationshipCount || relationships.length || 0}, Relevant artifacts: ${summary.relevantArtifactCount || artifacts.length || 0}`,
+	      `Workspace graph counts => Projects: ${summary.projectCount || projects.length || 0}, Artifacts: ${summary.artifactCount ?? "not measured for this scope"}, Relationships: ${summary.relationshipCount ?? "not measured for this scope"}, Relevant artifacts: ${summary.relevantArtifactCount || artifacts.length || 0}`,
 	      functionalConnectivity
 	        ? `Functional decomposition connectivity diagnostics. Use this for questions about orphan node pairs, isolated functions, disconnected graph islands, or missing diagram connections: ${boundedJson(functionalConnectivity, 5000)}`
 	        : null,
 	      hazardFocused
-	        ? `Hazard-analysis answering contract: answer from the supplied hazard_analysis_row artifacts and linked risk or safety artifacts. Treat incremental draft artifacts tagged "incremental" as generated evidence, distinguish them from a completed full analysis when relevant, use the stored column labels to interpret row values, and cite the specific source artifacts supporting the answer. If the requested evidence is not present, say exactly what is missing.`
+	        ? `Hazard-analysis answering contract: answer from the supplied hazard_analysis_row and code_architecture_hazard_row artifacts and linked risk or safety artifacts. Treat incremental draft artifacts tagged "incremental" as generated evidence, distinguish them from a completed full analysis when relevant, use the stored column labels to interpret row values, and cite the specific source artifacts supporting the answer. If the requested evidence is not present, say exactly what is missing.`
 	        : null,
 	      `When making claims about stored workspace data, cite the supplied citation metadata as a readable Markdown link. Use the exact form [Source: <natural-language title> — <artifact type>](#xhandle-artifact=<URL-encoded artifactId>). Never expose raw artifact ids, source keys, or source pointers in visible prose.`,
       `For destructive writes or ambiguous artifact generation, infer the best target from the prompt when clear; otherwise create/add to an appropriate workspace artifact or ask a short clarification.`,
+      `The supplied evidence is a bounded sample, not a complete search of every record. Do not infer exact dataset totals or claim that no matching records exist from this sample alone. If coverage.indexIncomplete is true or migration diagnostics report errors or sourceChangedDuringMigration, identify the affected evidence as potentially stale.`,
       `Canonical graph sample (truncated):`,
-      boundedJson(sample, hazardFocused ? 32000 : 14000),
+      JSON.stringify(deduplicateWorkspacePromptSample(fitWorkspacePromptSample(sample, hazardFocused ? 32000 : 14000), fittedReadEvidence, {
+        projectRow: compactPromptArtifact,
+        originalRows: [...artifacts, ...sourceFiles, ...(ctx.runs || []), ...(ctx.reviews || []), ...(ctx.evidence || [])],
+      })),
     ].filter(Boolean).join("\n");
   }
   const reqCount   = (ctx.requirements || []).length;
@@ -1377,6 +1393,7 @@ export function buildCollaboratorChatPayload(messages, {
   provider = getStoredActiveAIProvider(),
   model = getStoredAIProviderModelPreference(provider, { includeDefault: true }),
   effort = getStoredAIProviderEffortPreference(provider),
+  workflow = "collaborator.request", traceId,
 } = {}) {
   const payload = {
     temperature: 0,
@@ -1392,26 +1409,12 @@ export function buildCollaboratorChatPayload(messages, {
     stream,
   };
   if (supportsAIProviderEffort(provider, model)) payload.effort = effort;
-  return payload;
+  return addCollaboratorMetadata(payload,{workflow,traceId});
 }
 
-async function callChat(messages, signal, { maxTokens = 1800 } = {}) {
-  const resp = await fetch("/api/chat", {
-    method: "POST",
-    ...buildAIAuthOpts({ "Content-Type": "application/json" }),
-    signal,
-    body: JSON.stringify(buildCollaboratorChatPayload(messages, { maxTokens, stream: false })),
-  });
-  if (!resp.ok) {
-    let detail = "";
-    try {
-      const payload = await resp.clone().json();
-      detail = payload?.error ? `: ${payload.error}` : "";
-    } catch {}
-    throw new Error(`assistant_failed_${resp.status}${detail}`);
-  }
-  const data = await resp.json();
-  return extractChatText(data) || "No response.";
+async function callChat(messages, signal, options = {}) {
+  const result=await requestCollaboratorChat(messages,{...options,signal,stream:false,buildPayload:buildCollaboratorChatPayload,authOptions:buildAIAuthOpts({"Content-Type":"application/json"})});
+  return result.text;
 }
 
 const DIAGRAM_TOPOLOGY_EXTRACTION_SYSTEM_PROMPT = `
@@ -2376,148 +2379,8 @@ export async function reviewGeneratedSubsystem(userRequest, draftResponse, retry
   );
 }
 
-function extractChatText(payload) {
-  if (typeof payload === "string") return payload;
-  return String(
-    payload?.result ||
-    payload?.answer ||
-    payload?.content ||
-    payload?.message ||
-    payload?.choices?.[0]?.message?.content ||
-    payload?.choices?.[0]?.text ||
-    ""
-  );
-}
-
-function extractStreamToken(parsed) {
-  if (typeof parsed === "string") return parsed;
-  return String(
-    parsed?.choices?.[0]?.delta?.content ||
-    parsed?.delta?.content ||
-    parsed?.content ||
-    parsed?.token ||
-    ""
-  );
-}
-
-const COLLABORATOR_PROVIDER_TIMEOUT_MS = 300_000;
-const COLLABORATOR_STREAM_TIMEOUT_GRACE_MS = 10_000;
-
-export async function streamChat(messages, { signal, onToken, maxTokens = 1800 } = {}) {
-  const timeoutController = new AbortController();
-  const requestStartedAt = Date.now();
-  let requestTimeoutMs = COLLABORATOR_PROVIDER_TIMEOUT_MS + COLLABORATOR_STREAM_TIMEOUT_GRACE_MS;
-  let timeoutId;
-  let timedOut = false;
-  const armRequestDeadline = () => {
-    clearTimeout(timeoutId);
-    const remainingMs = Math.max(1, requestTimeoutMs - (Date.now() - requestStartedAt));
-    timeoutId = setTimeout(() => {
-      timedOut = true;
-      timeoutController.abort();
-    }, remainingMs);
-  };
-  const abortFromCaller = () => timeoutController.abort();
-  if (signal?.aborted) abortFromCaller();
-  else signal?.addEventListener?.("abort", abortFromCaller, { once: true });
-
-  try {
-    armRequestDeadline();
-    const resp = await fetch("/api/chat", {
-      method: "POST",
-      ...buildAIAuthOpts({ "Content-Type": "application/json" }),
-      signal: timeoutController.signal,
-      body: JSON.stringify(buildCollaboratorChatPayload(messages, { maxTokens, stream: true })),
-    });
-
-    const advertisedTimeout = Number(resp.headers.get("x-ai-request-timeout-ms"));
-    if (Number.isFinite(advertisedTimeout) && advertisedTimeout >= 60_000) {
-      requestTimeoutMs = advertisedTimeout + COLLABORATOR_STREAM_TIMEOUT_GRACE_MS;
-    }
-    armRequestDeadline();
-
-    if (!resp.ok) {
-      if (resp.status === 400) {
-        return {
-          text: await callChat(messages, timeoutController.signal, { maxTokens }),
-          finishReason: "stop",
-        };
-      }
-      let detail = "";
-      try {
-        const payload = await resp.clone().json();
-        detail = payload?.error ? `: ${payload.error}` : "";
-      } catch {}
-      throw new Error(`assistant_failed_${resp.status}${detail}`);
-    }
-    if (!resp.body) {
-      return {
-        text: await callChat(messages, timeoutController.signal, { maxTokens }),
-        finishReason: "stop",
-      };
-    }
-
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let fullText = "";
-    let finishReason = "";
-    let streamError = "";
-
-    const processEvent = (eventText) => {
-      const eventName = eventText
-        .split(/\r?\n/)
-        .find((line) => line.trim().startsWith("event:"))
-        ?.trim().slice(6).trim();
-      const dataLines = eventText
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice(5).trim());
-
-      for (const data of dataLines) {
-        if (!data || data === "[DONE]") continue;
-        try {
-          const parsed = JSON.parse(data);
-          if (eventName === "error") {
-            streamError = String(parsed?.error || parsed?.message || "LLM stream failed");
-            continue;
-          }
-          if (parsed && typeof parsed === "object" && parsed.finish_reason) {
-            finishReason = String(parsed.finish_reason);
-          }
-          const token = extractStreamToken(parsed);
-          if (token) {
-            fullText += token;
-            onToken?.(token, fullText);
-          }
-        } catch {
-          // Ignore malformed partial SSE frames; the next chunk usually completes them.
-        }
-      }
-    };
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const events = buffer.split(/\r?\n\r?\n/);
-      buffer = events.pop() || "";
-      for (const eventText of events) processEvent(eventText);
-      if (streamError) throw new Error(`assistant_stream_failed: ${streamError}`);
-    }
-
-    buffer += decoder.decode();
-    if (buffer.trim()) processEvent(buffer);
-    if (streamError) throw new Error(`assistant_stream_failed: ${streamError}`);
-    return { text: fullText.trim(), finishReason: finishReason || "stop" };
-  } catch (error) {
-    if (timedOut && !signal?.aborted) throw new Error("assistant_stream_timed_out");
-    throw error;
-  } finally {
-    clearTimeout(timeoutId);
-    signal?.removeEventListener?.("abort", abortFromCaller);
-  }
+export async function streamChat(messages, options = {}) {
+  return requestCollaboratorChat(messages,{...options,stream:true,buildPayload:buildCollaboratorChatPayload,authOptions:buildAIAuthOpts({"Content-Type":"application/json"})});
 }
 
 export function isCollaboratorLengthFinishReason(value = "") {
@@ -2572,7 +2435,7 @@ export function mergeCollaboratorContinuation(current = "", continuation = "") {
 
 async function streamChatWithContinuation(
   messages,
-  { signal, onToken, maxTokens = 1800, maxContinuations = 0 } = {},
+  { signal, onToken, maxTokens = 1800, maxContinuations = 0, trace, onStatus, workflow = "collaborator.answer", jsonProtocol = false } = {},
 ) {
   let accumulated = "";
   let requestMessages = messages;
@@ -2582,17 +2445,19 @@ async function streamChatWithContinuation(
     const prefix = accumulated;
     const isContinuation = continuationCount > 0;
     const result = await streamChat(requestMessages, {
+      preserveWhitespace: jsonProtocol,
+      trace, onStatus, workflow:isContinuation?"collaborator.continuation":workflow,
       signal,
       maxTokens,
       onToken: (token, segmentText) => {
         const combined = isContinuation
-          ? mergeCollaboratorContinuation(prefix, segmentText)
+          ? (jsonProtocol ? prefix + segmentText : mergeCollaboratorContinuation(prefix, segmentText))
           : segmentText;
         onToken?.(token, combined);
       },
     });
     accumulated = isContinuation
-      ? mergeCollaboratorContinuation(accumulated, result.text)
+      ? (jsonProtocol ? accumulated + result.text : mergeCollaboratorContinuation(accumulated, result.text))
       : result.text;
 
     if (!isCollaboratorLengthFinishReason(result.finishReason) || continuationCount >= maxContinuations) {
@@ -2604,7 +2469,10 @@ async function streamChatWithContinuation(
     }
 
     continuationCount += 1;
-    requestMessages = buildCollaboratorContinuationMessages(messages, accumulated);
+    requestMessages = jsonProtocol ? [...messages,
+      {role: "assistant", content: accumulated},
+      {role: "user", content: "Continue the incomplete JSON exactly at the next character. Output only the missing suffix, including any closing quote/braces. Do not repeat existing characters or add Markdown fences."},
+    ] : buildCollaboratorContinuationMessages(messages, accumulated);
   }
 }
 
@@ -3524,7 +3392,7 @@ export function resolveCollaboratorProjectBoundary({
   return view.activeProjectId || fallbackProjectId || null;
 }
 
-function parseScopeFromPrompt(text = "") {
+export function parseScopeFromPrompt(text = "") {
   const t = String(text);
   const areas = new Set();
 
@@ -3534,6 +3402,8 @@ function parseScopeFromPrompt(text = "") {
   if (/\brequirements?\b|\breqs?\b/i.test(t)) areas.add("requirements");
   if (/\bcode[-\s]?based architecture\b|\bcode\s*architecture\b|\bcba\b/i.test(t)) areas.add("cba");
   if (/\bfunctional\s+decomposition\b|\bfunctions?\b/i.test(t)) areas.add("functional");
+  if (/\breports?\b/i.test(t)) areas.add("reports");
+  if (/\btests?\b|\btest cases?\b|\bverification\b|\bv&v\b/i.test(t)) areas.add("testing");
 
   const fileMatch = t.match(/([A-Za-z0-9_\-./]+?\.(?:jsx?|tsx?|json|py|c|cc|cpp|h|md))/i);
   const filePath = fileMatch ? fileMatch[1] : null;
@@ -3545,7 +3415,7 @@ function parseScopeFromPrompt(text = "") {
   let projectName = m && m[1] ? m[1].trim() : null;
   if (!projectName && projects.length) {
     for (const p of projects) {
-      const re = new RegExp(`\\b${p.name}\\b`, "i");
+      const re = new RegExp(`\\b${String(p.name || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
       if (re.test(t)) { projectName = p.name; break; }
     }
   }
@@ -3555,47 +3425,6 @@ function parseScopeFromPrompt(text = "") {
   }
 
   return { areas: Array.from(areas), project, filePath };
-}
-
-/* ---- CBA hydration + formatting (auto-grounding) ------------------------- */
-
-function lsKeys() {
-  try {
-    const keys = [];
-    for (let i = 0; i < localStorage.length; i++) keys.push(localStorage.key(i));
-    return keys;
-  } catch { return []; }
-}
-
-function safeParse(json) {
-  try { return JSON.parse(json); } catch { return null; }
-}
-
-function readCBAFromLocalStorage(repoLike) {
-  const rows = [];
-  for (const k of lsKeys()) {
-    if (!k.startsWith("cba:")) continue;
-    if (repoLike && !k.toLowerCase().includes(repoLike.toLowerCase())) continue;
-    const v = safeParse(localStorage.getItem(k));
-    if (Array.isArray(v)) rows.push(...v);
-  }
-  return rows;
-}
-
-function mergeAutoContext(baseCtx, scope) {
-  const ctx = { ...baseCtx };
-  const repoLike = ctx?.projectHint?.owner && ctx?.projectHint?.repo
-    ? `${ctx.projectHint.owner}/${ctx.projectHint.repo}` : undefined;
-
-  const wantsCBA = !(scope?.areas?.length) || (scope?.areas || []).includes("cba");
-  if (wantsCBA) {
-    if (!Array.isArray(ctx.codeArchitecture) || ctx.codeArchitecture.length === 0) {
-      const cba = readCBAFromLocalStorage(repoLike);
-      if (cba.length) ctx.codeArchitecture = cba;
-    }
-  }
-
-  return ctx;
 }
 
 function formatCBAEdges(rows, max = 25) {
@@ -3631,57 +3460,7 @@ function cbaGuardNote(ctx, scope) {
   return "";
 }
 
-function repoLikeFromHint(hint) {
-  return hint?.owner && hint?.repo ? `${hint.owner}/${hint.repo}` : undefined;
-}
-
-function readIndexedFileFromLocalStorage(repoLike, path, source) {
-  if (!path) return null;
-  const key = isLocalCodeSource(source) ? codeSourceIndexKey(source, path) : repoLike ? `code:file:${repoLike}:${path}` : `code:file:${path}`;
-  if (!key) return null;
-  try { return JSON.parse(localStorage.getItem(key) || "null"); } catch { return null; }
-}
-
-function makeFileGrounding(fileRec, maxBytes = 3500) {
-  const lang = fileRec?.lang || "";
-  const functions = Array.isArray(fileRec?.functions) ? fileRec.functions.join(", ") : "unknown";
-  const exportsList = Array.isArray(fileRec?.exports) ? fileRec.exports.join(", ") : "unknown";
-  const content = (fileRec?.content || "").slice(0, maxBytes);
-  return [
-    `Grounding — File: ${fileRec.path} (${lang || "text"})`,
-    `Functions: ${functions}`,
-    `Exports: ${exportsList}`,
-    "",
-    "Excerpt:",
-    "```" + lang,
-    content,
-    "```"
-  ].join("\n");
-}
-
-const SCOPE_ARTIFACT_TYPES = {
-  requirements: new Set(["requirement", "sysml_requirement"]),
-  risk: new Set(["risk", "hazard_analysis_row", "safety_finding", "safety_case", "safety_case_node"]),
-  cba: new Set([
-    "code_architecture_edge",
-    "code_architecture_hazard_row",
-    "code_architecture_software_requirement",
-    "code_architecture_system_requirement",
-    "code_architecture_subsystem_requirement",
-    "code_architecture_design_element",
-    "safety_finding",
-    "patch_proposal",
-    "review_decision",
-    "verification_run",
-    "implementation_evidence",
-    "repository",
-    "source_file",
-  ]),
-  functional: new Set(["functional_decomposition_row", "sysml_element"]),
-  review: new Set(["review_item", "patch_proposal"]),
-};
-
-function buildScopedContext(base, scope) {
+export function buildScopedContext(base, scope) {
   if (!base) return base;
   const scoped = { ...base };
   const wants = new Set(scope?.areas || []);
@@ -4456,7 +4235,7 @@ export async function generateFunctionalDecompositionWithCollaborator({
   maxContinuations = 2,
   onToken,
   onStage,
-  signal,
+  signal, trace,
 } = {}) {
   const requestText = String(userRequest || "").trim();
   if (!requestText) throw new Error("A functional-decomposition request is required.");
@@ -4473,6 +4252,7 @@ export async function generateFunctionalDecompositionWithCollaborator({
 
   onStage?.("Generating with the Collaborator functional-architecture workflow...", "");
   const completion = await streamChatWithContinuation(requestMessages, {
+    trace,workflow:"collaborator.functional",
     signal,
     onToken,
     maxTokens,
@@ -4676,6 +4456,7 @@ export function buildContextualVibeReviewQueuePrompt(scope = "", reviewType = "h
 export default function XHandleCopilotView({
   projectHint,
   copilotContext,
+  getProjectContext,
   appFocus,
   onRemoveActiveSelection,
   docked = false,
@@ -4746,6 +4527,8 @@ function cancelCtxEditor() {
   const [hasInput, setHasInput] = useState(false);
   const [editingMessage, setEditingMessage] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [workStartedAt, setWorkStartedAt] = useState(null);
+  useEffect(() => { if (busy) setWorkStartedAt(Date.now()); else setWorkStartedAt(null); }, [busy]);
   const [promptRunning, setPromptRunning] = useState(false);
   const [queuedFollowUpCount, setQueuedFollowUpCount] = useState(0);
   const [streamingAssistant, setStreamingAssistant] = useState(null);
@@ -4775,7 +4558,6 @@ function cancelCtxEditor() {
     setAutoStick(nearBottom);
   };
 
-  const titlingRef = useRef(false);
   const textareaRef = useRef(null);
   const activePromptAbortRef = useRef(null);
   const queuedFollowUpsRef = useRef([]);
@@ -6573,7 +6355,11 @@ useEffect(() => {
   }
 
   async function applyWorkspacePlan(plan, messageIndex, { appendResult = true } = {}) {
+    const currentThread = loadThreads().find((entry) => entry.id === activeId);
+    validatePlanCard(currentThread?.messages, messageIndex, plan);
+    if (plan.threadId && plan.threadId !== activeId) throw new Error("This proposal belongs to a different conversation.");
     const provider = await waitForActionProvider("collaborator-workspace", 1800);
+    validatePlanCard(loadThreads().find((entry) => entry.id === activeId)?.messages, messageIndex, plan);
     if (!provider?.executeWorkspaceActionPlan) throw new Error("The governed workspace action provider is unavailable.");
     const result = await provider.executeWorkspaceActionPlan({ plan, threadId: activeId });
     completeWorkspacePlanCard(messageIndex, "applied", result?.summary || "Applied");
@@ -6583,6 +6369,7 @@ useEffect(() => {
         .map((action) => `[${action.target.title || action.target.type || "Open source"}](#xhandle-artifact=${encodeURIComponent(action.target.artifactId)})`);
       appendMessage(activeId, {
         role: "assistant",
+        workspaceActionResult: {threadId: activeId, applied: true},
         content: `${result?.summary || `Applied ${result?.actionCount || plan.actions.length} workspace change${plan.actions.length === 1 ? "" : "s"}.`} The saved source was refreshed and read back successfully.${sources.length ? ` Sources: ${sources.join(", ")}.` : ""} You can say “undo that” to restore the saved snapshot.`,
       });
       setThreads(loadThreads());
@@ -6619,6 +6406,8 @@ useEffect(() => {
       activeView: appFocus || enrichedContext?.focus || {},
       query: userText,
       tokenBudget: 10000,
+      signal,
+      areas: parseScopeFromPrompt(userText).areas,
     });
     const compactCandidates = Array.isArray(context?.relevantArtifacts) ? context.relevantArtifacts : [];
     const candidates = (await Promise.all(compactCandidates.map(async (candidate) => (
@@ -6668,6 +6457,9 @@ useEffect(() => {
     const ownsPromptAbortController = !options?.promptAbortController;
     const promptAbortController = options?.promptAbortController || new AbortController();
     const promptSignal = promptAbortController.signal;
+    const performanceTrace=createCollaboratorPerformanceTrace();
+    let performanceStatus="completed";
+    let resumeBackgroundIndexing;
     if (ownsPromptAbortController) {
       activePromptAbortRef.current = promptAbortController;
       setPromptRunning(true);
@@ -6676,10 +6468,16 @@ useEffect(() => {
     let latestAssistantContent = "";
     let activeVibeReviewQuestionContext = "";
     const progressSteps = [];
-    const reportProgress = (message) => {
+    let lastProgressKey;
+    const reportProgress = (message, { key } = {}) => {
       const value = String(message || "").trim();
-      if (!value || progressSteps.includes(value)) return;
-      progressSteps.push(value);
+      if (promptSignal.aborted || !value || progressSteps[progressSteps.length - 1] === value) return;
+      performanceTrace.mark("firstProgress");
+      if (key && key === lastProgressKey && progressSteps.length) progressSteps[progressSteps.length - 1] = value;
+      else progressSteps.push(value);
+      lastProgressKey = key;
+      // Streaming counters must not accumulate an unbounded history or enter AI context.
+      if (progressSteps.length > 12) progressSteps.shift();
       setWorkProgress([...progressSteps]);
     };
     const progressMarkdown = () => progressSteps.map((step) => `- ${step}`).join("\n");
@@ -6703,7 +6501,7 @@ useEffect(() => {
       throw error;
     };
     setBusy(true);
-    reportProgress("Reviewing the request and selected workspace context.");
+    reportProgress("Considering your request.");
     try {
       const focusedProjectId = resolveCollaboratorProjectBoundary({
         activeView: appFocus || enrichedContext?.focus || {},
@@ -6712,18 +6510,10 @@ useEffect(() => {
       const activeReview = focusedProjectId ? loadVibeReviewSession(focusedProjectId, activeId) : null;
       const activeFunctionalReview = focusedProjectId ? loadFunctionalVibeReviewSession(focusedProjectId, activeId) : null;
       const threadAtActionStart = loadThreads().find((thread) => thread.id === activeId);
-      const pendingWorkspacePlanEntry = [...(threadAtActionStart?.messages || [])]
-        .map((message, messageIndex) => ({ message, messageIndex }))
-        .reverse()
-        .find(({ message }) => message?.workspaceActionPlan && !message.workspaceActionPlan.completed);
-      const pendingContextualReviewEntry = [...(threadAtActionStart?.messages || [])]
-        .map((message, messageIndex) => ({ message, messageIndex }))
-        .reverse()
-        .find(({ message }) => message?.choicePrompt?.type === "contextual-vibe-review-target" && !message.choicePrompt.completed);
-      const pendingHazardDownstreamEntry = [...(threadAtActionStart?.messages || [])]
-        .map((message, messageIndex) => ({ message, messageIndex }))
-        .reverse()
-        .find(({ message }) => message?.hazardDownstreamImpact && !message.hazardDownstreamImpact.completed);
+      const pendingWorkspacePlanEntry = currentDecisionEntry(threadAtActionStart?.messages, message =>
+        message.workspaceActionPlan && !message.workspaceActionPlan.completed);
+      const pendingHazardDownstreamEntry = currentDecisionEntry(threadAtActionStart?.messages, message =>
+        message.hazardDownstreamImpact && !message.hazardDownstreamImpact.completed);
       const normalizedReviewCommand = String(userText || "").trim().toLowerCase().replace(/[.!]+$/g, "");
       const explicitContinueIntent = /^(?:let'?s\s+)?continue(?:\s+(?:the\s+)?review)?$/.test(normalizedReviewCommand);
       const ambiguousConfirmation = /^(?:yes|ok|okay|go ahead|do it|proceed)$/.test(normalizedReviewCommand);
@@ -6777,41 +6567,15 @@ useEffect(() => {
           return;
         }
       }
-      if (pendingContextualReviewEntry && !isContextualVibeReviewIntent(userText)) {
-        const requestedReviewScope = String(userText || "").trim();
-        if (requestedReviewScope) {
-          const customReviewOption = (pendingContextualReviewEntry.message.choicePrompt.options || []).find((option) => (
-            typeof option !== "string" && option?.custom
-          ));
-          const nextMessages = (threadAtActionStart?.messages || []).map((message, messageIndex) => messageIndex === pendingContextualReviewEntry.messageIndex
-            ? {
-                ...message,
-                choicePrompt: {
-                  ...message.choicePrompt,
-                  selectedValue: customReviewOption?.value || "custom-contextual-review",
-                  customValue: requestedReviewScope,
-                  completed: true,
-                },
-              }
-            : message);
-          setMessages(activeId, nextMessages);
-          setThreads(loadThreads());
-          await runCopilot(buildContextualVibeReviewQueuePrompt(
-            requestedReviewScope,
-            customReviewOption?.reviewType || "hazard",
-          ), { promptAbortController });
-          return;
-        }
-      }
-      const reviewAction = activeReview && [VIBE_REVIEW_STATES.AWAITING, VIBE_REVIEW_STATES.PROPOSING, VIBE_REVIEW_STATES.PAUSED].includes(activeReview.state)
+      const reviewAction = (explicitContinueIntent || /^resume(?: review)?[.!]?$/i.test(userText) || currentDecisionEntry(threadAtActionStart?.messages, message => message.vibeReview && !message.vibeReview.completed)) && activeReview && [VIBE_REVIEW_STATES.AWAITING, VIBE_REVIEW_STATES.PROPOSING, VIBE_REVIEW_STATES.PAUSED].includes(activeReview.state)
         ? parseVibeReviewAction(userText) : null;
-      const functionalReviewAction = activeFunctionalReview && [FUNCTIONAL_VIBE_REVIEW_STATES.AWAITING, FUNCTIONAL_VIBE_REVIEW_STATES.PROPOSING, FUNCTIONAL_VIBE_REVIEW_STATES.PAUSED].includes(activeFunctionalReview.state)
+      const functionalReviewAction = (explicitContinueIntent || /^resume(?: review)?[.!]?$/i.test(userText) || currentDecisionEntry(threadAtActionStart?.messages, message => message.functionalVibeReview && !message.functionalVibeReview.completed)) && activeFunctionalReview && [FUNCTIONAL_VIBE_REVIEW_STATES.AWAITING, FUNCTIONAL_VIBE_REVIEW_STATES.PROPOSING, FUNCTIONAL_VIBE_REVIEW_STATES.PAUSED].includes(activeFunctionalReview.state)
         ? parseFunctionalVibeReviewAction(userText) : null;
       const contextualVibeReviewIntent = isContextualVibeReviewIntent(userText);
       const vibeReviewIntent = !contextualVibeReviewIntent && isHazardVibeReviewIntent(userText);
       const functionalVibeReviewIntent = !contextualVibeReviewIntent && isFunctionalVibeReviewIntent(userText);
       const batchNeedsReviewIntent = isBatchNeedsReviewResolverIntent(userText);
-      const actionProvider = (reviewAction || functionalReviewAction || contextualVibeReviewIntent || vibeReviewIntent || functionalVibeReviewIntent || batchNeedsReviewIntent || activeReview || activeFunctionalReview)
+      const actionProvider = (reviewAction || functionalReviewAction || contextualVibeReviewIntent || vibeReviewIntent || functionalVibeReviewIntent || batchNeedsReviewIntent)
         ? await waitForActionProvider("project-functional-diagram", 1800)
         : null;
       throwIfPromptStopped();
@@ -6830,7 +6594,7 @@ useEffect(() => {
         setThreads(loadThreads());
         return;
       }
-      if (!activeReview && !activeFunctionalReview && isWorkspaceUndoIntent(userText)) {
+      if (!activeReview && !activeFunctionalReview && isWorkspaceUndoIntent(userText) && currentDecisionEntry(threadAtActionStart?.messages, message => message.workspaceActionResult?.threadId === activeId)) {
         const provider = await waitForActionProvider("collaborator-workspace", 1800);
         const result = await provider?.undoLastWorkspaceAction?.();
         appendMessage(activeId, { role: "assistant", content: result?.summary || result?.message || "There is no Collaborator workspace change to undo." });
@@ -7250,7 +7014,7 @@ useEffect(() => {
       const subsystemLookupRequest = extractSubsystemFunctionLookupRequest(userText);
       if (subsystemLookupRequest) {
 	        const answer = buildSubsystemFunctionLookupAnswer({
-	          rows: enrichedContext?.functionalDecomposition || [],
+	          rows: (getProjectContext?.() || enrichedContext)?.functionalDecomposition || [],
           requestedSubsystem: subsystemLookupRequest.subsystem,
           projectName: enrichedContext?.project?.name || focusContext?.project?.name || "",
         });
@@ -7259,7 +7023,7 @@ useEffect(() => {
 	        return;
 	      }
 		      if (isFunctionalGraphConnectivityQuestion(userText)) {
-		        let functionalRowsForConnectivity = resolveFunctionalRowsFromContext(enrichedContext, activeProjectId);
+		        let functionalRowsForConnectivity = resolveFunctionalRowsFromContext(getProjectContext?.() || enrichedContext, activeProjectId);
 		        if (!functionalRowsForConnectivity.length) {
 		          try {
 	            const graphContext = await buildWorkspaceLLMContext({
@@ -7688,6 +7452,7 @@ useEffect(() => {
               ...plan,
               completed: false,
               requiresConfirmation: true,
+              threadId: activeId,
             },
           });
         } else {
@@ -7696,20 +7461,84 @@ useEffect(() => {
         setThreads(loadThreads());
         return;
       }
-      let graphContext = enrichedContext;
-      try {
-        reportProgress("Retrieving the most relevant project and architecture context.");
-        graphContext = await buildWorkspaceLLMContext({
-          projectId: activeProjectId,
-          activeView: appFocus || enrichedContext?.focus || {},
-          query: userText,
-          tokenBudget: isHazardAnalysisQuestion(userText) ? 9000 : 5000,
+      const contextHistory = loadThreads().find(thread => thread.id === activeId)?.messages || [];
+      const generationRequest = isSubsystemGenerationRequest(userText) || Boolean(options?.diagramFunctionalDecomposition);
+      const overviewReadAreas = directProjectOverviewAreas(userText, {
+        modelUserContent: options?.modelUserContent, contexts: regionContexts, projectId: activeProjectId, areas: scope.areas,
+      });
+      const directReadAreas = overviewReadAreas || (!regionContexts.length && (!options?.modelUserContent || options.modelUserContent === userText)
+        ? explicitReadAreas(quickWorkspaceReadPlan(userText, {projects: scope.project ? [scope.project] : focusContext.visibleProjects || [], types: [...(artifactTypesForAreas(scope.areas) || [])]})) : null);
+      let readAreas = scope?.areas?.length ? scope.areas : directReadAreas;
+      let evidenceQuery = userText;
+      // Ordinary first response can be the complete answer. Storage is not a
+      // prerequisite, and invalid/unsupported requests never trigger a fallback scan.
+      let draftOnly = false;
+      if (!directReadAreas) {
+        reportProgress("Waiting for the selected model.");
+        let lastDirectRender = 0;
+        const firstMessages = contextTurnMessages({
+          history: contextHistory, userText, userContent: options?.modelUserContent, allowDraft: generationRequest,
+          view: compactViewDescriptor(focusContext, {docked}),
+          guidance: `${activeVibeReviewQuestionContext}${functionalDraftDecisionContext}${options?.voiceMode ? " Answer naturally and concisely for a spoken conversation." : ""}`,
+        });
+        const firstResponse = await streamChatWithContinuation(firstMessages, {
+          onStatus: status => reportProgress(status === "waiting" ? "Waiting for the selected model." : "Receiving the model’s response."),
+          signal: promptSignal, maxTokens: 3200, maxContinuations: 1, jsonProtocol: true,
+          trace: performanceTrace, workflow: "collaborator.context-turn",
+          onToken: (_token, fullText) => {
+            const visible = streamedContextAnswer(fullText);
+            if (!visible || Date.now() - lastDirectRender < 160) return;
+            lastDirectRender = Date.now();
+            performanceTrace.mark("firstVisibleAnswer");
+            latestAssistantContent = visible;
+            setStreamingAssistant({threadId: activeId, content: visible, reasoningActive: true});
+          },
         });
         throwIfPromptStopped();
+        const decision = await resolveContextResponse({
+          response: firstResponse.text, messages: firstMessages, signal: promptSignal,
+          parseOptions: {history: contextHistory, userText, allowDraft: generationRequest, allowedAreas: /\b(?:only|limit (?:this|the) (?:search|scope) to)\b/i.test(userText) ? scope?.areas || [] : []},
+          onRepair: () => { setStreamingAssistant(null); reportProgress("Resolving the model’s response format."); },
+          requestRepair: (messages, signal) => callChat(messages, signal, {maxTokens: 3200, trace: performanceTrace, workflow: "collaborator.context-repair"}),
+        });
+        if (["answer", "clarify"].includes(decision.kind)) {
+          performanceTrace.mark("firstVisibleAnswer");
+          performanceStatus = decision.kind === "clarify" ? "clarified" : "completed";
+          appendMessage(activeId, {role: "assistant", content: decision.text});
+          const draftedRows = extractFunctionalRowsFromAssistantText(decision.text);
+          if (draftedRows.length) setPendingFunctionalRows(draftedRows);
+          setThreads(loadThreads());
+          return;
+        }
+        draftOnly = decision.kind === "draft";
+        readAreas = decision.areas;
+        if (decision.reference) evidenceQuery = `${userText}\nConversation reference: ${decision.reference}`;
+      }
+      const conversationOnly = draftOnly;
+      const generalKnowledge = conversationOnly;
+      let graphContext = conversationOnly ? {conversationOnly:true,generalKnowledge} : enrichedContext;
+      try {
+        if (!conversationOnly) {
+        resumeBackgroundIndexing=pauseBackgroundWorkspaceIndexing();
+        reportProgress(`Reading saved ${readAreas.join(", ")} information for your request.`);
+        graphContext = await performanceTrace.measure("context",()=>buildWorkspaceLLMContext({
+          projectId: activeProjectId,
+          activeView: appFocus || enrichedContext?.focus || {},
+          query: evidenceQuery,
+          tokenBudget: isHazardAnalysisQuestion(userText) ? 9000 : 5000,
+          signal: promptSignal,
+          areas: readAreas,
+          contextOnDemand: true,
+          onProgress: progress => reportProgress(formatRetrievalProgress(progress), { key: 'retrieval' }),
+        }));
+        throwIfPromptStopped();
         graphContext.projectHint = projectHint || enrichedContext?.projectHint;
+        }
       } catch (error) {
+        if (promptSignal.aborted || error?.name === "AbortError") throw error;
         graphContext = {
-          ...enrichedContext,
+          relevantArtifacts: [], relationships: [], projects: [],
+          scope: {projectId: activeProjectId, activeView: focusContext},
           diagnostics: {
             ...(enrichedContext?.diagnostics || {}),
             workspaceGraphContextError: error?.message || String(error),
@@ -7717,34 +7546,44 @@ useEffect(() => {
         };
       }
 
-      let scoped = buildScopedContext(graphContext, scope);
-      if (enrichedContext?.organizationCalibration?.context) {
+      throwIfPromptStopped();
+      let readEvidence = null;
+      try {
+        if (!conversationOnly) readEvidence = await prepareWorkspaceReadEvidence({
+          query: evidenceQuery, policyQuery: userText, context: graphContext, areas: readAreas, force: true, history: contextHistory, signal: promptSignal,
+          requestPlan: (messages, signal) => callChat(messages, signal, {maxTokens: 1800,trace:performanceTrace,workflow:"collaborator.read-plan"}),
+          onTiming: performanceTrace.timing,
+          onProgress: reportProgress,
+        });
+        throwIfPromptStopped();
+        if (readEvidence?.clarification) {
+          performanceStatus="clarified";
+          appendMessage(activeId, {role: "assistant", content: readEvidence.clarification});
+          setThreads(loadThreads());
+          return;
+        }
+      } catch (error) {
+        if (promptSignal.aborted || error?.name === "AbortError") throw error;
+        readEvidence = {results: [], coverage: {state: "inaccessible", complete: false, reason: error.message}};
+      }
+      const promptBuildStarted=performance.now();
+      let scoped = conversationOnly ? graphContext : buildScopedContext(restrictContextToReadPolicy(graphContext, readEvidence), {...scope, areas: readAreas});
+      if (!conversationOnly && enrichedContext?.organizationCalibration?.context) {
         scoped.organizationCalibration = enrichedContext.organizationCalibration;
       }
-      scoped = mergeAutoContext(scoped, scope);
+      // Never hydrate legacy caches as an implicit fallback after a read failure.
+      if (!conversationOnly) scoped = compactAggregateContext(scoped,readEvidence);
       scoped.lastUserPrompt = userText;
+      scoped.citations = [...(scoped.citations || []), ...(readEvidence?.results || []).flatMap(result => result.citations || [])];
       const note = scoped?.__scopeNote
         ? `\nScope: areas=${(scoped.__scopeNote.areas || []).join(", ") || "all"}, project=${scoped.__scopeNote.project?.name || "active"}`
         : "";
       const cbaLines = Array.isArray(scoped.codeArchitecture) && scoped.codeArchitecture.length
         ? `\n\nGrounding — Code Architecture edges (first 25):\n${formatCBAEdges(scoped.codeArchitecture, 25).join("\n")}`
         : "";
-      const guard = cbaGuardNote(scoped, scope);
-      const repoLike = repoLikeFromHint(scoped?.projectHint);
-      const canonicalFile = scope?.filePath
-        ? (scoped.sourceFiles || []).find(file => {
-          if (isLocalCodeSource(scoped?.projectHint)) {
-            const source = file?.structuredData || file;
-            if (source?.sourceId !== scoped.projectHint.sourceId || source?.snapshotId !== scoped.projectHint.snapshotId) return false;
-          }
-          return file?.path === scope.filePath || file?.path?.endsWith(`/${scope.filePath}`);
-        })
-        : null;
-      const fileRec = canonicalFile || (scope?.filePath ? readIndexedFileFromLocalStorage(repoLike, scope.filePath, scoped?.projectHint) : null);
-      const fileGrounding = fileRec ? `\n\n${makeFileGrounding(fileRec)}` : "";
-      const fileGuard = scope?.filePath && !fileRec
-        ? `\nImportant: User asked about ${scope.filePath}, but no indexed file was found. Do not speculate; ask the user to sync/index the repository so this file can be read.`
-        : "";
+      const guard = readEvidence?.policy ? "" : cbaGuardNote(scoped, scope);
+      // Source excerpts come only from the governed read evidence above.
+      // A failed read must not fall back to parsing an unbounded legacy file.
       const runtimeNow = new Date();
       const runtimeContext = `
 
@@ -7762,13 +7601,15 @@ Runtime context:
 - Current timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown"}
 `;
 
+        const fittedReadEvidence = fitWorkspaceReadEvidence(readEvidence);
         const systemMsg = {
           role: "system",
-          content: `${runtimeContext}${renderCopilotContext(scoped)}${note}${cbaLines}${guard}${fileGrounding}${fileGuard}${activeVibeReviewQuestionContext}${functionalDraftDecisionContext}${options?.voiceMode ? `\n\nVoice partnership:\n${VOICE_PARTNERSHIP_INSTRUCTIONS}` : ""}
+          content: `${runtimeContext}${renderCopilotContext(scoped, fittedReadEvidence)}${renderFittedWorkspaceReadEvidence(fittedReadEvidence)}${note}${cbaLines}${guard}${activeVibeReviewQuestionContext}${functionalDraftDecisionContext}${options?.voiceMode ? `\n\nVoice partnership:\n${VOICE_PARTNERSHIP_INSTRUCTIONS}` : ""}
 
         Style:
         ${STYLE_GENERAL_ASSISTANT}`
         };
+      performanceTrace.timing({stage:"prompt",durationMs:performance.now()-promptBuildStarted});
 
       const t = loadThreads().find(t => t.id === activeId);
       const promptHistory = compactPromptHistory(t?.messages || [], {
@@ -7827,6 +7668,7 @@ Runtime context:
           parsedResponse.content,
           scoped?.citations || [],
         );
+        if(displayedContent.trim())performanceTrace.mark("firstVisibleAnswer");
         latestAssistantContent = displayedContent;
         if (!force) {
           setStreamingAssistant({
@@ -7865,6 +7707,7 @@ Runtime context:
       if (functionalGenerationIntent) {
         const generation = await generateFunctionalDecompositionWithCollaborator({
           userRequest: userText,
+          trace:performanceTrace,
           abstractionLevel: selectedAbstractionLevel || "multi-level",
           messages,
           maxTokens: options?.diagramFunctionalDecomposition ? 12000 : 16000,
@@ -7879,6 +7722,7 @@ Runtime context:
         answer = generation.answer;
       } else {
         const completion = await streamChatWithContinuation(messages, {
+          trace:performanceTrace,onStatus:status=>reportProgress(status==="waiting"?"Waiting for the selected model.":"Receiving the response."),
           signal: promptSignal,
           onToken: (_token, fullText) => updateAssistant(fullText),
           maxTokens: 3200,
@@ -7893,6 +7737,7 @@ Runtime context:
         if (requestedFunctionalProjectName) setPendingFunctionalProjectName(requestedFunctionalProjectName);
       }
     } catch (error) {
+      performanceStatus=promptSignal.aborted||error?.name==="AbortError"?"canceled":"failed";
       if (promptSignal.aborted || error?.name === "AbortError") {
         const stoppedMessage = latestAssistantContent.trim()
           ? `${latestAssistantContent.trimEnd()}\n\n_Response stopped by user._`
@@ -7903,11 +7748,15 @@ Runtime context:
         return;
       }
       const detail = String(error?.message || "unknown error").replace(/^assistant_failed_\d+:?\s*/i, "");
-      const failureMessage = `Sorry — I hit an issue generating a reply: ${detail}. Check the selected AI provider/model and try again.`;
+      const failureMessage = error?.code === 'CONTEXT_FORMAT'
+        ? 'Collaborator could not prepare the requested lookup because the model returned an unsupported response format twice. Please try again. No saved records were changed.'
+        : `Sorry — I hit an issue generating a reply: ${detail.replace(/[.!]+$/, '')}. Please try again.`;
       if (replacePendingAssistant) replacePendingAssistant(failureMessage, true);
       else appendMessage(activeId, { role: "assistant", content: failureMessage });
       setThreads(loadThreads());
     } finally {
+      resumeBackgroundIndexing?.();
+      performanceTrace.finish(performanceStatus);
       const shouldSendQueuedFollowUp = ownsPromptAbortController && queuedFollowUpsRef.current.length > 0;
       if (ownsPromptAbortController && activePromptAbortRef.current === promptAbortController) {
         activePromptAbortRef.current = null;
@@ -7934,47 +7783,26 @@ Runtime context:
     setThreads(loadThreads());
   }
 
-  // Name a new thread as soon as its first discussion topic is available.
+  // Titles yield to answer generation and are canceled when new work starts.
   useEffect(() => {
-    const t = threads.find((x) => x.id === activeId);
-    if (!t) return;
-    const userTurns = countUserMsgs(t.messages);
-    const isGeneric = !t.title || /^(welcome|new topic|untitled|copilot thread)/i.test(t.title);
-    if (titlingRef.current || t.autoTitleDone || userTurns < 1 || !isGeneric) return;
-
-    (async () => {
-      try {
-        titlingRef.current = true;
-        const title = await generateThreadTitle(t.messages);
-        const all = loadThreads();
-        const idx = all.findIndex((x) => x.id === t.id);
-        if (idx >= 0) {
-          all[idx].title = title && title.length >= 6 ? title : (all[idx].title || "General Collaborator Chat");
-          all[idx].autoTitleDone = true;
-          all[idx].updatedAt = Date.now();
-          saveThreads(all);
-          setThreads(all);
-        }
-      } catch {
-        const all = loadThreads();
-        const idx = all.findIndex((x) => x.id === t.id);
-        if (idx >= 0) { all[idx].autoTitleDone = true; saveThreads(all); setThreads(all); }
-      } finally {
-        titlingRef.current = false;
-      }
-    })();
-  }, [threads, activeId]);
+    const t=threads.find(thread=>thread.id===activeId);
+    const generic=t&&(!t.title||/^(welcome|new topic|untitled|copilot thread)/i.test(t.title));
+    if(busy||promptRunning||!t||t.autoTitleDone||countUserMsgs(t.messages)<1||!generic)return;
+    return scheduleIdleTitle({busy:busy||promptRunning,
+      generate:signal=>generateThreadTitle(t.messages,{signal}),
+      onTitle:title=>{
+        const all=loadThreads(),index=all.findIndex(thread=>thread.id===t.id);
+        if(index<0||all[index].title!==t.title||all[index].autoTitleDone)return;
+        all[index].title=title?.length>=6?title:(all[index].title||"General Collaborator Chat");
+        all[index].autoTitleDone=true;all[index].updatedAt=Date.now();saveThreads(all);setThreads(all);
+      },
+    });
+  },[threads,activeId,busy,promptRunning]);
 
   const displayMessages = useMemo(() => {
     const messages = active?.messages || [];
     if (!streamingAssistant || streamingAssistant.threadId !== activeId) return messages;
-    const next = [...messages];
-    for (let index = next.length - 1; index >= 0; index -= 1) {
-      if (next[index]?.role !== "assistant") continue;
-      next[index] = { ...next[index], ...streamingAssistant };
-      break;
-    }
-    return next;
+    return overlayStreamingMessage(messages, streamingAssistant);
   }, [active?.messages, activeId, streamingAssistant]);
   const allVisibleThreadTurns = useMemo(() => groupTurns(displayMessages), [displayMessages]);
   const hiddenTurnCount = Math.max(0, allVisibleThreadTurns.length - visibleTurnLimit);
@@ -8274,7 +8102,8 @@ Runtime context:
                           </HoverActionButton>
                         </div>
                         <CollaboratorReasoningSummary
-                          summary={am.reasoningSummary}
+                          startedAt={workStartedAt}
+                          summary={am.reasoningActive && workProgress.length ? workProgress.map(step => `- ${step}`).join("\n") : am.reasoningSummary}
                           active={Boolean(am.reasoningActive)}
                         />
                         {editingMessage && editingMessage.messageIndex === am.messageIndex ? (
@@ -8332,6 +8161,7 @@ Runtime context:
 
               {busy && streamingAssistant?.threadId !== activeId && (
                 <CollaboratorReasoningSummary
+                  startedAt={workStartedAt}
                   summary={(workProgress.length ? workProgress : ["Starting the selected workflow."])
                     .map((step) => `- ${step}`).join("\n")}
                   active
@@ -8527,7 +8357,8 @@ Runtime context:
                         </HoverActionButton>
                       </div>
                       <CollaboratorReasoningSummary
-                        summary={am.reasoningSummary}
+                        startedAt={workStartedAt}
+                          summary={am.reasoningActive && workProgress.length ? workProgress.map(step => `- ${step}`).join("\n") : am.reasoningSummary}
                         active={Boolean(am.reasoningActive)}
                       />
                       {editingMessage && editingMessage.messageIndex === am.messageIndex ? (
@@ -8578,7 +8409,8 @@ Runtime context:
 
             {busy && streamingAssistant?.threadId !== activeId && (
               <CollaboratorReasoningSummary
-                summary={(workProgress.length ? workProgress : ["Starting the selected workflow."])
+                startedAt={workStartedAt}
+                  summary={(workProgress.length ? workProgress : ["Starting the selected workflow."])
                   .map((step) => `- ${step}`).join("\n")}
                 active
               />

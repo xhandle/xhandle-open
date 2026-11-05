@@ -43,7 +43,7 @@ import './functionalDiagramCursors.css';
 import './functionalViewportNavigation.css';
 import { diagramRectsOverlap, GROUP_COLLISION_CLEARANCE } from './functionalDiagramCollision';
 import { separateContainedFunctions, tightenSystemSpacing, systemForElement, tightenSystemSubsystemSpacing, separateSystemGroups, rowsWithDiagramSystems, reconcileTableSystems, absoluteElementPosition, applyGroupGeometry, canContainElement, detachDeletedSystemParents, fitSystemAncestors, isSystemGroup, orderParentElements } from './functionalSystemGroups';
-import { toPng } from 'html-to-image';
+import { captureFullDiagram } from './utils/captureFullDiagram';
 import { SmartBezierEdge } from '@tisoap/react-flow-smart-edge';
 import ELK from 'elkjs/lib/elk.bundled.js';
 import {
@@ -4263,11 +4263,10 @@ useEffect(() => {
     async exportAsImage() {
       const flowCanvas = diagramHostRef.current?.querySelector('.react-flow');
       if (!flowCanvas) return null;
-      resetViewportPresentation();
-      return await toPng(flowCanvas, { backgroundColor: '#ffffff', style: { margin: '0 auto', display: 'block' } });
+      return captureFullDiagram(flowCanvas, getViewport().zoom);
     },
     async getPNG() { return this.exportAsImage(); },
-    isReady() { return !!diagramHostRef.current?.querySelector('.react-flow'); },
+    isReady() { return initialLayoutReady && measuredNodesReady && !!diagramHostRef.current?.querySelector('.react-flow'); },
     cleanOnce() { runCleanAndSpread(); },
     fitViewToDiagram() {
       try { fitView({ padding: 0.2, duration: 400, includeHiddenNodes: true }); } catch {}

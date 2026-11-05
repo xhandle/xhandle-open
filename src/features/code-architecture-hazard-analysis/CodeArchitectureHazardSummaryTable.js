@@ -219,13 +219,15 @@ export default function CodeArchitectureHazardSummaryTable({
   const localFilterState = useColumnFilters(rowItems, getFilterCell);
   const optionColumn=visibleColumns[localFilterState.openIndex]?.index;
   const optionSearch=localFilterState.searches[localFilterState.openIndex] || '';
+  const getPreparedOptions=remotePage?.getPreparedOptions;
+  const preparedOptions=React.useMemo(()=>getPreparedOptions?.(optionColumn,optionSearch),[getPreparedOptions,optionColumn,optionSearch]);
   const optionsMatch=remotePage?.optionsRequest===undefined || (remotePage.optionsRequest?.column===optionColumn && remotePage.optionsRequest?.search===optionSearch && remotePage.optionsRequest?.sourceKey===remotePage.optionsSourceKey);
   const filterState = remotePage ? {
     ...localFilterState, filteredRows:rowItems,
     filters:Object.fromEntries(visibleColumns.map((c,i)=>[i,remotePage.filters[c.index] || []])),
     activeFilterCount:Object.keys(remotePage.filters).length,
-    getOptions:()=>optionsMatch?(remotePage.options || []):[],
-    optionsLoading:optionColumn!=null && (!optionsMatch || remotePage.optionsLoading),optionsError:optionsMatch?remotePage.optionsError:null,optionsTruncated:optionsMatch && remotePage.optionsTruncated,
+    getOptions:()=>preparedOptions?.options ?? (optionsMatch?(remotePage.options || []):[]),
+    optionsLoading:!preparedOptions && optionColumn!=null && (!optionsMatch || remotePage.optionsLoading),optionsError:!preparedOptions && optionsMatch?remotePage.optionsError:null,optionsTruncated:preparedOptions?.truncated ?? (optionsMatch && remotePage.optionsTruncated),
     retryOptions:()=>remotePage.requestOptions(optionColumn,optionSearch),
     setFilterValues:(i,values)=>remotePage.setFilter(visibleColumns[i].index,values),
     toggleFilterValue:(i,value)=>{const key=visibleColumns[i].index,old=remotePage.filters[key] || [];remotePage.setFilter(key,old.includes(value)?old.filter(v=>v!==value):[...old,value]);},
@@ -233,8 +235,8 @@ export default function CodeArchitectureHazardSummaryTable({
   } : localFilterState;
   const requestFilterOptions=remotePage?.requestOptions,cancelFilterOptions=remotePage?.cancelOptions;
   useEffect(()=>{
-    if(requestFilterOptions && optionColumn!=null){requestFilterOptions(optionColumn,optionSearch);return()=>cancelFilterOptions?.();}
-  },[requestFilterOptions,cancelFilterOptions,optionColumn,optionSearch]);
+    if(!preparedOptions && requestFilterOptions && optionColumn!=null){requestFilterOptions(optionColumn,optionSearch);return()=>cancelFilterOptions?.();}
+  },[preparedOptions,requestFilterOptions,cancelFilterOptions,optionColumn,optionSearch]);
   const defaultColumnWidths = useMemo(() => {
     const widthFor = (header) => {
       const text = String(header || "").toLowerCase();
@@ -603,9 +605,10 @@ export default function CodeArchitectureHazardSummaryTable({
     <div className={`${className || "max-h-80"} flex min-h-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white`}>
       <div className="flex shrink-0 items-center justify-end gap-2 border-b border-slate-100 bg-white px-3 py-2">
         <div className="mr-auto flex h-6 min-w-0 items-center whitespace-nowrap text-sm text-slate-600">
-          {viewportLoading && !suppressLoadingIndicator
-            ? <TablePreparationProgress label="Loading hazard rows" progress={null} className="!p-0" />
-            : <span role="status">{remotePage ? `${remotePage.total} matching rows` : `${contextFilteredRowItems.length} of ${rows.length} rows match filters`}</span>}
+          <span role="status">{remotePage
+            ? `${remotePage.total.toLocaleString()} of ${(remotePage.unfilteredTotal ?? remotePage.total).toLocaleString()} rows match filters`
+            : `${contextFilteredRowItems.length.toLocaleString()} of ${rows.length.toLocaleString()} rows match filters`}</span>
+          {viewportLoading && !suppressLoadingIndicator && <TablePreparationProgress label="Loading hazard rows" progress={null} className="!py-0 !pl-3" />}
         </div>
         {filterState.activeFilterCount > 0 && <button type="button" className="text-sm font-medium text-[#2D7DFE]" onClick={filterState.clearAllFilters}>Clear filters</button>}
         <ColumnVisibilityMenu

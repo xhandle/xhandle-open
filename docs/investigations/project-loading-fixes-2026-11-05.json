@@ -1,0 +1,213 @@
+{
+  "date": "2026-11-05",
+  "previewVersion": "0.2.14-preview.20261105.8",
+  "workload": {
+    "hazardRows": 27125,
+    "diagramNodes": 4049,
+    "navigationCycles": 6,
+    "scrollMoves": 192
+  },
+  "stages": [
+    {
+      "label": "ordinary 0",
+      "ms": 409,
+      "peakObservedHeap": 412815960,
+      "loading": false,
+      "nodes": 35,
+      "rows": 0,
+      "tabs": false,
+      "heap": 412815960
+    },
+    {
+      "label": "CBA entry 0",
+      "ms": 634,
+      "peakObservedHeap": 204666701,
+      "loading": false,
+      "nodes": 0,
+      "rows": 0,
+      "tabs": true,
+      "heap": 204666701
+    },
+    {
+      "label": "hazards 0",
+      "ms": 11360,
+      "peakObservedHeap": 251969733,
+      "loading": false,
+      "nodes": 0,
+      "rows": 10,
+      "tabs": true,
+      "heap": 173812657
+    },
+    {
+      "label": "ordinary 1",
+      "ms": 290,
+      "peakObservedHeap": 173184459,
+      "loading": false,
+      "nodes": 35,
+      "rows": 0,
+      "tabs": false,
+      "heap": 173184459
+    },
+    {
+      "label": "CBA entry 1",
+      "ms": 1768,
+      "peakObservedHeap": 191639397,
+      "loading": false,
+      "nodes": 0,
+      "rows": 10,
+      "tabs": true,
+      "heap": 191639397
+    },
+    {
+      "label": "hazards 1",
+      "ms": 253,
+      "peakObservedHeap": 191666932,
+      "loading": false,
+      "nodes": 0,
+      "rows": 10,
+      "tabs": true,
+      "heap": 191666932
+    },
+    {
+      "label": "ordinary 2",
+      "ms": 289,
+      "peakObservedHeap": 193094055,
+      "loading": false,
+      "nodes": 35,
+      "rows": 0,
+      "tabs": false,
+      "heap": 193094055
+    },
+    {
+      "label": "CBA entry 2",
+      "ms": 1770,
+      "peakObservedHeap": 192205724,
+      "loading": false,
+      "nodes": 0,
+      "rows": 10,
+      "tabs": true,
+      "heap": 192205724
+    },
+    {
+      "label": "hazards 2",
+      "ms": 253,
+      "peakObservedHeap": 192240340,
+      "loading": false,
+      "nodes": 0,
+      "rows": 10,
+      "tabs": true,
+      "heap": 192240340
+    },
+    {
+      "label": "ordinary 3",
+      "ms": 265,
+      "peakObservedHeap": 187714196,
+      "loading": false,
+      "nodes": 35,
+      "rows": 0,
+      "tabs": false,
+      "heap": 187714196
+    },
+    {
+      "label": "CBA entry 3",
+      "ms": 1759,
+      "peakObservedHeap": 211419557,
+      "loading": false,
+      "nodes": 0,
+      "rows": 10,
+      "tabs": true,
+      "heap": 211419557
+    },
+    {
+      "label": "hazards 3",
+      "ms": 252,
+      "peakObservedHeap": 211446688,
+      "loading": false,
+      "nodes": 0,
+      "rows": 10,
+      "tabs": true,
+      "heap": 211446688
+    },
+    {
+      "label": "ordinary 4",
+      "ms": 268,
+      "peakObservedHeap": 190345167,
+      "loading": false,
+      "nodes": 35,
+      "rows": 0,
+      "tabs": false,
+      "heap": 190345167
+    },
+    {
+      "label": "CBA entry 4",
+      "ms": 1761,
+      "peakObservedHeap": 189155157,
+      "loading": false,
+      "nodes": 0,
+      "rows": 10,
+      "tabs": true,
+      "heap": 189155157
+    },
+    {
+      "label": "hazards 4",
+      "ms": 253,
+      "peakObservedHeap": 189188569,
+      "loading": false,
+      "nodes": 0,
+      "rows": 10,
+      "tabs": true,
+      "heap": 189188569
+    },
+    {
+      "label": "ordinary 5",
+      "ms": 284,
+      "peakObservedHeap": 186164973,
+      "loading": false,
+      "nodes": 35,
+      "rows": 0,
+      "tabs": false,
+      "heap": 186164973
+    },
+    {
+      "label": "CBA entry 5",
+      "ms": 1770,
+      "peakObservedHeap": 209364497,
+      "loading": false,
+      "nodes": 0,
+      "rows": 10,
+      "tabs": true,
+      "heap": 209364497
+    },
+    {
+      "label": "hazards 5",
+      "ms": 253,
+      "peakObservedHeap": 209377638,
+      "loading": false,
+      "nodes": 0,
+      "rows": 10,
+      "tabs": true,
+      "heap": 209377638
+    },
+    {
+      "label": "final ordinary",
+      "ms": 289,
+      "peakObservedHeap": 192919873,
+      "loading": false,
+      "nodes": 35,
+      "rows": 0,
+      "tabs": false,
+      "heap": 192919873
+    }
+  ],
+  "memory": {
+    "peakSampledRendererHeapBytes": 444063072,
+    "finalCollectedHeapBytes": 163149416,
+    "maxMountedTableRows": 16,
+    "rendererLifetimePeakWorkingSetKiB": 1856016,
+    "samples": 386,
+    "note": "Working-set peak spans this process lifetime, including an earlier diagram test. No forced collection between final stress cycles; collection before and after only."
+  },
+  "errors": [],
+  "crashes": [],
+  "tableErrorSamples": 0
+}

@@ -177,7 +177,7 @@ async function cleanGraphArchitecture(item) {
   const db = await openLogicalStorage('xhandle-workspace-graph');
   if (!db) return;
   try {
-    const stores = ['artifacts', 'relationships'].filter(name => db.objectStoreNames.contains(name));
+    const stores = ['artifacts', 'artifactIndex', 'relationships'].filter(name => db.objectStoreNames.contains(name));
     if (!stores.length) return;
     await logicalTransaction(db, stores, 'readwrite', (tx, abort) => {
       const removed = new Set();
@@ -190,7 +190,7 @@ async function cleanGraphArchitecture(item) {
             const row = cursor.value;
             if (row.sourceStore === (item.type === 'artifact' ? 'indexedDB:xhandle-code-architecture-assurance/artifactRows' : 'indexedDB:xhandle/copilot_baseline') && (item.type === 'artifact' ? row.sourceKey === item.key : targetRoot(row.sourceKey,item)) && (item.type === 'artifact' || row.type === 'code_architecture_edge')) {
               if (String(row.projectId) !== String(item.projectId) || row.workspaceId !== 'workspace:local') throw new Error('Saved analysis has conflicting workspace ownership. Cleanup stopped.');
-              removed.add(row.id); cursor.delete();
+              removed.add(row.id); cursor.delete(); if(stores.includes('artifactIndex'))tx.objectStore('artifactIndex').delete(row.id);
             }
             cursor.continue(); return;
           }
@@ -518,7 +518,7 @@ async function cleanHazardGraph(item,ids) {
   const db=await openLogicalStorage('xhandle-workspace-graph');
   if(!db)return;
   try {
-    const stores=['artifacts','runs','relationships'].filter(name=>db.objectStoreNames.contains(name)),removed=new Set();
+    const stores=['artifacts','artifactIndex','runs','relationships'].filter(name=>db.objectStoreNames.contains(name)),removed=new Set();
     if(!stores.length)return;
     await logicalTransaction(db,stores,'readwrite',(tx,abort)=>{
       let pending=stores.filter(name=>name!=='relationships').length;
@@ -535,7 +535,7 @@ async function cleanHazardGraph(item,ids) {
             if(!cursor){links();return;}
             const row=cursor.value;
             const matches=row.sourceStore==='indexedDB:xhandle-code-architecture-hazard-analysis/hazardAnalysisRuns' &&
-              [...ids].some(id=>row.sourceId===String(id) || (name==='artifacts' && typeof row.sourceId==='string' && row.sourceId.startsWith(`${id}:summary:`)));
+              [...ids].some(id=>row.sourceId===String(id) || (['artifacts','artifactIndex'].includes(name) && typeof row.sourceId==='string' && row.sourceId.startsWith(`${id}:summary:`)));
             if(matches){
               if(String(row.projectId)!==String(item.projectId)||row.workspaceId!=='workspace:local')throw new Error('Hazard workspace ownership conflicts. Cleanup stopped.');
               removed.add(row.id);cursor.delete();

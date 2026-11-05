@@ -373,10 +373,11 @@ async function requestAssuranceChunk({
   };
   const payloadLength = JSON.stringify(payload).length;
 
+  // Never retain prompts or result bodies in the renderer console.
   if (logPromptResponse) {
     console.info(`[xHandle AI] ${errorLabel} prompt rows ${chunk.start + 1}-${chunk.start + chunk.rows.length}`, {
-      systemPrompt,
-      payload,
+      rowCount: chunk.rows.length,
+      promptChars: payloadLength,
     });
   }
 
@@ -391,7 +392,7 @@ async function requestAssuranceChunk({
       respectUnavailable,
     });
     if (logPromptResponse) {
-      console.info(`[xHandle AI] ${errorLabel} response rows ${chunk.start + 1}-${chunk.start + chunk.rows.length}`, raw);
+      console.info(`[xHandle AI] ${errorLabel} response rows ${chunk.start + 1}-${chunk.start + chunk.rows.length}`, { responseChars: typeof raw === "string" ? raw.length : 0 });
     }
     const parsed = extractJson(raw);
     const rowsForChunk = Array.isArray(parsed[responseKey]) ? parsed[responseKey] : [];
@@ -566,8 +567,7 @@ async function requestAssuranceConsolidationRows({
 
     if (logPromptResponse) {
       console.info(`[xHandle AI] ${errorLabel} prompt rows ${chunk.start + 1}-${chunk.start + chunk.rows.length}`, {
-        systemPrompt,
-        payload,
+        rowCount: chunk.rows.length,
       });
     }
 
@@ -582,7 +582,7 @@ async function requestAssuranceConsolidationRows({
         respectUnavailable,
       });
       if (logPromptResponse) {
-        console.info(`[xHandle AI] ${errorLabel} response rows ${chunk.start + 1}-${chunk.start + chunk.rows.length}`, raw);
+        console.info(`[xHandle AI] ${errorLabel} response rows ${chunk.start + 1}-${chunk.start + chunk.rows.length}`, { responseChars: typeof raw === "string" ? raw.length : 0 });
       }
       const parsed = extractJson(raw);
       const rowsForChunk = Array.isArray(parsed[responseKey]) ? parsed[responseKey] : [];
@@ -2463,8 +2463,7 @@ export async function deriveFunctionalSoftwareRequirements({ cbaRows = [], proje
     };
 
     console.info(`[xHandle AI] Software requirements prompt rows ${start + 1}-${end}/${cbaRows.length}`, {
-      systemPrompt,
-      payload,
+      rowCount: batchRows.length,
     });
 
     try {
@@ -2477,7 +2476,7 @@ export async function deriveFunctionalSoftwareRequirements({ cbaRows = [], proje
         markTransientUnavailable: false,
         respectUnavailable: false,
       });
-      console.info(`[xHandle AI] Software requirements response rows ${start + 1}-${end}/${cbaRows.length}`, raw);
+      console.info(`[xHandle AI] Software requirements response rows ${start + 1}-${end}/${cbaRows.length}`, { responseChars: typeof raw === "string" ? raw.length : 0 });
       const parsed = extractJson(raw);
       const rowsForPrompt = Array.isArray(parsed.requirements) ? parsed.requirements : [];
       if (!rowsForPrompt.some(row => cellText(row?.requirementText))) throw new Error("AI returned no usable software requirements.");

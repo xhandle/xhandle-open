@@ -19,3 +19,9 @@ describe("Collaborator thread titles", () => {
     ])).resolves.toBe("Review edge routing behavior in the");
   });
 });
+
+test('uses current provider configuration and aborts background naming on demand',async()=>{
+ const fetchMock=jest.spyOn(global,'fetch').mockResolvedValue({ok:true,json:async()=>({result:'Saved Analysis Review'})});const controller=new AbortController();
+ await generateThreadTitle([{role:'user',content:'Review saved analysis'}],{signal:controller.signal});const payload=JSON.parse(fetchMock.mock.calls[0][1].body);expect(payload).not.toHaveProperty('model');expect(payload.xhandleWorkflow).toBe('collaborator.title');expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal);
+ controller.abort();await expect(generateThreadTitle([],{signal:controller.signal})).rejects.toHaveProperty('name','AbortError');
+});

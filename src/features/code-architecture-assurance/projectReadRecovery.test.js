@@ -42,3 +42,10 @@ it('extends the idle deadline when real read progress arrives',async()=>{
  jest.advanceTimersByTime(80);options.onProgress(20);jest.advanceTimersByTime(80);
  expect(options.signal.aborted).toBe(false);resolve('done');expect(await result).toBe('done');
 });
+it('stops persistent transient failures after one retry and removes resume listeners',async()=>{
+ const read=jest.fn().mockRejectedValue(Object.assign(new Error('storage unavailable'),{name:'UnknownError'}));
+ const result=readProjectWithRecovery(read);const rejected=expect(result).rejects.toThrow('storage unavailable');
+ await flush();jest.advanceTimersByTime(2000);await rejected;
+ window.dispatchEvent(new Event('pageshow'));jest.runAllTimers();await flush();
+ expect(read).toHaveBeenCalledTimes(2);expect(jest.getTimerCount()).toBe(0);
+});

@@ -1,3 +1,4 @@
+const {StringDecoder}=require('node:string_decoder');
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const MAX_PROVIDER_ERROR_BYTES = 1_000_000;
 
@@ -128,7 +129,8 @@ async function writeWithBackpressure(res, value) {
   return !(res.destroyed || res.writableEnded);
 }
 
-async function pipeAnthropicSseToClient(providerStream, res, { onText } = {}) {
+async function pipeAnthropicSseToClient(providerStream, res, { onText, completionMetadata } = {}) {
+  const decoder=new StringDecoder("utf8");
   let buffer = "";
   let finishReason = "stop";
   let providerDone = false;
@@ -148,19 +150,20 @@ async function pipeAnthropicSseToClient(providerStream, res, { onText } = {}) {
 
   for await (const chunk of providerStream) {
     if (res.destroyed || res.writableEnded) break;
-    buffer += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk || "");
+    buffer += Buffer.isBuffer(chunk) ? decoder.write(chunk) : String(chunk || "");
     const blocks = buffer.split(/\r?\n\r?\n/);
     buffer = blocks.pop() || "";
     for (const block of blocks) await processBlock(block);
   }
 
+  buffer+=decoder.end();
   if (buffer.trim() && !res.destroyed && !res.writableEnded) await processBlock(buffer);
   if (res.destroyed || res.writableEnded) return { finishReason, providerDone, clientClosed: true };
   if (!providerDone) throw new Error("Anthropic stream ended before message_stop.");
 
   await writeWithBackpressure(
     res,
-    `event: metadata\ndata: ${JSON.stringify({ finish_reason: finishReason })}\n\n`,
+    `event: metadata\ndata: ${JSON.stringify({ finish_reason: finishReason, ...(completionMetadata?.({finishReason})||{}) })}\n\n`,
   );
   await writeWithBackpressure(res, "event: done\ndata: [DONE]\n\n");
   res.end();
@@ -207,4 +210,5 @@ module.exports = {
   parseAnthropicSseEvent,
   pipeAnthropicSseToClient,
   requestAnthropicMessageStream,
+  writeWithBackpressure,
 };

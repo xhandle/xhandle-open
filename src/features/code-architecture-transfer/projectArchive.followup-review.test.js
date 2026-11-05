@@ -45,7 +45,9 @@ test('legacy partial hazard system requirements are retried after transfer', asy
   const checkpoint=createRequirementCheckpoint('p1','r1','system-requirements');
   const progress=jest.fn();progress.requestCheckpoint=(basis,generate)=>checkpoint(basis,generate,()=>true);
   const first=await deriveSystemRequirements({softwareRequirements,onProgress:progress});
-  expect(first).toHaveLength(1);
+  // Incomplete AI coverage now preserves the missing parent as an explicit draft.
+  expect(first).toHaveLength(2);
+  expect(first.filter(row=>row.derivationStatus==='local-fallback')).toHaveLength(1);
   const archive=await exportProjectArchive(project);fresh();await importProjectArchive(archive);
   global.fetch=jest.fn(async()=>({ok:true,json:async()=>({answer:JSON.stringify({requirements:[1,2].map(n=>({id:`SYS-SAFE-${n}`,requirementText:`The system shall inhibit actuator ${n} when its command is invalid.`,parentSwRequirement:`SWR-SAFE-${n}`}))})})}));
   const continued=jest.fn();continued.requestCheckpoint=createRequirementCheckpoint('p1','r1','system-requirements');

@@ -1,0 +1,264 @@
+{
+  "chrome": {
+    "ok": true,
+    "errors": [],
+    "peakHeapBytes": 43319964,
+    "cases": [
+      {
+        "id": "greeting",
+        "completeMs": 1257,
+        "workflows": [
+          "collaborator.context-turn"
+        ],
+        "evidence": []
+      },
+      {
+        "id": "arithmetic",
+        "completeMs": 1217,
+        "workflows": [
+          "collaborator.context-turn"
+        ],
+        "evidence": []
+      },
+      {
+        "id": "weather",
+        "completeMs": 1212,
+        "workflows": [
+          "collaborator.context-turn"
+        ],
+        "evidence": []
+      },
+      {
+        "id": "visible-screen",
+        "completeMs": 1310,
+        "workflows": [
+          "collaborator.context-turn"
+        ],
+        "evidence": []
+      },
+      {
+        "id": "general-non-engineering",
+        "completeMs": 1213,
+        "workflows": [
+          "collaborator.context-turn"
+        ],
+        "evidence": []
+      },
+      {
+        "id": "general-engineering",
+        "completeMs": 1215,
+        "workflows": [
+          "collaborator.context-turn"
+        ],
+        "evidence": []
+      },
+      {
+        "id": "thread-transform",
+        "completeMs": 1214,
+        "workflows": [
+          "collaborator.context-turn"
+        ],
+        "evidence": []
+      },
+      {
+        "id": "thread-shortening",
+        "completeMs": 1214,
+        "workflows": [
+          "collaborator.context-turn"
+        ],
+        "evidence": []
+      },
+      {
+        "id": "named-function",
+        "completeMs": 1298,
+        "workflows": [
+          "collaborator.context-turn"
+        ],
+        "evidence": []
+      },
+      {
+        "id": "invalid-context",
+        "completeMs": 1217,
+        "workflows": [
+          "collaborator.context-turn"
+        ],
+        "evidence": []
+      },
+      {
+        "id": "project-summary",
+        "completeMs": 1711,
+        "workflows": [
+          "collaborator.context-turn",
+          "collaborator.context-repair",
+          "collaborator.read-plan",
+          "collaborator.answer"
+        ],
+        "evidence": [
+          [
+            true,
+            false
+          ]
+        ]
+      },
+      {
+        "id": "technical-function",
+        "completeMs": 1708,
+        "workflows": [
+          "collaborator.context-turn",
+          "collaborator.read-plan",
+          "collaborator.answer"
+        ],
+        "evidence": [
+          [
+            true,
+            false
+          ]
+        ]
+      },
+      {
+        "id": "saved-count",
+        "completeMs": 1632,
+        "workflows": [
+          "collaborator.answer"
+        ],
+        "evidence": [
+          [
+            false,
+            false
+          ]
+        ]
+      }
+    ]
+  },
+  "electron": {
+    "ok": true,
+    "errors": [],
+    "peakHeapBytes": 41047183,
+    "cases": [
+      {
+        "id": "greeting",
+        "completeMs": 1279,
+        "workflows": [
+          "collaborator.context-turn"
+        ],
+        "evidence": []
+      },
+      {
+        "id": "arithmetic",
+        "completeMs": 1218,
+        "workflows": [
+          "collaborator.context-turn"
+        ],
+        "evidence": []
+      },
+      {
+        "id": "weather",
+        "completeMs": 1212,
+        "workflows": [
+          "collaborator.context-turn"
+        ],
+        "evidence": []
+      },
+      {
+        "id": "visible-screen",
+        "completeMs": 1214,
+        "workflows": [
+          "collaborator.context-turn"
+        ],
+        "evidence": []
+      },
+      {
+        "id": "general-non-engineering",
+        "completeMs": 1214,
+        "workflows": [
+          "collaborator.context-turn"
+        ],
+        "evidence": []
+      },
+      {
+        "id": "general-engineering",
+        "completeMs": 1215,
+        "workflows": [
+          "collaborator.context-turn"
+        ],
+        "evidence": []
+      },
+      {
+        "id": "thread-transform",
+        "completeMs": 1216,
+        "workflows": [
+          "collaborator.context-turn"
+        ],
+        "evidence": []
+      },
+      {
+        "id": "thread-shortening",
+        "completeMs": 1217,
+        "workflows": [
+          "collaborator.context-turn"
+        ],
+        "evidence": []
+      },
+      {
+        "id": "named-function",
+        "completeMs": 1302,
+        "workflows": [
+          "collaborator.context-turn"
+        ],
+        "evidence": []
+      },
+      {
+        "id": "invalid-context",
+        "completeMs": 1220,
+        "workflows": [
+          "collaborator.context-turn"
+        ],
+        "evidence": []
+      },
+      {
+        "id": "project-summary",
+        "completeMs": 1724,
+        "workflows": [
+          "collaborator.context-turn",
+          "collaborator.context-repair",
+          "collaborator.read-plan",
+          "collaborator.answer"
+        ],
+        "evidence": [
+          [
+            true,
+            false
+          ]
+        ]
+      },
+      {
+        "id": "technical-function",
+        "completeMs": 1709,
+        "workflows": [
+          "collaborator.context-turn",
+          "collaborator.read-plan",
+          "collaborator.answer"
+        ],
+        "evidence": [
+          [
+            true,
+            false
+          ]
+        ]
+      },
+      {
+        "id": "saved-count",
+        "completeMs": 1709,
+        "workflows": [
+          "collaborator.answer"
+        ],
+        "evidence": [
+          [
+            false,
+            false
+          ]
+        ]
+      }
+    ]
+  }
+}

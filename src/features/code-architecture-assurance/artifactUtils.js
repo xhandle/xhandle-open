@@ -1,3 +1,4 @@
+import { createArtifactMemoryCache, serializeArtifactFallback } from './artifactMemoryCache';
 import { functionalSourceIndex } from '../code-architecture-context/functionalModel';
 import { codeSourceProvenance } from '../code-architecture-context/codeSourceIdentity';
 import { ARTIFACT_DEFINITIONS, ARTIFACT_KINDS } from "./artifactDefinitions";
@@ -52,7 +53,7 @@ const ARTIFACT_DB_NAME = "xhandle-code-architecture-assurance";
 const ARTIFACT_STORE = "artifactRows";
 const LOCAL_STORAGE_CACHE_MAX_CHARS = 750000;
 const INDEXED_DB_ROW_CHUNK_MAX_CHARS = 300000;
-const artifactRowsMemoryCache = new Map();
+const artifactRowsMemoryCache = createArtifactMemoryCache();
 const artifactWrites = new Map();
 const cleaningArtifactKeys = new Set();
 const generatingArtifactKeys = new Map();
@@ -180,23 +181,21 @@ function requestPersistentBrowserStorage() {
   return persistentStorageRequestPromise;
 }
 
-function chunkRowsForIndexedDb(rows = []) {
-  const chunks = [];
+function* chunkRowsForIndexedDb(rows = []) {
   let current = [];
   let currentChars = 2;
-  rows.forEach((row) => {
+  for (const row of rows) {
     const rowChars = JSON.stringify(row).length + 1;
     if (current.length && currentChars + rowChars > INDEXED_DB_ROW_CHUNK_MAX_CHARS) {
-      chunks.push(current);
+      yield current;
       current = [row];
       currentChars = rowChars + 2;
     } else {
       current.push(row);
       currentChars += rowChars;
     }
-  });
-  if (current.length || !chunks.length) chunks.push(current);
-  return chunks;
+  }
+  if (current.length) yield current;
 }
 
 async function readArtifactRowsFromDb(key) {
@@ -217,28 +216,26 @@ async function readArtifactRowsFromDb(key) {
         if (!Array.isArray(record.chunkKeys) || !Number.isInteger(record.rowCount) || record.rowCount < 0 || record.chunkKeys.some(chunkKey => typeof chunkKey !== "string") || new Set(record.chunkKeys).size !== record.chunkKeys.length) {
           reject(invalid()); return;
         }
-        const chunkResults = new Array(record.chunkKeys.length);
-        let remaining = record.chunkKeys.length;
-        if (!remaining) {
-          if (record.rowCount !== 0) reject(invalid());
-          else resolve({ rows: [], revision: record.revision || 0 });
-          return;
-        }
-        record.chunkKeys.forEach((chunkKey, index) => {
-          const chunkRequest = store.get(chunkKey);
+        const rows = [];
+        let index = 0;
+        const readNext = () => {
+          if (index === record.chunkKeys.length) {
+            if (rows.length !== record.rowCount) reject(invalid());
+            else resolve({ rows, revision: record.revision || 0 });
+            return;
+          }
+          const chunkRequest = store.get(record.chunkKeys[index++]);
           chunkRequest.onsuccess = () => {
             const chunkRows = chunkRequest.result?.rows;
-            if (!Array.isArray(chunkRows) || chunkRequest.result.parentKey !== key) { reject(invalid()); return; }
-            chunkResults[index] = chunkRows;
-            remaining -= 1;
-            if (!remaining) {
-              const rows = chunkResults.flat();
-              if (rows.length !== record.rowCount) reject(invalid());
-              else resolve({ rows, revision: record.revision || 0 });
+            if (!Array.isArray(chunkRows) || chunkRequest.result.parentKey !== key || rows.length + chunkRows.length > record.rowCount) {
+              reject(invalid()); return;
             }
+            for (const row of chunkRows) rows.push(row);
+            readNext();
           };
           chunkRequest.onerror = () => reject(chunkRequest.error);
-        });
+        };
+        readNext();
         return;
       }
       if (!Array.isArray(record.rows)) reject(invalid());
@@ -265,27 +262,26 @@ async function writeArtifactRowsToDb(key, rows, revision) {
       try {
       revision.value = Math.max(revision.value, (priorRequest.result?.revision || 0) + 1);
       const priorChunkKeys = Array.isArray(priorRequest.result?.chunkKeys) ? priorRequest.result.chunkKeys : [];
-      const chunkKeys = chunks.map((_, index) => `${key}:chunk:${index}`);
-      chunks.forEach((chunkRows, index) => {
-        store.put({
-          key: chunkKeys[index],
-          parentKey: key,
-          rows: chunkRows,
-          updatedAt,
-        });
-      });
-      priorChunkKeys
-        .filter((chunkKey) => !chunkKeys.includes(chunkKey))
-        .forEach((chunkKey) => store.delete(chunkKey));
-      store.put({
-        key,
-        rows: [],
-        chunked: true,
-        chunkKeys,
-        rowCount: safeRows.length,
-        revision: revision.value,
-        updatedAt,
-      });
+      const chunkKeys = [];
+      const writeNext = () => {
+        try {
+          const next = chunks.next();
+          if (!next.done) {
+            const chunkKey = `${key}:chunk:${chunkKeys.length}`;
+            chunkKeys.push(chunkKey);
+            // Keep a single structured clone outstanding. Enqueue the next
+            // request in this callback so the same atomic transaction stays live.
+            const request = store.put({ key: chunkKey, parentKey: key, rows: next.value, updatedAt });
+            request.onsuccess = writeNext;
+            return;
+          }
+          const retained = new Set(chunkKeys);
+          priorChunkKeys.filter(chunkKey => !retained.has(chunkKey)).forEach(chunkKey => store.delete(chunkKey));
+          store.put({ key, rows: [], chunked: true, chunkKeys,
+            rowCount: safeRows.length, revision: revision.value, updatedAt });
+        } catch (error) { tx.abort(); reject(error); }
+      };
+      writeNext();
       } catch (error) {
         tx.abort();
         reject(error);
@@ -379,8 +375,8 @@ export function saveArtifactRowsAsync(kind, projectId, repoId, rows) {
     catch (error) { console.warn("[code-architecture-assurance] IndexedDB save failed.", error); }
     let cached = false;
     try {
-      const serialized = JSON.stringify({ format: "artifact-rows-v1", revision: revision.value, rowCount: safeRows.length, rows: safeRows });
-      if (serialized.length <= LOCAL_STORAGE_CACHE_MAX_CHARS) {
+      const serialized = serializeArtifactFallback(safeRows, revision.value, LOCAL_STORAGE_CACHE_MAX_CHARS);
+      if (serialized != null) {
         localStorage.setItem(key, serialized);
         cached = true;
       } else if (persisted) localStorage.removeItem(key);

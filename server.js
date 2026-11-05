@@ -34,8 +34,10 @@ const {
   createRequestCancellation,
   pipeAnthropicSseToClient,
   requestAnthropicMessageStream,
+  writeWithBackpressure,
 } = require("./server/anthropicStreaming");
 const { classifyAITransportError } = require("./server/aiTransportErrors");
+const {requestGeminiMessageStream,pipeGeminiSseToClient}=require('./server/geminiStreaming');
 const { createAIRequestMetrics } = require("./server/aiRequestMetrics");
 const { spawn, spawnSync } = require("child_process");
 
@@ -1487,19 +1489,13 @@ function toOpenAICompatibleResponse({ provider, model, text, raw, finishReason =
 }
 
 function setSseHeaders(res) {
+  if(res.headersSent)return;
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-AI-Request-Timeout-Ms", String(AI_PROVIDER_LONG_REQUEST_TIMEOUT_MS));
 }
 
-function writeTextAsSse(res, text, finishReason = "stop") {
-  setSseHeaders(res);
-  if (text) res.write(`data: ${JSON.stringify(text)}\n\n`);
-  res.write(`event: metadata\ndata: ${JSON.stringify({ finish_reason: finishReason })}\n\n`);
-  res.write("event: done\ndata: [DONE]\n\n");
-  res.end();
-}
 
 function logProviderCompatibilityRetry({ model: retryModel, attempt, removed, added }) {
   logger.info("[ai-provider] Compatibility retry " + attempt
@@ -1539,7 +1535,7 @@ async function callClaudeChat({ apiKey, body, messages, model, signal }) {
   });
 }
 
-async function streamClaudeChat({ apiKey, body, messages, model, signal, res, onText }) {
+async function streamClaudeChat({ apiKey, body, messages, model, signal, res, onText, completionMetadata }) {
   const { system, conversation } = splitSystemMessages(messages);
   const payload = buildClaudeRequestPayload({ body, model, system, conversation });
   const response = await requestAnthropicMessageStream({
@@ -1555,7 +1551,14 @@ async function streamClaudeChat({ apiKey, body, messages, model, signal, res, on
   setSseHeaders(res);
   res.flushHeaders?.();
   res.write(": connected\n\n");
-  return pipeAnthropicSseToClient(response.data, res, { onText });
+  return pipeAnthropicSseToClient(response.data, res, { onText, completionMetadata });
+}
+
+async function streamGeminiChat({apiKey,body,messages,model,signal,res,onText,completionMetadata}){
+  const {system,conversation}=splitSystemMessages(messages);
+  const payload=buildGeminiRequestPayload({body,model,system,conversation});
+  const response=await requestGeminiMessageStream({axiosClient:axios,apiKey,payload,model,timeoutMs:AI_PROVIDER_LONG_REQUEST_TIMEOUT_MS,signal});
+  return pipeGeminiSseToClient(response.data,res,{onText,completionMetadata});
 }
 
 async function callGeminiChat({ apiKey, body, messages, model, signal }) {
@@ -1600,6 +1603,7 @@ async function callGeminiChat({ apiKey, body, messages, model, signal }) {
   const text = Array.isArray(resp.data?.candidates)
     ? resp.data.candidates
         .flatMap((candidate) => candidate?.content?.parts || [])
+        .filter((part)=>!part?.thought)
         .map((part) => part?.text || "")
         .join("")
     : "";
@@ -2307,6 +2311,8 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
     timeoutMs: AI_PROVIDER_LONG_REQUEST_TIMEOUT_MS,
   });
   let requestMetrics = null;
+  const routeStartedAt=Date.now();
+  let heartbeat;
   try {
     const resolved = await resolveAIConfigForRequest(req);
     if (!resolved?.apiKey || !resolved?.provider) {
@@ -2334,6 +2340,8 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
       logger,
       requestId,
       workflow: body.xhandleWorkflow,
+      clientTraceId: body.xhandleTraceId,
+      startedAt: routeStartedAt,
       provider,
       model,
       effort: requestEffort,
@@ -2348,6 +2356,11 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
       "X-AI-Effort-Used": requestEffort || "automatic",
     });
 
+    requestMetrics.markProviderStarted();
+    if(stream){
+      setSseHeaders(res);res.flushHeaders?.();res.write(': connected\n\n');
+      heartbeat=setInterval(()=>{if(!res.destroyed&&!res.writableEnded&&!res.writableNeedDrain)res.write(': waiting\n\n');},15000);heartbeat.unref?.();
+    }
     if (provider === "claude") {
       if (stream) {
         const streamResult = await streamClaudeChat({
@@ -2358,8 +2371,9 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
           signal: requestCancellation.signal,
           res,
           onText: requestMetrics.addOutput,
+          completionMetadata:({finishReason})=>({serverTiming:requestMetrics.finish({finishReason})}),
         });
-        requestMetrics.finish({ finishReason: streamResult?.finishReason || "stop" });
+        requestMetrics.finish(streamResult?.clientClosed?{status:"canceled",finishReason:"error",errorCode:"client_disconnected"}:{ finishReason: streamResult?.finishReason || "stop" });
         return;
       }
       const resp = await callClaudeChat({
@@ -2371,11 +2385,15 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
       });
       const text = resp.choices?.[0]?.message?.content || "";
       requestMetrics.addOutput(text);
-      requestMetrics.finish({ finishReason: resp.choices?.[0]?.finish_reason || "stop" });
+      resp.xhandleMetrics=requestMetrics.finish({ finishReason: resp.choices?.[0]?.finish_reason || "stop" });
       return res.json(resp);
     }
 
     if (provider === "gemini") {
+      if(stream){
+        const result=await streamGeminiChat({apiKey:resolved.apiKey,body:{temperature:0.2,...body},messages,model,signal:requestCancellation.signal,res,onText:requestMetrics.addOutput,completionMetadata:({finishReason})=>({serverTiming:requestMetrics.finish({finishReason})})});
+        requestMetrics.finish(result?.clientClosed?{status:'canceled',finishReason:'error',errorCode:'client_disconnected'}:{finishReason:result?.finishReason||'stop'});return;
+      }
       const resp = await callGeminiChat({
         apiKey: resolved.apiKey,
         body: { temperature: 0.2, ...body },
@@ -2385,14 +2403,7 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
       });
       const text = resp.choices?.[0]?.message?.content || "";
       requestMetrics.addOutput(text);
-      requestMetrics.finish({ finishReason: resp.choices?.[0]?.finish_reason || "stop" });
-      if (stream) {
-        return writeTextAsSse(
-          res,
-          resp.choices?.[0]?.message?.content || "",
-          resp.choices?.[0]?.finish_reason || "stop",
-        );
-      }
+      resp.xhandleMetrics=requestMetrics.finish({ finishReason: resp.choices?.[0]?.finish_reason || "stop" });
       return res.json(resp);
     }
 
@@ -2415,7 +2426,7 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
       });
       const text = resp?.choices?.[0]?.message?.content || "";
       requestMetrics.addOutput(text);
-      requestMetrics.finish({ finishReason: resp?.choices?.[0]?.finish_reason || "stop" });
+      resp.xhandleMetrics=requestMetrics.finish({ finishReason: resp?.choices?.[0]?.finish_reason || "stop" });
       const h = resp?.response?.headers;
       if (h?.get) {
         for (const k of [
@@ -2448,15 +2459,19 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
 
     let finishReason = "";
     for await (const chunk of completion) {
+      if(res.destroyed||res.writableEnded)break;
       const delta = chunk.choices?.[0]?.delta?.content ?? "";
       if (delta) {
         requestMetrics.addOutput(delta);
-        res.write(`data: ${JSON.stringify(delta)}\n\n`);
+        await writeWithBackpressure(res,`data: ${JSON.stringify(delta)}\n\n`);
       }
       const chunkFinishReason = chunk.choices?.[0]?.finish_reason;
       if (chunkFinishReason) finishReason = chunkFinishReason;
     }
-    res.write(`event: metadata\ndata: ${JSON.stringify({ finish_reason: finishReason || "stop" })}\n\n`);
+    if(res.destroyed||res.writableEnded){requestMetrics.finish({status:"canceled",finishReason:"error",errorCode:"client_disconnected"});return;}
+    if(!finishReason)throw new Error("OpenAI stream ended before a completion reason.");
+    const serverTiming=requestMetrics.finish({finishReason:finishReason||"stop"});
+    res.write(`event: metadata\ndata: ${JSON.stringify({ finish_reason: finishReason || "stop", serverTiming })}\n\n`);
     res.write("event: done\ndata: [DONE]\n\n");
     res.end();
     requestMetrics.finish({ finishReason: finishReason || "stop" });
@@ -2492,6 +2507,7 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
       res.end();
     }
   } finally {
+    clearInterval(heartbeat);
     requestCancellation.dispose();
   }
 });

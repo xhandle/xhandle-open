@@ -1,0 +1,72 @@
+{
+  "date": "2026-11-05",
+  "sharedHead": "8e12412",
+  "sharedRegression": {
+    "passingDistinctTests": 2321,
+    "passingSuites": 241,
+    "skippedTests": 2,
+    "skippedSuites": 1,
+    "initialFailures": "Two assertions expected unformatted row counts; updated to the displayed comma-separated counts. Both suites then passed (13 tests)."
+  },
+  "serverAndMarkdownTests": 69,
+  "nativeTests": 44,
+  "productionBuild": "passed with existing warnings",
+  "acceptance": [
+    {
+      "journey": "context-on-demand-chrome",
+      "ok": true,
+      "routingCases": 15,
+      "checks": [
+        "direct/invalid requests complete with blocked storage and no fresh record bodies; scoped reads still wait for evidence; selected model settings preserved"
+      ],
+      "errors": []
+    },
+    {
+      "journey": "context-on-demand-electron",
+      "ok": true,
+      "routingCases": 15,
+      "checks": [
+        "direct/invalid requests complete with blocked storage and no fresh record bodies; scoped reads still wait for evidence; selected model settings preserved"
+      ],
+      "errors": []
+    },
+    {
+      "journey": "full-app-chrome",
+      "ok": true,
+      "routingCases": 0,
+      "checks": [
+        "greeting bypasses blocked workspace indexing",
+        "general explanation bypasses blocked indexing",
+        "ordinary saved-report list skips serial model planning",
+        "ordinary answer in actual App",
+        "automatic thread title waits for answer completion",
+        "citation opens correct saved report",
+        "Stop while switching threads does not write into new thread",
+        "new thread remains usable after Stop",
+        "report library and body survive full reload",
+        "confirmed report deletion persists after reload"
+      ],
+      "errors": []
+    },
+    {
+      "journey": "full-app-electron",
+      "ok": true,
+      "routingCases": 0,
+      "checks": [
+        "greeting bypasses blocked workspace indexing",
+        "general explanation bypasses blocked indexing",
+        "ordinary saved-report list skips serial model planning",
+        "ordinary answer in actual App",
+        "automatic thread title waits for answer completion",
+        "citation opens correct saved report",
+        "Stop while switching threads does not write into new thread",
+        "new thread remains usable after Stop",
+        "report library and body survive full reload",
+        "confirmed report deletion persists after reload"
+      ],
+      "errors": []
+    }
+  ],
+  "releaseArtifactsVerified": false,
+  "published": false
+}

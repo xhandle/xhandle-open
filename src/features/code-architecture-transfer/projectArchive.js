@@ -1,3 +1,5 @@
+import { upgradeWorkspaceGraphSchema } from '../workspace-graph/workspaceGraphDb';
+import { WORKSPACE_GRAPH_DB_VERSION } from '../workspace-graph/workspaceGraphTypes';
 import {prepareHazardTableIndex} from '../code-architecture-hazard-analysis/prepareHazardTableIndex';
 import { portableLocalMetadata } from './portableLocalMetadata';
 import { encodeCompact, decodeCompact } from './compactArchiveCodec';
@@ -27,7 +29,7 @@ const DATABASES = ['xhandle', 'xhandle-code-architecture-assurance', 'xhandle-co
 const SUPPORTED_VERSIONS = {
   xhandle: 4, 'xhandle-code-architecture-assurance': 1,
   'xhandle-code-architecture-hazard-analysis': HAZARD_DB_VERSION, 'xhandle-safety-remediation': 2,
-  'xhandle-results-review': 1, 'xhandle-workspace-graph': 2, TraceabilityDB: 7,
+  'xhandle-results-review': 1, 'xhandle-workspace-graph': WORKSPACE_GRAPH_DB_VERSION, TraceabilityDB: 7,
   TraceabilityMeta: 1, BaselinesDB: 1, SafetyCaseEvidenceDB: 1,
   'xhandle-project-reports': 1, 'xhandle-recovery': 1,
 };
@@ -442,6 +444,7 @@ export async function importProjectArchive(file, {signal,onProgress=()=>{}} = {}
     if (opened.has(schema.name)) return opened.get(schema.name);
     validateSchemaVersion(schema);
     let current = await existingDB(schema.name,storageOptions);
+    if(current&&schema.name==='xhandle-workspace-graph'&&current.version<WORKSPACE_GRAPH_DB_VERSION){current.close();current=await openArchiveDB(schema.name,WORKSPACE_GRAPH_DB_VERSION,upgradeWorkspaceGraphSchema,storageOptions);}
     if (current && schema.name===HAZARD_DB && current.version<HAZARD_DB_VERSION){
       current.close();current=await openArchiveDB(HAZARD_DB,HAZARD_DB_VERSION,upgradeHazardSchema,storageOptions);
     }
@@ -451,10 +454,11 @@ export async function importProjectArchive(file, {signal,onProgress=()=>{}} = {}
       opened.set(schema.name, current);
       return current;
     }
-    const version = (schema.name === 'xhandle-code-architecture-hazard-analysis' || REPAIRABLE_DATABASES.has(schema.name)) ? SUPPORTED_VERSIONS[schema.name] : schema.version;
+    const version = (schema.name === 'xhandle-code-architecture-hazard-analysis' || schema.name === 'xhandle-workspace-graph' || REPAIRABLE_DATABASES.has(schema.name)) ? SUPPORTED_VERSIONS[schema.name] : schema.version;
     const db=await openArchiveDB(schema.name,version,(db,old,next,tx)=>{
       if (old !== 0) { tx.abort(); return; } // Another tab created it after preflight.
       if(schema.name===HAZARD_DB)upgradeHazardSchema(db,old,next,tx);
+      if(schema.name==='xhandle-workspace-graph')upgradeWorkspaceGraphSchema(db,old,next,tx);
       for (const [name,spec] of Object.entries(schema.stores)) {
         const store=db.objectStoreNames.contains(name)?tx.objectStore(name):db.createObjectStore(name,{keyPath:spec.keyPath,autoIncrement:spec.autoIncrement});
         for (const index of spec.indexes) if (!store.indexNames.contains(index.name)) store.createIndex(index.name,index.keyPath,{unique:index.unique,multiEntry:index.multiEntry});
@@ -470,7 +474,8 @@ export async function importProjectArchive(file, {signal,onProgress=()=>{}} = {}
     const header=await visitArchive(file,async(entry,header,schemas)=>{
       assertNew(header.project);
       if (entry.kind==='database') {
-        const db = await existingDB(entry.name,storageOptions);
+        let db = await existingDB(entry.name,storageOptions);
+        if(db&&entry.name==='xhandle-workspace-graph'&&db.version<WORKSPACE_GRAPH_DB_VERSION){db.close();db=await openArchiveDB(entry.name,WORKSPACE_GRAPH_DB_VERSION,upgradeWorkspaceGraphSchema,storageOptions);}
         preflight.set(entry.name, db);
         if (db) await assertCompatibleSchema(db, entry, entry.name===HAZARD_DB && db.version<HAZARD_DB_VERSION);
       }
@@ -550,6 +555,7 @@ export async function importProjectArchive(file, {signal,onProgress=()=>{}} = {}
     const project=portableProject(header.project);
     writing='localStorage project list';
     localStorage.setItem(PROJECTS,JSON.stringify([...projects,project]));
+    window.dispatchEvent(new CustomEvent('xhandle:workspace-authoritative-data-changed',{detail:{source:'project-import'}}));
     onProgress('100% — project imported. Reload to open it and continue saved analyses.');
     return project;
   } catch(error) {

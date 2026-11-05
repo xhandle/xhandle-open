@@ -234,7 +234,7 @@ export default function EngineeringArtifactPanel({
     subsystemRows: kind === ARTIFACT_KINDS.SUBSYSTEM ? [] : loadArtifactRows(ARTIFACT_KINDS.SUBSYSTEM, projectId, repoId),
     designRows: kind === ARTIFACT_KINDS.DESIGN ? [] : loadArtifactRows(ARTIFACT_KINDS.DESIGN, projectId, repoId),
   }));
-  const softwareSource = useMemo(() => softwareRequirementSource(cbaRows), [cbaRows]);
+  const softwareSource = useMemo(() => kind === ARTIFACT_KINDS.SOFTWARE ? softwareRequirementSource(cbaRows) : { rows: [] }, [cbaRows, kind]);
   const currentSourceRows = kind === ARTIFACT_KINDS.SOFTWARE ? softwareSource.rows : parentSourceRows;
   const sourceRowsSignature = useMemo(() => {
     const list = Array.isArray(sourceRows) ? sourceRows : [];
@@ -338,6 +338,9 @@ export default function EngineeringArtifactPanel({
           ['subsystemRows', ARTIFACT_KINDS.SUBSYSTEM],
           ['designRows', ARTIFACT_KINDS.DESIGN],
         ].map(async ([field, artifactKind]) => {
+          // The active collection is already loaded by the main rows effect and
+          // supplied to artifactContext. Reading it again retains a second copy.
+          if (artifactKind === kind) return [];
           const loaded = await readArtifactRowsWithRecovery(artifactKind, projectId, repoId, {
             signal: controller.signal,
             onRetry: () => {

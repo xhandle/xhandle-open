@@ -1,0 +1,115 @@
+{
+  "validation": {
+    "unitTests": 284,
+    "suites": 20,
+    "electronCases": 14,
+    "chromeCases": 14,
+    "runtimeErrors": 0,
+    "liveProviderTest": false
+  },
+  "localRetrieval": {
+    "before": {
+      "artifacts": 22118,
+      "projections": 4745
+    },
+    "results": [
+      {
+        "elapsedMs": 338.59999999403954,
+        "selectedCorrectProject": true,
+        "evidenceCount": 2,
+        "sampleRows": 24,
+        "sampleSources": 1,
+        "overviewReadBytes": 8875,
+        "evidenceTypes": [
+          "project",
+          "repository"
+        ],
+        "migration": {
+          "version": 7,
+          "projectIds": [
+            "d1ba397d-a45d-4bc8-8cfe-abbac6e0fdd3"
+          ],
+          "migratedAt": "2026-11-05T13:34:54.295Z",
+          "artifactCount": 0,
+          "relationshipCount": 0,
+          "errors": [],
+          "durationMs": 99,
+          "reconciledRecords": 0,
+          "sourceChangedDuringMigration": false,
+          "skippedSteps": [
+            "projects"
+          ],
+          "deferredSteps": [
+            "projectData",
+            "generatedReports",
+            "durableProjectAnalysis",
+            "requirements",
+            "codeArchitecture",
+            "codeArchitectureAssurance",
+            "codeIndex",
+            "sysml",
+            "traceability",
+            "verificationTests",
+            "indexedFeatureStores"
+          ],
+          "stepDurationsMs": {},
+          "maintenanceDurationsMs": {
+            "reconciliationMs": 0,
+            "projectionMs": 87
+          }
+        },
+        "heapUsedBytes": 7485831
+      },
+      {
+        "elapsedMs": 139.80000001192093,
+        "selectedCorrectProject": true,
+        "evidenceCount": 2,
+        "sampleRows": 24,
+        "sampleSources": 1,
+        "overviewReadBytes": 8875,
+        "evidenceTypes": [
+          "project",
+          "repository"
+        ],
+        "migration": {
+          "version": 7,
+          "projectIds": [
+            "d1ba397d-a45d-4bc8-8cfe-abbac6e0fdd3"
+          ],
+          "migratedAt": "2026-11-05T13:34:54.295Z",
+          "artifactCount": 0,
+          "relationshipCount": 0,
+          "errors": [],
+          "durationMs": 99,
+          "reconciledRecords": 0,
+          "sourceChangedDuringMigration": false,
+          "skippedSteps": [
+            "projects"
+          ],
+          "deferredSteps": [
+            "projectData",
+            "generatedReports",
+            "durableProjectAnalysis",
+            "requirements",
+            "codeArchitecture",
+            "codeArchitectureAssurance",
+            "codeIndex",
+            "sysml",
+            "traceability",
+            "verificationTests",
+            "indexedFeatureStores"
+          ],
+          "stepDurationsMs": {},
+          "maintenanceDurationsMs": {
+            "reconciliationMs": 0,
+            "projectionMs": 87
+          },
+          "skipped": true,
+          "skipReason": "fresh"
+        },
+        "heapUsedBytes": 12550035
+      }
+    ]
+  },
+  "previewVersion": "0.2.14-preview.20261105.4"
+}

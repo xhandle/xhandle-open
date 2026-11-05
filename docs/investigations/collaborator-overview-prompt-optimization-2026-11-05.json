@@ -1,0 +1,244 @@
+{
+  "date": "2026-11-05",
+  "type": "optimized build, synthetic data, local mock AI; deliberately held storage lock; no live-provider latency measurement",
+  "regressions": {
+    "suites": 10,
+    "passed": 238
+  },
+  "native": [
+    {
+      "mode": "electron",
+      "ok": true,
+      "errors": [],
+      "peakHeapBytes": 61172429,
+      "cases": [
+        {
+          "id": "greeting",
+          "workflows": [
+            "collaborator.context-turn"
+          ]
+        },
+        {
+          "id": "arithmetic",
+          "workflows": [
+            "collaborator.context-turn"
+          ]
+        },
+        {
+          "id": "weather",
+          "workflows": [
+            "collaborator.context-turn"
+          ]
+        },
+        {
+          "id": "visible-screen",
+          "workflows": [
+            "collaborator.context-turn"
+          ]
+        },
+        {
+          "id": "general-non-engineering",
+          "workflows": [
+            "collaborator.context-turn"
+          ]
+        },
+        {
+          "id": "general-engineering",
+          "workflows": [
+            "collaborator.context-turn"
+          ]
+        },
+        {
+          "id": "thread-transform",
+          "workflows": [
+            "collaborator.context-turn"
+          ]
+        },
+        {
+          "id": "thread-shortening",
+          "workflows": [
+            "collaborator.context-turn"
+          ]
+        },
+        {
+          "id": "named-function",
+          "workflows": [
+            "collaborator.context-turn",
+            "collaborator.read-plan",
+            "collaborator.answer"
+          ],
+          "answerEvidenceCopies": 0,
+          "answerRequestCharacters": 14419
+        },
+        {
+          "id": "invalid-context",
+          "workflows": [
+            "collaborator.context-turn"
+          ]
+        },
+        {
+          "id": "project-summary",
+          "workflows": [
+            "collaborator.answer"
+          ],
+          "answerEvidenceCopies": 1,
+          "answerRequestCharacters": 16561
+        },
+        {
+          "id": "interpreted-project-summary",
+          "workflows": [
+            "collaborator.context-turn",
+            "collaborator.context-repair",
+            "collaborator.read-plan",
+            "collaborator.answer"
+          ],
+          "answerEvidenceCopies": 4,
+          "answerRequestCharacters": 17515
+        },
+        {
+          "id": "pasted-project-summary",
+          "workflows": [
+            "collaborator.answer"
+          ],
+          "answerEvidenceCopies": 1,
+          "answerRequestCharacters": 16953
+        },
+        {
+          "id": "technical-function",
+          "workflows": [
+            "collaborator.context-turn",
+            "collaborator.read-plan",
+            "collaborator.answer"
+          ],
+          "answerEvidenceCopies": 4,
+          "answerRequestCharacters": 17892
+        },
+        {
+          "id": "saved-count",
+          "workflows": [
+            "collaborator.answer"
+          ],
+          "answerEvidenceCopies": 0,
+          "answerRequestCharacters": 16042
+        }
+      ]
+    },
+    {
+      "mode": "chrome",
+      "ok": true,
+      "errors": [],
+      "peakHeapBytes": 72957600,
+      "cases": [
+        {
+          "id": "greeting",
+          "workflows": [
+            "collaborator.context-turn"
+          ]
+        },
+        {
+          "id": "arithmetic",
+          "workflows": [
+            "collaborator.context-turn"
+          ]
+        },
+        {
+          "id": "weather",
+          "workflows": [
+            "collaborator.context-turn"
+          ]
+        },
+        {
+          "id": "visible-screen",
+          "workflows": [
+            "collaborator.context-turn"
+          ]
+        },
+        {
+          "id": "general-non-engineering",
+          "workflows": [
+            "collaborator.context-turn"
+          ]
+        },
+        {
+          "id": "general-engineering",
+          "workflows": [
+            "collaborator.context-turn"
+          ]
+        },
+        {
+          "id": "thread-transform",
+          "workflows": [
+            "collaborator.context-turn"
+          ]
+        },
+        {
+          "id": "thread-shortening",
+          "workflows": [
+            "collaborator.context-turn"
+          ]
+        },
+        {
+          "id": "named-function",
+          "workflows": [
+            "collaborator.context-turn",
+            "collaborator.read-plan",
+            "collaborator.answer"
+          ],
+          "answerEvidenceCopies": 0,
+          "answerRequestCharacters": 14419
+        },
+        {
+          "id": "invalid-context",
+          "workflows": [
+            "collaborator.context-turn"
+          ]
+        },
+        {
+          "id": "project-summary",
+          "workflows": [
+            "collaborator.answer"
+          ],
+          "answerEvidenceCopies": 1,
+          "answerRequestCharacters": 16530
+        },
+        {
+          "id": "interpreted-project-summary",
+          "workflows": [
+            "collaborator.context-turn",
+            "collaborator.context-repair",
+            "collaborator.read-plan",
+            "collaborator.answer"
+          ],
+          "answerEvidenceCopies": 4,
+          "answerRequestCharacters": 17515
+        },
+        {
+          "id": "pasted-project-summary",
+          "workflows": [
+            "collaborator.answer"
+          ],
+          "answerEvidenceCopies": 1,
+          "answerRequestCharacters": 16922
+        },
+        {
+          "id": "technical-function",
+          "workflows": [
+            "collaborator.context-turn",
+            "collaborator.read-plan",
+            "collaborator.answer"
+          ],
+          "answerEvidenceCopies": 4,
+          "answerRequestCharacters": 17894
+        },
+        {
+          "id": "saved-count",
+          "workflows": [
+            "collaborator.answer"
+          ],
+          "answerEvidenceCopies": 0,
+          "answerRequestCharacters": 16044
+        }
+      ]
+    }
+  ]
+}

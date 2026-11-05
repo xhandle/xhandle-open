@@ -239,3 +239,13 @@ test('numeric project export/import preserves intentional deletion and suppresse
   expect(await readFirstCbaRowsFromIndexedDB([scope,alias])).toMatchObject({rows:[],found:true});
   expect(await keys()).toContain(`${scope}:storage-deleted`);
 });
+
+test('whole architecture deletion removes its compact query projection atomically',async()=>{
+  const {upsertArtifact}=require('../features/workspace-graph/workspaceGraphRepository');
+  const {openWorkspaceGraphDB}=require('../features/workspace-graph/workspaceGraphDb');
+  await seed([[scope,[]]]);
+  await upsertArtifact({id:'indexed-edge',projectId:'0',workspaceId:'workspace:local',type:'code_architecture_edge',title:'Saved edge',sourceStore:'indexedDB:xhandle/copilot_baseline',sourceKey:scope,createdAt:'2026-11-04',updatedAt:'2026-11-04'});
+  await deleteLogicalStorageItem(item('architecture'),opts());
+  const db=await openWorkspaceGraphDB();
+  try{expect(await db.get('artifacts','indexed-edge')).toBeUndefined();expect(await db.get('artifactIndex','indexed-edge')).toBeUndefined();}finally{db.close();}
+});

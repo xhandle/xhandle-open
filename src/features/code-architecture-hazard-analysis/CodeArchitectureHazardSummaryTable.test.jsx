@@ -284,7 +284,7 @@ it('bounds mounted rows while preserving full filtered count/export model and re
   render({});
   act(()=>jest.runAllTimers());
   expect(host.querySelectorAll('tbody tr').length).toBeLessThan(80);
-  expect(host.textContent).toContain('1000 of 1000');expect(onVisibleSummaryChange.mock.calls.at(-1)[0]).toHaveLength(1001);
+  expect(host.textContent).toContain('1,000 of 1,000 rows match filters');expect(onVisibleSummaryChange.mock.calls.at(-1)[0]).toHaveLength(1001);
   render({highlightedRowIndex:999,focusRequestKey:'last'});
   for(let frame=0;frame<8 && !onRowFocusResolved.mock.calls.length;frame++)act(()=>jest.advanceTimersByTime(16));
   expect(onRowFocusResolved).toHaveBeenCalledWith('last');

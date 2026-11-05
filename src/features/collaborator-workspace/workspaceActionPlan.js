@@ -1,5 +1,5 @@
 const MUTATION_VERBS = "add|append|assign|create|change|correct|delete|edit|link|make|mark|move|remove|rename|replace|set|unlink|update";
-const WORKSPACE_NOUNS = "artifact|cell|code architecture|decomposition|edge|finding|function|hazard|issue|model|node|note|project|report|requirement|risk|row|safety case|table|traceability|it|that|this";
+const WORKSPACE_NOUNS = "artifact|cell|code architecture|decomposition|edge|finding|function|hazard|issue|model|node|note|project|report|requirement|risk|row|safety case|table|traceability";
 const ADVISORY_LANGUAGE = "alternatives?|brainstorm|ideas?|options?|recommend(?:ation|ations|ed|ing)?|suggest(?:ion|ions|ed|ing)?";
 
 export const WORKSPACE_ACTION_OPERATIONS = new Set([
@@ -32,7 +32,11 @@ export function isWorkspaceMutationIntent(value = "") {
   const text = String(value || "").trim();
   if (!text) return false;
   if (isWorkspaceAdvisoryIntent(text)) return false;
-  const hasVerb = new RegExp(`\\b(?:${MUTATION_VERBS})\\b`, "i").test(text);
+  const commandPrefix = "^(?:please\\s+|(?:can|could|would|will)\\s+you\\s+(?:please\\s+)?|i\\s+want\\s+you\\s+to\\s+|go\\s+ahead(?:\\s+and)?\\s+)?";
+  // Match the object being edited, not a supporting reference later in an
+  // explicit saved-record command ("update A-1 using your previous answer").
+  if (new RegExp(`${commandPrefix}(?:${MUTATION_VERBS})\\s+(?:(?:your|this|that|the)\\s+)?(?:(?:previous|last)\\s+)?(?:answer|response|sentence|paragraph|message)\\b`, "i").test(text)) return false;
+  const hasVerb = new RegExp(`${commandPrefix}(?:${MUTATION_VERBS})\\b`, "i").test(text);
   const hasWorkspaceNoun = new RegExp(`\\b(?:${WORKSPACE_NOUNS})s?\\b`, "i").test(text);
   const hypothetical = /^(?:what\s+if|what\s+would|how\s+would|why\s+would|would\s+(?:it|this|that)|could\s+(?:it|this|that)|should\s+(?:we|i))\b/i.test(text);
   return hasVerb && hasWorkspaceNoun && !hypothetical;

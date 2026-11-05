@@ -459,6 +459,8 @@ export default function VnVCenterPro({
   setVnvArtifacts,
   saveProjectPatch,
   projects = [],
+  sourceFocus = null,
+  onSourceFocusHandled,
 }) {
   const [documents, setDocuments] = useState([]);
   const [folders, setFolders] = useState([]);
@@ -498,6 +500,24 @@ export default function VnVCenterPro({
   useEffect(() => { refresh(); }, [refresh]);
 
   useEffect(() => {
+    if (!sourceFocus) return;
+    if (!sourceFocus.documentId) {
+      setMessage('This test is stored as legacy project data. Open a System Test document to edit tests.');
+      setDocument(null); onSourceFocusHandled?.(sourceFocus); return;
+    }
+    const target = loadAllDocs().find(item => item.id === sourceFocus.documentId &&
+      String(item.sourceProjectId ?? item.projectId ?? '') === String(sourceFocus.projectId ?? ''));
+    if (!target) { setMessage('This test case document is no longer available.'); onSourceFocusHandled?.(sourceFocus); return; }
+    setDocument(target);
+    setSelectedTestId(sourceFocus.testId || null);
+    setMessage(sourceFocus.testId && !target.testCases.some(test => test.id === sourceFocus.testId) ? 'This test case is no longer available.' : '');
+    setSelectedFolderId(target.folderId || null);
+    setActiveDocumentId(target.id);
+    setTableFilters({ id: '', title: '', requirementId: '', requirementDetails: '', targetType: '', method: '', status: '' });
+    onSourceFocusHandled?.(sourceFocus);
+  }, [sourceFocus, onSourceFocusHandled]);
+
+  useEffect(() => {
     setGeneration((current) => ({
       ...current,
       sourceProjectId: current.sourceProjectId || activeProjectId || "",
@@ -530,7 +550,7 @@ export default function VnVCenterPro({
   );
 
   const selectedFolderName = folders.find((folder) => folder.id === selectedFolderId)?.name || "All Test Case Documents";
-  const selectedTest = useMemo(() => document?.testCases?.find((test) => test.id === selectedTestId) || document?.testCases?.[0] || null, [document, selectedTestId]);
+  const selectedTest = useMemo(() => selectedTestId ? document?.testCases?.find((test) => test.id === selectedTestId) || null : document?.testCases?.[0] || null, [document, selectedTestId]);
   const stats = useMemo(() => documentStats(document), [document]);
   const requirementDetailsById = useMemo(() => {
     const details = new Map();

@@ -1,3 +1,5 @@
+import { trackWorkspaceGraphSourceChanges } from './features/workspace-graph/workspaceGraphFreshness';
+import { startWorkspaceStorageSession } from './lib/workspaceStorageSession';
 import VirtualTableBody from "./components/VirtualTableBody";
 import { retainWorkspaceProject, persistWorkspaceProjectRemoval } from "./components/retainWorkspaceProject";
 import {readHazardReviewSummary} from './features/code-architecture-hazard-analysis/readHazardReviewSummary';
@@ -109,6 +111,8 @@ import LiteSummaryDiagramReactFlow from './components/LiteSummaryDiagramReactFlo
 import FunctionalDiagramWorkspace, { viewModeForDiagramFocus, viewModeForTableFocus } from './components/FunctionalDiagramWorkspace';
 import { runStorageWrite } from './lib/safeStorage';
 import { generateAgenticRiskReport } from './components/generateAgenticReport';
+import ReportLibrary, { useReportLibrary } from './components/ReportLibrary';
+import { saveGeneratedReport } from './features/project-hazard-analysis/generatedReportStorage';
 import SafetyReportViewer from './components/SafetyReportViewer';
 import ProjectTabSideToolbar, {
   ProjectTabToolbarButton,
@@ -3883,6 +3887,8 @@ function ensureTraceabilityDB() {
 }
 
 function LiteXHandle() {
+    useEffect(() => startWorkspaceStorageSession(), []);
+    useEffect(() => { trackWorkspaceGraphSourceChanges(); }, []);
     const resultsReview = useResultsReview();
     // Local-only open-source builds skip hosted auth and start unlocked.
     const [gate, setGate] = useState({ phase: 'ok', user: { id: 'local-user' }, provider: 'local', last4: null, error: null });
@@ -5991,6 +5997,8 @@ const [vnvArtifacts, setVnvArtifacts] = useState({
   hazardsCoverage: [],
   datasets: [],
 });
+const [vnvSourceFocus, setVnvSourceFocus] = useState(null);
+const handleVnvSourceFocusHandled = useCallback((focus) => setVnvSourceFocus(current => current === focus ? null : current), []);
 
 
 // ── Console (aggregate across ALL projects) ─────────────────────────────
@@ -6710,241 +6718,14 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
     // Destructive cleanup belongs to permanent deletion in Storage.
   };
 
-  // Legacy Collaborator fallback only. Native LLM grounding is built from
-  // src/features/workspace-graph inside XHandleCopilotView before each request.
+  // Specialized functional queries request this lazily. Ordinary chat receives
+  // only a view descriptor; no legacy workspace/cache hydration on App renders.
   function getActiveProjectContext() {
-    const map = readProjectMap();
-    const proj = projects.find(p => p.id === activeProjectId) || null;
-    const persisted = activeProjectId ? (map?.[activeProjectId] || {}) : {};
-
-    // ---- Pull from localStorage (safe, synchronous) ----
-    const ls = localStorage;
-    const lsKeys = Object.keys(ls);
-
-    // 1) Per-app/project blob you already use
-    let projectDataLS = {};
-    try { projectDataLS = JSON.parse(ls.getItem("xhandle.projectData") || "{}"); } catch {}
-    const storedProj = activeProjectId ? (projectDataLS?.[activeProjectId] || {}) : {};
-
-    // 2) Extra requirements cache (if present)
-    let reqsLS = [];
-    try { reqsLS = JSON.parse(ls.getItem("xhandle:requirements") || "[]"); } catch {}
-
-    let sysmlModelsLS = [];
-    try {
-      const parsed = JSON.parse(ls.getItem("xhandle.designManagement.sysmlV2.models") || "[]");
-      sysmlModelsLS = Array.isArray(parsed) ? parsed : [];
-    } catch {}
-
-    // 3) LiteSummaryDiagram blocks (capture all variants to give the model more context)
-    const liteSummaryKeys = lsKeys.filter(k => k.startsWith("LiteSummaryDiagram::"));
-    const liteSummaries = [];
-    for (const k of liteSummaryKeys) {
-      try {
-        const v = JSON.parse(ls.getItem(k) || "null");
-        if (v) liteSummaries.push({ key: k, headers: v.headers, nodes: v.nodes?.slice?.(0, 50) || v.nodes });
-      } catch {}
-    }
-
-    // 4) Diagram snapshots (positions) – keep a manageable tail
-    const diagramKeys = lsKeys.filter(k => k.startsWith("diagram:positions:")).sort();
-    const lastDiagKeys = diagramKeys.slice(-12); // tail to keep context compact
-    const diagramSnapshots = [];
-    for (const k of lastDiagKeys) {
-      try {
-        const v = JSON.parse(ls.getItem(k) || "null");
-        if (v) {
-          diagramSnapshots.push({
-            key: k,
-            count: Array.isArray(v) ? v.length : 0,
-            sample: Array.isArray(v) ? v.slice(0, 12) : v
-          });
-        }
-      } catch {}
-    }
-
-    // 5) Code-based architecture (CBA): scoped project/repo summaries plus legacy fallback
-    const cbaKeys = lsKeys.filter(k => k.startsWith("cba:"));
-    const codeArchitecture = [];
-    for (const k of cbaKeys) {
-      try {
-        const rows = JSON.parse(ls.getItem(k) || "[]");
-        if (Array.isArray(rows) && rows.length) {
-          codeArchitecture.push(...rows.map(r => ({ ...r, _source: k })));
-        }
-      } catch {}
-    }
-    const codeArchitectureProjectSummaries = (codeArchitectureProjects || []).map((project) => {
-      const folder = project.folderId ? codeArchitectureFolders.find((entry) => entry.id === project.folderId) : null;
-      const repos = Array.isArray(project.repos) ? project.repos : [];
-      return {
-        id: project.id,
-        name: project.name,
-        folder: folder ? { id: folder.id, name: folder.name } : null,
-        activeRepoId: project.activeRepoId || null,
-        repos: repos.map((repoConfig) => {
-          let meta = null;
-          try { meta = JSON.parse(ls.getItem(codeArchitectureMetaKey(project.id, repoConfig.id)) || "null"); } catch {}
-          const isActive = project.id === activeCodeArchitectureProjectId && repoConfig.id === activeCodeArchitectureRepo?.id;
-          return {
-            id: repoConfig.id,
-            repoId: repoConfig.repoId,
-            repoName: repoConfig.repoName,
-            repoUrl: repoConfig.repoUrl,
-            branch: repoConfig.branch || "",
-            commitSha: repoConfig.commitSha || "",
-            active: Boolean(isActive),
-            rowCount: meta?.rowCount || (isActive && Array.isArray(cbaTableData) ? cbaTableData.length : 0),
-            rowSample: isActive && Array.isArray(cbaTableData) ? cbaTableData.slice(0, 8) : [],
-            updatedAt: meta?.updatedAt || repoConfig.updatedAt || null,
-          };
-        }),
-      };
-    });
-
-    // 6) A few convenience hints (what you already had, preserved)
-    const owner = ls.getItem("repoOwner") || undefined;
-    const repo  = ls.getItem("repoName") || undefined;
-
-    const compactRows = (rows, limit = 40) => (Array.isArray(rows) ? rows.slice(0, limit) : []);
-    const summarizeProject = (project) => {
-      const data = projectDataLS?.[project.id] || map?.[project.id] || {};
-      return {
-        id: project.id,
-        name: project.name,
-        createdAt: project.createdAt || null,
-        counts: {
-          requirements: Array.isArray(data.requirements) ? data.requirements.length : 0,
-          functionalDecomposition: Array.isArray(data.responseRows) ? data.responseRows.length : 0,
-          riskRegister: Array.isArray(data.riskRegister) ? data.riskRegister.length : 0,
-          riskSummaryRows: Array.isArray(data.analysisResult?.Summary) ? Math.max(data.analysisResult.Summary.length - 1, 0) : 0,
-          tests: Array.isArray(data.vnvArtifacts?.tests || data.vnvArtifacts?.testCases)
-            ? (data.vnvArtifacts?.tests || data.vnvArtifacts?.testCases).length
-            : 0,
-        },
-        samples: {
-          requirements: compactRows(data.requirements, 8),
-          functionalDecomposition: compactRows(data.responseRows, 8),
-          riskRegister: compactRows(data.riskRegister, 8),
-          riskSummarySheet: compactRows(data.analysisResult?.Summary, 8),
-          tests: compactRows(data.vnvArtifacts?.tests || data.vnvArtifacts?.testCases, 8),
-        },
-      };
+    const project = projects.find(item => item.id === activeProjectId);
+    return {
+      project: project ? {id: project.id, name: project.name} : null,
+      functionalDecomposition: responseRows || [],
     };
-
-    const workspaceProjects = projects.map(summarizeProject);
-    const workspaceSysMLModels = sysmlModelsLS.map((model) => ({
-      id: model.id,
-      projectId: model.projectId || null,
-      name: model.name,
-      description: model.description || "",
-      activeView: model.activeView || null,
-      elementCount: Array.isArray(model.elements) ? model.elements.length : 0,
-      relationshipCount: Array.isArray(model.relationships) ? model.relationships.length : 0,
-      elements: compactRows(model.elements, 25).map((element) => ({
-        id: element.id,
-        type: element.type,
-        name: element.name,
-        description: element.description,
-        ownerId: element.ownerId,
-        traceLinks: compactRows(element.traceLinks, 5),
-      })),
-      relationships: compactRows(model.relationships, 25).map((relationship) => ({
-        id: relationship.id,
-        type: relationship.type,
-        sourceId: relationship.sourceId,
-        targetId: relationship.targetId,
-        label: relationship.label,
-      })),
-    }));
-    const designProvider = getActionProvider("requirements");
-    const designManagementState = designProvider?.getState?.() || null;
-    const organizationCalibration = getProjectOrganizationCalibration(activeProjectId);
-
-    // ---- Compose a single context (prefer live state → persisted → LS blobs) ----
-    const ctx = {
-      // meta / hinting. xCopilot reasons across local workspace data by default.
-      scope: "workspace",
-      project: proj ? { id: proj.id, name: proj.name, createdAt: proj.createdAt } : null,
-      focus: {
-        project: proj ? { id: proj.id, name: proj.name, createdAt: proj.createdAt } : null,
-        section,
-        activeTab,
-        screen: {
-          feature: section,
-          view: activeTab || null,
-          designManagement: designManagementState,
-        },
-      },
-      projectHint, // you already memoize owner/repo/baselineKey elsewhere
-      organizationCalibration,
-
-      workspace: {
-        projects: workspaceProjects,
-        projectCount: projects.length,
-        codeArchitecture: {
-          projects: codeArchitectureProjectSummaries,
-          projectCount: codeArchitectureProjects.length,
-          folderCount: codeArchitectureFolders.length,
-          activeProjectId: activeCodeArchitectureProjectId || null,
-          activeRepoId: activeCodeArchitectureRepo?.id || null,
-          legacyRows: codeArchitecture.slice(0, 40),
-        },
-        activeProjectId: activeProjectId || null,
-        requirements: compactRows(reqsLS, 80),
-        sysmlModels: workspaceSysMLModels,
-        legacyCodeArchitectureRows: compactRows(codeArchitecture, 120),
-        liteSummaries,
-        diagramSnapshots,
-      },
-
-      // core working data
-      requirements:
-        (requirements?.length ? requirements : null) ??
-        (persisted.requirements?.length ? persisted.requirements : null) ??
-        (storedProj.requirements?.length ? storedProj.requirements : null) ??
-        reqsLS,
-
-      functionalDecomposition:
-        (responseRows?.length ? responseRows : null) ??
-        (persisted.responseRows?.length ? persisted.responseRows : null) ??
-        (storedProj.responseRows?.length ? storedProj.responseRows : null) ??
-        [],
-
-      riskRegister:
-        (riskRegister?.length ? riskRegister : null) ??
-        (persisted.riskRegister?.length ? persisted.riskRegister : null) ??
-        (storedProj.riskRegister?.length ? storedProj.riskRegister : null) ??
-        [],
-
-      // generated analysis (Summary sheet)
-      riskSummarySheet:
-        (analysisResult?.Summary?.length ? analysisResult.Summary : null) ??
-        (persisted.analysisResult?.Summary?.length ? persisted.analysisResult.Summary : null) ??
-        (storedProj.analysisResult?.Summary?.length ? storedProj.analysisResult.Summary : null) ??
-        null,
-
-      // ALL CBA tables found in LS (tagged with their source key)
-      codeArchitecture,
-
-      // extra sources the Copilot can leverage for reasoning
-      liteSummaries,
-      diagramSnapshots,
-
-      // lightweight metadata
-      sourcesMeta: {
-        lsKeyCount: lsKeys.length,
-        cbaKeyCount: cbaKeys.length,
-        liteSummaryCount: liteSummaries.length,
-        diagramSnapshotCount: diagramSnapshots.length,
-        repoOwner: owner,
-        repoName: repo,
-        workspaceProjectCount: projects.length,
-        sysmlModelCount: workspaceSysMLModels.length,
-      },
-    };
-
-    return ctx;
   }
 
   function getCollaboratorAppFocus() {
@@ -7002,7 +6783,11 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
     }
     return {
       section,
-      activeTab,
+      viewKind: section === "copilot" ? "collaborator" : viewedProjectId ? "project-detail" : `${section}-dashboard`,
+      viewTitle: section === "copilot" ? "Collaborator conversation" : viewingCodeArchitecture && !viewedProjectId ? "Code architecture dashboard" : viewingFunctionalProject && !viewedProjectId ? "Projects dashboard" : viewedProjectName || section,
+      visibleProjectCount: viewingCodeArchitecture && !viewedProjectId ? codeArchitectureProjects.length : viewingFunctionalProject && !viewedProjectId ? projects.length : undefined,
+      visibleProjects: (viewingCodeArchitecture ? codeArchitectureProjects : viewingFunctionalProject ? projects : []).slice(0, 12).map(project => ({id: project.id, name: project.name})),
+      activeTab: viewingCodeArchitecture ? codeArchitectureWorkspaceTab : activeTab,
       viewedProjectId,
       viewedProjectName,
       viewedProjectType: viewingCodeArchitecture
@@ -7015,6 +6800,7 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
       activeCodeArchitectureRepoId: activeCodeArchitectureRepo?.id || null,
       activeCodeArchitectureRepoKey: activeCodeArchitectureRowsKey || null,
       activeCodeArchitectureWorkspaceTab: viewingCodeArchitecture ? codeArchitectureWorkspaceTab : null,
+      activeCodeArchitectureHazardRunId: viewingCodeArchitecture && String(codeArchitectureHazardRun?.projectId) === String(activeCodeArchitectureProjectId) && [activeCodeArchitectureRepo?.id, activeCodeArchitectureRepo?.repoId, activeCodeArchitectureRepo?.repoName, activeCodeArchitectureRepo?.owner && activeCodeArchitectureRepo?.repo ? `${activeCodeArchitectureRepo.owner}/${activeCodeArchitectureRepo.repo}` : null].filter(Boolean).map(String).includes(String(codeArchitectureHazardRun?.repoId)) ? codeArchitectureHazardRun?.id || null : null,
       activeCodeArchitectureRepo: activeCodeArchitectureRepo ? {
         id: activeCodeArchitectureRepo.id,
         owner: activeCodeArchitectureRepo.owner || "",
@@ -7890,6 +7676,7 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [isSafetyIssueReportFullscreen, setIsSafetyIssueReportFullscreen] = useState(false);
   const [progress, setProgress] = useState({ step: 0, total: stepDescriptionsMap["STPA"].total });
   const [agentReportResult, setAgentReportResult] = useState(null); // NEW: persisted report state
+  const [reportSourceFocus, setReportSourceFocus] = useState(null);
   const [isGeneratingAgentReport, setIsGeneratingAgentReport] = useState(false);
   const [functionalDiagramImage, setFunctionalDiagramImage] = useState(null);
   const [showPromptWizard, setShowPromptWizard] = useState(true);
@@ -7897,6 +7684,25 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [promptMode, setPromptMode] = useState('structured');
   const conversationalProjectModeAvailable = supportsConversationalProjectMode(gate.provider);
   const [loadedProjectId, setLoadedProjectId] = useState(null);
+  const [reportNotice, setReportNotice] = useState('');
+  const reportProjectRef = useRef(activeProjectId);
+  reportProjectRef.current = activeProjectId;
+  const reportSelectionRef = useRef(null);
+  reportSelectionRef.current = { projectId: activeProjectId, libraryId: agentReportResult?.libraryId, report: agentReportResult?.report ?? agentReportResult?.markdown ?? '' };
+  const reportLibrary = useReportLibrary({
+    projectId: activeProjectId,
+    requestedId: String(reportSourceFocus?.projectId) === String(activeProjectId) ? reportSourceFocus?.libraryId : '',
+    ready: projectLoaded && !loadingProjectId && loadedProjectId === activeProjectId &&
+      (section === 'reports' || (section === 'projects' && activeTab === 'Reporting')),
+    legacyReport: agentReportResult,
+    legacyDiagramImage: functionalDiagramImage,
+    onOpen: (saved) => {
+      setAgentReportResult(saved);
+      setReportSourceFocus(null);
+      setReportNotice('');
+      if (saved?.reportType && REPORT_TYPE_OPTIONS.includes(saved.reportType)) setReportType(saved.reportType);
+    },
+  });
   // Bulk selection + bulk edit for Risk Inbox
 const [inboxSelection, setInboxSelection] = useState(new Set());
 const [inboxBulk, setInboxBulk] = useState({
@@ -8162,6 +7968,7 @@ useEffect(() => {
     setExpandedHazardVariantKeys(new Set());
     setRiskMethod(normalizeProjectHazardMethod(data?.riskMethod));
     setAgentReportResult(data?.agentReportResult || null); // NEW: restore report
+    setFunctionalDiagramImage(null);
     const legacySafetyIssueReport = String(data?.riskAssessmentReportMarkdown || "");
     setRiskAssessmentReportMarkdown(legacySafetyIssueReport);
     loadSafetyIssueReportRecord(projectIdForLoad)
@@ -8389,7 +8196,12 @@ useEffect(() => {
     responseRows,
     diagramCategories,
     riskMethod,
-	    agentReportResult,
+	    agentReportResult: agentReportResult ? {
+      report: agentReportResult.report ?? agentReportResult.markdown ?? '',
+      libraryId: agentReportResult.libraryId, projectId: activeProjectId,
+      reportType: agentReportResult.reportType, title: agentReportResult.title,
+      generatedAt: agentReportResult.generatedAt, status: agentReportResult.status,
+    } : null,
     requirements,        // ← add this
 	    hazardOperationalContexts,
 	    hazardNeedsReviewResolutions,
@@ -8497,11 +8309,16 @@ const handleOpenHazardDiagramTarget = useCallback((target) => {
 // Accept an optional prompt override for Custom Report
 const handleGenerateAgentReport = async (customPromptOverride = null) => {
   if (!analysisResult?.Summary) return;
+  if (isGeneratingAgentReport) return;
+  const projectIdAtStart = activeProjectId;
+  const reportTypeAtStart = reportType;
+  const diagramAtStart = functionalDiagramImage;
+  setReportNotice('');
 
   // --- start activity
   const activityId = `agent-${activeProjectId || "default"}`;
   startActivity(activityId, {
-    title: "Generating safety report",
+    title: `Generating ${reportTypeAtStart}`,
     step: 1,
     total: Object.keys(agentStepDescriptions).length,
     message: agentStepDescriptions[1] || "Starting…"
@@ -8542,32 +8359,75 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         updateActivity(activityId, {
           step: p?.step || 0,
           total: p?.total || Object.keys(agentStepDescriptions).length,
-          message: agentStepDescriptions[p?.step] || "Working…"
+          message: p?.message || agentStepDescriptions[p?.step] || "Working…"
         });
       },
       reportType,
       customPrompt: customPromptToSend,
     });
 
-    setAgentReportResult(result);
-    finishActivity(activityId, "success", "Report ready");
+    const entry = {
+      report: result.report, reportType: reportTypeAtStart, projectId: projectIdAtStart,
+      generatedAt: new Date().toISOString(), functionalDiagramImage: diagramAtStart,
+      title: reportTypeAtStart, status: 'complete',
+    };
+    try {
+      const saved = await saveGeneratedReport(projectIdAtStart, entry);
+      if (reportProjectRef.current === projectIdAtStart) setAgentReportResult(saved);
+      finishActivity(activityId, "success", "Report saved to the library");
+    } catch {
+      if (reportProjectRef.current === projectIdAtStart) {
+        setAgentReportResult(entry);
+        setReportNotice('Report generated, but it could not be saved to the library. Keep it open and export it before closing this page.');
+      }
+      finishActivity(activityId, 'error', 'Report generated, but saving to the library failed.');
+    }
   } catch (err) {
-    console.error("Agentic report failed:", err);
+    if (err.stage === 'Report writing' && err.partialReport) {
+      const draft = { report: err.partialReport, reportType: reportTypeAtStart,
+        projectId: projectIdAtStart, generatedAt: new Date().toISOString(),
+        title: reportTypeAtStart, status: 'draft', functionalDiagramImage: diagramAtStart };
+      let saved = draft;
+      try { saved = await saveGeneratedReport(projectIdAtStart, draft); } catch {}
+      if (reportProjectRef.current === projectIdAtStart) {
+        setAgentReportResult(saved);
+        setReportNotice(saved.libraryId ? 'An incomplete draft was saved to the library.' : 'An incomplete draft is available below, but could not be saved. Keep it open and export it.');
+      }
+    }
+    // Errors may carry a recoverable draft. Keep report text out of diagnostics.
+    console.error("Agentic report failed:", err?.message || 'Report generation failed');
     finishActivity(activityId, "error", err?.message || "Report failed");
-    alert(err?.message || "Sorry — report generation failed.");
+    if (reportProjectRef.current === projectIdAtStart) alert(err?.message || "Sorry — report generation failed.");
   } finally {
     setIsGeneratingAgentReport(false);
   }
 };
 
 
+  const handleReportDiagramChange = async (markdown) => {
+    const projectId = activeProjectId;
+    const originalText = agentReportResult?.report ?? agentReportResult?.markdown ?? '';
+    const originalId = agentReportResult?.libraryId;
+    const saved = await saveGeneratedReport(projectId, {
+      report: markdown, reportType: agentReportResult?.reportType || reportType,
+      title: `${agentReportResult?.reportType || reportType} — graphical diagrams`,
+      status: agentReportResult?.status || 'complete',
+      functionalDiagramImage: agentReportResult?.libraryId ? agentReportResult.functionalDiagramImage : functionalDiagramImage,
+    });
+    if (reportSelectionRef.current?.projectId === projectId && reportSelectionRef.current.libraryId === originalId && reportSelectionRef.current.report === originalText) setAgentReportResult(saved);
+  };
+
   // Capture diagram image after analysis completes
   useEffect(() => {
     if (!analysisResult) return;
     if (functionalViewMode === 'table') return;
     if (!responseRows?.length) return;
-    const waitForDiagram = async (maxRetries = 10, delay = 200) => {
+    if (section !== 'projects') return;
+    if (activeTab !== 'Functional Diagramming' && !(activeTab === 'Hazard Analysis' && hazardViewMode === 'split')) return;
+    let cancelled = false;
+    const waitForDiagram = async (maxRetries = 50, delay = 200) => {
       for (let i = 0; i < maxRetries; i++) {
+        if (cancelled) return false;
         if (diagramRef.current?.isReady?.()) return true;
         await new Promise((r) => setTimeout(r, delay));
       }
@@ -8577,10 +8437,13 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       const isReady = await waitForDiagram();
       if (!isReady) return;
       const image = await diagramRef.current.exportAsImage();
-      setFunctionalDiagramImage(image);
+      if (!cancelled && image) setFunctionalDiagramImage(image);
     };
-    exportDiagram();
-  }, [analysisResult, functionalViewMode, responseRows?.length]);
+    exportDiagram().catch(() => {
+      if (!cancelled) console.warn('Report diagram capture could not be completed.');
+    });
+    return () => { cancelled = true; };
+  }, [activeProjectId, activeTab, section, hazardViewMode, analysisResult, functionalViewMode, responseRows?.length]);
 
   const draftHazardHeaders = useMemo(() => getProjectDraftHazardHeaders(riskMethod), [riskMethod]);
   useEffect(() => {
@@ -11158,6 +11021,18 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     if (projectId) {
       setActiveProjectId(projectId);
       setActiveProjectFolderId(null);
+    }
+
+    if (artifact.type === "generated_report") {
+      setReportSourceFocus({ projectId, libraryId: artifact.sourceId });
+      setSection("reports");
+      return { ok: true, artifactId, destination: "reports" };
+    }
+
+    if (artifact.type === "test_case") {
+      setVnvSourceFocus({ projectId, documentId: artifact.structuredData?.documentId || '', testId: artifact.structuredData?.id || '' });
+      setSection("vnv");
+      return { ok: true, artifactId, destination: "vnv" };
     }
 
     if (artifact.type === "functional_decomposition_row" && Number.isFinite(rowIndex)) {
@@ -16282,7 +16157,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
           >
               <XHandleCopilotView
                 projectHint={projectHint}
-                copilotContext={getActiveProjectContext()}
+                getProjectContext={getActiveProjectContext}
                 appFocus={getCollaboratorAppFocus()}
                 onRemoveActiveSelection={clearCollaboratorActiveSelection}
                 reviewer={gate.user}
@@ -17223,7 +17098,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
         {section === 'copilot' && !dockOpen && (
   <XHandleCopilotView
     projectHint={projectHint}
-    copilotContext={getActiveProjectContext()}
+    getProjectContext={getActiveProjectContext}
     appFocus={getCollaboratorAppFocus()}
     onRemoveActiveSelection={clearCollaboratorActiveSelection}
     reviewer={gate.user}
@@ -17247,13 +17122,16 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
 })}
 
 {section === 'reports' && (
-  <div className="flex h-full min-h-0 w-full flex-col overflow-auto bg-white px-3 py-1 md:px-5 lg:px-7">
+  <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-white px-3 pt-1 pb-3 md:px-5 lg:px-7">
     <h1 className="sr-only">Reports</h1>
+    {activeProjectId && <ReportLibrary library={reportLibrary} fitViewport />}
+    {reportNotice && <p role="status" className="mb-3 text-sm text-amber-800">{reportNotice}</p>}
+    {agentReportResult?.status === 'draft' && <p role="status" className="mb-3 text-sm text-amber-800">Incomplete draft — report generation did not finish.</p>}
     {!activeProjectId ? (
       <div className="rounded-xl border bg-white p-6 text-sm text-gray-600">
         Select a project from the Projects sidebar to generate reports.
       </div>
-    ) : !analysisResult?.Summary ? (
+    ) : !analysisResult?.Summary && !agentReportResult ? (
       <div className="rounded-xl border bg-white p-6 text-sm text-gray-600">
         <p className="mb-2">No risk profile yet.</p>
         <p>
@@ -17263,7 +17141,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
       </div>
     ) : (
       <>
-        <div className="mb-4 flex flex-wrap items-center gap-3">
+        <div className="mb-4 flex shrink-0 flex-wrap items-center gap-3">
           <div className="flex items-center gap-3">
             <select
               value={reportType}
@@ -17298,7 +17176,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                     handleGenerateAgentReport();
                   }
                 }}
-                disabled={isGeneratingAgentReport}
+                disabled={isGeneratingAgentReport || !analysisResult?.Summary}
                 className="px-3 py-2 text-white rounded bg-[#2D7DFE] hover:bg-[#1E61D6]"
                 title="Generate a full AI report from the completed risk profile"
               >
@@ -17308,7 +17186,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
           </div>
         </div>
 
-        <div className="mb-6 rounded-2xl border bg-white p-4">
+        <div className="mb-4 shrink-0 rounded-2xl border bg-white p-4">
           <div className="text-sm font-semibold mb-2">Exports</div>
           <div className="flex flex-wrap gap-3">
             <button
@@ -17342,18 +17220,23 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
         </div>
 
         {agentReportResult ? (
-          <section className="mt-2 w-full">
-            <div className="rounded-2xl border border-gray-200 bg-white shadow-sm p-4 space-y-6">
-              <div className="w-full overflow-x-auto overflow-y-auto max-h-[calc(100vh-310px)]
+          <section className="mt-2 flex min-h-0 w-full flex-1 flex-col">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+              <div role="region" aria-label="Report document" tabIndex={0}
+                   style={{ scrollbarGutter: 'stable' }}
+                   className="min-h-0 w-full min-w-0 flex-1 overflow-y-auto overscroll-contain pb-4
                                 [&_.prose]:max-w-none
                                 [&_.prose]:w-full
                                 [&_.prose]:px-0
+                                [&_.prose]:pb-4
                                 [&_.prose_img]:max-w-none
                                 [&_.prose_img]:w-full
                                 [&_.prose_table]:min-w-full">
                 <SafetyReportViewer
+                  embedded
                   reportText={displayedReport}
-                  functionalDiagramImage={functionalDiagramImage}
+                  functionalDiagramImage={agentReportResult.libraryId ? agentReportResult.functionalDiagramImage : functionalDiagramImage}
+                  onReportChange={handleReportDiagramChange}
                 />
               </div>
             </div>
@@ -20019,6 +19902,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                     ) : (
                     <div className="prose prose-sm max-w-none prose-headings:text-gray-900 prose-table:text-xs">
                       <SafetyReportViewer
+                        embedded
                         reportText={activeSafetyIssueReportMarkdown}
                         expanded={isSafetyIssueReportFullscreen}
                         onOpenSourceRow={(sourceRowNumber) => {
@@ -20058,8 +19942,11 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
 
 {activeTab === 'Reporting' && (
   <section className="mt-2">
+    <ReportLibrary library={reportLibrary} />
+    {reportNotice && <p role="status" className="mb-3 text-sm text-amber-800">{reportNotice}</p>}
+    {agentReportResult?.status === 'draft' && <p role="status" className="mb-3 text-sm text-amber-800">Incomplete draft — report generation did not finish.</p>}
     {/* Gate: need a finished risk profile to generate a report */}
-    {!analysisResult?.Summary ? (
+    {!analysisResult?.Summary && !agentReportResult ? (
       <div className="rounded-xl border bg-white p-6 text-gray-600 text-sm">
         <p className="mb-2">No risk profile yet.</p>
         <p>
@@ -20107,7 +19994,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
         handleGenerateAgentReport();
       }
     }}
-    disabled={isGeneratingAgentReport}
+    disabled={isGeneratingAgentReport || !analysisResult?.Summary}
     className="px-3 py-2 text-white rounded bg-[#2D7DFE] hover:bg-[#1E61D6]"
     title="Generate a full AI report from the completed risk profile"
   >
@@ -20158,7 +20045,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
         {agentReportResult ? (
           <section className="mt-6 w-full">
             <div className="rounded-2xl border border-gray-200 bg-white shadow-sm p-4 space-y-6">
-            <div className="w-full overflow-x-auto overflow-y-auto max-h-[510px]
+            <div className="w-full min-w-0
                               [&_.prose]:max-w-none
                               [&_.prose]:w-full
                               [&_.prose]:px-0
@@ -20167,8 +20054,10 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                               [&_.prose_table]:min-w-full">
 
                 <SafetyReportViewer
+                  embedded
                   reportText={displayedReport}
-                  functionalDiagramImage={functionalDiagramImage}
+                  functionalDiagramImage={agentReportResult.libraryId ? agentReportResult.functionalDiagramImage : functionalDiagramImage}
+                  onReportChange={handleReportDiagramChange}
                 />
               </div>
             </div>
@@ -21123,6 +21012,8 @@ const updateRiskInProject = async (projectId, predicate) => {
 {section === 'vnv' && (
   <div className="flex-1 min-h-0 overflow-hidden bg-white p-1 w-full">
     <VnVCenterPro
+      sourceFocus={vnvSourceFocus}
+      onSourceFocusHandled={handleVnvSourceFocusHandled}
       activeProject={activeProject}
       activeProjectId={activeProjectId}
       analysisResult={analysisResult}

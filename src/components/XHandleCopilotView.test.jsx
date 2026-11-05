@@ -1726,6 +1726,29 @@ describe("subsystem generation prompting", () => {
 });
 
 describe("renderCopilotContext", () => {
+  it('sends overview and catalog evidence once while preserving citations, coverage and unique fields',()=>{
+    const {fitWorkspaceReadEvidence,renderFittedWorkspaceReadEvidence,renderWorkspaceReadEvidence}=require('../features/workspace-graph/workspaceReadSession');
+    const row={id:'catalog',projectId:'p',type:'project',title:'Example App',summary:'CATALOG_DESCRIPTION',updatedAt:'v1',structuredData:{name:'Example App'}};
+    const citation={artifactId:row.id,projectId:'p',title:'Example App',sourceKey:'saved-project'};
+    const overview={rows:[{from:'UNIQUE_OVERVIEW_FROM',to:'UNIQUE_OVERVIEW_TO',description:'Saved relationship'}],sources:[{sourceKey:'cba:p:r'}]};
+    const context={relevantArtifacts:[row],projects:[{id:'p',name:'Example App'}],citations:[citation],diagnostics:{overview,migration:{errors:[]}}};
+    const evidence={results:[{operation:'overview',rows:[{...row,extra:'TARGET_ONLY_FIELD'}],citations:[citation],excerpt:{text:JSON.stringify(overview)},coverage:{state:'partial',complete:false,reason:'Sample, not an audit'}}]};
+    const fitted=fitWorkspaceReadEvidence(evidence);
+    const before=renderCopilotContext(context)+renderWorkspaceReadEvidence(evidence);
+    const after=renderCopilotContext(context,fitted)+renderFittedWorkspaceReadEvidence(fitted);
+    expect(after.split('UNIQUE_OVERVIEW_FROM')).toHaveLength(2);
+    expect(after.split('CATALOG_DESCRIPTION')).toHaveLength(2);
+    expect(after).toContain('TARGET_ONLY_FIELD');expect(after).toContain('saved-project');expect(after).toContain('Sample, not an audit');
+    expect(after.length).toBeLessThan(before.length);
+    expect(context.diagnostics.overview).toBe(overview);
+  });
+  it("keeps social-message context small without touching legacy workspace bodies", () => {
+    const context = { conversationOnly: true };
+    Object.defineProperty(context, 'functionalDecomposition', { get: () => { throw new Error('Workspace should not be loaded for a greeting'); } });
+    const rendered = renderCopilotContext(context);
+    expect(rendered).toContain('Saved workspace data has not been loaded');
+    expect(rendered.length).toBeLessThan(500);
+  });
   it("renders canonical workspace graph context without crashing", () => {
     const rendered = renderCopilotContext({
       scope: {
@@ -1974,5 +1997,30 @@ describe('sent attachment presentation', () => {
     expect(revisePromptMessage(message, '').content).toContain(context.fileText);
     expect(promptDisplayText({role:'user',content:'Old prompt'})).toBe('Old prompt');
     expect(buildHistoryUserMessage([], 'Plain prompt')).toEqual({role:'user',content:'Plain prompt'});
+  });
+});
+
+
+describe('workspace capability scope regressions', () => {
+  const { buildScopedContext, parseScopeFromPrompt } = require('./XHandleCopilotView');
+  test.each([
+    ['What are the software requirements?', 'code_architecture_software_requirement'],
+    ['Summarize the system requirements', 'code_architecture_system_requirement'],
+    ['Explain these hazards', 'code_architecture_hazard_row'],
+    ['Explain this function', 'code_architecture_edge'],
+    ['Summarize my saved reports', 'generated_report'],
+    ['Which tests failed?', 'test_case'],
+  ])('%s keeps relevant %s records', (query, type) => {
+    const scope = parseScopeFromPrompt(query);
+    const result = buildScopedContext({ relevantArtifacts: [{id:'item',type}], citations:[{artifactId:'item'}] }, scope);
+    expect(result.relevantArtifacts).toHaveLength(1);
+    expect(result.citations).toHaveLength(1);
+  });
+  it('never cuts off citation metadata while rendering a large graph sample',()=>{
+    const relevantArtifacts=Array.from({length:18},(_,i)=>({id:'item-'+i,type:'requirement',title:'Title '+i,summary:'x'.repeat(900),structuredData:'y'.repeat(900)}));
+    const prompt=renderCopilotContext({relevantArtifacts,citations:relevantArtifacts.map(row=>({artifactId:row.id,title:row.title})),scope:{query:'requirements'}});
+    const sample=JSON.parse(prompt.split('Canonical graph sample (truncated):\n')[1]);
+    expect(sample.coverage.omittedRecords).toBeGreaterThan(0);
+    for(const row of sample.relevantArtifacts)expect(sample.citations.some(c=>c.artifactId===row.id)).toBe(true);
   });
 });

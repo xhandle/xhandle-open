@@ -46,6 +46,8 @@ function summarizeChatInput(messages = []) {
 function createAIRequestMetrics({
   logger,
   requestId,
+  clientTraceId,
+  startedAt: suppliedStartedAt,
   workflow,
   provider,
   model,
@@ -55,12 +57,15 @@ function createAIRequestMetrics({
   maxOutputTokens,
   now = Date.now,
 }) {
-  const startedAt = now();
+  const startedAt = suppliedStartedAt ?? now();
+  let providerStartedAt=null;
   let firstTokenAt = null;
   let outputTextChars = 0;
   let completed = false;
+  let finalReport = null;
   const base = {
     requestId,
+    clientTraceId: typeof clientTraceId==='string'&&/^ct-[a-z0-9-]{10,80}$/i.test(clientTraceId)?clientTraceId:null,
     workflow: sanitizeWorkflowName(workflow),
     provider,
     model,
@@ -82,23 +87,27 @@ function createAIRequestMetrics({
     outputTextChars += length;
   };
   const finish = ({ status = "completed", finishReason = "stop", errorCode = null } = {}) => {
-    if (completed) return;
+    if (completed) return finalReport;
     completed = true;
     const endedAt = now();
-    logger?.info?.(`[ai-request] ${JSON.stringify({
+    finalReport={
       event: "finished",
       ...base,
       status,
       finishReason,
       errorCode,
+      providerStartOffsetMs: providerStartedAt==null?null:providerStartedAt-startedAt,
+      providerTimeToFirstTokenMs: firstTokenAt==null||providerStartedAt==null?null:firstTokenAt-providerStartedAt,
       timeToFirstTokenMs: firstTokenAt == null ? null : firstTokenAt - startedAt,
       elapsedMs: endedAt - startedAt,
       outputTextChars,
       approximateOutputTokens: Math.ceil(outputTextChars / 4),
-    })}`);
+    };
+    logger?.info?.(`[ai-request] ${JSON.stringify(finalReport)}`);
+    return {...finalReport};
   };
 
-  return { addOutput, finish, markFirstToken };
+  return { addOutput, finish, markFirstToken, markProviderStarted:()=>{if(providerStartedAt==null)providerStartedAt=now();} };
 }
 
 module.exports = {

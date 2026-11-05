@@ -22,8 +22,12 @@ const providerNeutralWorkflows = [
 test("major text-generation workflows use the provider-neutral chat endpoint and auth", () => {
   providerNeutralWorkflows.forEach((relativePath) => {
     const source = fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
-    assert.match(source, /\/api\/chat/, relativePath + " must use /api/chat");
+    const transport = relativePath === 'src/components/XHandleCopilotView.jsx'
+      ? fs.readFileSync(path.join(repoRoot,'src/features/collaborator-performance/chatTransport.js'),'utf8') : source;
+    assert.match(transport, /\/api\/chat/, relativePath + " must use /api/chat");
+    if (transport !== source) assert.match(source,/requestCollaboratorChat/, 'Collaborator must use the provider-neutral transport');
     assert.match(source, /buildAIAuthOpts/, relativePath + " must forward the selected provider");
     assert.doesNotMatch(source, /\/api\/openai/i, relativePath + " must not force OpenAI");
+    assert.doesNotMatch(transport, /\/api\/openai/i, relativePath + " transport must not force OpenAI");
   });
 });

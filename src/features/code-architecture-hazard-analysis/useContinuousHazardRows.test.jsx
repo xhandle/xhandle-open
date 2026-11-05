@@ -123,3 +123,14 @@ test('rejects a zero-progress page instead of spinning and starts no requests be
  await render({layout});await settle();
  expect(requestHazardRows).toHaveBeenCalledTimes(1);expect(model.error.message).toMatch(/invalid or empty range/);expect(model.loading).toBe(false);
 });
+
+test('filter changes reuse cached absolute rows but saved revisions invalidate them',async()=>{
+ await render({requestedRowIndices:range(0,100)});await settle();
+ const snapshot=model.rowsByIndex,calls=requestHazardRows.mock.calls.length;
+ await render({queryKey:'filtered',layout:{...layout,total:1},requestedRowIndices:[75]});await settle();
+ expect(model.rowsByIndex).toBe(snapshot);
+ expect(requestHazardRows).toHaveBeenCalledTimes(calls);
+ await render({run:{...run,[PAGED_HAZARD]:{...run[PAGED_HAZARD],revision:'new'}}});await settle();
+ expect(model.rowsByIndex).not.toBe(snapshot);
+ expect(requestHazardRows.mock.calls.length).toBeGreaterThan(calls);
+});

@@ -10,7 +10,10 @@ it('continues beyond the old retry budget and eventually returns actual saved ro
  const onRetry=jest.fn();
  const result=readArtifactRowsWithRecovery('system','project','repo',{onRetry});
  for(const delay of [2000,4000,8000,16000,30000]) {
-   await Promise.resolve();await Promise.resolve();
+   // Let the diagnostic wrapper and failed read settle before advancing the
+   // retry clock. Advancing before a timer exists silently loses that interval.
+   for(let tick=0;tick<20 && jest.getTimerCount()===0;tick++) await Promise.resolve();
+   expect(jest.getTimerCount()).toBe(1);
    jest.advanceTimersByTime(delay);
  }
  await expect(result).resolves.toEqual([{id:'SYS-1'}]);

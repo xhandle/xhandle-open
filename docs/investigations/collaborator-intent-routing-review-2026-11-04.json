@@ -1,0 +1,1208 @@
+{
+  "date": "2026-11-04",
+  "disposition": "Confirmed routing defects; application unchanged; not fixed by this review",
+  "sourceVerification": {
+    "applicationFiles": 867,
+    "changedFiles": []
+  },
+  "regressionChecks": {
+    "passed": 128,
+    "suites": 6,
+    "log": "/private/tmp/xhandle-routing-review-regressions.log"
+  },
+  "classifierProbe": {
+    "note": "Direct observation of current pure helpers. Full App has earlier specialized routes; these are not semantic model evaluations.",
+    "results": [
+      {
+        "id": "greeting",
+        "prompt": "hey",
+        "expected": [
+          "conversation"
+        ],
+        "flags": {},
+        "casual": true,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "direct-shortcut"
+      },
+      {
+        "id": "greeting-variation",
+        "prompt": "Hi, can you help me?",
+        "expected": [
+          "conversation"
+        ],
+        "flags": {},
+        "casual": false,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "workspace-default"
+      },
+      {
+        "id": "weather",
+        "prompt": "Whats the weather today?",
+        "expected": [
+          "external-capability"
+        ],
+        "flags": {},
+        "casual": false,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "workspace-default"
+      },
+      {
+        "id": "implicit-weather",
+        "prompt": "Should I bring an umbrella tomorrow?",
+        "expected": [
+          "external-capability"
+        ],
+        "flags": {},
+        "casual": false,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "workspace-default"
+      },
+      {
+        "id": "other-language",
+        "prompt": "\u00bfQu\u00e9 tiempo hace hoy?",
+        "expected": [
+          "external-capability"
+        ],
+        "flags": {},
+        "casual": false,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "workspace-default"
+      },
+      {
+        "id": "general",
+        "prompt": "Explain recursion in simple terms.",
+        "expected": [
+          "general-knowledge"
+        ],
+        "flags": {},
+        "casual": false,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "workspace-default"
+      },
+      {
+        "id": "general-project-definition",
+        "prompt": "What is a project?",
+        "expected": [
+          "general-knowledge"
+        ],
+        "flags": {},
+        "casual": false,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "workspace-default"
+      },
+      {
+        "id": "known-engineering-definition",
+        "prompt": "What is a software requirement?",
+        "expected": [
+          "general-knowledge"
+        ],
+        "flags": {},
+        "casual": false,
+        "general": true,
+        "mutation": false,
+        "candidateRoute": "direct-shortcut"
+      },
+      {
+        "id": "definition-paraphrase",
+        "prompt": "Could you explain software requirements?",
+        "expected": [
+          "general-knowledge"
+        ],
+        "flags": {},
+        "casual": false,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "workspace-default"
+      },
+      {
+        "id": "screen",
+        "prompt": "what are we looking at?",
+        "expected": [
+          "view-metadata"
+        ],
+        "flags": {},
+        "casual": false,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "workspace-default"
+      },
+      {
+        "id": "screen-tab",
+        "prompt": "Which tab am I on?",
+        "expected": [
+          "view-metadata"
+        ],
+        "flags": {},
+        "casual": false,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "workspace-default"
+      },
+      {
+        "id": "history-transform",
+        "prompt": "Translate your previous answer into Spanish.",
+        "expected": [
+          "conversation-history"
+        ],
+        "flags": {},
+        "casual": false,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "workspace-default"
+      },
+      {
+        "id": "history-shorten",
+        "prompt": "Make it shorter.",
+        "expected": [
+          "conversation-history"
+        ],
+        "flags": {},
+        "casual": false,
+        "general": false,
+        "mutation": true,
+        "candidateRoute": "workspace-action-preflight"
+      },
+      {
+        "id": "history-edit",
+        "prompt": "Remove that last sentence.",
+        "expected": [
+          "conversation-history"
+        ],
+        "flags": {},
+        "casual": false,
+        "general": false,
+        "mutation": true,
+        "candidateRoute": "workspace-action-preflight"
+      },
+      {
+        "id": "attachment",
+        "prompt": "Summarize the attached text.",
+        "expected": [
+          "attachments"
+        ],
+        "flags": {
+          "hasAttachments": true
+        },
+        "casual": false,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "workspace-default"
+      },
+      {
+        "id": "attached-weather-report",
+        "prompt": "Summarize this weather report.",
+        "expected": [
+          "attachments"
+        ],
+        "flags": {
+          "hasAttachments": true
+        },
+        "casual": false,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "workspace-default"
+      },
+      {
+        "id": "mixed",
+        "prompt": "Explain hazard analysis, then count our saved hazard rows.",
+        "expected": [
+          "general-knowledge",
+          "workspace"
+        ],
+        "flags": {},
+        "casual": false,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "workspace-default"
+      },
+      {
+        "id": "mixed-attachment",
+        "prompt": "Compare the attached specification with SWR-1.",
+        "expected": [
+          "attachments",
+          "workspace"
+        ],
+        "flags": {
+          "hasAttachments": true
+        },
+        "casual": false,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "workspace-default"
+      },
+      {
+        "id": "saved-count",
+        "prompt": "How many software requirements are there?",
+        "expected": [
+          "workspace"
+        ],
+        "flags": {},
+        "casual": false,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "workspace-default"
+      },
+      {
+        "id": "saved-id",
+        "prompt": "Read SWR-1.",
+        "expected": [
+          "workspace"
+        ],
+        "flags": {},
+        "casual": false,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "workspace-default"
+      },
+      {
+        "id": "saved-weather-function",
+        "prompt": "What does WeatherEstimator do in this project?",
+        "expected": [
+          "workspace"
+        ],
+        "flags": {},
+        "casual": false,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "workspace-default"
+      },
+      {
+        "id": "saved-weather-hazard",
+        "prompt": "What is our latest weather-related hazard?",
+        "expected": [
+          "workspace"
+        ],
+        "flags": {},
+        "casual": false,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "workspace-default"
+      },
+      {
+        "id": "named-function",
+        "prompt": "Explain what Launch does.",
+        "expected": [
+          "workspace-or-clarify"
+        ],
+        "flags": {},
+        "casual": false,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "workspace-default"
+      },
+      {
+        "id": "selected-review",
+        "prompt": "Review the selected hazard row.",
+        "expected": [
+          "selection",
+          "workspace-as-needed"
+        ],
+        "flags": {},
+        "casual": false,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "workspace-default"
+      },
+      {
+        "id": "action",
+        "prompt": "Delete that hazard row.",
+        "expected": [
+          "confirmed-action"
+        ],
+        "flags": {},
+        "casual": false,
+        "general": false,
+        "mutation": true,
+        "candidateRoute": "workspace-action-preflight"
+      },
+      {
+        "id": "ambiguous",
+        "prompt": "What about the second one?",
+        "expected": [
+          "conversation-referent-or-clarify"
+        ],
+        "flags": {},
+        "casual": false,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "workspace-default"
+      },
+      {
+        "id": "pending-social",
+        "prompt": "hey",
+        "expected": [
+          "conversation"
+        ],
+        "flags": {
+          "hasPendingDecision": true
+        },
+        "casual": false,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "workspace-default"
+      },
+      {
+        "id": "pinned-definition",
+        "prompt": "What is a software requirement?",
+        "expected": [
+          "general-knowledge"
+        ],
+        "flags": {
+          "hasExplicitProject": true
+        },
+        "casual": false,
+        "general": false,
+        "mutation": false,
+        "candidateRoute": "workspace-default"
+      }
+    ]
+  },
+  "productionAppProbes": [
+    {
+      "runtime": "electron",
+      "view": "project-dock",
+      "diagnosticCompleted": true,
+      "runtimeErrors": [],
+      "cases": [
+        {
+          "id": "greeting",
+          "question": "hey",
+          "expected": "conversation",
+          "startedBeforeRelease": true,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "completeMs": 1259,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "claude-haiku-5-5",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": false,
+              "inputTextChars": 7133,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "weather",
+          "question": "Whats the weather today?",
+          "expected": "external-information or honest capability limitation",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": true,
+            "busy": true
+          },
+          "completeMs": 1706,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "claude-haiku-5-5",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 18413,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "visible-screen",
+          "question": "what are we looking at?",
+          "expected": "lightweight visible view metadata",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": true,
+            "busy": true
+          },
+          "completeMs": 1618,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "claude-haiku-5-5",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 18745,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "general-non-engineering",
+          "question": "Explain recursion in simple terms.",
+          "expected": "general knowledge",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": true,
+            "busy": true
+          },
+          "completeMs": 1626,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "claude-haiku-5-5",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 19126,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "general-engineering",
+          "question": "What is a software requirement?",
+          "expected": "general knowledge",
+          "startedBeforeRelease": true,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "completeMs": 1214,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "claude-haiku-5-5",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": false,
+              "inputTextChars": 8426,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "thread-transform",
+          "question": "Translate your previous answer into Spanish.",
+          "expected": "conversation history only",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": true,
+            "busy": true
+          },
+          "completeMs": 1619,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "claude-haiku-5-5",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 19706,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "thread-shortening",
+          "question": "Make it shorter.",
+          "expected": "conversation history only",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": true
+          },
+          "completeMs": 1294,
+          "requests": [
+            {
+              "workflow": "collaborator.request",
+              "stream": false,
+              "model": "claude-haiku-5-5",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 9026,
+              "hasCompleteCount": false
+            },
+            {
+              "workflow": "collaborator.request",
+              "stream": false,
+              "model": "claude-haiku-5-5",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 9211,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "saved-count",
+          "question": "How many requirements are there for Acceptance Project?",
+          "expected": "targeted saved-data read",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": true,
+            "busy": true
+          },
+          "completeMs": 1627,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "claude-haiku-5-5",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 16158,
+              "hasCompleteCount": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "runtime": "chrome",
+      "view": "project-dock",
+      "diagnosticCompleted": true,
+      "runtimeErrors": [],
+      "cases": [
+        {
+          "id": "greeting",
+          "question": "hey",
+          "expected": "conversation",
+          "startedBeforeRelease": true,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "completeMs": 1234,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "gpt-5",
+              "effort": "high",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": false,
+              "inputTextChars": 7131,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "weather",
+          "question": "Whats the weather today?",
+          "expected": "external-information or honest capability limitation",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": true,
+            "busy": true
+          },
+          "completeMs": 1708,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "gpt-5",
+              "effort": "high",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 18411,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "visible-screen",
+          "question": "what are we looking at?",
+          "expected": "lightweight visible view metadata",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": true,
+            "busy": true
+          },
+          "completeMs": 1622,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "gpt-5",
+              "effort": "high",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 18743,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "general-non-engineering",
+          "question": "Explain recursion in simple terms.",
+          "expected": "general knowledge",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": true,
+            "busy": true
+          },
+          "completeMs": 1619,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "gpt-5",
+              "effort": "high",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 19124,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "general-engineering",
+          "question": "What is a software requirement?",
+          "expected": "general knowledge",
+          "startedBeforeRelease": true,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "completeMs": 1215,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "gpt-5",
+              "effort": "high",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": false,
+              "inputTextChars": 8424,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "thread-transform",
+          "question": "Translate your previous answer into Spanish.",
+          "expected": "conversation history only",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": true,
+            "busy": true
+          },
+          "completeMs": 1622,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "gpt-5",
+              "effort": "high",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 19704,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "thread-shortening",
+          "question": "Make it shorter.",
+          "expected": "conversation history only",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": true
+          },
+          "completeMs": 1294,
+          "requests": [
+            {
+              "workflow": "collaborator.request",
+              "stream": false,
+              "model": "gpt-5",
+              "effort": "high",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 9024,
+              "hasCompleteCount": false
+            },
+            {
+              "workflow": "collaborator.request",
+              "stream": false,
+              "model": "gpt-5",
+              "effort": "high",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 9209,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "saved-count",
+          "question": "How many requirements are there for Acceptance Project?",
+          "expected": "targeted saved-data read",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": true,
+            "busy": true
+          },
+          "completeMs": 1625,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "gpt-5",
+              "effort": "high",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 16156,
+              "hasCompleteCount": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "runtime": "electron",
+      "view": "dashboard",
+      "diagnosticCompleted": true,
+      "runtimeErrors": [],
+      "cases": [
+        {
+          "id": "greeting",
+          "question": "hey",
+          "expected": "conversation",
+          "startedBeforeRelease": true,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "completeMs": 1258,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "claude-haiku-5-5",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": false,
+              "inputTextChars": 7133,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "weather",
+          "question": "Whats the weather today?",
+          "expected": "external-information or honest capability limitation",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": true,
+            "busy": true
+          },
+          "completeMs": 1712,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "claude-haiku-5-5",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 19104,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "visible-screen",
+          "question": "what are we looking at?",
+          "expected": "lightweight visible view metadata",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": true,
+            "busy": true
+          },
+          "completeMs": 1629,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "claude-haiku-5-5",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": false,
+              "inputTextChars": 17073,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "general-non-engineering",
+          "question": "Explain recursion in simple terms.",
+          "expected": "general knowledge",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": true,
+            "busy": true
+          },
+          "completeMs": 1626,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "claude-haiku-5-5",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 16437,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "general-engineering",
+          "question": "What is a software requirement?",
+          "expected": "general knowledge",
+          "startedBeforeRelease": true,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "completeMs": 1215,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "claude-haiku-5-5",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": false,
+              "inputTextChars": 8361,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "thread-transform",
+          "question": "Translate your previous answer into Spanish.",
+          "expected": "conversation history only",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": true,
+            "busy": true
+          },
+          "completeMs": 1627,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "claude-haiku-5-5",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 20332,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "thread-shortening",
+          "question": "Make it shorter.",
+          "expected": "conversation history only",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": true
+          },
+          "completeMs": 1298,
+          "requests": [
+            {
+              "workflow": "collaborator.request",
+              "stream": false,
+              "model": "claude-haiku-5-5",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 7932,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "saved-count",
+          "question": "How many requirements are there for Acceptance Project?",
+          "expected": "targeted saved-data read",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": true,
+            "busy": true
+          },
+          "completeMs": 1711,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "claude-haiku-5-5",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 15905,
+              "hasCompleteCount": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "runtime": "chrome",
+      "view": "full-page",
+      "diagnosticCompleted": true,
+      "runtimeErrors": [],
+      "cases": [
+        {
+          "id": "greeting",
+          "question": "hey",
+          "expected": "conversation",
+          "startedBeforeRelease": true,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "completeMs": 1247,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "gemini-3.6-flash",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": false,
+              "inputTextChars": 7133,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "weather",
+          "question": "Whats the weather today?",
+          "expected": "external-information or honest capability limitation",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": true,
+            "busy": true
+          },
+          "completeMs": 1711,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "gemini-3.6-flash",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 19064,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "visible-screen",
+          "question": "what are we looking at?",
+          "expected": "lightweight visible view metadata",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": true,
+            "busy": true
+          },
+          "completeMs": 1628,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "gemini-3.6-flash",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": false,
+              "inputTextChars": 17033,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "general-non-engineering",
+          "question": "Explain recursion in simple terms.",
+          "expected": "general knowledge",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": true,
+            "busy": true
+          },
+          "completeMs": 1628,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "gemini-3.6-flash",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 16397,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "general-engineering",
+          "question": "What is a software requirement?",
+          "expected": "general knowledge",
+          "startedBeforeRelease": true,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": false
+          },
+          "completeMs": 1215,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "gemini-3.6-flash",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": false,
+              "inputTextChars": 8361,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "thread-transform",
+          "question": "Translate your previous answer into Spanish.",
+          "expected": "conversation history only",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": true,
+            "busy": true
+          },
+          "completeMs": 1629,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "gemini-3.6-flash",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 20292,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "thread-shortening",
+          "question": "Make it shorter.",
+          "expected": "conversation history only",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": false,
+            "busy": true
+          },
+          "completeMs": 1301,
+          "requests": [
+            {
+              "workflow": "collaborator.request",
+              "stream": false,
+              "model": "gemini-3.6-flash",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 7901,
+              "hasCompleteCount": false
+            }
+          ]
+        },
+        {
+          "id": "saved-count",
+          "question": "How many requirements are there for Acceptance Project?",
+          "expected": "targeted saved-data read",
+          "startedBeforeRelease": false,
+          "blockedSample": {
+            "lock": "held",
+            "retrieval": true,
+            "busy": true
+          },
+          "completeMs": 1637,
+          "requests": [
+            {
+              "workflow": "collaborator.answer",
+              "stream": true,
+              "model": "gemini-3.6-flash",
+              "effort": "medium",
+              "activeAnswers": 0,
+              "containsWorkspaceSentinel": true,
+              "inputTextChars": 15865,
+              "hasCompleteCount": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "confirmationProbe": {
+    "diagnosticCompleted": true,
+    "runtimeErrors": [],
+    "observation": {
+      "planCreatedThroughActualApp": true,
+      "proposalInitiallyUnapplied": true,
+      "latestQuestion": "Should I keep my next response concise?",
+      "reply": "yes",
+      "changedFixtureRequirement": true,
+      "productBehaviorIncorrect": true,
+      "requestsAfterYes": []
+    }
+  },
+  "limitations": [
+    "All AI responses were local mocks; no live model accuracy or provider latency claim.",
+    "Held-lock sampling and completion times include an intentional 1.1-second observation window.",
+    "Synthetic profiles only; the running user preview and installed workspace were not operated on.",
+    "The successful diagnostic confirmation probe demonstrates incorrect product behavior, not a passing safety acceptance gate."
+  ]
+}

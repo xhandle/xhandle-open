@@ -1,10 +1,19 @@
+import 'fake-indexeddb/auto';
 import {
   migrateLegacyStorageToWorkspaceGraph,
   migrateLegacyStorageToWorkspaceGraphIfStale,
 } from "./legacyWorkspaceGraphMigrator";
-import { upsertArtifacts, upsertProject, upsertRelationships, upsertSourceFile } from "./workspaceGraphRepository";
+import { upsertArtifacts, upsertProject, upsertRelationships, upsertSourceFiles } from "./workspaceGraphRepository";
+jest.mock("./workspaceGraphQueries",()=>({yieldIndexWork:async()=>{},ensureWorkspaceProjection:async()=>{}}));
+jest.mock("./workspaceGraphDb",()=>{
+ let rows=new Map();
+ return {resetTestIndexState:()=>{rows=new Map();},openWorkspaceGraphDB:async()=>({getAll:async()=>[...rows.values()],close:()=>{},transaction:()=>({store:{put:async row=>{rows.set(row.id,row);},delete:async id=>rows.delete(id)},done:Promise.resolve()})})};
+});
+
 
 jest.mock("./workspaceGraphRepository", () => ({
+  getArtifact: jest.fn(async()=>null),
+  reconcileWorkspaceGraphSources: jest.fn(async () => 0),
   upsertArtifacts: jest.fn(async (rows) => rows),
   upsertEvidence: jest.fn(async (row) => row),
   upsertFolder: jest.fn(async (row) => row),
@@ -12,7 +21,7 @@ jest.mock("./workspaceGraphRepository", () => ({
   upsertRelationships: jest.fn(async (rows) => rows),
   upsertReview: jest.fn(async (row) => row),
   upsertRun: jest.fn(async (row) => row),
-  upsertSourceFile: jest.fn(async (row) => row),
+  upsertSourceFiles: jest.fn(async (rows) => rows),
 }));
 
 function installIndexedDbMock(databases: Record<string, Record<string, any[]>> = {}) {
@@ -27,9 +36,12 @@ function installIndexedDbMock(databases: Record<string, Record<string, any[]>> =
         },
         transaction: (storeName: string) => ({
           objectStore: () => ({
+            getAllKeys: (range: any, limit: number) => {
+              const req:any={};setTimeout(()=>{req.result=(dbStores[storeName]||[]).map(row=>row.key??row.id).filter(key=>key!=null&&(!range||key>range.lower)).sort().slice(0,limit);req.onsuccess?.();},0);return req;
+            },
             get: (key: string) => {
               const req: any = {};
-              setTimeout(()=>{req.result=(dbStores[storeName] || []).find(row=>row.key===key);req.onsuccess?.();},0);
+              setTimeout(()=>{req.result=(dbStores[storeName] || []).find(row=>(row.key??row.id)===key);req.onsuccess?.();},0);
               return req;
             },
             openCursor: () => {
@@ -69,6 +81,7 @@ function installIndexedDbMock(databases: Record<string, Record<string, any[]>> =
 describe("migrateLegacyStorageToWorkspaceGraph", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    require("./workspaceGraphDb").resetTestIndexState();
     localStorage.clear();
     installIndexedDbMock();
   });
@@ -80,10 +93,23 @@ describe("migrateLegacyStorageToWorkspaceGraph", () => {
       { key: 'code:local:one:v2:main.js', value: { sourceType: 'local', sourceId: 'one', snapshotId: 'v2', path: 'main.js', content: 'three' } },
     ] } });
     await migrateLegacyStorageToWorkspaceGraph();
-    const artifacts = (upsertArtifacts as jest.Mock).mock.calls[0][0].filter((item: any) => item.type === 'source_file');
+    const artifacts = (upsertArtifacts as jest.Mock).mock.calls.flatMap(call=>call[0]).filter((item: any) => item.type === 'source_file');
     expect(artifacts).toHaveLength(3);
     expect(new Set(artifacts.map((item: any) => item.id)).size).toBe(3);
-    expect((upsertSourceFile as jest.Mock).mock.calls.map(call => call[0].repoId)).toEqual(['local:one', 'local:two', 'local:one']);
+    expect((upsertSourceFiles as jest.Mock).mock.calls.flatMap(call => call[0]).map(row=>row.repoId).sort()).toEqual(['local:one', 'local:one', 'local:two']);
+  });
+
+  it('batches source mirrors and artifact writes instead of opening a transaction per file',async()=>{
+    installIndexedDbMock({xhandle:{code_index:Array.from({length:260},(_,i)=>({key:`code:file:repo:file${i}.js`,value:{path:`file${i}.js`,content:'sample',updatedAt:'2026-11-04'}}))}});
+    const progress=jest.fn(()=>{throw Error('Telemetry must not interrupt indexing');});
+    const result=await migrateLegacyStorageToWorkspaceGraph({onProgress:progress});
+    expect(result.errors).toEqual([]);
+    const batches=(upsertSourceFiles as jest.Mock).mock.calls.map(call=>call[0]);
+    expect(batches.map(rows=>rows.length)).toEqual([128,128,4]);
+    const artifacts=(upsertArtifacts as jest.Mock).mock.calls.map(call=>call[0]).filter(rows=>rows.some(row=>row.type==='source_file'));
+    expect(artifacts.map(rows=>rows.length)).toEqual([256,4]);
+    expect(batches.flat().every(row=>row.sourceKey.startsWith('code:file:repo:'))).toBe(true);
+    expect(progress).toHaveBeenCalled();
   });
 
   it("converts xhandle.projectData rows into functional decomposition artifacts", async () => {
@@ -98,8 +124,8 @@ describe("migrateLegacyStorageToWorkspaceGraph", () => {
 
     await migrateLegacyStorageToWorkspaceGraph();
 
-    const artifacts = (upsertArtifacts as jest.Mock).mock.calls[0][0];
-    const relationships = (upsertRelationships as jest.Mock).mock.calls[0][0];
+    const artifacts = (upsertArtifacts as jest.Mock).mock.calls.flatMap(call=>call[0]);
+    const relationships = (upsertRelationships as jest.Mock).mock.calls.flatMap(call=>call[0]);
     expect(artifacts).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: "functional_decomposition_row",
@@ -141,7 +167,7 @@ describe("migrateLegacyStorageToWorkspaceGraph", () => {
 
     await migrateLegacyStorageToWorkspaceGraph();
 
-    const artifacts = (upsertArtifacts as jest.Mock).mock.calls[0][0];
+    const artifacts = (upsertArtifacts as jest.Mock).mock.calls.flatMap(call=>call[0]);
     const hazardArtifacts = artifacts.filter((artifact: any) => artifact.type === "hazard_analysis_row");
     expect(hazardArtifacts).toHaveLength(1);
     expect(hazardArtifacts[0]).toEqual(expect.objectContaining({
@@ -177,7 +203,7 @@ describe("migrateLegacyStorageToWorkspaceGraph", () => {
 
     await migrateLegacyStorageToWorkspaceGraph();
 
-    const artifacts = (upsertArtifacts as jest.Mock).mock.calls[0][0];
+    const artifacts = (upsertArtifacts as jest.Mock).mock.calls.flatMap(call=>call[0]);
     const hazards = artifacts.filter((artifact: any) => artifact.type === "hazard_analysis_row");
     expect(hazards).toHaveLength(2);
     expect(hazards.map((artifact: any) => artifact.structuredData.rowIndex)).toEqual([6, 7]);
@@ -201,7 +227,7 @@ describe("migrateLegacyStorageToWorkspaceGraph", () => {
 
     await migrateLegacyStorageToWorkspaceGraph();
 
-    const artifacts = (upsertArtifacts as jest.Mock).mock.calls[0][0];
+    const artifacts = (upsertArtifacts as jest.Mock).mock.calls.flatMap(call=>call[0]);
     expect(artifacts).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: "code_architecture_edge",
@@ -248,7 +274,7 @@ describe("migrateLegacyStorageToWorkspaceGraph", () => {
       projectType: "code-based-architecture",
       sourceStore: "localStorage:xhandle.codeArchitectureProjects",
     }));
-    const artifacts = (upsertArtifacts as jest.Mock).mock.calls[0][0];
+    const artifacts = (upsertArtifacts as jest.Mock).mock.calls.flatMap(call=>call[0]);
     expect(artifacts).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: "project",
@@ -278,7 +304,7 @@ describe("migrateLegacyStorageToWorkspaceGraph", () => {
 
     await migrateLegacyStorageToWorkspaceGraph();
 
-    const artifacts = (upsertArtifacts as jest.Mock).mock.calls[0][0];
+    const artifacts = (upsertArtifacts as jest.Mock).mock.calls.flatMap(call=>call[0]);
     expect(artifacts).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: "code_architecture_hazard_row",
@@ -299,7 +325,7 @@ describe("migrateLegacyStorageToWorkspaceGraph", () => {
     expect(first.skipped).toBeUndefined();
     expect(second.skipped).toBe(true);
     expect(third.skipped).toBeUndefined();
-    expect(upsertArtifacts).toHaveBeenCalledTimes(2);
+    expect(require("./workspaceGraphRepository").reconcileWorkspaceGraphSources).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -312,7 +338,7 @@ it('hydrates chunked source records and excludes storage chunks from workspace a
   {key:part,value:JSON.stringify(['object',Object.entries(value).map(([name,value])=>[name,{value}])])},
  ]}});
  await migrateLegacyStorageToWorkspaceGraph();
- const files=(upsertSourceFile as jest.Mock).mock.calls.map(call=>call[0]);
+ const files=(upsertSourceFiles as jest.Mock).mock.calls.flatMap(call=>call[0]);
  expect(files).toHaveLength(1);
  expect(files[0].repoId).toBe('local:chunked');
 });

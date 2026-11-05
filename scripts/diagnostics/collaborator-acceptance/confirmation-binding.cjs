@@ -1,0 +1,98 @@
+// Actual optimized App, synthetic storage and deterministic local provider only.
+// node full-app.cjs chrome|electron [absolute build directory]
+const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),http=require('node:http'),assert=require('node:assert/strict'),{spawn}=require('node:child_process');
+const mode=process.argv[2],root=path.resolve(__dirname,'../../..'),build=path.resolve(process.argv[3]||path.join(root,'build'));
+const provider=process.env.XHANDLE_ACCEPTANCE_PROVIDER||'openai',model=process.env.XHANDLE_ACCEPTANCE_MODEL||'gpt-5',effort=process.env.XHANDLE_ACCEPTANCE_EFFORT||'high';
+if(!['chrome','electron'].includes(mode))throw Error('Specify chrome or electron');
+const out=fs.mkdtempSync(path.join(os.tmpdir(),'xhandle-collaborator-acceptance-'));
+const profile=path.join(out,'profile');fs.mkdirSync(profile);
+const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const result={mode,out,checks:[],requests:[],errors:[],timings:[]};let processHandle,ws,browserWs,server,cdp,origin;
+let activeAnswers=0;
+const hash=(...parts)=>{const raw=parts.join(':');let n=0;for(const c of raw)n=((n<<5)-n+c.charCodeAt(0))|0;return 'artifact:'+encodeURIComponent(raw).replace(/%/g,'').slice(0,150)+':'+Math.abs(n).toString(36);};
+const reportArtifact=hash('generated-report','acceptance','saved-report');
+function connect(url,onEvent=()=>{}){return new Promise((resolve,reject)=>{const socket=new WebSocket(url),pending=new Map();let id=0;socket.onopen=()=>resolve({socket,call:(method,params={})=>new Promise((done,fail)=>{pending.set(++id,{done,fail});socket.send(JSON.stringify({id,method,params}));})});socket.onerror=reject;socket.onmessage=event=>{const value=JSON.parse(event.data);if(!value.id){onEvent(value);return;}const job=pending.get(value.id);pending.delete(value.id);value.error?job?.fail(Error(JSON.stringify(value.error))):job?.done(value.result);};});}
+async function evaluate(expression){const data=await cdp('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(data.exceptionDetails)throw Error(data.exceptionDetails.exception?.description||data.exceptionDetails.text);return data.result.value;}
+async function wait(expression,label,timeout=45000){const start=Date.now();while(Date.now()-start<timeout){try{if(await evaluate(expression))return;}catch(error){if(!/Inspected target navigated|Execution context was destroyed|Cannot find context/.test(error.message))throw error;}await sleep(80);}throw Error('Timed out: '+label+'; '+(await evaluate('document.body.innerText')).slice(-1800));}
+const clickText=text=>wait(`(()=>{const el=[...document.querySelectorAll('button')].find(el=>el.textContent.trim()===${JSON.stringify(text)});if(!el)return false;el.click();return true;})()`,'click '+text);
+async function ask(question){await evaluate(`(()=>{const input=[...document.querySelectorAll('textarea')].find(el=>el.placeholder==='Ask Collaborator');if(!input)throw Error('Missing composer');input.focus();Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,${JSON.stringify(question)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`);await sleep(100);await cdp('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});await cdp('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});}
+async function main(){
+ server=http.createServer(async(req,res)=>{
+  res.setHeader('Access-Control-Allow-Origin','*');res.setHeader('Access-Control-Allow-Headers','*');
+  if(req.method==='OPTIONS'){res.end();return;}
+  const url=new URL(req.url,'http://localhost');
+  if(url.pathname==='/seed.html'){res.setHeader('Content-Type','text/html');res.end('<!doctype html><title>Synthetic storage setup</title>');return;}
+  if(url.pathname==='/api/chat'){
+   let raw='';for await(const part of req)raw+=part;const body=JSON.parse(raw);const workflow=body.xhandleWorkflow||'unspecified';
+   const user=[...(body.messages||[])].reverse().find(row=>row.role==='user')?.content||'';
+   result.requests.push({workflow,stream:body.stream===true,model:req.headers['x-ai-model'],effort:req.headers['x-ai-effort'],activeAnswers,containsWorkspaceSentinel:raw.includes('ROUTING_REVIEW_SENTINEL'),inputTextChars:raw.length,hasCompleteCount:raw.includes('count\\":2')&&raw.includes('complete\\":true')});
+   if(workflow==='collaborator.read-plan'){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({choices:[{message:{content:JSON.stringify({calls:[{operation:'query',types:['generated_report'],limit:4}]})}}]}));return;}
+   if(!body.stream){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({choices:[{message:{content:workflow==='collaborator.request'&&String(user).includes('REVIEW_BUILD_PENDING_PLAN')?JSON.stringify({intent:'mutate',summary:'Synthetic pending requirement edit',actions:[{id:'review-action',operation:'update',target:{artifactId:hash('requirement','A-1'),type:'requirement',projectId:'acceptance',sourceId:'A-1',title:'Synthetic requirement'},field:'title',value:'CONFIRMATION_CONTEXT_FAILURE_CHANGED_REQUIREMENT'}]}):(workflow==='unspecified'||workflow==='collaborator.request')?JSON.stringify({intent:'clarify',clarification:'ROUTING_REVIEW_ACTION_CLARIFICATION',actions:[]}):'Acceptance Chat'}}]}));return;}
+   activeAnswers++;res.writeHead(200,{'Content-Type':'text/event-stream','x-ai-request-id':'acceptance-'+result.requests.length,'x-ai-provider-used':provider==='anthropic'?'claude':provider,'x-ai-model-used':model,'x-ai-effort-used':effort});res.write(': connected\n\n');
+   let answer=String(user).includes('Ask me whether your next answer')?'Should I keep my next response concise?':String(user).trim()==='hey'?'GREETING_COMPLETE: Hello!':String(user).includes('What is a software requirement')?'DEFINITION_COMPLETE: A software requirement describes required software behavior.':String(user).includes('Show all reports')?'REPORT_LIST_COMPLETE: Saved acceptance report.':String(user).includes('SLOW_ACCEPTANCE')?'SLOW_ACCEPTANCE response':String(user).includes('SECOND_ACCEPTANCE')?'SECOND_ACCEPTANCE response':`ACCEPTANCE_COMPLETE: Two requirements. [Source: Saved acceptance report — generated report](#xhandle-artifact=${encodeURIComponent(reportArtifact)})`;
+   if(workflow==='collaborator.context-turn')answer=JSON.stringify({kind:'answer',text:String(user).includes('Ask me whether')?'Should I keep my next response concise?':'Yes, I will be concise.'});
+   const first=setTimeout(()=>res.write('data: '+JSON.stringify(answer.slice(0,24))+'\n\n'),80);
+   const finish=setTimeout(()=>{res.write('data: '+JSON.stringify(answer.slice(24))+'\n\nevent: metadata\ndata: {"finish_reason":"stop"}\n\nevent: done\ndata: [DONE]\n\n');res.end();},String(user).includes('SLOW_ACCEPTANCE')?5000:350);
+   res.on('close',()=>{activeAnswers--;clearTimeout(first);clearTimeout(finish);});return;
+  }
+  if(url.pathname.startsWith('/api/')){res.setHeader('Content-Type','application/json');res.end(JSON.stringify(url.pathname.includes('models')?{models:[{id:model,value:model,label:'Synthetic selected model'}]}:{}));return;}
+  const file=path.resolve(build,'.'+decodeURIComponent(url.pathname));if(!file.startsWith(build+path.sep)&&file!==build){res.writeHead(403);res.end();return;}
+  const target=fs.existsSync(file)&&fs.statSync(file).isFile()?file:path.join(build,'index.html');res.setHeader('Content-Type',target.endsWith('.js')?'application/javascript':target.endsWith('.css')?'text/css':'text/html');res.end(fs.readFileSync(target));
+ });await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));origin='http://127.0.0.1:'+server.address().port+'/';
+ const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
+ if(mode==='electron'){
+  const file=path.join(out,'main.cjs');fs.writeFileSync(file,`const {app,BrowserWindow}=require('electron');app.setPath('userData',${JSON.stringify(profile)});app.commandLine.appendSwitch('remote-debugging-port','0');app.commandLine.appendSwitch('enable-precise-memory-info');app.whenReady().then(()=>new BrowserWindow({show:true,width:1440,height:920,webPreferences:{sandbox:true,nodeIntegration:false,contextIsolation:true,backgroundThrottling:false}}).loadURL('about:blank'));`);
+  processHandle=spawn('/Users/Nick/xhandle-desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron',[file],{env,stdio:['ignore','ignore','pipe']});
+ }else processHandle=spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',['--headless=new','--disable-background-networking','--no-first-run','--remote-debugging-port=0','--enable-precise-memory-info','--user-data-dir='+profile,'about:blank'],{env,stdio:['ignore','ignore','pipe']});
+ let stderr='';processHandle.stderr.on('data',part=>{stderr+=part;});let port;
+ for(let i=0;i<150;i++){try{port=Number(fs.readFileSync(path.join(profile,'DevToolsActivePort'),'utf8').split('\n')[0]);break;}catch{const match=stderr.match(/DevTools listening on ws:\/\/127.0.0.1:(\d+)/);if(match){port=Number(match[1]);break;}}await sleep(100);}if(!port)throw Error('No debugging port');
+ let target;for(let i=0;i<100;i++){const targets=await(await fetch('http://127.0.0.1:'+port+'/json/list')).json();target=targets.find(row=>row.type==='page');if(target)break;await sleep(50);}if(!target)throw Error('No application page target');
+ const connected=await connect(target.webSocketDebuggerUrl,event=>{if(event.method==='Runtime.exceptionThrown')result.errors.push(event.params.exceptionDetails.exception?.description||event.params.exceptionDetails.text);if(event.method==='Page.javascriptDialogOpening')void cdp('Page.handleJavaScriptDialog',{accept:true});if(event.method==='Fetch.requestPaused'){const p=event.params;void cdp(p.request.url.startsWith(origin)||p.request.url.startsWith('data:')||p.request.url.startsWith('blob:')?'Fetch.continueRequest':'Fetch.failRequest',{requestId:p.requestId,...(p.request.url.startsWith(origin)||p.request.url.startsWith('data:')||p.request.url.startsWith('blob:')?{}:{errorReason:'BlockedByClient'})});}});ws=connected.socket;cdp=connected.call;
+ await cdp('Runtime.enable');await cdp('Page.enable');await cdp('Emulation.setDeviceMetricsOverride',{width:1440,height:920,deviceScaleFactor:1,mobile:false});await cdp('Fetch.enable',{patterns:[{urlPattern:'*'}]});
+ await cdp('Page.addScriptToEvaluateOnNewDocument',{source:`window.__BACKEND_URL=${JSON.stringify(origin.slice(0,-1))};window.__acceptance={peakHeap:0,longTasks:[]};setInterval(()=>{window.__acceptance.peakHeap=Math.max(window.__acceptance.peakHeap,performance.memory?.usedJSHeapSize||0);},100);new PerformanceObserver(l=>{window.__acceptance.longTasks.push(...l.getEntries().map(v=>v.duration));}).observe({type:'longtask',buffered:true});`});
+ await cdp('Page.navigate',{url:origin+'seed.html'});await wait('document.readyState==="complete"','initial load');
+ await evaluate(`(async()=>{
+ localStorage.setItem('xhandle.projects',JSON.stringify([{id:'acceptance',name:'Acceptance Project'},{id:'other',name:'Other Project'}]));
+ localStorage.setItem('xhandle.sidebarProjectsOpen','true');localStorage.setItem('xhandle.sidebarLocked','true');
+ localStorage.setItem('xhandle.projectData',JSON.stringify({acceptance:{responseRows:[{fromFunction:'Observe',toFunction:'Validate',controlAction:'State'}],riskRegister:[],requirements:[],analysisResult:{Summary:[['Hazard'],['Synthetic hazard']]}},other:{responseRows:[],requirements:[],riskRegister:[]}}));
+ localStorage.setItem('xhandle:requirements',JSON.stringify([{id:'A-1',projectId:'acceptance',title:'ROUTING_REVIEW_SENTINEL: Reject stale commands'},{id:'A-2',projectId:'acceptance',title:'Validate state'}]));
+ localStorage.setItem('xhandle.aiProvider.active',${JSON.stringify(provider)});localStorage.setItem('xhandle.aiProvider.keys',JSON.stringify({[${JSON.stringify(provider)}]:{apiKey:'synthetic-local-key'}}));localStorage.setItem('xhandle.aiProviderModel.'+${JSON.stringify(provider)},${JSON.stringify(model)});localStorage.setItem('xhandle.aiProviderEffort.'+${JSON.stringify(provider)},${JSON.stringify(effort)});
+ localStorage.setItem('xhc.threads',JSON.stringify([{id:'thread-a',title:'New topic',messages:[],updatedAt:1},{id:'thread-b',title:'Acceptance B',messages:[],updatedAt:0}]));
+ const db=await new Promise((resolve,reject)=>{const r=indexedDB.open('xhandle-generated-reports',1);r.onupgradeneeded=()=>{for(const name of ['metadata','reports'])r.result.createObjectStore(name,{keyPath:'id'}).createIndex('projectId','projectId');};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
+ await new Promise((resolve,reject)=>{const tx=db.transaction(['metadata','reports'],'readwrite');const value={id:'saved-report',projectId:'acceptance',title:'Saved acceptance report',reportType:'Subsystem Design Document',status:'complete',createdAt:'2026-11-04T12:00:00Z'};tx.objectStore('metadata').put(value);tx.objectStore('reports').put({...value,report:'# SAVED_REPORT_BODY\\n\\nAcceptance evidence.'});tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);});db.close();
+ })()`);
+ await cdp('Page.navigate',{url:origin});await wait(`[...document.querySelectorAll('button')].some(e=>e.textContent.trim()==='Acceptance Project')`,'project');await clickText('Acceptance Project');await clickText('Collaborator');await wait(`!!document.querySelector('textarea[placeholder="Ask Collaborator"]')`,'composer');
+
+
+ if(process.env.XHANDLE_ROUTING_VIEW==='dashboard'){
+  await evaluate(`(()=>{const button=[...document.querySelectorAll('button')].find(e=>e.textContent.trim().startsWith('Code-Based Architecture'));if(!button)throw Error('Missing architecture navigation');button.click();})()`);
+  await wait(`document.body.innerText.includes('Code architecture dashboard')`,'visible architecture dashboard');
+ }
+ if(process.env.XHANDLE_ROUTING_VIEW==='full-page'){
+  await wait(`(()=>{const button=document.querySelector('button[title="Undock"]');if(!button)return false;button.click();return true;})()`,'full-page Collaborator');
+ }
+ result.reviewView=process.env.XHANDLE_ROUTING_VIEW||'project-dock';
+
+ await ask('How many requirements are there for Acceptance Project?');await wait(`document.body.innerText.includes('ACCEPTANCE_COMPLETE')`,'initial graph preparation');await wait(`!document.querySelector('button[aria-label="Stop generating"]')`,'initial answer complete');
+ await ask('Update the title of requirement A-1 to REVIEW_BUILD_PENDING_PLAN.');
+ await wait(`document.body.innerText.includes('I resolved that request to the saved workspace sources.')`,'native validated plan card');await wait(`!document.querySelector('button[aria-label="Stop generating"]')`,'plan complete');
+ const unchangedBefore=await evaluate(`JSON.parse(localStorage.getItem('xhandle:requirements')).find(row=>row.id==='A-1')?.title!=='CONFIRMATION_CONTEXT_FAILURE_CHANGED_REQUIREMENT'`);
+ assert.equal(unchangedBefore,true,'The proposal itself should not apply an edit');
+ await ask('Ask me whether your next answer should be concise.');await wait(`document.body.innerText.includes('Should I keep my next response concise?')`,'unrelated latest assistant question');await wait(`!document.querySelector('button[aria-label="Stop generating"]')`,'unrelated answer complete');
+ const begin=result.requests.length;await ask('yes');await sleep(1500);await wait(`!document.querySelector('button[aria-label="Stop generating"]')`,'confirmation handler');
+ const changed=await evaluate(`JSON.parse(localStorage.getItem('xhandle:requirements')).find(row=>row.id==='A-1')?.title==='CONFIRMATION_CONTEXT_FAILURE_CHANGED_REQUIREMENT'`);
+ result.confirmationReview={planCreatedThroughActualApp:true,proposalInitiallyUnapplied:unchangedBefore,latestQuestion:'Should I keep my next response concise?',reply:'yes',changedFixtureRequirement:changed,productBehaviorIncorrect:changed,requestsAfterYes:result.requests.slice(begin).filter(row=>row.workflow!=='collaborator.title').map(row=>row.workflow)};
+ assert.equal(changed,false,'An unrelated yes applied an old proposal');
+ result.checks.push('unrelated yes leaves an older proposal unapplied');
+ await clickText('Apply changes');
+ await wait(`JSON.parse(localStorage.getItem('xhandle:requirements')).find(row=>row.id==='A-1')?.title==='CONFIRMATION_CONTEXT_FAILURE_CHANGED_REQUIREMENT'`,'explicit card applies');
+ result.checks.push('explicit Apply on the exact card still performs the validated saved edit');
+ await ask('Update the title of requirement A-1 to REVIEW_BUILD_PENDING_PLAN.');
+ await wait(`JSON.parse(localStorage.getItem('xhc.threads')).find(t=>t.id==='thread-a').messages.filter(m=>m.workspaceActionPlan&&!m.workspaceActionPlan.completed).length===1`,'fresh proposal');
+ await wait(`!document.querySelector('button[aria-label="Stop generating"]')`,'fresh proposal ready');
+ await ask('no');
+ await wait(`JSON.parse(localStorage.getItem('xhc.threads')).find(t=>t.id==='thread-a').messages.some(m=>m.workspaceActionPlan?.outcome==='cancelled')`,'bound no cancels');
+ result.checks.push('current proposal can still be cancelled by its immediate confirmation reply');
+ result.memory=await evaluate('window.__acceptance');assert.deepEqual(result.errors,[]);result.ok=true;
+}
+let deadline;Promise.race([main(),new Promise((_resolve,reject)=>{deadline=setTimeout(()=>reject(Error('Acceptance journey timed out')),180000);})]).catch(error=>{result.ok=false;result.failure=error.stack;process.exitCode=1;}).finally(async()=>{clearTimeout(deadline);fs.writeFileSync(path.join(out,'results.json'),JSON.stringify(result,null,2));console.log(JSON.stringify(result,null,2));ws?.close();browserWs?.close();processHandle?.kill();server?.closeAllConnections();server?.close();});

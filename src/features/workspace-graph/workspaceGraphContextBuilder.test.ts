@@ -1,3 +1,15 @@
+jest.mock("./workspaceGraphQueries", () => ({
+  ensureWorkspaceProjection: async()=>{},
+  queryWorkspaceCandidates: async(_query, {projectId,types}) => {
+    const rows=await require("./workspaceGraphRepository").listArtifacts({projectId}) || [];
+    return {rows:types?rows.filter(row=>types.has(row.type)):rows,truncated:false};
+  },
+  workspaceGraphCounts: async(projectId)=>{
+    const repo=require("./workspaceGraphRepository");
+    return {projectCount:(await repo.listProjects()||[]).length,artifactCount:(await repo.listArtifacts({projectId})||[]).length,relationshipCount:(await repo.listRelationships({projectId})||[]).length};
+  },
+  relationshipsForArtifacts: async()=>await require("./workspaceGraphRepository").listRelationships({})||[],
+}));
 jest.mock("./legacyWorkspaceGraphMigrator", () => ({
   getLatestWorkspaceGraphMigrationDiagnostics: jest.fn(() => ({
     artifactCount: 1,

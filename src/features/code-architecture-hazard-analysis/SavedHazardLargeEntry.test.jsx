@@ -24,14 +24,14 @@ it('paints feedback before preparing a 26278-row saved run, then shows a windowe
   // Completing the panel starts the separate row-height preparation effect.
   act(()=>jest.runAllTimers());
   expect(host.querySelector('[role="progressbar"]')).toBeNull();
-  expect(host.textContent).toContain('26278 of 26278');
+  expect(host.textContent).toContain('26,278 of 26,278 rows match filters');
   expect(host.querySelectorAll('tbody tr').length).toBeGreaterThan(0);
   expect(host.querySelectorAll('tbody tr').length).toBeLessThan(100);
   for(let i=0;i<5;i++) {
     act(()=>root.render(<Workspace visible={false}/>));
     act(()=>root.render(<Workspace visible/>));
     act(()=>jest.runAllTimers());act(()=>jest.runAllTimers());
-    expect(host.textContent).toContain('26278 of 26278');
+    expect(host.textContent).toContain('26,278 of 26,278 rows match filters');
     expect(host.querySelectorAll('tbody tr').length).toBeGreaterThan(0);
     expect(host.querySelectorAll('tbody tr').length).toBeLessThan(100);
   }

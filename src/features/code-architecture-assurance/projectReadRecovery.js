@@ -1,5 +1,5 @@
 // Read-only recovery: each attempt owns its connection/transactions via signal.
-export function readProjectWithRecovery(read, { signal, onProgress, onRetry, idleMs = 60000 } = {}) {
+export function readProjectWithRecovery(read, { signal, onProgress, onRetry, idleMs = 60000, maxRetries = 1 } = {}) {
   return new Promise((resolve, reject) => {
     let done = false, active = null, timer, retryTimer, failures = 0, lastActivity = Date.now();
     const cancelled = () => signal?.reason || new DOMException('Project load cancelled.', 'AbortError');
@@ -20,7 +20,7 @@ export function readProjectWithRecovery(read, { signal, onProgress, onRetry, idl
     const fail = (owner, error) => {
       if (done || active !== owner) return;
       active = null; clearTimeout(timer); owner.abort(error);
-      if (!transient(error)) { finish(error); return; }
+      if (!transient(error) || failures >= maxRetries) { finish(error); return; }
       onRetry?.(error);
       retryTimer = setTimeout(start, Math.min(30000, 2000 * 2 ** Math.min(failures++, 4)));
     };
@@ -33,7 +33,7 @@ export function readProjectWithRecovery(read, { signal, onProgress, onRetry, idl
     const resume = () => {
       if (document.visibilityState === 'hidden' || done) return;
       if (active && Date.now() - lastActivity >= idleMs) expire();
-      if (!active) { clearTimeout(retryTimer); start(); }
+      if (!done && !active) { clearTimeout(retryTimer); start(); }
     };
     function start() {
       if (done || active) return;

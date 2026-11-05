@@ -1,0 +1,36 @@
+{
+  "electron": "45.0.0",
+  "fixture": {
+    "hazardRows": 26278,
+    "legacyArtifacts": 4000
+  },
+  "baselineHeapMiB": 2.0940256118774414,
+  "peakWorkingSetMiB": 290.328125,
+  "results": [
+    {
+      "concurrent": false,
+      "layoutMs": 2945.4000000059605,
+      "tableRows": 26278,
+      "indexCountsDuringTableRead": [],
+      "indexedAfterResume": 0,
+      "outlineBytes": 1089400
+    },
+    {
+      "concurrent": true,
+      "layoutMs": 2839.5999999940395,
+      "tableRows": 26278,
+      "indexCountsDuringTableRead": [
+        320,
+        320,
+        320
+      ],
+      "indexedAfterResume": 4000,
+      "outlineBytes": 1089400
+    }
+  ],
+  "peakRendererHeapMiB": 21.527862548828125,
+  "maxRendererEventLoopDelayMs": 1.600000023841858,
+  "failures": [],
+  "retainedHeapMiB": 2.387775421142578,
+  "crashes": []
+}

@@ -4,6 +4,7 @@ import {webcrypto} from 'crypto';
 import {serialize,deserialize} from 'v8';
 import {sha256} from 'hash.js';
 import {saveCodeArchitectureHazardRun,getLatestCodeArchitectureHazardRun,getCodeArchitectureHazardRunById,openCodeArchitectureHazardDB,resolveCodeArchitectureHazardRun,deletePagedHazardRow} from './codeArchitectureHazardStore';
+import {filterPreparedHazardLayout} from './hazardFilterOptions';
 import {queryHazardRows} from './pagedHazardRows';
 import {PAGED_HAZARD} from './hazardRowIndex';
 import {prepareHazardTableIndex} from './prepareHazardTableIndex';
@@ -24,6 +25,9 @@ test('filter, option search, partial inspection and continuation use the complet
  const run=fixture();await saveCodeArchitectureHazardRun(run);const descriptor=await read();
  const match=await queryHazardRows(descriptor,{operation:'query',search:'row 999',context:'a'});expect(match.indices).toEqual([999]);
  expect((await queryHazardRows(descriptor,{indices:match.indices})).rows[0][0]).toBe('HA-999');
+ const layout=await queryHazardRows(descriptor,{operation:'layout'});
+ expect(layout.optionIndex.columns[0].truncated).toBe(true);
+ expect(layout.optionIndex.columns[2]).toMatchObject({options:['a','b'],truncated:false});
  expect((await queryHazardRows(descriptor,{operation:'options',column:0,optionSearch:'HA-999'})).options).toEqual(['HA-999']);
  expect((await queryHazardRows(descriptor,{partial:true})).rows[0][0]).toBe('partial');
  expect(await resolveCodeArchitectureHazardRun(descriptor)).toMatchObject(run);
@@ -42,7 +46,7 @@ test('explicit legacy upgrade builds row coordinates without changing original d
  expect((await queryHazardRows(await read())).rows[0][0]).toBe('HA-0');expect(await getCodeArchitectureHazardRunById(run.id)).toMatchObject(run);
 });
 
-test('complete layout keeps first-seen grouping and absolute source order without retaining result cells',async()=>{
+test('complete layout keeps first-seen grouping and absolute source order without retaining row bodies',async()=>{
  const run=fixture();
  run.generatedSheets.Summary=[['Raw Analysis Row ID','From Function','Action','Target Function','Hazard','Operational Context ID'],
   ['a','Plan','Command','Control','private evidence A','normal'],
@@ -57,13 +61,18 @@ test('complete layout keeps first-seen grouping and absolute source order withou
  expect(layout.groups).toEqual(expected);
  expect(layout.groups.map(group=>group.rowIndices)).toEqual([[0,2],[1,3]]);
  expect(layout.indices).toEqual([0,1,2,3]);expect(layout.total).toBe(4);
- expect(layout.rows).toBeUndefined();expect(JSON.stringify(layout)).not.toContain('private evidence');
+ expect(layout.rows).toBeUndefined();expect(JSON.stringify(layout.groups)).not.toContain('private evidence');
+ expect(layout.optionIndex.columns[4]).toMatchObject({options:['private evidence A','private evidence B','private evidence C','private evidence D'],truncated:false});
  const selected=await queryHazardRows(descriptor,{operation:'layout',context:'degraded',search:'private evidence',filters:{4:['private evidence C']}});
+ expect(selected.optionIndex).toEqual(layout.optionIndex);
+ const base=await queryHazardRows(descriptor,{operation:'layout',context:'degraded',search:'private evidence'});
+ expect(filterPreparedHazardLayout(base,{4:['private evidence C']}).groups).toEqual(selected.groups);
  expect(selected.indices).toEqual([2]);expect(selected.groups[0].rowIndices).toEqual([2]);
  expect((await queryHazardRows(descriptor,{operation:'layout',search:'absent'})).groups).toEqual([]);
  const partial=await queryHazardRows(descriptor,{operation:'layout',partial:true});
  expect(partial.total).toBe(1);expect(partial.indices).toEqual([0]);
- expect(JSON.stringify(partial)).not.toContain('saved partial');
+ expect(JSON.stringify(partial.groups)).not.toContain('saved partial');
+ expect(partial.optionIndex.columns[1].options).toEqual(['saved partial']);
 });
 
 test('remote grouping retains full identity but only bounded previews for unusually long control actions',async()=>{
@@ -79,7 +88,9 @@ test('remote grouping retains full identity but only bounded previews for unusua
  for(const group of layout.groups){expect(group.key).toMatch(/^[a-f0-9]{64}$/);expect(group.label).toHaveLength(512);expect(group.label.endsWith('…')).toBe(true);}
  expect(layout.groups[0].label).toBe(layout.groups[1].label);
  expect(JSON.stringify(layout).length).toBeLessThan(3000);
- expect(layout.metadataBytes).toBeLessThan(5000);
+ expect(layout.metadataBytes-layout.optionIndex.metadataBytes).toBeLessThan(5000);
+ expect(layout.optionIndex.metadataBytes).toBeLessThan(3000);
+ expect(layout.optionIndex.columns[2]).toMatchObject({options:[],truncated:true});
  const page=await queryHazardRows(descriptor,{indices:[1]});
  expect(page.rows[0][2]).toBe(prefix+'suffix B');
 });
@@ -93,4 +104,17 @@ test('explicit index pages honor the byte-limited prefix and expose per-row esti
  expect(first.rowBytes[0]).toBeGreaterThan(600000);
  const next=await queryHazardRows(descriptor,{indices:[3,1,2],offset:first.nextOffset,limit:3});
  expect(next.rowIndices).toEqual([1]);expect(next.nextOffset).toBe(2);
+});
+
+test('outline validation reads no chunk bodies and rejects replaced/deleted saved runs',async()=>{
+ await saveCodeArchitectureHazardRun(fixture());const descriptor=await read();
+ const get=jest.spyOn(IDBObjectStore.prototype,'get');
+ try{
+  expect(await queryHazardRows(descriptor,{operation:'validate'})).toEqual({valid:true});
+  expect(get.mock.instances.filter(s=>s.name==='hazardRunChunks')).toHaveLength(0);
+ }finally{get.mockRestore();}
+ await saveCodeArchitectureHazardRun({...fixture(),runState:'incomplete'});
+ await expect(queryHazardRows(descriptor,{operation:'validate'})).rejects.toThrow('changed');
+ const next=await read(),db=await openCodeArchitectureHazardDB();await db.delete('hazardAnalysisRuns',next.id);db.close();
+ await expect(queryHazardRows(next,{operation:'validate'})).rejects.toThrow('changed');
 });

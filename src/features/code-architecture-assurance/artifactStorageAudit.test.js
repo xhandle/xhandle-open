@@ -1,12 +1,46 @@
 // Production storage adapter with IndexedDB transactions supplied by fake-indexeddb.
-import { IDBFactory, IDBDatabase } from 'fake-indexeddb';
+import { IDBFactory, IDBDatabase, IDBObjectStore } from 'fake-indexeddb';
 import { serialize, deserialize } from 'v8';
-import { loadArtifactRowsAsync, saveArtifactRowsAsync, storageKeyFor } from './artifactUtils';
+import { loadArtifactRows, loadArtifactRowsAsync, saveArtifactRowsAsync, storageKeyFor } from './artifactUtils';
 const kind = 'software-requirements';
 const fresh = [{ id: 'SWR-001', requirementText: 'The software shall retain the command.' }];
 const key = storageKeyFor(kind, 'audit', 'repo');
 const load = () => loadArtifactRowsAsync(kind, 'audit', 'repo');
 const save = rows => saveArtifactRowsAsync(kind, 'audit', 'repo', rows);
+
+test.each(['system-requirements','subsystem-requirements','design-elements'])('%s commits large results with only one chunk write outstanding', async target => {
+  const original = IDBObjectStore.prototype.put;
+  let outstanding = 0, peak = 0;
+  jest.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function(value, ...args) {
+    const request = original.call(this, value, ...args);
+    if (value.parentKey && value.rows) {
+      peak = Math.max(peak, ++outstanding);
+      request.addEventListener('success', () => outstanding--);
+    }
+    return request;
+  });
+  const rows = Array.from({length:6},(_,i)=>({id:`R-${i}`,requirementText:'x'.repeat(200000)}));
+  await saveArtifactRowsAsync(target, 'single-write', 'repo', rows);
+  expect(peak).toBe(1);
+  expect(await loadArtifactRowsAsync(target, 'single-write', 'repo')).toEqual(rows);
+});
+
+test('failure in a later streamed chunk rolls back earlier chunks and preserves the previous revision', async () => {
+  await save(fresh);
+  const original = IDBObjectStore.prototype.put;
+  let chunks = 0;
+  jest.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function(value, ...args) {
+    if (value.parentKey && ++chunks === 2) throw new Error('Injected second chunk failure');
+    return original.call(this, value, ...args);
+  });
+  const replacement = Array.from({length:6}, (_,i)=>({id:`R-${i}`,requirementText:'x'.repeat(200000)}));
+  await expect(save(replacement)).rejects.toThrow(/could not be saved/);
+  // New module simulates a fresh renderer, without the intentional unsaved-work cache.
+  jest.resetModules();
+  const reloaded = require('./artifactUtils');
+  localStorage.removeItem(key);
+  expect(await reloaded.loadArtifactRowsAsync(kind, 'audit', 'repo')).toEqual(fresh);
+});
 const originalIndexedDB = global.indexedDB;
 const originalClone = global.structuredClone;
 beforeEach(() => {
@@ -85,6 +119,25 @@ test('multi-chunk results reload without a local cache', async () => {
   await save(large);
   expect(localStorage.getItem(key)).toBeNull();
   expect(await load()).toEqual(large);
+});
+test('oversized results remain durable without a memory cache and load one chunk at a time', async () => {
+  const large = Array.from({length:20}, (_,index) => ({id:`SWR-${index}`,requirementText:'x'.repeat(250000)}));
+  await save(large);
+  expect(localStorage.getItem(key)).toBeNull();
+  expect(loadArtifactRows(kind, 'audit', 'repo')).toEqual([]);
+  const original = IDBObjectStore.prototype.get;
+  let outstanding = 0, peak = 0;
+  jest.spyOn(IDBObjectStore.prototype, 'get').mockImplementation(function(recordKey) {
+    const request = original.call(this, recordKey);
+    if (String(recordKey).includes(':chunk:')) {
+      peak = Math.max(peak, ++outstanding);
+      request.addEventListener('success', () => outstanding--);
+    }
+    return request;
+  });
+  expect(await load()).toEqual(large);
+  expect(peak).toBe(1);
+  expect(loadArtifactRows(kind, 'audit', 'repo')).toEqual([]);
 });
 test('legacy array records remain readable', async () => {
   await save([]);

@@ -70,13 +70,18 @@ test('loading stored results does not start a save/reload feedback loop',async()
 test('an older change-event reload cannot replace completed generation',async()=>{
  await act(async()=>root.render(<Panel {...props}/>));
  let release;let softwareReads=0;
- loadArtifactRowsAsync.mockImplementation(kind=>kind==='software-requirements' && ++softwareReads===2
+ loadArtifactRowsAsync.mockImplementation(kind=>kind==='software-requirements' && ++softwareReads===1
   ? new Promise(resolve=>{release=resolve;}) : Promise.resolve([]));
  await act(async()=>window.dispatchEvent(new CustomEvent('xhandle:code-architecture-assurance:changed',
   {detail:{kind:props.kind,projectId:'p',repoId:'r'}})));
  await generate();
  await act(async()=>release([]));
  expect(host.textContent).toContain('The software shall retain the command.');
+});
+
+test.each(['system-requirements','subsystem-requirements','design-elements'])('%s loads its active results only once', async kind => {
+ await act(async()=>root.render(<Panel {...props} kind={kind}/>));
+ expect(loadArtifactRowsAsync.mock.calls.filter(([requested])=>requested===kind)).toHaveLength(1);
 });
 
 test('generated requirements survive leaving and reopening the panel',async()=>{

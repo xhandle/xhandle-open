@@ -127,11 +127,11 @@ function createLoader(scope,run,partial,notify){
  };
 }
 
-// One active query owns this cache. Layout contains only the complete ordering;
+// One saved source revision owns this bounded cache; filters reuse its rows. Layout contains only the complete ordering;
 // requestedRowIndices is a bounded viewport-first list followed by prefetch.
-export default function useContinuousHazardRows({run,partial=false,queryKey,layout,requestedRowIndices=EMPTY_INDICES,requiredRowIndices=EMPTY_INDICES}){
+export default function useContinuousHazardRows({run,partial=false,layout,requestedRowIndices=EMPTY_INDICES,requiredRowIndices=EMPTY_INDICES}){
  const descriptor=run?.[PAGED_HAZARD];
- const scope=JSON.stringify([run?.id,descriptor?.generation,descriptor?.revision,partial,queryKey]);
+ const scope=JSON.stringify([run?.projectId,run?.repoId,run?.id,descriptor?.generation,descriptor?.revision,partial]);
  const owner=useRef(null),source=useRef(null);
  source.current={run,partial};
  const [state,setState]=useState({scope:null,rowsByIndex:EMPTY_ROWS,loading:false,error:null,cacheStats:emptyStats});

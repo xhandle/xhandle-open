@@ -22,7 +22,8 @@ export function deriveThreadTitle(messages = []) {
   return `${title.charAt(0).toUpperCase()}${title.slice(1)}`.slice(0, 80);
 }
 
-export async function generateThreadTitle(messages) {
+export async function generateThreadTitle(messages, {signal} = {}) {
+    if(signal?.aborted)throw signal.reason||new DOMException("Title cancelled.","AbortError");
     const fallbackTitle = deriveThreadTitle(messages);
     const slice = messages.slice(-8).map(m => `${m.role}: ${m.content}`).join("\n\n");
     const prompt = `Name this chat thread in 3–5 words.
@@ -40,9 +41,11 @@ export async function generateThreadTitle(messages) {
     try {
       const resp = await fetch("/api/chat", {
         method: "POST",
+        signal,
         ...buildAIAuthOpts({ "Content-Type": "application/json" }),
         body: JSON.stringify({
-          model: "gpt-4o-mini",
+          xhandleWorkflow:"collaborator.title",
+          max_tokens:256,
           temperature: 0.2,
           messages: [{ role: "user", content: prompt }],
         }),
@@ -50,7 +53,8 @@ export async function generateThreadTitle(messages) {
       if (!resp.ok) return fallbackTitle;
       const data = await resp.json();
       return (data.result || data.choices?.[0]?.message?.content || "").trim() || fallbackTitle;
-    } catch {
+    } catch(error) {
+      if(signal?.aborted||error?.name==="AbortError")throw error;
       return fallbackTitle;
     }
   }

@@ -1,3 +1,4 @@
+import { queryTerms } from './workspaceGraphProjection';
 import { listArtifacts } from "./workspaceGraphRepository";
 import type { ArtifactFilters, WorkspaceArtifact } from "./workspaceGraphTypes";
 
@@ -7,6 +8,8 @@ function haystack(artifact: WorkspaceArtifact) {
     : JSON.stringify(artifact.structuredData).slice(0, 1200);
   return [
     artifact.title,
+    artifact.id,
+    artifact.sourceId,
     artifact.summary,
     artifact.content ? String(artifact.content).slice(0, 1200) : "",
     artifact.type,
@@ -16,18 +19,10 @@ function haystack(artifact: WorkspaceArtifact) {
   ].filter(Boolean).join(" ").toLowerCase();
 }
 
-function tokenize(query = "") {
-  return String(query)
-    .toLowerCase()
-    .split(/[^a-z0-9_.:/-]+/i)
-    .map((token) => token.trim())
-    .filter((token) => token.length > 2)
-    .slice(0, 20);
-}
 
-export async function searchArtifacts(query = "", filters: ArtifactFilters = {}) {
-  const terms = tokenize(query);
-  const rows = await listArtifacts({ ...filters, limit: undefined });
+export async function searchArtifacts(query = "", filters: ArtifactFilters = {}, candidates?: WorkspaceArtifact[]) {
+  const terms = queryTerms(query);
+  const rows = candidates ?? await listArtifacts({ ...filters, limit: undefined });
   if (!terms.length) return rows.slice(0, filters.limit || 80);
 
   return rows

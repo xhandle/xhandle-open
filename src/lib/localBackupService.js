@@ -7,6 +7,7 @@ import {
   openWorkspaceGraphDB,
 } from "../features/workspace-graph";
 import { BACKUP_DATA_CHANGED_EVENT } from "./localBackupEvents";
+import { GENERATED_REPORT_DB, openGeneratedReportDatabase } from '../features/project-hazard-analysis/generatedReportStorage';
 
 const BACKUP_SCHEMA_VERSION = 1;
 const BACKUP_SETTINGS_KEY = "xhandle.backup.settings.v1";
@@ -51,6 +52,11 @@ const KNOWN_DB_CONFIGS = [
           }
         },
       }),
+  },
+  {
+    name: GENERATED_REPORT_DB, version: 1,
+    stores: { metadata: { keyPath: 'id' }, reports: { keyPath: 'id' } },
+    open: openGeneratedReportDatabase,
   },
   {
     name: WORKSPACE_GRAPH_DB_NAME,
@@ -472,6 +478,7 @@ async function restoreSnapshot(snapshot) {
     await restoreKnownDb(config, safeSnapshot.data.indexedDB[config.name]);
   }
 
+  window.dispatchEvent(new CustomEvent('xhandle:workspace-authoritative-data-changed',{detail:{source:'backup-restore'}}));
   return summarizeSnapshot(safeSnapshot);
 }
 

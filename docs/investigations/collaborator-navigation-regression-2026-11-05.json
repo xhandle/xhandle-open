@@ -1,0 +1,102 @@
+{
+  "before": {
+    "ok": false,
+    "navigation": [
+      {
+        "stage": "startup",
+        "cumulativeIndexPasses": 2
+      },
+      {
+        "stage": "ordinary project",
+        "cumulativeIndexPasses": 4
+      },
+      {
+        "stage": "code architecture project",
+        "cumulativeIndexPasses": 6
+      },
+      {
+        "stage": "return to ordinary project",
+        "cumulativeIndexPasses": 8
+      },
+      {
+        "stage": "source changed while browsing",
+        "cumulativeIndexPasses": 10
+      }
+    ],
+    "runtimeErrors": [],
+    "routingCases": 0,
+    "sourceChangesTracked": null
+  },
+  "after-electron": {
+    "ok": true,
+    "navigation": [
+      {
+        "stage": "startup",
+        "cumulativeIndexPasses": 0
+      },
+      {
+        "stage": "ordinary project",
+        "cumulativeIndexPasses": 0
+      },
+      {
+        "stage": "code architecture project",
+        "cumulativeIndexPasses": 0
+      },
+      {
+        "stage": "return to ordinary project",
+        "cumulativeIndexPasses": 0
+      },
+      {
+        "stage": "source changed while browsing",
+        "cumulativeIndexPasses": 0
+      }
+    ],
+    "runtimeErrors": [],
+    "routingCases": 0,
+    "sourceChangesTracked": true
+  },
+  "after-chrome": {
+    "ok": true,
+    "navigation": [
+      {
+        "stage": "startup",
+        "cumulativeIndexPasses": 0
+      },
+      {
+        "stage": "ordinary project",
+        "cumulativeIndexPasses": 0
+      },
+      {
+        "stage": "code architecture project",
+        "cumulativeIndexPasses": 0
+      },
+      {
+        "stage": "return to ordinary project",
+        "cumulativeIndexPasses": 0
+      },
+      {
+        "stage": "source changed while browsing",
+        "cumulativeIndexPasses": 0
+      }
+    ],
+    "runtimeErrors": [],
+    "routingCases": 0,
+    "sourceChangesTracked": true
+  },
+  "collaborator-electron": {
+    "ok": true,
+    "navigation": [],
+    "runtimeErrors": [],
+    "routingCases": 15,
+    "sourceChangesTracked": null
+  },
+  "collaborator-chrome": {
+    "ok": true,
+    "navigation": [],
+    "runtimeErrors": [],
+    "routingCases": 15,
+    "sourceChangesTracked": null
+  },
+  "scope": "Synthetic navigation and local mocked-provider acceptance; not customer-scale load-time or live-provider benchmark.",
+  "build": "/private/tmp/xhandle-navigation-fixed-build"
+}

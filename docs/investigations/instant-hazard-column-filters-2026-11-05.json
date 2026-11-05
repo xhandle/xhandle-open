@@ -1,0 +1,43 @@
+{
+  "date": "2026-11-05",
+  "preview": "0.2.14-preview.20261105.9",
+  "renderer": "xhandle://app/static/js/main.480f0f06.js",
+  "rows": 26278,
+  "optionMetadataBytes": 2157294,
+  "layoutMetadataBytes": 5501308,
+  "opens": 60,
+  "visibleColumns": 13,
+  "openMilliseconds": {
+    "min": 17.69999998807907,
+    "median": 31.599999994039536,
+    "max": 52.89999997615814
+  },
+  "loadingShown": false,
+  "optionWorkers": 0,
+  "searches": [
+    {
+      "query": "Autonomous",
+      "choices": 1,
+      "loading": false
+    },
+    {
+      "query": "no-such-mode-9172",
+      "choices": 0,
+      "loading": false
+    },
+    {
+      "query": "",
+      "choices": 1,
+      "loading": false
+    }
+  ],
+  "retainedHeapBefore": 196473112,
+  "retainedHeapAfter": 196875700,
+  "errors": [],
+  "crashes": [],
+  "tests": {
+    "suites": 7,
+    "passed": 42
+  },
+  "build": "passed; existing repository lint warnings"
+}

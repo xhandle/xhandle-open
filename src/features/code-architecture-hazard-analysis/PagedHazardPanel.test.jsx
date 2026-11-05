@@ -2,6 +2,7 @@ import React,{act} from 'react';
 import {createRoot} from 'react-dom/client';
 import PagedHazardPanel from './PagedHazardPanel';
 import requestHazardRows from './requestHazardRows';
+import {createHazardFilterOptions} from './hazardFilterOptions';
 import {PAGED_HAZARD} from './hazardRowIndex';
 let mockPanel;
 jest.mock('./CodeArchitectureHazardPanel',()=>({PreparedCodeArchitectureHazardPanel:function Prepared(props){
@@ -127,4 +128,70 @@ test('filter options distinguish loading, ignore stale searches and keep filter 
  act(()=>mockPanel.tablePage.requestOptions(0,'new'));
  act(()=>mockPanel.tablePage.cancelOptions());expect(pending[3].options.signal.aborted).toBe(true);expect(mockPanel.tablePage.optionsLoading).toBe(false);
  await act(async()=>pending[3].resolve({options:['Canceled value']}));expect(mockPanel.tablePage.options).toEqual([]);
+});
+
+test('prepared options and searches need no additional storage read and are replaced with the source revision',async()=>{
+ const fallback=requestHazardRows.getMockImplementation();
+ requestHazardRows.mockImplementation(async(value,options)=>{
+  const result=await fallback(value,options);
+  return options.operation==='layout'?{...result,optionIndex:{columns:[{options:[value[PAGED_HAZARD].revision,'Offscreen value'],truncated:false}]}}:result;
+ });
+ await act(async()=>root.render(<PagedHazardPanel latestRun={run}/>));await flush();
+ expect(mockPanel.tablePage.getPreparedOptions(0,'OFFSCREEN').options).toEqual(['Offscreen value']);
+ act(()=>mockPanel.tablePage.requestOptions(0,''));
+ expect(mockPanel.tablePage.optionsLoading).toBe(false);
+ expect(mockPanel.tablePage.options).toContain('one');
+ expect(requestHazardRows.mock.calls.some(([,options])=>options.operation==='options')).toBe(false);
+ await act(async()=>root.render(<PagedHazardPanel latestRun={{...run,[PAGED_HAZARD]:{...run[PAGED_HAZARD],revision:'two'}}}/>));await flush();
+ expect(mockPanel.tablePage.getPreparedOptions(0,'').options).toEqual(['two','Offscreen value']);
+});
+
+test('checkbox selection filters in place without another layout read and copy uses the matching source indices',async()=>{
+ const fallback=requestHazardRows.getMockImplementation();
+ requestHazardRows.mockImplementation(async(value,options)=>{
+  const result=await fallback(value,options);
+  if(options.operation==='layout'){
+   const collector=createHazardFilterOptions(1,1000);
+   for(let i=0;i<1000;i++)collector.addRow([i%2?'odd':'even']);
+   return {...result,optionIndex:collector.finish()};
+  }
+  return result;
+ });
+ Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:jest.fn(async()=>{})}});
+ await act(async()=>root.render(<PagedHazardPanel latestRun={run}/>));await flush();
+ const options=mockPanel.tablePage.getPreparedOptions(0,'');
+ for(let i=0;i<10;i++){
+  act(()=>mockPanel.tablePage.setFilter(0,['odd']));
+  expect(mockPanel.tablePage.loadState.status).toBe('ready');
+  expect(mockPanel.tablePage.layout.total).toBe(500);
+  expect(host.textContent).toContain('500 of 1,000 rows match filters');
+  expect(mockPanel.tablePage.layout.indices.at(-1)).toBe(999);
+  expect(mockPanel.tablePage.getPreparedOptions(0,'')).toBe(options);
+  act(()=>mockPanel.tablePage.setFilter(0,['even','odd']));
+  expect(mockPanel.tablePage.layout.total).toBe(1000);
+  act(()=>mockPanel.tablePage.clearFilters());
+  expect(mockPanel.tablePage.layout.total).toBe(1000);
+ }
+ act(()=>mockPanel.tablePage.setFilter(0,['odd']));await flush();
+ await act(async()=>mockPanel.tablePage.copy([0]));
+ const text=navigator.clipboard.writeText.mock.calls[0][0];
+ expect(text).toContain('saved 999');expect(text).not.toContain('saved 998');
+ expect(requestHazardRows.mock.calls.filter(([,o])=>o.operation==='layout')).toHaveLength(1);
+ expect(requestHazardRows.mock.calls.some(([,o])=>o.operation==='options')).toBe(false);
+});
+test('unindexed fallback preserves the displayed table and ignores an obsolete filter response',async()=>{
+ const fallback=requestHazardRows.getMockImplementation(),pending=[];
+ requestHazardRows.mockImplementation((value,options)=>options.operation==='layout'&&Object.keys(options.filters).length
+  ?new Promise(resolve=>pending.push({options,resolve})):fallback(value,options));
+ await act(async()=>root.render(<PagedHazardPanel latestRun={run}/>));await flush();
+ const initial=mockPanel.tablePage.layout;
+ act(()=>mockPanel.tablePage.setFilter(0,['first']));await act(async()=>jest.advanceTimersByTime(200));
+ expect(mockPanel.tablePage.layout).toBe(initial);expect(mockPanel.tablePage.loadState.status).toBe('ready');
+ act(()=>mockPanel.tablePage.setFilter(0,['second']));await act(async()=>jest.advanceTimersByTime(200));
+ expect(pending[0].options.signal.aborted).toBe(true);
+ await act(async()=>pending[0].resolve({...initial,indices:[1],total:1}));
+ expect(mockPanel.tablePage.layout).toBe(initial);
+ await act(async()=>pending[1].resolve({...initial,indices:[2],total:1}));
+ expect(mockPanel.tablePage.layout.indices).toEqual([2]);
+ act(()=>mockPanel.tablePage.clearFilters());expect(mockPanel.tablePage.layout).toBe(initial);
 });

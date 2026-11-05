@@ -89,3 +89,25 @@ test('remote filters show loading immediately and never display choices from a d
  expect(host.textContent).toContain('Available hazard');expect(host.textContent).toContain('Loading more filter values');
  act(()=>button.click());expect(remote.cancelOptions).toHaveBeenCalled();
 });
+
+test('prepared column values display on the opening render without a worker request or loading flash',()=>{
+ const options=['Available hazard','Other hazard'];
+ remote={...remote,optionsSourceKey:'current',optionsRequest:null,getPreparedOptions:(column)=>column===4?{options,truncated:false}:null};
+ render();
+ act(()=>host.querySelector('button[title="Filter Hazard"]').click());
+ expect(host.textContent).toContain('Available hazard');
+ expect(host.textContent).not.toContain('Loading filter values');
+ expect(remote.requestOptions).not.toHaveBeenCalled();
+ const choice=[...host.querySelectorAll('label')].find(label=>label.textContent.includes('Available hazard'));
+ act(()=>choice.querySelector('input').click());
+ expect(remote.setFilter).toHaveBeenCalledWith(4,['Available hazard']);
+});
+
+test('filtered counts use the full source total and remain visible while viewport rows load',()=>{
+ remote={...remote,unfilteredTotal:10346,total:1,queryKey:'one-match',layout:{headers,total:1,groups:[{key:'one',label:'One',rowCount:1,rowIndices:[999]}]},rowsByIndex:new Map()};
+ render();expect(host.textContent).toContain('1 of 10,346 rows match filters');
+ remote={...remote,total:0,layout:{headers,total:0,groups:[]},queryKey:'no-match'};
+ render();expect(host.textContent).toContain('0 of 10,346 rows match filters');
+ remote={...remote,total:10346,queryKey:'cleared'};
+ render();expect(host.textContent).toContain('10,346 of 10,346 rows match filters');
+});

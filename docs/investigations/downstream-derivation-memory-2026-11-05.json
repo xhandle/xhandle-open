@@ -1,0 +1,201 @@
+{
+  "description": "Isolated Electron 45 production artifact panel and derivation modules; deterministic provider; fresh disposable profiles. Not a reproduction of customer crash.",
+  "baseline": "Current working source with artifactAI.js, artifactUtils.js, EngineeringArtifactPanel.js restored to HEAD 8e124122ddd926b9f62429725e516d1ef37a4c55",
+  "before": {
+    "electron": "45.0.0",
+    "sourceRoot": "/private/tmp/downstream-memory-baseline-source",
+    "counts": [
+      5392,
+      8088
+    ],
+    "baselineHeapMiB": 2.631162643432617,
+    "results": [
+      {
+        "kind": "system-requirements",
+        "count": 5392,
+        "sourceKind": "software-requirements",
+        "resultRows": 2696,
+        "parentsCovered": 5392,
+        "requests": 2699,
+        "resumeRequests": 0,
+        "elapsedMs": 10312.40000000596,
+        "peakHeapMiB": 344.7970666885376,
+        "maxEventLoopDelayMs": 401.09999999403954,
+        "retainedHeapMiB": 30.8187198638916,
+        "failures": []
+      },
+      {
+        "kind": "subsystem-requirements",
+        "count": 5392,
+        "sourceKind": "system-requirements",
+        "resultRows": 2696,
+        "parentsCovered": 5392,
+        "requests": 2699,
+        "resumeRequests": 0,
+        "elapsedMs": 10289.5,
+        "peakHeapMiB": 329.92330837249756,
+        "maxEventLoopDelayMs": 499.59999999403954,
+        "retainedHeapMiB": 76.82139205932617,
+        "failures": []
+      },
+      {
+        "kind": "design-elements",
+        "count": 5392,
+        "sourceKind": "subsystem-requirements",
+        "resultRows": 1798,
+        "parentsCovered": 5392,
+        "requests": 2159,
+        "resumeRequests": 0,
+        "elapsedMs": 8264.5,
+        "peakHeapMiB": 327.1330451965332,
+        "maxEventLoopDelayMs": 315.80000001192093,
+        "retainedHeapMiB": 142.72929668426514,
+        "failures": []
+      },
+      {
+        "kind": "system-requirements",
+        "count": 8088,
+        "sourceKind": "software-requirements",
+        "resultRows": 4044,
+        "parentsCovered": 8088,
+        "requests": 4045,
+        "resumeRequests": 0,
+        "elapsedMs": 14069.90000000596,
+        "peakHeapMiB": 518.1138362884521,
+        "maxEventLoopDelayMs": 520.1999999880791,
+        "retainedHeapMiB": 178.56028652191162,
+        "failures": []
+      },
+      {
+        "kind": "subsystem-requirements",
+        "count": 8088,
+        "sourceKind": "system-requirements",
+        "resultRows": 4044,
+        "parentsCovered": 8088,
+        "requests": 4045,
+        "resumeRequests": 0,
+        "elapsedMs": 13818.200000017881,
+        "peakHeapMiB": 620.8745708465576,
+        "maxEventLoopDelayMs": 891.7000000178814,
+        "retainedHeapMiB": 246.96829891204834,
+        "failures": []
+      },
+      {
+        "kind": "design-elements",
+        "count": 8088,
+        "sourceKind": "subsystem-requirements",
+        "resultRows": 2696,
+        "parentsCovered": 8088,
+        "requests": 3238,
+        "resumeRequests": 0,
+        "elapsedMs": 11468,
+        "peakHeapMiB": 711.0748586654663,
+        "maxEventLoopDelayMs": 597.8000000119209,
+        "retainedHeapMiB": 345.9467315673828,
+        "failures": []
+      }
+    ],
+    "failures": []
+  },
+  "after": {
+    "electron": "45.0.0",
+    "sourceRoot": "/Users/Nick/xhandle-open",
+    "counts": [
+      5392,
+      8088
+    ],
+    "baselineHeapMiB": 2.631608009338379,
+    "results": [
+      {
+        "kind": "system-requirements",
+        "count": 5392,
+        "sourceKind": "software-requirements",
+        "resultRows": 2696,
+        "parentsCovered": 5392,
+        "requests": 2699,
+        "resumeRequests": 0,
+        "elapsedMs": 8749.699999988079,
+        "peakHeapMiB": 255.91019535064697,
+        "maxEventLoopDelayMs": 443.19999998807907,
+        "retainedHeapMiB": 15.935539245605469,
+        "failures": []
+      },
+      {
+        "kind": "subsystem-requirements",
+        "count": 5392,
+        "sourceKind": "system-requirements",
+        "resultRows": 2696,
+        "parentsCovered": 5392,
+        "requests": 2699,
+        "resumeRequests": 0,
+        "elapsedMs": 9607.5,
+        "peakHeapMiB": 286.0577344894409,
+        "maxEventLoopDelayMs": 418.89999997615814,
+        "retainedHeapMiB": 6.180367469787598,
+        "failures": []
+      },
+      {
+        "kind": "design-elements",
+        "count": 5392,
+        "sourceKind": "subsystem-requirements",
+        "resultRows": 1798,
+        "parentsCovered": 5392,
+        "requests": 2159,
+        "resumeRequests": 0,
+        "elapsedMs": 7310.699999988079,
+        "peakHeapMiB": 254.64353942871094,
+        "maxEventLoopDelayMs": 327.69999998807907,
+        "retainedHeapMiB": 6.367441177368164,
+        "failures": []
+      },
+      {
+        "kind": "system-requirements",
+        "count": 8088,
+        "sourceKind": "software-requirements",
+        "resultRows": 4044,
+        "parentsCovered": 8088,
+        "requests": 4045,
+        "resumeRequests": 0,
+        "elapsedMs": 14612.199999988079,
+        "peakHeapMiB": 429.1838836669922,
+        "maxEventLoopDelayMs": 650.6000000238419,
+        "retainedHeapMiB": 6.513516426086426,
+        "failures": []
+      },
+      {
+        "kind": "subsystem-requirements",
+        "count": 8088,
+        "sourceKind": "system-requirements",
+        "resultRows": 4044,
+        "parentsCovered": 8088,
+        "requests": 4045,
+        "resumeRequests": 0,
+        "elapsedMs": 14121.199999988079,
+        "peakHeapMiB": 406.7634801864624,
+        "maxEventLoopDelayMs": 687.6999999880791,
+        "retainedHeapMiB": 6.6829328536987305,
+        "failures": []
+      },
+      {
+        "kind": "design-elements",
+        "count": 8088,
+        "sourceKind": "subsystem-requirements",
+        "resultRows": 2696,
+        "parentsCovered": 8088,
+        "requests": 3238,
+        "resumeRequests": 0,
+        "elapsedMs": 11425.300000011921,
+        "peakHeapMiB": 377.22161293029785,
+        "maxEventLoopDelayMs": 520.9000000059605,
+        "retainedHeapMiB": 6.71619987487793,
+        "failures": []
+      }
+    ],
+    "failures": []
+  },
+  "checks": {
+    "regressionSuites": 34,
+    "regressionTests": 220,
+    "passed": true
+  }
+}

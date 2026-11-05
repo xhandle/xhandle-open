@@ -3,16 +3,17 @@ import { flushProjectArtifactWrites, clearProjectArtifactCache, blockDeletedProj
 import { flushProjectArchitectureWrites, blockDeletedProjectArchitectureWrites } from '../features/code-architecture-assurance/codeArchitectureStorage';
 import { withWorkspaceGraphMigrationPaused } from '../features/workspace-graph/legacyWorkspaceGraphMigrator';
 import { quiesceProjectRecovery } from '../lib/durableRecovery';
+import { blockGeneratedReportWrites } from '../features/project-hazard-analysis/generatedReportStorage';
 
 const DATABASES = ['xhandle', 'xhandle-recovery', 'xhandle-project-hazard-analysis',
   'xhandle-hazard-analysis-reset', 'xhandle-project-reports', 'xhandle-results-review',
   'xhandle-safety-remediation', 'xhandle-code-architecture-hazard-analysis',
   'xhandle-code-architecture-assurance', 'TraceabilityDB', 'TraceabilityMeta',
-  'BaselinesDB', 'SafetyCaseEvidenceDB'];
+  'BaselinesDB', 'SafetyCaseEvidenceDB', 'xhandle-generated-reports'];
 const CLEANUP_LABELS = ['architecture analyses and diagrams', 'recovery checkpoints', 'hazard analyses',
   'hazard undo snapshots', 'saved reports', 'review results', 'safety remediation records',
   'code hazard analyses', 'engineering artifacts', 'traceability records', 'traceability metadata',
-  'saved baselines', 'safety case evidence'];
+  'saved baselines', 'safety case evidence', 'saved report library'];
 const SHARED_FALLBACKS = ['xhandle:results-review:items', 'xhandle:safety-remediation:v1',
   'xhandle:code-architecture-hazard-analysis:v1', 'xhandle:review-summary-artifacts'];
 const sameProjectId = (value, projectId) => ['string','number'].includes(typeof value) && String(value) === String(projectId);
@@ -171,6 +172,7 @@ async function deleteStoredProject(project, prepareRecovery, progress) {
   const id=String(project.id);
   if (typeof indexedDB==='undefined') throw new Error('Browser storage is unavailable.');
   await assertRetainedWorkspaceOwnership(project);
+  await progress.step('Finishing pending report saves', () => waitForPendingWrites(() => blockGeneratedReportWrites(id), 'Report writes'));
   await progress.step('Finishing pending analysis saves', () => waitForPendingWrites(() => flushProjectArchitectureWrites(id), 'Architecture writes'));
   await progress.step('Finishing pending artifact saves', () => waitForPendingWrites(() => flushProjectArtifactWrites(id), 'Requirements writes'));
   await progress.step('Finishing recovery saves', prepareRecovery);
@@ -247,7 +249,7 @@ async function verifyProjectAbsent(projectId) {
 }
 
 export async function permanentlyDeleteStoredProject(project, { onProgress } = {}) {
-  const total = DATABASES.length + 7;
+  const total = DATABASES.length + 8;
   let completed = 0;
   const report = label => {
     // Presentation callbacks must never interrupt cleanup or change its result.
@@ -284,6 +286,7 @@ export async function permanentlyDeleteStoredProject(project, { onProgress } = {
     // Failed cleanup remains retryable/restorable from the retained row.
     if (releaseArchitecture) blockDeletedProjectArchitectureWrites(id,false);
     if (releaseArtifacts) blockDeletedProjectArtifactWrites(id,false);
+    blockGeneratedReportWrites(id,false);
     throw error;
   }
 }

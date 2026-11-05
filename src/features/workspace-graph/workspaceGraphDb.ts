@@ -27,6 +27,7 @@ export interface WorkspaceGraphSchema extends DBSchema {
     value: WorkspaceFolder;
     indexes: { by_project: string; by_parent: string | null; by_source: [string, string]; by_source_key: [string, string] };
   };
+  artifactIndex: { key: string; value: any; indexes: { by_project: string; by_type: string; by_project_type: [string,string]; by_updated: string; by_project_updated: [string,string,string]; by_project_type_updated: [string,string,string,string]; by_terms: string; by_lookup: string; by_row: [string,string,number]; by_source_store: string } };
   artifacts: {
     key: string;
     value: WorkspaceArtifact;
@@ -102,7 +103,11 @@ function getOrCreateStore(
 
 export async function openWorkspaceGraphDB() {
   return openDB<WorkspaceGraphSchema>(WORKSPACE_GRAPH_DB_NAME, WORKSPACE_GRAPH_DB_VERSION, {
-    upgrade(db, _oldVersion, _newVersion, tx) {
+    upgrade: upgradeWorkspaceGraphSchema,
+  });
+}
+
+export function upgradeWorkspaceGraphSchema(db: any, _oldVersion: number, _newVersion: number | null, tx: any) {
       getOrCreateStore(db, tx, WORKSPACE_GRAPH_STORES.workspaces);
 
       const projects = getOrCreateStore(db, tx, WORKSPACE_GRAPH_STORES.projects);
@@ -119,6 +124,11 @@ export async function openWorkspaceGraphDB() {
         createIndexIfMissing(folders, "by_source", ["sourceStore", "sourceId"]);
         createIndexIfMissing(folders, "by_source_key", ["sourceStore", "sourceKey"]);
       }
+
+      const artifactIndex = getOrCreateStore(db, tx, WORKSPACE_GRAPH_STORES.artifactIndex);
+      for (const [name,key] of Object.entries({by_project:'projectId',by_type:'type',by_project_type:['projectId','type'],by_updated:'updatedAt',by_project_updated:['projectId','updatedAt','id'],by_project_type_updated:['projectId','type','updatedAt','id'],by_row:['projectId','type','rowIndex'],by_source_store:'sourceStore'})) createIndexIfMissing(artifactIndex,name,key);
+      if(!artifactIndex.indexNames.contains('by_terms'))artifactIndex.createIndex('by_terms','searchTerms',{multiEntry:true});
+      if(!artifactIndex.indexNames.contains('by_lookup'))artifactIndex.createIndex('by_lookup','lookupKeys',{multiEntry:true});
 
       const artifacts = getOrCreateStore(db, tx, WORKSPACE_GRAPH_STORES.artifacts);
       if (artifacts) {
@@ -182,14 +192,18 @@ export async function openWorkspaceGraphDB() {
         createIndexIfMissing(summaries, "by_source_key", ["sourceStore", "sourceKey"]);
       }
 
+      for (const name of ['artifacts','relationships','runs','reviews','evidence','sourceFiles']) {
+        const store=tx.objectStore(name);
+        createIndexIfMissing(store,'by_source_store','sourceStore');
+        createIndexIfMissing(store,'by_updated','updatedAt');
+        createIndexIfMissing(store,'by_project_updated',['projectId','updatedAt','id']);
+      }
       const changeLog = getOrCreateStore(db, tx, WORKSPACE_GRAPH_STORES.changeLog);
       if (changeLog) {
         createIndexIfMissing(changeLog, "by_project", "projectId");
         createIndexIfMissing(changeLog, "by_entity", ["entityType", "entityId"]);
         createIndexIfMissing(changeLog, "by_at", "at");
       }
-    },
-  });
 }
 
 export async function ensureWorkspaceGraphDb() {

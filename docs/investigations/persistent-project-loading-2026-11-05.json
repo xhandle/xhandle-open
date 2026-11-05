@@ -1,0 +1,850 @@
+{
+  "method": "Same saved data, separate disposable profiles, same Electron shell/backend, sequential navigation; external network blocked; UI sampled every 250 ms. One valid run per renderer. Instrumentation attached after document load; startup database errors assessed separately from native logs.",
+  "databaseOpenFailure": {
+    "count": 52,
+    "first": "103624.464170",
+    "last": "103716.047194",
+    "error": "LOCK: Access denied (ChromeMethodBFE: 15::LockFile::5)",
+    "historicalLockOwnerIdentified": false
+  },
+  "builds": {
+    "released": {
+      "bundle": "main.b4a3b984.js",
+      "elapsedMs": {
+        "ordinary project": 238,
+        "CBA project": 4031,
+        "hazard tab": 12186,
+        "return ordinary project": 235
+      },
+      "automaticIndexingPasses": 0,
+      "pendingReadsAtEnd": 0,
+      "databaseOpenErrors": 0,
+      "finalJsHeapBytes": 170489448,
+      "states": [
+        {
+          "at": 908.5,
+          "loading": null,
+          "nodes": 0,
+          "rows": 3
+        },
+        {
+          "at": 20667.90000000596,
+          "mark": "ordinary project"
+        },
+        {
+          "at": 20905.79999998212,
+          "loading": null,
+          "nodes": 34,
+          "rows": 0
+        },
+        {
+          "at": 25683.90000000596,
+          "mark": "CBA project"
+        },
+        {
+          "at": 25905.90000000596,
+          "loading": [
+            "Loading saved analysis... 1%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 26156.90000000596,
+          "loading": [
+            "Loading saved analysis... 22%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 26416.19999998808,
+          "loading": [
+            "Preparing saved analysis... 92%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 27442.19999998808,
+          "loading": null,
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 29714.59999999404,
+          "loading": null,
+          "nodes": 4049,
+          "rows": 0
+        },
+        {
+          "at": 37721.69999998808,
+          "mark": "hazard tab"
+        },
+        {
+          "at": 38167.59999999404,
+          "loading": [
+            "Loading saved results\u2026"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 39907.90000000596,
+          "loading": [
+            "Preparing hazard analysis\u2026"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 40406.69999998808,
+          "loading": [
+            "Preparing hazard analysis\u2026 0%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 40657.29999998212,
+          "loading": [
+            "Preparing hazard analysis\u2026 2%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 40907.19999998808,
+          "loading": [
+            "Preparing hazard analysis\u2026 5%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 41157.29999998212,
+          "loading": [
+            "Preparing hazard analysis\u2026 8%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 41407.59999999404,
+          "loading": [
+            "Preparing hazard analysis\u2026 11%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 41657.69999998808,
+          "loading": [
+            "Preparing hazard analysis\u2026 14%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 41906,
+          "loading": [
+            "Preparing hazard analysis\u2026 16%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 42157.09999999404,
+          "loading": [
+            "Preparing hazard analysis\u2026 19%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 42407.09999999404,
+          "loading": [
+            "Preparing hazard analysis\u2026 22%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 42657.09999999404,
+          "loading": [
+            "Preparing hazard analysis\u2026 25%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 42906.19999998808,
+          "loading": [
+            "Preparing hazard analysis\u2026 28%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 43157.59999999404,
+          "loading": [
+            "Preparing hazard analysis\u2026 31%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 43407.5,
+          "loading": [
+            "Preparing hazard analysis\u2026 34%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 43657.5,
+          "loading": [
+            "Preparing hazard analysis\u2026 37%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 43907.5,
+          "loading": [
+            "Preparing hazard analysis\u2026 40%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 44157.09999999404,
+          "loading": [
+            "Preparing hazard analysis\u2026 42%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 44407.09999999404,
+          "loading": [
+            "Preparing hazard analysis\u2026 45%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 44657.09999999404,
+          "loading": [
+            "Preparing hazard analysis\u2026 48%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 44906.19999998808,
+          "loading": [
+            "Preparing hazard analysis\u2026 51%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 45156.09999999404,
+          "loading": [
+            "Preparing hazard analysis\u2026 54%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 45407,
+          "loading": [
+            "Preparing hazard analysis\u2026 57%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 45657.09999999404,
+          "loading": [
+            "Preparing hazard analysis\u2026 60%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 45906.19999998808,
+          "loading": [
+            "Preparing hazard analysis\u2026 63%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 46156.09999999404,
+          "loading": [
+            "Preparing hazard analysis\u2026 66%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 46407.40000000596,
+          "loading": [
+            "Preparing hazard analysis\u2026 69%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 46657.5,
+          "loading": [
+            "Preparing hazard analysis\u2026 72%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 46907.5,
+          "loading": [
+            "Preparing hazard analysis\u2026 75%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 47156.90000000596,
+          "loading": [
+            "Preparing hazard analysis\u2026 78%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 47405.69999998808,
+          "loading": [
+            "Preparing hazard analysis\u2026 81%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 47657.09999999404,
+          "loading": [
+            "Preparing hazard analysis\u2026 83%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 47907,
+          "loading": [
+            "Preparing hazard analysis\u2026 86%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 48156.19999998808,
+          "loading": [
+            "Preparing hazard analysis\u2026 88%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 48407,
+          "loading": [
+            "Preparing hazard analysis\u2026 91%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 48656.79999998212,
+          "loading": [
+            "Preparing hazard analysis\u2026 95%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 48907.09999999404,
+          "loading": [
+            "Preparing hazard analysis\u2026 97%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 49165.59999999404,
+          "loading": [
+            "Loading hazard rows\u2026"
+          ],
+          "nodes": 0,
+          "rows": 8
+        },
+        {
+          "at": 49907.79999998212,
+          "loading": null,
+          "nodes": 0,
+          "rows": 6
+        },
+        {
+          "at": 63173.19999998808,
+          "mark": "return ordinary project"
+        },
+        {
+          "at": 63408.29999998212,
+          "loading": null,
+          "nodes": 34,
+          "rows": 0
+        }
+      ]
+    },
+    "current": {
+      "bundle": "main.1188e3d9.js",
+      "elapsedMs": {
+        "ordinary project": 240,
+        "CBA project": 4113,
+        "hazard tab": 12378,
+        "return ordinary project": 151
+      },
+      "automaticIndexingPasses": 0,
+      "pendingReadsAtEnd": 0,
+      "databaseOpenErrors": 0,
+      "finalJsHeapBytes": 170831236,
+      "states": [
+        {
+          "at": 854.5999999940395,
+          "loading": null,
+          "nodes": 0,
+          "rows": 3
+        },
+        {
+          "at": 20649,
+          "mark": "ordinary project"
+        },
+        {
+          "at": 20888.90000000596,
+          "loading": null,
+          "nodes": 34,
+          "rows": 0
+        },
+        {
+          "at": 25681.30000001192,
+          "mark": "CBA project"
+        },
+        {
+          "at": 25850.69999998808,
+          "loading": [
+            "Loading saved analysis... 0%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 26104.5,
+          "loading": [
+            "Loading saved analysis... 12%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 26351.80000001192,
+          "loading": [
+            "Loading saved analysis... 57%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 27436.09999999404,
+          "loading": null,
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 29794,
+          "loading": null,
+          "nodes": 4049,
+          "rows": 0
+        },
+        {
+          "at": 37725.69999998808,
+          "mark": "hazard tab"
+        },
+        {
+          "at": 38209.30000001192,
+          "loading": [
+            "Loading saved results\u2026"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 39937.5,
+          "loading": [
+            "Preparing hazard analysis\u2026"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 40601.5,
+          "loading": [
+            "Preparing hazard analysis\u2026 1%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 40851.5,
+          "loading": [
+            "Preparing hazard analysis\u2026 4%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 41101.5,
+          "loading": [
+            "Preparing hazard analysis\u2026 7%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 41351.80000001192,
+          "loading": [
+            "Preparing hazard analysis\u2026 10%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 41601.5,
+          "loading": [
+            "Preparing hazard analysis\u2026 12%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 41851.5,
+          "loading": [
+            "Preparing hazard analysis\u2026 15%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 42101.30000001192,
+          "loading": [
+            "Preparing hazard analysis\u2026 18%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 42351.40000000596,
+          "loading": [
+            "Preparing hazard analysis\u2026 21%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 42601.69999998808,
+          "loading": [
+            "Preparing hazard analysis\u2026 24%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 42851.69999998808,
+          "loading": [
+            "Preparing hazard analysis\u2026 27%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 43101.30000001192,
+          "loading": [
+            "Preparing hazard analysis\u2026 29%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 43351.30000001192,
+          "loading": [
+            "Preparing hazard analysis\u2026 32%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 43601.30000001192,
+          "loading": [
+            "Preparing hazard analysis\u2026 35%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 43851.30000001192,
+          "loading": [
+            "Preparing hazard analysis\u2026 38%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 44101.40000000596,
+          "loading": [
+            "Preparing hazard analysis\u2026 41%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 44351.30000001192,
+          "loading": [
+            "Preparing hazard analysis\u2026 44%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 44601.5,
+          "loading": [
+            "Preparing hazard analysis\u2026 47%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 44851.69999998808,
+          "loading": [
+            "Preparing hazard analysis\u2026 50%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 45101.69999998808,
+          "loading": [
+            "Preparing hazard analysis\u2026 53%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 45351.69999998808,
+          "loading": [
+            "Preparing hazard analysis\u2026 56%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 45601.40000000596,
+          "loading": [
+            "Preparing hazard analysis\u2026 58%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 45851.30000001192,
+          "loading": [
+            "Preparing hazard analysis\u2026 61%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 46101.40000000596,
+          "loading": [
+            "Preparing hazard analysis\u2026 64%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 46351.30000001192,
+          "loading": [
+            "Preparing hazard analysis\u2026 67%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 46601.30000001192,
+          "loading": [
+            "Preparing hazard analysis\u2026 70%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 46851.59999999404,
+          "loading": [
+            "Preparing hazard analysis\u2026 73%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 47101.30000001192,
+          "loading": [
+            "Preparing hazard analysis\u2026 75%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 47351.40000000596,
+          "loading": [
+            "Preparing hazard analysis\u2026 78%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 47601.30000001192,
+          "loading": [
+            "Preparing hazard analysis\u2026 81%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 47851.30000001192,
+          "loading": [
+            "Preparing hazard analysis\u2026 84%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 48101,
+          "loading": [
+            "Preparing hazard analysis\u2026 87%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 48351.40000000596,
+          "loading": [
+            "Preparing hazard analysis\u2026 90%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 48601.40000000596,
+          "loading": [
+            "Preparing hazard analysis\u2026 93%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 48851.19999998808,
+          "loading": [
+            "Preparing hazard analysis\u2026 96%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 49101.69999998808,
+          "loading": [
+            "Preparing hazard analysis\u2026 99%"
+          ],
+          "nodes": 0,
+          "rows": 0
+        },
+        {
+          "at": 49351.80000001192,
+          "loading": [
+            "Loading hazard rows\u2026"
+          ],
+          "nodes": 0,
+          "rows": 8
+        },
+        {
+          "at": 50103.19999998808,
+          "loading": null,
+          "nodes": 0,
+          "rows": 6
+        },
+        {
+          "at": 63220,
+          "mark": "return ordinary project"
+        },
+        {
+          "at": 63370.59999999404,
+          "loading": null,
+          "nodes": 34,
+          "rows": 0
+        }
+      ]
+    }
+  },
+  "workingProfile": {
+    "bundle": "main.1188e3d9.js",
+    "nativeOpenRepeatedMs": [
+      10215,
+      10524,
+      10671,
+      10171.9,
+      10290.6
+    ],
+    "nativeTraceMs": {
+      "IDBFactory::open": 10668.711,
+      "BackingStore::OpenAndVerify": 10582.741,
+      "BackingStore::OpenAndVerify.OpenLevelDB": 60.774,
+      "BackingStore::OpenAndVerify.LevelDBScopes": 10518.264,
+      "BackingStore::CleanUpBlobJournal": 0.18
+    },
+    "connectionLifetimeExperiment": {
+      "initialOpenMs": 10171.9,
+      "heldConnectionOtherOpensMs": {
+        "xhandle": 1.2,
+        "xhandle-project-hazard-analysis": 1.3,
+        "xhandle-workspace-graph": 2.7
+      },
+      "afterClosingHeldConnectionMs": 10290.6,
+      "temporaryConnectionRemoved": true
+    },
+    "navigationMs": {
+      "ordinaryProject": "not ready before navigation away after 5 seconds",
+      "CbaDiagram": 8767,
+      "hazardTable": 20440,
+      "returnOrdinaryProject": 305
+    },
+    "automaticIndexingPasses": 0,
+    "nativeLockErrorsAfterRestart": 0,
+    "levelDbDirectoryBytes": 5037919751,
+    "levelDbFileCount": 2608,
+    "heldConnectionNavigation": {
+      "returnToRememberedHazardTabMs": 11302,
+      "slowDatabaseOpensOver100Ms": 0,
+      "caveat": "Remembered active tab differs from initial comparison; this is not a second diagram measurement."
+    }
+  },
+  "limitations": [
+    "One valid navigation run per released/current renderer on disposable profiles copied from the same closed profile. Copies include IndexedDB and Local Storage, not full browser profile state. Native compaction changed copied backing stores during runs.",
+    "Current native trace isolates scopes initialization, but does not identify which historic writes created the expensive storage state.",
+    "Historical lock ownership unknown. No new multi-minute single navigation reproduced after clean restart; actual working-profile delays up to 20.44 seconds were measured.",
+    "Native trace decoded from Perfetto incremental-clock TrackEvents; scope timing agrees with independent JS open duration. Raw trace remains temporary and is not committed."
+  ]
+}

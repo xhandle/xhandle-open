@@ -1,0 +1,69 @@
+{
+  "date": "2026-11-05",
+  "preview": "0.2.14-preview.20261105.10",
+  "renderer": "main.6f9bcfa7.js",
+  "rows": 26278,
+  "layoutMetadataBytes": 7659407,
+  "optionAndMembershipBytes": 4315393,
+  "regressionTests": 49,
+  "runs": [
+    {
+      "changes": 80,
+      "medianMs": 33.75000001490116,
+      "maxMs": 122.10000002384186,
+      "heapBeforeGCBytes": 195211424,
+      "heapAfterGCBytes": 199946904,
+      "sampledPeakHeapBytes": 494069923,
+      "maxCachedRows": 91,
+      "maxRowCacheBytes": 2363948,
+      "tableAndDropdownPreserved": true,
+      "countsCorrect": true,
+      "layoutWorkers": 0,
+      "optionWorkers": 0,
+      "wholeTableLoadingObservations": 0,
+      "errors": [],
+      "crashes": [],
+      "combinedFilters": [
+        {
+          "column": "Guide Phrase",
+          "count": "3,754 of 26,278 rows match filters",
+          "tablePreserved": true
+        },
+        {
+          "column": "Operational Mode",
+          "count": "3,754 of 26,278 rows match filters",
+          "tablePreserved": true
+        }
+      ]
+    },
+    {
+      "changes": 80,
+      "medianMs": 33.75000001490116,
+      "maxMs": 194.59999999403954,
+      "heapBeforeGCBytes": 199946772,
+      "heapAfterGCBytes": 200375124,
+      "sampledPeakHeapBytes": 464710239,
+      "maxCachedRows": 140,
+      "maxRowCacheBytes": 3199142,
+      "tableAndDropdownPreserved": true,
+      "countsCorrect": true,
+      "layoutWorkers": 0,
+      "optionWorkers": 0,
+      "wholeTableLoadingObservations": 0,
+      "errors": [],
+      "crashes": [],
+      "combinedFilters": [
+        {
+          "column": "Guide Phrase",
+          "count": "3,754 of 26,278 rows match filters",
+          "tablePreserved": true
+        },
+        {
+          "column": "Operational Mode",
+          "count": "3,754 of 26,278 rows match filters",
+          "tablePreserved": true
+        }
+      ]
+    }
+  ]
+}

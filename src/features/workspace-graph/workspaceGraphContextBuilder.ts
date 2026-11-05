@@ -1,3 +1,6 @@
+import {projectOverviewScope, readProjectOverviewSample} from './workspaceOverview';
+import type { WorkspaceIndexProgress } from './workspaceGraphMigrationCore';
+import { queryWorkspaceCandidates, workspaceGraphCounts, relationshipsForArtifacts } from './workspaceGraphQueries';
 import {
   getLatestWorkspaceGraphMigrationDiagnostics,
   migrateLegacyStorageToWorkspaceGraphIfStale,
@@ -5,15 +8,15 @@ import {
 import {
   getArtifact,
   getNeighborhood,
-  listArtifacts,
   listEvidence,
   listProjects,
-  listRelationships,
   listReviews,
   listRuns,
   listSourceFiles,
 } from "./workspaceGraphRepository";
 import { searchArtifacts } from "./workspaceGraphSearch";
+import { artifactTypesForAreas } from "./workspaceGraphCapabilities";
+import { workspaceIndexScope, requestedWorkspaceIndexScope, scopeWorkspaceIndex } from './workspaceIndexScope';
 import {
   DEFAULT_WORKSPACE_ID,
   type WorkspaceArtifact,
@@ -37,10 +40,14 @@ function isHazardAnalysisQuery(query = "") {
 }
 
 type WorkspaceContextArgs = {
+  onProgress?: (value:WorkspaceIndexProgress)=>void;
   projectId?: string | null;
   activeView?: any;
   query?: string;
   tokenBudget?: number;
+  areas?: string[];
+  contextOnDemand?: boolean;
+  signal?: AbortSignal;
 };
 
 type ArtifactContextArgs = {
@@ -172,6 +179,7 @@ function compactActiveView(activeView: any) {
     activeCodeArchitectureRepoId: activeView.activeCodeArchitectureRepoId || null,
     activeCodeArchitectureRepoKey: activeView.activeCodeArchitectureRepoKey || null,
     activeCodeArchitectureWorkspaceTab: activeView.activeCodeArchitectureWorkspaceTab || null,
+    activeCodeArchitectureHazardRunId: activeView.activeCodeArchitectureHazardRunId || null,
     activeCodeArchitectureRepo: activeView.activeCodeArchitectureRepo
       ? {
           id: activeView.activeCodeArchitectureRepo.id || null,
@@ -219,21 +227,22 @@ function artifactsForActiveSelections(artifacts: WorkspaceArtifact[], activeView
     ) return true;
     if (Array.from(exactIds).some((id) => id && String(artifact.sourceId || "").includes(id))) return true;
     if (artifact.type === "functional_decomposition_row") {
+      if(functionalIndexes.has(Number((artifact as any).rowIndex)))return true;
       const match = String(artifact.sourceId || "").match(/responseRows:(\d+)$/i);
       if (match && functionalIndexes.has(Number(match[1]))) return true;
     }
     if (artifact.type === "hazard_analysis_row") {
-      const rowIndex = Number(artifact.structuredData?.rowIndex);
+      const rowIndex = Number((artifact as any).rowIndex ?? artifact.structuredData?.rowIndex);
       if (Number.isInteger(rowIndex) && hazardIndexes.has(rowIndex)) return true;
       const match = String(artifact.sourceId || "").match(/Summary:(\d+)$/i);
       if (match && hazardIndexes.has(Number(match[1]))) return true;
     }
     if (artifact.type === "code_architecture_edge") {
-      const rowIndex = Number(artifact.structuredData?._rowIndex ?? artifact.structuredData?.rowIndex);
+      const rowIndex = Number((artifact as any).rowIndex ?? artifact.structuredData?._rowIndex ?? artifact.structuredData?.rowIndex);
       if (Number.isInteger(rowIndex) && codeArchitectureIndexes.has(rowIndex)) return true;
     }
     if (artifact.type === "code_architecture_hazard_row") {
-      const rowIndex = Number(artifact.structuredData?.rowIndex);
+      const rowIndex = Number((artifact as any).rowIndex ?? artifact.structuredData?.rowIndex);
       if (Number.isInteger(rowIndex) && codeArchitectureHazardIndexes.has(rowIndex)) return true;
     }
     return false;
@@ -324,11 +333,12 @@ function truncationDiagnostics(raw: Record<string, number>, limits: Record<strin
   );
 }
 
-async function migrateWithDiagnostics(diagnostics: Record<string, any>) {
+async function migrateWithDiagnostics(diagnostics: Record<string, any>, signal?: AbortSignal, steps?:string[], projectIds?:string[], onProgress?:WorkspaceContextArgs["onProgress"]) {
   try {
-    diagnostics.migration = await migrateLegacyStorageToWorkspaceGraphIfStale({ mode: "incremental" });
+    diagnostics.migration = await migrateLegacyStorageToWorkspaceGraphIfStale({ mode: "incremental", signal, steps, projectIds, onProgress });
     diagnostics.latestMigration = getLatestWorkspaceGraphMigrationDiagnostics();
   } catch (error: any) {
+    if(signal?.aborted)throw error;
     diagnostics.migrationError = error?.message || String(error);
     diagnostics.latestMigration = getLatestWorkspaceGraphMigrationDiagnostics();
   }
@@ -339,21 +349,59 @@ export async function buildWorkspaceLLMContext({
   activeView = null,
   query = "",
   tokenBudget = DEFAULT_TOKEN_BUDGET,
+  areas = [],
+  contextOnDemand = false,
+  signal,
+  onProgress,
 }: WorkspaceContextArgs = {}): Promise<WorkspaceLLMContext> {
   const diagnostics: Record<string, any> = {};
   const limits = scaleLimits(tokenBudget);
   const focusedActiveView = compactActiveView(activeView);
 
-  await migrateWithDiagnostics(diagnostics);
+  const overview = contextOnDemand ? projectOverviewScope(query, {projectId, areas}) : null;
+  if (overview) projectId = overview.projectId;
+  const requestedScope=overview ? {steps:['projects'],types:['project','repository'],deterministic:false} : workspaceIndexScope(query,areas) || (contextOnDemand ? requestedWorkspaceIndexScope(areas) : null);
+  const {indexScope,projectIds}=contextOnDemand?scopeWorkspaceIndex(requestedScope,{query,projectId,areas}):{indexScope:requestedScope,projectIds:undefined};
+  if(projectIds?.length===1)projectId=projectIds[0];
+  const progress=(step:string)=>{if(!signal?.aborted){try{onProgress?.({step,durationMs:0,complete:false});}catch{}}};
+  progress('opening');
+  await migrateWithDiagnostics(diagnostics, signal,indexScope?.steps,projectIds,onProgress);
+  progress('searching');
+  if(indexScope)diagnostics.indexScope=indexScope;
 
+  if (overview) {
+    const controller = new AbortController();
+    const abort = () => controller.abort(signal?.reason);
+    signal?.addEventListener('abort', abort, {once:true});
+    if (signal?.aborted) abort();
+    const timer = setTimeout(() => controller.abort(new Error('Overview sample exceeded its read budget.')), 5000);
+    let rejectRead: (error:any)=>void = () => {};
+    const stopped = new Promise<never>((_resolve,reject) => { rejectRead = reject; });
+    stopped.catch(() => {});
+    const stopRead = () => rejectRead(controller.signal.reason || new DOMException('Overview cancelled.','AbortError'));
+    controller.signal.addEventListener('abort',stopRead,{once:true});
+    if (controller.signal.aborted) stopRead();
+    try {
+      diagnostics.overview = !areas.length || areas.some(area => ['functional','cba'].includes(area))
+        ? await Promise.race([readProjectOverviewSample(overview, {signal:controller.signal}), stopped])
+        : {rows:[],sources:[],reason:'Only project catalog metadata was requested.'};
+    } catch (error:any) {
+      if (signal?.aborted) throw error;
+      diagnostics.overview = {rows:[],sources:[],reason:error.message};
+    } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); controller.signal.removeEventListener('abort',stopRead); }
+  }
   const allProjects = await listProjects();
   const projects = clamp(Array.isArray(allProjects) ? allProjects : [], limits.projects);
-  const totalArtifactRows = await listArtifacts({ projectId });
-  const totalArtifacts = Array.isArray(totalArtifactRows) ? totalArtifactRows : [];
-  const totalRelationshipRows = await listRelationships({ projectId });
-  const totalRelationships = Array.isArray(totalRelationshipRows) ? totalRelationshipRows : [];
+  const allowedTypes = indexScope?new Set<string>(indexScope.types):artifactTypesForAreas(areas);
+  const counts = await workspaceGraphCounts(projectId);
+  const candidateResult = await queryWorkspaceCandidates(query, { projectId, types: allowedTypes, limit: Math.max(96,limits.artifacts*3), activeView: focusedActiveView, signal });
+  const allArtifacts = candidateResult.rows;
+  const totalArtifacts = allArtifacts;
+  progress("relationships");
+  const totalRelationships = await relationshipsForArtifacts(totalArtifacts.slice(0,limits.artifacts).map(row=>row.id), {limit:limits.relationships*2,signal});
+  diagnostics.retrieval = { candidateCount: totalArtifacts.length, candidatesTruncated: candidateResult.truncated, fullBodiesLoaded: false };
   const searchedRows = query
-    ? await searchArtifacts(query, { projectId, limit: limits.artifacts })
+    ? await searchArtifacts(query, { projectId, limit: limits.artifacts }, totalArtifacts)
     : [];
   const searched = Array.isArray(searchedRows) ? searchedRows : [];
   const seedArtifacts = searched.length
@@ -403,11 +451,11 @@ export async function buildWorkspaceLLMContext({
     limits.relationships
   );
 
-  const sourceFileRows = await listSourceFiles(projectId, limits.sourceFiles * 2);
+  const sourceFileRows = !indexScope||indexScope.types.includes('source_file')?await listSourceFiles(projectId, limits.sourceFiles * 2):[];
   const allSourceFiles = Array.isArray(sourceFileRows) ? sourceFileRows : [];
   const sourceFiles = clamp(allSourceFiles.map(compactSourceFile), limits.sourceFiles);
   diagnostics.truncation = truncationDiagnostics({
-    projects: projects.length,
+    projects: Array.isArray(allProjects) ? allProjects.length : 0,
     artifacts: totalArtifacts.length,
     relevantArtifacts: uniqueById([...prioritizedSeeds, ...neighborhoodArtifacts, ...activeProjectArtifacts]).length,
     relationships: uniqueById([...relationshipsTouching(totalRelationships, relevantIds), ...neighborhoodRelationships]).length,
@@ -430,17 +478,17 @@ export async function buildWorkspaceLLMContext({
       query,
     },
     workspaceSummary: {
-      projectCount: projects.length,
-      artifactCount: totalArtifacts.length,
-      relationshipCount: totalRelationships.length,
+      projectCount: counts.projectCount,
+      artifactCount: indexScope?null:counts.artifactCount,
+      relationshipCount: indexScope?null:counts.relationshipCount,
       relevantArtifactCount: relevantArtifacts.length,
     },
     projects,
     relevantArtifacts,
     relationships,
-    runs: clamp(await listRuns(projectId, limits.runs), limits.runs),
-    reviews: clamp(await listReviews(projectId, limits.reviews), limits.reviews),
-    evidence: clamp(await listEvidence(projectId, limits.evidence), limits.evidence),
+    runs: indexScope?[]:clamp(await listRuns(projectId, limits.runs), limits.runs),
+    reviews: indexScope?[]:clamp(await listReviews(projectId, limits.reviews), limits.reviews),
+    evidence: indexScope?[]:clamp(await listEvidence(projectId, limits.evidence), limits.evidence),
     sourceFiles,
     citations: [
       ...relevantArtifacts.map(citationForArtifact),
@@ -469,16 +517,13 @@ export async function buildArtifactLLMContext({
   const projectId = root?.projectId || artifacts.find((artifact) => artifact.projectId)?.projectId || null;
   const allProjects = await listProjects();
   const projects = clamp(Array.isArray(allProjects) ? allProjects : [], limits.projects);
-  const projectArtifactRows = await listArtifacts({ projectId });
-  const projectArtifacts = Array.isArray(projectArtifactRows) ? projectArtifactRows : [];
-  const projectRelationshipRows = await listRelationships({ projectId });
-  const projectRelationships = Array.isArray(projectRelationshipRows) ? projectRelationshipRows : [];
+  const counts = await workspaceGraphCounts(projectId);
   const relevantArtifacts = clamp(artifacts.map(compactArtifact), limits.artifacts);
   const sourceFileRows = await listSourceFiles(projectId, limits.sourceFiles * 2);
   const allSourceFiles = Array.isArray(sourceFileRows) ? sourceFileRows : [];
   const sourceFiles = clamp(allSourceFiles.map(compactSourceFile), limits.sourceFiles);
   diagnostics.truncation = truncationDiagnostics({
-    projects: projects.length,
+    projects: Array.isArray(allProjects) ? allProjects.length : 0,
     artifacts: artifacts.length,
     relevantArtifacts: artifacts.length,
     relationships: neighborhood.relationships.length,
@@ -493,9 +538,9 @@ export async function buildArtifactLLMContext({
       query: root?.title || artifactId,
     },
     workspaceSummary: {
-      projectCount: projects.length,
-      artifactCount: projectArtifacts.length,
-      relationshipCount: projectRelationships.length,
+      projectCount: Array.isArray(allProjects) ? allProjects.length : 0,
+      artifactCount: counts.artifactCount,
+      relationshipCount: counts.relationshipCount,
       relevantArtifactCount: relevantArtifacts.length,
     },
     projects,

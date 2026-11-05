@@ -1,3 +1,4 @@
+import {createHazardFilterOptions} from './hazardFilterOptions';
 import {validateHazardTableIndex} from './hazardTableIndex';
 import {createHazardAssociationMatcher} from './hazardAssociationMatcher';
 import {openHazardSchema} from './hazardSchema';
@@ -15,6 +16,7 @@ export async function queryHazardRows(run,{operation='page',raw=false,field,targ
  try{
   check(signal);const root=await tx.objectStore('hazardAnalysisRuns').get(run.id),meta=await tx.objectStore('runMetadata').get(run.id);
   if(meta?.storageRevision!==descriptor.revision || root?.payload?.generation!==descriptor.generation)throw Error('Saved results changed. Reload the table before continuing.');
+  if(operation==='validate'){await tx.done;check(signal);return {valid:true};}
   const rootIndex=validateHazardRowIndex(root.payload);
   if(descriptor.records && (!raw || operation!=='page' || partial))throw Error('Legacy requirement summaries support raw page reads only.');
   const index=descriptor.records?{headers:[],spans:rootIndex.recordSummarySpans}:partial?rootIndex.partial:rootIndex;
@@ -51,8 +53,10 @@ export async function queryHazardRows(run,{operation='page',raw=false,field,targ
   if(operation==='query' || operation==='options' || operation==='layout'){
    let optionBytes=0,truncated=false;const matches=[],options=new Set(),needle=search.trim().toLowerCase(),optionNeedle=optionSearch.trim().toLowerCase();
    const layout=operation==='layout'?createCodeArchitectureHazardLayout(headers):null;
+   const filterOptions=layout?createHazardFilterOptions(headers.length,index.spans.length):null;
    for(let i=0;i<index.spans.length;i++){
     check(signal);const cells=await row(i);
+    filterOptions?.addRow(cells);
     if(operation==='options'){
      const value=text(cells[column])||'(blank)';if(!optionNeedle||value.toLowerCase().includes(optionNeedle)){
       if(value.length>2048 || optionBytes+value.length*2>256*1024){truncated=true;}
@@ -66,6 +70,7 @@ export async function queryHazardRows(run,{operation='page',raw=false,field,targ
     if(i%100===0)onProgress({completed:i,total:index.spans.length});
    }
    await tx.done;check(signal);
+   if(layout){const result=layout.finish(),optionIndex=filterOptions.finish();return {...result,optionIndex,metadataBytes:result.metadataBytes+optionIndex.metadataBytes};}
    return operation==='options'?{options:[...options].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'})),truncated}:layout?layout.finish():{indices:matches,total:matches.length};
   }
   const total=indices?indices.length:index.spans.length,rows=[],rowIndices=[],rowBytes=[];let bytes=0;
