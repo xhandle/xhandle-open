@@ -34,4 +34,3 @@ After skipping reconciliation entirely when no sources need pruning, a fresh Ele
 - Typed/pasted summaries included source architecture evidence, excluded unrelated project evidence, and made no AI read-planning call.
 - `git diff --check` passed.
 - Preview: `0.2.14-preview.20261105.4`, renderer `/private/tmp/xhandle-overview-build`, same isolated development profile and AI configuration. No release published.
-

@@ -779,7 +779,7 @@ async function migrateDurableProjectAnalysis(artifacts: WorkspaceArtifact[], rel
       tags: ["report", "safety-issue", "durable"],
     }));
     relationships.push(relationship({ type: "contains", projectId, fromArtifactId: projectArtifactId(projectId), toArtifactId: id, sourceStore: "indexedDB:xhandle-project-reports/safetyIssueReports" }));
-  
+
 }
 }
 
@@ -1386,7 +1386,7 @@ async function migrateTraceabilityDB(artifacts: WorkspaceArtifact[], relationshi
         sourceId: text(folder.id),
       }));
     }
-  
+
 }
 
   for await (const project of iterateStoreRows("TraceabilityDB","Projects")) {
@@ -1418,7 +1418,7 @@ async function migrateTraceabilityDB(artifacts: WorkspaceArtifact[], relationshi
         sourceId: projectId,
       }));
     }
-  
+
 }
 
   let notesOrdinal=0;
@@ -1443,7 +1443,7 @@ for await (const note of iterateStoreRows("TraceabilityDB","Notes")) {const inde
     }));
     const parent = note?.folderId ? folderArtifactId(`traceability:${note.folderId}`) : (projectId ? projectArtifactId(projectId) : "");
     if (parent) relationships.push(relationship({ type: "contains", projectId, fromArtifactId: parent, toArtifactId: id, sourceStore: "indexedDB:TraceabilityDB/Notes" }));
-  
+
 }
 
   for await (const sc of iterateStoreRows("TraceabilityDB","SafetyCases")) {
@@ -1516,7 +1516,7 @@ for await (const row of iterateStoreRows("TraceabilityDB","Requirements")) {cons
       tags: ["requirement", "traceability"],
     }));
     if (projectId) relationships.push(relationship({ type: "contains", projectId, fromArtifactId: projectArtifactId(projectId), toArtifactId: id, sourceStore: "indexedDB:TraceabilityDB/Requirements" }));
-  
+
 }
 }
 

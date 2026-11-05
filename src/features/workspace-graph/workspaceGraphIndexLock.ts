@@ -23,4 +23,3 @@ export function withWorkspaceGraphMigrationPaused<T>(operation: () => Promise<T>
   graphStorageMutation = result.then(() => undefined, () => undefined);
   return timeout ? Promise.race([result, timeout]) : result;
 }
-
