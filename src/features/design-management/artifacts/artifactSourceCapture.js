@@ -88,4 +88,3 @@ export async function captureLiveSourcesInline(config, storage = localStorage, o
     : isSafetyArtifact(config.templateId) ? await captureHazardAnalysisSources(configOwners(config), storage, { ...options, templateId: config.templateId }) : await captureArchitectureSources(config, storage);
   return captureSources(config.templateId === 'safety-requirements' ? { ...config, sources: [], architectureSources: [], notes: '', projectNotes: {} } : config, storage, architecture);
 }
-
