@@ -2,6 +2,20 @@ import {contextTurnMessages, parseContextTurn, resolveContextResponse, compactVi
 import {isWorkspaceMutationIntent} from '../collaborator-workspace/workspaceActionPlan';
 import {requestedWorkspaceIndexScope} from '../workspace-graph/workspaceIndexScope';
 
+test('current selected functions survive routing and resolve UI references', () => {
+  const view = compactViewDescriptor({section:'projects',activeSelections:[{kind:'functional-canvas',projectId:'p',selectedNodes:[{id:'base',label:'Base Vehicle Platform'},{id:'environment',label:'Operating Environment'}]}]});
+  const history = [{role:'assistant',content:'Teleoperation System and Fleet Management'}];
+  const messages = contextTurnMessages({userText:'Are we tracking hazards between these two functions?',view,history});
+  expect(messages[0].content).toContain('Base Vehicle Platform');
+  expect(messages[0].content).toContain('Operating Environment');
+  for (const reference of ['Base Vehicle Platform','environment']) {
+    const raw = JSON.stringify({kind:'workspace_read',areas:['risk'],reference});
+    expect(parseContextTurn(raw,{view,history}).reference).toBe('');
+    expect(()=>parseContextTurn(raw,{view,history,allowedAreas:['requirements']})).toThrow(/scope/);
+  }
+  expect(()=>parseContextTurn(JSON.stringify({kind:'workspace_read',areas:['risk'],reference:'Fleet Management'}),{view,history})).toThrow(/reference/);
+});
+
 test.each(['Whats the weather today?', 'Explain recursion in simple terms.', 'Make it shorter.', 'Translate your previous answer into Spanish.', '¿Qué estamos viendo?', 'What does WeatherEstimator do in this project?'])(
   'first turn for %s does not read storage or copy hidden view bodies', prompt => {
     const spy = jest.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {throw Error('storage unavailable');});
@@ -158,4 +172,22 @@ test('repair remains fail-closed, respects original scope, and never loops',asyn
 test('Stop during format correction prevents subsequent retrieval',async()=>{
  const controller=new AbortController();
  await expect(resolveContextResponse({response:'bad',messages:[],signal:controller.signal,requestRepair:async()=>{controller.abort();return '{"kind":"workspace_read","areas":["cba"]}';}})).rejects.toMatchObject({name:'AbortError'});
+});
+
+
+test('first AI request receives selected interface evidence alongside the user image', () => {
+  const {boundedSelectionEvidence} = require('../collaborator-selection/selectionMetadata');
+  const focus = {viewedProjectId:'p',activeSelections:[{kind:'functional-canvas',projectId:'p',selectedEdge:{id:'motion',label:'Vehicle Motion',source:'Base Vehicle Platform',target:'Operating Environment',description:'Physical motion of the vehicle'},selectedRows:[{controlDetails:'Vehicle motion output'}]}]};
+  const view = compactViewDescriptor(focus,{docked:false});
+  expect(view.selections[0].selectedEdge.label).toBe('Vehicle Motion');
+  const image = {type:'image_url',image_url:{url:'data:image/png;base64,fixture'}};
+  const messages = contextTurnMessages({userText:'Summarize this interface',userContent:[{type:'text',text:'Summarize this interface'},image],view,selectionEvidence:boundedSelectionEvidence(focus)});
+  const content = messages.at(-1).content;
+  expect(content).toContainEqual(image);
+  expect(content.at(-1).text).toContain('Physical motion of the vehicle');
+  expect(content.at(-1).text).toContain('Vehicle motion output');
+  expect(content.at(-1).text).toContain('untrusted evidence');
+  const raw = JSON.stringify({kind:'workspace_read',areas:['risk'],reference:'this interface'});
+  expect(parseContextTurn(raw,{view}).reference).toBe('');
+  expect(()=>parseContextTurn(raw,{view:{selections:[]}})).toThrow(/reference/);
 });

@@ -5,7 +5,8 @@ import { inspectStorageStore } from './inspectStorageStore';
 import { SIDEBAR_AREAS } from "../lib/sidebarPreferences";
 import { Fragment, useState, useEffect, useRef } from "react";
 import { storageScanTimeout } from "../lib/storageScanTimeout";
-import { permanentlyDeleteStoredProject } from './permanentlyDeleteStoredProject';
+import { enqueueProjectDeletions, retryProjectDeletionCleanup } from './projectDeletionQueue';
+import { listProjectDeletions, isProjectDeletionRequested, PROJECT_DELETIONS_CHANGED, PROJECT_DELETION_PREFIX } from '../lib/projectDeletionRegistry';
 import { backendURL, ACCOUNT_ID, getLocalAccessToken } from "./backendConfig";
 import {
   FileTypeSelectorModal,
@@ -89,6 +90,7 @@ const STORAGE_DATABASES = [
   "xhandle-hazard-analysis-reset",
   "xhandle-project-reports",
   "xhandle-generated-reports",
+  "xhandle-design-artifacts",
   "xhandle-results-review",
   "xhandle-safety-remediation",
   "xhandle-code-architecture-hazard-analysis",
@@ -136,6 +138,10 @@ const INDEXED_DB_STORE_DETAILS = {
   "xhandle-project-hazard-analysis:analyses": ["Project hazard analyses", "Complete hazard-analysis results saved for each project. Removing them clears results from the Hazard Analysis tab."],
   "xhandle-hazard-analysis-reset:snapshots": ["Hazard-analysis undo snapshots", "Temporary snapshots used to restore a project after clearing its hazard analysis."],
   "xhandle-project-reports:safetyIssueReports": ["Safety issue reports", "Generated stakeholder-facing safety issue reports saved for each project."],
+  "xhandle-design-artifacts:metadata": ["Design artifact library", "Engineering document titles, ownership and source status."],
+  "xhandle-design-artifacts:revisions": ["Design artifact revisions", "Immutable engineering document objects and their evidence."],
+  "xhandle-design-artifacts:jobs": ["Design artifact drafts", "Resumable section drafts awaiting review."],
+  "xhandle-design-artifacts:baselines": ["Design artifact baselines", "Named references to saved engineering document revisions."],
   "xhandle-generated-reports:metadata": ["Report library", "Titles and dates for saved project reports."],
   "xhandle-generated-reports:reports": ["Saved report documents", "Generated reports and their saved diagram images."],
   "xhandle-workspace-graph:workspaces": ["Workspace settings", "Workspace identity and configuration used to organize locally stored engineering work."],
@@ -526,7 +532,6 @@ export default function SettingsModal({
   const [storageInventory, setStorageInventory] = useState(null);
   const [storageBusy, setStorageBusy] = useState(false);
   const [storageMsg, setStorageMsg] = useState("");
-  const [projectDeletionProgress, setProjectDeletionProgress] = useState(null);
   const [selectedStorageItems, setSelectedStorageItems] = useState({});
   const [storagePages, setStoragePages] = useState({});
   const [selectedStorageRecords, setSelectedStorageRecords] = useState({});
@@ -561,6 +566,18 @@ export default function SettingsModal({
     finally { if (!signal.aborted) setLoadingStorageCategory(null); }
   };
   const [storedWorkspaceProjects, setStoredWorkspaceProjects] = useState([]);
+  const [deletionJobs, setDeletionJobs] = useState([]);
+  useEffect(() => {
+    const changed = () => {
+      try {
+        setDeletionJobs(listProjectDeletions());
+        setStoredWorkspaceProjects(current => current.filter(project => project.active || !isProjectDeletionRequested(project)));
+      } catch (error) { setStorageMsg(`Unable to read deletion status: ${error.message}`); }
+    };
+    changed();
+    window.addEventListener(PROJECT_DELETIONS_CHANGED, changed);
+    return () => window.removeEventListener(PROJECT_DELETIONS_CHANGED, changed);
+  }, []);
   const [projectInventoryError, setProjectInventoryError] = useState("");
   const storageTabScanStartedRef = useRef(false);
   const fileInputRef = useRef(null);
@@ -688,7 +705,7 @@ export default function SettingsModal({
       if (typeof localStorage !== "undefined") {
         for (let index = 0; index < localStorage.length; index += 1) {
           const key = localStorage.key(index);
-          if (!key || !isXHandleLocalStorageKey(key)) continue;
+          if (!key || key.startsWith(PROJECT_DELETION_PREFIX) || !isXHandleLocalStorageKey(key)) continue;
           const value = localStorage.getItem(key) || "";
           const groupId = localStorageCategoryForKey(key);
           if (!localGroups[groupId]) {
@@ -1038,31 +1055,25 @@ export default function SettingsModal({
     }
   };
 
-  const permanentlyDeleteWorkspaceProject = async (project) => {
-    if (storageBusy || project.active) return;
-    if (!window.confirm(`Permanently delete "${project.name || "Unnamed project"}"?\n\nThis deletes its retained project record and project-specific browser data, including saved analyses and diagrams. It will no longer be available to Restore. Other projects, shared repository caches, credentials, and existing backup files are kept.\n\nThis cannot be undone without a backup.`)) return;
-    setStorageBusy(true);
-    setStorageMsg("");
+  const deleteWorkspaceProjects = projects => {
+    if (storageBusy || !projects.length) return;
+    const label = projects.length === 1 ? `"${projects[0].name || "Unnamed project"}"` : `all ${projects.length} removed projects`;
+    if (!window.confirm(`Permanently delete ${label}?\n\nThis deletes their saved analyses, diagrams, and recovery data. This cannot be undone without a backup.`)) return;
     try {
-      await permanentlyDeleteStoredProject(project, {
-        onProgress: progress => setProjectDeletionProgress({
-          ...progress, total: progress.total + 1, projectId: project.id,
-          workspaceType: project.workspaceType, name: project.name || "Unnamed project",
-        }),
-      });
-      window.dispatchEvent?.(new CustomEvent("xhandle:data-changed", {
-        detail: {source:"settings-project-permanent-delete",projectId:project.id},
-      }));
-      notifyBackupDataChanged("storage-project-permanent-delete");
-      setProjectDeletionProgress(current => current && { ...current, label: "Refreshing the project list" });
-      await refreshStorageInventory();
-      setStorageMsg(current => `✅ Permanently deleted ${project.name || "project"}.${current ? ` Inventory refresh: ${current}` : ""}`);
-    } catch (error) {
-      setStorageMsg(`❌ Cleanup did not complete: ${error?.message || error}. Some records may already have been removed. Refresh and retry cleanup.`);
-    } finally {
-      setProjectDeletionProgress(null);
-      setStorageBusy(false);
-    }
+      const { accepted, error } = enqueueProjectDeletions(projects);
+      // The durable marker is saved before removing rows. No scan or disk
+      // reclamation blocks the user's action, including bulk deletion.
+      const identities = new Set(accepted.map(project => `${project.workspaceType}:${project.id}`));
+      setStoredWorkspaceProjects(current => current.filter(project => !identities.has(`${project.workspaceType}:${project.id}`)));
+      setStorageMsg(error
+        ? `${accepted.length ? `Deleted ${accepted.length} projects. ` : ""}Could not delete the remaining projects: ${error.message}`
+        : `Deleted ${accepted.length === 1 ? projects[0].name || "project" : `${accepted.length} projects`}.`);
+    } catch (error) { setStorageMsg(`Could not delete projects: ${error.message}`); }
+  };
+
+  const permanentlyDeleteWorkspaceProject = project => deleteWorkspaceProjects([project]);
+  const permanentlyDeleteAllRemovedProjects = () => {
+    if (!projectInventoryError) deleteWorkspaceProjects(storedWorkspaceProjects.filter(project => !project.active));
   };
 
   // ----- helpers -----
@@ -1934,17 +1945,21 @@ export default function SettingsModal({
                   </span>
                 </div>
               </div>
-              {projectDeletionProgress && (
-                <div role="status" aria-live="polite" className="border-b border-blue-100 bg-blue-50 px-4 py-3">
-                  <div className="text-sm font-medium text-blue-950">Deleting {projectDeletionProgress.name}…</div>
-                  <div className="mt-1 text-xs text-blue-800">{projectDeletionProgress.label}</div>
-                  <progress
-                    aria-label={`Deletion progress for ${projectDeletionProgress.name}`}
-                    className="mt-2 h-2 w-full accent-blue-600"
-                    value={projectDeletionProgress.completed}
-                    max={projectDeletionProgress.total}
-                  />
-                  <div className="mt-1 text-xs text-blue-800">{projectDeletionProgress.completed} of {projectDeletionProgress.total} cleanup steps completed</div>
+              {storedWorkspaceProjects.some(project => !project.active) && (
+                <div className="border-b border-slate-200 px-4 py-3">
+                  <button type="button"
+                    className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+                    disabled={storageBusy || !!projectInventoryError}
+                    onClick={permanentlyDeleteAllRemovedProjects}>
+                    Permanently delete all removed projects ({storedWorkspaceProjects.filter(project => !project.active).length})
+                  </button>
+                </div>
+              )}
+              {deletionJobs.some(job => job.status !== 'complete') && (
+                <div role="status" className="border-b border-slate-200 px-4 py-3 text-xs text-slate-500">
+                  {deletionJobs.some(job => job.status === 'failed')
+                    ? <>Some deleted projects still need storage cleanup. <button type="button" className="underline" onClick={retryProjectDeletionCleanup}>Retry cleanup</button></>
+                    : 'Freeing storage in the background. You can keep working.'}
                 </div>
               )}
               {!!storageMsg && <div role="status" className="px-4 py-3 text-sm">{storageMsg}</div>}
@@ -1999,7 +2014,7 @@ export default function SettingsModal({
                           onClick={() => permanentlyDeleteWorkspaceProject(project)}
                           aria-label={`Permanently delete ${project.name || "project"}`}
                         >
-                          {projectDeletionProgress?.workspaceType === project.workspaceType && String(projectDeletionProgress.projectId) === String(project.id) ? "Deleting…" : "Permanently delete"}
+                          Permanently delete
                         </button>
                         </div>
                       )}

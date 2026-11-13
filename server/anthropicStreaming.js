@@ -25,7 +25,15 @@ function parseAnthropicSseEvent(block = "") {
 }
 
 function anthropicStopReasonToOpenAI(stopReason = "") {
-  return stopReason === "max_tokens" ? "length" : "stop";
+  return ({
+    end_turn: 'stop',
+    stop_sequence: 'stop',
+    max_tokens: 'length',
+    refusal: 'refusal',
+    tool_use: 'tool_calls',
+    pause_turn: 'pause_turn',
+    model_context_window_exceeded: 'model_context_window_exceeded',
+  })[stopReason] || 'unknown';
 }
 
 function anthropicStreamEventValue({ event, data } = {}) {
@@ -129,11 +137,12 @@ async function writeWithBackpressure(res, value) {
   return !(res.destroyed || res.writableEnded);
 }
 
-async function pipeAnthropicSseToClient(providerStream, res, { onText, completionMetadata } = {}) {
+async function pipeAnthropicSseToClient(providerStream, res, { onText, completionMetadata, deferCompletion = false } = {}) {
   const decoder=new StringDecoder("utf8");
   let buffer = "";
   let finishReason = "stop";
   let providerDone = false;
+  let hasText = false;
 
   const processBlock = async (block) => {
     if (!block.trim()) return;
@@ -141,6 +150,7 @@ async function pipeAnthropicSseToClient(providerStream, res, { onText, completio
     if (value.error) throw value.error;
     if (value.finishReason) finishReason = value.finishReason;
     if (value.text) {
+      hasText = hasText || !!value.text.trim();
       onText?.(value.text);
       await writeWithBackpressure(res, `data: ${JSON.stringify(value.text)}\n\n`);
     }
@@ -160,6 +170,7 @@ async function pipeAnthropicSseToClient(providerStream, res, { onText, completio
   if (buffer.trim() && !res.destroyed && !res.writableEnded) await processBlock(buffer);
   if (res.destroyed || res.writableEnded) return { finishReason, providerDone, clientClosed: true };
   if (!providerDone) throw new Error("Anthropic stream ended before message_stop.");
+  if (deferCompletion) return { finishReason, providerDone, clientClosed: false, hasText };
 
   await writeWithBackpressure(
     res,

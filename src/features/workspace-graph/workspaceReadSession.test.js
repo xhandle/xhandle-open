@@ -5,6 +5,20 @@ jest.mock('./workspaceGraphRepository',()=>({listProjects:jest.fn()}));
 jest.mock('./workspaceReadClient',()=>({executeWorkspaceReadPlan:jest.fn()}));
 beforeEach(()=>{listProjects.mockResolvedValue([{id:'p',name:'Project',sourceData:{repos:[]}}]);executeWorkspaceReadPlan.mockResolvedValue([{operation:'aggregate',count:100,coverage:{complete:true}}]);});
 const context={scope:{projectId:'p'},relevantArtifacts:[],diagnostics:{migration:{errors:[]}}};
+test('hazard planner receives current selected functions despite stale conversation subjects',async()=>{
+ const labels=['Base Vehicle Platform','Operating Environment'];
+ const calls=labels.map(query=>({operation:'search',query,types:['hazard_analysis_row']}));
+ const requestPlan=jest.fn(async messages=>{
+  const payload=JSON.parse(messages[0].content.split('\n').at(-1));
+  expect(payload.currentSelections[0].selectedNodes.map(node=>node.label)).toEqual(labels);
+  expect(payload.policy.projectIds).toEqual(['p']);
+  return JSON.stringify({calls});
+ });
+ const scoped={...context,scope:{projectId:'p',activeView:{activeSelections:[{kind:'functional-canvas',projectId:'p',selectedNodes:labels.map((label,id)=>({id:String(id),label}))}]}},diagnostics:{indexScope:{types:['hazard_analysis_row'],deterministic:false},migration:{errors:[]}}};
+ await prepareWorkspaceReadEvidence({query:'Are we tracking hazards between these two functions?',context:scoped,areas:['risk'],force:true,history:[{role:'assistant',content:'Teleoperation System and Fleet Management'}],requestPlan});
+ expect(requestPlan).toHaveBeenCalledTimes(1);
+ expect(executeWorkspaceReadPlan.mock.calls[0][0]).toEqual(calls.map(call=>({...call,history:'latest'})));
+});
 test('simple counts use direct local reads without a planner model call',async()=>{
  const requestPlan=jest.fn();const result=await prepareWorkspaceReadEvidence({query:'How many requirements are there?',context,areas:['requirements'],requestPlan});
  expect(requestPlan).not.toHaveBeenCalled();expect(executeWorkspaceReadPlan).toHaveBeenCalledTimes(1);expect(result.results[0].count).toBe(100);

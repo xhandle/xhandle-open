@@ -1,0 +1,61 @@
+/* Bound scrolling to the work surface; never grow the application page. */
+.natural-language-design { display:flex; flex-direction:column; flex:1; min-height:0; min-width:0; overflow:hidden; }
+.design-toolbar { flex:none; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:6px 12px; padding:6px 10px; border-bottom:1px solid #e2e8f0; background:white; }
+.design-toolbar-actions { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.design-toolbar button { white-space:nowrap; }
+.natural-language-design .design-split-workspace { flex:1; min-height:0; min-width:0; overflow:hidden; }
+.natural-language-design .design-library-pane { display:flex; flex-direction:column; min-height:0; overflow:hidden; }
+.natural-language-design .design-library-pane > div:not(.design-library-scroll) { flex-shrink:0; }
+.natural-language-design .design-library-scroll { flex:1; min-height:0; overscroll-behavior:contain; }
+.natural-language-design .design-editor-pane { display:flex; flex-direction:column; min-height:0; overflow:hidden; padding:8px 12px; }
+.natural-language-design .design-legacy-workspace,
+.natural-language-design .artifact-editor,
+.natural-language-design .requirements-native-views { display:flex; flex-direction:column; flex:1; min-height:0; min-width:0; overflow:hidden; }
+.natural-language-design .design-view-tools { flex:none; padding:4px 0; }
+.natural-language-design .design-view-scroll { flex:1; min-height:0; min-width:0; overflow:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
+.natural-language-design .design-view-scroll[data-view=table],
+.natural-language-design .design-view-scroll[data-view=outline] { display:flex; flex-direction:column; overflow:hidden; scrollbar-gutter:auto; }
+.natural-language-design .requirements-table-panel,
+.natural-language-design .requirements-outline-panel { display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; margin-top:4px; }
+.natural-language-design .requirements-table-scroll,
+.natural-language-design .requirements-outline-scroll { flex:1; min-height:0; max-height:none; overscroll-behavior:contain; }
+.natural-language-design .artifact-header { flex:none; align-items:center; gap:6px 12px; padding-bottom:6px; }
+.natural-language-design .artifact-header h2 { font-size:18px; line-height:1.3; }
+.natural-language-design .artifact-header p { margin:2px 0; font-size:11px; }
+.natural-language-design .artifact-eyebrow { font-size:10px; }
+.natural-language-design .artifact-actions { gap:6px; }
+.natural-language-design .artifact-actions button { padding:5px 8px; font-size:12px; }
+.natural-language-design .artifact-status { flex:0 1 auto; max-height:28%; overflow:auto; min-height:0; }
+.natural-language-design .artifact-job { margin:6px 0; padding:8px 10px; }
+.natural-language-design .artifact-job p { margin:3px 0 6px; font-size:12px; }
+.natural-language-design .artifact-error,
+.natural-language-design .artifact-warning { margin:4px 0; padding:8px; font-size:12px; }
+.natural-language-design .artifact-empty { padding:16px; }
+.natural-language-design .artifact-history { flex:none; max-height:20%; overflow:auto; margin:6px 0 0; padding:6px; }
+.natural-language-design .artifact-document-layout { gap:12px; padding:12px; }
+.natural-language-design .artifact-paper { padding:24px; }
+.natural-language-design .artifact-cover { padding:8px 0 16px; margin-bottom:18px; }
+.natural-language-design .artifact-cover h1 { font-size:28px; margin:10px 0; }
+.natural-language-design .project-owner-details { padding:4px 0; font-size:12px; color:#60708a; }
+.natural-language-design .project-owner-details summary { cursor:pointer; }
+.natural-language-design .project-view-tabs { flex:none; align-self:flex-start; margin:4px 0; }
+.natural-language-design .project-view-tabs button { padding:5px 10px; font-size:12px; }
+@media (max-width:900px) {
+  .design-toolbar { gap:4px; padding:4px 6px; }
+  .design-toolbar button { font-size:11px; padding:4px 6px; }
+  .natural-language-design .design-editor-pane { padding:6px; }
+  .natural-language-design .artifact-document-layout { padding:6px; }
+}
+/* Keep the existing tools compact even when both navigation panes are open. */
+.natural-language-design .requirements-row-actions > div:first-child { flex-wrap:nowrap; max-width:100%; overflow-x:auto; }
+.natural-language-design .requirements-row-actions > div:first-child button { padding:6px; flex-shrink:0; }
+.natural-language-design .design-legacy-workspace > :not(.design-view-scroll) { flex-shrink:0; }
+.natural-language-design .artifact-header { display:grid; grid-template-columns:minmax(0,1fr) auto; }
+.natural-language-design .artifact-header > div:first-child { min-width:0; }
+.natural-language-design .artifact-header h2,
+.natural-language-design .artifact-header .artifact-eyebrow { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.design-toolbar > div:first-child { padding:2px; }
+.design-toolbar > div:first-child button { padding:4px 8px; font-size:12px; }
+@media (max-width:1000px) {
+  .natural-language-design .artifact-header { grid-template-columns:minmax(0,1fr); }
+}

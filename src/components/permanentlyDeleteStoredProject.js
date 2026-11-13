@@ -9,11 +9,11 @@ const DATABASES = ['xhandle', 'xhandle-recovery', 'xhandle-project-hazard-analys
   'xhandle-hazard-analysis-reset', 'xhandle-project-reports', 'xhandle-results-review',
   'xhandle-safety-remediation', 'xhandle-code-architecture-hazard-analysis',
   'xhandle-code-architecture-assurance', 'TraceabilityDB', 'TraceabilityMeta',
-  'BaselinesDB', 'SafetyCaseEvidenceDB', 'xhandle-generated-reports'];
+  'BaselinesDB', 'SafetyCaseEvidenceDB', 'xhandle-generated-reports', 'xhandle-design-artifacts'];
 const CLEANUP_LABELS = ['architecture analyses and diagrams', 'recovery checkpoints', 'hazard analyses',
   'hazard undo snapshots', 'saved reports', 'review results', 'safety remediation records',
   'code hazard analyses', 'engineering artifacts', 'traceability records', 'traceability metadata',
-  'saved baselines', 'safety case evidence', 'saved report library'];
+  'saved baselines', 'safety case evidence', 'saved report library', 'design artifacts'];
 const SHARED_FALLBACKS = ['xhandle:results-review:items', 'xhandle:safety-remediation:v1',
   'xhandle:code-architecture-hazard-analysis:v1', 'xhandle:review-summary-artifacts'];
 const sameProjectId = (value, projectId) => ['string','number'].includes(typeof value) && String(value) === String(projectId);
@@ -81,7 +81,7 @@ async function deleteOwnedDatabaseRecords(name,projectId) {
       settled=true; clearTimeout(timer); db.close();
       error ? reject(new Error(`Unable to clean ${name}: ${error.message || error}`)) : resolve(count);
     };
-    const abort=error=>{ failure=failure || error; try { tx.abort(); } catch { finish(error); } };
+    const abort=error=>{ failure=failure || error; try { tx.abort(); } catch { finish(failure); } };
     try {
       tx=db.transaction(stores,'readwrite');
       timer=setTimeout(()=>abort(new Error('Storage cleanup timed out. Close other tabs and retry.')),30000);
@@ -97,30 +97,89 @@ async function deleteOwnedDatabaseRecords(name,projectId) {
           objectStore.keyPath === 'projectId';
         // Walk primary keys, not the project index: missing index entries must
         // not hide scoped records. Hydrate only stores with payload ownership.
-        const request = objectStore.openKeyCursor();
-        request.onerror=()=>abort(request.error);
-        request.onsuccess=()=>{
-          try {
-            const cursor=request.result;
-            if (!cursor) return;
-            const owned = projectOwnsRecord(cursor.primaryKey, null, projectId, name, store) ||
-              (objectStore.keyPath === 'projectId' && sameProjectId(cursor.primaryKey,projectId));
-            const advance=record=>{
-              try {
-                if (owned || projectOwnsRecord(cursor.primaryKey,record,projectId,name,store)) {
-                  objectStore.delete(cursor.primaryKey); count++;
-                }
-                cursor.continue();
-              } catch(error) { abort(new Error(`${store}: ${error.message}`)); }
-            };
-            if (owned || keyOwned) advance(null);
-            else {
-              const read=objectStore.get(cursor.primaryKey);
-              read.onerror=()=>abort(read.error);
-              read.onsuccess=()=>advance(read.result);
-            }
-          } catch(error) { abort(new Error(`${store}: ${error.message}`)); }
+        const encodeKey = key => {
+          if (Array.isArray(key)) return ['array', key.map(encodeKey)];
+          if (key instanceof Date) return ['date', key.getTime()];
+          if (key instanceof ArrayBuffer || ArrayBuffer.isView(key)) {
+            const bytes = key instanceof ArrayBuffer ? new Uint8Array(key) : new Uint8Array(key.buffer, key.byteOffset, key.byteLength);
+            return ['binary', Array.from(bytes)];
+          }
+          return [typeof key, key];
         };
+        const keyToken = key => JSON.stringify(encodeKey(key));
+        const scan = () => {
+          const request = objectStore.openKeyCursor();
+          request.onerror=()=>abort(new Error(`${store}: ${request.error?.message || 'Unable to scan keys'}`));
+          request.onsuccess=()=>{
+            try {
+              const cursor=request.result;
+              if (!cursor) return;
+              const owned = projectOwnsRecord(cursor.primaryKey, null, projectId, name, store) ||
+                (objectStore.keyPath === 'projectId' && sameProjectId(cursor.primaryKey,projectId));
+              const advance=record=>{
+                try {
+                  if (owned || projectOwnsRecord(cursor.primaryKey,record,projectId,name,store)) {
+                    const deletion = objectStore.delete(cursor.primaryKey);
+                    deletion.onerror = () => abort(new Error(`${store}: ${deletion.error?.message || 'Record deletion failed'}`));
+                    count++;
+                  }
+                  cursor.continue();
+                } catch(error) { abort(new Error(`${store}: ${error.message}`)); }
+              };
+              if (owned || keyOwned) advance(null);
+              else {
+                const read=objectStore.get(cursor.primaryKey);
+                read.onerror=()=>abort(new Error(`${store}: ${read.error?.message || 'Unable to read ownership'}`));
+                read.onsuccess=()=>advance(read.result);
+              }
+            } catch(error) { abort(new Error(`${store}: ${error.message}`)); }
+          };
+        };
+        // Index keys provide project ownership without deserializing large
+        // hazard payloads. Still inspect records missing from the index.
+        const ownershipIndex = Array.from(objectStore.indexNames)
+          .map(indexName => objectStore.index(indexName))
+          .find(index => index.keyPath === 'projectId' && !index.multiEntry);
+        if (!ownershipIndex) scan();
+        else {
+          // Bulk key queries avoid one round trip per chunk across the entire
+          // database. Never fetch the indexed payloads just to inspect ownership.
+          const keys = objectStore.getAllKeys();
+          const indexed = ownershipIndex.getAllKeys();
+          const aliases = [projectId];
+          if (String(Number(projectId)) === projectId) aliases.push(Number(projectId));
+          const ownedQueries = aliases.map(id => ownershipIndex.getAllKeys(id));
+          const requests = [keys, indexed, ...ownedQueries];
+          let remaining = requests.length;
+          requests.forEach(request => {
+            request.onerror = () => abort(new Error(`${store}: ${request.error?.message || 'Unable to read ownership keys'}`));
+            request.onsuccess = () => {
+              if (--remaining) return;
+              try {
+                const indexedKeys = new Set(indexed.result.map(keyToken));
+                const ownedKeys = new Set(ownedQueries.flatMap(query => query.result).map(keyToken));
+                keys.result.forEach(key => {
+                  const token = keyToken(key);
+                  const owned = ownedKeys.has(token) || projectOwnsRecord(key, null, projectId, name, store);
+                  const remove = () => {
+                    const deletion = objectStore.delete(key);
+                    deletion.onerror = () => abort(new Error(`${store}: ${deletion.error?.message || 'Record deletion failed'}`));
+                    count++;
+                  };
+                  if (owned) remove();
+                  else if (!keyOwned && !indexedKeys.has(token)) {
+                    const read = objectStore.get(key);
+                    read.onerror = () => abort(new Error(`${store}: ${read.error?.message || 'Unable to read ownership'}`));
+                    read.onsuccess = () => {
+                      try { if (projectOwnsRecord(key, read.result, projectId, name, store)) remove(); }
+                      catch (error) { abort(new Error(`${store}: ${error.message}`)); }
+                    };
+                  }
+                });
+              } catch (error) { abort(new Error(`${store}: ${error.message}`)); }
+            };
+          });
+        }
       });
     } catch(error) { if (tx) abort(error); else finish(error); }
   });
@@ -299,4 +358,20 @@ async function waitForPendingWrites(operation, label) {
       new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error(`${label} did not finish. Wait for saving to complete and retry cleanup.`)),30000);}),
     ]);
   } finally { clearTimeout(timer); }
+}
+
+// Run sequentially to bound browser I/O; one failed project must not prevent
+// cleanup of the remaining removed projects.
+export async function permanentlyDeleteStoredProjects(projects, { onProgress } = {}) {
+  const removed = projects.filter(project => !project.active);
+  const deleted = [], failed = [];
+  for (const [index, project] of removed.entries()) {
+    try {
+      await permanentlyDeleteStoredProject(project, {
+        onProgress: progress => onProgress?.({ ...progress, project, index, count: removed.length }),
+      });
+      deleted.push(project);
+    } catch (error) { failed.push({ project, error }); }
+  }
+  return { deleted, failed };
 }

@@ -110,6 +110,20 @@ export function createBlankSafetyCase({ projectId = null, name = "Untitled Safet
   };
 }
 
+function normalizeEvidenceAutomation(value, validNodeIds) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const artifacts = Array.isArray(value.artifacts) ? value.artifacts.filter((item) => item && typeof item === "object" && typeof item.id === "string") : [];
+  const artifactIds = new Set(artifacts.map((item) => item.id));
+  return {
+    ...value,
+    complete: value.complete === true,
+    paused: value.paused === true,
+    errors: Array.isArray(value.errors) ? value.errors.map(String) : [],
+    artifacts,
+    allocations: Array.isArray(value.allocations) ? value.allocations.filter((item) => item && validNodeIds.has(item.nodeId) && artifactIds.has(item.artifactId)) : [],
+  };
+}
+
 export function normalizeSafetyCase(raw) {
   const timestamp = nowISO();
   const nodes = Array.isArray(raw?.nodes) ? raw.nodes.map((node) => createSafetyCaseNode(node)) : [];
@@ -132,6 +146,7 @@ export function normalizeSafetyCase(raw) {
     description: raw?.description || "",
     nodes,
     edges,
+    evidenceAutomation: normalizeEvidenceAutomation(raw?.evidenceAutomation, validIds),
     createdAt: raw?.createdAt || timestamp,
     updatedAt: raw?.updatedAt || timestamp,
   };

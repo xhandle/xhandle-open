@@ -31,6 +31,7 @@ const {
   supportsOpenAIEffort,
 } = require("./server/aiProviderPayloads");
 const {
+  anthropicStopReasonToOpenAI,
   createRequestCancellation,
   pipeAnthropicSseToClient,
   requestAnthropicMessageStream,
@@ -39,6 +40,7 @@ const {
 const { classifyAITransportError } = require("./server/aiTransportErrors");
 const {requestGeminiMessageStream,pipeGeminiSseToClient}=require('./server/geminiStreaming');
 const { createAIRequestMetrics } = require("./server/aiRequestMetrics");
+const { claudeResponseText, claudeRecoveryPayload } = require('./server/claudeResponseRecovery');
 const { spawn, spawnSync } = require("child_process");
 
 const app = express();
@@ -1420,15 +1422,17 @@ async function resolveAIConfigForRequest(req) {
       }
     }
 
-    const savedProviders = await listStoredAIProviderKeys(accountId);
-    const activeStored = savedProviders.find((row) => row.is_active);
-    const activeStoredKey = usableProviderApiKey(activeStored?.provider, activeStored?.api_key);
-    if (activeStoredKey) {
-      return {
-        provider: activeStored.provider,
-        apiKey: activeStoredKey,
-        model: resolveModelForProvider(activeStored.provider, headerModel || body.model),
-      };
+    if (!preferredProvider) {
+      const savedProviders = await listStoredAIProviderKeys(accountId);
+      const activeStored = savedProviders.find((row) => row.is_active);
+      const activeStoredKey = usableProviderApiKey(activeStored?.provider, activeStored?.api_key);
+      if (activeStoredKey) {
+        return {
+          provider: activeStored.provider,
+          apiKey: activeStoredKey,
+          model: resolveModelForProvider(activeStored.provider, headerModel || body.model),
+        };
+      }
     }
   }
 
@@ -1506,52 +1510,67 @@ function logProviderCompatibilityRetry({ model: retryModel, attempt, removed, ad
 
 async function callClaudeChat({ apiKey, body, messages, model, signal }) {
   const { system, conversation } = splitSystemMessages(messages);
-  const payload = buildClaudeRequestPayload({ body, model, system, conversation });
+  let payload = buildClaudeRequestPayload({ body, model, system, conversation });
+  let resp, attempt = 0;
 
-  const resp = await executeProviderRequestWithCompatibility(
-    (compatiblePayload) => axios.post("https://api.anthropic.com/v1/messages", compatiblePayload, {
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      timeout: AI_PROVIDER_LONG_REQUEST_TIMEOUT_MS,
-      signal,
-    }),
-    payload,
-    logProviderCompatibilityRetry,
-  );
-
-  const text = Array.isArray(resp.data?.content)
-    ? resp.data.content.filter((part) => part?.type === "text").map((part) => part.text || "").join("")
-    : "";
-
-  return toOpenAICompatibleResponse({
+  for (;;) {
+    if (signal?.aborted) throw signal.reason || new Error('Request cancelled.');
+    resp = await executeProviderRequestWithCompatibility(
+      (compatiblePayload) => axios.post("https://api.anthropic.com/v1/messages", compatiblePayload, {
+        headers: {
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        },
+        timeout: AI_PROVIDER_LONG_REQUEST_TIMEOUT_MS,
+        signal,
+      }),
+      payload,
+      logProviderCompatibilityRetry,
+    );
+    const recovery = claudeRecoveryPayload(payload, { body, attempt, finishReason: anthropicStopReasonToOpenAI(resp.data?.stop_reason), hasText: !!claudeResponseText(resp.data).trim() });
+    if (!recovery) break;
+    payload = recovery; attempt++;
+  }
+  return { ...toOpenAICompatibleResponse({
     provider: "claude",
     model,
-    text,
-    raw: resp.data,
-    finishReason: resp.data?.stop_reason === "max_tokens" ? "length" : "stop",
-  });
+    text: claudeResponseText(resp.data),
+    raw: { ...resp.data, content: (resp.data?.content || []).filter(part => part.type === 'text') },
+    finishReason: anthropicStopReasonToOpenAI(resp.data?.stop_reason),
+  }), xhandleCompletion: { maxOutputTokens: payload.max_tokens, providerAttempts: attempt + 1 } };
 }
 
 async function streamClaudeChat({ apiKey, body, messages, model, signal, res, onText, completionMetadata }) {
   const { system, conversation } = splitSystemMessages(messages);
-  const payload = buildClaudeRequestPayload({ body, model, system, conversation });
-  const response = await requestAnthropicMessageStream({
-    axiosClient: axios,
-    apiKey,
-    payload,
-    timeoutMs: AI_PROVIDER_LONG_REQUEST_TIMEOUT_MS,
-    signal,
-    executeWithCompatibility: executeProviderRequestWithCompatibility,
-    onRetry: logProviderCompatibilityRetry,
-  });
+  let payload = buildClaudeRequestPayload({ body, model, system, conversation });
+  let result, attempt = 0;
+  for (;;) {
+    if (signal?.aborted) throw signal.reason || new Error('Request cancelled.');
+    const response = await requestAnthropicMessageStream({
+      axiosClient: axios,
+      apiKey,
+      payload,
+      timeoutMs: AI_PROVIDER_LONG_REQUEST_TIMEOUT_MS,
+      signal,
+      executeWithCompatibility: executeProviderRequestWithCompatibility,
+      onRetry: logProviderCompatibilityRetry,
+    });
 
-  setSseHeaders(res);
-  res.flushHeaders?.();
-  res.write(": connected\n\n");
-  return pipeAnthropicSseToClient(response.data, res, { onText, completionMetadata });
+    setSseHeaders(res);
+    res.flushHeaders?.();
+    res.write(": connected\n\n");
+    result = await pipeAnthropicSseToClient(response.data, res, { onText, deferCompletion: true });
+    if (result.clientClosed || res.destroyed || res.writableEnded) return result;
+    const recovery = claudeRecoveryPayload(payload, { body, attempt, finishReason: result.finishReason, hasText: result.hasText });
+    if (!recovery) break;
+    payload = recovery; attempt++;
+  }
+  const completion = { finishReason: result.finishReason, maxOutputTokens: payload.max_tokens, providerAttempts: attempt + 1 };
+  await writeWithBackpressure(res, `event: metadata\ndata: ${JSON.stringify({ finish_reason: result.finishReason, max_output_tokens: payload.max_tokens, provider_attempts: attempt + 1, ...(completionMetadata?.(completion) || {}) })}\n\n`);
+  await writeWithBackpressure(res, 'event: done\ndata: [DONE]\n\n');
+  res.end();
+  return { ...result, ...completion };
 }
 
 async function streamGeminiChat({apiKey,body,messages,model,signal,res,onText,completionMetadata}){
@@ -2371,7 +2390,7 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
           signal: requestCancellation.signal,
           res,
           onText: requestMetrics.addOutput,
-          completionMetadata:({finishReason})=>({serverTiming:requestMetrics.finish({finishReason})}),
+          completionMetadata:completion=>({serverTiming:requestMetrics.finish(completion)}),
         });
         requestMetrics.finish(streamResult?.clientClosed?{status:"canceled",finishReason:"error",errorCode:"client_disconnected"}:{ finishReason: streamResult?.finishReason || "stop" });
         return;
@@ -2385,7 +2404,7 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
       });
       const text = resp.choices?.[0]?.message?.content || "";
       requestMetrics.addOutput(text);
-      resp.xhandleMetrics=requestMetrics.finish({ finishReason: resp.choices?.[0]?.finish_reason || "stop" });
+      resp.xhandleMetrics=requestMetrics.finish({ finishReason: resp.choices?.[0]?.finish_reason || "stop", ...resp.xhandleCompletion });
       return res.json(resp);
     }
 

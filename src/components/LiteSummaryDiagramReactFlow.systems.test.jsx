@@ -976,3 +976,151 @@ test('project function retains default ports and keyboard focus exposes unused p
   act(() => container.querySelector('.x-node').dispatchEvent(new FocusEvent('focusin', { bubbles: true })));
   expect(container.querySelectorAll('[data-handle]').length).toBe(32);
 });
+
+test('snapshot canvas preserves native geometry and styling, permits inspection, and cannot edit source storage', async () => {
+  const values = new Map([
+    [key, JSON.stringify([['n:Plan', { position: { x: 30, y: 60 }, parentId: 'g:planning', groupingIntent: 'explicit' }], ['n:Control', { position: { x: 30, y: 210 }, parentId: 'g:planning', groupingIntent: 'explicit' }]])],
+    [key + ':groups:v1', JSON.stringify([
+      { id: 'g:system', label: 'Vehicle', elementType: 'system', position: { x: 80, y: 90 }, width: 650, height: 550 },
+      { id: 'g:planning', label: 'Planning', parentNode: 'g:system', position: { x: 40, y: 60 }, width: 500, height: 400, brandColor: '#22aa66', manualMembership: true },
+    ])],
+  ]);
+  const storage = { getItem: name => values.get(name) ?? null, setItem: (name, value) => values.set(name, value), removeItem: name => values.delete(name) };
+  const sourceBefore = JSON.stringify(localStorage);
+  const onInspectElement = jest.fn(), onUpdateRows = jest.fn();
+  act(() => root.render(<Diagram rows={rows} storageKey={key} storage={storage} readOnly onInspectElement={onInspectElement} onUpdateRows={onUpdateRows} />));
+  await tick();
+  expect(mockNodes.find(node => node.id === 'g:planning')).toMatchObject({ parentNode: 'g:system', position: { x: 40, y: 60 }, data: { brandColor: '#22aa66' } });
+  expect(mockNodes.find(node => node.id === 'n:Plan')).toMatchObject({ parentNode: 'g:planning', position: { x: 30, y: 60 } });
+  expect(mockFlowProps).toMatchObject({ nodesDraggable: false, nodesConnectable: false, edgesUpdatable: false, deleteKeyCode: null });
+  expect(mockFlowProps.nodes.every(node => node.data.readOnly)).toBe(true);
+  expect(mockFlowProps.edges.every(edge => edge.data.readOnly)).toBe(true);
+  expect(container.querySelector('button[aria-label="Add system"]')).toBeNull();
+  const before = JSON.stringify(mockNodes);
+  act(() => mockFlowProps.onNodesChange([{ type: 'remove', id: 'n:Plan' }, { type: 'position', id: 'n:Control', position: { x: 999, y: 999 } }]));
+  act(() => mockFlowProps.onEdgesChange([{ type: 'remove', id: mockEdges[0].id }]));
+  await tick();
+  expect(JSON.stringify(mockNodes)).toBe(before);
+  expect(mockEdges).toHaveLength(1);
+  act(() => mockFlowProps.onNodeClick({}, mockNodes.find(node => node.id === 'n:Plan')));
+  expect(onInspectElement).toHaveBeenCalledWith({ type: 'node', id: 'n:Plan' });
+  expect(onUpdateRows).not.toHaveBeenCalled();
+  expect(JSON.stringify(localStorage)).toBe(sourceBefore);
+});
+
+// Both artifact sources deliberately mount this same renderer. Exercise the
+// real code adapter here so aggregation is tested through the actual UI toggle.
+test('code artifacts expand source bundles on the first click and share Projects arrangement, resizing and persistence', async () => {
+  global.ResizeObserver = class { observe() {} disconnect() {} };
+  const CodeArtifact = require('../features/design-management/artifacts/NativeCodeArchitectureDiagram').default;
+  const path = csc => ({ subsystem: 'Control', csci: 'Software', csc, csu: 'Unit' });
+  const diagram = { id: 'code', diagramHash: 'code-hash', abstraction: 'csc', snapshot: {
+    nodes: [{ id: 'a', label: 'Planner', displayArchitecture: path('Planner') }, { id: 'b', label: 'Control', displayArchitecture: path('Control') }],
+    edges: [{ id: 'bundle', from: 'a', to: 'b', label: 'Commands', relationships: [
+      { id: 'r1', label: 'Start' }, { id: 'r2', label: 'Stop' }, { id: 'r3', label: 'Reset' },
+    ] }],
+  } };
+  const original = JSON.stringify(diagram), save = jest.fn(), select = jest.fn();
+  await act(async () => root.render(<CodeArtifact diagram={diagram} editable onPresentationChange={save} onSelect={select} />));
+  await tick();
+  expect(mockEdges).toHaveLength(1);
+  expect(mockEdges[0].data.edgeIds).toHaveLength(3);
+  const leaves = mockNodes.filter(node => node.type !== 'groupBox');
+  expect(leaves.map(node => node.data.label).sort()).toEqual(['Control', 'Planner']);
+  expect(leaves.every(node => node.data.brandColor === '#2D7DFE')).toBe(true);
+  expect(leaves.every(node => mockNodes.some(parent => parent.id === node.parentNode && parent.type === 'groupBox'))).toBe(true);
+  const expand = container.querySelector('button[title="Expand directional edge bundles"]');
+  expect(expand.disabled).toBe(false);
+  act(() => expand.click()); await tick();
+  expect(mockEdges).toHaveLength(3);
+  expect(mockEdges.map(edge => edge.label).sort()).toEqual(['Reset', 'Start', 'Stop']);
+  expect(container.querySelector('button[title="Aggregate repeated directional edges"]')).not.toBeNull();
+  act(() => mockFlowProps.onNodeClick({}, mockFlowProps.nodes.find(node => node.id === leaves[0].id)));
+  expect(select).toHaveBeenCalledWith(leaves[0].data.label === 'Planner' ? 'a' : 'b');
+  expect(mockFlowProps.nodes.find(node => node.id === leaves[0].id).data.resizable).toBe(true);
+  act(() => container.querySelector('button[title="Auto arrange"]').click()); await tick();
+  expect(mockEdges).toHaveLength(3);
+  expect(mockFlowProps.nodes.every(node => node.deletable === false && node.connectable === false)).toBe(true);
+  expect(mockFlowProps.onConnect).toBeUndefined();
+  expect(save).toHaveBeenCalled();
+  const presentation = save.mock.calls.at(-1)[0];
+  expect(JSON.parse(presentation.storage[':edge-aggregation:v1']).aggregateAll).toBe(false);
+  expect(JSON.stringify(diagram)).toBe(original);
+  act(() => root.unmount()); root = createRoot(container);
+  await act(async () => root.render(<CodeArtifact diagram={{ ...diagram, presentation }} editable />)); await tick();
+  expect(mockEdges).toHaveLength(3);
+});
+
+test.each(['fresh', 'legacy-parent', 'legacy-no-intent', 'legacy-detached'])('code architecture retains every subsystem and CSCI parent through arrange and reload (%s)', async (savedLayout) => {
+  global.ResizeObserver = class { observe() {} disconnect() {} };
+  const CodeArtifact = require('../features/design-management/artifacts/NativeCodeArchitectureDiagram').default;
+  const nodes = ['Common', 'Planning', 'Sensing'].flatMap(subsystem => ['A', 'B'].map(csc => ({
+    id: `${subsystem}-${csc}`, label: `${subsystem} ${csc} Components`,
+    displayArchitecture: { subsystem: `${subsystem} Subsystem`, csci: `${subsystem} Software`, csc: `${subsystem} ${csc} Components`, csu: 'Unit' },
+  })));
+  const diagram = { id: 'nested-code', diagramHash: 'nested-code-hash', abstraction: 'csc', snapshot: {
+    nodes, edges: nodes.slice(1).map((node, i) => ({ id: `edge-${i}`, from: nodes[i].id, to: node.id, label: 'Signal' })),
+  } };
+  if (savedLayout !== 'fresh') {
+    const { diagram: translated } = require('../features/design-management/artifacts/codeArchitectureCanvas').codeArchitectureCanvas(diagram);
+    diagram.presentation = { storage: { ...translated.snapshot.native.storage,
+      '': JSON.stringify(JSON.parse(translated.snapshot.native.storage['']).map(([id, placement]) => [id, {
+        ...placement, groupingIntent: savedLayout === 'legacy-no-intent' ? undefined : 'automatic',
+        ...(savedLayout === 'legacy-detached' && id.startsWith('n:') ? { parentId: null, position: { x: 4000, y: 2000 } } : {}),
+      }])),
+    } };
+  }
+  const sourceSizes = JSON.parse(require('../features/design-management/artifacts/codeArchitectureCanvas').codeArchitectureCanvas(diagram).diagram.snapshot.native.storage[':element-sizes:v1']);
+  const save = jest.fn();
+  const checkParents = () => {
+    for (const [id, size] of Object.entries(sourceSizes)) {
+      expect(mockFlowProps.nodes.find(node => node.id === id)).toMatchObject({ width: size.width, height: size.height, data: { customSize: size } });
+    }
+    for (const source of nodes) {
+      const leaf = mockNodes.find(node => node.data.label === source.label);
+      const parent = mockNodes.find(node => node.id === leaf.parentNode);
+      expect(parent?.data.label).toBe(source.displayArchitecture.csci);
+      const grandparent = mockNodes.find(node => node.id === parent.parentNode);
+      expect(grandparent?.data.label).toBe(source.displayArchitecture.subsystem);
+    }
+  };
+  await act(async () => root.render(<CodeArtifact diagram={diagram} editable onPresentationChange={save} />)); await tick();
+  checkParents();
+  act(() => container.querySelector('button[title="Auto arrange"]').click()); await tick();
+  checkParents();
+  const presentation = save.mock.calls.at(-1)[0];
+  act(() => root.unmount()); root = createRoot(container);
+  await act(async () => root.render(<CodeArtifact diagram={{ ...diagram, presentation }} editable />)); await tick();
+  checkParents();
+});
+
+test.each(['subsystem', 'csci', 'csc'])('code artifact hydration preserves the complete source %s geometry', async abstraction => {
+  global.ResizeObserver = class { observe() {} disconnect() {} };
+  const CodeArtifact = require('../features/design-management/artifacts/NativeCodeArchitectureDiagram').default;
+  const { codeArchitectureCanvas } = require('../features/design-management/artifacts/codeArchitectureCanvas');
+  const nodes = ['Common', 'Planning', 'Sensing'].flatMap(subsystem => ['A', 'B', 'C'].map(csc => ({
+    id: `${subsystem}-${csc}`, label: `${subsystem} ${csc} Components`,
+    displayArchitecture: { subsystem, csci: `${subsystem} Software`, csc: `${subsystem} ${csc} Components`, csu: 'Unit' },
+  })));
+  const diagram = { id: `parity-${abstraction}`, abstraction, snapshot: {
+    nodes, edges: nodes.slice(1).map((node, i) => ({ id: `edge-${i}`, from: nodes[i].id, to: node.id, label: 'Signal' })),
+  } };
+  const expected = codeArchitectureCanvas(diagram).diagram.snapshot.nodes;
+  const checkGeometry = () => {
+    expect(mockFlowProps.nodes).toHaveLength(expected.length);
+    for (const source of expected) {
+      const rendered = mockFlowProps.nodes.find(node => node.id === source.id);
+      expect({ id: rendered.id, position: rendered.position, parent: rendered.parentNode,
+        width: rendered.style?.width || rendered.width, height: rendered.style?.height || rendered.height,
+      }).toEqual({ id: source.id, position: source.position, parent: source.parentId,
+        width: source.width, height: source.height });
+    }
+  };
+  const save = jest.fn();
+  await act(async () => root.render(<CodeArtifact diagram={diagram} editable onPresentationChange={save} />));
+  await tick(); await tick(); checkGeometry();
+  const presentation = save.mock.calls.at(-1)?.[0];
+  act(() => root.unmount()); root = createRoot(container);
+  await act(async () => root.render(<CodeArtifact diagram={{ ...diagram, presentation }} editable />));
+  await tick(); checkGeometry();
+});

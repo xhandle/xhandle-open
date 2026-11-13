@@ -1,0 +1,11 @@
+# Implement automatic safety-case evidence maintenance
+
+Execute the prerequisites and first useful automatic workflow from `docs/investigations/automated-safety-case-review.md`.
+
+Implement automatic, project-scoped collection and explainable allocation of existing requirements and explicitly traced verification artifacts. Run maintenance while the workspace is open, including when the Safety Case view is closed, and catch up on reopening. Preserve manual argument editing, evidence links, uploads, exclusions and human acceptance. Show missing, changed, failed, planned and incomplete evidence honestly. Automatic allocation must never automatically accept a claim.
+
+Before editing, inspect the actual source schemas, notification paths and workspace-graph coverage. Reuse appropriate existing infrastructure; do not make safety evidence depend on a truncated relevance search or silently stale graph. Keep broader source adapters and portable evidence bundles as explicit follow-up scope rather than claiming them implemented.
+
+Fix prerequisite project-scoping, cycle/completeness, misleading status, durable-write and AI-candidate-grounding defects relevant to this workflow. Use stable source identities and revision tracking. Keep automatic state separate from manual authoring so background reconciliation cannot overwrite unsaved edits. Avoid self-triggered event loops and do not turn unreadable sources into deletions. Preserve persisted compatibility and duplication/import/export of the added state.
+
+Add meaningful regression tests covering project isolation (including nested records), explicit trace allocation, plans versus results, failed/missing/changed evidence, idempotence, restart and closed-view updates, manual exclusions and edits, large inventories, source/save failure, transaction completion, existing editor/picker behavior, and cycles. Run the new tests and adjacent existing suites, lint changed code, and attempt a production build. Investigate failures and record pre-existing limitations accurately. Do not use live user data, call external AI, deploy, or commit. Save implementation and validation results in `docs/investigations/automated-safety-case-implementation.md`.

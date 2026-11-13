@@ -1,3 +1,4 @@
+import { validateModuleRows } from './normalizeModuleRows';
 const LS_KEY = "xhandle:requirements";
 const LS_PROJECTS = "xhandle:req-projects";
 const LS_ACTIVE_PROJECT = "xhandle:req-active-project";
@@ -96,6 +97,10 @@ export function migrateRequirementsState() {
   const folders = loadFolders();
   if (!folders.length) {
     const rows = loadRequirements();
+    if (!rows.length) {
+      if (getActiveFolderId()) setActiveFolderId(null, { source: "migration" });
+      return { folders: [], requirements: [], activeFolderId: null };
+    }
     const moduleNames = [...new Set(rows.map((row) => row.module).filter(Boolean))];
     const modules = moduleNames.map((name) => ({
       id: makeId("MOD"),
@@ -109,7 +114,7 @@ export function migrateRequirementsState() {
     const root = {
       id: makeId("FOL"),
       parentId: null,
-      name: "Root",
+      name: "Designs",
       modules,
       roles: { Owner: [], Editor: [], Viewer: [] },
       createdAt: nowISO(),
@@ -130,8 +135,8 @@ export function migrateRequirementsState() {
   }
 
   const fixed = folders.map((folder) =>
-    typeof folder.parentId === "undefined"
-      ? { ...folder, parentId: null, updatedAt: folder.updatedAt || nowISO() }
+    typeof folder.parentId === "undefined" || (!folder.parentId && folder.name === "Root")
+      ? { ...folder, parentId: folder.parentId || null, name: !folder.parentId && folder.name === "Root" ? "Designs" : folder.name, updatedAt: folder.updatedAt || nowISO() }
       : folder
   );
   if (JSON.stringify(fixed) !== JSON.stringify(folders)) {
@@ -203,7 +208,7 @@ export function createModuleRecord({ name, type = "Requirement", description = "
   const folder = ensureActiveFolder();
   const targetFolderId = folderId || folder?.id;
   const folderState = findFolderById(targetFolderId);
-  if (!folderState) throw new Error("No active Requirements folder is available.");
+  if (!folderState) throw new Error("Create a folder before adding a module.");
 
   const moduleName = String(name || "").trim();
   if (!moduleName) throw new Error("Module name is required.");
@@ -293,6 +298,9 @@ export function saveRequirementRecord(draft, { author = "xHandle Collaborator" }
     moduleId: moduleRecord?.id || draft.moduleId || null,
     status: draft.status || "Proposed",
     heading: !!draft.heading,
+    content: draft.content,
+    sourceRefs: draft.sourceRefs || [],
+    provenance: draft.provenance,
     attributes: draft.attributes || {},
     links: draft.links || [],
     parentId: draft.parentId ?? null,
@@ -305,6 +313,7 @@ export function saveRequirementRecord(draft, { author = "xHandle Collaborator" }
 
   const requirements = loadRequirements();
   const exists = requirements.find((row) => row.id === nextDraft.id);
+  if (exists && ((exists.folderId ?? exists.projectId) !== folderId || (exists.moduleId && exists.moduleId !== nextDraft.moduleId))) throw new Error('Object identity belongs to another module.');
   const next = clone(requirements);
 
   if (!exists) {
@@ -348,72 +357,28 @@ export function saveRequirementRecord(draft, { author = "xHandle Collaborator" }
   return nextDraft;
 }
 
-export function replaceModuleRequirements({ moduleId, folderId = getActiveFolderId(), rows = [], author = "xHandle Collaborator" } = {}) {
+function populateModuleRows({ moduleId, folderId = getActiveFolderId(), rows = [] } = {}, append = false) {
   const moduleRecord = findModule(moduleId, { by: "id", folderId });
   if (!moduleRecord) throw new Error("Module not found.");
-
   const requirements = loadRequirements();
-  const keep = requirements.filter(
-    (row) => !((row.folderId ?? row.projectId) === folderId && row.moduleId === moduleId)
-  );
-
+  const sameModule = row => (row.folderId ?? row.projectId) === folderId && (row.moduleId ? row.moduleId === moduleId : row.module === moduleRecord.name);
+  const existing = requirements.filter(sameModule);
+  const keep = append ? requirements : requirements.filter(row => !sameModule(row));
   const created = rows.map((row, index) => ({
-    id: makeId("REQ"),
-    title: row.title || `Item ${index + 1}`,
-    projectId: folderId,
-    folderId,
-    module: moduleRecord.name,
-    moduleId: moduleRecord.id,
-    status: row.status || "Proposed",
-    heading: !!row.heading,
-    attributes: row.attributes || {},
-    links: row.links || [],
-    parentId: row.parentId ?? null,
-    order: typeof row.order === "number" ? row.order : index,
-    version: 1,
-    history: [],
-    createdAt: nowISO(),
-    updatedAt: nowISO(),
+    ...clone(row), id: row.id || makeId("REQ"), title: row.title || `Item ${index + 1}`,
+    projectId: folderId, folderId, module: moduleRecord.name, moduleId,
+    status: row.status || "Proposed", heading: !!row.heading, attributes: row.attributes || {},
+    links: row.links || [], parentId: row.parentId ?? null,
+    order: typeof row.order === "number" ? row.order : (append ? existing.length : 0) + index,
+    version: row.version || 1, history: row.history || [], createdAt: row.createdAt || nowISO(), updatedAt: nowISO(),
   }));
-
-  saveRequirements([...keep, ...created], {
-    source: "replace-module-requirements",
-    folderId,
-    moduleId,
-    count: created.length,
-  });
+  validateModuleRows(created, keep, folderId, moduleId, moduleRecord.name);
+  saveRequirements([...keep, ...created], { source: append ? "append-module-requirements" : "replace-module-requirements", folderId, moduleId, count: created.length });
   emitFocus({ folderId, moduleId, moduleName: moduleRecord.name });
   return { module: moduleRecord, rows: created };
 }
-
-export function appendModuleRequirements({ moduleId, folderId = getActiveFolderId(), rows = [] } = {}) {
-  const moduleRecord = findModule(moduleId, { by: "id", folderId });
-  if (!moduleRecord) throw new Error("Module not found.");
-  const existing = listRequirementsForModule({ folderId, moduleId });
-  const created = [];
-  for (let index = 0; index < rows.length; index += 1) {
-    const row = rows[index];
-    const saved = saveRequirementRecord(
-      {
-        title: row.title || `Item ${existing.length + index + 1}`,
-        projectId: folderId,
-        folderId,
-        module: moduleRecord.name,
-        moduleId: moduleRecord.id,
-        status: row.status || "Proposed",
-        heading: !!row.heading,
-        attributes: row.attributes || {},
-        links: row.links || [],
-        parentId: row.parentId ?? null,
-        order: nextOrderAmong([...existing, ...created], row.parentId ?? null),
-      },
-      { author: "xHandle Collaborator" }
-    );
-    created.push(saved);
-  }
-  emitFocus({ folderId, moduleId, moduleName: moduleRecord.name });
-  return { module: moduleRecord, rows: created };
-}
+export function replaceModuleRequirements(options) { return populateModuleRows(options); }
+export function appendModuleRequirements(options) { return populateModuleRows(options, true); }
 
 export function loadEntityRecord(entityType, id, { folderId = getActiveFolderId() } = {}) {
   switch (entityType) {

@@ -261,8 +261,8 @@ export function separateContainedFunctions(nodes, boxes, padding) {
     const rectFor = node => {
       const childBox = currentBoxes.get(node.id);
       return { ...node.position,
-        width: childBox?.width || Math.max(node.width || 0, padding.nodeWidth),
-        height: childBox?.height || Math.max(node.height || 0, padding.nodeHeight) };
+        width: childBox?.width || node.width || Number(node.style?.width) || padding.nodeWidth,
+        height: childBox?.height || node.height || Number(node.style?.height) || padding.nodeHeight };
     };
     // Notes and child containers stay put; functions avoid them as well.
     const placed = children.filter(node => node.type === 'groupBox' || node.type === 'note').map(rectFor);

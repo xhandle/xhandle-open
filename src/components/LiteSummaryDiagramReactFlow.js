@@ -363,9 +363,9 @@ async function runElkLayoutOnce({ nodes, edges }) {
 }
 
 /* ===== Persisted positions helpers (localStorage) ===== */
-function loadPositions(storageKey) {
+function loadPositions(storageKey, storage = window.localStorage) {
   try {
-    const raw = localStorage.getItem(storageKey);
+    const raw = storage.getItem(storageKey);
     if (!raw) return new Map();
     const arr = JSON.parse(raw);
     return new Map(
@@ -380,16 +380,16 @@ function loadPositions(storageKey) {
     return new Map();
   }
 }
-function savePositions(storageKey, posMap) {
+function savePositions(storageKey, posMap, storage = window.localStorage) {
   try {
     const arr = Array.from(posMap.entries());
-    localStorage.setItem(storageKey, JSON.stringify(arr));
+    storage.setItem(storageKey, JSON.stringify(arr));
   } catch {}
 }
 
-function loadGroupBoxes(storageKey) {
+function loadGroupBoxes(storageKey, storage = window.localStorage) {
   try {
-    const raw = localStorage.getItem(`${storageKey}:groups:v1`);
+    const raw = storage.getItem(`${storageKey}:groups:v1`);
     const arr = raw ? JSON.parse(raw) : [];
     return Array.isArray(arr) ? arr : [];
   } catch {
@@ -397,19 +397,19 @@ function loadGroupBoxes(storageKey) {
   }
 }
 
-function saveGroupBoxes(storageKey, boxes, { verify = false } = {}) {
+function saveGroupBoxes(storageKey, boxes, { verify = false } = {}, storage = window.localStorage) {
   try {
     const key = `${storageKey}:groups:v1`;
     const serialized = JSON.stringify(boxes || []);
-    localStorage.setItem(key, serialized);
+    storage.setItem(key, serialized);
     // Some application storage wrappers report quota errors without throwing.
-    return !verify || localStorage.getItem(key) === serialized;
+    return !verify || storage.getItem(key) === serialized;
   } catch { return false; }
 }
 
-function saveAutoCategoryMeta(storageKey, meta) {
+function saveAutoCategoryMeta(storageKey, meta, storage = window.localStorage) {
   try {
-    localStorage.setItem(`${storageKey}:auto-categories:v1`, JSON.stringify(meta || {}));
+    storage.setItem(`${storageKey}:auto-categories:v1`, JSON.stringify(meta || {}));
   } catch {}
 }
 
@@ -456,9 +456,9 @@ function sanitizeNodesForReactFlowParentage(nodes = []) {
   return changed ? sanitized : list;
 }
 
-function loadDeletedAutoGroupIds(storageKey) {
+function loadDeletedAutoGroupIds(storageKey, storage = window.localStorage) {
   try {
-    const raw = localStorage.getItem(`${storageKey}:deleted-auto-groups:v1`);
+    const raw = storage.getItem(`${storageKey}:deleted-auto-groups:v1`);
     const arr = raw ? JSON.parse(raw) : [];
     return new Set(Array.isArray(arr) ? arr.filter(Boolean) : []);
   } catch {
@@ -466,15 +466,15 @@ function loadDeletedAutoGroupIds(storageKey) {
   }
 }
 
-function saveDeletedAutoGroupIds(storageKey, deletedIds) {
+function saveDeletedAutoGroupIds(storageKey, deletedIds, storage = window.localStorage) {
   try {
-    localStorage.setItem(`${storageKey}:deleted-auto-groups:v1`, JSON.stringify(Array.from(deletedIds || [])));
+    storage.setItem(`${storageKey}:deleted-auto-groups:v1`, JSON.stringify(Array.from(deletedIds || [])));
   } catch {}
 }
 
-function loadUngroupedAutoNodeIds(storageKey) {
+function loadUngroupedAutoNodeIds(storageKey, storage = window.localStorage) {
   try {
-    const raw = localStorage.getItem(`${storageKey}:ungrouped-auto-nodes:v1`);
+    const raw = storage.getItem(`${storageKey}:ungrouped-auto-nodes:v1`);
     const arr = raw ? JSON.parse(raw) : [];
     return new Set(Array.isArray(arr) ? arr.filter(Boolean) : []);
   } catch {
@@ -482,15 +482,15 @@ function loadUngroupedAutoNodeIds(storageKey) {
   }
 }
 
-function saveUngroupedAutoNodeIds(storageKey, nodeIds) {
+function saveUngroupedAutoNodeIds(storageKey, nodeIds, storage = window.localStorage) {
   try {
-    localStorage.setItem(`${storageKey}:ungrouped-auto-nodes:v1`, JSON.stringify(Array.from(nodeIds || [])));
+    storage.setItem(`${storageKey}:ungrouped-auto-nodes:v1`, JSON.stringify(Array.from(nodeIds || [])));
   } catch {}
 }
 
-function loadManualNodes(storageKey) {
+function loadManualNodes(storageKey, storage = window.localStorage) {
   try {
-    const raw = localStorage.getItem(`${storageKey}:manual:v1`);
+    const raw = storage.getItem(`${storageKey}:manual:v1`);
     const arr = raw ? JSON.parse(raw) : [];
     return Array.isArray(arr) ? arr : [];
   } catch {
@@ -498,15 +498,15 @@ function loadManualNodes(storageKey) {
   }
 }
 
-function saveManualNodes(storageKey, manualNodes) {
+function saveManualNodes(storageKey, manualNodes, storage = window.localStorage) {
   try {
-    localStorage.setItem(`${storageKey}:manual:v1`, JSON.stringify(manualNodes || []));
+    storage.setItem(`${storageKey}:manual:v1`, JSON.stringify(manualNodes || []));
   } catch {}
 }
 
-function loadEdgeAggregationState(storageKey) {
+function loadEdgeAggregationState(storageKey, storage = window.localStorage) {
   try {
-    const raw = localStorage.getItem(`${storageKey}:edge-aggregation:v1`);
+    const raw = storage.getItem(`${storageKey}:edge-aggregation:v1`);
     if (!raw) {
       return {
         aggregateAll: false,
@@ -538,9 +538,9 @@ function loadEdgeAggregationState(storageKey) {
   }
 }
 
-function saveEdgeAggregationState(storageKey, state = {}) {
+function saveEdgeAggregationState(storageKey, state = {}, storage = window.localStorage) {
   try {
-    localStorage.setItem(`${storageKey}:edge-aggregation:v1`, JSON.stringify({
+    storage.setItem(`${storageKey}:edge-aggregation:v1`, JSON.stringify({
       aggregateAll: Boolean(state.aggregateAll),
       aggregatedPairs: Array.from(state.aggregatedPairs || []),
       expandedPairs: Array.from(state.expandedPairs || []),
@@ -551,9 +551,9 @@ function saveEdgeAggregationState(storageKey, state = {}) {
   } catch {}
 }
 
-function loadEdgeRoutingState(storageKey) {
+function loadEdgeRoutingState(storageKey, storage = window.localStorage) {
   try {
-    const raw = localStorage.getItem(`${storageKey}:edge-routing:v1`);
+    const raw = storage.getItem(`${storageKey}:edge-routing:v1`);
     if (!raw) return { defaultStyle: EDGE_ROUTING_STYLES.RECTANGULAR, overrides: {}, manualRoutes: {} };
     const parsed = raw ? JSON.parse(raw) : {};
     const overrides = parsed?.overrides && typeof parsed.overrides === 'object' ? parsed.overrides : {};
@@ -572,9 +572,9 @@ function loadEdgeRoutingState(storageKey) {
   }
 }
 
-function saveEdgeRoutingState(storageKey, state = {}) {
+function saveEdgeRoutingState(storageKey, state = {}, storage = window.localStorage) {
   try {
-    localStorage.setItem(`${storageKey}:edge-routing:v1`, JSON.stringify({
+    storage.setItem(`${storageKey}:edge-routing:v1`, JSON.stringify({
       defaultStyle: normalizeEdgeRoutingStyle(state.defaultStyle),
       overrides: state.overrides && typeof state.overrides === 'object' ? state.overrides : {},
       manualRoutes: state.manualRoutes && typeof state.manualRoutes === 'object' ? state.manualRoutes : {},
@@ -698,6 +698,7 @@ function cloneEdgeRoutingForHistory(state = {}) {
 
 export function diagramHistoryComparable(snapshot = {}) {
   return JSON.stringify({
+    elementSizes: snapshot.elementSizes || {},
     rows: cloneDiagramRowsForHistory(snapshot.rows),
     nodes: (snapshot.nodes || []).map((node) => ({
       id: node.id,
@@ -843,7 +844,8 @@ const BidirectionalNode = React.memo(({ id, data, selected }) => {
   return (
     <div
       style={{
-        width: THEME.node.w,
+        width: data.customSize?.width || THEME.node.w,
+        height: data.customSize?.height,
         minHeight: THEME.node.h,
         padding: THEME.node.pad,
         border,
@@ -862,6 +864,7 @@ const BidirectionalNode = React.memo(({ id, data, selected }) => {
       onFocusCapture={() => setPortsActive(true)}
       onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setPortsActive(false); }}
     >
+      {data.resizable && <NodeResizer isVisible={selected} minWidth={120} minHeight={60} onResizeStart={() => data.onStartElementResize?.()} onResize={(_, size) => data.onResizeElement?.(size)} />}
       <CommentBadge count={data.commentCount} onClick={data.onOpenComments} />
       {/* TOP (5) */}
       {TOP_BOTTOM_PCTS.map((p, i) => (
@@ -939,7 +942,7 @@ const GroupBoxNode = React.memo(({ data, selected }) => {
       <NodeResizer
         minWidth={GROUP.minW}
         minHeight={GROUP.minH}
-        shouldResize={(_, params) => data.shouldResize?.(params) !== false}
+        shouldResize={(_, params) => !data.readOnly && data.shouldResize?.(params) !== false}
         onResizeStart={(_, params) => data.onResizeStart?.(params)}
         onResize={(_, params) => data.onResize?.(params)}
         onResizeEnd={(_, params) => data.onResizeEnd?.(params)}
@@ -952,7 +955,7 @@ const GroupBoxNode = React.memo(({ data, selected }) => {
           background: '#fff',
           pointerEvents: 'auto',
         }}
-        isVisible={selected}
+        isVisible={selected && !data.readOnly}
       />
       <div
         className="project-group-drag-handle"
@@ -2135,12 +2138,47 @@ function spreadToViewport({ nodes, containerW, containerH, padX = THEME.canvas.p
 /* ================================
  * Component
  * ================================ */
+
+function diagramPersistence(storage) {
+  return {
+    loadPositions: key => loadPositions(key, storage),
+    loadGroupBoxes: key => loadGroupBoxes(key, storage),
+    loadDeletedAutoGroupIds: key => loadDeletedAutoGroupIds(key, storage),
+    loadUngroupedAutoNodeIds: key => loadUngroupedAutoNodeIds(key, storage),
+    loadManualNodes: key => loadManualNodes(key, storage),
+    loadEdgeAggregationState: key => loadEdgeAggregationState(key, storage),
+    loadEdgeRoutingState: key => loadEdgeRoutingState(key, storage),
+    savePositions: (key, value) => savePositions(key, value, storage),
+    saveAutoCategoryMeta: (key, value) => saveAutoCategoryMeta(key, value, storage),
+    saveDeletedAutoGroupIds: (key, value) => saveDeletedAutoGroupIds(key, value, storage),
+    saveUngroupedAutoNodeIds: (key, value) => saveUngroupedAutoNodeIds(key, value, storage),
+    saveManualNodes: (key, value) => saveManualNodes(key, value, storage),
+    saveEdgeAggregationState: (key, value) => saveEdgeAggregationState(key, value, storage),
+    saveEdgeRoutingState: (key, value) => saveEdgeRoutingState(key, value, storage),
+    saveGroupBoxes: (key, value, options = {}) => saveGroupBoxes(key, value, options, storage),
+    loadDiagramComments: key => loadDiagramComments(key, storage),
+    saveDiagramComments: (key, value) => saveDiagramComments(key, value, storage),
+  };
+}
 const DiagramBody = forwardRef(function DiagramBody(
-    { rows = [], onUpdateRows, storageKey = 'diagram:positions:v1', cleanOnceKey = null, onCleanApplied, fitAfterClean = true, autoCategories = null, hazardSummary = null, hazardRowSourceIndexes = [], riskRegister = [], onOpenHazardRow, onOpenFunctionalRow, onOpenSafetyIssue, onCanvasSelectionChange },
+    { rows = [], nodeLabels = null, onUpdateRows: updateRows, storageKey = 'diagram:positions:v1', cleanOnceKey = null, onCleanApplied, fitAfterClean = true, autoCategories = null, hazardSummary = null, hazardRowSourceIndexes = [], riskRegister = [], onOpenHazardRow, onOpenFunctionalRow, onOpenSafetyIssue, onCanvasSelectionChange, storage = window.localStorage, readOnly = false, layoutOnly = false, preserveSnapshotGeometry = false, onInspectElement },
     ref
 ) {
+  const onUpdateRows = readOnly || layoutOnly ? undefined : updateRows;
+  const { loadPositions, loadGroupBoxes, loadDeletedAutoGroupIds, loadUngroupedAutoNodeIds, loadManualNodes, loadEdgeAggregationState, loadEdgeRoutingState, savePositions, saveAutoCategoryMeta, saveDeletedAutoGroupIds, saveUngroupedAutoNodeIds, saveManualNodes, saveEdgeAggregationState, saveEdgeRoutingState, saveGroupBoxes, loadDiagramComments, saveDiagramComments } = useMemo(() => diagramPersistence(storage), [storage]);
   const nodeTypes = useMemo(() => ({ bidirectional: BidirectionalNode, groupBox: GroupBoxNode, note: NoteNode }), []);
 
+  const [elementSizes, setElementSizes] = useState(() => { try { return JSON.parse(storage.getItem(storageKey + ':element-sizes:v1') || '{}'); } catch { return {}; } });
+  const elementSizesRef = useRef(elementSizes);
+  elementSizesRef.current = elementSizes;
+  const resizeCheckpoint = useRef(null);
+  const startElementResize = useCallback(() => resizeCheckpoint.current?.(), []);
+  const resizeElement = useCallback((id, size) => {
+    const next = { ...elementSizesRef.current, [id]: { width: size.width, height: size.height } };
+    elementSizesRef.current = next;
+    setElementSizes(next);
+    storage.setItem(storageKey + ':element-sizes:v1', JSON.stringify(next));
+  }, [storage, storageKey]);
   const [nodes, rawSetNodes, reactflowOnNodesChange] = useNodesState([]);
   const setNodes = useCallback((value) => {
     rawSetNodes((currentNodes) => {
@@ -2208,7 +2246,7 @@ const DiagramBody = forwardRef(function DiagramBody(
 
     const selectedFunctionLabels = new Set(selectedNodes
       .filter((node) => node.type === 'function')
-      .map((node) => node.label.toLowerCase())
+      .flatMap((node) => [node.label.toLowerCase(), node.id.replace(/^n:/, '').toLowerCase()])
       .filter(Boolean));
     const selectedSubsystemLabels = new Set(selectedNodes
       .filter((node) => node.type === 'subsystem-group')
@@ -2241,11 +2279,11 @@ const DiagramBody = forwardRef(function DiagramBody(
       .map((index) => ({
         rowNumber: index + 1,
         subsystem: rows[index]?.subsystem || '',
-        fromFunction: rows[index]?.fromFunction || '',
+        fromFunction: nodeLabels?.[nodeIdForFunction(rows[index]?.fromFunction)] || rows[index]?.fromFunction || '',
         fromDetails: rows[index]?.fromDetails || '',
         controlAction: rows[index]?.controlAction || '',
         controlDetails: rows[index]?.controlDetails || '',
-        toFunction: rows[index]?.toFunction || '',
+        toFunction: nodeLabels?.[nodeIdForFunction(rows[index]?.toFunction)] || rows[index]?.toFunction || '',
         toDetails: rows[index]?.toDetails || '',
       }));
 
@@ -2272,7 +2310,7 @@ const DiagramBody = forwardRef(function DiagramBody(
       selectedEdge,
       selectedRows,
     };
-  }, [comments, edges, groupBoxes, highlightedEdgeId, nodes, rows, selectedNodeIds]);
+  }, [comments, edges, groupBoxes, highlightedEdgeId, nodes, nodeLabels, rows, selectedNodeIds]);
 
   useEffect(() => {
     if (typeof onCanvasSelectionChange !== 'function') return;
@@ -2290,20 +2328,27 @@ const DiagramBody = forwardRef(function DiagramBody(
       const commentCount = commentsForDiagramTarget(comments, 'node', n.id).length;
       return {
         ...n,
+        ...(readOnly || layoutOnly ? { draggable: !readOnly, connectable: false, deletable: false } : {}),
+        ...(elementSizes[n.id] ? { style: { ...n.style, ...elementSizes[n.id] }, width: elementSizes[n.id].width, height: elementSizes[n.id].height } : {}),
         zIndex: selectedGroup ? 4 : n.zIndex,
         data: {
           ...(n.data || {}),
+          readOnly,
+          resizable: layoutOnly && !readOnly,
+          onResizeElement: size => resizeElement(n.id, size),
+          onStartElementResize: startElementResize,
+          customSize: elementSizes[n.id],
           commentCount,
-          onOpenComments: commentCount ? () => setCommentModal({
+          onOpenComments: commentCount && !readOnly ? () => setCommentModal({
             targetType: 'node',
             targetId: n.id,
             targetLabel: String(n.data?.label || n.id),
             draft: '',
           }) : null,
         },
-        style: highlighted ? { ...(n.style || {}), filter: 'drop-shadow(0 0 14px rgba(122,55,255,0.8))' } : n.style,
+        style: { ...n.style, ...elementSizes[n.id], ...(highlighted ? { filter: 'drop-shadow(0 0 14px rgba(122,55,255,0.8))' } : {}) },
       };
-  }), [comments]);
+  }), [comments, readOnly, layoutOnly, elementSizes, resizeElement, startElementResize]);
   const nodesByParent = useMemo(() => indexNodesByParent(nodes), [nodes]);
   const viewNodes = useMemo(() => {
     const active = edges.find(edge => edge.id === highlightedEdgeId);
@@ -2328,8 +2373,9 @@ const DiagramBody = forwardRef(function DiagramBody(
         const commentCount = commentsForDiagramTarget(comments, 'edge', e.id).length;
         return {
           ...e,
+          ...(readOnly || layoutOnly ? { updatable: false, deletable: false } : {}),
           label: commentCount ? `${e.label} · 💬 ${commentCount}` : e.label,
-          data: { ...(e.data || {}), baseLabel: e.label, commentCount },
+          data: { ...(e.data || {}), readOnly, baseLabel: e.label, commentCount },
           animated: isOn,
           style: {
             ...(e.style || {}),
@@ -2342,7 +2388,7 @@ const DiagramBody = forwardRef(function DiagramBody(
           markerStart: paintedMarker(e.markerStart),
           markerEnd: paintedMarker(markerEnd),
         };
-  }), [comments]);
+  }), [comments, readOnly, layoutOnly]);
   const viewEdges = useMemo(() => edges.map(edge => presentEdge(edge, edge.id === highlightedEdgeId)),
     [edges, highlightedEdgeId, presentEdge]);
 
@@ -2912,23 +2958,23 @@ const DiagramBody = forwardRef(function DiagramBody(
   const persistSoon = useCallback(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => savePositions(storageKey, posRef.current), 120);
-  }, [storageKey]);
+  }, [savePositions, storageKey]);
   const persistGroupsSoon = useCallback((nextBoxes) => {
     groupBoxesRef.current = nextBoxes;
     if (groupSaveTimer.current) clearTimeout(groupSaveTimer.current);
     groupSaveTimer.current = setTimeout(() => saveGroupBoxes(storageKey, nextBoxes), 120);
-  }, [storageKey]);
+  }, [saveGroupBoxes, storageKey]);
   const persistManualSoon = useCallback((nextManualNodes) => {
     latestManualNodesRef.current = nextManualNodes;
     if (manualSaveTimer.current) clearTimeout(manualSaveTimer.current);
     manualSaveTimer.current = setTimeout(() => saveManualNodes(storageKey, nextManualNodes), 120);
-  }, [storageKey]);
+  }, [saveManualNodes, storageKey]);
 
   const builtCountRef = useRef(0);
   const builtOnceRef = useRef(false);
   const initialArrangementPendingRef = useRef(false);
   const [initialLayoutReady, setInitialLayoutReady] = useState(false);
-  const savedViewport = useMemo(() => readDiagramViewport(localStorage, storageKey), [storageKey]);
+  const savedViewport = useMemo(() => readDiagramViewport(storage, storageKey), [storage, storageKey]);
   const structureRef = useRef('');
 
   const flushGroupResizeAndPersistence = useCallback(({ updateState = true } = {}) => {
@@ -2961,7 +3007,7 @@ const DiagramBody = forwardRef(function DiagramBody(
     if (groupSaveTimer.current) clearTimeout(groupSaveTimer.current);
     savePositions(storageKey, posRef.current);
     saveGroupBoxes(storageKey, groupBoxesRef.current);
-  }, [storageKey]);
+  }, [saveGroupBoxes, savePositions, storageKey]);
 
   // track which clean keys have been applied
   const cleanedKeysRef = useRef(new Set());
@@ -2992,6 +3038,7 @@ const DiagramBody = forwardRef(function DiagramBody(
   const createDiagramHistorySnapshot = useCallback(() => {
     const baseEdgesById = new Map(edges.map(edge => [edge.id, edge]));
     return {
+    elementSizes: elementSizesRef.current,
     rows: cloneDiagramRowsForHistory(rows),
     nodes: (getNodes().length ? getNodes() : nodes).map(cloneDiagramNodeForHistory),
     edges: (getEdges().length ? getEdges() : edges).map(edge => {
@@ -3025,10 +3072,15 @@ const DiagramBody = forwardRef(function DiagramBody(
     syncDiagramHistoryCounts();
   }, [createDiagramHistorySnapshot, syncDiagramHistoryCounts]);
 
+  resizeCheckpoint.current = captureDiagramHistoryCheckpoint;
+
   const restoreDiagramHistorySnapshot = useCallback((snapshot) => {
     if (!snapshot) return;
     historyRestoringRef.current = true;
 
+    elementSizesRef.current = snapshot.elementSizes || {};
+    setElementSizes(elementSizesRef.current);
+    storage.setItem(storageKey + ':element-sizes:v1', JSON.stringify(elementSizesRef.current));
     const restoredGroupBoxes = cloneGroupBoxesForHistory(snapshot.groupBoxes);
     const restoredManualNodes = cloneManualNodesForHistory(snapshot.manualNodesStore);
     const restoredComments = (snapshot.comments || []).map((comment) => ({ ...comment }));
@@ -3077,7 +3129,7 @@ const DiagramBody = forwardRef(function DiagramBody(
     window.setTimeout(() => {
       historyRestoringRef.current = false;
     }, 0);
-  }, [onUpdateRows, setEdges, setNodes, storageKey]);
+  }, [onUpdateRows, saveDeletedAutoGroupIds, saveDiagramComments, saveEdgeAggregationState, saveEdgeRoutingState, saveGroupBoxes, saveManualNodes, savePositions, saveUngroupedAutoNodeIds, setEdges, setNodes, storageKey, storage]);
 
   const undoDiagramChange = useCallback(() => {
     const previous = undoStackRef.current.pop();
@@ -3117,18 +3169,18 @@ const DiagramBody = forwardRef(function DiagramBody(
     edgeAggregationRef.current = edgeAggregation;
     if (storageKeyRef.current !== storageKey) return;
     saveEdgeAggregationState(storageKey, edgeAggregation);
-  }, [edgeAggregation, storageKey]);
+  }, [edgeAggregation, saveEdgeAggregationState, storageKey]);
 
   useEffect(() => {
     edgeRoutingRef.current = edgeRouting;
     if (storageKeyRef.current !== storageKey) return;
     saveEdgeRoutingState(storageKey, edgeRouting);
-  }, [edgeRouting, storageKey]);
+  }, [edgeRouting, saveEdgeRoutingState, storageKey]);
 
   useEffect(() => {
     if (!storageReady || storageKeyRef.current !== storageKey) return;
     saveDiagramComments(storageKey, comments);
-  }, [comments, storageKey, storageReady]);
+  }, [comments, saveDiagramComments, storageKey, storageReady]);
 
   const getConnectableFunctionName = useCallback((nodeId) => {
     const node = getNodes().find((entry) => entry.id === nodeId) || nodes.find((entry) => entry.id === nodeId);
@@ -3186,8 +3238,8 @@ const DiagramBody = forwardRef(function DiagramBody(
     setHydratedStorageKey(null);
     posRef.current = loadPositions(storageKey);
     let importing = false;
-    try { importing = localStorage.getItem(storageKey + ':csv-import-pending:v1') === 'true'; } catch {}
-    initialArrangementPendingRef.current = importing || initialDiagramLayoutPending(localStorage, storageKey, posRef.current.size > 0);
+    try { importing = storage.getItem(storageKey + ':csv-import-pending:v1') === 'true'; } catch {}
+    initialArrangementPendingRef.current = importing || initialDiagramLayoutPending(storage, storageKey, posRef.current.size > 0);
     setInitialLayoutReady(!initialArrangementPendingRef.current);
     const loadedDeletedAutoGroupIds = loadDeletedAutoGroupIds(storageKey);
     // Imported allocations supersede old canvas grouping overrides. Keep saved
@@ -3221,7 +3273,7 @@ const DiagramBody = forwardRef(function DiagramBody(
     saveGroupBoxes(storageKey, loadedGroupBoxes);
     if (positionsChanged || importing) savePositions(storageKey, posRef.current);
     if (importing) {
-      try { localStorage.removeItem(storageKey + ':csv-import-pending:v1'); } catch {}
+      try { storage.removeItem(storageKey + ':csv-import-pending:v1'); } catch {}
     }
     latestManualNodesRef.current = loadManualNodes(storageKey);
     setManualNodesStore(latestManualNodesRef.current);
@@ -3250,7 +3302,9 @@ const DiagramBody = forwardRef(function DiagramBody(
     canvasCreatedFunctionNodeIdsRef.current = new Set();
     groupMembershipSignatureRef.current = '';
     setHydratedStorageKey(storageKey);
-  }, [storageKey, setEdges, setNodes, syncDiagramHistoryCounts]);
+  // Hydrate only when switching storage; row/category changes reconcile below.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageKey, storage, setEdges, setNodes, syncDiagramHistoryCounts, loadPositions, loadDeletedAutoGroupIds, loadUngroupedAutoNodeIds, loadGroupBoxes, loadManualNodes, loadDiagramComments, loadEdgeAggregationState, loadEdgeRoutingState, saveDeletedAutoGroupIds, saveUngroupedAutoNodeIds, saveGroupBoxes, savePositions]);
 
 useEffect(() => {
   const swallowResizeObserverNoise = (event) => {
@@ -3383,7 +3437,7 @@ useEffect(() => {
       if (manualSaveTimer.current) clearTimeout(manualSaveTimer.current);
       saveManualNodes(storageKey, latestManualNodesRef.current);
     };
-  }, [flushGroupResizeAndPersistence, storageKey]);
+  }, [flushGroupResizeAndPersistence, saveManualNodes, storageKey]);
 
   const applySystemGeometry = useCallback((result) => {
     result.nodes.forEach(node => {
@@ -3716,7 +3770,7 @@ useEffect(() => {
     const allocatedRows = movedFunctions.size ? rows.map(row => movedFunctions.has(nodeIdForFunction(row.fromFunction))
       ? { ...row, subsystem: target && !isSystemGroup(target) ? target.label : '' } : row) : rows;
     publishDiagramSystems(result.nodes, result.boxes, allocatedRows);
-  }, [getNodes, persistGroupsSoon, persistSoon, preserveConnectedFunctionPlacements, publishDiagramSystems, refreshEdgesFromNodes, rows, setNodes, storageKey]);
+  }, [getNodes, persistGroupsSoon, persistSoon, preserveConnectedFunctionPlacements, publishDiagramSystems, refreshEdgesFromNodes, rows, saveUngroupedAutoNodeIds, setNodes, storageKey]);
 
 
   const assignNodesToGroup = useCallback((nodeIds, groupId) => {
@@ -3906,10 +3960,13 @@ useEffect(() => {
       generatedAt: autoCategories?.generatedAt || new Date().toISOString(),
     });
     structureRef.current = '';
-  }, [autoCategories, rows, groupBoxes, nodes, storageKey, deletedAutoGroupIds, ungroupedAutoNodeIds, persistGroupsSoon, setGroupBoxes, storageReady]);
+  }, [autoCategories, rows, groupBoxes, nodes, storageKey, deletedAutoGroupIds, ungroupedAutoNodeIds, persistGroupsSoon, setGroupBoxes, storageReady, saveGroupBoxes, savePositions, saveAutoCategoryMeta]);
 
   const runCleanAndSpread = useCallback(async ({ applyInitialEdgeDefaults = false, recordHistory = true, initialRender = false } = {}) => {
-    const layoutNodes = initialRender ? nodes : getNodes();
+    const layoutNodes = (initialRender ? nodes : getNodes()).map(node => {
+      const size = elementSizesRef.current[node.id];
+      return size ? { ...node, width: size.width, height: size.height } : node;
+    });
     if (recordHistory) captureDiagramHistoryCheckpoint();
     if (applyInitialEdgeDefaults) {
       const initialAggregation = getPromptWizardInitialEdgeAggregationState(edgeAggregationRef.current);
@@ -4000,7 +4057,7 @@ useEffect(() => {
     );
     setEdges(buildEdgesFromRaw(rawEdges, absolutePositions, edgeAggregationRef.current, edgeRoutingRef.current));
     if (fitAfterClean) setTimeout(() => fitView({ padding: 0.2, duration: initialRender ? 0 : 600, includeHiddenNodes: true }), 0);
-  }, [autoCategories, captureDiagramHistoryCheckpoint, groupBoxes, nodes, edges, rows, storageKey, fitAfterClean, fitView, persistSoon, getNodes, setEdges]);
+  }, [nodes, getNodes, captureDiagramHistoryCheckpoint, groupBoxes, autoCategories, edges, setNodes, persistSoon, savePositions, storageKey, rows, setEdges, fitAfterClean, saveEdgeAggregationState, saveEdgeRoutingState, saveGroupBoxes, fitView]);
 
   const canvasSpawnPosition = useCallback((offset = { x: 96, y: 108 }) => {
     const local = { x: offset.x, y: offset.y };
@@ -4221,7 +4278,7 @@ useEffect(() => {
     // first explicit drop establishes the layout, including on later reloads.
     if (!getNodes().length && !rows.some(row => row.fromFunction || row.toFunction)) {
       initialArrangementPendingRef.current = false;
-      try { localStorage.setItem(storageKey + ':initial-layout:v1', 'complete'); } catch {}
+      try { storage.setItem(storageKey + ':initial-layout:v1', 'complete'); } catch {}
       setInitialLayoutReady(true);
     }
     if (drag.kind === 'function') addManualDiagramNode(position);
@@ -4260,6 +4317,11 @@ useEffect(() => {
 
   // expose imperative actions to parent
   useImperativeHandle(ref, () => ({
+    flushPresentation() {
+      if (!layoutOnly) return;
+      clearTimeout(saveTimer.current);
+      savePositions(storageKey, posRef.current);
+    },
     async exportAsImage() {
       const flowCanvas = diagramHostRef.current?.querySelector('.react-flow');
       if (!flowCanvas) return null;
@@ -4268,8 +4330,8 @@ useEffect(() => {
     async getPNG() { return this.exportAsImage(); },
     isReady() { return initialLayoutReady && measuredNodesReady && !!diagramHostRef.current?.querySelector('.react-flow'); },
     cleanOnce() { runCleanAndSpread(); },
-    fitViewToDiagram() {
-      try { fitView({ padding: 0.2, duration: 400, includeHiddenNodes: true }); } catch {}
+    fitViewToDiagram({ duration = 400 } = {}) {
+      try { fitView({ padding: 0.2, duration, includeHiddenNodes: true }); } catch {}
     },
     clearSelection() {
       setSelectedNodeIds([]);
@@ -4277,6 +4339,17 @@ useEffect(() => {
       setContextMenu(null);
       setNodes((allNodes) => allNodes.map((node) => ({ ...node, selected: false })));
       setEdges((allEdges) => allEdges.map((edge) => ({ ...edge, selected: false })));
+    },
+    focusSavedElements(ids = []) {
+      const selected = new Set(ids);
+      const targets = getNodes().filter(node => selected.has(node.id));
+      if (!targets.length) return false;
+      setSelectedNodeIds(targets.map(node => node.id));
+      setHighlightedEdgeId(null);
+      setNodes(all => all.map(node => ({ ...node, selected: selected.has(node.id) })));
+      setEdges(all => all.map(edge => ({ ...edge, selected: false })));
+      fitView({ nodes: targets, padding: 0.45, duration: 550, maxZoom: 1.15 });
+      return true;
     },
     focusArchitectureTarget(target = {}) {
       const normalizeLookup = (value) => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
@@ -4359,6 +4432,7 @@ useEffect(() => {
 
   const onNodesChange = useCallback(
     (changes) => {
+      if (readOnly || layoutOnly) changes = changes.filter(change => change.type === 'select' || change.type === 'dimensions' || (layoutOnly && !readOnly && change.type === 'position'));
       if (changes.some((c) => c.type === 'remove')) {
         captureDiagramHistoryCheckpoint();
       }
@@ -4433,11 +4507,11 @@ useEffect(() => {
       }
       reactflowOnNodesChange(changes);
     },
-    [captureDiagramHistoryCheckpoint, getNodes, rows, systemRowsSignature, reactflowOnNodesChange, onUpdateRows, persistSoon, groupBoxes, queueGroupResizeUpdate, persistGroupsSoon, setNodes, storageKey]
-  );
+    [readOnly, layoutOnly, reactflowOnNodesChange, captureDiagramHistoryCheckpoint, persistSoon, groupBoxes, queueGroupResizeUpdate, rows, onUpdateRows, getNodes, setNodes, saveDeletedAutoGroupIds, storageKey, persistGroupsSoon, saveUngroupedAutoNodeIds]);
 
   const onEdgesChange = useCallback(
     (changes) => {
+      if (readOnly || layoutOnly) changes = changes.filter(change => change.type === 'select' || change.type === 'dimensions' || (layoutOnly && !readOnly && change.type === 'position'));
       const removals = changes
         .filter((c) => c.type === 'remove')
         .map((c) => c.id)
@@ -4452,8 +4526,7 @@ useEffect(() => {
         change.type !== 'remove' || !suppressedEdgeRemovalIdsRef.current.has(change.id)
       )));
     },
-    [captureDiagramHistoryCheckpoint, rows, reactflowOnEdgesChange, onUpdateRows]
-  );
+    [readOnly, layoutOnly, reactflowOnEdgesChange, captureDiagramHistoryCheckpoint, rows, onUpdateRows]);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') setHighlightedEdgeId(null); };
@@ -4608,7 +4681,9 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
       plannedTopLevelPositions.set(id, { ...pos });
     }
   }
-  const boundedPosition = parentId ? clampToGroup(pos, groupById.get(parentId)) : pos;
+  // A captured diagram already has a complete layout. Generic Projects padding
+  // and default node sizes must not clamp its compact source coordinates.
+  const boundedPosition = parentId && !preserveSnapshotGeometry ? clampToGroup(pos, groupById.get(parentId)) : pos;
   if (!saved || saved.parentId !== parentId || saved.position?.x !== boundedPosition?.x || saved.position?.y !== boundedPosition?.y) {
     posRef.current.set(id, { position: boundedPosition, parentId, groupingIntent: resolved.groupingIntent });
     persistSoon();
@@ -4629,7 +4704,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
       data: rowDetails
         ? {
           ...(existing.data || {}),
-          label: rowDetails.label || functionName,
+          label: nodeLabels?.[id] || rowDetails.label || functionName,
           description: rowDetails.description,
         }
         : existing.data,
@@ -4646,7 +4721,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
     extent: parentId ? 'parent' : undefined,
     style: nodeShellStyle,
     data: {
-      label: rowDetails?.label || name,
+      label: nodeLabels?.[id] || rowDetails?.label || name,
       description: rowDetails?.description || '',
       brandColor: BRAND.blue,
       brandTint: rgba(BRAND.blue, 0.08),
@@ -4686,7 +4761,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
       return {
         ...node,
         zIndex: parentId ? 2 : node.zIndex,
-        position: parentId ? clampToGroup(position, groupBoxes.find((box) => box.id === parentId)) : position,
+        position: parentId && !preserveSnapshotGeometry ? clampToGroup(position, groupBoxes.find((box) => box.id === parentId)) : position,
         parentNode: parentId || undefined,
         extent: parentId ? 'parent' : undefined,
         style: parentId
@@ -4702,7 +4777,10 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
     // A separate effect could otherwise replace a newer graph with a partial one.
     const baseNodes = [...groupNodes, ...nextFunctionalNodes, ...manualNodes];
     const hydrated = rowsWithDiagramSystems(rows, baseNodes, groupBoxes, { missingOnly: true });
-    const result = reconcileTableSystems(hydrated, baseNodes, groupBoxes,
+    // Imported architecture snapshots already have a complete layout. Projects
+    // defaults must not resize or reposition them merely because they opened.
+    // Explicit arrange/drag/resize commands still use the shared handlers.
+    const result = preserveSnapshotGeometry ? { boxes: groupBoxes, nodes: baseNodes } : reconcileTableSystems(hydrated, baseNodes, groupBoxes,
       { ...GROUP, nodeWidth: NODE_LAYOUT.w, nodeHeight: NODE_LAYOUT.h });
     const nextNodes = [
       ...orderParentElements(result.boxes).map(renderGroupNode),
@@ -4733,7 +4811,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
   // autoCategories changes are applied by the category-layout effect, which
   // updates groupBoxes and deliberately invalidates this structure build.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, persistSoon, persistManualSoon, manualNodesStore, nodes, setNodes, setEdges, runCleanAndSpread, groupBoxes, startGroupResize, shouldResizeGroup, queueGroupResizeUpdate, endGroupResize, storageReady, ungroupedAutoNodeIds]);
+  }, [rows, persistSoon, persistManualSoon, manualNodesStore, nodes, setNodes, setEdges, runCleanAndSpread, groupBoxes, startGroupResize, shouldResizeGroup, queueGroupResizeUpdate, endGroupResize, storageReady, ungroupedAutoNodeIds, preserveSnapshotGeometry]);
 
   const systemGeometryReady = useMemo(() => {
     const renderedIds = new Set(nodes.map(node => node.id));
@@ -4741,11 +4819,11 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
   }, [nodes, groupBoxes]);
 
   useEffect(() => {
-    if (!storageReady || !systemGeometryReady || groupDragRef.current || childDragRef.current || groupResizeSessionRef.current.size) return;
+    if (preserveSnapshotGeometry || !storageReady || !systemGeometryReady || groupDragRef.current || childDragRef.current || groupResizeSessionRef.current.size) return;
     const systems = groupBoxes.filter(isSystemGroup);
     if (systems.length < 2) return;
     settleSystemOverlaps();
-  }, [groupBoxes, storageReady, systemGeometryReady, settleSystemOverlaps]);
+  }, [groupBoxes, storageReady, systemGeometryReady, settleSystemOverlaps, preserveSnapshotGeometry]);
 
   const previousDescriptionRowsRef = useRef(null);
   useEffect(() => { previousDescriptionRowsRef.current = null; }, [storageKey]);
@@ -4794,7 +4872,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
 
 	  useEffect(() => {
 	    if (!storageReady) return;
-	    if (!groupBoxes.length || !nodes.length) return;
+	    if (preserveSnapshotGeometry || !groupBoxes.length || !nodes.length) return;
 	    if (groupDragRef.current || childDragRef.current) return;
 
     // Resize an unmanaged group only when its membership changes. Node movement
@@ -4828,7 +4906,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
       persistGroupsSoon(nextBoxes);
       return nextBoxes;
     });
-  }, [groupBoxes, nodes, nodesByParent, persistGroupsSoon, storageReady]);
+  }, [groupBoxes, nodes, nodesByParent, persistGroupsSoon, storageReady, preserveSnapshotGeometry]);
 
 	  useEffect(() => {
 	    if (!storageReady) return;
@@ -4885,8 +4963,8 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
     setNodes((nds) =>
       nds.map((n) => {
         if (n.type === 'groupBox' || n.type === 'note') return n;
-        const details = getFunctionalNodeDetails(nodeDetails, n.data?.label || n.id.replace(/^n:/, ''));
-        return details ? { ...n, data: { ...n.data, label: details.label, description: details.description } } : n;
+        const details = getFunctionalNodeDetails(nodeDetails, nodeLabels?.[n.id] ? n.id.replace(/^n:/, '') : n.data?.label || n.id.replace(/^n:/, ''));
+        return details ? { ...n, data: { ...n.data, label: nodeLabels?.[n.id] || details.label, description: details.description } } : n;
       })
     );
     setEdges((eds) =>
@@ -4896,7 +4974,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
           : e
       )
     );
-  }, [rows, setNodes, setEdges, storageReady]);
+  }, [rows, nodeLabels, setNodes, setEdges, storageReady]);
 
   /* Arrange a new diagram only after its complete hierarchy has been built. */
   useEffect(() => {
@@ -4904,7 +4982,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
     const requested = cleanOnceKey && !cleanedKeysRef.current.has(cleanOnceKey);
     if (requested && !initialArrangementPendingRef.current) {
       try {
-        if (localStorage.getItem(storageKey + ':initial-layout:v1') === 'pending') {
+        if (storage.getItem(storageKey + ':initial-layout:v1') === 'pending') {
           initialArrangementPendingRef.current = true;
           setInitialLayoutReady(false);
         }
@@ -4941,7 +5019,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
       const arrangementStorageKey = storageKey;
       runCleanAndSpread({ recordHistory: false, initialRender: true }).then(() => {
         if (storageKeyRef.current !== arrangementStorageKey) return;
-        try { localStorage.setItem(arrangementStorageKey + ':initial-layout:v1', 'complete'); } catch {}
+        try { storage.setItem(arrangementStorageKey + ':initial-layout:v1', 'complete'); } catch {}
         setInitialLayoutReady(true);
       }).catch(error => {
         console.error('[functional-diagram] Initial arrangement failed', error);
@@ -4951,7 +5029,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
     });
     return () => cancelAnimationFrame(frame);
 
-  }, [cleanOnceKey, nodes, groupBoxes, rows, runCleanAndSpread, onCleanApplied, storageReady, storageKey, measuredNodesReady]);
+  }, [cleanOnceKey, nodes, groupBoxes, rows, runCleanAndSpread, onCleanApplied, storageReady, storageKey, measuredNodesReady, storage]);
 
   /* Connect / Update */
   const onConnect = useCallback(
@@ -5121,10 +5199,12 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
   }, [getNodes, highlightedEdgeId, rows, setEdges]);
   useEffect(() => {
     const startManualRoute = (event) => {
+      if (readOnly) return;
       if (!event.detail?.routingTargetKey) return;
       captureDiagramHistoryCheckpoint();
     };
     const changeManualRoute = (event) => {
+      if (readOnly) return;
       const { routingTargetKey, routePatch } = event.detail || {};
       if (!routingTargetKey || !routePatch || typeof routePatch !== 'object') return;
       setEdgeRouting((current) => {
@@ -5149,7 +5229,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
       window.removeEventListener('xhandle:manual-edge-route-start', startManualRoute);
       window.removeEventListener('xhandle:manual-edge-route-change', changeManualRoute);
     };
-  }, [captureDiagramHistoryCheckpoint, rebuildEdgesWithRouting]);
+  }, [captureDiagramHistoryCheckpoint, rebuildEdgesWithRouting, readOnly]);
   const applyEdgeAggregation = useCallback((updater) => {
     setEdgeAggregation((current) => {
       const next = updater({
@@ -5360,7 +5440,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
     { id: 'aggregate', label: 'Aggregate', icon: '↔' },
     { id: 'route', label: 'Route', icon: 'R' },
     { id: 'export', label: 'Export', icon: '⇩' },
-  ];
+  ].filter(category => !layoutOnly || !['create', 'export'].includes(category.id));
   const openCanvasToolSection = (sectionId) => {
     if (canvasToolbarCollapsed) {
       setActiveCanvasToolSection(sectionId);
@@ -5498,7 +5578,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
           gap: 8,
         }}
       >
-        <div
+        {!readOnly && <div
           style={{
             position: 'relative',
             flex: `0 0 ${canvasToolbarCollapsed ? 36 : 128}px`,
@@ -5577,11 +5657,11 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
               ) : renderAllCanvasToolSections()}
             </div>
           </div>
-        </div>
+        </div>}
         <div
           ref={flowCanvasHostRef}
-          onDragOver={onToolbarDragOver}
-          onDrop={onToolbarDrop}
+          onDragOver={(readOnly || layoutOnly) ? undefined : onToolbarDragOver}
+          onDrop={(readOnly || layoutOnly) ? undefined : onToolbarDrop}
           style={{
             position: 'relative',
             flex: '1 1 auto',
@@ -5593,15 +5673,15 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
           }}
         >
         <ReactFlow
-          onDragOver={onToolbarDragOver}
-          onDrop={onToolbarDrop}
+          onDragOver={(readOnly || layoutOnly) ? undefined : onToolbarDragOver}
+          onDrop={(readOnly || layoutOnly) ? undefined : onToolbarDrop}
           style={{ visibility: initialLayoutReady ? 'visible' : 'hidden' }}
           defaultViewport={savedViewport || { x: 0, y: 0, zoom: 1 }}
           onMoveStart={handleViewportMoveStart}
           onMove={handleViewportMove}
           onMoveEnd={(_event, viewport) => {
             handleViewportMoveEnd(_event);
-            try { localStorage.setItem(storageKey + ':viewport:v1', JSON.stringify(viewport)); } catch {}
+            try { storage.setItem(storageKey + ':viewport:v1', JSON.stringify(viewport)); } catch {}
           }}
           nodes={renderNodes}
           edges={viewEdges}
@@ -5623,11 +5703,12 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
           edgeTypes={edgeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          onEdgeUpdateStart={onEdgeUpdateStart}
-          onEdgeUpdate={onEdgeUpdate}
-          onEdgeUpdateEnd={onEdgeUpdateEnd}
+          onConnect={readOnly || layoutOnly ? undefined : onConnect}
+          onEdgeUpdateStart={readOnly || layoutOnly ? undefined : onEdgeUpdateStart}
+          onEdgeUpdate={readOnly || layoutOnly ? undefined : onEdgeUpdate}
+          onEdgeUpdateEnd={readOnly || layoutOnly ? undefined : onEdgeUpdateEnd}
           onEdgeClick={(evt, edge) => {
+            onInspectElement?.({ type: 'edge', id: edge.id, data: edge.data });
             setHighlightedEdgeId(edge.id);
             setEdges((allEdges) => allEdges.map((candidate) => ({ ...candidate, selected: candidate.id === edge.id })));
           }}
@@ -5640,12 +5721,14 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
             event.preventDefault();
             setContextMenu(null);
           }}
-          onNodeClick={() => {
+          onNodeClick={(_event, node) => {
+            onInspectElement?.({ type: 'node', id: node.id });
             setHighlightedEdgeId(null);
             setEdges(clearEdgeSelection);
             setContextMenu(null);
           }}
           onNodeContextMenu={(event, node) => {
+            if (readOnly || layoutOnly) { event.preventDefault(); return; }
             event.preventDefault();
             event.stopPropagation();
             const selected = selectedNodeIds.length ? selectedNodeIds : [node.id];
@@ -5661,6 +5744,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
             });
           }}
           onEdgeContextMenu={(event, edge) => {
+            if (readOnly || layoutOnly) { event.preventDefault(); return; }
             event.preventDefault();
             event.stopPropagation();
             setHighlightedEdgeId(edge.id);
@@ -5680,12 +5764,13 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
           }}
           selectionOnDrag
           multiSelectionKeyCode={['Meta', 'Control', 'Shift']}
-          nodesDraggable
-          nodesConnectable
-          edgesUpdatable
+          nodesDraggable={!readOnly}
+          nodesConnectable={!readOnly && !layoutOnly}
+          edgesUpdatable={!readOnly && !layoutOnly}
+          deleteKeyCode={readOnly || layoutOnly ? null : 'Backspace'}
           connectionMode={ConnectionMode.Loose}
-          onConnectStart={onConnectStartLoose}
-          onConnectEnd={onConnectEndLoose}
+          onConnectStart={readOnly || layoutOnly ? undefined : onConnectStartLoose}
+          onConnectEnd={readOnly || layoutOnly ? undefined : onConnectEndLoose}
           minZoom={THEME.canvas.minZoom}
           maxZoom={THEME.canvas.maxZoom}
           panOnScroll
@@ -5694,6 +5779,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
           preventScrolling
           proOptions={{ hideAttribution: true }}
           onNodeDoubleClick={(event, node) => {
+            if (readOnly || layoutOnly) { event.preventDefault(); return; }
             event.preventDefault();
             event.stopPropagation();
             clearBrowserTextSelection();
@@ -5714,6 +5800,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
             requestAnimationFrame(clearBrowserTextSelection);
           }}
           onEdgeDoubleClick={(event, edge) => {
+            if (readOnly || layoutOnly) { event.preventDefault(); return; }
             event.preventDefault();
             event.stopPropagation();
             clearBrowserTextSelection();
@@ -5730,6 +5817,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
             requestAnimationFrame(clearBrowserTextSelection);
           }}
           onDoubleClick={(event) => {
+            if (readOnly || layoutOnly) return;
             const isInside = event.target.closest('.react-flow__node, .react-flow__edge, .react-flow__edge-label');
             if (isInside) return;
           
@@ -6126,7 +6214,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
               </summary>
               {editFunctionalRows.map(({ row, index }) => (
                 <div key={index} style={{ padding: '8px 0', fontSize: 13 }}>
-                  <span>Row {index + 1}: {row.fromFunction} → {row.controlAction} → {row.toFunction}</span>
+                  <span>Row {index + 1}: {nodeLabels?.[nodeIdForFunction(row.fromFunction)] || row.fromFunction} → {row.controlAction} → {nodeLabels?.[nodeIdForFunction(row.toFunction)] || row.toFunction}</span>
                   {typeof onOpenFunctionalRow === 'function' && (
                     <button type="button" style={{ marginLeft: 10, textDecoration: 'underline' }} onClick={() => {
                       setEditModal(null);

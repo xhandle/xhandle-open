@@ -48,6 +48,11 @@ test("removes temperature when a model only supports its default", () => {
   assert.equal(retry.max_completion_tokens, 900);
 });
 
+test('a discovered Claude model can reject top_k without losing its chosen model or native token parameter', () => {
+  const retry = buildChatCompletionCompatibilityRetry({model:'claude-discovered',max_tokens:16000,top_k:5},new Error('Unsupported parameter: top_k'));
+  assert.equal(retry.model,'claude-discovered');assert.equal(retry.max_tokens,16000);assert.equal(retry.top_k,undefined);assert.equal(retry.max_completion_tokens,undefined);
+});
+
 test("removes a sampling control when a provider deprecates it for one model", async () => {
   const calls = [];
   const result = await executeProviderRequestWithCompatibility(async (payload) => {

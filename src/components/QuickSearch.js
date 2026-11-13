@@ -15,6 +15,10 @@ export default function QuickSearch() {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const [expanded, setExpanded] = useState(() => new Set());
+  const [providers, setProviders] = useState([]);
+  const [remoteEntries, setRemoteEntries] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState('');
   const inputRef = useRef(null);
   const returnFocus = useRef(null);
   const dialogRef = useRef(null);
@@ -22,7 +26,7 @@ export default function QuickSearch() {
   const findTimer = useRef(null);
   const mac = /Mac|iPhone|iPad/.test(navigator.platform);
   const shortcut = mac ? '⌘F' : 'Ctrl+F';
-  const matches = useMemo(() => filterSearchEntries(entries, query), [entries, query]);
+  const matches = useMemo(() => filterSearchEntries([...entries, ...remoteEntries], query), [entries, remoteEntries, query]);
   const groups = useMemo(() => diagramNavigatorGroups(entries), [entries]);
   const browse = !query.trim() && groups.length > 0;
   const results = useMemo(() => browse ? diagramNavigatorRows(groups, expanded) : matches, [browse, groups, expanded, matches]);
@@ -32,18 +36,34 @@ export default function QuickSearch() {
     findTimer.current = null;
     setOpen(false);
     setEntries([]);
+    setProviders([]); setRemoteEntries([]);
     returnFocus.current?.focus?.({ preventScroll: true });
   };
   const show = useCallback(() => {
     returnFocus.current = document.activeElement;
     const collected = tableSearchEntries();
-    window.dispatchEvent(new CustomEvent(QUICK_SEARCH_COLLECT, { detail: { entries: collected } }));
+    const asyncProviders = [];
+    window.dispatchEvent(new CustomEvent(QUICK_SEARCH_COLLECT, { detail: { entries: collected, providers: asyncProviders } }));
     setEntries(collected);
+    setProviders(asyncProviders); setRemoteEntries([]); setSearchError('');
     setExpanded(new Set());
     setQuery('');
     setActive(0);
     setOpen(true);
   }, []);
+  useEffect(() => {
+    setRemoteEntries([]); setSearchError('');
+    if (!open || !query.trim() || !providers.length) { setSearching(false); return; }
+    const controller = new AbortController(); setSearching(true);
+    const timer = setTimeout(async () => {
+      const values = await Promise.allSettled(providers.map(provider => Promise.resolve().then(() => provider(query, controller.signal))));
+      if (controller.signal.aborted) return;
+      setRemoteEntries(values.flatMap(value => value.status === 'fulfilled' ? value.value : []));
+      if (values.some(value => value.status === 'rejected')) setSearchError('Some design content could not be searched. Close search and retry.');
+      setSearching(false);
+    }, 150);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [open, query, providers]);
   const scheduleFind = useCallback(() => {
     if (findTimer.current !== null) return;
     // macOS can omit F's keyup while Command is held. Defer past keydown
@@ -163,16 +183,16 @@ export default function QuickSearch() {
                   pendingKeyAction.current = { key: event.key, run: () => choose(entry) };
                 }
               }}
-              role="combobox" aria-label="Search current view" aria-expanded="true"
+              role="combobox" aria-label={providers.length ? 'Search Design Management' : 'Search current view'} aria-expanded="true"
               aria-haspopup={browse ? 'tree' : 'listbox'}
               aria-controls="quick-search-results" aria-autocomplete="list"
               aria-activedescendant={results[active] ? `quick-search-result-${active}` : undefined}
-              placeholder="Search tables and diagram elements…"
+              placeholder={providers.length ? 'Search Design Management…' : 'Search tables and diagram elements…'}
               className="w-full rounded-lg border px-3 py-2 bg-transparent" />
-            <p className="mt-2 text-xs text-gray-500">{groups.length ? 'Browse diagram elements or type to search. ← → expand or collapse. ' : 'Search the current view. Table filters and collapsed groups are respected. '}↑ ↓ to navigate; Enter to jump.</p>
+            <p className="mt-2 text-xs text-gray-500">{providers.length ? 'Search all design folders, artifacts, source assessments and requirements, including other pages and collapsed groups. ' : groups.length ? 'Browse diagram elements or type to search. ← → expand or collapse. ' : 'Search the current view. Table filters and collapsed groups are respected. '}↑ ↓ to navigate; Enter to jump.</p>
           </div>
           <div role="status" className="px-4 py-2 text-xs text-gray-500">
-            {browse ? `Diagram navigator · ${groups.reduce((count, group) => count + group.entries.length, 0)} elements` : !query.trim() ? 'Type to search.' : `${matches.length} matches`}
+            {searchError || (searching ? 'Searching design content…' : browse ? `Diagram navigator · ${groups.reduce((count, group) => count + group.entries.length, 0)} elements` : !query.trim() ? 'Type to search.' : `${matches.length} matches`)}
           </div>
           <QuickSearchResults rows={results} active={active} browse={browse} onChoose={choose} resetKey={query} />
         </div>

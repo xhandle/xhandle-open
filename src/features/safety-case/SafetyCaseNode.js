@@ -28,6 +28,8 @@ const ROLE_CLASSES = {
 
 export default function SafetyCaseNode({ data, selected }) {
   const node = data.node;
+  const automaticCount = data.automaticEvidence?.length || 0;
+  const automaticNeedsReview = data.automaticEvidence?.some((item) => item.state !== "current");
   const hasChildren = data.childCount > 0;
   const role = node.metadata?.layoutRole;
   const roleSize = ROLE_SIZES[role] || { width: SAFETY_CASE_NODE_SIZE.width - 20, minHeight: SAFETY_CASE_NODE_SIZE.height - 20 };
@@ -59,10 +61,11 @@ export default function SafetyCaseNode({ data, selected }) {
             </span>
             <span className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-700">{node.confidence}</span>
             <span className="inline-flex items-center gap-1 rounded bg-gray-100 px-1.5 py-0.5 text-gray-700">
-              <Link2 size={11} /> {(node.linkedArtifactIds || []).length}
+              <Link2 size={11} /> {(node.linkedArtifactIds || []).length + automaticCount}
             </span>
           </div>
         )}
+        {automaticCount > 0 && <div className="mt-1 text-[11px] text-blue-800">{automaticCount} automatic links{automaticNeedsReview ? " · needs review" : ""}</div>}
         {hasChildren && (
           <button
             type="button"
@@ -87,6 +90,7 @@ export default function SafetyCaseNode({ data, selected }) {
       <div className={`rounded-t-md border-b px-3 py-2 ${NODE_TYPE_STYLES[node.type] || NODE_TYPE_STYLES.claim}`}>
         <div className="flex items-center justify-between gap-2">
           <span className="text-[11px] font-semibold uppercase tracking-wide">{NODE_TYPE_LABELS[node.type] || node.type}</span>
+          {automaticCount > 0 && <div className="mt-1 text-[11px] text-blue-800">{automaticCount} automatic links{automaticNeedsReview ? " · needs review" : ""}</div>}
           {hasChildren && (
             <button
               type="button"
@@ -111,7 +115,7 @@ export default function SafetyCaseNode({ data, selected }) {
           </span>
           <span className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-700">{node.confidence}</span>
           <span className="inline-flex items-center gap-1 rounded bg-gray-100 px-1.5 py-0.5 text-gray-700">
-            <Link2 size={11} /> {(node.linkedArtifactIds || []).length}
+            <Link2 size={11} /> {(node.linkedArtifactIds || []).length + automaticCount}
           </span>
         </div>
       </div>

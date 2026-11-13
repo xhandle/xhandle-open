@@ -1,3 +1,4 @@
+import { ARTIFACT_DB, ARTIFACT_STORES, openArtifactDatabase } from '../features/design-management/artifacts/artifactRepository';
 import { openDB } from "idb";
 import { ensureTraceabilitySchema, openTraceabilityDB } from "../components/utils/traceabilityDb";
 import {
@@ -24,6 +25,7 @@ const EXCLUDED_BACKUP_KEYS = new Set([
 ]);
 
 const KNOWN_DB_CONFIGS = [
+  { name: ARTIFACT_DB, version: 2, stores: Object.fromEntries(ARTIFACT_STORES.map(name => [name, { keyPath: 'id' }])), open: openArtifactDatabase },
   {
     name: "xhandle-collaborator-attachments", version: 1,
     stores: { previews: { keyPath: null } },
@@ -449,10 +451,10 @@ async function clearAndRestoreLocalStorage(entries) {
 }
 
 async function restoreKnownDb(config, snapshotDb) {
-  const db = await config.open();
   const storeNames = snapshotDb?.stores ? Object.keys(snapshotDb.stores) : [];
   if (!storeNames.length) return;
-
+  const db = await config.open();
+  try {
   const tx = db.transaction(storeNames, "readwrite");
   for (const storeName of storeNames) {
     if (!db.objectStoreNames.contains(storeName)) continue;
@@ -468,6 +470,7 @@ async function restoreKnownDb(config, snapshotDb) {
     }
   }
   await tx.done;
+  } finally { db.close(); }
 }
 
 async function restoreSnapshot(snapshot) {

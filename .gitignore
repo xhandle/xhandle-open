@@ -10,6 +10,8 @@ node_modules
 # -------------------------
 /build
 /dist
+# Downloaded desktop installers are release assets, not application source.
+/linux-build-*/
 
 # -------------------------
 # Environment / Secrets

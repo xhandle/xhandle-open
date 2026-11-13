@@ -1,3 +1,4 @@
+import { isProjectDeletionRequested } from '../lib/projectDeletionRegistry';
 export const ACTIVE_FUNCTIONAL_PROJECTS_KEY = "xhandle.projects";
 export const ACTIVE_CODE_ARCHITECTURE_PROJECTS_KEY = "xhandle.codeArchitectureProjects";
 
@@ -30,6 +31,7 @@ export function classifyStoredWorkspaceProjects(workspaceProjects = [], function
         storageOwnershipConflict: (workspaceProjects || []).some(record => String(record?.id) === String(project.id) && record?.workspaceId && record.workspaceId !== 'workspace:local'),
         recoverable: !active && project.sourceData?.id != null && String(project.sourceData.id) === String(project.id) };
     })
+    .filter(project => project.active || !isProjectDeletionRequested(project))
     .sort((a, b) => Number(a.active) - Number(b.active) || String(a.name || "").localeCompare(String(b.name || "")));
 }
 

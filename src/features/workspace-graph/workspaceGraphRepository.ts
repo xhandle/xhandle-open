@@ -1,3 +1,4 @@
+import { deletedProjectIds } from '../../lib/projectDeletionRegistry';
 import { projectArtifact } from './workspaceGraphProjection';
 import { openWorkspaceGraphDB, ensureWorkspaceGraphDb as ensureDb } from "./workspaceGraphDb";
 import {
@@ -264,7 +265,8 @@ export async function listProjects() {
   const db = await openWorkspaceGraphDB();
   try {
     const rows = await db.getAll(WORKSPACE_GRAPH_STORES.projects);
-    return rows.sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+    const deleted = deletedProjectIds();
+    return rows.filter(row => !deleted.has(String(row.id))).sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
   } finally { db.close(); }
 }
 
@@ -277,7 +279,8 @@ export async function listArtifacts(filters: ArtifactFilters = {}) {
     else rows=await db.getAll('artifacts');
   } finally { db.close(); }
   const types = typeSet(filters.type);
-  rows = rows.filter((row) => matchesProject(row, filters.projectId));
+  const deleted = deletedProjectIds();
+  rows = rows.filter((row) => !deleted.has(String(row.projectId)) && matchesProject(row, filters.projectId));
   if (types) rows = rows.filter((row) => types.has(row.type));
   if (filters.sourceStore) rows = rows.filter((row) => row.sourceStore === filters.sourceStore);
   if (filters.sourceKey) rows = rows.filter((row) => row.sourceKey === filters.sourceKey);
@@ -296,7 +299,8 @@ export async function listRelationships(filters: RelationshipFilters = {}) {
     else rows=await db.getAll('relationships');
   } finally {db.close();}
   const types = typeSet(filters.type);
-  rows = rows.filter((row) => matchesProject(row, filters.projectId));
+  const deleted = deletedProjectIds();
+  rows = rows.filter((row) => !deleted.has(String(row.projectId)) && matchesProject(row, filters.projectId));
   if (types) rows = rows.filter((row) => types.has(row.type));
   if (filters.fromArtifactId) rows = rows.filter((row) => row.fromArtifactId === filters.fromArtifactId);
   if (filters.toArtifactId) rows = rows.filter((row) => row.toArtifactId === filters.toArtifactId);
@@ -315,7 +319,8 @@ async function listRecent(store: "runs"|"reviews"|"evidence"|"sourceFiles",proje
       while(cursor&&count<limit){rows.push(cursor.value);count++;cursor=await cursor.continue();}
       await tx.done;
     }
-    return sortByUpdatedThenId(rows).slice(0,limit);
+    const deleted = deletedProjectIds();
+    return sortByUpdatedThenId(rows.filter(row => !deleted.has(String(row.projectId)))).slice(0,limit);
   }finally{db.close();}
 }
 export const listRuns=(projectId?:string|null,limit=80)=>listRecent('runs',projectId,limit);
@@ -327,7 +332,7 @@ export async function getArtifact(id: string) {
   const db = await openWorkspaceGraphDB();
   const row = await db.get(WORKSPACE_GRAPH_STORES.artifacts, id);
   db.close();
-  return row || null;
+  return row && !deletedProjectIds().has(String(row.projectId)) ? row : null;
 }
 
 export async function deleteArtifacts(filters: ArtifactFilters = {}) {

@@ -1,3 +1,4 @@
+import SafetyCaseAutomaticEvidence from "./SafetyCaseAutomaticEvidence";
 import React from "react";
 import { Bot, Link2, Plus, Search, Trash2, Upload, X } from "lucide-react";
 import { NODE_TYPE_LABELS, SAFETY_CASE_CONFIDENCE, SAFETY_CASE_NODE_TYPES, SAFETY_CASE_STATUSES } from "./safetyCaseTypes";
@@ -748,6 +749,7 @@ export default function SafetyCaseInspector({ safetyCase, selectedNode, stats, o
           setLinkModalOpen(false);
         }}
       />
+      <SafetyCaseAutomaticEvidence key={selectedNode.id} safetyCase={safetyCase} node={selectedNode} onNodeChange={onNodeChange} />
       <div className="mt-5 grid grid-cols-2 gap-2">
         <InspectorButton icon={Plus} onClick={() => onAddChild("claim")}>Add Child</InspectorButton>
         <InspectorButton icon={Plus} onClick={() => onAddChild("evidence")}>Add Evidence</InspectorButton>

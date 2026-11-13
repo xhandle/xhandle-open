@@ -55,3 +55,10 @@ test('correlates client traces with provider first output without recording priv
  tick=110;metrics.markProviderStarted();tick=150;metrics.addOutput('PRIVATE_OUTPUT');tick=200;metrics.finish();metrics.finish();
  const result=JSON.parse(lines[1].replace(/^\[ai-request\] /,''));assert.equal(result.clientTraceId,'ct-1234567890-local');assert.equal(result.providerStartOffsetMs,20);assert.equal(result.providerTimeToFirstTokenMs,40);assert.equal(result.elapsedMs,110);assert.equal(lines.length,2);assert.doesNotMatch(lines.join('\n'),/PRIVATE_INPUT|PRIVATE_OUTPUT/);
 });
+
+test('reports the effective Claude allowance and recovery count once',()=>{
+ const metrics=createAIRequestMetrics({requestId:'claude-recovery',maxOutputTokens:1800});
+ const report=metrics.finish({maxOutputTokens:36368,providerAttempts:2});
+ assert.equal(report.maxOutputTokens,36368);assert.equal(report.providerAttempts,2);
+ assert.deepEqual(metrics.finish({maxOutputTokens:1800}),report);
+});

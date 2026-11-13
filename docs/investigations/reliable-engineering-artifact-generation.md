@@ -1,0 +1,40 @@
+# Reliable engineering artifact generation review and implementation
+
+Executed prompt: [reliable-engineering-artifact-generation.md](../codex-prompts/reliable-engineering-artifact-generation.md).
+
+## Findings
+
+1. **Recoverable response failures stopped whole sections.** The screenshots exposed a sequence of distinct faults rather than one error: invalid citations, provider output limits, and a malformed section container. The response contract is validated locally, but the provider is instructed through prompts rather than a universally supported provider-enforced schema. Retrying the same large section can repeat the same fault. The earlier implementation saved only complete sections.
+2. **Transport recovery was missing and timeout semantics were misleading.** A request timeout used the same abort path as the user's Pause command. Temporary network errors, rate limits and gateway failures stopped the project immediately. The previous status could describe a provider timeout as a user pause.
+3. **Editor navigation canceled generation.** Both editor cleanup effects aborted their request controllers on unmount. Selecting a different artifact or design mode could stop a long-running project. A component-local busy flag also did not coordinate duplicate runs or remounted views.
+4. **Input size grew with upstream documents.** Every downstream document receives its selected evidence and upstream object evidence. The same 350,000-character limit was treated as both a storage and request-context limit. Repeated nested architecture evidence amplified this growth. There was no source-group request plan.
+5. **Readiness needed stronger checks.** Accepted revisions were checked at publication, but a manual revision or changed source during generation could still allow a misleading ready state. Project completion primarily depended on the loop returning rather than an explicit verification of every current member's saved job.
+6. **Content guidance was too generic.** A single generic prompt covered operations narrative, requirements, design rationale and interface contracts. These artifacts require different content while sharing the same object, evidence and publication contracts.
+
+## Implemented design
+
+`generationRecovery.js` classifies transport failures. Network interruptions, request timeouts and HTTP 408/429/500/502/503/504 receive at most two cancellation-aware retries. Backoff starts at one second and doubles; Retry-After seconds or dates are honored. A requested delay over 30 seconds pauses instead of retrying too soon. Authorization, unsupported requests, refusals, source changes and persistence errors do not consume retry loops. Internal timeout and explicit Pause are distinct.
+
+The section runner has a single bounded policy: the initial request plus at most one output-limit retry, one format-correction retry, one citation retry and two transport retries (six attempts per work unit). It retains the previous short citation aliases, canonical ID resolution, complete-response parsing and explicit unsupported-claim handling.
+
+When a whole section repeatedly fails its format or output budget, it is divided into two smaller parts: principal supported content, then remaining detail/constraints/open questions. Each part requests at most 12 concise items and is validated and checkpointed before the next one begins. Part IDs namespace object keys deterministically; previously accepted/manual objects still use the existing merge/publication rules. A reload or interruption resumes the incomplete part without regenerating saved parts. The interface reports partial-part counts. Persistently invalid parts remain incomplete; they are not replaced with fabricated content or empty sections.
+
+Large model-facing inputs are grouped at a 90,000-character projection budget. Every citable source is assigned to exactly one group; project identity remains ownership metadata. There is no sampling or silent trimming. The full selected source manifest remains saved, and each response is validated against only the sources supplied in that group. Oversized individual sources or more than 12 groups fail with an actionable scope message. Source snapshots are not copied into model prompts. Project evidence storage is separately bounded at 2 MB, and identical nested architecture evidence is deduplicated by semantic identity. Existing hashes and selected source content remain authoritative; a changed source set still requires an explicit fresh proposal.
+
+`generationRuns.js` owns run lifetimes for the application session. Editor navigation unsubscribes the view without aborting the run. Returning to the editor reconnects to its progress and Pause control. Repeated starts share the same promise; Web Locks prevent another same-origin tab from starting that run when supported. Existing transactional job-token/version checks remain the final protection against late writes and concurrent replacements. Browser closure/reload ends the in-memory run; durable checkpoints are resumed explicitly.
+
+Before marking an artifact ready, generation checks the resulting object tree against publication size/identity/hierarchy limits, checks current source hashes and checks the accepted revision during the transactional checkpoint. Before marking a project ready, all members must have current, complete jobs belonging to that run and unchanged source inputs. Accepted revisions are still published only by explicit review/acceptance, atomically for a project.
+
+`artifactContentGuidance.js` adds template-specific instructions: operations narrative for ConOps; atomic supported requirements and allocations for specifications; evidenced architecture, responsibilities and rationale for design documents; and precise evidenced contracts plus open questions for interfaces. Source material remains untrusted data. No generated artifact is automatically an approved specification or proof of implementation behavior.
+
+## Operational boundaries
+
+Completion means every required section has valid saved content and the complete proposal is ready for review. It does not imply factual or engineering approval. No client can finish successfully through persistent provider refusal/outage, missing credentials, storage exhaustion, unavailable/changed sources, exceeded documented scope limits, or deliberate cancellation. These cases retain completed work and present a readable, resumable failure. Refreshing/closing the browser requires an explicit resume; navigation within the running app does not. No live provider request or personal workspace mutation is used for validation.
+
+## Verification
+
+All 138 tests passed across the ten artifact suites. Fault injection covers repeated malformed/empty responses, output/citation recovery, smaller-part generation, interrupted-part resume, complete source-group coverage, network errors, 429 responses, timeouts, Retry-After limits, authorization failures, cancellation during backoff, navigation/remount, duplicate starts, occupied cross-tab locks, late source changes, missing project jobs, project-wide completion and exact cross-document links. Existing manual-edit, revision, baseline, architecture, export, backup and UI tests also passed.
+
+Changed files pass lint and `git diff --check`; the final production build passed. The disposable production-browser workflow passed with 54 synthetic provider calls. Its first section returned two empty responses, forcing smaller parts, followed by a 503 response, output truncation and an unknown citation before recovery. The test navigated to another module during this run, verified all requests completed in the background, returned to review/accept the result, and completed the seven-artifact project, native diagram/requirements views, traceability, exports, library operations and reload checks. No live provider or personal workspace data was used.
+
+Evidence: `/tmp/xhandle-reliable-all-tests.log`, `/tmp/xhandle-reliable-lint.log`, `/tmp/xhandle-reliable-build.log`, `/tmp/xhandle-reliable-browser.log`.

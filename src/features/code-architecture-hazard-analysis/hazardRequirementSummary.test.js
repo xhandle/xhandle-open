@@ -91,3 +91,32 @@ test.each([true,false])('generated Summary takes precedence regardless of proper
  const first = (await source.readSummaryBatches().next()).value;
  expect(first.rows[0][0]).toBe('Hazard 0'); expect(source[PAGED_HAZARD].total).toBe(301);
 });
+
+test('one index snapshot serves all batches and unrelated trailing repository chunks are not read', async () => {
+  const run = { id: 'sequential', projectId: 'summary-project', repoId: 'repo', runState: 'complete', generatedSheets: { Summary: [['Hazard'], ...Array.from({ length: 1201 }, (_, index) => [`Hazard ${index}`])] }, architectureRowsSnapshot: ['unrelated source '.repeat(100000)] };
+  await saveCodeArchitectureHazardRun(run);
+  const source = await resolveSoftwareHazardSource({ projectId: run.projectId, repo: { id: run.repoId } });
+  const get = jest.spyOn(IDBObjectStore.prototype, 'get');
+  const progress = jest.fn();
+  try {
+    let count = 0;
+    for await (const page of source.readSummaryBatches(undefined, progress)) count += page.rows.length;
+    expect(count).toBe(1201);
+    expect(get.mock.instances.filter(store => store.name === 'hazardAnalysisRuns')).toHaveLength(1);
+    expect(progress.mock.calls.at(-1)[0]).toEqual({ completed: 1201, total: 1201 });
+  } finally { get.mockRestore(); }
+});
+
+test('cancellation and corruption still stop a sequential source read', async () => {
+  const run = fixture('cancel-or-corrupt', 'repo', '2026-11-01'); await saveCodeArchitectureHazardRun(run);
+  const source = await resolveSoftwareHazardSource({ projectId: run.projectId, repo: { id: run.repoId } });
+  const controller = new AbortController(), pages = source.readSummaryBatches(controller.signal);
+  await pages.next(); controller.abort(); await expect(pages.next()).rejects.toMatchObject({ name: 'AbortError' });
+  const db = await openCodeArchitectureHazardDB();
+  const root = await db.get('hazardAnalysisRuns', run.id);
+  const sequence = root.payload.rowIndex.spans[0][0];
+  const key = `${root.payload.generation}:${String(sequence).padStart(12, '0')}`;
+  const chunk = await db.get('hazardRunChunks', key); chunk.tokens[0] = ['null'];
+  await db.put('hazardRunChunks', chunk); db.close();
+  await expect(source.readSummaryBatches().next()).rejects.toThrow('integrity verification');
+});

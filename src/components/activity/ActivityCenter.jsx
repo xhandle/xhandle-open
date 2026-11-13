@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { ChevronDown, Loader2 } from "lucide-react";
 
 const ActivityContext = createContext(null);
-export const visibleActivityEntries = (activities) => Array.from(activities?.entries?.() || []).filter(([, activity]) => activity.status !== "paused");
+export const visibleActivityEntries = (activities) => Array.from(activities?.entries?.() || []).filter(([, activity]) => activity.status !== "paused" || activity.showWhenPaused);
 
 export function ActivityProvider({ children }) {
   const [activities, setActivities] = useState(new Map()); // id -> {title, status, step, total, message, createdAt}
@@ -164,7 +164,7 @@ export function ActivitiesButton() {
                   {a.status === "running" && <Loader2 className="w-4 h-4 animate-spin text-neutral-500" />}
                   <div className="font-medium text-sm min-w-0 break-words [overflow-wrap:anywhere]">{a.title}</div>
                   <div className="ml-auto text-xs text-neutral-500 capitalize">
-                    {a.status}{pct != null ? ` · ${pct}%` : ""}
+                    {a.statusLabel || a.status}{pct != null ? ` · ${pct}%` : ""}
                   </div>
                 </div>
                 {a.message && (
@@ -172,6 +172,7 @@ export function ActivitiesButton() {
                     {a.message}
                   </div>
                 )}
+                {a.progressLabel && <p className="mt-1 text-xs text-neutral-500">{a.progressLabel}</p>}
                 {a.status === "running" && (
                   <div className="mt-2"><ProgressBar step={a.step} total={a.total} /></div>
                 )}

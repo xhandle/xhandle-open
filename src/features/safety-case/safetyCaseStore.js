@@ -28,7 +28,9 @@ function loadFallback(projectId) {
           if (Array.isArray(list)) all.push(...list);
         }
       }
-      return Array.from(new Map(all.map((item) => [item.id, item])).values()).map(normalizeSafetyCase);
+      const byId = new Map();
+      all.forEach((item) => byId.set(item.id, latestCase(byId.get(item.id), item)));
+      return [...byId.values()].map(normalizeSafetyCase);
     }
     const list = JSON.parse(localStorage.getItem(lsFallbackKey(projectId)) || "[]");
     return Array.isArray(list) ? list.map(normalizeSafetyCase) : [];
@@ -40,7 +42,16 @@ function loadFallback(projectId) {
 function saveFallbackList(projectId, list) {
   try {
     localStorage.setItem(lsFallbackKey(projectId), JSON.stringify(list));
-  } catch {}
+    return true;
+  } catch { return false; }
+}
+
+function latestCase(primary, fallback) {
+  if (!primary) return fallback || null;
+  if (!fallback) return primary;
+  if (String(fallback.updatedAt) > String(primary.updatedAt)) return fallback;
+  if (fallback.updatedAt === primary.updatedAt && String(fallback.evidenceAutomation?.lastSyncedAt || "") > String(primary.evidenceAutomation?.lastSyncedAt || "")) return fallback;
+  return primary;
 }
 
 export function getActiveSafetyCaseId() {
@@ -70,7 +81,9 @@ export async function loadSafetyCases(projectId = undefined) {
       cases = await tx.store.getAll();
     }
     await tx.done;
-    return (cases || []).map(normalizeSafetyCase).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+    const merged = new Map((cases || []).map((item) => [item.id, item]));
+    loadFallback(projectId).forEach((item) => merged.set(item.id, latestCase(merged.get(item.id), item)));
+    return [...merged.values()].filter((item) => projectId == null || String(item.projectId) === String(projectId)).map(normalizeSafetyCase).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
   } catch (error) {
     console.warn("[SafetyCase] IndexedDB unavailable; using localStorage fallback.", error);
     return loadFallback(projectId);
@@ -85,30 +98,67 @@ export async function loadSafetyCase(id, projectId = undefined) {
     if (!tx) return loadFallback(projectId).find((item) => item.id === id) || null;
     const safetyCase = await tx.store.get(id);
     await tx.done;
-    return safetyCase ? normalizeSafetyCase(safetyCase) : null;
+    const latest = latestCase(safetyCase, loadFallback(projectId).find((item) => item.id === id));
+    return latest ? normalizeSafetyCase(latest) : null;
   } catch {
     return loadFallback(projectId).find((item) => item.id === id) || null;
   }
 }
 
+function announceSaved(normalized) {
+  window.dispatchEvent?.(new CustomEvent("xhandle:safety-case-updated", { detail: normalized }));
+}
+
+function mirrorCase(normalized) {
+  const mirrored = loadFallback(normalized.projectId);
+  return saveFallbackList(normalized.projectId, [normalized, ...mirrored.filter((item) => item.id !== normalized.id)]);
+}
+
 export async function saveSafetyCase(safetyCase) {
-  const normalized = normalizeSafetyCase({ ...safetyCase, updatedAt: nowISO() });
+  let normalized = normalizeSafetyCase({ ...safetyCase, updatedAt: nowISO() });
   try {
     const db = await openTraceabilityDB();
     const tx = createTraceabilityTransaction(db, STORE, "readwrite");
     if (!tx) throw new Error("Safety Case store unavailable.");
+    tx.done.catch(() => {});
+    const existing = latestCase(await tx.store.get(normalized.id), loadFallback(normalized.projectId).find((item) => item.id === normalized.id));
+    // Automatic state is maintained independently of the editor's draft. Merge
+    // it inside the write transaction so a stale UI save cannot replace it.
+    if (existing) normalized.evidenceAutomation = String(existing.sourceProjectId ?? existing.projectId) === String(normalized.sourceProjectId ?? normalized.projectId) ? existing.evidenceAutomation || null : null;
     await tx.store.put(normalized);
     await tx.done;
   } catch (error) {
-    const list = loadFallback(normalized.projectId);
-    const next = [normalized, ...list.filter((item) => item.id !== normalized.id)];
-    saveFallbackList(normalized.projectId, next);
+    const existing = loadFallback(normalized.projectId).find((item) => item.id === normalized.id);
+    if (existing) normalized.evidenceAutomation = String(existing.sourceProjectId ?? existing.projectId) === String(normalized.sourceProjectId ?? normalized.projectId) ? existing.evidenceAutomation || null : null;
+    if (!mirrorCase(normalized)) throw new Error("Safety case could not be saved to IndexedDB or browser storage.");
   }
-  const mirrored = loadFallback(normalized.projectId);
-  saveFallbackList(normalized.projectId, [normalized, ...mirrored.filter((item) => item.id !== normalized.id)]);
+  mirrorCase(normalized);
   setActiveSafetyCaseId(normalized.id);
-  window.dispatchEvent?.(new CustomEvent("xhandle:safety-case-updated", { detail: normalized }));
+  announceSaved(normalized);
   return normalized;
+}
+
+// The updater is synchronous and receives the latest committed manual content.
+// It writes only automatic state; no node/title/link/status fields are replaced.
+export async function updateSafetyCaseAutomation(id, reconcile) {
+  const db = await openTraceabilityDB();
+  const tx = createTraceabilityTransaction(db, STORE, "readwrite");
+  if (!tx) throw new Error("Safety Case store unavailable.");
+  tx.done.catch(() => {});
+  const stored = await tx.store.get(id);
+  const existing = latestCase(stored, loadFallback().find((item) => item.id === id));
+  if (!existing) { await tx.done; return null; }
+  const automatic = reconcile(existing);
+  if (JSON.stringify(automatic) === JSON.stringify(existing.evidenceAutomation || null)) {
+    await tx.done;
+    return existing;
+  }
+  const next = { ...existing, evidenceAutomation: automatic };
+  await tx.store.put(next);
+  await tx.done;
+  mirrorCase(next);
+  announceSaved(next);
+  return next;
 }
 
 export async function createSafetyCase({ projectId = getActiveProjectId(), sourceProjectId, folderId = null, name } = {}) {
@@ -119,18 +169,22 @@ export async function createSafetyCase({ projectId = getActiveProjectId(), sourc
   });
 }
 
-export async function deleteSafetyCase(id, projectId = undefined) {
+export async function deleteSafetyCase(id) {
   if (!id) return false;
-  try {
-    const db = await openTraceabilityDB();
-    const tx = createTraceabilityTransaction(db, STORE, "readwrite");
-    if (!tx) throw new Error("Safety Case store unavailable.");
-    await tx.store.delete(id);
-    await tx.done;
-  } catch {
-    saveFallbackList(projectId, loadFallback(projectId).filter((item) => item.id !== id));
+  const db = await openTraceabilityDB();
+  const tx = createTraceabilityTransaction(db, STORE, "readwrite");
+  if (!tx) throw new Error("Safety Case store unavailable.");
+  tx.done.catch(() => {});
+  await tx.store.delete(id);
+  await tx.done;
+  // Remove every mirror, including cases moved between projects. Otherwise the
+  // fallback merge would resurrect a successfully deleted primary record.
+  const keys = Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index))
+    .filter((key) => key?.startsWith("xhandle:safety-cases:"));
+  for (const key of keys) {
+    const list = JSON.parse(localStorage.getItem(key) || "[]");
+    if (Array.isArray(list) && list.some((item) => item.id === id)) localStorage.setItem(key, JSON.stringify(list.filter((item) => item.id !== id)));
   }
-  saveFallbackList(projectId, loadFallback(projectId).filter((item) => item.id !== id));
   if (getActiveSafetyCaseId() === id) setActiveSafetyCaseId(null);
   window.dispatchEvent?.(new CustomEvent("xhandle:safety-case-deleted", { detail: { id } }));
   return true;
@@ -147,6 +201,10 @@ export async function duplicateSafetyCase(id, projectId = undefined) {
     name: `${existing.name || "Safety Case"} Copy`,
     createdAt: timestamp,
     updatedAt: timestamp,
+    evidenceAutomation: existing.evidenceAutomation ? {
+      ...existing.evidenceAutomation,
+      allocations: (existing.evidenceAutomation.allocations || []).map((item) => ({ ...item, nodeId: nodeIdMap.get(item.nodeId) })).filter((item) => item.nodeId),
+    } : null,
     nodes: existing.nodes.map((node) => ({
       ...node,
       id: nodeIdMap.get(node.id),

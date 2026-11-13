@@ -1,7 +1,9 @@
 import {collaboratorWorkflow} from './performanceTrace';
+import {emptyAssistantResponseError} from './chatFailure';
 const FRAME_LIMIT=1024*1024,OUTPUT_LIMIT=2*1024*1024;
-export function extractChatText(payload){if(typeof payload==='string')return payload;return String(payload?.result||payload?.answer||payload?.content||payload?.message||payload?.choices?.[0]?.message?.content||payload?.choices?.[0]?.text||'');}
-const tokenFrom=parsed=>typeof parsed==='string'?parsed:String(parsed?.choices?.[0]?.delta?.content||parsed?.delta?.content||parsed?.content||parsed?.token||'');
+const readableText=value=>typeof value==='string'?value:Array.isArray(value)?value.filter(part=>['text','output_text'].includes(part?.type)&&typeof part.text==='string').map(part=>part.text).join(''):'';
+export function extractChatText(payload){if(typeof payload==='string')return payload;return [payload?.result,payload?.answer,payload?.content,payload?.message?.content,payload?.message,payload?.choices?.[0]?.message?.content,payload?.choices?.[0]?.text].map(readableText).find(text=>text.trim())||'';}
+const tokenFrom=parsed=>typeof parsed==='string'?parsed:[parsed?.choices?.[0]?.delta?.content,parsed?.delta?.content,parsed?.content,parsed?.token].map(readableText).find(text=>text.length)||'';
 export async function requestCollaboratorChat(messages,{stream=true,signal,onToken,onStatus,maxTokens=1800,preserveWhitespace=false,workflow=stream?'collaborator.answer':'collaborator.request',trace,buildPayload,authOptions={},fetchImpl=fetch}={}){
  const controller=new AbortController(),started=Date.now();let timeoutMs=310000,timer,timedOut=false,reader;
  const request=trace?.request(workflow);
@@ -19,10 +21,10 @@ export async function requestCollaboratorChat(messages,{stream=true,signal,onTok
   const contentType=String(response.headers?.get?.('content-type')||'');
   if(!stream||contentType.includes('application/json')||(!response.body&&response.json)){
    const data=await response.json(),text=extractChatText(data);request?.server(data?.xhandleMetrics);if(controller.signal.aborted)throw new DOMException('Request cancelled.','AbortError');
-   if(!text)throw Error('assistant_empty_response');if(text.length>OUTPUT_LIMIT)throw Error('assistant_output_limit');request?.token();if(stream){status('generating');onToken?.(text,text);}request?.finish('completed');return {text,finishReason:data?.choices?.[0]?.finish_reason||'stop'};
+   if(!text.trim())throw emptyAssistantResponseError({headers:response.headers,finishReason:data?.choices?.[0]?.finish_reason,refused:!!data?.choices?.[0]?.message?.refusal,maxTokens:data?.xhandleCompletion?.maxOutputTokens||maxTokens,providerAttempts:data?.xhandleCompletion?.providerAttempts});if(text.length>OUTPUT_LIMIT)throw Error('assistant_output_limit');request?.token();if(stream){status('generating');onToken?.(text,text);}request?.finish('completed');return {text,finishReason:data?.choices?.[0]?.finish_reason||'stop'};
   }
   if(!response.body)throw Error('assistant_missing_stream');
-  reader=response.body.getReader();const decoder=new TextDecoder();let buffer='',text='',finishReason='',done=false,first=true;
+  reader=response.body.getReader();const decoder=new TextDecoder();let buffer='',text='',finishReason='',done=false,first=true,refused=false,effectiveMaxTokens=maxTokens,providerAttempts;
   const event=block=>{
    const lines=block.split(/\r?\n/),name=lines.find(line=>line.startsWith('event:'))?.slice(6).trim();
    const raw=lines.filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trimStart()).join('\n');
@@ -30,14 +32,17 @@ export async function requestCollaboratorChat(messages,{stream=true,signal,onTok
    let parsed;try{parsed=JSON.parse(raw);}catch{throw Error('assistant_malformed_stream');}
    if(name==='error')throw Error('assistant_stream_failed: '+String(parsed?.error||parsed?.message||'Provider stream failed'));
    if(parsed?.serverTiming)request?.server(parsed.serverTiming);
-   if(parsed?.finish_reason)finishReason=String(parsed.finish_reason);
+   if(parsed?.finish_reason||parsed?.choices?.[0]?.finish_reason)finishReason=String(parsed.finish_reason||parsed.choices[0].finish_reason);
+   if(parsed?.choices?.[0]?.delta?.refusal)refused=true;
+   if(Number.isFinite(parsed?.max_output_tokens)&&parsed.max_output_tokens>0)effectiveMaxTokens=parsed.max_output_tokens;
+   if(Number.isInteger(parsed?.provider_attempts)&&parsed.provider_attempts>0)providerAttempts=parsed.provider_attempts;
    const token=tokenFrom(parsed);if(!token)return;
    if(first){first=false;status('generating');}request?.token();text+=token;if(text.length>OUTPUT_LIMIT)throw Error('assistant_output_limit');onToken?.(token,text);
   };
   while(!done){const item=await reader.read();if(controller.signal.aborted)throw new DOMException('Request cancelled.','AbortError');if(item.done)break;buffer+=decoder.decode(item.value,{stream:true});
    const blocks=buffer.split(/\r?\n\r?\n/);buffer=blocks.pop()||'';for(const block of blocks){if(block.length>FRAME_LIMIT)throw Error('assistant_stream_frame_limit');event(block);}if(buffer.length>FRAME_LIMIT)throw Error('assistant_stream_frame_limit');}
   buffer+=decoder.decode();if(buffer.trim())event(buffer);
-  if(!done)throw Error('assistant_incomplete_stream');if(!text.trim())throw Error('assistant_empty_response');
+  if(!done)throw Error('assistant_incomplete_stream');if(!text.trim())throw emptyAssistantResponseError({headers:response.headers,finishReason,refused,maxTokens:effectiveMaxTokens,providerAttempts});
   request?.finish('completed');return {text:preserveWhitespace?text:text.trim(),finishReason:finishReason||'stop'};
  }catch(error){request?.finish(timedOut?'timeout':signal?.aborted?'canceled':'failed');if(timedOut&&!signal?.aborted)throw Error('assistant_stream_timed_out');throw error;}
  finally{clearTimeout(timer);signal?.removeEventListener('abort',stop);if(reader){try{void reader.cancel?.().catch?.(()=>{});reader.releaseLock?.();}catch{}}}

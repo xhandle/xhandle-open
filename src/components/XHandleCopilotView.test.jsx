@@ -27,6 +27,7 @@ const { act } = React;
 const { createRoot } = require("react-dom/client");
 
 const {
+  captureSelectionAsImage,
   CollaboratorComposerMenu,
   CollaboratorPromptComposer,
   collaboratorClipboardHtmlToMarkdown,
@@ -1366,6 +1367,17 @@ describe("subsystem generation prompting", () => {
     expect(history.map((message) => message.content)).toContain("Earlier engineering context that should remain.");
   });
 
+  it('keeps request-failure UI messages out of model history without removing the user task or valid assistant evidence', () => {
+    const history = compactPromptHistory([
+      {role:'user',content:'Generate the localization decomposition.'},
+      {role:'assistant',content:'Sorry — I hit an issue generating a reply: assistant_empty_response. Please try again.'},
+      {role:'assistant',content:'The AI request failed. Request details: Model: test',requestFailed:true},
+      {role:'assistant',content:'Saved engineering evidence to preserve.'},
+      {role:'user',content:'Try the requested decomposition again.'},
+    ]);
+    expect(history.map(message=>message.content)).toEqual(['Generate the localization decomposition.','Saved engineering evidence to preserve.','Try the requested decomposition again.']);
+  });
+
   it("recovers a completed abstraction choice instead of asking the same question again", () => {
     const request = "Create a functional decomposition for an automatic door.";
     const messages = [
@@ -2023,4 +2035,83 @@ describe('workspace capability scope regressions', () => {
     expect(sample.coverage.omittedRecords).toBeGreaterThan(0);
     for(const row of sample.relevantArtifacts)expect(sample.citations.some(c=>c.artifactId===row.id)).toBe(true);
   });
+});
+
+
+describe("selected screen region context", () => {
+  const imageDataUrl = "data:image/png;base64,selected-region";
+  const contexts = [{ id: "region-1", type: "region", imageDataUrl }];
+
+  it.each(["", "   "])("summarizes an image-only selection (%j)", prompt => {
+    const content = buildPromptContentFromContext(contexts, prompt);
+    expect(content).toContainEqual({ type: "image_url", image_url: { url: imageDataUrl } });
+    expect(content[content.length - 1].text).toMatch(/^Summarize the selected screen area/);
+    const history = buildHistoryUserMessage(contexts, prompt);
+    expect(history.promptText).toBe(content[content.length - 1].text);
+    expect(history.attachments).toEqual([{ id: "region-1", name: "Selected screen area", kind: "image" }]);
+    expect(JSON.stringify(history)).not.toContain("base64");
+    expect(isDiagramFunctionalDecompositionRequest(contexts, history.promptText)).toBe(false);
+  });
+
+  it("uses accompanying text with the actual image in the model request", () => {
+    const prompt = "Explain the relationships in this diagram.";
+    const content = buildPromptContentFromContext(contexts, prompt);
+    expect(content[content.length - 1]).toEqual({ type: "text", text: prompt });
+    const payload = buildCollaboratorChatPayload([{ role: "user", content }]);
+    expect(payload.messages[0].content).toContainEqual({ type: "image_url", image_url: { url: imageDataUrl } });
+    expect(buildHistoryUserMessage(contexts, prompt).promptText).toBe(prompt);
+  });
+
+  it("does not apply the screen summary default to other attachments", () => {
+    expect(buildHistoryUserMessage([{ imageDataUrl }], "").promptText).toBe("");
+  });
+
+  it("crops the selected rectangle using document scroll offsets", async () => {
+    const html2canvas = require("html2canvas");
+    const toDataURL = jest.fn(() => imageDataUrl);
+    html2canvas.mockResolvedValueOnce({ toDataURL });
+    const previousX = window.scrollX;
+    const previousY = window.scrollY;
+    window.scrollX = 30;
+    window.scrollY = 200;
+    try {
+      await expect(captureSelectionAsImage({ x: 20, y: 40, width: 120, height: 80 })).resolves.toBe(imageDataUrl);
+      expect(html2canvas).toHaveBeenLastCalledWith(document.body, expect.objectContaining({ x: 50, y: 240, width: 120, height: 80 }));
+      expect(toDataURL).toHaveBeenCalledWith("image/png");
+    } finally {
+      window.scrollX = previousX;
+      window.scrollY = previousY;
+    }
+  });
+});
+
+
+it("attaches a selected image to the current Collaborator composer immediately", async () => {
+  const previousCrypto = global.crypto;
+  global.crypto = require("node:crypto").webcrypto;
+  const modelLookup = jest.spyOn(require("../lib/aiProviderConfig"), "fetchProviderModelRecords").mockResolvedValue([]);
+  const Copilot = require("./XHandleCopilotView").default;
+  const { openRegionSelector } = require("./RegionLassoOverlay");
+  require("./utils/copilotContextBus").popAllRegionContext.mockReturnValue([]);
+  const html2canvas = require("html2canvas");
+  html2canvas.mockResolvedValueOnce({ toDataURL: () => "data:image/png;base64,live-region" });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(<Copilot docked />));
+    act(() => host.querySelector('[aria-label="Open Collaborator options"]').click());
+    act(() => Array.from(host.querySelectorAll("button")).find(button => button.textContent.includes("Select screen region")).click());
+    const { onDone } = openRegionSelector.mock.calls[openRegionSelector.mock.calls.length - 1][0];
+    await act(async () => onDone({ bbox: { x: 10, y: 20, width: 200, height: 100 } }));
+    const attachments = host.querySelector('[aria-label="Attachments"]');
+    expect(attachments.textContent).toContain("Selected screen area");
+    expect(attachments.querySelector('img').getAttribute('src')).toBe("data:image/png;base64,live-region");
+    expect(host.textContent).not.toContain("Capturing selected area");
+  } finally {
+    act(() => root.unmount());
+    host.remove();
+    global.crypto = previousCrypto;
+    modelLookup.mockRestore();
+  }
 });

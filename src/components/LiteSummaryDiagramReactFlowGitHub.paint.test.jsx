@@ -5,6 +5,8 @@ import { readFileSync } from 'fs';
 import { serialize, deserialize } from 'v8';
 import Diagram from './LiteSummaryDiagramReactFlowGitHub';
 import FunctionalDiagram from './LiteSummaryDiagramReactFlow';
+import { architectureDiagram } from '../features/design-management/artifacts/architectureSources';
+import { architecturePages } from '../features/design-management/artifacts/architecturePages';
 
 // Exercise the actual CBA component, React Flow edge wrappers/marker definitions,
 // and SVG edge components. Only browser geometry/observation is supplied by the
@@ -97,7 +99,8 @@ async function mount(abstraction = 'detailed', onOuterDoubleClick, options = {})
   const modelRows = options.rows || rows;
   const expectedEdges = options.expectedEdges ?? 2;
   await act(async () => {
-    root.render(<div onDoubleClick={onOuterDoubleClick}><Diagram rows={modelRows} storageKey={options.storageKey || storageKey} architectureMode architectureAbstraction={abstraction} onNavigateAbstraction={options.onNavigateAbstraction} includeFiles={options.includeFiles} preserveLayoutOnMount={options.preserveLayoutOnMount} cleanOnceKey={options.cleanOnceKey} onCleanApplied={options.onCleanApplied} /></div>);
+    const Wrapper = options.strict ? React.StrictMode : React.Fragment;
+    root.render(<Wrapper><div onDoubleClick={onOuterDoubleClick}><Diagram rows={modelRows} storageKey={options.storageKey || storageKey} architectureMode reviewMode={options.reviewMode} allowLayoutChanges={options.allowLayoutChanges} canvasToolsTarget={options.canvasToolsTarget} architectureAbstraction={abstraction} onNavigateAbstraction={options.onNavigateAbstraction} includeFiles={options.includeFiles} preserveLayoutOnMount={options.preserveLayoutOnMount} cleanOnceKey={options.cleanOnceKey} onCleanApplied={options.onCleanApplied} /></div></Wrapper>);
   });
   // IndexedDB and React Flow dimension observation settle asynchronously.
   for (let attempt = 0; attempt < 30 && host.querySelectorAll('.react-flow__edge-path').length !== expectedEdges; attempt += 1) {
@@ -108,6 +111,26 @@ async function mount(abstraction = 'detailed', onOuterDoubleClick, options = {})
 
 const paths = () => [...host.querySelectorAll('.react-flow__edge-path')];
 const geometry = () => [...host.querySelectorAll('.react-flow__node')].map(node => [node.dataset.id, node.style.transform]).sort();
+
+test('CSC source canvas and artifact capture retain shared relationship allocations', async () => {
+  const modelRows = [
+    { fromFunction: 'A', toFunction: 'B', architecture: architecture('Planning') },
+    { fromFunction: 'B', toFunction: 'C', architecture: architecture('Execution') },
+    { fromFunction: 'C', toFunction: 'D', architecture: { ...architecture('Interfaces'), subsystem: 'Sensors' } },
+    { fromFunction: 'D', toFunction: 'A', architecture: architecture('Planning') },
+  ].map((row, i) => ({ ...row, traceId: `shared-${i}`, controlAction: `Call ${i}` }));
+  await mount('csc', undefined, { rows: modelRows, expectedEdges: 3 });
+  const sourceGeometry = geometry();
+  expect(sourceGeometry.some(([id]) => id === 'box:csc:Control::Application::Planning')).toBe(true);
+  await act(async () => { root.render(null); });
+  const saved = architectureDiagram({ projectId: 'p', repoId: 'repo', workspaceType: 'code-architecture', abstraction: 'csc' }, modelRows)[0];
+  expect(architecturePages(saved)).toHaveLength(1);
+  expect(saved.snapshot.nodes).toHaveLength(3);
+  expect(saved.snapshot.nodes.some(node => node.id.startsWith('unallocated:'))).toBe(false);
+  const retained = [...saved.snapshot.edges.flatMap(edge => edge.relationships), ...saved.snapshot.nodes.flatMap(node => node.internalRelationships)];
+  expect(retained.map(edge => edge.id).sort()).toEqual(modelRows.map(row => row.traceId).sort());
+
+});
 
 test.each([['Functions', 'detailed'], ['CSCI', 'csci']])('navigator reveals a %s target from the subsystem abstraction', async (group, level) => {
   jest.spyOn(Element.prototype, 'getClientRects').mockImplementation(function () { return [bounds(this)]; });
@@ -277,9 +300,9 @@ test.each(['detailed', 'csc'])('%s bidirectional aggregation paints both arrowhe
   for (const path of paths()) expect(marker(path)).toEqual([45, 125, 254, alpha]);
 });
 
-test.each(['wrapper', 'content'])('double-clicking function %s opens its details above an underlying edge and stops at the diagram', async targetKind => {
+test.each([[false, 'wrapper'], [false, 'content'], [true, 'wrapper'], [true, 'content']])('reviewMode=%s: double-clicking function %s opens its details above an underlying edge and stops at the diagram', async (reviewMode, targetKind) => {
   const onOuterDoubleClick = jest.fn();
-  await mount('detailed', onOuterDoubleClick);
+  await mount('detailed', onOuterDoubleClick, { reviewMode });
   const node = host.querySelector('[data-testid="rf__node-paint-a"]');
   const target = targetKind === 'content' ? node.querySelector('.x-node') : node;
   const underlyingEdge = host.querySelector('[data-testid="rf__edge-paint-command"] .react-flow__edge-path');
@@ -287,22 +310,24 @@ test.each(['wrapper', 'content'])('double-clicking function %s opens its details
   await act(async () => {
     target.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, clientX: 40, clientY: 30 }));
   });
-  expect(host.querySelector('h3')?.textContent).toBe('Edit Node');
+  expect(host.querySelector('h3')?.textContent).toBe(reviewMode ? 'Node Details' : 'Edit Node');
   expect(host.querySelector('input[type="text"]')?.value).toBe('Plan');
+  expect(host.querySelector('input[type="text"]')?.disabled).toBe(reviewMode);
   expect(host.textContent).toContain('plan.cpp');
   expect(onOuterDoubleClick).not.toHaveBeenCalled();
 });
 
-test('double-clicking an edge still opens that edge and does not reach an outer workspace handler', async () => {
+test.each([false, true])('reviewMode=%s: double-clicking an edge still opens that edge and does not reach an outer workspace handler', async reviewMode => {
   const onOuterDoubleClick = jest.fn();
-  await mount('detailed', onOuterDoubleClick);
+  await mount('detailed', onOuterDoubleClick, { reviewMode });
   const edge = host.querySelector('[data-testid="rf__edge-paint-command"] .react-flow__edge-path');
   document.elementsFromPoint = jest.fn(() => [edge]);
   await act(async () => {
     edge.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, clientX: 40, clientY: 30 }));
   });
-  expect(host.querySelector('h3')?.textContent).toBe('Edit Edge');
+  expect(host.querySelector('h3')?.textContent).toBe(reviewMode ? 'Edge Details' : 'Edit Edge');
   expect(host.querySelector('input[type="text"]')?.value).toBe('Command');
+  expect(host.querySelector('input[type="text"]')?.disabled).toBe(reviewMode);
   expect(onOuterDoubleClick).not.toHaveBeenCalled();
 });
 
@@ -814,4 +839,15 @@ test('functional undo and redo retain base custom paint without compounding idle
     expect(host.querySelectorAll('.react-flow__node-note')).toHaveLength(1);
     assertPaint(0.92);
   }
+});
+
+test('native CSU review mode arranges functions without overlap under Strict Mode', async () => {
+  const modelRows = Array.from({ length: 60 }, (_, index) => ({ ...rows[0], edgeId: 'parallel-' + index,
+    fromArchitecture: { subsystem: 'Control', csci: 'Application', csc: 'Commands', csu: 'Input' },
+    toArchitecture: { subsystem: 'Control', csci: 'Application', csc: 'Commands', csu: 'Storage' } }));
+  const onCleanApplied = jest.fn();
+  await mount('detailed', undefined, { strict: true, rows: modelRows, expectedEdges: 60, reviewMode: true, preserveLayoutOnMount: true, cleanOnceKey: 'initial-artifact-empty', onCleanApplied });
+  expect(onCleanApplied).toHaveBeenCalledWith('initial-artifact-empty');
+  const positions = absoluteFunctionPositions(), a = positions['paint-a'], b = positions['paint-b'];
+  expect(a.x + 240 <= b.x || b.x + 240 <= a.x || a.y + 96 <= b.y || b.y + 96 <= a.y).toBe(true);
 });

@@ -3,12 +3,37 @@ const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const { PassThrough, Readable } = require("node:stream");
 const {
+  anthropicStopReasonToOpenAI,
   anthropicStreamEventValue,
   createRequestCancellation,
   parseAnthropicSseEvent,
   pipeAnthropicSseToClient,
   requestAnthropicMessageStream,
 } = require("./anthropicStreaming");
+
+test('Claude refusal, context limits and tool requests cannot masquerade as normal completion', () => {
+  for (const [stopReason, expected] of [['refusal','refusal'],['model_context_window_exceeded','model_context_window_exceeded'],['tool_use','tool_calls'],['pause_turn','pause_turn'],['max_tokens','length'],['end_turn','stop'],['stop_sequence','stop'],['new_provider_reason','unknown']]) {
+    assert.equal(anthropicStopReasonToOpenAI(stopReason), expected);
+    assert.deepEqual(anthropicStreamEventValue({ event: 'message_delta', data: { type: 'message_delta', delta: { stop_reason: stopReason } } }), { finishReason: expected });
+  }
+});
+
+test('a Haiku refusal with no text reaches the client with its actual completion category', async () => {
+  const providerStream = Readable.from([
+    'event: message_start\ndata: {"type":"message_start","message":{"model":"claude-haiku-5-5"}}\n\n',
+    'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"refusal"}}\n\n',
+    'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+  ]);
+  const response = new PassThrough(); let output = '';
+  response.on('data', chunk => { output += chunk.toString('utf8'); });
+  const onText = [];
+  const result = await pipeAnthropicSseToClient(providerStream, response, { onText: text => onText.push(text) });
+  assert.equal(result.finishReason, 'refusal');
+  assert.equal(result.providerDone, true);
+  assert.deepEqual(onText, []);
+  assert.match(output, /"finish_reason":"refusal"/);
+  assert.match(output, /\[DONE\]/);
+});
 
 test("parses Anthropic text deltas and maps output-limit completion", () => {
   const delta = parseAnthropicSseEvent([

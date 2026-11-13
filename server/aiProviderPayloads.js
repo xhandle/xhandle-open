@@ -1,3 +1,5 @@
+const { supportsClaudeEffort, usesAdaptiveClaudeThinking, isClaudeCollaboratorRequest, claudeThinkingAllowance, claudeCollaboratorOutputLimit } = require('../src/lib/claudeModelCapabilities');
+
 function resolveOutputTokenLimit(body = {}, fallback = 1200) {
   const value = Number(body.max_tokens ?? body.max_completion_tokens);
   return Number.isFinite(value) && value > 0 ? value : fallback;
@@ -86,10 +88,6 @@ function normalizeClaudeConversation(conversation = [], fallbackPrompt = "Contin
   return normalized;
 }
 
-function supportsClaudeEffort(model = "") {
-  return /claude-(?:sonnet-5|opus-5|fable-5|mythos-5|haiku-5-5)/i.test(String(model || ""));
-}
-
 function normalizeEffort(effort = "") {
   const normalized = String(effort || "").trim().toLowerCase();
   return ["low", "medium", "high"].includes(normalized) ? normalized : "";
@@ -116,7 +114,7 @@ function supportsGeminiEffort(model = "") {
 function buildClaudeRequestPayload({ body = {}, model, system = "", conversation = [] }) {
   const payload = {
     model,
-    max_tokens: resolveOutputTokenLimit(body),
+    max_tokens: claudeCollaboratorOutputLimit(body, model, resolveOutputTokenLimit(body)),
     messages: normalizeClaudeConversation(conversation, body.prompt || "Continue."),
   };
 
@@ -125,6 +123,11 @@ function buildClaudeRequestPayload({ body = {}, model, system = "", conversation
     const effort = normalizeEffort(body.effort);
     if (effort) {
       payload.output_config = { effort };
+    }
+    if (isClaudeCollaboratorRequest(body)) {
+      payload.thinking = usesAdaptiveClaudeThinking(model)
+        ? { type: 'adaptive' }
+        : { type: 'enabled', budget_tokens: Math.min(claudeThinkingAllowance(effort), payload.max_tokens - 1) };
     }
   } else if (typeof body.temperature === "number") {
     payload.temperature = body.temperature;

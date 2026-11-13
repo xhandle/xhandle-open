@@ -1,5 +1,6 @@
 import {TextEncoder,TextDecoder} from 'util';
-import {requestCollaboratorChat,addCollaboratorMetadata} from './chatTransport';
+import {requestCollaboratorChat,addCollaboratorMetadata,extractChatText} from './chatTransport';
+import {formatCollaboratorFailure} from './chatFailure';
 import {createCollaboratorPerformanceTrace,getCollaboratorPerformanceReports,clearCollaboratorPerformanceReports} from './performanceTrace';
 import {scheduleIdleTitle} from './titleScheduler';
 beforeAll(()=>Object.assign(global,{TextEncoder,TextDecoder}));
@@ -23,6 +24,53 @@ test('HTTP failures and non-streaming compatibility responses never replay the p
 });
 test('rejects malformed, empty, truncated and oversized SSE instead of treating them as success',async()=>{
  for(const frame of ['data: {broken}\n\n','data: "partial"\n\n','event: done\ndata: [DONE]\n\n','data: "'+('x'.repeat(1024*1024))+'"\n\n'])await expect(send(async()=>response([frame]))).rejects.toThrow();
+});
+test.each(['length','stop','unknown'])('empty streamed answers preserve %s completion metadata without replaying the request or exposing content',async finishReason=>{
+ const headers={'x-ai-request-id':'request-123','x-ai-provider-used':'openai','x-ai-model-used':'test-model','x-ai-effort-used':'high','x-ai-api-key':'PRIVATE_KEY'};
+ const fetchImpl=jest.fn(async()=>response(['event: metadata\ndata: '+JSON.stringify({finish_reason:finishReason,serverTiming:{outputTextChars:0}})+'\n\nevent: done\ndata: [DONE]\n\n'],headers));
+ let failure;try{await send(fetchImpl,{maxTokens:16000});}catch(error){failure=error;}
+ expect(failure).toMatchObject({code:'ASSISTANT_EMPTY_RESPONSE',diagnostics:{provider:'openai',model:'test-model',effort:'high',requestId:'request-123',finishReason,requestTokenLimit:16000}});
+ const message=formatCollaboratorFailure(failure);
+ expect(message).toContain('Model: test-model');expect(message).toContain('Request ID: request-123');
+ expect(message).not.toContain('PRIVATE_');expect(JSON.stringify(failure)).not.toContain('PRIVATE_');
+ expect(message.includes('reached its output limit')).toBe(finishReason==='length');
+ expect(fetchImpl).toHaveBeenCalledTimes(1);
+});
+test.each(['length','content_filter'])('empty JSON responses surface %s instead of an opaque empty-response code',async finishReason=>{
+ const fetchImpl=jest.fn(async()=>({ok:true,headers:{get:name=>name==='content-type'?'application/json':null},json:async()=>({choices:[{message:{content:'   '},finish_reason:finishReason}]})}));
+ let failure;try{await send(fetchImpl);}catch(error){failure=error;}
+ expect(failure.diagnostics.finishReason).toBe(finishReason);
+ const message=formatCollaboratorFailure(failure);
+ expect(message).toMatch(finishReason==='length'?/output limit/:/filtered or declined/);
+ expect(fetchImpl).toHaveBeenCalledTimes(1);
+});
+test.each([true,false])('empty Claude responses report the effective server allowance and recovery count (stream=%s)',async stream=>{
+ const completion={maxOutputTokens:36368,providerAttempts:2};
+ const fetchImpl=jest.fn(async()=>stream
+  ? response(['event: metadata\ndata: '+JSON.stringify({finish_reason:'length',max_output_tokens:completion.maxOutputTokens,provider_attempts:completion.providerAttempts})+'\n\nevent: done\ndata: [DONE]\n\n'])
+  : {ok:true,headers:{get:()=>null},json:async()=>({choices:[{message:{content:''},finish_reason:'length'}],xhandleCompletion:completion})});
+ let failure;try{await send(fetchImpl,{stream,maxTokens:1800});}catch(error){failure=error;}
+ expect(failure.diagnostics).toMatchObject({requestTokenLimit:36368,providerAttempts:2,finishReason:'length'});
+ expect(formatCollaboratorFailure(failure)).toContain('Provider attempts: 2');
+ expect(fetchImpl).toHaveBeenCalledTimes(1);
+});
+test('refusal metadata is reported without retaining the refusal text, and message objects cannot masquerade as answers',async()=>{
+ const fetchImpl=jest.fn(async()=>({ok:true,headers:{get:()=>null},json:async()=>({choices:[{message:{content:null,refusal:'PRIVATE_REFUSAL'},finish_reason:'stop'}]})}));
+ let failure;try{await send(fetchImpl,{stream:false});}catch(error){failure=error;}
+ expect(failure.diagnostics.finishReason).toBe('refusal');expect(formatCollaboratorFailure(failure)).toContain('filtered or declined');
+ expect(JSON.stringify(failure)).not.toContain('PRIVATE_');
+ expect(extractChatText({message:{role:'assistant',content:null}})).toBe('');
+ expect(extractChatText({message:{content:'Readable answer'}})).toBe('Readable answer');
+ expect(extractChatText({choices:[{message:{content:[{type:'text',text:'Readable '},{type:'text',text:'parts'}]}}]})).toBe('Readable parts');
+});
+test.each(['refusal','model_context_window_exceeded','pause_turn'])('Claude %s completion remains distinguishable when the response contains no text',async reason=>{
+ const fetchImpl=jest.fn(async()=>response(['event: metadata\ndata: '+JSON.stringify({finish_reason:reason})+'\n\nevent: done\ndata: [DONE]\n\n'],{'x-ai-provider-used':'claude','x-ai-model-used':'claude-haiku-5-5'}));
+ let failure;try{await send(fetchImpl);}catch(error){failure=error;}
+ expect(failure.diagnostics).toMatchObject({provider:'claude',model:'claude-haiku-5-5',finishReason:reason});
+ const message=formatCollaboratorFailure(failure);
+ expect(message).toContain('Model: claude-haiku-5-5');
+ expect(message).toMatch(reason==='refusal'?/filtered or declined/:reason==='pause_turn'?/paused its turn/:/context-window limit/);
+ expect(fetchImpl).toHaveBeenCalledTimes(1);
 });
 test('decodes split UTF-8 and multiline JSON SSE events',async()=>{
  const bytes=Buffer.from('data: {"token":\ndata: "α🙂"}\n\nevent: done\ndata: [DONE]\n\n');const index=bytes.indexOf(Buffer.from('🙂'));let i=0;const chunks=[bytes.subarray(0,index+1),bytes.subarray(index+1)];

@@ -1,3 +1,4 @@
+import { deletedProjectIds } from '../../lib/projectDeletionRegistry';
 import { openWorkspaceGraphDB } from './workspaceGraphDb';
 import { projectArtifact, queryTerms, scopedTerm } from './workspaceGraphProjection';
 import type { WorkspaceArtifact } from './workspaceGraphTypes';
@@ -132,7 +133,8 @@ export async function queryWorkspaceCandidates(query='',{projectId=null,types=nu
     const ranked=[...candidates.values()].sort((a,b)=>score(b)-score(a)||String(b.updatedAt).localeCompare(String(a.updatedAt))||a.id.localeCompare(b.id));
     const output=new Map<string,any>();add([...selected.values()]);
     for(const row of [...selected.values(),...ranked])if(!types||types.has(row.type))output.set(row.id,row);
-    const rows=[...output.values()].slice(0,limit);
+    const deleted = deletedProjectIds();
+    const rows=[...output.values()].filter(row => !deleted.has(String(row.projectId))).slice(0,limit);
     // Logical cleanup can remove canonical rows without using repository writers.
     // Verify keys only; a normal question never hydrates their full bodies.
     const existing=await Promise.all(rows.map(row=>db.getKey('artifacts',row.id)));

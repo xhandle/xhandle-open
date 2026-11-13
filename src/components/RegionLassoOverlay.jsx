@@ -11,74 +11,6 @@ function rectFromPoints(a, b) {
   const h = Math.abs(a.y - b.y);
   return { x, y, width: w, height: h, right: x + w, bottom: y + h };
 }
-function rectsIntersect(r1, r2) {
-  return !(
-    r2.left > r1.right ||
-    r2.right < r1.x ||
-    r2.top > r1.bottom ||
-    r2.bottom < r1.y
-  );
-}
-
-/** Text extraction within a viewport rect using TextNode walker + Range rects */
-function extractTextInViewportRect(viewRect) {
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
-      const parent = node.parentElement;
-      if (!parent) return NodeFilter.FILTER_REJECT;
-      const style = window.getComputedStyle(parent);
-      if (style && (style.visibility === "hidden" || style.display === "none")) {
-        return NodeFilter.FILTER_REJECT;
-      }
-      return NodeFilter.FILTER_ACCEPT;
-    },
-  });
-
-  const chunks = [];
-  while (walker.nextNode()) {
-    const node = walker.currentNode;
-    const range = document.createRange();
-    range.selectNodeContents(node);
-    const rects = range.getClientRects();
-    for (const r of rects) {
-      const rr = { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
-      if (rectsIntersect(viewRect, rr)) {
-        chunks.push(node.nodeValue.trim());
-        break;
-      }
-    }
-  }
-
-  return chunks.join(" ").replace(/\s+/g, " ").trim();
-}
-
-/** Table → Markdown (simple header + rows) */
-function tableToMarkdown(tableEl) {
-  const rows = Array.from(tableEl.querySelectorAll("tr"));
-  if (!rows.length) return "";
-  const cells = (tr, sel) => Array.from(tr.querySelectorAll(sel)).map(td => (td.innerText || "").trim());
-
-  const headerRow = cells(rows[0], "th,td");
-  const bodyRows = rows.slice(1).map(r => cells(r, "td,th"));
-
-  const head = `| ${headerRow.join(" | ")} |`;
-  const sep  = `| ${headerRow.map(() => "---").join(" | ")} |`;
-  const body = bodyRows.map(r => `| ${r.join(" | ")} |`).join("\n");
-  return [head, sep, body].filter(Boolean).join("\n");
-}
-
-/** First table intersecting selection */
-function extractFirstTableMarkdownInRect(viewRect) {
-  const tables = Array.from(document.querySelectorAll("table"));
-  for (const t of tables) {
-    const r = t.getBoundingClientRect();
-    const rr = { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
-    if (rectsIntersect(viewRect, rr)) return tableToMarkdown(t);
-  }
-  return "";
-}
-
 /** Public API: open overlay and resolve on selection */
 export function openRegionSelector({ onDone } = {}) {
   const mount = document.createElement("div");
@@ -101,6 +33,7 @@ export function openRegionSelector({ onDone } = {}) {
     }, []);
 
     const onMouseDown = (e) => {
+      if (e.button !== 0) return;
       startRef.current = { x: e.clientX, y: e.clientY };
       setDragging(true);
       setRect({ x: e.clientX, y: e.clientY, width: 0, height: 0, right: e.clientX, bottom: e.clientY });
@@ -111,29 +44,23 @@ export function openRegionSelector({ onDone } = {}) {
       const r = rectFromPoints(startRef.current, { x: e.clientX, y: e.clientY });
       setRect(r);
     };
-    const onMouseUp = () => {
-      if (!rect) { destroy(); return; }
-      const viewRect = { left: rect.x, right: rect.right, top: rect.y, bottom: rect.bottom };
-      const text = extractTextInViewportRect(viewRect);
-      const tableMarkdown = extractFirstTableMarkdownInRect(viewRect);
-
-      const payload = {
-        type: "region",
-        bbox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-        text,
-        tableMarkdown: tableMarkdown || null,
-        capturedAt: new Date().toISOString(),
-      };
-
-      // Broadcast for listeners
-      window.dispatchEvent(new CustomEvent("xhandle:copilot-add-context", { detail: payload }));
-      onDone?.(payload);
+    const onMouseUp = (e) => {
+      const start = startRef.current;
+      const selection = start && rectFromPoints(start, { x: e.clientX, y: e.clientY });
+      // Remove the dimming, border, and selection hint before taking the image.
       destroy();
+      if (!selection || !selection.width || !selection.height) return;
+      onDone?.({
+        type: "region",
+        bbox: { x: selection.x, y: selection.y, width: selection.width, height: selection.height },
+        capturedAt: new Date().toISOString(),
+      });
     };
 
     return createPortal(
       <div
         role="presentation"
+        data-html2canvas-ignore="true"
         onMouseDown={onMouseDown}
         onMouseMove={onMouseMove}
         onMouseUp={onMouseUp}

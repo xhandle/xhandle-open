@@ -1,5 +1,9 @@
 // Prevention regressions for the memory investigation findings.
 jest.mock('idb',()=>({openDB:jest.fn()}));
+jest.mock('../features/design-management/artifacts/artifactRepository',()=>({
+ ARTIFACT_DB:'xhandle-design-artifacts',ARTIFACT_STORES:['metadata','revisions','jobs','baselines','presentations'],
+ openArtifactDatabase:()=>require('idb').openDB('xhandle-design-artifacts',2),
+}));
 jest.mock('../components/utils/traceabilityDb',()=>({ensureTraceabilitySchema:jest.fn(),openTraceabilityDB:jest.fn()}));
 jest.mock('../features/workspace-graph',()=>({WORKSPACE_GRAPH_DB_NAME:'graph',WORKSPACE_GRAPH_DB_VERSION:1,WORKSPACE_GRAPH_STORES:{projects:'projects'},openWorkspaceGraphDB:jest.fn()}));
 let service,openDB,listeners;

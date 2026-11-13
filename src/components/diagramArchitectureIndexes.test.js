@@ -1,4 +1,19 @@
-import { computeArchitectureByFunction, computeFunctionGroupsByFile, inferFunctionGroupForFile } from './diagramArchitectureIndexes';
+import { computeArchitectureByFunction, computeDiagramArchitectureByNode, computeFunctionGroupsByFile, inferFunctionGroupForFile } from './diagramArchitectureIndexes';
+
+test('native allocation precedence keeps row allocations separate from endpoint overrides', () => {
+  const a = { subsystem: 'Control', csci: 'App', csc: 'Planner', csu: 'Unit' };
+  const b = { ...a, csc: 'Sensor' }, explicit = { ...a, csc: 'Explicit' };
+  const rows = [
+    { from: 'A', to: 'B', architecture: a },
+    { from: 'B', to: 'C', architecture: b, fromArchitecture: explicit },
+  ];
+  const result = computeDiagramArchitectureByNode(rows);
+  expect(result.get('n:A')).toMatchObject(a);
+  expect(result.get('n:B')).toBe(explicit);
+  expect(result.get('n:C')).toMatchObject(b);
+  expect(computeDiagramArchitectureByNode([...rows, { from: 'B', architecture: b }]).get('n:B')).toMatchObject(a);
+  expect(rows[0]).not.toHaveProperty('fromArchitecture');
+});
 
 test('file index preserves group labels across shared files and endpoint combinations', () => {
   const rows = [

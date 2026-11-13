@@ -244,3 +244,24 @@ test('context reports real persisted batches before indexing finishes, then sear
  expect(events.slice(-2).map(e=>e.step)).toEqual(['searching','relationships']);
  expect(Object.keys(batches[0]).sort()).toEqual(['complete','durationMs','recordsPrepared','step']);
 });
+
+test('accepted deletion hides retained projects and evidence before physical cleanup, even after reindexing', async () => {
+  const { writeProjectDeletion } = require('../../lib/projectDeletionRegistry');
+  const { queryWorkspaceCandidates } = require('./workspaceGraphQueries');
+  const { getArtifact } = require('./workspaceGraphRepository');
+  localStorage.setItem('xhandle.projects', JSON.stringify([{ id: 'deleted', name: 'Deleted fixture' }, { id: 'kept', name: 'Kept fixture' }]));
+  await force();
+  await upsertArtifacts([
+    { id: 'deleted-note', projectId: 'deleted', type: 'note', title: 'Deleted evidence', sourceStore: 'canonical', createdAt: '2026-11-06', updatedAt: '2026-11-06' },
+    { id: 'kept-note', projectId: 'kept', type: 'note', title: 'Kept evidence', sourceStore: 'canonical', createdAt: '2026-11-06', updatedAt: '2026-11-06' },
+  ]);
+  localStorage.setItem('xhandle.projects', JSON.stringify([{ id: 'kept', name: 'Kept fixture' }]));
+  writeProjectDeletion({ id: 'deleted', workspaceType: 'functional', status: 'queued', attempts: 0 });
+  expect((await listProjects()).map(project => project.id)).toEqual(['kept']);
+  expect((await listArtifacts()).some(row => row.projectId === 'deleted')).toBe(false);
+  expect(await getArtifact('deleted-note')).toBeNull();
+  expect((await queryWorkspaceCandidates('evidence')).rows.some(row => row.projectId === 'deleted')).toBe(false);
+  await force();
+  expect((await listProjects()).some(project => project.id === 'deleted')).toBe(false);
+  expect((await listArtifacts()).some(row => row.id === 'kept-note')).toBe(true);
+});

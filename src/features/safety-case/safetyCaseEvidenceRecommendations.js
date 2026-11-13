@@ -150,9 +150,10 @@ export async function recommendEvidenceLinksForNode({ node, safetyCase, groups, 
 
   try {
     const ai = await aiRecommendations({ node, safetyCase, groups, candidates, limit });
+    const submittedIds = new Set(candidates.map((item) => item.id));
     const seen = new Set();
     const recommendations = ai
-      .filter((item) => artifactsById.has(item.id) && !seen.has(item.id) && seen.add(item.id))
+      .filter((item) => submittedIds.has(item.id) && !seen.has(item.id) && seen.add(item.id))
       .slice(0, limit)
       .map((item) => {
         const artifact = artifactsById.get(item.id);

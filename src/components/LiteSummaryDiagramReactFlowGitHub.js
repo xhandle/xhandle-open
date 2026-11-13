@@ -525,7 +525,7 @@ function columnsForSquareNodeGrid(count, { maxColumns = 8 } = {}) {
   return Math.max(1, Math.min(maxColumns, count, ideal));
 }
 
-function buildArchitectureLayout(elkNodes, { colorSystemElements = false, systemElementColorOverrides = new Map(), preservePositions = false, edges = [], functionalPresentation = false } = {}) {
+export function buildArchitectureLayout(elkNodes, { colorSystemElements = false, systemElementColorOverrides = new Map(), preservePositions = false, edges = [], functionalPresentation = false } = {}) {
   const dims = {
     nodeGapX: CSU_FUNCTION_GAP.x,
     nodeGapY: CSU_FUNCTION_GAP.y,
@@ -1599,7 +1599,7 @@ function compactArchBoxSize(label, kind) {
   return { width: Math.min(360, Math.max(240, textWidth)), height: 104 };
 }
 
-function buildCompactArchitectureViewNodes({ nodes, nodeVisibility, level, positionOverrides }) {
+export function buildCompactArchitectureViewNodes({ nodes, nodeVisibility, level, positionOverrides }) {
   const overrideFor = (nodeId, fallback) => positionOverrides?.get(`${level}:${nodeId}`) || fallback;
 
   if (level === 'subsystem') {

@@ -73,37 +73,25 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright-core')
     await remove('Synthetic removed').click();
     assert((await persisted()).projects.includes('removed'));
     console.log('PASS cancellation preserves retained project');
-    await page.evaluate(()=>{
-      localStorage.setItem('xhandle:results-review:items','broken JSON');
-      window.deletionProgressSnapshots=[];
-      new MutationObserver(()=>{
-        const bar=document.querySelector('progress[aria-label="Deletion progress for Synthetic removed"]');
-        if(bar) window.deletionProgressSnapshots.push({value:bar.value,max:bar.max,text:bar.parentElement.innerText});
-      }).observe(document.body,{subtree:true,childList:true,attributes:true,characterData:true});
+    await page.evaluate(() => localStorage.setItem('xhandle:results-review:items', 'broken JSON'));
+    page.once('dialog', d => d.accept());
+    await remove('Synthetic removed').click();
+    await remove('Synthetic removed').waitFor({ state: 'detached' });
+    await page.getByRole('button', { name: 'Retry cleanup', exact: true }).waitFor();
+    assert(await remove('Synthetic numeric').isEnabled());
+    await refresh();
+    assert.equal(await remove('Synthetic removed').count(), 0);
+    console.log('PASS deletion is immediate and stays deleted when background cleanup fails');
+    await page.evaluate(() => localStorage.setItem('xhandle:results-review:items', '[]'));
+    await page.getByRole('button', { name: 'Retry cleanup', exact: true }).click();
+    await page.waitForFunction(() => {
+      const key = 'xhandle:deleted-project:v1:code-architecture:removed';
+      return JSON.parse(localStorage.getItem(key) || '{}').status === 'complete';
     });
-    page.once('dialog',d=>d.accept());
-    await remove('Synthetic removed').click();
-    await page.getByRole('status').filter({hasText:'Cleanup did not complete'}).waitFor();
-    assert.match(await page.getByRole('status').innerText(),/xhandle:results-review:items/);
-    assert((await persisted()).projects.includes('removed'));
-    assert(await remove('Synthetic removed').isEnabled());
-    assert.equal(await page.getByRole('progressbar',{name:'Deletion progress for Synthetic removed'}).count(),0);
-    const failedProgress=await page.evaluate(()=>window.deletionProgressSnapshots);
-    assert(failedProgress.some(snapshot=>snapshot.text.includes('Deleting Synthetic removed') && snapshot.value<snapshot.max));
-    console.log('PASS visible progress during cleanup; failure clears progress and retains retryable row');
-    await page.evaluate(()=>localStorage.setItem('xhandle:results-review:items','[]'));
-    page.once('dialog',d=>d.accept());
-    await remove('Synthetic removed').click();
-    await page.getByRole('status').filter({hasText:'Permanently deleted Synthetic removed.'}).waitFor();
-    assert.equal(await remove('Synthetic removed').count(),0);
-    assert.equal(await page.getByRole('progressbar').count(),0);
-    const progress=await page.evaluate(()=>window.deletionProgressSnapshots);
-    assert(progress.some(snapshot=>snapshot.text.includes('Refreshing the project list')));
-    assert(progress.some(snapshot=>snapshot.value>0 && snapshot.value<snapshot.max));
-    console.log('PASS deletion stages and refresh progress remain visible until completion');
-    page.once('dialog',d=>d.accept());
+    page.once('dialog', d => d.accept());
     await remove('Synthetic numeric').click();
-    await page.getByRole('status').filter({hasText:'Permanently deleted Synthetic numeric.'}).waitFor();
+    await remove('Synthetic numeric').waitFor({ state: 'detached' });
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem('xhandle:deleted-project:v1:functional:123') || '{}').status === 'complete');
     const check = async () => {
       const data=await persisted();
       assert(!data.projects.includes('removed') && !data.projects.includes(123) && !data.projects.includes('123'));
@@ -126,6 +114,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright-core')
     await check();
     assert.equal(await remove('Synthetic removed').count(),0);
     assert.equal(await remove('Synthetic numeric').count(),0);
-    console.log('PASS persisted string/numeric project deletion, owned chunks/artifacts, unrelated active/removed projects, shared repository cache and credential preservation, refresh and reload');
+    console.log('PASS immediate and durable string/numeric project deletion, owned chunks/artifacts, unrelated active/removed projects, shared repository cache and credential preservation, refresh and reload');
   } finally { await browser.close(); }
 })().catch(error=>{console.error(error);process.exitCode=1;});

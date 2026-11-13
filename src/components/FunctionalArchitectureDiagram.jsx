@@ -1,3 +1,4 @@
+import { functionalHierarchyRevision } from './functionalDiagramIdentity';
 import { functionalHierarchyIsReady } from '../features/code-architecture-context/functionalHierarchy';
 import { ArchitectureWorkspace, ArchitectureDivider, ArchitectureTablePane, useArchitectureColumnWidths, useLatestCallback, diagramFocusView, architectureHeaderClass, architectureCellClass, architectureLinkClass } from './ArchitectureWorkspace';
 import { createTableCellSelection, isSelectedTableCell, isSelectedTableRow } from '../features/collaborator-selection/activeSelectionContext';
@@ -154,11 +155,7 @@ export default forwardRef(function FunctionalArchitectureDiagram({ rows, storage
     setHighlightedRow(row.traceId); setRevealRequest(value => value + 1);
     setView(view === 'split' ? 'split' : 'table');
   });
-  const hierarchyRevision = useMemo(() => {
-    let hash = 2166136261;
-    for (const row of modelRows) for (const char of JSON.stringify([row.fromArchitecture, row.toArchitecture])) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
-    return (hash >>> 0).toString(36);
-  }, [modelRows]);
+  const hierarchyRevision = useMemo(() => functionalHierarchyRevision(modelRows), [modelRows]);
   const layoutKey = useMemo(() => `initial-functional-${hierarchyRevision}-${modelRows.map(row => row.traceId).join('|')}`, [modelRows, hierarchyRevision]);
   const selectCell = (row, columnIndex) => {
     if (reviewMode) return;

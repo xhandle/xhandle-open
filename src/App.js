@@ -1,3 +1,5 @@
+import { startArtifactMaintenance } from './features/design-management/artifacts/artifactMaintenance';
+import { startProjectDeletionQueue } from './components/projectDeletionQueue';
 import { trackWorkspaceGraphSourceChanges } from './features/workspace-graph/workspaceGraphFreshness';
 import { startWorkspaceStorageSession } from './lib/workspaceStorageSession';
 import VirtualTableBody from "./components/VirtualTableBody";
@@ -66,6 +68,7 @@ import { FlaskConical } from 'lucide-react';
 import VnVCenterPro from './components/VnVCenterPro';
 import ReadmeModal from './components/ReadmeModal';
 import React from "react";
+import DesignGenerationActivities from './features/design-management/artifacts/DesignGenerationActivities';
 import { ActivityProvider, ActivitiesButton, useActivityCenter } from "./components/activity/ActivityCenter";
 import {
   Plus,
@@ -129,6 +132,7 @@ import { createPortal } from 'react-dom';
 import { GitCommit } from 'lucide-react';
 import DesignManagementView from './features/design-management/DesignManagementView';
 import SafetyCaseView from './features/safety-case/SafetyCaseView';
+import { startSafetyCaseEvidenceRuntime } from './features/safety-case/safetyCaseEvidenceRuntime';
 import TraceabilityAuditorPanel from './components/TraceabilityAuditorPanel';
 import { Gate } from './license/LicenseContext';
 import TopNavBar from './components/TopNavBar';
@@ -374,14 +378,11 @@ import {
   getSafetyEvidenceCell,
 } from "./features/project-hazard-analysis/safetyIssueOperationalContexts";
 import {
-  assessLLMConsolidationCoverage,
   buildDeterministicConsolidatedSafetyIssues,
-  enforceSafetyIssueFamilyConsolidation,
-  expandLLMSafetyIssueFamilyReferences,
 } from "./features/project-hazard-analysis/safetyIssueConsolidation";
+import { consolidateSafetyIssues } from "./features/project-hazard-analysis/safetyIssueGeneration";
 import { createSafetyIssueConsolidationCoordinator } from "./features/project-hazard-analysis/safetyIssueConsolidationRun";
 import {
-  buildSafetyIssueConsolidationPayload,
   compactSafetyIssueEvidenceRow,
   extractSafetyIssueEvidenceRows,
   getEvidenceSourceRowId,
@@ -3888,6 +3889,8 @@ function ensureTraceabilityDB() {
 
 function LiteXHandle() {
     useEffect(() => startWorkspaceStorageSession(), []);
+    useEffect(() => startProjectDeletionQueue(), []);
+    useEffect(() => startArtifactMaintenance(), []);
     useEffect(() => { trackWorkspaceGraphSourceChanges(); }, []);
     const resultsReview = useResultsReview();
     // Local-only open-source builds skip hosted auth and start unlocked.
@@ -13939,7 +13942,6 @@ Rules:
     if (!Array.isArray(summary) || !Array.isArray(summary[0]) || summary.length < 2) return [];
     const safetyRows = extractSafetyIssueEvidenceRows(summary);
     if (!safetyRows.length) return [];
-    const consolidationEvidence = buildSafetyIssueConsolidationPayload(safetyRows);
     const organizationCalibration = getProjectOrganizationCalibration(activeProjectId, [
       "Safety Philosophy",
       "Hazard and Loss Taxonomy",
@@ -13955,7 +13957,6 @@ Rules:
     }
     const selectedProvider = getStoredActiveAIProvider();
     const selectedModel = getConfiguredAIRequestModel();
-    const requestAuthOptions = buildAIAuthOpts({ "Content-Type": "application/json" });
     const activityId = `safety-issue-consolidation-${activeProjectId || "default"}`;
     const abortFromCaller = () => consolidationRun.controller.abort(signal?.reason);
     if (signal?.aborted) abortFromCaller();
@@ -14082,109 +14083,15 @@ Rules:
       })
       .filter(Boolean);
     try {
-      const prompt = `
-You are consolidating hazard-analysis rows into a concise set of Consolidated Safety Issues.
-
-Project: ${activeProject?.name || "Untitled project"}
-Hazard method: ${riskMethod}
-
-${organizationCalibration.context || "No organization calibration profile is enabled for this project."}
-
-Only the rows below are eligible because their canonical Safety Classification is Safety — Direct or Safety — Related. Do not use or infer from Mission/Reliability, Not Applicable, or Needs Review rows.
-
-Safety hazard evidence, grouped only to reduce transport size (the grouping does not decide issue boundaries):
-${JSON.stringify(consolidationEvidence)}
-
-Return strict JSON only with this schema:
-{
-  "issues": [
-    {
-      "title": "short consolidated safety issue title",
-      "description": "specific actionable engineering concern shared by the referenced evidence families",
-      "likelihood": 1,
-      "severity": 1,
-      "tags": "comma-separated tags",
-      "sourceFamilyIds": ["family-1", "family-2"]
-    }
-  ]
-}
-
-Rules:
-- You—not deterministic application code—must decide the semantic issue boundaries from the supplied engineering evidence.
-- Review every row inside every supplied family before deciding the clusters.
-- The familyId grouping is a lossless transport optimization for context and guide-phrase permutations. Merge families when they describe the same actionable unsafe condition, control strategy, design change, requirement set, or verification campaign.
-- Return clustering decisions only. Do not repeat sourceIndexes, context variants, causal scenarios, constraints, losses, or hazards; xHandle materializes those details losslessly from every row in each selected family.
-- Consolidate aggressively around actionable engineering concerns: rows belong together when an engineering team can address them through the same control strategy, requirement set, design change, or verification campaign.
-- Merge across guide phrases, scenarios, modes, functions, and interfaces when they are manifestations of the same underlying unsafe condition or share the same engineering treatment.
-- Treat guide phrases, scenarios, and modes as evidence or variants, not automatic reasons to create separate issues.
-- Do not mirror the hazard worksheet structure and do not create one issue per row, guide phrase, context, or functional interface.
-- Prefer the smallest defensible set of issues that remains technically coherent and actionable. A review backlog approaching the number of worksheet permutations is not adequately consolidated.
-- Treat operational assumptions as architecture invariants. Do not require a controller, powered actuator, sensor, or communication channel in a context where the evidence says it is unavailable; account for stated passive or mechanical fallbacks.
-- If a row has a credible physical-harm path such as collision, injury, loss of control, instability, unintended motion, or environmental harm, retain it as Safety even when it also affects mission or reliability.
-- Keep unrelated safety hazards as separate issues.
-- Never erase operational differences when consolidating rows. Use the issue description to call out material scenario or mode differences; xHandle preserves every represented context as linked evidence.
-- Keep hazards separate when their scenario or mode produces a materially different unsafe state that cannot be explained clearly as a context variant of one issue.
-- Include every supplied familyId in exactly one issue's sourceFamilyIds. Do not duplicate or omit family IDs.
-- Use likelihood and severity integers from 1 to 5. If the rows do not provide enough evidence, choose conservative middle values based on the row severity wording.
-- Do not invent hazards, controls, owners, dates, or numerical thresholds.
-- Return only strict JSON. No Markdown. No code fences.
-      `.trim();
-      let assessed = null;
-      {
-        updateRunStatus(`AI consolidation · reviewing ${safetyRows.length} Safety-marked rows…`, 1);
-        const timeoutController = new AbortController();
-        const abortAttempt = () => timeoutController.abort(consolidationRun.controller.signal.reason);
-        let timedOut = false;
-        const timeoutId = setTimeout(() => {
-          timedOut = true;
-          timeoutController.abort();
-        }, 120_000);
-        if (consolidationRun.controller.signal.aborted) abortAttempt();
-        else consolidationRun.controller.signal.addEventListener("abort", abortAttempt, { once: true });
-        let response;
-        try {
-          response = await fetch(`${backendURL}/api/chat`, {
-            method: "POST",
-            ...requestAuthOptions,
-            signal: timeoutController.signal,
-            body: JSON.stringify({
-              xhandleWorkflow: "safety-issue-consolidation",
-              provider: selectedProvider,
-              model: selectedModel,
-              messages: [
-                { role: "system", content: "Review all supplied safety evidence and return only the compact semantic clustering JSON requested. No prose or markdown." },
-                { role: "user", content: prompt },
-              ],
-              temperature: 0.2,
-              max_tokens: Math.min(8000, Math.max(3000, consolidationEvidence.length * 120)),
-            }),
-          });
-        } catch (error) {
-          if (consolidationRun.controller.signal.aborted) throw error;
-          if (timedOut) throw new Error("Safety issue consolidation timed out before the LLM returned a complete result.");
-          throw error;
-        } finally {
-          clearTimeout(timeoutId);
-          consolidationRun.controller.signal.removeEventListener("abort", abortAttempt);
-        }
-        if (!response.ok) throw new Error(`Safety issue consolidation AI HTTP ${response.status}`);
-        const parsed = parseJsonObjectFromText(extractAIText(await response.json())) || {};
-        const expandedIssues = expandLLMSafetyIssueFamilyReferences(parsed?.issues, consolidationEvidence);
-        assessed = assessLLMConsolidationCoverage(expandedIssues, safetyRows);
-      }
-      // Preserve the model's semantic clusters, then complete any omitted
-      // bookkeeping references deterministically at the evidence-family boundary.
-      // A second full LLM request would repeat a large prompt without adding
-      // engineering judgment, increasing latency and provider cost.
-      assessed = assessLLMConsolidationCoverage(
-        enforceSafetyIssueFamilyConsolidation(assessed?.issues || [], safetyRows),
-        safetyRows
-      );
-      if (!assessed?.coverageComplete || !assessed.issues.length) {
-        throw new Error(`The LLM did not return complete source coverage${assessed?.missingSourceIndexes?.length ? `; missing rows: ${assessed.missingSourceIndexes.join(", ")}` : ""}.`);
-      }
+      const assessedIssues = await consolidateSafetyIssues(safetyRows, {
+        projectName: activeProject?.name || "Untitled project",
+        hazardMethod: riskMethod,
+        organizationContext: organizationCalibration.context,
+        signal: consolidationRun.controller.signal,
+        onProgress: message => updateRunStatus(message, 1),
+      });
       updateRunStatus("Source coverage validated · applying consolidated safety issues…", 2);
-      const nextIssues = materializeIssues(assessed.issues);
+      const nextIssues = materializeIssues(assessedIssues);
       const resolvedIssues = mergeExisting ? mergeSafetyIssueEdits(nextIssues, riskRegister) : nextIssues;
       finishActivity(activityId, "success", `Consolidated ${safetyRows.length} Safety-marked rows into ${nextIssues.length} safety issues.`);
       return resolvedIssues;
@@ -16050,6 +15957,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
   onSignOut={signOut}
   rightActions={
     <div className="flex items-center gap-2 shrink-0">
+      <DesignGenerationActivities />
       <ActivitiesButton />
 
       <button
@@ -22892,6 +22800,7 @@ const CompletedHazardTableRow = React.memo(function CompletedHazardTableRow({
 });
 
 function App() {
+  useEffect(() => startSafetyCaseEvidenceRuntime(), []);
   return (
     <ActivityProvider>
       <ResultsReviewProvider mode="collaborator">

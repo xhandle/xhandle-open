@@ -317,3 +317,70 @@ test('ambiguous colon-delimited project namespaces preserve another retained pro
   expect(await graph.count('projects')).toBe(2);
   graph.close();
 });
+
+test('uses ownership indexes without reading hazard payloads and still removes unindexed owned rows', async () => {
+  const db = await openDB('xhandle-code-architecture-hazard-analysis', 1, { upgrade(db) {
+    db.createObjectStore('hazardAnalysisRuns', { keyPath: 'id' }).createIndex('projectId', 'projectId');
+  } });
+  await db.put('hazardAnalysisRuns', { id: 'indexed', projectId: 'index-remove', payload: [1] });
+  await db.put('hazardAnalysisRuns', { id: 'keep', projectId: 'index-keep', payload: [2] });
+  await db.put('hazardAnalysisRuns', { id: 'missing-index', value: { projectId: 'index-remove' } });
+  const { IDBObjectStore } = require('fake-indexeddb');
+  const original = IDBObjectStore.prototype.get;
+  const get = jest.spyOn(IDBObjectStore.prototype, 'get').mockImplementation(function(key) {
+    if (this.name === 'hazardAnalysisRuns' && ['indexed', 'keep'].includes(key)) throw new Error('Large hazard payload read');
+    return original.call(this, key);
+  });
+  try {
+    await permanentlyDeleteStoredProject({ id: 'index-remove', workspaceType: 'code-architecture' });
+    expect(await db.getAllKeys('hazardAnalysisRuns')).toEqual(['keep']);
+  } finally { get.mockRestore(); db.close(); }
+});
+
+test('bulk deletion skips active projects and continues after a failed project', async () => {
+  const { permanentlyDeleteStoredProjects } = require('./permanentlyDeleteStoredProject');
+  localStorage.setItem('xhandle.projects', JSON.stringify([{ id: 'bulk-active' }, { id: 'bulk-stale' }]));
+  localStorage.setItem('hazard-run:bulk-active', 'keep');
+  localStorage.setItem('hazard-run:bulk-remove', 'remove');
+  const result = await permanentlyDeleteStoredProjects([
+    { id: 'bulk-active', workspaceType: 'functional', active: true },
+    { id: 'bulk-stale', workspaceType: 'functional', active: false },
+    { id: 'bulk-remove', workspaceType: 'functional', active: false },
+  ]);
+  expect(result.deleted.map(project => project.id)).toEqual(['bulk-remove']);
+  expect(result.failed.map(({ project }) => project.id)).toEqual(['bulk-stale']);
+  expect(localStorage.getItem('hazard-run:bulk-active')).toBe('keep');
+  expect(localStorage.getItem('hazard-run:bulk-remove')).toBeNull();
+});
+
+test('cleanup timeout keeps its initiating cause when pending requests abort', async () => {
+  const graph = await openDB('xhandle-workspace-graph', 1, { upgrade(db) {
+    db.createObjectStore('projects', { keyPath: 'id' });
+  } });
+  await graph.put('projects', { id: 'timeout-cause' });
+  const db = await openDB('xhandle-code-architecture-hazard-analysis', 1, { upgrade(db) {
+    db.createObjectStore('hazardRunChunks', { keyPath: 'id' });
+  } });
+  const tx = db.transaction('hazardRunChunks', 'readwrite');
+  for (let i = 0; i < 500; i++) tx.store.put({ id: `chunk-${i}`, projectId: 'timeout-cause' });
+  await tx.done;
+  const schedule = global.setTimeout;
+  const timer = jest.spyOn(global, 'setTimeout').mockImplementation((callback, delay, ...args) =>
+    schedule(callback, delay === 30000 ? 0 : delay, ...args));
+  try {
+    await expect(permanentlyDeleteStoredProject({ id: 'timeout-cause', workspaceType: 'functional' }))
+      .rejects.toThrow(/Storage cleanup timed out/);
+    expect(await graph.get('projects', 'timeout-cause')).toBeDefined();
+  } finally { timer.mockRestore(); db.close(); graph.close(); }
+});
+
+test('project cleanup includes engineering artifact revisions, drafts and baselines without touching another project', async () => {
+  const { openArtifactDatabase, ARTIFACT_STORES } = require('../features/design-management/artifacts/artifactRepository');
+  const db = await openArtifactDatabase();
+  for (const name of ARTIFACT_STORES) for (const projectId of ['design-remove', 'design-keep']) await db.put(name, { id: projectId, projectId, artifactId: projectId });
+  db.close();
+  await permanentlyDeleteStoredProject({ id: 'design-remove', workspaceType: 'functional', active: false });
+  const reopened = await openArtifactDatabase();
+  for (const name of ARTIFACT_STORES) expect(await reopened.getAllKeys(name)).toEqual(['design-keep']);
+  reopened.close();
+});

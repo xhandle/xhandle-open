@@ -112,6 +112,7 @@ export default function GroupBoxNode({ data }) {
         </button>
       )}
       <div
+        className={data?.resizable ? 'x-artifact-group-drag-handle' : undefined}
         style={{
           position: 'absolute',
           top: 6,
@@ -126,7 +127,8 @@ export default function GroupBoxNode({ data }) {
           lineHeight: 1.2,
           whiteSpace: 'nowrap',
           boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-          pointerEvents: 'none',
+          pointerEvents: data?.resizable ? 'auto' : 'none',
+          cursor: data?.resizable ? 'grab' : undefined,
           ...(detailCanvas ? {
             top: 0, left: 0, right: 0, padding: '5px 8px',
             border: 'none', borderRadius: '8px 8px 0 0', boxShadow: 'none',

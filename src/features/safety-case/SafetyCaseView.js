@@ -21,7 +21,10 @@ import {
 import { createSafetyCaseEdge, createSafetyCaseNode, normalizeSafetyCase, uuid } from "./safetyCaseTypes";
 import { layoutSafetyCaseTreeSymmetrically, usesLifecycleSafetyCaseLayout } from "./safetyCaseLayout";
 import { buildSafetyCaseProjectContext, generateLifecycleSafetyCase, loadXHandleProjects } from "./safetyCaseProjectContext";
-import { checkSafetyCaseCompleteness } from "./safetyCaseCompleteness";
+import { checkSafetyCaseCompleteness, safetyCaseOverallStatus } from "./safetyCaseCompleteness";
+import { loadLinkableSafetyCaseEvidence } from "./safetyCaseEvidenceLinks";
+import { EVIDENCE_SYNC_EVENT } from "./safetyCaseEvidenceRuntime";
+import SafetyCaseAutomaticEvidence from "./SafetyCaseAutomaticEvidence";
 import { generateSafetyCaseFromProject, improveClaimWording, suggestEvidence } from "./safetyCaseAI";
 
 function Modal({ title, children, onClose }) {
@@ -171,12 +174,18 @@ export default function SafetyCaseView({ activeProjectId }) {
   const [selectedNodeId, setSelectedNodeId] = useState(null);
   const [message, setMessage] = useState("");
   const [findings, setFindings] = useState(null);
+  const [validatedEvidence, setValidatedEvidence] = useState(null);
   const [aiSuggestion, setAiSuggestion] = useState(null);
   const [generateModalOpen, setGenerateModalOpen] = useState(false);
   const [moveFolderTarget, setMoveFolderTarget] = useState(null);
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
   const [generation, setGeneration] = useState({ sourceProjectId: activeProjectId || "", name: "Project Safety Case", folderId: null });
+
+  const handleAction = (action) => async (...args) => {
+    try { return await action(...args); }
+    catch (error) { setMessage(error.message || "Safety case action failed."); return null; }
+  };
 
   const refresh = useCallback(async () => {
     await removeLegacyUnfiledSafetyCaseFolders();
@@ -191,6 +200,28 @@ export default function SafetyCaseView({ activeProjectId }) {
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  useEffect(() => {
+    const changed = (event) => {
+      const saved = event.detail;
+      setValidatedEvidence(null);
+      setCases((current) => current.map((item) => item.id === saved.id ? { ...item, evidenceAutomation: saved.evidenceAutomation } : item));
+      // Keep all unsaved author edits. Only the separately maintained evidence
+      // snapshot is refreshed by background collection.
+      setSafetyCase((current) => current?.id === saved.id ? { ...current, evidenceAutomation: saved.evidenceAutomation } : current);
+    };
+    const failed = (event) => setMessage(event.detail.error);
+    const invalidate = () => setValidatedEvidence(null);
+    const sourceEvents = ["storage", "xhandle:data-changed", "xhandle:vnv-documents-updated", "xhandle:backup-data-changed"];
+    sourceEvents.forEach((name) => window.addEventListener(name, invalidate));
+    window.addEventListener("xhandle:safety-case-updated", changed);
+    window.addEventListener(EVIDENCE_SYNC_EVENT, failed);
+    return () => {
+      window.removeEventListener("xhandle:safety-case-updated", changed);
+      window.removeEventListener(EVIDENCE_SYNC_EVENT, failed);
+      sourceEvents.forEach((name) => window.removeEventListener(name, invalidate));
+    };
+  }, []);
 
   useEffect(() => {
     if (!safetyCase) return;
@@ -217,17 +248,23 @@ export default function SafetyCaseView({ activeProjectId }) {
       claims: nodes.filter((node) => node.type === "claim").length,
       evidence: nodes.filter((node) => node.type === "evidence").length,
       unsupported,
-      overall: unsupported ? "Needs Review" : "Supported",
+      overall: safetyCaseOverallStatus(safetyCase, validatedEvidence && validatedEvidence.caseId === safetyCase?.id ? { evidenceById: validatedEvidence.index } : undefined),
     };
-  }, [safetyCase]);
+  }, [safetyCase, validatedEvidence]);
 
   const updateCase = useCallback((next) => setSafetyCase(normalizeSafetyCase(next)), []);
   const persist = useCallback(async (next = safetyCase) => {
     if (!next) return;
-    const saved = await saveSafetyCase(next);
-    setSafetyCase(saved);
-    setMessage("Safety case saved.");
-    refresh();
+    try {
+      const saved = await saveSafetyCase(next);
+      setSafetyCase(saved);
+      setMessage("Safety case saved.");
+      refresh();
+      return saved;
+    } catch (error) {
+      setMessage(error.message || "Unable to save safety case.");
+      return null;
+    }
   }, [refresh, safetyCase]);
 
   const updateNode = useCallback((node, options = {}) => {
@@ -359,7 +396,7 @@ export default function SafetyCaseView({ activeProjectId }) {
   const deleteSelectedNode = () => {
     if (!selectedNode || !safetyCase) return;
     const descendants = new Set();
-    const collect = (id) => safetyCase.nodes.filter((node) => node.parentId === id).forEach((child) => { descendants.add(child.id); collect(child.id); });
+    const collect = (id) => safetyCase.nodes.filter((node) => node.parentId === id && !descendants.has(node.id)).forEach((child) => { descendants.add(child.id); collect(child.id); });
     collect(selectedNode.id);
     descendants.add(selectedNode.id);
     updateCase({ ...safetyCase, nodes: safetyCase.nodes.filter((node) => !descendants.has(node.id)), edges: safetyCase.edges.filter((edge) => !descendants.has(edge.source) && !descendants.has(edge.target)) });
@@ -386,6 +423,24 @@ export default function SafetyCaseView({ activeProjectId }) {
     link.download = `${(safetyCase.name || "safety-case").replace(/[^\w-]+/g, "-")}.json`;
     link.click();
     URL.revokeObjectURL(url);
+  };
+
+  const runCompleteness = async (unsupportedOnly = false) => {
+    setMessage("Validating linked evidence…");
+    try {
+      const groups = await loadLinkableSafetyCaseEvidence(safetyCase);
+      const index = new Map(groups.flatMap((group) => group.artifacts.map((item) => [item.id, item])));
+      (safetyCase.evidenceAutomation?.artifacts || []).forEach((item) => {
+        if (String(item.projectId) === String(safetyCase.sourceProjectId ?? safetyCase.projectId)) {
+          if (item.available === false) index.delete(item.id);
+          else index.set(item.id, item);
+        }
+      });
+      setValidatedEvidence({ caseId: safetyCase.id, index });
+      const result = checkSafetyCaseCompleteness(safetyCase, { evidenceById: index });
+      setFindings(unsupportedOnly ? result.filter((finding) => /support|weak|unsupported|evidence|verification/i.test(`${finding.title} ${finding.description}`)) : result);
+      setMessage("Evidence validation completed.");
+    } catch (error) { setMessage(error.message || "Unable to validate evidence."); }
   };
 
   const askAI = async (mode = "support") => {
@@ -415,7 +470,7 @@ export default function SafetyCaseView({ activeProjectId }) {
             <h2 className="text-2xl font-semibold">Build a Safety Case</h2>
             <p className="mt-3 text-sm leading-6 text-gray-600">Create a top-down safety argument that connects claims, evidence, hazards, requirements, verification results, and architecture artifacts.</p>
             <div className="mt-6 flex flex-wrap justify-center gap-3">
-              <button className="rounded-md bg-[#2D7DFE] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1f66d1]" onClick={createBlank}>Create Blank Safety Case</button>
+              <button className="rounded-md bg-[#2D7DFE] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1f66d1]" onClick={handleAction(createBlank)}>Create Blank Safety Case</button>
               <button className="rounded-md border bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50" onClick={() => setGenerateModalOpen(true)}>Generate From Project</button>
             </div>
             <p className="mt-5 text-xs text-gray-500">Collaborator can help identify unsupported claims, suggest evidence, and maintain the safety case as the system evolves.</p>
@@ -427,7 +482,7 @@ export default function SafetyCaseView({ activeProjectId }) {
             generation={generation}
             onChange={setGeneration}
             onClose={() => setGenerateModalOpen(false)}
-            onGenerate={generateFromProject}
+            onGenerate={handleAction(generateFromProject)}
             projects={projects}
           />
         )}
@@ -438,21 +493,22 @@ export default function SafetyCaseView({ activeProjectId }) {
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
       <h1 className="sr-only">Safety Case</h1>
+      <SafetyCaseAutomaticEvidence safetyCase={safetyCase} />
       {message && <div className="border-b px-4 py-1.5 text-xs text-gray-500">{message}</div>}
       <SafetyCaseToolbar
         disabled={!safetyCase}
-        onNew={createBlank}
+        onNew={handleAction(createBlank)}
         onSave={() => persist()}
-        onDuplicate={async () => setSafetyCase(await duplicateSafetyCase(safetyCase.id))}
-        onDelete={async () => { await deleteSafetyCase(safetyCase.id, safetyCase.projectId); setSafetyCase(null); refresh(); }}
+        onDuplicate={handleAction(async () => setSafetyCase(await duplicateSafetyCase(safetyCase.id)))}
+        onDelete={handleAction(async () => { await deleteSafetyCase(safetyCase.id, safetyCase.projectId); setSafetyCase(null); refresh(); })}
         onAddTopClaim={() => addNode("claim", null)}
         onLayout={() => updateCase(layoutSafetyCaseTreeSymmetrically(safetyCase))}
         onExport={exportJson}
         onImport={importJson}
         onAskAI={() => askAI("support")}
         onGenerate={() => setGenerateModalOpen(true)}
-        onCheck={() => setFindings(checkSafetyCaseCompleteness(safetyCase))}
-        onUnsupported={() => setFindings(checkSafetyCaseCompleteness(safetyCase).filter((finding) => /support|weak|unsupported/i.test(`${finding.title} ${finding.description}`)))}
+        onCheck={() => runCompleteness()}
+        onUnsupported={() => runCompleteness(true)}
       />
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden xl:flex-row">
         {leftPanelCollapsed ? (
@@ -610,7 +666,7 @@ export default function SafetyCaseView({ activeProjectId }) {
           generation={generation}
           onChange={setGeneration}
           onClose={() => setGenerateModalOpen(false)}
-          onGenerate={generateFromProject}
+          onGenerate={handleAction(generateFromProject)}
           projects={projects}
         />
       )}

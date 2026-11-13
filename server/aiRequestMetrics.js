@@ -86,13 +86,15 @@ function createAIRequestMetrics({
     markFirstToken();
     outputTextChars += length;
   };
-  const finish = ({ status = "completed", finishReason = "stop", errorCode = null } = {}) => {
+  const finish = ({ status = "completed", finishReason = "stop", errorCode = null, maxOutputTokens: effectiveMaxOutputTokens, providerAttempts } = {}) => {
     if (completed) return finalReport;
     completed = true;
     const endedAt = now();
     finalReport={
       event: "finished",
       ...base,
+      ...(Number.isFinite(effectiveMaxOutputTokens) && effectiveMaxOutputTokens > 0 ? { maxOutputTokens: effectiveMaxOutputTokens } : {}),
+      ...(Number.isInteger(providerAttempts) && providerAttempts > 0 ? { providerAttempts } : {}),
       status,
       finishReason,
       errorCode,

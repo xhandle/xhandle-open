@@ -4,6 +4,15 @@ import { resolveGeneratedNodePlacement } from './functionalDiagramNodeReconcilia
 import { cloneDiagramNodeForHistory, diagramHistoryComparable } from './LiteSummaryDiagramReactFlow';
 
 const padding = { w: 420, h: 280, minW: 320, minH: 180, padX: 18, padTop: 46, padBottom: 18, nodeWidth: 180, nodeHeight: 72 };
+
+test('auto arrange retains a compact grid instead of expanding cards to default dimensions', () => {
+  const boxes = [{ id: 'g', width: 600, height: 340, position: { x: 0, y: 0 } }];
+  const nodes = [0, 1, 2, 3].map(index => ({ id: String(index), type: 'bidirectional', parentNode: 'g',
+    position: { x: 24 + index % 2 * 280, y: 60 + Math.floor(index / 2) * 144 }, width: 240, height: 104 }));
+  const result = separateContainedFunctions(nodes, boxes, { ...padding, nodeWidth: 264, nodeHeight: 120, nodeGapY: 180 });
+  expect(result.nodes).toBe(nodes);
+  expect(result.boxes).toBe(boxes);
+});
 const fixture = () => {
   const boxes = [
     { id: 'g:sub', label: 'Subsystem', position: { x: 150, y: 180 }, width: 420, height: 280 },

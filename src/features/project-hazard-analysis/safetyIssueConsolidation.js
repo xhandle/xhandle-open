@@ -60,7 +60,7 @@ export function buildSafetyIssueSourceFamilies(safetyRows = []) {
   }));
 }
 
-function deterministicIssueForFamily(family, index = 0) {
+export function describeSafetyIssueFamily(family, index = 0) {
   const firstCells = family.rows[0]?.cells || {};
   const from = cell(firstCells, [/^Function \(From\)$/i, /^From Function$/i, /^Controller$/i]);
   const action = cell(firstCells, [/^Control Action$/i, /^Action$/i]);
@@ -82,11 +82,11 @@ function deterministicIssueForFamily(family, index = 0) {
     const mode = cell(item.cells, [/^Operational Mode$/i, /^Mode$/i]);
     return [scenario, mode].filter(Boolean).join(" · ");
   }));
-  const interfaceLabel = [from, action, to].filter(Boolean).join(" → ");
-  const title = hazards.length === 1
+  const interfaceLabel = family.interfaceLabel || [from, action, to].filter(Boolean).join(" → ");
+  const title = family.title || (hazards.length === 1
     ? hazards[0]
-    : `Unsafe ${action || "system behavior"}${from || to ? ` involving ${from || to}` : ""}`;
-  const contextText = contexts.length === 1 ? "one operational context" : `${contexts.length || family.rows.length} operational contexts`;
+    : `Unsafe ${action || "system behavior"}${from || to ? ` involving ${from || to}` : ""}`);
+  const contextText = contexts.length === 1 ? "one operational context" : contexts.length ? `${contexts.length} operational contexts` : "the recorded assessment scope";
   const hazardText = hazards.length
     ? ` Documented hazardous outcomes include ${hazards.slice(0, 4).join("; ")}.`
     : "";
@@ -98,6 +98,12 @@ function deterministicIssueForFamily(family, index = 0) {
         + hazardText,
       700
     ),
+  };
+}
+
+function deterministicIssueForFamily(family, index = 0) {
+  return {
+    ...describeSafetyIssueFamily(family, index),
     likelihood: 3,
     severity: 3,
     status: "Open",
@@ -220,8 +226,8 @@ export function enforceSafetyIssueFamilyConsolidation(proposedIssues = [], safet
     const familyFallback = exactSingleFamily ? deterministicIssueForFamily(touchedFamilies[0]) : null;
     return {
       ...primary,
-      title: familyFallback?.title || primary.title,
-      description: familyFallback?.description || primary.description,
+      title: primary.semantic ? primary.title : familyFallback?.title || primary.title,
+      description: primary.semantic ? primary.description : familyFallback?.description || primary.description,
       likelihood: Number(highestRisk.likelihood) || 3,
       severity: Number(highestRisk.severity) || 3,
       tags: unique(component.flatMap((issue) => clean(issue.tags).split(","))).join(", "),

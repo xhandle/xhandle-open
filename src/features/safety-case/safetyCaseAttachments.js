@@ -46,7 +46,9 @@ function putAttachment(db, attachment) {
     const tx = db.transaction(ATTACHMENT_STORE, "readwrite");
     const request = tx.objectStore(ATTACHMENT_STORE).put(attachment);
     request.onerror = () => reject(request.error || new Error("Unable to save attachment."));
-    request.onsuccess = () => resolve(attachment);
+    tx.oncomplete = () => resolve(attachment);
+    tx.onabort = () => reject(tx.error || new Error("Attachment transaction aborted."));
+    tx.onerror = () => reject(tx.error || new Error("Unable to commit attachment."));
   });
 }
 

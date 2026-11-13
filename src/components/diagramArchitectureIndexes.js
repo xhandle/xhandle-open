@@ -87,6 +87,25 @@ export function archPath(row) {
   };
 }
 
+// The native canvas takes the first row allocation for each node, overridden
+// by the explicit allocation on its last endpoint occurrence. A relationship's
+// allocation is not an additional ownership assignment for both endpoints.
+// Keep this presentation choice separate from the original evidence.
+export function computeDiagramArchitectureByNode(rows) {
+  const first = new Map(), endpoints = new Map();
+  for (const row of rows || []) {
+    const normalized = { ...row, fromFunction: row.fromFunction || row.from, toFunction: row.toFunction || row.to };
+    for (const side of ['from', 'to']) {
+      const name = normalized[`${side}Function`];
+      if (!name) continue;
+      const id = row[`${side}NodeId`] || `n:${name}`;
+      if (!first.has(id)) first.set(id, archPath(normalized));
+      endpoints.set(id, row[`${side}Architecture`]);
+    }
+  }
+  return new Map([...first].map(([id, path]) => [id, endpoints.get(id) || path]));
+}
+
 export function computeArchitectureByFunction(rows, { useNodeIds = false } = {}) {
   const map = new Map();
   const accumulated = new Map();

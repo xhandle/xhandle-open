@@ -1,6 +1,6 @@
 import React from "react";
 
-export default function NaturalLanguageDesignPanel({ children, activeDesignContext, onGenerateSysML, onAnalyzeGaps }) {
+export default function NaturalLanguageDesignPanel({ children, modeControls, activeDesignContext, onGenerateSysML, onAnalyzeGaps, onGenerateArtifact, onGenerateProject }) {
   const rowCount = activeDesignContext?.rows?.length || 0;
   const sourceLabel = [
     activeDesignContext?.activeFolderName,
@@ -8,19 +8,13 @@ export default function NaturalLanguageDesignPanel({ children, activeDesignConte
   ].filter(Boolean).join(" / ");
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-white px-3 py-2">
-        <div>
-          <div className="text-sm font-semibold text-gray-900">Natural Language Design</div>
-          <div className="text-xs text-gray-500">Use the existing Design Management module system for specifications, requirements, and narrative artifacts.</div>
-          {sourceLabel ? (
-            <div className="mt-1 text-xs text-indigo-700">
-              SysML source: <span className="font-medium">{sourceLabel}</span> · {rowCount} visible rows
-            </div>
-          ) : null}
-        </div>
-        <div className="flex gap-2">
-          <button className="rounded border px-2.5 py-1.5 text-xs font-medium hover:bg-gray-50" onClick={onGenerateSysML}>Generate SysML v2 Model</button>
+    <div className="natural-language-design">
+      <div className="design-toolbar" aria-label="Natural Language Design controls">
+        {modeControls || <strong className="text-sm">Natural Language Design</strong>}
+        <div className="design-toolbar-actions">
+          <button className="rounded border border-indigo-600 text-indigo-700 px-3 py-1.5 text-xs font-medium" onClick={onGenerateProject}>Generate systems engineering project</button>
+          <button className="rounded bg-indigo-600 text-white px-3 py-1.5 text-xs font-medium" onClick={onGenerateArtifact}>Generate engineering artifact</button>
+          <button className="rounded border px-2.5 py-1.5 text-xs font-medium hover:bg-gray-50" title={sourceLabel ? `SysML source: ${sourceLabel} · ${rowCount} visible rows` : undefined} onClick={onGenerateSysML}>Generate SysML v2 Model</button>
           <button className="rounded border px-2.5 py-1.5 text-xs font-medium hover:bg-gray-50" onClick={onAnalyzeGaps}>Analyze Model Gaps</button>
         </div>
       </div>

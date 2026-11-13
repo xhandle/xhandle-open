@@ -1,3 +1,11 @@
+import StructuredAttributeInput from '../features/requirements/components/StructuredAttributeInput';
+import { DESIGN_SEARCH_REVEAL } from '../features/design-management/designQuickSearch';
+import DesignLibraryTree from '../features/requirements/components/DesignLibraryTree';
+import DesignFolderContents from '../features/requirements/components/DesignFolderContents';
+import DesignEditorMenu from '../features/requirements/components/DesignEditorMenu';
+import { designLibraryModel } from '../features/requirements/components/designLibraryModel';
+import { buildIndex, computeNumbering, OutlinePanel, TablePanel, TraceabilityView, Field, Modal, RowActionsBar } from "../features/requirements/components/RequirementsViews";
+import { validateModuleRows } from '../features/requirements/actions/normalizeModuleRows';
 // RequirementsManager.jsx — Folders • Modules • Requirements
 // xHandle Lite: outline + table views, hierarchy, versioning, traceability, import/export
 // New in this version:
@@ -11,13 +19,7 @@
 // - Access control hooks (canEdit/currentRole/moduleAccess)
 
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import {
-    Download, Boxes, Upload, Plus, Trash2, Edit3, History, Link2, X, Search, PlusCircle,
-    ArrowUp, ArrowDown, IndentIncrease, IndentDecrease, Layers,
-    Table as TableIcon, FileStack, Save, RotateCcw, Folder as FolderIcon,
-    FolderOpen, ChevronDown, ChevronRight, ChevronLeft, Image as ImageIcon, Grid3x3,
-    Copy
-  } from "lucide-react";
+import { Plus, Trash2, Link2, X, Search, PlusCircle, ChevronRight, ChevronLeft } from "lucide-react";
 
 import HazardAttributeMapper from "./HazardAttributeMapper";
 // ADD
@@ -33,9 +35,9 @@ import {
   migrateRequirementsState,
 } from "../features/requirements/actions";
 import { registerActionProvider } from "../features/app/actionRegistry";
-import ReactFlow, { Background, Controls, MiniMap } from "reactflow";
+
 import "reactflow/dist/style.css";
-import { FolderPlus } from "lucide-react";
+
 
 
 
@@ -53,12 +55,12 @@ const LINK_INVERSE = {
 const BASE_MODULES = ["System", "Subsystem", "Interface", "Requirement", "Test"];
 const STATUSES = ["Proposed", "Approved", "Rejected"];
 const VIEW_MODES = { OUTLINE: "outline", TABLE: "table", TRACE: "TRACE" };
-const LS_FOLDER_OPEN = "xhandle:folder-open";
+
 const LS_SIDEBAR_OPEN = "xhandle:sidebar-open";
 const ATTR_TYPES = ["text", "number", "select", "multiselect", "date", "boolean"];
 // Drag & Drop MIME types
 const DND_MIME_FOLDER = "application/x-xhandle-folder";   // you already have this
-const DND_MIME_MODULE = "application/x-xhandle-module";   // ← NEW
+
 // ───────────────── Module Attribute Schema (per moduleId) ─────────────────
 const LS_MODULE_SCHEMAS = "xhandle:module-schemas";
 
@@ -511,52 +513,13 @@ const LS_BASELINES_V2 = "xhandle:req-baselines:v2"; // { [folderId]: { [moduleId
 // Limit how much we keep in history to avoid storage blow-ups
 const MAX_HISTORY_ENTRIES = 30;
 
-function pruneForStorage(rows) {
-  return (rows || []).map(r => {
-    const out = { ...r };
-
-    // Trim very large image data URLs (we keep the name as a placeholder)
-    if (out?.content?.type === "image" && out.content.image?.dataUrl) {
-      const du = out.content.image.dataUrl;
-      if (du.length > 50_000) {
-        out.content = {
-          ...out.content,
-          image: { ...out.content.image, dataUrl: "__omitted__" },
-        };
-      }
-    }
-
-    // Cap history length
-    if (Array.isArray(out.history) && out.history.length > MAX_HISTORY_ENTRIES) {
-      out.history = out.history.slice(-MAX_HISTORY_ENTRIES);
-    }
-
-    return out;
-  });
-}
 
 const Storage = {
   async load() { return JSON.parse(localStorage.getItem(LS_KEY) || "[]"); },
-  async save(rows) {
-    try {
-      localStorage.setItem(LS_KEY, JSON.stringify(rows));
-    } catch (e1) {
-      try {
-        // Retry with a pruned copy
-        const pruned = pruneForStorage(rows);
-        localStorage.setItem(LS_KEY, JSON.stringify(pruned));
-        console.warn("[xhandle] localStorage full; saved pruned requirements");
-      } catch (e2) {
-        try {
-          // Last-resort: sessionStorage (will be lost on tab close)
-          const pruned = pruneForStorage(rows);
-          sessionStorage.setItem(LS_KEY, JSON.stringify(pruned));
-          console.warn("[xhandle] fell back to sessionStorage for requirements");
-        } catch (e3) {
-          console.error("[xhandle] failed to persist requirements:", e3);
-        }
-      }
-    }
+  save(rows) {
+    // A save either persists all content or fails visibly. Never silently prune evidence.
+    localStorage.setItem(LS_KEY, JSON.stringify(rows));
+    window.dispatchEvent(new CustomEvent('xhandle:requirements-data-changed', { detail: { source: 'requirements-editor' } }));
   },
   loadViews() { return JSON.parse(localStorage.getItem(LS_VIEWS) || "[]"); },
   saveViews(v) {
@@ -585,71 +548,9 @@ const Folders = {
   }
 };
 
-// Migration: ensure at least one root folder and add parentId if missing
-async function migrateIfNeeded() {
-  const folders = Folders.loadAll();
-  if (!folders.length) {
-    // Build defaults from any legacy rows
-    const rows = JSON.parse(localStorage.getItem(LS_KEY) || "[]");
-    const moduleNames = [...new Set(rows.map(r => r.module).filter(Boolean))];
-    const modules = moduleNames.map(m => ({
-      id: makeId("MOD"),
-      name: m,
-      type: BASE_MODULES.includes(m) ? m : "Requirement",
-      attrTemplate: [],
-      viewTemplates: []
-    }));
-    const root = {
-      id: makeId("FOL"),
-      parentId: null,
-      name: "Root",
-      modules,
-      roles: { Owner: [], Editor: [], Viewer: [] }
-    };
-    const tagged = rows.map(r => ({ ...r, projectId: root.id,
-      folderId: root.id,
-      moduleId: modules.find(mm => mm.name === r.module)?.id || null
-    }));
-    Folders.saveAll([root]);
-    Folders.setActive(root.id);
-    localStorage.setItem(LS_KEY, JSON.stringify(tagged));
-    return;
-  }
-  // Add parentId if missing
-  let mutated = false;
-  const fixed = folders.map(f => {
-    if (typeof f.parentId === "undefined") { mutated = true; return { ...f, parentId: null }; }
-    return f;
-  });
-  if (mutated) Folders.saveAll(fixed);
-}
-
 // ----------------------------- Tree Utilities -------------------------------
-function buildIndex(rows) {
-  const byId = new Map(rows.map(r => [r.id, r]));
-  const children = new Map();
-  for (const r of rows) {
-    const p = r.parentId || null;
-    if (!children.has(p)) children.set(p, []);
-    children.get(p).push(r);
-  }
-  for (const list of children.values()) list.sort((a,b)=> (a.order??0)-(b.order??0) || (a.title||'').localeCompare(b.title||''));
-  return { byId, children };
-}
-function computeNumbering(moduleRows) {
-  const { children } = buildIndex(moduleRows);
-  const res = new Map();
-  function dfs(parentId, prefix=[]) {
-    const list = children.get(parentId||null) || [];
-    list.forEach((node, idx) => {
-      const num = [...prefix, idx+1];
-      res.set(node.id, num.join('.'));
-      dfs(node.id, num);
-    });
-  }
-  dfs(null, []);
-  return res;
-}
+
+
 function siblingsOf(rows, id) {
   const { byId, children } = buildIndex(rows);
   const me = byId.get(id); if (!me) return [];
@@ -727,160 +628,46 @@ function hasRequirementsInScope(requirements, folderId, descendantIds) {
   return requirements.some(r => inScope.has(r.folderId ?? r.projectId));
 }
 
-function MenuBar({
-    // selection + actions
-    selectedReq, onNewSibling,
-    onNewChild, onEdit, onDelete, onNewParent,
-    onMoveUp, onMoveDown, onPromote, onDemote,
-
-    // file ops
-    onImportFile, onOpenImportHazardModal,
-    onExportJSON, onExportCSV, onExportXLSX,
-    onSaveBaseline, onRestoreBaseline,
-
-    // view ops
-    viewMode, setViewMode,
-    sidebarOpen, setSidebarOpen,
-    savedViews = [], onApplyView, onSaveView,
-
-    // extras
-    onReuse, onManageModulesClick, // pass if you still want access via menu
-    onOpenLinker,
-  }) {
-    const [open, setOpen] = React.useState(null); // "File" | "Edit" | ...
-    const fileRef = React.useRef();
-    const hasSel = !!selectedReq;
-
-    React.useEffect(() => {
-      function onDocClick(e) {
-        // close menus if clicking outside
-        if (!(e.target.closest && e.target.closest('[data-menubar]'))) setOpen(null);
-      }
-      document.addEventListener('click', onDocClick);
-      return () => document.removeEventListener('click', onDocClick);
-    }, []);
-
-    const Btn = ({label}) => (
-      <button
-        className={`px-3 py-1.5 text-sm hover:bg-gray-100 rounded ${open===label?'bg-gray-100':''}`}
-        onClick={(e)=>{ e.stopPropagation(); setOpen(m => m===label ? null : label); }}
-      >{label}</button>
-    );
-
-    const Item = ({children, onClick, disabled}) => (
-      <button
-        className={`flex w-full items-center justify-between px-3 py-1.5 text-sm hover:bg-gray-50 ${disabled?'opacity-40 cursor-not-allowed':''}`}
-        onClick={(e)=>{ e.stopPropagation(); if(!disabled) { setOpen(null); onClick?.(); } }}
-        disabled={disabled}
-        role="menuitem"
-      >{children}</button>
-    );
-
-    const Divider = () => <div className="my-1 h-px bg-gray-200" />;
-
-    return (
-      <div className="mb-2" data-menubar>
-        <div className="flex gap-1 text-gray-800">
-          <Btn label="File" />
-          <Btn label="Edit" />
-          <Btn label="View" />
-          <Btn label="Arrange" />
-          <Btn label="Extras" />
-          <Btn label="Help" />
-        </div>
-
-        {/* Hidden file input for Import… */}
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".json,.csv,.xlsx,.xls"
-          className="hidden"
-          onChange={(e)=>{ onImportFile?.(e.target.files?.[0]); e.target.value=""; }}
-        />
-
-        {/* Menus */}
-        {open && (
-          <div className="relative">
-            <div className="absolute z-50 mt-1 min-w-[220px] rounded-md border bg-white shadow">
-              {open === "File" && (
-                <div role="menu" aria-label="File">
-                  <Item onClick={onOpenImportHazardModal}>Import from Hazard Analysis…</Item>
-                  <Item onClick={()=>fileRef.current?.click()}>Import…</Item>
-                  <Item onClick={onOpenLinker}>Link Modules (AI)</Item>
-                  <Divider />
-                  <Item onClick={onExportJSON}>Export as JSON</Item>
-                  <Item onClick={onExportCSV}>Export as CSV</Item>
-                  <Item onClick={onExportXLSX}>Export as Excel</Item>
-                  <Divider />
-                  <Item onClick={onSaveBaseline}>Save Baseline…</Item>
-                  <Item onClick={onRestoreBaseline}>Restore Baseline…</Item>
-                </div>
-              )}
-
-  {open === "Edit" && (
-  <div role="menu" aria-label="Edit">
-    <Item onClick={() => onNewChild?.()} disabled={!onNewChild}>New Child</Item>
-    <Item onClick={() => onNewSibling?.(selectedReq?.id)} disabled={!hasSel || !onNewSibling}>
-      New at Same Level
-    </Item>
-    <Item onClick={() => onNewParent?.(selectedReq?.id)} disabled={!hasSel || !onNewParent}>
-      New Parent
-    </Item>
-    <Item onClick={() => onEdit?.(selectedReq)} disabled={!hasSel}>Edit Selected</Item>
-    <Item onClick={() => onDelete?.(selectedReq?.id)} disabled={!hasSel}>Delete Selected</Item>
-  </div>
-)}
-
-
-
-              {open === "View" && (
-                <div role="menu" aria-label="View">
-                  <Item onClick={()=>setViewMode("outline")}>{viewMode==="outline" ? "✓ " : ""}Outline</Item>
-                  <Item onClick={()=>setViewMode("table")}>{viewMode==="table" ? "✓ " : ""}Table</Item>
-                  <Item onClick={()=>setSidebarOpen(s=>!s)}>
-                    {sidebarOpen ? "Hide Sidebar" : "Show Sidebar"}
-                  </Item>
-                  <Divider />
-                  <Item onClick={onSaveView}>Save Current View…</Item>
-                  {!savedViews.length && <div className="px-3 py-1.5 text-xs text-gray-500">No saved views</div>}
-                  {savedViews.map(v=>(
-                    <Item key={v.name} onClick={()=>onApplyView?.(v)}>{v.name}</Item>
-                  ))}
-                </div>
-              )}
-
-              {open === "Arrange" && (
-                <div role="menu" aria-label="Arrange">
-                  <Item onClick={()=>onMoveUp?.(selectedReq?.id)} disabled={!hasSel}>Move Up</Item>
-                  <Item onClick={()=>onMoveDown?.(selectedReq?.id)} disabled={!hasSel}>Move Down</Item>
-                  <Item onClick={()=>onPromote?.(selectedReq?.id)} disabled={!hasSel}>Promote</Item>
-                  <Item onClick={()=>onDemote?.(selectedReq?.id)} disabled={!hasSel}>Demote</Item>
-                </div>
-              )}
-
-              {open === "Extras" && (
-                <div role="menu" aria-label="Extras">
-                  <Item onClick={onReuse}>Duplicate Module</Item>
-                  {!!onManageModulesClick && <Item onClick={onManageModulesClick}>Manage Modules…</Item>}
-                </div>
-              )}
-
-              {open === "Help" && (
-                <div role="menu" aria-label="Help">
-                  <div className="px-3 py-1.5 text-sm text-gray-700">
-                    Double-click a title to edit. Use the menu for imports, exports, and baselines.
-                  </div>
-                </div>
-              )}
-
-            </div>
-          </div>
-        )}
-
-
-      </div>
-    );
-  }
+function MenuBar({ selectedReq, onNewSibling, onNewChild, onEdit, onDelete, onNewParent,
+  onMoveUp, onMoveDown, onPromote, onDemote, onImportFile, onOpenImportHazardModal,
+  onExportJSON, onExportCSV, onExportXLSX, onSaveBaseline, onRestoreBaseline,
+  viewMode, setViewMode, sidebarOpen, setSidebarOpen, savedViews = [], onApplyView, onSaveView,
+  onReuse, onOpenLinker, readOnly }) {
+  const fileRef = useRef(null);
+  const selectionDisabled = !selectedReq || readOnly;
+  const entry = (label, onSelect, disabled = false) => ({ label, onSelect, disabled });
+  const menus = [
+    { label: 'File', items: [
+      entry('Import from Hazard Analysis…', onOpenImportHazardModal, readOnly),
+      entry('Import…', () => fileRef.current?.click(), readOnly),
+      entry('Export as JSON', onExportJSON), entry('Export as CSV', onExportCSV), entry('Export as Excel', onExportXLSX),
+      entry('Save Baseline…', onSaveBaseline, readOnly), entry('Restore Baseline…', onRestoreBaseline, readOnly),
+    ] },
+    { label: 'Edit', items: [
+      entry('New Child', onNewChild, readOnly),
+      entry('New at Same Level', () => onNewSibling(selectedReq.id), selectionDisabled),
+      entry('New Parent', () => onNewParent(selectedReq.id), selectionDisabled),
+      entry('Edit Selected', () => onEdit(selectedReq), selectionDisabled),
+      entry('Delete Selected', () => onDelete(selectedReq.id), selectionDisabled),
+    ] },
+    { label: 'View', items: [
+      entry(`${viewMode === 'outline' ? '✓ ' : ''}Outline`, () => setViewMode('outline')),
+      entry(`${viewMode === 'table' ? '✓ ' : ''}Table`, () => setViewMode('table')),
+      entry('Traceability', () => setViewMode('TRACE')),
+      entry(sidebarOpen ? 'Hide Sidebar' : 'Show Sidebar', () => setSidebarOpen(value => !value)),
+      entry('Save Current View…', onSaveView), ...savedViews.map(view => entry(view.name, () => onApplyView(view))),
+    ] },
+    { label: 'Arrange', items: [
+      entry('Move Up', () => onMoveUp(selectedReq.id), selectionDisabled),
+      entry('Move Down', () => onMoveDown(selectedReq.id), selectionDisabled),
+      entry('Promote', () => onPromote(selectedReq.id), selectionDisabled),
+      entry('Demote', () => onDemote(selectedReq.id), selectionDisabled),
+    ] },
+    { label: 'Extras', items: [entry('Duplicate Module', onReuse, readOnly), entry('Link Modules (AI)', onOpenLinker, readOnly)] },
+    { label: 'Help', items: [{ text: 'Select a row to edit or arrange it. Double-click a title to edit. File contains module imports, exports and baselines.' }] },
+  ].map(menu => ({ ...menu, items: menu.items.filter(item => item.onSelect || item.text) }));
+  return <><DesignEditorMenu menus={menus} /><input ref={fileRef} type="file" accept=".json,.csv,.xlsx,.xls" className="hidden" onChange={event => { onImportFile?.(event.target.files?.[0]); event.target.value = ''; }} /></>;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TraceabilityLinkEditor — module → scrollable requirement list with search
@@ -1101,27 +888,47 @@ export default function RequirementsManager({
   currentUser = "anonymous",
   currentRole = "Owner", // "Owner" | "Editor" | "Viewer"
   onActiveDesignContextChange,
+  onGenerateProject,
+  onGenerateArtifact,
+  onUpdateArtifactDetails,
+  onDeleteArtifact,
+  artifactModules = [],
+  onMoveArtifact,
+  onMoveDesignFolder,
+  activeArtifactId = null,
+  onSelectArtifact,
+  renderArtifact,
 }) {
-  useEffect(() => { migrateIfNeeded(); migrateRequirementsState(); }, []);
+  useEffect(() => { migrateRequirementsState(); }, []);
 
   // --- folders & selection
   const [folders, setFolders] = useState(Folders.loadAll());
   const [activeFolderId, setActiveFolderId] = useState(Folders.activeId());
+  const [libraryView, setLibraryView] = useState('folder');
   useEffect(() => { setFolders(Folders.loadAll()); setActiveFolderId(Folders.activeId()); }, []);
   useEffect(() => { Folders.setActive(activeFolderId); }, [activeFolderId]);
+
+  useEffect(() => {
+    const artifact = artifactModules.find(m => m.id === activeArtifactId);
+    if (artifact) { setActiveFolderId(artifact.folderId); setLibraryView('folder'); }
+  }, [activeArtifactId, artifactModules]);
 
   const activeFolder = useMemo(() => folders.find(p => p.id === activeFolderId) || null, [folders, activeFolderId]);
   const moduleMetas = useMemo(() => activeFolder?.modules || [], [activeFolder]);
   const moduleByName = useMemo(() => Object.fromEntries(moduleMetas.map(m => [m.name, m])), [moduleMetas]);
   // --- requirements: must be declared before helpers that use it
 const [requirements, setRequirements] = useState([]);
+const requirementsRef = useRef(requirements);
+requirementsRef.current = requirements;
+const [persistenceError, setPersistenceError] = useState('');
 const updateRequirements = (apply) => {
-  setRequirements((prev) => {
-    const prevCopy = deepClone(prev);
-    const next = typeof apply === "function" ? apply(prevCopy) : apply;
-    Storage.save(next); // persist on every write
-    return next;
-  });
+  const previous = deepClone(requirementsRef.current);
+  const next = typeof apply === "function" ? apply(previous) : apply;
+  try { Storage.save(next); }
+  catch (error) { setPersistenceError(`Changes were not saved: ${error.message}`); throw error; }
+  requirementsRef.current = next;
+  setRequirements(next);
+  setPersistenceError('');
 };
 
 
@@ -1133,12 +940,15 @@ useEffect(() => { (async ()=> setRequirements(await Storage.load()))(); }, []);
       const nextFolders = loadSharedFolders();
       const nextRequirements = loadSharedRequirements();
       setFolders(nextFolders);
+      requirementsRef.current = nextRequirements;
       setRequirements(nextRequirements);
       setActiveFolderId(getSharedActiveFolderId() || nextFolders[0]?.id || null);
     };
 
     const onFocusModule = (event) => {
       syncFromSharedState();
+      setLibraryView('module');
+      onSelectArtifact?.(null);
       const detail = event?.detail || {};
       if (detail.folderId) setActiveFolderId(detail.folderId);
       if (detail.moduleName) setSelectedModule(detail.moduleName);
@@ -1155,7 +965,7 @@ useEffect(() => { (async ()=> setRequirements(await Storage.load()))(); }, []);
       window.removeEventListener("xhandle:requirements-data-changed", syncFromSharedState);
       window.removeEventListener("xhandle:requirements-focus-module", onFocusModule);
     };
-  }, []);
+  }, [onSelectArtifact]);
 
   const [showLinker, setShowLinker] = useState(false);
   const getAllReqs = useCallback(() => {
@@ -1411,13 +1221,6 @@ const [isRootDrop, setIsRootDrop] = useState(false);
     }
   }, [moduleMetas, selectedModule]);
 
-  const [filterText, setFilterText] = useState("");
-  const [filterStatus, setFilterStatus] = useState("all");
-  const [filterModule, setFilterModule] = useState("all");
-  const [sortKey, setSortKey] = useState("numbering");
-const [sortDir, setSortDir] = useState("asc");
-
-
   const [savedViews, setSavedViews] = useState(Storage.loadViews());
   useEffect(() => { Storage.saveViews(savedViews); }, [savedViews]);
 
@@ -1429,6 +1232,8 @@ const [sortDir, setSortDir] = useState("asc");
 const [showImportModal, setShowImportModal] = useState(false);
 // Single-row selection for global actions
 const [selectedId, setSelectedId] = useState(null);
+const pendingSearchSelection = useRef(null);
+const [searchSelectionVersion, setSearchSelectionVersion] = useState(0);
 // Multi-select + clipboard
 const [selectedIds, setSelectedIds] = useState(() => new Set());        // holds multiple ids
 const [clipboard, setClipboard] = useState(null); // { moduleName, roots: Requirement[], withHierarchy: true }
@@ -1464,10 +1269,18 @@ const [mapperTitleCol, setMapperTitleCol] = useState(null); // string
 const [mapperSummary2D, setMapperSummary2D] = useState([]); // original 2D rows
 
 // Clear selection when switching folder/module
-useEffect(() => { setSelectedId(null); }, [activeFolderId, selectedModule]);
+useEffect(() => {
+  const target = pendingSearchSelection.current;
+  if (target?.folderId === activeFolderId && target.moduleName === selectedModule) {
+    setSelectedId(target.objectId); setSelectedIds(new Set([target.objectId])); setViewMode('table');
+    pendingSearchSelection.current = null;
+  } else { pendingSearchSelection.current = null; setSelectedId(null); }
+}, [activeFolderId, selectedModule]);
 
 
   const [showModuleManager, setShowModuleManager] = useState(false);
+  const [moduleManagerFolderId, setModuleManagerFolderId] = useState(null);
+  const moduleManagerFolder = moduleManagerFolderId ? folders.find(folder => folder.id === moduleManagerFolderId) : activeFolder;
   const [showReuse, setShowReuse] = useState(false);
   const [showNewFolder, setShowNewFolder] = useState(false);
 
@@ -1496,14 +1309,15 @@ useEffect(() => {
   onActiveDesignContextChange({
     activeFolderId,
     activeFolderName: activeFolder?.name || "Current Design Folder",
-    selectedModule,
-    selectedModuleId: moduleByName[selectedModule]?.id || null,
-    rows: moduleRows,
+    selectedModule: libraryView === 'module' ? selectedModule : null,
+    selectedModuleId: libraryView === 'module' ? moduleByName[selectedModule]?.id || null : null,
+    rows: libraryView === 'module' ? moduleRows : [],
   });
-}, [activeFolderId, activeFolder?.name, selectedModule, moduleByName, moduleRows, onActiveDesignContextChange]);
+}, [activeFolderId, activeFolder?.name, selectedModule, moduleByName, moduleRows, libraryView, onActiveDesignContextChange]);
 
 useEffect(() => {
   function onKeyDown(e) {
+    if (activeArtifactId || libraryView !== 'module') return;
     // don't hijack arrows while typing
     const tag = (e.target && e.target.tagName) || "";
     if (tag === "INPUT" || tag === "TEXTAREA" || e.target?.isContentEditable) return;
@@ -1562,7 +1376,7 @@ useEffect(() => {
 
   window.addEventListener("keydown", onKeyDown);
   return () => window.removeEventListener("keydown", onKeyDown);
-}, [selectedReq, selectedIds, moduleRows, saveRequirement, promote, demote, copySelection, cutSelection, pasteClipboard]);
+}, [activeArtifactId, libraryView, selectedReq, selectedIds, moduleRows, saveRequirement, promote, demote, copySelection, cutSelection, pasteClipboard]);
 
 
 // Columns for the Table view (template + keys present in data)
@@ -1584,92 +1398,11 @@ const attrColumns = useMemo(() => {
 // Outline numbering for the current module
 const numbering = useMemo(() => computeNumbering(moduleRows), [moduleRows]);
 
-// Filtered/sorted rows for the Table view
-const tableFiltered = useMemo(() => {
-  // start from the current module only
-  let rows = selectedModule
-    ? folderRequirements.filter(r => r.module === selectedModule)
-    : folderRequirements;
-
-  if (filterText.trim()) {
-    const q = filterText.toLowerCase();
-    rows = rows.filter(r =>
-      (r.title || "").toLowerCase().includes(q) ||
-      (r.module || "").toLowerCase().includes(q) ||
-      (r.status || "").toLowerCase().includes(q) ||
-      JSON.stringify(r.attributes || {}).toLowerCase().includes(q)
-    );
-  }
-  if (filterStatus !== "all") {
-    rows = rows.filter(r => (r.status || "Proposed") === filterStatus);
-  }
-
-  const dir = sortDir === "asc" ? 1 : -1;
-
-  function parsePath(s) {
-    return String(s || "")
-      .split(".")
-      .map(n => parseInt(n, 10))
-      .map(n => (Number.isFinite(n) ? n : -1));
-  }
-  function cmpNumbering(aId, bId) {
-    const aP = parsePath(numbering.get(aId));
-    const bP = parsePath(numbering.get(bId));
-    const len = Math.max(aP.length, bP.length);
-    for (let i = 0; i < len; i++) {
-      const a = aP[i] ?? -1;
-      const b = bP[i] ?? -1;
-      if (a !== b) return a - b;
-    }
-    return 0;
-  }
-
-  if (sortKey === "numbering") {
-    rows = [...rows].sort((a, b) => {
-      const byNum = cmpNumbering(a.id, b.id);
-      if (byNum !== 0) return byNum * dir;
-      // stable tie-breakers
-      return (
-        String(a.title || "").localeCompare(String(b.title || "")) ||
-        String(a.id || "").localeCompare(String(b.id || ""))
-      ) * dir;
-    });
-// inside tableFiltered, right before the final return, replace your non-numbering sort with:
-} else {
-  rows = [...rows].sort((a, b) => {
-    let aVal, bVal;
-
-    if (sortKey.startsWith("attr:")) {
-      const k = sortKey.slice("attr:".length);
-      aVal = a?.attributes?.[k];
-      bVal = b?.attributes?.[k];
-      // normalize arrays/booleans/numbers
-      aVal = Array.isArray(aVal) ? aVal.join(", ") : (aVal ?? "");
-      bVal = Array.isArray(bVal) ? bVal.join(", ") : (bVal ?? "");
-      // numeric-aware compare
-      const an = Number(aVal), bn = Number(bVal);
-      if (!Number.isNaN(an) && !Number.isNaN(bn)) {
-        return (an - bn) * dir;
-      }
-      return String(aVal).localeCompare(String(bVal)) * dir;
-    }
-
-    aVal = a?.[sortKey];
-    bVal = b?.[sortKey];
-    return String(aVal ?? "").localeCompare(String(bVal ?? "")) * dir;
-  });
-}
-
-  return rows;
-}, [
-  folderRequirements,
-  selectedModule,
-  filterText,
-  filterStatus,
-  sortKey,
-  sortDir,
-  numbering, // ensure it re-sorts when the outline hierarchy changes
-]);
+// Keep Table in the same hierarchy order as Outline, including unparented rows.
+const tableRows = useMemo(() => {
+  const byId = new Map(moduleRows.map(row => [row.id, row]));
+  return [...Array.from(numbering.keys(), id => byId.get(id)), ...moduleRows.filter(row => !numbering.has(row.id))];
+}, [moduleRows, numbering]);
   // ----------------------------- Access helpers -----------------------------
   function canEditModule(modName){
     if (!canEdit) return false;
@@ -1869,6 +1602,7 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
     Folders.upsert(folder);
     setFolders(Folders.loadAll());
     setActiveFolderId(folder.id);
+    setLibraryView('folder');
     return folder;
   }
 
@@ -1883,6 +1617,8 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
     );
     if (existing) {
       setActiveFolderId(folderId);
+      setLibraryView('module');
+      onSelectArtifact?.(null);
       setSelectedModule(existing.name);
       return existing;
     }
@@ -1899,6 +1635,8 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
     setFolders(Folders.loadAll());
     setActiveFolderId(folderId);
     setSelectedModule(mod.name);
+    setLibraryView('module');
+    onSelectArtifact?.(null);
     return mod;
   }
 
@@ -1907,6 +1645,8 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
     if (!module) throw new Error("Module not found.");
     setActiveFolderId(folderId);
     setSelectedModule(module.name);
+    setLibraryView('module');
+    onSelectArtifact?.(null);
     return module;
   }
 
@@ -2002,7 +1742,9 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
       order: typeof row.order === "number" ? row.order : index,
       version: 1,
       history: [],
-      content: isHeading ? undefined : row.content,
+      content: row.content,
+      sourceRefs: row.sourceRefs || [],
+      provenance: row.provenance,
       createdAt: nowISO(),
       updatedAt: nowISO(),
     };
@@ -2136,20 +1878,21 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
     setActiveFolderId(folderId);
     setSelectedModule(module.name);
 
+    const normalizedRows = expandHeadingDetails(rows);
+    const created = normalizedRows.map((row, index) => buildRequirementRow(row, module, folderId, index));
     updateRequirements((prev) => {
       const scopeMatch = (row) =>
         (row.folderId ?? row.projectId) === folderId &&
-        (row.moduleId === module.id || row.module === module.name);
+        (row.moduleId ? row.moduleId === module.id : row.module === module.name);
 
       const base = mode === "replace" ? prev.filter((row) => !scopeMatch(row)) : [...prev];
-      const normalizedRows = expandHeadingDetails(rows);
-      const created = normalizedRows.map((row, index) => buildRequirementRow(row, module, folderId, index));
+      validateModuleRows(created, base, folderId, module.id, module.name);
       return [...base, ...created];
     });
 
     return {
       module,
-      rows: expandHeadingDetails(rows).map((row, index) => buildRequirementRow(row, module, folderId, index)),
+      rows: created,
     };
   }
 
@@ -2835,10 +2578,20 @@ updateRequirements(prev => {
 
   // ----------------------------- Folder deletion (NEW) ----------------------
   function deleteFolder(folderId) {
-    const fol = folders.find(f => f.id === folderId);
+    // Project-attached folders are no longer children of their original parent.
+    const attached = new Set(artifactModules.flatMap(module => module.libraryFolderIds || []));
+    const visibleFolders = folders.map(folder => attached.has(folder.id) ? { ...folder, parentId: null } : folder);
+    if (artifactModules.length) {
+      const descendants = new Set([folderId]);
+      let changed = true;
+      while (changed) { changed = false; for (const folder of visibleFolders) if (descendants.has(folder.parentId) && !descendants.has(folder.id)) { descendants.add(folder.id); changed = true; } }
+      if (artifactModules.some(m => descendants.has(m.folderId))) { window.alert('Delete the engineering artifacts in this folder before deleting the folder.'); return; }
+    }
+
+    const fol = visibleFolders.find(f => f.id === folderId);
     if (!fol) return;
 
-    const descendants = collectDescendantIds(folders, folderId);
+    const descendants = collectDescendantIds(visibleFolders, folderId);
     const hasChildren = descendants.size > 0;
     const hasReqs = hasRequirementsInScope(requirements, folderId, descendants);
 
@@ -2857,7 +2610,7 @@ updateRequirements(prev => {
     const choice = window.prompt(
       `Folder '${fol.name}' is not empty.\n` +
       `Type DELETE to remove this folder, all subfolders, and their requirements.\n` +
-      `Type MOVE to move contents to the parent folder, then delete this folder.\n` +
+      (fol.parentId ? `Type MOVE to move contents to the parent folder, then delete this folder.\n` : "") +
       `Leave blank to cancel.`
     );
     if (!choice) return;
@@ -2889,10 +2642,11 @@ updateRequirements(prev => {
     }
 
     if (choice.toUpperCase() === "MOVE") {
-      const parentId = fol.parentId || null;
+      if (!fol.parentId || !folders.some(folder => folder.id === fol.parentId)) return;
+      const parentId = fol.parentId;
 
       // Reparent direct children
-      const movedFolders = folders.map(f => f.parentId === folderId ? { ...f, parentId } : f);
+      const movedFolders = folders.map(f => !attached.has(f.id) && f.parentId === folderId ? { ...f, parentId } : f);
       const remainingFolders = movedFolders.filter(f => f.id !== folderId);
       Folders.saveAll(remainingFolders);
       setFolders(remainingFolders);
@@ -2908,7 +2662,7 @@ updateRequirements(prev => {
       // Move baselines bucket (merge into parent)
       const baseMap = Baselines.loadMap();
       if (baseMap[folderId]) {
-        const parentKey = parentId || "root";
+        const parentKey = parentId;
         baseMap[parentKey] = { ...(baseMap[parentKey] || {}), ...(baseMap[folderId] || {}) };
         delete baseMap[folderId];
         Baselines.saveMap(baseMap);
@@ -2961,7 +2715,7 @@ updateRequirements(prev => {
     toastOnce?.(`Moved module '${mod.name}' to '${dst.name}'`);
   }
 
-  function moveFolder(folderId, newParentId) {
+  async function moveFolder(folderId, newParentId, programId = null) {
     const src = folders.find(f => f.id === folderId);
     if (!src) return;                       // unknown source
     if (folderId === newParentId) return;   // no-op
@@ -2974,6 +2728,9 @@ updateRequirements(prev => {
       toastOnce("Can't move a folder into its own descendant");
       return;
     }
+
+    if (onMoveDesignFolder) await onMoveDesignFolder(folderId, programId, newParentId);
+    if (programId) return;
 
     // no-op if parent is unchanged
     if ((src.parentId ?? null) === (newParentId ?? null)) return;
@@ -2989,22 +2746,120 @@ updateRequirements(prev => {
   // Saved views
   function saveCurrentView(){
     const name = window.prompt("Save view as:"); if(!name) return;
-    const view = { name, filterText, filterStatus, filterModule, sortKey, sortDir, selectedModule, viewMode };
+    const view = { name, selectedModule, viewMode };
     setSavedViews(prev=>{ const next=[...prev.filter(v=>v.name!==name), view]; return next; }); toastOnce(`Saved view '${name}'`);
   }
   function applyView(v){
-    setFilterText(v.filterText||""); setFilterStatus(v.filterStatus||"all"); setFilterModule(v.filterModule||"all");
-    setSortKey(v.sortKey||"updatedAt"); setSortDir(v.sortDir||"desc"); setSelectedModule(v.selectedModule||selectedModule); setViewMode(v.viewMode||VIEW_MODES.OUTLINE);
+    setSelectedModule(v.selectedModule||selectedModule); setViewMode(v.viewMode||VIEW_MODES.OUTLINE);
   }
   function deleteView(name){ setSavedViews(prev=>prev.filter(v=>v.name!==name)); }
 
   // ----------------------------- UI -----------------------------------------
-  const folderTree = useMemo(()=> buildFolderTree(folders), [folders]);
+  const folderTree = useMemo(() => buildFolderTree(folders.map(folder => ({ ...folder,
+    modules: [...(folder.modules || []), ...artifactModules.filter(m => m.folderId === folder.id)],
+  }))), [folders, artifactModules]);
+  const library = useMemo(() => designLibraryModel(folderTree), [folderTree]);
+  const canEditLibraryItem = item => canEdit && currentRole !== 'Viewer' && (item.kind !== 'module' || canEditModule(item.name));
+  const openLibraryItem = item => {
+    clearSelection();
+    if (item.kind === 'folder') {
+      setActiveFolderId(item.id); setLibraryView('folder'); onSelectArtifact?.(null);
+    } else {
+      setActiveFolderId(item.folderId);
+      if (item.externalArtifact) { setLibraryView('folder'); onSelectArtifact?.(item.id); }
+      else { setLibraryView('module'); onSelectArtifact?.(null); setSelectedModule(item.name); }
+    }
+  };
+  useEffect(() => {
+    const reveal = event => {
+      const { folderId, moduleName, objectId } = event.detail || {};
+      if (!folderId) return;
+      pendingSearchSelection.current = objectId ? { folderId, moduleName, objectId } : null;
+      clearSelection(); setActiveFolderId(folderId);
+      setLibraryView(moduleName ? 'module' : 'folder');
+      if (moduleName) setSelectedModule(moduleName);
+      if (objectId) { setViewMode('table'); setSelectedId(objectId); setSelectedIds(new Set([objectId])); }
+      setSearchSelectionVersion(value => value + 1);
+      setSidebarOpen(true);
+    };
+    window.addEventListener(DESIGN_SEARCH_REVEAL, reveal);
+    return () => window.removeEventListener(DESIGN_SEARCH_REVEAL, reveal);
+  }, []);
+  useEffect(() => {
+    if (!selectedId || activeArtifactId) return;
+    const timer = setTimeout(() => {
+      const node = [...document.querySelectorAll('.design-management-workspace [data-artifact-object-id]')].find(node => node.dataset.artifactObjectId === selectedId);
+      if (node) { pendingSearchSelection.current = null; node.scrollIntoView?.({ block: 'center', inline: 'nearest' }); node.classList.add('xhandle-search-hit'); node.focus?.({ preventScroll: true }); }
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [selectedId, activeFolderId, selectedModule, libraryView, viewMode, activeArtifactId, searchSelectionVersion]);
+  const commitLibraryChange = (nextFolders, nextRequirements, nextBaselines) => {
+    const keys = [LS_PROJECTS, ...(nextRequirements ? [LS_KEY] : []), ...(nextBaselines ? [LS_BASELINES_V2] : [])];
+    const previous = new Map(keys.map(key => [key, localStorage.getItem(key)]));
+    try {
+      Folders.saveAll(nextFolders);
+      if (nextBaselines) Baselines.saveMap(nextBaselines);
+      if (nextRequirements) updateRequirements(nextRequirements);
+    } catch (error) {
+      for (const [key, value] of previous) { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); }
+      throw error;
+    }
+    setFolders(nextFolders);
+  };
+  const saveLibraryDetails = async (item, details) => {
+    if (!canEditLibraryItem(item)) throw new Error('You do not have permission to edit this item.');
+    const name = details.title.trim(), description = details.description.trim();
+    if (!name || name.length > 200 || description.length > 4000) throw new Error('Enter a title of 1–200 characters and a description up to 4,000 characters.');
+    if (item.externalArtifact) {
+      if (!onUpdateArtifactDetails) throw new Error('Editing this artifact is unavailable in this view.');
+      await onUpdateArtifactDetails(item, { title: name, description });
+      return;
+    }
+    const current = Folders.loadAll();
+    const folder = current.find(folder => folder.id === (item.kind === 'folder' ? item.id : item.folderId));
+    if (!folder) throw new Error('This folder no longer exists.');
+    if (item.kind === 'folder') {
+      Folders.upsert({ ...folder, name, description, updatedAt: nowISO() });
+    } else {
+      const module = folder.modules?.find(module => module.id === item.id);
+      if (!module) throw new Error('This module no longer exists.');
+      if (folder.modules.some(module => module.id !== item.id && module.name.toLowerCase() === name.toLowerCase())) throw new Error('A module with that title already exists in this folder.');
+      const nextRequirements = requirementsRef.current.map(row => (row.folderId ?? row.projectId) === folder.id && (row.moduleId === item.id || (!row.moduleId && row.module === module.name)) ? { ...row, module: name, updatedAt: nowISO() } : row);
+      const updated = { ...folder, modules: folder.modules.map(module => module.id === item.id ? { ...module, name, description, updatedAt: nowISO() } : module) };
+      commitLibraryChange(current.map(folder => folder.id === updated.id ? updated : folder), nextRequirements);
+      if (activeFolderId === folder.id && selectedModule === module.name) setSelectedModule(name);
+    }
+    setFolders(Folders.loadAll());
+  };
+  const removeLibraryItem = async item => {
+    if (!canEditLibraryItem(item)) throw new Error('You do not have permission to remove this item.');
+    if (item.externalArtifact) {
+      if (!onDeleteArtifact) throw new Error('Removing this artifact is unavailable in this view.');
+      await onDeleteArtifact(item);
+      return;
+    }
+    const current = Folders.loadAll();
+    if (item.kind === 'folder') {
+      if ((library.containers.get(`folder:${item.id}`) || []).length || requirementsRef.current.some(row => (row.folderId ?? row.projectId) === item.id)) throw new Error('Open this folder and remove its contents before removing the folder.');
+      const baselines = Baselines.loadMap(); delete baselines[item.id];
+      commitLibraryChange(current.filter(folder => folder.id !== item.id), null, baselines);
+    } else {
+      const folder = current.find(folder => folder.id === item.folderId);
+      if (!folder) throw new Error('This folder no longer exists.');
+      const module = folder.modules.find(module => module.id === item.id);
+      if (!module) throw new Error('This module no longer exists.');
+      const nextRequirements = requirementsRef.current.filter(row => !((row.folderId ?? row.projectId) === item.folderId && (row.moduleId === item.id || (!row.moduleId && row.module === module.name))));
+      const baselines = Baselines.loadMap();
+      if (baselines[item.folderId]) delete baselines[item.folderId][item.id];
+      commitLibraryChange(current.map(folder => folder.id === item.folderId ? { ...folder, modules: folder.modules.filter(module => module.id !== item.id) } : folder), nextRequirements, baselines);
+    }
+    setFolders(Folders.loadAll());
+  };
 
   return (
-    <div className="flex">
+    <div className="design-split-workspace flex">
       {/* Sidebar: Folder Tree */}
-      <div className={`shrink-0 border-r bg-white transition-all duration-200 ${sidebarOpen ? "w-64" : "w-10"}`}>
+      <div className={`design-library-pane shrink-0 border-r bg-white transition-all duration-200 ${sidebarOpen ? "w-72" : "w-10"}`}>
 
 
 {/* Sidebar header */}
@@ -3023,50 +2878,49 @@ updateRequirements(prev => {
     const srcId =
     e.dataTransfer.getData(DND_MIME_FOLDER) ||
       e.dataTransfer.getData("text/plain");
-    if (srcId) moveFolder(srcId, null);   // ← reparent to ROOT
+    if (srcId) moveFolder(srcId, null);   // Move to the top level
   }}
 >
   <button
     className="rounded p-1 hover:bg-gray-100"
     title={sidebarOpen ? "Collapse" : "Expand"}
     onClick={() => setSidebarOpen(o => !o)}
-    aria-label={sidebarOpen ? "Collapse folders sidebar" : "Expand folders sidebar"}
+    aria-label={sidebarOpen ? "Collapse design library sidebar" : "Expand design library sidebar"}
   >
     {sidebarOpen ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
   </button>
 
-  {sidebarOpen && <div className="text-xs font-semibold text-gray-700">Folders</div>}
+  {sidebarOpen && <div className="text-xs font-semibold text-gray-700">Design library</div>}
 
-  {sidebarOpen && (
-    <button
-      className="rounded p-1 hover:bg-gray-100"
-      title="New root folder"
-      onClick={() => {
-        const name = window.prompt("Folder name:");
-        if (!name?.trim()) return;
-        createFolderAction({ name: name.trim(), parentId: null });
-      }}
-    >
-      <Plus className="h-4 w-4" />
-    </button>
-  )}
+
 </div>
 
 
+  {sidebarOpen && <div className="px-2 pt-3 pb-1"><button type="button" className="flex min-h-[40px] w-full items-center justify-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 text-sm font-medium text-indigo-700 hover:bg-indigo-100" onClick={() => { const name = window.prompt("New folder name:"); if (name?.trim()) createFolderAction({ name: name.trim(), parentId: null }); }}><Plus className="h-4 w-4" />New folder</button><p className="mt-1 text-center text-[11px] text-gray-500">Creates a top-level folder</p></div>}
+
   {/* Tree content */}
-  <div className={`${sidebarOpen ? "max-h-[80vh] overflow-auto p-2" : "hidden"}`}>
-    <FolderTree
+  <div className={`${sidebarOpen ? "design-library-scroll overflow-auto p-2" : "hidden"}`}>
+    <DesignLibraryTree
       roots={folderTree}
       activeId={activeFolderId}
-      onSelect={(id)=>setActiveFolderId(id)}
+      onSelect={(id)=>{ clearSelection(); setActiveFolderId(id); setLibraryView('folder'); onSelectArtifact?.(null); }}
       onCreateChild={(parentId)=>{
         const name = window.prompt("Folder name:"); if(!name) return;
         createFolderAction({ name, parentId });
       }}
+      onRenameFolder={(id) => {
+        const folder = folders.find(folder => folder.id === id);
+        const name = window.prompt("Folder name:", folder?.name || "");
+        if (!folder || !name?.trim() || name.trim() === folder.name) return;
+        const next = Folders.loadAll().map(folder => folder.id === id ? { ...folder, name: name.trim(), updatedAt: nowISO() } : folder);
+        Folders.saveAll(next); setFolders(next);
+      }}
       onDeleteFolder={(id) => deleteFolder(id)}
-      onManageModules={(id)=>{ setActiveFolderId(id); setShowModuleManager(true); }}
-      selectedModule={selectedModule}
-      onSelectModule={(moduleName)=> setSelectedModule(moduleName)}
+      onManageModules={(id)=>{ setModuleManagerFolderId(id); setShowModuleManager(true); }}
+      onGenerateProject={onGenerateProject}
+      onGenerateArtifact={onGenerateArtifact}
+      selectedModule={activeArtifactId || (libraryView === 'module' ? selectedModule : null)}
+      onSelectModule={(moduleName, module)=> { if (module?.externalArtifact) { setLibraryView('folder'); onSelectArtifact?.(module.id); } else { setLibraryView('module'); onSelectArtifact?.(null); setSelectedModule(moduleName); } }}
       onCreateModule={(folderId)=>{
         const name = window.prompt("Module name:", "Requirement");
         if (!name?.trim()) return;
@@ -3074,15 +2928,30 @@ updateRequirements(prev => {
       }}
       onMoveFolder={(folderId, newParentId) => moveFolder(folderId, newParentId)}
       onMoveModule={moveModule}
+      onMoveItem={async (item, destination) => {
+        if (item.kind === 'folder') await moveFolder(item.id, destination.folderId, destination.programId);
+        else if (item.kind === 'module') {
+          moveModule(item.id, item.folderId, destination.folderId);
+          if (activeFolderId === item.folderId && selectedModule === item.name) setActiveFolderId(destination.folderId);
+        } else if (destination.programId) {
+          if (!onMoveArtifact) throw new Error('Moving artifacts is unavailable in this view.');
+          await onMoveArtifact(item.id, null, destination.programId);
+        } else if (destination.folderId && destination.folderId !== item.folderId) {
+          if (!onMoveArtifact) throw new Error('Moving artifacts is unavailable in this view.');
+          await onMoveArtifact(item.id, destination.folderId);
+        }
+      }}
     />
   </div>
 </div>
 
 
       {/* Main */}
-      <div className="flex-1 p-4">
-
-<MenuBar
+      <div className="design-editor-pane flex-1 min-w-0 p-4">
+{persistenceError && <p role="alert" className="p-3 bg-red-50 text-red-700">{persistenceError}</p>}
+{activeArtifactId ? renderArtifact?.() : libraryView === 'folder' ? <DesignFolderContents key={activeFolderId || 'library'} folder={activeFolder} items={library.containers.get(activeFolderId ? `folder:${activeFolderId}` : 'library') || []} onOpen={openLibraryItem} onSaveDetails={saveLibraryDetails} onRemove={removeLibraryItem} canEditItem={canEditLibraryItem} /> : <div className="design-legacy-workspace">
+{['outline', 'table'].includes(viewMode) && <MenuBar
+  readOnly={!canEditModule(selectedModule)}
   /* selection + arrange */
   selectedReq={selectedReq}
   onNewChild={() => selectedReq ? onCreate(selectedReq.id) : onCreate(null)}
@@ -3115,23 +2984,8 @@ updateRequirements(prev => {
 
   /* extras */
   onReuse={() => setShowReuse(true)}
-  onManageModulesClick={undefined /* or () => setShowModuleManager(true) if you want it accessible here */}
   onOpenLinker={() => setShowLinker(true)}
-/>
-
-<HeaderBar
-  folderName={activeFolder?.name || "—"}
-  filterText={filterText}
-  setFilterText={setFilterText}
-  filterStatus={filterStatus}
-  setFilterStatus={setFilterStatus}
-  sortKey={sortKey}
-  setSortKey={setSortKey}
-  sortDir={sortDir}
-  setSortDir={setSortDir}
-  attrColumns={attrColumns}
-/>
-
+/>}
 
 <RowActionsBar
   disabled={!selectedReq || !canEditModule(selectedModule)}
@@ -3157,6 +3011,7 @@ updateRequirements(prev => {
 
 
 
+<div className="design-view-scroll" data-view={viewMode === VIEW_MODES.TABLE ? "table" : viewMode === VIEW_MODES.OUTLINE ? "outline" : "trace"} tabIndex={0} role="region" aria-label="Design module content">
 {viewMode === VIEW_MODES.OUTLINE && (
   <OutlinePanel
     moduleName={selectedModule}
@@ -3180,7 +3035,7 @@ updateRequirements(prev => {
 
 {viewMode === VIEW_MODES.TABLE && (
   <TablePanel
-    rows={tableFiltered}
+    rows={tableRows}
     numbering={numbering}
     moduleName={selectedModule}
     attrColumns={attrColumns}
@@ -3206,6 +3061,7 @@ updateRequirements(prev => {
   />
 )}
 
+</div>
 
 {showForm && (
   <RequirementForm
@@ -3223,72 +3079,6 @@ updateRequirements(prev => {
 
         {showHistoryFor && (
           <HistoryModal requirement={requirements.find(r=>r.id===showHistoryFor)} onClose={() => setShowHistoryFor(null)} />
-        )}
-
-        {showModuleManager && activeFolder && (
-          <ModuleManager
-            project={activeFolder} // reusing same shape; this “project” is a folder
-            onClose={()=>setShowModuleManager(false)}
-            onSave={(updated) => {
-              const before = activeFolder?.modules || [];
-              const after  = updated?.modules || [];
-              const removed = before.filter(m => !after.some(mm => mm.id === m.id)); // [{id, name, ...}]
-
-              if (removed.length) {
-                const removedIds   = new Set(removed.map(m => m.id));
-                const removedNames = new Set(removed.map(m => m.name));
-
-                updateRequirements(prev => prev.filter(r => {
-                  const fid = r.folderId ?? r.projectId;
-                  return !(fid === activeFolderId && removedIds.has(r.moduleId));
-                }));
-
-                const baseMap = Baselines.loadMap();
-                if (baseMap?.[activeFolderId]) {
-                  for (const m of removed) {
-                    if (baseMap[activeFolderId][m.id]) {
-                      delete baseMap[activeFolderId][m.id];
-                    }
-                  }
-                  Baselines.saveMap(baseMap);
-                }
-
-                if (removedNames.has(selectedModule) && activeFolderId === activeFolder?.id) {
-                  const fallback = after[0]?.name || "";
-                  setSelectedModule(fallback);
-                }
-
-                toastOnce(`Deleted module(s): ${[...removedNames].join(", ")} and their requirements from this folder`);
-              }
-
-              const renamedById = new Map();
-              for (const nextModule of after) {
-                const prevModule = before.find((entry) => entry.id === nextModule.id);
-                if (prevModule && prevModule.name !== nextModule.name) {
-                  renamedById.set(nextModule.id, { from: prevModule.name, to: nextModule.name });
-                }
-              }
-
-              Folders.upsert(updated);
-              setFolders(Folders.loadAll());
-
-              if (renamedById.size) {
-                updateRequirements((prev) =>
-                  prev.map((row) => {
-                    if ((row.folderId ?? row.projectId) !== activeFolderId) return row;
-                    const rename = renamedById.get(row.moduleId);
-                    return rename ? { ...row, module: rename.to, updatedAt: nowISO() } : row;
-                  })
-                );
-
-                const currentRename = Array.from(renamedById.values()).find((entry) => entry.from === selectedModule);
-                if (currentRename) setSelectedModule(currentRename.to);
-              }
-
-              setShowModuleManager(false);
-            }}
-
-          />
         )}
 
         {showReuse && activeFolder && (
@@ -3381,277 +3171,80 @@ updateRequirements(prev => {
 {!!toast && (
   <div className="fixed bottom-4 left-1/2 …">{toast}</div>
 )}
+      </div>}
+        {showModuleManager && moduleManagerFolder && (
+          <ModuleManager
+            project={moduleManagerFolder} // reusing same shape; this “project” is a folder
+            onClose={()=>{ setShowModuleManager(false); setModuleManagerFolderId(null); }}
+            onSave={(updated) => {
+              const before = moduleManagerFolder?.modules || [];
+              const after  = updated?.modules || [];
+              const removed = before.filter(m => !after.some(mm => mm.id === m.id)); // [{id, name, ...}]
+
+              if (removed.length) {
+                const removedIds   = new Set(removed.map(m => m.id));
+                const removedNames = new Set(removed.map(m => m.name));
+
+                updateRequirements(prev => prev.filter(r => {
+                  const fid = r.folderId ?? r.projectId;
+                  return !(fid === moduleManagerFolder.id && removedIds.has(r.moduleId));
+                }));
+
+                const baseMap = Baselines.loadMap();
+                if (baseMap?.[moduleManagerFolder.id]) {
+                  for (const m of removed) {
+                    if (baseMap[moduleManagerFolder.id][m.id]) {
+                      delete baseMap[moduleManagerFolder.id][m.id];
+                    }
+                  }
+                  Baselines.saveMap(baseMap);
+                }
+
+                if (removedNames.has(selectedModule) && activeFolderId === moduleManagerFolder.id) {
+                  const fallback = after[0]?.name || "";
+                  setSelectedModule(fallback);
+                }
+
+                toastOnce(`Deleted module(s): ${[...removedNames].join(", ")} and their requirements from this folder`);
+              }
+
+              const renamedById = new Map();
+              for (const nextModule of after) {
+                const prevModule = before.find((entry) => entry.id === nextModule.id);
+                if (prevModule && prevModule.name !== nextModule.name) {
+                  renamedById.set(nextModule.id, { from: prevModule.name, to: nextModule.name });
+                }
+              }
+
+              Folders.upsert(updated);
+              setFolders(Folders.loadAll());
+
+              if (renamedById.size) {
+                updateRequirements((prev) =>
+                  prev.map((row) => {
+                    if ((row.folderId ?? row.projectId) !== moduleManagerFolder.id) return row;
+                    const rename = renamedById.get(row.moduleId);
+                    return rename ? { ...row, module: rename.to, updatedAt: nowISO() } : row;
+                  })
+                );
+
+                const currentRename = Array.from(renamedById.values()).find((entry) => entry.from === selectedModule);
+                if (currentRename && activeFolderId === moduleManagerFolder.id) setSelectedModule(currentRename.to);
+              }
+
+              setShowModuleManager(false); setModuleManagerFolderId(null);
+            }}
+
+          />
+        )}
+
       </div>
     </div>
   );
 }
 
-// ----------------------------- Folder Sidebar -------------------------------
-function FolderTree({
-    roots,
-    activeId,
-    selectedModule,
-    onSelect,
-    onSelectModule,
-    onCreateChild,
-    onManageModules,
-    onDeleteFolder,
-    onCreateModule,
-    onMoveFolder,
-    onMoveModule,
-  }) {
-    const [open, setOpen] = useState(() => {
-      try {
-        const raw = localStorage.getItem(LS_FOLDER_OPEN);
-        const arr = raw ? JSON.parse(raw) : [];
-        return new Set(arr);
-      } catch {
-        return new Set();
-      }
-    });
-
-      // NEW: highlight the folder currently being hovered during drag
-  const [dragOverId, setDragOverId] = useState(null);
-
-    // persist open set
-    useEffect(() => {
-      localStorage.setItem(LS_FOLDER_OPEN, JSON.stringify([...open]));
-    }, [open]);
-
-    function toggle(id) {
-      setOpen((s) => {
-        const n = new Set(s);
-        if (n.has(id)) n.delete(id);
-        else n.add(id);
-        return n;
-      });
-    }
-
-    function setAll(expanded) {
-      const gather = (nodes, acc) => {
-        for (const n of nodes) {
-          acc.push(n.id);
-          if (n.children?.length) gather(n.children, acc);
-        }
-        return acc;
-      };
-      const allIds = gather(roots, []);
-      setOpen(expanded ? new Set(allIds) : new Set());
-    }
-
-    function ModuleRow({ folderId, m, isActiveFolder, isActiveModule }) {
-        return (
-          <div
-            className={`ml-6 flex items-center gap-2 rounded px-2 py-1 hover:bg-gray-50 ${
-              isActiveFolder && isActiveModule ? "bg-blue-50" : ""
-            }`}
-            onDoubleClick={(e) => { e.stopPropagation(); onManageModules(folderId); }}
-            title="Drag to another folder to move this module"
-            draggable                      // ← NEW
-            onDragStart={(e) => {         // ← NEW
-              e.dataTransfer.effectAllowed = "move";
-              e.dataTransfer.setData(
-                DND_MIME_MODULE,
-                JSON.stringify({ moduleId: m.id, fromFolderId: folderId })
-              );
-              // fallback for some browsers
-              e.dataTransfer.setData("text/plain", m.id);
-            }}
-          >
-            <Layers className="h-4 w-4" />
-            <button
-              className="flex-1 text-left text-sm"
-              onClick={() => { onSelect(folderId); onSelectModule?.(m.name); }}
-              title={m.name}
-            >
-              {m.name}
-            </button>
-          </div>
-        );
-      }
-
-    function Node({ n }) {
-      const isOpen = open.has(n.id);
-      const modules = n.modules || [];
-      const hasChildren = (n.children || []).length > 0;
-      const hasContent = hasChildren || modules.length > 0;
-      const Chevron = isOpen ? ChevronDown : ChevronRight;
-
-      const handleToggle = () => {
-        if (hasContent) {
-          setOpen(s => {
-            const next = new Set(s);
-            if (next.has(n.id)) next.delete(n.id);
-            else next.add(n.id);
-            return next;
-          });
-        }
-        onSelect(n.id);
-      };
-
-      return (
-        <div>
-<div
-  className={`flex items-center gap-1 rounded px-2 py-1 hover:bg-gray-50 ${
-    activeId === n.id ? "bg-blue-50" : ""
-  }`}
-  role="button"
-  tabIndex={0}
-  onClick={handleToggle}
-  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") handleToggle(); }}
-  draggable
-   onDragStart={(e) => {
-      e.dataTransfer.effectAllowed = "move";
-      e.dataTransfer.setData(DND_MIME_FOLDER, n.id);
-      e.dataTransfer.setData("text/plain", n.id); // fallback
-    }}
-  // ↓↓↓ NEW: accept folder or module drops
-  onDragOver={(e) => {
-    const types = e.dataTransfer?.types ? Array.from(e.dataTransfer.types) : [];
-    if (types.includes(DND_MIME_FOLDER) || types.includes(DND_MIME_MODULE)) {
-      e.preventDefault(); // allow drop
-      setDragOverId(n.id);
-    }
-  }}
-  onDragLeave={() => setDragOverId(null)}
-  onDrop={(e) => {
-    e.preventDefault();
-    setDragOverId(null);
-    // Module move?
-    const modPayload = e.dataTransfer.getData(DND_MIME_MODULE);
-    if (modPayload) {
-      try {
-        const { moduleId, fromFolderId } = JSON.parse(modPayload);
-        if (moduleId && fromFolderId && fromFolderId !== n.id) {
-          onMoveModule?.(moduleId, fromFolderId, n.id);
-          return;
-        }
-      } catch {}
-    }
-    // (your existing folder drop code stays here; if you used DND_MIME_FOLDER, leave it as-is)
-    const folderId = e.dataTransfer.getData(DND_MIME_FOLDER);
-    if (folderId && folderId !== n.id) {
-       onMoveFolder?.(folderId, n.id);  // keep your existing call
-    }
-  }}
->
-
-            {hasContent ? <Chevron className="h-4 w-4" /> : <span className="inline-block w-4" />}
-            {isOpen ? <FolderOpen className="h-4 w-4" /> : <FolderIcon className="h-4 w-4" />}
-            <span className="flex-1 text-left text-sm">{n.name}</span>
-
-            {/* Manage button */}
-            <button
-  className="rounded px-1 text-xs hover:bg-gray-100"
-  title="Manage Modules"
-  onClick={(e) => { e.stopPropagation(); onManageModules(n.id); }}
->
-  <Boxes className="h-4 w-4" />
-</button>
-            {/* Add subfolder */}
-            <button
-  className="rounded px-1 text-xs hover:bg-gray-100"
-  title="Add subfolder"
-  onClick={(e) => { e.stopPropagation(); onCreateChild(n.id); }}
->
-  <FolderPlus className="h-4 w-4" />
-</button>
-            <button
-  className="rounded px-1 text-xs hover:bg-gray-100 text-red-600"
-  title="Delete folder"
-  onClick={(e) => { e.stopPropagation(); onDeleteFolder?.(n.id); }}
->
-  <Trash2 className="h-4 w-4" />
-</button>
-          </div>
-
-          {isOpen && modules.map(m => (
-            <ModuleRow
-              key={m.id}
-              folderId={n.id}
-              m={m}
-              isActiveFolder={activeId === n.id}
-              isActiveModule={selectedModule === m.name}
-            />
-          ))}
-
-          {isOpen && (
-            <div className="ml-4">
-              {(n.children || []).map(ch => <Node key={ch.id} n={ch} />)}
-            </div>
-          )}
-        </div>
-      );
-    }
-
-    // expose expand/collapse all via a tiny header bar returned alongside the tree
-    return (
-        <div>
-          {roots.map((r) => (
-            <Node key={r.id} n={r} />
-          ))}
-        </div>
-      );
-  }
-
 // ----------------------------- Header Bar -----------------------------------
-function HeaderBar({ folderName, filterText, setFilterText, filterStatus, setFilterStatus, sortKey, setSortKey, sortDir, setSortDir, attrColumns = [] })
- {
-    return (
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="min-w-[16rem] flex-1">
-          <label className="block text-xs font-medium text-gray-700 mb-1">Search</label>
-          <input
-            className="w-full rounded border px-2 py-1 text-sm"
-            placeholder={`Search in ${folderName}…`}
-            onChange={(e)=>setFilterText(e.target.value)}
-            value={filterText}
-          />
-        </div>
 
-        <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1">Status</label>
-          <select
-            className="rounded border px-2 py-1 text-sm"
-            value={filterStatus}
-            onChange={(e)=>setFilterStatus(e.target.value)}
-          >
-            <option value="all">All</option>
-            {STATUSES.map(s=> <option key={s} value={s}>{s}</option>)}
-          </select>
-        </div>
-
-        <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1">Sort</label>
-          <div className="flex items-center gap-2">
-          <select
-  className="rounded border px-2 py-1 text-sm"
-  value={sortKey}
-  onChange={(e)=>setSortKey(e.target.value)}
->
-  <option value="numbering">Numbering</option>
-  <option value="updatedAt">Updated</option>
-  <option value="title">Title</option>
-  <option value="module">Module</option>
-  <option value="status">Status</option>
-  <option value="version">Version</option>
-  {attrColumns.map(k => <option key={`attr-${k}`} value={`attr:${k}`}>{`Attr: ${k}`}</option>)}
-
-</select>
-
-            <select
-              className="rounded border px-2 py-1 text-sm"
-              value={sortDir}
-              onChange={(e)=>setSortDir(e.target.value)}
-            >
-              <option value="desc">Desc</option>
-              <option value="asc">Asc</option>
-            </select>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
 function ViewsDropdown({ views, onApply, onDelete, moduleViewTemplates = [] }){
   const [open, setOpen] = useState(false);
@@ -3686,718 +3279,14 @@ function ViewsDropdown({ views, onApply, onDelete, moduleViewTemplates = [] }){
   );
 }
 
-function RowActionsBar({
-    disabled,
-    selection,
-    numbering,
-    onClear,
-    onNewChild,
-    onEdit,
-    onDelete,
-    onMoveUp,
-    onMoveDown,
-    onPromote,
-    onDemote,
-    onHistory,
-    viewMode,
-    setViewMode,
-    onSetContent,     // ← receives { type: "image"| "table", ... }
-  }) {
-    const label = selection
-      ? `${numbering?.get?.(selection.id) ? numbering.get(selection.id) + " — " : ""}${selection.title || selection.id}`
-      : "No requirement selected";
 
-    const [showTableMaker, setShowTableMaker] = React.useState(false);
-    const fileRef = React.useRef(null);
-
-    function onPickImage(file) {
-      if (!file) return;
-      const fr = new FileReader();
-      fr.onload = () => onSetContent?.({
-        type: "image",
-        image: { dataUrl: String(fr.result || ""), name: file.name }
-      });
-      fr.readAsDataURL(file);
-    }
-
-    return (
-        <div className="flex flex-wrap items-center gap-2">
-             <div className="flex flex-wrap items-center gap-1">
-
-{/* View toggle */}
-<div className="inline-flex overflow-hidden rounded border">
-  <button
-    className={`p-2 ${viewMode === VIEW_MODES.OUTLINE ? "bg-gray-900 text-white" : "hover:bg-gray-50"}`}
-    onClick={() => setViewMode(VIEW_MODES.OUTLINE)}
-    title="Outline view"
-    aria-pressed={viewMode === VIEW_MODES.OUTLINE}
-  >
-    <Layers className="h-4 w-4" />
-  </button>
-  <div className="w-px bg-gray-200" />
-  <button
-    className={`p-2 ${viewMode === VIEW_MODES.TABLE ? "bg-gray-900 text-white" : "hover:bg-gray-50"}`}
-    onClick={() => setViewMode(VIEW_MODES.TABLE)}
-    title="Table view"
-    aria-pressed={viewMode === VIEW_MODES.TABLE}
-  >
-    <TableIcon className="h-4 w-4" />
-  </button>
-  <div className="w-px bg-gray-200" />
-  <button
-    className={`p-2 ${viewMode === VIEW_MODES.TRACE ? "bg-gray-900 text-white" : "hover:bg-gray-50"}`}
-    onClick={() => setViewMode(VIEW_MODES.TRACE)}
-    title="Traceability view"
-    aria-pressed={viewMode === VIEW_MODES.TRACE}
-  >
-    <Link2 className="h-4 w-4" />
-  </button>
-</div>
-
-
-          {/* New child */}
-          <button
-            onClick={onNewChild}
-            disabled={disabled}
-            title="New child"
-            className="rounded border p-2 text-sm hover:bg-gray-50 disabled:opacity-50"
-            aria-disabled={disabled}
-          >
-            <Plus className="h-4 w-4" />
-          </button>
-
-          {/* Insert image */}
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => { onPickImage(e.target.files?.[0]); e.target.value = ""; }}
-          />
-          <button
-            onClick={() => fileRef.current?.click()}
-            disabled={!selection || disabled}
-            title="Insert image (renders in place of title)"
-            className="rounded border p-2 hover:bg-gray-50 disabled:opacity-50"
-          >
-            <ImageIcon className="h-4 w-4" />
-          </button>
-
-          {/* Insert table */}
-          <button
-            onClick={() => setShowTableMaker(true)}
-            disabled={!selection || disabled}
-            title="Insert table (renders in place of title)"
-            className="rounded border p-2 hover:bg-gray-50 disabled:opacity-50"
-          >
-            <Grid3x3 className="h-4 w-4" />
-          </button>
-
-          <div className="mx-1 h-5 w-px bg-gray-200" />
-
-          {/* Edit / Delete */}
-          <button
-            onClick={onEdit}
-            disabled={!selection || disabled}
-            title="Edit"
-            className="rounded border p-2 hover:bg-gray-50 disabled:opacity-50"
-          >
-            <Edit3 className="h-4 w-4" />
-          </button>
-          <button
-            onClick={onDelete}
-            disabled={!selection || disabled}
-            title="Delete"
-            className="rounded border p-2 hover:bg-gray-50 disabled:opacity-50"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
-
-          <div className="mx-1 h-5 w-px bg-gray-200" />
-
-          {/* Ordering / hierarchy */}
-          <button onClick={onMoveUp} disabled={!selection || disabled} title="Move up"
-                  className="rounded border p-2 hover:bg-gray-50 disabled:opacity-50">
-            <ArrowUp className="h-4 w-4" />
-          </button>
-          <button onClick={onMoveDown} disabled={!selection || disabled} title="Move down"
-                  className="rounded border p-2 hover:bg-gray-50 disabled:opacity-50">
-            <ArrowDown className="h-4 w-4" />
-          </button>
-          <button onClick={onPromote} disabled={!selection || disabled} title="Promote (outdent)"
-                  className="rounded border p-2 hover:bg-gray-50 disabled:opacity-50">
-            <IndentDecrease className="h-4 w-4" />
-          </button>
-          <button onClick={onDemote} disabled={!selection || disabled} title="Demote (indent)"
-                  className="rounded border p-2 hover:bg-gray-50 disabled:opacity-50">
-            <IndentIncrease className="h-4 w-4" />
-          </button>
-
-          <div className="mx-1 h-5 w-px bg-gray-200" />
-
-          {/* History / clear */}
-          <button onClick={onHistory} disabled={!selection} title="History"
-                  className="rounded border p-2 hover:bg-gray-50 disabled:opacity-50">
-            <History className="h-4 w-4" />
-          </button>
-          <button onClick={onClear} title="Clear selection" className="rounded border p-2 hover:bg-gray-50">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        {showTableMaker && (
-          <QuickTableModal
-            onCancel={() => setShowTableMaker(false)}
-            onSave={(cells) => {
-              onSetContent?.({ type: "table", table: { cells } });
-              setShowTableMaker(false);
-            }}
-          />
-        )}
-      </div>
-    );
-  }
 
 // ----------------------------- Outline Panel --------------------------------
-function OutlinePanel({
-  moduleName, rows, numbering,
-  onCreateChild, onEdit, onDelete,
-  onMoveUp, onMoveDown, onPromote, onDemote,
-  onShowHistory,
-  onInlineUpdate,
-  disabled,
-  selectedId,
-  selectedIds,         // add this
-  onSelect,            // update to accept (id, event)
-}) {
 
-    const { children } = buildIndex(rows);
-
-    const [editState, setEditState] = React.useState({ id: null, title: "" });
-    const [editTable, setEditTable] = React.useState({ open: false, row: null, cells: [[]] });
-
-    const inputRef = React.useRef(null);
-
-    React.useEffect(() => {
-      if (editState.id && inputRef.current) inputRef.current.focus();
-    }, [editState.id]);
-
-    function startInlineEdit(node) {
-      if (disabled) return;
-      onSelect?.(node.id);
-      setEditState({ id: node.id, title: node.title || "" });
-    }
-    function commitInlineEdit() {
-      if (!editState.id) return;
-      const cur = rows.find(r => r.id === editState.id);
-      const nextTitle = editState.title.trim();
-      setEditState({ id: null, title: "" });
-      if (!disabled && cur && nextTitle !== (cur.title || "")) {
-        onInlineUpdate?.(cur, { title: nextTitle });
-      }
-    }
-    function cancelInlineEdit() {
-      setEditState({ id: null, title: "" });
-    }
-
-    function renderBranch(parentId) {
-      const list = children.get(parentId || null) || [];
-      return list.map(node => {
-        const isSelected = selectedId === node.id || selectedIds?.has?.(node.id);
-        const isEditing = editState.id === node.id;
-
-        return (
-          <div key={node.id} className="border-t first:border-t-0">
-           <div
-  className={`flex cursor-pointer items-center gap-2 px-3 py-2 hover:bg-gray-50 ${isSelected ? "bg-blue-50 ring-1 ring-blue-300" : ""}`}
-  role="button"
-  tabIndex={0}
-  aria-selected={isSelected}
-  onMouseDown={(e) => {
-    const t = e.target;
-    const tag = t.tagName;
-    const interactive =
-      tag === "INPUT" ||
-      tag === "TEXTAREA" ||
-      tag === "SELECT" ||
-      tag === "BUTTON" ||
-      t.isContentEditable;
-    if (interactive) return;
-    if (e.shiftKey || e.metaKey || e.ctrlKey) {
-      e.preventDefault();
-    }
-  }}
-  onClick={(e) => onSelect?.(node.id, e)}
-  onDoubleClick={(e) => { e.stopPropagation(); !disabled && onEdit(node); }}
-  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onSelect?.(node.id); }}
->
-
-              <div className="w-24 shrink-0 text-xs font-mono text-gray-500">
-                {numbering.get(node.id)}
-              </div>
-
-              <div className="flex-1">
-                {isEditing ? (
-                  <input
-                    ref={inputRef}
-                    className="w-full rounded border px-2 py-1 text-sm"
-                    value={editState.title}
-                    onChange={(e) => setEditState(s => ({ ...s, title: e.target.value }))}
-                    onBlur={commitInlineEdit}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") { e.preventDefault(); commitInlineEdit(); }
-                      if (e.key === "Escape") { e.preventDefault(); cancelInlineEdit(); }
-                    }}
-                  />
-                ) : node?.content?.type === "image" ? (
-                  <img
-                    src={node.content?.image?.dataUrl}
-                    alt={node.title || node.content?.image?.name || "image"}
-                    className="max-h-24 rounded"
-                    onDoubleClick={(e) => { e.stopPropagation(); onEdit(node); }}
-                  />
-                ) : node?.content?.type === "table" ? (
-                    <div
-                      onDoubleClick={(e) => {
-                        e.stopPropagation();
-                        setEditTable({
-                          open: true,
-                          row: node,
-                          cells: Array.isArray(node.content?.table?.cells) ? node.content.table.cells : [[]],
-                        });
-                      }}
-                    >
-                      <MiniTable cells={node.content?.table?.cells || []} />
-                    </div>
-                  ) : (
-
-<div
-  className={node.heading ? "font-semibold" : "font-medium"}
-  title="Double-click to edit title"
-  onDoubleClick={(e) => { e.stopPropagation(); startInlineEdit(node); }}
->
-  {node.title || <span className="text-gray-400">(untitled)</span>}
-</div>
-
-                )}
-
-                <div className="text-xs text-gray-500">
-                  {node.status} · v{node.version} · {(node.updatedAt || "").replace("T", " ").slice(0, 16)}
-                </div>
-              </div>
-            </div>
-
-            <div className="pl-8">{renderBranch(node.id)}</div>
-          </div>
-        );
-      });
-    }
-
-    return (
-      <div className="mt-4 overflow-hidden rounded-xl border bg-white">
-        <div className="border-b px-3 py-2 text-sm text-gray-600">{moduleName} — Outline</div>
-        <div className="max-h-[55vh] overflow-auto">{renderBranch(null)}</div>
-        {!rows.length && (
-          <div className="p-6 text-center text-sm text-gray-500">
-            No items in this module. Click <span className="font-medium">New</span> or <span className="font-medium">Import</span>.
-          </div>
-        )}
-        {editTable.open && (
-  <QuickTableModal
-    title="Edit Table"
-    initial={editTable.cells}
-    onCancel={() => setEditTable({ open: false, row: null, cells: [[]] })}
-    onSave={(cells) => {
-      if (editTable.row) {
-        onInlineUpdate?.(editTable.row, { content: { type: "table", table: { cells } } });
-      }
-      setEditTable({ open: false, row: null, cells: [[]] });
-    }}
-  />
-)}
-
-      </div>
-    );
-  }
 
 
 // ----------------------------- Table Panel ----------------------------------
-function TablePanel({ rows, numbering, moduleName, attrColumns = [],
-  onEdit, onDelete, onCreate, canCreate,
-  onInlineUpdate, onShowHistory,
-  onSelect, selectedId, selectedIds }) {
 
-      // ────────────── Column Model (order must match rendering) ──────────────
-  const columns = React.useMemo(() => {
-    const fixedBefore = [
-      { key: "id",       label: "ID" },
-      { key: "title",    label: "Title" },
-    ];
-    const attrs = (attrColumns || []).map((k) => ({ key: `attr:${k}`, label: k }));
-    const fixedAfter = [
-      { key: "status",   label: "Status" },
-      { key: "version",  label: "Version" },
-      { key: "updatedAt",label: "Updated" },
-      { key: "links",    label: "Links" },
-    ];
-    return [...fixedBefore, ...attrs, ...fixedAfter];
-  }, [attrColumns]);
-
-  // Reasonable defaults per column
-  const defaultWidthFor = React.useCallback((key) => {
-    if (key === "id") return 160;
-    if (key === "title") return 340;
-    if (key.startsWith("attr:")) return 180;
-    if (key === "status") return 120;
-    if (key === "version") return 100;
-    if (key === "updatedAt") return 170;
-    if (key === "links") return 90;
-    return 150;
-  }, []);
-
-  // Persist widths per module
-  const STORAGE_KEY = React.useMemo(
-    () => `xhandle:table-colwidths:${moduleName || "default"}`,
-    [moduleName]
-  );
-
-  // Initialize widths from storage or defaults
-  const [colWidths, setColWidths] = React.useState(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        return parsed && typeof parsed === "object" ? parsed : {};
-      }
-    } catch {}
-    return {};
-  });
-
-  // Ensure any new columns get a width
-  React.useEffect(() => {
-    setColWidths((prev) => {
-      const next = { ...prev };
-      let changed = false;
-      for (const c of columns) {
-        if (!next[c.key]) {
-          next[c.key] = defaultWidthFor(c.key);
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [columns, defaultWidthFor]);
-
-  // Persist on change
-  React.useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(colWidths)); } catch {}
-  }, [STORAGE_KEY, colWidths]);
-
-  // Resize interaction
-  const MIN_WIDTH = 60;
-  const startResize = (key, e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const startX = e.clientX;
-    const startW = colWidths[key] ?? defaultWidthFor(key);
-
-    const onMove = (ev) => {
-      const dx = ev.clientX - startX;
-      const w = Math.max(MIN_WIDTH, startW + dx);
-      setColWidths((m) => ({ ...m, [key]: w }));
-    };
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
-
-  const resetWidth = (key) => {
-    setColWidths((m) => ({ ...m, [key]: defaultWidthFor(key) }));
-  };
-
-  const renderAttrVal = (v) => {
-    if (v == null) return "";
-    if (Array.isArray(v)) return v.join(", ");
-    if (typeof v === "boolean") return v ? "Yes" : "No";
-    return String(v);
-  };
-
-    const [editState, setEditState] = React.useState({ id: null, title: "" });
-    const [editTable, setEditTable] = React.useState({ open: false, row: null, cells: [[]] });
-    const [copiedId, setCopiedId] = React.useState(null);
-
-    const inputRef = React.useRef(null);
-
-    React.useEffect(() => {
-      if (editState.id && inputRef.current) inputRef.current.focus();
-    }, [editState.id]);
-
-    function startInlineEdit(row) {
-      setEditState({ id: row.id, title: row.title || "" });
-    }
-    function commitInlineEdit() {
-      if (!editState.id) return;
-      const row = rows.find(r => r.id === editState.id);
-      const nextTitle = (editState.title || "").trim();
-      setEditState({ id: null, title: "" });
-      if (row && nextTitle !== (row.title || "")) {
-        onInlineUpdate?.(row, { title: nextTitle });
-      }
-    }
-    function cancelInlineEdit() {
-      setEditState({ id: null, title: "" });
-    }
-
-    async function copyRequirementId(id) {
-      const text = String(id || "");
-      if (!text) return;
-      try {
-        if (navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(text);
-        } else {
-          const textarea = document.createElement("textarea");
-          textarea.value = text;
-          textarea.setAttribute("readonly", "");
-          textarea.style.position = "fixed";
-          textarea.style.opacity = "0";
-          document.body.appendChild(textarea);
-          textarea.select();
-          document.execCommand("copy");
-          document.body.removeChild(textarea);
-        }
-        setCopiedId(text);
-        window.setTimeout(() => setCopiedId((current) => (current === text ? null : current)), 1200);
-      } catch {
-        setCopiedId(null);
-      }
-    }
-
-    return (
-      <div className="mt-4 rounded-xl border bg-white">
-        {/* NEW: scrolling container for both axes */}
-        <div className="relative max-h-[60vh] overflow-x-auto overflow-y-auto">
-          <table className="min-w-full text-sm table-fixed">
-            <colgroup>
-              {columns.map((c) => (
-                <col
-                  key={`col-${c.key}`}
-                  style={{ width: (colWidths[c.key] ?? defaultWidthFor(c.key)) + "px" }}
-                />
-              ))}
-            </colgroup>
-
-            {/* NEW: sticky header */}
-            <thead className="sticky top-0 z-20 bg-gray-50 text-xs uppercase text-gray-600">
-              <tr>
-                {columns.map((c) => (
-                  <th
-                    key={`h-${c.key}`}
-                    title={c.label}
-                    // note the extra sticky/bg/z classes on the th itself too
-                    className="relative px-3 py-2 text-left font-medium select-none sticky top-0 bg-gray-50 z-20"
-                  >
-                    <span>{c.label}</span>
-                    {/* Resize handle (unchanged) */}
-                    <span
-                      role="separator"
-                      aria-label={`Resize column ${c.label}`}
-                      className="absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-gray-300"
-                      onMouseDown={(e) => startResize(c.key, e)}
-                      onDoubleClick={() => resetWidth(c.key)}
-                    />
-                  </th>
-                ))}
-              </tr>
-            </thead>
-
-            <tbody>
-              {rows.map((r) => {
-const isSelected = selectedId === r.id || selectedIds?.has?.(r.id);
-const isEditing = editState.id === r.id;
-
-                return (
-                  <tr
-  key={r.id}
-  className={`border-t hover:bg-gray-50 ${isSelected ? "bg-blue-50 ring-1 ring-blue-300" : ""}`}
-  onMouseDown={(e) => {
-    const t = e.target;
-    const tag = t.tagName;
-    const interactive =
-      tag === "INPUT" ||
-      tag === "TEXTAREA" ||
-      tag === "SELECT" ||
-      tag === "BUTTON" ||
-      t.isContentEditable;
-    if (interactive) return;
-    if (e.shiftKey || e.metaKey || e.ctrlKey) {
-      e.preventDefault();
-    }
-  }}
-  onClick={(e) => onSelect?.(r.id, e)}
-  onDoubleClick={(e) => { e.stopPropagation(); onEdit(r); }}
-  role="button"
-  aria-selected={isSelected}
->
-                    <td className="group/id-cell px-3 py-2 align-top font-mono text-[11px] text-gray-500">
-                      <div className="flex min-w-0 items-center gap-1.5">
-                        <span className="truncate" title={r.id}>{r.id}</span>
-                        <button
-                          type="button"
-                          title={copiedId === r.id ? "Copied" : "Copy requirement ID"}
-                          aria-label={`Copy requirement ID ${r.id}`}
-                          className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-transparent transition ${
-                            copiedId === r.id
-                              ? "bg-emerald-50 text-emerald-700 opacity-100"
-                              : "text-gray-400 opacity-0 hover:border-gray-200 hover:bg-white hover:text-gray-700 focus:opacity-100 group-hover/id-cell:opacity-100"
-                          }`}
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                          }}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            copyRequirementId(r.id);
-                          }}
-                        >
-                          <Copy className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </td>
-
-                    <td className="px-3 py-2 align-top">
-                      {(() => {
-                        const num = numbering?.get?.(r.id);
-                        const Prefix = num ? (
-                          <span
-                            className="shrink-0 whitespace-nowrap font-mono text-[11px] text-gray-500 min-w-[3.5rem] text-right"
-                            style={{ display: "inline-block" }}
-                            aria-hidden="true"
-                          >
-                            {num}
-                          </span>
-                        ) : null;
-
-                        if (isEditing) {
-                          return (
-                            <div className="flex items-start gap-2">
-                              {Prefix}
-                              <input
-                                ref={inputRef}
-                                className="w-full rounded border px-2 py-1 text-sm"
-                                value={editState.title}
-                                onChange={(e) => setEditState((s) => ({ ...s, title: e.target.value }))}
-                                onBlur={commitInlineEdit}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") { e.preventDefault(); commitInlineEdit(); }
-                                  if (e.key === "Escape") { e.preventDefault(); cancelInlineEdit(); }
-                                }}
-                              />
-                            </div>
-                          );
-                        }
-
-                        if (r?.content?.type === "image") {
-                          return (
-                            <div className="flex items-start gap-2">
-                              {Prefix}
-                              <img
-                                src={r.content?.image?.dataUrl}
-                                alt={r.title || r.content?.image?.name || "image"}
-                                className="max-h-16 rounded"
-                                onDoubleClick={(e) => { e.stopPropagation(); onEdit(r); }}
-                              />
-                            </div>
-                          );
-                        }
-
-                        if (r?.content?.type === "table") {
-                          return (
-                            <div
-                              className="flex items-start gap-2"
-                              onDoubleClick={(e) => {
-                                e.stopPropagation();
-                                setEditTable({
-                                  open: true,
-                                  row: r,
-                                  cells: Array.isArray(r.content?.table?.cells) ? r.content.table.cells : [[]],
-                                });
-                              }}
-                            >
-                              {Prefix}
-                              <div className="max-h-28 overflow-auto">
-                                <MiniTable cells={r.content?.table?.cells || []} dense />
-                              </div>
-                            </div>
-                          );
-                        }
-
-                        return (
-<div
-  className="flex items-start gap-2"
-  title="Double-click to edit title"
-  onDoubleClick={(e) => { e.stopPropagation(); startInlineEdit(r); }}
->
-  {Prefix}
-  <div className={`whitespace-normal break-words leading-snug ${r.heading ? "font-semibold" : "font-medium"}`}>
-    {r.title || <span className="text-gray-400">(untitled)</span>}
-  </div>
-</div>
-
-                        );
-                      })()}
-                    </td>
-
-                    {/* attribute cells */}
-                    {attrColumns.map((k) => (
-                      <td key={`c-${r.id}-${k}`} className="px-3 py-2">
-                        {renderAttrVal(r.attributes?.[k])}
-                      </td>
-                    ))}
-
-                    <td className="px-3 py-2">
-                      <select
-                        className="rounded border px-2 py-1 text-sm"
-                        value={r.status || "Proposed"}
-                        onChange={(e) => onInlineUpdate(r, { status: e.target.value })}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {STATUSES.map((s) => (
-                          <option key={s} value={s}>{s}</option>
-                        ))}
-                      </select>
-                    </td>
-
-                    <td className="px-3 py-2">{r.version ?? 1}</td>
-                    <td className="px-3 py-2 text-xs text-gray-500">
-                      {(r.updatedAt || "").replace("T", " ").slice(0, 16)}
-                    </td>
-                    <td className="px-3 py-2 text-xs text-gray-600">{(r.links || []).length}</td>
-                  </tr>
-                );
-              })}
-
-              {!rows.length && (
-                <tr>
-                  <td colSpan={columns.length} className="px-4 py-8 text-center text-sm text-gray-500">
-                    No requirements yet.{" "}
-                    {canCreate && (
-                      <>
-                        Click <span className="font-medium">New</span> or use <span className="font-medium">Import</span>.
-                      </>
-                    )}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  }
 
 
 function Th({ label }){ return <th className="px-3 py-2 text-left font-medium">{label}</th>; }
@@ -4420,390 +3309,10 @@ function MultiSelect({ value = [], options = [], onChange }) {
     );
   }
 
-  function MiniTable({ cells = [[]], dense = false }) {
-    const cls = dense ? "px-1 py-0.5" : "px-2 py-1";
-    return (
-      <table className="border border-gray-200 rounded">
-        <tbody>
-          {(cells.length ? cells : [[]]).map((row, i) => (
-            <tr key={i}>
-              {(row.length ? row : [""]).map((c, j) => (
-                <td key={j} className={`border border-gray-200 text-xs ${cls}`}>{String(c ?? "")}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    );
-  }
-  function QuickTableModal({ title = "Insert Table", initial, onCancel, onSave }) {
-    // If `initial` is provided, prefill from it
-    const initialRows = Array.isArray(initial) && initial.length ? initial.length : 3;
-    const initialCols = Array.isArray(initial?.[0]) && initial[0].length ? initial[0].length : 3;
 
-    const [rows, setRows] = React.useState(initialRows);
-    const [cols, setCols] = React.useState(initialCols);
-    const [grid, setGrid] = React.useState(
-      Array.from({ length: initialRows }, (_, i) =>
-        Array.from({ length: initialCols }, (_, j) => initial?.[i]?.[j] ?? "")
-      )
-    );
-
-    // When rows/cols change, preserve existing cells
-    React.useEffect(() => {
-      setGrid((g) => {
-        const r = Math.max(1, rows), c = Math.max(1, cols);
-        const next = Array.from({ length: r }, (_, i) =>
-          Array.from({ length: c }, (_, j) => g[i]?.[j] ?? "")
-        );
-        return next;
-      });
-    }, [rows, cols]);
-
-    return (
-      <Modal title={title} onClose={onCancel}>
-        <div className="space-y-3">
-          <div className="flex gap-3">
-            <Field label="Rows">
-              <input
-                type="number"
-                min={1}
-                className="w-24 rounded border px-2 py-1 text-sm"
-                value={rows}
-                onChange={(e) => setRows(Number(e.target.value || 1))}
-              />
-            </Field>
-            <Field label="Cols">
-              <input
-                type="number"
-                min={1}
-                className="w-24 rounded border px-2 py-1 text-sm"
-                value={cols}
-                onChange={(e) => setCols(Number(e.target.value || 1))}
-              />
-            </Field>
-          </div>
-
-          <div className="overflow-auto max-h-72 rounded border p-2">
-            <table className="text-xs">
-              <tbody>
-                {grid.map((r, i) => (
-                  <tr key={i}>
-                    {r.map((cell, j) => (
-                      <td key={j} className="border border-gray-200">
-                        <input
-                          className="w-28 px-2 py-1 text-xs outline-none"
-                          value={cell}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setGrid((g) =>
-                              g.map((rr, ii) =>
-                                ii === i
-                                  ? rr.map((cc, jj) => (jj === j ? v : cc))
-                                  : rr
-                              )
-                            );
-                          }}
-                        />
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="flex justify-end gap-2">
-            <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={onCancel}>
-              Cancel
-            </button>
-            <button
-              className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]"
-              onClick={() => onSave(grid)}
-            >
-              Save
-            </button>
-          </div>
-        </div>
-      </Modal>
-    );
-  }
 
 // ----------------------------- Traceability View -----------------------------
-function TraceabilityView({
-  allRequirements = [],
-  selectedModule,
-  activeFolderId,
-  folderNameById = {},
-}) {
-  const [mode, setMode] = React.useState("REFINES"); // "REFINES" | "REFINED_BY"
 
-  const memo = React.useMemo(() => {
-    const all = Array.isArray(allRequirements) ? allRequirements : [];
-
-    // Seed = only items in the selected module & active folder
-    const seed = all.filter((r) => {
-      if (selectedModule && r.module !== selectedModule) return false;
-      if (activeFolderId && (r.folderId ?? r.projectId) !== activeFolderId) return false;
-      return true;
-    });
-
-    // Map for resolving titles/modules/folders for ANY node (not just seed)
-    const byId = new Map(all.map((r) => [r.id, r]));
-    const seedSet = new Set(seed.map((r) => r.id));
-
-    // Helper to pull folder label
-    const folderOf = (r) => folderNameById?.[r?.folderId ?? r?.projectId] ?? "—";
-
-    // -------- Refines OUT of the seed (module → anything)
-    const edgesOut = [];
-    const dangling = [];
-
-    for (const r of seed) {
-      const links = Array.isArray(r.links) ? r.links : [];
-      for (const l of links) {
-        if (!l?.toId) continue;
-        if (String(l.type || "").toLowerCase() !== "refines") continue;
-
-        const fromFolder = folderOf(r);
-        if (byId.has(l.toId)) {
-          const toReq = byId.get(l.toId);
-          edgesOut.push({
-            type: "refines",
-            from: r.id,
-            fromTitle: r.title || "",
-            fromModule: r.module || "",
-            fromFolder,
-            to: l.toId,
-            toTitle: toReq?.title || "",
-            toModule: toReq?.module || "",
-            toFolder: folderOf(toReq),
-          });
-        } else {
-          // missing target → dangling
-          dangling.push({
-            type: "refines",
-            from: r.id,
-            fromTitle: r.title || "",
-            fromModule: r.module || "",
-            fromFolder,
-            to: l.toId,
-          });
-        }
-      }
-    }
-
-    // -------- Refines INTO the seed (anything → module)
-    const edgesInRaw = [];
-    for (const r of all) {
-      const links = Array.isArray(r.links) ? r.links : [];
-      for (const l of links) {
-        if (!l?.toId) continue;
-        if (String(l.type || "").toLowerCase() !== "refines") continue;
-        if (!seedSet.has(l.toId)) continue;
-
-        const toReq = byId.get(l.toId);
-        edgesInRaw.push({
-          type: "refines",
-          from: r.id,
-          fromTitle: r.title || "",
-          fromModule: r.module || "",
-          fromFolder: folderOf(r),
-          to: l.toId,
-          toTitle: toReq?.title || "",
-          toModule: toReq?.module || "",
-          toFolder: folderOf(toReq),
-        });
-      }
-    }
-
-    // -------- Orphans within the module context:
-    // no outgoing "refines" FROM seed AND no incoming "refines" INTO seed
-    const outgoingFromSeed = new Map();
-    edgesOut.forEach((e) => outgoingFromSeed.set(e.from, (outgoingFromSeed.get(e.from) || 0) + 1));
-
-    const incomingToSeed = new Map();
-    edgesInRaw.forEach((e) => incomingToSeed.set(e.to, (incomingToSeed.get(e.to) || 0) + 1));
-
-    const orphans = seed.filter(
-      (r) => (outgoingFromSeed.get(r.id) || 0) === 0 && (incomingToSeed.get(r.id) || 0) === 0
-    );
-
-    // Stats reflect the seeded set; edges count reflects the current mode
-    const stats = {
-      nodes: seed.length,
-      edges: mode === "REFINES" ? edgesOut.length : edgesInRaw.length,
-      dangling: dangling.length,
-      orphans: orphans.length,
-    };
-
-    return { edgesOut, edgesInRaw, dangling, orphans, stats, seed };
-  }, [allRequirements, selectedModule, activeFolderId, folderNameById, mode]);
-
-  const { edgesOut, edgesInRaw, dangling, orphans, stats } = memo;
-
-  // For "refined by", show SUBJECT (seed item) on the left and the REFINER on the right
-  const viewEdges =
-    mode === "REFINES"
-      ? edgesOut
-      : edgesInRaw.map((e) => ({
-          type: "refined by",
-          from: e.to,
-          fromTitle: e.toTitle,
-          fromModule: e.toModule,
-          fromFolder: e.toFolder,
-          to: e.from,
-          toTitle: e.fromTitle,
-          toModule: e.toModule,
-          toFolder: e.fromFolder,
-        }));
-
-  const PathLine = ({ folder, module }) => (
-    <div className="text-[11px] text-gray-500">[{folder || "—"} / {module || "—"}]</div>
-  );
-
-  return (
-    <div className="grid grid-cols-12 gap-4 mt-4">
-      {/* Left: metrics + lists */}
-      <div className="col-span-12 lg:col-span-4 space-y-4">
-        {/* Metrics (sticky) */}
-    <div className="rounded-xl border bg-white p-4">
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-sm font-semibold">Traceability Metrics</h3>
-          </div>
-
-          <dl className="grid grid-cols-2 gap-2 text-sm">
-            <div><dt className="text-gray-500">Nodes</dt><dd className="font-medium">{stats.nodes}</dd></div>
-            <div><dt className="text-gray-500">Edges</dt><dd className="font-medium">{stats.edges}</dd></div>
-            <div><dt className="text-gray-500">Orphans</dt><dd className="font-medium">{stats.orphans}</dd></div>
-            <div><dt className="text-gray-500">Dangling Refs</dt><dd className="font-medium">{stats.dangling}</dd></div>
-          </dl>
-        </div>
-
-        {/* Dangling list (sticky header inside, scroll body) */}
-        {!!dangling.length && (
-          <div className="rounded-xl border bg-white">
-            <div className="max-h-[32vh] overflow-auto">
-              <div className="sticky top-0 z-10 bg-white/95 backdrop-blur border-b px-4 py-2">
-                <h4 className="text-sm font-semibold">Dangling “refines” Links</h4>
-              </div>
-              <ul className="p-4 space-y-2 text-xs">
-                {dangling.map((d, i) => (
-                  <li key={`${d.from}-${d.to}-${i}`} className="leading-tight">
-                    <PathLine folder={d.fromFolder} module={d.fromModule} />
-                    <div className="text-[11px] text-gray-400 font-mono">{d.from}</div>
-                    <div className="text-[13px] font-medium">
-                      {d.fromTitle || <span className="text-gray-400">(untitled)</span>}
-                    </div>
-                    <div>
-                      <span className="mx-1">—refines→</span>
-                      <code className="bg-gray-50 px-1 py-0.5 rounded">(missing) {d.to}</code>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        )}
-
-        {/* Orphans (sticky header inside, scroll body) */}
-        {!!orphans.length && (
-          <div className="rounded-xl border bg-white">
-            <div className="max-h-[45vh] overflow-auto">
-              <div className="sticky top-0 z-10 bg-white/95 backdrop-blur border-b px-4 py-2">
-                <h4 className="text-sm font-semibold">Orphans (no in/out “refines”)</h4>
-              </div>
-              <ul className="p-4 space-y-2 text-sm">
-                {orphans.map((r) => {
-                  const folder = folderNameById?.[r.folderId ?? r.projectId] ?? "—";
-                  return (
-                    <li key={r.id} className="leading-tight">
-                      <PathLine folder={folder} module={r.module} />
-                      <div className="text-[11px] text-gray-400 font-mono">{r.id}</div>
-                      <div className="truncate">
-                        {r.title || <span className="text-gray-400">(untitled)</span>}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Right: links table (sticky head, scroll body) */}
-      <div className="col-span-12 lg:col-span-8 rounded-xl border bg-white">
-        <div className="flex items-center justify-between px-4 py-2 border-b">
-          <h3 className="text-sm font-semibold">
-            Links — {mode === "REFINES" ? "Refines" : "Refined by"}
-          </h3>
-          <div className="inline-flex overflow-hidden rounded border">
-            <button
-              className={`px-2 py-1 text-xs ${mode === "REFINES" ? "bg-gray-900 text-white" : "hover:bg-gray-50"}`}
-              onClick={() => setMode("REFINES")}
-              aria-pressed={mode === "REFINES"}
-            >
-              Refines
-            </button>
-            <button
-              className={`px-2 py-1 text-xs ${mode === "REFINED_BY" ? "bg-gray-900 text-white" : "hover:bg-gray-50"}`}
-              onClick={() => setMode("REFINED_BY")}
-              aria-pressed={mode === "REFINED_BY"}
-            >
-              Refined by
-            </button>
-          </div>
-        </div>
-
-        <div className="relative max-h-[520px] overflow-auto">
-          {!viewEdges.length ? (
-            <div className="p-4 text-sm text-gray-500">No links found for this view.</div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 z-20 bg-gray-50 text-xs uppercase text-gray-600">
-                <tr>
-                  <th className="px-2 py-2 text-left">
-                    {mode === "REFINES" ? "From (module item)" : "Subject (module item)"}
-                  </th>
-                  <th className="px-2 py-2 text-left">Relation</th>
-                  <th className="px-2 py-2 text-left">
-                    {mode === "REFINES" ? "To" : "Refiner"}
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {viewEdges.map((e, i) => (
-                  <tr key={i} className="border-t align-top">
-                    <td className="px-2 py-2">
-                      <div className="leading-tight">
-                        <PathLine folder={e.fromFolder} module={e.fromModule} />
-                        <div className="text-[11px] text-gray-400 font-mono">{e.from}</div>
-                        <div className="font-medium">
-                          {e.fromTitle || <span className="text-gray-400">(untitled)</span>}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-2 py-2">{e.type}</td>
-                    <td className="px-2 py-2">
-                      <div className="leading-tight">
-                        <PathLine folder={e.toFolder} module={e.toModule} />
-                        <div className="text-[11px] text-gray-400 font-mono">{e.to}</div>
-                        <div className="font-medium">
-                          {e.toTitle || <span className="text-gray-400">(untitled)</span>}
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ----------------------------- Requirement Form -----------------------------
 function RequirementForm({
@@ -5092,16 +3601,7 @@ function updateLinkModule(i, moduleName) {
             value={k}
             onChange={e => upsertAttribute(k, e.target.value, v)}
           />
-          <input
-            className="rounded border px-2 py-1 text-sm"
-            placeholder="value"
-            value={typeof v === "string" ? v : JSON.stringify(v)}
-            onChange={(e) => {
-              let val = e.target.value;
-              try { val = JSON.parse(val); } catch {}
-              setField("attributes", { ...(form.attributes || {}), [k]: val });
-            }}
-          />
+          <StructuredAttributeInput label="Value" value={v} onChange={value => setField("attributes", { ...(form.attributes || {}), [k]: value })} />
           <button className="icon-btn" onClick={() => removeAttribute(k)} title="Remove">
             <X className="h-4 w-4" />
           </button>
@@ -5230,7 +3730,7 @@ function updateLinkModule(i, moduleName) {
     );
   }
 
-function Field({label, children}){ return (<label className="block"><div className="mb-1 text-xs font-medium text-gray-700">{label}</div>{children}</label>); }
+
 
 // ----------------------------- History Modal --------------------------------
 function HistoryModal({ requirement, onClose }){
@@ -5540,29 +4040,3 @@ setHeaderName(prev => (opts.includes(prev) ? prev : (opts[0] || "")));
 
 
 // ----------------------------- Modal (shared) --------------------------------
-function Modal({ title, onClose, children }) {
-    return (
-      <div className="xhandle-modal-viewport fixed inset-0 z-[999]">
-        <div
-          className="absolute inset-0 bg-black/40"
-          onClick={onClose}
-          aria-hidden
-        />
-        <div className="absolute inset-0 flex items-center justify-center p-4">
-          <div className="w-full max-w-3xl max-h-[90vh] rounded-2xl bg-white shadow-xl flex flex-col">
-            <div className="flex items-center justify-between border-b px-4 py-3">
-              <h3 className="text-sm font-semibold">{title}</h3>
-              <button
-                className="rounded px-2 py-1 text-xs text-gray-600 hover:bg-gray-100"
-                onClick={onClose}
-              >
-                ✕
-              </button>
-            </div>
-            {/* Scrollable content area */}
-            <div className="p-4 overflow-y-auto flex-1">{children}</div>
-          </div>
-        </div>
-      </div>
-    );
-  }

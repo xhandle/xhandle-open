@@ -49,6 +49,7 @@ describe("AI provider model preferences", () => {
     expect(supportsAIProviderEffort("anthropic", "claude-sonnet-5")).toBe(true);
     expect(supportsAIProviderEffort("anthropic", "claude-fable-5-1")).toBe(true);
     expect(supportsAIProviderEffort("anthropic", "claude-haiku-4-5")).toBe(false);
+    for (const model of ['claude-haiku-5-5','claude-sonnet-4-6','claude-opus-4-5','claude-opus-4-6','claude-opus-4-7','claude-opus-4-8']) expect(supportsAIProviderEffort('anthropic', model)).toBe(true);
     expect(supportsAIProviderEffort("openai", "gpt-5.5")).toBe(true);
     expect(supportsAIProviderEffort("openai", "gpt-4o")).toBe(false);
     expect(supportsAIProviderEffort("gemini", "gemini-3.6-flash")).toBe(true);

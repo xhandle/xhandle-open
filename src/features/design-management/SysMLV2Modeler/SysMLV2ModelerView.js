@@ -1,4 +1,5 @@
 import React from "react";
+import { QUICK_SEARCH_COLLECT, isSearchVisible } from '../../../components/quickSearchUtils';
 import { ChevronDown, ChevronUp, PanelLeftOpen, PanelRightOpen } from "lucide-react";
 import SysMLV2DiagramCanvas from "./SysMLV2DiagramCanvas";
 import SysMLV2ElementTable from "./SysMLV2ElementTable";
@@ -202,6 +203,7 @@ function analyzeDesignRowsToSysML({ rows, sourceFolder, sourceModule, projectId 
 }
 
 export default function SysMLV2ModelerView({ projectId, projectName, autoGenerateRequest = 0, designContext = {}, onGenerateRequirements }) {
+  const searchRoot = React.useRef(null);
   const [model, setModel] = React.useState(() => ensureDefaultSysMLV2Model(projectId, projectName));
   const [selection, setSelection] = React.useState(null);
   const [findings, setFindings] = React.useState(() => validateSysMLV2Model(model));
@@ -210,6 +212,16 @@ export default function SysMLV2ModelerView({ projectId, projectName, autoGenerat
   const [explorerOpen, setExplorerOpen] = React.useState(true);
   const [propertiesOpen, setPropertiesOpen] = React.useState(true);
   const lastAutoGenerateRef = React.useRef(0);
+  React.useEffect(() => {
+    const collect = event => {
+      if (!isSearchVisible(searchRoot.current)) return;
+      for (const [kind, items] of [['element', model?.elements || []], ['relationship', model?.relationships || []]]) {
+        for (const item of items) event.detail.entries.push({ id: `sysml:${kind}:${item.id}`, kind: `SysML ${kind}`, label: item.name || item.label || item.id, text: JSON.stringify(item), activate() { setExplorerOpen(true); setPropertiesOpen(true); setSelection({ kind, id: item.id }); } });
+      }
+    };
+    window.addEventListener(QUICK_SEARCH_COLLECT, collect);
+    return () => window.removeEventListener(QUICK_SEARCH_COLLECT, collect);
+  }, [model]);
 
   const refresh = React.useCallback((next = loadSysMLV2Model(model?.id, projectId)) => {
     if (!next) return;
@@ -329,7 +341,7 @@ export default function SysMLV2ModelerView({ projectId, projectName, autoGenerat
   const updateRelationship = (id, patch) => refresh(updateSysMLRelationship(model.id, id, patch));
 
   return (
-    <div className="flex h-[calc(100vh-220px)] min-h-[560px] flex-col rounded-xl border bg-white">
+    <div ref={searchRoot} className="flex h-[calc(100vh-220px)] min-h-[560px] flex-col rounded-xl border bg-white">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
         <div>
           <div className="text-lg font-semibold text-gray-950">SysML v2 Modeler</div>

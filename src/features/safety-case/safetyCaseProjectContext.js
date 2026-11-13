@@ -27,8 +27,11 @@ function redactRows(rows, limit = 80) {
 
 function filterByProject(rows, projectId) {
   if (!projectId || !Array.isArray(rows)) return rows || [];
-  const scoped = rows.filter((row) => row?.projectId == null || String(row.projectId) === String(projectId));
-  return scoped.length ? scoped : rows;
+  const scoped = rows.filter((row) => {
+    const ids = [row?.projectId, row?.sourceProjectId, row?.ProjectId].filter((id) => id != null);
+    return ids.length && ids.every((id) => String(id) === String(projectId));
+  });
+  return scoped;
 }
 
 export function loadXHandleProjects() {
@@ -57,7 +60,7 @@ export function buildSafetyCaseProjectContext(sourceProjectId) {
     riskSummary: redactRows(filterByProject(safeParse(localStorage.getItem("xhandle:risk-summary"), []), selectedProjectId), 80),
     requirements: redactRows(filterByProject(safeParse(localStorage.getItem("xhandle:requirements"), []), selectedProjectId), 120),
     verification: redactRows(filterByProject(safeParse(localStorage.getItem("xhandle:vnv-center"), []), selectedProjectId), 80),
-    codeArchitecture: redactRows(cbaRows, 120),
+    codeArchitecture: redactRows(filterByProject(cbaRows, selectedProjectId), 120),
   };
 }
 
@@ -127,7 +130,7 @@ export function generateLifecycleSafetyCase(projectContext = {}, rootId) {
   const hasArchitecture = architecture.length > 0;
   const hasVerification = verification.length > 0;
 
-  const node = (key, values) => ({ key, ...values });
+  const node = (key, values) => ({ key, ...values, metadata: { ...values.metadata, evidenceRole: key } });
   const nodes = [
     node("context", {
       type: "context",

@@ -334,3 +334,29 @@ test.each(['Meta', 'Control', 'Shift', 'Alt'])('search allows %s release but blo
     document.removeEventListener('keyup', backgroundUp);
   }
 });
+
+test('async design providers search beyond the visible view and ignore stale results after typing or closing', async () => {
+  jest.useFakeTimers();
+  const waiting = [], activate = jest.fn();
+  const collect = event => event.detail.providers.push((query, signal) => new Promise(resolve => waiting.push({ query, signal, resolve })));
+  window.addEventListener(QUICK_SEARCH_COLLECT, collect);
+  try {
+    await act(async () => root.render(<QuickSearch />));
+    await act(async () => host.querySelector('button').click());
+    const input = document.querySelector('[role="combobox"]');
+    const type = value => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, value); input.dispatchEvent(new Event('input', { bubbles: true })); };
+    await act(async () => type('old'));
+    await act(async () => jest.advanceTimersByTime(150));
+    await act(async () => type('brake'));
+    await act(async () => jest.advanceTimersByTime(150));
+    expect(waiting[0].signal.aborted).toBe(true);
+    await act(async () => waiting[0].resolve([{ id: 'old', kind: 'Artifact', label: 'Old', text: 'brake stale', activate }]));
+    expect(document.querySelector('[role="option"]')).toBeNull();
+    await act(async () => waiting[1].resolve([{ id: 'deep', kind: 'Artifact', label: 'Another folder', text: 'Brake buried on page 25', activate }]));
+    expect(document.querySelector('[role="option"]').textContent).toContain('Another folder');
+    await act(async () => document.querySelector('[role="option"]').click());
+    expect(activate).toHaveBeenCalledWith('brake');
+    expect(waiting[1].signal.aborted).toBe(true);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  } finally { window.removeEventListener(QUICK_SEARCH_COLLECT, collect); }
+});

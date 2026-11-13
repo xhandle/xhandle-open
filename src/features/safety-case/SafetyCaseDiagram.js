@@ -2,6 +2,7 @@ import React, { useMemo, useCallback } from "react";
 import ReactFlow, { Background, Controls, MiniMap, applyEdgeChanges, applyNodeChanges, MarkerType } from "reactflow";
 import "reactflow/dist/style.css";
 import ELK from "elkjs/lib/elk.bundled.js";
+import { automaticEvidenceForNode } from "./safetyCaseEvidenceAutomation";
 import SafetyCaseNode from "./SafetyCaseNode";
 import { SAFETY_CASE_NODE_SIZE, centerSafetyCaseOnYAxis } from "./safetyCaseLayout";
 
@@ -40,6 +41,7 @@ function descendantIds(nodes, rootId) {
   const stack = [...(byParent.get(rootId) || [])];
   while (stack.length) {
     const id = stack.pop();
+    if (ids.has(id)) continue;
     ids.add(id);
     stack.push(...(byParent.get(id) || []));
   }
@@ -60,7 +62,7 @@ function visibleModel(safetyCase, onToggleCollapse) {
     id: node.id,
     type: "safetyCaseNode",
     position: node.position || { x: 0, y: 0 },
-    data: { node, childCount: childCounts[node.id] || 0, onToggleCollapse },
+    data: { node, automaticEvidence: automaticEvidenceForNode(safetyCase, node.id), childCount: childCounts[node.id] || 0, onToggleCollapse },
   }));
   const visibleIds = new Set(rfNodes.map((node) => node.id));
   const rfEdges = (safetyCase.edges || []).filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target)).map((edge) => ({

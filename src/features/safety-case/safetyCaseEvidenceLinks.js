@@ -279,8 +279,9 @@ function sheetRowsToRecords(rows, context) {
     });
     const title = record.Hazard || record.Hazards || record.Risk || record.Effect || record["Function (From)"] || record.Requirement || `Sheet row ${index + 1}`;
     return {
-      ...record,
       ...context,
+      ...record,
+      _inheritedProjectId: context.projectId,
       id: `${context._localStorageKey}:${context._localStoragePath}:row-${index + 1}`,
       title,
       type: context._localStoragePath.includes("analysisResult") ? "analysis-sheet-row" : "sheet-row",
@@ -291,8 +292,9 @@ function sheetRowsToRecords(rows, context) {
 
 function normalizeFunctionalRow(row, context, index) {
   return {
-    ...row,
     ...context,
+    ...row,
+    _inheritedProjectId: context.projectId,
     id: row?.id || `${context._localStorageKey}:${context._localStoragePath}:row-${index + 1}`,
     title: row?.fromFunction && row?.toFunction ? `${row.fromFunction} -> ${row.toFunction}` : row?.fromFunction || row?.toFunction || `Functional row ${index + 1}`,
     type: "functional-decomposition-row",
@@ -307,12 +309,17 @@ function normalizeFunctionalRow(row, context, index) {
 
 function shouldIncludeForProject(record, selectedProjectId) {
   if (!selectedProjectId) return true;
-  const recordProjectId = record?.projectId || record?.ProjectId || record?.folderId || record?.FolderId;
-  return recordProjectId == null || String(recordProjectId) === String(selectedProjectId);
+  const recordProjectId = record?.sourceProjectId ?? record?.projectId ?? record?.ProjectId;
+  const declared = [record?.sourceProjectId, record?.projectId, record?.ProjectId, record?._inheritedProjectId].filter((id) => id != null);
+  return recordProjectId != null && declared.every((id) => String(id) === String(selectedProjectId));
 }
 
 function collectLocalStorageRecordsFromValue(value, context, depth = 0) {
   if (depth > MAX_LOCAL_STORAGE_DEPTH || value == null) return [];
+  if (isRecordLike(value)) {
+    const owner = value.sourceProjectId ?? value.projectId ?? value.ProjectId;
+    if (owner != null) context = { ...context, projectId: owner };
+  }
   if (Array.isArray(value)) {
     if (!value.length) return [];
     if (Array.isArray(value[0])) return sheetRowsToRecords(value, context);
@@ -320,8 +327,9 @@ function collectLocalStorageRecordsFromValue(value, context, depth = 0) {
       if (isRecordLike(item)) {
         if (/responseRows/i.test(context._localStoragePath)) return [normalizeFunctionalRow(item, context, index)];
         return [{
-          ...item,
           ...context,
+          ...item,
+          _inheritedProjectId: context.projectId,
           id: item.id || item.key || `${context._localStorageKey}:${context._localStoragePath}:row-${index + 1}`,
         }];
       }
@@ -360,8 +368,8 @@ function collectLocalStorageRecordsFromValue(value, context, depth = 0) {
 
   if (childRecords.length) return childRecords;
   return [{
-    ...value,
     ...context,
+    ...value,
     id: value.id || value.key || `${context._localStorageKey}:${context._localStoragePath || "record"}`,
   }];
 }
@@ -432,7 +440,9 @@ function flattenIndexedDBRows(rows, database, storeName) {
   return rows.flatMap((row, index) => {
     if (Array.isArray(row?.value)) {
       return row.value.slice(0, MAX_RECORDS_PER_STORE).map((item, childIndex) => ({
+        projectId: row.projectId,
         ...item,
+        _inheritedProjectId: row.sourceProjectId ?? row.projectId ?? row.ProjectId,
         id: item?.id || item?.key || `${row.key || index}:${childIndex}`,
         _sourceRecordKey: row.key,
       }));
@@ -514,8 +524,7 @@ async function loadAllIndexedDBEvidence(projectId, diagnostics = null) {
     for (const storeName of storeNames) {
       const rows = await getAllFromStore(db, storeName);
       if (diagnostics) diagnostics.indexedDBRows += rows.length;
-      const scopedRows = projectId ? rows.filter((row) => row?.projectId == null || String(row.projectId) === String(projectId)) : rows;
-      const flattenedRows = flattenIndexedDBRows(scopedRows, dbName, storeName);
+      const flattenedRows = flattenIndexedDBRows(rows, dbName, storeName).filter((row) => shouldIncludeForProject(row, projectId));
       addArtifacts(groups, categoryForStore(dbName, storeName), `${dbName}.${storeName}`, flattenedRows, {
         database: dbName,
         store: storeName,
@@ -543,10 +552,6 @@ function mergeGroups(target, source) {
     target[category].push(...artifacts);
   });
   return target;
-}
-
-function artifactCount(groups) {
-  return Object.values(groups || {}).reduce((count, artifacts) => count + (Array.isArray(artifacts) ? artifacts.length : 0), 0);
 }
 
 function addProjectContextArtifacts(groups, context, diagnostics = null) {
@@ -578,11 +583,7 @@ async function loadEvidenceGroupsForProject(selectedProjectId, diagnostics = nul
 export async function loadLinkableSafetyCaseEvidence({ projectId, sourceProjectId } = {}) {
   const selectedProjectId = sourceProjectId ?? projectId;
   const diagnostics = createDiagnostics(selectedProjectId);
-  let groups = await loadEvidenceGroupsForProject(selectedProjectId, diagnostics);
-  if (selectedProjectId && artifactCount(groups) === 0) {
-    diagnostics.fallbackToWorkspace = true;
-    groups = await loadEvidenceGroupsForProject(undefined, diagnostics);
-  }
+  const groups = await loadEvidenceGroupsForProject(selectedProjectId, diagnostics);
   const result = Object.entries(groups)
     .filter(([category]) => !HIDDEN_MODAL_CATEGORIES.has(category))
     .map(([category, artifacts]) => ({

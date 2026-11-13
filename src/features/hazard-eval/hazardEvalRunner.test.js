@@ -94,6 +94,7 @@ const smallFixture = {
 const generatedRow = (id, overrides = {}) => ({
   id,
   guidePhraseApplicable: "Yes",
+  guidePhraseApplicabilityRationale: "The required command can be absent and prevent the actuator from reaching the commanded state.",
   losses: "Loss of controlled shutdown.",
   hazards: "The actuator continues to run and the receiver enters an uncontrolled state.",
   unsafeControlActions: "The command is not provided when it is required.",
@@ -354,26 +355,17 @@ describe("end-to-end fixture run", () => {
     expect(report.stages.slice(1).every(({ deltas }) => deltas !== null)).toBe(true);
   });
 
-  test("attributes to generation an applicability the model never stated", async () => {
-    // normalizeGuidePhraseApplicability falls back to "Yes" for any value it
-    // cannot parse, so a row that returns no applicability at all enters the
-    // pipeline already counted as applicable. Stage attribution shows the false
-    // positive existing at generation, before any adjudication has run.
-    const report = await runWithTransport(scriptedRun([
+  test("rejects generation that never states applicability before scoring later stages", async () => {
+    const transport = scriptedRun([
       applicableTag("FD-1-STPA", STOP_EXCERPT),
       notApplicableTag("FD-2-STPA", FAIL_SAFE_EXCERPT),
     ], {
       first: { guidePhraseApplicable: "" },
       second: { guidePhraseApplicable: "" },
-    }));
-
-    const byStage = Object.fromEntries(report.stages.map((entry) => [entry.stage, entry]));
-    expect(byStage.generation.metrics.applicabilityUndecided).toBe(0);
-    expect(byStage.generation.metrics.applicabilityFalsePositives).toBe(1);
-    // The audit stage then correctly declines FD-2, removing the false positive
-    // that generation's default introduced.
-    expect(byStage["safety-audit"].metrics.applicabilityFalsePositives).toBe(0);
-    expect(byStage["safety-audit"].deltas.applicabilityFalsePositives).toBe(-1);
+    });
+    await expect(runWithTransport(transport)).rejects.toThrow(/assessment\(s\) were not generated.*FD-1, FD-2/);
+    expect(transport.calls.filter(({ workflow }) => workflow === "hazard-row-generation").length).toBeGreaterThan(1);
+    expect(transport.calls.some(({ workflow }) => workflow === "hazard-safety-audit")).toBe(false);
   });
 
   test("marks a stage that cost a call but moved no metric", async () => {

@@ -11,6 +11,7 @@ function errorMessage(error) {
 const REMOVABLE_SAMPLING_CONTROLS = [
   "temperature",
   "top_p",
+  "top_k",
   "frequency_penalty",
   "presence_penalty",
   "seed",
