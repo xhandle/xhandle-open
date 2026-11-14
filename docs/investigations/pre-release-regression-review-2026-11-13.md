@@ -2,7 +2,9 @@
 
 ## Disposition
 
-Reviewed the complete pending shared working tree against `13333664ca6a50ae6a7f49122345db40cd0dd50f`, including newly added files, and the desktop packaging boundary against private desktop checkout `60c9d7d`. This is a source and local runtime review, not approval of a signed cross-platform release. No commit, push, submodule-pin update, tag, or publication was performed.
+**Final outcome:** the reviewed shared changes were committed and pushed as `4ab7bc9`, followed by whitespace cleanup `93b793d3d20dcca46fa95c4ae16e259ec8737092`. [xHandle Desktop 0.2.16](https://github.com/xhandle/xhandle-desktop-releases/releases/tag/v0.2.16), built with that exact shared pin, was published as the latest stable release on November 13 at 7:09 p.m. Eastern (November 14, 00:09 UTC). Apple Silicon macOS, Windows x64, and Linux x64 distributions and all three update channels are present. Final release evidence follows below; the initial review and blockers are retained as history.
+
+The initial review covered the complete pending shared working tree against `13333664ca6a50ae6a7f49122345db40cd0dd50f`, including newly added files, and the desktop packaging boundary against private desktop checkout `60c9d7d`. At that initial stage, only source and local runtime review had been completed; no commit, push, submodule-pin update, tag, or publication had been performed.
 
 The source checks have no remaining test failures. The eight baseline hazard-evaluation failures were traced to stale synthetic generation responses missing the now-required applicability rationale. The fixtures now supply that field, and the obsolete test expecting blank applicability to default to Yes now verifies that incomplete assessments are rejected before later stages can be scored. No production acceptance rule was loosened.
 
@@ -47,7 +49,7 @@ The original eight `src/features/hazard-eval/hazardEvalRunner.test.js` failures 
 
 Baseline log: `/tmp/xhandle-pre-release-baseline-tests.log`. Initial suite log: `/tmp/xhandle-pre-release-client-final.log`. Final green suite log: `/tmp/xhandle-release-client-green.log`.
 
-## Desktop release blockers and remaining gates
+## Desktop release blockers at the initial review
 
 - The checked-out desktop source still pins the older published shared commit. Commit/publish the reviewed shared source, then update and review the private desktop pin and include its staging fix. Release builds intentionally reject dirty/unpublished source. Select a version higher than the then-current stable release; do not republish the downloaded 0.2.15 assets as this change set.
 - `scripts/publish-release.py` in the private desktop repository currently validates only Apple Silicon macOS artifacts, allowlists `latest-arm64-mac.yml`, and promotes only that allowlisted set. The CI matrix can build macOS/Windows/Linux, but private CI artifacts/tag releases do not automatically become a complete public update. The public publication path must support validated Windows x64 and Linux x64 assets/manifests before promoting the requested combined release. Publishing only the macOS set would leave other platform channels absent.
@@ -64,4 +66,19 @@ The earlier Claude-specific findings and synthetic model/effort matrix are docum
 
 Prepared private desktop version 0.2.16 with destination-OS Windows x64 and Linux x64 installer/archive verification receipts. The public publisher now requires both verified platform directories alongside the signed/notarized macOS set, matches exact source provenance, validates all asset digests and prevents incomplete-channel or downgrade publication. Ten regression tests cover allowlisting, tampering, receipt/source mismatch, path traversal, legacy manifest targets, symlinks and combined checksums. The existing 45 native host tests also pass. These pipeline changes still require real target-OS CI execution.
 
-The local Developer ID signing identity is available. Apple notarization currently returns HTTP 403 because a required developer agreement is missing or expired. The account holder must accept the pending agreement before notarization and publication can finish. No signing credential was printed or stored in source.
+The local Developer ID signing identity was available. Apple initially returned HTTP 403 because a required developer agreement was missing or expired. The account holder subsequently accepted it, allowing final app and installer notarization to pass. No signing credential was printed or stored in source.
+
+## Final release validation and publication
+
+All initial release gates have been completed. The native publisher requires matching provenance and verified distributions from all three operating systems, verifies the exact allowlisted public asset set, and promotes the draft only after server-side checksums match. All 12 published asset sizes and SHA256 digests match the frozen local inputs. Anonymous downloads of the three update manifests and combined SHA256SUMS are byte-identical. The private native repository remains private; only allowlisted distribution files were uploaded.
+
+The complete client suite remains green at 3,964 passed, with four existing optional skips; the backend suite passes all 85 tests. Final native host tests pass 49 checks and release-integrity tests pass 11. Shared desktop boundary tests, production builds and whitespace checks pass. Lint has zero errors and the 71 previously recorded warnings.
+
+- macOS: Developer ID signing, Apple Accepted notarization, stapled app/installer tickets, Gatekeeper, archive and temporary installed-copy smoke checks pass. The signed final app reports `PUBLIC_UPDATE_FEED_OK 0.2.16` against the public latest channel.
+- Windows x64: archive smoke, signature inspection, actual temporary NSIS installation, installed-app smoke and uninstallation pass. A runtime diagnostics path defect under Windows short temporary paths was fixed while retaining exact window/frame/page authorization checks. The original CI matrix failed in its external PowerShell signature inspector; corrected verification tooling successfully revalidated the same frozen binaries in a separate destination-OS job. This is not a claim that the original entire matrix was green. The installer is explicitly **unsigned** in the release notes.
+- Linux x64: tar archive and native extracted AppImage payload smoke checks pass. This does not establish FUSE/desktop integration on every distribution.
+- Native upgrade: an unmodified published 0.2.15 Mac app upgraded a disposable bundle to final 0.2.16. Ordinary and code-project catalogs, localStorage and IndexedDB markers survived; final signatures, ticket and embedded source provenance passed. Windows/Linux native replacement between production versions was not exercised.
+
+**Diagnostic incident:** an early Mac upgrade probe allowed automatic relaunch, opening its temporary app against the default desktop profile. The temporary app and stale probe processes were stopped after verifying their exact identities; only checksum-matched unpublished probe cache files were removed. The installed app bundle was not a replacement target. The default profile cannot be claimed byte-for-byte unchanged, and no user-data rollback was attempted. The corrected successful final probe uses an isolated profile/cache, verifies its child process identity, disables automatic relaunch, and explicitly reopens the upgraded app with the test profile.
+
+Full native receipts, CI job references, public asset digests and verification limits are recorded in the private desktop repository at `docs/releases/0.2.16-verification.md`. Synthetic provider checks establish transport and validation behavior; they do not guarantee live model availability or output quality for every customer.
