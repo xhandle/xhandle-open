@@ -1,10 +1,10 @@
 # Pre-release readiness — November 16, 2026
 
-**Local fix verification: passed. Desktop publication remains pending.** The final source passes all 17 suites in the Electron regression gate, all four 31,500-row hazard-analysis cases, and all eight failure-recovery and cancel/reload/resume cases. Each large case completed, saved and reloaded every expected assessment without a renderer crash, input timeout or assumption fallback, and stayed below the existing two-second maximum renderer-gap limit.
+**Local fix verification: passed. Desktop 0.2.17 is published and verified for Mac arm64 and Linux x64.** The final source passes all 17 suites in the Electron regression gate, all four 31,500-row hazard-analysis cases, and all eight failure-recovery and cancel/reload/resume cases. Each large case completed, saved and reloaded every expected assessment without a renderer crash, input timeout or assumption fallback, and stayed below the existing two-second maximum renderer-gap limit.
 
 The earlier Projects HARA out-of-memory failure is preserved and superseded by these final-source checks. See the [investigation](../investigations/large-hazard-analysis-memory-fix-2026-11-16.md) and [executed Codex prompt](../codex-prompts/fix-large-hazard-analysis-memory-and-responsiveness.md).
 
-No commit, push, version change, desktop upstream-pin change or update publication was performed during this fix task. The results support reviewing and committing the pending changes; newly packaged installers still need verification.
+No commit, push or publication was performed during the initial fix task. The user subsequently authorized release: [Desktop 0.2.17](https://github.com/xhandle/xhandle-desktop-releases/releases/tag/v0.2.17) is now published for Apple Silicon macOS and Linux x64. Both native CI jobs, Mac signing/notarization, the isolated native 0.2.16-to-0.2.17 replacement, all nine public asset checksums and anonymous update feeds passed. Windows was not rebuilt and remains on 0.2.16 through its preserved update manifest.
 
 ## Final source gate
 
@@ -46,13 +46,13 @@ Memory figures are sampled renderer JS heap measurements, not total application 
 
 The staged check also covered newly added files and found trailing whitespace in three files that an unstaged tracked-file diff did not cover. The cleanup changes no application behavior (the diff ignoring whitespace and blank lines is empty). The post-cleanup runtime fingerprint is `cc4222046cfb4d18dabdc5fda93da4dcd02d383e8d6b53099cfd696cdac44afe` (1,201 files); functional test evidence above remains tied to its recorded pre-cleanup fingerprint.
 
-## Publication sequence
+## Completed publication
 
-1. Review, commit and push the tested shared changes. Update the private desktop repository to that committed upstream pin; include its two pending backend-staging changes and increment package and lockfile versions together.
-2. Build and run packaged checks from the same committed source for macOS arm64, Windows x64 and Linux x64. Sign and notarize the macOS application and installer, then verify the installed copy and all platform receipts.
-3. Validate the three-platform assets, checksums and update manifests in a draft release. Promote after verification, then check the anonymous public update feed.
+The reviewed shared changes were committed and pushed. Desktop 0.2.17 is frozen at private build commit `bc8c051bab018734bea3df487283b2550f81757e` with shared application pin `e9ebafc45a38290a1bba7822b03718b4fc931d56`. A subsequent shared CI-only correction (`9e90a4c`) passed on GitHub; application files are identical to the frozen pin.
 
-Existing installers and earlier release receipts do not verify this pending source. Committing and pushing shared source alone does not make a desktop update available.
+Mac arm64 and Linux x64 packages were built and verified from the same source. The Mac application and installer are Developer ID signed and Apple notarized. Native Mac replacement preserved synthetic Projects/Code project identities, local storage and IndexedDB in the isolated profile; automatic normal-profile relaunch is not claimed. Linux installer/archive smoke and updater configuration checks passed on Linux. No new Windows binary was produced.
+
+The publisher verified the complete selected-platform asset set and all nine uploaded SHA256 digests before promotion. Post-publication verification confirmed sizes/digests and anonymous Mac/Linux/retained-Windows manifests and SHA256SUMS. The signed Mac application printed `PUBLIC_UPDATE_FEED_OK 0.2.17`. Current Mac/AppImage installations can use Help → Check for Updates; Linux tar archives require manual replacement.
 
 ## Local evidence
 
@@ -64,3 +64,7 @@ Existing installers and earlier release receipts do not verify this pending sour
 - Code methods/recovery: `/private/tmp/xhandle-hazard-final-code-20261116/report.json`
 - Projects HARA recovery: `/private/tmp/xhandle-hazard-final-projects-hara-recovery-20261116/report.json`
 - Original crash: `/private/tmp/xhandle-precommit-large-hara-20261116/report.json` and its native flight/crash logs
+
+- Final public verification: `/private/tmp/xhandle-0.2.17-public-verification.json`
+- Native upgrade and release receipt summary: `/private/tmp/xhandle-0.2.17-release-readiness.json`
+- Signed Mac live feed: `/private/tmp/xhandle-0.2.17-public-feed.log`
