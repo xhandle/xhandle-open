@@ -1,0 +1,25 @@
+.design-dialog-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
+  overflow: hidden;
+}
+.design-dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.design-dialog-footer {
+  flex: 0 0 auto;
+  border-top: 1px solid #e2e8f0;
+  background: white;
+}
+.design-dialog-footer > div {
+  flex-wrap: wrap;
+}
+.design-dialog-form-body { padding: 24px; }
+.design-dialog-form-footer { padding: 16px 24px; }

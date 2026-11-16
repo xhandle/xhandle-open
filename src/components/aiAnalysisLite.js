@@ -30,6 +30,7 @@ import {
 import {
   generateStandardCodeHazardAnalysisSheets,
 } from "./aiAnalysisCodeHazardStandard";
+import { generateProjectHaraAnalysisSheets } from './aiAnalysisProjectHara';
 
 /* ------------------- NEW: STPA-SEC imports ------------------- */
 import {
@@ -68,6 +69,7 @@ export async function runLiteAIAnalysis({
   onStageComplete = async () => {},
   generationCheckpoint = null,
   codeArchitectureWorkflow = false,
+  haraItemDefinition = '',
 }) {
   const totalSteps = 9;
   let step = 0;
@@ -268,8 +270,10 @@ export async function runLiteAIAnalysis({
 
     step = 2;
     updateProgress();
-    updatedSheets = (await generateHaraAnalysisSheets({
+    updatedSheets = (await (codeArchitectureWorkflow ? generateHaraAnalysisSheets : generateProjectHaraAnalysisSheets)({
       sheets: updatedSheets,
+      tableRows,
+      itemDefinition: haraItemDefinition,
       setFolders,
       currentFolder,
       haraGenerationMode: "standard",

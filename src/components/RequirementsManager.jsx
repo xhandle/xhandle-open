@@ -1282,7 +1282,7 @@ useEffect(() => {
   const [moduleManagerFolderId, setModuleManagerFolderId] = useState(null);
   const moduleManagerFolder = moduleManagerFolderId ? folders.find(folder => folder.id === moduleManagerFolderId) : activeFolder;
   const [showReuse, setShowReuse] = useState(false);
-  const [showNewFolder, setShowNewFolder] = useState(false);
+  const [newFolderDialog, setNewFolderDialog] = useState(null);
 
   function toastOnce(msg){ setToast(msg); setTimeout(()=>setToast(""), 1800); }
 
@@ -1397,6 +1397,15 @@ const attrColumns = useMemo(() => {
 
 // Outline numbering for the current module
 const numbering = useMemo(() => computeNumbering(moduleRows), [moduleRows]);
+const moduleRowIds = useMemo(() => new Set(moduleRows.map(row => row.id)), [moduleRows]);
+const selectedSiblings = selectedReq ? siblingsOf(moduleRows, selectedReq.id) : [];
+const selectedSiblingIndex = selectedSiblings.findIndex(row => row.id === selectedId);
+const unavailableRowActions = {
+  up: selectedSiblingIndex <= 0,
+  down: selectedSiblingIndex < 0 || selectedSiblingIndex === selectedSiblings.length - 1,
+  promote: !selectedReq?.parentId,
+  demote: selectedSiblingIndex <= 0,
+};
 
 // Keep Table in the same hierarchy order as Outline, including unparented rows.
 const tableRows = useMemo(() => {
@@ -1603,6 +1612,7 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
     setFolders(Folders.loadAll());
     setActiveFolderId(folder.id);
     setLibraryView('folder');
+    onSelectArtifact?.(null);
     return folder;
   }
 
@@ -2154,6 +2164,9 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
       },
       resolveModule: ({ folderId = activeFolderId, moduleRef } = {}) => resolveModuleLocal(moduleRef, folderId),
       getState: () => ({
+        libraryView,
+        viewMode,
+        canEditArtifacts: canEdit && currentRole !== 'Viewer',
         activeFolderId,
         activeFolderName: activeFolder?.name || null,
         selectedModule,
@@ -2168,39 +2181,31 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
         lastAgentSnapshot: readAgentSnapshots()[0] || null,
       }),
       clearSelection,
+      getDesignState: () => ({ libraryView, viewMode, activeFolderId, activeFolderName: activeFolder?.name || null,
+        selectedModule, selectedModuleId: moduleByName[selectedModule]?.id || null,
+        selectedRowIds: selectedIds?.size ? [...selectedIds] : selectedId ? [selectedId] : [], canEditArtifacts: canEdit && currentRole !== 'Viewer' }),
+      canEditDesignModule: target => target.folderId === activeFolderId && moduleMetas.some(module => module.id === target.id && canEditModule(module.name)),
     };
 
     return registerActionProvider("requirements", provider);
-  }, [activeFolderId, activeFolder?.name, folders.length, requirements, selectedModule, moduleByName, selectedId, selectedIds, selectedReq, moduleRows]);
+  }, [activeFolderId, activeFolder?.name, folders.length, requirements, selectedModule, moduleByName, selectedId, selectedIds, selectedReq, moduleRows, libraryView, viewMode, canEdit, currentRole]);
 
 
   // ----------------------------- Reorder / Promote / Demote -----------------
-  function moveUp(id){
+  function moveSibling(id, direction){
     updateRequirements(prev => {
       const me = prev.find(r=>r.id===id); if (!me) return prev;
-      const same = prev.filter(r=> (r.folderId??r.projectId)===me.folderId && r.module===me.module);
+      const same = prev.filter(r=> (r.folderId??r.projectId)===(me.folderId??me.projectId) && r.module===me.module);
       const sibs = siblingsOf(same, id);
-      const idx = sibs.findIndex(s=>s.id===id); if (idx<=0) return prev;
-      const above = sibs[idx-1];
-      const next = deepClone(prev);
-      const a = next.find(r=>r.id===me.id); const b = next.find(r=>r.id===above.id);
-      const t = a.order ?? 0; a.order = b.order ?? 0; b.order = t;
-      return next;
+      const idx = sibs.findIndex(s=>s.id===id), target = idx + direction;
+      if (idx < 0 || target < 0 || target >= sibs.length) return prev;
+      [sibs[idx], sibs[target]] = [sibs[target], sibs[idx]];
+      const positions = new Map(sibs.map((row, order) => [row.id, order]));
+      return prev.map(row => positions.has(row.id) ? { ...row, order: positions.get(row.id) } : row);
     });
   }
-  function moveDown(id){
-    updateRequirements(prev => {
-      const me = prev.find(r=>r.id===id); if (!me) return prev;
-      const same = prev.filter(r=> (r.folderId??r.projectId)===me.folderId && r.module===me.module);
-      const sibs = siblingsOf(same, id);
-      const idx = sibs.findIndex(s=>s.id===id); if (idx<0 || idx>=sibs.length-1) return prev;
-      const below = sibs[idx+1];
-      const next = deepClone(prev);
-      const a = next.find(r=>r.id===me.id); const b = next.find(r=>r.id===below.id);
-      const t = a.order ?? 0; a.order = b.order ?? 0; b.order = t;
-      return next;
-    });
-  }
+  function moveUp(id){ moveSibling(id, -1); }
+  function moveDown(id){ moveSibling(id, 1); }
   function promote(id){
     updateRequirements(prev => {
       const me = prev.find(r => r.id === id);
@@ -2216,7 +2221,7 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
 
       // Constrain to same folder/project + module (matches your original filter)
       const same = next.filter(
-        r => (r.folderId ?? r.projectId) === me.folderId && r.module === me.module
+        r => (r.folderId ?? r.projectId) === (me.folderId ?? me.projectId) && r.module === me.module
       );
 
       // Locate live references in `next`
@@ -2251,7 +2256,7 @@ if (Array.isArray(draft.history) && draft.history.length > MAX_HISTORY_ENTRIES) 
   function demote(id){
     updateRequirements(prev => {
       const me = prev.find(r=>r.id===id); if (!me) return prev;
-      const same = prev.filter(r=> (r.folderId??r.projectId)===me.folderId && r.module===me.module);
+      const same = prev.filter(r=> (r.folderId??r.projectId)===(me.folderId??me.projectId) && r.module===me.module);
       const sibs = siblingsOf(same, id);
       const idx = sibs.findIndex(s=>s.id===id); if (idx<=0) return prev;
       const newParent = sibs[idx-1];
@@ -2896,7 +2901,7 @@ updateRequirements(prev => {
 </div>
 
 
-  {sidebarOpen && <div className="px-2 pt-3 pb-1"><button type="button" className="flex min-h-[40px] w-full items-center justify-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 text-sm font-medium text-indigo-700 hover:bg-indigo-100" onClick={() => { const name = window.prompt("New folder name:"); if (name?.trim()) createFolderAction({ name: name.trim(), parentId: null }); }}><Plus className="h-4 w-4" />New folder</button><p className="mt-1 text-center text-[11px] text-gray-500">Creates a top-level folder</p></div>}
+  {sidebarOpen && <div className="px-2 pt-3 pb-1"><button type="button" className="flex min-h-[40px] w-full items-center justify-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 text-sm font-medium text-indigo-700 hover:bg-indigo-100" onClick={() => setNewFolderDialog({ parentId: null })}><Plus className="h-4 w-4" />New folder</button><p className="mt-1 text-center text-[11px] text-gray-500">Creates a top-level folder</p></div>}
 
   {/* Tree content */}
   <div className={`${sidebarOpen ? "design-library-scroll overflow-auto p-2" : "hidden"}`}>
@@ -2904,16 +2909,11 @@ updateRequirements(prev => {
       roots={folderTree}
       activeId={activeFolderId}
       onSelect={(id)=>{ clearSelection(); setActiveFolderId(id); setLibraryView('folder'); onSelectArtifact?.(null); }}
-      onCreateChild={(parentId)=>{
-        const name = window.prompt("Folder name:"); if(!name) return;
-        createFolderAction({ name, parentId });
-      }}
+      onCreateChild={parentId => setNewFolderDialog({ parentId })}
+      canEditFolder={folder => canEditLibraryItem({ ...folder, kind: 'folder' })}
       onRenameFolder={(id) => {
         const folder = folders.find(folder => folder.id === id);
-        const name = window.prompt("Folder name:", folder?.name || "");
-        if (!folder || !name?.trim() || name.trim() === folder.name) return;
-        const next = Folders.loadAll().map(folder => folder.id === id ? { ...folder, name: name.trim(), updatedAt: nowISO() } : folder);
-        Folders.saveAll(next); setFolders(next);
+        if (folder) setNewFolderDialog({ rename: folder });
       }}
       onDeleteFolder={(id) => deleteFolder(id)}
       onManageModules={(id)=>{ setModuleManagerFolderId(id); setShowModuleManager(true); }}
@@ -2988,7 +2988,8 @@ updateRequirements(prev => {
 />}
 
 <RowActionsBar
-  disabled={!selectedReq || !canEditModule(selectedModule)}
+  disabled={!canEditModule(selectedModule)}
+  unavailable={unavailableRowActions}
   selection={selectedReq}
   numbering={numbering}
   onClear={clearSelection}
@@ -3039,6 +3040,8 @@ updateRequirements(prev => {
     numbering={numbering}
     moduleName={selectedModule}
     attrColumns={attrColumns}
+    filterScope={`${activeFolderId}:${selectedModule}`}
+    onClearSelection={clearSelection}
     onEdit={onEdit}
     onDelete={onDelete}
     onCreate={onCreate}
@@ -3058,6 +3061,10 @@ updateRequirements(prev => {
     selectedModule={selectedModule}    // ← module picked in the sidebar
     activeFolderId={activeFolderId}    // ← active folder
     folderNameById={folderNameById}
+    onSelect={(id, event) => event?.shiftKey || event?.metaKey || event?.ctrlKey ? toggleSelect(id) : selectOne(id)}
+    selectedId={selectedId}
+    selectedIds={selectedIds}
+    canSelect={id => moduleRowIds.has(id)}
   />
 )}
 
@@ -3118,20 +3125,6 @@ updateRequirements(prev => {
           />
         )}
 
-        {showNewFolder && (
-          <NewFolderModal
-            parents={folders}
-            onCancel={()=>setShowNewFolder(false)}
-            onCreate={({ name, parentId })=>{
-              const fol = { id: makeId("FOL"), parentId: parentId || null, name, modules: [], roles:{Owner:[],Editor:[],Viewer:[]} };
-              Folders.upsert(fol);
-              setFolders(Folders.loadAll());
-              setActiveFolderId(fol.id);
-              setShowNewFolder(false);
-            }}
-          />
-        )}
-
 {showImportModal && (
   <ImportFromHazardModal
     onCancel={() => setShowImportModal(false)}
@@ -3172,6 +3165,26 @@ updateRequirements(prev => {
   <div className="fixed bottom-4 left-1/2 …">{toast}</div>
 )}
       </div>}
+        {newFolderDialog && (
+          <NewFolderModal
+            key={`folder-dialog:${newFolderDialog.rename?.id || 'new'}`}
+            parents={folders}
+            renameFolder={newFolderDialog.rename}
+            initialParentId={newFolderDialog.parentId}
+            onCancel={()=>setNewFolderDialog(null)}
+            onCreate={({ name, parentId })=>{
+              if (newFolderDialog.rename) {
+                const current = Folders.loadAll(), original = newFolderDialog.rename;
+                const folder = current.find(folder => folder.id === original.id);
+                if (!folder || folder.name !== original.name) throw new Error('The folder changed. Reopen Rename folder to use its current name.');
+                if (!canEditLibraryItem({ ...folder, kind: 'folder' })) throw new Error('You do not have permission to edit this folder.');
+                const next = current.map(item => item.id === original.id ? { ...item, name, updatedAt: nowISO() } : item);
+                Folders.saveAll(next); setFolders(next);
+              } else createFolderAction({ name, parentId });
+              setNewFolderDialog(null);
+            }}
+          />
+        )}
         {showModuleManager && moduleManagerFolder && (
           <ModuleManager
             project={moduleManagerFolder} // reusing same shape; this “project” is a folder
@@ -3436,7 +3449,10 @@ function updateLinkModule(i, moduleName) {
 }
 
     return (
-      <Modal title={form.id ? `Edit Requirement` : `New Requirement`} onClose={onCancel}>
+      <Modal title={form.id ? `Edit Requirement` : `New Requirement`} onClose={onCancel} footer={<div className="flex justify-end gap-2 pt-2">
+            <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={onCancel}>Cancel</button>
+            <button className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]" onClick={submit}>Save</button>
+          </div>}>
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <Field label="Text">
@@ -3721,10 +3737,7 @@ function updateLinkModule(i, moduleName) {
 
           </div>
 
-          <div className="flex justify-end gap-2 pt-2">
-            <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={onCancel}>Cancel</button>
-            <button className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]" onClick={submit}>Save</button>
-          </div>
+
         </div>
       </Modal>
     );
@@ -3778,7 +3791,10 @@ function ModuleManager({ project, onSave, onClose }) {
   function delView(mid, idx){ const m = (draft.modules||[]).find(m=>m.id===mid); updateModule(mid, { viewTemplates: (m?.viewTemplates||[]).filter((_,i)=>i!==idx) }); }
 
   return (
-    <Modal title={`Manage Modules — ${project.name}`} onClose={onClose}>
+    <Modal title={`Manage Modules — ${project.name}`} onClose={onClose} footer={<div className="flex justify-end gap-2">
+          <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={onClose}>Cancel</button>
+          <button className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]" onClick={()=>onSave(draft)}>Save</button>
+        </div>}>
       <div className="space-y-4">
         <div className="flex justify-between"><div className="text-sm text-gray-600">Define modules, attribute templates & default views for this folder.</div><button className="rounded border px-2 py-1 text-xs hover:bg-gray-50" onClick={addModule}>+ Add Module</button></div>
         <div className="space-y-4">
@@ -3914,10 +3930,7 @@ function ModuleManager({ project, onSave, onClose }) {
           ))}
         </div>
 
-        <div className="flex justify-end gap-2">
-          <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={onClose}>Cancel</button>
-          <button className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]" onClick={()=>onSave(draft)}>Save</button>
-        </div>
+
       </div>
     </Modal>
   );
@@ -3928,7 +3941,13 @@ function ReuseModal({ projects, activeProjectId, onCancel, onApply }) {
   const [sourceModuleId, setSourceModuleId] = useState("");
   const sourceProject = other.find(p => p.id === sourceProjectId);
   return (
-    <Modal title="Duplicate Module" onClose={onCancel}>
+    <Modal title="Duplicate Module" onClose={onCancel} footer={<div className="flex justify-end gap-2">
+          <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={onCancel}>Cancel</button>
+          <button className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]"
+            onClick={()=> onApply({ sourceProjectId, sourceModuleId })}
+            disabled={!sourceProjectId || !sourceModuleId}
+          >Copy</button>
+        </div>}>
       <div className="space-y-3">
         <Field label="From folder">
           <select className="w-full rounded border px-2 py-1 text-sm" value={sourceProjectId} onChange={e=>{ setSourceProjectId(e.target.value); setSourceModuleId(""); }}>
@@ -3941,36 +3960,42 @@ function ReuseModal({ projects, activeProjectId, onCancel, onApply }) {
             {sourceProject?.modules?.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
         </Field>
-        <div className="flex justify-end gap-2">
-          <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={onCancel}>Cancel</button>
-          <button className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]"
-            onClick={()=> onApply({ sourceProjectId, sourceModuleId })}
-            disabled={!sourceProjectId || !sourceModuleId}
-          >Copy</button>
-        </div>
+
       </div>
     </Modal>
   );
 }
-function NewFolderModal({ parents, onCancel, onCreate }){
-  const [name, setName] = useState("");
-  const [parentId, setParentId] = useState("");
+function NewFolderModal({ parents, initialParentId = null, renameFolder, onCancel, onCreate }){
+  const formId = React.useId();
+  const [name, setName] = useState(renameFolder?.name || "");
+  const [parentId, setParentId] = useState(initialParentId || "");
+  const [error, setError] = useState("");
+  const submit = event => {
+    event.preventDefault();
+    if (!name.trim()) return;
+    setError("");
+    try { onCreate({ name: name.trim(), parentId: parentId || null }); }
+    catch (error) { setError(error.message || "The folder could not be created. Please try again."); }
+  };
   return (
-    <Modal title="New Folder" onClose={onCancel}>
-      <div className="space-y-3">
+    <Modal title={renameFolder ? "Rename folder" : initialParentId ? "New subfolder" : "New folder"} onClose={onCancel} footer={<div className="flex justify-end gap-2">
+          <button type="button" className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={onCancel}>Cancel</button>
+          <button type="submit" form={formId} disabled={!name.trim()} className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6] disabled:opacity-40">{renameFolder ? "Save name" : "Create"}</button>
+        </div>}>
+      <div>
+      <form id={formId} className="space-y-3" onSubmit={submit}>
         <Field label="Name">
-          <input className="w-full rounded border px-2 py-1 text-sm" value={name} onChange={e=>setName(e.target.value)} />
+          <input autoFocus required maxLength={200} className="w-full rounded border px-2 py-1 text-sm" value={name} onChange={e=>setName(e.target.value)} />
         </Field>
-        <Field label="Parent (optional)">
+        {!renameFolder && <Field label="Parent (optional)">
           <select className="w-full rounded border px-2 py-1 text-sm" value={parentId} onChange={e=>setParentId(e.target.value)}>
             <option value="">— root —</option>
             {parents.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
-        </Field>
-        <div className="flex justify-end gap-2">
-          <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={onCancel}>Cancel</button>
-          <button className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]" onClick={()=>{ if(!name.trim()) return; onCreate({ name: name.trim(), parentId: parentId || null }); }}>Create</button>
-        </div>
+        </Field>}
+        {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+
+      </form>
       </div>
     </Modal>
   );
@@ -3998,7 +4023,16 @@ setHeaderName(prev => (opts.includes(prev) ? prev : (opts[0] || "")));
       }, [projectId]);
 
     return (
-      <Modal title="Import from Hazard Analysis" onClose={onCancel}>
+      <Modal title="Import from Hazard Analysis" onClose={onCancel} footer={<div className="flex justify-end gap-2">
+            <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={onCancel}>Cancel</button>
+            <button
+              className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]"
+              disabled={!projectId || !headerName}
+              onClick={() => onImport({ projectId, headerName })}
+            >
+              Import
+            </button>
+          </div>}>
         <div className="space-y-4">
           <Field label="Project">
             <select
@@ -4023,16 +4057,7 @@ setHeaderName(prev => (opts.includes(prev) ? prev : (opts[0] || "")));
             </select>
           </Field>
 
-          <div className="flex justify-end gap-2">
-            <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={onCancel}>Cancel</button>
-            <button
-              className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]"
-              disabled={!projectId || !headerName}
-              onClick={() => onImport({ projectId, headerName })}
-            >
-              Import
-            </button>
-          </div>
+
         </div>
       </Modal>
     );

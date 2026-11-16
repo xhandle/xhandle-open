@@ -1,6 +1,7 @@
 // src/components/LLMModuleLinkerModal.jsx
 import React, { useMemo, useState, useEffect, useRef } from "react";
-import { X, Link2, Loader2 } from "lucide-react";
+import { Link2, Loader2 } from "lucide-react";
+import { Modal as ModalFrame } from '../features/requirements/components/RequirementsViews';
 import { buildAIAuthOpts } from "./backendConfig";
 
 /* ----------------------------- Local LLM helpers ----------------------------- */
@@ -201,25 +202,6 @@ function topKRiskRowsForModules(parentReqs, childReqs, riskRows, k) {
 }
 
 /* ----------------------------- UI Shell ----------------------------- */
-
-function ModalFrame({ title, onClose, children }) {
-  return (
-    <div className="xhandle-modal-viewport fixed inset-0 z-[999]">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden />
-      <div className="absolute inset-0 flex items-center justify-center p-4">
-        <div className="w-full max-w-3xl rounded-2xl bg-white shadow-xl flex flex-col max-h-[80vh]">
-          <div className="flex items-center justify-between border-b px-4 py-3">
-            <h3 className="text-sm font-semibold">{title}</h3>
-            <button className="rounded p-1 text-gray-600 hover:bg-gray-100" onClick={onClose} aria-label="Close">
-              <X size={18} />
-            </button>
-          </div>
-          <div className="p-4 overflow-y-auto">{children}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 /* ----------------------------- Component ----------------------------- */
 
@@ -458,7 +440,13 @@ ${riskBlock}
   };
 
   return (
-    <ModalFrame title="LLM Module Linker" onClose={onClose}>
+    <ModalFrame title="LLM Module Linker" onClose={onClose} footer={<div className="flex items-center justify-end gap-2">
+      <button className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50" onClick={onClose}>Cancel</button>
+      <button className="inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50" onClick={handleGenerate} disabled={busy || !parentId || !childId || parentId === childId}>
+        {busy ? <Loader2 className="animate-spin" size={16} /> : <Link2 size={16} />}Generate suggestions
+      </button>
+      {!!suggestions.length && <button className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700 disabled:opacity-60" onClick={applySelected} disabled={busy || !parentId || !childId || parentId === childId}>Apply Links</button>}
+    </div>}>
       <div className="grid grid-cols-2 gap-3">
         <label className="text-sm">
           <div className="mb-1 text-gray-600">Parent Module</div>
@@ -513,17 +501,7 @@ ${riskBlock}
         </div>
       </div>
 
-      <div className="mt-3 flex items-center gap-2">
-        <button
-          className="inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
-          onClick={handleGenerate}
-          disabled={busy || !parentId || !childId || parentId === childId}
-        >
-          {busy ? <Loader2 className="animate-spin" size={16} /> : <Link2 size={16} />}
-          Generate suggestions
-        </button>
-        <div className="text-xs text-gray-500">The model proposes parent→child links; you choose which to apply.</div>
-      </div>
+      <p className="mt-3 text-xs text-gray-500">The model proposes parent→child links; you choose which to apply.</p>
 
       {/* Live review status */}
       {(busy || progressPct > 0) && (
@@ -620,18 +598,6 @@ ${riskBlock}
             </tbody>
           </table>
 
-          <div className="mt-3 flex justify-end gap-2">
-            <button className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50" onClick={onClose}>
-              Cancel
-            </button>
-            <button
-              className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700 disabled:opacity-60"
-              onClick={applySelected}
-              disabled={busy || !parentId || !childId || parentId === childId}
-            >
-              Apply Links
-            </button>
-          </div>
         </div>
       )}
     </ModalFrame>

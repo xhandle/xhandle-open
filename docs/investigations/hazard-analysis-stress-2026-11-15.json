@@ -1,0 +1,759 @@
+{
+  "date": "2026-11-15",
+  "status": "completion-passed; responsiveness-failed",
+  "sourceSha256": "f6f477161766d629f28df00611ac3a2a97f5d64128f02350320b3cd668660cac",
+  "sourceChanged": false,
+  "environment": {
+    "platform": "macOS 27.0 arm64",
+    "memoryGiB": 8,
+    "cpus": 8,
+    "node": "22.23.4",
+    "electron": "45.0.0"
+  },
+  "scope": "Production hazard dispatchers and real Electron storage with controlled local AI responses. Large cases test engine/storage and a GUI input probe; full hazard-table UI separately tested at small scale. Not live-provider quality, provider throughput, cross-platform or ISO 26262 compliance verification.",
+  "summary": {
+    "scenarios": 20,
+    "completionPassed": 20,
+    "responsivenessPassed": 16,
+    "responsivenessFailed": 4,
+    "jestSuites": 156,
+    "jestTests": 1520,
+    "electronUIChecks": 16,
+    "providerFixtureTests": 4
+  },
+  "evidence": {
+    "matrix": "/private/tmp/xhandle-hazard-stress-current-20261115/report.json",
+    "largeProjectsHaraRetest": "/private/tmp/xhandle-hazard-hara-completion-20261115/report.json",
+    "durableRecoveryRetest": "/private/tmp/xhandle-hazard-durable-recovery-confirmed-20261115/report.json",
+    "jest": "/private/tmp/xhandle-hazard-final-regression.json",
+    "ui": "/var/folders/67/8rby79hs1xq1fvs4f925m8600000gp/T/xhandle-hara-live-9CWWUu/result.json"
+  },
+  "cases": [
+    {
+      "id": "projects-STPA-32-none",
+      "area": "projects",
+      "method": "STPA",
+      "interfaces": 32,
+      "operationalContexts": 3,
+      "guidePhrases": 7,
+      "assessments": 672,
+      "status": "passed",
+      "completionPassed": true,
+      "elapsedMs": 1095.8999999761581,
+      "maxEventLoopGapMs": 73,
+      "maxProbeLatencyMs": 106,
+      "probeFailures": 0,
+      "peakHeapBytes": 129558079,
+      "assumptionFallbackRows": 0,
+      "requests": {
+        "total": 314,
+        "byWorkflow": {
+          "chat": 1,
+          "hazard-row-generation": 169,
+          "hazard-safety-audit": 56,
+          "hazard-applicability-pattern-repair": 84,
+          "hazard-canonical-catalog": 1,
+          "hazard-canonical-mapping": 3
+        },
+        "injected": [],
+        "peakConcurrent": 1,
+        "maxPromptChars": 60926,
+        "maxOutputTokens": 12000
+      },
+      "publications": 7
+    },
+    {
+      "id": "projects-HARA-32-none",
+      "area": "projects",
+      "method": "HARA",
+      "interfaces": 32,
+      "operationalContexts": 3,
+      "guidePhrases": 7,
+      "assessments": 672,
+      "status": "passed",
+      "completionPassed": true,
+      "elapsedMs": 1384.7000000476837,
+      "maxEventLoopGapMs": 87.39999997615814,
+      "maxProbeLatencyMs": 83,
+      "probeFailures": 0,
+      "peakHeapBytes": 114518433,
+      "assumptionFallbackRows": 0,
+      "requests": {
+        "total": 474,
+        "byWorkflow": {
+          "chat": 1,
+          "hazard-row-generation": 329,
+          "hazard-safety-audit": 56,
+          "hazard-applicability-pattern-repair": 84,
+          "hazard-canonical-catalog": 1,
+          "hazard-canonical-mapping": 3
+        },
+        "injected": [],
+        "peakConcurrent": 1,
+        "maxPromptChars": 61120,
+        "maxOutputTokens": 12000
+      },
+      "publications": 8
+    },
+    {
+      "id": "code-STPA-32-none",
+      "area": "code",
+      "method": "STPA",
+      "interfaces": 32,
+      "operationalContexts": 3,
+      "guidePhrases": 7,
+      "assessments": 672,
+      "status": "passed",
+      "completionPassed": true,
+      "elapsedMs": 2527.100000023842,
+      "maxEventLoopGapMs": 95.90000009536743,
+      "maxProbeLatencyMs": 100,
+      "probeFailures": 0,
+      "peakHeapBytes": 125185822,
+      "assumptionFallbackRows": 0,
+      "requests": {
+        "total": 60,
+        "byWorkflow": {
+          "chat": 1,
+          "hazard-row-generation": 43,
+          "hazard-applicability-screen": 16
+        },
+        "injected": [],
+        "peakConcurrent": 1,
+        "maxPromptChars": 14436,
+        "maxOutputTokens": 24000
+      },
+      "publications": 0
+    },
+    {
+      "id": "code-HARA-32-none",
+      "area": "code",
+      "method": "HARA",
+      "interfaces": 32,
+      "operationalContexts": 3,
+      "guidePhrases": 7,
+      "assessments": 672,
+      "status": "passed",
+      "completionPassed": true,
+      "elapsedMs": 3395.5,
+      "maxEventLoopGapMs": 99.20000004768372,
+      "maxProbeLatencyMs": 121,
+      "probeFailures": 0,
+      "peakHeapBytes": 129484192,
+      "assumptionFallbackRows": 0,
+      "requests": {
+        "total": 60,
+        "byWorkflow": {
+          "chat": 1,
+          "hazard-row-generation": 43,
+          "hazard-applicability-screen": 16
+        },
+        "injected": [],
+        "peakConcurrent": 1,
+        "maxPromptChars": 15975,
+        "maxOutputTokens": 24000
+      },
+      "publications": 0
+    },
+    {
+      "id": "projects-STPA-256-none",
+      "area": "projects",
+      "method": "STPA",
+      "interfaces": 256,
+      "operationalContexts": 3,
+      "guidePhrases": 7,
+      "assessments": 5376,
+      "status": "passed",
+      "completionPassed": true,
+      "elapsedMs": 7578.600000023842,
+      "maxEventLoopGapMs": 409.7000000476837,
+      "maxProbeLatencyMs": 592,
+      "probeFailures": 0,
+      "peakHeapBytes": 312543148,
+      "assumptionFallbackRows": 0,
+      "requests": {
+        "total": 2487,
+        "byWorkflow": {
+          "chat": 1,
+          "hazard-row-generation": 1345,
+          "hazard-safety-audit": 448,
+          "hazard-applicability-pattern-repair": 672,
+          "hazard-canonical-catalog": 1,
+          "hazard-canonical-mapping": 20
+        },
+        "injected": [],
+        "peakConcurrent": 1,
+        "maxPromptChars": 112376,
+        "maxOutputTokens": 12000
+      },
+      "publications": 7
+    },
+    {
+      "id": "projects-HARA-256-none",
+      "area": "projects",
+      "method": "HARA",
+      "interfaces": 256,
+      "operationalContexts": 3,
+      "guidePhrases": 7,
+      "assessments": 5376,
+      "status": "passed",
+      "completionPassed": true,
+      "elapsedMs": 11923.899999976158,
+      "maxEventLoopGapMs": 638.7999999523163,
+      "maxProbeLatencyMs": 567,
+      "probeFailures": 0,
+      "peakHeapBytes": 437117141,
+      "assumptionFallbackRows": 0,
+      "requests": {
+        "total": 3767,
+        "byWorkflow": {
+          "chat": 1,
+          "hazard-row-generation": 2625,
+          "hazard-safety-audit": 448,
+          "hazard-applicability-pattern-repair": 672,
+          "hazard-canonical-catalog": 1,
+          "hazard-canonical-mapping": 20
+        },
+        "injected": [],
+        "peakConcurrent": 1,
+        "maxPromptChars": 112570,
+        "maxOutputTokens": 12000
+      },
+      "publications": 15
+    },
+    {
+      "id": "code-STPA-256-none",
+      "area": "code",
+      "method": "STPA",
+      "interfaces": 256,
+      "operationalContexts": 3,
+      "guidePhrases": 7,
+      "assessments": 5376,
+      "status": "passed",
+      "completionPassed": true,
+      "elapsedMs": 20055.100000023842,
+      "maxEventLoopGapMs": 619,
+      "maxProbeLatencyMs": 118,
+      "probeFailures": 0,
+      "peakHeapBytes": 447460020,
+      "assumptionFallbackRows": 0,
+      "requests": {
+        "total": 466,
+        "byWorkflow": {
+          "chat": 1,
+          "hazard-row-generation": 337,
+          "hazard-applicability-screen": 128
+        },
+        "injected": [],
+        "peakConcurrent": 1,
+        "maxPromptChars": 14459,
+        "maxOutputTokens": 24000
+      },
+      "publications": 0
+    },
+    {
+      "id": "code-HARA-256-none",
+      "area": "code",
+      "method": "HARA",
+      "interfaces": 256,
+      "operationalContexts": 3,
+      "guidePhrases": 7,
+      "assessments": 5376,
+      "status": "passed",
+      "completionPassed": true,
+      "elapsedMs": 25915.799999952316,
+      "maxEventLoopGapMs": 629.3000000715256,
+      "maxProbeLatencyMs": 115,
+      "probeFailures": 0,
+      "peakHeapBytes": 446332204,
+      "assumptionFallbackRows": 0,
+      "requests": {
+        "total": 466,
+        "byWorkflow": {
+          "chat": 1,
+          "hazard-row-generation": 337,
+          "hazard-applicability-screen": 128
+        },
+        "injected": [],
+        "peakConcurrent": 1,
+        "maxPromptChars": 15998,
+        "maxOutputTokens": 24000
+      },
+      "publications": 0
+    },
+    {
+      "id": "projects-STPA-1500-none",
+      "area": "projects",
+      "method": "STPA",
+      "interfaces": 1500,
+      "operationalContexts": 3,
+      "guidePhrases": 7,
+      "assessments": 31500,
+      "status": "failed",
+      "completionPassed": true,
+      "elapsedMs": 45268.89999997616,
+      "maxEventLoopGapMs": 2574.2999999523163,
+      "maxProbeLatencyMs": 2835,
+      "probeFailures": 0,
+      "peakHeapBytes": 1535792819,
+      "assumptionFallbackRows": 0,
+      "requests": {
+        "total": 14557,
+        "byWorkflow": {
+          "chat": 1,
+          "hazard-row-generation": 7876,
+          "hazard-safety-audit": 2625,
+          "hazard-applicability-pattern-repair": 3941,
+          "hazard-canonical-catalog": 1,
+          "hazard-canonical-mapping": 113
+        },
+        "injected": [],
+        "peakConcurrent": 1,
+        "maxPromptChars": 112726,
+        "maxOutputTokens": 12000
+      },
+      "publications": 7,
+      "failure": "AssertionError [ERR_ASSERTION]: Renderer was unresponsive during analysis"
+    },
+    {
+      "id": "projects-HARA-1500-none",
+      "area": "projects",
+      "method": "HARA",
+      "interfaces": 1500,
+      "operationalContexts": 3,
+      "guidePhrases": 7,
+      "assessments": 31500,
+      "status": "failed",
+      "completionPassed": true,
+      "elapsedMs": 149646.19999992847,
+      "maxEventLoopGapMs": 14283.5,
+      "maxProbeLatencyMs": 5095,
+      "probeFailures": 1,
+      "peakHeapBytes": 2120394327,
+      "assumptionFallbackRows": 0,
+      "requests": {
+        "total": 22057,
+        "byWorkflow": {
+          "chat": 1,
+          "hazard-row-generation": 15376,
+          "hazard-safety-audit": 2625,
+          "hazard-applicability-pattern-repair": 3941,
+          "hazard-canonical-catalog": 1,
+          "hazard-canonical-mapping": 113
+        },
+        "injected": [],
+        "peakConcurrent": 1,
+        "maxPromptChars": 112920,
+        "maxOutputTokens": 12000
+      },
+      "publications": 19,
+      "failure": "AssertionError [ERR_ASSERTION]: Renderer was unresponsive during analysis"
+    },
+    {
+      "id": "code-STPA-1500-none",
+      "area": "code",
+      "method": "STPA",
+      "interfaces": 1500,
+      "operationalContexts": 3,
+      "guidePhrases": 7,
+      "assessments": 31500,
+      "status": "failed",
+      "completionPassed": true,
+      "elapsedMs": 121522,
+      "maxEventLoopGapMs": 3654.600000023842,
+      "maxProbeLatencyMs": 371,
+      "probeFailures": 0,
+      "peakHeapBytes": 1804152904,
+      "assumptionFallbackRows": 0,
+      "requests": {
+        "total": 2721,
+        "byWorkflow": {
+          "chat": 1,
+          "hazard-row-generation": 1970,
+          "hazard-applicability-screen": 750
+        },
+        "injected": [],
+        "peakConcurrent": 1,
+        "maxPromptChars": 14482,
+        "maxOutputTokens": 24000
+      },
+      "publications": 0,
+      "failure": "AssertionError [ERR_ASSERTION]: Renderer was unresponsive during analysis"
+    },
+    {
+      "id": "code-HARA-1500-none",
+      "area": "code",
+      "method": "HARA",
+      "interfaces": 1500,
+      "operationalContexts": 3,
+      "guidePhrases": 7,
+      "assessments": 31500,
+      "status": "failed",
+      "completionPassed": true,
+      "elapsedMs": 159791.10000002384,
+      "maxEventLoopGapMs": 3704.7000000476837,
+      "maxProbeLatencyMs": 331,
+      "probeFailures": 0,
+      "peakHeapBytes": 2512972495,
+      "assumptionFallbackRows": 0,
+      "requests": {
+        "total": 2721,
+        "byWorkflow": {
+          "chat": 1,
+          "hazard-row-generation": 1970,
+          "hazard-applicability-screen": 750
+        },
+        "injected": [],
+        "peakConcurrent": 1,
+        "maxPromptChars": 16021,
+        "maxOutputTokens": 24000
+      },
+      "publications": 0,
+      "failure": "AssertionError [ERR_ASSERTION]: Renderer was unresponsive during analysis"
+    },
+    {
+      "id": "projects-STPA-32-mixed",
+      "area": "projects",
+      "method": "STPA",
+      "interfaces": 32,
+      "operationalContexts": 3,
+      "guidePhrases": 7,
+      "assessments": 672,
+      "status": "passed",
+      "completionPassed": true,
+      "elapsedMs": 1498.3000000715256,
+      "maxEventLoopGapMs": 83.20000004768372,
+      "maxProbeLatencyMs": 89,
+      "probeFailures": 0,
+      "peakHeapBytes": 131879160,
+      "assumptionFallbackRows": 0,
+      "requests": {
+        "total": 320,
+        "byWorkflow": {
+          "chat": 1,
+          "hazard-row-generation": 175,
+          "hazard-safety-audit": 56,
+          "hazard-applicability-pattern-repair": 84,
+          "hazard-canonical-catalog": 1,
+          "hazard-canonical-mapping": 3
+        },
+        "injected": [
+          {
+            "kind": "truncated",
+            "workflow": "hazard-row-generation",
+            "request": 3
+          },
+          {
+            "kind": "malformed",
+            "workflow": "hazard-row-generation",
+            "request": 11
+          },
+          {
+            "kind": "missing-row",
+            "workflow": "hazard-row-generation",
+            "request": 19
+          },
+          {
+            "kind": "rate-limit",
+            "workflow": "hazard-row-generation",
+            "request": 27
+          }
+        ],
+        "peakConcurrent": 1,
+        "maxPromptChars": 60926,
+        "maxOutputTokens": 12000
+      },
+      "publications": 7
+    },
+    {
+      "id": "projects-HARA-32-mixed",
+      "area": "projects",
+      "method": "HARA",
+      "interfaces": 32,
+      "operationalContexts": 3,
+      "guidePhrases": 7,
+      "assessments": 672,
+      "status": "passed",
+      "completionPassed": true,
+      "elapsedMs": 1873.8999999761581,
+      "maxEventLoopGapMs": 84.5,
+      "maxProbeLatencyMs": 73,
+      "probeFailures": 0,
+      "peakHeapBytes": 128490428,
+      "assumptionFallbackRows": 0,
+      "requests": {
+        "total": 480,
+        "byWorkflow": {
+          "chat": 1,
+          "hazard-row-generation": 335,
+          "hazard-safety-audit": 56,
+          "hazard-applicability-pattern-repair": 84,
+          "hazard-canonical-catalog": 1,
+          "hazard-canonical-mapping": 3
+        },
+        "injected": [
+          {
+            "kind": "truncated",
+            "workflow": "hazard-row-generation",
+            "request": 3
+          },
+          {
+            "kind": "malformed",
+            "workflow": "hazard-row-generation",
+            "request": 11
+          },
+          {
+            "kind": "missing-row",
+            "workflow": "hazard-row-generation",
+            "request": 19
+          },
+          {
+            "kind": "rate-limit",
+            "workflow": "hazard-row-generation",
+            "request": 27
+          }
+        ],
+        "peakConcurrent": 1,
+        "maxPromptChars": 61120,
+        "maxOutputTokens": 12000
+      },
+      "publications": 8
+    },
+    {
+      "id": "code-STPA-32-mixed",
+      "area": "code",
+      "method": "STPA",
+      "interfaces": 32,
+      "operationalContexts": 3,
+      "guidePhrases": 7,
+      "assessments": 672,
+      "status": "passed",
+      "completionPassed": true,
+      "elapsedMs": 3099.100000023842,
+      "maxEventLoopGapMs": 99.10000002384186,
+      "maxProbeLatencyMs": 86,
+      "probeFailures": 0,
+      "peakHeapBytes": 109748671,
+      "assumptionFallbackRows": 0,
+      "requests": {
+        "total": 66,
+        "byWorkflow": {
+          "chat": 1,
+          "hazard-row-generation": 44,
+          "hazard-applicability-screen": 21
+        },
+        "injected": [
+          {
+            "kind": "truncated",
+            "workflow": "hazard-applicability-screen",
+            "request": 3
+          },
+          {
+            "kind": "malformed",
+            "workflow": "hazard-applicability-screen",
+            "request": 11
+          },
+          {
+            "kind": "missing-row",
+            "workflow": "hazard-applicability-screen",
+            "request": 19
+          },
+          {
+            "kind": "rate-limit",
+            "workflow": "hazard-row-generation",
+            "request": 27
+          }
+        ],
+        "peakConcurrent": 1,
+        "maxPromptChars": 14437,
+        "maxOutputTokens": 24000
+      },
+      "publications": 0
+    },
+    {
+      "id": "code-HARA-32-mixed",
+      "area": "code",
+      "method": "HARA",
+      "interfaces": 32,
+      "operationalContexts": 3,
+      "guidePhrases": 7,
+      "assessments": 672,
+      "status": "passed",
+      "completionPassed": true,
+      "elapsedMs": 3691.399999976158,
+      "maxEventLoopGapMs": 99.30000007152557,
+      "maxProbeLatencyMs": 103,
+      "probeFailures": 0,
+      "peakHeapBytes": 117435852,
+      "assumptionFallbackRows": 0,
+      "requests": {
+        "total": 66,
+        "byWorkflow": {
+          "chat": 1,
+          "hazard-row-generation": 44,
+          "hazard-applicability-screen": 21
+        },
+        "injected": [
+          {
+            "kind": "truncated",
+            "workflow": "hazard-applicability-screen",
+            "request": 3
+          },
+          {
+            "kind": "malformed",
+            "workflow": "hazard-applicability-screen",
+            "request": 11
+          },
+          {
+            "kind": "missing-row",
+            "workflow": "hazard-applicability-screen",
+            "request": 19
+          },
+          {
+            "kind": "rate-limit",
+            "workflow": "hazard-row-generation",
+            "request": 27
+          }
+        ],
+        "peakConcurrent": 1,
+        "maxPromptChars": 15976,
+        "maxOutputTokens": 24000
+      },
+      "publications": 0
+    },
+    {
+      "id": "projects-STPA-32-cancel-resume",
+      "area": "projects",
+      "method": "STPA",
+      "interfaces": 32,
+      "operationalContexts": 3,
+      "guidePhrases": 7,
+      "assessments": 672,
+      "status": "passed",
+      "completionPassed": true,
+      "elapsedMs": 1032.8000000715256,
+      "maxEventLoopGapMs": 72.89999997615814,
+      "maxProbeLatencyMs": 356,
+      "probeFailures": 0,
+      "peakHeapBytes": 115755366,
+      "assumptionFallbackRows": 0,
+      "requests": {
+        "total": 316,
+        "byWorkflow": {
+          "chat": 1,
+          "hazard-row-generation": 171,
+          "hazard-safety-audit": 56,
+          "hazard-applicability-pattern-repair": 84,
+          "hazard-canonical-catalog": 1,
+          "hazard-canonical-mapping": 3
+        },
+        "injected": [],
+        "peakConcurrent": 2,
+        "maxPromptChars": 60926,
+        "maxOutputTokens": 12000
+      },
+      "publications": 7,
+      "reusedCommittedAssessments": 16,
+      "repeatedCommittedAssessmentIds": []
+    },
+    {
+      "id": "projects-HARA-32-cancel-resume",
+      "area": "projects",
+      "method": "HARA",
+      "interfaces": 32,
+      "operationalContexts": 3,
+      "guidePhrases": 7,
+      "assessments": 672,
+      "status": "passed",
+      "completionPassed": true,
+      "elapsedMs": 1338.7000000476837,
+      "maxEventLoopGapMs": 71.60000002384186,
+      "maxProbeLatencyMs": 162,
+      "probeFailures": 0,
+      "peakHeapBytes": 127905885,
+      "assumptionFallbackRows": 0,
+      "requests": {
+        "total": 476,
+        "byWorkflow": {
+          "chat": 1,
+          "hazard-row-generation": 331,
+          "hazard-safety-audit": 56,
+          "hazard-applicability-pattern-repair": 84,
+          "hazard-canonical-catalog": 1,
+          "hazard-canonical-mapping": 3
+        },
+        "injected": [],
+        "peakConcurrent": 2,
+        "maxPromptChars": 61120,
+        "maxOutputTokens": 12000
+      },
+      "publications": 8,
+      "reusedCommittedAssessments": 16,
+      "repeatedCommittedAssessmentIds": []
+    },
+    {
+      "id": "code-STPA-32-cancel-resume",
+      "area": "code",
+      "method": "STPA",
+      "interfaces": 32,
+      "operationalContexts": 3,
+      "guidePhrases": 7,
+      "assessments": 672,
+      "status": "passed",
+      "completionPassed": true,
+      "elapsedMs": 2762.4000000953674,
+      "maxEventLoopGapMs": 54.89999997615814,
+      "maxProbeLatencyMs": 93,
+      "probeFailures": 0,
+      "peakHeapBytes": 121637515,
+      "assumptionFallbackRows": 0,
+      "requests": {
+        "total": 72,
+        "byWorkflow": {
+          "chat": 1,
+          "hazard-row-generation": 55,
+          "hazard-applicability-screen": 16
+        },
+        "injected": [],
+        "peakConcurrent": 4,
+        "maxPromptChars": 14445,
+        "maxOutputTokens": 24000
+      },
+      "publications": 0,
+      "reusedCommittedAssessments": 1,
+      "repeatedCommittedAssessmentIds": []
+    },
+    {
+      "id": "code-HARA-32-cancel-resume",
+      "area": "code",
+      "method": "HARA",
+      "interfaces": 32,
+      "operationalContexts": 3,
+      "guidePhrases": 7,
+      "assessments": 672,
+      "status": "passed",
+      "completionPassed": true,
+      "elapsedMs": 3635.600000023842,
+      "maxEventLoopGapMs": 51,
+      "maxProbeLatencyMs": 109,
+      "probeFailures": 0,
+      "peakHeapBytes": 124430574,
+      "assumptionFallbackRows": 0,
+      "requests": {
+        "total": 72,
+        "byWorkflow": {
+          "chat": 1,
+          "hazard-row-generation": 55,
+          "hazard-applicability-screen": 16
+        },
+        "injected": [],
+        "peakConcurrent": 4,
+        "maxPromptChars": 15984,
+        "maxOutputTokens": 24000
+      },
+      "publications": 0,
+      "reusedCommittedAssessments": 1,
+      "repeatedCommittedAssessmentIds": []
+    }
+  ]
+}

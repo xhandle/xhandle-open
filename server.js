@@ -40,6 +40,8 @@ const {
 const { classifyAITransportError } = require("./server/aiTransportErrors");
 const {requestGeminiMessageStream,pipeGeminiSseToClient}=require('./server/geminiStreaming');
 const { createAIRequestMetrics } = require("./server/aiRequestMetrics");
+const { withOrganizationPromptContext, decodeOrganizationContext } = require('./server/organizationPromptContext');
+const { ORGANIZATION_CONTEXT_HEADER } = require('./src/lib/organizationPromptPolicy');
 const { claudeResponseText, claudeRecoveryPayload } = require('./server/claudeResponseRecovery');
 const { spawn, spawnSync } = require("child_process");
 
@@ -60,7 +62,8 @@ const CORS_ALLOWED_HEADERS = [
   "x-ai-provider",
   "x-ai-api-key",
   "x-ai-model",
-  "x-ai-effort"
+  "x-ai-effort",
+  ORGANIZATION_CONTEXT_HEADER
 ];
 const configuredCorsOrigins = String(process.env.CORS_ALLOWED_ORIGINS || "")
   .split(",")
@@ -594,7 +597,7 @@ app.post("/api/rt/session", llmLimiter, async (req, res) => {
           type: "realtime",
           model: OPENAI_REALTIME_MODEL,
           output_modalities: ["audio"],
-          instructions: sessionInstructions,
+          instructions: [decodeOrganizationContext(req.header(ORGANIZATION_CONTEXT_HEADER)), sessionInstructions].filter(Boolean).join('\n\n'),
           audio: {
             input: {
               noise_reduction: {
@@ -2344,13 +2347,15 @@ app.post(["/api/chat", "/api/chatgpt", "/chat"], llmLimiter, async (req, res) =>
     const requestEffort = resolveAIRequestEffort(requestBody, req.header("x-ai-effort"));
     const body = requestEffort ? { ...requestBody, effort: requestEffort } : requestBody;
     const provider = resolved.provider;
-    const messages = Array.isArray(body.messages)
+    const taskMessages = Array.isArray(body.messages)
       ? normalizeChatMessages(body.messages, { preserveMultimodal: true })
       : (typeof body.prompt === "string" ? [{ role: "user", content: body.prompt }] : []);
 
-    if (messages.length === 0) {
+    if (taskMessages.length === 0) {
       return res.status(400).json({ error: "Provide messages[] or prompt" });
     }
+
+    const messages = withOrganizationPromptContext(taskMessages, req.header(ORGANIZATION_CONTEXT_HEADER));
 
     const stream = body.stream === true;
     const model = resolved.model || AI_PROVIDERS[provider]?.defaultModel;
@@ -2551,10 +2556,10 @@ app.post("/api/openai", llmLimiter, async (req, res) => {
     const completion = await openai.chat.completions.create({
       model,
       temperature,
-      messages: [
+      messages: withOrganizationPromptContext([
         { role: "system", content: "You are a precise, structured systems engineering assistant." },
         { role: "user", content: prompt },
-      ],
+      ], req.header(ORGANIZATION_CONTEXT_HEADER)),
     });
 
     const result = completion?.choices?.[0]?.message?.content?.trim() || "";

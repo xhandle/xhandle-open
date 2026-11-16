@@ -1,0 +1,19 @@
+# Implement traceability profiles and the Traceability Matrix artifact
+
+Work in the current xHandle workspace and implement `docs/design/traceability-profiles-and-matrix.md`. Preserve unrelated working-tree changes and existing source evidence, generation, acceptance and desktop boundaries. Do not commit, push or publish a release.
+
+Build a complete usable workflow:
+
+1. A built-in, versioned xHandle Systems Engineering profile. Users can duplicate it, create custom rules and publish immutable versions. Provide synchronized Rules and Scheme diagram presentations and import/export. Validate role/type/direction, coverage alternatives, cardinality and contradictory rules.
+2. Project selection of a pinned profile version and explicit role bindings. Matrix creation inherits the project profile or labels an explicit override. Changing rules/profile versions previews the impact and preserves old assessments and links.
+3. A Traceability Matrix choice in engineering artifact creation, stored in the Design library, with deterministic evaluation, saved assessment revisions, historical inspection and exports. Include objects with no links and explicitly report unavailable artifacts, drafts and empty populations. Support coverage and pairwise presentations, searchable multiselect column filters, adjustable widths, pagination and navigation to original objects.
+4. Canonical typed engineering relationships with exact object identities, review state, rationale and revision/content identity. Validate all writes through one service against the selected profile and scope. Preserve original citations as provenance. Never infer satisfaction, mitigation or successful verification from a generic refines/source link. Changed evidence makes reviewed links suspect; historic snapshots remain reproducible. Explicit, reviewed exclusions retain their rationale and are counted separately.
+5. Use consolidated HTRs for hazard obligations and retain drill-through to original assessment provenance. Reuse existing artifact and architecture source adapters. Missing integrations must be visible as unassessed, not invented evidence or 100% coverage. Support alternative parent paths and stage-specific obligations without forcing artificial subsystem layers.
+6. Keep large projects responsive with sparse indexes, bounded asynchronous evaluation, progress/cancellation and paginated rendering. Avoid loading all original hazard assessments or computing an entire object cross-product to display a page.
+7. Integrate profile/matrix controls in Design Management and project workflows. Reuse existing modal footer and filter components. Preserve review/approval meanings; AI-proposed relationships need explicit review and rule validation.
+
+Inspect and extend current storage, backup/restore, search, export, project traceability and Collaborator contracts rather than creating disconnected state. Keep module/source identities and existing historic revisions stable. Validate concurrency, imported data and profile changes. Explain unsupported capabilities honestly.
+
+Add meaningful tests for default/custom profiles, source/target direction, OR versus AND coverage, cardinality, scoped roles, forbidden links, draft/confirmed/suspect states, exclusions, unavailable/empty populations, persistence, pinned assessments, imports, concurrency, UI filters and project selection. Run relevant regressions and a production build. Run real browser and isolated Electron workflows with synthetic fixtures and a representative large HTL/code-project scope; use controlled AI only where needed, avoiding real customer data or paid provider requests. Record evidence, limitations and measured responsiveness. Refresh the idle isolated preview safely after validation.
+
+Implement and verify the work; do not stop after writing a plan.

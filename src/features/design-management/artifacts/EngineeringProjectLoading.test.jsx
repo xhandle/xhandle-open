@@ -27,7 +27,7 @@ test('shows the existing spinning logo and real 0–100 stage progress, and defe
   await click('Traceability'); expect(pending).toHaveLength(2); expect(pending[1].options.trace).toBe(true);
   expect(host.querySelector('[role=progressbar]')).not.toBeNull();
   await act(async () => pending[1].resolve({ nodes: [], links: [], gaps: [] }));
-  expect(host.textContent).toContain('0 nodes · 0 links');
+  expect(host.textContent).toContain('No recorded traceability.');
 });
 test('project switches cancel old work and ignore late progress/results', async () => {
   await act(async () => root.render(<EngineeringProjectEditor id="Old" />));

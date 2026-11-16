@@ -42,3 +42,17 @@ test.each(['functional', 'csc'])('%s artifacts use the Projects canvas, preservi
     expect(onSelect).toHaveBeenCalledWith('target');
   } finally { act(() => root.unmount()); }
 });
+
+test('paged original relationships focus and inspect their original aggregate evidence', async () => {
+  const host = document.createElement('div'), root = createRoot(host), onSelect = jest.fn();
+  const other = { ...node, id: 'controller', label: 'Controller', displayArchitecture: { ...node.displayArchitecture, csc: 'Controller' } };
+  const diagram = { id: 'page', abstraction: 'csc', displayOwners: { 'original-edge': 'bundle' }, snapshot: {
+    nodes: [node, other], edges: [{ id: 'original-edge', from: node.id, to: other.id, label: 'Start' }],
+  } };
+  try {
+    await act(async () => root.render(<NativeCodeArchitectureDiagram diagram={diagram} editable focusId="bundle" onSelect={onSelect} />));
+    const props = mockProps.at(-1);
+    expect(props.focusId).toBe('original-edge');
+    props.onSelect('original-edge'); expect(onSelect).toHaveBeenCalledWith('bundle');
+  } finally { act(() => root.unmount()); }
+});

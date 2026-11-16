@@ -2,12 +2,11 @@ export const CANONICAL_PROJECT_HAZARD_METHOD = "STPA-Textbook";
 
 export function normalizeProjectHazardMethod(value) {
   const normalized = String(value || "").trim().toLowerCase().replace(/[\s_]+/g, "-");
+  if (["hara", "hara-(iso-26262)", "iso-26262-hara"].includes(normalized)) return 'HARA';
   if (["stpa", "stpa-textbook", "stpa-(textbook)"].includes(normalized)) {
     return CANONICAL_PROJECT_HAZARD_METHOD;
   }
-  // STPA is currently the only selectable project-hazard method. Treat stale,
-  // imported, or malformed values as STPA instead of silently producing one
-  // blank generic variant per interface.
+  // Unknown legacy values still resolve to the established Projects default.
   return CANONICAL_PROJECT_HAZARD_METHOD;
 }
 

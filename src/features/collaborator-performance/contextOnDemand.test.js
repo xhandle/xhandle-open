@@ -48,6 +48,19 @@ test('validates direct answer, mixed domains and user-authored follow-up referen
   expect(parseContextTurn('{"kind":"workspace_read","areas":["requirements"],"reference":"SWR-1"}',{history}).reference).toBe('SWR-1');
 });
 
+test('general and CBA follow-up choices preserve the conversation protocol without authorizing actions', async () => {
+  const choices = { question: 'Which view would you prefer?', options: ['Table', 'Document'] };
+  expect(parseContextTurn(JSON.stringify({ kind: 'clarify', text: choices.question, choices }))).toEqual({ kind: 'clarify', text: choices.question, choices });
+  const requestRepair = jest.fn().mockResolvedValue(JSON.stringify({ kind: 'clarify', text: choices.question, choices }));
+  const invalid = JSON.stringify({ kind: 'clarify', text: choices.question, choices: { ...choices, options: [{ label: 'Execute', actions: ['delete'] }, 'Cancel'] } });
+  const response = await resolveContextResponse({ response: invalid, messages: [], requestRepair });
+  expect(response.choices).toEqual(choices); expect(requestRepair).toHaveBeenCalledTimes(1);
+  expect(() => parseContextTurn(JSON.stringify({ kind: 'execute', choices }))).toThrow();
+  const messages = contextTurnMessages({ userText: 'Choose for me.', history: [{ role: 'assistant', content: choices.question,
+    choicePrompt: { type: 'follow-up', question: choices.question, options: [{ value: 'table', label: 'Table' }, { value: 'document', label: 'Document' }] } }], view: { kind: 'code-architecture' } });
+  expect(messages[1].content).toContain('Table'); expect(messages[1].content).toContain('Document');
+});
+
 test('a redundant current-project reference does not break the lookup or alter its query', () => {
   const raw = '{"kind":"workspace_read","areas":["projects","functional","cba"],"reference":"VulnerableApp"}';
   expect(parseContextTurn(raw, {userText:'summarize the vulnerableapp project'})).toEqual({kind:'workspace_read',areas:['projects','functional','cba'],reference:''});

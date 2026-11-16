@@ -16,7 +16,8 @@ test('production chat route streams all three providers and returns correlated s
       child.on('message',value=>{message=value;});child.on('error',reject);
       child.on('exit',code=>code===0&&message?.ok?resolve(message):reject(Error(message?.error||diagnostic||'Fixture exited '+code)));
     });
-    assert.equal(result.output.length,3);
+    assert.equal(result.output.length,6);
+    assert.equal(result.output.filter(value=>value.profileEnabled).length,3);
     console.log(JSON.stringify(result.output.map(({provider,firstOutputMs,completeMs})=>({provider,firstOutputMs,completeMs}))));
   } finally {child?.kill();rmSync(cwd,{recursive:true,force:true});}
 });

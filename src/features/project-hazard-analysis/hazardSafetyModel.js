@@ -1,3 +1,5 @@
+import { sha256 } from 'hash.js';
+
 const text = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
 
 const normalized = (value) => text(value).toLowerCase();
@@ -13,6 +15,11 @@ function hashText(value) {
 }
 
 export function createSafetyModelId(prefix, value) {
+  // Raw assessments grow into tens of thousands of records. The legacy 32-bit
+  // display hash collided between distinct interfaces/guide phrases in a
+  // 31,500-row run. Keep concept IDs compatible; use a wider digest for new raw
+  // identities. Existing saved identities are never rewritten here.
+  if (prefix === 'RAW') return `RAW-${sha256().update(normalized(value)).digest('hex').slice(0, 24).toUpperCase()}`;
   return `${prefix}-${hashText(value)}`;
 }
 

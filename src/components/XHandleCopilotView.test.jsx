@@ -1,4 +1,8 @@
-jest.mock("react-markdown", () => function ReactMarkdownMock({ children }) {
+jest.mock("react-markdown", () => function ReactMarkdownMock({ children, components }) {
+  if (global.__testCollaboratorReviewTable && String(children).includes('REVIEW_FIXTURE')) {
+    const Table = components.table, Cell = components.td;
+    return <Table><tbody><tr><Cell><a href="#review-fixture">Review object</a></Cell></tr></tbody></Table>;
+  }
   return <div>{children}</div>;
 });
 global.TextDecoder = global.TextDecoder || require("node:util").TextDecoder;
@@ -30,6 +34,7 @@ const {
   captureSelectionAsImage,
   CollaboratorComposerMenu,
   CollaboratorPromptComposer,
+  CollaboratorChoicePrompt,
   collaboratorClipboardHtmlToMarkdown,
   FunctionalVibeReviewRecoveryCard,
   FunctionalVibeReviewCard,
@@ -2113,5 +2118,104 @@ it("attaches a selected image to the current Collaborator composer immediately",
     host.remove();
     global.crypto = previousCrypto;
     modelLookup.mockRestore();
+  }
+});
+
+it('keeps saved review tables read-only and preserves their DOM during a context rerender', async () => {
+  require('./utils/copilotContextBus').popAllRegionContext.mockReturnValue([]);
+  const threads = require('./copilotThreads');
+  const previous = threads.loadThreads();
+  const previousCrypto = global.crypto;
+  global.crypto = require('node:crypto').webcrypto;
+  const modelLookup = jest.spyOn(require('../lib/aiProviderConfig'), 'fetchProviderModelRecords').mockResolvedValue([]);
+  const Copilot = require('./XHandleCopilotView').default;
+  const host = document.createElement('div'); document.body.appendChild(host);
+  const root = createRoot(host);
+  global.__testCollaboratorReviewTable = true;
+  threads.saveThreads([{ id: 'review-stability', title: 'Review list', createdAt: Date.now(), updatedAt: Date.now(), messages: [
+    { role: 'user', content: 'Which items require review?' },
+    { role: 'assistant', content: 'REVIEW_FIXTURE', designReviewResult: { target: { kind: 'artifact', id: 'doc', draft: true }, version: 'draft:1', nextOffset: null } },
+  ] }]);
+  try {
+    await act(async () => root.render(<Copilot docked />));
+    const table = host.querySelector('table');
+    expect(table).not.toBeNull(); expect(table.querySelector('[contenteditable]')).toBeNull();
+    await act(async () => root.render(<Copilot docked appFocus={{ section: 'requirements', design: { title: 'Safety Requirements' } }} />));
+    expect(host.querySelector('table')).toBe(table);
+    expect(host.querySelector('table a').textContent).toBe('Review object');
+    act(() => host.querySelector('table a').dispatchEvent(new FocusEvent('focusout', { bubbles: true })));
+    expect(threads.loadThreads().find(row => row.id === 'review-stability').messages[1].content).toBe('REVIEW_FIXTURE');
+  } finally {
+    act(() => root.unmount()); host.remove(); threads.saveThreads(previous);
+    delete global.__testCollaboratorReviewTable;
+    global.crypto = previousCrypto; modelLookup.mockRestore();
+  }
+});
+
+it('renders follow-up options and requires text for Something else before sending an answer', async () => {
+  const { normalizeFollowUpChoices, SOMETHING_ELSE } = require('../features/collaborator-choices/followUpChoices');
+  const host = document.createElement('div'); document.body.appendChild(host); const root = createRoot(host);
+  const message = { messageIndex: 4, choicePrompt: { ...normalizeFollowUpChoices({ question: 'Which view would you prefer?', options: ['Table', 'Document'] }), id: 'question-1' } };
+  const onContinue = jest.fn();
+  try {
+    act(() => root.render(<CollaboratorChoicePrompt message={message} onContinue={onContinue} />));
+    const radios = host.querySelectorAll('input[type="radio"]'); expect(radios).toHaveLength(3);
+    expect(host.querySelector('button').disabled).toBe(true);
+    act(() => radios[0].click()); expect(host.querySelector('button').disabled).toBe(false);
+    await act(async () => host.querySelector('button').click());
+    expect(onContinue).toHaveBeenLastCalledWith('option-1', 4, '', 'question-1');
+    act(() => radios[2].click()); expect(host.querySelector('button').disabled).toBe(true);
+    const textbox = host.querySelector('textarea[aria-label="Something else"]'); expect(textbox).not.toBeNull();
+    act(() => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(textbox, 'Compare both views side by side.'); textbox.dispatchEvent(new Event('input', { bubbles: true })); });
+    await act(async () => host.querySelector('button').click());
+    expect(onContinue).toHaveBeenLastCalledWith(SOMETHING_ELSE, 4, 'Compare both views side by side.', 'question-1');
+    act(() => root.render(<CollaboratorChoicePrompt message={{ ...message, choicePrompt: { ...message.choicePrompt, completed: true, selectedValue: SOMETHING_ELSE, customValue: 'Compare both views side by side.' } }} onContinue={onContinue} />));
+    expect(host.querySelector('fieldset').disabled).toBe(true); expect(host.querySelector('textarea').value).toBe('Compare both views side by side.');
+  } finally { act(() => root.unmount()); host.remove(); }
+});
+
+it('adds Something else to guided option questions and shows retryable submission errors inline', async () => {
+  const host = document.createElement('div'); document.body.appendChild(host); const root = createRoot(host);
+  const onContinue = jest.fn().mockRejectedValueOnce(Error('This question is no longer pending.')).mockResolvedValueOnce();
+  try {
+    act(() => root.render(<CollaboratorChoicePrompt message={{ ...buildFunctionalAbstractionChoiceMessage(), messageIndex: 2 }} onContinue={onContinue} />));
+    expect(host.querySelectorAll('input[type="radio"]')).toHaveLength(5);
+    expect(host.textContent).toContain('Something else');
+    await act(async () => host.querySelector('button').click());
+    expect(host.querySelector('[role="alert"]').textContent).toContain('no longer pending');
+    expect(host.querySelector('button').disabled).toBe(false);
+  } finally { act(() => root.unmount()); host.remove(); }
+});
+
+it.each([false, true])('continues a follow-up once using the selected answer (custom=%s)', async custom => {
+  require('./utils/copilotContextBus').popAllRegionContext.mockReturnValue([]);
+  const { normalizeFollowUpChoices } = require('../features/collaborator-choices/followUpChoices');
+  const threads = require('./copilotThreads'); const previous = threads.loadThreads();
+  const previousCrypto = global.crypto; global.crypto = require('node:crypto').webcrypto;
+  const models = jest.spyOn(require('../lib/aiProviderConfig'), 'fetchProviderModelRecords').mockResolvedValue([]);
+  const transport = jest.spyOn(require('../features/collaborator-performance/chatTransport'), 'requestCollaboratorChat').mockResolvedValue({ text: JSON.stringify({ kind: 'answer', text: 'The follow-up answer was received.' }), finishReason: 'stop' });
+  const Copilot = require('./XHandleCopilotView').default;
+  const prompt = { ...normalizeFollowUpChoices({ question: 'Which presentation would you prefer?', options: ['Table', 'Document'] }), id: 'pending-follow-up', originalPrompt: 'Help me choose a presentation.' };
+  threads.saveThreads([{ id: 'follow-up-test', title: 'Follow-up test', createdAt: Date.now(), updatedAt: Date.now(), messages: [{ role: 'user', content: prompt.originalPrompt }, { role: 'assistant', content: prompt.question, choicePrompt: prompt }] }]);
+  const host = document.createElement('div'); document.body.appendChild(host); const root = createRoot(host);
+  try {
+    await act(async () => root.render(<Copilot docked />));
+    const fieldset = host.querySelector('fieldset'); const radios = fieldset.querySelectorAll('input[type="radio"]');
+    act(() => radios[custom ? 2 : 0].click());
+    if (custom) {
+      const textarea = fieldset.querySelector('textarea');
+      act(() => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(textarea, 'Explain the tradeoffs instead.'); textarea.dispatchEvent(new Event('input', { bubbles: true })); });
+    }
+    await act(async () => { fieldset.querySelector('button').click(); fieldset.querySelector('button').click(); await new Promise(resolve => setTimeout(resolve, 20)); });
+    for (let attempt = 0; attempt < 15 && !host.textContent.includes('The follow-up answer was received.'); attempt++) await act(async () => new Promise(resolve => setTimeout(resolve, 20)));
+    expect(transport).toHaveBeenCalledTimes(1);
+    const data = JSON.stringify(transport.mock.calls[0][0]); expect(data).toContain(custom ? 'Explain the tradeoffs instead.' : 'Table'); expect(data).toContain(prompt.question);
+    const saved = threads.loadThreads().find(row => row.id === 'follow-up-test');
+    expect(saved.messages[1].choicePrompt.completed).toBe(true);
+    expect(saved.messages.filter(row => row.role === 'user')).toHaveLength(2);
+    expect(saved.messages.at(-1).content).toContain('follow-up answer was received');
+    expect(saved.messages.some(row => row.workspaceActionResult?.applied)).toBe(false);
+  } finally {
+    act(() => root.unmount()); host.remove(); threads.saveThreads(previous); global.crypto = previousCrypto; models.mockRestore(); transport.mockRestore();
   }
 });

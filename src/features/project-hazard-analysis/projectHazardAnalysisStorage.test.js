@@ -1,8 +1,3 @@
-jest.mock("idb", () => ({
-  __esModule: true,
-  openDB: jest.fn(),
-}));
-
 import { openDB } from "idb";
 import { installFakeIndexedDb } from "./testSupport/fakeIndexedDb";
 import {
@@ -18,9 +13,15 @@ import {
   restoreHazardAnalysisRevision,
   saveHazardAnalysis,
   saveProjectHazardAnalysisRecord,
+  switchProjectHazardMethod,
 } from "./projectHazardAnalysisStorage";
 
 import { planHazardAnalysisCsvImport, applyHazardAnalysisCsvImport, applyHazardCsvImportToDrafts } from "./hazardAnalysisCsv";
+
+jest.mock("idb", () => ({
+  __esModule: true,
+  openDB: jest.fn(),
+}));
 
 const analysis = (label, rows = 1) => ({
   Summary: [["Hazard"], ...Array.from({ length: rows }, (_, index) => [`${label}-${index}`])],
@@ -41,6 +42,55 @@ beforeEach(() => {
 const headOf = (projectId = "project-1") => getDb()._dump("analyses")[projectId];
 const revisionsOf = (projectId = "project-1") =>
   getDb()._rows("analysisRevisions").filter((entry) => entry.projectId === projectId);
+
+test('legacy JSON signatures migrate without duplicating an identical revision or losing a pin', async () => {
+  const content = { analysisResult: analysis('legacy'), draftHazardRowsByIndex: {}, riskRegister: [] };
+  await getDb().put('analyses', { projectId: 'project-1', ...content, revision: 7, contentSignature: JSON.stringify(content) });
+  await getDb().put('analysisRevisions', { projectId: 'project-1', ...content, revision: 7, key: 'project-1::0000000007', pinned: true });
+  const saved = await saveHazardAnalysis('project-1', content);
+  expect(saved.outcome).toBe(HAZARD_WRITE_OUTCOME.UNCHANGED);
+  expect(headOf().revision).toBe(7);
+  expect(headOf().contentSignature).toMatch(/^sha256-tree-v1:[a-f0-9]{64}$/);
+  expect(revisionsOf()).toHaveLength(1);
+  expect(revisionsOf()[0].pinned).toBe(true);
+});
+
+describe('independent method analyses', () => {
+  it('does not replace an edit that committed while a method-change snapshot was waiting', async () => {
+    await saveHazardAnalysis('project-1',{method:'STPA-Textbook',analysisResult:analysis('before edit')});
+    await saveHazardAnalysis('project-1',{method:'STPA-Textbook',analysisResult:analysis('edited')},{reason:'manual-cell-edit'});
+    await switchProjectHazardMethod('project-1','STPA-Textbook','HARA',{analysisResult:analysis('before edit')},1);
+    await switchProjectHazardMethod('project-1','HARA','STPA-Textbook',{},headOf().revision);
+    expect(headOf().analysisResult).toEqual(analysis('edited'));
+  });
+  it('keeps the active method and analysis if a method switch head write fails', async () => {
+    await saveHazardAnalysis('project-1',{method:'STPA-Textbook',analysisResult:analysis('STPA')});
+    getDb()._failures.set('analyses:put',Object.assign(new Error('Storage quota reached'),{name:'QuotaExceededError'}));
+    const result=await switchProjectHazardMethod('project-1','STPA-Textbook','HARA');
+    expect(result.status).toBe('quota'); expect(headOf().method).toBe('STPA-Textbook');
+    expect(headOf().analysisResult).toEqual(analysis('STPA'));
+  });
+  it('round trips STPA and HARA, including pending draft edits and risk registers', async () => {
+    await saveHazardAnalysis('project-1', {method:'STPA-Textbook',analysisResult:analysis('STPA'),riskRegister:[{id:'stpa-risk'}]});
+    const switched = await switchProjectHazardMethod('project-1','STPA-Textbook','HARA', {analysisResult:analysis('STPA edited'),draftHazardRowsByIndex:{pending:{row:['edit']}}},1);
+    expect(switched.status).toBe('ok'); expect(headOf().analysisResult).toBeNull();
+    await saveHazardAnalysis('project-1', {method:'HARA',analysisResult:analysis('HARA'),draftHazardRowsByIndex:{hara:{row:['HARA']}}});
+    await switchProjectHazardMethod('project-1','HARA','STPA-Textbook',{},headOf().revision);
+    expect(headOf()).toMatchObject({method:'STPA-Textbook',analysisResult:analysis('STPA edited'),draftHazardRowsByIndex:{pending:{row:['edit']}},riskRegister:[{id:'stpa-risk'}]});
+    await switchProjectHazardMethod('project-1','STPA-Textbook','HARA',{},headOf().revision);
+    expect(headOf()).toMatchObject({method:'HARA',analysisResult:analysis('HARA'),draftHazardRowsByIndex:{hara:{row:['HARA']}}});
+    const history = await listHazardAnalysisRevisions('project-1');
+    expect(history.revisions.every(entry => entry.recordType !== 'method-snapshot')).toBe(true);
+  });
+  it('rejects an old method autosave after switching and removes method snapshots when deleting', async () => {
+    await saveHazardAnalysis('project-1',{method:'STPA-Textbook',analysisResult:analysis('STPA')});
+    await switchProjectHazardMethod('project-1','STPA-Textbook','HARA');
+    const stale = await saveHazardAnalysis('project-1',{method:'STPA-Textbook',analysisResult:analysis('stale')});
+    expect(stale.outcome).toBe('stale'); expect(headOf().method).toBe('HARA');
+    await deleteProjectHazardAnalysisRecord('project-1');
+    expect(revisionsOf()).toHaveLength(0);
+  });
+});
 
 describe("persisting the analysis", () => {
   it("stores the analysis, draft rows, and risks together", async () => {

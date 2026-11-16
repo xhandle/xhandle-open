@@ -56,6 +56,4 @@
 .natural-language-design .artifact-header .artifact-eyebrow { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .design-toolbar > div:first-child { padding:2px; }
 .design-toolbar > div:first-child button { padding:4px 8px; font-size:12px; }
-@media (max-width:1000px) {
-  .natural-language-design .artifact-header { grid-template-columns:minmax(0,1fr); }
-}
+.natural-language-design .artifact-overflow { max-width:min(260px,40vw); }

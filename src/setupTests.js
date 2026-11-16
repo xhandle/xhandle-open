@@ -11,3 +11,5 @@ jest.mock("./features/code-architecture-hazard-analysis/createHazardRowsWorker",
 jest.mock("./features/code-architecture-hazard-analysis/createHazardCsvImportWorker", () => ({__esModule:true,default:()=>{throw new Error("Provide a CSV worker mock for this DOM test.");}}));
 jest.mock("./features/workspace-graph/createWorkspaceGraphWorker", () => ({__esModule:true,default:()=>{throw new Error("Provide a workspace index worker mock for this DOM test.");}}));
 jest.mock('./features/workspace-graph/createWorkspaceReadWorker',()=>({__esModule:true,default:()=>{throw new Error('Provide a workspace read worker mock for this DOM test.');}}));
+
+jest.mock('./lib/createHazardStorageWorker', () => ({ __esModule: true, default: jest.fn(() => { throw new Error('Provide a hazard storage worker mock for this DOM test.'); }) }));

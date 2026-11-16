@@ -1,3 +1,4 @@
+import { createMatrix, assessMatrix, saveAssessment } from '../traceability/traceabilityRepository';
 import * as generationBudgets from './generationBudget';
 import { briefGroups } from './generationBrief';
 import 'fake-indexeddb/auto';
@@ -37,11 +38,34 @@ afterEach(() => jest.restoreAllMocks());
 
 test('plans selected types and repeated instances in dependency order with explicit owners', () => {
   const plan = planEngineeringProject({ ...input(), artifacts: ARTIFACT_TEMPLATES.filter(t => t.id !== 'architecture').map(template => ({ templateId: template.id, subsystem: 'Control', endpointA: 'Control', endpointB: 'Sensor' })).concat([{ templateId: 'subsystem-spec', subsystem: 'Sensor' }]) });
-  expect(plan.members).toHaveLength(9);
-  expect(plan.members.map(member => member.config.templateId)).toEqual(['conops', 'hazard-tracking-list', 'safety-requirements', 'system-spec', 'subsystem-spec', 'subsystem-spec', 'system-design', 'subsystem-design', 'interface-spec']);
-  expect(plan.members[8].dependsOn).toHaveLength(8);
+  expect(plan.members).toHaveLength(11);
+  expect(plan.members.map(member => member.config.templateId)).toEqual(['conops', 'hazard-tracking-list', 'safety-requirements', 'system-spec', 'software-spec', 'hardware-spec', 'subsystem-spec', 'subsystem-spec', 'system-design', 'subsystem-design', 'interface-spec']);
+  expect(plan.members[10].dependsOn).toHaveLength(9);
+  const htl = plan.members.find(member => member.config.templateId === 'hazard-tracking-list'), safety = plan.members.find(member => member.config.templateId === 'safety-requirements'), software = plan.members.find(member => member.config.templateId === 'software-spec');
+  expect(safety.dependsOn).toEqual([htl.id]); expect(software.dependsOn).toEqual([plan.members.find(member => member.config.templateId === 'system-spec').id]);
   expect(plan.ownerProjects).toEqual(owners);
   expect(plan.projectId).not.toBe('p');
+});
+test('software and hardware specifications use upstream allocations and publish with project traceability', async () => {
+  const id = await createEngineeringProject({ ...input(), artifacts: [{ templateId: 'hardware-spec' }, { templateId: 'software-spec' }, { templateId: 'system-spec' }] });
+  await generateEngineeringProject(id, { request });
+  let { records } = await loadEngineeringProject(id);
+  expect(records.map(record => record.meta.templateId)).toEqual(['system-spec', 'software-spec', 'hardware-spec']);
+  const [system, software, hardware] = records;
+  expect(system.meta.dependsOn).toEqual([]);
+  expect(software.meta.dependsOn).toEqual([system.meta.id]);
+  expect(hardware.meta.dependsOn).toEqual([system.meta.id]);
+  expect(software.job.sources.entries.some(source => source.sourceType === 'artifact-object' && source.artifactId === system.meta.id)).toBe(true);
+  expect(hardware.job.sources.entries.some(source => source.sourceType === 'artifact-object' && source.artifactId === system.meta.id)).toBe(true);
+  await accept(id);
+  const accepted = await loadEngineeringProject(id); records = accepted.records;
+  expect(records.every(record => record.meta.revision === 1 && !record.job)).toBe(true);
+  const graph = engineeringProjectTrace(accepted.program, records);
+  for (const record of records.slice(1)) expect(graph.links.some(link => link.type === 'refines' && link.from.startsWith(record.meta.id) && link.to.startsWith(system.meta.id))).toBe(true);
+  for (const record of [software, hardware]) {
+    expect(record.job.sources.entries.filter(source => source.sourceType !== 'project').every(source => source.templateId === 'system-spec')).toBe(true);
+    expect(record.job.sources.entries.some(source => source.sourceType === 'architecture-element' || source.id === 'notes')).toBe(false);
+  }
 });
 test('rejects absent ownership, conflicting assignments, empty evidence and deselected-owner notes', async () => {
   await expect(createEngineeringProject({ ...input(), owners: [] })).rejects.toThrow('owning projects');
@@ -570,4 +594,64 @@ test('failed artifact cleanup rolls back project membership and document deletio
   });
   await expect(deleteArtifact(removed.meta.id)).rejects.toThrow('Storage unavailable');
   expect(await loadEngineeringProject(id)).toEqual(before);
+});
+
+
+test('project matrices remain members while generation and acceptance process only source documents', async () => {
+  const id = await createEngineeringProject(input()), before = await loadEngineeringProject(id);
+  const matrixId = await createMatrix({ title: 'Project matrix', folderId: 'f', system: 'Mission', scopeId: id, stage: 'definition' });
+  expect((await loadEngineeringProject(id)).records.some(record => record.meta.id === matrixId)).toBe(true);
+  await saveAssessment(matrixId, await assessMatrix(matrixId));
+  const saved = (await loadArtifact(matrixId)).revision;
+  const progress = [];
+  await generateEngineeringProject(id, { request, onProgress: (message, details) => progress.push(details) });
+  expect(progress.at(-1).totalDocuments).toBe(before.program.members.length);
+  expect(progress.some(details => details.artifactId === matrixId)).toBe(false);
+  await accept(id);
+  const after = await loadEngineeringProject(id);
+  expect(after.program.state).toBe('accepted');
+  expect(after.records.filter(record => record.meta.id !== matrixId).every(record => record.meta.revision === 1)).toBe(true);
+  expect((await loadArtifact(matrixId)).revision).toEqual(saved);
+  await generateEngineeringProject(id, { request, reset: true }); await accept(id);
+  expect((await loadArtifact(matrixId)).revision).toEqual(saved);
+  localStorage.setItem('xhandle:req-projects', JSON.stringify([...JSON.parse(localStorage.getItem('xhandle:req-projects')), { id: 'outside', name: 'Outside' }]));
+  await expect(moveArtifactInLibrary(matrixId, 'outside')).rejects.toThrow('containing project artifacts');
+  await deleteEngineeringProject(id);
+  await expect(loadArtifact(matrixId)).rejects.toThrow();
+});
+
+
+test('standalone matrix creation is rejected and existing matrices can join project artifacts without rewriting history', async () => {
+  await expect(createArtifact({ templateId: 'traceability-matrix', projectId: 'p', workspaceType: 'functional', folderId: 'f', system: 'Mission', title: 'Standalone matrix', sources: [], notes: 'Some source notes' })).rejects.toThrow('project artifacts');
+  const id = await createEngineeringProject(input());
+  const matrixId = await createMatrix({ title: 'Project matrix', folderId: 'f', system: 'Mission', scopeId: id, stage: 'definition' });
+  await saveAssessment(matrixId, await assessMatrix(matrixId));
+  const saved = (await loadArtifact(matrixId)).revision;
+  // Simulate a matrix created by the earlier standalone implementation.
+  const db = await openArtifactDatabase();
+  try {
+    const tx = db.transaction(['metadata'], 'readwrite'), store = tx.objectStore('metadata');
+    const meta = await store.get(matrixId), program = await store.get(id);
+    await store.put({ ...meta, programId: undefined, config: { ...meta.config, scopeId: 'functional:p', bindings: { system: ['outside-artifact'] } } });
+    await store.put({ ...program, members: program.members.filter(member => member.id !== matrixId) }); await tx.done;
+  } finally { db.close(); }
+  await expect(assessMatrix(matrixId)).rejects.toThrow('Saved assessments are retained');
+  await addArtifactToEngineeringProject(matrixId, id);
+  const joined = await loadArtifact(matrixId);
+  expect(joined.meta.config).toMatchObject({ scopeId: id, bindings: {}, lineageSources: null });
+  expect(joined.revision).toEqual(saved);
+  await expect(assessMatrix(matrixId)).resolves.toBeDefined();
+});
+
+
+test('deleting a computed matrix leaves an active source-document generation run intact', async () => {
+  const id = await createEngineeringProject(input());
+  const matrixId = await createMatrix({ title: 'Project matrix', folderId: 'f', system: 'Mission', scopeId: id, stage: 'definition' });
+  const before = (await loadEngineeringProject(id)).program;
+  const generating = await beginEngineeringGeneration(id, before.version);
+  await deleteArtifact(matrixId);
+  const after = (await loadEngineeringProject(id)).program;
+  expect(after.state).toBe('generating'); expect(after.runToken).toBe(generating.runToken);
+  expect(after.members.some(member => member.id === matrixId)).toBe(false);
+  await finishEngineeringGeneration(generating, 'paused');
 });

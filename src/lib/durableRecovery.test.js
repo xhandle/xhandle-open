@@ -21,6 +21,20 @@ test('checkpoint survives a new connection and keeps a snapshot', async () => {
  await saved;
  expect(await recoveryRecord('decomposition:p')).toEqual({responseRows:[{controlAction:'Stop'}]});
 });
+test('native snapshots preserve shared workbook rows without retaining caller mutations', async () => {
+ const originalClone=global.structuredClone;
+ const {serialize,deserialize}=require('v8');
+ global.structuredClone=value=>deserialize(serialize(value));
+ try {
+  let stored;
+  openDB.mockImplementation(async()=>({close:jest.fn(),transaction:()=>({done:Promise.resolve(),store:{put:async value=>{stored=value;}}})}));
+  const row=['Hazard'];const sheet=[row];
+  const saved=saveRecoveryRecord('shared-workbook',{Summary:sheet,HARA:sheet});
+  row[0]='Caller edit';await saved;
+  expect(stored.Summary).toBe(stored.HARA);
+  expect(stored.Summary[0][0]).toBe('Hazard');
+ } finally { global.structuredClone=originalClone; }
+});
 test('stalled transaction aborts and rejects rather than holding queue',async()=>{
  jest.useFakeTimers();const abort=jest.fn();
  openDB.mockResolvedValue({close:jest.fn(),transaction:()=>({abort,done:Promise.resolve(),store:{put:()=>new Promise(()=>{})}})});

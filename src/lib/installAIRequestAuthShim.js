@@ -5,22 +5,28 @@ import {
   getStoredAIProviderModelPreference,
   supportsAIProviderEffort,
 } from "./aiProviderConfig";
+import { organizationPromptHeaders } from '../features/organization-profile/organizationPromptContext';
 
-const AI_ENDPOINT_RE = /\/api\/(?:chat|chatgpt|openai)(?:$|[/?#])/;
+const AI_ENDPOINT_RE = /^(?:\/api\/(?:chat|chatgpt|openai)|\/api\/rt\/session|\/chat)\/?$/;
 
 function isLocalAIRequest(input) {
-  const raw = typeof input === "string" ? input : input?.url;
+  const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input?.url;
   if (!raw) return false;
   try {
-    const url = new URL(raw, window.location.origin);
+    const current = new URL(window.location.href);
+    const url = new URL(raw, current);
     const configuredBackend =
       window.__BACKEND_URL ||
+      process.env.REACT_APP_BACKEND_URL ||
       (typeof localStorage !== "undefined" ? localStorage.getItem("backendURL") : null) ||
       "";
-    const configuredOrigin = configuredBackend ? new URL(configuredBackend, window.location.origin).origin : "";
-    const isSameOrigin = url.origin === window.location.origin;
-    const isConfiguredBackend = configuredOrigin && url.origin === configuredOrigin;
-    const isLoopbackBackend = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(url.hostname);
+    const configured = configuredBackend ? new URL(configuredBackend, current) : null;
+    // Registered Electron schemes can report a null URL.origin. Compare their
+    // protocol/host explicitly; never equate unrelated null-origin URLs.
+    const same = target => target && url.protocol === target.protocol && url.host === target.host;
+    const isSameOrigin = same(current);
+    const isConfiguredBackend = same(configured);
+    const isLoopbackBackend = /^https?:$/.test(url.protocol) && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(url.hostname);
     return (isSameOrigin || isConfiguredBackend || isLoopbackBackend) && AI_ENDPOINT_RE.test(url.pathname);
   } catch {
     return AI_ENDPOINT_RE.test(String(raw));
@@ -29,6 +35,9 @@ function isLocalAIRequest(input) {
 
 function mergeAIHeaders(init = {}) {
   const headers = new Headers(init.headers || {});
+  for (const [name, value] of Object.entries(organizationPromptHeaders({hint: typeof init.body === 'string' ? init.body.slice(0, 1600) : ''}))) {
+    if (!headers.has(name)) headers.set(name, value);
+  }
   const provider = getStoredActiveAIProvider();
   const apiKey = getStoredAIProviderApiKey(provider);
   const selectedModel = getStoredAIProviderModelPreference(provider, { includeDefault: true });
@@ -56,20 +65,12 @@ export function installAIRequestAuthShim() {
     if (!isLocalAIRequest(input)) return nativeFetch(input, init);
 
     if (input instanceof Request) {
+      // Let Request inherit its own body, signal and fetch options. Supplying
+      // input.body explicitly turns it into a new streaming body in Chromium,
+      // which requires duplex and can break otherwise valid POST requests.
       const mergedInit = mergeAIHeaders({
-        method: input.method,
-        headers: input.headers,
-        body: init.body ?? input.body,
-        mode: input.mode,
-        credentials: init.credentials ?? input.credentials,
-        cache: input.cache,
-        redirect: input.redirect,
-        referrer: input.referrer,
-        referrerPolicy: input.referrerPolicy,
-        integrity: input.integrity,
-        keepalive: input.keepalive,
-        signal: init.signal ?? input.signal,
         ...init,
+        headers: init.headers ?? input.headers,
       });
       return nativeFetch(new Request(input, mergedInit));
     }

@@ -45,7 +45,7 @@ export async function runLegacyCodeArchitectureHazardAnalysis({
   signal = null,
 } = {}) {
   if (organizationContext && !['STPA-Textbook', 'STPA_TEXTBOOK', 'STPA_TEXTBOOK_APPROACH', 'HARA', 'FHA', 'FMEA', 'FMEA-Textbook', 'FMEA_TEXTBOOK', 'FMEA_TEXTBOOK_APPROACH', 'WhatIf', 'WhatIf-Textbook', 'WHATIF_TEXTBOOK', 'WHAT_IF_TEXTBOOK', 'WHAT_IF_TEXTBOOK_APPROACH'].includes(method)) {
-    throw new Error("This legacy method does not support organization profiles. Select STPA, HARA or FHA from the Code-Based Architecture method menu.");
+    throw new Error("This legacy method does not support organization profiles. Select STPA or HARA from the Code-Based Architecture method menu.");
   }
   organizationProfileProvenance = { ...organizationProfileProvenance,
     effectiveContextIdentity: organizationProfileContextIdentity(organizationContext),

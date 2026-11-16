@@ -7,6 +7,7 @@ export async function refreshArtifactSources({ signal } = {}) {
   const captured = new Map();
   for (const meta of await listArtifacts()) {
     if (signal?.aborted) return;
+    if (meta.templateId === 'traceability-matrix') continue; // Its pinned source and relationship identities are evaluated explicitly.
     let freshness, error = null;
     try { const key = JSON.stringify(meta.config); if (!captured.has(key)) captured.set(key, captureLiveSourceHash(meta.config, { signal })); freshness = await captured.get(key) === (meta.baseSourceHash || meta.sourceHash) ? 'current' : 'stale'; if (freshness === 'current' && meta.programId && meta.revision) { const { revision } = await loadArtifact(meta.id); freshness = await engineeringDependencyStatus(meta, revision.sources); } }
     catch (e) { if (signal?.aborted) return; freshness = 'unavailable'; error = e.message; }

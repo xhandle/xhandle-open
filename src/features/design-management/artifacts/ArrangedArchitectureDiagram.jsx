@@ -86,7 +86,7 @@ export default forwardRef(function ArrangedArchitectureDiagram({ artifactId, dia
   useImperativeHandle(ref, () => ({ flush, restoreSourceLayout, getPNG: () => canvas.current?.getPNG(), isReady: () => canvas.current?.isReady() }), [flush, restoreSourceLayout]);
   const Canvas = diagram.workspaceType === 'functional' ? NativeArchitectureDiagram : NativeCodeArchitectureDiagram;
   return <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-    <div role="status" className="text-xs text-slate-500" style={{ flexShrink: 0 }}>{status || (loaded ? 'Drag elements to arrange. Select an element to resize.' : '')}{status.startsWith('Arrangement not saved:') && <button onClick={() => flush().catch(() => {})}>Retry save</button>}</div>
+    {(status.startsWith('Arrangement not saved:') || status.startsWith('Could not ')) && <div role="alert" className="text-xs text-slate-500" style={{ flexShrink: 0 }}>{status}{status.startsWith('Arrangement not saved:') && <button onClick={() => flush().catch(() => {})}>Retry save</button>}</div>}
     {!loaded && !status && <TablePreparationProgress label="Loading diagram arrangement" progress={0} />}
     {loaded && <div aria-busy={restoringLayout} inert={restoringLayout ? '' : undefined} style={{ flex: 1, minHeight: 0, pointerEvents: restoringLayout ? 'none' : undefined }}><Canvas key={canvasVersion} ref={canvas} diagram={loaded} editable onPresentationChange={change} {...props} /></div>}
   </div>;

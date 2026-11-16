@@ -3,7 +3,7 @@ import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
 import { serialize, deserialize } from 'v8';
 import { randomUUID } from 'crypto';
 import { captureSources } from './artifactSources';
-import { ARTIFACT_TEMPLATES, artifactObjectText, validateSection } from './artifactModel';
+import { ARTIFACT_TEMPLATES, CREATABLE_ARTIFACT_TEMPLATES, ENGINEERING_ARTIFACT_TYPES, artifactObjectText, getTemplate, validateSection } from './artifactModel';
 import { acceptProposal, checkpointJob, createArtifact, createBaseline, deleteArtifact, listArtifacts, listRevisions, loadArtifact, openArtifactDatabase, saveDraftObjects, saveObjects, startProposal } from './artifactRepository';
 import { generateArtifact, requestSection } from './artifactGeneration';
 import { refreshArtifactSources, startArtifactMaintenance } from './artifactMaintenance';
@@ -45,8 +45,18 @@ test('missing and malformed sources are unavailable, never treated as empty evid
   expect(() => captureSources(config)).toThrow('unavailable');
 });
 test('all required template families are versioned and scoped', () => {
-  expect(ARTIFACT_TEMPLATES.map(t => t.id)).toEqual(['conops', 'system-spec', 'subsystem-spec', 'system-design', 'subsystem-design', 'interface-spec', 'architecture', 'hazard-tracking-list', 'safety-requirements']);
+  expect(ARTIFACT_TEMPLATES.map(t => t.id)).toEqual(['conops', 'system-spec', 'subsystem-spec', 'software-spec', 'hardware-spec', 'system-design', 'subsystem-design', 'interface-spec', 'architecture', 'hazard-tracking-list', 'safety-requirements']);
   expect(ARTIFACT_TEMPLATES.every(t => t.version === 1 && t.sections.length)).toBe(true);
+});
+test('creation offers exactly six document types while saved legacy templates remain readable', () => {
+  expect(ENGINEERING_ARTIFACT_TYPES.map(template => template.name)).toEqual(['ConOps', 'Architecture', 'System Requirements Specification', 'Software Requirements Specification', 'Hardware Requirements Specification', 'Traceability Matrix']);
+  expect(CREATABLE_ARTIFACT_TEMPLATES.every(template => !template.deterministic)).toBe(true);
+  for (const id of ['subsystem-spec', 'system-design', 'subsystem-design', 'interface-spec', 'hazard-tracking-list', 'safety-requirements']) {
+    expect(CREATABLE_ARTIFACT_TEMPLATES.some(template => template.id === id)).toBe(false);
+    expect(getTemplate(id)).toMatchObject({ id, version: 1 });
+    expect(getTemplate(id).sections.length).toBeGreaterThan(0);
+  }
+  expect(getTemplate('system-spec').sections[1]).toEqual({ id: 's2', title: 'Functional requirements' });
 });
 test('validates generated identity, citation, kind and size boundaries', () => {
   const section = ARTIFACT_TEMPLATES[0].sections[0], allowed = new Set(['module:f/m:r149']);
@@ -168,6 +178,12 @@ test.each(ARTIFACT_TEMPLATES.filter(t => t.id !== 'architecture').map(template =
   if (templateId === 'safety-requirements') {
     const htl = await createArtifact({ ...config, templateId: 'hazard-tracking-list' });
     await generateArtifact(htl, { hazardIssueRequest: fixtureSafetyIssues });
+  }
+  if (['software-spec', 'hardware-spec'].includes(templateId)) {
+    const db = await openArtifactDatabase();
+    await db.put('metadata', { id: 'system-input', templateId: 'system-spec', title: 'Parent System Requirements', revision: 1, config });
+    await db.put('revisions', { id: 'system-input:1', artifactId: 'system-input', number: 1, objects: [{ id: 'system-r1', kind: 'requirement', text: 'The controller shall retain commands for review.', sourceIds: [] }] }); db.close();
+    request.mockImplementation(async ({ sources }) => ({ objects: [{ key: 'retain-commands', kind: 'requirement', title: 'Command retention', text: 'The controller shall retain commands for review.', sourceIds: [sources.entries.find(source => source.sourceType === 'artifact-object').id] }] }));
   }
   const id = await createArtifact({ ...config, templateId, subsystem: 'Command subsystem', endpointA: 'Operator station', endpointB: 'Command subsystem' });
   await generateArtifact(id, { request, hazardIssueRequest: fixtureSafetyIssues }); const { job } = await loadArtifact(id); await acceptProposal(id, 0, job.token);

@@ -25,7 +25,9 @@ function HazardGroup({ group, ...props }) {
   const totalPages = Math.ceil(group.rows.length / PAGE_SIZE), current = Math.min(page, totalPages), start = (current - 1) * PAGE_SIZE;
   const label = group.summary || group.values?.Hazard[0] || group.attributes.Hazard || 'Hazard';
   return <>
-    <tr className="border-b bg-white align-top" data-hazard-group={group.id}>
+    <tr className={`border-b align-top ${group.rows.some(row => props.selectedId === row.id || props.selectedIds?.has(row.id)) ? 'bg-blue-50' : 'bg-white'}`} data-hazard-group={group.id} data-design-object-id={group.rows[0]?.id} tabIndex={0}
+      onClick={event => { if (!event.target.closest('button')) props.onSelect?.(group.rows[0].id, event); }}
+      onKeyDown={event => { if (event.target === event.currentTarget && ['Enter', ' '].includes(event.key)) { event.preventDefault(); props.onSelect?.(group.rows[0].id, event); } }}>
       {HAZARD_TRACKING_TABLE_COLUMNS.map(column => <td key={column} className="max-w-md whitespace-pre-wrap break-words px-3 py-2" onDoubleClick={() => setExpanded(true)}>
         {column === 'Hazard' && <button type="button" className="mb-2 block text-left font-medium text-indigo-700" aria-expanded={expanded} aria-label={`${expanded ? 'Collapse' : 'Expand'} ${label} (${group.rows.length} assessments)`} onClick={() => setExpanded(value => !value)}>{expanded ? '▾' : '▸'} {group.rows.length} assessments</button>}
         {hazardGroupValues(group, column).slice(0, 3).map((value, index) => <p key={index} className={index ? 'mt-2' : ''}><CellText column={column} value={value} /></p>)}

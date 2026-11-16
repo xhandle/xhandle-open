@@ -1,3 +1,4 @@
+import {createHazardTaskYield} from './hazardTaskYield';
 import {isAcceptedApplicabilityDecision} from './hazardFieldContract';
 import {canDeferHazardFailure,preferredHazardFailure} from './hazardDeferredFailures';
 import {createHazardEvidenceChunker} from './hazardEvidenceChunking';
@@ -37,6 +38,7 @@ Rows: ${JSON.stringify(rows)}`;
 
 // Small decision records allow substantially larger batches than full assessments.
 export async function screenFastApplicability({method,sources,context,checkpoint,signal,request,evidenceChunker,onDeferred,maxBatchRows=48,onDecision=()=>{},onProgress=()=>{}}) {
+  const cooperate=createHazardTaskYield(signal);
   const decisions=new Map(),held=new Set(),evidenceQueue=[];
   const basis=source=>({stage:'applicability-v4-focused',method,context,source});
   const publish=async(source,value)=>{decisions.set(source.id,value);await onDecision(source,value);onProgress(decisions.size,sources.length);};
@@ -117,17 +119,18 @@ export async function screenFastApplicability({method,sources,context,checkpoint
   // Group phrases by interface across the input. Keep ordinary groups intact;
   // exceptionally large groups still obey row and prompt budgets.
   const groups=new Map();
-  for(const source of pending){const key=JSON.stringify(screenDefinition(source));if(!groups.has(key))groups.set(key,[]);groups.get(key).push(source);}
+  for(const source of pending){const key=JSON.stringify(screenDefinition(source));if(!groups.has(key))groups.set(key,[]);groups.get(key).push(source);await cooperate();}
   const batches=[];let batch=[];
   for(const group of groups.values()){
     if(batch.length && (batch.length+group.length>maxBatchRows || hazardPromptBytes(applicabilityPrompt(method,[...batch,...group],context))>Math.min(limit,SCREEN_BYTES))){batches.push(batch);batch=[];}
     for(const source of group){
       if(batch.length && (batch.length>=maxBatchRows || hazardPromptBytes(applicabilityPrompt(method,[...batch,source],context))>Math.min(limit,SCREEN_BYTES))){batches.push(batch);batch=[];}
       batch.push(source);
+      await cooperate();
     }
   }
   if(batch.length)batches.push(batch);
-  for(const source of pending)chunker.plan?.(applicabilityPrompt(method,[source],context),{maxTokens:8000,inputByteLimit:SCREEN_BYTES});
+  for(const source of pending){chunker.plan?.(applicabilityPrompt(method,[source],context),{maxTokens:8000,inputByteLimit:SCREEN_BYTES});await cooperate();}
   let next=0,failure;
   await Promise.all(Array.from({length:Math.min(3,batches.length)},async()=>{
     while(!failure && next<batches.length){const index=next++;try{check(signal);await assess(batches[index]);}catch(error){failure=preferredHazardFailure(failure,error);}}
@@ -140,8 +143,9 @@ export async function screenFastApplicability({method,sources,context,checkpoint
     const {id,phrase,reviewedApplicability,reviewedRationale,reviewedValues,...identity}=item.source;
     const key=JSON.stringify(identity);if(!evidenceGroups.has(key))evidenceGroups.set(key,[]);
     evidenceGroups.get(key).push(item);
+    await cooperate();
   }
-  for(const group of evidenceGroups.values())chunker.plan?.(applicabilityPrompt(method,group.map(x=>x.source),context,{includeEvidence:true,questions:group.map(x=>({phrase:x.source.phrase,question:x.question}))}),{maxTokens:8000,inputByteLimit:SCREEN_BYTES});
+  for(const group of evidenceGroups.values()){chunker.plan?.(applicabilityPrompt(method,group.map(x=>x.source),context,{includeEvidence:true,questions:group.map(x=>({phrase:x.source.phrase,question:x.question}))}),{maxTokens:8000,inputByteLimit:SCREEN_BYTES});await cooperate();}
   // One evidence group at a time; its chunk extractor has at most three workers.
   // This keeps extraction plus screening within the same three-request ceiling.
   for(const group of evidenceGroups.values()){

@@ -13,7 +13,7 @@ const { createRequire } = require('node:module');
 const modules = new Map();
 function loadSource(file) {
   if (modules.has(file)) return modules.get(file);
-  const exports = {}; modules.set(file, exports);
+  const exports = {}, module = { exports }; modules.set(file, exports);
   const code = babel.transformSync(fs.readFileSync(file, 'utf8'), {
     filename: file, babelrc: false, configFile: false,
     presets: ['@babel/preset-react'], plugins: ['@babel/plugin-transform-modules-commonjs'],
@@ -25,8 +25,9 @@ function loadSource(file) {
     const target = [root, root + '.js', root + '.jsx'].find((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile());
     return target ? loadSource(target) : resolve(name);
   };
-  vm.runInNewContext(code, { exports, require: localRequire, process, console, setTimeout, clearTimeout }, { filename: file });
-  return exports;
+  vm.runInNewContext(code, { exports, module, require: localRequire, process, console, setTimeout, clearTimeout }, { filename: file });
+  modules.set(file, module.exports);
+  return module.exports;
 }
 const Viewer = loadSource(path.resolve(__dirname, '../../src/components/SafetyReportViewer.js')).default;
 const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRz8AAAAASUVORK5CYII=';

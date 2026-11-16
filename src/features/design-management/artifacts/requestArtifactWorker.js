@@ -11,7 +11,7 @@ export function requestArtifactWorker(operation, payload, { signal, timeoutMs = 
   return new Promise((resolve, reject) => {
     let worker, timer, started = false, finished = false;
     const hazard = operation === 'hazard-availability' || ['hazard-tracking-list', 'safety-requirements'].includes(payload?.config?.templateId);
-    const timeout = () => finish(new Error(hazard ? 'Reading saved hazard analysis timed out. Saved draft work is retained; retry the source check.' : 'Background artifact processing timed out. Saved work is retained; retry or select a smaller diagram scope.'));
+    const timeout = () => finish(new Error(operation.startsWith('trace-') ? 'Traceability assessment timed out. Saved assessments are retained; retry or narrow the bound scope.' : hazard ? 'Reading saved hazard analysis timed out. Saved draft work is retained; retry the source check.' : 'Background artifact processing timed out. Saved work is retained; retry or select a smaller diagram scope.'));
     const armTimeout = () => { clearTimeout(timer); timer = setTimeout(timeout, timeoutMs); };
     const finish = (error, result) => {
       if (finished) return;

@@ -8,8 +8,8 @@ export default forwardRef(function NativeCodeArchitectureDiagram({ diagram, focu
   const identity = diagram.diagramHash ? `${diagram.id}:${diagram.diagramHash}` : diagram;
   if (cache.current?.identity !== identity) cache.current = { identity, ...codeArchitectureCanvas(diagram) };
   const adapted = cache.current;
-  const edge = diagram.snapshot.edges.find(item => item.id === focusId);
-  const focus = adapted.sourceNodes.get(focusId) || edge?.relationships?.[0]?.id || focusId;
+  const edge = diagram.snapshot.edges.find(item => item.id === focusId || diagram.displayOwners?.[item.id] === focusId);
+  const focus = adapted.sourceNodes.get(focusId) || edge?.relationships?.[0]?.id || edge?.id || focusId;
   return <NativeArchitectureDiagram key={diagram.diagramHash || diagram.id} ref={ref} diagram={adapted.diagram}
     focusId={focus} onSelect={id => onSelect?.(adapted.nodeSources.get(id) || id)} {...props} />;
 });

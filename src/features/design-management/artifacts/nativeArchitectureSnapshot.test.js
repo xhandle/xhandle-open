@@ -10,6 +10,18 @@ test('native renderer gets a private copy of snapshot storage and rows', () => {
   expect(second.rows[0].fromFunction).toBe('Operator');
   expect(second.storage.getItem(second.key + ':groups:v1')).toContain('900');
 });
+test('imported source bundling is disabled while artifact-specific preferences remain restorable', () => {
+  const bundled = JSON.stringify({ aggregateAll: true, aggregateBidirectionalAll: true, aggregatedPairs: ['source-pair'] });
+  const source = { ...diagram, snapshot: { ...diagram.snapshot, native: { ...diagram.snapshot.native, storage: { ...diagram.snapshot.native.storage, ':edge-aggregation:v1': bundled } } } };
+  const before = JSON.stringify(source), fresh = nativeArchitectureState(source);
+  expect(JSON.parse(fresh.storage.getItem(fresh.key + ':edge-aggregation:v1'))).toEqual({ aggregateAll: false, aggregateBidirectionalAll: false });
+  expect(fresh.rows).toEqual(rows);
+  const saved = nativeArchitectureState({ ...source, presentation: { storage: { ':edge-aggregation:v1': bundled } } });
+  expect(saved.storage.getItem(saved.key + ':edge-aggregation:v1')).toBe(bundled);
+  const reset = nativeArchitectureState({ ...source, presentation: { storage: { ':edge-aggregation:v1': null } } });
+  expect(JSON.parse(reset.storage.getItem(reset.key + ':edge-aggregation:v1'))).toEqual({ aggregateAll: false, aggregateBidirectionalAll: false });
+  expect(JSON.stringify(source)).toBe(before);
+});
 test('native relationship and aggregate clicks resolve stable source identities', () => {
   expect(nativeElementSource(diagram, { type: 'node', id: 'n:Operator' })).toBe('n:Operator');
   expect(nativeElementSource(diagram, { type: 'edge', id: 'e:n:Controller->n:Operator-1' })).toBe('feedback');

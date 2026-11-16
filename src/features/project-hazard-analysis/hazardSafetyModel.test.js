@@ -15,6 +15,14 @@ describe("hazard safety model", () => {
     expect(createSafetyModelId("H", " Loss of control ")).toBe(createSafetyModelId("H", "loss of control"));
   });
 
+  test('raw assessment IDs distinguish the confirmed large-run hash collision', () => {
+    const a='Vehicle controller 929|Brake command|Brake actuator|The control action is provided too early|crossing-0';
+    const b='Vehicle controller 1058|Brake command|Brake actuator|The control action is provided in the wrong order|crossing-0';
+    expect(createSafetyModelId('RAW',a)).not.toBe(createSafetyModelId('RAW',b));
+    expect(createSafetyModelId('RAW',a)).toBe(createSafetyModelId('RAW',' '+a.toLowerCase()+' '));
+    expect(createSafetyModelId('RAW',a)).toMatch(/^RAW-[A-F0-9]{24}$/);
+  });
+
   test("classifies actions and translates guide phrases semantically", () => {
     expect(inferControlActionType("Primary brake status")).toBe("Feedback / status");
     expect(semanticGuidePhrase("Feedback / status", "The control action is stopped too soon"))

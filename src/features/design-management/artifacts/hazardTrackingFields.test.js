@@ -13,3 +13,7 @@ test('prefers canonical columns and retains stable source identity outside docum
   const project = hazardTrackingProjection(['Raw Analysis Row ID', 'Function', 'Controller', 'Verification', 'Verification Method', 'Internal reason']);
   expect(project(['R-42', 'Direct function', 'Fallback function', 'Direct verification', 'Fallback verification', 'Excluded'])).toEqual({ attributes: { Function: 'Direct function', Verification: 'Direct verification' }, sourceRowId: 'R-42' });
 });
+test('retains the source functional trace identity as metadata without adding table columns', () => {
+  const projected = hazardTrackingProjection(['Raw Analysis Row ID', 'Trace ID', 'Hazard'])(['HA-7', 'functional-4', 'Unintended motion']);
+  expect(projected).toEqual({ attributes: { Hazard: 'Unintended motion' }, sourceRowId: 'HA-7', functionalTraceId: 'functional-4' });
+});

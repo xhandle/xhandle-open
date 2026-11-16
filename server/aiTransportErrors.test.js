@@ -27,6 +27,8 @@ test('chat route returns a structured offline error and handles a subsequent req
   const handler = route.expression.arguments.at(-1);
   let failure = Object.assign(new Error('DNS offline'), { code: 'ENOTFOUND' }), disposed = 0;
   const context = { Buffer, ArrayBuffer, clearInterval, AI_PROVIDER_LONG_REQUEST_TIMEOUT_MS: 300000, classifyAITransportError,
+    withOrganizationPromptContext: require('./organizationPromptContext').withOrganizationPromptContext,
+    ORGANIZATION_CONTEXT_HEADER: require('../src/lib/organizationPromptPolicy').ORGANIZATION_CONTEXT_HEADER,
     createRequestCancellation: () => ({ signal: { aborted: false }, dispose: () => disposed++ }),
     resolveAIConfigForRequest: async () => ({ provider: 'claude', apiKey: 'fixture', model: 'fixture' }),
     resolveAIRequestEffort: () => null, createAIRequestMetrics: () => ({ addOutput() {}, markProviderStarted() {}, finish() {} }),

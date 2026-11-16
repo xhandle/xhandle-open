@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { Modal } from '../features/requirements/components/RequirementsViews';
 
 const TYPE_OPTIONS = ["text", "number", "boolean", "date"];
 
@@ -50,24 +51,10 @@ export default function HazardAttributeMapper({
     setRows((r) => r.map((row, idx) => (idx === i ? { ...row, ...patch } : row)));
 
   return (
-    <div className="xhandle-modal-viewport fixed inset-0 z-[999]">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden />
-      <div className="absolute inset-0 flex items-center justify-center p-4">
-        <div className="w-full max-w-3xl rounded-2xl bg-white shadow-xl">
-          <div className="flex items-center justify-between border-b px-4 py-3">
-            <h3 className="text-sm font-semibold">
-              Map Attributes (Title: <span className="font-mono">{titleColumn}</span>)
-            </h3>
-            <button
-              className="rounded px-2 py-1 text-xs text-gray-600 hover:bg-gray-100"
-              onClick={onClose}
-              aria-label="Close"
-            >
-              ✕
-            </button>
-          </div>
-
-          <div className="p-4 overflow-y-auto max-h-[70vh]">
+    <Modal title={`Map Attributes (Title: ${titleColumn})`} onClose={onClose} footer={<div className="flex items-center justify-end gap-2">
+      <button className="rounded-md border px-3 py-1 text-sm" onClick={onClose}>Cancel</button>
+      <button className="rounded-md bg-black px-3 py-1 text-sm text-white" onClick={() => onConfirm(rows.filter(row => row.enabled))}>Create attributes &amp; import</button>
+    </div>}>
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left border-b">
@@ -128,23 +115,6 @@ export default function HazardAttributeMapper({
               </tbody>
             </table>
 
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <button
-                className="rounded-md border px-3 py-1 text-sm"
-                onClick={onClose}
-              >
-                Cancel
-              </button>
-              <button
-                className="rounded-md bg-black px-3 py-1 text-sm text-white"
-                onClick={() => onConfirm(rows.filter((r) => r.enabled))}
-              >
-                Create attributes & import
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

@@ -10,6 +10,8 @@ import { downloadArchitecture } from './architectureGraph';
 import 'reactflow/dist/style.css';
 import './architectureDiagram.css';
 import { Modal } from '../../requirements/components/RequirementsViews';
+import { useDesignSurface } from '../collaborator/useDesignCollaborator';
+import { DESIGN_DIAGRAM } from '../collaborator/designContext';
 
 export function ArchitectureDiagrams({ artifactId, manifest, initialDiagramId, focusId, objects = [], onExportActionChange }) {
   const arranged = useRef(null);
@@ -30,6 +32,9 @@ export function ArchitectureDiagrams({ artifactId, manifest, initialDiagramId, f
   useEffect(() => { setPageIndex(architecturePageForElement(pages, focusId)); }, [pages, focusId]);
   const currentIndex = Math.min(pageIndex, Math.max(0, pages.length - 1));
   const displayed = pages[currentIndex];
+  const collaboratorDiagram = useMemo(() => ({ artifactId, sourceId: diagram?.id || '', title: diagram?.title || '', elementId,
+    nodeCount: diagram?.snapshot?.nodes?.length || 0, edgeCount: diagram?.snapshot?.edges?.length || 0, readOnly: true }), [artifactId, diagram, elementId]);
+  useDesignSurface(collaboratorDiagram, () => { setElementId(''); setCanvasFocus(''); }, DESIGN_DIAGRAM);
   const elements = useMemo(() => (manifest?.entries || []).filter(source => source.diagramId === diagram?.id && source.sourceType === 'architecture-element'), [manifest, diagram]);
   const visibleIds = useMemo(() => new Set([...(displayed?.snapshot.nodes || []), ...(displayed?.snapshot.edges || [])].flatMap(item => [item.id, displayed?.displayOwners?.[item.id]].filter(Boolean))), [displayed]);
   const matches = useMemo(() => elements.filter(source => query.trim() ? `${source.title} ${source.elementId}`.toLowerCase().includes(query.trim().toLowerCase()) : visibleIds.has(source.elementId)), [elements, query, visibleIds]);
@@ -57,10 +62,10 @@ export function ArchitectureDiagrams({ artifactId, manifest, initialDiagramId, f
   if (!diagram) return <p>No saved diagram snapshot is available for this revision.</p>;
   const selected = elements.find(source => source.elementId === elementId);
   return <section className="architecture-diagrams">
-    <div className="architecture-diagram-toolbar" title={`${diagram.snapshot.nodes.length} elements · ${diagram.snapshot.edges.length} relationships`}>
-      {diagrams.length > 1 ? <select aria-label="Source diagram" value={diagram.id} onChange={event => { setSelection(event.target.value); setElementId(''); setCanvasFocus(''); setQuery(''); setPageIndex(0); }}>{diagrams.map(source => <option key={source.id} value={source.id}>{source.title}{source.level != null ? ` · Level ${source.level}` : ''}</option>)}</select> : <span className="architecture-diagram-source">{diagram.title}{diagram.level != null ? ` · Level ${diagram.level}` : ''}</span>}
+    {(diagrams.length > 1 || !onExportActionChange) && <div className="architecture-diagram-toolbar" title={`${diagram.snapshot.nodes.length} elements · ${diagram.snapshot.edges.length} relationships`}>
+      {diagrams.length > 1 ? <select aria-label="Source diagram" value={diagram.id} onChange={event => { setSelection(event.target.value); setElementId(''); setCanvasFocus(''); setQuery(''); setPageIndex(0); }}>{diagrams.map(source => <option key={source.id} value={source.id}>{source.title}{source.level != null ? ` · Level ${source.level}` : ''}</option>)}</select> : null}
       {!onExportActionChange && <button type="button" disabled={exporting} onClick={async () => { setExporting(true); setExportError(''); try { await arranged.current?.flush(); await downloadArchitecture(artifactId ? await diagramWithPresentation(artifactId, displayed) : displayed); } catch (error) { setExportError(error.message); } finally { setExporting(false); } }}>{exporting ? 'Exporting…' : `Export ${pages.length > 1 ? 'current view' : 'diagram'} (PNG)`}</button>}
-    </div>
+    </div>}
     {exportError && <p role="alert">{exportError}</p>}
     {pages.length > 1 && <div className="artifact-actions" role="group" aria-label="Architecture views"><button type="button" disabled={!currentIndex} onClick={() => { setPageIndex(currentIndex - 1); setElementId(''); setCanvasFocus(''); }}>Previous view</button><span>View {currentIndex + 1} of {pages.length} · {displayed.snapshot.nodes.length} elements · {displayed.snapshot.edges.length} relationships</span><button type="button" disabled={currentIndex === pages.length - 1} onClick={() => { setPageIndex(currentIndex + 1); setElementId(''); setCanvasFocus(''); }}>Next view</button></div>}
     {diagram.workspaceType === 'functional' && !diagram.snapshot.native && <p className="text-sm my-2">This revision predates saved diagram styling. Generate an update to capture the current project layout.</p>}

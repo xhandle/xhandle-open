@@ -56,6 +56,30 @@ test("Claude converts a cross-provider completion limit back to max_tokens", () 
   assert.equal(payload.max_completion_tokens, undefined);
 });
 
+for (const model of ["claude-haiku-5-5", "claude-sonnet-5", "claude-opus-5-5"]) {
+  test(`HARA output and recovery budgets survive backend conversion for ${model} at every effort`, () => {
+    for (const effort of [undefined, "low", "medium", "high"]) {
+      for (const maxTokens of [12000, 16000]) {
+        const payload = buildClaudeRequestPayload({
+          body: {
+            xhandleWorkflow: "hazard-row-generation",
+            max_tokens: maxTokens,
+            ...(effort ? { effort } : {}),
+          },
+          model,
+          conversation: [{ role: "user", content: "Assess the supplied HARA events." }],
+        });
+
+        assert.equal(payload.max_tokens, maxTokens);
+        assert.equal(payload.model, model);
+        assert.deepEqual(payload.output_config, effort ? { effort } : undefined);
+        assert.equal(payload.thinking, undefined);
+        assert.equal(payload.max_completion_tokens, undefined);
+      }
+    }
+  });
+}
+
 test("Claude Sonnet 5 receives native effort and omits deprecated sampling controls", () => {
   const payload = buildClaudeRequestPayload({
     body: { max_tokens: 16000, effort: "medium", temperature: 0, top_p: 0.1, top_k: 5 },

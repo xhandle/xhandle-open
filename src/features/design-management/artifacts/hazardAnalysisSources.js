@@ -8,6 +8,7 @@ import { readHazardTransaction } from '../../code-architecture-hazard-analysis/r
 import { semanticHash } from './artifactModel';
 import { DOCUMENT_EVIDENCE_LIMIT } from './artifactSize';
 import { hazardTrackingProjection } from './hazardTrackingFields';
+import { projectHazardRequirements, mergeHazardRequirementSources } from './requirementSafety';
 
 const clean = value => typeof value === 'string' ? value.trim() : value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value);
 const read = (storage, key, fallback) => JSON.parse(storage.getItem(key) || JSON.stringify(fallback));
@@ -17,7 +18,7 @@ const ownerKey = owner => `${owner.workspaceType}:${owner.id}`;
 
 // Read only saved hazard summaries. Repository snapshots and historical runs are
 // not document inputs. The latest saved result for each repository stays distinct.
-async function codeSources(owner, storage, { signal } = {}) {
+async function codeSources(owner, storage, { signal, skipIncomplete = false } = {}) {
   const db = await openHazardSchema({ signal });
   let metadata;
   try { metadata = await readHazardTransaction(db, 'runMetadata', store => store.index('projectId').getAll(String(owner.id)), { signal }); }
@@ -40,8 +41,11 @@ async function codeSources(owner, storage, { signal } = {}) {
     const run = selected ? await getLatestCodeArchitectureHazardRun({ projectId: String(owner.id), id: selected.id }, { signal, paged: true, summaryOnly: true, expectedRevision: selected.storageRevision })
       : latest(fallback.filter(run => aliases.includes(String(run.repoId || ''))));
     if (!run) continue;
-    if (run.finalSavePending || (run.runState && !['complete', 'completed', 'ready', 'accepted'].includes(run.runState))) throw new Error(`Finish and save the hazard analysis for ${run.repoId || owner.id} in Code-Based Architecture before creating safety documents.`);
-    sources.push({ run: createHazardRequirementSource(run), analysisId: run.id, repoId: run.repoId || null, method: run.hazardMethod || 'Recorded hazard analysis' });
+    if (run.finalSavePending || (run.runState && !['complete', 'completed', 'ready', 'accepted'].includes(run.runState))) {
+      if (skipIncomplete) continue;
+      throw new Error(`Finish and save the hazard analysis for ${run.repoId || owner.id} in Code-Based Architecture before creating safety documents.`);
+    }
+    sources.push({ run: createHazardRequirementSource(run), analysisId: run.id, revision: run.storageRevision || null, repoId: run.repoId || null, method: run.hazardMethod || 'Recorded hazard analysis' });
   }
   return sources;
 }
@@ -73,7 +77,33 @@ async function functionalSources(owner, storage) {
   // Older workspaces keep analysis in projectData until the project is opened.
   // A durable empty record is authoritative and must not revive cleared results.
   const record = result.record || read(storage, 'xhandle.projectData', {})[owner.id];
-  return record?.analysisResult ? [{ run: { generatedSheets: { Summary: record.analysisResult.Summary } }, risks: record.riskRegister || [], analysisId: `project-hazards:${owner.id}`, revision: record.revision || null, method: record.analysisResult.hazardMethod || 'Project hazard analysis' }] : [];
+  return record?.analysisResult ? [{ run: { generatedSheets: { Summary: record.analysisResult.Summary } }, risks: record.riskRegister || [], analysisId: `project-hazards:${owner.id}`, revision: record.revision || null, method: record.method || record.analysisResult.hazardMethod || 'Project hazard analysis' }] : [];
+}
+
+// Optional inputs for normal requirements specifications. Missing analysis is
+// allowed; an existing unreadable analysis must not be silently omitted.
+export async function captureSavedSafetyRequirementSources(owners, storage = localStorage, {signal,onProgress} = {}) {
+  const entries=[];
+  for(const owner of owners) {
+    if (signal?.aborted) throw new DOMException('Safety source capture cancelled.', 'AbortError');
+    const analyses=owner.workspaceType==='functional' ? await functionalSources(owner,storage) : await codeSources(owner,storage,{signal,skipIncomplete:true});
+    for(const analysis of analyses) {
+      const add=(headers,rows,records=false,offset=0)=>rows.forEach((raw,index)=>{
+        const cells=records?raw:Object.fromEntries(headers.map((header,column)=>[header,raw[column]]));
+        const sourceRowId=clean(cells['Raw Analysis Row ID']||cells['Analysis Row ID']||cells.id)||`legacy-${offset+index}-${semanticHash(cells)}`;
+        entries.push(...projectHazardRequirements(cells,{projectId:String(owner.id),workspaceType:owner.workspaceType,analysisId:analysis.analysisId,
+          analysisRevision:analysis.revision||null,repoId:analysis.repoId||null,method:analysis.method,sourceRowId}));
+      });
+      if(analysis.run?.readSummaryBatches) {
+        for await(const page of analysis.run.readSummaryBatches(signal,onProgress)) {
+          if(signal?.aborted) throw new DOMException('Safety source capture cancelled.','AbortError');
+          add(page.headers,page.rows,page.records,page.offset);
+        }
+      } else if(analysis.run?.summaryRows) add([],analysis.run.summaryRows,true);
+      else {const summary=analysis.run?.generatedSheets?.Summary;if(summary?.length>1)add(summary[0],summary.slice(1));}
+    }
+  }
+  return mergeHazardRequirementSources(entries);
 }
 
 export async function captureHazardAnalysisSources(owners, storage = localStorage, { templateId, signal, onProgress } = {}) {
@@ -106,6 +136,7 @@ export async function captureHazardAnalysisSources(owners, storage = localStorag
           const hazard = cells.Hazard || cells.Hazards || cells.hazard || cells['Unsafe Control Action'] || cells['Causal Scenario'];
           const entry = { id, sourceType: 'hazard-analysis-row', title: tracking ? `Analysis row ${rowId}` : `${name}${analysis.repoId ? ` / ${analysis.repoId}` : ''} — ${hazard || rowId}`, ownerProjects: [{ id: String(owner.id), workspaceType: owner.workspaceType }], projectName: name, analysisId: analysis.analysisId, analysisRevision: tracking ? null : analysis.revision || null, repoId: analysis.repoId || null, hazardMethod: analysis.method, sourceRowId: String(rowId), attributes: cells, ...(!tracking ? { text: Object.entries(cells).filter(([, value]) => value).map(([key, value]) => `${key}: ${value}`).join('\n') } : {}) };
           const related = tracking ? [] : (analysis.risks || []).filter(risk => risk.sourceRowIds?.map(String).includes(String(rowId)) || (!risk.sourceRowIds?.length && [...(risk.sourceIndexes || []), risk.sourceIndex].map(Number).includes(offset + index + 1)));
+          if (selected?.functionalTraceId) { entry.functionalTraceId = selected.functionalTraceId; entry.projectId = String(owner.id); entry.workspaceType = owner.workspaceType; }
           if (related.length) { entry.relatedSafetyIssues = related; entry.text += `\nRecorded safety issues: ${JSON.stringify(related)}`; }
           if (!tracking) totals.bytes += JSON.stringify(entry).length;
           if (!tracking && totals.bytes > DOCUMENT_EVIDENCE_LIMIT) throw new Error('Saved hazard evidence exceeds the document evidence limit. Split the analysis scope before creating this document. No rows were discarded.');

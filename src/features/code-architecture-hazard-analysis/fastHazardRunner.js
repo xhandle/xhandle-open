@@ -12,6 +12,7 @@ import {createCodeHazardCheckpoint} from './codeHazardGenerationCheckpoint';
 import {saveCodeArchitectureHazardRun} from './codeArchitectureHazardStore';
 import {generateFastHazards,compactHazardSources} from './fastHazardPipeline';
 import {fastMethod,FAST_HAZARD_VERSION,FAST_HAZARD_COLUMNS,deriveFastAsil,deriveFastSwci,validateFastAssessment} from './fastHazardSchema';
+import { HARA_ADDITIONAL_FIELDS, finalizeCodeHaraSheets } from './codeArchitectureHara';
 
 const SUMMARY_ASSESSMENT_FIELDS=method=>({assessmentBasis:'Assessment Basis',executionDependency:'Execution Dependency',executionEvidenceQuote:'Execution Evidence Quote',operatorDependency:'Operator Dependency',operatorContextQuote:'Operator Context Quote',uca:'Unsafe Control Action',loss:'Loss',causalScenario:'Causal Scenario',safetyConstraint:'Safety Constraint',evidenceQuote:'Causal Evidence Quote',assessedAction:'Assessed Control Action',causalBasis:'Causal Assessment Basis',causalEvidence:'Causal Evidence / Assumption',applicable:'Guide Phrase Applicable',applicabilityRationale:'Guide Phrase Applicability Rationale',classification:'Safety Classification',classificationRationale:'Safety Significance Rationale',assumptions:'Assumptions',malfunction:'Malfunctioning Behavior',causalFactor:'Causal Factor',hazard:'Hazard',hazardousEvent:'Hazardous Event',mishap:'Mishap',severity:method==='FHA'?'Severity Category':'Severity',exposure:'Exposure',controllability:'Controllability',ratingRationale:'Rating Rationale',safetyGoal:'Safety Goal',severityRationale:'Severity Rationale',scc:'Software Control Category',sccRationale:'Software Control Category Rationale',softwareRequirement:'Software Safety Requirement',verification:'Verification'});
 
@@ -19,7 +20,7 @@ const SUMMARY_ASSESSMENT_FIELDS=method=>({assessmentBasis:'Assessment Basis',exe
 // dependent ratings from the final ratings rather than retaining stale indexes.
 function validateMergedSheet(method,sheet,sources,onInvalid) {
   const headers=sheet[0];
-  const fields=SUMMARY_ASSESSMENT_FIELDS(method);
+  const fields={...SUMMARY_ASSESSMENT_FIELDS(method),...(method==='HARA'?HARA_ADDITIONAL_FIELDS:{})};
   for(let index=1;index<sheet.length;index++){
     const row=sheet[index],source=sources[index-1];
     // An imported prior assessment must not refill excluded downstream cells.
@@ -85,6 +86,10 @@ export function fastHazardSheets(method,input,assessments) {
       'Severity':downstream(result.severity),'Exposure':downstream(result.exposure),'Controllability':downstream(result.controllability),
       'ASIL':downstream(method==='HARA'?deriveFastAsil(result.severity,result.exposure,result.controllability):''),
       'Rating Rationale':downstream(result.ratingRationale),'Safety Goal':downstream(result.safetyGoal),
+      ...(method==='HARA'?{
+        ...Object.fromEntries(Object.entries(HARA_ADDITIONAL_FIELDS).map(([field,header])=>[header,downstream(result[field] ?? '')])),
+        'Assessment Assumptions':downstream(result.assumptions),
+      }:{}),
       'Severity Category':downstream(result.severity),'Severity Rationale':downstream(result.severityRationale),
       'Software Control Category':downstream(result.scc),'Software Control Category Rationale':downstream(result.sccRationale),
       'Software Criticality Index':downstream(method==='FHA'?deriveFastSwci(result.severity,result.scc):''),
@@ -106,7 +111,8 @@ export function fastHazardSheets(method,input,assessments) {
   const common=['Execution Dependency','Execution Evidence Quote','Operator Dependency','Operator Context Quote','Function (From)','Control Action','Function (To)','Operational Context ID','Operational Scenario','Operational Mode','Operating Conditions','Context Assumptions','Guide Phrase Applicability Rationale','Guide Phrase Applicability Review Status','Hazard','Safety Significant','Safety Significance Rationale','Software Safety Requirement','Verification','Assumptions','Assessment Basis','Assessed Control Action','Causal Assessment Basis','Causal Evidence / Assumption','Causal Evidence Quote','Raw Analysis Row ID'];
   const trace=Object.keys(traceabilityObjectToSummaryFields({}));
   const headers=[...new Set([...FAST_HAZARD_COLUMNS[method],...common,...(method==='HARA'?['Rating Rationale']:[]),...(method==='STPA'?['Causal Factor','Loss ID','Hazard ID','UCA ID','Hazard → Loss ID','UCA → Hazard ID','Causal Scenario → UCA ID','Safety Constraint → UCA ID']:[]),...trace])];
-  return {'Functional Decomposition':input.sheets['Functional Decomposition'],Summary:[headers,...records.map(row=>headers.map(header=>row[header] ?? ''))]};
+  const sheets={'Functional Decomposition':input.sheets['Functional Decomposition'],Summary:[headers,...records.map(row=>headers.map(header=>row[header] ?? ''))]};
+  return method==='HARA'?finalizeCodeHaraSheets(sheets):sheets;
 }
 
 export async function runFastCodeArchitectureHazardAnalysis({previousRun=null,regenerate=false,cbaRows=[],method='STPA-Textbook',repoMeta={},projectId='',operationalContexts=[],selectedOperationalContextId='all',organizationContext='',organizationProfileProvenance=null,setProgress=()=>{},onActivityUpdate=()=>{},onPartialRunUpdate=()=>{},signal}={}) {
@@ -194,7 +200,7 @@ export async function runFastCodeArchitectureHazardAnalysis({previousRun=null,re
     const headers=generated.Summary[0];
     if(!matcher){
       matcher=createHazardPreprocessingMatcher(selectedInput.tableRows,headers);
-      fieldColumns=Object.entries(SUMMARY_ASSESSMENT_FIELDS(normalizedMethod)).map(([field,header])=>[field,headers.indexOf(header)]).filter(([,column])=>column>=0);
+      fieldColumns=Object.entries({...SUMMARY_ASSESSMENT_FIELDS(normalizedMethod),...(normalizedMethod==='HARA'?HARA_ADDITIONAL_FIELDS:{})}).map(([field,header])=>[field,headers.indexOf(header)]).filter(([,column])=>column>=0);
       reconciled.sheets.Summary=[headers];
     }
     const part=reconcileCodeHazardPreprocessing(generated,tableRows,matcher);
@@ -218,6 +224,16 @@ export async function runFastCodeArchitectureHazardAnalysis({previousRun=null,re
     summaryRows.push(...summarySheetToHazardSummaryRows(part.sheets.Summary,offset));
     if(!signal?.aborted)progress({step:96+Math.min(1,(offset+batch.length)/Math.max(1,assessments.length)),message:`Preparing traceable hazard results: ${Math.min(offset+batch.length,assessments.length)} of ${assessments.length} assessments`});
     await yieldTask();
+  }
+  if(normalizedMethod==='HARA'){
+    // Recalculate after user-owned ratings/constraints have been reconciled,
+    // across the entire run so goals shared by separate batches get one ASIL.
+    reconciled.sheets=finalizeCodeHaraSheets(reconciled.sheets);
+    summaryRows.length=0;
+    for(let offset=1;offset<reconciled.sheets.Summary.length;offset+=100){
+      summaryRows.push(...summarySheetToHazardSummaryRows([reconciled.sheets.Summary[0],...reconciled.sheets.Summary.slice(offset,offset+100)],offset-1));
+      await yieldTask();
+    }
   }
   const id=attemptId;
   return normalizeCodeArchitectureHazardRun({id,sourceRunId:id,projectId,repoId:input.repoId,repoName:repoMeta.repoName || input.repoId,repoUrl:repoMeta.repoUrl,repoPath:repoMeta.repoPath,branch:repoMeta.branch,

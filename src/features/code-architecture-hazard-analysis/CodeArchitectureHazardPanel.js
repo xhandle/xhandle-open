@@ -305,6 +305,7 @@ export function PreparedCodeArchitectureHazardPanel({
               className="w-full rounded-md border border-slate-200 bg-white px-2 py-2 text-xs font-medium text-slate-700"
               disabled={isRunning || importing || reviewMode}
             >
+              {method === 'FHA' && <option value="FHA" disabled>FHA (saved analysis)</option>}
               {CODE_ARCHITECTURE_HAZARD_METHOD_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}

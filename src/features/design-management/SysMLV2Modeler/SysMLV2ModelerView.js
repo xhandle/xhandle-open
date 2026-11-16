@@ -27,6 +27,8 @@ import {
 import { createSysMLTraceLink } from "./sysmlV2Types";
 import { validateSysMLV2Model } from "./sysmlV2Validator";
 import { applyGeneratedSysMLModel } from "./sysmlV2CopilotTools";
+import { useDesignSurface } from '../collaborator/useDesignCollaborator';
+import { DESIGN_REVEAL } from '../collaborator/designContext';
 
 function downloadJson(filename, value) {
   const blob = new Blob([JSON.stringify(value, null, 2)], { type: "application/json" });
@@ -247,6 +249,21 @@ export default function SysMLV2ModelerView({ projectId, projectName, autoGenerat
   }, [refresh, projectId]);
 
   const activeView = model?.activeView || "structure";
+  const collaboratorSurface = React.useMemo(() => ({ target: { kind: 'sysml', id: model.id }, title: model.name, view: activeView,
+    selectedIds: selection?.id ? [selection.id] : [] }), [model.id, model.name, activeView, selection?.id]);
+  useDesignSurface(collaboratorSurface, () => setSelection(null));
+  React.useEffect(() => {
+    const reveal = event => {
+      if (event.detail?.kind !== 'sysml') return;
+      const next = loadSysMLV2Model(event.detail.id, null);
+      if (!next || next.id !== event.detail.id) return;
+      refresh(next);
+      const id = event.detail.objectId;
+      setSelection(id ? { kind: next.elements.some(element => element.id === id) ? 'element' : 'relationship', id } : null);
+    };
+    window.addEventListener(DESIGN_REVEAL, reveal);
+    return () => window.removeEventListener(DESIGN_REVEAL, reveal);
+  }, [refresh]);
 
   const handleAddElement = (type) => {
     const name = window.prompt(`${type} name:`, type.replace(/Definition|Usage/g, ""));

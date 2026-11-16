@@ -1010,7 +1010,7 @@ test('snapshot canvas preserves native geometry and styling, permits inspection,
 
 // Both artifact sources deliberately mount this same renderer. Exercise the
 // real code adapter here so aggregation is tested through the actual UI toggle.
-test('code artifacts expand source bundles on the first click and share Projects arrangement, resizing and persistence', async () => {
+test('code artifacts import individual edges, switch bundling modes and fully expand on the first click', async () => {
   global.ResizeObserver = class { observe() {} disconnect() {} };
   const CodeArtifact = require('../features/design-management/artifacts/NativeCodeArchitectureDiagram').default;
   const path = csc => ({ subsystem: 'Control', csci: 'Software', csc, csu: 'Unit' });
@@ -1023,15 +1023,22 @@ test('code artifacts expand source bundles on the first click and share Projects
   const original = JSON.stringify(diagram), save = jest.fn(), select = jest.fn();
   await act(async () => root.render(<CodeArtifact diagram={diagram} editable onPresentationChange={save} onSelect={select} />));
   await tick();
-  expect(mockEdges).toHaveLength(1);
-  expect(mockEdges[0].data.edgeIds).toHaveLength(3);
+  expect(mockEdges).toHaveLength(3);
+  expect(mockEdges.every(edge => !edge.data.aggregated)).toBe(true);
   const leaves = mockNodes.filter(node => node.type !== 'groupBox');
   expect(leaves.map(node => node.data.label).sort()).toEqual(['Control', 'Planner']);
   expect(leaves.every(node => node.data.brandColor === '#2D7DFE')).toBe(true);
   expect(leaves.every(node => mockNodes.some(parent => parent.id === node.parentNode && parent.type === 'groupBox'))).toBe(true);
-  const expand = container.querySelector('button[title="Expand directional edge bundles"]');
-  expect(expand.disabled).toBe(false);
-  act(() => expand.click()); await tick();
+  const aggregate = container.querySelector('button[title="Aggregate repeated directional edges"]');
+  expect(aggregate.disabled).toBe(false);
+  act(() => aggregate.click()); await tick();
+  expect(mockEdges).toHaveLength(1);
+  expect(mockEdges[0].data.edgeIds).toHaveLength(3);
+  act(() => container.querySelector('button[title="Aggregate all traffic between node pairs regardless of direction"]').click()); await tick();
+  expect(mockEdges).toHaveLength(1);
+  expect(mockEdges[0].data.bidirectionalAggregated).toBe(true);
+  expect(container.querySelector('button[title="Expand directional edge bundles"]')).toBeNull();
+  act(() => container.querySelector('button[title="Expand all bidirectional bundles"]').click()); await tick();
   expect(mockEdges).toHaveLength(3);
   expect(mockEdges.map(edge => edge.label).sort()).toEqual(['Reset', 'Start', 'Stop']);
   expect(container.querySelector('button[title="Aggregate repeated directional edges"]')).not.toBeNull();
@@ -1047,8 +1054,50 @@ test('code artifacts expand source bundles on the first click and share Projects
   expect(JSON.parse(presentation.storage[':edge-aggregation:v1']).aggregateAll).toBe(false);
   expect(JSON.stringify(diagram)).toBe(original);
   act(() => root.unmount()); root = createRoot(container);
-  await act(async () => root.render(<CodeArtifact diagram={{ ...diagram, presentation }} editable />)); await tick();
+  await act(async () => root.render(<CodeArtifact diagram={{ ...diagram, presentation }} editable onPresentationChange={save} />)); await tick();
   expect(mockEdges).toHaveLength(3);
+  act(() => container.querySelector('button[title="Aggregate repeated directional edges"]').click()); await tick();
+  const bundledPresentation = save.mock.calls.at(-1)[0];
+  expect(JSON.parse(bundledPresentation.storage[':edge-aggregation:v1']).aggregateAll).toBe(true);
+  act(() => root.unmount()); root = createRoot(container);
+  await act(async () => root.render(<CodeArtifact diagram={{ ...diagram, presentation: bundledPresentation }} editable />)); await tick();
+  expect(mockEdges).toHaveLength(1);
+});
+
+test.each(['Expand directional edge bundles', 'Expand all bidirectional bundles'])('legacy artifact with both aggregation modes enabled fully expands through %s', async title => {
+  global.ResizeObserver = class { observe() {} disconnect() {} };
+  const CodeArtifact = require('../features/design-management/artifacts/NativeCodeArchitectureDiagram').default;
+  const path = csc => ({ subsystem: 'Control', csci: 'Software', csc, csu: 'Unit' });
+  const diagram = { id: 'legacy', diagramHash: 'legacy-bundles', abstraction: 'csc', presentation: { storage: { ':edge-aggregation:v1': JSON.stringify({ aggregateAll: true, aggregateBidirectionalAll: true }) } }, snapshot: {
+    nodes: [{ id: 'a', label: 'Planner', displayArchitecture: path('Planner') }, { id: 'b', label: 'Controller', displayArchitecture: path('Controller') }],
+    edges: [{ id: 'out', from: 'a', to: 'b', relationships: [{ id: 'start', label: 'Start' }, { id: 'stop', label: 'Stop' }] }, { id: 'in', from: 'b', to: 'a', relationships: [{ id: 'status', label: 'Status' }] }],
+  } };
+  const original = JSON.stringify(diagram);
+  await act(async () => root.render(<CodeArtifact diagram={diagram} editable />)); await tick();
+  expect(mockEdges).toHaveLength(1);
+  act(() => container.querySelector(`button[title="${title}"]`).click()); await tick();
+  expect(mockEdges.map(edge => edge.label).sort()).toEqual(['Start', 'Status', 'Stop']);
+  expect(mockEdges.every(edge => !edge.data.aggregated)).toBe(true);
+  expect(JSON.stringify(diagram)).toBe(original);
+});
+
+test('the arranged artifact wrapper restores saved aggregation before mounting the canvas', async () => {
+  global.ResizeObserver = class { observe() {} disconnect() {} };
+  const Arranged = require('../features/design-management/artifacts/ArrangedArchitectureDiagram').default;
+  const persistence = require('../features/design-management/artifacts/architecturePresentation');
+  const load = jest.spyOn(persistence, 'loadArchitecturePresentation').mockResolvedValue({ storage: { ':edge-aggregation:v1': JSON.stringify({ aggregateAll: true, aggregateBidirectionalAll: true }) } });
+  const save = jest.spyOn(persistence, 'saveArchitecturePresentation').mockResolvedValue();
+  const path = csc => ({ subsystem: 'Control', csci: 'Software', csc, csu: 'Unit' });
+  const diagram = { id: 'saved-diagram', diagramHash: 'saved-hash', workspaceType: 'code-architecture', abstraction: 'csc', snapshot: {
+    nodes: [{ id: 'a', label: 'Planner', displayArchitecture: path('Planner') }, { id: 'b', label: 'Controller', displayArchitecture: path('Controller') }],
+    edges: [{ id: 'bundle', from: 'a', to: 'b', relationships: [{ id: 'start', label: 'Start' }, { id: 'stop', label: 'Stop' }] }],
+  } };
+  try {
+    await act(async () => root.render(<Arranged artifactId="saved-artifact" diagram={diagram} />)); await tick();
+    expect(load).toHaveBeenCalledWith('saved-artifact', diagram);
+    expect(mockEdges).toHaveLength(1);
+    expect(container.querySelector('button[title="Expand all bidirectional bundles"]')).not.toBeNull();
+  } finally { act(() => root.unmount()); root = createRoot(container); load.mockRestore(); save.mockRestore(); }
 });
 
 test.each(['fresh', 'legacy-parent', 'legacy-no-intent', 'legacy-detached'])('code architecture retains every subsystem and CSCI parent through arrange and reload (%s)', async (savedLayout) => {

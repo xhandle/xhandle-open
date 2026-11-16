@@ -5,10 +5,23 @@ export const ARCHITECTURE_PAGE_EDGES = 60;
 
 export function architecturePages(diagram) {
   if (diagram.workspaceType === 'code-architecture') diagram = codeDisplayDiagram(diagram);
-  const { nodes, edges } = diagram.snapshot;
+  const { nodes } = diagram.snapshot;
+  let edges = diagram.snapshot.edges;
   // Coarse abstractions already collapse implementation detail. Keep manageable
   // graphs together so the native canvas can reproduce the source layout.
-  if (['subsystem', 'csci', 'csc'].includes(diagram.abstraction) && nodes.length <= 500 && edges.length <= 1000) return [diagram];
+  if (['subsystem', 'csci', 'csc'].includes(diagram.abstraction)) {
+    const relationshipCount = edges.reduce((count, edge) => count + (edge.relationships?.length || 1), 0);
+    if (nodes.length <= 500 && relationshipCount <= 1000) return [diagram];
+    // A small number of coarse bundles can contain thousands of relationships.
+    // Bound the actual rendered edges while retaining their projected endpoints
+    // and the exact aggregate evidence used by inspection and focus navigation.
+    const owners = { ...diagram.displayOwners };
+    edges = edges.flatMap(edge => (edge.relationships?.length ? edge.relationships : [edge]).map(relationship => {
+      owners[relationship.id] = diagram.displayOwners?.[edge.id] || edge.id;
+      return { ...relationship, from: edge.from, to: edge.to };
+    }));
+    diagram = { ...diagram, displayOwners: owners };
+  }
   if (diagram.workspaceType !== 'code-architecture' || (nodes.length <= ARCHITECTURE_PAGE_NODES && edges.length <= ARCHITECTURE_PAGE_EDGES)) return [diagram];
   const byId = new Map(nodes.map(node => [node.id, node]));
   const covered = new Set(), pages = [];

@@ -8,7 +8,7 @@ const artifacts = [{ id: 'b', name: 'System Specification', programId: 'p', exte
 const roots = [{ id: 'root', name: 'Root', modules: [], children: [{ id: 'f', name: 'Designs', modules: [artifacts[0], { id: 'standalone', name: 'System Specification', externalArtifact: true }, project, artifacts[1], { id: 'legacy', name: 'Source requirements' }], children: [] }] }];
 let root, host, callbacks;
 const node = id => host.querySelector(`[data-library-id="${id}"]`);
-const button = label => [...host.querySelectorAll('button')].find(button => button.getAttribute('aria-label') === label || button.textContent === label);
+const button = label => [...document.querySelectorAll('button')].find(button => button.getAttribute('aria-label') === label || button.textContent === label);
 const click = async label => act(async () => button(label).click());
 const render = async (props = {}) => act(async () => root.render(<DesignLibraryTree roots={roots} activeId="f" selectedModule="p" {...callbacks} {...props} />));
 beforeEach(() => {
@@ -88,7 +88,7 @@ test('legacy modules still move by drag and drop and artifact rows are draggable
 test('folder actions use labeled buttons, close after an action, and Escape returns focus to the trigger', async () => {
   await render(); await click('Actions for Designs');
   expect(button('Actions for Designs').getAttribute('aria-expanded')).toBe('true');
-  expect(host.querySelector('[aria-label="Folder actions for Designs"]')).not.toBeNull();
+  expect(document.querySelector('[aria-label="Folder actions for Designs"]')).not.toBeNull();
   expect(button('Manage modules')).toBeUndefined();
   await click('Generate systems engineering project'); expect(callbacks.onGenerateProject).toHaveBeenCalledWith('f');
   expect(button('Actions for Designs').getAttribute('aria-expanded')).toBe('false');

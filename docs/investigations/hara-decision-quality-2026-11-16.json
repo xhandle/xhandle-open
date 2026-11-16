@@ -1,0 +1,106 @@
+{
+  "date": "2026-11-16",
+  "source": {
+    "sha256": "08399495d30d4d27de88b09c94c72f6f1eef49db567cab10f2d7f8e4dc904db2",
+    "files": 1180
+  },
+  "stageMatchesFinalSource": true,
+  "unit": {
+    "suites": 155,
+    "passed": 1473,
+    "failed": 0
+  },
+  "electron": {
+    "checks": 16,
+    "rendererErrors": [],
+    "requests": 19,
+    "singletonOutputRecovery": true,
+    "batchOutputRecovery": true
+  },
+  "stress": {
+    "initialRunStatus": "failed",
+    "successfulRetryStatus": "passed",
+    "cases": [
+      {
+        "id": "projects-HARA-256-none",
+        "status": "failed",
+        "expected": 5376,
+        "requests": 0,
+        "failure": "electronApplication.firstWindow: Timeout 30000ms exceeded while waiting for event \"window\""
+      },
+      {
+        "id": "code-HARA-256-none",
+        "status": "passed",
+        "expected": 5376,
+        "rows": 5376,
+        "completionPassed": true,
+        "elapsedMs": 33192.39999997616,
+        "maxEventLoopGapMs": 630.8999999761581,
+        "requests": 466,
+        "assumptionFallbackRows": 0
+      },
+      {
+        "id": "projects-HARA-32-mixed",
+        "status": "passed",
+        "expected": 672,
+        "rows": 672,
+        "completionPassed": true,
+        "elapsedMs": 2485.7999999523163,
+        "maxEventLoopGapMs": 109.40000009536743,
+        "requests": 512,
+        "assumptionFallbackRows": 0
+      },
+      {
+        "id": "code-HARA-32-mixed",
+        "status": "passed",
+        "expected": 672,
+        "rows": 672,
+        "completionPassed": true,
+        "elapsedMs": 4654.5,
+        "maxEventLoopGapMs": 100.80000007152557,
+        "requests": 66,
+        "assumptionFallbackRows": 0
+      },
+      {
+        "id": "projects-HARA-32-cancel-resume",
+        "status": "passed",
+        "expected": 672,
+        "rows": 672,
+        "completionPassed": true,
+        "elapsedMs": 1669.1000000238419,
+        "maxEventLoopGapMs": 108.30000007152557,
+        "requests": 508,
+        "assumptionFallbackRows": 0,
+        "reusedCommittedAssessments": 16
+      },
+      {
+        "id": "code-HARA-32-cancel-resume",
+        "status": "passed",
+        "expected": 672,
+        "rows": 672,
+        "completionPassed": true,
+        "elapsedMs": 4407.399999976158,
+        "maxEventLoopGapMs": 64.40000009536743,
+        "requests": 72,
+        "assumptionFallbackRows": 0,
+        "reusedCommittedAssessments": 1
+      },
+      {
+        "id": "projects-HARA-256-none",
+        "status": "passed",
+        "expected": 5376,
+        "rows": 5376,
+        "completionPassed": true,
+        "elapsedMs": 15899.300000071526,
+        "maxEventLoopGapMs": 1087.2000000476837,
+        "requests": 4023,
+        "assumptionFallbackRows": 0
+      }
+    ]
+  },
+  "limits": [
+    "Synthetic evidence and controlled AI responses; live model semantic quality was not established.",
+    "One unreproduced native backend startup timeout preceded the successful Projects stress retry.",
+    "macOS arm64 Electron execution only; no installer or release publication."
+  ]
+}

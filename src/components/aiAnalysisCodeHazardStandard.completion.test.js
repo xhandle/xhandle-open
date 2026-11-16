@@ -1,11 +1,29 @@
-jest.mock('./aiAnalysisSTPA', () => ({ fetchLLMResponse: jest.fn() }));
 import { fetchLLMResponse } from './aiAnalysisSTPA';
 import { hasGeneratedHazardAssessment, requestStandardRowsWithRetries } from './aiAnalysisCodeHazardStandard';
+import { HAZARD_ANALYSIS_REPAIR_STAGES, getStandardConfig } from './aiAnalysisCodeHazardStandard';
+import { buildEffectiveOrganizationProfileContext, createOrganizationProfileRecord } from '../features/organization-profile/organizationProfile';
+jest.mock('./aiAnalysisSTPA', () => ({ fetchLLMResponse: jest.fn() }));
 
 const config = { sheetName: 'STPA', analysisName: 'STPA', fields: [['hazards','Hazards']], promptGuidance: '' };
 const items = [{ id:'FD-1', from:'Estimate Pose', controlAction:'Publish pose', to:'Plan Motion', guidePhrase:'Not provided' }];
 const assessed = { id:'FD-1-STPA', guidePhraseApplicable:'Yes', guidePhraseApplicabilityRationale:'Planner requires a current pose.', hazards:'Planner operates using a stale pose.' };
 beforeEach(() => jest.clearAllMocks());
+test.each([true,false])('canonical catalogs and mappings honor effective profile enabled=%s',async enabled=>{
+ const profile=createOrganizationProfileRecord({enabled,markdown:'---\norganization: Canonical fixture\nprofile_version: 1.0\nstatus: approved\n---\n# Custom Hazard Taxonomy\nORG-CANONICAL-POLICY: use vehicle-level loss of separation.\n'});
+ const organizationContext=buildEffectiveOrganizationProfileContext({profile,projectProfile:{mode:'inherit',overrideMarkdown:'PROJECT-CANONICAL-POLICY: occupied crossings.'}});
+ const row={...assessed,losses:'Pedestrians suffer fatal injury.',hazards:'Vehicle enters the occupied crossing.',rawLossCandidate:'Fatal pedestrian injury.',rawHazardCandidate:'Vehicle enters the occupied crossing.'};
+ fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(prompt.includes('Return ONLY one JSON object with arrays losses and hazards')
+  ?{losses:[{id:'L1',statement:'Fatal injury to pedestrians.'}],hazards:[{id:'H1',statement:'Vehicle enters the occupied crossing.'}]}
+  :[{id:row.id,canonicalLossIds:['L1'],canonicalHazardId:'H1'}]));
+ const errors=[];
+ const result=await HAZARD_ANALYSIS_REPAIR_STAGES.find(([key])=>key==='canonicalization')[1](getStandardConfig('STPA'),[row],items,{organizationContext,onRecoverableError:error=>errors.push(error.message)});
+ expect(errors).toEqual([]);expect(fetchLLMResponse).toHaveBeenCalledTimes(2);
+ for(const [prompt] of fetchLLMResponse.mock.calls){
+  if(enabled){expect(prompt).toContain('ORG-CANONICAL-POLICY');expect(prompt).toContain('PROJECT-CANONICAL-POLICY');}
+  else{expect(prompt).not.toContain('ORG-CANONICAL-POLICY');expect(prompt).not.toContain('PROJECT-CANONICAL-POLICY');}
+ }
+ expect(result[0].canonicalHazardId).toBe('H1');
+});
 test('identity-only output is retried rather than accepted as completed analysis', async () => {
  fetchLLMResponse.mockResolvedValueOnce(JSON.stringify([{id:'FD-1-STPA'}])).mockResolvedValue(JSON.stringify([assessed]));
  await expect(requestStandardRowsWithRetries(config, items)).resolves.toEqual([assessed]);
@@ -118,4 +136,20 @@ test('a repair stage that reports a recoverable failure is not cached as complet
    await runStandardHazardAnalysisStages({config,items,generationCheckpoint:checkpoint,onProgress:()=>{},onStageComplete:async()=>{}});
    expect(checkpoint.write.mock.calls.map(([basis])=>basis.stage)).toEqual(['generation']);
  } finally {HAZARD_ANALYSIS_REPAIR_STAGES.splice(0,HAZARD_ANALYSIS_REPAIR_STAGES.length,...original);}
+});
+
+
+test('old canonicalization checkpoints cannot bypass the new governed profile mapping policy',async()=>{
+ const {runStandardHazardAnalysisStages}=require('./aiAnalysisCodeHazardStandard');
+ const original=[...HAZARD_ANALYSIS_REPAIR_STAGES],canonical=original.find(([key])=>key==='canonicalization');
+ const row={...assessed,losses:'Fatal pedestrian injury',hazards:'Vehicle enters an occupied crossing'};
+ const checkpoint={read:jest.fn(async basis=>basis.stage==='generation'?[row]:basis.stage==='canonicalization'&&!basis.canonicalContextPolicy?[{...row,canonicalHazardId:'OLD-UNCALIBRATED'}]:undefined),write:jest.fn()};
+ HAZARD_ANALYSIS_REPAIR_STAGES.splice(0,HAZARD_ANALYSIS_REPAIR_STAGES.length,canonical);
+ fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(prompt.includes('Return ONLY one JSON object with arrays losses and hazards')?{losses:[{id:'L1',statement:'Fatal pedestrian injury'}],hazards:[{id:'H1',statement:'Vehicle enters an occupied crossing'}]}:[{id:row.id,canonicalLossIds:['L1'],canonicalHazardId:'H1'}]));
+ try{
+  const result=await runStandardHazardAnalysisStages({config:getStandardConfig('STPA'),items,organizationContext:'ORG-CANONICAL-POLICY',generationCheckpoint:checkpoint});
+  expect(fetchLLMResponse).toHaveBeenCalledTimes(2);
+  expect(checkpoint.read).toHaveBeenCalledWith(expect.objectContaining({stage:'canonicalization',canonicalContextPolicy:'governed-profile-v1'}));
+  expect(result[0].canonicalHazardId).toBe('H1');
+ }finally{HAZARD_ANALYSIS_REPAIR_STAGES.splice(0,HAZARD_ANALYSIS_REPAIR_STAGES.length,...original);}
 });

@@ -4,7 +4,8 @@ import { folderProject, libraryParents, libraryDescendants } from '../../require
 import { ARTIFACT_STORES, listRevisions, loadArtifact, makeArtifactJob, moveArtifactInLibrary, publishArtifactRevision, readArtifactStorage, writeArtifactStorage } from './artifactRepository';
 import { assertOwner, checkedCapturedSources, captureLiveSources, captureLiveSourceHash, configOwners, ownerKey } from './artifactSources';
 import { getTemplate, newId, semanticHash } from './artifactModel';
-import { ENGINEERING_PROJECT_TYPE, engineeringProjectTrace, planEngineeringProject, projectInputSources, proposedRevision, sameProjectInputs } from './engineeringProjectModel';
+import { upstreamRequirementTemplate } from './requirementDerivation';
+import { ENGINEERING_PROJECT_TYPE, generationMembers, engineeringProjectTrace, planEngineeringProject, projectInputSources, proposedRevision, sameProjectInputs, systemRequirementDerivation } from './engineeringProjectModel';
 
 export const listEngineeringProjects = () => readArtifactStorage(async db => (await db.getAll('metadata')).filter(m => m.recordType === ENGINEERING_PROJECT_TYPE && !m.deleted));
 export async function loadEngineeringProject(id) {
@@ -14,6 +15,7 @@ export async function loadEngineeringProject(id) {
   return { program, records };
 }
 export async function createEngineeringProject(input) {
+  if (input.traceabilityProfile) await (await import('../traceability/traceabilityRepository')).getProfile(input.traceabilityProfile);
   const program = planEngineeringProject(input);
   const snapshots = new Map(await Promise.all(program.members.map(async member => [member.id, await captureLiveSources(member.config)])));
   await writeArtifactStorage(['metadata'], async tx => {
@@ -29,12 +31,30 @@ export async function createEngineeringProject(input) {
   return program.id;
 }
 export async function beginEngineeringGeneration(id, expectedVersion, reset = false) {
+  const before = await readArtifactStorage(db => db.get('metadata', id));
+  if (!before || before.deleted || before.version !== expectedVersion) throw new Error('The project changed in another window. Reload before generating.');
+  const planned = systemRequirementDerivation(before);
+  const changed = semanticHash(planned.members) !== semanticHash(before.members);
+  if (changed && !reset) throw new Error('Choose Generate fresh update to apply the requirement derivation order for the selected source diagrams. Existing revisions and saved drafts are retained.');
+  const existingIds = new Set(before.members.map(member => member.id));
+  const added = planned.members.filter(member => !existingIds.has(member.id));
+  const snapshots = new Map(await Promise.all(added.map(async member => [member.id, await captureLiveSources(member.config)])));
   return writeArtifactStorage(['metadata', 'jobs'], async tx => {
     const program = await tx.objectStore('metadata').get(id);
     if (!program || program.deleted || program.version !== expectedVersion) throw new Error('The project changed in another window. Reload before generating.');
     assertOwner(program.config);
-    const next = { ...program, version: program.version + 1, runToken: newId(), state: 'generating', error: null, updatedAt: new Date().toISOString() };
-    if (reset) for (const member of program.members) await deleteArtifactJob(tx, member.id);
+    const next = { ...planned, version: program.version + 1, runToken: newId(), state: 'generating', error: null, updatedAt: new Date().toISOString() };
+    if (changed) for (const member of planned.members) {
+      const meta = await tx.objectStore('metadata').get(member.id);
+      if (meta) await tx.objectStore('metadata').put({ ...meta, config: member.config, dependsOn: member.dependsOn });
+      else {
+        const sources = checkedCapturedSources(member.config, snapshots.get(member.id));
+        await tx.objectStore('metadata').add({ id: member.id, programId: id, projectId: id, workspaceType: 'systems-engineering',
+          folderId: member.config.folderId, title: member.config.title, templateId: member.config.templateId, templateVersion: getTemplate(member.config.templateId).version,
+          config: member.config, dependsOn: member.dependsOn, revision: 0, sourceHash: sources.hash, baseSourceHash: sources.hash, freshness: 'current', updatedAt: next.updatedAt });
+      }
+    }
+    if (reset) for (const member of generationMembers(program)) await deleteArtifactJob(tx, member.id);
     await tx.objectStore('metadata').put(next); return next;
   });
 }
@@ -57,7 +77,7 @@ export async function prepareEngineeringDocument(program, artifactId, upstream) 
 export async function finishEngineeringGeneration(program, state, error = null) {
   if (state === 'ready') {
     const { records } = await loadEngineeringProject(program.id);
-    for (const record of records) {
+    for (const record of records.filter(record => record.meta.templateId !== 'traceability-matrix')) {
       if (!record.job || record.job.state !== 'ready') throw new Error('A project document is incomplete. Resume the project to finish saved drafts.');
       if (await captureLiveSourceHash(record.meta.config) !== (record.job.sources.baseHash || record.job.sources.hash)) throw new Error('Project sources changed during generation. Saved drafts are retained; generate a fresh update before review.');
     }
@@ -68,7 +88,7 @@ export async function finishEngineeringGeneration(program, state, error = null) 
       if (state === 'ready') throw new Error('This project generation was replaced.');
       return;
     }
-    if (state === 'ready') for (const member of current.members) {
+    if (state === 'ready') for (const member of generationMembers(current)) {
       const meta = await tx.objectStore('metadata').get(member.id), job = await tx.objectStore('jobs').get(member.id);
       if (!meta || meta.deleted || !job || job.state !== 'ready' || job.programRunToken !== program.runToken || job.baseRevision !== meta.revision || getTemplate(meta.templateId).sections.some(section => !job.sections[section.id]?.length)) throw new Error('A project document is incomplete or changed. Resume the project to finish saved drafts.');
     }
@@ -77,13 +97,13 @@ export async function finishEngineeringGeneration(program, state, error = null) 
 }
 export async function acceptEngineeringProject(id, expectedVersion, expectedToken) {
   const initial = await loadEngineeringProject(id);
-  const snapshots = new Map(await Promise.all(initial.records.map(async data => [data.meta.id, await captureLiveSources(data.meta.config)])));
+  const snapshots = new Map(await Promise.all(initial.records.filter(data => data.meta.templateId !== 'traceability-matrix').map(async data => [data.meta.id, await captureLiveSources(data.meta.config)])));
   return writeArtifactStorage(['metadata', 'jobs', 'revisions'], async tx => {
     const program = await tx.objectStore('metadata').get(id);
     if (!program || program.deleted || program.version !== expectedVersion || program.runToken !== expectedToken || program.state !== 'ready') throw new Error('Reload and review the current complete project proposal.');
     assertOwner(program.config);
     const records = [];
-    for (const member of program.members) {
+    for (const member of generationMembers(program)) {
       const meta = await tx.objectStore('metadata').get(member.id);
       const job = await tx.objectStore('jobs').get(member.id);
       if (!meta || meta.deleted || !job || job.programRunToken !== program.runToken || job.baseRevision !== meta.revision || job.state !== 'ready') throw new Error('A document changed or is incomplete. Generate a fresh project update.');
@@ -174,13 +194,13 @@ async function adoptArtifact(tx, artifactId, programId, folderId) {
   const projectFolder = folders.find(item => item.id === program.folderId);
   if (!projectFolder) throw new Error('The project folder no longer exists.');
   for (const destination of [folder, projectFolder]) if (destination.engineeringProjectId && !artifactOwners.some(owner => String(owner.id) === String(destination.engineeringProjectId))) throw new Error('The destination folder belongs to another owning project.');
-  const config = { ...meta.config, folderId: destinationId, ownerProjects: artifactOwners };
+  const config = { ...meta.config, folderId: destinationId, ownerProjects: artifactOwners, ...(meta.templateId === 'traceability-matrix' ? { programId, scopeId: programId, bindings: {}, lineageSources: null } : {}) };
   assertOwner(config); assertOwner(program.config);
   const updatedAt = new Date().toISOString();
   const next = { ...meta, programId, projectId: programId, workspaceType: 'systems-engineering', folderId: destinationId, config, dependsOn: [], updatedAt };
   await store.put(next);
   if (job) await putArtifactJob(tx, { ...job, projectId: programId, workspaceType: 'systems-engineering',
-    sources: projectInputSources(config, [], job.sources), token: newId(), version: job.version + 1, programRunToken: null, updatedAt });
+    sources: upstreamRequirementTemplate(config) ? job.sources : projectInputSources(config, [], job.sources), token: newId(), version: job.version + 1, programRunToken: null, updatedAt });
   // Existing document dependencies and checkpoints remain valid. Adding a member
   // does not fabricate claims that the other documents already cite its content.
   await store.put({ ...program, ownerProjects: owners, config: { ...program.config, ownerProjects: owners },

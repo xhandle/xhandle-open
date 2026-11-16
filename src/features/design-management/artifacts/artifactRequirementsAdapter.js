@@ -47,7 +47,7 @@ export function artifactRequirementRows(meta, revision, objects, manifest, proje
 
 export function changeArtifactStructure(objects, id, command) {
   const object = objects.find(o => o.id === id);
-  if (!object) return objects;
+  if (!object || object.deleted || !['delete', 'up', 'down', 'promote', 'demote'].includes(command)) return objects;
   if (command === 'delete') {
     const removed = new Set([id]);
     let changed = true;
@@ -55,7 +55,7 @@ export function changeArtifactStructure(objects, id, command) {
     return objects.map(o => removed.has(o.id) ? { ...o, deleted: true, manual: true } : o);
   }
   const ordered = orderedObjects(objects);
-  const siblings = ordered.filter(o => o.parentId === object.parentId);
+  const siblings = ordered.filter(o => (o.parentId || null) === (object.parentId || null));
   const index = siblings.findIndex(o => o.id === id);
   let nextParent = object.parentId;
   if (command === 'up' || command === 'down') {

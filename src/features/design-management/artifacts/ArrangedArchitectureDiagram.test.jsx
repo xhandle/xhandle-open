@@ -67,5 +67,5 @@ test('a failed restore retains the arrangement and can be retried', async () => 
   expect(host.textContent).toContain('Could not restore source layout');
   await act(async () => ref.current.restoreSourceLayout());
   expect(mockMounts).toBe(2);
-  expect(host.textContent).toContain('Source layout restored');
+  expect(host.querySelector('[role=status]')).toBeNull();
 });

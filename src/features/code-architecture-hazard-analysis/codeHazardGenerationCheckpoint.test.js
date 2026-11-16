@@ -5,7 +5,24 @@ import {TextEncoder} from 'util';
 import {serialize,deserialize} from 'v8';
 import {createCodeHazardCheckpoint} from './codeHazardGenerationCheckpoint';
 import {openCodeArchitectureHazardDB} from './codeArchitectureHazardStore';
+import {clearOrganizationPromptCache} from '../organization-profile/organizationPromptContext';
 jest.mock('./codeArchitectureHazardStore',()=>({openCodeArchitectureHazardDB:jest.fn()}));
+
+test('hazard checkpoints invalidate enabled profile changes while preserving disabled-profile work',async()=>{
+ const priorCrypto=global.crypto,priorEncoder=global.TextEncoder,priorClone=global.structuredClone;
+ global.structuredClone=value=>deserialize(serialize(value));global.TextEncoder=TextEncoder;Object.defineProperty(global,'crypto',{value:webcrypto,configurable:true});
+ localStorage.clear();clearOrganizationPromptCache();
+ const db=await openDB('checkpoint-profile-test',1,{upgrade(database){database.createObjectStore('generationCheckpoints',{keyPath:'id'}).createIndex('scope','scope');}});openCodeArchitectureHazardDB.mockResolvedValue(db);
+ const scope={projectId:'profile-project',repoId:'r'},basis={row:1};
+ try{
+  const disabled=await createCodeHazardCheckpoint(scope);await disabled.write(basis,{policy:'disabled'});
+  const save=text=>localStorage.setItem('xhandle.organizationProfile',JSON.stringify({enabled:true,markdown:'---\norganization: Hazard fixture\nprofile_version: 1.0\nstatus: approved\n---\n# Engineering Rules\n'+text}));
+  save('Use policy A.');const first=await createCodeHazardCheckpoint(scope);expect(await first.read(basis)).toBeUndefined();await first.write(basis,{policy:'A'});
+  expect(await (await createCodeHazardCheckpoint(scope)).read(basis)).toEqual({policy:'A'});
+  save('Use policy B.');expect(await (await createCodeHazardCheckpoint(scope)).read(basis)).toBeUndefined();
+  localStorage.removeItem('xhandle.organizationProfile');expect(await (await createCodeHazardCheckpoint(scope)).read(basis)).toEqual({policy:'disabled'});
+ }finally{db.close();localStorage.clear();clearOrganizationPromptCache();Object.defineProperty(global,'crypto',{value:priorCrypto,configurable:true});global.TextEncoder=priorEncoder;global.structuredClone=priorClone;}
+});
 
 test('bulk checkpoint I/O preserves individual-key compatibility, scope and cancellation',async()=>{
   const priorCrypto=global.crypto, priorEncoder=global.TextEncoder, priorClone=global.structuredClone;

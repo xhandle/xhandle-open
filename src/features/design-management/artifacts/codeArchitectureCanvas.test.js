@@ -17,7 +17,7 @@ test.each(['subsystem', 'csci', 'csc', 'csu', 'functional'])('%s retains the sel
   expect(nodeSources.get(sourceNodes.get('a'))).toBe('a');
   expect(diagram.snapshot.edges.map(edge => edge.label)).toEqual(['Start', 'Stop']);
   expect(diagram.snapshot.edges.every(edge => leaves.some(node => node.id === edge.from) && leaves.some(node => node.id === edge.to))).toBe(true);
-  expect(JSON.parse(diagram.snapshot.native.storage[':edge-aggregation:v1']).aggregateAll).toBe(true);
+  expect(JSON.parse(diagram.snapshot.native.storage[':edge-aggregation:v1'])).toEqual({ aggregateAll: false, aggregateBidirectionalAll: false });
   expect(JSON.stringify(source)).toBe(before);
 });
 

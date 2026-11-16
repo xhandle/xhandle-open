@@ -19,7 +19,17 @@ jest.mock('../../components/backendConfig', () => ({ backendURL: '/fixture', bui
 let root, host;
 const contents = () => host.querySelector('[aria-label="Folder contents"]');
 const button = (label, scope = host) => [...scope.querySelectorAll('button')].find(node => node.getAttribute('aria-label') === label || node.title === label || node.textContent === label);
-const click = async (label, scope = host) => act(async () => { const target = button(label, scope); if (!target) throw new Error(`Missing button: ${label}`); target.click(); });
+const click = async (label, scope = host) => {
+  let target = button(label, scope) || button(label, document.querySelector('.artifact-actions-popover') || scope);
+  if (!target && scope === contents()) {
+    const name = label === 'Edit folder details' ? null : label.replace(/^(Open |Edit details for |Remove )/, '');
+    const trigger = name ? button(`Actions for ${name}`, scope) : host.querySelector('.design-toolbar-actions .artifact-overflow-trigger');
+    if (trigger) await act(async () => trigger.click());
+    target = button(label, document.querySelector('.artifact-actions-popover') || scope);
+  }
+  if (!target) throw new Error(`Missing button: ${label}`);
+  await act(async () => target.click());
+};
 async function until(check) {
   for (let n = 0; n < 150; n++) { if (check()) return; await act(async () => new Promise(resolve => setTimeout(resolve, 5))); }
   throw new Error(host.textContent);
@@ -53,6 +63,92 @@ beforeEach(() => {
   host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host);
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); jest.restoreAllMocks(); });
+
+test.each(['Outline view', 'Table view', 'Traceability view'])('legacy module toolbar works in %s with tied orders and projectId-only rows', async view => {
+  jest.spyOn(window, 'confirm').mockReturnValue(true);
+  localStorage.setItem('xhandle:requirements', JSON.stringify(['Alpha', 'Beta', 'Gamma'].map((title, index) => ({ id: `toolbar-${index}`, projectId: 'f', module: 'Source requirements', title, links: [], attributes: {}, parentId: null }))));
+  await mount(); await click('Open Source requirements', contents()); await click(view);
+  const toolbar = title => host.querySelector(`.requirements-row-actions button[title="${title}"]`);
+  const press = title => act(async () => toolbar(title).click());
+  const select = id => act(async () => host.querySelector(`.design-view-scroll [data-artifact-object-id="${id}"]`).click());
+  const saved = () => JSON.parse(localStorage.getItem('xhandle:requirements'));
+  await select('toolbar-1'); await press('Move up');
+  expect(saved().find(row => row.id === 'toolbar-1').order).toBe(0);
+  expect(toolbar('Move up').disabled).toBe(true);
+  await press('Move down'); expect(saved().find(row => row.id === 'toolbar-1').order).toBe(1);
+  await press('Demote (indent)'); expect(saved().find(row => row.id === 'toolbar-1').parentId).toBe('toolbar-0');
+  await press('Promote (outdent)'); expect(saved().find(row => row.id === 'toolbar-1').parentId).toBeNull();
+  await press('Edit'); await field('Text', 'Reviewed Beta'); await click('Save');
+  expect(saved().find(row => row.id === 'toolbar-1').title).toBe('Reviewed Beta');
+  await press('History'); expect(host.querySelector('[role="dialog"]').textContent).toContain('Version 2');
+  await click('Close Change History — Reviewed Beta');
+  await press('New child'); await field('Text', 'Toolbar child'); await click('Save');
+  const child = saved().find(row => row.title === 'Toolbar child'); expect(child.parentId).toBe('toolbar-1');
+  await press('Insert table (renders in place of title)'); await click('Save');
+  expect(saved().find(row => row.id === 'toolbar-1').content.type).toBe('table');
+  await select(child.id); await press('Delete'); expect(saved().some(row => row.id === child.id)).toBe(false);
+  await select('toolbar-0'); expect(toolbar('Promote (outdent)').disabled).toBe(true);
+  await press('Clear selection'); expect(toolbar('History').disabled).toBe(true); expect(toolbar('Edit').disabled).toBe(true);
+});
+
+test('New folder uses an in-app dialog, opens the new folder from an artifact, and persists across remounts', async () => {
+  const prompt = jest.spyOn(window, 'prompt').mockImplementation(() => { throw new Error('prompt() is not supported.'); });
+  const id = await createArtifact(config);
+  await mount(); await until(() => !!contents()?.querySelector(`[data-folder-item-id="${id}"]`));
+  await click('Open Operations concept', contents()); await until(() => !!host.querySelector('.artifact-header'));
+  await click('New folder');
+  expect(button('Create').disabled).toBe(true);
+  expect(host.querySelector('[role="dialog"] select').value).toBe('');
+  await field('Name', '  Safety documents  '); await submit();
+  const folder = JSON.parse(localStorage.getItem('xhandle:req-projects')).find(folder => folder.name === 'Safety documents');
+  expect(folder).toMatchObject({ parentId: null, modules: [] });
+  expect(host.querySelector('[role="dialog"]')).toBeNull();
+  expect(host.querySelector('.artifact-header')).toBeNull();
+  expect(contents().textContent).toContain('Safety documents');
+  expect(contents().textContent).toContain('This folder is empty');
+  await act(async () => root.unmount()); root = createRoot(host); await mount();
+  expect(folderButton('Safety documents')).toBeDefined();
+  expect(contents().textContent).toContain('Safety documents');
+  expect(prompt).not.toHaveBeenCalled();
+});
+
+test('folder dialogs cancel safely and Add subfolder preselects and saves its parent', async () => {
+  const prompt = jest.spyOn(window, 'prompt').mockImplementation(() => { throw new Error('prompt() is not supported.'); });
+  await mount();
+  const original = localStorage.getItem('xhandle:req-projects');
+  await click('New folder'); await field('Name', '   ');
+  expect(button('Create').disabled).toBe(true);
+  await submit(); expect(localStorage.getItem('xhandle:req-projects')).toBe(original);
+  await click('Cancel'); expect(host.querySelector('[role="dialog"]')).toBeNull();
+  await click('New folder');
+  await act(async () => host.querySelector('[role="dialog"] input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+  expect(host.querySelector('[role="dialog"]')).toBeNull();
+  expect(localStorage.getItem('xhandle:req-projects')).toBe(original);
+  await click('Actions for Designs'); await click('Add subfolder');
+  expect(host.querySelector('[role="dialog"]').getAttribute('aria-label')).toBe('New subfolder');
+  expect(host.querySelector('[role="dialog"] select').value).toBe('f');
+  await field('Name', 'Safety analysis'); await submit();
+  expect(JSON.parse(localStorage.getItem('xhandle:req-projects')).find(folder => folder.name === 'Safety analysis')).toMatchObject({ parentId: 'f', modules: [] });
+  expect(folderButton('Safety analysis')).toBeDefined();
+  expect(contents().textContent).toContain('Safety analysis');
+  expect(prompt).not.toHaveBeenCalled();
+});
+
+test('folder creation reports a save failure and retains the entered name for retry', async () => {
+  await mount(); await click('New folder'); await field('Name', 'Safety evidence');
+  const setItem = Storage.prototype.setItem;
+  const failingSave = jest.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
+    if (key === 'xhandle:req-projects') throw new Error('Storage is full.');
+    return setItem.call(this, key, value);
+  });
+  await submit();
+  expect(host.querySelector('[role="dialog"] [role="alert"]').textContent).toContain('Storage is full.');
+  expect(host.querySelector('[role="dialog"] input').value).toBe('Safety evidence');
+  expect(JSON.parse(localStorage.getItem('xhandle:req-projects')).some(folder => folder.name === 'Safety evidence')).toBe(false);
+  failingSave.mockRestore(); await submit();
+  expect(host.querySelector('[role="dialog"]')).toBeNull();
+  expect(contents().textContent).toContain('Safety evidence');
+});
 
 test('folder clicks show direct children once and opening an artifact or module switches to the editor', async () => {
   localStorage.setItem('xhandle:req-views', JSON.stringify([{ name: 'Legacy filtered view', selectedModule: 'Source requirements', viewMode: 'table', filterText: 'No matching rows', filterStatus: 'Rejected', sortKey: 'title', sortDir: 'desc' }]));
@@ -88,7 +184,7 @@ test('artifact and folder details persist from the list and stale artifact edits
   await click('Edit details for Operations concept', contents()); await field('Title', 'Reviewed operations'); await field('Description', 'Operating scenarios and boundaries.'); await submit();
   await until(() => !host.querySelector('[role="dialog"]'));
   expect((await loadArtifact(id)).meta).toMatchObject({ title: 'Reviewed operations', description: 'Operating scenarios and boundaries.' });
-  await until(() => !!button('Edit details for Reviewed operations', contents()));
+  await until(() => contents().textContent.includes('Reviewed operations'));
   await click('Edit details for Reviewed operations', contents());
   await act(async () => updateDocumentDetails(id, 1, { title: 'Edited in another window', description: 'Latest details' }));
   await field('Title', 'Stale edit'); await submit();
@@ -103,12 +199,12 @@ test('artifact and folder details persist from the list and stale artifact edits
 test('removing artifacts and complete projects from a folder deletes their records after confirmation', async () => {
   const id = await createArtifact(config);
   const projectId = await createEngineeringProject({ name: 'Mission engineering', system: 'Mission', folderId: 'f', owners: [{ id: 'p', workspaceType: 'functional' }], notes: 'Review commands.', artifacts: [{ templateId: 'conops', title: 'Project document' }] });
-  await mount(); await until(() => !!button('Remove Operations concept', contents()));
+  await mount(); await until(() => !!contents()?.querySelector(`[data-folder-item-id="${id}"]`));
   await click('Remove Operations concept', contents()); await click('Cancel'); expect((await listArtifacts()).some(item => item.id === id)).toBe(true);
-  await click('Remove Operations concept', contents()); await click('Permanently remove'); await until(() => !button('Remove Operations concept', contents()));
+  await click('Remove Operations concept', contents()); await click('Permanently remove'); await until(() => !contents().querySelector(`[data-folder-item-id="${id}"]`));
   expect((await listArtifacts()).some(item => item.id === id)).toBe(false);
   await click('Remove Mission engineering', contents()); expect(host.querySelector('[role="dialog"]').textContent).toContain('all its generated documents');
-  await click('Permanently remove'); await until(() => !button('Remove Mission engineering', contents()));
+  await click('Permanently remove'); await until(() => !contents().textContent.includes('Mission engineering'));
   expect(await listEngineeringProjects()).toEqual([]); expect(await listArtifacts()).toEqual([]);
   expect(JSON.parse(localStorage.getItem('xhandle.projects'))).toHaveLength(1);
   expect(host.querySelector('[data-menubar]')).toBeNull();
@@ -190,4 +286,16 @@ test('global Find searches folders, offscreen requirements and other artifact dr
   const folder = await search('Subsystems');
   await act(async () => folder.click());
   await until(() => !!contents()?.textContent.includes('This folder is empty'));
+});
+
+test('sidebar folder rename uses an in-app dialog and preserves its identity and description', async () => {
+  const prompt = jest.spyOn(window, 'prompt').mockImplementation(() => { throw Error('Native prompt is unavailable in Electron'); });
+  await mount(); await click('Actions for Designs'); await click('Rename folder');
+  expect(host.querySelector('[role="dialog"]').textContent).toContain('Rename folder');
+  await field('Name', 'Renamed designs'); await submit();
+  expect(prompt).not.toHaveBeenCalled();
+  const folder = JSON.parse(localStorage.getItem('xhandle:req-projects')).find(folder => folder.id === 'f');
+  expect(folder).toMatchObject({ name: 'Renamed designs', description: 'Mission design library' });
+  await until(() => contents()?.textContent.includes('Renamed designs'));
+  expect(contents().textContent).toContain('Renamed designs');
 });

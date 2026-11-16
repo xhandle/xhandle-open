@@ -173,7 +173,7 @@ it('defaults STPA to the requested columns and retains picker customization', ()
 it('defaults HARA to the requested columns with legacy field labels and persistent customization', () => {
   const { HARA_DEFAULT_COLUMNS } = require('./CodeArchitectureHazardSummaryTable');
   const storageKey='test:hara-focused';
-  const headers=[...HARA_DEFAULT_COLUMNS].reverse().map(name=>name==='Function'?'Item / Function':name==='Malfunctioning Behavior'?'Malfunction':name).concat(['Rationale','Safety Significant']);
+  const headers=[...new Set([...HARA_DEFAULT_COLUMNS].reverse().map(name=>name==='Function'?'Item / Function':name==='Malfunctioning Behavior'?'Malfunction':name).concat(['Rationale','Safety Significant']))];
   const sheet=[headers,headers.map(name=>`Value: ${name}`)];
   localStorage.setItem(`${storageKey}:hidden-columns`,'[]');
   const host=document.createElement('div');document.body.appendChild(host);
@@ -195,7 +195,7 @@ it('defaults HARA to the requested columns with legacy field labels and persiste
     expect(sheet[0]).toEqual(headers);
   } finally {
     act(()=>root.unmount());host.remove();
-    for(const suffix of [':hidden-columns',':hidden-columns:hara-focused-v2',':column-widths']) localStorage.removeItem(storageKey+suffix);
+    for(const suffix of [':hidden-columns',':hidden-columns:hara-focused-v3',':column-widths']) localStorage.removeItem(storageKey+suffix);
   }
 });
 

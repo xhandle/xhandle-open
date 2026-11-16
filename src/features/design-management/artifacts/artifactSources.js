@@ -1,19 +1,24 @@
 import { captureLiveSourcesInline, configOwners } from './artifactSourceCapture';
 import { PROJECT_DELETION_PREFIX } from '../../../lib/projectDeletionRegistry';
 import { requestArtifactWorker } from './requestArtifactWorker';
+import { requirementDiagramSources, upstreamRequirementTemplate } from './requirementDerivation';
+import { hazardRequirementOwners } from './requirementSafety';
 export * from './artifactSourceCapture';
 
 // Workers read code repositories directly from IndexedDB. Only the selected
 // localStorage inputs cross threads, never the full code repository or workspace.
 export function artifactStorageSnapshot(config, storage) {
-  const keys = new Set(['xhandle.projects', 'xhandle.codeArchitectureProjects', 'xhandle:req-projects']);
-  if (config.sources?.length) keys.add('xhandle:requirements');
+  const keys = new Set(['xhandle.projects', 'xhandle.codeArchitectureProjects', 'xhandle:req-projects', 'xhandle.organizationProfile']);
+  const hazardOwners=hazardRequirementOwners(config);
+  if(hazardOwners.some(owner=>owner.workspaceType==='functional'))keys.add('xhandle.projectData');
+  if(hazardOwners.some(owner=>owner.workspaceType==='code-architecture'))keys.add('xhandle:code-architecture-hazard-analysis:v1');
+  if (!upstreamRequirementTemplate(config) && config.sources?.length) keys.add('xhandle:requirements');
   if (config.templateId === 'hazard-tracking-list') {
     if (configOwners(config).some(owner => owner.workspaceType === 'functional')) keys.add('xhandle.projectData');
     if (configOwners(config).some(owner => owner.workspaceType === 'code-architecture')) keys.add('xhandle:code-architecture-hazard-analysis:v1');
   }
   for (const owner of configOwners(config)) keys.add(`${PROJECT_DELETION_PREFIX}${encodeURIComponent(owner.workspaceType)}:${encodeURIComponent(String(owner.id))}`);
-  for (const source of config.architectureSources || []) {
+  for (const source of requirementDiagramSources(config)) {
     if (source.workspaceType === 'code-architecture') {
       for (let i = 0; i < storage.length; i++) {
         const key = storage.key(i);

@@ -1,7 +1,8 @@
+import ArtifactActionsPopover from '../../design-management/artifacts/ArtifactActionsPopover';
 import { designLibraryModel, libraryContents } from './designLibraryModel';
 import { LIBRARY_DRAG, LIBRARY_ORDER, libraryContainer, libraryDrop, libraryNodeKey, orderLibraryItems, reorderedKeys } from './designLibraryDrag';
-import React, { useEffect, useId, useRef, useState } from 'react';
-import { Briefcase, ChevronDown, ChevronRight, FileText, Folder, FolderOpen, FolderPlus, Layers, MoreHorizontal, Pencil, ArrowUpRight, Trash2 } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Briefcase, ChevronDown, ChevronRight, FileText, Folder, FolderOpen, FolderPlus, Layers, Pencil, ArrowUpRight, Trash2 } from 'lucide-react';
 export { libraryContents } from './designLibraryModel';
 
 const OPEN_KEY = 'xhandle:folder-open';
@@ -11,23 +12,19 @@ const projectKey = item => `project:${item.id}`;
 
 
 function FolderActions({ folder, onGenerateProject, onGenerateArtifact, onCreateChild, onRenameFolder, onMoveFolder, onDeleteFolder }) {
-  const [expanded, setExpanded] = useState(false);
-  const trigger = useRef(null), panelId = useId();
-  const run = callback => { setExpanded(false); callback?.(folder.id); };
-  return <div className="contents" onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setExpanded(false); trigger.current?.focus(); } }}>
-    <button ref={trigger} type="button" aria-label={`Actions for ${folder.name}`} aria-expanded={expanded} aria-controls={panelId} className="inline-flex min-h-[36px] items-center gap-1 rounded border px-2 text-xs text-gray-700 hover:bg-gray-100 focus-visible:ring-2 focus-visible:ring-indigo-500" onClick={() => setExpanded(value => !value)}><MoreHorizontal className="h-4 w-4" aria-hidden="true" />Actions</button>
-    {expanded && <div id={panelId} role="group" aria-label={`Folder actions for ${folder.name}`} className="basis-full w-full rounded-lg border bg-white p-1 shadow-sm">
-      <button type="button" className="flex min-h-[44px] w-full items-center gap-2 rounded px-3 py-2 text-left text-sm hover:bg-gray-100" onClick={() => run(onGenerateProject)}><Briefcase aria-hidden="true" className="h-4 w-4 shrink-0" />Generate systems engineering project</button>
-      <button type="button" className="flex min-h-[44px] w-full items-center gap-2 rounded px-3 py-2 text-left text-sm hover:bg-gray-100" onClick={() => run(onGenerateArtifact)}><FileText aria-hidden="true" className="h-4 w-4 shrink-0" />Generate engineering artifact</button>
-      <button type="button" className="flex min-h-[44px] w-full items-center gap-2 rounded px-3 text-left text-sm hover:bg-gray-100" onClick={() => run(onCreateChild)}><FolderPlus className="h-4 w-4" />Add subfolder</button>
-      <button type="button" className="flex min-h-[44px] w-full items-center gap-2 rounded px-3 text-left text-sm hover:bg-gray-100" onClick={() => run(onRenameFolder)}><Pencil className="h-4 w-4" />Rename folder</button>
-      {(folder.parentId || folder.libraryParent?.startsWith('project:')) && <button type="button" className="flex min-h-[44px] w-full items-center gap-2 rounded px-3 text-left text-sm hover:bg-gray-100" onClick={() => { setExpanded(false); onMoveFolder?.(folder.id, null); }}><ArrowUpRight className="h-4 w-4" />Move to top level</button>}
-      <button type="button" className="flex min-h-[44px] w-full items-center gap-2 rounded border-t px-3 text-left text-sm text-red-700 hover:bg-red-50" onClick={() => run(onDeleteFolder)}><Trash2 className="h-4 w-4" />Delete folder</button>
+  return <ArtifactActionsPopover compact label={`Actions for ${folder.name}`} panelLabel={`Folder actions for ${folder.name}`}>
+    {close => <div className="design-actions-list">
+      <button type="button" onClick={() => { close(); onGenerateProject?.(folder.id); }}><Briefcase aria-hidden="true" className="h-4 w-4 shrink-0" />Generate systems engineering project</button>
+      <button type="button" onClick={() => { close(); onGenerateArtifact?.(folder.id); }}><FileText aria-hidden="true" className="h-4 w-4 shrink-0" />Generate engineering artifact</button>
+      <button type="button" onClick={() => { close(); onCreateChild?.(folder.id); }}><FolderPlus aria-hidden="true" className="h-4 w-4 shrink-0" />Add subfolder</button>
+      <button type="button" onClick={() => { close(); onRenameFolder?.(folder.id); }}><Pencil aria-hidden="true" className="h-4 w-4 shrink-0" />Rename folder</button>
+      {(folder.parentId || folder.libraryParent?.startsWith('project:')) && <button type="button" onClick={() => { close(); onMoveFolder?.(folder.id, null); }}><ArrowUpRight aria-hidden="true" className="h-4 w-4 shrink-0" />Move to top level</button>}
+      <button type="button" className="danger" onClick={() => { close(); onDeleteFolder?.(folder.id); }}><Trash2 aria-hidden="true" className="h-4 w-4 shrink-0" />Delete folder</button>
     </div>}
-  </div>;
+  </ArtifactActionsPopover>;
 }
 
-export default function DesignLibraryTree({ roots, activeId, selectedModule, onSelect, onSelectModule, onCreateChild, onManageModules, onGenerateProject, onGenerateArtifact, onRenameFolder, onDeleteFolder, onMoveFolder, onMoveModule, onMoveItem }) {
+export default function DesignLibraryTree({ roots, activeId, selectedModule, onSelect, onSelectModule, onCreateChild, onManageModules, onGenerateProject, onGenerateArtifact, onRenameFolder, onDeleteFolder, onMoveFolder, onMoveModule, onMoveItem, canEditFolder = () => true }) {
   const [open, setOpen] = useState(() => { try { const saved = JSON.parse(localStorage.getItem(OPEN_KEY) || '[]'); return new Set(Array.isArray(saved) ? saved : []); } catch { return new Set(); } });
   const readOrder = () => { try { const value = JSON.parse(localStorage.getItem(LIBRARY_ORDER) || '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; } catch { return {}; } };
   const [order, setOrder] = useState(readOrder);
@@ -145,7 +142,7 @@ export default function DesignLibraryTree({ roots, activeId, selectedModule, onS
         {disclosure(folder.id, 'folder', folder.name, hasContent)}
         <Icon aria-hidden="true" className="h-4 w-4 shrink-0 mt-0.5 text-amber-700" />
         <div className="min-w-0 flex-1 ml-1"><button type="button" className="block w-full truncate text-left text-sm font-medium" title={folder.name} aria-current={selected ? 'page' : undefined} onClick={() => { setOpen(previous => new Set([...previous, folder.id])); onSelect(folder.id); }}>{folder.name}</button><p className="text-[10px] text-gray-500">Folder</p></div>
-        <FolderActions folder={folder} onGenerateProject={onGenerateProject} onGenerateArtifact={onGenerateArtifact} onCreateChild={onCreateChild} onRenameFolder={onRenameFolder} onMoveFolder={async (...args) => { try { await onMoveFolder?.(...args); } catch (error) { setMoveError(error.message); } }} onDeleteFolder={onDeleteFolder} />
+        {canEditFolder(folder) && <FolderActions folder={folder} onGenerateProject={onGenerateProject} onGenerateArtifact={onGenerateArtifact} onCreateChild={onCreateChild} onRenameFolder={onRenameFolder} onMoveFolder={async (...args) => { try { await onMoveFolder?.(...args); } catch (error) { setMoveError(error.message); } }} onDeleteFolder={onDeleteFolder} />}
       </div>
       {expanded && hasContent && <ul className="ml-3 border-l border-gray-200 pl-2" aria-label={`Contents of ${folder.name}`}>{childrenOf(`folder:${folder.id}`).map(item => item.kind === 'folder' ? renderFolder(item) : item.kind === 'project' ? renderProject(folder.id, item) : renderItem(folder.id, item))}</ul>}
     </li>;

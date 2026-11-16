@@ -450,6 +450,11 @@ npm test -- --watchAll=false --runTestsByPath src/components/LitePromptHandler.t
 
 The current app builds with a known ESLint warning backlog in some large ported components. Treat new warnings and build failures as cleanup work before committing.
 
+For the desktop regression gate, including all discovered tests, a fresh production
+build and isolated Electron interactions across populated workspaces, see
+[Electron regression testing](docs/testing/electron-regression.md). Run it with
+`npm run test:electron:regression -- --desktop ../xhandle-desktop --playwright /path/to/playwright-core` using Node 22 or newer.
+
 ### Advanced local configuration
 
 For normal local use, `npm run dev` is enough.

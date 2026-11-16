@@ -1,6 +1,11 @@
 import { runLiteAIAnalysis } from "./aiAnalysisLite";
 import { generateStandardCodeHazardAnalysisSheets } from "./aiAnalysisCodeHazardStandard";
 import { generateFhaAnalysisSheets, generateHaraAnalysisSheets } from "./aiAnalysisHaraFha";
+import { generateProjectHaraAnalysisSheets } from './aiAnalysisProjectHara';
+
+jest.mock('./aiAnalysisProjectHara', () => ({
+  generateProjectHaraAnalysisSheets: jest.fn(async ({ sheets }) => sheets),
+}));
 
 jest.mock("./aiAnalysisCodeHazardStandard", () => ({
   generateStandardCodeHazardAnalysisSheets: jest.fn(async ({ sheets }) => sheets),
@@ -46,12 +51,14 @@ test.each([
 });
 
 test.each([
-  ["HARA", generateHaraAnalysisSheets],
-  ["FHA", generateFhaAnalysisSheets],
-])("forwards organization calibration independently through %s generation", async (hazardMethod, generator) => {
+  ["HARA", generateProjectHaraAnalysisSheets, false],
+  ["HARA", generateHaraAnalysisSheets, true],
+  ["FHA", generateFhaAnalysisSheets, true],
+])("forwards organization calibration independently through %s generation", async (hazardMethod, generator, codeArchitectureWorkflow) => {
   await runLiteAIAnalysis({
     ...baseInput(),
     hazardMethod,
+    codeArchitectureWorkflow,
     hazardGenerationMode: "standard",
   });
 

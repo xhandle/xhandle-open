@@ -1,15 +1,17 @@
 import {hasUnresolvedHazardText,hasLockedApplicabilityRationale} from './hazardFieldContract';
+import { calculateProjectHaraAsil } from '../project-hazard-analysis/projectHara';
+import { CODE_HARA_COLUMNS, HARA_ADDITIONAL_FIELDS, HARA_OPTIONAL_FIELDS } from './codeArchitectureHara';
 export const FAST_HAZARD_VERSION = 'compact-hazard-v7-grounded-results-first';
 export const FAST_HAZARD_COLUMNS = {
   STPA: ['Function','Operational Scenario','Operational Mode','Operating Conditions','Guide Phrase','Guide Phrase Applicable','Unsafe Control Action','Loss','Hazard','Causal Scenario','Safety Constraint','Verification','Safety Classification'],
-  HARA: ['Function','Operational Scenario','Operational Mode','Operating Conditions','Guide Phrase','Guide Phrase Applicable','Malfunctioning Behavior','Hazardous Event','Severity','Exposure','Controllability','ASIL','Safety Goal','Safety Classification'],
+  HARA: CODE_HARA_COLUMNS,
   FHA: ['Function (From)','Control Action','Function (To)','Operational Context','Guide Phrase','Guide Phrase Applicable','Mishap','Severity Category','Severity Rationale','Software Control Category','Software Control Category Rationale','Software Criticality Index','SWCI Rationale / Derivation','Safety Classification','Verification'],
 };
 export const fastMethod = method => /^STPA(?:[-_]TEXTBOOK(?:_APPROACH)?)?$/i.test(method || '') ? 'STPA' : /^(HARA|FHA)$/i.test(method || '') ? method.toUpperCase() : null;
 export const COMMON_FIELDS = ['applicable','applicabilityRationale','classification','classificationRationale','assumptions'];
 export const ASSESSMENT_FIELDS = {
   STPA: ['uca','loss','hazard','causalScenario','causalFactor','safetyConstraint','softwareRequirement','verification'],
-  HARA: ['malfunction','hazardousEvent','severity','exposure','controllability','ratingRationale','safetyGoal','softwareRequirement','verification'],
+  HARA: [...new Set(['malfunction','hazardousEvent','severity','exposure','controllability','ratingRationale','safetyGoal','softwareRequirement','verification','uca','loss','hazard','causalScenario','safetyConstraint',...Object.keys(HARA_ADDITIONAL_FIELDS)])],
   FHA: ['mishap','severity','severityRationale','scc','sccRationale','softwareRequirement','verification'],
 };
 const text = value => typeof value === 'string' ? value.trim() : '';
@@ -18,13 +20,10 @@ const evidenceStrings = value => typeof value === 'string' ? [value] : value && 
 const normalizedQuote = value => text(value).replace(/\s+/g,' ');
 export const classificationValues = ['Safety — Direct','Safety — Related','Mission/Reliability'];
 
-// ISO 26262 risk graph: zero classes imply QM; positive S/E/C classes
-// progress one ASIL per step above sum 6. Ratings are never inferred here.
+// Use the same deterministic lookup and zero-class handling as Projects.
 export function deriveFastAsil(severity, exposure, controllability) {
   if(!/^S[0-3]$/.test(severity) || !/^E[0-4]$/.test(exposure) || !/^C[0-3]$/.test(controllability)) return null;
-  const ratings=[severity,exposure,controllability].map(value=>Number(value.slice(1)));
-  if(ratings.includes(0)) return 'QM';
-  return ['QM','ASIL A','ASIL B','ASIL C','ASIL D'][Math.max(0,ratings.reduce((a,b)=>a+b,0)-6)];
+  return calculateProjectHaraAsil(severity, exposure, controllability);
 }
 // Same MIL-STD-882E software criticality matrix used by the legacy FHA.
 export function deriveFastSwci(severity,scc) {
@@ -81,7 +80,15 @@ export function validateFastAssessment(method,row,source,{structuralOnly=false}=
   if(classificationValues.includes(governedClassification) && governedClassification!==row.classification)errors.push('Reviewed safety classification is read-only');
   const governedSignificance=source.reviewedValues?.['Safety Significant'];
   if(['Yes','No'].includes(governedSignificance) && governedSignificance!==(row.classification==='Mission/Reliability'?'No':'Yes'))errors.push('Classification conflicts with reviewed safety significance');
-  for(const field of ASSESSMENT_FIELDS[method])if(unresolvedAnswer(row[field]) || /^not applicable\b/i.test(text(row[field])))errors.push(`Missing applicable ${field}`);
+  for(const field of ASSESSMENT_FIELDS[method]) {
+    if(method==='HARA' && HARA_OPTIONAL_FIELDS.has(field)) {
+      // Older checkpoints predate the additional quality-evidence fields.
+      // Keep their assessments readable; the shared finalizer flags omissions.
+      if(row[field]===undefined && !['safeState','ftti','fttiRationale','itemDefinition','gaps'].includes(field))continue;
+      if(typeof row[field]!=='string')errors.push(`Provide ${field} as text, empty when unsupported`);
+    } else if(unresolvedAnswer(row[field]) || /^not applicable\b/i.test(text(row[field])))errors.push(`Missing applicable ${field}`);
+  }
+  if(method==='HARA' && text(row.ftti) && unresolvedAnswer(row.fttiRationale))errors.push('A supplied FTTI requires its evidence-based rationale');
   if(method==='HARA' && !deriveFastAsil(row.severity,row.exposure,row.controllability))errors.push('Invalid S/E/C rating');
   if(method==='FHA' && !deriveFastSwci(row.severity,row.scc))errors.push('Invalid severity/SCC rating');
   if(row.applicable==='Yes' && !/\bshall\b/i.test(text(row.softwareRequirement)))errors.push('Provide a software-allocated shall requirement');

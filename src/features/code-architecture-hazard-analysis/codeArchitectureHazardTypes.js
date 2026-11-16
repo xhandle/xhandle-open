@@ -9,7 +9,6 @@ export const CODE_ARCHITECTURE_HAZARD_REVIEW_STATUSES = {
 export const CODE_ARCHITECTURE_HAZARD_METHOD_OPTIONS = [
   { value: "STPA-Textbook", label: "STPA" },
   { value: "HARA", label: "HARA" },
-  { value: "FHA", label: "FHA" },
 ];
 
 export const CODE_ARCHITECTURE_HAZARD_ARTIFACT_TYPE = "code_architecture_hazard_summary_table";

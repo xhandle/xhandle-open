@@ -20,6 +20,38 @@ jest.mock('../../components/aiAnalysisLite',()=>({runLiteAIAnalysis:jest.fn()}))
 
 const base={projectId:'project-A',repoMeta:{repoId:'repo-A'},cbaRows:[{from:'Planner',action:'Apply torque',to:'Actuator',traceId:'functional-1',rowRef:1,hazardAnalysisEligibility:'Include',hazardAnalysisEligibilitySource:'manual'}],organizationContext:'Org requires fault injection for torque limits.',operationalContexts:[{id:'drive',scenario:'Urban driving',mode:'Automatic',conditions:'Wet road'}]};
 beforeEach(()=>{jest.clearAllMocks();saveCodeArchitectureHazardRun.mockResolvedValue(undefined);});
+test('HARA retains new fields and assigns the highest safety-goal ASIL across result batches and storage reload',async()=>{
+ const actual=jest.requireActual('./codeArchitectureHazardStore');
+ saveCodeArchitectureHazardRun.mockImplementation(actual.saveCodeArchitectureHazardRun);
+ fetchLLMResponse.mockImplementation(async prompt=>{
+  return JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>({...answer('HARA',id),
+   severity:id==='HA-112'?'S3':'S1',safeState:'Controlled standstill',ftti:'100 ms',
+   fttiRationale:'Supplied hazard timing analysis establishes 100 ms to prevent crossing entry.',
+   itemDefinition:'Automated braking controller and actuator; no driver.',gaps:''})));
+ });
+ const cbaRows=Array.from({length:16},(_,index)=>({...base.cbaRows[0],from:`Planner ${index+1}`,traceId:`functional-${index+1}`,rowRef:index+1}));
+ const run=await runCodeArchitectureHazardAnalysis({...base,cbaRows,method:'HARA'});
+ for(const [prompt] of fetchLLMResponse.mock.calls){
+  expect(prompt).toContain('fttiRationale');
+  expect(prompt).toContain('Never multiply it by malfunction');
+ }
+ const stored=await actual.getCodeArchitectureHazardRunById(run.id);
+ const [headers,...rows]=stored.generatedSheets.Summary;
+ expect(rows).toHaveLength(112);
+ expect(rows.every(row=>row[headers.indexOf('Safe State')]==='Controlled standstill')).toBe(true);
+ expect(rows.some(row=>/Assumption-based bounding/.test(row[headers.indexOf('Assessment Basis')]))).toBe(false);
+ expect(rows.at(-1)[headers.indexOf('ASIL')]).toBe('ASIL D');
+ expect(rows[0][headers.indexOf('ASIL')]).toBe('ASIL B');
+ expect(rows.every(row=>row[headers.indexOf('Safety Goal ASIL')]==='ASIL D')).toBe(true);
+ expect(stored.generatedSheets['Safety Goals']).toHaveLength(2);
+ expect(stored.generatedSheets['Safety Goals'][1][3].split('; ')).toHaveLength(112);
+ for(const header of ['Exposure Rationale','Controllability Rationale','Safe State','Fault Tolerant Time Interval','FTTI Rationale','Assessment Status']) {
+  expect(rows.every(row=>row[headers.indexOf(header)])).toBe(true);
+ }
+ expect(parseCsv(toCsvText(stored.generatedSheets.Summary))).toEqual(stored.generatedSheets.Summary.map(row=>row.map(String)));
+ expect(stored.summaryRows).toHaveLength(112);
+ localStorage.removeItem('xhandle:code-architecture-hazard-analysis:v1');
+});
 test.each(['STPA-Textbook','HARA','FHA'])('%s default dispatch uses new pipeline and supplies traceable software requirements',async method=>{
  const short=method==='STPA-Textbook'?'STPA':method;
  fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>answer(short,id))));

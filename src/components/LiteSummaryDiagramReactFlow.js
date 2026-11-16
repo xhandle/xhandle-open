@@ -2161,7 +2161,7 @@ function diagramPersistence(storage) {
   };
 }
 const DiagramBody = forwardRef(function DiagramBody(
-    { rows = [], nodeLabels = null, onUpdateRows: updateRows, storageKey = 'diagram:positions:v1', cleanOnceKey = null, onCleanApplied, fitAfterClean = true, autoCategories = null, hazardSummary = null, hazardRowSourceIndexes = [], riskRegister = [], onOpenHazardRow, onOpenFunctionalRow, onOpenSafetyIssue, onCanvasSelectionChange, storage = window.localStorage, readOnly = false, layoutOnly = false, preserveSnapshotGeometry = false, onInspectElement },
+    { rows = [], nodeLabels = null, onUpdateRows: updateRows, storageKey = 'diagram:positions:v1', cleanOnceKey = null, onCleanApplied, fitAfterClean = true, autoCategories = null, hazardSummary = null, hazardRowSourceIndexes = [], riskRegister = [], onOpenHazardRow, onOpenFunctionalRow, onOpenSafetyIssue, onCanvasSelectionChange, storage = window.localStorage, readOnly = false, layoutOnly = false, preserveSnapshotGeometry = false, exclusiveEdgeAggregation = false, onInspectElement },
     ref
 ) {
   const onUpdateRows = readOnly || layoutOnly ? undefined : updateRows;
@@ -5246,6 +5246,8 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
       return next;
     });
   }, [getNodes, rows, setEdges]);
+  // Artifact diagrams offer one bundling mode at a time. Retain the Projects
+  // canvas's existing independent controls unless explicitly requested.
   const toggleAggregateAllEdges = useCallback(() => {
     captureDiagramHistoryCheckpoint();
     applyEdgeAggregation((current) => ({
@@ -5253,9 +5255,10 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
       aggregateAll: !current.aggregateAll,
       aggregatedPairs: new Set(),
       expandedPairs: new Set(),
+      ...(exclusiveEdgeAggregation ? { aggregateBidirectionalAll: false, aggregatedBidirectionalPairs: new Set(), expandedBidirectionalPairs: new Set() } : {}),
     }));
     setHighlightedEdgeId(null);
-  }, [applyEdgeAggregation, captureDiagramHistoryCheckpoint]);
+  }, [applyEdgeAggregation, captureDiagramHistoryCheckpoint, exclusiveEdgeAggregation]);
   const toggleAggregateAllBidirectionalEdges = useCallback(() => {
     captureDiagramHistoryCheckpoint();
     applyEdgeAggregation((current) => ({
@@ -5263,13 +5266,19 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
       aggregateBidirectionalAll: !current.aggregateBidirectionalAll,
       aggregatedBidirectionalPairs: new Set(),
       expandedBidirectionalPairs: new Set(),
+      ...(exclusiveEdgeAggregation ? { aggregateAll: false, aggregatedPairs: new Set(), expandedPairs: new Set() } : {}),
     }));
     setHighlightedEdgeId(null);
-  }, [applyEdgeAggregation, captureDiagramHistoryCheckpoint]);
+  }, [applyEdgeAggregation, captureDiagramHistoryCheckpoint, exclusiveEdgeAggregation]);
   const toggleHighlightedEdgePairAggregation = useCallback(() => {
     if (!canToggleHighlightedPair || !highlightedPairKey) return;
     captureDiagramHistoryCheckpoint();
     applyEdgeAggregation((current) => {
+      if (exclusiveEdgeAggregation) {
+        current.aggregateBidirectionalAll = false;
+        current.aggregatedBidirectionalPairs.clear();
+        current.expandedBidirectionalPairs.clear();
+      }
       if (current.aggregateAll) {
         if (current.expandedPairs.has(highlightedPairKey)) {
           current.expandedPairs.delete(highlightedPairKey);
@@ -5284,11 +5293,16 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
       return current;
     });
     setHighlightedEdgeId(null);
-  }, [applyEdgeAggregation, canToggleHighlightedPair, captureDiagramHistoryCheckpoint, highlightedPairKey]);
+  }, [applyEdgeAggregation, canToggleHighlightedPair, captureDiagramHistoryCheckpoint, highlightedPairKey, exclusiveEdgeAggregation]);
   const toggleHighlightedBidirectionalEdgePairAggregation = useCallback(() => {
     if (!canToggleHighlightedBidirectionalPair || !highlightedBidirectionalPairKey) return;
     captureDiagramHistoryCheckpoint();
     applyEdgeAggregation((current) => {
+      if (exclusiveEdgeAggregation) {
+        current.aggregateAll = false;
+        current.aggregatedPairs.clear();
+        current.expandedPairs.clear();
+      }
       if (current.aggregateBidirectionalAll) {
         if (current.expandedBidirectionalPairs.has(highlightedBidirectionalPairKey)) {
           current.expandedBidirectionalPairs.delete(highlightedBidirectionalPairKey);
@@ -5303,7 +5317,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
       return current;
     });
     setHighlightedEdgeId(null);
-  }, [applyEdgeAggregation, canToggleHighlightedBidirectionalPair, captureDiagramHistoryCheckpoint, highlightedBidirectionalPairKey]);
+  }, [applyEdgeAggregation, canToggleHighlightedBidirectionalPair, captureDiagramHistoryCheckpoint, highlightedBidirectionalPairKey, exclusiveEdgeAggregation]);
   const setAllEdgeRoutingStyle = useCallback((style) => {
     const next = {
       defaultStyle: normalizeEdgeRoutingStyle(style),

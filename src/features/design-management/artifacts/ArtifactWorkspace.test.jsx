@@ -5,10 +5,10 @@ import { IDBFactory } from 'fake-indexeddb';
 import { serialize, deserialize } from 'v8';
 import { randomUUID, webcrypto } from 'crypto';
 import { TextEncoder } from 'util';
-import { ARTIFACT_TEMPLATES, validateSection } from './artifactModel';
+import { ARTIFACT_TEMPLATES, ENGINEERING_ARTIFACT_TYPES, validateSection } from './artifactModel';
 import { generateArtifact } from './artifactGeneration';
 import { ArtifactCreateDialog, ArtifactEditor } from './ArtifactWorkspace';
-import { acceptProposal, checkpointJob, createArtifact, loadArtifact, startProposal } from './artifactRepository';
+import { acceptProposal, checkpointJob, createArtifact, loadArtifact, openArtifactDatabase, saveObjects, startProposal } from './artifactRepository';
 import * as artifactExports from './artifactExport';
 import { saveProjectHazardAnalysisRecord } from '../../project-hazard-analysis/projectHazardAnalysisStorage';
 import { HAZARD_TRACKING_TABLE_COLUMNS } from './hazardTrackingFields';
@@ -21,7 +21,7 @@ jest.mock('../../../components/backendConfig', () => ({ backendURL: '/fixture', 
 let root, host;
 const config = { templateId: 'conops', title: 'Mission ConOps', projectId: 'p', workspaceType: 'functional', folderId: 'f', system: 'Mission', sources: [], notes: 'Operators request an observation.' };
 const buttons = () => [...document.querySelectorAll('button')];
-const button = text => buttons().find(b => b.textContent === text || b.title === ({ Outline: 'Outline view', Table: 'Table view', Trace: 'Traceability view', Document: 'Document view' }[text] || text));
+const button = text => buttons().find(b => b.textContent === text || b.getAttribute('aria-label') === text || b.title === ({ Outline: 'Outline view', Table: 'Table view', Trace: 'Traceability view', Document: 'Document view' }[text] || text));
 const openActions = async () => {
   await until(() => !!host.querySelector('[aria-label="Artifact actions"]'));
   const trigger = host.querySelector('[aria-label="Artifact actions"]');
@@ -29,6 +29,8 @@ const openActions = async () => {
 };
 const click = async text => {
   if (!button(text) && host.querySelector('[aria-label="Artifact actions"]')) await openActions();
+  const group = button(text)?.closest('details.design-action-group');
+  if (group && !group.open) await act(async () => group.querySelector('summary').click());
   await act(async () => button(text).click());
   await until(() => !host.querySelector('.design-view-scroll [role="progressbar"]'));
 };
@@ -51,6 +53,137 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); jest.restoreAllMocks(); });
 
+test('the standalone generator chooses Software as the System source and System as the Hardware source for code projects', async () => {
+  localStorage.setItem('xhandle.codeArchitectureProjects', JSON.stringify([{ id: 'code', name: 'Controller implementation', repos: [] }]));
+  const db = await openArtifactDatabase();
+  for (const [id, templateId] of [['code-software', 'software-spec'], ['code-system', 'system-spec']]) {
+    await db.put('metadata', { id, templateId, title: id, revision: 1, config: { ...config, templateId, projectId: 'code', workspaceType: 'code-architecture' } });
+    await db.put('revisions', { id: `${id}:1`, artifactId: id, number: 1, objects: [{ id: `${id}-r1`, kind: 'requirement', text: 'The controller shall reject invalid commands.', sourceIds: [] }] });
+  }
+  db.close();
+  const created = jest.fn();
+  await act(async () => root.render(<ArtifactCreateDialog activeFolderId="f" onClose={() => {}} onCreated={created} />));
+  await act(async () => { setField('Owning project', 'code-architecture:code'); setField('System', 'Mission'); setField('Document type', 'system-spec'); });
+  await until(() => !!host.querySelector('select option[value="code-software"]'));
+  expect(host.textContent).toContain('Source Software Requirements Specification');
+  expect(host.querySelector('textarea')).toBeNull();
+  await act(async () => host.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+  await until(() => created.mock.calls.length === 1);
+  expect((await loadArtifact(created.mock.calls[0][0])).job.sources.entries[0]).toMatchObject({ artifactId: 'code-software', templateId: 'software-spec' });
+  await act(async () => setField('Document type', 'hardware-spec'));
+  await until(() => !!host.querySelector('select option[value="code-system"]'));
+  expect(host.textContent).toContain('Source System Requirements Specification');
+  await act(async () => setField('System Requirements Specification', 'code-system'));
+  await act(async () => host.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+  await until(() => created.mock.calls.length === 2);
+  expect((await loadArtifact(created.mock.calls[1][0])).job.sources.entries[0]).toMatchObject({ artifactId: 'code-system', templateId: 'system-spec' });
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+test.each(['conops', 'system-spec', 'software-spec', 'hardware-spec'])('%s is available in the standalone generator and creates a correctly typed draft', async templateId => {
+  const template = ARTIFACT_TEMPLATES.find(item => item.id === templateId), created = jest.fn();
+  const derived = ['software-spec', 'hardware-spec'].includes(templateId);
+  if (derived) {
+    const db = await openArtifactDatabase();
+    await db.put('metadata', { id: 'system-input', templateId: 'system-spec', title: 'Mission System Requirements', revision: 1, config: { ...config, templateId: 'system-spec' } });
+    await db.put('revisions', { id: 'system-input:1', artifactId: 'system-input', number: 1, objects: [{ id: 'system-r1', kind: 'requirement', title: '', text: 'The controller shall retain commands.', sourceIds: [] }] });
+    db.close();
+  }
+  await act(async () => root.render(<ArtifactCreateDialog onClose={() => {}} onCreated={created} />));
+  await act(async () => {
+    setField('Document type', templateId); setField('Owning project', 'functional:p'); setField('Destination folder', 'f');
+    setField('System', 'Mission'); if (!derived) setField('Source notes', 'The controller shall retain commands.');
+  });
+  if (derived) {
+    await until(() => host.textContent.includes('Mission System Requirements'));
+    expect(host.textContent).not.toContain('Source notes'); expect(host.textContent).not.toContain('Source diagrams');
+  }
+  expect([...host.querySelectorAll('input')].some(input => input.value === template.name)).toBe(true);
+  await act(async () => host.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+  await until(() => created.mock.calls.length === 1);
+  const saved = await loadArtifact(created.mock.calls[0][0]);
+  expect(saved.meta).toMatchObject({ templateId, templateVersion: 1, title: template.name, revision: 0 });
+  expect(saved.job.sources.entries.some(source => source.text?.includes('retain commands'))).toBe(true);
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+test('History shows the current draft and explains the absence of accepted revisions', async () => {
+  const id = await createArtifact(config); await savedPartial(id);
+  await act(async () => root.render(<ArtifactEditor id={id} onDeleted={() => {}} />));
+  await until(() => !!host.querySelector('.requirements-outline-panel [data-artifact-object-id]'));
+  const row = [...host.querySelectorAll('.requirements-outline-panel [data-artifact-object-id]')].find(row => row.textContent.includes('Saved operational scenario'));
+  await act(async () => row.click()); await click('History');
+  await until(() => !!host.querySelector('[role="dialog"][aria-label="Object history"]'));
+  const dialog = host.querySelector('[aria-label="Object history"]');
+  expect(dialog.textContent).toContain('Current draft');
+  expect(dialog.textContent).toContain('An operator requests an observation.');
+  expect(dialog.textContent).toContain('No accepted revisions');
+  await act(async () => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+  expect(host.querySelector('[aria-label="Object history"]')).toBeNull();
+});
+
+test.each(['Outline', 'Table', 'Trace'])('%s toolbar commands save their effects, preserve selection, and respect hierarchy boundaries', async view => {
+  const id = await createArtifact(config); await generateArtifact(id);
+  const { job } = await loadArtifact(id); await acceptProposal(id, 0, job.token);
+  const original = await loadArtifact(id), first = original.revision.objects.find(object => object.kind !== 'section');
+  const beta = { ...first, id: `${id}:beta`, title: 'Beta topic', order: 1 };
+  const gamma = { ...first, id: `${id}:gamma`, title: 'Gamma topic', order: 2 };
+  await saveObjects(id, 1, [...original.revision.objects, beta, gamma]);
+  await act(async () => root.render(<ArtifactEditor id={id} onDeleted={() => {}} />));
+  await until(() => !!host.querySelector('.requirements-outline-panel [data-artifact-object-id]'));
+  await click(view);
+  const toolbar = title => host.querySelector(`.requirements-row-actions button[title="${title}"]`);
+  const press = title => act(async () => toolbar(title).click());
+  const selected = async objectId => {
+    await until(() => !host.querySelector('.design-view-scroll [role="progressbar"]') && !!host.querySelector(`.design-view-scroll [data-artifact-object-id="${objectId}"]`));
+    await act(async () => host.querySelector(`.design-view-scroll [data-artifact-object-id="${objectId}"]`).click());
+    await until(() => !toolbar('Edit').disabled);
+  };
+  const saved = () => loadArtifact(id);
+  const afterSave = async check => until(() => !host.querySelector('.design-view-scroll [role="progressbar"]') && check());
+  await press('Clear selection'); expect(toolbar('Edit').disabled).toBe(true); expect(toolbar('History').disabled).toBe(true);
+  await selected(beta.id); expect(toolbar('Edit').disabled).toBe(false);
+  await press('History'); await until(() => !!host.querySelector('[aria-label="Object history"]'));
+  expect(host.querySelector('[aria-label="Object history"]').textContent).toContain('Revision 2');
+  await click('Close Object history');
+  await until(() => !toolbar('Edit').disabled);
+  await press('Edit'); await act(async () => setField('Content', `Reviewed in ${view}.`)); await click('Save object');
+  await afterSave(() => !toolbar('Edit').disabled);
+  expect((await saved()).revision.objects.find(object => object.id === beta.id).text).toBe(`Reviewed in ${view}.`);
+  await press('Move up'); await afterSave(() => !toolbar('Edit').disabled);
+  let current = await saved();
+  expect(current.revision.objects.find(object => object.id === beta.id).order).toBe(0);
+  expect(toolbar('Move up').disabled).toBe(true);
+  expect(toolbar('Demote (indent)').disabled).toBe(true);
+  await press('Move down'); await afterSave(() => !toolbar('Edit').disabled);
+  expect((await saved()).revision.objects.find(object => object.id === beta.id).order).toBe(1);
+  await press('Demote (indent)'); await afterSave(() => !toolbar('Edit').disabled);
+  expect((await saved()).revision.objects.find(object => object.id === beta.id).parentId).toBe(first.id);
+  await press('Promote (outdent)'); await afterSave(() => !toolbar('Edit').disabled);
+  expect((await saved()).revision.objects.find(object => object.id === beta.id).parentId).toBe(first.parentId);
+  await press('New child'); await act(async () => { setField('Title', 'Toolbar child'); setField('Content', 'Child content.'); }); await click('Save object');
+  await afterSave(() => !toolbar('Edit').disabled);
+  const child = (await saved()).revision.objects.find(object => object.title === 'Toolbar child'); expect(child.parentId).toBe(beta.id);
+  await press('Insert table (renders in place of title)'); await click('Save');
+  await afterSave(() => !toolbar('Edit').disabled);
+  expect((await saved()).revision.objects.find(object => object.id === beta.id).content.type).toBe('table');
+  const file = new File(['image fixture'], 'toolbar.png', { type: 'image/png' });
+  await act(async () => {
+    const input = host.querySelector('.requirements-row-actions input[type="file"]');
+    Object.defineProperty(input, 'files', { configurable: true, value: [file] }); input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await until(() => !host.querySelector('.design-view-scroll [role="progressbar"]') && !toolbar('Edit').disabled && !host.querySelector('[role="dialog"]'));
+  await until(() => host.querySelector('[data-artifact-revision="10"]'));
+  expect((await saved()).revision.objects.find(object => object.id === beta.id).content).toMatchObject({ type: 'image', image: { name: 'toolbar.png' } });
+  await selected(child.id); await press('Delete');
+  await until(() => toolbar('Edit').disabled && !host.querySelector('.design-view-scroll [role="progressbar"]'));
+  expect((await saved()).revision.objects.find(object => object.id === child.id).deleted).toBe(true);
+  await selected(first.parentId); expect(toolbar('Promote (outdent)').disabled).toBe(true);
+  const beforeBoundary = (await saved()).meta.revision; await press('Promote (outdent)');
+  expect((await saved()).meta.revision).toBe(beforeBoundary);
+  await press('Clear selection'); expect(toolbar('History').disabled).toBe(true);
+});
+
 test('Outline and Table menus contain artifact commands and execute export, details, editing and baseline actions', async () => {
   const id = await createArtifact(config); await generateArtifact(id);
   const { job } = await loadArtifact(id); await acceptProposal(id, 0, job.token);
@@ -72,63 +205,27 @@ test('Outline and Table menus contain artifact commands and execute export, deta
   await act(async () => host.querySelector('.requirements-native-views [data-artifact-object-id]').click());
   await click('Arrange'); expect(button('Move Up').disabled).toBe(true); expect(button('Promote').disabled).toBe(true);
   expect(button('Move Down').disabled).toBe(false); await click('Move Down');
-  await until(() => host.querySelector('.artifact-header').textContent.includes('Revision 2') && !host.querySelector('.design-view-scroll [role="progressbar"]'));
+  await until(() => host.querySelector('[data-artifact-revision="2"]') && !host.querySelector('.design-view-scroll [role="progressbar"]'));
   await click('Edit'); await click('Edit Selected');
   await act(async () => setField('Content', 'Updated from the editor menu.')); await click('Save object');
-  await until(() => host.querySelector('.artifact-header').textContent.includes('Revision 3'));
+  await until(() => host.querySelector('[data-artifact-revision="3"]'));
   expect((await loadArtifact(id)).revision.objects.some(object => object.text === 'Updated from the editor menu.')).toBe(true);
   await click('Table'); expect(host.querySelector('[data-menubar]')).not.toBeNull();
   await click('Document'); expect(host.querySelector('[data-menubar]')).toBeNull();
   await click('Trace'); expect(host.querySelector('[data-menubar]')).toBeNull();
 });
 
-test('creation exposes all artifact templates and requires explicit project and destination', async () => {
+test('standalone creation excludes project-only matrices and exposes document templates and requires explicit project and destination', async () => {
   const created = jest.fn();
   await act(async () => root.render(<ArtifactCreateDialog onClose={() => {}} onCreated={created} />));
-  expect(host.querySelector('select').options).toHaveLength(9);
+  const options = [...host.querySelector('select').options];
+  expect(options.map(option => option.textContent)).toEqual(['ConOps', 'Architecture', 'System Requirements Specification', 'Software Requirements Specification', 'Hardware Requirements Specification']);
+  expect(options.map(option => option.value)).toEqual(ENGINEERING_ARTIFACT_TYPES.filter(template => template.id !== 'traceability-matrix').map(template => template.id));
+  expect([...host.querySelectorAll('input')].some(input => input.value === 'ConOps')).toBe(true);
   await act(async () => { setField('Owning project', 'functional:p'); setField('Destination folder', 'f'); setField('System', 'Mission'); setField('Source notes', 'Operators request an observation.'); });
   await act(async () => host.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
   await until(() => created.mock.calls.length > 0);
   expect((await loadArtifact(created.mock.calls[0][0])).meta.config).toMatchObject({ projectId: 'p', folderId: 'f', system: 'Mission' });
-  expect(fetch).not.toHaveBeenCalled();
-});
-test('hazard tracking creation explains missing analysis and becomes available when analysis is saved', async () => {
-  const templateId = 'hazard-tracking-list';
-  const created = jest.fn();
-  await act(async () => root.render(<ArtifactCreateDialog onClose={() => {}} onCreated={created} />));
-  await act(async () => { setField('Document type', templateId); setField('Owning project', 'functional:p'); setField('Destination folder', 'f'); setField('System', 'Mission'); });
-  await until(() => host.querySelector('[aria-label="Hazard analysis sources"] [role="alert"]'));
-  expect(host.querySelector('[aria-label="Hazard analysis sources"]').textContent).toContain('Perform hazard analysis for Mission program in Projects');
-  expect(button('Create draft').disabled).toBe(true);
-  expect([...host.querySelectorAll('label')].some(label => label.firstChild?.textContent === 'Source notes')).toBe(false);
-  await act(async () => saveProjectHazardAnalysisRecord('p', { analysisResult: { Summary: [['Raw Analysis Row ID', 'Hazard', 'System Requirement'], ['H-ROW', 'Lost commands', 'The system shall retain commands.']] } }));
-  await until(() => !button('Create draft').disabled);
-  expect(host.querySelector('[aria-label="Hazard analysis sources"]').textContent).toContain('1 saved assessment row');
-  await act(async () => host.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
-  await until(() => created.mock.calls.length === 1);
-  const saved = await loadArtifact(created.mock.calls[0][0]);
-  expect(saved.meta.templateId).toBe(templateId); expect(saved.job.sources.entries[0]).toMatchObject({ sourceType: 'hazard-analysis-row', sourceRowId: 'H-ROW' });
-  expect(fetch).not.toHaveBeenCalled();
-});
-test('Safety Requirements creation selects the consolidated HTL and waits until consolidation is ready', async () => {
-  const created = jest.fn();
-  await act(async () => root.render(<ArtifactCreateDialog onClose={() => {}} onCreated={created} />));
-  await act(async () => { setField('Document type', 'safety-requirements'); setField('Owning project', 'functional:p'); setField('Destination folder', 'f'); setField('System', 'Mission'); });
-  await until(() => host.querySelector('[aria-label="Consolidated hazard sources"] [role="alert"]'));
-  expect(host.textContent).toContain('Create and consolidate a Hazard Tracking List');
-  expect(button('Create draft').disabled).toBe(true);
-  await act(async () => saveProjectHazardAnalysisRecord('p', { analysisResult: { Summary: [['Raw Analysis Row ID', 'Hazard', 'Safety Constraint'], ['H-ROW', 'Lost commands', 'Retain valid commands.']] } }));
-  let htl;
-  await act(async () => { htl = await createArtifact({ ...config, system: 'Mission', templateId: 'hazard-tracking-list', notes: '' }); });
-  await until(() => host.textContent.includes('Finish generating and consolidating'));
-  await act(async () => generateArtifact(htl));
-  await until(() => !button('Create draft').disabled);
-  expect(host.textContent).toContain('1 consolidated HTR available');
-  await act(async () => host.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
-  await until(() => created.mock.calls.length === 1);
-  const saved = await loadArtifact(created.mock.calls[0][0]);
-  expect(saved.meta.config.hazardTrackingArtifactId).toBe(htl);
-  expect(saved.job.sources.entries[0]).toMatchObject({ sourceType: 'hazard-tracking-record', recordId: 'HTR-1' });
   expect(fetch).not.toHaveBeenCalled();
 });
 test('HTL opens with exactly the requested columns and edits an initially blank field', async () => {
@@ -147,7 +244,7 @@ test('HTL opens with exactly the requested columns and edits an initially blank 
   await act(async () => cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
   await act(async () => setField('Operating Conditions', 'Heavy rain'));
   await click('Save object');
-  await until(() => host.querySelector('.artifact-header').textContent.includes('Revision 2'));
+  await until(() => host.querySelector('[data-artifact-revision="2"]'));
   expect((await loadArtifact(id)).revision.objects.find(object => object.hazardTrackingRow).attributes['Operating Conditions']).toBe('Heavy rain');
   expect(host.textContent).not.toContain('Excluded diagnostic data');
 });
@@ -162,7 +259,7 @@ test('the consolidate action resumes persisted comparisons after a provider erro
   await until(() => !!host.querySelector('[aria-label="Hazard tracking assessments"]'));
   expect(host.querySelector('[aria-label="Hazard tracking assessments"] th button span').textContent).toBe('HTR');
   await click('Consolidate into actionable HTRs');
-  await openActions(); await until(() => document.querySelector('.artifact-actions-popover')?.textContent.includes('Proposal ready for review'));
+  await openActions(); await until(() => document.querySelector('.artifact-actions-popover')?.textContent.includes('Review proposal'));
   expect(request.mock.calls[2][0].families[0].familyId).toBe('family-33:part-0');
   expect(request.mock.calls.length).toBeGreaterThan(3);
   const saved = await loadArtifact(id);
@@ -175,15 +272,15 @@ test('generation requires review, then supports manual edits and four canonical 
   await openActions();
   await until(() => !!button('Generate / resume draft'));
   expect(button('Accept proposal')).toBeUndefined();
-  await click('Generate / resume draft'); await until(() => !!button('Review proposal'));
+  await click('Generate / resume draft'); await until(() => host.querySelector('[data-artifact-revision]') && !document.querySelector('.artifact-generation-summary')); await openActions(); await until(() => !!button('Review proposal'));
   expect(fetch).toHaveBeenCalledTimes(6); expect(button('Accept proposal')).toBeUndefined();
   await click('Review proposal'); await click('Accept proposal');
-  await until(() => host.querySelector('.artifact-header')?.textContent.includes('Revision 1'));
+  await until(() => host.querySelector('[data-artifact-revision="1"]'));
   await click('Document');
   await act(async () => host.querySelector('.artifact-object-title button').click());
   await act(async () => setField('Content', 'Reviewed by the author.'));
   await act(async () => host.querySelector('.artifact-modal form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
-  await until(() => host.querySelector('.artifact-header')?.textContent.includes('Revision 2'));
+  await until(() => host.querySelector('[data-artifact-revision="2"]'));
   for (const name of ['Outline', 'Table', 'Document', 'Trace']) {
     await click(name); expect(button(name).getAttribute('aria-pressed')).toBe('true');
     expect(host.querySelector('.requirements-filter-bar')).toBeNull();
@@ -191,7 +288,7 @@ test('generation requires review, then supports manual edits and four canonical 
   }
   const saved = await loadArtifact(id); expect(saved.revision.objects.some(o => o.text === 'Reviewed by the author.' && o.manual)).toBe(true);
   await click('Generate update'); await openActions(); await until(() => !!button('Review proposal')); await click('Review proposal'); await click('Accept proposal');
-  await until(() => host.querySelector('.artifact-header')?.textContent.includes('Revision 3'));
+  await until(() => host.querySelector('[data-artifact-revision="3"]'));
   expect((await loadArtifact(id)).revision.objects.some(o => o.text === 'Reviewed by the author.')).toBe(true);
 });
 
@@ -214,10 +311,10 @@ test('five saved sections are visible after opening a paused draft and the last 
   expect(button('Accept proposal')).toBeUndefined(); expect(host.querySelector('.artifact-object-title button').disabled).toBe(false);
   for (const view of ['Outline', 'Table']) { await click(view); expect(host.textContent).toContain('Saved operational scenario'); }
   global.fetch = jest.fn(async () => ({ ok: true, text: async () => JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ objects: [{ key: 'budget', kind: 'requirement', title: 'Timing budget', text: 'A timing budget is needed.', sourceIds: [] }] }) } }] }) }));
-  await click('Generate / resume draft'); await until(() => !!button('Review proposal'));
+  await click('Generate / resume draft'); await until(() => host.querySelector('[data-artifact-revision]') && !document.querySelector('.artifact-generation-summary')); await openActions(); await until(() => !!button('Review proposal'));
   await until(() => host.textContent.includes('Unverified generated text:'));
   expect(fetch).toHaveBeenCalledTimes(1); expect(host.textContent).toContain('Unverified generated text:');
-  await click('Review proposal'); await click('Accept proposal'); await until(() => host.querySelector('.artifact-header')?.textContent.includes('Revision 1'));
+  await click('Review proposal'); await click('Accept proposal'); await until(() => host.querySelector('[data-artifact-revision="1"]'));
   await click('Document'); expect(host.querySelector('.artifact-gap').textContent).toContain('no supporting source citation');
 });
 
@@ -245,7 +342,7 @@ test('the original requirements table retains columns, multi-selection, resizing
   await act(async () => root.render(<ArtifactEditor id={id} onDeleted={() => {}} />));
   await until(() => !!button('Table')); await click('Table');
   const table = () => host.querySelector('.requirements-native-views table');
-  expect([...table().querySelectorAll('thead th')].map(th => th.textContent)).toEqual(['ID', 'Title', 'Description', 'Kind', 'Status', 'Version', 'Updated', 'Links']);
+  expect([...table().querySelectorAll('thead th')].map(th => th.querySelector('button span').textContent)).toEqual(['ID', 'Title', 'Description', 'Kind', 'Status', 'Version', 'Updated', 'Links']);
   const row = () => [...table().querySelectorAll('tbody tr')].find(tr => tr.querySelector(`[title="${objectId}"]`));
   const first = table().querySelector('tbody tr');
   await act(async () => { first.dispatchEvent(new MouseEvent('click', { bubbles: true })); row().dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true })); });
@@ -254,22 +351,22 @@ test('the original requirements table retains columns, multi-selection, resizing
   await act(async () => { handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 100 })); window.dispatchEvent(new MouseEvent('mousemove', { clientX: 160 })); window.dispatchEvent(new MouseEvent('mouseup')); });
   expect(JSON.parse(localStorage.getItem('xhandle:table-colwidths:Mission ConOps')).title).toBe(400);
   await act(async () => { const status = row().querySelector('select'); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(status, 'Approved'); status.dispatchEvent(new Event('change', { bubbles: true })); });
-  await until(() => host.querySelector('.artifact-header').textContent.includes('Revision 2'));
+  await until(() => host.querySelector('[data-artifact-revision="2"]'));
   await until(() => !!table());
   expect((await loadArtifact(id)).revision.objects.find(o => o.id === objectId).status).toBe('Approved');
   await act(async () => row().querySelector('[title="Double-click to edit title"]').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
   await act(async () => { const input = row().querySelector('input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'Reviewed operator activity'); input.dispatchEvent(new Event('input', { bubbles: true })); });
   await act(async () => row().querySelector('input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
-  await until(() => host.querySelector('.artifact-header').textContent.includes('Revision 3'));
+  await until(() => host.querySelector('[data-artifact-revision="3"]'));
   await until(() => !!table());
   expect((await loadArtifact(id)).revision.objects.find(o => o.id === objectId)).toMatchObject({ title: 'Reviewed operator activity', manual: true });
   await click('Insert table (renders in place of title)'); await click('Save');
-  await until(() => host.querySelector('.artifact-header').textContent.includes('Revision 4'));
+  await until(() => host.querySelector('[data-artifact-revision="4"]'));
   await until(() => !!table());
   expect((await loadArtifact(id)).revision.objects.find(o => o.id === objectId).content.type).toBe('table');
   await act(async () => row().querySelector('table').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
   expect(host.querySelector('.xhandle-modal-viewport').textContent).toContain('Edit Table');
-  await click('Save'); await until(() => host.querySelector('.artifact-header').textContent.includes('Revision 5'));
+  await click('Save'); await until(() => host.querySelector('[data-artifact-revision="5"]'));
   await until(() => !!table());
   await click('History'); await until(() => host.textContent.includes('Object history'));
   expect(host.querySelector('.xhandle-modal-viewport').textContent).toContain('Revision 1');
@@ -298,6 +395,7 @@ test('a condensed draft exposes coverage counts and the complete readable source
   await checkpointJob(id, job, { evidenceBrief: { version: 1, sourceHash: job.sources.hash, rounds: [] } });
   await act(async () => root.render(<ArtifactEditor id={id} onDeleted={() => {}} />));
   await openActions();
+  await click('Review proposal');
   await until(() => !!button('View document and source register'));
   expect(document.body.textContent).toContain('1 of 1 sources are cited; 0 are not cited');
   expect(document.body.textContent).toContain('A citation alone does not establish complete coverage');
@@ -355,24 +453,31 @@ test('document details support cancel, save and reopening without regenerating a
 });
 
 
-test('artifact actions and proposal panels stay collapsed until requested, with keyboard and outside dismissal', async () => {
+test('compact commands open a separate proposal review with comparisons, sources and acceptance', async () => {
   const id = await createArtifact(config); await generateArtifact(id);
   await act(async () => root.render(<ArtifactEditor id={id} onDeleted={() => {}} />));
   await until(() => !!host.querySelector('[aria-label="Artifact actions"]'));
   const trigger = host.querySelector('[aria-label="Artifact actions"]');
   expect(trigger.getAttribute('aria-expanded')).toBe('false');
-  expect(host.querySelector('.artifact-header').textContent).not.toContain('Proposal ready');
+  expect(host.querySelector('.artifact-header').textContent).toBe(config.title + '…');
+  expect(host.querySelector('.artifact-compact-status')).toBeNull();
   expect(document.querySelector('.artifact-job')).toBeNull();
   expect(document.body.textContent).not.toContain('object changes proposed.');
   expect(button('Edit details')).toBeUndefined();
+  const reviewBar = host.querySelector('[aria-label="Document proposal review"]');
+  expect(reviewBar).toBeNull(); expect(button('Review proposal')).toBeUndefined();
+  expect(button('Accept proposal')).toBeUndefined();
   await openActions();
   const panel = document.querySelector('.artifact-actions-popover');
   expect(panel.parentElement).toBe(document.body);
   expect(document.activeElement).toBe(panel);
-  expect(panel.textContent).toContain('Proposal ready for review');
-  await until(() => panel.textContent.includes('object changes proposed.'));
-  for (const label of ['Edit details', 'Delete artifact', 'Source diagrams', 'Generate update', 'Review proposal']) expect(panel.contains(button(label))).toBe(true);
-  expect(panel.textContent).toContain('Compare with accepted revision');
+  expect(panel.textContent).toContain('Review proposal');
+  expect(panel.textContent).not.toContain('object changes proposed.');
+  expect(panel.querySelector('.artifact-job')).toBeNull();
+  expect(panel.querySelector('.artifact-warning')).toBeNull();
+  expect(panel.querySelectorAll('details.design-action-group[open]')).toHaveLength(0);
+  for (const label of ['Edit details', 'Delete artifact', 'Source diagrams', 'Generate update']) expect(panel.contains(button(label))).toBe(true);
+  expect(panel.textContent).not.toContain('Compare with accepted revision');
   await act(async () => panel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
   expect(document.querySelector('.artifact-actions-popover')).toBeNull();
   expect(document.activeElement).toBe(trigger);
@@ -382,8 +487,18 @@ test('artifact actions and proposal panels stay collapsed until requested, with 
   await click('Review proposal');
   expect(document.querySelector('.artifact-actions-popover')).toBeNull();
   expect(host.querySelector('.requirements-native-views')).not.toBeNull();
+  expect(button('Document').getAttribute('aria-pressed')).toBe('true');
+  const dialog = document.querySelector('[aria-label="Document proposal review"]');
+  expect(dialog.contains(button('Accept proposal'))).toBe(true);
+  expect(dialog.textContent).toContain('object changes proposed.');
+  expect(dialog.textContent).toContain('Compare with accepted revision');
+  const before = (await loadArtifact(id)).job;
   await click('Accept proposal');
-  await until(() => host.querySelector('.artifact-header').textContent.includes('Revision 1'));
+  await until(() => host.querySelector('[data-artifact-revision="1"]'));
+  expect(host.querySelector('[aria-label="Document proposal review"]')).toBeNull();
+  const saved = await loadArtifact(id);
+  expect(saved.revision.objects.map(object => object.status)).toEqual(Object.values(before.sections).flat().map(object => object.status));
+  expect(saved.job).toBeFalsy();
 });
 
 test.each(['Outline', 'Table', 'Trace', 'Document'])('%s supports double-click and context-menu editing of saved draft objects', async view => {

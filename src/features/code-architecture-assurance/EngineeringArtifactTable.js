@@ -408,7 +408,7 @@ export default function EngineeringArtifactTable({
                 )}
                 {visibleColumns.map((column) => {
                   const value = cellText(valueForColumn(row, column, tableContext));
-                  const tokens = splitIds(value);
+                  const tokens = column.getTokens ? column.getTokens(value) : splitIds(value);
                   const canLink = column.linkType && tokens.length > 0;
                   const editable = !readOnly && !column.readOnly && !column.getValue;
                   const cellKey = `${rowId}:${column.key}`;

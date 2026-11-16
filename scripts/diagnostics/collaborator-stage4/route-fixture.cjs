@@ -24,6 +24,7 @@ const frame = data => 'data: ' + JSON.stringify(data) + '\n\n';
 let providerFinished = false;
 let upstreamAborts = 0;
 axios.post = async (url, payload, options) => {
+  if(url==='https://api.openai.com/v1/realtime/client_secrets'){calls.push({url,payload});return {status:200,data:{value:'synthetic-client-token'}};}
   assert.match(url, /^https:\/\/(generativelanguage.googleapis.com|api.anthropic.com)\//);
   calls.push({url, payload});
   const serialized = JSON.stringify(payload.messages || []);
@@ -70,6 +71,7 @@ class MockOpenAI {
   constructor() {
     this.chat = {completions:{create:async (payload, options) => {
       calls.push({url:'mock:openai',payload});
+      if(!payload.stream)return {choices:[{message:{content:'first α🙂 last'},finish_reason:'stop'}]};
       return (async function* () {
         await sleep(25); if (options.signal.aborted) return;
         yield {choices:[{delta:{content:'first α🙂 '}}]};
@@ -81,15 +83,32 @@ class MockOpenAI {
   }
 }
 require.cache[fromApp.resolve('openai')] = {exports:{OpenAI:MockOpenAI}};
+const {ORGANIZATION_CONTEXT_HEADER,ORGANIZATION_CONTEXT_VERSION,ORGANIZATION_CONTEXT_GUIDANCE}=require(root+'/src/lib/organizationPromptPolicy');
+const profileMarker='ORGANIZATION_PROFILE_DELIVERY_FIXTURE';
+const profileHeader=Buffer.from(`${ORGANIZATION_CONTEXT_VERSION}\norg-v1:fixture\n${ORGANIZATION_CONTEXT_GUIDANCE}\n${profileMarker}: use customer terminology.`).toString('base64');
 const app = require(root + '/server.js');
 const server = app.listen(0, '127.0.0.1', async () => {
   const output = [];
   try {
     const url = 'http://127.0.0.1:' + server.address().port + '/api/chat';
-    for (const [provider, model] of [['gemini','gemini-synthetic'],['claude','claude-synthetic'],['openai','gpt-5']]) {
+    const preflight=await fetch(url,{method:'OPTIONS',headers:{Origin:'http://localhost:3000','Access-Control-Request-Method':'POST','Access-Control-Request-Headers':ORGANIZATION_CONTEXT_HEADER}});
+    assert.equal(preflight.status,204);assert.ok(preflight.headers.get('access-control-allow-headers').toLowerCase().includes(ORGANIZATION_CONTEXT_HEADER));
+    for(const mode of ['wizard','collaborator']){
+      const response=await fetch(url.replace('/api/chat','/api/rt/session'),{method:'POST',headers:{'Content-Type':'application/json','x-ai-provider':'openai','x-ai-api-key':'synthetic-local-key',[ORGANIZATION_CONTEXT_HEADER]:profileHeader},body:JSON.stringify({mode})});
+      assert.equal(response.status,200);assert.equal((await response.json()).value,'synthetic-client-token');
+      assert.ok(calls.at(-1).payload.session.instructions.includes(profileMarker),'Realtime session retains organization context');
+      if(mode==='collaborator')assert.ok(calls.at(-1).payload.session.instructions.includes('do not answer'));
+    }
+    for(const enabled of [false,true]){
+      const response=await fetch(url.replace('/api/chat','/api/openai'),{method:'POST',headers:{'Content-Type':'application/json','x-ai-api-key':'synthetic-local-key',...(enabled?{[ORGANIZATION_CONTEXT_HEADER]:profileHeader}:{})},body:JSON.stringify({prompt:'Legacy prompt fixture'})});
+      assert.equal(response.status,200);assert.equal((await response.json()).result,'first α🙂 last');
+      assert.equal(JSON.stringify(calls.at(-1).payload).includes(profileMarker),enabled,'Legacy prompt endpoint follows the global profile setting');
+    }
+
+    for (const [provider, model] of [['gemini','gemini-synthetic'],['claude','claude-synthetic'],['openai','gpt-5']]) for (const profileEnabled of [false,true]) {
       providerFinished = false;
       const before = calls.length, start = performance.now();
-      const response = await fetch(url, {method:'POST',headers:{'Content-Type':'application/json','x-ai-provider':provider,'x-ai-api-key':'synthetic-local-key','x-ai-model':model,'x-ai-effort':'high'},body:JSON.stringify({stream:true,messages:[{role:'user',content:'PRIVATE_PROMPT'}],max_tokens:500,xhandleWorkflow:'collaborator.answer',xhandleTraceId:'ct-route-synthetic-12345'})});
+      const response = await fetch(url, {method:'POST',headers:{'Content-Type':'application/json','x-ai-provider':provider,'x-ai-api-key':'synthetic-local-key','x-ai-model':model,'x-ai-effort':'high',...(profileEnabled?{[ORGANIZATION_CONTEXT_HEADER]:profileHeader}:{})},body:JSON.stringify({stream:true,messages:[{role:'user',content:'PRIVATE_PROMPT'}],max_tokens:500,xhandleWorkflow:'collaborator.answer',xhandleTraceId:'ct-route-synthetic-12345'})});
       assert.equal(response.status, 200);assert.equal(response.headers.get('x-ai-model-used'),model);assert.equal(response.headers.get('x-ai-effort-used'),'high');
       const reader = response.body.getReader(), decoder = new TextDecoder();let text = '', firstMs;
       for (;;) {
@@ -101,7 +120,9 @@ const server = app.listen(0, '127.0.0.1', async () => {
       const metadata = text.split('\n').filter(line => line.startsWith('data: {')).map(line => JSON.parse(line.slice(6))).find(value => value.serverTiming);
       assert.equal(metadata.serverTiming.clientTraceId,'ct-route-synthetic-12345');assert.equal(metadata.serverTiming.provider,provider);assert.equal(metadata.serverTiming.status,'completed');assert.ok(metadata.serverTiming.providerTimeToFirstTokenMs >= 0);
       assert.equal(calls.length-before,1,'Unexpected provider replay');assert.ok(!JSON.stringify(calls.at(-1).payload).includes('xhandleTraceId'));
-      output.push({provider,firstOutputMs:Math.round(firstMs),completeMs:Math.round(performance.now()-start),serverTiming:metadata.serverTiming});
+      assert.equal(JSON.stringify(calls.at(-1).payload).includes(profileMarker),profileEnabled,'Enabled context reaches the actual provider adapter exactly once');
+      if(profileEnabled)assert.equal(JSON.stringify(calls.at(-1).payload).split(profileMarker).length-1,1);
+      output.push({provider,profileEnabled,firstOutputMs:Math.round(firstMs),completeMs:Math.round(performance.now()-start),serverTiming:metadata.serverTiming});
     }
     // Both real route variants must retain an empty Haiku refusal; collapsing
     // it to "stop" is what previously hid its cause in the renderer.

@@ -46,6 +46,22 @@ test('CSC native presentation uses compact aggregate rows with source identities
   expect(display.rows[0]).not.toHaveProperty('members');
 });
 
+test('large coarse imports page original relationships at projected endpoints without losing aggregate provenance', () => {
+  const saved = diagram('csc');
+  const bundle = saved.snapshot.edges[0];
+  bundle.relationships = Array.from({ length: 1051 }, (_, index) => ({ id: `original-${index}`, from: `implementation-${index}`, to: `other-${index}`, label: `Command ${index}` }));
+  const before = JSON.stringify(saved), pages = architecturePages(saved);
+  expect(pages.length).toBeGreaterThan(1);
+  expect(pages.every(page => page.snapshot.edges.length <= 60 && page.snapshot.nodes.length <= 120)).toBe(true);
+  const originals = pages.flatMap(page => page.snapshot.edges);
+  expect(originals.map(edge => edge.id)).toEqual(bundle.relationships.map(edge => edge.id));
+  expect(originals.every(edge => edge.from === bundle.from && edge.to === bundle.to)).toBe(true);
+  expect(pages.every(page => page.snapshot.edges.every(edge => page.displayOwners[edge.id] === bundle.id))).toBe(true);
+  expect(architecturePageForElement(pages, bundle.id)).toBe(0);
+  expect(architecturePageForElement(pages, 'original-1050')).toBe(pages.length - 1);
+  expect(JSON.stringify(saved)).toBe(before);
+});
+
 test('duplicate code relationships remain deduplicated despite different native row offsets', () => {
   const row = { traceId: 'call', fromFunction: 'A', toFunction: 'B' };
   const result = architectureDiagram({ projectId: 'p', workspaceType: 'code-architecture', repoId: 'repo', abstraction: 'functional' }, [row, row]);

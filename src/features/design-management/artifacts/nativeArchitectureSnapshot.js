@@ -10,8 +10,13 @@ export function nativeArchitectureState(diagram, onPresentationChange) {
     values.set(key, JSON.stringify(nodes.filter(node => node.position).map(node => [node.id, { position: node.position, parentId: node.parentId || null }])));
     values.set(key + ':groups:v1', JSON.stringify(nodes.filter(node => node.group).map(node => ({ ...node, parentNode: node.parentId || undefined, elementType: node.groupType, position: node.position || { x: 0, y: 0 } }))));
   }
+  // Source-project bundling is a display preference, not imported evidence.
+  // Start with individual relationships, then restore only this artifact's own
+  // saved preferences below. Never overwrite its immutable source snapshot.
+  values.set(key + ':edge-aggregation:v1', JSON.stringify({ aggregateAll: false, aggregateBidirectionalAll: false }));
   const removed = new Set();
   for (const [suffix, value] of Object.entries(diagram.presentation?.storage || {})) {
+    if (value === null && suffix === ':edge-aggregation:v1') continue;
     if (value === null) { values.delete(key + suffix); removed.add(key + suffix); } else values.set(key + suffix, value);
   }
   const notify = () => onPresentationChange?.({ storage: Object.fromEntries([...values, ...[...removed].map(name => [name, null])].filter(([name]) => name.startsWith(key)).map(([name, value]) => [name.slice(key.length), value])) });

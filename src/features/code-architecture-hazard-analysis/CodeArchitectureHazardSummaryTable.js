@@ -10,6 +10,7 @@ import { FilterableHeaderCell, useColumnFilters } from "../../components/Filtera
 import { REVIEW_STATUSES } from "../results-review/reviewTypes";
 import ReviewStatusBadge from "../results-review/ReviewStatusBadge";
 import ColumnVisibilityMenu from "../code-architecture-assurance/ColumnVisibilityMenu";
+import { CODE_HARA_COLUMNS, codeHaraColumnLabel, expandCodeHaraSheet } from './codeArchitectureHara';
 import {
   buildCodeArchitectureHazardGroups,
   filterCodeArchitectureHazardRowsByContext,
@@ -38,11 +39,7 @@ export const STPA_DEFAULT_COLUMNS = [
 ];
 const STPA_DEFAULT_COLUMN_SET = new Set(STPA_DEFAULT_COLUMNS.map(name => name.toLowerCase()));
 
-export const HARA_DEFAULT_COLUMNS = [
-  "Function", "Operational Scenario", "Operational Mode", "Operating Conditions",
-  "Guide Phrase", "Guide Phrase Applicable", "Malfunctioning Behavior", "Hazardous Event",
-  "Severity", "Exposure", "Controllability", "ASIL", "Safety Goal", "Safety Classification",
-];
+export const HARA_DEFAULT_COLUMNS = CODE_HARA_COLUMNS;
 export const FHA_DEFAULT_COLUMNS = [
   "Function (From)", "Control Action", "Function (To)", "Operational Context",
   "Guide Phrase", "Guide Phrase Applicable", "Effect", "Severity Category",
@@ -53,10 +50,7 @@ const FHA_DEFAULT_COLUMN_SET = new Set(FHA_DEFAULT_COLUMNS.map(name => name.toLo
 
 const HARA_DEFAULT_COLUMN_SET = new Set(HARA_DEFAULT_COLUMNS.map(name => name.toLowerCase()));
 
-const haraColumnLabel = header => ({
-  "item / function": "Function",
-  "malfunction": "Malfunctioning Behavior",
-}[String(header || "").trim().toLowerCase()] || header);
+const haraColumnLabel = codeHaraColumnLabel;
 
 const MIN_COLUMN_WIDTH = 120;
 const MAX_COLUMN_WIDTH = 720;
@@ -107,7 +101,7 @@ export default function CodeArchitectureHazardSummaryTable({
   const isFha = String(hazardMethod).toUpperCase() === "FHA";
   const showCombinedContext = !isStpa && !isHara && !isFha;
   // New defaults apply once to existing tables; subsequent picker choices persist.
-  const visibilityStorageKey = `${storageKey}:hidden-columns${isStpa ? ":stpa-focused-v5" : isHara ? ":hara-focused-v2" : isFha ? ":fha-focused-v2" : ""}`;
+  const visibilityStorageKey = `${storageKey}:hidden-columns${isStpa ? ":stpa-focused-v5" : isHara ? ":hara-focused-v3" : isFha ? ":fha-focused-v2" : ""}`;
   const searchTableRef = useRef(null);
   const [selectedCellKey, setSelectedCellKey] = useState("");
   React.useEffect(() => {
@@ -118,6 +112,7 @@ export default function CodeArchitectureHazardSummaryTable({
   const [collapsedInterfaceKeys, setCollapsedInterfaceKeys] = useState(() => new Set());
 
   const displaySheet = React.useMemo(() => {
+    if (isHara) return expandCodeHaraSheet(summarySheet);
     if (!isFha || !Array.isArray(summarySheet?.[0])) return summarySheet;
     const originalHeaders = summarySheet[0];
     const missing = FHA_DEFAULT_COLUMNS.filter(name => !originalHeaders.includes(name) && !(name === 'Effect' && originalHeaders.includes('Mishap')));
@@ -127,7 +122,7 @@ export default function CodeArchitectureHazardSummaryTable({
         ? `${cell(row, 'Operational Scenario') || 'Unspecified scenario'} · ${cell(row, 'Operational Mode') || 'Unspecified mode'}`
         : ''),
     ])];
-  }, [summarySheet, isFha]);
+  }, [summarySheet, isFha, isHara]);
   const headers = React.useMemo(
     () => (Array.isArray(displaySheet?.[0]) ? displaySheet[0] : []),
     [displaySheet]

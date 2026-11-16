@@ -1,10 +1,14 @@
 import { captureArchitectureSources } from './architectureSources';
 import { semanticHash, validateConfig } from './artifactModel';
+import { getOrganizationPromptContext } from '../../organization-profile/organizationPromptContext';
 import { sourceManifestSize, DOCUMENT_EVIDENCE_LIMIT } from './artifactSize';
 import { isProjectDeletionRequested } from '../../../lib/projectDeletionRegistry';
-import { captureHazardAnalysisSources } from './hazardAnalysisSources';
+import { captureHazardAnalysisSources, captureSavedSafetyRequirementSources } from './hazardAnalysisSources';
+import { hazardRequirementOwners } from './requirementSafety';
 import { isSafetyArtifact } from './safetyArtifactTypes';
 import { captureConsolidatedHazardSources } from './hazardTrackingSources';
+import { requirementDiagramSources, upstreamRequirementTemplate } from './requirementDerivation';
+import { captureRequirementSources } from './requirementDerivationSources';
 
 export function readArray(key, storage = localStorage) {
   const value = JSON.parse(storage.getItem(key) || '[]');
@@ -77,14 +81,22 @@ export function captureSources(config, storage = localStorage, architectureEntri
   } else if (architectureEntries.length || isSafetyArtifact(config.templateId)) {
     if (sourceManifestSize(manifest) > DOCUMENT_EVIDENCE_LIMIT) throw new Error('Selected sources exceed the saved supporting-evidence limit. Use a focused source scope.');
   } else if (JSON.stringify(manifest).length > 350000) throw new Error('Selected sources exceed the generation context limit. Select fewer modules or create a focused source module.');
-  return { ...manifest, hash: semanticHash(manifest) };
+  const organizationPromptIdentity = getOrganizationPromptContext({storage, projectId: ''}).identity;
+  return { ...manifest, hash: semanticHash(organizationPromptIdentity ? {...manifest, organizationPromptIdentity} : manifest) };
 }
 
 // Read external stores before opening an artifact write transaction.
 export async function captureLiveSourcesInline(config, storage = localStorage, options = {}) {
   validateConfig(config); assertOwner(config, storage);
+  const safety = await captureSavedSafetyRequirementSources(hazardRequirementOwners(config), storage, options);
+  if (upstreamRequirementTemplate(config)) {
+    const entries = config.programId ? [] : await captureRequirementSources(config);
+    const direct = { ...config, sources: [], architectureSources: requirementDiagramSources(config), notes: '', projectNotes: {} };
+    const architecture = direct.architectureSources.length ? await captureArchitectureSources(direct, storage) : [];
+    return captureSources(direct, storage, [...entries, ...architecture, ...safety]);
+  }
   const architecture = config.templateId === 'safety-requirements'
     ? config.programId ? [] : await captureConsolidatedHazardSources(config)
-    : isSafetyArtifact(config.templateId) ? await captureHazardAnalysisSources(configOwners(config), storage, { ...options, templateId: config.templateId }) : await captureArchitectureSources(config, storage);
-  return captureSources(config.templateId === 'safety-requirements' ? { ...config, sources: [], architectureSources: [], notes: '', projectNotes: {} } : config, storage, architecture);
+    : isSafetyArtifact(config.templateId) ? await captureHazardAnalysisSources(configOwners(config), storage, { ...options, templateId: config.templateId }) : await captureArchitectureSources({ ...config, architectureSources: requirementDiagramSources(config) }, storage);
+  return captureSources(config.templateId === 'safety-requirements' ? { ...config, sources: [], architectureSources: [], notes: '', projectNotes: {} } : config, storage, [...architecture, ...safety]);
 }

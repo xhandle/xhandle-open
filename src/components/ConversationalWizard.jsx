@@ -10,6 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import { backendURL, buildAIAuthOpts } from './backendConfig';
+import { getOrganizationPromptContext } from '../features/organization-profile/organizationPromptContext';
 import {
   DEFAULT_FUNCTIONAL_ABSTRACTION_LEVEL,
   FUNCTIONAL_ABSTRACTION_LEVEL_OPTIONS,
@@ -706,6 +707,10 @@ function useRealtimeVoice({
   const sendEvent = useCallback((event) => {
     const channel = dataChannelRef.current;
     if (!channel || channel.readyState !== 'open') return false;
+    if (event.type === 'response.create' && event.response?.instructions) {
+      const context = getOrganizationPromptContext({hint: 'functional architecture discovery'}).context;
+      if (context) event = {...event, response: {...event.response, instructions: `${context}\n\n${event.response.instructions}`}};
+    }
     channel.send(JSON.stringify(event));
     return true;
   }, []);

@@ -145,7 +145,7 @@ export function codeArchitectureCanvas(diagram) {
     '': JSON.stringify(nodes.map(node => [node.id, { position: node.position, parentId: node.parentId || null, groupingIntent: 'explicit' }])),
     ':groups:v1': JSON.stringify(groups),
     ':element-sizes:v1': JSON.stringify(sizes),
-    ':edge-aggregation:v1': JSON.stringify({ aggregateAll: true, aggregateBidirectionalAll: Boolean(diagram.presentation?.aggregation?.bidirectionalAll) }),
+    ':edge-aggregation:v1': JSON.stringify({ aggregateAll: false, aggregateBidirectionalAll: false }),
     ':edge-routing:v1': JSON.stringify({ defaultStyle: oldRouting.defaultStyle || 'rectangular', overrides: remapRoutes(oldRouting.overrides), manualRoutes: remapRoutes(oldRouting.manualRoutes) }),
     ':manual:v1': JSON.stringify(notes),
     ':comments:v1': JSON.stringify((diagram.presentation?.comments || display.snapshot.comments || []).map(comment => ({ ...comment,

@@ -3,12 +3,17 @@ import { validateArchitectureSelection } from './architectureSources';
 import { sha256 } from 'hash.js';
 import { isSafetyArtifact } from './safetyArtifactTypes';
 import { hazardTrackingText } from './hazardTrackingFields';
+import { upstreamRequirementTemplate } from './requirementDerivation';
 
 const template = (id, name, scope, sections) => ({ id, name, scope, version: 1, sections: sections.map((title, i) => ({ id: `s${i + 1}`, title })) });
+// Keep saved template identities and section IDs readable, including document
+// families retired from the creation menus. Do not rewrite existing artifacts.
 export const ARTIFACT_TEMPLATES = [
-  template('conops', 'Concept of Operations', 'system', ['Purpose and scope', 'Stakeholders and operational needs', 'Operational context', 'Operational scenarios', 'Modes and transitions', 'Constraints and open questions']),
-  template('system-spec', 'System Specification', 'system', ['Scope and system boundary', 'Functional requirements', 'Performance requirements', 'External interfaces', 'Constraints and quality attributes', 'Verification approach and gaps']),
+  template('conops', 'ConOps', 'system', ['Purpose and scope', 'Stakeholders and operational needs', 'Operational context', 'Operational scenarios', 'Modes and transitions', 'Constraints and open questions']),
+  template('system-spec', 'System Requirements Specification', 'system', ['Scope and system boundary', 'Functional requirements', 'Performance requirements', 'External interfaces', 'Constraints and quality attributes', 'Verification approach and gaps']),
   template('subsystem-spec', 'Subsystem Specification', 'subsystem', ['Scope and allocation', 'Functional requirements', 'Performance and budgets', 'Subsystem interfaces', 'Constraints and dependencies', 'Verification approach and gaps']),
+  template('software-spec', 'Software Requirements Specification', 'system', ['Scope and software allocation', 'Software functional requirements', 'Software performance and resource requirements', 'Software interfaces and data requirements', 'Software quality and design constraints', 'Verification criteria and gaps']),
+  template('hardware-spec', 'Hardware Requirements Specification', 'system', ['Scope and hardware allocation', 'Hardware functional requirements', 'Performance and physical requirements', 'Electrical, mechanical and data interfaces', 'Environmental, reliability and design constraints', 'Verification criteria and gaps']),
   template('system-design', 'System Design Document', 'system', ['Design context', 'Architecture and responsibilities', 'Behavior and data flows', 'Interfaces and integration', 'Design decisions and rationale', 'Risks and open decisions']),
   template('subsystem-design', 'Subsystem Design Document', 'subsystem', ['Subsystem context', 'Component design', 'Behavior and states', 'Data and interfaces', 'Design decisions and rationale', 'Integration and open decisions']),
   template('interface-spec', 'Interface Specification', 'interface', ['Interface scope and endpoints', 'Interactions and direction', 'Data definitions and units', 'Timing and protocols', 'Failures and compatibility', 'Verification approach and unresolved contracts']),
@@ -19,7 +24,12 @@ ARTIFACT_TEMPLATES.push(
   { ...template('hazard-tracking-list', 'Hazard Tracking List', 'system', []), sections: [{ id: 's2', title: 'Hazard tracking list' }] },
   template('safety-requirements', 'Safety Requirements', 'system', ['Scope and source analyses', 'Safety requirements', 'Safety constraints', 'Hazard traceability', 'Verification methods', 'Gaps and analysis coverage']),
 );
-export const getTemplate = id => { const t = ARTIFACT_TEMPLATES.find(t => t.id === id); if (!t) throw new Error('Unknown artifact template.'); return t; };
+// A matrix is evaluated deterministically after its sources exist; it is not
+// an AI-generated member of the engineering document generation sequence.
+export const MATRIX_TEMPLATE = { id: 'traceability-matrix', name: 'Traceability Matrix', scope: 'system', version: 1, sections: [], deterministic: true };
+export const CREATABLE_ARTIFACT_TEMPLATES = ['conops', 'architecture', 'system-spec', 'software-spec', 'hardware-spec'].map(id => ARTIFACT_TEMPLATES.find(template => template.id === id));
+export const ENGINEERING_ARTIFACT_TYPES = [...CREATABLE_ARTIFACT_TEMPLATES, MATRIX_TEMPLATE];
+export const getTemplate = id => { const t = [...ARTIFACT_TEMPLATES, MATRIX_TEMPLATE].find(t => t.id === id); if (!t) throw new Error('Unknown artifact template.'); return t; };
 export const newId = () => crypto.randomUUID();
 export function stableJSON(value) {
   if (Array.isArray(value)) return `[${value.map(stableJSON).join(',')}]`;
@@ -76,7 +86,7 @@ export function validateConfig(config) {
   if (t.scope === 'interface' && (!config.endpointA?.trim() || !config.endpointB?.trim())) throw new Error('Both interface endpoints are required.');
   if ((config.notes || '').length > 20000 || config.title.length > 200) throw new Error('Title or source notes are too long.');
   if (!Array.isArray(config.sources) || config.sources.length > 30) throw new Error('Select up to 30 source modules.');
-  if (!isSafetyArtifact(config.templateId) && !config.architectureSources?.length && !config.sources.length && !config.notes?.trim() && !Object.values(config.projectNotes || {}).some(text => text?.trim())) throw new Error('Select source diagrams, a source module, or provide source notes.');
+  if (!isSafetyArtifact(config.templateId) && !upstreamRequirementTemplate(config) && !config.architectureSources?.length && !config.sources.length && !config.notes?.trim() && !Object.values(config.projectNotes || {}).some(text => text?.trim())) throw new Error('Select source diagrams, a source module, or provide source notes.');
   return t;
 }
 // One canonical object tree drives all four presentations and exports.
@@ -122,6 +132,7 @@ export function validateEvidenceReview(response, section, artifactId, sourceIds,
   return objects;
 }
 export function artifactObjectText(object) {
+  if (['missing-parent-requirement', 'missing-system-requirement'].includes(object.evidenceIssue)) return `Requirement needs a parent requirement. Review the source link before accepting this statement.\n\nProposed wording:\n${object.text}`;
   if (object.hazardTrackingRow && !object.text) return hazardTrackingText(object.attributes);
   if (object.evidenceIssue === 'requirement-writing') return `Requirement wording needs review: ${(object.requirementWritingIssues || []).join(' ')}\n\nProposed wording:\n${object.text}`;
   if (object.evidenceIssue === 'unknown-citation') return `Unresolved: a supporting reference in this generated item could not be matched to the selected sources. Review the claim and supply evidence before treating it as an established fact.\n\nUnverified generated text:\n${object.text}`;

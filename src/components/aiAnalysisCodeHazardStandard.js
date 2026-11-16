@@ -1608,7 +1608,7 @@ async function requestStandardRows(config, items, contextOptions = {}) {
   const retryInstruction = sanitizeText(contextOptions.retryReason);
   const prompt = `
 ${items.some(item => item.guidePhraseApplicabilityOrigin === SCREENING_ORIGIN) ? APPLICABILITY_OWNERSHIP_PROMPT : ""}
-You are performing ${config.analysisName} for software safety using a code-based functional decomposition.
+You are performing ${config.analysisName} ${config.analysisScope || 'for software safety using a code-based functional decomposition'}.
 
 ${generationGuidance(config, items)}
 
@@ -2400,12 +2400,15 @@ ${JSON.stringify(candidates)}
 }
 
 async function requestCanonicalRiskMappings(config, catalog, mappingItems, contextOptions = {}) {
+  const operationalContextBlock = formatHazardOperationalContext(contextOptions);
   const prompt = `
 Map each applicable ${config.analysisName} row to exactly one canonical Loss and one canonical Hazard from the supplied catalogs.
 
 Return ONLY a JSON array with one object per row containing id, canonicalLossIds, canonicalHazardId. Preserve each row id exactly. canonicalLossIds must be an array containing every catalog Loss explicitly supported by that row's raw Loss candidate; canonicalHazardId must contain exactly one Hazard id. Use only catalog ids; do not create or rewrite catalog entries.
 
 Choose by the underlying unacceptable outcome and hazardous system state, not superficial wording, guide phrase, interface name, or causal mechanism. Different UCAs and scenarios should share a canonical mapping when they reach the same system-level state.
+
+${operationalContextBlock}
 
 Loss catalog:
 ${JSON.stringify(catalog.losses)}
@@ -2780,7 +2783,7 @@ export async function runStandardHazardAnalysisStages({
 
   for (let index = 0; index < HAZARD_ANALYSIS_REPAIR_STAGES.length; index += 1) {
     const [stage, runStage] = HAZARD_ANALYSIS_REPAIR_STAGES[index];
-    const stageBasis = {stage, ...(items.some(applicabilityIsReadOnly) ? { applicabilityAuditPolicy: "read-only-applicability-v1" } : {}), config, rows: normalizedRows, items, operationalContext, organizationContext, analysisContext, contextSources, provider};
+    const stageBasis = {stage, ...(stage === 'canonicalization' ? { canonicalContextPolicy: 'governed-profile-v1' } : {}), ...(items.some(applicabilityIsReadOnly) ? { applicabilityAuditPolicy: "read-only-applicability-v1" } : {}), config, rows: normalizedRows, items, operationalContext, organizationContext, analysisContext, contextSources, provider};
     const savedStage = await generationCheckpoint?.read(stageBasis);
     let stageFailed = false;
     const reusableStage = Array.isArray(savedStage) && savedStage.length === items.length;
@@ -2833,13 +2836,15 @@ export async function generateStandardCodeHazardAnalysisSheets({
   signal = null,
   provider = getStoredActiveAIProvider(),
   generationCheckpoint = null,
+  analysisScope = '',
 }) {
   const items = flattenDecomposition(sheets);
   if (!items.length) return sheets;
 
-  const config = omitConsolidatedRequirement
+  const standardConfig = omitConsolidatedRequirement
     ? omitConsolidatedRequirementFromConfig(getStandardConfig(method))
     : getStandardConfig(method);
+  const config = analysisScope ? { ...standardConfig, analysisScope } : standardConfig;
 
   const normalizedRows = await runStandardHazardAnalysisStages({
     config,

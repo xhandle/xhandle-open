@@ -24,6 +24,7 @@ export function hazardTrackingProjection(headers) {
   const action = indices(['Control Action', 'Action']);
   const to = indices(['Function (To)', 'To Function', 'Controlled Process', 'To']);
   const identity = indices(['Raw Analysis Row ID', 'Raw Row ID', 'Analysis Row ID', 'Row ID', 'ID']);
+  const functionalIdentity = indices(['Trace ID', 'Functional Trace ID', 'Functional Row ID', 'Source Functional Row', 'sourceTraceId', 'functionalTraceId']);
   const first = (row, candidates) => { for (const index of candidates) { const value = text(row[index]); if (value) return value; } return ''; };
   return row => {
     const attributes = {};
@@ -31,7 +32,8 @@ export function hazardTrackingProjection(headers) {
       const value = first(row, candidates) || (column === 'Function' ? [first(row, from), first(row, action), first(row, to)].filter(Boolean).join(' → ') : '');
       if (value) attributes[column] = value;
     }
-    return { attributes, sourceRowId: first(row, identity) };
+    const functionalTraceId = first(row, functionalIdentity);
+    return { attributes, sourceRowId: first(row, identity), ...(functionalTraceId ? { functionalTraceId } : {}) };
   };
 }
 export function projectHazardTrackingFields(attributes = {}) {

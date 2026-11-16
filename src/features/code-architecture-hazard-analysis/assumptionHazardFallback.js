@@ -51,6 +51,15 @@ export function assumptionHazardFallback(method,source,decision) {
  if(method==='FHA' && values['Software Control Category'] && !values['Software Control Category Rationale'])
   result.sccRationale=`Retained reviewed SCC ${result.scc}; the control-role category is a premise of this assessment.`;
  if(method==='HARA')result.assumptions+=` Selected ratings: ${result.severity}/${result.exposure}/${result.controllability}. ${Object.keys(headers).some(h=>values[h])?'Reviewed ratings are retained; unreviewed ratings use the bounding premises.':result.ratingRationale}`;
+ if(method==='HARA')Object.assign(result,{
+  potentialHarm:loss,
+  personsAtRisk:mission?'No persons are assumed exposed in this mission-only scenario.':'Persons exposed to the assumed physical-harm scenario; identify and validate the actual exposed population.',
+  severityRationale:values['Severity Rationale'] || `Severity ${result.severity} is a bounding assessment premise, not a verified injury assessment. ${result.ratingRationale}`,
+  exposureRationale:values['Exposure Rationale'] || `Exposure ${result.exposure} is a premise about the operational situation, not software failure probability. Validate its frequency against the operating domain.`,
+  controllabilityRationale:values['Controllability Rationale'] || `Controllability ${result.controllability} is a bounding premise. Validate available reaction time and recovery measures without assuming a driver or crediting unsupported safeguards.`,
+  safeState:values['Safe State'] || '',ftti:values['Fault Tolerant Time Interval'] || '',fttiRationale:values['FTTI Rationale'] || '',itemDefinition:values['Item Definition'] || '',
+  gaps:values['Assessment Gaps'] || 'Validate the item boundary, harm mechanism, exposed population and all bounding S/E/C premises. Establish the safe state and whether an FTTI applies from the hazard timing analysis.',
+ });
  if(method==='FHA')result.assumptions+=` Selected ratings: ${result.severity}/SCC ${result.scc}. ${Object.keys(headers).some(h=>values[h])?'Reviewed ratings are retained; unreviewed ratings use the bounding premises.':result.severityRationale+' '+result.sccRationale}`;
  if(Object.keys(headers).some(h=>values[h]))result.assumptions+=' Explicitly reviewed rating fields take precedence over the bounding defaults; their retained rationale supplies the rating premise.';
  if(Object.keys(retained).length){

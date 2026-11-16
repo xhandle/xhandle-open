@@ -32,6 +32,7 @@ export function portableArtifact(meta, revision, baselines = [], revisions = [re
 }
 const supportingNames = (object, revision) => (object.sourceIds || []).map(id => (object.sourceEvidence || []).find(source => source.id === id)?.title || revision.sources.entries.find(source => source.id === id)?.title || 'Unavailable supporting source').join('; ');
 const sourceDescription = source => [source.text, source.artifactTitle && `Source document: ${source.artifactTitle}`, source.revision && `Revision ${source.revision}`, source.diagramTitle && `Diagram: ${source.diagramTitle}`, ...Object.entries(source.attributes || {}).map(([key, value]) => `${key}: ${readableValue(value)}`)].filter(Boolean).join(' — ');
+const safetyLabel = object => object.attributes?.['Safety Significant'] === 'Yes' ? 'Safety significant' : object.attributes?.['Safety Significant'] === 'Needs review' ? 'Safety significance needs review' : '';
 function documentObjects(meta, revision) {
   if (meta.templateId !== 'architecture') return orderedObjects(revision.objects);
   const description = architectureDescriptionObjects(meta, revision.sources, revision.objects);
@@ -41,7 +42,7 @@ function documentObjects(meta, revision) {
 export function artifactMarkdown(meta, revision, diagramImages = {}) {
   if (meta.templateId === 'hazard-tracking-list') return hazardTrackingMarkdown(meta, revision);
   const diagrams = meta.templateId === 'architecture' ? revision.sources.entries.filter(e => e.sourceType === 'architecture-diagram').flatMap(architecturePages) : [];
-  return [`# ${meta.title}`, ...(meta.description ? [meta.description] : []), `Revision ${revision.number} · Working engineering document`, ...diagrams.map(diagram => { const image = diagramImages[diagram.id] || (diagram.workspaceType !== 'functional' ? `data:image/svg+xml,${encodeURIComponent(architectureSVG(diagram))}` : null); return image ? `![${diagram.title.replace(/[[\]]/g, '')}](${image})` : `Diagram: ${diagram.title} (saved diagram included in the portable JSON snapshot)`; }), ...documentObjects(meta, revision).flatMap(o => [...(o.title ? [`${o.kind === 'section' ? '##' : '###'} ${o.title}`] : []), artifactObjectText(o), o.sourceIds.length ? `Sources: ${supportingNames(o, revision)}${o.manual ? ' (evidence retained with manual object; see portable JSON for the exact snapshot)' : ''}` : '']), '## Source register', ...revision.sources.entries.map(e => `- ${e.title || 'Untitled source'}${sourceDescription(e) ? ` — ${sourceDescription(e)}` : ''}`)].join('\n\n');
+  return [`# ${meta.title}`, ...(meta.description ? [meta.description] : []), `Revision ${revision.number} · Working engineering document`, ...diagrams.map(diagram => { const image = diagramImages[diagram.id] || (diagram.workspaceType !== 'functional' ? `data:image/svg+xml,${encodeURIComponent(architectureSVG(diagram))}` : null); return image ? `![${diagram.title.replace(/[[\]]/g, '')}](${image})` : `Diagram: ${diagram.title} (saved diagram included in the portable JSON snapshot)`; }), ...documentObjects(meta, revision).flatMap(o => [...(o.title ? [`${o.kind === 'section' ? '##' : '###'} ${o.title}`] : []), artifactObjectText(o), ...(safetyLabel(o) ? [safetyLabel(o)] : []), o.sourceIds.length ? `Sources: ${supportingNames(o, revision)}${o.manual ? ' (evidence retained with manual object; see portable JSON for the exact snapshot)' : ''}` : '']), '## Source register', ...revision.sources.entries.map(e => `- ${e.title || 'Untitled source'}${sourceDescription(e) ? ` — ${sourceDescription(e)}` : ''}`)].join('\n\n');
 }
 export async function exportArtifact(format, meta, revision, baselines = [], revisions = [revision]) {
   if (!revision) throw new Error('Accept a proposal before exporting.');
@@ -70,6 +71,7 @@ export async function exportArtifact(format, meta, revision, baselines = [], rev
     for (const o of documentObjects(meta, revision)) {
       if (o.title) paragraphs.push(new Paragraph({ text: o.title, heading: o.kind === 'section' ? HeadingLevel.HEADING_1 : HeadingLevel.HEADING_2 }));
       artifactObjectText(o).split('\n').forEach(text => paragraphs.push(new Paragraph(text)));
+      if (safetyLabel(o)) paragraphs.push(new Paragraph(safetyLabel(o)));
       if (o.sourceIds.length) paragraphs.push(new Paragraph({ children: [new TextRun({ text: `Sources: ${supportingNames(o, revision)}${o.manual ? ' — evidence retained with manual object' : ''}`, italics: true, size: 18 })] }));
     }
     paragraphs.push(new Paragraph({ text: 'Source register', heading: HeadingLevel.HEADING_1 }));
@@ -92,7 +94,7 @@ export async function exportArtifact(format, meta, revision, baselines = [], rev
       const image = await architectureImage(await diagramWithPresentation(meta.id, diagram)), scale = Math.min(170 / image.width, 210 / image.height);
       pdf.addPage(); y = 24; line(diagram.title, 14); pdf.addImage(image.data, 'PNG', 20, y, image.width * scale, image.height * scale); pdf.addPage(); y = 24;
     }
-    documentObjects(meta, revision).forEach(o => { if (o.title) line(o.title, o.kind === 'section' ? 16 : 12); if (o.text || o.evidenceIssue || o.hazardTrackingRow) line(artifactObjectText(o)); if (o.sourceIds.length) line(`Sources: ${supportingNames(o, revision)}${o.manual ? ' — evidence retained with manual object' : ''}`, 8); });
+    documentObjects(meta, revision).forEach(o => { if (o.title) line(o.title, o.kind === 'section' ? 16 : 12); if (o.text || o.evidenceIssue || o.hazardTrackingRow) line(artifactObjectText(o)); if (safetyLabel(o)) line(safetyLabel(o), 8); if (o.sourceIds.length) line(`Sources: ${supportingNames(o, revision)}${o.manual ? ' — evidence retained with manual object' : ''}`, 8); });
     line('Source register', 16); revision.sources.entries.forEach(e => line(`${e.title || 'Untitled source'}${sourceDescription(e) ? ` — ${sourceDescription(e)}` : ''}`, 8));
     for (let i = 1; i <= pdf.getNumberOfPages(); i++) { pdf.setPage(i); pdf.setFontSize(8); pdf.text(`${i} / ${pdf.getNumberOfPages()}`, 180, 290); }
     blob = pdf.output('blob');

@@ -1,4 +1,5 @@
 import { openCodeArchitectureHazardDB } from './codeArchitectureHazardStore';
+import { getOrganizationPromptContext } from '../organization-profile/organizationPromptContext';
 
 const STORE = 'generationCheckpoints';
 // Bump when prompts, interpretation or audit contracts change.
@@ -28,7 +29,8 @@ export async function checkpointDigest(value) {
 export async function createCodeHazardCheckpoint(scopeParts, { regenerate = false, signal, onProgress = () => {} } = {}) {
   let db = await openCodeArchitectureHazardDB();
   if (!db || (typeof crypto === "undefined" || !crypto.subtle)) return null;
-  const scope = JSON.stringify(scopeParts);
+  const organizationPromptIdentity = getOrganizationPromptContext({projectId: scopeParts.projectId}).identity;
+  const scope = JSON.stringify(organizationPromptIdentity ? {...scopeParts, organizationPromptIdentity} : scopeParts);
   const check = () => { if (signal?.aborted) throw new DOMException('Hazard analysis cancelled.', 'AbortError'); };
   const transaction = async (mode, work) => {
     // Observe transaction completion before issuing requests: a synchronous

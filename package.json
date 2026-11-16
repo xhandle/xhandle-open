@@ -102,7 +102,8 @@
     "server": "node scripts/dev-server.js",
     "client": "node scripts/dev-client.js",
     "dev": "concurrently -k -n API,WEB \"npm run server\" \"npm run client\"",
-    "test:server-startup": "node --test server/serverEntrypoint.test.cjs"
+    "test:server-startup": "node --test server/serverEntrypoint.test.cjs",
+    "test:electron:regression": "node scripts/diagnostics/run-electron-regression.cjs"
   },
   "eslintConfig": {
     "extends": [

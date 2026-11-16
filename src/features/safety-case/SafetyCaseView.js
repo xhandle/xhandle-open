@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useCurrentViewSource } from '../collaborator-performance/useCurrentViewSource';
+import { currentDiagramSample } from '../collaborator-performance/currentViewEvidence';
 import { Bot, Folder, FolderPlus, MoveRight, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, ShieldCheck } from "lucide-react";
 import SafetyCaseDiagram, { layoutSafetyCase } from "./SafetyCaseDiagram";
 import SafetyCaseToolbar from "./SafetyCaseToolbar";
@@ -236,6 +238,10 @@ export default function SafetyCaseView({ activeProjectId }) {
   }, [safetyCase, selectedNodeId]);
 
   const selectedNode = useMemo(() => safetyCase?.nodes?.find((node) => node.id === selectedNodeId) || null, [safetyCase, selectedNodeId]);
+  useCurrentViewSource('safety-case', () => ({ section: 'safety-case', projectId: null, content: safetyCase ? {
+    kind: 'safety-case', id: safetyCase.id, title: safetyCase.name, selectedNodeId,
+    ...currentDiagramSample(safetyCase.nodes, safetyCase.edges),
+  } : null }));
   const renderedSafetyCase = useMemo(() => (
     safetyCase && usesLifecycleSafetyCaseLayout(safetyCase)
       ? layoutSafetyCaseTreeSymmetrically(safetyCase)

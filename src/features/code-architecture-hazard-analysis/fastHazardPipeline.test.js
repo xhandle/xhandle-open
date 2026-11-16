@@ -1,10 +1,10 @@
 // These tests isolate detailed assessment/recovery; the real prepass is covered in fastHazardApplicability.test.js.
-jest.mock('./fastHazardApplicability',()=>({screenFastApplicability:async({sources})=>new Map(sources.map(s=>[s.id,{applicable:s.reviewedApplicability || 'Yes',rationale:s.reviewedRationale || 'Meaningful action deviation.'}]))}));
-jest.mock('./fastHazardSemanticReview',()=>({createReviewBatchPolicy:()=>({rows:24,chars:60000,successes:0,epoch:0}),reviewFastHazards:async ({entries})=>Object.fromEntries(entries.map(({source})=>[source.id,[]]))}));
 import {generateReviewedFastHazards as generateFastHazards,fastHazardPrompt} from './fastHazardPipeline';
 import {deriveFastAsil,deriveFastSwci,validateFastAssessment} from './fastHazardSchema';
 
 import {answer} from './fastHazardTestFixtures';
+jest.mock('./fastHazardApplicability',()=>({screenFastApplicability:async({sources})=>new Map(sources.map(s=>[s.id,{applicable:s.reviewedApplicability || 'Yes',rationale:s.reviewedRationale || 'Meaningful action deviation.'}]))}));
+jest.mock('./fastHazardSemanticReview',()=>({createReviewBatchPolicy:()=>({rows:24,chars:60000,successes:0,epoch:0}),reviewFastHazards:async ({entries})=>Object.fromEntries(entries.map(({source})=>[source.id,[]]))}));
 
 const sources=count=>Array.from({length:count},(_,i)=>({id:`HA-${i+1}`,from:'Planner',action:'Apply torque',to:'Actuator',phrase:'Too late',context:{mode:'Driving'}}));
 const ids=prompt=>JSON.parse(prompt.split('\nRows: ')[1]).map(row=>row.id);
@@ -60,7 +60,7 @@ test('standard ratings are derived deterministically and invalid ratings rejecte
  expect(deriveFastAsil('S3','E4','C3')).toBe('ASIL D');
  expect(deriveFastAsil('S3','E3','C3')).toBe('ASIL C');
  expect(deriveFastAsil('S1','E1','C1')).toBe('QM');
- expect(deriveFastAsil('S0','E4','C3')).toBe('QM');
+ expect(deriveFastAsil('S0','E4','C3')).toBe('Not assigned');
  expect(deriveFastAsil('S9','E4','C3')).toBeNull();
  expect(deriveFastSwci('I','1')).toBe('SwCI 1');expect(deriveFastSwci('IV','5')).toBe('SwCI 5');
  expect(validateFastAssessment('HARA',{...answer('HARA','a'),severity:'Unknown'},{id:'a'}).length).toBeGreaterThan(0);

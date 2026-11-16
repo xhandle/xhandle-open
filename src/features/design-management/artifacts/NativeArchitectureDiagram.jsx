@@ -33,5 +33,5 @@ export default forwardRef(function NativeArchitectureDiagram({ diagram, focusId,
     }, 100);
     return () => clearInterval(timer);
   }, [diagram, focusId]);
-  return <div ref={host} style={{ height: '100%', minHeight: 0 }}><LiteSummaryDiagramReactFlow ref={canvas} rows={state.rows} nodeLabels={diagram.snapshot.native?.nodeLabels} preserveSnapshotGeometry={diagram.snapshot.native?.preserveGeometry === true} autoCategories={state.autoCategories} storageKey={state.key} storage={state.storage} readOnly={!editable} layoutOnly={editable} onInspectElement={target => onSelect?.(nativeElementSource(diagram, target))} /></div>;
+  return <div ref={host} style={{ height: '100%', minHeight: 0 }}><LiteSummaryDiagramReactFlow ref={canvas} rows={state.rows} nodeLabels={diagram.snapshot.native?.nodeLabels} preserveSnapshotGeometry={diagram.snapshot.native?.preserveGeometry === true} autoCategories={state.autoCategories} storageKey={state.key} storage={state.storage} exclusiveEdgeAggregation readOnly={!editable} layoutOnly={editable} onInspectElement={target => onSelect?.(nativeElementSource(diagram, target))} /></div>;
 });

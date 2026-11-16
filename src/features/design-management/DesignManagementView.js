@@ -11,6 +11,9 @@ import RequirementsManager from "../../components/RequirementsManager";
 import NaturalLanguageDesignPanel from "./NaturalLanguageDesignPanel";
 import SysMLV2ModelerView from "./SysMLV2Modeler/SysMLV2ModelerView";
 import { DESIGN_SEARCH_REVEAL, useDesignQuickSearch } from './designQuickSearch';
+import { useDesignCollaborator } from './collaborator/useDesignCollaborator';
+import TraceabilityProfilesDialog from './traceability/TraceabilityProfilesDialog';
+import TraceabilityMatrix from './traceability/TraceabilityMatrix';
 
 export default function DesignManagementView({
   requirements,
@@ -18,16 +21,20 @@ export default function DesignManagementView({
   onApplyWorkflowArtifacts,
 }) {
   const artifacts = useArtifactWorkspace();
-  const { select: selectArtifact, setFocusObjectId } = artifacts;
+  const { select: selectArtifact, setFocusObjectId, setShowCreate: setShowArtifactCreate } = artifacts;
   const rootRef = React.useRef(null);
   const [searchTarget, setSearchTarget] = React.useState(null);
   const [activeDesignContext, setActiveDesignContext] = React.useState(null);
   const [generationFolderId, setGenerationFolderId] = React.useState(null);
+  const [showProfiles, setShowProfiles] = React.useState(false);
+  const [matrixProject, setMatrixProject] = React.useState(null);
+  React.useEffect(() => { const create = event => { setMatrixProject(event.detail); setGenerationFolderId(event.detail.folderId); setShowArtifactCreate(true); }; window.addEventListener('xhandle:create-traceability-matrix', create); return () => window.removeEventListener('xhandle:create-traceability-matrix', create); }, [setShowArtifactCreate]);
   const openProjectGeneration = (folderId = activeDesignContext?.activeFolderId) => {
     setGenerationFolderId(folderId);
     artifacts.setShowProjectCreate(true);
   };
   const openArtifactGeneration = (folderId = activeDesignContext?.activeFolderId) => {
+    setMatrixProject(null);
     setGenerationFolderId(folderId);
     artifacts.setShowCreate(true);
   };
@@ -47,6 +54,7 @@ export default function DesignManagementView({
     setTimeout(() => window.dispatchEvent(new CustomEvent(DESIGN_SEARCH_REVEAL, { detail })), 0);
   }, [selectArtifact]);
   useDesignQuickSearch({ rootRef, modules: artifacts.modules, onOpenArtifact: openSearchArtifact, onOpenLibrary: openSearchLibrary });
+  useDesignCollaborator({ mode, selectedId: artifacts.selectedId, modules: artifacts.modules, openArtifact: openSearchArtifact, openLibrary: openSearchLibrary, setMode });
 
   React.useEffect(() => {
     try { sessionStorage.setItem("xhandle.designManagement.mode", mode); } catch {}
@@ -74,6 +82,7 @@ export default function DesignManagementView({
           activeDesignContext={activeDesignContext}
           onGenerateArtifact={() => openArtifactGeneration()}
           onGenerateProject={() => openProjectGeneration()}
+          onTraceabilityProfiles={() => setShowProfiles(true)}
           onGenerateSysML={() => {
             setMode("sysml");
             setSysmlGenerationRequest((value) => value + 1);
@@ -101,7 +110,9 @@ export default function DesignManagementView({
             onSelectArtifact={id => { setSearchTarget(null); artifacts.setFocusObjectId(null); artifacts.select(id); }}
             renderArtifact={() => !artifacts.modules.some(module => module.id === artifacts.selectedId) ? <p>Loading design module…</p> : artifacts.modules.find(module => module.id === artifacts.selectedId)?.recordType === ENGINEERING_PROJECT_TYPE
               ? <EngineeringProjectEditor key={artifacts.selectedId} id={artifacts.selectedId} onDeleted={() => artifacts.select(null)} onOpenArtifact={(id, objectId) => { artifacts.setFocusObjectId(objectId || null); artifacts.select(id); }} />
-              : <ArtifactEditor key={`${artifacts.selectedId}:${searchTarget?.nonce || ''}`} id={artifacts.selectedId} focusDraft={searchTarget?.draft} focusObjectId={artifacts.focusObjectId} onOpenProject={artifacts.select} onDeleted={() => artifacts.select(null)} />}
+              : artifacts.modules.find(module => module.id === artifacts.selectedId)?.templateId === 'traceability-matrix'
+                ? <TraceabilityMatrix key={`${artifacts.selectedId}:${searchTarget?.nonce || ''}`} id={artifacts.selectedId} focusObjectId={artifacts.focusObjectId} onDeleted={() => artifacts.select(null)} onOpenArtifact={openSearchArtifact} />
+                : <ArtifactEditor key={`${artifacts.selectedId}:${searchTarget?.nonce || ''}`} id={artifacts.selectedId} focusDraft={searchTarget?.draft} focusObjectId={artifacts.focusObjectId} onOpenProject={artifacts.select} onDeleted={() => artifacts.select(null)} />}
             projectName={workspaceProjectName}
             requirements={requirements}
             setRequirements={setRequirements}
@@ -109,7 +120,8 @@ export default function DesignManagementView({
           />
           {artifacts.error && <p role="alert">{artifacts.error}</p>}
           {artifacts.showProjectCreate && <EngineeringProjectDialog libraryProjects={artifacts.modules.filter(module => module.recordType === ENGINEERING_PROJECT_TYPE)} activeFolderId={generationFolderId} onClose={() => artifacts.setShowProjectCreate(false)} onCreated={artifacts.select} />}
-          {artifacts.showCreate && <ArtifactCreateDialog libraryProjects={artifacts.modules.filter(module => module.recordType === ENGINEERING_PROJECT_TYPE)} activeFolderId={generationFolderId} onClose={() => artifacts.setShowCreate(false)} onCreated={artifacts.select} />}
+          {artifacts.showCreate && <ArtifactCreateDialog matrixProject={matrixProject} libraryProjects={artifacts.modules.filter(module => module.recordType === ENGINEERING_PROJECT_TYPE)} activeFolderId={generationFolderId} onClose={() => artifacts.setShowCreate(false)} onCreated={artifacts.select} />}
+          {showProfiles && <TraceabilityProfilesDialog onClose={() => setShowProfiles(false)} />}
         </NaturalLanguageDesignPanel>
       ) : (
         <SysMLV2ModelerView

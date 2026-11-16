@@ -1,6 +1,7 @@
 import { hasCompleteRequirementCoverage } from '../code-architecture-transfer/requirementCoverage';
 import { softwareRequirementSource } from './softwareRequirementSource';
 import { backendURL, buildAIAuthOpts } from "../../components/backendConfig";
+import { ORGANIZATION_CONTEXT_HEADER } from '../../lib/organizationPromptPolicy';
 import {
   ARTIFACT_KINDS,
 } from "./artifactDefinitions";
@@ -126,6 +127,7 @@ async function callAssuranceModel(payload, options) {
 
 async function callAssuranceModelUncached(payload, {
   systemPrompt,
+  onProgress,
   errorLabel,
   retryDelays = [],
   markTransientUnavailable = true,
@@ -152,7 +154,8 @@ async function callAssuranceModelUncached(payload, {
     const request = async () => {
       const response = await fetch(`${backendURL}/api/chat`, {
         method: "POST",
-        ...buildAIAuthOpts({ "Content-Type": "application/json" }),
+        ...buildAIAuthOpts({ "Content-Type": "application/json", ...(onProgress?.requestCheckpoint?.organizationPromptContext
+          ? {[ORGANIZATION_CONTEXT_HEADER]: onProgress.requestCheckpoint.organizationPromptContext.header} : {}) }),
         body: requestBody,
         signal: controller.signal,
       });

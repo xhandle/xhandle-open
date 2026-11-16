@@ -1,58 +1,27 @@
-import { openDB } from 'idb';
-import { notifyBackupDataChanged } from './localBackupEvents';
+import { captureHazardSnapshot } from './hazardMessageGraph';
+import { recoveryRecord as localRecoveryRecord } from './recoveryDatabase';
+import { canUseHazardStorageWorker, requestHazardStorage } from './hazardStorageClient';
+export { openRecoveryDatabase } from './recoveryDatabase';
 
-// Bound connection waits; a late connection must not run a timed-out write.
-export function openRecoveryDatabase(name, version, options, timeoutMs = 10000) {
-  return new Promise((resolve, reject) => {
-    let expired = false;
-    let connection;
-    const timer = setTimeout(() => { expired = true; reject(new Error('Browser storage connection timed out.')); }, timeoutMs);
-    Promise.resolve().then(() => openDB(name, version, {
-      ...options,
-      blocking() { connection?.close?.(); },
-      blocked() { expired = true; clearTimeout(timer); reject(new Error('Browser storage is blocked by another tab. Close other xHandle tabs and retry.')); },
-    })).then(db => {
-      clearTimeout(timer);
-      if (expired) { db?.close?.(); return; }
-      connection = db;
-      resolve(db);
-    }, error => { clearTimeout(timer); reject(error); });
-  });
-}
-
-export async function recoveryRecord(key, value, remove = false) {
-  const db = await openRecoveryDatabase('xhandle-recovery', 1, {
-    upgrade(database) { database.createObjectStore('checkpoints'); },
-  });
-  try {
-    const tx = db.transaction('checkpoints', value === undefined && !remove ? 'readonly' : 'readwrite');
-    tx.done.catch(() => {}); // Request failures can also reject the transaction.
-    let timer;
-    try {
-      return await Promise.race([
-        (async () => {
-          const result = remove ? await tx.store.delete(key) : value === undefined ? await tx.store.get(key) : await tx.store.put(value, key);
-          await tx.done;
-          if (value !== undefined) notifyBackupDataChanged({ database: 'xhandle-recovery', key });
-          return result;
-        })(),
-        new Promise((_, reject) => {
-          timer = setTimeout(() => {
-            try { tx.abort(); } catch {}
-            reject(new Error('Browser storage operation timed out.'));
-          }, 10000);
-        }),
-      ]);
-    } finally { clearTimeout(timer); }
-  } finally { db.close?.(); }
+export function recoveryRecord(key, value, remove = false) {
+  return canUseHazardStorageWorker()
+    ? requestHazardStorage('recoveryRecord', [key, value, remove])
+    : localRecoveryRecord(key, value, remove);
 }
 
 const queues = new Map();
 const deletedKeys = new Set();
 export function saveRecoveryRecord(key, value) {
   if (deletedKeys.has(key)) return Promise.reject(new Error('Project was deleted; checkpoint discarded.'));
-  const snapshot = JSON.parse(JSON.stringify(value));
   let state = queues.get(key);
+  // Preserve shared workbook rows instead of expanding each Summary/HARA/method
+  // alias into another complete JSON tree and allocating a giant JSON string.
+  // Capture synchronously so edits after this call cannot change the checkpoint.
+  // An immediate worker post already captures synchronously. Cloning before
+  // that post would retain another full workbook on the renderer unnecessarily.
+  // Pending replacements still need their own isolated snapshot until dispatched.
+  const snapshot = canUseHazardStorageWorker() && !state?.running ? value
+    : captureHazardSnapshot(value);
   if (!state) { state = { running: false, pending: null }; queues.set(key, state); }
   // One active snapshot and one latest pending snapshot per key. Superseded
   // callers share the promise for that latest replacement.

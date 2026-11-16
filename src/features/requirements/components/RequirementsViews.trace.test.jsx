@@ -31,3 +31,18 @@ test('large trace lists page every relationship while preserving total metrics',
     expect(nav().textContent).toContain('1–100 of 201');
   } finally { await act(async () => root.unmount()); host.remove(); }
 });
+
+test('trace selection supports keyboard and multiselect for local objects while source evidence stays read-only', async () => {
+  const host = document.createElement('div'); document.body.appendChild(host);
+  const root = createRoot(host), onSelect = jest.fn();
+  const rows = [{ id: 'local', title: 'Local requirement', module: 'Source', links: [{ type: 'refines', toId: 'evidence' }] }, { id: 'evidence', title: 'Recorded evidence', module: 'Snapshot', links: [] }];
+  try {
+    await act(async () => root.render(<TraceabilityView allRequirements={rows} selectedModule="Source" selectedId="local" selectedIds={new Set(['local'])} onSelect={onSelect} canSelect={id => id === 'local'} />));
+    const local = host.querySelector('[data-artifact-object-id="local"]'), evidence = host.querySelector('[data-artifact-object-id="evidence"]');
+    expect(local.getAttribute('aria-pressed')).toBe('true');
+    expect(evidence.getAttribute('role')).toBeNull();
+    await act(async () => local.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, shiftKey: true })));
+    expect(onSelect).toHaveBeenCalledWith('local', expect.objectContaining({ shiftKey: true }));
+    onSelect.mockClear(); await act(async () => evidence.click()); expect(onSelect).not.toHaveBeenCalled();
+  } finally { await act(async () => root.unmount()); host.remove(); }
+});

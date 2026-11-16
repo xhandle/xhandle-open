@@ -1,4 +1,7 @@
 import { readableValue } from './readableValues';
+import ColumnValueFilter from './ColumnValueFilter';
+import { filterTableRows, tableColumnOptions } from './tableColumnFilters';
+import './designDialog.css';
 // Shared original requirements views. Both legacy modules and engineering artifacts use these components.
 import React from "react";
 import { Copy, Layers, Link2, Table as TableIcon, FileText, Network, Plus, Image as ImageIcon, Grid3x3, Edit3, Trash2, ArrowUp, ArrowDown, IndentDecrease, IndentIncrease, History, X } from "lucide-react";
@@ -45,6 +48,8 @@ export function RowActionsBar({
     onPromote,
     onDemote,
     onHistory,
+    historyDisabled = false,
+    unavailable = {},
     viewMode,
     setViewMode,
     documentView = false,
@@ -107,7 +112,7 @@ export function RowActionsBar({
           {/* New child */}
           <button
             onClick={onNewChild}
-            disabled={disabled}
+            disabled={disabled || !onNewChild}
             title="New child"
             className="rounded border p-2 text-sm hover:bg-gray-50 disabled:opacity-50"
             aria-disabled={disabled}
@@ -125,7 +130,7 @@ export function RowActionsBar({
           />
           <button
             onClick={() => fileRef.current?.click()}
-            disabled={!selection || disabled}
+            disabled={!selection || disabled || !onSetContent}
             title="Insert image (renders in place of title)"
             className="rounded border p-2 hover:bg-gray-50 disabled:opacity-50"
           >
@@ -135,7 +140,7 @@ export function RowActionsBar({
           {/* Insert table */}
           <button
             onClick={() => setShowTableMaker(true)}
-            disabled={!selection || disabled}
+            disabled={!selection || disabled || !onSetContent}
             title="Insert table (renders in place of title)"
             className="rounded border p-2 hover:bg-gray-50 disabled:opacity-50"
           >
@@ -147,7 +152,7 @@ export function RowActionsBar({
           {/* Edit / Delete */}
           <button
             onClick={onEdit}
-            disabled={!selection || disabled}
+            disabled={!selection || disabled || !onEdit}
             title="Edit"
             className="rounded border p-2 hover:bg-gray-50 disabled:opacity-50"
           >
@@ -155,7 +160,7 @@ export function RowActionsBar({
           </button>
           <button
             onClick={onDelete}
-            disabled={!selection || disabled}
+            disabled={!selection || disabled || !onDelete}
             title="Delete"
             className="rounded border p-2 hover:bg-gray-50 disabled:opacity-50"
           >
@@ -165,19 +170,19 @@ export function RowActionsBar({
           <div className="mx-1 h-5 w-px bg-gray-200" />
 
           {/* Ordering / hierarchy */}
-          <button onClick={onMoveUp} disabled={!selection || disabled} title="Move up"
+          <button onClick={onMoveUp} disabled={!selection || disabled || !onMoveUp || unavailable.up} title="Move up"
                   className="rounded border p-2 hover:bg-gray-50 disabled:opacity-50">
             <ArrowUp className="h-4 w-4" />
           </button>
-          <button onClick={onMoveDown} disabled={!selection || disabled} title="Move down"
+          <button onClick={onMoveDown} disabled={!selection || disabled || !onMoveDown || unavailable.down} title="Move down"
                   className="rounded border p-2 hover:bg-gray-50 disabled:opacity-50">
             <ArrowDown className="h-4 w-4" />
           </button>
-          <button onClick={onPromote} disabled={!selection || disabled} title="Promote (outdent)"
+          <button onClick={onPromote} disabled={!selection || disabled || !onPromote || unavailable.promote} title="Promote (outdent)"
                   className="rounded border p-2 hover:bg-gray-50 disabled:opacity-50">
             <IndentDecrease className="h-4 w-4" />
           </button>
-          <button onClick={onDemote} disabled={!selection || disabled} title="Demote (indent)"
+          <button onClick={onDemote} disabled={!selection || disabled || !onDemote || unavailable.demote} title="Demote (indent)"
                   className="rounded border p-2 hover:bg-gray-50 disabled:opacity-50">
             <IndentIncrease className="h-4 w-4" />
           </button>
@@ -185,11 +190,11 @@ export function RowActionsBar({
           <div className="mx-1 h-5 w-px bg-gray-200" />
 
           {/* History / clear */}
-          <button onClick={onHistory} disabled={!selection} title="History"
+          <button onClick={onHistory} disabled={!selection || !onHistory || historyDisabled} title="History"
                   className="rounded border p-2 hover:bg-gray-50 disabled:opacity-50">
             <History className="h-4 w-4" />
           </button>
-          <button onClick={onClear} title="Clear selection" className="rounded border p-2 hover:bg-gray-50">
+          <button onClick={onClear} disabled={!selection || !onClear} title="Clear selection" className="rounded border p-2 hover:bg-gray-50 disabled:opacity-50">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -332,7 +337,7 @@ export function OutlinePanel({
                 )}
 
                 <div className="text-xs text-gray-500">
-                  {node.status} · v{node.version} · {(node.updatedAt || "").replace("T", " ").slice(0, 16)}
+                  {node.status} · v{node.version} · {(node.updatedAt || "").replace("T", " ").slice(0, 16)}{node.attributes?.['Safety Significant'] === 'Yes' ? ' · Safety significant' : node.attributes?.['Safety Significant'] === 'Needs review' ? ' · Safety significance needs review' : ''}
                 </div>
               </div>
             </div>
@@ -373,7 +378,7 @@ export function OutlinePanel({
 export function TablePanel({ rows, numbering, moduleName, attrColumns = [],
   onEdit, onDelete, onCreate, canCreate,
   onInlineUpdate, onShowHistory,
-  onSelect, selectedId, selectedIds, disabled = false, hideRequirementTitles = false }) {
+  onSelect, selectedId, selectedIds, onClearSelection, filterScope, disabled = false, hideRequirementTitles = false }) {
 
       // ────────────── Column Model (order must match rendering) ──────────────
   const columns = React.useMemo(() => {
@@ -390,6 +395,34 @@ export function TablePanel({ rows, numbering, moduleName, attrColumns = [],
     ];
     return [...fixedBefore, ...attrs, ...fixedAfter];
   }, [attrColumns]);
+
+  const scope = filterScope || moduleName || 'default';
+  const [filterState, setFilterState] = React.useState(() => ({ scope, values: {} }));
+  const filters = React.useMemo(() => Object.fromEntries(Object.entries(filterState.scope === scope ? filterState.values : {})
+    .filter(([key, filter]) => filter && columns.some(column => column.key === key))), [filterState, scope, columns]);
+  const [filterMenu, setFilterMenu] = React.useState(null);
+  const closeFilter = React.useCallback(() => setFilterMenu(null), []);
+  const openFilter = filterMenu?.scope === scope && columns.some(column => column.key === filterMenu.column.key) ? filterMenu : null;
+  const visibleRows = React.useMemo(() => filterTableRows(rows, filters, hideRequirementTitles), [rows, filters, hideRequirementTitles]);
+  const filterOptions = React.useMemo(() => openFilter ? tableColumnOptions(rows, openFilter.column.key, hideRequirementTitles) : [], [rows, openFilter, hideRequirementTitles]);
+  const setColumnFilter = (key, filter) => {
+    const next = { ...filters };
+    if (filter) next[key] = filter; else delete next[key];
+    setFilterState({ scope, values: next });
+    const visibleIds = new Set(filterTableRows(rows, next, hideRequirementTitles).map(row => row.id));
+    if ((selectedId && !visibleIds.has(selectedId)) || [...(selectedIds || [])].some(id => !visibleIds.has(id))) onClearSelection?.();
+  };
+  // An exact search/citation navigation may select a currently hidden row.
+  // Reveal that new target without letting old filters follow another document.
+  const filterContext = React.useRef(null);
+  filterContext.current = { rows, filters, hideRequirementTitles };
+  React.useEffect(() => {
+    if (!selectedId) return;
+    const current = filterContext.current;
+    if (current.rows.some(row => row.id === selectedId) && !filterTableRows(current.rows, current.filters, current.hideRequirementTitles).some(row => row.id === selectedId)) {
+      setFilterState({ scope, values: {} }); closeFilter();
+    }
+  }, [selectedId, scope, closeFilter]);
 
   // Reasonable defaults per column
   const defaultWidthFor = React.useCallback((key) => {
@@ -521,6 +554,10 @@ export function TablePanel({ rows, numbering, moduleName, attrColumns = [],
 
     return (
       <div className="requirements-table-panel mt-4 rounded-xl border bg-white">
+        {Object.keys(filters).length > 0 && <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b px-3 py-2 text-xs">
+          <p role="status">{visibleRows.length} of {rows.length} items shown · {Object.keys(filters).length} column {Object.keys(filters).length === 1 ? 'filter' : 'filters'}</p>
+          <button type="button" className="font-medium text-indigo-700" onClick={() => setFilterState({ scope, values: {} })}>Clear filters</button>
+        </div>}
         {/* NEW: scrolling container for both axes */}
         <div className="requirements-table-scroll relative max-h-[60vh] overflow-x-auto overflow-y-auto">
           <table className="min-w-full text-sm table-fixed" style={{ width: columns.reduce((total, column) => total + (colWidths[column.key] ?? defaultWidthFor(column.key)), 0) }}>
@@ -543,7 +580,11 @@ export function TablePanel({ rows, numbering, moduleName, attrColumns = [],
                     // note the extra sticky/bg/z classes on the th itself too
                     className="relative px-3 py-2 text-left font-medium select-none sticky top-0 bg-gray-50 z-20"
                   >
-                    <span>{c.label}</span>
+                    <button type="button" aria-label={`Filter ${c.label}`} aria-haspopup="dialog" aria-expanded={openFilter?.column.key === c.key}
+                      className={`flex w-full items-start justify-between gap-2 pr-1 text-left ${filters[c.key] ? 'text-indigo-700' : ''}`}
+                      onClick={event => { const anchor = event.currentTarget; setFilterMenu(current => current?.scope === scope && current.column.key === c.key ? null : { scope, column: c, anchor }); }}>
+                      <span>{c.label}</span><span aria-hidden="true">{filters[c.key] ? '● ' : ''}▾</span>
+                    </button>
                     {/* Resize handle (unchanged) */}
                     <span
                       role="separator"
@@ -558,7 +599,7 @@ export function TablePanel({ rows, numbering, moduleName, attrColumns = [],
             </thead>
 
             <tbody>
-              {rows.map((r) => {
+              {visibleRows.map((r) => {
 const isSelected = selectedId === r.id || selectedIds?.has?.(r.id);
 const isEditing = editState.id === r.id;
 
@@ -729,11 +770,11 @@ const isEditing = editState.id === r.id;
                 );
               })}
 
-              {!rows.length && (
+              {!visibleRows.length && (
                 <tr>
                   <td colSpan={columns.length} className="px-4 py-8 text-center text-sm text-gray-500">
-                    No requirements yet.{" "}
-                    {canCreate && (
+                    {rows.length ? 'No items match the selected column filters.' : 'No requirements yet.'}{" "}
+                    {!rows.length && canCreate && (
                       <>
                         Click <span className="font-medium">New</span> or use <span className="font-medium">Import</span>.
                       </>
@@ -744,6 +785,8 @@ const isEditing = editState.id === r.id;
             </tbody>
           </table>
         </div>
+        {openFilter && <ColumnValueFilter key={`${scope}:${openFilter.column.key}`} column={openFilter.column.label} anchor={openFilter.anchor} options={filterOptions}
+          filter={filters[openFilter.column.key]} onChange={filter => setColumnFilter(openFilter.column.key, filter)} onClose={closeFilter} />}
         {editTable.open && !disabled && <QuickTableModal title="Edit Table" initial={editTable.cells} onCancel={() => setEditTable({ open: false, row: null, cells: [[]] })} onSave={cells => { onInlineUpdate?.(editTable.row, { content: { type: 'table', table: { cells } } }); setEditTable({ open: false, row: null, cells: [[]] }); }} />}
       </div>
     );
@@ -791,7 +834,17 @@ export function QuickTableModal({ title = "Insert Table", initial, onCancel, onS
     }, [rows, cols]);
 
     return (
-      <Modal title={title} onClose={onCancel}>
+      <Modal title={title} onClose={onCancel} footer={<div className="flex justify-end gap-2">
+            <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={onCancel}>
+              Cancel
+            </button>
+            <button
+              className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]"
+              onClick={() => onSave(grid)}
+            >
+              Save
+            </button>
+          </div>}>
         <div className="space-y-3">
           <div className="flex gap-3">
             <Field label="Rows">
@@ -843,17 +896,7 @@ export function QuickTableModal({ title = "Insert Table", initial, onCancel, onS
             </table>
           </div>
 
-          <div className="flex justify-end gap-2">
-            <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={onCancel}>
-              Cancel
-            </button>
-            <button
-              className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]"
-              onClick={() => onSave(grid)}
-            >
-              Save
-            </button>
-          </div>
+
         </div>
       </Modal>
     );
@@ -865,6 +908,7 @@ export function TraceabilityView({
   activeFolderId,
   folderNameById = {},
   pageSize = Infinity,
+  onSelect, selectedId, selectedIds, canSelect,
 }) {
   const [mode, setMode] = React.useState("REFINES"); // "REFINES" | "REFINED_BY"
 
@@ -1003,6 +1047,16 @@ export function TraceabilityView({
   const PathLine = ({ folder, module }) => (
     <div className="text-[11px] text-gray-500">[{folder || "—"} / {module || "—"}]</div>
   );
+  const selectionProps = id => {
+    if (!onSelect || (canSelect && !canSelect(id))) return {};
+    const selected = selectedId === id || selectedIds?.has(id);
+    return {
+      role: 'button', tabIndex: 0, 'aria-pressed': !!selected,
+      onClick: event => onSelect(id, event),
+      onKeyDown: event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(id, event); } },
+      style: { cursor: 'pointer', ...(selected ? { backgroundColor: '#eff6ff', outline: '1px solid #93c5fd' } : {}) },
+    };
+  };
 
   return (
     <div className="grid grid-cols-12 gap-4 mt-4">
@@ -1031,7 +1085,7 @@ export function TraceabilityView({
               </div>
               <ul className="p-4 space-y-2 text-xs">
                 {visible("Dangling links", dangling).map((d, i) => (
-                  <li key={`${d.from}-${d.to}-${i}`} data-artifact-object-id={d.from} className="leading-tight">
+                  <li key={`${d.from}-${d.to}-${i}`} data-artifact-object-id={d.from} className="leading-tight" {...selectionProps(d.from)}>
                     <PathLine folder={d.fromFolder} module={d.fromModule} />
                     <div className="text-[11px] text-gray-400 font-mono">{d.from}</div>
                     <div className="text-[13px] font-medium">
@@ -1060,7 +1114,7 @@ export function TraceabilityView({
                 {visible("Orphans", orphans).map((r) => {
                   const folder = folderNameById?.[r.folderId ?? r.projectId] ?? "—";
                   return (
-                    <li key={r.id} data-artifact-object-id={r.id} className="leading-tight">
+                    <li key={r.id} data-artifact-object-id={r.id} className="leading-tight" {...selectionProps(r.id)}>
                       <PathLine folder={folder} module={r.module} />
                       <div className="text-[11px] text-gray-400 font-mono">{r.id}</div>
                       <div className="truncate">
@@ -1121,7 +1175,7 @@ export function TraceabilityView({
                 {visible("Relationships", viewEdges).map((e, i) => (
                   <tr key={i} className="border-t align-top">
                     <td className="px-2 py-2">
-                      <div className="leading-tight" data-artifact-object-id={e.from}>
+                      <div className="leading-tight" data-artifact-object-id={e.from} {...selectionProps(e.from)}>
                         <PathLine folder={e.fromFolder} module={e.fromModule} />
                         <div className="text-[11px] text-gray-400 font-mono">{e.from}</div>
                         <div className="font-medium">
@@ -1131,7 +1185,7 @@ export function TraceabilityView({
                     </td>
                     <td className="px-2 py-2">{e.type}</td>
                     <td className="px-2 py-2">
-                      <div className="leading-tight" data-artifact-object-id={e.to}>
+                      <div className="leading-tight" data-artifact-object-id={e.to} {...selectionProps(e.to)}>
                         <PathLine folder={e.toFolder} module={e.toModule} />
                         <div className="text-[11px] text-gray-400 font-mono">{e.to}</div>
                         <div className="font-medium">
@@ -1152,7 +1206,29 @@ export function TraceabilityView({
 
 export function Field({label, children}){ return (<label className="block"><div className="mb-1 text-xs font-medium text-gray-700">{label}</div>{children}</label>); }
 
-export function Modal({ title, onClose, children }) {
+export function Modal({ title, onClose, children, footer }) {
+    const panelRef = React.useRef(null);
+    const previousFocus = React.useRef(document.activeElement);
+    const closeRef = React.useRef(onClose);
+    closeRef.current = onClose;
+    React.useEffect(() => {
+      const panel = panelRef.current;
+      const focusable = () => [...panel.querySelectorAll('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),a[href],[tabindex="0"]')].filter(element => !element.closest('[hidden]'));
+      if (!panel.contains(document.activeElement)) (focusable()[0] || panel).focus();
+      const keydown = event => {
+        const dialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
+        if (dialogs[dialogs.length - 1] !== panel) return;
+        if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeRef.current(); }
+        if (event.key === 'Tab') {
+          const elements = focusable(), first = elements[0] || panel, last = elements[elements.length - 1] || panel;
+          if (event.shiftKey && (document.activeElement === first || !panel.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
+          else if (!event.shiftKey && (document.activeElement === last || !panel.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
+        }
+      };
+      document.addEventListener('keydown', keydown);
+      const trigger = previousFocus.current;
+      return () => { document.removeEventListener('keydown', keydown); if (trigger?.isConnected) trigger.focus(); };
+    }, []);
     return (
       <div className="xhandle-modal-viewport fixed inset-0 z-[999]">
         <div
@@ -1161,10 +1237,12 @@ export function Modal({ title, onClose, children }) {
           aria-hidden
         />
         <div className="absolute inset-0 flex items-center justify-center p-4">
-          <div className="w-full max-w-3xl max-h-[90vh] rounded-2xl bg-white shadow-xl flex flex-col">
-            <div className="flex items-center justify-between border-b px-4 py-3">
+          <div ref={panelRef} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} className="design-dialog-panel w-full max-w-3xl rounded-2xl bg-white shadow-xl">
+            <div className="flex shrink-0 items-center justify-between border-b px-4 py-3">
               <h3 className="text-sm font-semibold">{title}</h3>
               <button
+                type="button"
+                aria-label={`Close ${title}`}
                 className="rounded px-2 py-1 text-xs text-gray-600 hover:bg-gray-100"
                 onClick={onClose}
               >
@@ -1172,7 +1250,8 @@ export function Modal({ title, onClose, children }) {
               </button>
             </div>
             {/* Scrollable content area */}
-            <div className="p-4 overflow-y-auto flex-1">{children}</div>
+            <div className="design-dialog-body p-4">{children}</div>
+            {footer && <div className="design-dialog-footer px-4 py-3">{footer}</div>}
           </div>
         </div>
       </div>

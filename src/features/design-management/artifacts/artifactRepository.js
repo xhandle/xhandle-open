@@ -1,8 +1,10 @@
 import { putArtifactJob, deleteArtifactJob } from './artifactJobSummary';
 import { assignHazardTrackingRecordNumbers } from './consolidateHazardRows';
 import { assertConsolidatedHazardInputs } from './hazardTrackingSources';
+import { assertRequirementInputs } from './requirementDerivationSources';
 import { compactSafetyRequirementMetadata } from './safetyRequirements';
 import { organizeAtomicSafetyRequirements } from './atomicSafetyRequirements';
+import { usesAtomicRequirements } from './requirementArtifactTypes';
 import { libraryParents, libraryDescendants, folderProject } from '../../requirements/components/designLibraryHierarchy';
 import { artifactDocumentSize, DOCUMENT_CONTENT_LIMIT, DOCUMENT_EVIDENCE_LIMIT, sizeDescription } from './artifactSize';
 import { artifactOperation } from './artifactOperation';
@@ -127,12 +129,14 @@ export async function loadArtifact(id, onProgress) {
 }
 export async function createArtifact(config) {
   const t = validateConfig(config);
+  if (t.deterministic) throw new Error('Create traceability matrices from the project artifacts.');
   const sources = await artifactOperation('Capturing artifact sources', () => captureLiveSources(config));
   const id = newId();
   const meta = { id, projectId: config.projectId, workspaceType: config.workspaceType, folderId: config.folderId, title: config.title, templateId: t.id, templateVersion: t.version, config, revision: 0, sourceHash: sources.hash, freshness: 'current', updatedAt: new Date().toISOString() };
   await artifactOperation('Saving the artifact draft', () => writeArtifactStorage(['metadata', 'jobs', 'revisions'], async tx => {
     assertOwner(config);
     await assertConsolidatedHazardInputs(tx, config, sources);
+    await assertRequirementInputs(tx, config, sources);
     await tx.objectStore('metadata').add(meta);
     await putArtifactJob(tx, makeArtifactJob(meta, sources), true);
   }));
@@ -149,6 +153,7 @@ export async function startProposal(id, expectedRevision) {
     const current = await requireArtifactMeta(tx, id);
     if (current.revision !== expectedRevision) throw new Error('The artifact changed. Reload before generating an update.');
     await assertConsolidatedHazardInputs(tx, current.config, sources);
+    await assertRequirementInputs(tx, current.config, sources);
     const job = makeArtifactJob(current, sources);
     await putArtifactJob(tx, job);
     return job;
@@ -191,12 +196,13 @@ export function validateArtifactObjects(meta, objects) {
     for (const id of path) checked.add(id);
   }
 }
-export async function publishArtifactRevision(tx, meta, objects, sourceHash, sources, reason, previousObjects = []) {
+export async function publishArtifactRevision(tx, meta, objects, sourceHash, sources, reason, previousObjects = [], collaboratorEdit = null) {
   if (meta.templateId === 'hazard-tracking-list') objects = assignHazardTrackingRecordNumbers(objects, previousObjects);
   if (meta.templateId === 'safety-requirements') objects = organizeAtomicSafetyRequirements(compactSafetyRequirementMetadata(objects, sources));
+  else if (usesAtomicRequirements(meta.templateId)) objects = organizeAtomicSafetyRequirements(objects);
   validateArtifactObjects(meta, objects);
   const number = meta.revision + 1;
-  const revision = { id: `${meta.id}:${number}`, artifactId: meta.id, projectId: meta.projectId, workspaceType: meta.workspaceType, number, objects, sourceHash, sources, reason, createdAt: new Date().toISOString() };
+  const revision = { id: `${meta.id}:${number}`, artifactId: meta.id, projectId: meta.projectId, workspaceType: meta.workspaceType, number, objects, sourceHash, sources, reason, createdAt: new Date().toISOString(), ...(collaboratorEdit ? { collaboratorEdit } : {}) };
   const next = { ...meta, revision: number, sourceHash, baseSourceHash: sources.baseHash || sourceHash, manualReviewRequired: objects.filter(o => o.manual && o.evidenceHash && o.evidenceHash !== sourceHash).length, updatedAt: revision.createdAt };
   await tx.objectStore('revisions').add(revision);
   await tx.objectStore('metadata').put(next);
@@ -213,6 +219,7 @@ export async function acceptProposal(id, expectedRevision, token) {
     if (meta.revision !== expectedRevision || job.baseRevision !== meta.revision) throw new Error('The document changed since generation began. Regenerate the proposal; manual edits will be preserved.');
     const sources = checkedCapturedSources(meta.config, live);
     await assertConsolidatedHazardInputs(tx, meta.config, sources);
+    await assertRequirementInputs(tx, meta.config, sources);
     if (sources.hash !== job.sources.hash) throw new Error('Sources changed since generation. Regenerate the proposal before accepting.');
     const current = meta.revision ? await tx.objectStore('revisions').get(`${id}:${meta.revision}`) : null;
     const sections = getTemplate(meta.templateId).sections;
@@ -223,16 +230,21 @@ export async function acceptProposal(id, expectedRevision, token) {
     return revision;
   });
 }
-export async function saveObjects(id, expectedRevision, objects) {
-  return writeArtifactStorage(['metadata', 'revisions'], async tx => {
+export async function saveObjects(id, expectedRevision, objects, { collaboratorEdit = null } = {}) {
+  return writeArtifactStorage(['metadata', 'revisions', ...(collaboratorEdit ? ['jobs'] : [])], async tx => {
     const meta = await requireArtifactMeta(tx, id);
     if (!meta.revision || meta.revision !== expectedRevision) throw new Error('The document changed in another window. Reload before saving.');
+    if (collaboratorEdit) {
+      const job = await tx.objectStore('jobs').get(id);
+      const program = meta.programId ? await tx.objectStore('metadata').get(meta.programId) : null;
+      if (job?.state === 'generating' || program?.state === 'generating') throw new Error('Pause generation before applying Collaborator changes.');
+    }
     const previous = await tx.objectStore('revisions').get(`${id}:${meta.revision}`);
-    return publishArtifactRevision(tx, meta, objects, previous.sourceHash, previous.sources, 'Manual edit', previous.objects);
+    return publishArtifactRevision(tx, meta, objects, previous.sourceHash, previous.sources, collaboratorEdit ? 'Collaborator edit' : 'Manual edit', previous.objects, collaboratorEdit);
   });
 }
 // Edit saved proposal content without accepting it or racing a generation checkpoint.
-export async function saveDraftObjects(id, expectedJob, objects) {
+export async function saveDraftObjects(id, expectedJob, objects, { collaboratorEdit = null } = {}) {
   return writeArtifactStorage(['metadata', 'jobs'], async tx => {
     const meta = await requireArtifactMeta(tx, id);
     const job = await tx.objectStore('jobs').get(id);
@@ -241,6 +253,7 @@ export async function saveDraftObjects(id, expectedJob, objects) {
     if (job.state === 'generating' || program?.state === 'generating') throw new Error('Pause generation before editing saved objects.');
     if (meta.templateId === 'hazard-tracking-list') objects = assignHazardTrackingRecordNumbers(objects, Object.values(job.sections).flat());
     if (meta.templateId === 'safety-requirements') objects = organizeAtomicSafetyRequirements(compactSafetyRequirementMetadata(objects, job.sources));
+    else if (usesAtomicRequirements(meta.templateId)) objects = organizeAtomicSafetyRequirements(objects);
     validateArtifactObjects(meta, objects);
     const sections = Object.fromEntries(Object.keys(job.sections).map(key => [key, []]));
     for (const object of objects) {
@@ -248,7 +261,7 @@ export async function saveDraftObjects(id, expectedJob, objects) {
       if (!bucket) throw new Error('This section has not been generated yet.');
       bucket.push(object);
     }
-    await putArtifactJob(tx, { ...job, sections, version: job.version + 1, updatedAt: new Date().toISOString() });
+    await putArtifactJob(tx, { ...job, sections, version: job.version + 1, collaboratorEdit, updatedAt: new Date().toISOString() });
     if (program) await tx.objectStore('metadata').put({ ...program, version: program.version + 1, updatedAt: new Date().toISOString() });
   });
 }
@@ -287,9 +300,11 @@ export async function deleteArtifact(id) {
       // Cancel the old project run atomically so late responses cannot resurrect
       // the member or publish a proposal for the previous document set. Retain
       // other documents and their historical evidence, including citations to it.
-      await store.put({ ...program, members, version: program.version + 1, runToken: null,
-        state: program.state === 'accepted' ? 'accepted' : members.length ? 'paused' : 'draft',
-        error: changedInputs && program.state !== 'accepted' ? 'An input artifact was deleted. Saved drafts are retained. Generate a fresh update to refresh document dependencies.' : null,
+      const computedMatrix = meta.templateId === 'traceability-matrix' && !changedInputs;
+      await store.put({ ...program, members, version: program.version + 1,
+        ...(computedMatrix ? {} : { runToken: null,
+          state: program.state === 'accepted' ? 'accepted' : members.length ? 'paused' : 'draft',
+          error: changedInputs && program.state !== 'accepted' ? 'An input artifact was deleted. Saved drafts are retained. Generate a fresh update to refresh document dependencies.' : null }),
         updatedAt: new Date().toISOString() });
     }
     // Retain a tombstone: in-flight generation cannot resurrect a deleted module.
@@ -312,6 +327,10 @@ export async function moveArtifactInLibrary(id, folderId) {
     if (!meta || meta.deleted) throw new Error('This library item no longer exists.');
     const projects = (await store.getAll()).filter(record => !record.deleted && record.recordType === 'systems-engineering-project');
     const owner = folderProject(folderId, folders, projects);
+    if (meta.templateId === 'traceability-matrix' && meta.programId) {
+      const program = projects.find(project => project.id === meta.programId);
+      if (!program || (folderId !== program.folderId && owner !== program.id)) throw new Error('Traceability matrices must remain in their containing project artifacts.');
+    }
     if (meta.recordType === 'systems-engineering-project') {
       if (owner || libraryDescendants(libraryParents(folders, projects), `project:${id}`).has(`folder:${folderId}`)) throw new Error('A project cannot be moved inside another project or its own folders.');
     } else if (owner && meta.programId !== owner) throw new Error('Add this artifact to the destination project before moving it into its folders.');

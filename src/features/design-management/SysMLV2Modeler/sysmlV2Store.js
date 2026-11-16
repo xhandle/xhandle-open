@@ -94,8 +94,8 @@ export function loadSysMLV2Model(modelId = null, projectId = currentProjectId())
   return model ? withQualifiedNames(model) : null;
 }
 
-export function saveSysMLV2Model(model) {
-  const projectId = model.projectId || currentProjectId();
+export function saveSysMLV2Model(model, { preserveProject = false } = {}) {
+  const projectId = preserveProject ? model.projectId : model.projectId || currentProjectId();
   const nextModel = withQualifiedNames({ ...model, projectId, updatedAt: nowISO() });
   const models = readModels();
   const exists = models.some((entry) => entry.id === nextModel.id);

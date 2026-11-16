@@ -6,6 +6,7 @@ import HazardTrackingTable from './HazardTrackingTable';
 import DesignEditorMenu from '../../requirements/components/DesignEditorMenu';
 import { OutlinePanel, RowActionsBar, TablePanel, TraceabilityView, computeNumbering } from '../../requirements/components/RequirementsViews';
 import { artifactRequirementRows } from './artifactRequirementsAdapter';
+import { useDesignSurface } from '../collaborator/useDesignCollaborator';
 
 const EMPTY_PROJECTION = { rows: [], allRequirements: [], folderNameById: {} };
 
@@ -20,8 +21,8 @@ export default function ArtifactRequirementsViews({ meta, revision, objects, edi
   const objectIndex = useMemo(() => new Map([...objects, ...editableDescriptions].map(object => [object.id, object])), [objects, editableDescriptions]);
   const targetObject = event => {
     if (view === 'diagram' || event.target.closest('input,textarea,select,button,a,summary,.artifact-citations')) return null;
-    const element = event.target.closest('[data-artifact-object-id]');
-    const object = element && objectIndex.get(element.dataset.artifactObjectId);
+    const element = event.target.closest('[data-artifact-object-id],[data-design-object-id]');
+    const object = element && objectIndex.get(element.dataset.artifactObjectId || element.dataset.designObjectId);
     return object && { object, element, field: event.target.closest('[data-object-field]')?.dataset.objectField };
   };
   const contextMenu = event => {
@@ -42,6 +43,12 @@ export default function ArtifactRequirementsViews({ meta, revision, objects, edi
   };
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [selectedId, setSelectedId] = useState(focusObjectId || null);
+  const [collaboratorCell, setCollaboratorCell] = useState(null);
+  const collaboratorState = useMemo(() => ({ target: { kind: 'artifact', id: meta.id, draft: !!draft }, title: meta.title, view,
+    selectedIds: (selectedIds.size ? [...selectedIds] : selectedId ? [selectedId] : []).filter(id => objectIndex.has(id)),
+    cell: collaboratorCell && objectIndex.has(collaboratorCell.objectId) ? collaboratorCell : null }), [meta.id, meta.title, draft, view, selectedIds, selectedId, collaboratorCell, objectIndex]);
+  useDesignSurface(collaboratorState, () => { setSelectedId(null); setSelectedIds(new Set()); setCollaboratorCell(null); });
+  useEffect(() => { setCollaboratorCell(null); }, [view, meta.id, draft]);
   useEffect(() => { if (focusObjectId) { setSelectedId(focusObjectId); setSelectedIds(new Set([focusObjectId])); } }, [focusObjectId]);
   // Yield before preparing a new view so the loading mark can paint and animate.
   const input = useMemo(() => ({ meta, revision, objects, manifest, project, draft, view }), [meta, revision, objects, manifest, project, draft, view]);
@@ -75,13 +82,14 @@ export default function ArtifactRequirementsViews({ meta, revision, objects, edi
   }, [focusObjectId, preparing, tableOnly, view]);
   const projection = preparing ? EMPTY_PROJECTION : prepared.projection;
   const { rows, allRequirements, folderNameById } = projection;
+  const rowIds = useMemo(() => new Set(rows.map(row => row.id)), [rows]);
   const numbering = useMemo(() => tableOnly ? {} : computeNumbering(rows), [rows, tableOnly]);
   const selected = rows.find(r => r.id === selectedId);
   const columns = tableOnly ? [] : [...new Set(rows.flatMap(r => Object.keys(r.attributes)))];
   const select = (id, event) => { setSelectedId(id); setSelectedIds(previous => { if (!event?.shiftKey && !event?.metaKey && !event?.ctrlKey) return new Set([id]); const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; }); };
   const edit = row => !disabled && onEdit(objects.find(o => o.id === row.id));
   const update = (row, patch) => !disabled && onUpdate(row.id, patch);
-  const command = name => !disabled && onCommand(name, selectedId, selectedIds);
+  const command = name => !selectedDisabled && !unavailable[name] && onCommand(name, selectedId, selectedIds);
   const selectedDisabled = disabled || !selected || preparing;
   const siblings = rows.filter(row => (row.parentId || null) === (selected?.parentId || null));
   const siblingIndex = siblings.findIndex(row => row.id === selectedId);
@@ -102,18 +110,25 @@ export default function ArtifactRequirementsViews({ meta, revision, objects, edi
   ];
   return <div className="requirements-native-views text-gray-900">
     {!tableOnly && <div className="design-view-tools">{['outline', 'table'].includes(view) && <DesignEditorMenu menus={editorMenus} />}
-    <RowActionsBar disabled={disabled || !selected} selection={selected} numbering={numbering} onClear={() => { setSelectedId(null); setSelectedIds(new Set()); }} onNewChild={() => command('new')} onEdit={() => selected && edit(selected)} onDelete={() => command('delete')} onMoveUp={() => command('up')} onMoveDown={() => command('down')} onPromote={() => command('promote')} onDemote={() => command('demote')} onHistory={() => onHistory(selectedId)} onSetContent={content => selected && update(selected, { content })} viewMode={view} setViewMode={setView} documentView diagramView={meta.templateId === 'architecture'} />
+    <RowActionsBar disabled={selectedDisabled} unavailable={unavailable} historyDisabled={preparing} selection={selected} numbering={numbering} onClear={() => { setSelectedId(null); setSelectedIds(new Set()); }} onNewChild={() => command('new')} onEdit={() => selected && edit(selected)} onDelete={() => command('delete')} onMoveUp={() => command('up')} onMoveDown={() => command('down')} onPromote={() => command('promote')} onDemote={() => command('demote')} onHistory={onHistory ? () => onHistory(selectedId) : undefined} onSetContent={content => selected && update(selected, { content })} viewMode={view} setViewMode={setView} documentView diagramView={meta.templateId === 'architecture'} />
     </div>}
-    <div ref={contentRef} onDoubleClickCapture={doubleClick} onContextMenu={contextMenu} onKeyDown={event => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) contextMenu(event); }} className="design-view-scroll" data-view={view.toLowerCase()} data-architecture={meta.templateId === 'architecture' && view === 'diagram' ? 'true' : undefined} role="region" aria-label="Artifact content" tabIndex={0}>
+    <div ref={contentRef} onClickCapture={event => {
+      const target = targetObject(event);
+      if (!target) return;
+      const cell = event.target.closest('td');
+      setCollaboratorCell(cell ? { objectId: target.object.id, columnIndex: cell.cellIndex, field: target.field || null,
+        ...(cell.closest('table')?.closest('[data-artifact-object-id]') ? { tableRow: cell.parentElement.rowIndex, tableColumn: cell.cellIndex } : {}) } : null);
+      if (view === 'document') { setSelectedId(target.object.id); setSelectedIds(new Set([target.object.id])); }
+    }} onDoubleClickCapture={doubleClick} onContextMenu={contextMenu} onKeyDown={event => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) contextMenu(event); }} className="design-view-scroll" data-view={view.toLowerCase()} data-architecture={meta.templateId === 'architecture' && view === 'diagram' ? 'true' : undefined} role="region" aria-label="Artifact content" tabIndex={0}>
     {preparationError ? <div role="alert">{preparationError}<button onClick={() => setAttempt(value => value + 1)}>Retry loading view</button></div> : view === 'TRACE' && projectError ? <div role="alert">{projectError}<button onClick={onRetryProject}>Retry loading traceability</button></div> : view === 'TRACE' && projectLoading ? <TablePreparationProgress {...projectProgress} /> : preparing ? <TablePreparationProgress label={`Preparing ${view === 'TRACE' ? 'traceability' : view} view`} progress={preparationProgress?.input === input ? preparationProgress.progress : 0} /> : <>
     {view === 'outline' && <OutlinePanel moduleName={meta.title} rows={rows} numbering={numbering} disabled={disabled} selectedId={selectedId} selectedIds={selectedIds} onSelect={select} onEdit={edit} onInlineUpdate={update} />}
-    {view === 'table' && (meta.templateId === 'hazard-tracking-list' ? <HazardTrackingTable artifactId={meta.id} rows={rows} selectedId={selectedId} selectedIds={selectedIds} onSelect={select} onEdit={(row, field) => !disabled && onEdit(objectIndex.get(row.id), field)} disabled={disabled} /> : <TablePanel hideRequirementTitles moduleName={meta.title} rows={rows} numbering={numbering} attrColumns={columns} disabled={disabled} canCreate={!disabled} selectedId={selectedId} selectedIds={selectedIds} onSelect={select} onEdit={edit} onInlineUpdate={update} />)}
-    {view === 'TRACE' && <><ArchitectureTrace objects={objects} manifest={manifest} /><TraceabilityView allRequirements={allRequirements} selectedModule={meta.title} activeFolderId={meta.folderId} folderNameById={folderNameById} pageSize={100} /></>}
+    {view === 'table' && (meta.templateId === 'hazard-tracking-list' ? <HazardTrackingTable artifactId={meta.id} rows={rows} selectedId={selectedId} selectedIds={selectedIds} onSelect={select} onEdit={(row, field) => !disabled && onEdit(objectIndex.get(row.id), field)} disabled={disabled} /> : <TablePanel hideRequirementTitles moduleName={meta.title} filterScope={`${meta.id}:${draft ? 'draft' : 'revision'}`} rows={rows} numbering={numbering} attrColumns={columns} disabled={disabled} canCreate={!disabled} selectedId={selectedId} selectedIds={selectedIds} onSelect={select} onClearSelection={() => { setSelectedId(null); setSelectedIds(new Set()); setCollaboratorCell(null); }} onEdit={edit} onInlineUpdate={update} />)}
+    {view === 'TRACE' && <><ArchitectureTrace objects={objects} manifest={manifest} /><TraceabilityView allRequirements={allRequirements} selectedModule={meta.title} activeFolderId={meta.folderId} folderNameById={folderNameById} pageSize={100} onSelect={select} selectedId={selectedId} selectedIds={selectedIds} canSelect={id => rowIds.has(id)} /></>}
     {view === 'document' && document}
     {view === 'diagram' && diagram}
     </>}
     </div>
-    {menu && <ArtifactObjectMenu tableOnly={tableOnly} onDelete={objectId => !disabled && onCommand('delete', objectId, new Set([objectId]))} target={menu} disabled={disabled} onClose={closeMenu} onEdit={onEdit} onHistory={revision && !draft ? onHistory : null} onView={(nextView, objectId) => {
+    {menu && <ArtifactObjectMenu tableOnly={tableOnly} onDelete={objectId => !disabled && onCommand('delete', objectId, new Set([objectId]))} target={menu} disabled={disabled} onClose={closeMenu} onEdit={onEdit} onHistory={onHistory} onView={(nextView, objectId) => {
       setSelectedId(objectId); setSelectedIds(new Set([objectId])); setView(nextView);
       requestAnimationFrame(() => {
         const element = [...(contentRef.current?.querySelectorAll('[data-artifact-object-id]') || [])].find(node => node.dataset.artifactObjectId === objectId);

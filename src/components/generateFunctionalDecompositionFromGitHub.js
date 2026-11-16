@@ -1,4 +1,6 @@
 import { beginArchitectureStorageWork } from '../features/code-architecture-assurance/codeArchitectureStorage';
+import { useCurrentViewSource } from '../features/collaborator-performance/useCurrentViewSource';
+import { currentArchitectureSample } from '../features/collaborator-performance/currentViewEvidence';
 import { extractCppSourceFunctions } from "../features/code-architecture-context/cppSourceFunctions";
 import { FUNCTIONAL_RETRY_STATUSES, backendConnectionError, functionalHttpError, withFunctionalConnectivityRecovery, probeFunctionalConnectivity } from "../features/code-architecture-context/functionalTransportRecovery";
 import { mapAnalysisWork, serialAnalysisWriter, createAnalysisPacer } from '../features/code-architecture-context/functionalWorkScheduler';
@@ -4127,6 +4129,10 @@ React.useEffect(() => {
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }, [repoName, tableFilterState.filteredRows, tableColumns]);
+  useCurrentViewSource('code-architecture', () => ({ section: 'code-architecture', projectId, tab: 'architecture',
+    content: view === 'report' ? null : { view, repoName, ...currentArchitectureSample(view === 'table'
+      ? tableFilterState.filteredRows.slice(0, 32).map(({ row }) => row) : diagramRows,
+      view === 'table' ? tableFilterState.filteredRows.length : diagramRows.length) } }));
   React.useEffect(() => {
     if (architectureAbstraction === "functional") return;
     onExportTableChange?.(rowsWithTraceIds.length ? exportRowsToCsv : null);

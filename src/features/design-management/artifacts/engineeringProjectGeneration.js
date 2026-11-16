@@ -1,3 +1,4 @@
+import { generationMembers } from './engineeringProjectModel';
 import { createGenerationBudget } from './generationBudget';
 import { getTemplate } from './artifactModel';
 import { generateArtifact } from './artifactGeneration';
@@ -14,17 +15,19 @@ async function generateEngineeringProjectWork(id, { reset = false, signal, reque
   const { program: before, records } = await loadEngineeringProject(id);
   const program = await beginEngineeringGeneration(id, before.version, reset);
   const generated = new Map();
-  const counts = new Map(records.map(record => [record.meta.id, reset ? 0 : Object.keys(record.job?.sections || {}).length]));
-  const ready = new Set(reset ? [] : records.filter(record => record.job?.state === 'ready').map(record => record.meta.id));
-  const totalSections = program.members.reduce((sum, member) => sum + getTemplate(member.config.templateId).sections.length, 0);
+  const documents = records.filter(record => record.meta.templateId !== 'traceability-matrix');
+  const members = generationMembers(program);
+  const counts = new Map(documents.map(record => [record.meta.id, reset ? 0 : Object.keys(record.job?.sections || {}).length]));
+  const ready = new Set(reset ? [] : documents.filter(record => record.job?.state === 'ready').map(record => record.meta.id));
+  const totalSections = members.reduce((sum, member) => sum + getTemplate(member.config.templateId).sections.length, 0);
   const report = (message, details = {}) => onProgress(message, { projectTitle: program.title,
-    completedDocuments: ready.size, totalDocuments: program.members.length,
+    completedDocuments: ready.size, totalDocuments: members.length,
     completedSections: [...counts.values()].reduce((sum, value) => sum + value, 0), totalSections, ...details });
   report('Preparing the project document set…', { stage: 'preparing' });
   try {
-    for (const member of program.members) {
+    for (const member of members) {
       if (signal?.aborted) throw new DOMException('Project generation paused.', 'AbortError');
-      const document = { artifactId: member.id, documentTitle: member.config.title, documentIndex: program.members.indexOf(member) + 1, sectionTitle: null, partTitle: null, retryReason: null, savedParts: 0 };
+      const document = { artifactId: member.id, documentTitle: member.config.title, documentIndex: members.indexOf(member) + 1, sectionTitle: null, partTitle: null, retryReason: null, savedParts: 0 };
       report(`Preparing ${member.config.title}…`, { ...document, stage: 'preparing' });
       const upstream = member.dependsOn.map(id => generated.get(id));
       const job = await prepareEngineeringDocument(program, member.id, upstream);
