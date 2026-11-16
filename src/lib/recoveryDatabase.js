@@ -46,4 +46,3 @@ export async function recoveryRecord(key, value, remove = false) {
     } finally { clearTimeout(timer); }
   } finally { db.close?.(); }
 }
-

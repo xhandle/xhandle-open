@@ -63,4 +63,3 @@ The reusable live runner is `scripts/diagnostics/verify-design-traceability.cjs`
 - Canonical link edits use the new profile-aware matrix service. Existing native module/SysML editors continue to own their source data; imported violations are findings, not automatically deleted or reinterpreted links.
 - The Collaborator can inspect saved matrices, but it cannot directly edit computed coverage rows or automatically confirm engineering relationships. Relationship proposals require explicit review through the matrix editor.
 - The matrix is a post-source assessment artifact and is excluded from AI document-generation batches. A project shortcut creates the independently versioned assessment with inherited settings.
-

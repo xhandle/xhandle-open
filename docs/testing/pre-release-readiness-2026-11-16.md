@@ -42,6 +42,10 @@ All eight 672-row recovery cases pass: mixed output-limit, malformed-result, mis
 
 Memory figures are sampled renderer JS heap measurements, not total application memory or evidence of unlimited supported size. Large Code persistence remains slow while the GUI services input. These runs verify the reproduced workload on this Mac; Windows/Linux execution and signed installers remain separate checks.
 
+## Commit preparation
+
+The staged check also covered newly added files and found trailing whitespace in three files that an unstaged tracked-file diff did not cover. The cleanup changes no application behavior (the diff ignoring whitespace and blank lines is empty). The post-cleanup runtime fingerprint is `cc4222046cfb4d18dabdc5fda93da4dcd02d383e8d6b53099cfd696cdac44afe` (1,201 files); functional test evidence above remains tied to its recorded pre-cleanup fingerprint.
+
 ## Publication sequence
 
 1. Review, commit and push the tested shared changes. Update the private desktop repository to that committed upstream pin; include its two pending backend-staging changes and increment package and lockfile versions together.
