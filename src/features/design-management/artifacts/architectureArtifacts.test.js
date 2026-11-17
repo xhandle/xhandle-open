@@ -39,6 +39,37 @@ beforeEach(() => {
 afterEach(() => jest.restoreAllMocks());
 const response = ({ sources }) => ({ objects: [{ key: 'braking', title: 'Braking command', text: 'The system shall issue the stop command.', kind: 'requirement', sourceIds: [sources.entries.find(source => source.sourceType === 'architecture-element' && source.elementType === 'edge').id] }] });
 
+test('the five-document project finishes after fifteen minutes and maintains accurate source freshness', async () => {
+  const id = await createEngineeringProject({ name: 'Vehicle engineering', system: 'Vehicle', folderId: 'f', owners: [owner], sources: [], architectureSources: [selected], artifacts: [
+    { templateId: 'architecture', architectureKind: 'functional' }, { templateId: 'conops' },
+    { templateId: 'system-spec' }, { templateId: 'software-spec' }, { templateId: 'hardware-spec' },
+  ] });
+  let now = Date.now(); jest.spyOn(Date, 'now').mockImplementation(() => now);
+  const request = jest.fn(async args => {
+    now += 90000;
+    const source = args.sources.entries.find(source => source.sourceType === 'artifact-object' && source.kind === 'requirement')
+      || args.sources.entries.find(source => source.sourceType === 'architecture-element' && source.elementType === 'edge');
+    return { objects: [{ key: 'braking', title: 'Braking command', text: 'The system shall issue the stop command.', kind: 'requirement', sourceIds: [source.id] }] };
+  });
+  await generateEngineeringProject(id, { request });
+  let data = await loadEngineeringProject(id);
+  expect(data.program.state).toBe('ready');
+  expect(request).toHaveBeenCalledTimes(24);
+  expect(data.records.map(record => [record.meta.templateId, record.job.state])).toEqual([
+    ['architecture', 'ready'], ['conops', 'ready'], ['system-spec', 'ready'], ['software-spec', 'ready'], ['hardware-spec', 'ready'],
+  ]);
+  await refreshArtifactSources();
+  expect((await listArtifacts()).every(meta => meta.freshness === 'current')).toBe(true);
+  await acceptEngineeringProject(id, data.program.version, data.program.runToken);
+  await refreshArtifactSources(); data = await loadEngineeringProject(id);
+  expect(data.records.every(record => record.meta.freshness === 'current')).toBe(true);
+  const saved = data.records.map(record => record.revision);
+  saveRows(rows.map((row, index) => index ? row : { ...row, controlDetails: 'Updated braking interface' }));
+  await refreshArtifactSources(); data = await loadEngineeringProject(id);
+  expect(data.records.some(record => record.meta.freshness === 'stale')).toBe(true);
+  expect(data.records.map(record => record.revision)).toEqual(saved);
+});
+
 test('artifact arrangements persist independently of evidence and are removed with their artifact', async () => {
   const id = await createArtifact(config), otherId = await createArtifact(config);
   const before = await loadArtifact(id);

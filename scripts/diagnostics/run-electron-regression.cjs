@@ -5,7 +5,7 @@ const { files, fingerprint, cleanEnvironment, command, resultFromOutput, markdow
 const root = path.resolve(__dirname, '../..');
 const value = name => { const index = process.argv.indexOf(name); return index < 0 ? undefined : process.argv[index + 1]; };
 if (process.argv.includes('--help')) {
-  console.log('Usage: node scripts/diagnostics/run-electron-regression.cjs --desktop ../xhandle-desktop --playwright /path/to/playwright-core [--out /tmp/fresh-directory] [--only frontend,capacity,backend,native-node,native-python,build,fixtures,shell,workspace,hara,hazard-profile,platform-profile,design,derivation,safety-inheritance,collaborator,worker]');
+  console.log('Usage: node scripts/diagnostics/run-electron-regression.cjs --desktop ../xhandle-desktop --playwright /path/to/playwright-core [--out /tmp/fresh-directory] [--only frontend,capacity,backend,native-node,native-python,build,fixtures,shell,workspace,hara,hazard-profile,platform-profile,design,artifact-generation,derivation,safety-inheritance,collaborator,worker]');
   process.exit(0);
 }
 if (+process.versions.node.split('.')[0] < 22) throw Error('Run this harness with Node 22 or newer.');
@@ -13,7 +13,7 @@ const desktop = fs.realpathSync(value('--desktop') || path.join(root, '../xhandl
 const output = value('--out') ? path.resolve(value('--out')) : fs.mkdtempSync(path.join(os.tmpdir(), 'xhandle-electron-regression-'));
 if (value('--out')) { if (fs.existsSync(output)) throw Error('Choose a fresh --out directory; existing results are never overwritten.'); fs.mkdirSync(output, { recursive: true }); }
 const selected = value('--only')?.split(',');
-const known = ['frontend','capacity','backend','native-node','native-python','build','fixtures','shell','workspace','hara','hazard-profile','platform-profile','design','derivation','safety-inheritance','collaborator','worker'];
+const known = ['frontend','capacity','backend','native-node','native-python','build','fixtures','shell','workspace','hara','hazard-profile','platform-profile','design','artifact-generation','derivation','safety-inheritance','collaborator','worker'];
 if (selected?.some(name => !known.includes(name))) throw Error('Unknown suite in --only. Use --help for suite names.');
 const playwright = value('--playwright') || process.env.XHANDLE_PLAYWRIGHT_MODULE || require.resolve('playwright-core');
 const electron = value('--electron') || require(path.join(desktop, 'node_modules/electron'));
@@ -117,6 +117,11 @@ async function live(item, name, extra = []) {
   await suite('hazard-profile','Enabled and disabled organization profiles in both hazard areas',async item=>live(item,'verify-hazard-organization-profile.cjs'));
   await suite('platform-profile','Platform-wide organization context, opt-outs and request preparation performance',async item=>live(item,'verify-platform-organization-profile.cjs'));
   await suite('design','Design library, artifacts, traceability matrix and diagrams',async item=>live(item,'verify-design-derivation-matrix.cjs'));
+  await suite('artifact-generation','Artifact evidence recovery, long project completion and accepted persistence',async item=>{
+    const result=await execute(item,node,[diagnostic('verify-artifact-evidence-kinds.cjs'),'--electron',electron,'--build',path.join(stage,'stage/renderer')],{timeoutMs:180000});
+    item.evidence=resultFromOutput(result.tail);
+    if(!item.evidence)throw Error('Artifact generation diagnostic did not produce successful assertions.');
+  });
   await suite('derivation','Projects/code/mixed derivation without hazard analysis',async item=>live(item,'verify-design-derivation-matrix.cjs',['--requirement-direction-only']));
   await suite('safety-inheritance','Saved hazard obligations and downstream safety significance',async item=>live(item,'verify-design-derivation-matrix.cjs',['--requirement-direction-only','--safety-inheritance']));
   await suite('collaborator','Current-view context across every populated work area',async item=>live(item,'verify-collaborator-current-view.cjs',['--fixtures',path.join(output,'fixtures')]));

@@ -96,6 +96,50 @@ test('a request budget checkpoints evidence review and resume skips completed gr
   expect((await loadArtifact(id)).job.evidenceBrief.rounds[0].completed[0]).toEqual(saved);
 });
 
+test('system specification resumes a fourth-review kind failure with exact saved work and corrected provider kinds', async () => {
+  localStorage.setItem('xhandle:requirements', JSON.stringify(Array.from({ length: 30 }, (_, i) => ({ ...rows[0], id: `need${i}`, attributes: { Description: 'Evidence '.repeat(1200) } }))));
+  const id = await createArtifact({ ...config, templateId: 'system-spec' });
+  const initial = (await loadArtifact(id)).job;
+  expect(briefGroups(initial.sources).length).toBe(4);
+  const fetchBefore = global.fetch;
+  let failFourthReview = true;
+  global.fetch = jest.fn(async (_url, options) => {
+    const body = JSON.parse(options.body), prompt = JSON.parse(body.messages[1].content);
+    expect(body.messages[0].content).toContain('"kind":"narrative"');
+    expect(body.messages[0].content).toContain('Fact and constraint are descriptions of content, not kind values');
+    const review = prompt.task === 'evidence-review';
+    if (review) expect(prompt.synthesisGuidance).toContain('Label source-backed facts as kind narrative');
+    const objects = [{ key: 'recorded-motion', kind: review ? ' Fact ' : 'narrative', title: 'Recorded motion', text: 'An operator requests vehicle motion.', sourceIds: prompt.sources.map(source => source.id) }];
+    if (review) objects.push({ key: 'recorded-constraint', kind: 'CONSTRAINT', title: 'Corrupted audio', text: 'The microphone controller shall reject corrupted audio frames.', sourceIds: prompt.sources.map(source => source.id) });
+    if (failFourthReview && prompt.section.id === 'review-0-3') objects[0].kind = 'safety-goal';
+    return { ok: true, text: async () => JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ objects }) } }] }) };
+  });
+  try {
+    await expect(generateArtifact(id)).rejects.toMatchObject({ code: 'INVALID_SECTION_RESPONSE', responseIssue: 'kind' });
+    const paused = (await loadArtifact(id)).job;
+    expect(paused.state).toBe('paused');
+    expect(Object.keys(paused.evidenceBrief.rounds[0].completed)).toEqual(['0', '1', '2']);
+    expect(paused.evidenceBrief.rounds[0].completed[0].map(object => object.kind)).toEqual(['narrative', 'requirement']);
+    const correction = JSON.parse(fetch.mock.calls[4][1].body).messages[1].content;
+    expect(JSON.parse(correction).formatCorrection).toContain('objects[0].kind was "safety-goal"');
+    expect(paused.sources).toEqual(initial.sources);
+    failFourthReview = false; fetch.mockClear();
+    await generateArtifact(id);
+    const { job } = await loadArtifact(id);
+    expect(job.state).toBe('ready');
+    expect(job.token).toBe(initial.token);
+    expect(job.sources).toEqual(initial.sources);
+    expect(Object.keys(job.sections)).toHaveLength(6);
+    const resumedPrompts = fetch.mock.calls.map(([, options]) => JSON.parse(JSON.parse(options.body).messages[1].content));
+    expect(resumedPrompts[0].section.id).toBe('review-0-3');
+    expect(resumedPrompts.some(prompt => ['review-0-0', 'review-0-1', 'review-0-2'].includes(prompt.section.id))).toBe(false);
+    for (let index = 0; index < 3; index++) expect(job.evidenceBrief.rounds[0].completed[index]).toEqual(paused.evidenceBrief.rounds[0].completed[index]);
+    for (const section of Object.values(job.sections)) expect(section[1].sourceIds).toEqual(initial.sources.entries.map(source => source.id));
+    await acceptProposal(id, 0, job.token);
+    expect((await loadArtifact(id)).revision.objects.filter(object => object.kind === 'section')).toHaveLength(6);
+  } finally { global.fetch = fetchBefore; }
+});
+
 test.each([13, 61])('a complete %i-item evidence review is saved intact and survives resume before concise synthesis', async count => {
   localStorage.setItem('xhandle:requirements', JSON.stringify(Array.from({ length: 14 }, (_, i) => ({ ...rows[0], id: `need${i}`, attributes: { Description: 'Evidence '.repeat(1200) } }))));
   const id = await createArtifact(config), before = (await loadArtifact(id)).job;
@@ -139,6 +183,15 @@ test('a run deadline aborts a stalled request, retains saved sections, and preve
   finish(); await new Promise(resolve => setTimeout(resolve, 0));
   expect((await loadArtifact(id)).job).toEqual(job);
   const resume = jest.fn(async args => value(args)); await generateArtifact(id, { request: resume }); expect(resume).toHaveBeenCalledTimes(5);
+});
+
+test('ordinary standalone UI generation completes its finite section plan beyond fifteen total minutes', async () => {
+  const id = await createArtifact(config);
+  let now = Date.now(); jest.spyOn(Date, 'now').mockImplementation(() => now);
+  const provider = jest.fn(async args => { now += 240000; return value(args); });
+  await generateArtifact(id, { request: provider });
+  expect(provider).toHaveBeenCalledTimes(6);
+  expect((await loadArtifact(id)).job.state).toBe('ready');
 });
 
 test('oversized final synthesis is checkpointed and resumed without rerunning completed evidence reviews', async () => {

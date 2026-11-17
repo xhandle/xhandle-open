@@ -397,24 +397,45 @@ test('a paused draft above 1000 objects resumes intact, feeds downstream generat
 });
 
 
-test('one project request budget spans documents and resume keeps the ready document intact', async () => {
+test('a finite project finishes every document without exhausting a shared request or elapsed-time allowance', async () => {
   const realBudget = generationBudgets.createGenerationBudget;
   const makeBudget = jest.spyOn(generationBudgets, 'createGenerationBudget').mockImplementation(signal => realBudget(signal, { requestLimit: 7 }));
   const id = await createEngineeringProject(input());
-  await expect(generateEngineeringProject(id, { request })).rejects.toMatchObject({ code: 'GENERATION_BUDGET' });
-  const partial = await loadEngineeringProject(id);
-  expect(makeBudget).toHaveBeenCalledTimes(1);
-  expect(request).toHaveBeenCalledTimes(7);
-  expect(partial.program.state).toBe('paused');
-  expect(partial.program.error).toContain('7-request');
-  expect(partial.records[0].job.state).toBe('ready');
-  expect(Object.keys(partial.records[1].job.sections)).toHaveLength(1);
-  expect(partial.records[1].job.error).toContain('7-request');
-  makeBudget.mockRestore(); request.mockClear();
+  let now = Date.now();
+  jest.spyOn(Date, 'now').mockImplementation(() => now);
+  request.mockImplementation(async args => { now += 180000; return response(args); });
   await generateEngineeringProject(id, { request });
-  expect(request).toHaveBeenCalledTimes(5);
-  expect((await loadEngineeringProject(id)).records[0].job.sections).toEqual(partial.records[0].job.sections);
+  const complete = await loadEngineeringProject(id);
+  expect(makeBudget).toHaveBeenCalledTimes(1);
+  expect(request).toHaveBeenCalledTimes(12);
+  expect(complete.program.state).toBe('ready');
+  expect(complete.program.error).toBeNull();
+  expect(complete.records.every(record => record.job.state === 'ready' && Object.keys(record.job.sections).length === 6)).toBe(true);
+  request.mockClear();
+  await generateEngineeringProject(id, { request });
+  expect(request).not.toHaveBeenCalled();
+  expect((await loadEngineeringProject(id)).records[0].job.sections).toEqual(complete.records[0].job.sections);
   await accept(id);
+});
+
+test('a 24-document requirements plan completes more than 120 requests without restarting saved work', async () => {
+  const id = await createEngineeringProject({ ...input(), artifacts: [
+    { templateId: 'system-spec' },
+    ...Array.from({ length: 23 }, (_, index) => ({ templateId: 'software-spec', title: `Software allocation ${index + 1}` })),
+  ] });
+  let now = Date.now();
+  jest.spyOn(Date, 'now').mockImplementation(() => now);
+  request.mockImplementation(async args => { now += 20000; return response(args); });
+  await generateEngineeringProject(id, { request });
+  const complete = await loadEngineeringProject(id);
+  expect(request).toHaveBeenCalledTimes(144);
+  expect(complete.program.state).toBe('ready');
+  expect(complete.records).toHaveLength(24);
+  expect(complete.records.every(record => record.job.state === 'ready' && Object.keys(record.job.sections).length === 6)).toBe(true);
+  request.mockClear(); await generateEngineeringProject(id, { request });
+  expect(request).not.toHaveBeenCalled();
+  await accept(id);
+  expect((await loadEngineeringProject(id)).records.every(record => record.meta.revision === 1 && !record.job)).toBe(true);
 });
 
 

@@ -7,7 +7,10 @@ import { beginEngineeringGeneration, finishEngineeringGeneration, loadEngineerin
 
 export async function generateEngineeringProject(id, options = {}) {
   const budget = createGenerationBudget(options.signal);
-  try { return await generateEngineeringProjectWork(id, { ...options, signal: budget.signal, budget }); }
+  // The saved member/dependency plan is finite. A single elapsed-time or request
+  // allowance must not stop later specifications after earlier ones complete.
+  // Each provider request and recovery loop retains its own bounded policy.
+  try { return await budget.runFiniteWork(() => generateEngineeringProjectWork(id, { ...options, signal: budget.signal, budget })); }
   catch (error) { throw budget.error() || error; }
   finally { budget.close(); }
 }

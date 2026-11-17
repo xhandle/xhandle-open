@@ -1,4 +1,4 @@
-import { normalizeSectionResponse, sectionResponseError } from './sectionResponse';
+import { DRAFT_ITEM_KINDS, normalizeSectionResponse, sectionResponseError } from './sectionResponse';
 import { validateArchitectureSelection } from './architectureSources';
 import { sha256 } from 'hash.js';
 import { isSafetyArtifact } from './safetyArtifactTypes';
@@ -90,17 +90,17 @@ export function validateConfig(config) {
   return t;
 }
 // One canonical object tree drives all four presentations and exports.
-export function validateSection(response, section, artifactId, sourceIds, { maxSourceIds = 100 } = {}) {
+export function validateSection(response, section, artifactId, sourceIds, { maxSourceIds = 100, indexOffset = 0 } = {}) {
   response = normalizeSectionResponse(response);
   if (!response || !Array.isArray(response.objects)) throw sectionResponseError('missing');
   if (!response.objects.length) throw sectionResponseError('empty');
   if (response.objects.length > 60) throw sectionResponseError('excess');
   const seen = new Set();
-  const objects = response.objects.map(o => {
+  const objects = response.objects.map((o, index) => {
     if (!o || typeof o !== 'object' || Array.isArray(o)) throw sectionResponseError('item');
     if (typeof o.key !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(o.key) || seen.has(o.key)) throw sectionResponseError('key');
     seen.add(o.key);
-    if (!['narrative', 'requirement', 'decision', 'gap', 'interface'].includes(o.kind)) throw sectionResponseError('kind');
+    if (!DRAFT_ITEM_KINDS.includes(o.kind)) throw sectionResponseError('kind', { index: indexOffset + index, kind: o.kind });
     if (typeof o.title !== 'string' || !o.title.trim() || o.title.length > 300 || typeof o.text !== 'string' || o.text.length > 16000) throw sectionResponseError('content');
     if (!Array.isArray(o.sourceIds) || o.sourceIds.length > maxSourceIds || o.sourceIds.some(id => typeof id !== 'string')) throw sectionResponseError('citations');
     if (o.sourceIds.some(id => !sourceIds.has(id))) { const error = new Error('The response cites an unknown source.'); error.code = 'UNKNOWN_SOURCE_CITATION'; throw error; }
@@ -118,6 +118,7 @@ export function validateSection(response, section, artifactId, sourceIds, { maxS
 // valid item in a complete provider response, then consolidate in later rounds.
 // The parser's response-size limit and each item's schema limits still apply.
 export function validateEvidenceReview(response, section, artifactId, sourceIds, options = {}) {
+  response = normalizeSectionResponse(response, { evidenceReview: true });
   if (!Array.isArray(response?.objects) || !response.objects.length) return validateSection(response, section, artifactId, sourceIds, options);
   const keys = new Set();
   for (const object of response.objects) {
@@ -126,7 +127,7 @@ export function validateEvidenceReview(response, section, artifactId, sourceIds,
   }
   const objects = [];
   for (let start = 0; start < response.objects.length; start += 60) {
-    const checked = validateSection({ objects: response.objects.slice(start, start + 60) }, section, artifactId, sourceIds, options);
+    const checked = validateSection({ objects: response.objects.slice(start, start + 60) }, section, artifactId, sourceIds, { ...options, indexOffset: start });
     objects.push(...(start ? checked.slice(1) : checked));
   }
   return objects;

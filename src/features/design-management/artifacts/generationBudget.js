@@ -14,8 +14,8 @@ export function createGenerationBudget(signal, { requestLimit = PROJECT_REQUEST_
     signal: controller.signal,
     error: () => failure,
     count: () => requests,
-    // A fixed, checkpointed source catalog has a natural completion condition.
-    // Its comparisons must not pause at an arbitrary document request/deadline
+    // A fixed, checkpointed document plan or source catalog has a natural end.
+    // Its work must not pause at an arbitrary document request/deadline
     // threshold. The caller's cancellation and individual request deadlines
     // still govern every comparison, including when a project shares this budget.
     async runFiniteWork(work) {
