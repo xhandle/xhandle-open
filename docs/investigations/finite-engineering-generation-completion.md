@@ -14,4 +14,4 @@ The Electron artifact-generation fixture also creates the five document types th
 
 Validation passed: 508 tests in 54 Design Management suites, the production build, focused lint and syntax checks, and all five Electron fixture checks. The final Electron report's renderer manifest fingerprint matches the freshly compiled application.
 
-The change is local and does not alter the published desktop packages.
+The change is included in [desktop 0.2.18](../testing/desktop-release-0.2.18.md) for macOS arm64 and Linux x64. Previously published packages remain immutable.

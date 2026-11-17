@@ -23,4 +23,4 @@ Run the focused renderer check with:
 XHANDLE_PLAYWRIGHT_MODULE=/path/to/playwright-core node scripts/diagnostics/verify-artifact-evidence-kinds.cjs --electron /path/to/electron --build build
 ```
 
-These tests exercise controlled provider responses. They do not certify arbitrary live model output quality or alter a customer's workspace. This fix does not change the published 0.2.17 desktop packages.
+These tests exercise controlled provider responses. They do not certify arbitrary live model output quality or alter a customer's workspace. The fix is included in [desktop 0.2.18](../testing/desktop-release-0.2.18.md); previously published packages remain immutable.
