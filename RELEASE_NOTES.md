@@ -1,6 +1,8 @@
 # Release Notes
 
-## Unreleased
+## Desktop 0.2.19 (2026-11-20)
+
+[Mac/Linux installers and update](https://github.com/xhandle/xhandle-desktop-releases/releases/tag/v0.2.19). Windows remains on 0.2.16.
 
 - GitHub code analysis pauses automatically at API rate limits and resumes the same pinned source requests after reset. Concurrent reads share the wait; cancellation remains available.
 - Code analysis retries transient browser-storage transaction aborts, preserves competing edits, and retains the interruption reason beside incomplete progress.

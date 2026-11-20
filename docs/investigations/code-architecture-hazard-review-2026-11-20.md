@@ -1,6 +1,6 @@
 # Code architecture and hazard-analysis review
 
-Status: review complete; identified issues fixed; all 18 comprehensive Electron verification categories passed on the unchanged final source. No unresolved confirmed findings remain in the reviewed workflows. No commit, push, desktop pin change or release publication has been performed. The user confirmed successful Chrome analysis and excluded Safari from this update.
+Status: review complete; identified issues fixed; all 18 comprehensive Electron verification categories passed on the unchanged final source. No unresolved confirmed findings remain in the reviewed workflows. The reviewed changes were committed, pushed and published in [Desktop 0.2.19](desktop-0.2.19-publication-2026-11-20.md); that record identifies the frozen builds and completed release gates. The user confirmed successful Chrome analysis and excluded Safari from this update.
 
 ## Scope and approach
 

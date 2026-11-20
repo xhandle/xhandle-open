@@ -1,6 +1,6 @@
 # GitHub analysis and checkpoint reliability review
 
-Status: local regression review passed. The user confirmed the same repository completes in Chrome and explicitly excluded Safari from this update's scope. Safari confirmation is no longer a release blocker. Changes are prepared for commit and desktop release; no commit, push, desktop tag or release publication has been performed.
+Status: local regression review passed. The user confirmed the same repository completes in Chrome and explicitly excluded Safari from this update's scope. Safari confirmation is no longer a release blocker. The changes are committed and published in [Desktop 0.2.19](desktop-0.2.19-publication-2026-11-20.md); the later publication record supersedes the preparation status below.
 
 The subsequent [detailed architecture/hazard review](code-architecture-hazard-review-2026-11-20.md) records additional fixes and the final comprehensive verification of the expanded changeset. Use that report and its final source fingerprint for current release readiness.
 
