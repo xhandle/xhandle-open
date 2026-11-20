@@ -45,3 +45,18 @@ test('offers save-only recovery and identifies memory-only results', async () =>
  await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='Retry save').click());
  expect(resume).toHaveBeenCalledWith(expect.objectContaining({publicationReady:true,key:'fixture'}));
 });
+
+test('shows the run-level reason even when no file failures were recorded', async () => {
+ readLatestArchitectureCheckpoint.mockResolvedValue({...checkpoint,completed:13,total:24,failedFiles:[],interruption:{status:'failed',message:'AI settings changed during analysis.',path:'src/model.py'}});
+ await act(async()=>root.render(<ArchitectureRunRecovery scope="cba:test" onResume={async()=>{}}/>));
+ expect(host.querySelector('[role="alert"]').textContent).toContain('AI settings changed during analysis.');
+ expect(host.querySelector('[role="alert"]').textContent).toContain('src/model.py');
+ expect(host.textContent).toContain('11 files remain unfinished');
+ expect(host.textContent).toContain('0 failed');
+});
+
+test('keeps a live failure visible when storage cannot supply a checkpoint', async () => {
+ readLatestArchitectureCheckpoint.mockResolvedValue(null);
+ await act(async()=>root.render(<ArchitectureRunRecovery scope="cba:test" failure="Browser storage quota exceeded." onResume={async()=>{}}/>));
+ expect(host.querySelector('[role="alert"]').textContent).toContain('Browser storage quota exceeded.');
+});

@@ -31,6 +31,23 @@ export function hazardPreprocessingIdentitySheet(run) {
   return [columns,...current,...retainedRows.filter(row=>!currentIds.has(row[idColumn]))];
 }
 
+// A scoped run replaces only the selected context's assessment. Keep governed
+// edits and identities from other contexts for a later All-contexts run.
+export function unselectedHazardPreprocessing(input, previousRun) {
+  if (!input.selectedOperationalContextId || input.selectedOperationalContextId === 'all') return {};
+  const sheet = hazardPreprocessingIdentitySheet(previousRun);
+  if (!sheet) return {};
+  const retained = {};
+  for (const row of sheet.slice(1)) {
+    const id = cell(sheet, row, 'Raw Analysis Row ID');
+    if (cell(sheet, row, 'Operational Context ID') !== input.selectedOperationalContextId
+      && previousRun.userPreprocessing?.[id] && !input.archivedUserPreprocessing?.[id]) {
+      retained[id] = previousRun.userPreprocessing[id];
+    }
+  }
+  return retained;
+}
+
 export function prepareCodeHazardPreprocessing(input, previousRun) {
   if (!Object.values(previousRun?.userPreprocessing || {}).some(entry => entry?.values && Object.keys(entry.values).length)) return input;
   const summary = hazardPreprocessingIdentitySheet(previousRun);

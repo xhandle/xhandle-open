@@ -120,7 +120,7 @@ async function waitForSavedHead(predicate, timeoutMs = 90000) {
         const inputs = lastArray(prompt);
         const entries = inputs.map(input => answer(input.id || input.row?.id || input.item?.id));
         assert(entries.every(entry => entry.id), 'Provider response is tied to input ids');
-        const hara = prompt.startsWith('Perform the ISO 26262-3 HARA');
+        const hara = prompt.includes('Perform the ISO 26262-3 HARA risk-assessment step');
         content = hara ? { assessments: entries } : entries;
         if (hara) {
           assert(body.max_tokens >= 12000, 'HARA reserves output instead of using the generic 1,200-token default');

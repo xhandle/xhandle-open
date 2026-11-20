@@ -32,6 +32,20 @@ export function indexProjectTrace(graph) {
   return { nodes, links, incident, objects, gaps };
 }
 
+export function projectTraceLayers(index) {
+  return [...new Set([...index.links.values()].map(edge => edge.type))].map(id => ({ id }));
+}
+
+// Filter relationships before aggregation, object expansion and edge limits.
+// Keep documents and selected objects available as context, including when all
+// relationships are hidden. Keep the original index for evidence lookup.
+export function filterProjectTraceLayers(index, selectedLayers) {
+  const selected = new Set(selectedLayers);
+  const links = new Map([...index.links].filter(([, edge]) => selected.has(edge.type)));
+  const incident = new Map([...index.incident].map(([id, edges]) => [id, edges.filter(edge => links.has(edge))]));
+  return { ...index, links, incident };
+}
+
 function boundGraph(nodes, edges, extra = {}) {
   const visibleNodes = nodes.slice(0, TRACE_NODE_LIMIT), ids = new Set(visibleNodes.map(node => node.id));
   const eligibleEdges = edges.filter(edge => ids.has(edge.from) && ids.has(edge.to));

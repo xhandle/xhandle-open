@@ -77,3 +77,32 @@ it('retains large Unicode GitHub files including the final function', async () =
  global.fetch=jest.fn(async()=>({ok:true,json:async()=>({encoding:'base64',content:Buffer.from(content).toString('base64')})}));
  expect((await readGitHubSnapshotFile({owner:'o',repo:'r',ref:revision,sha,path:'large.py'})).content).toBe(content);
 });
+
+it('waits past the normal timeout, then retries the same pinned private blob without falling back', async () => {
+ const content='def pinned(): return command()\n';
+ const sha=await gitBlobDigest(new TextEncoder().encode(content));
+ jest.useFakeTimers('modern');jest.setSystemTime(new Date('2026-11-20T12:00:00Z'));
+ const reset=Date.now()/1000+300,onProgress=jest.fn();
+ global.fetch=jest.fn().mockResolvedValueOnce({ok:false,status:403,headers:{get:name=>({'x-ratelimit-remaining':'0','x-ratelimit-reset':String(reset)})[name]??null}})
+  .mockResolvedValue({ok:true,status:200,json:async()=>({encoding:'base64',content:Buffer.from(content).toString('base64')})});
+ try {
+  const pending=readGitHubSnapshotFile({owner:'private',repo:'fixture',token:'private-blob-resume',ref:revision,sha,path:'pinned.py',onProgress});
+  for(let i=0;i<30;i++)await Promise.resolve();
+  expect(fetch).toHaveBeenCalledTimes(1);expect(onProgress.mock.calls[0][0].phase).toBe('github-rate-limit');
+  for(let second=0;second<300;second+=30){jest.advanceTimersByTime(30000);for(let i=0;i<30;i++)await Promise.resolve();}
+  expect(fetch).toHaveBeenCalledTimes(1);
+  jest.advanceTimersByTime(1000);
+  expect((await pending).content).toBe(content);
+  expect(fetch.mock.calls.map(([url])=>url)).toEqual(Array(2).fill(`https://api.github.com/repos/private/fixture/git/blobs/${sha}`));
+  expect(onProgress.mock.calls.at(-1)[0].phase).toBe('github-rate-limit-resumed');
+ }finally{jest.useRealTimers();}
+});
+
+it('cancelling a rate-limit pause never tries Contents or raw fallback', async () => {
+ const controller=new AbortController();
+ global.fetch=jest.fn(async()=>({ok:false,status:403,headers:{get:name=>({'x-ratelimit-remaining':'0','x-ratelimit-reset':String(Date.now()/1000+3600)})[name]??null}}));
+ await expect(readGitHubSnapshotFile({owner:'private',repo:'fixture',token:'private-blob-cancel',ref:revision,sha:'b'.repeat(40),path:'pinned.py',signal:controller.signal,
+  onProgress:progress=>{if(progress.phase==='github-rate-limit')controller.abort();},
+ })).rejects.toThrow(/cancelled/);
+ expect(fetch).toHaveBeenCalledTimes(1);
+});

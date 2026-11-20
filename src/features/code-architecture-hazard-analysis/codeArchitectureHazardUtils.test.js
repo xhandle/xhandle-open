@@ -39,6 +39,14 @@ function rowObject(summary, rowIndex = 1) {
 }
 
 describe("code architecture hazard evidence review", () => {
+  it.each(['STPA-Textbook', 'HARA', 'FHA'])('rejects an unavailable context for %s instead of expanding the analysis scope', method => {
+    expect(() => buildCodeArchitectureHazardInput({
+      cbaRows:[{from:'Monitor',action:'Report health',to:'Fallback'}],method,
+      operationalContexts:[{id:'normal',scenario:'Nominal operation'}],
+      selectedOperationalContextId:'deleted-context',
+    })).toThrow('selected operational context is no longer available');
+  });
+
   it("expands STPA interfaces across every guide phrase and selected operational context", () => {
     const contexts = [
       { id: "normal", scenario: "Nominal route", mode: "Automatic", conditions: "Dry road", assumptions: "Sensors healthy" },

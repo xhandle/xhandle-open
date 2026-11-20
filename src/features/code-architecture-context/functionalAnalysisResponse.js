@@ -171,9 +171,9 @@ export async function analyzeFunctionalSourceChunk({ content, request, signal, o
 
 // Used for source preflight/reads as well as model responses. Permanent access,
 // integrity and configuration errors are not made retryable by this wrapper.
-export async function retryAnalysisOperation(request, {signal, onRetry, wait = waitForAnalysisRetry, timeoutMs = FUNCTIONAL_REQUEST_TIMEOUT_MS} = {}) {
+export async function retryAnalysisOperation(request, {signal, onRetry, wait = waitForAnalysisRetry, timeoutMs = FUNCTIONAL_REQUEST_TIMEOUT_MS, requestHandlesDeadline = false} = {}) {
   for (let attempt = 0; attempt < 3; attempt++) {
-    try { return await withAnalysisRequestDeadline(request,signal,timeoutMs); }
+    try { return await (requestHandlesDeadline ? request(signal) : withAnalysisRequestDeadline(request,signal,timeoutMs)); }
     catch (error) {
       throwIfAnalysisAborted(signal);
       if (attempt === 2 || !(error.retryable || error instanceof TypeError)) throw error;

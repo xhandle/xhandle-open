@@ -33,6 +33,7 @@ const architectureWrites = new Map();
 const deletingProjects = new Set();
 const cleaningScopes = new Set();
 const runningScopes = new Set();
+const runInterruptions = new Map();
 export function beginArchitectureStorageWork(scope) {
   if (cleaningScopes.has(scope) || runningScopes.has(scope)) throw new Error('Storage cleanup is in progress. Retry analysis when it finishes.');
   runningScopes.add(scope);
@@ -215,6 +216,7 @@ async function recoverArchitecturePublicationNow(scope, checkpointKey, signal) {
             store.put({key:`${scope}:run:${run.fingerprint}`,value:ready.runRecord});
             store.put({key:`${scope}:run`,value:ready.runRecord});
             store.delete(checkpointKey);
+            store.delete(`${checkpointKey}:interruption`);
             } catch(error) {failure=error;stop();}
           };
         } catch (error) { failure=error; stop(); }
@@ -226,20 +228,38 @@ async function recoverArchitecturePublicationNow(scope, checkpointKey, signal) {
         await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
       } finally { signal?.removeEventListener('abort', stop); }
     }
-    pendingInMemory.delete(checkpointKey); changed();
+    pendingInMemory.delete(checkpointKey); runInterruptions.delete(checkpointKey); changed();
     return {rows, metadata:{...ready.metadata, storageSaved:true, storageError:''}};
   } finally { db.close(); }
 }
 
 export async function readArchitectureCheckpoint(key) {
   if (!String(key).startsWith('functional-decomposition-checkpoint:')) throw new Error('Invalid checkpoint.');
-  if (pendingInMemory.has(key)) return {...pendingInMemory.get(key), phase:'ready-to-publish', durable:false};
+  if (pendingInMemory.has(key)) return {...pendingInMemory.get(key), phase:'ready-to-publish', durable:false, ...(runInterruptions.has(key) ? {interruption:runInterruptions.get(key)} : {})};
   const db = await openCbaIndexedDB();
   try {
     const value = await readRecord(db, XHANDLE_IDB_CBA_STORE, key);
-    if (value?.phase === 'ready-to-publish') return {...value, rows:await hydrateRecord(db,XHANDLE_IDB_CBA_STORE,value.rowRecord), run:await hydrateRecord(db,XHANDLE_IDB_CBA_STORE,value.runRecord)};
-    return value;
+    if (!value) return value;
+    const interruption = runInterruptions.get(key) || await readRecord(db, XHANDLE_IDB_CBA_STORE, `${key}:interruption`) || null;
+    if (value.phase === 'ready-to-publish') return {...value, rows:await hydrateRecord(db,XHANDLE_IDB_CBA_STORE,value.rowRecord), run:await hydrateRecord(db,XHANDLE_IDB_CBA_STORE,value.runRecord), ...(interruption ? {interruption} : {})};
+    return interruption ? {...value, interruption} : value;
   } finally { db.close(); }
+}
+
+// A small separate record avoids rewriting/hydrating a large source checkpoint
+// merely to explain why the run stopped. Failed storage still has a live reason.
+export async function recordArchitectureInterruption(scope, key, interruption) {
+  if (!String(key).startsWith(`functional-decomposition-checkpoint:${scope}:`)) throw new Error('Checkpoint does not belong to this project.');
+  if (interruption) runInterruptions.set(key, interruption); else runInterruptions.delete(key);
+  return queueArchitectureWrite(scope, async () => {
+    const db = await openCbaIndexedDB();
+    try {
+      if (interruption) await writeRecord(db, XHANDLE_IDB_CBA_STORE, `${key}:interruption`, interruption);
+      else { const tx=db.transaction(XHANDLE_IDB_CBA_STORE,'readwrite'), done=transactionDone(tx); tx.objectStore(XHANDLE_IDB_CBA_STORE).delete(`${key}:interruption`); await done; }
+      changed();
+      if (!pendingInMemory.has(key) && runInterruptions.get(key) === interruption) runInterruptions.delete(key);
+    } finally { db.close(); }
+  });
 }
 export async function readLatestArchitectureCheckpoint(scope) {
   if (!scope) return null;
@@ -254,13 +274,14 @@ export async function readLatestArchitectureCheckpoint(scope) {
     let latest=null;
     const published=await readRecord(db,XHANDLE_IDB_CBA_STORE,`${scope}:run`);
     for (const key of keys) {
+      if (String(key).endsWith(':interruption')) continue;
       const value=await readArchitectureCheckpoint(key);
       if (!value)continue;
       const completed=value.completedPaths?.length || (value.phase==='ready-to-publish' ? value.totalFiles || value.metadata?.selectedFiles || 0 : 0);
-      const updatedAt=value.updatedAt || value.run?.publishedAt || '';
-      if (value.phase!=='ready-to-publish' && (!completed && !value.failedFiles?.length))continue;
+      const updatedAt=value.interruption?.at || value.updatedAt || value.run?.publishedAt || '';
+      if (value.phase!=='ready-to-publish' && (!completed && !value.failedFiles?.length && !value.interruption))continue;
       if (published?.publishedAt && updatedAt<=published.publishedAt)continue;
-      if (!latest || updatedAt>latest.updatedAt)latest={key,updatedAt,publicationReady:value.phase==='ready-to-publish',durable:value.durable!==false,completed,total:value.totalFiles || value.metadata?.selectedFiles || 0,failedFiles:value.failedFiles || [],rowCount:value.rows?.length || 0,rows:(value.rows || []).slice(0,50)};
+      if (!latest || updatedAt>latest.updatedAt)latest={key,updatedAt,interruption:value.interruption,publicationReady:value.phase==='ready-to-publish',durable:value.durable!==false,completed,total:value.totalFiles || value.metadata?.selectedFiles || 0,failedFiles:value.failedFiles || [],rowCount:value.rows?.length || 0,rows:(value.rows || []).slice(0,50)};
     }
     return latest;
   } finally {db.close();}

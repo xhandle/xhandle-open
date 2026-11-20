@@ -1,5 +1,6 @@
 /* global globalThis */
 import { retryAfterMilliseconds, retryAnalysisOperation } from './functionalAnalysisResponse';
+import { githubRateLimitedRequest } from './githubRateLimit';
 // Acquisition has no UI/storage side effects. All reads stay on one resolved revision.
 export const compareSourcePaths = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const enc = value => encodeURIComponent(value);
@@ -16,20 +17,21 @@ export async function gitBlobDigest(bytes) {
   blob.set(header); blob.set(bytes, header.length);
   return digestBytes(blob, 'SHA-1');
 }
-async function json(url, token, signal) {
-  const response = await fetch(url, { headers: headers(token), signal });
-  if (!response.ok) throw Object.assign(new Error(`GitHub source request failed (${response.status}). The selected revision was not changed.`), {retryable:[408,429,500,502,503,504].includes(response.status),retryAfterMs:retryAfterMilliseconds(response.headers?.get?.("Retry-After"))});
-  return response.json();
+export async function fetchGitHubJson(url, token, signal, onProgress) {
+  return githubRateLimitedRequest(url, { headers: headers(token), signal }, { onProgress, read: async response => {
+    if (!response.ok) throw Object.assign(new Error(`GitHub source request failed (${response.status}). The selected revision was not changed.`), {status:response.status,retryable:[408,500,502,503,504].includes(response.status),retryAfterMs:retryAfterMilliseconds(response.headers?.get?.('Retry-After'))});
+    return response.json();
+  } });
 }
-export async function resolveGitHubRevision(owner, repo, token, ref, signal) {
-  const result = await json(`${base(owner, repo)}/commits/${enc(ref)}`, token, signal);
+export async function resolveGitHubRevision(owner, repo, token, ref, signal, onProgress) {
+  const result = await fetchGitHubJson(`${base(owner, repo)}/commits/${enc(ref)}`, token, signal, onProgress);
   if (!/^[a-f0-9]{40}$/i.test(result?.sha || '')) throw new Error('GitHub did not resolve an immutable commit. Previous results were preserved.');
   return result.sha;
 }
-export async function listGitHubSnapshot(owner, repo, token, revision, signal) {
+export async function listGitHubSnapshot(owner, repo, token, revision, signal, onProgress) {
   if (!/^[a-f0-9]{40}$/i.test(revision || '')) throw new Error('An immutable GitHub commit is required.');
-  const tree = sha => retryAnalysisOperation(requestSignal => json(`${base(owner, repo)}/git/trees/${enc(sha)}`, token, requestSignal), {signal});
-  const result = await retryAnalysisOperation(requestSignal => json(`${base(owner, repo)}/git/trees/${enc(revision)}?recursive=1`, token, requestSignal), {signal});
+  const tree = sha => retryAnalysisOperation(requestSignal => fetchGitHubJson(`${base(owner, repo)}/git/trees/${enc(sha)}`, token, requestSignal, onProgress), {signal,requestHandlesDeadline:true});
+  const result = await retryAnalysisOperation(requestSignal => fetchGitHubJson(`${base(owner, repo)}/git/trees/${enc(revision)}?recursive=1`, token, requestSignal, onProgress), {signal,requestHandlesDeadline:true});
   if (!Array.isArray(result.tree)) throw new Error('GitHub returned an invalid file inventory.');
   let entries = result.tree;
   if (result.truncated) {
@@ -60,25 +62,26 @@ function base64Bytes(value) {
   const binary = atob(value.replace(/\s/g, ''));
   return Uint8Array.from(binary, ch => ch.charCodeAt(0));
 }
-export async function readGitHubSnapshotFile({ owner, repo, token, ref, sha, path, signal }) {
+export async function readGitHubSnapshotFile({ owner, repo, token, ref, sha, path, signal, onProgress }) {
   if (!/^[a-f0-9]{40}$/i.test(ref || '')) throw new Error('An immutable GitHub commit is required to read source.');
   const candidates = [];
   if (sha) candidates.push(async () => {
-    const result = await json(`${base(owner, repo)}/git/blobs/${enc(sha)}`, token, signal);
+    const result = await fetchGitHubJson(`${base(owner, repo)}/git/blobs/${enc(sha)}`, token, signal, onProgress);
     if (result.encoding !== 'base64' || typeof result.content !== 'string') throw new Error('GitHub blob content unavailable.');
     return base64Bytes(result.content);
   });
   const encodedPath = path.split('/').map(enc).join('/');
   candidates.push(async () => {
-    const result = await json(`${base(owner, repo)}/contents/${encodedPath}?ref=${enc(ref)}`, token, signal);
+    const result = await fetchGitHubJson(`${base(owner, repo)}/contents/${encodedPath}?ref=${enc(ref)}`, token, signal, onProgress);
     if (result.encoding !== 'base64' || typeof result.content !== 'string') throw new Error('GitHub file content unavailable.');
     return base64Bytes(result.content);
   });
   // Public raw fallback is pinned to the same commit; never send credentials to another host.
   candidates.push(async () => {
-    const response = await fetch(`https://raw.githubusercontent.com/${enc(owner)}/${enc(repo)}/${enc(ref)}/${encodedPath}`, { signal });
-    if (!response.ok) throw Object.assign(new Error(`GitHub raw source unavailable (${response.status}).`), {retryable:[408,429,500,502,503,504].includes(response.status),retryAfterMs:retryAfterMilliseconds(response.headers?.get?.("Retry-After"))});
-    return new Uint8Array(await response.arrayBuffer());
+    return githubRateLimitedRequest(`https://raw.githubusercontent.com/${enc(owner)}/${enc(repo)}/${enc(ref)}/${encodedPath}`, { signal }, { onProgress, read: async response => {
+      if (!response.ok) throw Object.assign(new Error(`GitHub raw source unavailable (${response.status}).`), {retryable:[408,500,502,503,504].includes(response.status),retryAfterMs:retryAfterMilliseconds(response.headers?.get?.('Retry-After'))});
+      return new Uint8Array(await response.arrayBuffer());
+    } });
   });
   let lastError;
   for (const read of candidates) {
@@ -89,7 +92,10 @@ export async function readGitHubSnapshotFile({ owner, repo, token, ref, sha, pat
       const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
       if (content.includes('\0')) throw new Error('Binary source content is unsupported.');
       return { ok: true, content, contentDigest: await digestBytes(bytes), textDigest: await digestText(content), size: bytes.length, decoding: 'utf8-fatal-v1' };
-    } catch (error) { lastError = error; }
+    } catch (error) {
+      if (signal?.aborted || error.name === 'AbortError' || error.code === 'GITHUB_RATE_LIMIT') throw error;
+      lastError = error;
+    }
   }
   throw lastError || new Error(`Unable to read pinned source ${path}.`);
 }

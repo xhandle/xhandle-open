@@ -6,7 +6,7 @@ const programmingFailure=error=>['ReferenceError','RangeError'].includes(error?.
 // with explicit assumptions. Status metadata must not disguise a fatal error.
 export function canCompleteHazardWithAssumptions(error,signal) {
  return !signal?.aborted && error?.name!=='AbortError' &&
-  error?.code!=='HAZARD_EVIDENCE_STORAGE_UNAVAILABLE' && !programmingFailure(error) &&
+  !['HAZARD_EVIDENCE_STORAGE_UNAVAILABLE','HAZARD_SETTINGS_CHANGED'].includes(error?.code) && !programmingFailure(error) &&
   [401,402,403,404,429].includes(providerStatus(error));
 }
 
@@ -17,7 +17,7 @@ export function canDeferHazardFailure(error,signal) {
  if(signal?.aborted || error?.name==='AbortError')return false;
  // A storage outage is not evidence uncertainty. Preserve partial work and
  // require recovery instead of substituting assumption-based assessments.
- if(error?.code==='HAZARD_EVIDENCE_STORAGE_UNAVAILABLE')return false;
+ if(['HAZARD_EVIDENCE_STORAGE_UNAVAILABLE','HAZARD_SETTINGS_CHANGED'].includes(error?.code))return false;
  if([401,402,403,404,429].includes(providerStatus(error)))return false;
  if(programmingFailure(error))return false;
  return true;

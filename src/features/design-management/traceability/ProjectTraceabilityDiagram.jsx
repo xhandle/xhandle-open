@@ -4,9 +4,10 @@ import 'reactflow/dist/style.css';
 import { relationshipLabel } from '../artifacts/SourceEvidenceDetails';
 import { readableLabel } from '../../requirements/components/readableValues';
 import { getTemplate } from '../artifacts/artifactModel';
-import { indexProjectTrace, overviewTraceDiagram, objectTraceDiagram, layoutTraceDiagram, traceNodeName } from './projectTraceDiagram';
+import { indexProjectTrace, projectTraceLayers, filterProjectTraceLayers, overviewTraceDiagram, objectTraceDiagram, layoutTraceDiagram, traceNodeName } from './projectTraceDiagram';
 import { TRACE_ICON_LEFT, TRACE_ICON_RIGHT, TRACE_ICON_Y, TRACE_ITEM_WIDTH, TRACE_ITEM_HEIGHT, traceRoutePath } from './projectTraceLayout';
 import TraceArtifactIcon from './TraceArtifactIcon';
+import TraceLayersDropdown from './TraceLayersDropdown';
 import './projectTraceDiagram.css';
 
 const typeNames = { 'systems-engineering-project': 'Project', 'owning-project': 'Source project', 'architecture-diagram': 'Source diagram',
@@ -37,14 +38,18 @@ const pageSize = 25;
 function TraceCanvas({ graph, records, onOpenNode, labelForNode }) {
   const [level, setLevel] = useState('artifacts'), [artifact, setArtifact] = useState(''), [query, setQuery] = useState(''), [page, setPage] = useState(0);
   const [selection, setSelection] = useState(null), [detailPage, setDetailPage] = useState(0);
+  const [hiddenLayers, setHiddenLayers] = useState([]);
   const { fitView, fitBounds } = useReactFlow();
   const index = useMemo(() => indexProjectTrace(graph), [graph]);
+  const layers = useMemo(() => projectTraceLayers(index).map(layer => ({ ...layer, label: relationshipLabel(layer.id) })), [index]);
+  const selectedLayers = useMemo(() => layers.map(layer => layer.id).filter(id => !hiddenLayers.includes(id)), [layers, hiddenLayers]);
+  const visibleIndex = useMemo(() => hiddenLayers.length ? filterProjectTraceLayers(index, selectedLayers) : index, [index, hiddenLayers, selectedLayers]);
   const artifacts = useMemo(() => [...index.nodes.values()].filter(node => node.type === 'artifact'), [index]);
   const artifactId = artifacts.some(node => node.id === artifact) ? artifact : artifacts[0]?.id || '';
   const model = useMemo(() => {
-    const view = level === 'artifacts' ? overviewTraceDiagram(index) : objectTraceDiagram(index, artifactId, query, page);
+    const view = level === 'artifacts' ? overviewTraceDiagram(visibleIndex) : objectTraceDiagram(visibleIndex, artifactId, query, page);
     return { ...view, edges: view.edges.map(edge => ({ ...edge, label: `${relationshipLabel(edge.type)}${edge.members.length > 1 ? ` · ${edge.members.length}` : ''}` })) };
-  }, [index, level, artifactId, query, page]);
+  }, [visibleIndex, level, artifactId, query, page]);
   const [layoutState, setLayoutState] = useState({}), [layoutAttempt, setLayoutAttempt] = useState(0);
   const layout = layoutState.model === model && layoutState.attempt === layoutAttempt ? layoutState.layout : null;
   const layoutError = layoutState.model === model && layoutState.attempt === layoutAttempt ? layoutState.error : null;
@@ -92,6 +97,7 @@ function TraceCanvas({ graph, records, onOpenNode, labelForNode }) {
   return <section className="project-trace-diagram" aria-label="Traceability directed graph">
     <div className="project-trace-tools">
       <label>Level<select value={level} onChange={event => switchLevel(event.target.value)}><option value="artifacts">Artifacts</option><option value="objects">Objects</option></select></label>
+      <TraceLayersDropdown layers={layers} selected={selectedLayers} onChange={selected => { setHiddenLayers(layers.map(layer => layer.id).filter(id => !selected.includes(id))); setPage(0); select(null); }} />
       {level === 'objects' && <>
         <label>Artifact<select value={artifactId} onChange={event => { setArtifact(event.target.value); setPage(0); select(null); }}>{artifacts.map(node => <option key={node.id} value={node.id}>{label(node)}</option>)}</select></label>
         <label>Find object<input type="search" value={query} onChange={event => { setQuery(event.target.value); setPage(0); select(null); }} /></label>
@@ -99,11 +105,13 @@ function TraceCanvas({ graph, records, onOpenNode, labelForNode }) {
       </>}
     </div>
     {model.truncated && <p className="project-trace-notice" role="status">Showing {model.nodes.length} of {model.totalNodes} nodes and {model.edges.length} of {model.totalEdges} relationships in this view. Use Objects or the traceability table to inspect further links.</p>}
+    {!!layers.length && !selectedLayers.length && <p role="status">No relationship layers selected. Choose layers to show links.</p>}
     {level === 'objects' && !model.objectCount && <p role="status">No saved objects{query ? ' match this search' : ' in this artifact'}.</p>}
     <div className="project-trace-body">
       <div className="project-trace-canvas">
         {layoutError ? <div className="project-trace-layout-message" role="alert">{layoutError}<button onClick={() => setLayoutAttempt(layoutAttempt + 1)}>Retry diagram</button></div> : !layout ? <p className="project-trace-layout-message" role="status">Arranging diagram…</p> : <ReactFlow key={`${level}:${artifactId}:${model.page || 0}:${query}`} nodes={diagramNodes} edges={diagramEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
           fitView fitViewOptions={{ padding: .18, minZoom: .55, maxZoom: 1 }} minZoom={.02} maxZoom={2} nodesDraggable={false} nodesConnectable={false}
+          panOnScroll panOnScrollMode="free" zoomOnScroll={false} zoomOnPinch
           deleteKeyCode={null} onNodesDelete={() => {}} onEdgesDelete={() => {}} onlyRenderVisibleElements
           onNodeClick={(_, node) => select({ kind: 'node', id: node.id })}
           onNodeDoubleClick={(_, node) => { const source = rawNodeFor(model.nodes.find(item => item.id === node.id)); if (canOpen(source)) onOpenNode(source); }}

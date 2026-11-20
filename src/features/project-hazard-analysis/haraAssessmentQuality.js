@@ -39,9 +39,14 @@ export const outcomeKinds = value => {
   if (/\bfalse\b[^.]{0,40}\b(?:emergenc|alert|dispatch)|\b(?:spurious|unwarranted)\b[^.]{0,40}\b(?:alert|dispatch|emergenc)|resource diversion/i.test(v)) kinds.push('false-alert');
   return kinds;
 };
+const failureTerm = '(?:(?:communication|network|recovery|diagnostic|dispatch|transmission)[ /-]+)*(?:failures?|malfunctions?|outages?|packet[ -]loss|acknowledg\\w*\\s+timeouts?)';
+const failureSubject = `(?:${failureTerm})(?:\\s*/\\s*(?:${failureTerm}))*`;
+const failureStatistic = '(?:probability|likelihood|rates?|frequency)';
+const excludedFailureBasis = new RegExp(`\\b(?:never|not|rather than|excluding|excludes?|independent of)\\s+(?:(?:based on|determined by|using|including)\\s+)?(?:the\\s+)?(?:${failureSubject}\\s+${failureStatistic}|${failureStatistic}\\s+(?:of|for)\\s+(?:the\\s+)?${failureSubject})\\b`, 'gi');
 const positiveFailureBasis = value => {
-  // Strip an explicit prohibition before detecting a claimed failure basis.
-  const v=text(value).replace(/(?:never|not|rather than|excluding)[^.;&]{0,100}(?:failure|malfunction|outage)[^.;&]{0,50}(?:probability|rate|frequency)|(?:never|not|excluding)\s+(?:the\s+)?(?:failure|malfunction)\s+(?:probability|rate)/gi,'');
+  // Remove only the explicitly excluded factor first, in either word order.
+  // This preserves a separate affirmative failure argument in the same sentence.
+  const v=text(value).replace(excludedFailureBasis, '').replace(/(?:never|not|rather than|excluding)[^.;&]{0,100}(?:failure|malfunction|outage)[^.;&]{0,50}(?:probability|rate|frequency)|(?:never|not|excluding)\s+(?:the\s+)?(?:failure|malfunction)\s+(?:probability|rate)/gi,'');
   return /(?:probability|frequency|rate|exposure)[^.]{0,90}(?:fail(?:ure|s)|malfunction|packet loss|outage|acknowledg\w*\s+timeout)|(?:fail(?:ure|s)|malfunction|packet loss|outage|acknowledg\w*\s+timeout)[^.]{0,90}(?:probability|frequency|rate)|because[^.]{0,50}(?:transmissions? (?:will )?fail|network reliability)/i.test(v);
 };
 export const diagnosticOnlyTiming = value => /(?:ftti (?:is|equals|must be)|derived from|based on|covers?)\s+(?:the\s+)?(?:minimum duration|\d+\s+(?:(?:consecutive|nominal)\s+)?(?:\d+\s*ms\s*)?frames?|frame (?:period|interval)|(?:diagnostic |acknowledg\w* |processing )?timeout|processing deadline|retry interval)|minimum duration for which[^.]*updates|typical emergency response time/i.test(text(value));

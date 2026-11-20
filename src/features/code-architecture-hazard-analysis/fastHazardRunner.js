@@ -7,7 +7,7 @@ import {organizationProfileContextIdentity} from '../organization-profile/organi
 import {functionalModelIsReady} from '../code-architecture-context/functionalModel';
 import {getStoredActiveAIProvider,getStoredAIProviderModelPreference,getStoredAIProviderEffortPreference} from '../../lib/aiProviderConfig';
 import {buildCodeArchitectureHazardInput,summarySheetToHazardSummaryRows,normalizeCodeArchitectureHazardRun,makeCodeArchitectureHazardId,traceabilityObjectToSummaryFields} from './codeArchitectureHazardUtils';
-import {prepareCodeHazardPreprocessing,createHazardPreprocessingMatcher,reconcileCodeHazardPreprocessing,hazardPreprocessingIdentitySheet} from './codeArchitectureHazardPreprocessing';
+import {prepareCodeHazardPreprocessing,createHazardPreprocessingMatcher,reconcileCodeHazardPreprocessing,hazardPreprocessingIdentitySheet,unselectedHazardPreprocessing} from './codeArchitectureHazardPreprocessing';
 import {createCodeHazardCheckpoint} from './codeHazardGenerationCheckpoint';
 import {saveCodeArchitectureHazardRun} from './codeArchitectureHazardStore';
 import {generateFastHazards,compactHazardSources} from './fastHazardPipeline';
@@ -62,7 +62,7 @@ export function fastHazardSheets(method,input,assessments) {
       // Preserve the original architecture snapshot; do not invent classifications.
       'Lifecycle Phase': /^(?:needs? review|unknown|unresolved)?$/i.test(String(source.lifecyclePhase || '').trim()) ? 'Not specified in source architecture' : source.lifecyclePhase,
       'Interface Type': /^(?:needs? review|unknown|unresolved)?$/i.test(String(source.interfaceType || '').trim()) ? 'Not specified in source architecture' : source.interfaceType,
-      'Raw Analysis Row ID':source.userPreprocessingId || result.id,
+      'Raw Analysis Row ID':source.userPreprocessingId || source.generatedAnalysisRowId || result.id,
       'Function':source.fromFunction,'Function (From)':source.fromFunction,'Control Action':source.controlAction,'Function (To)':source.toFunction,
       'Operational Context ID':source.operationalContextId,'Operational Scenario':source.operationalScenario || 'Not specified',
       'Operational Mode':source.operationalMode || 'Not specified','Operating Conditions':source.operatingConditions || 'Not specified',
@@ -135,7 +135,14 @@ export async function runFastCodeArchitectureHazardAnalysis({previousRun=null,re
    return {...row,userPreprocessing:{...row.userPreprocessing,values:usable}};
   })};
   if(!input.tableRows.length)throw new Error('No architecture interfaces are included for hazard analysis.');
-  const provider=getStoredActiveAIProvider();
+  const readModelSettings=()=>{
+    const selectedProvider=getStoredActiveAIProvider();
+    return {provider:selectedProvider,model:getStoredAIProviderModelPreference(selectedProvider,{includeDefault:true}),effort:getStoredAIProviderEffortPreference(selectedProvider)};
+  };
+  const modelSettings=readModelSettings();
+  const checkSettings=()=>{
+    if(JSON.stringify(modelSettings)!==JSON.stringify(readModelSettings()))throw Object.assign(new Error('AI settings changed during hazard analysis. Completed work is retained; continue with the original settings or regenerate using the new settings.'),{code:'HAZARD_SETTINGS_CHANGED'});
+  };
   const context={repository:repoMeta.repoName || input.repoId,organizationProfile:organizationContext || 'No organization profile enabled.',operationalContext:input.operationalContext,analysisContext:input.analysisContext,contextSources:input.contextSources};
   let manifestWarning='',checkpointWarning='',lastAssessmentProgress=null,generating=true;
   const reportAssessmentProgress=()=>{
@@ -148,12 +155,17 @@ export async function runFastCodeArchitectureHazardAnalysis({previousRun=null,re
   signal?.addEventListener('abort',cancelCheckpoint,{once:true});
   if(signal?.aborted)cancelCheckpoint();
   try{
-  const checkpoint=()=>createCodeHazardCheckpoint({pipeline:FAST_HAZARD_VERSION,projectId,repoId:input.repoId,method:normalizedMethod,provider,model:getStoredAIProviderModelPreference(provider,{includeDefault:true}),effort:getStoredAIProviderEffortPreference(provider)},
+  const checkpoint=()=>createCodeHazardCheckpoint({pipeline:FAST_HAZARD_VERSION,projectId,repoId:input.repoId,method:normalizedMethod,...modelSettings},
     {regenerate,signal:checkpointController.signal,onProgress:progress});
+  const attemptId=makeCodeArchitectureHazardId('cba-hazard-run');
+  // Positional HA-* IDs can now refer to another phrase/context. Never attach
+  // an earlier governed edit to an unrelated newly generated row with that ID.
+  const governedIds=new Set(Object.keys(previousRun?.userPreprocessing || {}));
+  input={...input,tableRows:input.tableRows.map((row,index)=>!row.userPreprocessingId && governedIds.has(`HA-${index+1}`)
+    ? {...row,generatedAnalysisRowId:`${attemptId}:HA-${index+1}`} : row)};
   const sources=compactHazardSources(input.tableRows);
   // Publish a small durable recovery record before any provider work. Row
   // checkpoints hold the assessments; this record makes them discoverable after reload.
-  const attemptId=makeCodeArchitectureHazardId('cba-hazard-run');
   const interrupted=normalizeCodeArchitectureHazardRun({
     id:attemptId,sourceRunId:attemptId,projectId,repoId:input.repoId,repoName:repoMeta.repoName || input.repoId,
     pipelineVersion:FAST_HAZARD_VERSION,hazardMethod:method,runState:'incomplete',
@@ -245,12 +257,12 @@ hazardMethod:method,hazardGenerationMode:'compact',
     operationalContext:input.operationalContext,operationalContexts:input.configuredOperationalContexts,analysisOperationalContexts:input.analysisOperationalContexts,selectedOperationalContextId:input.selectedOperationalContextId,
     organizationProfileProvenance:{...organizationProfileProvenance,effectiveContextIdentity:organizationProfileContextIdentity(organizationContext),effectiveEnabled:Boolean(organizationContext)},
     contextSources:input.contextSources,generatedSheets:reconciled.sheets,
-    userPreprocessing:reconciled.ownership,userPreprocessingConflicts:reconciled.conflicts,archivedUserPreprocessing:input.archivedUserPreprocessing || previousRun?.archivedUserPreprocessing || {},
+    userPreprocessing:{...unselectedHazardPreprocessing(input,previousRun),...reconciled.ownership},userPreprocessingConflicts:reconciled.conflicts,archivedUserPreprocessing:input.archivedUserPreprocessing || previousRun?.archivedUserPreprocessing || {},
   });
   };
   let assessments;
   try {
-    assessments=await generateFastHazards({method:normalizedMethod,sources,context,checkpoint,signal,checkpointSignal:checkpointController.signal,onProgress:patch=>{lastAssessmentProgress=patch;reportAssessmentProgress();},onStorageState:state=>{
+    assessments=await generateFastHazards({method:normalizedMethod,sources,context,checkpoint,signal,checkSettings,checkpointSignal:checkpointController.signal,onProgress:patch=>{lastAssessmentProgress=patch;reportAssessmentProgress();},onStorageState:state=>{
       checkpointWarning=state.unsaved?(state.status==='pending'?state.message:'Progress could not be saved. Keep this browser tab open.'):'';
       reportAssessmentProgress();
     }});

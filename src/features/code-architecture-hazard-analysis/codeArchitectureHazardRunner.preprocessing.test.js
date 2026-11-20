@@ -1,13 +1,15 @@
-jest.mock('./codeHazardApplicabilityScreening', () => ({screenCodeHazardApplicability: jest.fn(async input => ({...input, applicabilityScreening: {counts: {yes: 0, no: 0, unresolved: 0}}}))}));
-jest.mock('./codeHazardGenerationCheckpoint', () => ({createCodeHazardCheckpoint: jest.fn(async () => null)}));
-jest.mock('../../components/aiAnalysisLite', () => ({ runLiteAIAnalysis: jest.fn() }));
-jest.mock('./codeArchitectureHazardStore', () => ({ saveCodeArchitectureHazardRun: jest.fn(async run => run) }));
-jest.mock('./codeArchitectureHazardSourceAudit', () => ({ enrichHazardTableRowsWithSourceContent: jest.fn(async rows => rows) }));
 import { screenCodeHazardApplicability } from './codeHazardApplicabilityScreening';
 import { runLiteAIAnalysis } from '../../components/aiAnalysisLite';
 import { runLegacyCodeArchitectureHazardAnalysis as runCodeArchitectureHazardAnalysis } from './codeArchitectureHazardRunner';
 import { buildCodeArchitectureHazardCsvDraft } from './codeArchitectureHazardCsv';
 import { recordUserPreprocessing } from '../project-hazard-analysis/hazardUserPreprocessing';
+import { normalizeCodeArchitectureHazardRun } from './codeArchitectureHazardUtils';
+
+jest.mock('./codeHazardApplicabilityScreening', () => ({screenCodeHazardApplicability: jest.fn(async input => ({...input, applicabilityScreening: {counts: {yes: 0, no: 0, unresolved: 0}}}))}));
+jest.mock('./codeHazardGenerationCheckpoint', () => ({createCodeHazardCheckpoint: jest.fn(async () => null)}));
+jest.mock('../../components/aiAnalysisLite', () => ({ runLiteAIAnalysis: jest.fn() }));
+jest.mock('./codeArchitectureHazardStore', () => ({ saveCodeArchitectureHazardRun: jest.fn(async run => run) }));
+jest.mock('./codeArchitectureHazardSourceAudit', () => ({ enrichHazardTableRowsWithSourceContent: jest.fn(async rows => rows) }));
 
 const headers=['Function (From)','Control Action','Function (To)','Guide Phrase','Operational Context ID','Operational Scenario','Operational Mode','Operating Conditions','Raw Analysis Row ID','Guide Phrase Applicable','Guide Phrase Applicability Rationale','Hazard','Classification Resolution Status'];
 const options={method:'STPA-Textbook',projectId:'p1',repoMeta:{repoId:'repo'},cbaRows:[{from:'Estimate Pose',action:'Publish pose estimate',to:'Plan Motion',traceId:'trace1',fromNodeId:'from1',toNodeId:'to1',edgeId:'edge1',hazardAnalysisEligibility:'Include',hazardAnalysisEligibilitySource:'manual'}]};
@@ -26,6 +28,27 @@ test('runner leaves ordinary generation inputs and assessment behavior unchanged
  expect(result.generatedSheets.Summary[1][8]).toBe('AI-0');
  expect(result.generatedSheets.Summary[1][9]).toBe('Yes');
  expect(result.userPreprocessing).toBeUndefined();
+});
+test('legacy scoped generation preserves other-context decisions through normalization and re-expansion',async()=>{
+ const operationalContexts=[{id:'one',scenario:'First scenario',mode:'Automatic'},{id:'two',scenario:'Second scenario',mode:'Standby'}];
+ const config={...options,operationalContexts};
+ const previous=buildCodeArchitectureHazardCsvDraft(config,headers);
+ const row=previous.generatedSheets.Summary.slice(1).find(row=>row[4]==='two'),baseline=[...row];
+ row[9]='No';row[10]='Accepted second-context exclusion.';
+ previous.userPreprocessing={[row[8]]:recordUserPreprocessing(null,headers,row,[headers[9],headers[10]],baseline)};
+ const generate=runLiteAIAnalysis.getMockImplementation();
+ runLiteAIAnalysis.mockImplementation(async request=>{
+   const result=await generate(request);
+   if(request.tableRows.every(row=>row.operationalContextId==='one'))result.Summary[1][8]=row[8];
+   return result;
+ });
+ const selected=await runCodeArchitectureHazardAnalysis({...config,previousRun:previous,selectedOperationalContextId:'one'});
+ expect(selected.generatedSheets.Summary.slice(1).some(next=>next[8]===row[8])).toBe(false);
+ const reloaded=normalizeCodeArchitectureHazardRun(JSON.parse(JSON.stringify(selected)));
+ expect(reloaded.userPreprocessing[row[8]]).toEqual(previous.userPreprocessing[row[8]]);
+ const all=await runCodeArchitectureHazardAnalysis({...config,previousRun:reloaded});
+ const retained=all.generatedSheets.Summary.slice(1).find(next=>next[8]===row[8]);
+ expect(retained[9]).toBe('No');expect(retained[10]).toBe('Accepted second-context exclusion.');
 });
 test('runner completes unassessed rows while preserving imported No and its ID',async()=>{
  const previous=buildCodeArchitectureHazardCsvDraft(options,headers);

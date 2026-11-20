@@ -1,10 +1,18 @@
 import {generateFastHazards} from './resultsFirstHazardPipeline';
 import {screenFastApplicability} from './fastHazardApplicability';
 import {answer} from './fastHazardTestFixtures';
+import {canCompleteHazardWithAssumptions,canDeferHazardFailure,preferredHazardFailure} from './hazardDeferredFailures';
 const batch=p=>JSON.parse(p.split('\nRows: ')[1]);
 const source=(i,reviewed=true)=>({id:`HA-${i}`,action:'Apply torque',phrase:'Too late',...(reviewed?{reviewedApplicability:'Yes',reviewedRationale:'Reviewed'}:{})});
 const quiet={onDiagnostic:()=>{},onMetrics:()=>{}};
 beforeEach(()=>localStorage.clear());
+test('settings mismatch is fatal and cannot be replaced by provider-error assumption completion',()=>{
+ const changed=Object.assign(new Error('Settings changed'),{code:'HAZARD_SETTINGS_CHANGED',status:429});
+ const rateLimited=Object.assign(new Error('Rate limited'),{status:429});
+ expect(canCompleteHazardWithAssumptions(changed)).toBe(false);
+ expect(canDeferHazardFailure(changed)).toBe(false);
+ expect(preferredHazardFailure(rateLimited,changed)).toBe(changed);
+});
 test.each(['STPA','HARA','FHA'])('%s defers provider failure, completes independent work, then retries only unfinished rows',async method=>{
  const events=[];let first=true;
  const request=jest.fn(async p=>{

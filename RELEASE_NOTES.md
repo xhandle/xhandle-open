@@ -1,5 +1,15 @@
 # Release Notes
 
+## Unreleased
+
+- GitHub code analysis pauses automatically at API rate limits and resumes the same pinned source requests after reset. Concurrent reads share the wait; cancellation remains available.
+- Code analysis retries transient browser-storage transaction aborts, preserves competing edits, and retains the interruption reason beside incomplete progress.
+- Code analysis honors Stop during repository understanding and architecture classification, and rechecks provider settings before queued requests are sent.
+- Scoped hazard analysis preserves user decisions in other operational contexts across reloads and reruns, prevents row-ID collisions, and rejects unavailable context selections.
+- Hazard generation stops if provider/model/effort settings change, preserving partial recovery and keeping new checkpoints consistent with the settings used.
+- Project traceability diagrams offer a multi-select Layers filter for relationship types and two-finger trackpad panning while retaining pinch zoom.
+- Projects HARA includes rejected assessments in bounded reasoning repairs and recognizes explicit exclusions of failure probability in exposure rationales.
+
 ## v0.1.0
 
 Initial public open-source release of xHandle.

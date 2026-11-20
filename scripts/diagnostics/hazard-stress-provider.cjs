@@ -48,7 +48,7 @@ function respond(prompt) {
  const inputs=inputsFromPrompt(prompt);
  const results=inputs.map(input=>assessment(input));
  if(prompt.startsWith('First-pass '))return results.map(row=>({id:row.id,applicable:'Yes',rationale:row.applicabilityRationale}));
- if(prompt.startsWith('Perform the ISO 26262-3 HARA'))return {assessments:results};
+ if(prompt.includes('Perform the ISO 26262-3 HARA'))return {assessments:results};
  return results;
 }
 module.exports={inputsFromPrompt,assessment,respond};

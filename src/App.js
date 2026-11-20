@@ -4034,6 +4034,8 @@ const [codeArchitectureRepoDraft, setCodeArchitectureRepoDraft] = useState({
   analysisContextFiles: [],
 });
 const repoContextRequestRef = useRef(0);
+const repoSourceRequestRef = useRef(null);
+useEffect(() => () => repoSourceRequestRef.current?.abort(), [codeArchitectureRepoDraft, showCodeArchitectureRepoConfig, codeArchitectureRepoConfigProjectId, codeArchitectureRepoConfigRepoId]);
 const repoContextDraftRef = useRef(null);
 repoContextDraftRef.current = {draft:codeArchitectureRepoDraft, open:showCodeArchitectureRepoConfig, project:codeArchitectureRepoConfigProjectId, repo:codeArchitectureRepoConfigRepoId};
 const [codeArchitectureRepoConfigMessage, setCodeArchitectureRepoConfigMessage] = useState("");
@@ -4059,6 +4061,7 @@ const [codeArchitectureFolderView, setCodeArchitectureFolderView] = useState("pr
 const [codeArchitectureArtifactFocus, setCodeArchitectureArtifactFocus] = useState(null);
 const [hazardRemediationTab, setHazardRemediationTab] = useState("hazard-analysis");
 const [codeArchitectureFunctionalReviewRunId, setCodeArchitectureFunctionalReviewRunId] = useState("");
+const [codeArchitectureRunFailure, setCodeArchitectureRunFailure] = useState(null);
 const [codeArchitectureFunctionalTableOpenKey, setCodeArchitectureFunctionalTableOpenKey] = useState(null);
 const [highlightedCodeArchitectureFunctionalRowIndex, setHighlightedCodeArchitectureFunctionalRowIndex] = useState(null);
 const [codeArchitectureHazardSummaryOpenKey, setCodeArchitectureHazardSummaryOpenKey] = useState(null);
@@ -4398,6 +4401,9 @@ function upsertCodeArchitectureRepo(projectId, repoConfig, { setActive = true } 
 }
 
 function openCodeArchitectureRepoConfig(projectId = activeCodeArchitectureProjectId, repoId = null) {
+  repoSourceRequestRef.current?.abort();
+  setIsCodeArchitectureRepoVerifying(false);
+  setIsCodeArchitectureContextGenerating(false);
   const project = codeArchitectureProjects.find((entry) => entry.id === projectId) || null;
   const repoConfig = repoId
     ? (project?.repos || []).find((entry) => entry.id === repoId)
@@ -4454,16 +4460,24 @@ async function verifyCodeArchitectureRepo({ silent = false } = {}) {
   }
   setIsCodeArchitectureRepoVerifying(true);
   if (!silent) setCodeArchitectureRepoConfigMessage("Verifying repository...");
+  repoSourceRequestRef.current?.abort();
+  const controller = new AbortController();
+  repoSourceRequestRef.current = controller;
+  const started = repoContextDraftRef.current;
+  const current = () => !controller.signal.aborted && repositoryContextRequestIsCurrent(started, repoContextDraftRef.current, controller, repoSourceRequestRef.current);
+  const onProgress = ({ message }) => { if (current()) setCodeArchitectureRepoConfigMessage(message); };
   try {
     const headers = { "Content-Type": "application/json" };
     const response = await fetch(`${backendURL}/api/github/repo-files`, {
       method: "POST",
       headers,
+      signal: controller.signal,
       body: JSON.stringify(token ? { owner, repo, token } : { owner, repo }),
     });
-    const defaultBranch = await getDefaultBranch(owner, repo, token || undefined);
-    const repoFiles = filterSelectableRepoFiles(await listRepoFilesViaGitHub(owner, repo, token || undefined, defaultBranch));
+    const defaultBranch = await getDefaultBranch(owner, repo, token || undefined, controller.signal, onProgress);
+    const repoFiles = filterSelectableRepoFiles(await listRepoFilesViaGitHub(owner, repo, token || undefined, defaultBranch, controller.signal, onProgress));
     const json = await response.json().catch(() => ({}));
+    if (!current()) return null;
     if (!response.ok && !repoFiles.length) throw new Error(json?.error || `Verification failed (HTTP ${response.status})`);
     const count = repoFiles.length || (Array.isArray(json) ? json.length : Number(json?.files?.length || json?.count || 0));
     const repoConfig = makeRepoConfig({
@@ -4484,10 +4498,10 @@ async function verifyCodeArchitectureRepo({ silent = false } = {}) {
     setCodeArchitectureRepoFilesForModal(repoFiles);
     return { repoConfig, repoFiles };
   } catch (error) {
-    setCodeArchitectureRepoConfigMessage(error?.message || String(error));
+    if (current()) setCodeArchitectureRepoConfigMessage(error?.message || String(error));
     return null;
   } finally {
-    setIsCodeArchitectureRepoVerifying(false);
+    if (repoSourceRequestRef.current === controller) { repoSourceRequestRef.current = null; setIsCodeArchitectureRepoVerifying(false); }
   }
 }
 
@@ -4522,11 +4536,15 @@ async function generateCodeArchitectureRepoContext() {
 
   setIsCodeArchitectureContextGenerating(true);
   setCodeArchitectureRepoConfigMessage("Reading repository README and structure...");
+  repoSourceRequestRef.current?.abort();
+  const controller = new AbortController();
+  repoSourceRequestRef.current = controller;
+  const onProgress = ({ message }) => { if (current() && !controller.signal.aborted) setCodeArchitectureRepoConfigMessage(message); };
   try {
-    const branch = await getDefaultBranch(owner, repo, token || undefined);
-    const revision = await getCommitShaForRef(owner, repo, token || undefined, branch);
+    const branch = await getDefaultBranch(owner, repo, token || undefined, controller.signal, onProgress);
+    const revision = await getCommitShaForRef(owner, repo, token || undefined, branch, controller.signal, onProgress);
     const repoFiles = filterSelectableRepoFiles(
-      await listRepoFilesViaGitHub(owner, repo, token || undefined, revision),
+      await listRepoFilesViaGitHub(owner, repo, token || undefined, revision, controller.signal, onProgress),
     );
     if (!repoFiles.length) throw new Error("No readable repository files were found.");
     if (!current()) return;
@@ -4537,6 +4555,8 @@ async function generateCodeArchitectureRepoContext() {
       token: token || undefined,
       ref: revision,
       allFiles: repoFiles,
+      signal: controller.signal,
+      onProgress,
     });
     if (!current()) return;
     setCodeArchitectureRepoConfigMessage("Generating editable analysis context with the selected AI provider and model...");
@@ -4555,8 +4575,9 @@ async function generateCodeArchitectureRepoContext() {
     }));
     setCodeArchitectureRepoConfigMessage("Analysis context generated. Review or edit it before saving or analyzing.");
   } catch (error) {
-    if (current()) setCodeArchitectureRepoConfigMessage(error?.message || "Unable to generate repository analysis context.");
+    if (current() && !controller.signal.aborted) setCodeArchitectureRepoConfigMessage(error?.message || "Unable to generate repository analysis context.");
   } finally {
+    if (repoSourceRequestRef.current === controller) repoSourceRequestRef.current = null;
     if (requestId===repoContextRequestRef.current) setIsCodeArchitectureContextGenerating(false);
   }
 }
@@ -5426,6 +5447,7 @@ async function handleBaselineRepo({
   const setAnalysisLoading = value => { if (codeArchitectureScopeRef.current === storageKey) setCbaLoading(value); };
   codeArchitectureAnalysisInFlightRef.current = true;
   const analysisController = new AbortController();
+  setCodeArchitectureRunFailure(null);
   codeArchitectureAnalysisAbortRef.current = analysisController;
   startActivity(id, {
     title: "Generating code-based architecture",
@@ -5439,7 +5461,7 @@ async function handleBaselineRepo({
     setAnalysisLoading(true);
     await flushArchitectureWrites(storageKey);
     const result = publicationCheckpointKey
-      ? await recoverArchitecturePublication(storageKey, publicationCheckpointKey)
+      ? await recoverArchitecturePublication(storageKey, publicationCheckpointKey, analysisController.signal)
       : await generateFunctionalDecompositionFromGitHub(
       rows => { if (codeArchitectureScopeRef.current === storageKey) { setCbaLoading(false); publishCbaTableData(storageKey, rows); } },
       setAnalysisLoading,
@@ -5594,6 +5616,7 @@ async function handleBaselineRepo({
       return;
     }
     finishActivity(id, "error", String(e?.message || e));
+    setCodeArchitectureRunFailure({ scope:storageKey, message:String(e?.message || e) });
     throw e;
   } finally {
     if (codeArchitectureAnalysisAbortRef.current === analysisController) codeArchitectureAnalysisAbortRef.current = null;
@@ -17664,6 +17687,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
           key={activeCodeArchitectureRowsKey}
           scope={activeCodeArchitectureRowsKey}
           loading={cbaLoading}
+          failure={codeArchitectureRunFailure?.scope === activeCodeArchitectureRowsKey ? codeArchitectureRunFailure.message : ''}
           hasPublishedRows={cbaTableData.length > 0}
           onResume={(checkpoint) => handleBaselineRepo({ projectId: activeCodeArchitectureProject.id, repoConfig: activeCodeArchitectureRepo, publicationCheckpointKey: checkpoint.publicationReady ? checkpoint.key : undefined })}
         />}
@@ -21991,14 +22015,14 @@ const updateRiskInProject = async (projectId, predicate) => {
 
         {showCodeArchitectureRepoConfig && (
           <div className="xhandle-modal-viewport fixed inset-0 z-[120] flex items-center justify-center">
-            <div className="absolute inset-0 bg-black/40" onClick={() => { repoContextRequestRef.current++; setIsCodeArchitectureContextGenerating(false); setShowCodeArchitectureRepoConfig(false); }} />
+            <div className="absolute inset-0 bg-black/40" onClick={() => { repoSourceRequestRef.current?.abort(); repoContextRequestRef.current++; setIsCodeArchitectureContextGenerating(false); setShowCodeArchitectureRepoConfig(false); }} />
             <div className="relative z-[121] w-full max-w-2xl rounded-2xl border bg-white shadow-xl">
               <div className="px-5 py-4 border-b flex items-center justify-between">
                 <div>
                   <h2 className="text-base font-semibold text-slate-800">GitHub repo configuration</h2>
                   <p className="text-xs text-slate-500 mt-0.5">Connect, verify, and analyze a repository for this Code-Based Architecture project.</p>
                 </div>
-                <button className="rounded px-2 py-1 text-xs text-gray-600 hover:bg-gray-100" onClick={() => { repoContextRequestRef.current++; setIsCodeArchitectureContextGenerating(false); setShowCodeArchitectureRepoConfig(false); }}>✕</button>
+                <button className="rounded px-2 py-1 text-xs text-gray-600 hover:bg-gray-100" onClick={() => { repoSourceRequestRef.current?.abort(); repoContextRequestRef.current++; setIsCodeArchitectureContextGenerating(false); setShowCodeArchitectureRepoConfig(false); }}>✕</button>
               </div>
               <div className="px-5 py-4 space-y-4">
                 <label className="block text-sm font-medium">Source
@@ -22122,7 +22146,7 @@ const updateRiskInProject = async (projectId, predicate) => {
                 )}
               </div>
               <div className="px-5 py-4 border-t flex flex-wrap items-center justify-end gap-2">
-                <button onClick={() => { repoContextRequestRef.current++; setIsCodeArchitectureContextGenerating(false); setShowCodeArchitectureRepoConfig(false); }} className="px-3 py-2 rounded border text-sm hover:bg-gray-50">Cancel</button>
+                <button onClick={() => { repoSourceRequestRef.current?.abort(); repoContextRequestRef.current++; setIsCodeArchitectureContextGenerating(false); setShowCodeArchitectureRepoConfig(false); }} className="px-3 py-2 rounded border text-sm hover:bg-gray-50">Cancel</button>
                 <button onClick={() => saveCodeArchitectureRepoConfig({ analyze: false })} disabled={isCodeArchitectureContextGenerating || isCodeArchitectureRepoVerifying || isCodeArchitectureRepoAnalyzing} className="px-3 py-2 rounded border text-sm hover:bg-gray-50 disabled:opacity-60">
                   {isCodeArchitectureRepoVerifying ? "Verifying..." : "Verify & save"}
                 </button>

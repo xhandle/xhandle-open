@@ -67,7 +67,7 @@ test.each(['Publication failed', 'SOURCE_PUBLICATION_CONFLICT', 'AbortError'])('
   isLocalCodeSource:()=>false,codeArchitectureRowsKey:(p,r)=>`cba:${p}:${r}`,
   setSection(){},setCodeArchitectureWorkspaceTab(){},setCodeArchitectureFunctionalTableOpenKey(){},
   setHighlightedCodeArchitectureFunctionalRowIndex(){},setPendingCodeArchitectureDiagramTarget(){},setCodeArchitectureFunctionalReviewRunId(){},
-  setCbaLoadingLabel(){},setCbaLoadingProgress(){},setCbaLoadError(){},setCbaLoading:value=>{loading=value;},
+  setCbaLoadingLabel(){},setCbaLoadingProgress(){},setCbaLoadError(){},setCodeArchitectureRunFailure:jest.fn(),setCbaLoading:value=>{loading=value;},
   flushArchitectureWrites,requestCbaReload:jest.fn(),
   beginCbaLoad:api.beginLoad,publishCbaTableData:api.publishRows,startActivity(){},finishActivity(){},
   generateFunctionalDecompositionFromGitHub:()=>new Promise((resolve,reject)=>{rejectRun=reject;}),
@@ -83,6 +83,7 @@ test.each(['Publication failed', 'SOURCE_PUBLICATION_CONFLICT', 'AbortError'])('
  await act(async()=>{rejectRun(Object.assign(new Error(failure),{code:failure,name:failure}));await run;});
  expect(loading).toBe(false);expect(inFlight.current).toBe(false);expect(analysisScope.current).toBe(null);
  expect(env.requestCbaReload).toHaveBeenCalledWith(A);
+ expect(env.setCodeArchitectureRunFailure).toHaveBeenLastCalledWith({scope:A,message:failure});
  // Execute the requested reload with the current visit's callbacks.
  let finishHydration;
  const hydrated=new Promise(resolve=>{finishHydration=resolve;});

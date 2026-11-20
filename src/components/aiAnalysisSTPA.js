@@ -173,6 +173,9 @@ let json;
 let rateLimitWaitMs = 0;
 const rateLimitError = () => Object.assign(new Error("LLM proxy error (429): provider rate limit retry budget exhausted."), {status: 429, code: "HAZARD_RATE_LIMIT_EXHAUSTED"});
 for (let attempt = 1; attempt <= 5; attempt++) {
+  // Recheck the run's frozen settings before every physical request, including
+  // an HTTP 429 retry that may follow a long wait.
+  requestOptions.beforeRequest?.();
   const timeoutController = new AbortController();
   const abortFromCaller = () => timeoutController.abort();
   const timeoutMs = getHazardAnalysisRequestTimeoutMs(requestOptions);

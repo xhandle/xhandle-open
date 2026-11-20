@@ -216,6 +216,12 @@ Notes:
 
 The code-based architecture workflow can inspect public GitHub repositories without a token. For private repositories or higher rate limits, add a GitHub token in Settings under the `GitHub` tab.
 
+GitHub source retrieval automatically pauses when an API rate limit is detected and retries the interrupted request after GitHub's reset time or `Retry-After` delay. The progress display shows the expected retry time. Keep xHandle open during the wait; **Stop analysis** cancels it. Concurrent source reads share the wait, and a quota wait does not consume the normal network request timeout. When GitHub provides no usable reset time, xHandle uses bounded backoff rather than retrying indefinitely. Permission and authentication errors still require correction.
+
+For large repositories, selecting **Source → Local project folder** and choosing a local checkout avoids GitHub API requests for source retrieval.
+
+Code analysis retries transient browser-storage transaction aborts automatically. If it still stops, the recovery panel retains the interruption reason and saved progress; a zero failed-file count does not mean all selected files completed. Use **Retry incomplete analysis** to resume after addressing the displayed cause.
+
 Repository analysis runs locally in the browser and local API server. Generated rows, review state, assurance artifacts, and related workspace data are stored in local browser storage.
 
 ### Code architecture review app export

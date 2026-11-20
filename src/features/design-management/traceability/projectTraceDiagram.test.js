@@ -1,4 +1,4 @@
-import { indexProjectTrace, overviewTraceDiagram, objectTraceDiagram, layoutTraceDiagram, TRACE_NODE_LIMIT, TRACE_EDGE_LIMIT, TRACE_OBJECT_PAGE_SIZE } from './projectTraceDiagram';
+import { indexProjectTrace, projectTraceLayers, filterProjectTraceLayers, overviewTraceDiagram, objectTraceDiagram, layoutTraceDiagram, TRACE_NODE_LIMIT, TRACE_EDGE_LIMIT, TRACE_OBJECT_PAGE_SIZE } from './projectTraceDiagram';
 
 const nodes = [{ id: 'p', type: 'systems-engineering-project', title: 'Vehicle' }, { id: 'a', type: 'artifact', title: 'Safety' }, { id: 'b', type: 'artifact', title: 'Software' },
   { id: 'a1', type: 'requirement', artifactId: 'a', title: '', description: 'The controller shall reject invalid commands.' },
@@ -54,4 +54,37 @@ test('cyclic recorded relationships produce finite positions and preserve both a
   for (const position of positions.values()) { expect(Number.isFinite(position.x)).toBe(true); expect(Number.isFinite(position.y)).toBe(true); }
   expect(routes.size).toBe(2);
   expect(model.edges).toHaveLength(2);
+});
+
+test('relationship layers filter links in both levels while preserving documents and saved traceability', () => {
+  const index = indexProjectTrace(graph), layers = projectTraceLayers(index);
+  expect(layers.map(layer => layer.id)).toEqual(['contains', 'uses-drafting-input', 'refines']);
+  const filtered = filterProjectTraceLayers(index, ['refines']);
+  expect(filtered.nodes).toBe(index.nodes); expect(filtered.objects).toBe(index.objects); expect(filtered.gaps).toBe(index.gaps);
+  expect([...filtered.links.keys()]).toEqual(['citation1', 'citation2']);
+  const overview = overviewTraceDiagram(filtered);
+  expect(overview.nodes.map(node => node.id)).toEqual(['p', 'a', 'b']);
+  expect(overview.edges).toHaveLength(1);
+  expect(overview.edges[0]).toMatchObject({ type: 'refines', from: 'b', to: 'a', members: ['citation1', 'citation2'] });
+  const objects = objectTraceDiagram(filtered, 'a');
+  expect(objects.nodes.map(node => node.id)).toEqual(['a', 'a1', 'b1', 'b2']);
+  expect(objects.edges.map(edge => edge.id)).toEqual(['citation1', 'citation2']);
+  expect(index.nodes.size).toBe(6); expect(index.links.size).toBe(5);
+  expect(overviewTraceDiagram(filterProjectTraceLayers(index, layers.map(layer => layer.id)))).toEqual(overviewTraceDiagram(index));
+});
+
+test('relationship filtering precedes object expansion and display limits, and deselecting all retains context', () => {
+  const others = Array.from({ length: TRACE_EDGE_LIMIT + 5 }, (_, i) => ({ id: `r${i}`, type: 'requirement', artifactId: 'b' }));
+  const index = indexProjectTrace({ nodes: [
+    { id: 'a', type: 'artifact' }, { id: 'b', type: 'artifact' }, { id: 'root', type: 'requirement', artifactId: 'a' },
+    ...others, { id: 'old', type: 'source-snapshot', historical: true, artifactId: 'b', revision: 1 },
+  ], links: [...others.map(node => ({ id: `link-${node.id}`, from: 'root', to: node.id, type: 'contains' })),
+    { id: 'cite', from: 'root', to: 'old', type: 'refines' }] });
+  const model = objectTraceDiagram(filterProjectTraceLayers(index, ['refines']), 'a');
+  expect(model.nodes.map(node => node.id)).toEqual(['a', 'root', 'old']);
+  expect(model.edges[0].members).toEqual(['cite']); expect(model.truncated).toBe(false);
+  const empty = overviewTraceDiagram(filterProjectTraceLayers(index, []));
+  expect(empty.nodes).toHaveLength(3); expect(empty.edges).toHaveLength(0);
+  expect(objectTraceDiagram(filterProjectTraceLayers(index, []), 'a').nodes.map(node => node.id)).toEqual(['a', 'root']);
+  expect(projectTraceLayers(indexProjectTrace({ nodes: [], links: [] }))).toEqual([]);
 });

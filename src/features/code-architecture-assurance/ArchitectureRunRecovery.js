@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { readLatestArchitectureCheckpoint, readArchitectureCheckpoint } from './codeArchitectureStorage';
 
-export default function ArchitectureRunRecovery({ scope, loading, hasPublishedRows, onResume }) {
+export default function ArchitectureRunRecovery({ scope, loading, hasPublishedRows, onResume, failure = '' }) {
   const [checkpoint, setCheckpoint] = useState(null);
   const [error, setError] = useState('');
   const [retrying, setRetrying] = useState(false);
@@ -14,7 +14,7 @@ export default function ArchitectureRunRecovery({ scope, loading, hasPublishedRo
     }).catch(e => { if (active) setError(`Unable to read saved analysis progress: ${e.message}`); });
     return () => { active = false; };
   }, [scope, loading, refresh]);
-  if (loading || (!checkpoint && !error)) return null;
+  if (loading || (!checkpoint && !error && !failure)) return null;
   const resume = async () => {
     setRetrying(true); setError('');
     try { await onResume(checkpoint); }
@@ -31,6 +31,7 @@ export default function ArchitectureRunRecovery({ scope, loading, hasPublishedRo
     } catch (e) { setError(e.message); }
   };
   return <section aria-label="Incomplete architecture analysis" className="shrink-0 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-slate-800">
+    {(failure || checkpoint?.interruption?.message) && <p role="alert" className="mb-2 font-medium">{checkpoint?.interruption?.status === 'cancelled' ? 'Analysis cancelled' : 'Analysis stopped'}: {failure || checkpoint.interruption.message}{checkpoint?.interruption?.path ? ` (${checkpoint.interruption.path})` : ''}</p>}
     {checkpoint && <>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <strong>{checkpoint.publicationReady ? 'Analysis complete — save pending' : 'Analysis unfinished — progress saved'}</strong>
@@ -41,6 +42,7 @@ export default function ArchitectureRunRecovery({ scope, loading, hasPublishedRo
       </div>
       {checkpoint.durable === false && <p role="alert">Completed results are only in memory. Export them before refreshing; they have not been saved to browser storage.</p>}
       <p className="mt-2">{checkpoint.completed} of {checkpoint.total} files completed. {checkpoint.failedFiles.length} failed. {checkpoint.rowCount} draft relationships saved.</p>
+      {!checkpoint.failedFiles.length && checkpoint.completed < checkpoint.total && <p>{Math.max(0, checkpoint.total - checkpoint.completed)} files remain unfinished. The failed-file count does not include work interrupted before a file-level result was recorded.</p>}
       <p>{hasPublishedRows ? 'Your last completed architecture remains available below.' : 'No completed architecture has been published yet.'} Saved draft relationships are available for inspection; they are not used in downstream analysis.</p>
       {checkpoint.failedFiles.length > 0 && <details className="mt-2"><summary className="cursor-pointer font-semibold">File failure details</summary>
         <ul className="max-h-48 overflow-auto pl-5 list-disc">{checkpoint.failedFiles.map(file => <li key={file.path}><strong>{file.path}</strong>: {file.message}</li>)}</ul>

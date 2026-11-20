@@ -20,6 +20,54 @@ jest.mock('../../components/aiAnalysisLite',()=>({runLiteAIAnalysis:jest.fn()}))
 
 const base={projectId:'project-A',repoMeta:{repoId:'repo-A'},cbaRows:[{from:'Planner',action:'Apply torque',to:'Actuator',traceId:'functional-1',rowRef:1,hazardAnalysisEligibility:'Include',hazardAnalysisEligibilitySource:'manual'}],organizationContext:'Org requires fault injection for torque limits.',operationalContexts:[{id:'drive',scenario:'Urban driving',mode:'Automatic',conditions:'Wet road'}]};
 beforeEach(()=>{jest.clearAllMocks();saveCodeArchitectureHazardRun.mockResolvedValue(undefined);});
+test.each([
+ ['provider','xhandle.aiProvider.active','anthropic'],
+ ['model','xhandle.aiProviderModel.openai','gpt-4.1'],
+ ['effort','xhandle.aiProviderEffort.openai','low'],
+])('changing %s cannot accept responses or publish under the original checkpoint settings',async(_kind,key,value)=>{
+ const before=localStorage.getItem(key);
+ try{
+  fetchLLMResponse.mockImplementation(async prompt=>{
+   localStorage.setItem(key,value);
+   return JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>answer('STPA',id)));
+  });
+  const failure=await runCodeArchitectureHazardAnalysis(base).catch(error=>error);
+  expect(failure).toMatchObject({code:'HAZARD_SETTINGS_CHANGED',recoveryRun:{runState:'incomplete',validatedAssessments:0}});
+  expect(fetchLLMResponse).toHaveBeenCalledTimes(1);
+  expect(saveCodeArchitectureHazardRun.mock.calls.every(([run])=>run.runState==='incomplete')).toBe(true);
+ }finally{if(before===null)localStorage.removeItem(key);else localStorage.setItem(key,before);}
+});
+test.each(['STPA-Textbook','HARA'])('%s rejects an unavailable context before saving or calling the provider',async method=>{
+ const previous={id:'previous',projectId:base.projectId,repoId:base.repoMeta.repoId,hazardMethod:method,runState:'complete'};
+ const snapshot=JSON.stringify(previous);
+ await expect(runCodeArchitectureHazardAnalysis({...base,method,previousRun:previous,selectedOperationalContextId:'deleted-context'})).rejects.toThrow('selected operational context is no longer available');
+ expect(fetchLLMResponse).not.toHaveBeenCalled();expect(saveCodeArchitectureHazardRun).not.toHaveBeenCalled();
+ expect(JSON.stringify(previous)).toBe(snapshot);
+});
+test.each(['STPA-Textbook','HARA'])('%s preserves edits in other contexts through a scoped run and reload',async method=>{
+ const storage=jest.requireActual('./codeArchitectureHazardStore');
+ saveCodeArchitectureHazardRun.mockImplementation(storage.saveCodeArchitectureHazardRun);
+ const short=method==='HARA'?'HARA':'STPA';
+ fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>answer(short,id))));
+ const operationalContexts=[...base.operationalContexts,{id:'park',scenario:'Parked',mode:'Standby'}];
+ const first=await runCodeArchitectureHazardAnalysis({...base,method,operationalContexts});
+ const [headers,...rows]=first.generatedSheets.Summary;
+ const row=rows.find(row=>row[headers.indexOf('Operational Context ID')]==='park'),prior=[...row];
+ const id=row[headers.indexOf('Raw Analysis Row ID')];
+ row[headers.indexOf('Guide Phrase Applicable')]='No';
+ row[headers.indexOf('Guide Phrase Applicability Rationale')]='Accepted parked-context exclusion.';
+ first.userPreprocessing={[id]:recordUserPreprocessing(null,headers,row,['Guide Phrase Applicable','Guide Phrase Applicability Rationale'],prior)};
+ const selected=await runCodeArchitectureHazardAnalysis({...base,method,operationalContexts,selectedOperationalContextId:'drive',previousRun:first});
+ expect(selected.generatedSheets.Summary.slice(1).every(row=>row[headers.indexOf('Operational Context ID')]==='drive')).toBe(true);
+ expect(selected.generatedSheets.Summary.slice(1).some(row=>row[headers.indexOf('Raw Analysis Row ID')]===id)).toBe(false);
+ expect(new Set(selected.generatedSheets.Summary.slice(1).map(row=>row[headers.indexOf('Raw Analysis Row ID')])).size).toBe(7);
+ expect(selected.userPreprocessing[id]).toEqual(first.userPreprocessing[id]);
+ const reloaded=normalizeCodeArchitectureHazardRun(await storage.getCodeArchitectureHazardRunById(selected.id));
+ const all=await runCodeArchitectureHazardAnalysis({...base,method,operationalContexts,previousRun:reloaded});
+ const retained=all.generatedSheets.Summary.slice(1).find(row=>row[headers.indexOf('Raw Analysis Row ID')]===id);
+ expect(retained[headers.indexOf('Guide Phrase Applicable')]).toBe('No');
+ expect(retained[headers.indexOf('Guide Phrase Applicability Rationale')]).toBe('Accepted parked-context exclusion.');
+});
 test('HARA retains new fields and assigns the highest safety-goal ASIL across result batches and storage reload',async()=>{
  const actual=jest.requireActual('./codeArchitectureHazardStore');
  saveCodeArchitectureHazardRun.mockImplementation(actual.saveCodeArchitectureHazardRun);

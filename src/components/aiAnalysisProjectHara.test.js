@@ -149,11 +149,83 @@ test('generation repairs unsound risk arguments and returns a complete decision 
   fetchLLMResponse.mockResolvedValueOnce(JSON.stringify({assessments:[{...assessment(),severity:'S2',severityRationale:'Death is not certain if fallback mechanisms activate.',exposure:'E3',exposureEvidence:'',exposureRationale:'Exposure is medium because dispatch receipt failures are common.',controllability:'C3',controllabilityRationale:'Passengers cannot detect or repair an internal audio fault.',safeState:'Activate undocumented cellular fallback.',ftti:'200 ms',fttiRationale:'Covers 2 consecutive frames.'}]}));
   const result=await generateProjectHaraAnalysisSheets(options()),cell=name=>result.Summary[1][result.Summary[0].indexOf(name)];
   expect(fetchLLMResponse).toHaveBeenCalledTimes(2);expect(fetchLLMResponse.mock.calls[1][0]).toContain('EXPOSURE_FAILURE_BASIS');
+  expect(fetchLLMResponse.mock.calls[1][0]).toContain('Exposure is medium because dispatch receipt failures are common.');
+  expect(fetchLLMResponse.mock.calls[1][0]).toContain('Reconsider the E class from that basis');
   expect(cell('Severity')).toBe('S3');expect(cell('Exposure')).toBe('E4');expect(cell('Controllability')).toBe('C3');expect(cell('ASIL')).toBe('ASIL D');
   expect(cell('Safe State')).toBe('Vehicle stopped.');expect(cell('Fault Tolerant Time Interval')).toBe('100 ms');
   expect(cell('Assessment Status')).toBe('Complete');expect(cell('Assessment Basis')).toBe('Engineering judgment');
   expect(cell('Assessment Assumptions')).toContain('engineering estimate');
   expect(result['HARA Coverage'][3][1]).toBe('Scenario-specific HARA for the selected operational scenario.');
+});
+
+test('a second targeted reasoning repair includes the latest rejected assessment and then completes', async () => {
+  const first = { ...assessment(), exposureRationale: 'Exposure is E3 because communication failure probability is medium.' };
+  const second = { ...assessment(), exposureRationale: 'Exposure is E3 because network failure rates are moderate.' };
+  fetchLLMResponse.mockResolvedValueOnce(JSON.stringify({ assessments: [first] }))
+    .mockResolvedValueOnce(JSON.stringify({ assessments: [second] }));
+  const onProgress = jest.fn();
+  const result = await generateProjectHaraAnalysisSheets({ ...options(), onProgress });
+  expect(fetchLLMResponse).toHaveBeenCalledTimes(3);
+  expect(fetchLLMResponse.mock.calls[1][0]).toContain(first.exposureRationale);
+  expect(fetchLLMResponse.mock.calls[2][0]).toContain(second.exposureRationale);
+  expect(fetchLLMResponse.mock.calls[2][0]).not.toContain(first.exposureRationale);
+  expect(onProgress.mock.calls.some(([progress]) => /Repairing HARA reasoning.*event-1.*repair 2 of 2/.test(progress.message))).toBe(true);
+  expect(result.Summary[1][result.Summary[0].indexOf('Exposure Rationale')]).toBe(assessment().exposureRationale);
+  expect(result.Summary[1][result.Summary[0].indexOf('Assessment Status')]).toBe('Complete');
+});
+
+test('output recovery can repair a singleton reasoning failure and continue the remaining events', async () => {
+  const sizes = [], onProgress = jest.fn(); let invalid = 0;
+  fetchLLMResponse.mockImplementation(async prompt => {
+    const inputs = promptEvents(prompt); sizes.push(inputs.length);
+    if (inputs.length > 1) throw truncated();
+    const row = assessment(inputs[0].id);
+    if (row.id === 'event-1' && invalid++ < 2) row.exposureRationale = 'Exposure is low because communication failure rates are low.';
+    return JSON.stringify({ assessments: [row] });
+  });
+  const result = await generateProjectHaraAnalysisSheets({ ...multipleEvents(4), onProgress });
+  expect(sizes).toEqual([3, 1, 1, 1, 1, 1, 1]);
+  expect(onProgress.mock.calls.some(([progress]) => /smaller event batches/.test(progress.message))).toBe(true);
+  expect(onProgress.mock.calls.some(([progress]) => /Repairing HARA reasoning/.test(progress.message))).toBe(true);
+  expect(result.Summary.slice(1).every(row => row[result.Summary[0].indexOf('Exposure')] === 'E4')).toBe(true);
+});
+
+test('persistent reasoning failures stop after bounded repairs and preserve completed checkpoints on retry', async () => {
+  const saved = new Map();
+  const generationCheckpoint = { read: jest.fn(async key => saved.get(JSON.stringify(key))), write: jest.fn(async (key, value) => saved.set(JSON.stringify(key), value)) };
+  const input = multipleEvents(2), calls = [];
+  fetchLLMResponse.mockImplementation(async prompt => {
+    const inputs = promptEvents(prompt); calls.push(inputs.map(input => input.id));
+    if (inputs.length > 1) throw truncated();
+    return JSON.stringify({ assessments: inputs.map(input => ({ ...assessment(input.id),
+      ...(input.id === 'event-2' ? { exposureRationale: 'Exposure is E2 because dispatch failure rates are low.' } : {}),
+    })) });
+  });
+  await expect(generateProjectHaraAnalysisSheets({ ...input, generationCheckpoint })).rejects.toThrow(/event-2: EXPOSURE_FAILURE_BASIS[\s\S]*Saved hazard evidence is retained/);
+  expect(calls).toEqual([['event-1', 'event-2'], ['event-1'], ['event-2'], ['event-2'], ['event-2']]);
+  expect(generationCheckpoint.write).toHaveBeenCalledTimes(1);
+  const [headers, ...rows] = publications.at(-1).Project.Summary;
+  expect(rows[0][headers.indexOf('Exposure')]).toBe('E4');
+  expect(rows[1][headers.indexOf('Exposure')]).toBe('');
+  expect(rows[1][headers.indexOf('ASIL')]).toBe('Not assessed');
+  fetchLLMResponse.mockClear();
+  fetchLLMResponse.mockImplementation(async prompt => {
+    const inputs = promptEvents(prompt);
+    if (inputs.length > 1) throw truncated();
+    return JSON.stringify({ assessments: inputs.map(input => assessment(input.id)) });
+  });
+  const resumed = await generateProjectHaraAnalysisSheets({ ...input, generationCheckpoint });
+  expect(fetchLLMResponse.mock.calls.map(([prompt]) => promptEvents(prompt).map(input => input.id))).toEqual([['event-1', 'event-2'], ['event-2']]);
+  expect(resumed.Summary.slice(1).every(row => row[resumed.Summary[0].indexOf('Exposure')] === 'E4')).toBe(true);
+});
+
+test('cancellation during a reasoning repair stops before another provider request', async () => {
+  const controller = new AbortController();
+  fetchLLMResponse.mockResolvedValue(JSON.stringify({ assessments: [{ ...assessment(), exposureRationale: 'Exposure is low because network failure rates are low.' }] }));
+  await expect(generateProjectHaraAnalysisSheets({ ...options(), signal: controller.signal, onProgress: progress => {
+    if (/Repairing HARA reasoning/.test(progress.message)) controller.abort();
+  } })).rejects.toMatchObject({ name: 'AbortError' });
+  expect(fetchLLMResponse).toHaveBeenCalledTimes(1);
 });
 test('an evidence-absence exclusion is reviewed rather than treated as established non-applicability',async()=>{
   const headers=[...sourceHeaders,'Guide Phrase Applicability Rationale'],no=[...source,'No interface evidence was provided.'];no[4]='No';

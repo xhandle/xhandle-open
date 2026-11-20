@@ -6,7 +6,7 @@ import { createCodeHazardCheckpoint } from './codeHazardGenerationCheckpoint';
 import { getStoredActiveAIProvider, getStoredAIProviderModelPreference, getStoredAIProviderEffortPreference } from '../../lib/aiProviderConfig';
 import { functionalModelIsReady } from '../code-architecture-context/functionalModel';
 import { fillNotApplicableHazardSummary } from '../project-hazard-analysis/hazardNotApplicableCells';
-import { prepareCodeHazardPreprocessing, reconcileCodeHazardPreprocessing } from './codeArchitectureHazardPreprocessing';
+import { prepareCodeHazardPreprocessing, reconcileCodeHazardPreprocessing, hazardPreprocessingIdentitySheet, unselectedHazardPreprocessing } from './codeArchitectureHazardPreprocessing';
 import { ensureHazardAnalysisRowIds } from '../project-hazard-analysis/classificationResolutionStatus';
 import { runLiteAIAnalysis } from "../../components/aiAnalysisLite";
 import { saveCodeArchitectureHazardRun, resolveCodeArchitectureHazardRun } from "./codeArchitectureHazardStore";
@@ -200,6 +200,15 @@ export async function runLegacyCodeArchitectureHazardAnalysis({
     sourceAuditedTableRows
   );
 
+  const unselected = unselectedHazardPreprocessing(input, previousRun);
+  const rawIdColumn = generatedSheets.Summary?.[0]?.indexOf('Raw Analysis Row ID') ?? -1;
+  if (rawIdColumn >= 0 && Object.keys(unselected).length) {
+    generatedSheets = {...generatedSheets, Summary:generatedSheets.Summary.map((row,index)=>{
+      if (!index || !unselected[row[rawIdColumn]]) return row;
+      const next = [...row]; next[rawIdColumn] = `${sourceRunId}:${row[rawIdColumn]}`; return next;
+    })};
+  }
+
   const hasPreprocessing = input.tableRows.some(row => row.userPreprocessing);
   if (hasPreprocessing && generatedSheets.Summary) generatedSheets = { ...generatedSheets, Summary: ensureHazardAnalysisRowIds(generatedSheets.Summary) };
   const reconciled = reconcileCodeHazardPreprocessing(generatedSheets, input.tableRows);
@@ -250,8 +259,9 @@ export async function runLegacyCodeArchitectureHazardAnalysis({
   });
 
   run.archivedUserPreprocessing = input.archivedUserPreprocessing || previousRun?.archivedUserPreprocessing || {};
-  if (hasPreprocessing) {
-    run.userPreprocessing = { ...Object.fromEntries(Object.entries(previousRun?.userPreprocessing || {}).filter(([key]) => !run.archivedUserPreprocessing[key])), ...reconciled.ownership };
+  if (hasPreprocessing || Object.keys(unselected).length) {
+    run.userPreprocessing = { ...unselected, ...reconciled.ownership };
+    run.preprocessingIdentitySheet = hazardPreprocessingIdentitySheet(previousRun);
     run.userPreprocessingConflicts = reconciled.conflicts;
   }
   checkCancelled();

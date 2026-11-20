@@ -1,7 +1,7 @@
 import {hasUnresolvedHazardText,hasLockedApplicabilityRationale} from './hazardFieldContract';
 import { calculateProjectHaraAsil } from '../project-hazard-analysis/projectHara';
 import { CODE_HARA_COLUMNS, HARA_ADDITIONAL_FIELDS, HARA_OPTIONAL_FIELDS } from './codeArchitectureHara';
-export const FAST_HAZARD_VERSION = 'compact-hazard-v7-grounded-results-first';
+export const FAST_HAZARD_VERSION = 'compact-hazard-v8-frozen-settings-results-first';
 export const FAST_HAZARD_COLUMNS = {
   STPA: ['Function','Operational Scenario','Operational Mode','Operating Conditions','Guide Phrase','Guide Phrase Applicable','Unsafe Control Action','Loss','Hazard','Causal Scenario','Safety Constraint','Verification','Safety Classification'],
   HARA: CODE_HARA_COLUMNS,

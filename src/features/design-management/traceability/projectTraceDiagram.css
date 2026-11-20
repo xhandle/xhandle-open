@@ -2,6 +2,10 @@
 .project-trace-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:6px 0;flex:none;font-size:12px}
 .project-trace-tools label{display:flex;align-items:center;gap:6px}.project-trace-tools select,.project-trace-tools input{min-width:0;max-width:240px;border:1px solid #cbd5e1;border-radius:6px;padding:5px 7px;background:white}
 .project-trace-tools button,.project-trace-paging button,.project-trace-open{border:1px solid #ccd5e4;border-radius:6px;background:white;padding:5px 8px;font-size:12px}.project-trace-tools button:disabled,.project-trace-paging button:disabled{opacity:.45}
+.project-trace-layers{position:relative}.project-trace-layers>button{display:flex;align-items:center;gap:8px}.project-trace-layers>button[aria-expanded=true]{border-color:#6366f1}.project-trace-layers>button span{color:#64748b}
+.project-trace-layers-panel{position:absolute;top:calc(100% + 6px);left:0;z-index:10;width:300px;max-width:calc(100vw - 32px);padding:10px;border:1px solid #ccd5e4;border-radius:8px;background:white;box-shadow:0 8px 24px #17243b26}
+.project-trace-layers-heading{font-weight:600;margin:0 0 8px}
+.project-trace-layers-actions{display:flex;gap:6px;padding-bottom:8px;border-bottom:1px solid #e2e8f0}.project-trace-layers-options{max-height:260px;overflow:auto;padding-top:5px}.project-trace-layers-options label{align-items:flex-start;padding:6px 2px;overflow-wrap:anywhere}.project-trace-layers-options input{flex:none;margin-top:2px;accent-color:#4338ca}
 .project-trace-body{display:flex;flex:1;min-height:0;min-width:0;overflow:hidden;border:1px solid #dce3ef;border-radius:9px;background:#fafbfe}
 .project-trace-canvas{flex:1;min-width:0;min-height:260px}.project-trace-canvas .react-flow__node{border:0;background:transparent;padding:0}
 .project-trace-node{position:relative;box-sizing:border-box;width:196px;height:140px;text-align:center;background:transparent;border:0;padding:0 4px}

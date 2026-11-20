@@ -15,7 +15,9 @@ if (value('--out')) { if (fs.existsSync(output)) throw Error('Choose a fresh --o
 const selected = value('--only')?.split(',');
 const known = ['frontend','capacity','backend','native-node','native-python','build','fixtures','shell','workspace','hara','hazard-profile','platform-profile','design','artifact-generation','derivation','safety-inheritance','collaborator','worker'];
 if (selected?.some(name => !known.includes(name))) throw Error('Unknown suite in --only. Use --help for suite names.');
-const playwright = value('--playwright') || process.env.XHANDLE_PLAYWRIGHT_MODULE || require.resolve('playwright-core');
+// Resolve explicit paths too: fail before lengthy build/test work when a
+// temporary automation directory has been removed or left incomplete.
+const playwright = require.resolve(value('--playwright') || process.env.XHANDLE_PLAYWRIGHT_MODULE || 'playwright-core');
 const electron = value('--electron') || require(path.join(desktop, 'node_modules/electron'));
 const env = cleanEnvironment({ XHANDLE_PLAYWRIGHT_MODULE: playwright, PLAYWRIGHT_MODULE: playwright, NODE_OPTIONS: '--max-old-space-size=8192', ELECTRON_PATH: electron, BABEL_ENV: 'production' });
 const source = fingerprint(root);

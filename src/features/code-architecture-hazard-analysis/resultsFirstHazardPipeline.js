@@ -39,7 +39,7 @@ Interfaces: ${JSON.stringify(packed.interfaces)}
 Rows: ${JSON.stringify(rows)}`;
 }
 
-export async function generateFastHazards({method,sources,context,checkpoint,signal,checkpointSignal=signal,onProgress=()=>{},onStorageState=()=>{},onMetrics=event=>console.info('[hazard-analysis-performance]',JSON.stringify(event)),onDiagnostic=event=>console.info('[hazard-analysis-batch]',JSON.stringify(event)),
+export async function generateFastHazards({method,sources,context,checkpoint,signal,checkSettings=()=>{},checkpointSignal=signal,onProgress=()=>{},onStorageState=()=>{},onMetrics=event=>console.info('[hazard-analysis-performance]',JSON.stringify(event)),onDiagnostic=event=>console.info('[hazard-analysis-batch]',JSON.stringify(event)),
  applicabilityRequest=(prompt,options)=>fetchLLMResponse(prompt,{},[],'',{workflow:'hazard-applicability-screen',signal,...options}),
  request=(prompt,options)=>fetchLLMResponse(prompt,{},[],'',{workflow:'hazard-row-generation',signal,...options}),
 }) {
@@ -57,7 +57,14 @@ export async function generateFastHazards({method,sources,context,checkpoint,sig
    const startedAt=Date.now(),diagnostic={method,stage,batchId:++batchId,rows,inputChars:prompt.length,inputBytes:hazardPromptBytes(prompt),inputByteLimit:options.inputByteLimit,...(options.payloadBytes?{payloadBytes:options.payloadBytes}:{}),maxTokens:options.maxTokens,retryReason,...(options.screeningMode?{screeningMode:options.screeningMode}:{})};
    onDiagnostic({...diagnostic,event:'started'});
    try{
-     const value=await recover(()=>{const send=()=>{metrics[stage].requests++;return fn(prompt,{...options,onResponseMetadata:metadata=>onDiagnostic({...diagnostic,event:'response',...metadata})});};return stage==='applicability' || stage==='evidence'?screeningScheduler.run('generation',send):send();},{stage,rows,batchId:diagnostic.batchId});
+     const value=await recover(()=>{
+       const send=async()=>{
+         checkSettings();metrics[stage].requests++;
+         const value=await fn(prompt,{...options,beforeRequest:checkSettings,onResponseMetadata:metadata=>onDiagnostic({...diagnostic,event:'response',...metadata})});
+         checkSettings();return value;
+       };
+       return stage==='applicability' || stage==='evidence'?screeningScheduler.run('generation',send):send();
+     },{stage,rows,batchId:diagnostic.batchId});
      onDiagnostic({...diagnostic,event:'finished',elapsedMs:Date.now()-startedAt});return value;
    }catch(error){onDiagnostic({...diagnostic,event:'failed',elapsedMs:Date.now()-startedAt,errorType:error.name});throw error;}
  };
@@ -74,6 +81,7 @@ export async function generateFastHazards({method,sources,context,checkpoint,sig
  const report=()=>onProgress({step:20+75*results.size/Math.max(1,sources.length),total:100,completed:results.size,message:`Assessed ${results.size} of ${sources.length} ${method} guide-phrase rows`});
  const excluded=(source,decision)=>({id:source.id,applicable:'No',applicabilityRationale:decision.rationale,classification:'Not applicable',classificationRationale:'Guide phrase excluded.',assumptions:'Not applicable',...(decision.evidencePreparation?{evidencePreparation:decision.evidencePreparation}:{})});
  const completeWithAssumptions=async()=>{
+  checkSettings();
   for(const source of sources){
    check();
    if(results.has(source.id))continue;
@@ -87,10 +95,10 @@ export async function generateFastHazards({method,sources,context,checkpoint,sig
   await cache.flush();check();assessmentComplete=true;return sources.map(s=>results.get(s.id));
  };
  try{
-  check();
+  check();checkSettings();
   for(let offset=0;offset<sources.length;offset+=48){
   const group=sources.slice(offset,offset+48);
-  const saved=await cache.readMany(group.map(key));check();
+  const saved=await cache.readMany(group.map(key));check();checkSettings();
   group.forEach((source,i)=>{if(source.reviewedApplicability==='No'){results.set(source.id,excluded(source,{rationale:source.reviewedRationale || 'User applicability decision: No.'}));excludedCount++;return;}const decision=saved[i]?.acceptedApplicability;const validationSource=isAcceptedApplicabilityDecision(decision)?{...source,screenedApplicability:decision.applicable,screenedRationale:decision.rationale}:source;if(saved[i] && !validateFastAssessment(method,saved[i],validationSource,{structuralOnly:true}).length){results.set(source.id,saved[i]);recovered++;}});
   }
   report();

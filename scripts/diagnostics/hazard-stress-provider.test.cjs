@@ -10,6 +10,10 @@ test('HARA fixture returns the event envelope and supported ratings without supp
  const result=respond('Perform the ISO 26262-3 HARA\nEvents:\n[{"id":"event-9"}]');
  assert.equal(result.assessments[0].id,'event-9');assert.equal(result.assessments[0].severity,'S3');assert.equal(result.assessments[0].asil,undefined);
 });
+test('HARA repair instructions can precede the original event contract',()=>{
+ const result=respond('Repair the rejected HARA assessment. Rejected data: [{"id":"old"}]\nPerform the ISO 26262-3 HARA\nEvents:\n[{"id":"event-9"}]');
+ assert.deepEqual(result.assessments.map(row=>row.id),['event-9']);
+});
 test('unknown contracts and missing ids fail closed',()=>{
  assert.throws(()=>respond('An unsupported prompt'),/contract/);
  assert.throws(()=>respond('Rows: [{"evidence":"missing id"}]'),/exact source ID/);

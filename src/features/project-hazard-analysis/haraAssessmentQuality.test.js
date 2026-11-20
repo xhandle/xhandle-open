@@ -6,6 +6,17 @@ test('exposure excludes acknowledgment failure probability even when the rationa
   expect(findings({'Exposure Rationale':'Exposure is the operational situation, not failure probability. E3 because not all transmissions will fail.'})).toContain('EXPOSURE_FAILURE_BASIS');
   expect(findings({'Exposure Rationale':'Frequent occupied crossings; never the malfunction/failure probability.'})).not.toContain('EXPOSURE_FAILURE_BASIS');
 });
+test.each([
+  'E4 reflects frequent urban operation, not the probability of communication failure.',
+  'Exposure reflects how often urban trips occur, excluding packet loss probability.',
+  'E3 reflects the operational situation frequency, independent of malfunction probability.',
+])('explicitly excluding failure probability is not an exposure failure basis: %s', rationale => {
+  expect(findings({ 'Exposure Rationale': rationale })).not.toContain('EXPOSURE_FAILURE_BASIS');
+});
+test('an explicit exclusion cannot hide a separate affirmative failure-frequency argument', () => {
+  expect(findings({ 'Exposure Rationale': 'Exposure excludes the probability of communication failure. E3 because network failure rates are moderate.' })).toContain('EXPOSURE_FAILURE_BASIS');
+  expect(findings({ 'Exposure Rationale': 'Exposure is not malfunction probability, but E3 because network failure rates are moderate.' })).toContain('EXPOSURE_FAILURE_BASIS');
+});
 test('severity cannot be downgraded because fatal harm is uncertain or fallback might work',()=>{
   expect(findings({Severity:'S2','Severity Rationale':'Severe injury or death is possible but death is not certain if fallback mechanisms activate.'})).toContain('SEVERITY_MITIGATION_CREDIT');
   expect(findings({Severity:'S3','Severity Rationale':'Life-threatening injuries with uncertain survival.'})).not.toContain('SEVERITY_MITIGATION_CREDIT');

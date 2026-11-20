@@ -693,9 +693,10 @@ export function buildCodeArchitectureHazardInput({
   const analysisOperationalContexts = selectedOperationalContextId === "all"
     ? effectiveOperationalContexts
     : effectiveOperationalContexts.filter((context) => context.id === selectedOperationalContextId);
-  const contextsToAnalyze = analysisOperationalContexts.length
-    ? analysisOperationalContexts
-    : effectiveOperationalContexts;
+  if (!analysisOperationalContexts.length) {
+    throw new Error('The selected operational context is no longer available. Select an available context or All contexts before running hazard analysis.');
+  }
+  const contextsToAnalyze = analysisOperationalContexts;
   const guidePhrases = getCodeArchitectureHazardGuidePhrases(method);
   const tableRows = sourceTableRows.flatMap((row, index) => {
     const variants = guidePhrases.flatMap((guidePhrase) => contextsToAnalyze.map((context) => ({
@@ -1672,6 +1673,7 @@ export function normalizeCodeArchitectureHazardRun(raw = {}, context = {}) {
     needsReviewArchitectureRows: Array.isArray(raw.needsReviewArchitectureRows) ? raw.needsReviewArchitectureRows : [],
     hazardMethod: raw.hazardMethod || context.hazardMethod || "STPA-Textbook",
     ...(raw.pipelineVersion ? {pipelineVersion:raw.pipelineVersion,runState:raw.runState || "complete",userPreprocessing:raw.userPreprocessing || {},userPreprocessingConflicts:raw.userPreprocessingConflicts || []} : {}),
+    ...(!raw.pipelineVersion && raw.userPreprocessing ? {userPreprocessing:raw.userPreprocessing,userPreprocessingConflicts:raw.userPreprocessingConflicts || []} : {}),
     ...(raw.pendingAttempt ? {pendingAttempt:raw.pendingAttempt} : {}),
     ...(raw.runState === 'incomplete' ? {runState:'incomplete',totalAssessments:raw.totalAssessments,validatedAssessments:raw.validatedAssessments,failedAssessments:raw.failedAssessments || [],failureMessage:raw.failureMessage || ''} : {}),
     ...(raw.finalSavePending ? {finalSavePending:true,finalSaveStatus:raw.finalSaveStatus || 'failed',saveFailureMessage:raw.saveFailureMessage || ''} : {}),

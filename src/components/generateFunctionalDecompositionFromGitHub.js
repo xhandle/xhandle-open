@@ -1,4 +1,4 @@
-import { beginArchitectureStorageWork } from '../features/code-architecture-assurance/codeArchitectureStorage';
+import { beginArchitectureStorageWork, recordArchitectureInterruption } from '../features/code-architecture-assurance/codeArchitectureStorage';
 import { useCurrentViewSource } from '../features/collaborator-performance/useCurrentViewSource';
 import { currentArchitectureSample } from '../features/collaborator-performance/currentViewEvidence';
 import { extractCppSourceFunctions } from "../features/code-architecture-context/cppSourceFunctions";
@@ -11,15 +11,15 @@ import { ArchitectureWorkspace, ArchitectureDivider, ArchitectureTablePane, useA
 import VirtualTableBody from './VirtualTableBody';
 import { buildFunctionalModelRows, processFunctionalModel, functionalModelIsReady, immutableFunctionalRows, functionalInputKey, FUNCTIONAL_MODEL_VERSION } from '../features/code-architecture-context/functionalModel';
 import { writeCbaRowsToIndexedDB, readCbaRowsRevision, flushArchitectureWrites } from '../features/code-architecture-assurance/codeArchitectureStorage';
-import { readRecord, writeRecord } from '../features/code-architecture-storage/chunkedRecord';
-import { prepareArchitecturePublication, recoverArchitecturePublication, openCbaIndexedDB } from '../features/code-architecture-assurance/codeArchitectureStorage';
+import { writeAnalysisSourceRecord as idbPut, readAnalysisSourceRecord as idbGet, analysisStorageError } from '../features/code-architecture-context/analysisSourceStorage';
+import { prepareArchitecturePublication, recoverArchitecturePublication } from '../features/code-architecture-assurance/codeArchitectureStorage';
 import { summarizeCodeAnalysisCoverage } from "../features/code-architecture-context/codeAnalysisCoverage";
 import { scopeFunctionalDecomposition, decompositionRowsAllowed, decompositionTableEntries } from '../features/code-architecture-context/functionalDecompositionScope';
 import { FUNCTIONAL_OUTPUT_TOKENS, FUNCTIONAL_FILE_PASSES, FUNCTIONAL_RECOVERY_POLICY } from '../features/code-architecture-context/functionalAnalysisPolicy';
 import { analyzeFunctionalSourceChunk, incompleteResponse, retryAfterMilliseconds, waitForAnalysisRetry, withAnalysisRequestDeadline, retryAnalysisOperation } from '../features/code-architecture-context/functionalAnalysisResponse';
 import { pythonRelationshipInventory, createPythonModuleIndex, isPlaceholderRelationship, updatePublishedProposalCounts, reconcileSourceProposals, completeSupportedRelationships, dedupeEvidenceRows, reconcileArchitectureRows } from "../features/code-architecture-context/codeRelationshipEvidence";
 import { ANALYSIS_VERSION, createRunGuard, settingsFromAuth, runFingerprint } from "../features/code-architecture-context/codeAnalysisRun";
-import { resolveGitHubRevision, listGitHubSnapshot, readGitHubSnapshotFile, compareSourcePaths, digestText } from "../features/code-architecture-context/codeSourceAcquisition";
+import { fetchGitHubJson, resolveGitHubRevision, listGitHubSnapshot, readGitHubSnapshotFile, compareSourcePaths, digestText } from "../features/code-architecture-context/codeSourceAcquisition";
 import { isLocalCodeSource, codeSourceProvenance, codeSourceIndexKey } from "../features/code-architecture-context/codeSourceIdentity";
 import { createLocalSourceProvider } from "../features/code-architecture-context/localCodeSource";
 
@@ -34,7 +34,6 @@ import FunctionalArchitectureDiagram from './FunctionalArchitectureDiagram';
 import ArchitectureReportViewer from "./ArchitectureReportViewer";
 import { FilterableHeaderCell, useColumnFilters } from "./FilterableTableHeader";
 import { backendURL, ACCOUNT_ID, getLocalAccessToken, buildAIAuthOpts } from "./backendConfig";
-import { notifyBackupDataChanged } from "../lib/localBackupEvents";
 import { architectureElementFromRow } from "../features/safety-remediation/safetyRemediationUtils";
 import ReviewStatusBadge from "../features/results-review/ReviewStatusBadge";
 import { REVIEW_STATUSES } from "../features/results-review/reviewTypes";
@@ -60,7 +59,6 @@ import {
 } from "../features/collaborator-selection/activeSelectionContext";
 
 // --- IndexedDB helpers (xHandle durable storage, unified schema) ---
-const IDB_DB_NAME = "xhandle";
 const IDB_STORES = {
   codeIndex: "code_index",         // per-file code index
   cba: "copilot_baseline",         // Copilot Baseline Array rows
@@ -72,18 +70,6 @@ const architectureReportStorageKey = (repoName, branch) =>
 
 const architectureTableColumnWidthsKey = (repoName, branch) =>
   `code-architecture-table-column-widths:${repoName || "repo"}:${branch || "main"}`;
-
-function idbOpen() { return openCbaIndexedDB(); }
-
-async function idbPut(storeName, key, value) {
-  const db = await idbOpen();
-  try { await writeRecord(db, storeName, key, value); notifyBackupDataChanged({db:IDB_DB_NAME, stores:[storeName]}); }
-  finally { db.close(); }
-}
-async function idbGet(storeName, key) {
-  const db = await idbOpen();
-  try { return await readRecord(db, storeName, key); } finally { db.close(); }
-}
 
 // --- Lightweight file indexer for Copilot grounding ---
 function detectLangFromPath(path) {
@@ -328,7 +314,8 @@ async function indexSourceFileToIDB({ owner, repo, path, content, branch, commit
   const record = existingRecord || buildSourceFileIndexRecord({ owner, repo, path, content, branch, commitSha, ...source });
 
   const key = codeSourceIndexKey({ owner, repo, ...source }, path);
-  await idbPut(IDB_STORES.codeIndex, key, record);
+  try { await idbPut(IDB_STORES.codeIndex, key, record); }
+  catch (error) { throw analysisStorageError(error, `Unable to save source evidence for ${path}`); }
   return record;
 }
 
@@ -602,36 +589,17 @@ export function FileTypeSelectorModal({ open, files, onCancel, onConfirm }) {
 
 /* ===================== GitHub helper layer (no backend dependency) ===================== */
 
-const githubHeaders = (token) =>
-  token
-    ? {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github.v3+json",
-      }
-    : { Accept: "application/vnd.github.v3+json" };
-
-async function jsonFetch(url, opts = {}) {
-  const r = await fetch(url, opts);
-  if (!r.ok) {
-    const t = await r.text().catch(() => "");
-    const err = new Error(`HTTP ${r.status} ${r.statusText} - ${t}`);
-    err.status = r.status;
-    throw err;
-  }
-  return r.json();
-}
-
-export async function getDefaultBranch(owner, repo, token, signal) {
-  const result = await jsonFetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, { headers: githubHeaders(token), signal });
+export async function getDefaultBranch(owner, repo, token, signal, onProgress) {
+  const result = await fetchGitHubJson(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, token, signal, onProgress);
   if (!result.default_branch) throw new Error("GitHub did not identify the default branch. Configure an explicit branch and retry.");
   return result.default_branch;
 }
-export async function getCommitShaForRef(owner, repo, token, ref, signal) {
-  return resolveGitHubRevision(owner, repo, token, ref, signal);
+export async function getCommitShaForRef(owner, repo, token, ref, signal, onProgress) {
+  return resolveGitHubRevision(owner, repo, token, ref, signal, onProgress);
 }
-export async function listRepoFilesViaGitHub(owner, repo, token, ref, signal) {
-  const revision = /^[a-f0-9]{40}$/i.test(ref || "") ? ref : await getCommitShaForRef(owner, repo, token, ref, signal);
-  return listGitHubSnapshot(owner, repo, token, revision, signal);
+export async function listRepoFilesViaGitHub(owner, repo, token, ref, signal, onProgress) {
+  const revision = /^[a-f0-9]{40}$/i.test(ref || "") ? ref : await getCommitShaForRef(owner, repo, token, ref, signal, onProgress);
+  return listGitHubSnapshot(owner, repo, token, revision, signal, onProgress);
 }
 
 export function filterSelectableRepoFiles(allFiles) {
@@ -711,16 +679,17 @@ export function buildRepoStructureSummary(allFiles = []) {
   };
 }
 
-export async function fetchRepositoryContext({ owner, repo, token, ref, allFiles, sourceProvider }) {
+export async function fetchRepositoryContext({ owner, repo, token, ref, allFiles, sourceProvider, signal, onProgress }) {
   const { folderSummary, topLevelEntries } = buildRepoStructureSummary(allFiles);
   const readme = findReadmeFile(allFiles);
   let readmeText = "";
 
   if (readme?.path) {
     try {
-      const got = await (sourceProvider ? sourceProvider.readText({ path: readme.path }) : fetchGitHubFileSmart({ owner, repo, path: readme.path, token, ref, sha: readme.sha }));
+      const got = await (sourceProvider ? sourceProvider.readText({ path: readme.path, signal }) : fetchGitHubFileSmart({ owner, repo, path: readme.path, token, ref, sha: readme.sha, signal, onProgress }));
       if (got.ok) readmeText = String(got.content || "").slice(0, 18000);
     } catch (error) {
+      if (signal?.aborted) throw error;
       throw new Error(`Repository context could not be read from the selected snapshot: ${error.message}`);
     }
   }
@@ -1954,6 +1923,10 @@ async function requestOpenAIProxyWithRetry({ prompt, bearer, label, attempts = 3
     runGuard?.check();
     const queuedAt = performance.now();
     await paceDecompositionRequest(signal);
+    // Settings may change while this request waits for its reserved start.
+    // Check again before constructing headers or sending source to a provider.
+    throwIfAborted(signal);
+    runGuard?.check();
     onAttempt?.({ queueMs: performance.now() - queuedAt });
     let response;
     try {
@@ -2122,7 +2095,8 @@ function buildFallbackSystemUnderstanding(repoContext = {}, userContext = {}) {
   return lines.join("\n\n").slice(0, MAX_SYSTEM_UNDERSTANDING_CHARS);
 }
 
-async function deriveSystemUnderstanding({ repoContext, userContext, bearer, metricsRun = null }) {
+async function deriveSystemUnderstanding({ repoContext, userContext, bearer, metricsRun = null, signal }) {
+  throwIfAborted(signal);
   const hasReadme = !!String(repoContext?.readmeText || "").trim();
   const userContextText = formatUserAnalysisContext(userContext);
   if (!hasReadme && !userContextText) return "";
@@ -2161,10 +2135,12 @@ ${userContextText || "[none]"}
       label: "Repository context analysis AI",
       attempts: 2,
       metricsRun,
+      signal,
     });
     const understanding = String(result || "").trim().slice(0, MAX_SYSTEM_UNDERSTANDING_CHARS);
     return understanding || buildFallbackSystemUnderstanding(repoContext, userContext);
   } catch (error) {
+    if (signal?.aborted || error.code === 'SOURCE_RUN_CHANGED') throw error;
     console.warn("Repository context analysis failed; using deterministic context summary.", error);
     return buildFallbackSystemUnderstanding(repoContext, userContext);
   }
@@ -2523,7 +2499,8 @@ function buildArchitectureAllocationMapFromPlan(plan, rows, repoContext = {}) {
   return allocationByRef;
 }
 
-async function generateNestedArchitectureAllocationPlan({ rows, repoContext = {}, bearer = "", metricsRun = null }) {
+async function generateNestedArchitectureAllocationPlan({ rows, repoContext = {}, bearer = "", metricsRun = null, signal }) {
+  throwIfAborted(signal);
   if (!bearer || !rows?.length) return null;
   if ((rows || []).length > MAX_AI_ARCHITECTURE_ALLOCATION_ROWS) {
     console.info(
@@ -2610,9 +2587,11 @@ ${JSON.stringify(compactRowsForArchitectureClassification(rows), null, 2)}
       label: "Nested architecture abstraction AI",
       attempts: 2,
       metricsRun,
+      signal,
     });
     return parseStrictJsonFromText(result);
   } catch (error) {
+    if (signal?.aborted || error.code === 'SOURCE_RUN_CHANGED') throw error;
     console.warn("Nested architecture allocation failed; using deterministic architecture fallback.", error);
     return null;
   }
@@ -2716,7 +2695,8 @@ function compactComponentSummaryForDescriptions(rows) {
   }));
 }
 
-async function generateArchitectureComponentDescriptions(rows, bearer, metricsRun = null) {
+async function generateArchitectureComponentDescriptions(rows, bearer, metricsRun = null, signal) {
+  throwIfAborted(signal);
   const fallback = buildFallbackArchitectureDescriptions(rows);
   if (!bearer) return fallback;
   if ((rows || []).length > MAX_AI_ARCHITECTURE_ALLOCATION_ROWS) {
@@ -2751,6 +2731,7 @@ ${JSON.stringify(compactComponentSummaryForDescriptions(rows), null, 2)}
       label: "Architecture component description AI",
       attempts: 2,
       metricsRun,
+      signal,
     });
     const text = String(result || "").trim().replace(/^```(?:json)?\s*/i, "").replace(/```$/i, "");
     const parsed = JSON.parse(text);
@@ -2761,6 +2742,7 @@ ${JSON.stringify(compactComponentSummaryForDescriptions(rows), null, 2)}
       if (key && description) fallback.set(key, description.slice(0, 900));
     });
   } catch (error) {
+    if (signal?.aborted || error.code === 'SOURCE_RUN_CHANGED') throw error;
     console.warn("Architecture component description generation failed; using deterministic descriptions.", error);
   }
   return fallback;
@@ -2818,15 +2800,16 @@ function sourceSnippetForFunction(content = "", fn = {}) {
   return lines.slice(start, end).join("\n").slice(0, 12000);
 }
 
-async function buildCodeEvidenceForRows({ owner, repo, rows, ...source }) {
+async function buildCodeEvidenceForRows({ owner, repo, rows, signal, ...source }) {
   const cache = new Map(), lineCache = new WeakMap(), evidenceCache = new WeakMap();
   async function getFileRecord(path) {
     if (!path) return null;
     if (cache.has(path)) return cache.get(path);
     let record = null;
     try {
-      record = await idbGet(IDB_STORES.codeIndex, codeSourceIndexKey({ owner, repo, ...source }, path));
-    } catch {}
+      record = await idbGet(IDB_STORES.codeIndex, codeSourceIndexKey({ owner, repo, ...source }, path), { signal });
+    } catch (error) { if (signal?.aborted) throw error; }
+    throwIfAborted(signal);
     if (!record) {
       try {
         const raw = localStorage.getItem(codeSourceIndexKey({ owner, repo, ...source }, path));
@@ -2840,7 +2823,8 @@ async function buildCodeEvidenceForRows({ owner, repo, rows, ...source }) {
 
   const enriched = [];
   for (let index = 0; index < rows.length; index++) {
-    if (index > 0 && index % 25 === 0) await sleep(0);
+    throwIfAborted(signal);
+    if (index > 0 && index % 25 === 0) await sleep(0, signal);
     const row = rows[index];
     const files = Array.from(new Set([...splitRelatedFiles(row.fromFile), ...splitRelatedFiles(row.toFile)]));
     const fileRecords = [];
@@ -2895,7 +2879,7 @@ async function buildCodeEvidenceForRows({ owner, repo, rows, ...source }) {
   return enriched;
 }
 
-async function ensureCodeArchitectureTraceIdsCooperative(rows = []) {
+async function ensureCodeArchitectureTraceIdsCooperative(rows = [], signal) {
   const safeRows = Array.isArray(rows) ? rows : [];
   const normalizeIdentity = (value) => String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
   const functionIdentityKey = (row = {}, side = "from") => {
@@ -2913,14 +2897,16 @@ async function ensureCodeArchitectureTraceIdsCooperative(rows = []) {
   };
   const nodeIdsByIdentity = new Map();
   for (let index = 0; index < safeRows.length; index++) {
-    if (index > 0 && index % 100 === 0) await sleep(0);
+    throwIfAborted(signal);
+    if (index > 0 && index % 100 === 0) await sleep(0, signal);
     const row = safeRows[index] || {};
     if (row.fromNodeId) nodeIdsByIdentity.set(functionIdentityKey(row, "from"), row.fromNodeId);
     if (row.toNodeId) nodeIdsByIdentity.set(functionIdentityKey(row, "to"), row.toNodeId);
   }
   const output = [];
   for (let index = 0; index < safeRows.length; index++) {
-    if (index > 0 && index % 100 === 0) await sleep(0);
+    throwIfAborted(signal);
+    if (index > 0 && index % 100 === 0) await sleep(0, signal);
     const row = safeRows[index] || {};
     const fromKey = functionIdentityKey(row, "from");
     const toKey = functionIdentityKey(row, "to");
@@ -2940,8 +2926,9 @@ async function ensureCodeArchitectureTraceIdsCooperative(rows = []) {
   return output;
 }
 
-async function classifyArchitectureRows({ rows, owner, repo, repoContext = {}, bearer = "", metricsRun = null, relationshipLedger, ...source }) {
-  const enriched = await buildCodeEvidenceForRows({ owner, repo, rows, ...source });
+async function classifyArchitectureRows({ rows, owner, repo, repoContext = {}, bearer = "", metricsRun = null, relationshipLedger, signal, ...source }) {
+  throwIfAborted(signal);
+  const enriched = await buildCodeEvidenceForRows({ owner, repo, rows, signal, ...source });
   // Source-audit enrichment may propose rows; it must not bypass publication scope.
   const rowsWithEvidence = relationshipLedger ? enriched.filter(row => decompositionRowsAllowed(row, relationshipLedger)) : enriched;
   if (!rowsWithEvidence.length) return rowsWithEvidence;
@@ -2951,12 +2938,14 @@ async function classifyArchitectureRows({ rows, owner, repo, repoContext = {}, b
     repoContext,
     bearer,
     metricsRun,
+    signal,
   });
   const allocations = buildArchitectureAllocationMapFromPlan(allocationPlan, rowsWithEvidence, repoContext);
 
   const architectureRows = [];
   for (let index = 0; index < rowsWithEvidence.length; index++) {
-    if (index > 0 && index % 50 === 0) await sleep(0);
+    throwIfAborted(signal);
+    if (index > 0 && index % 50 === 0) await sleep(0, signal);
     const row = rowsWithEvidence[index];
     const architecture = (row.canonicalRelationshipId ? null : allocations.get(Number(row.rowRef))) || inferArchitectureFallback(row, repoContext);
     architectureRows.push({
@@ -2964,11 +2953,12 @@ async function classifyArchitectureRows({ rows, owner, repo, repoContext = {}, b
       architecture: refineArchitectureAllocation(row, architecture, repoContext),
     });
   }
-  const descriptions = await generateArchitectureComponentDescriptions(architectureRows, bearer, metricsRun);
+  const descriptions = await generateArchitectureComponentDescriptions(architectureRows, bearer, metricsRun, signal);
 
   const describedRows = [];
   for (let index = 0; index < architectureRows.length; index++) {
-    if (index > 0 && index % 50 === 0) await sleep(0);
+    throwIfAborted(signal);
+    if (index > 0 && index % 50 === 0) await sleep(0, signal);
     const row = architectureRows[index];
     const arch = row.architecture || {};
     describedRows.push({
@@ -3006,15 +2996,17 @@ export const generateFunctionalDecompositionFromGitHub = async (
   filterFiles = null,
   opts = {}
 ) => {
-  let finishStorageWork;
+  let finishStorageWork, activeCheckpoint;
   try {
     if (opts.storageKey) finishStorageWork = beginArchitectureStorageWork(opts.storageKey);
     setLoading(true);
     const originalProgress = opts.onProgress;
-    let lastProgress = {};
+    let lastProgress = {}, rateLimitProgress = null;
     opts = { ...opts, onProgress: update => {
+      if (update.phase === 'github-rate-limit') rateLimitProgress = update;
+      else if (update.phase === 'github-rate-limit-resumed') rateLimitProgress = null;
       lastProgress = { ...lastProgress, ...update };
-      if (!opts.signal?.aborted) originalProgress?.(lastProgress);
+      if (!opts.signal?.aborted) originalProgress?.({ ...lastProgress, ...rateLimitProgress });
     } };
     console.log("🔄 Starting functional decomposition generation...");
 
@@ -3047,8 +3039,8 @@ export const generateFunctionalDecompositionFromGitHub = async (
     });
 
     // Determine ref/branch once up front
-    const displayBranch = local ? "" : repoConfig.branch || await getDefaultBranch(owner, repo, token, opts.signal);
-    const ref = local ? "" : await retryAnalysisOperation(signal => getCommitShaForRef(owner, repo, token, displayBranch, signal), {signal:opts.signal});
+    const displayBranch = local ? "" : repoConfig.branch || await getDefaultBranch(owner, repo, token, opts.signal, opts.onProgress);
+    const ref = local ? "" : await retryAnalysisOperation(signal => getCommitShaForRef(owner, repo, token, displayBranch, signal, opts.onProgress), {signal:opts.signal,requestHandlesDeadline:true});
     opts?.onProgress?.({
       phase: "scan",
       completedFiles: 0,
@@ -3060,7 +3052,7 @@ export const generateFunctionalDecompositionFromGitHub = async (
     if (!local) source = { ...source, sourceType: "github", snapshotId: commitSha, evidenceVersion: 1 };
 
     // List all repo files via GitHub Trees API (no backend state)
-    const allFiles = sourceProvider ? await sourceProvider.listFiles() : await listRepoFilesViaGitHub(owner, repo, token, ref, opts.signal);
+    const allFiles = sourceProvider ? await sourceProvider.listFiles() : await listRepoFilesViaGitHub(owner, repo, token, ref, opts.signal, opts.onProgress);
     if (!allFiles.length) throw new Error("No files found in the selected source.");
     const repoPathResolver = createRepoPathResolver(allFiles);
     const pythonModuleIndex = createPythonModuleIndex(allFiles);
@@ -3072,7 +3064,7 @@ export const generateFunctionalDecompositionFromGitHub = async (
       currentFile: "",
       message: `Found ${allFiles.length} repository files; filtering selectable source files...`,
     });
-    const repoContext = await fetchRepositoryContext({ owner, repo: local ? source.folderName : repo, token, ref, allFiles, sourceProvider });
+    const repoContext = await fetchRepositoryContext({ owner, repo: local ? source.folderName : repo, token, ref, allFiles, sourceProvider, signal:opts.signal, onProgress:opts.onProgress });
     const userAnalysisContext = opts?.analysisContext || (local ? { text: "", files: [] } : loadGitHubAnalysisContextFromStorage());
 
     // Exclude heavy/vendor dirs; allow all extensions for modal selection
@@ -3142,8 +3134,8 @@ export const generateFunctionalDecompositionFromGitHub = async (
     // Hash a bounded number of verified inputs concurrently; retain only digests.
     const readSourceFile = (file, signal) => retryAnalysisOperation(requestSignal => sourceProvider
       ? sourceProvider.readText({ path:file.path, signal:requestSignal })
-      : fetchGitHubFileSmart({owner,repo,token,ref,path:file.path,sha:file.sha,signal:requestSignal}),
-      {signal,onRetry:message => opts?.onProgress?.({phase:"fetch",currentFile:file.path,message:`${file.path}: ${message}`})});
+      : fetchGitHubFileSmart({owner,repo,token,ref,path:file.path,sha:file.sha,signal:requestSignal,onProgress:opts.onProgress}),
+      {signal,requestHandlesDeadline:!sourceProvider,onRetry:message => opts?.onProgress?.({phase:"fetch",currentFile:file.path,message:`${file.path}: ${message}`})});
     const inputManifest = await mapAnalysisWork(validFiles, async (file, index, signal) => {
       const read = await readSourceFile(file, signal);
       return { path: file.path, entryKind: file.entryKind || "file", size: read.size ?? file.size, contentDigest: read.contentDigest || null, textDigest: read.textDigest || await digestText(read.content), decoding: read.decoding || "utf8-fatal-v1", disposition: "selected" };
@@ -3155,8 +3147,11 @@ export const generateFunctionalDecompositionFromGitHub = async (
     const savedCheckpoint = opts?.resumeFromCheckpoint === false ? null : await idbGet(IDB_STORES.cba, checkpointKey);
     const checkpoint = savedCheckpoint?.fingerprint === fingerprint && savedCheckpoint?.version === ANALYSIS_VERSION && savedCheckpoint?.actualSettings && runGuard.settings.provider && runGuard.settings.model ? savedCheckpoint : null;
     if (savedCheckpoint && !checkpoint) checkpointKey = `${checkpointKey}:incompatible-${Date.now()}`;
+    activeCheckpoint = { scope:outputStorageKey, key:checkpointKey };
+    await recordArchitectureInterruption(outputStorageKey, checkpointKey, null);
     if (checkpoint) runGuard.restore(checkpoint.actualSettings);
-    const systemUnderstanding = checkpoint?.systemUnderstanding ?? await deriveSystemUnderstanding({ repoContext, userContext: userAnalysisContext, bearer, metricsRun });
+    const systemUnderstanding = checkpoint?.systemUnderstanding ?? await deriveSystemUnderstanding({ repoContext, userContext: userAnalysisContext, bearer, metricsRun, signal:opts.signal });
+    throwIfAborted(opts.signal);
     runGuard.check();
     const checkpointContext = { phase: "extraction", version: ANALYSIS_VERSION, fingerprint, actualSettings: runGuard.actual, systemUnderstanding, scope: outputStorageKey, source: codeSourceProvenance(source), inputManifest };
     await idbPut(IDB_STORES.cba, checkpointKey, { ...checkpoint, ...checkpointContext });
@@ -3255,7 +3250,7 @@ Rules:
           failedFiles: failedFiles.map(file => ({ ...file })), rows: allTableData, rowsByPath: { ...rowsByPath }, legacyCheckpointRows, updatedAt: new Date().toISOString(),
         };
         await idbPut(IDB_STORES.cba, checkpointKey, snapshot);
-      } catch (error) { error.code = "SOURCE_STORAGE_FAILED"; throw error; }
+      } catch (error) { throw analysisStorageError(error, 'Unable to save analysis progress'); }
     });
     const analyzeFile = async (file, workerSignal, recoveryPass) => {
 
@@ -3284,16 +3279,7 @@ Rules:
               currentFile: file.path,
               message: `Batch ${currentBatchNumber} of ${analysisPlan.batchCount}: fetching file ${currentFileNumber} of ${totalFileCount}: ${file.path}`,
             });
-            const got = await withAnalysisRequestDeadline(requestSignal => (sourceProvider ? sourceProvider.readText({ path: file.path, signal: requestSignal }) : fetchGitHubFileSmart({
-              backendURL, // unused now
-              owner,
-              repo,
-              path: file.path,
-              token,
-              ref,
-              sha: file.sha,
-              signal: requestSignal,
-            })), signal);
+            const got = await readSourceFile(file, signal);
             throwIfAborted(signal);
             if (!got.ok) {
               throw new Error(`Could not fetch ${file.path} from GitHub.`);
@@ -3319,7 +3305,7 @@ Rules:
                   branch: displayBranch,
                   commitSha,
                 }, currentFileRecord);
-              } catch (error) { error.code = "SOURCE_STORAGE_FAILED"; throw error; }
+              } catch (error) { throw analysisStorageError(error, `Unable to save source evidence for ${file.path}`); }
             }
             throwIfAborted(signal);
 
@@ -3375,7 +3361,7 @@ Rules:
               const parsedRows = await analyzeFunctionalSourceChunk({
                 content: chunks[i], signal, requestHandlesDeadline: true,
                 state: progress.sections[i] ||= {},
-                onCheckpoint: persistCheckpoint,
+                onCheckpoint: () => persistCheckpoint(),
                 onRetry: message => opts?.onProgress?.({ phase: "decomposition", completedFiles: completedPathSet.size, totalFiles: totalFileCount, currentFile: file.path, message: `${file.path}: ${message}` }),
                 request: async (content, repair, section) => {
                   const { result } = await requestOpenAIProxyJsonWithMetrics({
@@ -3407,7 +3393,7 @@ Rules:
           fileAnalysisSucceeded = true;
           delete fileProgress[file.path];
         } catch (e) {
-          if (workerSignal?.aborted || e.code === "SOURCE_RUN_CHANGED" || e.code === "SOURCE_STORAGE_FAILED" || /Source content changed|Local file changed|size limit|quota|storage/i.test(e?.message || "")) throw e;
+          if (workerSignal?.aborted || e.code === "SOURCE_RUN_CHANGED" || e.code === "SOURCE_STORAGE_FAILED" || /Source content changed|Local file changed|size limit|quota|storage/i.test(e?.message || "")) { e.sourcePath ||= file.path; throw e; }
           fileFailureMessage = e?.message || String(e);
           for (let i = failedFiles.length - 1; i >= 0; i -= 1) {
             if (failedFiles[i]?.path === file.path) failedFiles.splice(i, 1);
@@ -3482,7 +3468,8 @@ Rules:
       bearer,
       repoContext,
       metricsRun,
-    }));
+      signal:opts.signal,
+    }), opts.signal);
 
     throwIfAborted(opts.signal);
     runGuard.check();
@@ -3589,6 +3576,13 @@ Rules:
     
   } catch (error) {
     console.error("🚨 Failed to generate functional decomposition:", error);
+    if (activeCheckpoint) {
+      error.checkpointKey ||= activeCheckpoint.key;
+      try { await recordArchitectureInterruption(activeCheckpoint.scope, activeCheckpoint.key, {
+        status:opts.signal?.aborted ? 'cancelled' : 'failed', message:String(error.message || error).slice(0,2000),
+        code:String(error.code || error.name || '').slice(0,200), path:String(error.sourcePath || '').slice(0,1000), at:new Date().toISOString(),
+      }); } catch (storageError) { console.warn('Unable to save the interruption reason; original analysis error retained.', storageError); }
+    }
     // Preserve last successful rows on acquisition, model or storage failure.
     throw error;
   } finally {

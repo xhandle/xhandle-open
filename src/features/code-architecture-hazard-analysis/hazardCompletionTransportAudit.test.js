@@ -7,6 +7,19 @@ const originalFetch=global.fetch;
 afterEach(()=>{global.fetch=originalFetch;jest.useRealTimers();});
 const requestFor=signal=>(prompt,options)=>fetchLLMResponse(prompt,{},[],'',{...options,workflow:'hazard-row-generation',signal});
 
+test('settings are rechecked before a physical request after a 429 wait',async()=>{
+ jest.useFakeTimers();
+ global.fetch=jest.fn(async()=>({ok:false,status:429,headers:{get:()=> '1'}}));
+ let changed=false;
+ const beforeRequest=jest.fn(()=>{if(changed)throw Object.assign(new Error('Settings changed'),{code:'HAZARD_SETTINGS_CHANGED'});});
+ const outcome=fetchLLMResponse('assess',{},[],'',{workflow:'hazard-row-generation',beforeRequest}).catch(error=>error);
+ for(let i=0;i<8;i++)await Promise.resolve();
+ expect(global.fetch).toHaveBeenCalledTimes(1);
+ changed=true;jest.advanceTimersByTime(1000);
+ expect(await outcome).toMatchObject({code:'HAZARD_SETTINGS_CHANGED'});
+ expect(beforeRequest).toHaveBeenCalledTimes(2);expect(global.fetch).toHaveBeenCalledTimes(1);
+});
+
 test.each(['STPA','HARA','FHA'])('malformed successful provider content completes %s through bounded fallback',async method=>{
  global.fetch=jest.fn(async()=>({ok:true,status:200,json:async()=>({choices:[{message:{content:[{type:'text',text:'[]'}]}}]})}));
  const controller=new AbortController();
