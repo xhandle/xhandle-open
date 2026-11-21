@@ -85,3 +85,13 @@ it('retains reviewed calls and historical evidence while keeping new downstream 
   expect(decompositionTableEntries(next,true)).toHaveLength(3);
   expect(decompositionTableEntries(next,false,2).map(entry=>entry.sourceIndex)).toEqual([0,2]);
 });
+
+it('retains source-cited integration proposals for Python without admitting ordinary unmatched proposals',()=>{
+ const path='source.py',ledger={[path]:{supported:true,relationships:[]}};
+ const proposal={from:'produce',to:'receive',fromFile:path,toFile:'receiver.py',action:'Transfer input',
+  relationshipEvidence:{supported:false,extractionMethod:'source-cited-model-proposal'},
+  integrationEvidence:{version:1,verification:'source-citations',reviewRequired:true}};
+ expect(decompositionRowsAllowed(proposal,ledger)).toBe(true);
+ expect(decompositionRowsAllowed({...proposal,integrationEvidence:undefined},ledger)).toBe(false);
+ expect(decompositionRowsAllowed({...proposal,fromFile:'tests/source.py'},ledger)).toBe(false);
+});

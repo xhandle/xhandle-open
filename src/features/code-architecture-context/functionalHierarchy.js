@@ -1,4 +1,5 @@
 import { isFunctionalTransportError } from './functionalTransportRecovery';
+import parseCodeAnalysisJson from './parseCodeAnalysisJson';
 // Functional allocation is derived metadata: it never changes source or interaction IDs.
 export const FUNCTIONAL_HIERARCHY_VERSION = 1;
 const levels = ['subsystem', 'csci', 'csc'];
@@ -86,7 +87,7 @@ ${validationError ? `The previous result failed validation. Correct the reported
     try {
       const response = await request(prompt, signal, { kind: 'hierarchy' });
       checkAbort(signal);
-      const result = typeof response === 'string' ? JSON.parse(response.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/i, '$1')) : response;
+      const result = parseCodeAnalysisJson(response);
       if (!Array.isArray(result?.allocations) || result.allocations.length !== batch.length) throw new Error('Incomplete functional hierarchy coverage.');
       const seen = new Set(), pending = [];
       for (const value of result.allocations) {

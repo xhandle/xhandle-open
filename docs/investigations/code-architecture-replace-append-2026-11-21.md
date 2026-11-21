@@ -1,0 +1,29 @@
+# Code architecture: Replace or Append
+
+The repository configuration workflow now lets a user choose how a later analysis affects saved results. After **… → GitHub Repo Configuration → Analyze → Choose file types**, an existing saved analysis opens a dialog with **Cancel**, **Replace analysis**, and **Append to analysis**. A first analysis proceeds directly. Empty initialized storage does not count as an earlier analysis; a completed run with zero relationships does.
+
+**Replace** preserves the established reconciliation behavior: analyze the selected types, retain compatible IDs and analyst decisions, and mark unmatched earlier rows historical. **Append** analyzes only new selected paths and keeps earlier active rows, historical rows, evidence, trace IDs, edits, and eligibility decisions. A referenced target file does not count as an analyzed file. Selecting only completed files produces an explanatory message without model calls or publication.
+
+## Source and publication contracts
+
+- GitHub work remains pinned to an immutable commit. A newer commit may be appended only if every previously analyzed file retains its original blob and entry kind. Earlier runs without saved blob IDs are checked against their immutable Git tree. Changed or removed earlier files require Replace. Local sources verify earlier text digests and source identity.
+- Legacy analyses without an immutable revision cannot safely support append. The application preserves them and asks for Replace to establish verifiable provenance. Legacy coverage that can be retained without a full manifest remains explicitly marked unknown.
+- Existing functional cohorts are reused only when their input fingerprints and hierarchy validate. Cross-cohort links use exact file/symbol identity. Ambiguous or stale cohorts require derived-model regeneration from the combined detailed evidence. Append functional-processing failure retains the earlier publication and extraction checkpoint.
+- The saved row and run pointers are captured in one IndexedDB transaction. An explicit mode decision and subsequent publication both check that base. Publication atomically compares row revision, run revision, and deletion marker; a concurrent edit, deletion, or publication leaves current work intact and retains completed checkpoint results.
+- Checkpoints retain mode, base identity, selected paths, context, and immutable revision. Retry preserves the batch and mode, including when the connection's current selection or branch has changed. Input/provider changes that invalidate the fingerprint require a new analysis.
+- The configuration handler canonicalizes an existing repository ID and checks draft, project, navigation, and saved revision after asynchronous boundaries. Cancel or stale configuration cannot save/start the old decision. The mode dialog supports keyboard focus containment and Escape.
+- Existing hazards and artifacts remain stored. Architecture snapshot checks mark earlier hazard runs stale after the architecture expands. Portable exports include the latest run even if the appended file produced no relationships; import restores the selected run pointer and discards stale manifests when importing unrelated legacy rows.
+
+## Validation
+
+Implementation prompt: [append-code-architecture-analysis.md](../codex-prompts/append-code-architecture-analysis.md).
+
+New regression tests exercise the actual App configuration handlers, real generator, functional model, and IndexedDB publication with synthetic source/provider boundaries. They cover both modes; C → JS; overlap and repeat selection; exact cross-file references; duplicate symbol names; edits and overrides; reload; immutable source revisions; legacy data; empty files/storage; scope/navigation cancellation; concurrent edits, run changes, and deletion; source/model/storage failure; checkpoint continuation; and portable manifest preservation. Existing GitHub setup/lifecycle and storage cancellation tests also pass.
+
+The comprehensive Electron regression run **passed all 18 categories**, recorded at `/private/tmp/xhandle-append-replace-electron-20261121/report.json`. The complete frontend suite passed **4,425 tests** across **489 executed suites**, with four existing skipped tests (491 discovered suites). Backend/diagnostic checks passed **140 tests**, including the seven new actual-handler checks. Capacity passed **13**, native Node passed **49**, and native Python passed **19** tests. The fresh production renderer built successfully with existing warnings. Shell persistence, populated workspace interactions, HARA, both profile suites, design, artifact generation, derivation, safety inheritance, collaborator context, and worker responsiveness all passed. The source fingerprint is `7b42650b39c3f9409566301f52bfa02617064953ac9ead97752363ca0c858fc1` (1,212 files).
+
+An additional production Electron UI check passed all five steps: initial C analysis bypasses the mode choice; Cancel preserves the publication; JavaScript Append publishes combined coverage in the same connection; combined results persist after reload; and explicit JavaScript Replace restores selected-file behavior. The check used actual controls, verified Git blob hashes, 24 controlled GitHub requests, nine controlled model responses, and no renderer errors. Evidence: `/private/tmp/xhandle-append-ui-klocVD/result.json` and `/private/tmp/xhandle-append-ui-klocVD/mode-dialog.png`; reproducible runner: `/private/tmp/xhandle-append-mode-ui.cjs`.
+
+The harness uses temporary staging, disposable profiles, controlled providers, and a fresh production renderer. It does not test live provider quality, customer GitHub permissions, signed installers, notarization, or Linux runtime execution on this macOS host.
+
+This feature is uncommitted and unpublished. No application update feed has been changed.

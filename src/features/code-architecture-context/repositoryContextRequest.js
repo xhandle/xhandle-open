@@ -5,3 +5,8 @@ export function repositoryContextRequestIsCurrent(started, current, requestId, a
     && current.draft === started?.draft
     && current.project === started?.project && current.repo === started?.repo);
 }
+
+export function analysisConfigurationIsCurrent(started, current) {
+  return repositoryContextRequestIsCurrent(started, current, 0, 0)
+    && started.section === current.section && started.activeProject === current.activeProject;
+}

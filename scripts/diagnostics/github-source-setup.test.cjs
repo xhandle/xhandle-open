@@ -33,7 +33,7 @@ function fixture() {
     listRepoFilesViaGitHub: async () => [{ path: 'control.py' }],
   };
   vm.createContext(context);
-  vm.runInContext(fs.readFileSync(path.resolve(__dirname, '../../src/features/code-architecture-context/repositoryContextRequest.js'), 'utf8').replace('export function', 'function'), context);
+  vm.runInContext(fs.readFileSync(path.resolve(__dirname, '../../src/features/code-architecture-context/repositoryContextRequest.js'), 'utf8').replaceAll('export function', 'function'), context);
   for (const code of functions.values()) vm.runInContext(code, context);
   return { context, updates };
 }

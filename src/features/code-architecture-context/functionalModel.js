@@ -1,4 +1,5 @@
 import { isFunctionalTransportError } from './functionalTransportRecovery';
+import parseFunctionalResponse from './parseCodeAnalysisJson';
 import { mapAnalysisWork } from './functionalWorkScheduler';
 import { allocateFunctionalHierarchy, functionalEndpointAllocations, functionalHierarchyIsReady } from './functionalHierarchy';
 // A derived, source-addressed model. Detailed rows are never replaced.
@@ -15,12 +16,6 @@ function digest(value) {
 const id = (kind, value) => `functional-${kind}:${digest(JSON.stringify(value))}`;
 const human = value => text(value).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_:./]+/g, ' ').replace(/\s+/g, ' ').trim();
 const unique = values => [...new Set(values.filter(Boolean))];
-function parseFunctionalResponse(value) {
-  if (typeof value !== 'string') return value;
-  // Some providers return fenced JSON despite the format instruction. Remove
-  // only an enclosing fence, never guess missing fields or repair source facts.
-  return JSON.parse(value.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/i, '$1'));
-}
 const retryPrompt = (prompt, attempt) => attempt ? `The previous response could not be validated. Return one complete JSON object matching the supplied schema, with every supplied member exactly once. Escape quotes and newlines inside strings. No prose, Markdown fences, comments, or trailing commas.\n\n${prompt}` : prompt;
 // Cache only explicitly sealed JSON revisions. Mutable callers retain full
 // validation; freezing at CBA state boundaries makes the revision contract enforceable.
@@ -61,7 +56,8 @@ export function functionalInputKey(row) {
   const value = JSON.stringify([side(row, 'from'), side(row, 'to'), row.action || row.controlAction,
     text(row.fromDetails), text(row.toDetails), text(row.controlActionDetails || row.controlDetails),
     row.architecture, row.fromArchitecture, row.toArchitecture, row.relationshipEvidence, row.sourceEvidence, row.codeEvidence,
-    text(row.interfaceType), text(row.lifecyclePhase), text(row.hazardAnalysisEligibility), text(row.hazardAnalysisEligibilitySource), text(row.hazardAnalysisEligibilityRationale)]);
+    text(row.interfaceType), text(row.lifecyclePhase), text(row.hazardAnalysisEligibility), text(row.hazardAnalysisEligibilitySource), text(row.hazardAnalysisEligibilityRationale),
+    ...(row.integrationEvidence ? [row.integrationEvidence] : [])]);
   const result = digest(value);
   if (sealed.has(row)) fingerprints.set(row, result);
   return result;
@@ -78,6 +74,46 @@ export function functionalModelIsReady(rows = []) {
   }
   if (sealed.has(rows)) readiness.set(rows, result);
   return result;
+}
+
+// Combine independently validated cohorts. Exact source endpoints connect new
+// dependencies to established responsibilities without renaming old functions.
+// Ambiguous/stale models must go through normal combined-model processing.
+export function appendFunctionalModels(previous, incoming) {
+  const old = current(previous), added = current(incoming);
+  if (!added.length) return previous;
+  if ((old.length && (!functionalModelIsReady(previous) || !functionalHierarchyIsReady(previous))) ||
+      !functionalModelIsReady(incoming) || !functionalHierarchyIsReady(incoming)) return null;
+  const sources = new Map(), targets = new Map();
+  const remember = (map, endpoint, unit) => {
+    if (!unit) return;
+    const identity = key(endpoint), stored = map.get(identity);
+    map.set(identity, stored === undefined ? unit : stored?.id === unit.id ? stored : null);
+  };
+  for (const { row } of old) {
+    remember(sources, side(row, 'from'), row.functionalAbstraction.source);
+    remember(targets, side(row, 'to'), row.functionalAbstraction.target);
+  }
+  let ambiguous = false;
+  const resolve = (row, which, unit) => {
+    if (!unit) return unit;
+    const identity = key(side(row, which));
+    const map = sources.has(identity) ? sources : targets;
+    if (!map.has(identity)) return unit;
+    if (!map.get(identity)) { ambiguous = true; return unit; }
+    return map.get(identity);
+  };
+  const combined = [...previous, ...incoming.map(row => row.lineage?.status === 'historical' ? row : {
+    ...row, functionalAbstraction: { ...row.functionalAbstraction,
+      source: resolve(row, 'from', row.functionalAbstraction.source),
+      target: resolve(row, 'to', row.functionalAbstraction.target) },
+  })];
+  if (ambiguous) return null;
+  const modelKey = digest(current(combined).map(({ row }) => functionalInputKey(row)).sort().join('|'));
+  const result = combined.map(row => row.lineage?.status === 'historical' ? row : {
+    ...row, functionalAbstraction: { ...row.functionalAbstraction, modelKey },
+  });
+  return functionalModelIsReady(result) && functionalHierarchyIsReady(result) ? result : null;
 }
 function abort(signal) { if (signal?.aborted) throw Object.assign(new Error('Functional processing cancelled.'), { name: 'AbortError' }); }
 function nonempty(value, field) { if (typeof value !== 'string' || !value.trim() || value.length > 1500) throw new Error(`Invalid functional ${field}.`); return value.trim(); }

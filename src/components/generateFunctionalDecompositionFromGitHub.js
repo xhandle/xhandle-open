@@ -1,4 +1,6 @@
-import { beginArchitectureStorageWork, recordArchitectureInterruption } from '../features/code-architecture-assurance/codeArchitectureStorage';
+import { APPEND_INTEGRATION_VERSION, integrationFileDescriptor, discoverAppendIntegration } from '../features/code-architecture-context/appendIntegration';
+import { planArchitectureAppend, verifyArchitectureAppendSource, appendArchitectureRows, mergeArchitectureManifests, analyzedArchitecturePaths } from '../features/code-architecture-context/appendCodeArchitecture';
+import { beginArchitectureStorageWork, recordArchitectureInterruption, readPublishedArchitectureState, readArchitectureCheckpoint } from '../features/code-architecture-assurance/codeArchitectureStorage';
 import { useCurrentViewSource } from '../features/collaborator-performance/useCurrentViewSource';
 import { currentArchitectureSample } from '../features/collaborator-performance/currentViewEvidence';
 import { extractCppSourceFunctions } from "../features/code-architecture-context/cppSourceFunctions";
@@ -9,7 +11,7 @@ import { createFunctionalRequestRuntime, createValidatedFunctionalCache } from '
 import { SHOW_TABLE_REVIEW_COLUMNS } from "./tablePresentation";
 import { ArchitectureWorkspace, ArchitectureDivider, ArchitectureTablePane, useArchitectureColumnWidths, diagramFocusView, architectureHeaderClass, architectureCellClass, architectureLinkClass } from './ArchitectureWorkspace';
 import VirtualTableBody from './VirtualTableBody';
-import { buildFunctionalModelRows, processFunctionalModel, functionalModelIsReady, immutableFunctionalRows, functionalInputKey, FUNCTIONAL_MODEL_VERSION } from '../features/code-architecture-context/functionalModel';
+import { buildFunctionalModelRows, processFunctionalModel, appendFunctionalModels, functionalModelIsReady, immutableFunctionalRows, functionalInputKey, FUNCTIONAL_MODEL_VERSION } from '../features/code-architecture-context/functionalModel';
 import { writeCbaRowsToIndexedDB, readCbaRowsRevision, flushArchitectureWrites } from '../features/code-architecture-assurance/codeArchitectureStorage';
 import { writeAnalysisSourceRecord as idbPut, readAnalysisSourceRecord as idbGet, analysisStorageError } from '../features/code-architecture-context/analysisSourceStorage';
 import { prepareArchitecturePublication, recoverArchitecturePublication } from '../features/code-architecture-assurance/codeArchitectureStorage';
@@ -3019,6 +3021,22 @@ export const generateFunctionalDecompositionFromGitHub = async (
     const token = local ? undefined : (repoConfig.token || localStorage.getItem("githubToken") || "") || undefined;
     if (!local && (!owner || !repo)) throw new Error("Missing owner/repo. Connect a GitHub repository first.");
     const outputStorageKey = opts?.storageKey || (local ? `cba:local:${source.sourceId}` : `cba:${owner}/${repo}`);
+    // Resolve retry intent before choosing source paths or reading a moving branch.
+    let resume = null;
+    if (opts.resumeCheckpointKey) {
+      if (!opts.resumeCheckpointKey.startsWith(`${FUNCTIONAL_DECOMPOSITION_CHECKPOINT_PREFIX}${outputStorageKey}:`)) throw new Error('Checkpoint does not belong to this project.');
+      resume = await readArchitectureCheckpoint(opts.resumeCheckpointKey);
+      if (!resume || resume.scope !== outputStorageKey || resume.phase === 'ready-to-publish') throw new Error('No unfinished analysis is available for this checkpoint.');
+    }
+    const analysisMode = resume?.analysisMode || opts.analysisMode || 'replace';
+    if (!['replace', 'append'].includes(analysisMode)) throw new Error('Invalid analysis mode.');
+    const append = analysisMode === 'append';
+    await flushArchitectureWrites(outputStorageKey);
+    const base = append || opts.expectedBaseIdentity || resume?.baseIdentity
+      ? await readPublishedArchitectureState(outputStorageKey, { signal: opts.signal }) : null;
+    const expectedBaseIdentity = resume?.baseIdentity || opts.expectedBaseIdentity;
+    if (expectedBaseIdentity && base.identity !== expectedBaseIdentity) throw Object.assign(new Error('The saved analysis changed. Reopen repository configuration and choose Replace or Append again.'), { code: 'SOURCE_PUBLICATION_CONFLICT' });
+    const baseIdentity = base?.identity;
     const metricsRun = createFunctionalDecompositionMetricsRun({
       projectId: opts?.projectId || repoConfig.projectId || "",
       repoId: repoConfig.id || repoConfig.repoId || `${owner}/${repo}`,
@@ -3040,7 +3058,7 @@ export const generateFunctionalDecompositionFromGitHub = async (
 
     // Determine ref/branch once up front
     const displayBranch = local ? "" : repoConfig.branch || await getDefaultBranch(owner, repo, token, opts.signal, opts.onProgress);
-    const ref = local ? "" : await retryAnalysisOperation(signal => getCommitShaForRef(owner, repo, token, displayBranch, signal, opts.onProgress), {signal:opts.signal,requestHandlesDeadline:true});
+    const ref = local ? "" : resume?.commitSha || resume?.source?.snapshotId || await retryAnalysisOperation(signal => getCommitShaForRef(owner, repo, token, displayBranch, signal, opts.onProgress), {signal:opts.signal,requestHandlesDeadline:true});
     opts?.onProgress?.({
       phase: "scan",
       completedFiles: 0,
@@ -3064,16 +3082,17 @@ export const generateFunctionalDecompositionFromGitHub = async (
       currentFile: "",
       message: `Found ${allFiles.length} repository files; filtering selectable source files...`,
     });
-    const repoContext = await fetchRepositoryContext({ owner, repo: local ? source.folderName : repo, token, ref, allFiles, sourceProvider, signal:opts.signal, onProgress:opts.onProgress });
-    const userAnalysisContext = opts?.analysisContext || (local ? { text: "", files: [] } : loadGitHubAnalysisContextFromStorage());
+    const repoContext = resume?.repoContext || await fetchRepositoryContext({ owner, repo: local ? source.folderName : repo, token, ref, allFiles, sourceProvider, signal:opts.signal, onProgress:opts.onProgress });
+    const userAnalysisContext = resume?.analysisContext || opts?.analysisContext || (local ? { text: "", files: [] } : loadGitHubAnalysisContextFromStorage());
 
     // Exclude heavy/vendor dirs; allow all extensions for modal selection
     const candidates = filterSelectableRepoFiles(allFiles);
 
     // Determine which files to include
     let selectedFiles;
-    if (opts?.preselectedPaths?.length) {
-      const set = new Set(opts.preselectedPaths);
+    const resumePaths = resume?.selectedPaths || resume?.inputManifest?.map(entry => entry.path);
+    if (resumePaths?.length || opts?.preselectedPaths?.length) {
+      const set = new Set(resumePaths || opts.preselectedPaths);
       selectedFiles = candidates.filter((f) => set.has(f.path));
     } else if (opts?.selectedExtensions?.length) {
       const chosen = new Set((opts.selectedExtensions || []).map((e) => String(e || "").toLowerCase()));
@@ -3090,11 +3109,20 @@ export const generateFunctionalDecompositionFromGitHub = async (
     }
 
     // Back-compat direct path filtering (old callers)
-    const finalList = filterFiles
+    let finalList = filterFiles
       ? selectedFiles.filter((f) => filterFiles.includes(f.path))
       : selectedFiles;
 
     if (!finalList.length) throw new Error("No matching files after filters.");
+    if (append) {
+      const planned = planArchitectureAppend(base, finalList, outputStorageKey, repoConfig);
+      await verifyArchitectureAppendSource(base, planned.previousPaths, {
+        source, files: allFiles, signal: opts.signal, digestText,
+        previousFiles: snapshot => listRepoFilesViaGitHub(owner, repo, token, snapshot, opts.signal, opts.onProgress),
+        readText: (path, signal) => sourceProvider.readText({ path, signal }),
+      });
+      finalList = planned.files;
+    }
     const maxFilesToAnalyze = Number(opts?.maxFilesToAnalyze || 0);
     const maxChunksToAnalyze = Number(opts?.maxChunksToAnalyze || 0);
     const analysisPlan = planFunctionalAnalysisFiles(finalList, {
@@ -3138,12 +3166,14 @@ export const generateFunctionalDecompositionFromGitHub = async (
       {signal,requestHandlesDeadline:!sourceProvider,onRetry:message => opts?.onProgress?.({phase:"fetch",currentFile:file.path,message:`${file.path}: ${message}`})});
     const inputManifest = await mapAnalysisWork(validFiles, async (file, index, signal) => {
       const read = await readSourceFile(file, signal);
-      return { path: file.path, entryKind: file.entryKind || "file", size: read.size ?? file.size, contentDigest: read.contentDigest || null, textDigest: read.textDigest || await digestText(read.content), decoding: read.decoding || "utf8-fatal-v1", disposition: "selected" };
+      return { path: file.path, blobSha: file.sha || null, entryKind: file.entryKind || "file", size: read.size ?? file.size, contentDigest: read.contentDigest || null, textDigest: read.textDigest || await digestText(read.content), decoding: read.decoding || "utf8-fatal-v1", disposition: "selected" };
     }, { concurrency: 4, signal: opts.signal });
     const inputManifestByPath = new Map(inputManifest.map(entry=>[entry.path,entry]));
     const planSignature = functionalAnalysisPlanSignature(validFiles);
-    const fingerprint = await runFingerprint({ snapshot: local ? source.snapshotId : commitSha, planSignature, inputManifest, context: userAnalysisContext, repoContext, settings: runGuard.settings, grounding: FUNCTIONAL_GROUNDING_VERSION });
+    const fingerprint = await runFingerprint({ snapshot: local ? source.snapshotId : commitSha, planSignature, inputManifest: inputManifest.map(({ blobSha, ...entry }) => entry), context: userAnalysisContext, repoContext, settings: runGuard.settings, grounding: FUNCTIONAL_GROUNDING_VERSION, ...(append ? { analysisMode, baseIdentity, integrationVersion: APPEND_INTEGRATION_VERSION } : {}) });
     let checkpointKey = `${FUNCTIONAL_DECOMPOSITION_CHECKPOINT_PREFIX}${outputStorageKey}:${fingerprint}`;
+    if (resume && resume.fingerprint !== fingerprint) throw Object.assign(new Error('Analysis inputs or provider settings changed since this checkpoint. Start a new analysis from repository configuration.'), { code: 'SOURCE_RUN_CHANGED' });
+    if (resume) checkpointKey = opts.resumeCheckpointKey;
     const savedCheckpoint = opts?.resumeFromCheckpoint === false ? null : await idbGet(IDB_STORES.cba, checkpointKey);
     const checkpoint = savedCheckpoint?.fingerprint === fingerprint && savedCheckpoint?.version === ANALYSIS_VERSION && savedCheckpoint?.actualSettings && runGuard.settings.provider && runGuard.settings.model ? savedCheckpoint : null;
     if (savedCheckpoint && !checkpoint) checkpointKey = `${checkpointKey}:incompatible-${Date.now()}`;
@@ -3153,7 +3183,8 @@ export const generateFunctionalDecompositionFromGitHub = async (
     const systemUnderstanding = checkpoint?.systemUnderstanding ?? await deriveSystemUnderstanding({ repoContext, userContext: userAnalysisContext, bearer, metricsRun, signal:opts.signal });
     throwIfAborted(opts.signal);
     runGuard.check();
-    const checkpointContext = { phase: "extraction", version: ANALYSIS_VERSION, fingerprint, actualSettings: runGuard.actual, systemUnderstanding, scope: outputStorageKey, source: codeSourceProvenance(source), inputManifest };
+    const checkpointContext = { phase: "extraction", version: ANALYSIS_VERSION, fingerprint, actualSettings: runGuard.actual, systemUnderstanding, scope: outputStorageKey, source: codeSourceProvenance(source), inputManifest,
+      analysisMode, baseIdentity, selectedPaths: validFiles.map(file => file.path), analysisContext: userAnalysisContext, repoContext };
     await idbPut(IDB_STORES.cba, checkpointKey, { ...checkpoint, ...checkpointContext });
 
     if (systemUnderstanding) {
@@ -3219,6 +3250,8 @@ Rules:
     const fileProgress = { ...(checkpoint?.fileProgress || {}) };
     // A new user-started run may resume completed sections with a fresh finite request allowance.
     Object.values(fileProgress).forEach(progress => Object.values(progress.sections || {}).forEach(section => { section.requests = 0; }));
+    const integrationState = checkpoint?.integration || {};
+    let integrationResult = null;
     const rowsByPath = { ...(checkpoint?.rowsByPath || {}) };
     const legacyCheckpointRows = checkpoint?.rowsByPath ? (checkpoint.legacyCheckpointRows || []) : checkpointRows;
     let allTableData = checkpointRows;
@@ -3247,7 +3280,7 @@ Rules:
           fileProgress: JSON.parse(JSON.stringify(fileProgress)),
           recoveryPolicy: FUNCTIONAL_RECOVERY_POLICY,
           totalFiles: validFiles.length, completedPaths: Array.from(completedPathSet),
-          failedFiles: failedFiles.map(file => ({ ...file })), rows: allTableData, rowsByPath: { ...rowsByPath }, legacyCheckpointRows, updatedAt: new Date().toISOString(),
+          integration: integrationState, failedFiles: failedFiles.map(file => ({ ...file })), rows: allTableData, rowsByPath: { ...rowsByPath }, legacyCheckpointRows, updatedAt: new Date().toISOString(),
         };
         await idbPut(IDB_STORES.cba, checkpointKey, snapshot);
       } catch (error) { throw analysisStorageError(error, 'Unable to save analysis progress'); }
@@ -3447,9 +3480,60 @@ Rules:
       error.checkpointKey = checkpointKey;
       throw error;
     }
+    if (append) {
+      opts?.onProgress?.({phase:'integration',message:'Checking source connections between earlier and newly analyzed files…'});
+      const previousPaths = analyzedArchitecturePaths(base), currentFiles = new Map(allFiles.map(file => [file.path,file]));
+      const newPaths = new Set(validFiles.map(file => file.path));
+      const manifests = new Map([...(base.run?.inputManifest || []), ...inputManifest].map(file => [file.path,file]));
+      const cache = new Map();
+      const loadRecord = async path => {
+        throwIfAborted(opts.signal);
+        if (cache.has(path)) { const record=cache.get(path);cache.delete(path);cache.set(path,record);return record; }
+        const file = currentFiles.get(path), expected = manifests.get(path);
+        if (!file) throw Object.assign(new Error(`Integration source is unavailable: ${path}. Choose Replace analysis.`), {code:'SOURCE_APPEND_SOURCE_CHANGED'});
+        let content, cached;
+        const currentKey = codeSourceIndexKey({owner,repo,...codeSourceProvenance(source)},path);
+        if (!local && expected?.textDigest) {
+          const original = expected.source || base.run?.source;
+          const keys = [...new Set([currentKey, original ? codeSourceIndexKey({owner,repo,...original},path) : null].filter(Boolean))];
+          for (const key of keys) {
+            cached = await idbGet(IDB_STORES.codeIndex,key,{signal:opts.signal});
+            if (typeof cached?.content === 'string' && await digestText(cached.content) === expected.textDigest) {content=cached.content;break;}
+          }
+        }
+        if (content === undefined) {
+          const read = await readSourceFile(file,opts.signal);
+          if (!read.ok || typeof read.content !== 'string') throw new Error(`Cannot read integration source ${path}.`);
+          content = read.content;
+        }
+        const textDigest = await digestText(content);
+        if (expected?.textDigest && textDigest !== expected.textDigest) throw Object.assign(new Error(`Source content changed during integration: ${path}`), {code:'SOURCE_APPEND_SOURCE_CHANGED'});
+        const record = cached?.path === path && cached.snapshotId === source.snapshotId && cached.content === content && Array.isArray(cached.sourceFunctions)
+          ? cached : await indexSourceFileToIDB({owner,repo,path,content,branch:displayBranch,commitSha,...codeSourceProvenance(source)});
+        record.integrationTextDigest = textDigest;
+        cache.set(path,record);if(cache.size>4)cache.delete(cache.keys().next().value);
+        return record;
+      };
+      try {
+        const descriptors = [];
+        for (const path of [...new Set([...previousPaths,...newPaths])].sort(compareSourcePaths)) {
+          const record = await loadRecord(path);
+          descriptors.push(integrationFileDescriptor(record,newPaths.has(path)?'new':'earlier',record.integrationTextDigest));
+          opts?.onProgress?.({phase:'integration',message:`Indexing connections across ${descriptors.length} of ${previousPaths.size+newPaths.size} analyzed files…`});
+          await sleep(0,opts.signal);
+        }
+        integrationResult = await discoverAppendIntegration({descriptors,loadRecord,digestText,state:integrationState,signal:opts.signal,
+          onCheckpoint:() => persistCheckpoint('integration'),onProgress:opts.onProgress,
+          request:async (prompt,signal) => (await requestOpenAIProxyJsonWithMetrics({prompt,signal,bearer,metricsRun,jsonMode:true,maxTokens:7000,attempts:1,label:'Append cross-batch integration'})).result,
+        });
+      } catch (cause) {
+        if (opts.signal?.aborted || ['SOURCE_RUN_CHANGED','SOURCE_STORAGE_FAILED','SOURCE_APPEND_SOURCE_CHANGED'].includes(cause.code)) throw cause;
+        throw Object.assign(new Error(`Append integration could not complete: ${cause.message}. Earlier results are preserved; retry the unfinished analysis.`),{code:'SOURCE_INTEGRATION_INCOMPLETE',cause});
+      }
+    }
     await persistCheckpoint("classification");
     allTableData = dedupeEvidenceRows(reconcileSourceProposals(allTableData, pythonModuleIndex));
-    const decompositionRows = scopeFunctionalDecomposition(allTableData, relationshipLedger);
+    const decompositionRows = scopeFunctionalDecomposition([...allTableData, ...(integrationResult?.rows || [])], relationshipLedger);
 
     console.log("🏛️ Classifying functional decomposition into Subsystem/CSCI/CSC/CSU architecture...");
     opts?.onProgress?.({
@@ -3474,31 +3558,48 @@ Rules:
     throwIfAborted(opts.signal);
     runGuard.check();
     const publicationFingerprint = await runFingerprint({ requestFingerprint: fingerprint, effectiveSettings: runGuard.actual });
-    const comparisonFingerprint = await runFingerprint({ files: inputManifest.map(({path,contentDigest,textDigest,decoding})=>({path,contentDigest,textDigest,decoding})), context: userAnalysisContext, readme: repoContext.readmeText || "", generationSettings: runGuard.settings, effectiveSettings: runGuard.actual });
+    const comparisonFingerprint = await runFingerprint({ files: inputManifest.map(({path,contentDigest,textDigest,decoding})=>({path,contentDigest,textDigest,decoding})), ...(append ? { parentFingerprint: base.run?.fingerprint || baseIdentity } : {}), context: userAnalysisContext, readme: repoContext.readmeText || "", generationSettings: runGuard.settings, effectiveSettings: runGuard.actual });
     updatePublishedProposalCounts(relationshipLedger, architectureRows);
     await flushArchitectureWrites(outputStorageKey);
-    const previousRows = await idbGet(IDB_STORES.cba, outputStorageKey) || [];
-    let classifiedArchitectureRows = ensureCodeArchitectureTraceIds(reconcileArchitectureRows(architectureRows, previousRows, outputStorageKey));
+    const previousRows = base ? base.rows : await idbGet(IDB_STORES.cba, outputStorageKey) || [];
+    let classifiedArchitectureRows = ensureCodeArchitectureTraceIds(append
+      ? appendArchitectureRows(previousRows, architectureRows, outputStorageKey)
+      : reconcileArchitectureRows(architectureRows, previousRows, outputStorageKey));
+    if (append) classifiedArchitectureRows = classifiedArchitectureRows.map((row, index) => index < previousRows.length ? { ...previousRows[index], lineage: previousRows[index].lineage ? { ...previousRows[index].lineage } : undefined } : row);
     let functionalProcessingError = '';
     try {
-      classifiedArchitectureRows = await processResumableFunctionalModel(classifiedArchitectureRows, {
-        scope: outputStorageKey, bearer, metricsRun,
-        signal: opts.signal,
+      const processModel = rows => processResumableFunctionalModel(rows, {
+        scope: outputStorageKey, bearer, metricsRun, signal: opts.signal,
         onProgress: progress => opts?.onProgress?.({ phase: 'functional', completedFiles, totalFiles: validFiles.length, ...progress }),
       });
+      if (append) {
+        const oldRows = classifiedArchitectureRows.slice(0, previousRows.length);
+        const processed = await processModel(classifiedArchitectureRows.slice(previousRows.length));
+        classifiedArchitectureRows = appendFunctionalModels(oldRows, processed) || await processModel([...oldRows, ...processed]);
+      } else classifiedArchitectureRows = await processModel(classifiedArchitectureRows);
     } catch (error) {
-      if (opts.signal?.aborted) throw error;
+      if (opts.signal?.aborted || append) throw error;
       functionalProcessingError = error.message;
       console.warn('Detailed analysis retained; functional processing did not complete.', error);
     }
-    const selectedPaths = new Set(validFiles.map(file => file.path));
+    const combined = append ? mergeArchitectureManifests(base, inputManifest, relationshipLedger, codeSourceProvenance(source)) : { inputManifest, relationshipLedger };
+    const publishedManifest = combined.inputManifest, publishedLedger = combined.relationshipLedger;
+    if (append) updatePublishedProposalCounts(publishedLedger, classifiedArchitectureRows.filter(row => row.lineage?.status !== 'historical'));
+    const selectedPaths = new Set([...validFiles.map(file => file.path), ...(append ? analyzedArchitecturePaths(base) : [])]);
     const requestedPaths = new Set(finalList.map(file => file.path));
     const selectablePaths = new Set(candidates.map(file => file.path));
     const selectionManifest = allFiles.map(file => ({ path: file.path, entryKind: file.entryKind || "file", size: file.size, disposition: selectedPaths.has(file.path) ? "analyzed" : requestedPaths.has(file.path) ? "skipped-limit" : selectablePaths.has(file.path) ? "not-selected" : "excluded-by-policy-or-entry-kind" })).sort((a,b)=>compareSourcePaths(a.path,b.path));
-    const coverage = summarizeCodeAnalysisCoverage(relationshipLedger, inputManifest);
-    const runRecord = { coverage, version: 1, analysisVersion: ANALYSIS_VERSION, recoveryPolicy: FUNCTIONAL_RECOVERY_POLICY, generationSettings: runGuard.settings, publishedAt: new Date().toISOString(), selectionManifest, adapterExclusions: sourceProvider?.skipped || [], fingerprint: publicationFingerprint, comparisonFingerprint, inputManifest, relationshipLedger, effectiveSettings: runGuard.actual, source: codeSourceProvenance(source), scope: outputStorageKey, status: skippedForScale ? "partial-selection" : "selected-files-analyzed" };
+    const coverage = { ...summarizeCodeAnalysisCoverage(publishedLedger, publishedManifest), ...(combined.legacyCoverageUnknown ? { legacyCoverageUnknown: true } : {}) };
+    const runRecord = { coverage, version: 1, analysisVersion: ANALYSIS_VERSION, recoveryPolicy: FUNCTIONAL_RECOVERY_POLICY, generationSettings: runGuard.settings, publishedAt: new Date().toISOString(), selectionManifest, adapterExclusions: sourceProvider?.skipped || [], fingerprint: publicationFingerprint, comparisonFingerprint, inputManifest: publishedManifest, relationshipLedger: publishedLedger,
+      integration: integrationResult ? { ...integrationResult.coverage,
+        relationships: integrationResult.rows.map(({from,fromFile,to,toFile,integrationEvidence}) => ({from,fromFile,to,toFile,integrationEvidence})),
+        unresolved: integrationState.unresolved, rejected: integrationState.rejected } : null,
+      analysisMode, baseIdentity, legacyCoverageUnknown: combined.legacyCoverageUnknown || false,
+      parentFingerprint: append ? base.run?.fingerprint || null : null,
+      batches: [...(append ? base.run?.batches || (base.run ? [{ fingerprint: base.run.fingerprint, source: base.run.source, paths: (base.run.inputManifest || []).map(file => file.path), effectiveSettings: base.run.effectiveSettings }] : []) : []), { fingerprint: publicationFingerprint, source: codeSourceProvenance(source), paths: inputManifest.map(file => file.path), effectiveSettings: runGuard.actual }], effectiveSettings: runGuard.actual, source: codeSourceProvenance(source), scope: outputStorageKey, status: skippedForScale ? "partial-selection" : combined.legacyCoverageUnknown ? "selected-files-analyzed-with-legacy-coverage" : "selected-files-analyzed" };
     // Every published row carries the compact run reference for portable lineage.
-    classifiedArchitectureRows.forEach(row => { if (row.lineage?.status === "current") row.lineage.runFingerprint = publicationFingerprint; });
+    classifiedArchitectureRows = classifiedArchitectureRows.map((row, index) => row.lineage?.status === 'current' && (!append || index >= previousRows.length)
+      ? { ...row, lineage: { ...row.lineage, runFingerprint: publicationFingerprint } } : row);
     const finalMetrics = finishFunctionalDecompositionMetricsRun(metricsRun, {
       rowCount: architectureRows.length,
       selectedFiles: validFiles.length,
@@ -3511,9 +3612,12 @@ Rules:
     console.log("📊 Parsed table rows:", architectureRows.length);
     const metadata = {
       functionalProcessingError,
+      analysisMode,
+      integration: integrationResult?.coverage || null,
+      appendedFiles: append ? validFiles.length : 0,
       ...codeSourceProvenance(source),
       excludedFiles: sourceProvider?.skipped || [],
-      sourceAnalysis: { coverage, version: 1, fingerprint: publicationFingerprint, comparisonFingerprint, scope: outputStorageKey, status: runRecord.status, effectiveSettings: runGuard.actual, manifestKey: `${outputStorageKey}:run:${publicationFingerprint}`, publishedCalls: Object.values(relationshipLedger).reduce((sum,file) => sum + (file.publishedCalls || 0), 0), reviewProposals: Object.values(relationshipLedger).reduce((sum,file) => sum + (file.reviewProposals || []).length, 0), supportedRelationships: Object.values(relationshipLedger).reduce((sum,file) => sum + file.relationships.length, 0), modelOnlyRelationships: Object.values(relationshipLedger).reduce((sum,file) => sum + file.modelOnly, 0) },
+      sourceAnalysis: { coverage, integration: integrationResult?.coverage || null, version: 1, fingerprint: publicationFingerprint, comparisonFingerprint, scope: outputStorageKey, status: runRecord.status, effectiveSettings: runGuard.actual, manifestKey: `${outputStorageKey}:run:${publicationFingerprint}`, publishedCalls: Object.values(publishedLedger).reduce((sum,file) => sum + (file.publishedCalls || 0), 0), reviewProposals: Object.values(publishedLedger).reduce((sum,file) => sum + (file.reviewProposals || []).length, 0), supportedRelationships: Object.values(publishedLedger).reduce((sum,file) => sum + file.relationships.length, 0), modelOnlyRelationships: Object.values(publishedLedger).reduce((sum,file) => sum + file.modelOnly, 0) },
       runFingerprint: publicationFingerprint,
       analysisVersion: ANALYSIS_VERSION,
       recoveryPolicy: FUNCTIONAL_RECOVERY_POLICY,
@@ -3527,13 +3631,13 @@ Rules:
       commitSha,
       filesFound: allFiles.length,
       selectedFilesBeforeLimits: finalList.length,
-      selectedFiles: validFiles.length,
+      selectedFiles: selectedPaths.size,
       skippedForScale,
       skippedForChunkLimit: analysisPlan.skippedForChunkLimit.length,
       totalEstimatedChunks: analysisPlan.totalEstimatedChunks,
       batchCount: analysisPlan.batchCount,
-      coverage: { version: 1, acquisition: "complete", selected: finalList.length, analyzed: completedPathSet.size, failed: failedFiles.length, skippedByLimits: skippedForScale, excludedByAdapter: sourceProvider?.skipped?.length || 0, relationships: "bounded-extraction-and-model-proposals" },
-      analyzedFiles: completedPathSet.size,
+      coverage: { version: 1, acquisition: combined.legacyCoverageUnknown ? "legacy-coverage-unknown" : "complete", selected: selectedPaths.size, analyzed: selectedPaths.size, failed: failedFiles.length, skippedByLimits: skippedForScale, excludedByAdapter: sourceProvider?.skipped?.length || 0, relationships: "bounded-extraction-and-model-proposals" },
+      analyzedFiles: selectedPaths.size,
       failedFileCount: failedFiles.length,
       failedFiles: failedFiles.slice(-25),
       storageKey: outputStorageKey,

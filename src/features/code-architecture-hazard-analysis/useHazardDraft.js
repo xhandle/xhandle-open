@@ -19,13 +19,23 @@ export default function useHazardDraft(enabled,input){
      if(Number.isFinite(data.progress))setState(previous=>({input,status:'loading',progress:Math.max(previous?.input===input?previous.progress||0:0,Math.min(99,Math.max(0,data.progress)))}));
      return;
     }
+    closed=true;
     if(data.error)setState({input,status:'error',error:data.error});
     else{cache.current={input,run:data.run};setState({input,status:'ready',run:data.run});}
     worker.terminate();
    };
-   worker.onerror=event=>{if(!closed){setState({input,status:'error',error:event.message || 'Unable to prepare hazard table.'});worker.terminate();}};
+   worker.onerror=event=>{
+    // This failure is surfaced by the panel's retryable error state. Cancel the
+    // default global error report too, including late errors from retired work,
+    // so a failed script download does not also open the development overlay.
+    event.preventDefault?.();
+    if(closed)return;
+    closed=true;
+    setState({input,status:'error',error:event.message || 'Unable to prepare hazard table. Reload xHandle and retry.'});
+    worker.terminate();
+   };
    worker.postMessage(input);
-  }catch(error){worker?.terminate();setState({input,status:'error',error:error.message});}
+  }catch(error){closed=true;worker?.terminate();setState({input,status:'error',error:error.message});}
   return ()=>{closed=true;worker?.terminate();};
  },[enabled,input,attempt]);
  const result=cache.current?.input===input?cache.current:state?.input===input?state:null;

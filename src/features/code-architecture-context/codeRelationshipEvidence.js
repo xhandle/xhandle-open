@@ -183,7 +183,16 @@ const exactLegacyKey = row => stableJson([row.fromFile,row.from,row.action,row.t
 export function reconcileArchitectureRows(incoming, previous, scope) {
   previous = (previous || []).filter(row => !row.lineage?.scope || row.lineage.scope === scope);
   const used=new Set(), result=[];
-  let nextRowRef = Math.max(0,...(previous || []).map(row=>Number(row.rowRef)||0));
+  let nextRowRef = previous.reduce((max,row)=>Math.max(max,Number(row.rowRef)||0),0);
+  const canonical = new Map(), legacy = new Map(), withoutCanonical = new Map(), integration = new Map();
+  const add = (map,key,row) => { const entries=map.get(key)||[];entries.push(row);map.set(key,entries); };
+  for (const old of previous) {
+    if (old.lineage?.status === 'historical') continue;
+    if (old.integrationEvidence) { add(integration,old.integrationEvidence.relationshipId,old); continue; }
+    add(legacy,exactLegacyKey(old),old);
+    if (old.canonicalRelationshipId) add(canonical,old.canonicalRelationshipId,old);
+    else add(withoutCanonical,exactLegacyKey(old),old);
+  }
   const nodeIdentity = (row,side) => row.relationshipEvidence?.supported ? stableJson([row.relationshipEvidence[`${side}File`],row.relationshipEvidence[side]]) : null;
   const previousNodes = new Map();
   for (const row of previous || []) for (const side of ['from','to']) {
@@ -191,8 +200,10 @@ export function reconcileArchitectureRows(incoming, previous, scope) {
     if(key && id) { const ids=previousNodes.get(key)||new Set(); ids.add(id);previousNodes.set(key,ids); }
   }
   for(const row of incoming) {
-    const matches=(previous||[]).filter(old=> !used.has(old) && old.lineage?.status !== "historical" && (!old.lineage?.scope || old.lineage.scope===scope) &&
-      (row.canonicalRelationshipId && old.canonicalRelationshipId ? row.canonicalRelationshipId===old.canonicalRelationshipId : exactLegacyKey(row)===exactLegacyKey(old)));
+    const candidates = row.integrationEvidence ? (row.integrationEvidence.relationshipId ? integration.get(row.integrationEvidence.relationshipId) || [] : [])
+      : row.canonicalRelationshipId ? [...(canonical.get(row.canonicalRelationshipId) || []), ...(withoutCanonical.get(exactLegacyKey(row)) || [])]
+      : legacy.get(exactLegacyKey(row)) || [];
+    const matches=candidates.filter(old=>!used.has(old));
     const candidate=matches.length===1?matches[0]:null;
     // A new revision/policy or ambiguous mapping must not inherit an old assessment.
     const old=candidate && (candidate.relationshipEvidence ? relationshipEvidenceUnchanged(candidate.relationshipEvidence,row.relationshipEvidence) : legacyEvidenceUnchanged(candidate,row)) ? candidate : null;

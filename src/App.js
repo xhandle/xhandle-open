@@ -25,7 +25,9 @@ import {safeHazardObserver} from './features/code-architecture-hazard-analysis/h
 import {createHazardRunRegistry} from './features/code-architecture-hazard-analysis/hazardRunRegistry';
 import {boundedHazardStorage} from './features/code-architecture-hazard-analysis/resilientHazardCheckpoint';
 import useDiagramAssuranceArtifacts from './features/code-architecture-assurance/useDiagramAssuranceArtifacts';
-import { repositoryContextRequestIsCurrent } from './features/code-architecture-context/repositoryContextRequest';
+import AnalysisModeModal from './features/code-architecture-context/AnalysisModeModal';
+import { assertArchitectureAppendDestination } from './features/code-architecture-context/appendCodeArchitecture';
+import { repositoryContextRequestIsCurrent, analysisConfigurationIsCurrent } from './features/code-architecture-context/repositoryContextRequest';
 import { getCbaMethodDraftHeaders } from "./components/haraFhaSharedWorkflow";
 import XHandleWorkingMark from "./components/XHandleWorkingMark";
 import { assertHazardContextRunScope, persistHazardContexts } from './features/code-architecture-hazard-analysis/saveHazardContexts';
@@ -267,6 +269,7 @@ import {
   writeImportedArchitectureRunRecords,
   recoverArchitecturePublication,
   readArchitectureMetadata,
+  readPublishedArchitectureState,
   hasArchitectureConnectionWork,
 } from "./features/code-architecture-assurance/codeArchitectureStorage";
 import {
@@ -4037,7 +4040,7 @@ const repoContextRequestRef = useRef(0);
 const repoSourceRequestRef = useRef(null);
 useEffect(() => () => repoSourceRequestRef.current?.abort(), [codeArchitectureRepoDraft, showCodeArchitectureRepoConfig, codeArchitectureRepoConfigProjectId, codeArchitectureRepoConfigRepoId]);
 const repoContextDraftRef = useRef(null);
-repoContextDraftRef.current = {draft:codeArchitectureRepoDraft, open:showCodeArchitectureRepoConfig, project:codeArchitectureRepoConfigProjectId, repo:codeArchitectureRepoConfigRepoId};
+repoContextDraftRef.current = {draft:codeArchitectureRepoDraft, open:showCodeArchitectureRepoConfig, project:codeArchitectureRepoConfigProjectId, repo:codeArchitectureRepoConfigRepoId, section, activeProject:activeCodeArchitectureProjectId};
 const [codeArchitectureRepoConfigMessage, setCodeArchitectureRepoConfigMessage] = useState("");
 const [localConnectionChoicePending, setLocalConnectionChoicePending] = useState(false);
 const codeArchitectureAnalysisInFlightRef = useRef(false);
@@ -4050,6 +4053,22 @@ const [isCodeArchitectureContextGenerating, setIsCodeArchitectureContextGenerati
 const [codeArchitectureRepoFilesForModal, setCodeArchitectureRepoFilesForModal] = useState([]);
 const [codeArchitectureFileSelectorOpen, setCodeArchitectureFileSelectorOpen] = useState(false);
 const codeArchitectureFileSelectorResolver = useRef(null);
+const [codeArchitectureAnalysisModeSelection, setCodeArchitectureAnalysisModeSelection] = useState(null);
+const codeArchitectureAnalysisModeResolver = useRef(null);
+const codeArchitectureConfigWorkflowRef = useRef(null);
+useEffect(() => {
+  for (const ref of [codeArchitectureFileSelectorResolver, codeArchitectureAnalysisModeResolver]) {
+    if (ref.current && !analysisConfigurationIsCurrent(ref.current.context, repoContextDraftRef.current)) {
+      ref.current(null); ref.current = null;
+      setCodeArchitectureFileSelectorOpen(false);
+      setCodeArchitectureAnalysisModeSelection(null);
+    }
+  }
+}, [codeArchitectureRepoDraft, showCodeArchitectureRepoConfig, codeArchitectureRepoConfigProjectId, codeArchitectureRepoConfigRepoId, section, activeCodeArchitectureProjectId]);
+useEffect(() => () => {
+  codeArchitectureFileSelectorResolver.current?.(null);
+  codeArchitectureAnalysisModeResolver.current?.(null);
+}, []);
 const [selectedCbaElement, setSelectedCbaElement] = useState(null);
 const [activeCodeArchitectureSelection, setActiveCodeArchitectureSelection] = useState(null);
 const [codeArchitectureWorkspaceTab, setCodeArchitectureWorkspaceTab] = useState("architecture");
@@ -4586,36 +4605,71 @@ function awaitCodeArchitectureFileTypes(files) {
   setCodeArchitectureRepoFilesForModal(files || []);
   setCodeArchitectureFileSelectorOpen(true);
   return new Promise((resolve) => {
-    codeArchitectureFileSelectorResolver.current = resolve;
+    codeArchitectureFileSelectorResolver.current = Object.assign(resolve, { context: repoContextDraftRef.current });
+  });
+}
+
+function awaitCodeArchitectureAnalysisMode(extensions) {
+  setCodeArchitectureAnalysisModeSelection({ extensions });
+  return new Promise(resolve => {
+    codeArchitectureAnalysisModeResolver.current = Object.assign(resolve, { context: repoContextDraftRef.current });
   });
 }
 
 async function saveCodeArchitectureRepoConfig({ analyze = false } = {}) {
+  if (codeArchitectureConfigWorkflowRef.current) return;
+  const started = repoContextDraftRef.current;
+  const current = () => analysisConfigurationIsCurrent(started, repoContextDraftRef.current);
   const projectId = codeArchitectureRepoConfigProjectId || activeCodeArchitectureProjectId;
   if (!projectId) {
     setCodeArchitectureRepoConfigMessage("Create or select a Code-Based Architecture project first.");
     return;
   }
+  const workflow = {};
+  codeArchitectureConfigWorkflowRef.current = workflow;
   setIsCodeArchitectureRepoAnalyzing(Boolean(analyze));
   try {
     const verified = await verifyCodeArchitectureRepo({ silent: analyze });
-    if (!verified?.repoConfig) return;
+    if (!verified?.repoConfig || !current()) return;
     let selectedExtensions = verified.repoConfig.selectedExtensions || [];
     if (analyze) {
       selectedExtensions = await awaitCodeArchitectureFileTypes(verified.repoFiles);
-      if (!selectedExtensions.length) {
+      if (!current()) return;
+      if (!selectedExtensions?.length) {
         setCodeArchitectureRepoConfigMessage("Analysis cancelled. No file types selected.");
         return;
       }
     }
+    const project = codeArchitectureProjects.find(entry => entry.id === projectId);
+    if (!project) throw new Error('This project is no longer available.');
+    const existing = project.repos?.find(entry => codeArchitectureReposMatch(entry, verified.repoConfig));
     const repoConfig = {
       ...verified.repoConfig,
+      id: existing?.id || verified.repoConfig.id,
       selectedExtensions,
       analysisContext: {
         text: codeArchitectureRepoDraft.analysisContextText,
         files: codeArchitectureRepoDraft.analysisContextFiles,
       },
     };
+    let analysisMode = 'replace', expectedBaseIdentity;
+    if (analyze) {
+      const scope = codeArchitectureRowsKey(projectId, repoConfig.id);
+      await flushArchitectureWrites(scope);
+      if (!current()) return;
+      const saved = await readPublishedArchitectureState(scope, { summaryOnly: true });
+      if (!current()) return;
+      expectedBaseIdentity = saved.identity;
+      if (saved.hasAnalysis) {
+        analysisMode = await awaitCodeArchitectureAnalysisMode(selectedExtensions);
+        if (!current() || !analysisMode) return;
+      }
+      const latest = await readPublishedArchitectureState(scope, { summaryOnly: true });
+      if (!current()) return;
+      if (latest.identity !== expectedBaseIdentity) throw new Error('The saved analysis changed. Click Analyze again to review the current results before proceeding.');
+      if (analysisMode === 'append') assertArchitectureAppendDestination(latest, scope, repoConfig);
+    }
+    if (!current()) return;
     upsertCodeArchitectureRepo(projectId, repoConfig);
     setActiveCodeArchitectureProjectId(projectId);
     setActiveCodeArchitectureFolderId(null);
@@ -4626,15 +4680,20 @@ async function saveCodeArchitectureRepoConfig({ analyze = false } = {}) {
         repoConfig,
         selectedExtensions,
         analysisContext: repoConfig.analysisContext,
+        analysisMode, expectedBaseIdentity,
       });
     } else {
       setCodeArchitectureRepoConfigMessage("Repository saved.");
     }
   } catch (error) {
-    if (!["SOURCE_ANALYSIS_INCOMPLETE", "SOURCE_PUBLICATION_PENDING", "SOURCE_PUBLICATION_CONFLICT", "SOURCE_STORAGE_FAILED", "SOURCE_ANALYSIS_CANCELLED"].includes(error?.code)) setShowCodeArchitectureRepoConfig(true);
+    if (!current() && !error?.code) return;
+    if (!["SOURCE_ANALYSIS_INCOMPLETE", "SOURCE_INTEGRATION_INCOMPLETE", "SOURCE_PUBLICATION_PENDING", "SOURCE_PUBLICATION_CONFLICT", "SOURCE_STORAGE_FAILED", "SOURCE_ANALYSIS_CANCELLED"].includes(error?.code)) setShowCodeArchitectureRepoConfig(true);
     setCodeArchitectureRepoConfigMessage(error?.message || String(error));
   } finally {
-    setIsCodeArchitectureRepoAnalyzing(false);
+    if (codeArchitectureConfigWorkflowRef.current === workflow) {
+      codeArchitectureConfigWorkflowRef.current = null;
+      setIsCodeArchitectureRepoAnalyzing(false);
+    }
   }
 }
 
@@ -4648,6 +4707,7 @@ function normalizeImportedCodeArchitectureRows(value) {
         : [];
   return restoreFunctionalCsvSnapshot(ensureCodeArchitectureTraceIds(rawRows.map((row) => ({
     functionalCsvSnapshot: row.functionalCsvSnapshot,
+    integrationEvidence: row.integrationEvidence || undefined,
     fromArchitecture: row.fromArchitecture,
     toArchitecture: row.toArchitecture,
     functionalAbstraction: row.functionalAbstraction || undefined,
@@ -4731,7 +4791,11 @@ async function saveImportedCodeArchitectureRows({ project, file, rows, repoPacka
   const storageKey = codeArchitectureRowsKey(project.id, repoConfig.id);
   // Explicit project import copies ownership, without changing saved trace/artifact IDs.
   rows = rows.map(row => row.lineage ? { ...row, lineage: { ...row.lineage, originalScope: row.lineage.originalScope || row.lineage.scope, scope: storageKey } } : row);
-  await writeImportedArchitectureRunRecords(storageKey, repoPackage?.runRecords || [], rows, { signal: operation?.signal });
+  await writeImportedArchitectureRunRecords(storageKey, repoPackage?.runRecords || [], rows, {
+    signal: operation?.signal,
+    latestFingerprint: repoPackage?.metadata?.sourceAnalysis?.fingerprint,
+    metadata: { ...repoPackage?.metadata, owner: repoConfig.owner, repo: repoConfig.repo, ...codeSourceProvenance(repoConfig) },
+  });
   operation?.check();
   const rowsPersisted = true;
   localStorage.setItem(codeArchitectureMetaKey(project.id, repoConfig.id), JSON.stringify({
@@ -5397,6 +5461,9 @@ async function handleBaselineRepo({
   projectId,
   repoConfig,
   publicationCheckpointKey,
+  resumeCheckpointKey,
+  analysisMode,
+  expectedBaseIdentity,
 } = {}) {
   if (codeArchitectureAnalysisInFlightRef.current) return;
   setSection("code-architecture");
@@ -5468,6 +5535,7 @@ async function handleBaselineRepo({
       null,
       {
         signal: analysisController.signal,
+        analysisMode, expectedBaseIdentity, resumeCheckpointKey,
         repoConfig: { ...effectiveRepoConfig, owner: finalOwner, repo: finalRepo, token: finalToken },
         projectId: targetProject?.id || "",
         storageKey,
@@ -17689,7 +17757,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
           loading={cbaLoading}
           failure={codeArchitectureRunFailure?.scope === activeCodeArchitectureRowsKey ? codeArchitectureRunFailure.message : ''}
           hasPublishedRows={cbaTableData.length > 0}
-          onResume={(checkpoint) => handleBaselineRepo({ projectId: activeCodeArchitectureProject.id, repoConfig: activeCodeArchitectureRepo, publicationCheckpointKey: checkpoint.publicationReady ? checkpoint.key : undefined })}
+          onResume={(checkpoint) => handleBaselineRepo({ projectId: activeCodeArchitectureProject.id, repoConfig: activeCodeArchitectureRepo, publicationCheckpointKey: checkpoint.publicationReady ? checkpoint.key : undefined, resumeCheckpointKey: checkpoint.publicationReady ? undefined : checkpoint.key })}
         />}
 
         {cbaLoadError && <div role="alert" className="rounded border border-red-200 bg-red-50 p-4 text-sm text-red-700">Unable to load or save this project: {cbaLoadError}</div>}
@@ -22157,6 +22225,15 @@ const updateRiskInProject = async (projectId, predicate) => {
             </div>
           </div>
         )}
+
+        <AnalysisModeModal
+          selection={codeArchitectureAnalysisModeSelection}
+          onChoose={mode => {
+            setCodeArchitectureAnalysisModeSelection(null);
+            codeArchitectureAnalysisModeResolver.current?.(mode);
+            codeArchitectureAnalysisModeResolver.current = null;
+          }}
+        />
 
         <FileTypeSelectorModal
           open={codeArchitectureFileSelectorOpen}

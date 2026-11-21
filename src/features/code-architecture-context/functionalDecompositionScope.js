@@ -5,6 +5,9 @@ export const isNonProductionCallPath = path => /(^|\/)(tests?|__tests__|fixtures
 
 export function decompositionDisposition(row, ledger = {}) {
   const e = row.relationshipEvidence;
+  if (row.integrationEvidence?.version === 1 && row.integrationEvidence.verification === 'source-citations' && e?.extractionMethod === 'source-cited-model-proposal') {
+    return isNonProductionCallPath(row.fromFile) ? 'excluded-nonproduction-call' : 'review-required-integration';
+  }
   const file = ledger[e?.fromFile || row.grounding?.currentFile || row.fromFile];
   if (!e?.supported) {
     // A new Python policy must not silently erase existing extraction support
@@ -20,7 +23,7 @@ export function decompositionDisposition(row, ledger = {}) {
 }
 
 export function decompositionRowsAllowed(row, ledger) {
-  return ['published-call', 'legacy-language-extraction'].includes(decompositionDisposition(row, ledger));
+  return ['published-call', 'legacy-language-extraction', 'review-required-integration'].includes(decompositionDisposition(row, ledger));
 }
 
 export function decompositionTableEntries(rows, showHistorical = false, focusedIndex = null) {
@@ -35,7 +38,7 @@ export function scopeFunctionalDecomposition(rows, ledger) {
   for (const row of rows) {
     const disposition = decompositionDisposition(row, ledger);
     if (row.canonicalRelationshipId) dispositions.set(row.canonicalRelationshipId, disposition);
-    if (disposition === 'published-call' || disposition === 'legacy-language-extraction') included.push(row);
+    if (['published-call', 'legacy-language-extraction', 'review-required-integration'].includes(disposition)) included.push(row);
     else if (!row.canonicalRelationshipId) reviewProposals.push({...row, decompositionDisposition:disposition});
   }
   for (const file of Object.values(ledger)) {

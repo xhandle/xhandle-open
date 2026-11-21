@@ -111,20 +111,33 @@ export async function readArchitectureRunRecords(key, rows = []) {
   const db = await openCbaIndexedDB();
   try {
     const records = [];
+    const latest = await readRecord(db, XHANDLE_IDB_CBA_STORE, `${key}:run`);
+    if (latest) records.push(latest);
     for (const fingerprint of new Set(rows.map(row => row.lineage?.runFingerprint).filter(Boolean))) {
+      if (fingerprint === latest?.fingerprint) continue;
       const record = await readRecord(db, XHANDLE_IDB_CBA_STORE, `${key}:run:${fingerprint}`);
       if (record) records.push(record);
     }
     return records;
   } finally { db.close(); }
 }
-async function writeImportedArchitectureRunRecordsNow(key, records = [], rows, { signal } = {}) {
+async function writeImportedArchitectureRunRecordsNow(key, records = [], rows, { signal, latestFingerprint, metadata } = {}) {
   const db = await openCbaIndexedDB({ signal });
   try {
     const writes = [];
-    for (const record of records.filter(r => r.version === 1 && /^[a-f0-9]{64}$/.test(r.fingerprint || ''))) {
+    const valid = records.filter(r => r.version === 1 && /^[a-f0-9]{64}$/.test(r.fingerprint || ''));
+    const parents = new Set(valid.map(record => record.parentFingerprint).filter(Boolean));
+    const leaves = valid.filter(record => !parents.has(record.fingerprint));
+    const latest = valid.find(record => record.fingerprint === latestFingerprint) || (!latestFingerprint && leaves.length === 1 ? leaves[0] : null);
+    for (const record of valid) {
       const recordKey = `${key}:run:${record.fingerprint}`;
       writes.push({key:recordKey, value:await stageRecord(db, XHANDLE_IDB_CBA_STORE, recordKey, {...record, originalScope:record.originalScope || record.scope, scope:key}, { signal })});
+    }
+    if (latest && Array.isArray(rows)) {
+      const pointer = writes.find(write => write.key === `${key}:run:${latest.fingerprint}`).value;
+      writes.push({key:`${key}:run`, value:pointer});
+      writes.push({key:`${key}:metadata`, value:{...metadata, ...latest.source, rowCount:rows.length,
+        sourceAnalysis:{...metadata?.sourceAnalysis, fingerprint:latest.fingerprint,scope:key,manifestKey:`${key}:run:${latest.fingerprint}`}}});
     }
     if (Array.isArray(rows)) writes.push({key, value:await stageRecord(db, XHANDLE_IDB_CBA_STORE, key, rows, { signal })});
     if (signal?.aborted) throw signal.reason || new Error('Import cancelled.');
@@ -134,6 +147,10 @@ async function writeImportedArchitectureRunRecordsNow(key, records = [], rows, {
     done.finally(() => signal?.removeEventListener('abort', abort)).catch(() => {});
     try {for (const write of writes) tx.objectStore(XHANDLE_IDB_CBA_STORE).put(write);
       if (Array.isArray(rows)) {
+        if (!latest) {
+          tx.objectStore(XHANDLE_IDB_CBA_STORE).delete(`${key}:run`);
+          tx.objectStore(XHANDLE_IDB_CBA_STORE).delete(`${key}:metadata`);
+        }
         tx.objectStore(XHANDLE_IDB_CBA_STORE).delete(`${key}:storage-deleted`);
         tx.objectStore(XHANDLE_IDB_CBA_STORE).delete(`${key}:storage-cleanup-pending`);
       }}
@@ -142,6 +159,31 @@ async function writeImportedArchitectureRunRecordsNow(key, records = [], rows, {
   } finally { db.close(); }
 }
 const revision = value => isChunkedRecord(value) ? value.root : JSON.stringify(value || []);
+const publicationIdentity = (rows, run, deleted) => JSON.stringify([revision(rows), revision(run), Boolean(deleted)]);
+
+// Capture both publication pointers in one transaction. Hydrating immutable
+// chunks afterwards cannot accidentally mix rows from one run with another.
+export async function readPublishedArchitectureState(scope, { summaryOnly = false, signal } = {}) {
+  const db = await openCbaIndexedDB({ signal });
+  try {
+    const tx = db.transaction(XHANDLE_IDB_CBA_STORE, 'readonly'), done = transactionDone(tx);
+    done.catch(() => {});
+    const store = tx.objectStore(XHANDLE_IDB_CBA_STORE);
+    const requests = [scope, `${scope}:run`, `${scope}:metadata`, `${scope}:storage-deleted`].map(key => store.get(key));
+    await done;
+    if (signal?.aborted) throw signal.reason || new DOMException('Analysis cancelled.', 'AbortError');
+    const [rowRecord, runRecord, metadata, deleted] = requests.map(request => request.result?.value);
+    const identity = publicationIdentity(rowRecord, runRecord, deleted);
+    // An initialized empty row record is not a completed analysis. A run pointer
+    // still counts when a legitimately analyzed selection produced zero rows.
+    const legacyRows = !deleted && !runRecord ? await hydrateRecord(db, XHANDLE_IDB_CBA_STORE, rowRecord, { signal }) : null;
+    const hasAnalysis = !deleted && Boolean(runRecord || (Array.isArray(legacyRows) && legacyRows.length));
+    if (summaryOnly) return { identity, hasAnalysis, metadata: metadata || {} };
+    const rows = deleted ? [] : legacyRows || await hydrateRecord(db, XHANDLE_IDB_CBA_STORE, rowRecord, { signal });
+    const run = deleted ? null : await hydrateRecord(db, XHANDLE_IDB_CBA_STORE, runRecord, { signal });
+    return { identity, hasAnalysis, rows: Array.isArray(rows) ? rows : [], run: run || null, metadata: metadata || {} };
+  } finally { db.close(); }
+}
 const pendingInMemory = new Map();
 
 async function prepareArchitecturePublicationNow(key, rows, run, metadata, checkpointKey, previousRows, signal) {
@@ -168,7 +210,7 @@ async function prepareArchitecturePublicationNow(key, rows, run, metadata, check
     const rowRecord = await stageRecord(db, XHANDLE_IDB_CBA_STORE, key, rows, {signal});
     const runRecord = await stageRecord(db, XHANDLE_IDB_CBA_STORE, `${key}:run:${run.fingerprint}`, run, {signal});
     // The ready record references immutable chunks instead of copying the completed rows.
-    const ready = {phase:'ready-to-publish', scope:key, checkpointKey, expected:payload.expected, rowRecord, runRecord, metadata,
+    const ready = {phase:'ready-to-publish', scope:key, checkpointKey, expected:payload.expected, baseIdentity:run.baseIdentity, rowRecord, runRecord, metadata,
       updatedAt:new Date().toISOString(), totalFiles:metadata.selectedFiles || 0};
     await putRawRecord(db, XHANDLE_IDB_CBA_STORE, checkpointKey, ready);
     durable = true;
@@ -206,18 +248,24 @@ async function recoverArchitecturePublicationNow(scope, checkpointKey, signal) {
           if (revision(current.result?.value) !== ready.expected) throw Object.assign(new Error('Architecture was edited before publication. Saved analysis is retained; current edits were not overwritten.'), {code:'SOURCE_PUBLICATION_CONFLICT'});
           const oldRun = store.get(`${scope}:run`);
           oldRun.onsuccess = () => {
-            try {
-            // Immutable pointer history reuses existing data; never duplicates the row array.
-            if (current.result) store.put({key:`${scope}:history:${oldRun.result?.value?.root?.split(':$part:').pop() || 'legacy'}`,value:current.result.value});
-            store.put({key:scope,value:ready.rowRecord});
-            store.delete(`${scope}:storage-deleted`);
-            store.delete(`${scope}:storage-cleanup-pending`);
-            store.put({key:`${scope}:metadata`,value:{...ready.metadata,rowCount:rows.length,updatedAt:new Date().toISOString(),storageSaved:true,storageError:''}});
-            store.put({key:`${scope}:run:${run.fingerprint}`,value:ready.runRecord});
-            store.put({key:`${scope}:run`,value:ready.runRecord});
-            store.delete(checkpointKey);
-            store.delete(`${checkpointKey}:interruption`);
-            } catch(error) {failure=error;stop();}
+            const deleted = store.get(`${scope}:storage-deleted`);
+            deleted.onsuccess = () => {
+              try {
+                if (ready.baseIdentity && publicationIdentity(current.result?.value, oldRun.result?.value, deleted.result?.value) !== ready.baseIdentity) {
+                  throw Object.assign(new Error('The saved architecture changed during analysis. Current results are preserved; start again from the current analysis.'), {code:'SOURCE_PUBLICATION_CONFLICT'});
+                }
+                // Immutable pointer history reuses existing data; never duplicates the row array.
+                if (current.result) store.put({key:`${scope}:history:${oldRun.result?.value?.root?.split(':$part:').pop() || 'legacy'}`,value:current.result.value});
+                store.put({key:scope,value:ready.rowRecord});
+                store.delete(`${scope}:storage-deleted`);
+                store.delete(`${scope}:storage-cleanup-pending`);
+                store.put({key:`${scope}:metadata`,value:{...ready.metadata,rowCount:rows.length,updatedAt:new Date().toISOString(),storageSaved:true,storageError:''}});
+                store.put({key:`${scope}:run:${run.fingerprint}`,value:ready.runRecord});
+                store.put({key:`${scope}:run`,value:ready.runRecord});
+                store.delete(checkpointKey);
+                store.delete(`${checkpointKey}:interruption`);
+              } catch(error) {failure=error;stop();}
+            };
           };
         } catch (error) { failure=error; stop(); }
       };
