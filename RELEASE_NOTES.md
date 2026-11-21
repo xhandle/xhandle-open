@@ -1,5 +1,16 @@
 # Release Notes
 
+## Desktop 0.2.20 (2026-11-21)
+
+[Mac/Linux installers and update](https://github.com/xhandle/xhandle-desktop-releases/releases/tag/v0.2.20). Windows remains on 0.2.16.
+
+- Choose Replace or Append when analyzing an existing code project. Append adds newly selected file types while preserving earlier evidence, trace IDs and analyst decisions.
+- Append checks source-cited connections in both directions between earlier and newly analyzed files and includes accepted links in the combined architecture.
+- Interrupted Append integration resumes saved progress without repeating completed file analysis. Complete JSON responses wrapped in Markdown/prose are accepted; malformed responses retain recovery progress.
+- Hazard draft-worker failures stay in the retry interface and late messages cannot replace completed or retried results.
+- Removed the connection-summary notice at the user's request; stored integration evidence remains available. Scrolling is unchanged.
+
+
 ## Desktop 0.2.19 (2026-11-20)
 
 [Mac/Linux installers and update](https://github.com/xhandle/xhandle-desktop-releases/releases/tag/v0.2.19). Windows remains on 0.2.16.

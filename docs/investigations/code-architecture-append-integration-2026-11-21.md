@@ -1,5 +1,7 @@
 # Append: source integration across analysis batches
 
+Published after review in [Desktop 0.2.20](desktop-0.2.20-publication-2026-11-21.md). That record supersedes preparation/unpublished status below and identifies the frozen source, final requested UI and release evidence.
+
 Prompt executed: [append-code-architecture-integration.md](../codex-prompts/append-code-architecture-integration.md). This extends the uncommitted Replace/Append workflow; no commit, push, installer, or update-feed publication is included.
 
 ## Result

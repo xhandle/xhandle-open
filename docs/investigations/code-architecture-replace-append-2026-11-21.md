@@ -1,5 +1,7 @@
 # Code architecture: Replace or Append
 
+Published after review in [Desktop 0.2.20](desktop-0.2.20-publication-2026-11-21.md). That record supersedes preparation/unpublished status below and identifies the frozen source, final requested UI and release evidence.
+
 The repository configuration workflow now lets a user choose how a later analysis affects saved results. After **… → GitHub Repo Configuration → Analyze → Choose file types**, an existing saved analysis opens a dialog with **Cancel**, **Replace analysis**, and **Append to analysis**. A first analysis proceeds directly. Empty initialized storage does not count as an earlier analysis; a completed run with zero relationships does.
 
 **Replace** preserves the established reconciliation behavior: analyze the selected types, retain compatible IDs and analyst decisions, and mark unmatched earlier rows historical. **Append** analyzes only new selected paths and keeps earlier active rows, historical rows, evidence, trace IDs, edits, and eligibility decisions. A referenced target file does not count as an analyzed file. Selecting only completed files produces an explanatory message without model calls or publication.

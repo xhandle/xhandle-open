@@ -1,5 +1,7 @@
 # Append response and hazard worker recovery review — November 21, 2026
 
+Published after review in [Desktop 0.2.20](desktop-0.2.20-publication-2026-11-21.md). That record supersedes preparation/unpublished status below and identifies the frozen source, final requested UI and release evidence.
+
 ## User-reported failures and scope
 
 Append completed source processing but stopped during cross-batch integration when a model response began with a Markdown JSON fence. Existing publication and draft progress remained available. The exact provider payload was not supplied; a valid fenced response with surrounding explanatory text reproduces the parsing failure in the previous implementation.
