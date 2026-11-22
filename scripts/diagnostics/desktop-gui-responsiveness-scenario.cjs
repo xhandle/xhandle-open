@@ -23,7 +23,7 @@ module.exports=async({page,cdp,result,measure,scroll,frame,save,gesture})=>{
  await test('Design search last requirement',()=>page.getByRole('combobox',{name:'Search Design Management',exact:true}).fill('command 1999'),()=>page.getByRole('option').filter({hasText:'Audit Safety Requirements'}).first().waitFor());
  await page.keyboard.press('Escape');
  await area('Reports');result.phases.push({label:'Reports populated body',text:(await page.locator('body').innerText()).slice(0,8000)});save();
- const report=page.getByText('Audit report 0',{exact:true});if(await report.count())await test('Saved report open',()=>report.first().click(),()=>page.getByText('Recorded safety concern 149',{exact:true}).waitFor());
+ const report=page.getByRole('combobox',{name:'Saved report',exact:true});if(await report.count())await test('Saved report open',()=>report.selectOption({label:'Audit report 0'}),()=>page.getByText('Recorded safety concern 149',{exact:true}).first().waitFor());
  await area('Safety Case');await page.locator('.react-flow__node').first().waitFor();result.phases.push({label:'Safety Case populated body',text:(await page.locator('body').innerText()).slice(0,8000)});save();
  const safety=page.getByText('Audit Safety Case',{exact:true});if(await safety.count())await test('Safety Case open',()=>safety.first().click(),()=>page.locator('.react-flow__node').first().waitFor());
  if(gesture){await gesture('Safety Case pan','pan').catch(e=>result.phases.push({label:'Safety Case pan unavailable',error:e.message}));}

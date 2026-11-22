@@ -10,7 +10,7 @@ import {buildCodeArchitectureHazardInput,summarySheetToHazardSummaryRows,normali
 import {prepareCodeHazardPreprocessing,createHazardPreprocessingMatcher,reconcileCodeHazardPreprocessing,hazardPreprocessingIdentitySheet,unselectedHazardPreprocessing} from './codeArchitectureHazardPreprocessing';
 import {createCodeHazardCheckpoint} from './codeHazardGenerationCheckpoint';
 import {saveCodeArchitectureHazardRun} from './codeArchitectureHazardStore';
-import {generateFastHazards,compactHazardSources} from './fastHazardPipeline';
+import {generateFastHazards,compactHazardSources,sharedHazardCodeEvidence} from './fastHazardPipeline';
 import {fastMethod,FAST_HAZARD_VERSION,FAST_HAZARD_COLUMNS,deriveFastAsil,deriveFastSwci,validateFastAssessment} from './fastHazardSchema';
 import { HARA_ADDITIONAL_FIELDS, finalizeCodeHaraSheets } from './codeArchitectureHara';
 
@@ -110,7 +110,7 @@ export function fastHazardSheets(method,input,assessments) {
   });
   const common=['Execution Dependency','Execution Evidence Quote','Operator Dependency','Operator Context Quote','Function (From)','Control Action','Function (To)','Operational Context ID','Operational Scenario','Operational Mode','Operating Conditions','Context Assumptions','Guide Phrase Applicability Rationale','Guide Phrase Applicability Review Status','Hazard','Safety Significant','Safety Significance Rationale','Software Safety Requirement','Verification','Assumptions','Assessment Basis','Assessed Control Action','Causal Assessment Basis','Causal Evidence / Assumption','Causal Evidence Quote','Raw Analysis Row ID'];
   const trace=Object.keys(traceabilityObjectToSummaryFields({}));
-  const headers=[...new Set([...FAST_HAZARD_COLUMNS[method],...common,...(method==='HARA'?['Rating Rationale']:[]),...(method==='STPA'?['Causal Factor','Loss ID','Hazard ID','UCA ID','Hazard → Loss ID','UCA → Hazard ID','Causal Scenario → UCA ID','Safety Constraint → UCA ID']:[]),...trace])];
+  const headers=[...new Set([...FAST_HAZARD_COLUMNS[method],...common,...(method==='HARA'?['Rating Rationale']:[]),...(method==='STPA'?['Operational Context','Causal Factor','Loss ID','Hazard ID','UCA ID','Hazard → Loss ID','UCA → Hazard ID','Causal Scenario → UCA ID','Safety Constraint → UCA ID']:[]),...trace])];
   const sheets={'Functional Decomposition':input.sheets['Functional Decomposition'],Summary:[headers,...records.map(row=>headers.map(header=>row[header] ?? ''))]};
   return method==='HARA'?finalizeCodeHaraSheets(sheets):sheets;
 }
@@ -143,7 +143,7 @@ export async function runFastCodeArchitectureHazardAnalysis({previousRun=null,re
   const checkSettings=()=>{
     if(JSON.stringify(modelSettings)!==JSON.stringify(readModelSettings()))throw Object.assign(new Error('AI settings changed during hazard analysis. Completed work is retained; continue with the original settings or regenerate using the new settings.'),{code:'HAZARD_SETTINGS_CHANGED'});
   };
-  const context={repository:repoMeta.repoName || input.repoId,organizationProfile:organizationContext || 'No organization profile enabled.',operationalContext:input.operationalContext,analysisContext:input.analysisContext,contextSources:input.contextSources};
+  const context={repository:repoMeta.repoName || input.repoId,organizationProfile:organizationContext || 'No organization profile enabled.',operationalContext:input.operationalContext,analysisContext:input.analysisContext,contextSources:input.contextSources,sharedSourceCorpus:sharedHazardCodeEvidence(input.tableRows)};
   let manifestWarning='',checkpointWarning='',lastAssessmentProgress=null,generating=true;
   const reportAssessmentProgress=()=>{
     if(!generating || signal?.aborted || !lastAssessmentProgress)return;

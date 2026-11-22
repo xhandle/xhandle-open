@@ -43,7 +43,7 @@ describe("ProjectTabSideToolbar", () => {
       const toolbar = host.querySelector('aside[aria-label="Hazard Analysis tools"]');
       expect(toolbar).not.toBeNull();
       expect(toolbar.className).toContain("shrink-0");
-      expect(toolbar.className).toContain("bg-[#F8FAFC]");
+      expect(toolbar.className).toContain("bg-slate-50");
       expect(toolbar.className).toContain("w-56");
       expect(toolbar.parentElement.querySelector("main").textContent).toBe("Analysis content");
 

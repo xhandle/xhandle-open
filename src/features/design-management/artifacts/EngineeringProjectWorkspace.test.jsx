@@ -160,7 +160,7 @@ test('folder persistence failures keep the previous destination and show the sto
 });
 
 test('project area shows the active document, section, saved totals and progress bar during generation', async () => {
-  const id = await createEngineeringProject({ name: 'Pronto', system: 'Robotaxi', folderId: 'f', owners: [{ id: 'p', workspaceType: 'functional' }], notes: 'Operators request vehicle motion.', artifacts: [{ templateId: 'conops', title: 'Concept of Operations' }, { templateId: 'system-spec', title: 'System Specification' }] });
+  const id = await createEngineeringProject({ name: 'Example', system: 'Robotaxi', folderId: 'f', owners: [{ id: 'p', workspaceType: 'functional' }], notes: 'Operators request vehicle motion.', artifacts: [{ templateId: 'conops', title: 'Concept of Operations' }, { templateId: 'system-spec', title: 'System Specification' }] });
   const normal = global.fetch.getMockImplementation(); let finish;
   global.fetch.mockImplementationOnce((...args) => new Promise(resolve => { finish = async () => resolve(await normal(...args)); }));
   await act(async () => root.render(<EngineeringProjectEditor id={id} onOpenArtifact={() => {}} onDeleted={() => {}} />));
@@ -191,7 +191,7 @@ test('project details are editable from the project header and persist', async (
 });
 
 test('project artifacts have Delete artifact in the actions menu, with cancel and navigation back to the project', async () => {
-  const id = await createEngineeringProject({ name: 'Pronto', system: 'Vehicle', folderId: 'f', owners: [{ id: 'p', workspaceType: 'functional' }], notes: 'Retain commands.', artifacts: [{ templateId: 'conops' }, { templateId: 'system-spec' }] });
+  const id = await createEngineeringProject({ name: 'Example', system: 'Vehicle', folderId: 'f', owners: [{ id: 'p', workspaceType: 'functional' }], notes: 'Retain commands.', artifacts: [{ templateId: 'conops' }, { templateId: 'system-spec' }] });
   const { records } = await loadEngineeringProject(id), openProject = jest.fn();
   await act(async () => root.render(<ArtifactEditor id={records[0].meta.id} onOpenProject={openProject} onDeleted={() => {}} />));
   await openActions();

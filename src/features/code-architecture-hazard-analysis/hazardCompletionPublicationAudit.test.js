@@ -9,10 +9,16 @@ import {importHazardSoftwareRequirements} from '../code-architecture-assurance/a
 import {toCsvText,parseCsv} from '../../lib/csv';
 const base={projectId:'audit-project',repoMeta:{repoId:'audit-repo'},cbaRows:[{from:'Planner',action:'Apply torque',to:'Actuator',traceId:'functional-1',rowRef:1,hazardAnalysisEligibility:'Include',hazardAnalysisEligibilitySource:'manual'}]};
 beforeEach(()=>{jest.clearAllMocks();localStorage.clear();});
-test.each(['STPA','HARA','FHA'])('%s publishes every expected row despite unavailable provider, checkpoint and final storage',async method=>{
+test.each(['STPA','HARA','FHA'])('%s preserves recovery behavior when provider, checkpoint and final storage are unavailable',async method=>{
  fetchLLMResponse.mockRejectedValue(Object.assign(new Error('Provider account unavailable'),{status:403}));
  saveCodeArchitectureHazardRun.mockRejectedValue(new DOMException('Storage aborted','AbortError'));
  const updates=[];
+ if(method==='STPA'){
+  const failure=await runCodeArchitectureHazardAnalysis({...base,method,onPartialRunUpdate:value=>{updates.push(value);throw new Error('Observer failed');}}).catch(error=>error);
+  expect(failure).toMatchObject({recoveryRun:{runState:'incomplete',validatedAssessments:0}});
+  expect(saveCodeArchitectureHazardRun.mock.calls.every(([run])=>run.runState==='incomplete')).toBe(true);
+  expect(()=>importHazardSoftwareRequirements({hazardAnalysis:failure.recoveryRun})).toThrow('Complete and save');return;
+ }
  const run=await runCodeArchitectureHazardAnalysis({...base,method,onPartialRunUpdate:value=>{updates.push(value);throw new Error('Observer failed');}});
  expect(run.runState).toBe('complete');expect(run.finalSavePending).toBe(true);
  const [headers,...rows]=run.generatedSheets.Summary;

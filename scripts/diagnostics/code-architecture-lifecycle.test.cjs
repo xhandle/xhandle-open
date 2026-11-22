@@ -11,15 +11,25 @@ const traverse = require('@babel/traverse').default;
 const source = fs.readFileSync(path.resolve(__dirname, '../../src/components/generateFunctionalDecompositionFromGitHub.js'), 'utf8');
 const names = new Set(['throwIfAborted', 'deriveSystemUnderstanding', 'requestOpenAIProxyWithRetry',
   'generateNestedArchitectureAllocationPlan', 'generateArchitectureComponentDescriptions',
-  'classifyArchitectureRows', 'ensureCodeArchitectureTraceIdsCooperative', 'buildCodeEvidenceForRows']);
+  'classifyArchitectureRows', 'ensureCodeArchitectureTraceIdsCooperative', 'buildCodeEvidenceForRows', 'sourceSnippetForFunction']);
 const functions = [];
 traverse(parse(source, { sourceType:'module', plugins:['jsx'] }), {
   FunctionDeclaration({node}) { if (names.has(node.id?.name)) functions.push(source.slice(node.start, node.end)); },
 });
+// Enrichment now lives in shared production data modules. Execute their actual
+// declarations too; keep provider/storage boundaries isolated as before.
+for (const [file, selected] of [
+  ['src/features/code-architecture-context/finalizationBatches.js',['estimateJsonMemory','createByteCache','mapFinalizationBatches']],
+  ['src/features/code-architecture-context/codeEvidenceEnrichment.js',['enrichCodeEvidenceRows']],
+  ['src/features/code-architecture-storage/chunkedRecord.js',['freezeEvidence']],
+]) {
+  const text=fs.readFileSync(path.resolve(__dirname,'../..',file),'utf8');
+  traverse(parse(text,{sourceType:'module'}),{FunctionDeclaration({node}){if(selected.includes(node.id?.name))functions.push(text.slice(node.start,node.end));}});
+}
 function fixture() {
   const requests = [], warnings = [];
   const context = {
-    AbortController, Error, Map, Set, WeakMap, JSON, performance, setTimeout, clearTimeout,
+    AbortController, DOMException, Error, Map, Set, WeakMap, WeakSet, JSON, performance, setTimeout, clearTimeout,
     console:{warn:(...args)=>warnings.push(args),info:()=>{}},
     MAX_SYSTEM_UNDERSTANDING_CHARS:3200, MAX_AI_ARCHITECTURE_ALLOCATION_ROWS:300,
     FUNCTIONAL_OUTPUT_TOKENS:4096, BULK_ANALYSIS_MODEL:'synthetic-model',
@@ -60,7 +70,11 @@ for(const stage of ['Nested architecture abstraction AI','Architecture component
     const wait=context.requestOpenAIProxyJsonWithMetrics;
     context.requestOpenAIProxyJsonWithMetrics=options=>options.label===stage?wait(options):Promise.resolve({result:'{}'});
     const pending=context.classifyArchitectureRows({rows:[{from:'producer',to:'consumer',action:'Send data'}],bearer:'synthetic',signal:controller.signal});
-    await tick();assert.equal(requests.length,1);assert.equal(requests[0].label,stage);
+    // Cooperative enrichment can yield through a timer before reaching AI.
+    // Wait for the observable request rather than assuming a microtask count.
+    const deadline=Date.now()+1000;
+    while(!requests.length&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,2));
+    assert.equal(requests.length,1);assert.equal(requests[0].label,stage);
     assert.equal(requests[0].signal,controller.signal);
     controller.abort(new Error('Stopped by user'));
     await assert.rejects(pending,/Stopped by user/);assert.equal(warnings.length,0);

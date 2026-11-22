@@ -70,3 +70,6 @@ builder-debug.yml
 coverage
 .npmbaselines.db
 baselines.db
+
+# Local generated work and private financial/workspace artifacts
+/output/

@@ -21,3 +21,30 @@ test('large shared evidence is hashed without whole-tree or long-string stringif
 test('nested key insertion order does not change hash',()=>{
  expect(stableSnapshotHash({z:{b:2,a:1},a:3})).toBe(stableSnapshotHash({a:3,z:{a:1,b:2}}));
 });
+test('deeply frozen shared evidence composes the exact legacy hash across rows and repeated calls',()=>{
+ const leaf=Object.freeze({content:'source \\" café 车辆 😀\n'.repeat(200),location:Object.freeze({line:7,file:'source.cpp'})});
+ const evidence=Object.freeze({functions:Object.freeze([leaf]),files:Object.freeze(['source.cpp'])});
+ const rows=Array.from({length:80},(_,i)=>({id:i,sourceEvidence:evidence,codeEvidence:evidence}));
+ expect(stableSnapshotHash(rows)).toBe(legacy(rows));
+ const keys=Object.keys,spy=jest.spyOn(Object,'keys').mockImplementation(value=>keys(value));
+ try {
+  expect(stableSnapshotHash([{changed:true,sourceEvidence:evidence}])).toBe(legacy([{changed:true,sourceEvidence:evidence}]));
+  // Exclude the reference serializer's traversal when checking cache reuse.
+  spy.mockClear();stableSnapshotHash(rows);
+  expect(spy.mock.calls.filter(([value])=>value===evidence||value===leaf)).toHaveLength(0);
+ }finally{spy.mockRestore();}
+});
+test('shallow freezing and frozen getters never cache mutable evidence',()=>{
+ const child={content:'before'},parent=Object.freeze({child});
+ const before=stableSnapshotHash(parent);child.content='after';
+ expect(stableSnapshotHash(parent)).not.toBe(before);expect(stableSnapshotHash(parent)).toBe(legacy(parent));
+ let text='first';const getter=Object.freeze({get text(){return text;}});
+ const first=stableSnapshotHash(getter);text='second';expect(stableSnapshotHash(getter)).not.toBe(first);
+});
+test('frozen sparse arrays preserve holes and inherited indices without a stale cache',()=>{
+ const prototype=Object.create(Array.prototype),values=[,Object.freeze({label:'value'})];
+ Object.setPrototypeOf(values,prototype);Object.freeze(values);
+ expect(stableSnapshotHash(values)).toBe(legacy(values));
+ const before=stableSnapshotHash(values);prototype[0]='inherited value';
+ expect(stableSnapshotHash(values)).not.toBe(before);expect(stableSnapshotHash(values)).toBe(legacy(values));
+});

@@ -1,3 +1,4 @@
+import { PROMPT_COOKBOOK, COOKBOOK_WORKFLOW_NOTE, COOKBOOK_SHORTCUT } from '../features/collaborator-prompts/promptCookbook';
 import React, { useEffect, useState } from "react";
 import {
   Bot,
@@ -375,141 +376,13 @@ export default function ReadmeModal({ open, onClose }) {
                 they are applied.
               </p>
 
-              <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-600">
-                Create and understand functional architecture
-              </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <PromptExample
-                  title="Generate a new decomposition"
-                  description="Naming the abstraction level avoids an additional selection step."
-                  prompt="Create a multi-level functional decomposition for an autonomous warehouse robot that retrieves totes in shared pedestrian aisles."
-                />
-                <PromptExample
-                  title="Inspect one subsystem"
-                  description="Returns the functions and interfaces already present in the active project."
-                  prompt="Show the functions and interfaces allocated to the Perception subsystem in the current project."
-                />
-                <PromptExample
-                  title="Check graph connectivity"
-                  description="Inspects the existing decomposition without changing it."
-                  prompt="Check the current functional decomposition for orphan node pairs, isolated functions, and disconnected graph islands."
-                />
-                <PromptExample
-                  title="Propose connections for orphan pairs"
-                  description="Creates reviewable bridging rows; say “add them” only after checking the proposal."
-                  prompt="Find orphan node pairs in the current functional decomposition and propose interface rows that connect them to the main functional graph."
-                />
-              </div>
-
-              <div className="mb-3 mt-6 text-xs font-semibold uppercase tracking-wide text-slate-600">
-                Review and revise the active decomposition
-              </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <PromptExample
-                  title="Score decomposition quality"
-                  description="Applies the same weighted engineering rubric to the complete active table and returns row-referenced findings."
-                  prompt="Review and score the current project’s functional decomposition for hazard-analysis readiness."
-                />
-                <PromptExample
-                  title="Revise from the quality review"
-                  description="Uses the exact scored findings from this thread to prepare changes that remain subject to your approval."
-                  prompt="Revise the current functional decomposition using this quality review."
-                />
-                <PromptExample
-                  title="Run an additive completeness audit"
-                  description="Looks for missing coverage while preserving every existing row."
-                  prompt="Audit the current functional decomposition for missing operational, feedback, health, mode, and fault-management interfaces. Preserve every existing row and propose additions only."
-                />
-                <PromptExample
-                  title="Revise from engineering feedback"
-                  description="Produces targeted additions, updates, and removals for review."
-                  prompt="Revise the current functional decomposition based on this feedback: [describe the specific problem and desired correction]. Preserve sound unrelated rows and prepare targeted changes for review."
-                />
-                <PromptExample
-                  title="Reevaluate subsystem ownership"
-                  description="Reviews allocation without rewriting the interfaces."
-                  prompt="Reevaluate the subsystem allocation for every existing functional decomposition row. Do not add, remove, or rewrite interfaces."
-                />
-                <PromptExample
-                  title="Request an explicit table edit"
-                  description="Use exact function and payload names whenever possible."
-                  prompt="Add a feedback interface from Monitor Brake Status to Determine Braking Availability carrying Secondary Brake Health Status. Preserve unrelated rows."
-                />
-                <PromptExample
-                  title="Vibe review each interface"
-                  description="Walks a stable queue one row at a time and proposes Keep, Revise, Remove, or Needs Input."
-                  prompt="Vibe review the current functional decomposition one interface at a time. Check leaf-function endpoints, subsystem ownership, direction, interface semantics, and details."
-                />
-                <PromptExample
-                  title="Vibe review one subsystem"
-                  description="Limits the queue to an exact subsystem name."
-                  prompt="Vibe review functional-decomposition rows in subsystem Perception & World Modeling one interface at a time."
-                />
-              </div>
-
-              <div className="mb-3 mt-6 text-xs font-semibold uppercase tracking-wide text-slate-600">
-                Review hazard-analysis results
-              </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <PromptExample
-                  title="Vibe Review Needs Review rows"
-                  description="Creates a stable queue and presents one governed Yes/No proposal at a time."
-                  prompt="Vibe review the current project’s hazard-analysis rows where Safety Significance is marked Needs Review. Review them one at a time, briefly explain each row, and propose Yes or No."
-                />
-                <PromptExample
-                  title="Resolve shared evidence gaps in batch"
-                  description="Opens the grouped architecture-question workflow when many unresolved rows depend on the same missing evidence."
-                  prompt="Help me resolve the remaining Needs Review hazard rows in batch using grouped architecture evidence questions."
-                />
-                <PromptExample
-                  title="Challenge existing Yes classifications"
-                  description="Useful for finding false positives after the initial analysis."
-                  prompt="Vibe review the current project’s hazard-analysis rows where Safety Significance is marked Yes. Review them one at a time. Propose retaining Yes or changing it to No using only the documented causal path and physical-harm chain."
-                />
-                <PromptExample
-                  title="Ask an evidence-grounded question"
-                  description="Collaborator can explain the analysis without changing it."
-                  prompt="Summarize the current project’s highest-priority safety-significant hazard-analysis results and include links to the supporting source rows."
-                />
-                <PromptExample
-                  title="Review a narrower hazard scope"
-                  description="Name an exact table field and value to avoid an ambiguous review queue."
-                  prompt="Vibe review hazard-analysis rows where Subsystem Allocation is Perception & World Modeling. Review exactly one row at a time and propose Yes or No."
-                />
-              </div>
-
-              <div className="mt-5 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-950">
-                <span className="font-semibold">Prompted reviews and analysis buttons have different roles.</span>{" "}
-                Use Collaborator prompts to inspect, revise, or Vibe Review functional architecture, answer workspace questions, and
-                conduct row-by-row hazard Vibe Review, or open grouped Needs Review evidence resolution. Use the controls in Hazard Analysis and Safety Issues &amp; Risk
-                Assessment to run the full analysis, regenerate consolidated safety issues, and generate reports.
-              </div>
-
-              <div className="mb-3 mt-6 text-xs font-semibold uppercase tracking-wide text-slate-600">
-                Work across the saved xHandle workspace
-              </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <PromptExample
-                  title="Ask across artifact families"
-                  description="Searches the workspace graph and links the answer to saved sources."
-                  prompt="Across all projects, which requirements, hazard rows, safety issues, reports, and safety-case claims address unintended vehicle motion? Cite the saved sources."
-                />
-                <PromptExample
-                  title="Update a saved field"
-                  description="Shows the resolved source and exact proposed edit before anything changes."
-                  prompt="Set the owner of the Secondary Brake Availability safety issue to Alex Chen and explain which saved record you found."
-                />
-                <PromptExample
-                  title="Add a record"
-                  description="Creates a governed proposal against the active project or named destination."
-                  prompt="Add a proposed system requirement that the secondary brake health status be reported before autonomous motion is authorized."
-                />
-                <PromptExample
-                  title="Delete or undo"
-                  description="Deletes require an additional confirmation; approved Collaborator changes retain an undo snapshot."
-                  prompt={'Delete the duplicate hazard row titled "Stale localization state" from the current project. After applying it, say “undo that” if you want it restored.'}
-                />
-              </div>
+              {PROMPT_COOKBOOK.map(group => <div key={group.id} className="mt-6 first:mt-0">
+                <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-600">{group.title}</div>
+                <div className="grid gap-3 md:grid-cols-2">{group.recipes.map(recipe => <PromptExample key={recipe.id} {...recipe} />)}</div>
+              </div>)}
+              <p className="mt-5 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-950">
+                Open <strong>Prompt Cookbook</strong> from Collaborator’s + menu to browse these examples or get help drafting a prompt. With the composer focused, press {COOKBOOK_SHORTCUT} to open it. Review and edit the draft before sending. {COOKBOOK_WORKFLOW_NOTE}
+              </p>
             </Section>
 
             <Section id="guide-local-data" icon={Database} title="Local-First Data Model" eyebrow="Open-source behavior">

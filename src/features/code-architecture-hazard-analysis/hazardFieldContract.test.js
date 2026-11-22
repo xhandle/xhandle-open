@@ -1,6 +1,7 @@
 import {usableHazardInputs} from './hazardCompletionSupport';
 import {assumptionHazardFallback} from './assumptionHazardFallback';
 import {validateFastAssessment} from './fastHazardSchema';
+import {answer} from './fastHazardTestFixtures';
 import {isAcceptedApplicabilityDecision} from './hazardFieldContract';
 const source={id:'HA-1',action:'Apply torque',phrase:'Too late',reviewedApplicability:'Yes',reviewedRationale:'Reviewed timing condition'};
 const cases=['Unknown: allocation absent','Unresolved: allocation absent','Pending: allocation absent','N/A: allocation absent','Not generated: allocation absent','Not applicable','Allocation to be confirmed','TBD','TBC','TODO'];
@@ -18,7 +19,7 @@ test('valid imported narrative remains a constraint',()=>{
  expect(usableHazardInputs({'Software Control Category Rationale':value},'FHA')).toEqual({usable:{'Software Control Category Rationale':value},retained:{}});
 });
 test('locked rationale does not exempt unrelated unresolved fields or changed applicability',()=>{
- const result=assumptionHazardFallback('STPA',source);
+ const result={...answer('STPA',source.id),applicabilityRationale:source.reviewedRationale};
  expect(validateFastAssessment('STPA',{...result,assumptions:'Unknown: missing context'},source).length).toBeGreaterThan(0);
  expect(validateFastAssessment('STPA',{...result,applicable:'No'},source).length).toBeGreaterThan(0);
  expect(isAcceptedApplicabilityDecision({applicable:'Yes',rationale:'Needs review'})).toBe(false);

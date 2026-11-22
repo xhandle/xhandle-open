@@ -1,19 +1,19 @@
 .architecture-diagrams { display:flex; flex-direction:column; min-width:0; min-height:0; height:min(70vh, 750px); overflow:hidden; gap:6px; }
-.architecture-diagram-toolbar { display:flex; align-items:center; gap:8px; flex:none; min-width:0; font-size:12px; color:#60708a; }
+.architecture-diagram-toolbar { display:flex; align-items:center; gap:8px; flex:none; min-width:0; font-size:12px; color:var(--muted); }
 .architecture-diagram-source { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.architecture-diagram-toolbar select { min-width:0; max-width:100%; padding:2px 4px; background:white; border:1px solid #dce3ef; border-radius:5px; }
-.architecture-diagram-toolbar button { margin-left:auto; flex:none; border:1px solid #ccd5e4; border-radius:5px; padding:4px 8px; background:white; }
+.architecture-diagram-toolbar select { min-width:0; max-width:100%; padding:2px 4px; background:var(--card); border:1px solid var(--border); border-radius:5px; }
+.architecture-diagram-toolbar button { margin-left:auto; flex:none; border:1px solid var(--border-strong); border-radius:5px; padding:4px 8px; background:var(--card); }
 .architecture-diagrams > .artifact-actions,
 .architecture-diagrams > p { flex:none; margin:0; }
 .architecture-diagrams .artifact-actions { display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
 .architecture-diagrams .artifact-actions label { min-width:0; }
 .architecture-diagrams .artifact-actions select { max-width:100%; }
 .architecture-diagrams .architecture-canvas { flex:1; min-height:0; min-width:0; overflow:hidden; }
-.architecture-inspector-tray { display:flex; flex-direction:column; flex:0 0 auto; min-height:0; border-top:1px solid #dce3ef; }
+.architecture-inspector-tray { display:flex; flex-direction:column; flex:0 0 auto; min-height:0; border-top:1px solid var(--border); }
 .architecture-inspector-tray.is-open { flex:0 1 auto; max-height:35%; }
-.architecture-inspector-toggle { display:flex; align-items:center; gap:8px; flex:none; width:100%; padding:5px 8px; text-align:left; font-size:12px; color:#334155; background:#f8fafc; border-radius:5px; }
-.architecture-inspector-toggle:hover { background:#eef2ff; }
-.architecture-inspector-selection { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#60708a; }
+.architecture-inspector-toggle { display:flex; align-items:center; gap:8px; flex:none; width:100%; padding:5px 8px; text-align:left; font-size:12px; color:var(--text); background:var(--panel); border-radius:5px; }
+.architecture-inspector-toggle:hover { background:var(--selected); }
+.architecture-inspector-selection { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); }
 .architecture-inspector-toggle > span:not(.architecture-inspector-selection) { flex:none; }
 .architecture-inspector { flex:1 1 auto; min-height:0; overflow:auto; overscroll-behavior:contain; padding:8px; }
 .natural-language-design .design-view-scroll[data-architecture=true] { display:flex; overflow:hidden; scrollbar-gutter:auto; }

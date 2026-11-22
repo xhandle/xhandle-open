@@ -130,14 +130,14 @@ export function FilterableHeaderCell({
           type="button"
           onClick={() => setOpenIndex(isOpen ? null : index)}
           className={`flex w-full items-start justify-between gap-2 rounded-md border px-2 py-1.5 text-left text-xs font-semibold ${
-            selectedValues.length ? "border-[#2D7DFE] bg-white text-[#1E61D6]" : "border-slate-200 bg-white/70 text-slate-700"
+            selectedValues.length ? "border-blue-500 bg-white text-blue-700" : "border-slate-200 bg-white/70 text-slate-700"
           }`}
           title={`Filter ${label || `Column ${index + 1}`}`}
         >
           <span className="min-w-0 whitespace-normal break-words">{label || `Column ${index + 1}`}</span>
           <span className="inline-flex shrink-0 items-center gap-1 pt-0.5">
             {selectedValues.length > 0 && (
-              <span className="rounded-full bg-[#2D7DFE] px-1.5 py-0.5 text-[10px] font-semibold text-white">
+              <span className="rounded-full bg-blue-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
                 {selectedValues.length}
               </span>
             )}
@@ -153,7 +153,7 @@ export function FilterableHeaderCell({
                 {selectedValues.length > 0 && (
                   <button
                     type="button"
-                    className="text-[11px] font-medium text-[#2D7DFE]"
+                    className="text-[11px] font-medium text-blue-700"
                     onClick={() => setFilterValues(index, [])}
                   >
                     Clear
@@ -165,7 +165,7 @@ export function FilterableHeaderCell({
                 value={search}
                 onChange={(event) => setSearches((prev) => ({ ...prev, [index]: event.target.value }))}
                 placeholder="Search values..."
-                className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-[#2D7DFE]"
+                className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-blue-500"
               />
               <div className="mt-2 flex gap-2">
                 <button
@@ -215,7 +215,7 @@ export function FilterableHeaderCell({
           title="Drag to resize column"
           onMouseDown={(event) => onResizeStart(event, index)}
           onClick={(event) => event.stopPropagation()}
-          className="absolute right-0 top-0 h-full w-2 cursor-col-resize border-0 bg-transparent p-0 hover:bg-[#2D7DFE]/20"
+          className="absolute right-0 top-0 h-full w-2 cursor-col-resize border-0 bg-transparent p-0 hover:bg-blue-600/20"
         />
       )}
     </th>

@@ -305,7 +305,7 @@ function ProfileEditor({ initial, onSave, onClose }) {
           </button>
           <button
             className="px-3 py-2 rounded-md text-white"
-            style={{ backgroundColor: "#7A37FF" }}
+            style={{ backgroundColor: "var(--brand-purple-action)" }}
             onClick={() => onSave({ name, title, company, avatar })}
           >
             Save

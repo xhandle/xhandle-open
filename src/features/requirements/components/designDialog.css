@@ -15,8 +15,8 @@
 }
 .design-dialog-footer {
   flex: 0 0 auto;
-  border-top: 1px solid #e2e8f0;
-  background: white;
+  border-top: 1px solid var(--border);
+  background: var(--card);
 }
 .design-dialog-footer > div {
   flex-wrap: wrap;

@@ -11,10 +11,12 @@ import { REVIEW_STATUSES } from "../results-review/reviewTypes";
 import ReviewStatusBadge from "../results-review/ReviewStatusBadge";
 import ColumnVisibilityMenu from "../code-architecture-assurance/ColumnVisibilityMenu";
 import { CODE_HARA_COLUMNS, codeHaraColumnLabel, expandCodeHaraSheet } from './codeArchitectureHara';
+import { STPA_DEFAULT_COLUMNS, stpaColumnOptions } from './stpaTableColumns';
 import {
   buildCodeArchitectureHazardGroups,
   filterCodeArchitectureHazardRowsByContext,
 } from "./codeArchitectureHazardGrouping";
+export { STPA_DEFAULT_COLUMNS } from './stpaTableColumns';
 
 const EMPTY_GROUPS = [];
 const EMPTY_LOADED_ROWS = new Map();
@@ -33,10 +35,6 @@ const HIDDEN_SUMMARY_COLUMNS = new Set([
   "context assumptions",
 ]);
 
-export const STPA_DEFAULT_COLUMNS = [
-  "Function", "Operational Scenario", "Operational Mode", "Operating Conditions",
-  "Guide Phrase", "Guide Phrase Applicable", "Unsafe Control Action", "Loss", "Hazard", "Causal Scenario", "Safety Constraint", "Verification", "Safety Classification",
-];
 const STPA_DEFAULT_COLUMN_SET = new Set(STPA_DEFAULT_COLUMNS.map(name => name.toLowerCase()));
 
 export const HARA_DEFAULT_COLUMNS = CODE_HARA_COLUMNS;
@@ -96,12 +94,13 @@ export default function CodeArchitectureHazardSummaryTable({
   readOnly = false,
 }) {
   const continuous = Boolean(remotePage?.continuous);
-  const isStpa = ["STPA", "STPA-TEXTBOOK", "STPA_TEXTBOOK"].includes(String(hazardMethod).toUpperCase());
+  const isRemote = Boolean(remotePage);
+  const isStpa = /^STPA(?:[-_]TEXTBOOK(?:_APPROACH)?)?$/i.test(String(hazardMethod));
   const isHara = String(hazardMethod).toUpperCase() === "HARA";
   const isFha = String(hazardMethod).toUpperCase() === "FHA";
   const showCombinedContext = !isStpa && !isHara && !isFha;
   // New defaults apply once to existing tables; subsequent picker choices persist.
-  const visibilityStorageKey = `${storageKey}:hidden-columns${isStpa ? ":stpa-focused-v5" : isHara ? ":hara-focused-v3" : isFha ? ":fha-focused-v2" : ""}`;
+  const visibilityStorageKey = `${storageKey}:hidden-columns${isStpa ? ":stpa-focused-v6" : isHara ? ":hara-focused-v3" : isFha ? ":fha-focused-v2" : ""}`;
   const searchTableRef = useRef(null);
   const [selectedCellKey, setSelectedCellKey] = useState("");
   React.useEffect(() => {
@@ -113,6 +112,13 @@ export default function CodeArchitectureHazardSummaryTable({
 
   const displaySheet = React.useMemo(() => {
     if (isHara) return expandCodeHaraSheet(summarySheet);
+    if (isStpa && !isRemote && Array.isArray(summarySheet?.[0]) && !summarySheet[0].includes('Operational Context')) {
+      const originalHeaders = summarySheet[0];
+      const contextColumns = ['Operational Scenario', 'Operational Mode', 'Operating Conditions'].map(name => originalHeaders.indexOf(name));
+      return [[...originalHeaders, 'Operational Context'], ...summarySheet.slice(1).map(row => [
+        ...row, contextColumns.map(index => index < 0 ? '' : String(row[index] ?? '').trim()).filter(Boolean).join(' · '),
+      ])];
+    }
     if (!isFha || !Array.isArray(summarySheet?.[0])) return summarySheet;
     const originalHeaders = summarySheet[0];
     const missing = FHA_DEFAULT_COLUMNS.filter(name => !originalHeaders.includes(name) && !(name === 'Effect' && originalHeaders.includes('Mishap')));
@@ -122,7 +128,7 @@ export default function CodeArchitectureHazardSummaryTable({
         ? `${cell(row, 'Operational Scenario') || 'Unspecified scenario'} · ${cell(row, 'Operational Mode') || 'Unspecified mode'}`
         : ''),
     ])];
-  }, [summarySheet, isFha, isHara]);
+  }, [summarySheet, isFha, isHara, isStpa, isRemote]);
   const headers = React.useMemo(
     () => (Array.isArray(displaySheet?.[0]) ? displaySheet[0] : []),
     [displaySheet]
@@ -156,24 +162,28 @@ export default function CodeArchitectureHazardSummaryTable({
     }
     return header;
   }, [headers,isHara,isStpa,isFha]);
+  const columnRows = isRemote ? EMPTY_GROUPS : rows;
   const columnOptions = React.useMemo(
-    () => headers.map((header, index) => ({
+    () => {
+      const columns = headers.map((header, index) => ({
       key: String(index),
       header: displayColumnLabel(header),
       label: displayColumnLabel(header) || `Column ${index + 1}`,
       index,
-    })),
-    [headers, displayColumnLabel]
+      }));
+      return isStpa ? stpaColumnOptions(columns, columnRows, {remote: isRemote}) : columns;
+    },
+    [headers, displayColumnLabel, isStpa, columnRows, isRemote]
   );
   const defaultHiddenColumnKeys = React.useMemo(
     () => columnOptions
       .filter(({ header }) => isStpa
-        ? !STPA_DEFAULT_COLUMN_SET.has(String(header || "").trim().toLowerCase())
+        ? !(STPA_DEFAULT_COLUMN_SET.has(String(header || "").trim().toLowerCase()) || (!headers.includes('Operational Context') && ['Operational Scenario', 'Operational Mode', 'Operating Conditions'].includes(header)))
         : isHara ? !HARA_DEFAULT_COLUMN_SET.has(String(header || "").trim().toLowerCase())
         : isFha ? !FHA_DEFAULT_COLUMN_SET.has(String(header || "").trim().toLowerCase())
         : HIDDEN_SUMMARY_COLUMNS.has(String(header || "").trim().toLowerCase()))
       .map((column) => column.key),
-    [columnOptions, isStpa, isHara, isFha]
+    [columnOptions, isStpa, isHara, isFha, headers]
   );
   const [hiddenColumnKeys, setHiddenColumnKeys] = useState(() => {
     try {
@@ -290,14 +300,14 @@ export default function CodeArchitectureHazardSummaryTable({
     document.addEventListener("mouseup", onMouseUp);
   }, [columnWidths, defaultColumnWidths, visibleColumns]);
   const actionsColumnWidth = onDeleteRow && !readOnly ? 110 : 0;
-  const showReview = SHOW_TABLE_REVIEW_COLUMNS && requestedShowReview;
+  const showReview = !isStpa && SHOW_TABLE_REVIEW_COLUMNS && requestedShowReview;
   const reviewColumnWidth = showReview && reviewItems.length > 0 ? 110 : 0;
   const operationalContextColumnWidth = showCombinedContext ? 220 : 0;
   const tablePixelWidth = visibleColumns.reduce(
     (sum, { key, index }) => sum + (columnWidths[key] || defaultColumnWidths[String(index)] || 180),
     actionsColumnWidth + reviewColumnWidth + operationalContextColumnWidth
   );
-  const traceLinkClass = "shrink-0 rounded p-1 text-[#2D7DFE] hover:bg-blue-100 hover:text-[#1E61D6]";
+  const traceLinkClass = "shrink-0 rounded p-1 text-blue-700 hover:bg-blue-100 hover:text-blue-700";
   const traceColumnType = React.useCallback((header) => {
     const normalized = String(header || "").trim().toLowerCase();
     if (["function (from)", "function", "item / function"].includes(normalized)) return "from";
@@ -333,15 +343,27 @@ export default function CodeArchitectureHazardSummaryTable({
       toFile: getCellByHeader(row, "Related Source File(s)"),
     };
   }, [getCellByHeader]);
+  const copySourceColumns = useMemo(() => {
+    if (!isStpa) return visibleColumns;
+    // The interface lives in a group heading on screen. Include that identity
+    // when copying flattened rows, including copies fetched from paged storage.
+    const identity = [['Function (From)', 'Function'], ['Control Action'], ['Function (To)']].flatMap(names => {
+      if (visibleColumns.some(column => names.includes(headers[column.index]))) return [];
+      const index = names.map(name => headerIndexByName.get(name.toLowerCase())).find(value => value !== undefined);
+      const column = columnOptions.find(value => value.index === index);
+      return column ? [column] : [];
+    });
+    return [...identity, ...visibleColumns];
+  }, [isStpa, visibleColumns, headers, headerIndexByName, columnOptions]);
   const copyColumns = useMemo(() => [
     ...(showCombinedContext ? [{
       key: 'operationalContext', label: 'Operational context',
       getValue: ({ row }) => `${getCellByHeader(row, 'Operational Scenario') || 'Unspecified scenario'} · ${getCellByHeader(row, 'Operational Mode') || 'Unspecified mode'}`,
     }] : []),
-    ...visibleColumns.map(column => ({
+    ...copySourceColumns.map(column => ({
       key: column.key, label: column.label, getValue: ({ row }) => row[column.index],
     })),
-  ], [getCellByHeader, visibleColumns, showCombinedContext]);
+  ], [getCellByHeader, copySourceColumns, showCombinedContext]);
   const filteredRowItems = filterState.filteredRows;
   const contextFilteredRowItems = useMemo(
     () => filterCodeArchitectureHazardRowsByContext(headers, filteredRowItems, selectedOperationalContextId),
@@ -501,7 +523,7 @@ export default function CodeArchitectureHazardSummaryTable({
         onClick={() => selectForCollaborator()}
         className={`cursor-pointer align-top transition-colors ${
           highlighted
-            ? "bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset"
+            ? "bg-amber-50 ring-2 ring-[#F3B63F] ring-inset"
             : selectedCellKey === rowId || selectedCellKey.startsWith(`${rowId}:`)
               ? "bg-blue-50 ring-1 ring-inset ring-blue-300"
             : rejected
@@ -605,13 +627,13 @@ export default function CodeArchitectureHazardSummaryTable({
             : `${contextFilteredRowItems.length.toLocaleString()} of ${rows.length.toLocaleString()} rows match filters`}</span>
           {viewportLoading && !suppressLoadingIndicator && <TablePreparationProgress label="Loading hazard rows" progress={null} className="!py-0 !pl-3" />}
         </div>
-        {filterState.activeFilterCount > 0 && <button type="button" className="text-sm font-medium text-[#2D7DFE]" onClick={filterState.clearAllFilters}>Clear filters</button>}
+        {filterState.activeFilterCount > 0 && <button type="button" className="text-sm font-medium text-blue-700" onClick={filterState.clearAllFilters}>Clear filters</button>}
         <ColumnVisibilityMenu
           columns={columnOptions.map((column) => ({ key: column.key, label: column.label }))}
           hiddenKeys={hiddenColumnKeys}
           onChange={setHiddenColumnKeys}
         />
-        {remotePage ? <button type="button" onClick={()=>remotePage.copy(visibleColumns.map(c=>c.index))}>Copy matching rows</button> : <CopyTableButton label="Copy code architecture hazard analysis table" columns={copyColumns} rows={contextFilteredRowItems} />}
+        {remotePage ? <button type="button" onClick={()=>remotePage.copy(copySourceColumns.map(c=>c.index))}>Copy matching rows</button> : <CopyTableButton label="Copy code architecture hazard analysis table" columns={copyColumns} rows={contextFilteredRowItems} />}
       </div>
       <div className="min-h-0 flex-1 overflow-auto" data-hazard-scroll={continuous ? "true" : undefined} style={continuous ? {overflowAnchor:"none"} : undefined}>
       <table data-hazard-total={remotePage?.total} data-hazard-cache-rows={remotePage?.cacheStats?.rows} data-hazard-cache-bytes={remotePage?.cacheStats?.bytes} aria-busy={viewportLoading || undefined} aria-rowcount={continuous ? rowWindow.totalEntries + 1 : undefined} ref={searchTableRef} aria-label="Code architecture hazard analysis" className="table-fixed text-left text-sm" style={{ width: tablePixelWidth, minWidth: tablePixelWidth }}>

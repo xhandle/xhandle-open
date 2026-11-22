@@ -1,3 +1,5 @@
+import PromptCookbookPanel from '../features/collaborator-prompts/PromptCookbookPanel';
+import {appendCookbookPrompt, cookbookContext, COOKBOOK_SHORTCUT} from '../features/collaborator-prompts/promptCookbook';
 import {boundedSelectionEvidence, selectionEvidenceQuery} from '../features/collaborator-selection/selectionMetadata';
 import {captureCurrentViewEvidence, CURRENT_VIEW_GUIDANCE} from '../features/collaborator-performance/currentViewEvidence';
 import CollaboratorElapsedTime from './CollaboratorElapsedTime';
@@ -18,7 +20,7 @@ import XHandleWorkingMark from "./XHandleWorkingMark";
 import AttachmentPreview from './AttachmentPreview';
 import { buildAttachmentPreview, retainAttachmentPreviews } from '../lib/collaboratorAttachmentPreviews';
 // src/components/XHandleCopilotView.jsx
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import MarkdownDraftTablePreview from './MarkdownDraftTablePreview';
 import CollaboratorAttachmentCard from './CollaboratorAttachmentCard';
 import SentAttachmentChips from './SentAttachmentChips';
@@ -30,6 +32,7 @@ import remarkGfm from "remark-gfm";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import html2canvas from "html2canvas";
 import {
+  BookOpen,
   MessageSquareText,
   ArrowDown,
   SendHorizonal,
@@ -349,6 +352,7 @@ export function CollaboratorComposerMenu({
   onSelectRegion,
   onAttachFiles,
   onStartConversation,
+  onOpenCookbook,
   disabled = false,
   loadingModels = false,
 }) {
@@ -393,7 +397,7 @@ export function CollaboratorComposerMenu({
         aria-controls={open ? menuId : undefined}
         onClick={() => setOpen((current) => !current)}
         className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border transition-colors ${open ? "border-indigo-300 bg-indigo-50 text-indigo-700" : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50"}`}
-        title="Attachments, screen selection, model, and effort"
+        title="Prompt Cookbook, attachments, screen selection, model, and effort"
       >
         <Plus className={`h-5 w-5 transition-transform ${open ? "rotate-45" : ""}`} />
       </button>
@@ -404,6 +408,7 @@ export function CollaboratorComposerMenu({
           aria-label="Collaborator options"
           className="absolute bottom-full left-0 z-[80] mb-2 w-[300px] max-w-[calc(100vw-2rem)] rounded-xl border border-neutral-200 bg-white p-2 shadow-xl"
         >
+          {onOpenCookbook && <><button type="button" onClick={() => runAndClose(onOpenCookbook)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-neutral-800 hover:bg-neutral-100 focus:bg-neutral-100 focus:outline-none"><BookOpen className="h-4 w-4 text-indigo-600" /><span className="flex-1">Prompt Cookbook</span><kbd className="text-[10px] text-neutral-500">{COOKBOOK_SHORTCUT}</kbd></button><div className="my-2 border-t border-neutral-200" /></>}
           <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
             Add context
           </div>
@@ -494,7 +499,13 @@ export function CollaboratorPromptComposer({
   onPasteAttachment,
   onPasteFiles,
   menuProps,
+  promptCookbookContext = {},
+  cookbookSessionKey = "",
+  onSuggestCookbookPrompt,
 }) {
+  const [cookbookOpen, setCookbookOpen] = useState(false);
+  const closeCookbook = useCallback(() => setCookbookOpen(false), []);
+  useEffect(() => { setCookbookOpen(false); }, [cookbookSessionKey]);
   const [previewDraft, setPreviewDraft] = useState(defaultValue);
   const [pendingPastes, setPendingPastes] = useState(0);
   const [pasteError, setPasteError] = useState('');
@@ -536,19 +547,30 @@ export function CollaboratorPromptComposer({
     });
   };
 
+  const useCookbookPrompt = (prompt) => {
+    const current = textareaRef?.current?.value ?? previewDraft;
+    const next = appendCookbookPrompt(current, prompt);
+    if (textareaRef?.current) { textareaRef.current.value = next; resizeCollaboratorTextarea(textareaRef.current); }
+    setPreviewDraft(next); onDraftChange?.(next); closeCookbook();
+  };
   return (
-    <div>
+    <div onKeyDownCapture={event => {
+      if ((event.metaKey || event.ctrlKey) && event.altKey && !event.shiftKey && !event.nativeEvent?.isComposing && !event.getModifierState?.('AltGraph') && (event.code === 'KeyP' || event.key.toLowerCase() === 'p')) {
+        event.preventDefault(); event.stopPropagation(); setCookbookOpen(true);
+      }
+    }}>
+      <PromptCookbookPanel key={cookbookSessionKey} open={cookbookOpen} onClose={closeCookbook} onUse={useCookbookPrompt} context={promptCookbookContext} requestSuggestion={onSuggestCookbookPrompt} returnFocusRef={textareaRef} />
       <div className="rounded-[26px] border border-neutral-200 bg-white p-2 shadow-sm transition focus-within:border-neutral-300 focus-within:shadow-md">
         {pendingContext && <div className="px-1 pt-1">{pendingContext}</div>}
         {pendingPastes > 0 && <div role="status" className="px-2 py-1 text-xs text-neutral-500">Adding attachment…</div>}
         {pasteError && <div role="alert" className="px-2 py-1 text-xs text-red-600">{pasteError}</div>}
         <MarkdownDraftTablePreview text={deferredPreviewDraft} />
         <div className="flex items-end gap-1.5">
-          <CollaboratorComposerMenu {...menuProps} />
+          <CollaboratorComposerMenu {...menuProps} onOpenCookbook={() => setCookbookOpen(true)} />
           <textarea
             ref={textareaRef}
             rows={1}
-            className="block min-h-9 max-h-48 min-w-0 flex-1 resize-none border-0 bg-transparent px-2 py-1.5 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:outline-none focus:ring-0"
+            className="block min-h-9 max-h-48 min-w-0 flex-1 resize-none border-0 bg-transparent px-2 py-1.5 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-500 focus:outline-none focus:ring-0"
             placeholder={placeholder}
             defaultValue={defaultValue}
             onChange={handleChange}
@@ -575,7 +597,7 @@ export function CollaboratorPromptComposer({
           </button>
         </div>
       </div>
-      <div className="mt-1.5 text-center text-[10px] text-neutral-400">
+      <div className="mt-1.5 text-center text-[10px] text-neutral-500">
         {isGenerating
           ? `Enter to queue a follow-up · Shift+Enter for a new line${queuedCount ? ` · ${queuedCount} queued` : ""}`
           : "Enter to send · Shift+Enter for a new line"}
@@ -3007,19 +3029,19 @@ const mdComponentsUser = {
   li: ({ children }) => <li className="pl-1 leading-relaxed marker:text-indigo-200">{children}</li>,
   table: ({ children }) => (
     <div className="overflow-auto my-3">
-      <table className="w-full text-sm bg-[#F6F1FF] border border-[#E5DBFF] rounded">
+      <table className="w-full text-sm bg-violet-50 border border-violet-200 rounded">
         {children}
       </table>
     </div>
   ),
-  thead: ({ children }) => <thead className="bg-[#EFE6FF]">{children}</thead>,
+  thead: ({ children }) => <thead className="bg-violet-50">{children}</thead>,
   th: ({ children }) => (
-    <th className="text-left px-2 py-1 border-b border-[#E5DBFF] text-neutral-900">
+    <th className="text-left px-2 py-1 border-b border-violet-200 text-neutral-900">
       {children}
     </th>
   ),
   td: ({ children }) => (
-    <td className="px-2 py-1 border-b border-[#E5DBFF] align-top text-neutral-900">
+    <td className="px-2 py-1 border-b border-violet-200 align-top text-neutral-900">
       {children}
     </td>
   ),
@@ -8119,7 +8141,7 @@ Runtime context:
                           </button>
                         </div>
                       </div>
-                      <div className="text-[11px] text-neutral-500 mt-1">
+                      <div className="text-[11px] text-neutral-600 mt-1">
                         {new Date(t.updatedAt).toLocaleString()}
                       </div>
                     </div>
@@ -8142,7 +8164,7 @@ Runtime context:
 
           {/* RIGHT: Conversation */}
           <div className="relative flex-1 min-w-0 h-full flex flex-col">
-            <div className="copilot-header px-6 py-3 border-b flex items-center justify-between bg-[#F8FAFC]">
+            <div className="copilot-header px-6 py-3 border-b flex items-center justify-between bg-slate-50">
               <div className="flex items-center gap-2 text-sm text-neutral-700">
                 <button
                   onClick={() => setSidebarOpen((s) => !s)}
@@ -8210,7 +8232,7 @@ Runtime context:
                   {turn.user ? (
                     <div className="px-4 py-3 border-b bg-neutral-50">
                       <div className="w-full flex justify-end">
-                        <div className={`${userBubbleMax} group relative w-full bg-indigo-600 text-white px-4 py-3 rounded-2xl rounded-tr-sm shadow`}>
+                        <div className={`${userBubbleMax} collaborator-user-bubble group relative w-full px-4 py-3 rounded-2xl rounded-tr-sm shadow`}>
                           <div className="absolute right-2 top-2 opacity-0 transition group-hover:opacity-100 flex items-center gap-1">
                             <HoverActionButton
                               title="Edit prompt"
@@ -8356,6 +8378,9 @@ Runtime context:
             <div className="border-t bg-white p-4">
               <CollaboratorPromptComposer
                 textareaRef={textareaRef}
+                promptCookbookContext={cookbookContext(appFocus || enrichedContext?.focus || {}, enrichedContext)}
+                cookbookSessionKey={`${activeId}:${docked}:${collaboratorAI.provider}:${collaboratorAI.model}:${collaboratorAI.effort}`}
+                onSuggestCookbookPrompt={(messages, signal) => callChat(messages, signal, {maxTokens: 2400, workflow: 'collaborator.prompt-cookbook'})}
                 defaultValue={inputDraftRef.current}
                 placeholder="Ask Collaborator"
                 onDraftChange={updateInputDraft}
@@ -8466,7 +8491,7 @@ Runtime context:
                 {turn.user ? (
                   <div className="px-3 py-2 border-b bg-neutral-50">
                     <div className="w-full flex justify-end">
-                      <div className={`${userBubbleMax} group relative w-full bg-indigo-600 text-white px-3 py-2 rounded-2xl rounded-tr-sm shadow`}>
+                      <div className={`${userBubbleMax} collaborator-user-bubble group relative w-full px-3 py-2 rounded-2xl rounded-tr-sm shadow`}>
                         <div className="absolute right-2 top-2 opacity-0 transition group-hover:opacity-100 flex items-center gap-1">
                           <HoverActionButton
                             title="Edit prompt"
@@ -8608,6 +8633,9 @@ Runtime context:
           <div className="border-t bg-white p-2">
             <CollaboratorPromptComposer
               textareaRef={textareaRef}
+              promptCookbookContext={cookbookContext(appFocus || enrichedContext?.focus || {}, enrichedContext)}
+              cookbookSessionKey={`${activeId}:${docked}:${collaboratorAI.provider}:${collaboratorAI.model}:${collaboratorAI.effort}`}
+              onSuggestCookbookPrompt={(messages, signal) => callChat(messages, signal, {maxTokens: 2400, workflow: 'collaborator.prompt-cookbook'})}
               defaultValue={inputDraftRef.current}
               placeholder="Ask Collaborator"
               onDraftChange={updateInputDraft}

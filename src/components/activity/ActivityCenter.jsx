@@ -92,7 +92,7 @@ function ProgressBar({ step, total }) {
   const pct = total > 0 ? Math.min(100, Math.round((step / total) * 100)) : 0;
   return (
     <div className="w-full h-1.5 bg-neutral-200 rounded">
-      <div className="h-1.5 bg-[#2D7DFE] rounded" style={{ width: `${pct}%` }} />
+      <div className="h-1.5 bg-blue-600 rounded" style={{ width: `${pct}%` }} />
     </div>
   );
 }
@@ -198,8 +198,8 @@ export function ActivitiesButton() {
         <span className="relative flex h-2.5 w-2.5">
           {running ? (
             <>
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#2D7DFE] opacity-60"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#2D7DFE]"></span>
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-600 opacity-60"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-600"></span>
             </>
           ) : (
             <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-neutral-300"></span>

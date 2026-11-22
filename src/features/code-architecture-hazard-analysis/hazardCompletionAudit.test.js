@@ -4,6 +4,9 @@ const source={id:'HA-1',action:'Apply torque',phrase:'Too late',reviewedApplicab
 const quiet={onDiagnostic:()=>{},onMetrics:()=>{}};
 test.each(['STPA','HARA','FHA'])('audit: %s fallback preserves locked rationale and completes',async method=>{
  const request=jest.fn(async()=>{throw new Error('Provider unavailable');});
+ if(method==='STPA'){
+  await expect(generateFastHazards({method,sources:[{...source,reviewedRationale:'Timing applies; needs review of the deadline.'}],context:{},request,...quiet})).rejects.toMatchObject({code:'COMPACT_HAZARD_INCOMPLETE',partialResults:[]});return;
+ }
  await expect(generateFastHazards({method,sources:[{...source,reviewedRationale:'Timing applies; needs review of the deadline.'}],context:{},request,...quiet})).resolves.toMatchObject([{applicable:'Yes',applicabilityRationale:'Timing applies; needs review of the deadline.'}]);
  expect(request).toHaveBeenCalledTimes(3);
 });

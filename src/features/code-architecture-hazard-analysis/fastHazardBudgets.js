@@ -1,4 +1,4 @@
-import {getStoredActiveAIProvider,getStoredAIProviderModelPreference} from '../../lib/aiProviderConfig';
+import {getStoredActiveAIProvider,getStoredAIProviderModelPreference,supportsAIProviderEffort} from '../../lib/aiProviderConfig';
 
 // This is a batch scheduling target, not a hard limit for a single source.
 // Request admission uses a separate conservative envelope below.
@@ -10,12 +10,15 @@ export const hazardInputLimit=(fixedChars,variableChars)=>Math.min(MAX_HAZARD_IN
 export function createGenerationBudget() {
   const provider=getStoredActiveAIProvider();
   const model=getStoredAIProviderModelPreference(provider,{includeDefault:true}) || '';
-  // Haiku 5.5 supports this allowance; retain the existing ceiling for other
-  // providers/models (including those whose output maximum is 16K).
-  const maxTokens=/claude-haiku-5-5(?:$|[-:])/.test(model)?24000:14000;
+  // Register the larger allowance only for these known app-supported models;
+  // other providers/models retain the existing ceiling.
+  const largeBatch=/claude-haiku-5-5(?:$|[-:])/.test(model);
+  const maxTokens=largeBatch || /claude-sonnet-5-5(?:$|[-:])/.test(model)?24000:14000;
   let rowChars=6000,largestObserved=0;
   return {
     maxTokens,
+    outputTokensFor(prompt){return maxTokens>14000 && hazardPromptBytes(prompt)>hazardRequestInputBudget(maxTokens) && hazardPromptBytes(prompt)<=hazardRequestInputBudget(14000)?14000:maxTokens;},
+    get initialRows(){return largeBatch?16:supportsAIProviderEffort(provider,model)?5:8;},
     get rows(){return Math.max(1,Math.min(16,Math.floor((maxTokens-4000)*3/rowChars)));},
     observe(rows){
       // Exclusions are much shorter: do not let them inflate the capacity for

@@ -16,7 +16,7 @@ export default function GroupBoxNode({ data }) {
     csci: {
       border: '1px solid #2563EB',
       background: 'rgba(37, 99, 235, 0.05)',
-      color: '#1D4ED8',
+      color: 'var(--info-text)',
       size: 13,
       weight: 700,
       radius: 18,
@@ -24,7 +24,7 @@ export default function GroupBoxNode({ data }) {
     csc: {
       border: '1px solid #14B8A6',
       background: 'rgba(20, 184, 166, 0.055)',
-      color: '#0F766E',
+      color: 'var(--success-text)',
       size: 12,
       weight: 700,
       radius: 16,
@@ -32,7 +32,7 @@ export default function GroupBoxNode({ data }) {
     csu: {
       border: '1px solid #A855F7',
       background: 'rgba(168, 85, 247, 0.045)',
-      color: '#7E22CE',
+      color: 'var(--link)',
       size: 12,
       weight: 650,
       radius: 14,
@@ -100,8 +100,8 @@ export default function GroupBoxNode({ data }) {
             padding: '0 6px',
             borderRadius: 999,
             border: '1px solid rgba(122,55,255,0.35)',
-            background: '#fff',
-            color: '#7A37FF',
+            background: "var(--card)",
+            color: 'var(--link)',
             fontSize: 11,
             fontWeight: 800,
             cursor: 'pointer',
@@ -120,8 +120,8 @@ export default function GroupBoxNode({ data }) {
           padding: '2px 8px',
           fontSize: arch?.size || (isFunctionGroup ? 13 : 12),
           fontWeight: arch?.weight || 600,
-          color: systemElementStyle?.color || arch?.color || (isFunctionGroup ? '#1E61D6' : '#2D7DFE'),
-          background: 'white',
+          color: systemElementStyle?.color || arch?.color || 'var(--link)',
+          background: "var(--card)",
           border: systemElementStyle?.color ? `1px solid ${systemElementStyle.color}` : '1px solid #E6E8EF',
           borderRadius: 8,
           lineHeight: 1.2,
@@ -133,7 +133,7 @@ export default function GroupBoxNode({ data }) {
             top: 0, left: 0, right: 0, padding: '5px 8px',
             border: 'none', borderRadius: '8px 8px 0 0', boxShadow: 'none',
             background: detailHeaderBackground,
-            color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis',
+            color: "var(--text)", overflow: 'hidden', textOverflow: 'ellipsis',
           } : {}),
         }}
       >

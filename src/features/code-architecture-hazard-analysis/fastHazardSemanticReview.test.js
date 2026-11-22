@@ -26,7 +26,8 @@ test.each(['STPA','HARA','FHA'])('%s review includes actual narrative, action an
  expect(prompt).toContain('runs concurrently with output creation');
  expect(prompt).toContain('no engineer interaction');
  expect(prompt).toContain('path-existence check');
- expect(prompt).toContain('proposed/assumed');
+ expect(prompt).toContain('An explicitly allocated proposed safeguard');
+ expect(prompt).toContain('Do not permit invented metric parameters in requirements');
  expect(prompt).toContain('Profile A');
  expect(request.mock.calls.flatMap(([p])=>entries(p))).toEqual(fixtures.filter(entry=>!obviousNarrativeIssues(entry.assessment).length));
 });

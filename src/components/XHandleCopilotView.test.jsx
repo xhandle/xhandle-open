@@ -2219,3 +2219,32 @@ it.each([false, true])('continues a follow-up once using the selected answer (cu
     act(() => root.unmount()); host.remove(); threads.saveThreads(previous); global.crypto = previousCrypto; models.mockRestore(); transport.mockRestore();
   }
 });
+
+describe('Collaborator composer Prompt Cookbook', () => {
+  let host, root, textareaRef, onDraftChange, onSend;
+  const button = title => [...document.querySelectorAll('button')].find(node => node.textContent.trim() === title);
+  beforeEach(() => { host = document.createElement('div'); document.body.append(host); root = createRoot(host); textareaRef = React.createRef(); onDraftChange = jest.fn(); onSend = jest.fn(); });
+  afterEach(() => { act(() => root.unmount()); host.remove(); });
+  function render(extra = {}) { act(() => root.render(<CollaboratorPromptComposer textareaRef={textareaRef} defaultValue="Keep this original draft" canSend onSend={onSend} onDraftChange={onDraftChange} pendingContext={<div>Attached evidence remains available</div>} menuProps={{provider:'openai',model:'gpt-5.5',effort:'medium'}} {...extra} />)); }
+  function choose() { act(() => [...document.querySelectorAll('button')].find(node => node.textContent.startsWith('Check graph connectivity')).click()); }
+  test.each(['docked','full-screen'])('the %s composer inserts an editable cookbook prompt without sending or losing the draft and attachments', layout => {
+    render({cookbookSessionKey:layout}); act(() => host.querySelector('[aria-label="Open Collaborator options"]').click());
+    const cookbook = [...document.querySelectorAll('button')].find(node => node.textContent.startsWith('Prompt Cookbook')); expect(cookbook).toBeTruthy(); act(() => cookbook.click());
+    expect(host.querySelector('[aria-label="Collaborator options"]')).toBeNull(); expect(textareaRef.current.value).toBe('Keep this original draft'); choose();
+    act(() => button('Use prompt').click()); expect(document.querySelector('[aria-modal=true]')).toBeNull(); expect(textareaRef.current.value).toMatch(/^Keep this original draft\n\nCheck the current functional decomposition/);
+    expect(onDraftChange).toHaveBeenCalledWith(textareaRef.current.value); expect(onSend).not.toHaveBeenCalled(); expect(host.textContent).toContain('Attached evidence remains available'); expect(document.activeElement).toBe(textareaRef.current);
+  });
+  test('the shortcut is composer-scoped, ignores ordinary typing and closes with Escape without editing the draft', () => {
+    render(); act(() => document.dispatchEvent(new KeyboardEvent('keydown',{code:'KeyP',key:'p',ctrlKey:true,altKey:true,bubbles:true,cancelable:true}))); expect(document.querySelector('[aria-modal=true]')).toBeNull();
+    act(() => textareaRef.current.dispatchEvent(new KeyboardEvent('keydown',{code:'KeyP',key:'p',bubbles:true,cancelable:true}))); expect(document.querySelector('[aria-modal=true]')).toBeNull();
+    act(() => textareaRef.current.dispatchEvent(new KeyboardEvent('keydown',{code:'KeyP',key:'p',ctrlKey:true,altKey:true,bubbles:true,cancelable:true}))); expect(document.querySelector('[aria-modal=true]')).not.toBeNull();
+    act(() => document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))); expect(document.querySelector('[aria-modal=true]')).toBeNull(); expect(onDraftChange).not.toHaveBeenCalled(); expect(onSend).not.toHaveBeenCalled();
+  });
+  test('a conversation switch closes and cancels pending prompt suggestions', async () => {
+    let signal, resolve; const request = jest.fn((_messages,nextSignal)=>{signal=nextSignal;return new Promise(done=>{resolve=done;});});
+    render({cookbookSessionKey:'first',onSuggestCookbookPrompt:request}); act(()=>textareaRef.current.dispatchEvent(new KeyboardEvent('keydown',{code:'KeyP',key:'p',metaKey:true,altKey:true,bubbles:true,cancelable:true})));
+    act(()=>button('Help me write a prompt').click()); const goal=document.querySelector('textarea[placeholder^="For example"]'); act(()=>{Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(goal,'Find missing links');goal.dispatchEvent(new Event('input',{bubbles:true}));});
+    await act(async()=>button('Suggest prompt').click()); render({cookbookSessionKey:'second',onSuggestCookbookPrompt:request}); expect(signal.aborted).toBe(true);
+    await act(async()=>resolve('{"kind":"suggestion","recipeId":"check-graph-connectivity","prompt":"STALE","explanation":"Old conversation"}')); expect(document.querySelector('[aria-modal=true]')).toBeNull(); expect(onDraftChange).not.toHaveBeenCalled();
+  });
+});

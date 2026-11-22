@@ -19,9 +19,15 @@ export function createImportedHazardContextAssigner(sourceHeaders, contexts) {
     const context = unspecified && normalized.length === 1 ? normalized[0] : contextsById.get(id);
     if (!context) return {row:original, preprocessing:previous, changed:false};
     const values = [context.id, context.scenario, context.mode, context.conditions, context.assumptions];
-    if (fields.every((field, index) => get(field) === values[index])) return {row:original, preprocessing:previous, changed:false};
+    const contextChanged = !fields.every((field, index) => get(field) === values[index]);
+    const combinedIndex = indices.get('Operational Context');
+    const combined = [context.scenario, context.mode, context.conditions].filter(Boolean).join(' · ') || 'Not specified';
+    const labelChanged = combinedIndex !== undefined && original[combinedIndex] !== combined;
+    if (!contextChanged && !labelChanged) return {row:original, preprocessing:previous, changed:false};
     const row = headers.map((_, index) => original[index] ?? '');
     fields.forEach((field, index) => {row[indices.get(field)] = values[index];});
+    if (combinedIndex !== undefined) row[combinedIndex] = combined;
+    if (!contextChanged) return {row, changed:true, preprocessing:previous};
     return {row, changed:true, preprocessing:previous && {...previous,
       // Retain the scenario/mode basis so reassignment requires review.
       basis:{...previous.basis, 'Operational Context ID':context.id},

@@ -1,3 +1,5 @@
+import ReportDiagramImage from './ReportDiagramImage';
+import { reportUrlTransform } from './utils/reportUrlTransform';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -394,7 +396,7 @@ export default function ArchitectureReportViewer({
           className="my-6 block w-full rounded-lg border border-slate-200 bg-white p-2 shadow-sm"
           title="Click to enlarge diagram"
         >
-          <img src={src} alt={alt || "Architecture diagram"} className="mx-auto h-auto max-h-[560px] max-w-full object-contain" />
+          <ReportDiagramImage src={src} images={report?.diagramImages} alt={alt || "Architecture diagram"} className="mx-auto h-auto max-h-[560px] max-w-full object-contain" />
         </button>
       ),
       blockquote: ({ children }) => (
@@ -403,7 +405,7 @@ export default function ArchitectureReportViewer({
         </blockquote>
       ),
     };
-  }, [reviewMode, reviewableHeadings, getSectionStatus]);
+  }, [reviewMode, reviewableHeadings, getSectionStatus, report?.diagramImages]);
 
   const handleCopy = async () => {
     try {
@@ -430,7 +432,7 @@ export default function ArchitectureReportViewer({
           <button
             type="button"
             onClick={onRegenerate}
-            className="mt-5 rounded-lg bg-[#2D7DFE] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#1E61D6]"
+            className="mt-5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
           >
             Generate Architecture Description
           </button>
@@ -470,7 +472,7 @@ export default function ArchitectureReportViewer({
           <button onClick={() => downloadMarkdown(filename, markdown)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
             Download Markdown
           </button>
-          <button onClick={onRegenerate} className="rounded-lg bg-[#2D7DFE] px-3 py-2 text-sm font-semibold text-white hover:bg-[#1E61D6]">
+          <button onClick={onRegenerate} className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700">
             Regenerate Report
           </button>
           <button
@@ -551,7 +553,7 @@ export default function ArchitectureReportViewer({
               <pre className="whitespace-pre-wrap text-sm leading-6 text-slate-800">{markdown}</pre>
             ) : (
               <ErrorBoundary onError={() => setRenderFailed(true)}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>
+                <ReactMarkdown urlTransform={reportUrlTransform} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>
                   {markdown}
                 </ReactMarkdown>
               </ErrorBoundary>
@@ -675,7 +677,7 @@ export default function ArchitectureReportViewer({
                         type="button"
                         onClick={addActionItem}
                         disabled={!actionDraft.title.trim()}
-                        className="rounded-lg bg-[#2D7DFE] px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                        className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
                       >
                         Add Action
                       </button>
@@ -720,7 +722,7 @@ export default function ArchitectureReportViewer({
             <div className="mb-2 flex justify-end">
               <button onClick={() => setImagePreview(null)} className="rounded border px-2 py-1 text-sm text-slate-700">Close</button>
             </div>
-            <img src={imagePreview.src} alt={imagePreview.alt || "Architecture diagram"} className="h-auto max-w-full" />
+            <ReportDiagramImage src={imagePreview.src} images={report?.diagramImages} alt={imagePreview.alt || "Architecture diagram"} className="h-auto max-w-full" />
           </div>
         </div>
       )}

@@ -1,3 +1,5 @@
+import { captureReportDiagramImages } from './utils/captureReportDiagramImages';
+import { diagramBackgroundColor } from './utils/diagramBackgroundColor';
 import requestHazardRows from '../features/code-architecture-hazard-analysis/requestHazardRows';
 import { diagnosticCheckpoint } from '../lib/diagnosticOperations';
 import { computeArchitectureByFunction, computeFunctionGroupsByFile, cleanArchLabel } from './diagramArchitectureIndexes';
@@ -1064,8 +1066,8 @@ const CommentBadge = ({ count = 0, onClick }) => {
         padding: '0 6px',
         borderRadius: 999,
         border: `1px solid ${rgba(BRAND.purple, 0.35)}`,
-        background: '#fff',
-        color: BRAND.purple,
+        background: "var(--card)",
+        color: "var(--link)",
         fontSize: 11,
         fontWeight: 800,
         cursor: 'pointer',
@@ -1103,7 +1105,7 @@ const BidirectionalNode = React.memo(({ id, data, selected }) => {
         padding: THEME.node.pad,
         border,
         borderRadius: THEME.radius,
-        backgroundColor: '#fff',
+        backgroundColor: "var(--card)",
         backgroundImage: `linear-gradient(${tint}, ${tint})`,
         boxShadow: selected
           ? `0 0 0 5px ${rgba(brandColor, 0.18)}, ${THEME.node.shadow}`
@@ -1155,7 +1157,7 @@ const BidirectionalNode = React.memo(({ id, data, selected }) => {
         style={{
           fontWeight: 700,
           fontSize: THEME.node.titleSize,
-          color: BRAND.dark,
+          color: "var(--text)",
           textAlign: 'center',
           lineHeight: 1.2,
           wordBreak: 'break-word',
@@ -1176,7 +1178,7 @@ const BidirectionalNode = React.memo(({ id, data, selected }) => {
             right: 10,
             bottom: 8,
             fontSize: 10,
-            color: '#64748B',
+            color: "var(--muted)",
             textAlign: 'center',
             whiteSpace: 'nowrap',
             overflow: 'hidden',
@@ -1205,7 +1207,7 @@ const NoteNode = ({ data, selected }) => {
         boxShadow: selected
           ? `0 0 0 5px ${rgba(brandColor, 0.18)}, ${THEME.node.shadow}`
           : THEME.node.shadow,
-        color: BRAND.dark,
+        color: "var(--text)",
         display: 'flex',
         flexDirection: 'column',
         gap: 8,
@@ -3248,6 +3250,9 @@ useEffect(() => {
 
   // expose imperative actions to parent
   useImperativeHandle(ref, () => ({
+    async exportReportImages() {
+      return captureReportDiagramImages(diagramHostRef.current?.querySelector('.react-flow'), getViewport().zoom);
+    },
     async exportAsImage() {
       const flowCanvas = diagramHostRef.current?.querySelector('.react-flow');
       if (!flowCanvas) return null;
@@ -3256,7 +3261,7 @@ useEffect(() => {
       clearTimeout(viewportIdleTimer.current);
       viewportGesture.current = { epoch: viewportGesture.current.epoch + 1, startedAt: 0, active: false, pointerHeld: false };
       diagramHostRef.current?.removeAttribute('data-viewport-moving');
-      return await toPng(flowCanvas, { backgroundColor: '#ffffff', filter: node => !node.classList?.contains('x-edge-motion-image'), style: { margin: '0 auto', display: 'block' } });
+      return await toPng(flowCanvas, { backgroundColor: diagramBackgroundColor(flowCanvas), filter: node => !node.classList?.contains('x-edge-motion-image'), style: { margin: '0 auto', display: 'block' } });
     },
     async getPNG() { return this.exportAsImage(); },
 	    isReady() { return !!diagramHostRef.current?.querySelector('.react-flow'); },
@@ -3931,9 +3936,9 @@ useEffect(() => {
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 6,
-    border: `1px solid ${disabled ? 'rgba(15,15,18,0.12)' : rgba(tone, active ? 0.8 : 0.32)}`,
-    background: disabled ? '#F8FAFC' : active ? tone : 'white',
-    color: disabled ? 'rgba(15,15,18,0.34)' : active ? 'white' : tone,
+    border: `1px solid ${disabled ? "rgb(var(--x-text) / 0.12)" : rgba(tone, active ? 0.8 : 0.32)}`,
+    background: disabled ? "var(--panel)" : active ? (tone === BRAND.purple ? "var(--action-purple)" : tone === BRAND.yellow ? "var(--action-yellow)" : "var(--action)") : "var(--card)",
+    color: disabled ? "rgb(var(--x-text) / 0.34)" : active ? 'white' : (tone === BRAND.yellow ? 'var(--warning-text)' : 'var(--link)'),
     fontWeight: 800,
     fontSize: 13,
     lineHeight: 1,
@@ -3953,11 +3958,11 @@ useEffect(() => {
   ];
   const toolGroupStyle = { display: 'grid', gridTemplateColumns: 'repeat(3, 32px)', gap: 6 };
   const toolGroupHeadingStyle = toolsInSidebar
-    ? { margin: '6px 2px 2px', color: 'rgba(15,15,18,0.52)', fontSize: 10, fontWeight: 800, letterSpacing: 0, textTransform: 'uppercase' }
-    : { margin: '6px 2px 6px', color: 'rgba(15,15,18,0.52)', fontSize: 10, fontWeight: 800, textTransform: 'uppercase' };
+    ? { margin: '6px 2px 2px', color: "var(--muted)", fontSize: 10, fontWeight: 800, letterSpacing: 0, textTransform: 'uppercase' }
+    : { margin: '6px 2px 6px', color: "var(--muted)", fontSize: 10, fontWeight: 800, textTransform: 'uppercase' };
   const toolDividerStyle = toolsInSidebar
-    ? { height: 1, background: 'rgba(15,15,18,0.08)', margin: '2px 0' }
-    : { height: 1, background: 'rgba(15,15,18,0.08)', margin: '8px 0 2px' };
+    ? { height: 1, background: "rgb(var(--x-text) / 0.08)", margin: '2px 0' }
+    : { height: 1, background: "rgb(var(--x-text) / 0.08)", margin: '8px 0 2px' };
   const canvasTools = (
           <div
             aria-label="Code architecture canvas tools"
@@ -3976,9 +3981,9 @@ useEffect(() => {
             <div
               style={{
                 height: '100%',
-                border: toolsInSidebar ? 0 : '1px solid rgba(15,15,18,0.12)',
+                border: toolsInSidebar ? 0 : "1px solid rgb(var(--x-text) / 0.12)",
                 borderRadius: toolsInSidebar ? 0 : 10,
-                background: toolsInSidebar ? 'transparent' : 'rgba(255,255,255,0.96)',
+                background: toolsInSidebar ? 'transparent' : "rgb(var(--x-surface) / 0.96)",
                 boxShadow: canvasToolsTarget === undefined ? '0 12px 28px rgba(15,15,18,0.16)' : 'none',
                 overflow: 'hidden',
                 display: 'flex',
@@ -3995,9 +4000,9 @@ useEffect(() => {
                   height: 34,
                   flexShrink: 0,
                   border: 0,
-                  borderBottom: canvasToolbarCollapsed ? 0 : '1px solid rgba(15,15,18,0.08)',
-                  background: canvasToolbarCollapsed ? BRAND.blue : '#F8FAFC',
-                  color: canvasToolbarCollapsed ? 'white' : BRAND.dark,
+                  borderBottom: canvasToolbarCollapsed ? 0 : "1px solid rgb(var(--x-text) / 0.08)",
+                  background: canvasToolbarCollapsed ? "var(--action)" : "var(--panel)",
+                  color: canvasToolbarCollapsed ? 'white' : "var(--text)",
                   fontWeight: 900,
                   fontSize: 12,
                   cursor: 'pointer',
@@ -4014,7 +4019,7 @@ useEffect(() => {
                       title={category.label}
                       aria-label={category.label}
                       onClick={() => setCanvasToolbarCollapsed(false)}
-                      style={{ ...toolButtonStyle(), width: 30, height: 30, border: '1px solid rgba(15,15,18,0.12)', color: 'rgba(15,15,18,0.68)' }}
+                      style={{ ...toolButtonStyle(), width: 30, height: 30, border: "1px solid rgb(var(--x-text) / 0.12)", color: "var(--muted)" }}
                     >
                       {category.icon}
                     </button>
@@ -4123,16 +4128,16 @@ useEffect(() => {
             alignItems: 'center',
             gap: 8,
             maxWidth: 460,
-            background: 'white',
+            background: "var(--card)",
             border: '1px solid rgba(45,125,254,0.35)',
             borderRadius: 10,
             padding: '7px 9px',
             boxShadow: '0 8px 22px rgba(15, 23, 42, 0.10)',
-            color: '#334155',
+            color: "var(--text)",
             fontSize: 12,
           }}
         >
-          <span style={{ fontWeight: 800, color: BRAND.blue }}>
+          <span style={{ fontWeight: 800, color: "var(--link)" }}>
             Focused {architectureFocus.kind.toUpperCase()}:
           </span>
           <span
@@ -4147,9 +4152,9 @@ useEffect(() => {
             title="Show full architecture"
             style={{
               border: '1px solid #D8E2F3',
-              background: '#F8FAFC',
+              background: "var(--panel)",
               borderRadius: 7,
-              color: '#475569',
+              color: "var(--muted)",
               cursor: 'pointer',
               fontWeight: 800,
               lineHeight: 1,
@@ -4168,20 +4173,20 @@ useEffect(() => {
             top: 54,
             zIndex: 10,
             width: 320,
-            background: 'white',
+            background: "var(--card)",
             border: '1px solid rgba(20,184,166,0.45)',
             borderRadius: 10,
             padding: 10,
             boxShadow: '0 10px 28px rgba(15, 23, 42, 0.12)',
             fontSize: 12,
-            color: '#334155',
+            color: "var(--text)",
           }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'start' }}>
             <div style={{ fontWeight: 800, color: '#0F766E' }}>Selected Source Trace</div>
             <button
               onClick={() => setSelectedTrace(null)}
-              style={{ border: 'none', background: 'transparent', color: '#64748B', cursor: 'pointer', fontWeight: 700 }}
+              style={{ border: 'none', background: 'transparent', color: "var(--muted)", cursor: 'pointer', fontWeight: 700 }}
               title="Clear source trace highlight"
             >
               ×
@@ -4223,8 +4228,8 @@ useEffect(() => {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              background: 'rgba(255,255,255,0.92)',
-              color: BRAND.blue,
+              background: "rgb(var(--x-surface) / 0.92)",
+              color: "var(--link)",
               fontWeight: 700,
               letterSpacing: '0.01em',
             }}
@@ -4510,7 +4515,7 @@ useEffect(() => {
         >
           <ArchitectureMarkers definitions={preparedMarkers.definitions} />
           <ArchitectureEdgeMotionLayer hostRef={diagramHostRef} enabled={largeArchitectureCanvas} scope={`${storageKey}:${activeArchitectureAbstraction}`} />
-          <Background variant="dots" gap={18} size={1} />
+          <Background variant="dots" gap={18} size={1} color="var(--canvas-grid)" />
           <Controls showInteractive={false} position="bottom-right" />
         </ReactFlow>
       </div>
@@ -4524,9 +4529,9 @@ useEffect(() => {
             zIndex: 35,
             minWidth: 190,
             overflow: 'hidden',
-            border: '1px solid rgba(15,15,18,0.12)',
+            border: "1px solid rgb(var(--x-text) / 0.12)",
             borderRadius: 10,
-            background: '#fff',
+            background: "var(--card)",
             boxShadow: '0 10px 28px rgba(15,15,18,0.18)',
           }}
           onMouseLeave={() => setContextMenu(null)}
@@ -4534,7 +4539,7 @@ useEffect(() => {
           <button
             type="button"
             onClick={() => openCommentComposer(contextMenu)}
-            style={{ display: 'block', width: '100%', padding: '10px 12px', border: 'none', background: '#fff', color: BRAND.purple, textAlign: 'left', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+            style={{ display: 'block', width: '100%', padding: '10px 12px', border: 'none', background: "var(--card)", color: "var(--link)", textAlign: 'left', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
           >
             💬 Add comment
           </button>
@@ -4551,39 +4556,39 @@ useEffect(() => {
             alignItems: 'center',
             justifyContent: 'center',
             padding: 20,
-            background: 'rgba(15,15,18,0.34)',
+            background: "var(--overlay)",
           }}
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) setCommentModal(null);
           }}
         >
-          <div style={{ width: 'min(560px, 94%)', maxHeight: '82%', display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRadius: 14, border: '1px solid rgba(15,15,18,0.12)', background: '#fff', boxShadow: '0 22px 60px rgba(15,15,18,0.24)' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, padding: '16px 18px', borderBottom: '1px solid rgba(15,15,18,0.1)' }}>
+          <div style={{ width: 'min(560px, 94%)', maxHeight: '82%', display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRadius: 14, border: "1px solid rgb(var(--x-text) / 0.12)", background: "var(--card)", boxShadow: '0 22px 60px rgba(15,15,18,0.24)' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, padding: '16px 18px', borderBottom: "1px solid rgb(var(--x-text) / 0.1)" }}>
               <div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: BRAND.dark }}>Comments</div>
-                <div style={{ marginTop: 3, fontSize: 12, color: '#64748B' }}>
+                <div style={{ fontSize: 16, fontWeight: 800, color: "var(--text)" }}>Comments</div>
+                <div style={{ marginTop: 3, fontSize: 12, color: "var(--muted)" }}>
                   {commentModal.targetType === 'edge' ? 'Edge' : 'Node'} · {commentModal.targetLabel}
                 </div>
               </div>
-              <button type="button" onClick={() => setCommentModal(null)} aria-label="Close comments" style={{ border: 'none', background: 'transparent', fontSize: 22, lineHeight: 1, color: '#64748B', cursor: 'pointer' }}>×</button>
+              <button type="button" onClick={() => setCommentModal(null)} aria-label="Close comments" style={{ border: 'none', background: 'transparent', fontSize: 22, lineHeight: 1, color: "var(--muted)", cursor: 'pointer' }}>×</button>
             </div>
             <div style={{ minHeight: 0, overflowY: 'auto', padding: '14px 18px' }}>
               {commentsForDiagramTarget(comments, commentModal.targetType, commentModal.targetId).length > 0 ? (
                 <div style={{ display: 'grid', gap: 8, marginBottom: 14 }}>
                   {commentsForDiagramTarget(comments, commentModal.targetType, commentModal.targetId).map((comment) => (
-                    <div key={comment.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: 10, borderRadius: 9, border: '1px solid #E2E8F0', background: '#F8FAFC' }}>
+                    <div key={comment.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: 10, borderRadius: 9, border: "1px solid var(--border)", background: "var(--panel)" }}>
                       <div style={{ minWidth: 0, flex: 1 }}>
-                        <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13, lineHeight: 1.45, color: '#1E293B' }}>{comment.text}</div>
-                        <div style={{ marginTop: 5, fontSize: 10, color: '#94A3B8' }}>{new Date(comment.createdAt).toLocaleString()}</div>
+                        <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13, lineHeight: 1.45, color: "var(--text)" }}>{comment.text}</div>
+                        <div style={{ marginTop: 5, fontSize: 10, color: "var(--muted-2)" }}>{new Date(comment.createdAt).toLocaleString()}</div>
                       </div>
-                      <button type="button" onClick={() => deleteDiagramComment(comment.id)} title="Delete comment" aria-label="Delete comment" style={{ border: 'none', background: 'transparent', color: '#DC2626', cursor: 'pointer', fontSize: 16 }}>×</button>
+                      <button type="button" onClick={() => deleteDiagramComment(comment.id)} title="Delete comment" aria-label="Delete comment" style={{ border: 'none', background: 'transparent', color: "var(--danger-text)", cursor: 'pointer', fontSize: 16 }}>×</button>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div style={{ marginBottom: 12, fontSize: 13, color: '#64748B' }}>No comments yet.</div>
+                <div style={{ marginBottom: 12, fontSize: 13, color: "var(--muted)" }}>No comments yet.</div>
               )}
-              <label htmlFor="code-architecture-diagram-comment" style={{ display: 'block', marginBottom: 6, fontSize: 12, fontWeight: 700, color: '#334155' }}>Add a comment</label>
+              <label htmlFor="code-architecture-diagram-comment" style={{ display: 'block', marginBottom: 6, fontSize: 12, fontWeight: 700, color: "var(--text)" }}>Add a comment</label>
               <textarea
                 id="code-architecture-diagram-comment"
                 autoFocus
@@ -4593,16 +4598,16 @@ useEffect(() => {
                   if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') saveCommentDraft();
                 }}
                 placeholder="Enter review feedback, a question, or an engineering note…"
-                style={{ width: '100%', minHeight: 110, resize: 'vertical', borderRadius: 9, border: '1px solid #CBD5E1', padding: 10, fontSize: 13, lineHeight: 1.45, outline: 'none' }}
+                style={{ width: '100%', minHeight: 110, resize: 'vertical', borderRadius: 9, border: "1px solid var(--border-strong)", padding: 10, fontSize: 13, lineHeight: 1.45, outline: 'none' }}
               />
             </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '12px 18px', borderTop: '1px solid rgba(15,15,18,0.1)' }}>
-              <button type="button" onClick={() => setCommentModal(null)} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #CBD5E1', background: '#fff', color: '#334155', cursor: 'pointer' }}>Close</button>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '12px 18px', borderTop: "1px solid rgb(var(--x-text) / 0.1)" }}>
+              <button type="button" onClick={() => setCommentModal(null)} style={{ padding: '8px 12px', borderRadius: 8, border: "1px solid var(--border-strong)", background: "var(--card)", color: "var(--text)", cursor: 'pointer' }}>Close</button>
               <button
                 type="button"
                 onClick={saveCommentDraft}
                 disabled={!String(commentModal.draft || '').trim()}
-                style={{ padding: '8px 13px', borderRadius: 8, border: 'none', background: BRAND.purple, color: '#fff', fontWeight: 700, cursor: String(commentModal.draft || '').trim() ? 'pointer' : 'not-allowed', opacity: String(commentModal.draft || '').trim() ? 1 : 0.5 }}
+                style={{ padding: '8px 13px', borderRadius: 8, border: 'none', background: "var(--brand-purple-action)", color: '#fff', fontWeight: 700, cursor: String(commentModal.draft || '').trim() ? 'pointer' : 'not-allowed', opacity: String(commentModal.draft || '').trim() ? 1 : 0.5 }}
               >
                 Add comment
               </button>
@@ -4619,7 +4624,7 @@ useEffect(() => {
             top: '50%',
             left: '50%',
             transform: 'translate(-50%, -50%)',
-            background: 'white',
+            background: "var(--card)",
             border: '1px solid rgba(0,0,0,0.1)',
             borderRadius: 12,
             padding: 0,
@@ -4637,8 +4642,8 @@ useEffect(() => {
             style={{
               flex: '0 0 auto',
               padding: '10px 92px 10px 16px',
-              borderBottom: '1px solid rgba(15,23,42,0.1)',
-              background: 'white',
+              borderBottom: "1px solid rgb(var(--x-text) / 0.1)",
+              background: "var(--card)",
               position: 'relative',
               zIndex: 1,
             }}
@@ -4654,9 +4659,9 @@ useEffect(() => {
                 width: 30,
                 height: 30,
                 borderRadius: 999,
-                border: '1px solid rgba(15,23,42,0.12)',
-                background: '#F8FAFC',
-                color: '#334155',
+                border: "1px solid rgb(var(--x-text) / 0.12)",
+                background: "var(--panel)",
+                color: "var(--text)",
                 fontSize: 18,
                 lineHeight: '26px',
                 cursor: 'pointer',
@@ -4676,9 +4681,9 @@ useEffect(() => {
                 minWidth: 34,
                 height: 30,
                 borderRadius: 999,
-                border: '1px solid rgba(15,23,42,0.12)',
-                background: '#F8FAFC',
-                color: '#334155',
+                border: "1px solid rgb(var(--x-text) / 0.12)",
+                background: "var(--panel)",
+                color: "var(--text)",
                 fontSize: 16,
                 lineHeight: '26px',
                 cursor: 'pointer',
@@ -4704,7 +4709,7 @@ useEffect(() => {
                 alignItems: 'start',
               }}
             >
-            <label style={{ display: 'block', marginBottom: 0, fontSize: 12, fontWeight: 700, color: '#334155' }}>
+            <label style={{ display: 'block', marginBottom: 0, fontSize: 12, fontWeight: 700, color: "var(--text)" }}>
               Label
               <input
                 type="text"
@@ -4714,7 +4719,7 @@ useEffect(() => {
                 style={{ width: '100%', marginTop: 3, padding: '6px 8px', borderRadius: 8, border: '1px solid #ddd', fontSize: 13 }}
               />
             </label>
-            <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#334155' }}>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: "var(--text)" }}>
               Description
               <textarea
                 value={editModal.description}
@@ -4746,7 +4751,7 @@ useEffect(() => {
               />
             </label>
             {editModal.canEditSystemElementColor && (
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#334155' }}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: "var(--text)" }}>
                 Color
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 3 }}>
                   <input
@@ -4760,7 +4765,7 @@ useEffect(() => {
                       padding: 2,
                       borderRadius: 8,
                       border: '1px solid #ddd',
-                      background: 'white',
+                      background: "var(--card)",
                       cursor: 'pointer',
                     }}
                   />
@@ -4782,7 +4787,7 @@ useEffect(() => {
 	            <details
 	              style={{
                 marginTop: 14,
-                borderTop: '1px solid rgba(15,23,42,0.1)',
+                borderTop: "1px solid rgb(var(--x-text) / 0.1)",
                 paddingTop: 12,
               }}
             >
@@ -4797,15 +4802,15 @@ useEffect(() => {
                   listStylePosition: 'inside',
                 }}
               >
-                <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A' }}>
+                <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>
                   Architecture Trace
                 </span>
-                <span style={{ fontSize: 12, color: '#64748B' }}>
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>
                   {editFunctionalTraceRows.length} row{editFunctionalTraceRows.length === 1 ? '' : 's'}
                 </span>
               </summary>
               {editFunctionalTraceRows.length === 0 ? (
-                <div style={{ fontSize: 13, color: '#64748B' }}>
+                <div style={{ fontSize: 13, color: "var(--muted)" }}>
                   No functional decomposition rows are linked to this {editModal.type === 'architectureBox' ? 'architecture box' : editModal.type}.
                 </div>
               ) : (
@@ -4834,7 +4839,7 @@ useEffect(() => {
                         style={{
                           border: '1px solid rgba(45,125,254,0.18)',
                           borderRadius: 8,
-                          background: '#F8FAFC',
+                          background: "var(--panel)",
                           overflow: 'hidden',
                         }}
                       >
@@ -4845,8 +4850,8 @@ useEffect(() => {
                             justifyContent: 'space-between',
                             gap: 10,
                             padding: '8px 10px',
-                            background: '#EEF4FF',
-                            color: '#0B3EA8',
+                            background: "var(--info-bg)",
+                            color: "var(--info-text)",
                             fontSize: 12,
                             fontWeight: 700,
                           }}
@@ -4869,7 +4874,7 @@ useEffect(() => {
                                 flex: '0 0 auto',
                                 border: 'none',
                                 background: 'transparent',
-                                color: BRAND.blue,
+                                color: "var(--link)",
                                 fontSize: 12,
                                 fontWeight: 700,
                                 textDecoration: 'underline',
@@ -4888,13 +4893,13 @@ useEffect(() => {
                               padding: '7px 10px',
                               fontSize: 12,
                               fontWeight: 700,
-                              color: BRAND.blue,
+                              color: "var(--link)",
                               listStylePosition: 'inside',
                             }}
                           >
                             Details
                           </summary>
-                          <div style={{ display: 'grid', gap: 4, padding: '0 10px 10px', fontSize: 12, color: '#475569' }}>
+                          <div style={{ display: 'grid', gap: 4, padding: '0 10px 10px', fontSize: 12, color: "var(--muted)" }}>
                             {[
                               ['Subsystem', row?.architecture?.subsystem || editModal.architecture?.subsystem],
                               ['CSCI', row?.architecture?.csci || editModal.architecture?.csci],
@@ -4903,13 +4908,13 @@ useEffect(() => {
                               ['Files', files.join(', ')],
                             ].filter(([, value]) => value).map(([label, value]) => (
                               <div key={`${ref}-${label}`} style={{ display: 'grid', gridTemplateColumns: '130px minmax(0, 1fr)', gap: 8 }}>
-                                <span style={{ fontWeight: 700, color: '#334155' }}>{label}</span>
+                                <span style={{ fontWeight: 700, color: "var(--text)" }}>{label}</span>
                                 <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{String(value)}</span>
                               </div>
                             ))}
                             {sourceFunctions.length > 0 && (
                               <div style={{ marginTop: 6 }}>
-                                <div style={{ fontWeight: 700, color: '#334155', marginBottom: 4 }}>Source Links</div>
+                                <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: 4 }}>Source Links</div>
                                 <div style={{ display: 'grid', gap: 4 }}>
                                   {sourceFunctions.map((fn, index) => {
                                     const lineLabel = fn.startLine
@@ -4918,7 +4923,7 @@ useEffect(() => {
                                     const label = `${fn.functionName || 'source'} (${fn.filePath || 'unknown file'}${fn.startLine ? `:${fn.startLine}` : ''})`;
                                     const isSelectedSource = sourceFunctionKey(selectedTrace?.sourceFn) === sourceFunctionKey(fn);
                                     const sourceItemStyle = {
-                                      color: '#2563EB',
+                                      color: "var(--link)",
                                       textDecoration: fn.sourceUrl ? 'underline' : 'none',
                                       overflow: 'hidden',
                                       textOverflow: 'ellipsis',
@@ -4945,7 +4950,7 @@ useEffect(() => {
                                         <summary style={{ ...sourceItemStyle, cursor: 'pointer' }} title={label}>
                                           {fn.functionName || 'source'} - {lineLabel} · View saved source
                                         </summary>
-                                        <pre style={{ maxHeight: 320, overflow: 'auto', whiteSpace: 'pre', textAlign: 'left', padding: 8, background: '#f8fafc' }}>{fn.content || 'Source excerpt is unavailable. Reconnect this folder and analyze again to restore source evidence.'}</pre>
+                                        <pre style={{ maxHeight: 320, overflow: 'auto', whiteSpace: 'pre', textAlign: 'left', padding: 8, background: "var(--panel)" }}>{fn.content || 'Source excerpt is unavailable. Reconnect this folder and analyze again to restore source evidence.'}</pre>
                                       </details>
                                     ) : (
                                       <button
@@ -4982,7 +4987,7 @@ useEffect(() => {
               key={group.key}
               style={{
                 marginTop: 14,
-                borderTop: '1px solid rgba(15,23,42,0.1)',
+                borderTop: "1px solid rgb(var(--x-text) / 0.1)",
                 paddingTop: 12,
               }}
             >
@@ -4997,15 +5002,15 @@ useEffect(() => {
                   listStylePosition: 'inside',
                 }}
               >
-                <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A' }}>
+                <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>
                   {group.label}
                 </span>
-                <span style={{ fontSize: 12, color: '#64748B' }}>
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>
                   {group.rows.length} result{group.rows.length === 1 ? '' : 's'}
                 </span>
               </summary>
               {group.rows.length === 0 ? (
-                <div style={{ fontSize: 13, color: '#64748B' }}>
+                <div style={{ fontSize: 13, color: "var(--muted)" }}>
                   No {group.label.toLowerCase()} are linked to this {editModal.type === 'architectureBox' ? 'architecture box' : editModal.type}.
                 </div>
               ) : (
@@ -5019,7 +5024,7 @@ useEffect(() => {
                         style={{
                           border: '1px solid rgba(45,125,254,0.18)',
                           borderRadius: 8,
-                          background: '#F8FAFC',
+                          background: "var(--panel)",
                           overflow: 'hidden',
                         }}
                       >
@@ -5030,8 +5035,8 @@ useEffect(() => {
                             justifyContent: 'space-between',
                             gap: 10,
                             padding: '8px 10px',
-                            background: '#EEF4FF',
-                            color: '#0B3EA8',
+                            background: "var(--info-bg)",
+                            color: "var(--info-text)",
                             fontSize: 12,
                             fontWeight: 700,
                           }}
@@ -5047,7 +5052,7 @@ useEffect(() => {
                                 flex: '0 0 auto',
                                 border: 'none',
                                 background: 'transparent',
-                                color: BRAND.blue,
+                                color: "var(--link)",
                                 fontSize: 12,
                                 fontWeight: 700,
                                 textDecoration: 'underline',
@@ -5066,20 +5071,20 @@ useEffect(() => {
                               padding: '7px 10px',
                               fontSize: 12,
                               fontWeight: 700,
-                              color: BRAND.blue,
+                              color: "var(--link)",
                               listStylePosition: 'inside',
                             }}
                           >
                             Details
                           </summary>
-                          <div style={{ display: 'grid', gap: 4, padding: '0 10px 10px', fontSize: 12, color: '#475569' }}>
+                          <div style={{ display: 'grid', gap: 4, padding: '0 10px 10px', fontSize: 12, color: "var(--muted)" }}>
                             {[
                               ['Architecture Source', refs],
                               ...group.fields.map(([label, key]) => [label, row?.[key]]),
                               ['Last Updated', row.updatedAt],
                             ].filter(([, value]) => assuranceText(value)).map(([label, value]) => (
                               <div key={`${group.key}-${rowId}-${label}`} style={{ display: 'grid', gridTemplateColumns: '170px minmax(0, 1fr)', gap: 8 }}>
-                                <span style={{ fontWeight: 700, color: '#334155' }}>{label}</span>
+                                <span style={{ fontWeight: 700, color: "var(--text)" }}>{label}</span>
                                 <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{assuranceText(value)}</span>
                               </div>
                             ))}
@@ -5101,7 +5106,7 @@ useEffect(() => {
             key={group.key}
             style={{
               marginTop: 14,
-              borderTop: '1px solid rgba(15,23,42,0.1)',
+              borderTop: "1px solid rgb(var(--x-text) / 0.1)",
               paddingTop: 12,
             }}
           >
@@ -5116,21 +5121,21 @@ useEffect(() => {
                 listStylePosition: 'inside',
               }}
             >
-              <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A' }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>
                 {group.label}
               </span>
               {hazardDataRows.length > 0 && (
-                <span style={{ fontSize: 12, color: '#64748B' }}>
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>
                   {group.rows.length} result{group.rows.length === 1 ? '' : 's'}
                 </span>
               )}
             </summary>
             {!hazardDataRows.length ? (
-              <div style={{ fontSize: 13, color: '#64748B' }}>
+              <div style={{ fontSize: 13, color: "var(--muted)" }}>
                 Run hazard analysis to see linked results here.
               </div>
             ) : group.rows.length === 0 ? (
-              <div style={{ fontSize: 13, color: '#64748B' }}>
+              <div style={{ fontSize: 13, color: "var(--muted)" }}>
                 No {group.key === 'mission-reliability' ? 'mission/reliability' : 'hazard analysis'} rows are linked to this {editModal.type === 'architectureBox' ? 'architecture box' : editModal.type}.
               </div>
             ) : (
@@ -5149,7 +5154,7 @@ useEffect(() => {
                     style={{
                       border: '1px solid rgba(45,125,254,0.18)',
                       borderRadius: 8,
-                      background: '#F8FAFC',
+                      background: "var(--panel)",
                       overflow: 'hidden',
                     }}
                   >
@@ -5160,8 +5165,8 @@ useEffect(() => {
                         justifyContent: 'space-between',
                         gap: 10,
                         padding: '8px 10px',
-                        background: '#EEF4FF',
-                        color: '#0B3EA8',
+                        background: "var(--info-bg)",
+                        color: "var(--info-text)",
                         fontSize: 12,
                         fontWeight: 700,
                       }}
@@ -5177,7 +5182,7 @@ useEffect(() => {
                             flex: '0 0 auto',
                             border: 'none',
                             background: 'transparent',
-                            color: BRAND.blue,
+                            color: "var(--link)",
                             fontSize: 12,
                             fontWeight: 700,
                             textDecoration: 'underline',
@@ -5196,16 +5201,16 @@ useEffect(() => {
                           padding: '7px 10px',
                           fontSize: 12,
                           fontWeight: 700,
-                          color: BRAND.blue,
+                          color: "var(--link)",
                           listStylePosition: 'inside',
                         }}
                       >
                         Details
                       </summary>
-                      <div style={{ display: 'grid', gap: 4, padding: '0 10px 10px', fontSize: 12, color: '#475569' }}>
+                      <div style={{ display: 'grid', gap: 4, padding: '0 10px 10px', fontSize: 12, color: "var(--muted)" }}>
                         {hazardHeaders.slice(0, 6).map((header, colIndex) => (
                           <div key={`${sourceIndex}-${header}-${colIndex}`} style={{ display: 'grid', gridTemplateColumns: '130px minmax(0, 1fr)', gap: 8 }}>
-                            <span style={{ fontWeight: 700, color: '#334155' }}>{header || `Column ${colIndex + 1}`}</span>
+                            <span style={{ fontWeight: 700, color: "var(--text)" }}>{header || `Column ${colIndex + 1}`}</span>
                             <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{String(cells?.[colIndex] ?? '')}</span>
                           </div>
                         ))}
@@ -5217,7 +5222,7 @@ useEffect(() => {
             )}
           </details>)}
           </div>
-          <div style={{ flex: '0 0 auto', borderTop: '1px solid rgba(15,23,42,0.1)', padding: '12px 20px', display: 'flex', justifyContent: 'space-between', background: 'white' }}>
+          <div style={{ flex: '0 0 auto', borderTop: "1px solid rgb(var(--x-text) / 0.1)", padding: '12px 20px', display: 'flex', justifyContent: 'space-between', background: "var(--card)" }}>
             <button onClick={() => setEditModal(null)} style={{ padding: '6px 12px', borderRadius: 8 }}>
               Cancel
             </button>
@@ -5302,7 +5307,7 @@ useEffect(() => {
                 setEditModal(null);
               }}
               style={{
-                background: BRAND.purple,
+                background: "var(--brand-purple-action)",
                 color: 'white',
                 padding: '8px 14px',
                 borderRadius: 8,

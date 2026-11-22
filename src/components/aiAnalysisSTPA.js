@@ -277,7 +277,7 @@ const responseMetadata = { finishReason, usage: json?.usage || json?.raw?.usage 
 requestOptions.onResponseMetadata?.(responseMetadata);
 // Compact generation/review must not accept even parseable text when the
 // provider explicitly reports incomplete output. Preserve legacy callers.
-if (["hazard-row-generation", "hazard-semantic-review", "hazard-applicability-screen", "hazard-evidence-extraction", "hazard-evidence-compaction"].includes(requestOptions.workflow)
+if ((requestOptions.requireCompleteOutput || ["hazard-row-generation", "hazard-semantic-review", "hazard-applicability-screen", "hazard-evidence-extraction", "hazard-evidence-compaction"].includes(requestOptions.workflow))
     && ["length", "max_tokens", "model_context_window_exceeded"].includes(finishReason)) {
   const error = new Error("The analysis response reached its output limit; retry with a smaller batch or a larger review allowance.");
   error.name = "TruncatedResponseError";
@@ -294,7 +294,7 @@ return content?.trim() || "(empty)";
 
 
   } catch (error) {
-    if (error?.name === "AbortError" || error?.name === "TimeoutError" || error?.name === "NetworkError" || ["hazard-row-generation", "hazard-semantic-review", "hazard-applicability-screen", "hazard-evidence-extraction", "hazard-evidence-compaction"].includes(requestOptions.workflow)) throw error;
+    if (requestOptions.throwOnError || error?.name === "AbortError" || error?.name === "TimeoutError" || error?.name === "NetworkError" || ["hazard-row-generation", "hazard-semantic-review", "hazard-applicability-screen", "hazard-evidence-extraction", "hazard-evidence-compaction"].includes(requestOptions.workflow)) throw error;
     console.error("🚨 Error in fetchLLMResponse (via ClayPrompt logic):", error);
     return "(error)";
   }

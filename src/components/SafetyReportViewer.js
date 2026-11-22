@@ -1,6 +1,8 @@
 // SafetyReportViewer.js
 import React from 'react';
-import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
+import ReactMarkdown from 'react-markdown';
+import ReportDiagramImage from './ReportDiagramImage';
+import { reportUrlTransform } from './utils/reportUrlTransform';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { ConvertReportDiagram, ReportGraphicalDiagram } from './ReportGraphicalDiagram';
@@ -31,19 +33,12 @@ function ReportCodeBlock({ children }) {
   return <pre className="overflow-auto">{children}</pre>;
 }
 
-function reportUrlTransform(url, key, node) {
-  // Diagram captures are PNG data URLs. Allow raster image sources only;
-  // links, SVG/HTML data URLs, and other protocols keep the default policy.
-  if (key === 'src' && node.tagName === 'img' && /^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/]+={0,2}$/i.test(url)) {
-    return url;
-  }
-  return defaultUrlTransform(url);
-}
 
 export default function SafetyReportViewer({
   reportText,
   report,
   functionalDiagramImage,
+  functionalDiagramImages,
   expanded = false,
   // Pages and drawers that already scroll own the full document height.
   embedded = false,
@@ -107,7 +102,7 @@ export default function SafetyReportViewer({
       return (
         <a
           href={href}
-          className="font-medium text-[#1c5fde] underline decoration-blue-300 underline-offset-2 hover:text-[#0B3EA8]"
+          className="font-medium text-blue-700 underline decoration-blue-300 underline-offset-2 hover:text-blue-800"
           onClick={canOpenSource ? (event) => {
             event.preventDefault();
             onOpenSourceRow(Number(sourceMatch[1]));
@@ -137,7 +132,7 @@ export default function SafetyReportViewer({
     },
     p: ({ node, ...props }) => <p className="mb-3" {...props} />,
     img: ({ node, alt = '', ...props }) => (
-      <img {...props} alt={alt} style={{ display: 'block', maxWidth: '100%', width: '100%', height: 'auto', objectFit: 'contain' }} />
+      <ReportDiagramImage {...props} images={functionalDiagramImages} original={functionalDiagramImage} alt={alt} style={{ display: 'block', maxWidth: '100%', width: '100%', height: 'auto', objectFit: 'contain' }} />
     ),
   };
 
@@ -168,7 +163,9 @@ export default function SafetyReportViewer({
           </ReactMarkdown>
           {functionalDiagramImage && index < sections.length - 1 && (
             <div className="flex justify-center my-6">
-              <img
+              <ReportDiagramImage
+                images={functionalDiagramImages}
+                original={functionalDiagramImage}
                 src={reportUrlTransform(functionalDiagramImage, 'src', { tagName: 'img' }) || undefined}
                 alt="Functional Architecture"
                 className="rounded border shadow max-w-3xl w-full h-auto"

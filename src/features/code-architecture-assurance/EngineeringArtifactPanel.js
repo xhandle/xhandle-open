@@ -646,7 +646,7 @@ export default function EngineeringArtifactPanel({
                   type="button"
                   onClick={deriveRows}
                   disabled={!sourceCount || isDeriving}
-                  className="rounded-md bg-[#2D7DFE] px-3 py-2 text-sm font-semibold text-white hover:bg-[#1E61D6] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isDeriving ? "Deriving..." : definition.deriveButton}
                 </button>

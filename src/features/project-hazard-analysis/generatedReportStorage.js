@@ -1,3 +1,4 @@
+import { normalizeReportImages } from '../../components/utils/reportDiagramImages';
 import { wrap } from 'idb';
 import shajs from 'sha.js';
 import { notifyBackupDataChanged } from '../../lib/localBackupEvents';
@@ -54,6 +55,13 @@ export async function readGeneratedReport(projectId, id) {
   } finally { db.close(); }
 }
 
+function trackWrite(projectIdKey, work) {
+  const pending = pendingWrites.get(projectIdKey) || new Set();
+  pending.add(work); pendingWrites.set(projectIdKey, pending);
+  work.finally(() => { pending.delete(work); if (!pending.size) pendingWrites.delete(projectIdKey); }).catch(() => {});
+  return work;
+}
+
 export function saveGeneratedReport(projectId, value, { id } = {}) {
   const projectIdKey = projectKey(projectId);
   const work = (async () => {
@@ -68,9 +76,10 @@ export function saveGeneratedReport(projectId, value, { id } = {}) {
       title: String(value.title || value.reportType || 'Saved report').slice(0, 160),
       reportType: String(value.reportType || 'Saved report'),
       status: value.status === 'draft' ? 'draft' : 'complete',
+      functionalDiagramImages: normalizeReportImages(value.functionalDiagramImages),
       functionalDiagramImage: typeof value.functionalDiagramImage === 'string' ? value.functionalDiagramImage : null,
     };
-    const { functionalDiagramImage, report: body, ...metadata } = record;
+    const { functionalDiagramImage, functionalDiagramImages, report: body, ...metadata } = record;
     const db = await openGeneratedReportDatabase();
     try {
       if (blockedProjects.has(projectIdKey)) throw new Error('This project is no longer available for saving reports.');
@@ -88,10 +97,7 @@ export function saveGeneratedReport(projectId, value, { id } = {}) {
       return { ...record, libraryId: record.id, libraryLoaded: true };
     } finally { db.close(); }
   })();
-  const pending = pendingWrites.get(projectIdKey) || new Set();
-  pending.add(work); pendingWrites.set(projectIdKey, pending);
-  work.finally(() => { pending.delete(work); if (!pending.size) pendingWrites.delete(projectIdKey); }).catch(() => {});
-  return work;
+  return trackWrite(projectIdKey, work);
 }
 
 export async function preserveLegacyGeneratedReport(projectId, legacy) {
@@ -115,6 +121,33 @@ export async function preserveLegacyGeneratedReport(projectId, legacy) {
     if (migrated) return migrated;
     throw error;
   }
+}
+
+export function renameGeneratedReport(projectId, id, name) {
+  const key = projectKey(projectId);
+  const work = (async () => {
+    const title = String(name ?? '').trim();
+    if (!title || title.length > 160) throw new Error('Enter a report name between 1 and 160 characters.');
+    if (!key || blockedProjects.has(key)) throw new Error('This project is no longer available for saving reports.');
+    const db = await openGeneratedReportDatabase();
+    try {
+      if (blockedProjects.has(key)) throw new Error('This project is no longer available for saving reports.');
+      const tx = db.transaction(['metadata', 'reports'], 'readwrite');
+      try {
+        const [metadata, report] = await Promise.all([tx.objectStore('metadata').get(id), tx.objectStore('reports').get(id)]);
+        if (!metadata || metadata.deleted || metadata.projectId !== key || report?.projectId !== key) { await tx.done; return false; }
+        const updatedAt = new Date().toISOString();
+        await tx.objectStore('reports').put({ ...report, title, updatedAt });
+        await tx.objectStore('metadata').put({ ...metadata, title, updatedAt });
+        await tx.done;
+      } catch (error) {
+        try { tx.abort(); } catch {}
+        await tx.done.catch(() => {}); throw error;
+      }
+      changed(key); return { id, title };
+    } finally { db.close(); }
+  })();
+  return trackWrite(key, work);
 }
 
 export async function deleteGeneratedReport(projectId, id) {

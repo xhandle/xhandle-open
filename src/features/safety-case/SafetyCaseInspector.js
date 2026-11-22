@@ -57,7 +57,7 @@ function EvidencePreviewModal({ artifact, onClose }) {
           {artifact.raw?.dataUrl && (
             <div className="mt-4 rounded-md border p-3">
               <div className="mb-2 text-xs font-semibold uppercase text-gray-500">Attached file</div>
-              <a className="text-[#2D7DFE] hover:underline" href={artifact.raw.dataUrl} target="_blank" rel="noreferrer">
+              <a className="text-blue-700 hover:underline" href={artifact.raw.dataUrl} target="_blank" rel="noreferrer">
                 Open {artifact.raw.name || artifact.title}
               </a>
             </div>
@@ -153,7 +153,7 @@ function LinkedEvidenceModal({ open, artifacts, unresolvedIds, loading, onClose,
         <EvidencePreviewModal artifact={previewArtifact} onClose={() => setPreviewArtifact(null)} />
         <div className="flex justify-end gap-2 border-t px-4 py-3">
           <button className="rounded-md border px-3 py-2 text-xs font-medium hover:bg-gray-50" type="button" onClick={onClose}>Close</button>
-          <button className="rounded-md bg-[#2D7DFE] px-3 py-2 text-xs font-semibold text-white hover:bg-[#1f66d1]" type="button" onClick={onOpenLinker}>
+          <button className="rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700" type="button" onClick={onOpenLinker}>
             Manage links
           </button>
         </div>
@@ -297,7 +297,7 @@ function EvidenceLinkModal({ open, groups, loading, diagnostics, safetyCase, sel
         </div>
         <div className="min-h-[320px] flex-1 overflow-auto p-4">
           {(recommendationMessage || recommendations.length > 0) && (
-            <div className="mb-4 rounded-md border border-[#BFD4FF] bg-[#F6F8FF] p-3">
+            <div className="mb-4 rounded-md border border-[#BFD4FF] bg-indigo-50 p-3">
               <div className="flex flex-wrap items-center gap-2">
                 <div className="text-sm font-semibold text-gray-900">Recommended links</div>
                 <span className="rounded bg-white px-2 py-0.5 text-[11px] text-gray-600">{acceptedRecommendationCount}/{recommendations.length} accepted</span>
@@ -328,7 +328,7 @@ function EvidenceLinkModal({ open, groups, loading, diagnostics, safetyCase, sel
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-semibold text-gray-900">{item.title}</span>
                           <span className="rounded bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">{item.category}</span>
-                          <span className="rounded bg-[#ECEEFF] px-2 py-0.5 text-[11px] text-[#2D7DFE]">{item.confidence}</span>
+                          <span className="rounded bg-indigo-50 px-2 py-0.5 text-[11px] text-blue-700">{item.confidence}</span>
                         </div>
                         <div className="mt-1 text-gray-600">{item.reason}</div>
                         <div className="mt-1 truncate text-[11px] text-gray-500">{item.source}</div>
@@ -439,7 +439,7 @@ function EvidenceLinkModal({ open, groups, loading, diagnostics, safetyCase, sel
                                               <td className="px-3 py-2 align-top">
                                                 <div className="font-medium text-gray-900">{artifact.title}</div>
                                                 <div className="mt-1 break-all text-[11px] text-gray-500">{artifact.id}</div>
-                                                {selectedIds.has(artifact.id) && <span className="mt-1 inline-block rounded bg-[#ECEEFF] px-2 py-0.5 text-[11px] font-medium text-[#2D7DFE]">linked</span>}
+                                                {selectedIds.has(artifact.id) && <span className="mt-1 inline-block rounded bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">linked</span>}
                                               </td>
                                               <td className="px-3 py-2 align-top text-gray-700">
                                                 <div className="line-clamp-3">{artifact.description || "Location unavailable."}</div>
@@ -474,7 +474,7 @@ function EvidenceLinkModal({ open, groups, loading, diagnostics, safetyCase, sel
         <EvidencePreviewModal artifact={previewArtifact} onClose={() => setPreviewArtifact(null)} />
         <div className="flex justify-end gap-2 border-t px-4 py-3">
           <button className="rounded-md border px-3 py-2 text-xs font-medium hover:bg-gray-50" type="button" onClick={onClose}>Cancel</button>
-          <button className="rounded-md bg-[#2D7DFE] px-3 py-2 text-xs font-semibold text-white hover:bg-[#1f66d1]" type="button" onClick={() => onApply(Array.from(draftIds))}>
+          <button className="rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700" type="button" onClick={() => onApply(Array.from(draftIds))}>
             Apply links
           </button>
         </div>
@@ -695,7 +695,7 @@ export default function SafetyCaseInspector({ safetyCase, selectedNode, stats, o
             onClick={() => setLinkedEvidenceOpen(true)}
           >
             <span>{selectedNode.linkedArtifactIds?.length || 0} linked artifact{(selectedNode.linkedArtifactIds?.length || 0) === 1 ? "" : "s"}</span>
-            <span className="text-xs text-[#2D7DFE]">View</span>
+            <span className="text-xs text-blue-700">View</span>
           </button>
         </div>
         <button

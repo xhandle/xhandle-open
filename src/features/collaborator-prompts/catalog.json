@@ -1,0 +1,173 @@
+[
+  {
+    "id": "group-1",
+    "title": "Create and understand functional architecture",
+    "recipes": [
+      {
+        "id": "generate-a-new-decomposition",
+        "title": "Generate a new decomposition",
+        "description": "Naming the abstraction level avoids an additional selection step.",
+        "prompt": "Create a multi-level functional decomposition for an autonomous warehouse robot that retrieves totes in shared pedestrian aisles.",
+        "mode": "Draft"
+      },
+      {
+        "id": "inspect-one-subsystem",
+        "title": "Inspect one subsystem",
+        "description": "Returns the functions and interfaces already present in the active project.",
+        "prompt": "Show the functions and interfaces allocated to the Perception subsystem in the current project.",
+        "mode": "Explain"
+      },
+      {
+        "id": "check-graph-connectivity",
+        "title": "Check graph connectivity",
+        "description": "Inspects the existing decomposition without changing it.",
+        "prompt": "Check the current functional decomposition for orphan node pairs, isolated functions, and disconnected graph islands.",
+        "mode": "Review"
+      },
+      {
+        "id": "propose-connections-for-orphan-pairs",
+        "title": "Propose connections for orphan pairs",
+        "description": "Creates reviewable bridging rows; say “add them” only after checking the proposal.",
+        "prompt": "Find orphan node pairs in the current functional decomposition and propose interface rows that connect them to the main functional graph.",
+        "mode": "Propose changes"
+      }
+    ]
+  },
+  {
+    "id": "group-2",
+    "title": "Review and revise the active decomposition",
+    "recipes": [
+      {
+        "id": "score-decomposition-quality",
+        "title": "Score decomposition quality",
+        "description": "Applies the same weighted engineering rubric to the complete active table and returns row-referenced findings.",
+        "prompt": "Review and score the current project’s functional decomposition for hazard-analysis readiness.",
+        "mode": "Review"
+      },
+      {
+        "id": "revise-from-the-quality-review",
+        "title": "Revise from the quality review",
+        "description": "Uses the exact scored findings from this thread to prepare changes that remain subject to your approval.",
+        "prompt": "Revise the current functional decomposition using this quality review.",
+        "mode": "Propose changes"
+      },
+      {
+        "id": "run-an-additive-completeness-audit",
+        "title": "Run an additive completeness audit",
+        "description": "Looks for missing coverage while preserving every existing row.",
+        "prompt": "Audit the current functional decomposition for missing operational, feedback, health, mode, and fault-management interfaces. Preserve every existing row and propose additions only.",
+        "mode": "Propose additions"
+      },
+      {
+        "id": "revise-from-engineering-feedback",
+        "title": "Revise from engineering feedback",
+        "description": "Produces targeted additions, updates, and removals for review.",
+        "prompt": "Revise the current functional decomposition based on this feedback: [describe the specific problem and desired correction]. Preserve sound unrelated rows and prepare targeted changes for review.",
+        "mode": "Propose changes"
+      },
+      {
+        "id": "reevaluate-subsystem-ownership",
+        "title": "Reevaluate subsystem ownership",
+        "description": "Reviews allocation without rewriting the interfaces.",
+        "prompt": "Reevaluate the subsystem allocation for every existing functional decomposition row. Do not add, remove, or rewrite interfaces.",
+        "mode": "Propose changes"
+      },
+      {
+        "id": "request-an-explicit-table-edit",
+        "title": "Request an explicit table edit",
+        "description": "Use exact function and payload names whenever possible.",
+        "prompt": "Add a feedback interface from Monitor Brake Status to Determine Braking Availability carrying Secondary Brake Health Status. Preserve unrelated rows.",
+        "mode": "Propose changes"
+      },
+      {
+        "id": "vibe-review-each-interface",
+        "title": "Vibe review each interface",
+        "description": "Walks a stable queue one row at a time and proposes Keep, Revise, Remove, or Needs Input.",
+        "prompt": "Vibe review the current functional decomposition one interface at a time. Check leaf-function endpoints, subsystem ownership, direction, interface semantics, and details.",
+        "mode": "Guided review"
+      },
+      {
+        "id": "vibe-review-one-subsystem",
+        "title": "Vibe review one subsystem",
+        "description": "Limits the queue to an exact subsystem name.",
+        "prompt": "Vibe review functional-decomposition rows in subsystem Perception & World Modeling one interface at a time.",
+        "mode": "Guided review"
+      }
+    ]
+  },
+  {
+    "id": "group-3",
+    "title": "Review hazard-analysis results",
+    "recipes": [
+      {
+        "id": "vibe-review-needs-review-rows",
+        "title": "Vibe Review Needs Review rows",
+        "description": "Creates a stable queue and presents one governed Yes/No proposal at a time.",
+        "prompt": "Vibe review the current project’s hazard-analysis rows where Safety Significance is marked Needs Review. Review them one at a time, briefly explain each row, and propose Yes or No.",
+        "mode": "Guided review"
+      },
+      {
+        "id": "resolve-shared-evidence-gaps-in-batch",
+        "title": "Resolve shared evidence gaps in batch",
+        "description": "Opens the grouped architecture-question workflow when many unresolved rows depend on the same missing evidence.",
+        "prompt": "Help me resolve the remaining Needs Review hazard rows in batch using grouped architecture evidence questions.",
+        "mode": "Resolve evidence"
+      },
+      {
+        "id": "challenge-existing-yes-classifications",
+        "title": "Challenge existing Yes classifications",
+        "description": "Useful for finding false positives after the initial analysis.",
+        "prompt": "Vibe review the current project’s hazard-analysis rows where Safety Significance is marked Yes. Review them one at a time. Propose retaining Yes or changing it to No using only the documented causal path and physical-harm chain.",
+        "mode": "Guided review"
+      },
+      {
+        "id": "ask-an-evidence-grounded-question",
+        "title": "Ask an evidence-grounded question",
+        "description": "Collaborator can explain the analysis without changing it.",
+        "prompt": "Summarize the current project’s highest-priority safety-significant hazard-analysis results and include links to the supporting source rows.",
+        "mode": "Explain"
+      },
+      {
+        "id": "review-a-narrower-hazard-scope",
+        "title": "Review a narrower hazard scope",
+        "description": "Name an exact table field and value to avoid an ambiguous review queue.",
+        "prompt": "Vibe review hazard-analysis rows where Subsystem Allocation is Perception & World Modeling. Review exactly one row at a time and propose Yes or No.",
+        "mode": "Guided review"
+      }
+    ]
+  },
+  {
+    "id": "group-4",
+    "title": "Work across the saved xHandle workspace",
+    "recipes": [
+      {
+        "id": "ask-across-artifact-families",
+        "title": "Ask across artifact families",
+        "description": "Searches the workspace graph and links the answer to saved sources.",
+        "prompt": "Across all projects, which requirements, hazard rows, safety issues, reports, and safety-case claims address unintended vehicle motion? Cite the saved sources.",
+        "mode": "Explain"
+      },
+      {
+        "id": "update-a-saved-field",
+        "title": "Update a saved field",
+        "description": "Shows the resolved source and exact proposed edit before anything changes.",
+        "prompt": "Set the owner of the Secondary Brake Availability safety issue to Alex Chen and explain which saved record you found.",
+        "mode": "Propose changes"
+      },
+      {
+        "id": "add-a-record",
+        "title": "Add a record",
+        "description": "Creates a governed proposal against the active project or named destination.",
+        "prompt": "Add a proposed system requirement that the secondary brake health status be reported before autonomous motion is authorized.",
+        "mode": "Propose changes"
+      },
+      {
+        "id": "delete-or-undo",
+        "title": "Delete or undo",
+        "description": "Deletes require an additional confirmation; approved Collaborator changes retain an undo snapshot.",
+        "prompt": "Delete the duplicate hazard row titled \"Stale localization state\" from the current project. After applying it, say “undo that” if you want it restored.",
+        "mode": "Delete / undo"
+      }
+    ]
+  }
+]

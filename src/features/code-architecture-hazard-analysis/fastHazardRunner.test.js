@@ -20,6 +20,20 @@ jest.mock('../../components/aiAnalysisLite',()=>({runLiteAIAnalysis:jest.fn()}))
 
 const base={projectId:'project-A',repoMeta:{repoId:'repo-A'},cbaRows:[{from:'Planner',action:'Apply torque',to:'Actuator',traceId:'functional-1',rowRef:1,hazardAnalysisEligibility:'Include',hazardAnalysisEligibilitySource:'manual'}],organizationContext:'Org requires fault injection for torque limits.',operationalContexts:[{id:'drive',scenario:'Urban driving',mode:'Automatic',conditions:'Wet road'}]};
 beforeEach(()=>{jest.clearAllMocks();saveCodeArchitectureHazardRun.mockResolvedValue(undefined);});
+test('publishes compact STPA responses with absent optional premise metadata through the merged sheet',async()=>{
+ fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>{
+  const row=answer('STPA',id);
+  for(const key of ['executionDependency','executionEvidenceQuote','operatorDependency','operatorContextQuote','causalBasis','causalEvidence','evidenceQuote'])delete row[key];
+  return row;
+ })));
+ const run=await runCodeArchitectureHazardAnalysis(base);
+ expect(run.runState).toBe('complete');
+ expect(run.generatedSheets.Summary).toHaveLength(8);
+ const sheet=run.generatedSheets.Summary;
+ expect(sheet[1][sheet[0].indexOf('Execution Dependency')]).toBe('');
+ expect(sheet[1][sheet[0].indexOf('Operator Dependency')]).toBe('');
+ expect(importHazardSoftwareRequirements({hazardAnalysis:run}).length).toBeGreaterThan(0);
+});
 test.each([
  ['provider','xhandle.aiProvider.active','anthropic'],
  ['model','xhandle.aiProviderModel.openai','gpt-4.1'],
@@ -149,7 +163,7 @@ test('save failure publishes complete unsaved results with truthful completion',
  expect(progress.mock.calls.at(-1)[0]).toMatchObject({step:100,message:expect.stringContaining('save pending')});
 });
 
-test.each(['STPA-Textbook','HARA','FHA'])('%s assumption-based completion survives storage, CSV and requirements derivation',async method=>{
+test.each(['HARA','FHA'])('%s assumption-based completion survives storage, CSV and requirements derivation',async method=>{
  const actual=jest.requireActual('./codeArchitectureHazardStore');
  saveCodeArchitectureHazardRun.mockImplementation(actual.saveCodeArchitectureHazardRun);
  const short=method==='STPA-Textbook'?'STPA':method;
@@ -167,27 +181,31 @@ test.each(['STPA-Textbook','HARA','FHA'])('%s assumption-based completion surviv
  localStorage.removeItem('xhandle:code-architecture-hazard-analysis:v1');
 });
 
-test('a replacement completes with assumptions without modifying the prior run',async()=>{
+test('an incomplete STPA replacement retains the prior completed run',async()=>{
  fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>answer('STPA',id))));
  const previous=await runCodeArchitectureHazardAnalysis(base),snapshot=JSON.stringify(previous.generatedSheets);
  fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>id==='HA-1'?{id}:answer('STPA',id))));
- const next=await runCodeArchitectureHazardAnalysis({...base,previousRun:previous,regenerate:true});
- expect(next.runState).toBe('complete');
+ const failure=await runCodeArchitectureHazardAnalysis({...base,previousRun:previous,regenerate:true}).catch(error=>error);
+ expect(failure).toMatchObject({code:'COMPACT_HAZARD_INCOMPLETE',recoveryRun:{runState:'complete',pendingAttempt:{runState:'incomplete',validatedAssessments:6}}});
  expect(JSON.stringify(previous.generatedSheets)).toBe(snapshot);
- expect(next.generatedSheets.Summary[1][next.generatedSheets.Summary[0].indexOf('Assessment Basis')]).toContain('Assumption-based');
+ expect(failure.recoveryRun.generatedSheets).toEqual(previous.generatedSheets);
+ expect(failure.recoveryRun.pendingAttempt.generatedSheets.Summary).toHaveLength(7);
 });
 
-test('completed assumption-based rows are checkpointed without repeated provider calls',async()=>{
+test('incomplete STPA attempts checkpoint accepted rows and retry only unfinished work',async()=>{
  const {createCodeHazardCheckpoint}=jest.requireMock('./codeHazardGenerationCheckpoint');
  const cached=new Map();
  createCodeHazardCheckpoint.mockResolvedValue({read:async key=>cached.get(JSON.stringify(key)),write:async(key,value)=>cached.set(JSON.stringify(key),value)});
  try {
   fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>id==='HA-1'?{id}:answer('STPA',id))));
-  const run=await runCodeArchitectureHazardAnalysis(base);
+  const failure=await runCodeArchitectureHazardAnalysis(base).catch(error=>error);
+  expect(failure.recoveryRun).toMatchObject({runState:'incomplete',validatedAssessments:6});
+  fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>answer('STPA',id))));
   fetchLLMResponse.mockClear();
-  const next=await runCodeArchitectureHazardAnalysis({...base,previousRun:normalizeCodeArchitectureHazardRun(JSON.parse(JSON.stringify(run)))});
+  const next=await runCodeArchitectureHazardAnalysis({...base,previousRun:normalizeCodeArchitectureHazardRun(JSON.parse(JSON.stringify(failure.recoveryRun)))});
   expect(next.runState).toBe('complete');
-  expect(fetchLLMResponse).not.toHaveBeenCalled();
+  expect(fetchLLMResponse).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(fetchLLMResponse.mock.calls[0][0].split('\nRows: ')[1]).map(row=>row.id)).toEqual(['HA-1']);
  } finally {createCodeHazardCheckpoint.mockReset();}
 });
 

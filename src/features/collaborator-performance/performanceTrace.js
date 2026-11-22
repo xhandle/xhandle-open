@@ -3,7 +3,7 @@
 // projects/records, source paths, credentials or provider error messages.
 const reports=[];
 const stages=new Set(['context','readPolicy','readPlanning','readExecution','prompt','firstProgress','firstToken','firstVisibleAnswer']);
-const workflows=new Set(['collaborator.context-turn','collaborator.context-repair','collaborator.answer','collaborator.request','collaborator.read-plan','collaborator.continuation','collaborator.functional','collaborator.title','collaborator.design-management']);
+const workflows=new Set(['collaborator.context-turn','collaborator.context-repair','collaborator.answer','collaborator.request','collaborator.read-plan','collaborator.continuation','collaborator.functional','collaborator.title','collaborator.design-management','collaborator.prompt-cookbook']);
 export const collaboratorWorkflow=value=>workflows.has(value)?value:'collaborator.request';
 const duration=value=>Number.isFinite(value)&&value>=0?Math.round(value*10)/10:null;
 const identifier=value=>typeof value==='string'&&/^[a-z0-9_.:/-]{1,128}$/i.test(value)?value:null;

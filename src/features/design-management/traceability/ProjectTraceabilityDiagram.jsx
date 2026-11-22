@@ -116,7 +116,7 @@ function TraceCanvas({ graph, records, onOpenNode, labelForNode }) {
           onNodeClick={(_, node) => select({ kind: 'node', id: node.id })}
           onNodeDoubleClick={(_, node) => { const source = rawNodeFor(model.nodes.find(item => item.id === node.id)); if (canOpen(source)) onOpenNode(source); }}
           onEdgeClick={(_, edge) => select({ kind: 'edge', id: edge.id })} onPaneClick={() => select(null)}>
-          <Background gap={22} color="#e2e8f0" /><Controls showInteractive={false} onFitView={fitDiagram} />
+          <Background gap={22} color="var(--canvas-grid)" /><Controls showInteractive={false} onFitView={fitDiagram} />
           {model.nodes.length > 8 && <MiniMap pannable zoomable style={{ width: 140, height: 90 }} nodeColor="#c7d2fe" />}
         </ReactFlow>}
       </div>

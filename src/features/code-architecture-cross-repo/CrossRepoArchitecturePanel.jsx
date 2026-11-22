@@ -989,7 +989,7 @@ export default function CrossRepoArchitecturePanel({
               type="button"
               onClick={generate}
               disabled={isGenerating || !folderProjects.length}
-              className="inline-flex items-center gap-2 rounded-md bg-[#2D7DFE] px-3 py-1.5 text-sm font-semibold text-white hover:bg-[#1E61D6] disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <GitBranch size={15} />
               {isGenerating ? "Generating..." : "Generate Cross-Repo Architecture"}

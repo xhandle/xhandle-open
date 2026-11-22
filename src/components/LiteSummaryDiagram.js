@@ -206,7 +206,7 @@ const CustomNode = ({ data, id }) => {
       className="relative group px-4 py-2 text-sm max-w-xs whitespace-normal break-words rounded-xl shadow-md"
       style={{
         ...((data?.label?.style) || {}),
-        color: BRAND.text,
+        color: data?.label?.style?.color || BRAND.text,
         border: `2px solid ${BRAND.blue}`,
         boxShadow: "0 4px 16px rgba(13, 60, 180, 0.10)",
       }}
@@ -1284,8 +1284,8 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
             onClick={() => setView(v)}
             className="px-3 py-1.5 rounded-lg text-sm"
             style={{
-              background: view === v ? BRAND.blue : BRAND.white,
-              color: view === v ? BRAND.white : BRAND.text,
+              background: view === v ? "var(--action)" : "var(--card)",
+              color: view === v ? BRAND.white : "var(--text)",
               border: `1px solid ${BRAND.blueDim}`,
             }}
           >
@@ -1296,10 +1296,10 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
         {/* NEW: Filter-by heading selector */}
         {hasData && (
           <div className="ml-2 flex items-center gap-2">
-            <span className="text-sm" style={{ color: BRAND.text }}>Filter by:</span>
+            <span className="text-sm" style={{ color: "var(--text)" }}>Filter by:</span>
             <select
               className="px-2 py-1.5 rounded-lg text-sm"
-              style={{ border: `1px solid ${BRAND.blueDim}`, background: BRAND.white }}
+              style={{ border: `1px solid ${BRAND.blueDim}`, background: "var(--card)" }}
               value={activeFilterKey === FULL_DIAGRAM_KEY ? FULL_DIAGRAM_KEY : String(Math.min(filterColIdx ?? 0, Math.max(headers.length - 1, 0)))}
               onChange={(e) => {
                 if (e.target.value === FULL_DIAGRAM_KEY) {
@@ -1342,7 +1342,7 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
             disabled={!isIsolated && !activeNodeId}
             className="px-3 py-1.5 rounded-md shadow-sm text-sm font-medium whitespace-nowrap"
             style={{
-              background: BRAND.blue,
+              background: "var(--action)",
               color: BRAND.white,
               border: `1px solid ${BRAND.blue}`,
               opacity: (isIsolated || activeNodeId) ? 1 : 0.65,
@@ -1361,7 +1361,7 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
           <button
             onClick={exportDiagramXml}
             className="px-3 py-1.5 rounded-md shadow-sm text-sm font-medium whitespace-nowrap"
-            style={{ background: BRAND.blue, color: BRAND.white, border: `1px solid ${BRAND.blue}` }}
+            style={{ background: "var(--action)", color: BRAND.white, border: `1px solid ${BRAND.blue}` }}
             title="Export diagram to XML"
           >
             Export Diagram XML
@@ -1369,7 +1369,7 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
           <button
             onClick={() => setAddOpen(true)}
             className="px-3 py-1.5 rounded-md shadow-sm text-sm font-medium text-white whitespace-nowrap"
-            style={{ background: BRAND.blue, border: `1px solid ${BRAND.blue}` }}
+            style={{ background: "var(--action)", border: `1px solid ${BRAND.blue}` }}
             title="Add Node"
           >
             + Add Node
@@ -1424,18 +1424,18 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
             maxZoom={2}
             style={{ width: "100%", height: "100%" }}
           >
-            <Background variant="dots" gap={18} size={1} color={BRAND.blueDim} />
+            <Background variant="dots" gap={18} size={1} color="var(--canvas-grid)" />
             <Controls
               showInteractive={false}
               position="bottom-right"
-              style={{ background: BRAND.white, borderRadius: 8, border: `1px solid ${BRAND.blueDim}` }}
+              style={{ background: "var(--card)", borderRadius: 8, border: `1px solid ${BRAND.blueDim}` }}
             />
           </ReactFlow>
 
           {/* Legend */}
           <div
             className="absolute top-4 left-4 px-3 py-2 text-xs z-10 rounded-md"
-            style={{ background: "rgba(255,255,255,0.92)", border: `1px solid ${BRAND.blueDim}`, boxShadow: "0 4px 14px rgba(13, 60, 180, 0.08)" }}
+            style={{ background: "rgb(var(--x-surface) / 0.92)", border: `1px solid ${BRAND.blueDim}`, boxShadow: "0 4px 14px rgba(13, 60, 180, 0.08)" }}
           >
             <div className="font-semibold text-gray-700 mb-1">Legend</div>
             <div className="space-y-1 max-h-60 overflow-y-auto pr-1">
@@ -1452,7 +1452,7 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
           <div
             className="absolute left-0 right-0 bottom-0 z-30"
             style={{
-              background: "rgba(255,255,255,0.96)",
+              background: "rgb(var(--x-surface) / 0.96)",
               borderTop: `1px solid ${BRAND.blueDim}`,
               padding: "6px 8px",
             }}
@@ -1466,8 +1466,8 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
                     onClick={() => setActiveFilterKey(t.key)}
                     className="shrink-0 px-10 py-1.5 rounded-full text-sm whitespace-nowrap"
                     style={{
-                      background: isActive ? BRAND.blue : BRAND.white,
-                      color: isActive ? BRAND.white : BRAND.text,
+                      background: isActive ? "var(--action)" : "var(--card)",
+                      color: isActive ? BRAND.white : "var(--text)",
                       border: `1px solid ${BRAND.blueDim}`,
                       boxShadow: isActive ? "0 4px 14px rgba(13,60,180,0.16)" : "none",
                     }}
@@ -1499,7 +1499,7 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
             <button
               onClick={exportTableCsv}
               className="px-3 py-2 rounded-md text-sm"
-              style={{ border: `1px solid ${BRAND.blueDim}`, background: BRAND.white }}
+              style={{ border: `1px solid ${BRAND.blueDim}`, background: "var(--card)" }}
             >
               Export CSV
             </button>
@@ -1507,7 +1507,7 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
 
           <div
             className="grid grid-cols-12 items-center px-3 py-2 text-xs font-semibold rounded-md mb-1"
-            style={{ background: BRAND.blueSoft, color: BRAND.text, border: `1px solid ${BRAND.blueDim}` }}
+            style={{ background: BRAND.blueSoft, color: "var(--text)", border: `1px solid ${BRAND.blueDim}` }}
           >
             <div className="col-span-7">Hazard</div>
           </div>
@@ -1521,7 +1521,7 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
                 style={{ borderColor: BRAND.blueDim }}
                 title="Double-click for details"
               >
-                <div className="col-span-7 pr-3 truncate" style={{ color: BRAND.text }}>
+                <div className="col-span-7 pr-3 truncate" style={{ color: "var(--text)" }}>
                   {item.text}
                 </div>
               </div>
@@ -1534,11 +1534,11 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
       {/* TABLE VIEW */}
       {view === VIEW.TABLE && hasData && (
         <div className="absolute inset-12 flex min-h-0 flex-col overflow-hidden border rounded-md" style={{ borderColor: BRAND.blueDim }}>
-          <div className="shrink-0 flex justify-end px-3 py-2" style={{ background: BRAND.white, borderBottom: `1px solid ${BRAND.blueDim}` }}>
+          <div className="shrink-0 flex justify-end px-3 py-2" style={{ background: "var(--card)", borderBottom: `1px solid ${BRAND.blueDim}` }}>
             <button
               onClick={exportTableCsv}
               className="px-3 py-2 rounded-md text-sm"
-              style={{ border: `1px solid ${BRAND.blue}`, background: BRAND.blue, color: BRAND.white }}
+              style={{ border: `1px solid ${BRAND.blue}`, background: "var(--action)", color: BRAND.white }}
             >
               Export Table CSV
             </button>
@@ -1565,9 +1565,9 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
                         onClick={() => setOpenTableFilterIdx((prev) => (prev === i ? null : i))}
                         className="w-full rounded-md border px-3 py-2 text-left text-xs font-semibold flex items-center justify-between gap-3"
                         style={{
-                          background: openTableFilterIdx === i || (tableColumnFilters[i] || []).length ? BRAND.white : BRAND.blueSoft,
+                          background: openTableFilterIdx === i || (tableColumnFilters[i] || []).length ? "var(--card)" : BRAND.blueSoft,
                           borderColor: openTableFilterIdx === i || (tableColumnFilters[i] || []).length ? BRAND.blue : BRAND.blueDim,
-                          color: BRAND.text,
+                          color: "var(--text)",
                         }}
                         title={`Filter ${h || `Column ${i + 1}`}`}
                       >
@@ -1576,7 +1576,7 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
                           {(tableColumnFilters[i] || []).length > 0 && (
                             <span
                               className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-white"
-                              style={{ background: BRAND.blue }}
+                              style={{ background: "var(--action)" }}
                             >
                               {(tableColumnFilters[i] || []).length}
                             </span>
@@ -1597,11 +1597,11 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
                       {openTableFilterIdx === i && (
                         <div
                           className="absolute left-0 mt-2 w-72 rounded-xl border shadow-xl overflow-hidden"
-                          style={{ background: BRAND.white, borderColor: BRAND.blueDim, zIndex: 50 }}
+                          style={{ background: "var(--card)", borderColor: BRAND.blueDim, zIndex: 50 }}
                         >
-                          <div className="sticky top-0 z-10 border-b p-3 space-y-2" style={{ background: BRAND.white, borderColor: BRAND.blueDim }}>
+                          <div className="sticky top-0 z-10 border-b p-3 space-y-2" style={{ background: "var(--card)", borderColor: BRAND.blueDim }}>
                             <div className="flex items-center justify-between gap-2">
-                              <div className="text-xs font-semibold" style={{ color: BRAND.text }}>
+                              <div className="text-xs font-semibold" style={{ color: "var(--text)" }}>
                                 {h || `Column ${i + 1}`}
                               </div>
                               {(tableColumnFilters[i] || []).length > 0 && (
@@ -1609,7 +1609,7 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
                                   type="button"
                                   onClick={() => setTableFilterValues(i, [])}
                                   className="text-[11px]"
-                                  style={{ color: BRAND.blue }}
+                                  style={{ color: "var(--link)" }}
                                 >
                                   Clear
                                 </button>
@@ -1628,7 +1628,7 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
                                 type="button"
                                 onClick={() => setTableFilterValues(i, getTableColumnOptions(i, tableFilterSearches[i] || ""))}
                                 className="rounded-md border px-2 py-1 text-[11px]"
-                                style={{ borderColor: BRAND.blueDim, background: "#F8FAFC" }}
+                                style={{ borderColor: BRAND.blueDim, background: "var(--panel)" }}
                               >
                                 Select Visible
                               </button>
@@ -1636,7 +1636,7 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
                                 type="button"
                                 onClick={() => setTableFilterValues(i, [])}
                                 className="rounded-md border px-2 py-1 text-[11px]"
-                                style={{ borderColor: BRAND.blueDim, background: "#F8FAFC" }}
+                                style={{ borderColor: BRAND.blueDim, background: "var(--panel)" }}
                               >
                                 Clear All
                               </button>
@@ -1688,10 +1688,10 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
             role="dialog"
             aria-modal="true"
             className="relative w-[min(90vw,520px)] max-w-[520px] rounded-2xl overflow-hidden shadow-2xl"
-            style={{ background: BRAND.white, border: `1px solid ${BRAND.blueDim}` }}
+            style={{ background: "var(--card)", border: `1px solid ${BRAND.blueDim}` }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="px-6 py-4 text-white" style={{ background: BRAND.blue }}>
+            <div className="px-6 py-4 text-white" style={{ background: "var(--action)" }}>
               <div className="text-lg font-semibold">Add Node</div>
             </div>
 
@@ -1712,7 +1712,7 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
                 <button onClick={() => setAddOpen(false)} className="px-4 py-2 text-sm rounded-md border" style={{ borderColor: BRAND.blueDim }}>
                   Cancel
                 </button>
-                <button onClick={() => handleAddNodeToColumn(addColIdx)} className="px-4 py-2 text-sm rounded-md text-white" style={{ background: BRAND.blue }}>
+                <button onClick={() => handleAddNodeToColumn(addColIdx)} className="px-4 py-2 text-sm rounded-md text-white" style={{ background: "var(--action)" }}>
                   Add
                 </button>
               </div>
@@ -1728,10 +1728,10 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
             role="dialog"
             aria-modal="true"
             className="relative w-[min(90vw,720px)] max-w-[720px] rounded-2xl overflow-hidden shadow-2xl"
-            style={{ background: BRAND.white, border: `1px solid ${BRAND.blueDim}` }}
+            style={{ background: "var(--card)", border: `1px solid ${BRAND.blueDim}` }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="px-6 py-4 text-white" style={{ background: BRAND.blue }}>
+            <div className="px-6 py-4 text-white" style={{ background: "var(--action)" }}>
               <div className="text-lg font-semibold">Edit Node Text</div>
             </div>
 
@@ -1755,7 +1755,7 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
                 <button onClick={closeEditor} className="px-4 py-2 text-sm rounded-md border" style={{ borderColor: BRAND.blueDim }}>
                   Cancel
                 </button>
-                <button onClick={saveEditor} className="px-4 py-2 text-sm rounded-md text-white" style={{ background: BRAND.blue }}>
+                <button onClick={saveEditor} className="px-4 py-2 text-sm rounded-md text-white" style={{ background: "var(--action)" }}>
                   Save Changes
                 </button>
               </div>
@@ -1771,15 +1771,15 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
             role="dialog"
             aria-modal="true"
             className="relative w-[min(90vw,560px)] max-w-[560px] rounded-2xl overflow-hidden shadow-2xl"
-            style={{ background: BRAND.white, border: `1px solid ${BRAND.blueDim}` }}
+            style={{ background: "var(--card)", border: `1px solid ${BRAND.blueDim}` }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="px-6 py-4 text-white" style={{ background: BRAND.blue }}>
+            <div className="px-6 py-4 text-white" style={{ background: "var(--action)" }}>
               <div className="text-lg font-semibold">Configure Risk Assessment</div>
             </div>
             <div className="p-6 space-y-4">
               <div className="flex flex-wrap items-center gap-4">
-                <div className="text-sm font-medium" style={{ color: BRAND.text }}>Method</div>
+                <div className="text-sm font-medium" style={{ color: "var(--text)" }}>Method</div>
                 <label className="text-sm flex items-center gap-2">
                   <input type="radio" name="method" checked={riskConfig.method === "SxL"} onChange={() => setRiskConfig((c) => ({ ...c, method: "SxL" }))} />
                   S × L
@@ -1791,7 +1791,7 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
               </div>
 
               <div className="flex flex-wrap items-center gap-3">
-                <div className="text-sm font-medium" style={{ color: BRAND.text, minWidth: 120 }}>Scale (max)</div>
+                <div className="text-sm font-medium" style={{ color: "var(--text)", minWidth: 120 }}>Scale (max)</div>
                 <input
                   type="number"
                   min={3}
@@ -1805,7 +1805,7 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
               </div>
 
               <div className="flex flex-wrap items-center gap-3">
-                <div className="text-sm font-medium" style={{ color: BRAND.text, minWidth: 120 }}>Thresholds</div>
+                <div className="text-sm font-medium" style={{ color: "var(--text)", minWidth: 120 }}>Thresholds</div>
                 <div className="flex items-center gap-2 text-sm">
                   Low ≤
                   <input
@@ -1833,7 +1833,7 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
                 <button onClick={() => setCfgOpen(false)} className="px-4 py-2 text-sm rounded-md border" style={{ borderColor: BRAND.blueDim }}>
                   Cancel
                 </button>
-                <button onClick={applyCfg} className="px-4 py-2 text-sm rounded-md text-white" style={{ background: BRAND.blue }}>
+                <button onClick={applyCfg} className="px-4 py-2 text-sm rounded-md text-white" style={{ background: "var(--action)" }}>
                   Apply
                 </button>
               </div>
@@ -1855,7 +1855,7 @@ export default function LiteSummaryDiagram({ summaryData, projectId }) {
             aria-modal="true"
             className="relative w-[min(96vw,1120px)] max-w-[1120px] rounded-2xl overflow-hidden shadow-2xl"
             style={{
-              background: BRAND.white,
+              background: "var(--card)",
               border: `1px solid ${BRAND.blueDim}`,
               maxHeight: "66vh",
               display: "flex",
@@ -1900,7 +1900,7 @@ const interactiveCols = new Set(
                   {/* Header: title + risk badge + close */}
                   <div
                     className="px-6 py-3 text-white flex items-center gap-3"
-                    style={{ background: BRAND.blue }}
+                    style={{ background: "var(--action)" }}
                   >
                     <div className="text-lg font-semibold truncate pr-2 flex-1">{entry.text}</div>
 
@@ -1944,24 +1944,24 @@ const interactiveCols = new Set(
                         className="rounded-xl p-4"
                         style={{ border: `1px solid ${BRAND.blueDim}`, boxShadow: "0 6px 20px rgba(13, 60, 180, 0.06)" }}
                       >
-                        <div className="text-sm font-semibold mb-3" style={{ color: BRAND.text }}>
+                        <div className="text-sm font-semibold mb-3" style={{ color: "var(--text)" }}>
                           At-a-glance
                         </div>
                         <div className="space-y-3 text-sm">
                           <div className="flex items-center justify-between">
                             <span className="text-gray-600">Rows</span>
-                            <span className="font-medium" style={{ color: BRAND.text }}>{entry.rows.length}</span>
+                            <span className="font-medium" style={{ color: "var(--text)" }}>{entry.rows.length}</span>
                           </div>
                           {cols.ucaIdx >= 0 && (
                             <div className="flex items-center justify-between">
                               <span className="text-gray-600">UCAs</span>
-                              <span className="font-medium" style={{ color: BRAND.text }}>{ucaCount}</span>
+                              <span className="font-medium" style={{ color: "var(--text)" }}>{ucaCount}</span>
                             </div>
                           )}
                           {cols.mitIdx >= 0 && (
                             <div className="flex items-center justify-between">
                               <span className="text-gray-600">Mitigations</span>
-                              <span className="font-medium" style={{ color: BRAND.text }}>{mitCount}</span>
+                              <span className="font-medium" style={{ color: "var(--text)" }}>{mitCount}</span>
                             </div>
                           )}
                         </div>
@@ -2058,7 +2058,7 @@ const interactiveCols = new Set(
             <details
               key={idx}
               className="rounded-lg border"
-              style={{ borderColor: BRAND.blueDim, background: "#fff" }}
+              style={{ borderColor: BRAND.blueDim, background: "var(--card)" }}
             >
               <summary
                 className="flex items-center gap-3 px-3 py-2 cursor-pointer select-none"
@@ -2071,7 +2071,7 @@ const interactiveCols = new Set(
                     borderColor: BRAND.blueDim,
                   }}
                 />
-                <span className="text-sm font-medium" style={{ color: BRAND.text }}>
+                <span className="text-sm font-medium" style={{ color: "var(--text)" }}>
                   {h || `Column ${idx + 1}`}
                 </span>
 
@@ -2131,7 +2131,7 @@ const interactiveCols = new Set(
                           })
                         }
                         className="px-2 py-1 text-xs rounded-full border"
-                        style={{ borderColor: BRAND.blueDim, background: BRAND.white }}
+                        style={{ borderColor: BRAND.blueDim, background: "var(--card)" }}
                         title="Add linked item"
                       >
                         + Add
@@ -2167,10 +2167,10 @@ const interactiveCols = new Set(
             role="dialog"
             aria-modal="true"
             className="relative w-[min(92vw,680px)] max-w-[680px] rounded-2xl overflow-hidden shadow-2xl"
-            style={{ background: BRAND.white, border: `1px solid ${BRAND.blueDim}` }}
+            style={{ background: "var(--card)", border: `1px solid ${BRAND.blueDim}` }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="px-6 py-3 text-white flex items-center justify-between" style={{ background: BRAND.blue }}>
+            <div className="px-6 py-3 text-white flex items-center justify-between" style={{ background: "var(--action)" }}>
               <div className="text-lg font-semibold">Add Linked Items</div>
               <button
                 onClick={() => setAddTrace((s) => ({ ...s, open: false }))}
@@ -2293,7 +2293,7 @@ const interactiveCols = new Set(
                         setAddTrace({ open: false, colIdx: null, hazardKey: null, search: "", selected: new Set() });
                       }}
                       className="px-4 py-2 text-sm rounded-md text-white"
-                      style={{ background: BRAND.blue }}
+                      style={{ background: "var(--action)" }}
                       disabled={addTrace.selected.size === 0}
                     >
                       Add Selected

@@ -79,7 +79,7 @@ function GenerateSafetyCaseModal({ folders, generation, onChange, onClose, onGen
         </div>
         <div className="flex justify-end gap-2">
           <button className="rounded-md border px-3 py-2 text-xs" onClick={onClose}>Cancel</button>
-          <button className="rounded-md bg-[#2D7DFE] px-3 py-2 text-xs font-semibold text-white" onClick={() => onGenerate(generation)}>Generate</button>
+          <button className="rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white" onClick={() => onGenerate(generation)}>Generate</button>
         </div>
       </div>
     </Modal>
@@ -117,7 +117,7 @@ function MoveFolderModal({ folder, folders, onClose, onMove }) {
         </div>
         <div className="flex justify-end gap-2">
           <button className="rounded-md border px-3 py-2 text-xs" type="button" onClick={onClose}>Cancel</button>
-          <button className="rounded-md bg-[#2D7DFE] px-3 py-2 text-xs font-semibold text-white" type="button" onClick={() => onMove(parentId || null)}>Move</button>
+          <button className="rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white" type="button" onClick={() => onMove(parentId || null)}>Move</button>
         </div>
       </div>
     </Modal>
@@ -472,11 +472,11 @@ export default function SafetyCaseView({ activeProjectId }) {
         <h1 className="sr-only">Safety Case</h1>
         <div className="flex min-h-[520px] items-center justify-center rounded-lg border bg-gray-50 p-8 text-center">
           <div className="max-w-2xl">
-            <ShieldCheck className="mx-auto mb-4 text-[#2D7DFE]" size={44} />
+            <ShieldCheck className="mx-auto mb-4 text-blue-700" size={44} />
             <h2 className="text-2xl font-semibold">Build a Safety Case</h2>
             <p className="mt-3 text-sm leading-6 text-gray-600">Create a top-down safety argument that connects claims, evidence, hazards, requirements, verification results, and architecture artifacts.</p>
             <div className="mt-6 flex flex-wrap justify-center gap-3">
-              <button className="rounded-md bg-[#2D7DFE] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1f66d1]" onClick={handleAction(createBlank)}>Create Blank Safety Case</button>
+              <button className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700" onClick={handleAction(createBlank)}>Create Blank Safety Case</button>
               <button className="rounded-md border bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50" onClick={() => setGenerateModalOpen(true)}>Generate From Project</button>
             </div>
             <p className="mt-5 text-xs text-gray-500">Collaborator can help identify unsupported claims, suggest evidence, and maintain the safety case as the system evolves.</p>
@@ -553,7 +553,7 @@ export default function SafetyCaseView({ activeProjectId }) {
             {folderRows.map((folder) => (
               <div key={folder.id} className="group flex items-center gap-1">
                 <button
-                  className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 text-left text-sm ${selectedFolderId === folder.id ? "bg-white font-medium text-[#2D7DFE]" : "text-gray-700 hover:bg-white"}`}
+                  className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 text-left text-sm ${selectedFolderId === folder.id ? "bg-white font-medium text-blue-700" : "text-gray-700 hover:bg-white"}`}
                   onClick={() => setSelectedFolderId(folder.id)}
                   title={folder.name}
                   style={{ paddingLeft: `${8 + folder.depth * 16}px` }}
@@ -602,7 +602,7 @@ export default function SafetyCaseView({ activeProjectId }) {
                 {filteredCases.map((item) => (
                   <button
                     key={item.id}
-                    className={`w-full rounded-md px-2 py-2 text-left text-sm ${safetyCase?.id === item.id ? "bg-[#ECEEFF] text-gray-900" : "text-gray-700 hover:bg-white"}`}
+                    className={`w-full rounded-md px-2 py-2 text-left text-sm ${safetyCase?.id === item.id ? "bg-indigo-50 text-gray-900" : "text-gray-700 hover:bg-white"}`}
                     onClick={() => {
                       setSafetyCase(item);
                       setSelectedNodeId(null);
@@ -696,7 +696,7 @@ export default function SafetyCaseView({ activeProjectId }) {
             {(aiSuggestion.warnings || []).map((warning, index) => <div key={index} className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">{warning}</div>)}
             <div className="flex justify-end gap-2">
               <button className="rounded-md border px-3 py-2 text-xs" onClick={() => setAiSuggestion(null)}>Cancel</button>
-              <button className="inline-flex items-center gap-1.5 rounded-md bg-[#2D7DFE] px-3 py-2 text-xs font-semibold text-white" onClick={async () => { const next = await layoutSafetyCase(applyAIUpdate(safetyCase, aiSuggestion, selectedNodeId)); updateCase(next); setAiSuggestion(null); }}>
+              <button className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white" onClick={async () => { const next = await layoutSafetyCase(applyAIUpdate(safetyCase, aiSuggestion, selectedNodeId)); updateCase(next); setAiSuggestion(null); }}>
                 <Bot size={14} /> Apply
               </button>
             </div>

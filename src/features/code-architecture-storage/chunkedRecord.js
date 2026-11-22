@@ -149,92 +149,193 @@ export async function stageRecord(db, store, key, value, { signal } = {}) {
   return { format: FORMAT, root, bytesWritten, chunksWritten };
 }
 
-// Content-addressing may merge equal objects on disk. Recreate independent mutable
-// objects on read so an edit to one row cannot mutate another equal row's fields.
-function copyValue(value) {
-  if (Array.isArray(value)) return value.map(copyValue);
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, copyValue(item)]));
-  return value;
+// Cache serialized chunks only. Caching decoded subtrees retained a second tree
+// while mutable readers received copies of it. Ordinary reads still own every
+// mutable value; immutable evidence sharing is an explicit UI-boundary option.
+export function freezeEvidence(value) {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value)) freezeEvidence(child);
+  return Object.freeze(value);
 }
-export async function hydrateRecord(db, store, value, { onProgress, signal } = {}) {
-  aborted(signal);
-  let completed = 0, reported = -1;
-  const report = percent => {
-    const next = Math.max(reported, Math.min(100, Math.floor(percent)));
-    if (next !== reported) { reported = next; onProgress?.(next); }
+const evidencePath = path => (path.length >= 2 && (
+  (path[path.length - 2] === 'codeEvidence' && ['files', 'sourceFunctions'].includes(path[path.length - 1])) ||
+  (path[path.length - 2] === 'sourceEvidence' && path[path.length - 1] === 'functions'))) || (path.length >= 3 && (
+  (path[path.length - 3] === 'codeEvidence' && ['files', 'sourceFunctions'].includes(path[path.length - 2])) ||
+  (path[path.length - 3] === 'sourceEvidence' && path[path.length - 2] === 'functions')));
+
+function recordReader(db, store, { signal, cacheBytes = 4 * 1024 * 1024, immutableEvidence = false, onMetrics } = {}) {
+  const cache = new Map(), evidence = new Map();
+  let bytes = 0, peakCacheBytes = 0, chunksRead = 0, lastYield = Date.now();
+  const tick = async () => {
+    aborted(signal);
+    if (Date.now() - lastYield >= 8) { await pause(); lastYield = Date.now(); aborted(signal); }
   };
-  // A subtree owns a fraction of the remaining work. Splitting that fraction
-  // between children keeps progress monotonic without a second database scan.
-  const advance = weight => { completed += weight; report(Math.min(99, completed * 100)); };
+  const part = async key => {
+    await tick();
+    let text = cache.get(key);
+    if (text !== undefined) { cache.delete(key); cache.set(key, text); }
+    else {
+      text = await rawRecord(db, store, key, { signal }); chunksRead++;
+      if (typeof text !== 'string') throw new Error('Saved analysis is missing a data chunk. Restore its complete backup.');
+      const size = text.length * 2;
+      while (bytes + size > cacheBytes && cache.size) { const oldest = cache.keys().next().value; bytes -= cache.get(oldest).length * 2; cache.delete(oldest); }
+      if (size <= cacheBytes) { cache.set(key, text); bytes += size; peakCacheBytes = Math.max(peakCacheBytes, bytes); }
+      onMetrics?.({ cacheBytes: bytes, peakCacheBytes, chunksRead });
+    }
+    const node = JSON.parse(text);
+    if (!Array.isArray(node) || node.length !== 2 || !['value', 'array', 'object', 'pages', 'string'].includes(node[0])) throw new Error('Unsupported analysis storage chunk.');
+    if (['array', 'object', 'pages'].includes(node[0]) && !Array.isArray(node[1])) throw new Error('Invalid analysis storage page.');
+    return node;
+  };
+  const decode = async (key, advance = () => {}, weight = 1, path = [], parents = new Set()) => {
+    if (parents.has(key)) throw new Error('Cyclic analysis storage chunk.');
+    const shared = immutableEvidence && evidencePath(path);
+    if (shared && evidence.has(key)) { advance(weight); return evidence.get(key); }
+    const next = new Set(parents); next.add(key);
+    const [type, data] = await part(key);
+    const partWeight = weight / Math.max(1, data?.length || 0);
+    const child = async (entry, name) => {
+      if (!entry || typeof entry !== 'object') throw new Error('Invalid analysis storage entry.');
+      const childPath = [...path, name];
+      if (Object.prototype.hasOwnProperty.call(entry, 'ref')) {
+        if (typeof entry.ref !== 'string') throw new Error('Invalid analysis storage reference.');
+        return decode(entry.ref, advance, partWeight, childPath, next);
+      }
+      if (!Object.prototype.hasOwnProperty.call(entry, 'value')) throw new Error('Invalid analysis storage entry.');
+      advance(partWeight); return immutableEvidence && evidencePath(childPath) ? freezeEvidence(entry.value) : entry.value;
+    };
+    let result;
+    if (type === 'value') { advance(weight); result = data; }
+    else if (type === 'string') result = (await decode(data, advance, weight, path, next)).join('');
+    else {
+      if (!data.length) advance(weight);
+      result = type === 'object' ? {} : [];
+      // Sequential decoding bounds pending work as well as cached bytes.
+      for (let i = 0; i < data.length; i++) {
+        if (type === 'array') result.push(await child(data[i], i));
+        else if (type === 'object') {
+          if (!Array.isArray(data[i]) || data[i].length !== 2 || typeof data[i][0] !== 'string') throw new Error('Invalid analysis storage property.');
+          const [name, entry] = data[i];
+          Object.defineProperty(result, name, {value: await child(entry, name), enumerable: true, writable: true, configurable: true});
+        } else {
+          if (typeof data[i] !== 'string') throw new Error('Invalid analysis storage page reference.');
+          const page = await decode(data[i], advance, partWeight, path, next);
+          if (Array.isArray(page)) { for (const entry of page) result.push(entry); }
+          else { if (Array.isArray(result)) result = {}; for (const name of Object.keys(page)) Object.defineProperty(result, name, {value:page[name], enumerable:true, writable:true, configurable:true}); }
+        }
+      }
+    }
+    if (shared) { freezeEvidence(result); evidence.set(key, result); }
+    return result;
+  };
+  return { part, decode, tick };
+}
+
+export async function hydrateRecord(db, store, value, options = {}) {
+  aborted(options.signal);
+  let completed = 0, reported = -1;
+  const report = percent => { const next = Math.max(reported, Math.min(100, Math.floor(percent))); if (next !== reported) { reported = next; options.onProgress?.(next); } };
   report(0);
   if (!isChunkedRecord(value)) { report(100); return value; }
-  const cache = new Map(), waiting = [];
-  let lastYield = Date.now(), paintYield = null;
-  const yieldForProgress = async () => {
-    if (!onProgress) return;
-    if (!paintYield && Date.now() - lastYield >= 16) {
-      paintYield = pause().then(() => { lastYield = Date.now(); paintYield = null; });
-    }
-    if (paintYield) await paintYield;
-  };
-  let scheduled = false;
-  const readPart = key => new Promise((resolve,reject) => {
-    waiting.push({key,resolve,reject});
-    if (!scheduled) { scheduled=true; Promise.resolve().then(drain); }
-  });
-  function drain() {
-    const batch=waiting.splice(0,PAGE);
-    let tx, objectStore;
-    try { aborted(signal); tx=db.transaction(store,'readonly'); objectStore=tx.objectStore(store); }
-    catch (error) { batch.forEach(entry=>entry.reject(error)); waiting.splice(0).forEach(entry=>entry.reject(error)); scheduled=false; return; }
-    const stop=()=>{try{tx.abort();}catch{}};
-    signal?.addEventListener('abort',stop,{once:true});
-    tx.oncomplete=()=>signal?.removeEventListener('abort',stop);
-    for (const entry of batch) {
-      const request=objectStore.get(entry.key);
-      request.onsuccess=()=>entry.resolve(request.result?.value);
-      request.onerror=()=>entry.reject(request.error);
-    }
-    tx.onabort=()=>{signal?.removeEventListener('abort',stop);batch.forEach(entry=>entry.reject(signal?.reason || tx.error || new DOMException('Storage read aborted.', 'AbortError')));};
-    scheduled=false;
-    if (waiting.length) { scheduled=true; Promise.resolve().then(drain); }
-  }
-  const decode = async (key, weight = 1) => {
+  const reader = recordReader(db, store, options);
+  const result = await reader.decode(value.root, weight => { completed += weight; report(Math.min(99, completed * 100)); });
+  aborted(options.signal); report(100); return result;
+}
+
+// Visit the stored array a page at a time. Consumers can stop after a preview;
+// no complete result or decoded-tree cache is constructed along the way.
+export async function* iterateRecordArray(db, store, value, options = {}) {
+  const { signal, batchRows = 128, batchBytes = 2 * 1024 * 1024, offset = 0, limit = Infinity } = options;
+  if (!(batchRows > 0) || !(batchBytes > 0)) throw new Error('Batch limits must be positive.');
+  const reader = recordReader(db, store, options);
+  let index = 0, emitted = 0, batch = [], bytes = 0;
+  async function* entries(ref, parents = new Set()) {
     aborted(signal);
-    if (cache.has(key)) return cache.get(key).then(result => { advance(weight); return copyValue(result); });
-    const task = (async () => {
-      const text = await readPart(key);
-      aborted(signal);
-      await yieldForProgress();
-      if (typeof text !== 'string') throw new Error('Saved analysis is missing a data chunk. Restore its complete backup.');
-      const [type, data] = JSON.parse(text);
-      const partWeight = weight / Math.max(1, data?.length || 0);
-      const child = entry => {
-        if (Object.prototype.hasOwnProperty.call(entry, 'ref')) return decode(entry.ref, partWeight);
-        advance(partWeight); return entry.value;
-      };
-      if (['array', 'object', 'pages'].includes(type) && data.length === 0) advance(weight);
-      if (type === 'value') { advance(weight); return data; }
-      if (type === 'string') return (await decode(data, weight)).join('');
-      if (type === 'array') return Promise.all(data.map(child));
-      if (type === 'object') { const values = await Promise.all(data.map(([, entry]) => child(entry))); const result = {}; data.forEach(([name], i) => Object.defineProperty(result, name, {value:values[i], enumerable:true, writable:true, configurable:true})); return result; }
-      if (type === 'pages') {
-        let result;
-        for (const ref of data) {
-          const page = await decode(ref, partWeight);
-          if (Array.isArray(page)) { if (!result) result = []; for (const entry of page) result.push(entry); }
-          else result = Object.assign(result || {}, page);
-        }
-        return result;
-      }
-      throw new Error('Unsupported analysis storage chunk.');
-    })();
-    cache.set(key, task);
-    return task;
+    if (parents.has(ref)) throw new Error('Cyclic analysis storage chunk.');
+    const next = new Set(parents); next.add(ref);
+    const [type, data] = await reader.part(ref);
+    if (type === 'pages') { for (const child of data) yield* entries(child, next); }
+    else if (type === 'array') { for (const entry of data) yield entry; }
+    else throw new Error('Saved analysis record is not an array.');
+  }
+  const source = isChunkedRecord(value) ? entries(value.root) : (async function* () { if (!Array.isArray(value)) throw new Error('Saved analysis record is not an array.'); for (const row of value) yield {value:row}; })();
+  for await (const entry of source) {
+    if (emitted >= limit) break;
+    if (index++ < offset) continue;
+    const row = Object.prototype.hasOwnProperty.call(entry, 'ref') ? await reader.decode(entry.ref) : entry.value;
+    const size = JSON.stringify(row)?.length * 2 || 4;
+    if (batch.length && (bytes + size > batchBytes || batch.length >= batchRows)) { yield batch; batch = []; bytes = 0; }
+    batch.push(row); bytes += size; emitted++;
+    await reader.tick();
+  }
+  if (batch.length) yield batch;
+}
+
+export async function countRecordArray(db, store, value, options = {}) {
+  if (!isChunkedRecord(value)) return Array.isArray(value) ? value.length : 0;
+  const reader = recordReader(db, store, options);
+  const count = async (ref, parents = new Set()) => {
+    if (parents.has(ref)) throw new Error('Cyclic analysis storage chunk.');
+    const next = new Set(parents); next.add(ref);
+    const [type, data] = await reader.part(ref);
+    if (type === 'array') return data.length;
+    if (type !== 'pages') throw new Error('Saved analysis record is not an array.');
+    let total = 0;
+    for (const child of data) total += await count(child, next);
+    return total;
   };
-  const result = await decode(value.root);
-  report(100);
-  return result;
+  return count(value.root);
+}
+
+// Validate the graph without hydrating its repeated evidence. Only compact
+// visited keys survive a chunk visit. Hash verification is optional for legacy
+// encodings; publication enables it for the content-addressed current format.
+export async function inspectRecord(db, store, value, { prefix, verifyHashes = false, ...options } = {}) {
+  const reader = recordReader(db, store, options), visited = new Map(), active = new Set();
+  const validate = async ref => {
+    if (typeof ref !== 'string' || (prefix && !ref.startsWith(prefix + PART))) throw new Error('Analysis chunk belongs to another record.');
+    if (active.has(ref)) throw new Error('Cyclic analysis storage chunk.');
+    if (visited.has(ref)) return visited.get(ref);
+    active.add(ref);
+    const [type, data] = await reader.part(ref);
+    if (verifyHashes && ref !== `${prefix}${PART}${await digest(JSON.stringify([type, data]))}`) throw new Error('Analysis chunk checksum does not match.');
+    let count = 0, kind = type;
+    const child = async entry => {
+      if (!entry || typeof entry !== 'object') throw new Error('Invalid analysis storage entry.');
+      if (Object.prototype.hasOwnProperty.call(entry, 'ref')) return validate(entry.ref);
+      if (!Object.prototype.hasOwnProperty.call(entry, 'value')) throw new Error('Invalid analysis storage entry.');
+      return {kind:typeof entry.value};
+    };
+    if (type === 'array') { for (const entry of data) await child(entry); count = data.length; }
+    else if (type === 'object') {
+      for (const property of data) { if (!Array.isArray(property) || property.length !== 2 || typeof property[0] !== 'string') throw new Error('Invalid analysis storage property.'); await child(property[1]); }
+    } else if (type === 'pages') {
+      for (const ref of data) { const page = await validate(ref); if (!['array', 'object'].includes(page.kind) || (kind !== 'pages' && kind !== page.kind)) throw new Error('Inconsistent analysis storage pages.'); kind = page.kind; count += page.count; }
+      if (!data.length) kind = 'array';
+    } else if (type === 'string') { const chars = await validate(data); if (chars.kind !== 'array') throw new Error('Invalid analysis storage string.'); }
+    const result = {kind, count}; active.delete(ref); visited.set(ref, result); return result;
+  };
+  if (!isChunkedRecord(value)) return {kind:Array.isArray(value) ? 'array' : typeof value, count:Array.isArray(value) ? value.length : 0};
+  const result = await validate(value.root);
+  return {...result, chunks:visited.size};
+}
+
+// Read a single manifest property without expanding its other fields.
+export async function readRecordProperty(db, store, value, name, options = {}) {
+  if (!isChunkedRecord(value)) return value?.[name];
+  const reader = recordReader(db, store, options);
+  const find = async (ref, parents = new Set()) => {
+    if (parents.has(ref)) throw new Error('Cyclic analysis storage chunk.');
+    const next = new Set(parents); next.add(ref);
+    const [type, data] = await reader.part(ref);
+    if (type === 'pages') { for (const child of data) { const found = await find(child, next); if (found.found) return found; } return {found:false}; }
+    if (type !== 'object') throw new Error('Saved analysis manifest is not an object.');
+    const entry = data.find(([key]) => key === name)?.[1];
+    return entry ? {found:true, value:Object.prototype.hasOwnProperty.call(entry, 'ref')
+      ? options.descriptorOnly ? {format:FORMAT, root:entry.ref} : await reader.decode(entry.ref)
+      : entry.value} : {found:false};
+  };
+  return (await find(value.root)).value;
 }
 export async function readRecord(db, store, key, options) { return hydrateRecord(db, store, await rawRecord(db, store, key), options); }
 export async function writeRecord(db, store, key, value, options) {

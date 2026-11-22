@@ -1,7 +1,7 @@
 import { isFunctionalTransportError } from './functionalTransportRecovery';
 import parseFunctionalResponse from './parseCodeAnalysisJson';
 import { mapAnalysisWork } from './functionalWorkScheduler';
-import { allocateFunctionalHierarchy, functionalEndpointAllocations, functionalHierarchyIsReady } from './functionalHierarchy';
+import { allocateFunctionalHierarchy, functionalEndpointAllocations, functionalHierarchyIsReady, FUNCTIONAL_HIERARCHY_VERSION } from './functionalHierarchy';
 // A derived, source-addressed model. Detailed rows are never replaced.
 export const FUNCTIONAL_MODEL_VERSION = 4;
 const text = value => String(value || '').trim();
@@ -152,15 +152,20 @@ export async function processFunctionalModel(rows, { request, signal, onProgress
 }
 
 async function processFunctionalModelCore(rows, { request, signal, onProgress, concurrency, stop }) {
-  const items = current(rows), owners = new Map(), definitions = new Set();
+  const items = current(rows), owners = new Map(), definitions = new Set(), indexedFiles = new WeakSet();
   const endpointAllocation = functionalEndpointAllocations(rows);
   for (const { row } of items) {
     const source = side(row, 'from');
     if (!owners.has(key(source))) owners.set(key(source), { ...source, rows: [], architecture: endpointAllocation(source.file, source.name) });
     if (row.relationshipEvidence?.targetResolution === 'lexical-definition') definitions.add(key(side(row, 'to')));
-    const functions = [...(row.sourceEvidence?.functions || []), ...(row.codeEvidence?.sourceFunctions || []),
-      ...(row.codeEvidence?.files || []).flatMap(file => typeof file === 'object' ? (file.sourceFunctions || []).map(fn => ({ ...fn, filePath: fn.filePath || file.filePath })) : [])];
-    functions.forEach(fn => { if (fn.filePath && (fn.functionName || fn.name)) definitions.add(key({ file: fn.filePath, name: fn.functionName || fn.name })); });
+    const remember = (fn, filePath = fn.filePath) => { if (filePath && (fn.functionName || fn.name)) definitions.add(key({file:filePath, name:fn.functionName || fn.name})); };
+    for (const fn of row.sourceEvidence?.functions || []) remember(fn);
+    for (const fn of row.codeEvidence?.sourceFunctions || []) remember(fn);
+    for (const file of row.codeEvidence?.files || []) {
+      if (!file || typeof file !== 'object' || indexedFiles.has(file)) continue;
+      indexedFiles.add(file);
+      for (const fn of file.sourceFunctions || []) remember(fn, fn.filePath || file.filePath);
+    }
   }
   items.forEach(item => owners.get(key(side(item.row, 'from'))).rows.push(item));
   const units = new Map(), annotations = new Map();
@@ -422,6 +427,55 @@ export function buildFunctionalModelRows(rows = [], onProgress) {
   }
   return result;
 }
+// A functional label is a summary, not a replacement for the implementation.
+// Preserve complete files (including imports, constants and adjacent guards).
+// Keep conflicting snapshots separate rather than stitching their contents.
+function functionalFileEvidence(rows, paths) {
+  const files = new Map(paths.map(path => [path, []]));
+  for (const row of rows) for (const value of [...(row.codeEvidence?.files || []), ...(row.sourceEvidence?.files || [])]) {
+    const file = typeof value === 'string' ? {filePath: value} : value;
+    const path = file?.filePath || file?.path;
+    if (!path) continue;
+    if (!files.has(path)) files.set(path, []);
+    files.get(path).push(file);
+  }
+  return [...files].flatMap(([filePath, candidates]) => {
+    const complete = candidates.filter(file => typeof file.content === 'string' && file.content);
+    const seen = new Map();
+    return (complete.length ? complete : candidates.length ? candidates : [{filePath}]).filter(file => {
+      const identity = JSON.stringify([file.sourceType, file.sourceId, file.snapshotId, file.commitSha]);
+      if (!seen.has(identity)) seen.set(identity, new Set());
+      const bodies = seen.get(identity), body = file.content || '';
+      if (bodies.has(body)) return false;
+      bodies.add(body); return true;
+    });
+  });
+}
+// Repeated relationship rows can reference the same file catalog hundreds of
+// times. Collect distinct evidence directly instead of first expanding the
+// complete repeated catalog into a large temporary array.
+export function collectFunctionalSourceFunctions(sourceRows) {
+  const result = [], identities = new Set(), objects = new WeakSet(), files = new WeakSet();
+  const add = fn => {
+    if (objects.has(fn)) return;
+    objects.add(fn);
+    const identity = JSON.stringify(fn);
+    if (!identities.has(identity)) { identities.add(identity); result.push(fn); }
+  };
+  for (const row of sourceRows) {
+    add({filePath:row.fromFile, functionName:row.from || row.fromFunction});
+    add({filePath:row.toFile, functionName:row.to || row.toFunction});
+    for (const fn of row.codeEvidence?.sourceFunctions || []) add(fn);
+    for (const fn of row.sourceEvidence?.functions || []) add(fn);
+    for (const file of row.codeEvidence?.files || []) {
+      if (!file || typeof file !== 'object' || files.has(file)) continue;
+      files.add(file);
+      for (const fn of file.sourceFunctions || []) add(fn.filePath ? fn : {...fn,filePath:file.filePath});
+    }
+  }
+  return result;
+}
+
 function buildFunctionalModelRowsUncached(rows, onProgress) {
   if (!functionalModelIsReady(rows)) return [];
   const groups = new Map(), implementationByResponsibility = new Map();
@@ -452,20 +506,15 @@ function buildFunctionalModelRowsUncached(rows, onProgress) {
     const sourceTraceIds = unique(sourceRows.flatMap(row => row.functionalAbstraction.importedSnapshot?.sourceTraceIds || [row.traceId]));
     const sourceRowRefs = sourceRows.flatMap(row => row.functionalAbstraction.importedSnapshot?.sourceRowRefs || [row.rowRef]).filter(Boolean);
     const files = unique(sourceRows.flatMap(row => [row.fromFile, row.toFile]));
-    const sourceFunctions = sourceRows.flatMap(row => [
-      { filePath: row.fromFile, functionName: row.from || row.fromFunction },
-      { filePath: row.toFile, functionName: row.to || row.toFunction },
-      ...(row.codeEvidence?.sourceFunctions || []), ...(row.sourceEvidence?.functions || []),
-      ...(row.codeEvidence?.files || []).flatMap(file => typeof file === "object" ? (file.sourceFunctions || []).map(fn => ({ ...fn, filePath: fn.filePath || file.filePath })) : []),
-    ]);
+    const sourceFunctions = collectFunctionalSourceFunctions(sourceRows);
     const result = { ...sourceRows[0], canonicalRelationshipId: undefined, classificationPolicyVersion: undefined,
       relationshipEvidence: undefined, functionalAbstraction: undefined,
       rowRef: index + 1, traceId, fromNodeId: source.id, toNodeId: target?.id || source.id, edgeId: traceId,
       from: source.label, fromFunction: source.label, to: target?.label || source.label, toFunction: target?.label || source.label,
       action: internal ? 'Internal implementation' : model.action, controlAction: internal ? 'Internal implementation' : model.action,
       fromDetails: source.description, toDetails: target?.description || source.description,
-      controlActionDetails: `[Functional interaction: ${model.kind}] ` + unique(group.sourceRows.map(row => row.functionalAbstraction.interactionDescription || row.functionalAbstraction.rationale)).join('\n'),
-      controlDetails: `[Functional interaction: ${model.kind}] ` + unique(group.sourceRows.map(row => row.functionalAbstraction.interactionDescription || row.functionalAbstraction.rationale)).join('\n'),
+      controlActionDetails: (model.importedSnapshot ? '' : `[Functional interaction: ${model.kind}] `) + unique(group.sourceRows.map(row => row.functionalAbstraction.interactionDescription || row.functionalAbstraction.rationale)).join('\n'),
+      controlDetails: (model.importedSnapshot ? '' : `[Functional interaction: ${model.kind}] `) + unique(group.sourceRows.map(row => row.functionalAbstraction.interactionDescription || row.functionalAbstraction.rationale)).join('\n'),
       fromFile: source.file, toFile: target?.file || source.file,
       architecture: { ...source.architecture, csu: source.label },
       fromArchitecture: { ...source.architecture, csu: source.label },
@@ -474,7 +523,7 @@ function buildFunctionalModelRowsUncached(rows, onProgress) {
       hazardAnalysisEligibility: internal ? 'Exclude' : (model.importedSnapshot || sourceRows[0].hazardAnalysisEligibilitySource === 'analyst-override') ? sourceRows[0].hazardAnalysisEligibility : 'Include',
       hazardAnalysisEligibilitySource: model.importedSnapshot ? sourceRows[0].hazardAnalysisEligibilitySource : internal || (!model.importedSnapshot && sourceRows[0].hazardAnalysisEligibilitySource !== 'analyst-override') ? 'functional-semantic-assessment' : 'analyst-override',
       hazardAnalysisEligibilityRationale: internal ? 'Implementation operations retained inside the functional responsibility.' : (model.importedSnapshot || sourceRows[0].hazardAnalysisEligibilitySource === 'analyst-override') ? sourceRows[0].hazardAnalysisEligibilityRationale : `Retained ${model.significance} functional interaction: ${model.rationale}`,
-      codeEvidence: { sourceFunctions, files: files.map(filePath => ({ filePath })), rowRefs: sourceRowRefs },
+      codeEvidence: { sourceFunctions, files: functionalFileEvidence(sourceRows, files), rowRefs: sourceRowRefs },
       sourceEvidence: { functions: sourceFunctions, files },
       functionalModel: { version: FUNCTIONAL_MODEL_VERSION, internal, kind: model.kind, significance: model.significance,
         directSourceIndices: group.sourceIndices, assessments: sourceRows.map(row => ({ traceId: row.traceId, significance: row.functionalAbstraction.significance, rationale: row.functionalAbstraction.rationale })), sourceIndices, sourceTraceIds, sourceRowRefs,
@@ -508,7 +557,9 @@ export function restoreFunctionalCsvSnapshot(rows) {
     const unit = which => ({ id: row[`${which}NodeId`] || id('imported-function', [row[which], row[`${which}Architecture`]]),
       label: row[which], description: row[`${which}Details`] || '', architecture: row[`${which}Architecture`] || {},
       file: row[`${which}File`] || '', symbol: '', significance: 'uncertain' });
+    const allocated = which => ['subsystem','csci','csc'].every(level => text(row[`${which}Architecture`]?.[level]));
     return { ...row, functionalAbstraction: { version: FUNCTIONAL_MODEL_VERSION, inputKey: functionalInputKey(row), modelKey,
+      ...(allocated('from') && (snapshot.kind === 'internal' || allocated('to')) ? {hierarchyVersion: FUNCTIONAL_HIERARCHY_VERSION} : {}),
       source: unit('from'), target: snapshot.kind === 'internal' ? null : unit('to'),
       kind: snapshot.kind, disposition: snapshot.kind === 'internal' ? 'internal' : 'interaction', significance: 'uncertain',
       action: row.action, interactionDescription: row.controlActionDetails, rationale: 'Imported Functional snapshot; not a source-code reanalysis.',

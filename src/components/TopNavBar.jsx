@@ -14,8 +14,6 @@ export default function TopNavBar({
       className="
         sticky top-0 z-50 border-b
         bg-white/90 supports-[backdrop-filter]:bg-white/70 backdrop-blur
-        dark:bg-black/90 supports-[backdrop-filter]:dark:bg-black/70
-        dark:border-zinc-800
       "
     >
       <div className="mx-auto max-w-full px-3 py-2 flex items-center justify-between gap-3">

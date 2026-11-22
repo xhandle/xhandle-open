@@ -74,9 +74,9 @@ function makeNodes(rows = [], folderId = "") {
           ),
         },
         style: {
-          border: "1px solid #cbd5e1",
+          border: "1px solid var(--border-strong)",
           borderRadius: 8,
-          background: "#fff",
+          background: "var(--card)",
           width: 220,
           minHeight: 64,
           boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)",
@@ -163,14 +163,14 @@ export default function CrossRepoArchitectureDiagram({ folderId, rows = [], onOp
               <div className="flex flex-wrap gap-2 pt-2">
                 <button
                   type="button"
-                  className="rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-[#2D7DFE] hover:bg-slate-50"
+                  className="rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-blue-700 hover:bg-slate-50"
                   onClick={() => onOpenRow(selectedRow, "source")}
                 >
                   Open Source Row
                 </button>
                 <button
                   type="button"
-                  className="rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-[#2D7DFE] hover:bg-slate-50"
+                  className="rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-blue-700 hover:bg-slate-50"
                   onClick={() => onOpenRow(selectedRow, "target")}
                 >
                   Open Target Row

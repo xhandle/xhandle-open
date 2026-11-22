@@ -2,7 +2,7 @@ import React, { forwardRef, useCallback, useEffect, useRef, useState } from 'rea
 
 export const architectureHeaderClass = 'sticky top-0 z-10 bg-indigo-50 text-slate-700 font-semibold text-[13px] uppercase tracking-wide border-b border-slate-200 px-3 py-2';
 export const architectureCellClass = 'border-b border-slate-100 px-3 py-2 align-top text-[13px] text-slate-800';
-export const architectureLinkClass = 'shrink-0 rounded p-1 text-[#2D7DFE] hover:bg-blue-100 hover:text-[#1E61D6]';
+export const architectureLinkClass = 'shrink-0 rounded p-1 text-blue-700 hover:bg-blue-100 hover:text-blue-700';
 export const diagramFocusView = view => view === 'split' ? 'split' : 'architecture';
 export function useLatestCallback(fn) {
   const latest = useRef(fn); latest.current = fn;
@@ -62,7 +62,7 @@ export function ArchitectureDivider({ view, scope, workspaceRef, percent, onChan
     className="group hidden w-3 shrink-0 cursor-col-resize items-stretch justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2D7DFE] md:flex" style={{ touchAction: 'none' }}
     onPointerDown={event => drag(event, x => { const bounds = workspaceRef.current?.getBoundingClientRect(); if (bounds?.width) onChange(clamp((x - bounds.left) / bounds.width * 100)); }, fit)}
     onKeyDown={event => { if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return; event.preventDefault(); onChange(clamp(percent + (event.key === 'ArrowRight' ? 5 : -5))); if (keyboardFrame.current != null) cancelAnimationFrame(keyboardFrame.current); keyboardFrame.current = requestAnimationFrame(fit); }}>
-    <span className="w-px bg-slate-200 transition-colors group-hover:bg-[#2D7DFE]" />
+    <span className="w-px bg-slate-200 transition-colors group-hover:bg-blue-600" />
   </div>;
 }
 export function useArchitectureColumnWidths(columns, storageKey, scope = storageKey, persist = true) {

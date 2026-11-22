@@ -103,7 +103,9 @@
     "client": "node scripts/dev-client.js",
     "dev": "concurrently -k -n API,WEB \"npm run server\" \"npm run client\"",
     "test:server-startup": "node --test server/serverEntrypoint.test.cjs",
-    "test:electron:regression": "node scripts/diagnostics/run-electron-regression.cjs"
+    "test:electron:regression": "node scripts/diagnostics/run-electron-regression.cjs",
+    "test:stpa:synthetic": "node scripts/diagnostics/run-stpa-synthetic.cjs",
+    "test:hazard:quality": "node scripts/diagnostics/run-hazard-quality.cjs"
   },
   "eslintConfig": {
     "extends": [

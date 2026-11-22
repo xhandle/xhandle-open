@@ -6,10 +6,14 @@ import {answer} from './fastHazardTestFixtures';
 const source={id:'HA-1',action:'Apply torque',phrase:'Too late',reviewedApplicability:'Yes',reviewedRationale:'Accepted timing assessment'};
 const quiet={onDiagnostic:()=>{},onMetrics:()=>{}};
 
-test.each(['STPA','HARA','FHA'])('%s completes every expected row for missing, duplicate and invalid answers',async method=>{
+test.each(['STPA','HARA','FHA'])('%s handles missing, duplicate and invalid answers without silently losing rows',async method=>{
  for(const response of ['[]','null','not JSON',JSON.stringify([answer(method,'HA-1'),answer(method,'HA-1')]),JSON.stringify([{id:'HA-1',applicable:'Yes'}])]){
   const sources=[source,{...source,id:'HA-2'},{...source,id:'HA-3',reviewedApplicability:'No'}];
   const request=jest.fn(async()=>response);
+  if(method==='STPA'){
+   await expect(generateFastHazards({method,sources,context:{},request,...quiet})).rejects.toMatchObject({code:'COMPACT_HAZARD_INCOMPLETE',partialResults:[expect.objectContaining({id:'HA-3',applicable:'No'})]});
+   expect(request.mock.calls.length).toBeLessThanOrEqual(18);continue;
+  }
   const results=await generateFastHazards({method,sources,context:{},request,...quiet});
   expect(results.map(row=>row.id)).toEqual(sources.map(row=>row.id));
   results.forEach((row,index)=>expect(validateFastAssessment(method,row,sources[index])).toEqual([]));
@@ -23,6 +27,10 @@ test.each(['STPA','HARA','FHA'])('%s keeps cached accepted rows while completing
  const sources=[source,{...source,id:'HA-2'}];
  const checkpoint={read:async key=>key.source?.id==='HA-1' && !key.stage?accepted:undefined,write:async()=>{throw new Error('Storage unavailable');}};
  const request=jest.fn(async()=>{throw Object.assign(new Error('Provider unavailable'),{status:403});});
+ if(method==='STPA'){
+  await expect(generateFastHazards({method,sources,context:{},checkpoint,request,...quiet})).rejects.toMatchObject({partialResults:[accepted],totalAssessments:2});
+  expect(request).toHaveBeenCalledTimes(1);return;
+ }
  const results=await generateFastHazards({method,sources,context:{},checkpoint,request,...quiet});
  expect(results).toHaveLength(2);expect(results[0]).toEqual(accepted);
  expect(results[1].assessmentBasis).toContain('Assumption-based');

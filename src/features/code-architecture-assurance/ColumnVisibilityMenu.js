@@ -59,7 +59,7 @@ export default function ColumnVisibilityMenu({
             <div className="text-xs font-semibold">Visible Columns</div>
             <button
               type="button"
-              className="text-[11px] font-semibold text-[#2D7DFE]"
+              className="text-[11px] font-semibold text-blue-700"
               onClick={showAll}
             >
               Show all

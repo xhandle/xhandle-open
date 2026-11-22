@@ -839,7 +839,7 @@ export function QuickTableModal({ title = "Insert Table", initial, onCancel, onS
               Cancel
             </button>
             <button
-              className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]"
+              className="rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
               onClick={() => onSave(grid)}
             >
               Save

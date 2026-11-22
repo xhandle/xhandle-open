@@ -1,0 +1,22 @@
+.report-document-layout { display:grid; position:relative; grid-template-columns:210px minmax(0,1fr); height:min(75vh,900px); min-height:0; min-width:0; overflow:hidden; border:1px solid var(--border); border-radius:10px; background:var(--inset); }
+.report-document-layout--fill { flex:1; height:100%; }
+.report-document-layout[data-outline-collapsed=true] { grid-template-columns:38px minmax(0,1fr); }
+.report-document-outline { display:flex; flex-direction:column; min-height:0; min-width:0; border-right:1px solid var(--border); background:var(--panel); }
+.report-document-outline-heading { display:flex; align-items:center; justify-content:space-between; flex:none; padding:8px; font-size:12px; font-weight:600; }
+.report-document-layout[data-outline-collapsed=true] .report-document-outline-heading { padding:5px; }
+.report-document-outline-heading button { display:flex; align-items:center; justify-content:center; width:28px; height:28px; border-radius:5px; flex:none; }
+.report-document-outline-heading button:hover { background:var(--selected); }
+.report-document-outline nav:not([hidden]) { display:flex; flex-direction:column; gap:4px; min-height:0; overflow:auto; overscroll-behavior:contain; padding:8px; font-size:12px; }
+.report-document-outline a { display:block; padding:7px 8px; border-radius:5px; color:var(--link); overflow-wrap:anywhere; line-height:1.5; }
+.report-document-outline a:hover { background:var(--hover); }
+.report-document-outline a[aria-current=location] { background:var(--selected); color:var(--selected-text); font-weight:600; }
+.report-document-outline p { padding:4px; color:var(--muted); }
+.report-document-reader { grid-column:2; grid-row:1; min-width:0; min-height:0; overflow:auto; overscroll-behavior:contain; scrollbar-gutter:stable; padding:20px; background:var(--card); }
+.report-document-reader > .prose { max-width:none; width:100%; padding:0 0 16px; }
+.report-document-reader .prose img { max-width:100%; width:100%; }
+.report-document-layout[data-compact=true] { grid-template-columns:38px minmax(0,1fr); }
+.report-document-layout[data-compact=true][data-outline-collapsed=false] .report-document-outline { position:absolute; z-index:10; inset:0 auto 0 0; width:min(230px,calc(100% - 38px)); box-shadow:var(--popover-shadow); }
+@media print {
+  .report-document-outline { display:none; }
+  .report-document-layout,.report-document-reader { display:block; height:auto; max-height:none; overflow:visible; border:0; padding:0; }
+}

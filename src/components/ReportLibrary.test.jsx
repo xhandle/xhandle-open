@@ -1,12 +1,12 @@
 import React, { act, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import ReportLibrary, { useReportLibrary } from './ReportLibrary';
-import { deleteGeneratedReport, listGeneratedReports, preserveLegacyGeneratedReport, readGeneratedReport } from '../features/project-hazard-analysis/generatedReportStorage';
+import { deleteGeneratedReport, listGeneratedReports, preserveLegacyGeneratedReport, readGeneratedReport, renameGeneratedReport } from '../features/project-hazard-analysis/generatedReportStorage';
 
 jest.mock('../features/project-hazard-analysis/generatedReportStorage', () => ({
   GENERATED_REPORT_CHANGED: 'fixture-reports-changed',
   listGeneratedReports: jest.fn(), readGeneratedReport: jest.fn(),
-  preserveLegacyGeneratedReport: jest.fn(), deleteGeneratedReport: jest.fn(),
+  preserveLegacyGeneratedReport: jest.fn(), deleteGeneratedReport: jest.fn(), renameGeneratedReport: jest.fn(),
 }));
 
 const rows = [
@@ -15,11 +15,11 @@ const rows = [
 ];
 let root, container;
 const flush = async () => { await act(async () => { for (let i = 0; i < 15; i++) await Promise.resolve(); }); };
-function Harness({ projectId = 'p', initial = null, ready = true, opened = () => {}, requestedId = '' }) {
+function Harness({ projectId = 'p', initial = null, ready = true, opened = () => {}, requestedId = '', compact = false }) {
   const [selected, setSelected] = useState(initial);
   const library = useReportLibrary({ projectId, ready, legacyReport: selected, requestedId,
     onOpen: (value) => { setSelected(value); opened(value); } });
-  return <><ReportLibrary library={library} /><pre>{selected?.report}</pre></>;
+  return <><ReportLibrary library={library} compact={compact} /><pre>{selected?.report}</pre></>;
 }
 beforeEach(() => {
   global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -28,6 +28,7 @@ beforeEach(() => {
   readGeneratedReport.mockImplementation(async (_project, id) => ({ ...rows.find((row) => row.id === id), projectId: 'p', libraryId: id, libraryLoaded: true, report: 'Body ' + id, functionalDiagramImage: 'saved image ' + id }));
   preserveLegacyGeneratedReport.mockResolvedValue(null);
   deleteGeneratedReport.mockResolvedValue(true);
+  renameGeneratedReport.mockImplementation(async (project,id,title)=>({id,title}));
 });
 afterEach(() => { act(() => root.unmount()); container.remove(); delete global.IS_REACT_ACT_ENVIRONMENT; jest.restoreAllMocks(); });
 
@@ -112,4 +113,46 @@ test('a missing source request reports it rather than opening a different saved 
   act(() => root.render(<Harness requestedId="deleted-version" />)); await flush();
   expect(readGeneratedReport).not.toHaveBeenCalled();
   expect(container.textContent).toContain('This saved report is no longer available.');
+});
+
+test('compact mode removes the library heading, refresh and list whitespace while preserving selection/search', async () => {
+ act(()=>root.render(<Harness compact />));await flush();
+ expect(container.querySelector('h2')).toBeNull();expect([...container.querySelectorAll('button')].some(button=>button.textContent==='Refresh')).toBe(false);
+ const select=container.querySelector('select[aria-label="Saved report"]');
+ act(()=>{select.value='r2';select.dispatchEvent(new Event('change',{bubbles:true}));});await flush();
+ expect(container.querySelector('pre').textContent).toBe('Body r2');
+ const input=container.querySelector('input[aria-label="Search saved reports"]');
+ act(()=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Subsystem');input.dispatchEvent(new Event('input',{bubbles:true}));});
+ expect(select.value).toBe('r2');expect([...select.options].map(option=>option.value)).toEqual(['r2','r1']);
+});
+
+test('renaming updates the selected saved name without generating or overwriting its body', async () => {
+ const opened=jest.fn();act(()=>root.render(<Harness opened={opened} />));await flush();
+ act(()=>container.querySelector('[aria-label="Rename Subsystem design"]').click());
+ const input=document.querySelector('[role="dialog"] input');
+ act(()=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Updated title');input.dispatchEvent(new Event('input',{bubbles:true}));});
+ act(()=>[...document.querySelectorAll('button')].find(button=>button.textContent==='Save name').click());await flush();
+ expect(renameGeneratedReport).toHaveBeenCalledWith('p','r1','Updated title');
+ expect(opened).toHaveBeenLastCalledWith(expect.objectContaining({title:'Updated title',report:'Body r1',libraryId:'r1'}));
+ expect(container.querySelector('pre').textContent).toBe('Body r1');
+});
+
+test('a delayed rename from another project cannot replace the current report selection', async () => {
+ let finish;renameGeneratedReport.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+ const opened=jest.fn();act(()=>root.render(<Harness projectId="a" opened={opened} />));await flush();
+ act(()=>container.querySelector('[aria-label="Rename Subsystem design"]').click());
+ act(()=>[...document.querySelectorAll('button')].find(button=>button.textContent==='Save name').click());
+ act(()=>root.render(<Harness projectId="b" opened={opened} />));await flush();opened.mockClear();
+ await act(async()=>{finish({id:'r1',title:'Late title'});});await flush();
+ expect(opened).not.toHaveBeenCalledWith(expect.objectContaining({title:'Late title'}));
+ expect(document.querySelector('[role="dialog"]')).toBeNull();
+});
+
+test('compact selection distinguishes same-named saved versions by their dates', () => {
+ const library={items:[{id:'a',title:'Safety',createdAt:'2026-11-20T10:00:00Z'},{id:'b',title:'Safety',createdAt:'2026-11-19T10:00:00Z'}],selectedId:'a',open:jest.fn()};
+ act(()=>root.render(<ReportLibrary library={library} compact />));
+ const options=[...container.querySelector('select').options];
+ expect(options.every(option=>option.textContent.startsWith('Safety — '))).toBe(true);
+ expect(new Set(options.map(option=>option.textContent)).size).toBe(2);
+ expect(options.map(option=>option.value)).toEqual(['a','b']);
 });
