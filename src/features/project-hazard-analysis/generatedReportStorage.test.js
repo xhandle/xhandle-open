@@ -3,7 +3,7 @@ import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
 import { serialize, deserialize } from 'v8';
 import { replaceTextDiagram } from '../../components/reportDiagramModel';
 import { GENERATED_REPORT_DB, blockGeneratedReportWrites, deleteGeneratedReport, listGeneratedReports,
-  openGeneratedReportDatabase, preserveLegacyGeneratedReport, readGeneratedReport, saveGeneratedReport } from './generatedReportStorage';
+  openGeneratedReportDatabase, preserveLegacyGeneratedReport, readGeneratedReport, saveGeneratedReport, renameGeneratedReport } from './generatedReportStorage';
 
 beforeEach(() => {
   global.structuredClone = (value) => deserialize(serialize(value));
@@ -133,4 +133,55 @@ test('the existing backup download and restore includes library versions and dia
   jest.spyOn(global, 'setTimeout').mockImplementation((callback, ms, ...args) => ms === 150 ? 0 : timeout(callback, ms, ...args));
   await restoreFromBackupFile({ text: async () => text });
   expect(await readGeneratedReport('p', saved.libraryId)).toMatchObject(input);
+});
+
+test('persists paired snapshots with their report revision and excludes both from library metadata', async () => {
+ const functionalDiagramImages={light:'data:image/png;base64,bGlnaHQ=',dark:'data:image/png;base64,ZGFyaw=='};
+ const first=await saveGeneratedReport('p',{...input,functionalDiagramImages});
+ functionalDiagramImages.dark='data:image/png;base64,bmV3';
+ const second=await saveGeneratedReport('p',{...input,functionalDiagramImages});
+ expect((await readGeneratedReport('p',first.libraryId)).functionalDiagramImages.dark).toBe('data:image/png;base64,ZGFyaw==');
+ expect((await readGeneratedReport('p',second.libraryId)).functionalDiagramImages.dark).toBe('data:image/png;base64,bmV3');
+ expect((await listGeneratedReports('p')).every(row=>!('functionalDiagramImages' in row)&&!('functionalDiagramImage' in row))).toBe(true);
+});
+
+test('renames the library entry and saved title atomically, preserving content, timestamps, revision and diagrams', async () => {
+ const saved=await saveGeneratedReport('p',{...input,functionalDiagramImages:{light:'data:image/png;base64,bGlnaHQ=',dark:'data:image/png;base64,ZGFyaw=='}});
+ await expect(renameGeneratedReport('p',saved.libraryId,'  Renamed report  ')).resolves.toEqual({id:saved.libraryId,title:'Renamed report'});
+ const renamed=await readGeneratedReport('p',saved.libraryId);
+ expect(renamed).toMatchObject({...saved,title:'Renamed report'});
+ expect(renamed.updatedAt).toEqual(expect.any(String));
+ expect((await listGeneratedReports('p'))[0]).toMatchObject({title:'Renamed report',createdAt:saved.createdAt,updatedAt:renamed.updatedAt});
+});
+
+test.each(['', '   ', 'x'.repeat(161)])('rejects an invalid report name without changing the saved record', async title => {
+ const saved=await saveGeneratedReport('p',input);
+ await expect(renameGeneratedReport('p',saved.libraryId,title)).rejects.toThrow('between 1 and 160');
+ expect((await readGeneratedReport('p',saved.libraryId)).title).toBe(saved.title);
+});
+
+test('a rename cannot cross project boundaries or resurrect a deleted report', async () => {
+ const saved=await saveGeneratedReport('p',input);
+ await expect(renameGeneratedReport('other',saved.libraryId,'Wrong project')).resolves.toBe(false);
+ await deleteGeneratedReport('p',saved.libraryId);
+ await expect(renameGeneratedReport('p',saved.libraryId,'Deleted report')).resolves.toBe(false);
+ expect(await listGeneratedReports('p')).toEqual([]);
+});
+
+test('a failed metadata rename rolls back the saved document title as well', async () => {
+ const saved=await saveGeneratedReport('p',input),put=IDBObjectStore.prototype.put;
+ jest.spyOn(IDBObjectStore.prototype,'put').mockImplementation(function(value,key){if(this.name==='metadata')throw Error('quota');return key===undefined?put.call(this,value):put.call(this,value,key);});
+ await expect(renameGeneratedReport('p',saved.libraryId,'Failed rename')).rejects.toThrow('quota');
+ expect((await readGeneratedReport('p',saved.libraryId)).title).toBe(saved.title);
+ expect((await listGeneratedReports('p'))[0].title).toBe(saved.title);
+});
+
+test('the project deletion barrier also waits for or blocks pending report renames', async () => {
+ const project='rename-barrier',saved=await saveGeneratedReport(project,input);
+ try {
+  const pending=renameGeneratedReport(project,saved.libraryId,'Late rename');
+  await blockGeneratedReportWrites(project);
+  await expect(pending).rejects.toThrow('no longer available');
+  expect((await readGeneratedReport(project,saved.libraryId)).title).toBe(saved.title);
+ } finally { await blockGeneratedReportWrites(project,false); }
 });

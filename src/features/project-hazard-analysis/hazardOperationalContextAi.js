@@ -189,6 +189,8 @@ export async function generateHazardOperationalContexts({
   projectName = "",
   functionalRows = [],
   existingContexts = [],
+  organizationContext = "",
+  projectContext = "",
 }) {
   const request = String(description || "").trim();
   if (!request) throw new Error("Describe the system or operating concept before generating contexts.");
@@ -200,6 +202,9 @@ export async function generateHazardOperationalContexts({
       functionFrom: String(row?.fromFunction || "").trim(),
       controlAction: String(row?.controlAction || "").trim(),
       functionTo: String(row?.toFunction || "").trim(),
+      details: [row?.systemDetails, row?.fromDetails, row?.fromFunctionDetails,
+        row?.controlDetails, row?.controlActionDetails, row?.toDetails, row?.toFunctionDetails]
+        .filter(Boolean).map(value => String(value).slice(0, 2000)),
     }));
   const existing = normalizeHazardOperationalContexts(existingContexts).map(({ scenario, mode }) => ({ scenario, mode }));
   const explicitScenarios = extractExplicitScenarioRequests(request);
@@ -217,8 +222,14 @@ ${request.slice(0, 8000)}
 
 Project name: ${String(projectName || "Unspecified project").slice(0, 200)}
 
+Project operating concept and source context (project evidence):
+${String(projectContext || "None supplied").slice(0, 12000)}
+
 Functional architecture evidence:
 ${JSON.stringify(architecture)}
+
+Organization guidance (terminology and priorities; does not establish project capabilities):
+${String(organizationContext || "None enabled").slice(0, 12000)}
 
 Existing scenario-mode combinations to avoid duplicating:
 ${JSON.stringify(existing)}
@@ -234,6 +245,8 @@ Rules:
 - Propose scenario-mode combinations, not every theoretical Cartesian product.
 - Cover meaningfully different exposure, control authority, degraded-state, transition, startup/shutdown, maintenance, emergency, or fallback conditions when supported by the description.
 - Keep the proposal domain-neutral unless the description or architecture establishes a domain.
+- Explicit user scope and project/source evidence take precedence over organization examples. Preserve the established control authority and operating mode; remote supervision does not imply remote driving, and explicit remote driving must not become autonomous operation because the profile describes autonomy.
+- Do not infer implemented perception, physical braking, drive-by-wire, independence or human intervention capability from profile conventions. Record unsupported premises as assumptions rather than existing project facts.
 - Do not generate hazards, mitigations, guide phrases, or functional decomposition rows.
 - Do not repeat an existing scenario-mode combination.
 - Use this exact top-level shape: {"contexts":[{"scenario":"...","mode":"...","conditions":"...","assumptions":"..."}]}

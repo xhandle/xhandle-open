@@ -3,7 +3,7 @@ import {validateFastAssessment,deriveFastAsil,deriveFastSwci} from './fastHazard
 import {generateFastHazards} from './resultsFirstHazardPipeline';
 const source={id:'HA-1',from:'Controller',action:'Apply torque',to:'Actuator',phrase:'Too late',context:{scenario:'Unattended'},reviewedApplicability:'Yes',reviewedRationale:'Accepted timing decision'};
 const quiet={onDiagnostic:()=>{},onMetrics:()=>{}};
-test.each(['STPA','HARA','FHA'])('%s fallback is structurally valid and explicitly assumption-based',method=>{
+test.each(['HARA','FHA'])('%s fallback is structurally valid and explicitly assumption-based',method=>{
  const value=assumptionHazardFallback(method,source);
  expect(validateFastAssessment(method,value,source)).toEqual([]);
  expect(value.applicabilityRationale).toBe(source.reviewedRationale);
@@ -15,7 +15,7 @@ test.each(['STPA','HARA','FHA'])('%s fallback is structurally valid and explicit
  if(method==='HARA')expect(deriveFastAsil(value.severity,value.exposure,value.controllability)).toBe('ASIL D');
  if(method==='FHA')expect(deriveFastSwci(value.severity,value.scc)).toBe('SwCI 1');
 });
-test.each(['STPA','HARA','FHA'])('%s excludes reviewed No and preserves reviewed mission classification',method=>{
+test.each(['HARA','FHA'])('%s excludes reviewed No and preserves reviewed mission classification',method=>{
  const excluded=assumptionHazardFallback(method,{...source,reviewedApplicability:'No'});
  expect(excluded.applicable).toBe('No');expect(excluded.uca).toBeUndefined();
  const mission=assumptionHazardFallback(method,{...source,reviewedValues:{'Safety Classification':'Mission/Reliability'}});
@@ -23,9 +23,9 @@ test.each(['STPA','HARA','FHA'])('%s excludes reviewed No and preserves reviewed
  expect(mission.assumptions).toContain('mission output');
 });
 test('contradictory governed decisions are never silently replaced',()=>{
- expect(assumptionHazardFallback('STPA',{...source,reviewedValues:{'Safety Classification':'Safety — Direct','Safety Significant':'No'}})).toMatchObject({classification:'Safety — Direct',retainedUserInputs:{'Safety Significant':'No'}});
+ expect(assumptionHazardFallback('HARA',{...source,reviewedValues:{'Safety Classification':'Safety — Direct','Safety Significant':'No'}})).toMatchObject({classification:'Safety — Direct',retainedUserInputs:{'Safety Significant':'No'}});
 });
-test.each(['STPA','HARA','FHA'])('%s truncation and checkpoint failure still yield exportable memory assessments',async method=>{
+test.each(['HARA','FHA'])('%s truncation and checkpoint failure still yield exportable memory assessments',async method=>{
  const request=jest.fn(async()=>{throw Object.assign(new Error('Output truncated'),{name:'TruncatedResponseError'});});
  const onStorageState=jest.fn(),checkpoint={read:async()=>undefined,write:async()=>{throw new DOMException('Storage aborted','AbortError');}};
  const result=await generateFastHazards({method,sources:[source],context:{},request,checkpoint,onStorageState,...quiet});
@@ -44,4 +44,8 @@ test('reviewed rating overrides keep their corresponding premise rather than the
  const fha=assumptionHazardFallback('FHA',{...source,reviewedValues:{'Severity Category':'III','Software Control Category':'3'}});
  expect(fha.severityRationale).toContain('III');expect(fha.sccRationale).toContain('3');
  expect(deriveFastSwci(fha.severity,fha.scc)).toBe('SwCI 4');
+});
+
+test('STPA cannot accept local fallback scenarios as completed assessments',()=>{
+ expect(()=>assumptionHazardFallback('STPA',source)).toThrow('local recovery templates');
 });

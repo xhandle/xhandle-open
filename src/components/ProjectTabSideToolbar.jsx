@@ -2,7 +2,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 
 const BUTTON_TONES = {
   default: "border-gray-200 bg-white text-gray-700 hover:bg-gray-100",
-  primary: "border-[#2D7DFE]/30 bg-[#EEF4FF] text-[#0B3EA8] hover:bg-blue-100",
+  primary: "border-blue-500/30 bg-blue-50 text-blue-800 hover:bg-blue-100",
   success: "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100",
   warning: "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100",
   danger: "border-red-200 bg-white text-red-700 hover:bg-red-50",
@@ -18,7 +18,7 @@ export default function ProjectTabSideToolbar({
   return (
     <aside
       aria-label={label}
-      className={`flex min-h-0 shrink-0 flex-col self-stretch overflow-hidden border border-gray-200 bg-[#F8FAFC] transition-[width] duration-200 ${collapsed ? "w-14" : "w-56"} ${className}`}
+      className={`flex min-h-0 shrink-0 flex-col self-stretch overflow-hidden border border-gray-200 bg-slate-50 transition-[width] duration-200 ${collapsed ? "w-14" : "w-56"} ${className}`}
     >
       <button
         type="button"

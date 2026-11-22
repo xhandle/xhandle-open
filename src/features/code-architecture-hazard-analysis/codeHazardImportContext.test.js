@@ -35,3 +35,21 @@ test('retains unaffected row references and both governed applicability decision
  expect(next.generatedSheets.Summary[1].slice(0,3)).toEqual(['RAW-1','Yes','Yes rationale']);
  expect(next.generatedSheets.Summary[2].slice(0,3)).toEqual(['RAW-2','No','No rationale']);
 });
+
+test('updates the combined context column when reassigning imported STPA rows',()=>{
+ const source={...run,generatedSheets:{Summary:[[...headers,'Operational Context'],[...run.generatedSheets.Summary[1],'Old context']]}};
+ const next=assignImportedHazardContext(source,[{...context,conditions:'Wet road'}]);
+ expect(next.generatedSheets.Summary[1][6]).toBe('Urban operation · Autonomous · Wet road');
+ expect(next.generatedSheets.Summary[1][0]).toBe('RAW-1');
+ expect(source.generatedSheets.Summary[1][6]).toBe('Old context');
+});
+
+test('repairs a stale combined label without flagging unchanged underlying context as changed',()=>{
+ const assigned=assignImportedHazardContext(run,[context]);
+ const sheet=assigned.generatedSheets.Summary;
+ const source={...assigned,generatedSheets:{Summary:[[...sheet[0],'Operational Context'],[...sheet[1],'Stale context']]}};
+ const next=assignImportedHazardContext(source,[context]);
+ expect(next.generatedSheets.Summary[1].at(-1)).toBe('Urban operation · Autonomous');
+ expect(next.userPreprocessing['RAW-1']).toBe(source.userPreprocessing['RAW-1']);
+ expect(assignImportedHazardContext(next,[context])).toBe(next);
+});

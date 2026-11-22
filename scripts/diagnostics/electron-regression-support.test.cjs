@@ -38,3 +38,9 @@ test('a timeout also stops detached GUI descendants', { skip: process.platform =
   assert(result.timedOut);const pid=Number(fs.readFileSync(pidFile,'utf8'));
   await new Promise(resolve=>setTimeout(resolve,100));assert.throws(()=>process.kill(pid,0),{code:'ESRCH'});
 });
+
+ test('theme configuration and diagnostic changes invalidate certification fingerprints',t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'theme-fingerprint-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ let before=fingerprint(root);fs.writeFileSync(path.join(root,'tailwind.config.js'),'theme A');assert.notEqual(before.sha256,fingerprint(root).sha256);before=fingerprint(root);
+ fs.mkdirSync(path.join(root,'scripts','diagnostics'),{recursive:true});fs.writeFileSync(path.join(root,'scripts','diagnostics','theme.cjs'),'theme B');assert.notEqual(before.sha256,fingerprint(root).sha256);
+ });

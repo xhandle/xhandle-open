@@ -6,11 +6,17 @@
  */
 
 // tailwind.config.js
+const theme = require('./src/theme/tailwindTheme.cjs');
+const plugin = require('tailwindcss/plugin');
 module.exports = {
   darkMode: 'class',                    // << enable class-based dark mode
   content: ["./src/**/*.{js,jsx,ts,tsx}"],
   theme: {
-    extend: {},
+    extend: {
+      backgroundColor: theme.backgroundColor,
+      textColor: theme.textColor,
+      borderColor: theme.borderColor,
+    },
   },
-  plugins: [],
+  plugins: [plugin(({addBase}) => addBase({':root':theme.variables.light,'html.dark':theme.variables.dark}))],
 };

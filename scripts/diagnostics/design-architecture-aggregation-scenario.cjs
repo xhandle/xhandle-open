@@ -4,9 +4,9 @@ const assert = require('node:assert/strict');
 module.exports = async function verifyArchitectureAggregation(page, root) {
   const before = await page.evaluate(async () => {
     const owners = JSON.parse(localStorage.getItem('xhandle.projects') || '[]');
-    if (!owners.some(owner => owner.id === 'pronto-functional')) localStorage.setItem('xhandle.projects', JSON.stringify([...owners, { id: 'pronto-functional', name: 'Aggregation source' }]));
+    if (!owners.some(owner => owner.id === 'example-functional')) localStorage.setItem('xhandle.projects', JSON.stringify([...owners, { id: 'example-functional', name: 'Aggregation source' }]));
     const codeOwners = JSON.parse(localStorage.getItem('xhandle.codeArchitectureProjects') || '[]');
-    if (!codeOwners.some(owner => owner.id === 'pronto-code')) localStorage.setItem('xhandle.codeArchitectureProjects', JSON.stringify([...codeOwners, { id: 'pronto-code', name: 'Aggregation code source', folderId: null, repos: [], activeRepoId: null, createdAt: '2026-11-15T12:00:00Z', updatedAt: '2026-11-15T12:00:00Z' }]));
+    if (!codeOwners.some(owner => owner.id === 'example-code')) localStorage.setItem('xhandle.codeArchitectureProjects', JSON.stringify([...codeOwners, { id: 'example-code', name: 'Aggregation code source', folderId: null, repos: [], activeRepoId: null, createdAt: '2026-11-15T12:00:00Z', updatedAt: '2026-11-15T12:00:00Z' }]));
     const db = await new Promise((resolve, reject) => { const r = indexedDB.open('xhandle-design-artifacts', 2); r.onsuccess = () => resolve(r.result); r.onerror = () => reject(r.error); });
     const tx = db.transaction(['metadata', 'revisions', 'presentations'], 'readwrite');
     const done = new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onabort = () => reject(tx.error); });
@@ -30,7 +30,7 @@ module.exports = async function verifyArchitectureAggregation(page, root) {
         ...(functional ? { native: { rows, storage: { ':edge-aggregation:v1': JSON.stringify({ aggregateAll: true, aggregateBidirectionalAll: true }) } } } : {}) };
       const source = { id: diagramId, title, sourceType: 'architecture-diagram', workspaceType: functional ? 'functional' : 'code-architecture',
         diagramHash: hash, snapshot, ...(functional ? {} : { abstraction: 'csc' }) };
-      const config = { templateId: 'architecture', architectureKind: functional ? 'system' : 'code-based', projectId: functional ? 'pronto-functional' : 'pronto-code', workspaceType: source.workspaceType, system: 'Controller', sources: [] };
+      const config = { templateId: 'architecture', architectureKind: functional ? 'system' : 'code-based', projectId: functional ? 'example-functional' : 'example-code', workspaceType: source.workspaceType, system: 'Controller', sources: [] };
       const meta = { id, title, templateId: 'architecture', templateVersion: 1, projectId: config.projectId, workspaceType: config.workspaceType, folderId: 'trace-folder', config, revision: 1, sourceHash: 'fixture', baseSourceHash: 'fixture', freshness: 'current' };
       const sectionId = `${id}:s1`;
       const objects = [{ id: sectionId, sectionId: 's1', parentId: null, title, kind: 'section', text: '', sourceIds: [] },

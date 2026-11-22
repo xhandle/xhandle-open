@@ -58,12 +58,12 @@ beforeEach(() => {
   jest.spyOn(Element.prototype, 'clientWidth', 'get').mockImplementation(function () { return bounds(this).width; });
   jest.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(function () { return bounds(this).height; });
   jest.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function () { return bounds(this); });
-  // Load the real dark edge rule rather than copying a rule that could drift.
+  // The shared theme may style label chrome, but must never repaint authored paths.
   const css = readFileSync(require.resolve('../index.css'), 'utf8');
   const darkRule = css.match(/\.dark \.react-flow__edge-path\s*\{[^}]+\}/)?.[0];
-  expect(darkRule).toBeTruthy();
+  expect(darkRule).toBeUndefined();
   darkStyles = document.createElement('style');
-  darkStyles.textContent = darkRule;
+  darkStyles.textContent = css.match(/html\.dark \.react-flow__edge-text\s*\{[^}]+\}/)?.[0] || '';
   document.head.appendChild(darkStyles);
   navigationStyles = document.createElement('style');
   navigationStyles.textContent = readFileSync(require.resolve('./csuNavigation.css'), 'utf8');
@@ -266,15 +266,14 @@ test('detailed edges keep stroke and arrow alpha without route-wide opacity; sel
   expect(geometry()).toEqual(before);
 });
 
-test.each(['detailed', 'csc'])('%s paint alpha survives the existing dark-mode stroke override', async abstraction => {
+test.each(['detailed', 'csc'])('%s paint alpha and authored color survive dark appearance without global stroke overrides', async abstraction => {
   await mount(abstraction);
   const alpha = abstraction === 'detailed' ? 0.92 : 0.58;
   const before = paths().map(path => path.getAttribute('d'));
   document.documentElement.classList.add('dark');
   const rule = darkStyles.sheet.cssRules[0];
-  expect(rule.style.getPropertyPriority('stroke')).toBe('important');
-  // The alpha is independent of stroke color, so the real global important
-  // color override cannot make an idle compact edge fully opaque.
+  expect(rule.style.getPropertyPriority('stroke')).toBe('');
+  // Theme changes preserve the paint and alpha supplied by the diagram.
   for (const path of paths()) {
     expect(paint(path)).toEqual({ opacity: 1, strokeOpacity: alpha });
     expect(path.style.strokeOpacity).toBe(String(alpha));

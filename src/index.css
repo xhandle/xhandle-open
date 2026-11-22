@@ -76,33 +76,50 @@ html, body, #root { width: 100vw; height: 100vh; overflow: auto; background: var
 /* Selection & scrollbars */
 *::selection { background: rgba(76,154,255,0.28); }
 * { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
-.dark * { scrollbar-color: var(--border) transparent; }
+html.dark * { scrollbar-color: var(--border-strong) transparent; }
 
-/* Global dark shim (utility flips when .dark on html) */
-@layer base { html.dark body { @apply bg-zinc-950 text-zinc-100; } }
-
-/* ── Theme tokens (Jira-ish) ──────────────────────────────────────────── */
+/* Semantic aliases shared by utility classes, native controls and diagrams.
+   RGB channels are emitted from src/theme/palette.json by Tailwind. */
 :root {
   color-scheme: light;
-  --bg:#ffffff; --text:#0b1220;
-  --panel:#f7f8fa; --card:#ffffff;
-  --border:#e5e7eb; --border-strong:#cbd5e1;
-  --muted:#667085; --muted-2:#6b7280;
-  --accent:#4c9aff; --accent-strong:#2f7ee6;
-  --note-bg:#fef3c7; --note-border:#fcd34d;
+  --bg:rgb(var(--x-canvas)); --text:rgb(var(--x-text));
+  --panel:rgb(var(--x-panel)); --card:rgb(var(--x-surface)); --raised:rgb(var(--x-raised));
+  --inset:rgb(var(--x-inset)); --hover:rgb(var(--x-hover)); --field:rgb(var(--x-field));
+  --border:rgb(var(--x-border)); --border-strong:rgb(var(--x-borderStrong)); --control-border:rgb(var(--x-controlBorder));
+  --muted:rgb(var(--x-muted)); --muted-2:rgb(var(--x-subtle));
+  --accent:#2563eb; --accent-strong:#1d4ed8; --action:rgb(var(--x-actionBlue)); --action-purple:rgb(var(--x-actionPurple)); --action-yellow:#92400e;
+  --brand-purple-action:rgb(var(--x-brandPurpleAction)); --artifact-action:rgb(var(--x-artifactAction)); --trace-action:rgb(var(--x-traceAction));
+  --prompt-bubble:rgb(var(--x-promptBubble)); --prompt-text:rgb(var(--x-promptText));
+  --link:rgb(var(--x-link)); --focus:rgb(var(--x-focus));
+  --selected:rgb(var(--x-selected)); --selected-text:rgb(var(--x-selectedText));
+  --info-bg:rgb(var(--x-info)); --info-text:rgb(var(--x-infoText));
+  --success-bg:rgb(var(--x-success)); --success-text:rgb(var(--x-successText));
+  --warning-bg:rgb(var(--x-warning)); --warning-text:rgb(var(--x-warningText));
+  --danger-bg:rgb(var(--x-danger)); --danger-text:rgb(var(--x-dangerText));
+  --note-bg:var(--warning-bg); --note-border:var(--warning-text);
   --toolbar-bg:#0b1220; --toolbar-fg:#ffffff;
-  --chip-border-contrast:#ffffff; --label-color:#111827;
+  --chip-border-contrast:#ffffff; --label-color:var(--text);
+  --diagram-edge:rgb(var(--x-diagramEdge)); --canvas-grid:rgb(var(--x-canvasGrid));
+  --overlay:#0b122080; --popover-shadow:0 12px 36px #0b122026;
 }
-.dark {
+html.dark {
   color-scheme: dark;
-  --bg:#0f1114; --text:#e6e8eb;
-  --panel:#14171a; --card:#1a1d21;
-  --border:#2a2f36; --border-strong:#39414a;
-  --muted:#a1a6ae; --muted-2:#8b9097;
-  --accent:#4c9aff; --accent-strong:#6aa8ff;
-  --note-bg:#1f232a; --note-border:#334155;
-  --toolbar-bg:#161a1f; --toolbar-fg:#f1f5f9;
-  --chip-border-contrast:#0f1114; --label-color:#e5e7eb;
+  --accent:var(--action); --accent-strong:rgb(var(--x-actionBlueHover)); --toolbar-bg:var(--raised);
+  --chip-border-contrast:var(--bg); --overlay:#030710b8;
+  --popover-shadow:0 16px 48px #0008;
+}
+:where(button, a, input, textarea, select, summary, [tabindex]):focus-visible {
+  outline:2px solid var(--focus) !important; outline-offset:3px;
+}
+:where(input, textarea, select) { accent-color:var(--focus); }
+:where(input, textarea)::placeholder { color:var(--muted-2); opacity:1; }
+:where(input, textarea, select):disabled { cursor:not-allowed; }
+:where(html.dark) :where(input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=range]), textarea, select) {
+  background-color:var(--field); color:var(--text);
+}
+html.dark ::selection { background:#5265a6; color:#fff; }
+@media (forced-colors: active) {
+  :where(button, a, input, textarea, select, summary, [tabindex]):focus-visible { outline:2px solid Highlight !important; }
 }
 
 /* ── SysML / React Flow UI ───────────────────────────────────────────── */
@@ -180,141 +197,29 @@ html, body, #root { width: 100vw; height: 100vh; overflow: auto; background: var
 .react-flow__minimap .circle { rx: 100%; ry: 100%; }
 .react-flow__minimap .annotation { display: none; }
 
-/* React Flow (dark polish, brighter contrast) */
-.dark .react-flow__background path { stroke:#3b4355 !important; opacity:.8 !important; }
-.dark .react-flow__node { background:#1f232a !important; border:1px solid #3a4150 !important; color:#f8fafc !important; }
-.dark .react-flow__edge-path { stroke:#6aa8ff !important; stroke-width:3 !important; }
-.dark .react-flow__edge-text { fill:#f1f5f9 !important; font-size:13px !important; font-weight:600; }
-html.dark .react-flow__controls button { background-color:#23262b !important; border-color:var(--border) !important; color:var(--text) !important; }
-html.dark .react-flow__controls button:hover { background-color:#2a2f36 !important; }
-
-/* ── Utility flips in dark ───────────────────────────────────────────── */
-html.dark .bg-white        { background-color: var(--panel) !important; }
-html.dark .bg-white\/95    { background-color: color-mix(in oklab, var(--panel) 95%, transparent) !important; }
-html.dark .bg-white\/80    { background-color: color-mix(in oklab, var(--panel) 80%, transparent) !important; }
-html.dark .bg-gray-50,
-html.dark .bg-gray-100     { background-color: #1f2227 !important; }
-html.dark .bg-yellow-50    { background-color: #2a2416 !important; }
-html.dark .bg-white\/10    { background-color: rgba(57,65,74,0.30) !important; }
-
-html.dark .border,
-html.dark .border-b,
-html.dark .border-gray-200 { border-color: var(--border) !important; }
-html.dark .border-gray-300 { border-color: var(--border-strong) !important; }
-
-html.dark .text-gray-700 { color: #edeef0 !important; }
-html.dark .text-gray-600 { color: var(--muted) !important; }
-html.dark .text-gray-500 { color: #a1a6ae !important; }
-html.dark .text-\[\#0F0F12\] { color: #f4f4f5 !important; }
-
-html.dark thead.sticky,
-html.dark .sticky.bg-white,
-html.dark .border-b.bg-white,
-html.dark .border-b.bg-white\/95,
-html.dark .border-b.bg-gray-50 {
-  background-color: var(--card) !important; border-color: var(--border) !important;
-  box-shadow: 0 1px 0 0 rgba(0,0,0,0.35) inset !important;
+/* Theme diagram chrome; source/category/custom paint continues to own nodes
+   and edges. Never globally replace edge color, width, opacity or node borders. */
+.react-flow .react-flow__controls button {
+  background-color:var(--card); color:var(--text); border-color:var(--border);
 }
-
-html.dark .hover\:bg-gray-50:hover,
-html.dark .hover\:bg-gray-100:hover { background-color: #1f2227 !important; }
-html.dark .bg-gray-200 { background-color: #23262b !important; }
-html.dark .bg-\[\#ECEEFF\] { background-color: rgba(49,46,129,.30) !important; }
-
-/* Inputs */
-html.dark textarea,
-html.dark input[type="text"],
-html.dark input[type="search"],
-html.dark input[type="number"],
-html.dark select {
-  background-color: #15181c !important; border: 1px solid var(--border) !important; color: var(--text) !important;
-}
-html.dark input:focus,
-html.dark textarea:focus,
-html.dark select:focus {
-  outline: none !important; border-color: var(--accent) !important;
-  box-shadow: 0 0 0 3px rgba(76,154,255,0.25) !important;
-}
-
-/* Charts */
-html.dark .recharts-legend-item-text,
-html.dark .recharts-cartesian-axis-tick-value { fill: var(--label-color) !important; }
-html.dark .recharts-tooltip-wrapper .recharts-default-tooltip {
-  background: var(--card) !important; border-color: var(--border) !important; color: var(--text) !important;
+.react-flow .react-flow__controls button:hover { background-color:var(--hover); }
+.react-flow .react-flow__controls button svg { fill:currentColor; }
+.react-flow .react-flow__minimap { background-color:var(--panel); }
+.react-flow .react-flow__minimap-mask { fill:rgb(var(--x-canvas) / .65); }
+.react-flow .react-flow__node-default,
+.react-flow .react-flow__node-input,
+.react-flow .react-flow__node-output { background:var(--card); color:var(--text); border-color:var(--border-strong); }
+html.dark .react-flow__edge-text { fill:var(--text); }
+html.dark .react-flow__edge-textbg { fill:var(--card); }
+html.dark .react-flow__attribution { background:var(--panel); color:var(--muted); }
+html.dark .react-flow__attribution a { color:var(--muted); }
+.recharts-cartesian-axis-tick-value { fill:var(--muted); }
+.recharts-legend-item-text { color:var(--text) !important; }
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  background:var(--raised) !important; border-color:var(--border-strong) !important; color:var(--text) !important;
 }
 .recharts-cartesian-grid-horizontal line,
-.recharts-cartesian-grid-vertical line { stroke: var(--border) !important; }
-
-/* Cards / panels */
-html.dark .rounded-xl.border,
-html.dark .rounded-2xl.border,
-html.dark .panel,
-html.dark .card {
-  background-color: var(--card) !important; border-color: var(--border) !important;
-  box-shadow: 0 1px 0 0 rgba(0,0,0,0.35), 0 8px 24px rgba(0,0,0,0.28) !important;
-}
-
-/* ── Top bar ─────────────────────────────────────────────────────────── */
-html.dark .sticky.top-0.border-b,
-html.dark .fixed.top-0.border-b,
-html.dark header.sticky.top-0.border-b {
-  background-color: #0b0d10 !important; border-color: #1f242b !important; color: #e6e8eb !important;
-}
-html.dark .sticky.top-0.border-b *,
-html.dark .fixed.top-0.border-b *,
-html.dark header.sticky.top-0.border-b * { color: #e6e8eb !important; }
-html.dark .sticky.top-0.border-b .hover\:bg-gray-50:hover,
-html.dark .sticky.top-0.border-b .hover\:bg-gray-100:hover,
-html.dark .fixed.top-0.border-b .hover\:bg-gray-50:hover,
-html.dark .fixed.top-0.border-b .hover\:bg-gray-100:hover { background-color: #171b20 !important; }
-html.dark .sticky.top-0.border-b .border,
-html.dark .fixed.top-0.border-b .border { border-color: #2a2f36 !important; }
-
-/* ── Copilot (black surfaces + legible controls) ───────────────────────── */
-html.dark .copilot-header {
-  background-color: #0b0d10 !important; border-color: #1f242b !important; color: #e6e8eb !important;
-}
-html.dark .copilot-header .text-neutral-700,
-html.dark .copilot-header .text-neutral-600,
-html.dark .copilot-header .text-neutral-500 { color: #e6e8eb !important; }
-html.dark .copilot-header button:not(.bg-indigo-600) {
-  color: #e6e8eb !important; border-color: #2a2f36 !important; background-color: transparent !important;
-}
-html.dark .copilot-header button:not(.bg-indigo-600):hover { background-color: #1f2227 !important; }
-html.dark .copilot-header .border.bg-white {
-  background-color: var(--card) !important; border-color: var(--border) !important; color: var(--text) !important;
-}
-html.dark .copilot-header .bg-neutral-200 { background-color: #23262b !important; }
-html.dark .copilot-header .text-neutral-700 { color: #e6e8eb !important; }
-
-html.dark .rounded-xl.border.bg-white,
-html.dark .rounded-lg.border.bg-white,
-html.dark .bg-white.shadow-sm,
-html.dark .p-4.border-t.bg-white,
-html.dark .px-4.py-3.border-b.bg-neutral-50,
-html.dark .px-3.py-2.border-b.bg-neutral-50 {
-  background-color: #0b0d10 !important; border-color: #1f242b !important; color: #e6e8eb !important;
-}
-
-html.dark .hover\:bg-neutral-50:hover { background-color: #101317 !important; }
-html.dark .bg-indigo-50 {
-  background-color: rgba(49,46,129,0.30) !important; color: #f4f4f5 !important;
-  box-shadow: inset 2px 0 0 0 rgba(76,154,255,0.9);
-}
-html.dark .text-\[\#0F0F12\] { color: #f4f4f5 !important; }
-html.dark .bg-\[\#ECEEFF\] { background-color: rgba(49,46,129,.30) !important; }
-
-html.dark .copilot-header input,
-html.dark .p-4.border-t.bg-white textarea,
-html.dark .p-4.border-t.bg-white input {
-  background-color: #101317 !important; border: 1px solid #2a2f36 !important; color: #e6e8eb !important;
-}
-
-/* Headings */
-html:not(.dark) h1, html:not(.dark) h2, html:not(.dark) h3, html:not(.dark) h4,
-html:not(.dark) .prose h1, html:not(.dark) .prose h2, html:not(.dark) .prose h3, html:not(.dark) .prose h4 { color: #0f0f12 !important; }
-html.dark h1, html.dark h2, html.dark h3, html.dark h4,
-html.dark .prose h1, html.dark .prose h2, html.dark .prose h3, html.dark .prose h4 { color: var(--text) !important; }
+.recharts-cartesian-grid-vertical line { stroke:var(--border); }
 
 /* Conversational wizard: slow, continuous idle haze around the avatar. */
 .xhandle-avatar-fog {
@@ -446,5 +351,27 @@ html.dark .prose h1, html.dark .prose h2, html.dark .prose h3, html.dark .prose 
   .cba-project-export-list {
     padding-top: 8px;
     padding-bottom: 8px;
+  }
+}
+
+/* Messages use a quiet surface; primary actions retain their own hierarchy. */
+.collaborator-user-bubble { background-color:var(--prompt-bubble); color:var(--prompt-text); }
+
+/* Structured report diagrams follow appearance without changing their model. */
+.report-graphical-diagram {
+  --report-edge:#2d5c9e; --report-label-bg:#fff; --report-label-text:#334155;
+  --report-node-bg:#eff6ff; --report-node-border:#8cadd8; --report-node-text:#17375e;
+}
+html.dark .report-graphical-diagram {
+  --report-edge:var(--diagram-edge); --report-label-bg:var(--card); --report-label-text:var(--text);
+  --report-node-bg:var(--info-bg); --report-node-border:var(--border-strong); --report-node-text:var(--text);
+}
+@media print {
+  .report-graphical-diagram figcaption { color:#0b1220; }
+  .report-graphical-diagram > ul { color:#92400e; }
+  html.dark .report-graphical-diagram {
+    --report-edge:#2d5c9e; --report-label-bg:#fff; --report-label-text:#334155;
+    --report-node-bg:#eff6ff; --report-node-border:#8cadd8; --report-node-text:#17375e;
+    background:#fff; color:#0b1220;
   }
 }

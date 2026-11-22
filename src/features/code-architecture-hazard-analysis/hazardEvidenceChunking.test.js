@@ -180,6 +180,10 @@ test('validated extraction is reused in memory without checkpoint storage',async
 test.each(['STPA','HARA','FHA'])('%s completes exhausted evidence once and preserves reviewed decisions',async method=>{
  const request=jest.fn(async p=>summary(items(p)));
  const applicabilityRequest=jest.fn(async p=>JSON.parse(p.split('\nRows: ')[1]).map(({id})=>({id,applicable:'Yes',rationale:'Meaningful deviation'})));
+ if(method==='STPA'){
+  await expect(generateFastHazards({method,sources:[{...source,reviewedApplicability:'Yes',reviewedRationale:'Accepted command deviation'},{...source,id:'HA-2',reviewedApplicability:'No'}],context:{},request,applicabilityRequest,onMetrics:()=>{},onDiagnostic:()=>{}})).rejects.toMatchObject({code:'COMPACT_HAZARD_INCOMPLETE',partialResults:[expect.objectContaining({id:'HA-2',applicable:'No'})]});
+  expect(request).toHaveBeenCalledTimes(12);return;
+ }
  const result=await generateFastHazards({method,sources:[{...source,reviewedApplicability:'Yes',reviewedRationale:'Accepted command deviation'},{...source,id:'HA-2',reviewedApplicability:'No'}],context:{},request,applicabilityRequest,onMetrics:()=>{},onDiagnostic:()=>{}});
  expect(result).toHaveLength(2);
  expect(result[0]).toMatchObject({applicable:'Yes',assessmentBasis:expect.stringContaining('Assumption-based')});
@@ -189,6 +193,10 @@ test.each(['STPA','HARA','FHA'])('%s completes exhausted evidence once and prese
 test.each(['STPA','HARA','FHA'])('%s does not restart invalid evidence recovery on later passes',async method=>{
  const request=jest.fn(async()=>({coveredRefs:[],facts:[],constraints:[],safeguards:[],conflicts:[],unknowns:[]}));
  const applicabilityRequest=jest.fn(async p=>JSON.parse(p.split('\nRows: ')[1]).map(({id})=>({id,needsEvidence:true,rationale:'Need command deadline'})));
+ if(method==='STPA'){
+  await expect(generateFastHazards({method,sources:[source],context:{},request,applicabilityRequest,onMetrics:()=>{},onDiagnostic:()=>{}})).rejects.toMatchObject({code:'COMPACT_HAZARD_INCOMPLETE',partialResults:[]});
+  expect(applicabilityRequest).toHaveBeenCalledTimes(1);expect(request.mock.calls.length).toBeLessThanOrEqual(6);return;
+ }
  const result=await generateFastHazards({method,sources:[source],context:{},request,applicabilityRequest,onMetrics:()=>{},onDiagnostic:()=>{}});
  expect(result[0].assessmentBasis).toContain('Assumption-based');
  expect(applicabilityRequest).toHaveBeenCalledTimes(1);

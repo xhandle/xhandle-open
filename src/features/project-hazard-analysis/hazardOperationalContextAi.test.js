@@ -34,6 +34,25 @@ describe("hazard operational context AI", () => {
       .toThrow("did not contain an operational-context list");
   });
 
+  it("separates organization examples from user scope and preserves source operating concepts", async () => {
+    const fetchMock = jest.spyOn(global,"fetch").mockResolvedValue({ok:true,json:async()=>({choices:[{message:{content:JSON.stringify({contexts:[
+      {scenario:'Forward yard travel',mode:'Teleoperated operation',conditions:'Remote driver holds authority',assumptions:'Simulated actuation'},
+    ]})}}]})});
+    await generateHazardOperationalContexts({description:'Create the following scenarios:\n- Forward yard travel',
+      organizationContext:'Organization builds autonomous haulage. Create the following scenarios:\n- Autonomous dumping',
+      projectContext:'This source is a forward-only remotely driven simulation, not an autonomous system.',
+      functionalRows:[{fromFunction:'tick',controlAction:'Plan speed',toFunction:'plan_speed',
+        controlDetails:'Reset commands return zero speed in the reset cycle.'}]});
+    const prompt = JSON.parse(fetchMock.mock.calls[0][1].body).messages[1].content;
+    expect(prompt).toContain('Project operating concept and source context (project evidence)');
+    expect(prompt).toContain('forward-only remotely driven simulation');
+    expect(prompt).toContain('Organization guidance (terminology and priorities; does not establish project capabilities)');
+    expect(prompt).toContain('Reset commands return zero speed');
+    expect(prompt).toContain('must not become autonomous operation');
+    expect(prompt).toContain('Required new scenarios: ["Forward yard travel"]');
+    expect(prompt).not.toContain('Required new scenarios: ["Forward yard travel","Autonomous dumping"]');
+  });
+
   it("recognizes an explicit bulleted scenario request without treating descriptive prompts as exact lists", () => {
     expect(extractExplicitScenarioRequests(`Create the following scenarios:\n- Hauling on a production route\n- Loading at the shovel\n3. Dumping at the crusher`)).toEqual([
       "Hauling on a production route",

@@ -4,6 +4,7 @@ jest.mock('./codeArchitectureHazardStore',()=>({saveCodeArchitectureHazardRun:je
 import {fetchLLMResponse} from '../../components/aiAnalysisSTPA';
 import {saveCodeArchitectureHazardRun} from './codeArchitectureHazardStore';
 import {runCodeArchitectureHazardAnalysis} from './codeArchitectureHazardRunner';
+import {answer} from './fastHazardTestFixtures';
 import {generateFastHazards} from './resultsFirstHazardPipeline';
 import {usableHazardInputs} from './hazardCompletionSupport';
 import {recordUserPreprocessing} from '../project-hazard-analysis/hazardUserPreprocessing';
@@ -52,6 +53,12 @@ test.each(['STPA','HARA','FHA'])('%s preserves screened Yes through fallback and
  const applicabilityRequest=jest.fn(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>({id,applicable:'Yes',rationale}))));
  const request=jest.fn(async()=>{throw new Error('Provider unavailable');});
  const args={method,sources:[unreviewed],context:{},checkpoint,request,applicabilityRequest,...quiet};
+ if(method==='STPA'){
+  await expect(generateFastHazards(args)).rejects.toMatchObject({code:'COMPACT_HAZARD_INCOMPLETE',partialResults:[]});
+  request.mockImplementation(async()=>[answer('STPA','HA-1')]);
+  const resumed=await generateFastHazards(args);
+  expect(resumed[0]).toMatchObject({applicable:'Yes',applicabilityRationale:rationale});return;
+ }
  const result=await generateFastHazards(args);
  expect(result[0]).toMatchObject({applicable:'Yes',applicabilityRationale:rationale});
  request.mockClear();applicabilityRequest.mockClear();

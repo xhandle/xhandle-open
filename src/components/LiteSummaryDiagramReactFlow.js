@@ -44,6 +44,7 @@ import './functionalViewportNavigation.css';
 import { diagramRectsOverlap, GROUP_COLLISION_CLEARANCE } from './functionalDiagramCollision';
 import { separateContainedFunctions, tightenSystemSpacing, systemForElement, tightenSystemSubsystemSpacing, separateSystemGroups, rowsWithDiagramSystems, reconcileTableSystems, absoluteElementPosition, applyGroupGeometry, canContainElement, detachDeletedSystemParents, fitSystemAncestors, isSystemGroup, orderParentElements } from './functionalSystemGroups';
 import { captureFullDiagram } from './utils/captureFullDiagram';
+import { captureReportDiagramImages } from './utils/captureReportDiagramImages';
 import { SmartBezierEdge } from '@tisoap/react-flow-smart-edge';
 import ELK from 'elkjs/lib/elk.bundled.js';
 import {
@@ -811,8 +812,8 @@ const CommentBadge = ({ count = 0, onClick }) => {
         padding: '0 6px',
         borderRadius: 999,
         border: `1px solid ${rgba(BRAND.purple, 0.35)}`,
-        background: '#fff',
-        color: BRAND.purple,
+        background: "var(--card)",
+        color: "var(--link)",
         fontSize: 11,
         fontWeight: 800,
         cursor: 'pointer',
@@ -850,7 +851,7 @@ const BidirectionalNode = React.memo(({ id, data, selected }) => {
         padding: THEME.node.pad,
         border,
         borderRadius: THEME.radius,
-        backgroundColor: '#fff',
+        backgroundColor: "var(--card)",
         backgroundImage: `linear-gradient(${tint}, ${tint})`,
         boxShadow: selected
           ? `0 0 0 5px ${rgba(brandColor, 0.18)}, ${THEME.node.shadow}`
@@ -903,7 +904,7 @@ const BidirectionalNode = React.memo(({ id, data, selected }) => {
         style={{
           fontWeight: 700,
           fontSize: THEME.node.titleSize,
-          color: BRAND.dark,
+          color: "var(--text)",
           textAlign: 'center',
           lineHeight: 1.2,
           wordBreak: 'break-word',
@@ -963,7 +964,7 @@ const GroupBoxNode = React.memo(({ data, selected }) => {
           padding: '12px 14px',
           fontSize: 13,
           fontWeight: 700,
-          color: BRAND.dark,
+          color: "var(--text)",
           background: rgba(brandColor, 0.08),
 	          borderBottom: `1px dashed ${rgba(brandColor, 0.3)}`,
 	          textAlign: 'left',
@@ -989,10 +990,10 @@ const NoteNode = React.memo(({ data, selected }) => {
         padding: 14,
         border: `1px solid ${rgba(brandColor, 0.45)}`,
         borderRadius: 8,
-        backgroundColor: '#fff',
+        backgroundColor: "var(--card)",
         backgroundImage: `linear-gradient(${tint}, ${tint})`,
         boxShadow: selected ? `0 0 0 5px ${rgba(brandColor, 0.18)}, ${THEME.node.shadow}` : THEME.node.shadow,
-        color: BRAND.dark,
+        color: "var(--text)",
         display: 'flex',
         flexDirection: 'column',
         gap: 8,
@@ -2835,7 +2836,7 @@ const DiagramBody = forwardRef(function DiagramBody(
   const renderAssociatedHazardRows = useCallback((associatedRows, { accentColor, accentTint, emptyText }) => {
     if (!associatedRows.length) {
       return (
-        <div style={{ fontSize: 13, color: 'rgba(15,15,18,0.58)' }}>
+        <div style={{ fontSize: 13, color: "var(--muted)" }}>
           {emptyText}
         </div>
       );
@@ -2848,7 +2849,7 @@ const DiagramBody = forwardRef(function DiagramBody(
             style={{
               border: `1px solid ${rgba(accentColor, 0.18)}`,
               borderRadius: 8,
-              background: '#F8FAFC',
+              background: "var(--panel)",
               overflow: 'hidden',
             }}
           >
@@ -2896,11 +2897,11 @@ const DiagramBody = forwardRef(function DiagramBody(
                   <div
                     style={{
                       padding: '8px 10px',
-                      borderTop: '1px solid rgba(15,15,18,0.08)',
+                      borderTop: "1px solid rgb(var(--x-text) / 0.08)",
                       fontSize: 12,
                       fontWeight: 700,
-                      color: '#4B5563',
-                      background: 'white',
+                      color: "var(--muted)",
+                      background: "var(--card)",
                     }}
                   >
                     {hazardHeaders[idx] || `Column ${idx + 1}`}
@@ -2908,10 +2909,10 @@ const DiagramBody = forwardRef(function DiagramBody(
                   <div
                     style={{
                       padding: '8px 10px',
-                      borderTop: '1px solid rgba(15,15,18,0.08)',
+                      borderTop: "1px solid rgb(var(--x-text) / 0.08)",
                       fontSize: 12,
-                      color: '#111827',
-                      background: 'white',
+                      color: "var(--text)",
+                      background: "var(--card)",
                       whiteSpace: 'pre-wrap',
                       wordBreak: 'break-word',
                     }}
@@ -4322,6 +4323,9 @@ useEffect(() => {
       clearTimeout(saveTimer.current);
       savePositions(storageKey, posRef.current);
     },
+    async exportReportImages() {
+      return captureReportDiagramImages(diagramHostRef.current?.querySelector('.react-flow'), getViewport().zoom);
+    },
     async exportAsImage() {
       const flowCanvas = diagramHostRef.current?.querySelector('.react-flow');
       if (!flowCanvas) return null;
@@ -5404,7 +5408,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
 
   const toolSectionLabelStyle = {
     margin: '6px 2px 2px',
-    color: 'rgba(15,15,18,0.52)',
+    color: "var(--muted)",
     fontSize: 10,
     fontWeight: 800,
     letterSpacing: 0,
@@ -5422,9 +5426,9 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 6,
-    border: `1px solid ${disabled ? 'rgba(15,15,18,0.12)' : rgba(tone, active ? 0.8 : 0.32)}`,
-    background: disabled ? '#F8FAFC' : active ? tone : 'white',
-    color: disabled ? 'rgba(15,15,18,0.34)' : active ? 'white' : tone,
+    border: `1px solid ${disabled ? "rgb(var(--x-text) / 0.12)" : rgba(tone, active ? 0.8 : 0.32)}`,
+    background: disabled ? "var(--panel)" : active ? (tone === BRAND.purple ? "var(--action-purple)" : tone === BRAND.yellow ? "var(--action-yellow)" : "var(--action)") : "var(--card)",
+    color: disabled ? "rgb(var(--x-text) / 0.34)" : active ? 'white' : (tone === BRAND.yellow ? 'var(--warning-text)' : 'var(--link)'),
     fontWeight: 800,
     fontSize: 13,
     lineHeight: 1,
@@ -5438,9 +5442,9 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 6,
-    border: `1px solid ${active ? rgba(BRAND.blue, 0.6) : 'rgba(15,15,18,0.12)'}`,
-    background: active ? '#EEF4FF' : 'white',
-    color: active ? BRAND.blue : 'rgba(15,15,18,0.68)',
+    border: `1px solid ${active ? rgba(BRAND.blue, 0.6) : "rgb(var(--x-text) / 0.12)"}`,
+    background: active ? "var(--info-bg)" : "var(--card)",
+    color: active ? "var(--link)" : "rgb(var(--x-text) / 0.68)",
     fontWeight: 900,
     fontSize: 13,
     cursor: 'pointer',
@@ -5572,7 +5576,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
     <>
       {toolCategories.map((category, index) => (
         <React.Fragment key={category.id}>
-          {index > 0 && <div style={{ height: 1, background: 'rgba(15,15,18,0.08)', margin: '2px 0' }} />}
+          {index > 0 && <div style={{ height: 1, background: "rgb(var(--x-text) / 0.08)", margin: '2px 0' }} />}
           {renderCanvasToolSection(category.id)}
         </React.Fragment>
       ))}
@@ -5602,16 +5606,16 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
             height: '100%',
             pointerEvents: 'auto',
             transition: 'width 160ms ease, min-width 160ms ease, flex-basis 160ms ease',
-            border: '1px solid rgba(15,15,18,0.12)',
+            border: "1px solid rgb(var(--x-text) / 0.12)",
             borderRadius: 8,
-            background: '#fff',
+            background: "var(--card)",
             overflow: 'hidden',
           }}
         >
           <div
             style={{
               height: '100%',
-              background: '#fff',
+              background: "var(--card)",
               overflow: 'hidden',
               display: 'flex',
               flexDirection: 'column',
@@ -5625,9 +5629,9 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
               style={{
                 height: 34,
                 border: 0,
-                borderBottom: canvasToolbarCollapsed ? 0 : '1px solid rgba(15,15,18,0.08)',
-                background: canvasToolbarCollapsed ? BRAND.blue : '#F8FAFC',
-                color: canvasToolbarCollapsed ? 'white' : BRAND.dark,
+                borderBottom: canvasToolbarCollapsed ? 0 : "1px solid rgb(var(--x-text) / 0.08)",
+                background: canvasToolbarCollapsed ? "var(--action)" : "var(--panel)",
+                color: canvasToolbarCollapsed ? 'white' : "var(--text)",
                 fontWeight: 900,
                 fontSize: 12,
                 cursor: 'pointer',
@@ -5960,10 +5964,10 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
             }
           }}
         >
-          <Background variant="dots" gap={18} size={1} />
+          <Background variant="dots" gap={18} size={1} color="var(--canvas-grid)" />
           <Controls showInteractive={false} position="bottom-right" />
         </ReactFlow>
-        {manualDropLabel && <div role="status" style={{ position:'absolute',top:12,left:12,padding:'8px 12px',background:'#eef2ff',color:'#4338ca',borderRadius:8,pointerEvents:'none',zIndex:20 }}>{manualDropLabel}</div>}
+        {manualDropLabel && <div role="status" style={{ position:'absolute',top:12,left:12,padding:'8px 12px',background:"var(--selected)",color:'#4338ca',borderRadius:8,pointerEvents:'none',zIndex:20 }}>{manualDropLabel}</div>}
         </div>
       </div>
 
@@ -5974,8 +5978,8 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
             left: contextMenu.x,
             top: contextMenu.y,
             zIndex: 30,
-            background: '#fff',
-            border: '1px solid rgba(15,15,18,0.12)',
+            background: "var(--card)",
+            border: "1px solid rgb(var(--x-text) / 0.12)",
             borderRadius: 10,
             boxShadow: '0 10px 28px rgba(15,15,18,0.18)',
             minWidth: 220,
@@ -5985,27 +5989,27 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
         >
           <button
             onClick={() => openCommentComposer(contextMenu)}
-            style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px', fontSize: 13, fontWeight: 700, color: BRAND.purple, background: '#fff', border: 'none', cursor: 'pointer' }}
+            style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px', fontSize: 13, fontWeight: 700, color: "var(--link)", background: "var(--card)", border: 'none', cursor: 'pointer' }}
           >
             💬 Add comment
           </button>
           {contextMenu.targetType === 'node' && contextMenu.nodeIds?.length > 0 && groupBoxes.length > 0 && (
             <>
-              <div style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, borderTop: '1px solid rgba(15,15,18,0.08)', borderBottom: '1px solid rgba(15,15,18,0.08)' }}>
+              <div style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, borderTop: "1px solid rgb(var(--x-text) / 0.08)", borderBottom: "1px solid rgb(var(--x-text) / 0.08)" }}>
                 Add Selected Nodes To Group
               </div>
               {groupBoxes.filter(box => contextMenu.nodeIds.some(id => canContainElement(box, getNodes().find(node => node.id === id), groupBoxes))).map((box) => (
                 <button
                   key={box.id}
                   onClick={() => assignNodesToGroup(contextMenu.nodeIds, box.id)}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px', fontSize: 13, background: '#fff', border: 'none', cursor: 'pointer' }}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px', fontSize: 13, background: "var(--card)", border: 'none', cursor: 'pointer' }}
                 >
                   {box.label}{isSystemGroup(box) ? ' (System)' : ''}
                 </button>
               ))}
               <button
                 onClick={() => ungroupNodes(contextMenu.nodeIds)}
-                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px', fontSize: 13, background: '#fff', border: 'none', borderTop: '1px solid rgba(15,15,18,0.08)', cursor: 'pointer' }}
+                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px', fontSize: 13, background: "var(--card)", border: 'none', borderTop: "1px solid rgb(var(--x-text) / 0.08)", cursor: 'pointer' }}
               >
                 Remove From Group
               </button>
@@ -6024,41 +6028,41 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
             alignItems: 'center',
             justifyContent: 'center',
             padding: 20,
-            background: 'rgba(15,15,18,0.34)',
+            background: "var(--overlay)",
           }}
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) setCommentModal(null);
           }}
         >
-          <div style={{ width: 'min(560px, 94%)', maxHeight: '82%', display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRadius: 14, border: '1px solid rgba(15,15,18,0.12)', background: '#fff', boxShadow: '0 22px 60px rgba(15,15,18,0.24)' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, padding: '16px 18px', borderBottom: '1px solid rgba(15,15,18,0.1)' }}>
+          <div style={{ width: 'min(560px, 94%)', maxHeight: '82%', display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRadius: 14, border: "1px solid rgb(var(--x-text) / 0.12)", background: "var(--card)", boxShadow: '0 22px 60px rgba(15,15,18,0.24)' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, padding: '16px 18px', borderBottom: "1px solid rgb(var(--x-text) / 0.1)" }}>
               <div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: BRAND.dark }}>Comments</div>
-                <div style={{ marginTop: 3, fontSize: 12, color: '#64748B' }}>
+                <div style={{ fontSize: 16, fontWeight: 800, color: "var(--text)" }}>Comments</div>
+                <div style={{ marginTop: 3, fontSize: 12, color: "var(--muted)" }}>
                   {commentModal.targetType === 'edge' ? 'Edge' : 'Node'} · {commentModal.targetLabel}
                 </div>
               </div>
-              <button type="button" onClick={() => setCommentModal(null)} aria-label="Close comments" style={{ border: 'none', background: 'transparent', fontSize: 22, lineHeight: 1, color: '#64748B', cursor: 'pointer' }}>×</button>
+              <button type="button" onClick={() => setCommentModal(null)} aria-label="Close comments" style={{ border: 'none', background: 'transparent', fontSize: 22, lineHeight: 1, color: "var(--muted)", cursor: 'pointer' }}>×</button>
             </div>
 
             <div style={{ minHeight: 0, overflowY: 'auto', padding: '14px 18px' }}>
               {commentsForDiagramTarget(comments, commentModal.targetType, commentModal.targetId).length > 0 ? (
                 <div style={{ display: 'grid', gap: 8, marginBottom: 14 }}>
                   {commentsForDiagramTarget(comments, commentModal.targetType, commentModal.targetId).map((comment) => (
-                    <div key={comment.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: 10, borderRadius: 9, border: '1px solid #E2E8F0', background: '#F8FAFC' }}>
+                    <div key={comment.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: 10, borderRadius: 9, border: "1px solid var(--border)", background: "var(--panel)" }}>
                       <div style={{ minWidth: 0, flex: 1 }}>
-                        <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13, lineHeight: 1.45, color: '#1E293B' }}>{comment.text}</div>
-                        <div style={{ marginTop: 5, fontSize: 10, color: '#94A3B8' }}>{new Date(comment.createdAt).toLocaleString()}</div>
+                        <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13, lineHeight: 1.45, color: "var(--text)" }}>{comment.text}</div>
+                        <div style={{ marginTop: 5, fontSize: 10, color: "var(--muted-2)" }}>{new Date(comment.createdAt).toLocaleString()}</div>
                       </div>
-                      <button type="button" onClick={() => deleteDiagramComment(comment.id)} title="Delete comment" aria-label="Delete comment" style={{ border: 'none', background: 'transparent', color: '#DC2626', cursor: 'pointer', fontSize: 16 }}>×</button>
+                      <button type="button" onClick={() => deleteDiagramComment(comment.id)} title="Delete comment" aria-label="Delete comment" style={{ border: 'none', background: 'transparent', color: "var(--danger-text)", cursor: 'pointer', fontSize: 16 }}>×</button>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div style={{ marginBottom: 12, fontSize: 13, color: '#64748B' }}>No comments yet.</div>
+                <div style={{ marginBottom: 12, fontSize: 13, color: "var(--muted)" }}>No comments yet.</div>
               )}
 
-              <label htmlFor="diagram-comment-draft" style={{ display: 'block', marginBottom: 6, fontSize: 12, fontWeight: 700, color: '#334155' }}>Add a comment</label>
+              <label htmlFor="diagram-comment-draft" style={{ display: 'block', marginBottom: 6, fontSize: 12, fontWeight: 700, color: "var(--text)" }}>Add a comment</label>
               <textarea
                 id="diagram-comment-draft"
                 autoFocus
@@ -6068,17 +6072,17 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                   if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') saveCommentDraft();
                 }}
                 placeholder="Enter review feedback, a question, or an engineering note…"
-                style={{ width: '100%', minHeight: 110, resize: 'vertical', borderRadius: 9, border: '1px solid #CBD5E1', padding: 10, fontSize: 13, lineHeight: 1.45, outline: 'none' }}
+                style={{ width: '100%', minHeight: 110, resize: 'vertical', borderRadius: 9, border: "1px solid var(--border-strong)", padding: 10, fontSize: 13, lineHeight: 1.45, outline: 'none' }}
               />
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '12px 18px', borderTop: '1px solid rgba(15,15,18,0.1)' }}>
-              <button type="button" onClick={() => setCommentModal(null)} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #CBD5E1', background: '#fff', color: '#334155', cursor: 'pointer' }}>Close</button>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '12px 18px', borderTop: "1px solid rgb(var(--x-text) / 0.1)" }}>
+              <button type="button" onClick={() => setCommentModal(null)} style={{ padding: '8px 12px', borderRadius: 8, border: "1px solid var(--border-strong)", background: "var(--card)", color: "var(--text)", cursor: 'pointer' }}>Close</button>
               <button
                 type="button"
                 onClick={saveCommentDraft}
                 disabled={!String(commentModal.draft || '').trim()}
-                style={{ padding: '8px 13px', borderRadius: 8, border: 'none', background: BRAND.purple, color: '#fff', fontWeight: 700, cursor: String(commentModal.draft || '').trim() ? 'pointer' : 'not-allowed', opacity: String(commentModal.draft || '').trim() ? 1 : 0.5 }}
+                style={{ padding: '8px 13px', borderRadius: 8, border: 'none', background: "var(--brand-purple-action)", color: '#fff', fontWeight: 700, cursor: String(commentModal.draft || '').trim() ? 'pointer' : 'not-allowed', opacity: String(commentModal.draft || '').trim() ? 1 : 0.5 }}
               >
                 Add comment
               </button>
@@ -6094,7 +6098,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
             position: 'absolute',
             inset: 0,
             zIndex: 100,
-            background: 'rgba(15,15,18,0.12)',
+            background: "var(--overlay)",
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -6105,7 +6109,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
         >
           <div
             style={{
-              background: 'white',
+              background: "var(--card)",
               border: '1px solid rgba(0,0,0,0.1)',
               borderRadius: 12,
               width: 'min(860px, calc(100% - 32px))',
@@ -6162,8 +6166,8 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                       justifyContent: 'center',
                       borderRadius: 8,
                       border: '1px solid rgba(122,55,255,0.28)',
-                      background: editModal.regeneratingDescription ? '#F3F4F6' : '#F5F0FF',
-                      color: BRAND.purple,
+                      background: editModal.regeneratingDescription ? "var(--inset)" : "var(--selected)",
+                      color: "var(--link)",
                       cursor: editModal.regeneratingDescription ? 'wait' : 'pointer',
                       fontSize: 16,
                       lineHeight: 1,
@@ -6185,9 +6189,9 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                 rows={4}
               />
             </label>
-            {editModal.saveError && <div role="alert" style={{ marginTop: 6, color: '#B91C1C' }}>{editModal.saveError}</div>}
+            {editModal.saveError && <div role="alert" style={{ marginTop: 6, color: "var(--danger-text)" }}>{editModal.saveError}</div>}
             {editModal.descriptionError && (
-              <div role="alert" style={{ marginTop: 6, fontSize: 12, color: '#B91C1C' }}>
+              <div role="alert" style={{ marginTop: 6, fontSize: 12, color: "var(--danger-text)" }}>
                 {editModal.descriptionError}
               </div>
             )}
@@ -6204,7 +6208,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                         width: 28,
                         height: 28,
                         borderRadius: 999,
-                        border: editModal.color === color ? `2px solid ${BRAND.dark}` : '1px solid rgba(15,15,18,0.15)',
+                        border: editModal.color === color ? `2px solid ${BRAND.dark}` : "1px solid rgb(var(--x-text) / 0.15)",
                         background: color,
                         cursor: 'pointer',
                         boxShadow: editModal.color === color ? '0 0 0 2px rgba(15,15,18,0.08)' : 'none',
@@ -6218,7 +6222,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                   aria-label="Custom color"
                   value={editModal.color || BRAND.blue}
                   onChange={(e) => setEditModal((m) => ({ ...m, color: e.target.value }))}
-                  style={{ display: 'block', width: 56, height: 36, padding: 0, border: '1px solid #ddd', borderRadius: 8, background: '#fff' }}
+                  style={{ display: 'block', width: 56, height: 36, padding: 0, border: '1px solid #ddd', borderRadius: 8, background: "var(--card)" }}
                 />
               </div>
             )}
@@ -6248,16 +6252,16 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                 emptyText: 'No linked Mission/Reliability issues for this item.' },
             ].map((group) => (
               <details key={`${editModal.id}-${group.key}`}
-                style={{ marginTop: 16, borderTop: '1px solid rgba(15,15,18,0.1)', paddingTop: 14 }}
+                style={{ marginTop: 16, borderTop: "1px solid rgb(var(--x-text) / 0.1)", paddingTop: 14 }}
               >
                 <summary style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
-                  <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.dark }}>{group.label}</span>
-                  <span style={{ fontSize: 12, color: 'rgba(15,15,18,0.58)' }}>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>{group.label}</span>
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>
                     {group.rows.length} result{group.rows.length === 1 ? '' : 's'}
                   </span>
                 </summary>
                 {!hazardDataRows.length ? (
-                  <div style={{ fontSize: 13, color: 'rgba(15,15,18,0.58)' }}>
+                  <div style={{ fontSize: 13, color: "var(--muted)" }}>
                     Run hazard analysis to see linked results here.
                   </div>
                 ) : renderAssociatedHazardRows(group.rows, group)}
@@ -6266,24 +6270,24 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
             <details key={`${editModal.id}-issues`}
               style={{
                 marginTop: 16,
-                borderTop: '1px solid rgba(15,15,18,0.1)',
+                borderTop: "1px solid rgb(var(--x-text) / 0.1)",
                 paddingTop: 14,
               }}
             >
               <summary style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.dark }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>
                   Associated Safety Issues
                 </div>
-                <div style={{ fontSize: 12, color: 'rgba(15,15,18,0.58)' }}>
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>
                   {editSafetyIssues.length} issue{editSafetyIssues.length === 1 ? '' : 's'}
                 </div>
               </summary>
               {!Array.isArray(riskRegister) || !riskRegister.length ? (
-                <div style={{ fontSize: 13, color: 'rgba(15,15,18,0.58)' }}>
+                <div style={{ fontSize: 13, color: "var(--muted)" }}>
                   Generate the risk assessment to see consolidated safety issues here.
                 </div>
               ) : editSafetyIssues.length === 0 ? (
-                <div style={{ fontSize: 13, color: 'rgba(15,15,18,0.58)' }}>
+                <div style={{ fontSize: 13, color: "var(--muted)" }}>
                   No consolidated safety issues are linked to this {editModal.aggregated ? 'aggregated edge' : editModal.type}.
                 </div>
               ) : (
@@ -6294,7 +6298,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                       style={{
                         border: '1px solid rgba(122,55,255,0.18)',
                         borderRadius: 8,
-                        background: '#F8FAFC',
+                        background: "var(--panel)",
                         overflow: 'hidden',
                       }}
                     >
@@ -6303,8 +6307,8 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                           cursor: 'pointer',
                           listStyle: 'none',
                           padding: '8px 10px',
-                          background: '#F5F0FF',
-                          color: '#4C1D95',
+                          background: "var(--selected)",
+                          color: "var(--selected-text)",
                           fontSize: 12,
                           fontWeight: 700,
                         }}
@@ -6323,7 +6327,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                               style={{
                                 border: 'none',
                                 background: 'transparent',
-                                color: BRAND.purple,
+                                color: "var(--link)",
                                 fontSize: 12,
                                 fontWeight: 700,
                                 textDecoration: 'underline',
@@ -6359,11 +6363,11 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                             <div
                               style={{
                                 padding: '8px 10px',
-                                borderTop: '1px solid rgba(15,15,18,0.08)',
+                                borderTop: "1px solid rgb(var(--x-text) / 0.08)",
                                 fontSize: 12,
                                 fontWeight: 700,
-                                color: '#4B5563',
-                                background: 'white',
+                                color: "var(--muted)",
+                                background: "var(--card)",
                               }}
                             >
                               {label}
@@ -6371,10 +6375,10 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                             <div
                               style={{
                                 padding: '8px 10px',
-                                borderTop: '1px solid rgba(15,15,18,0.08)',
+                                borderTop: "1px solid rgb(var(--x-text) / 0.08)",
                                 fontSize: 12,
-                                color: '#111827',
-                                background: 'white',
+                                color: "var(--text)",
+                                background: "var(--card)",
                                 whiteSpace: 'pre-wrap',
                                 wordBreak: 'break-word',
                               }}
@@ -6398,8 +6402,8 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                 alignItems: 'center',
                 gap: 12,
                 padding: '14px 20px',
-                borderTop: '1px solid rgba(15,15,18,0.1)',
-                background: 'white',
+                borderTop: "1px solid rgb(var(--x-text) / 0.1)",
+                background: "var(--card)",
                 boxShadow: '0 -8px 18px rgba(15,15,18,0.04)',
               }}
             >
@@ -6583,7 +6587,7 @@ const nextFunctionalNodes = sortedNodeIds.map((id, index) => {
                   setEditModal(null);
                 }}
                 style={{
-                  background: BRAND.purple,
+                  background: "var(--brand-purple-action)",
                   color: 'white',
                   padding: '8px 14px',
                   borderRadius: 8,

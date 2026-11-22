@@ -428,7 +428,7 @@ function GenerateDocumentModal({ folders, generation, onChange, onClose, onGener
         </div>
         <div className="flex justify-end gap-2">
           <button className="rounded-md border px-3 py-2 text-xs" onClick={onClose}>Cancel</button>
-          <button className="inline-flex items-center gap-1.5 rounded-md bg-[#2D7DFE] px-3 py-2 text-xs font-semibold text-white" onClick={() => onGenerate(generation)}>
+          <button className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white" onClick={() => onGenerate(generation)}>
             <Sparkles size={14} /> Generate
           </button>
         </div>
@@ -723,11 +723,11 @@ export default function VnVCenterPro({
         <h1 className="sr-only">V&amp;V Center</h1>
         <div className="flex min-h-[520px] items-center justify-center rounded-lg border bg-gray-50 p-8 text-center">
           <div className="max-w-2xl">
-            <ClipboardCheck className="mx-auto mb-4 text-[#2D7DFE]" size={44} />
+            <ClipboardCheck className="mx-auto mb-4 text-blue-700" size={44} />
             <h2 className="text-2xl font-semibold">Build a Test Case Document</h2>
             <p className="mt-3 text-sm leading-6 text-gray-600">Create a V&V document workspace that derives test cases from requirements and safety goals, then review, edit, execute, and export the resulting traceable test set.</p>
             <div className="mt-6 flex flex-wrap justify-center gap-3">
-              <button className="rounded-md bg-[#2D7DFE] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1f66d1]" onClick={() => setGenerateModalOpen(true)}>Generate From Targets</button>
+              <button className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700" onClick={() => setGenerateModalOpen(true)}>Generate From Targets</button>
               <button className="rounded-md border bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50" onClick={createBlank}>Create Blank Document</button>
             </div>
           </div>
@@ -787,7 +787,7 @@ export default function VnVCenterPro({
             {folderRows.map((folder) => (
               <div key={folder.id} className="group flex items-center gap-1">
                 <button
-                  className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 text-left text-sm ${selectedFolderId === folder.id ? "bg-white font-medium text-[#2D7DFE]" : "text-gray-700 hover:bg-white"}`}
+                  className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 text-left text-sm ${selectedFolderId === folder.id ? "bg-white font-medium text-blue-700" : "text-gray-700 hover:bg-white"}`}
                   onClick={() => setSelectedFolderId(folder.id)}
                   style={{ paddingLeft: `${8 + folder.depth * 16}px` }}
                   title={folder.name}
@@ -807,7 +807,7 @@ export default function VnVCenterPro({
                   return (
                     <button
                       key={item.id}
-                      className={`w-full rounded-md px-2 py-2 text-left text-sm ${document?.id === item.id ? "bg-[#ECEEFF] text-gray-900" : "text-gray-700 hover:bg-white"}`}
+                      className={`w-full rounded-md px-2 py-2 text-left text-sm ${document?.id === item.id ? "bg-indigo-50 text-gray-900" : "text-gray-700 hover:bg-white"}`}
                       onClick={() => {
                         setActiveDocumentId(item.id);
                         setDocument(item);
@@ -935,7 +935,7 @@ export default function VnVCenterPro({
                 </thead>
                 <tbody>
                   {filteredTestCases.map((test) => (
-                    <tr key={test.id} className={`cursor-pointer border-t hover:bg-gray-50 ${selectedTest?.id === test.id ? "bg-[#F4F8FF]" : ""}`} onClick={() => setSelectedTestId(test.id)}>
+                    <tr key={test.id} className={`cursor-pointer border-t hover:bg-gray-50 ${selectedTest?.id === test.id ? "bg-blue-50" : ""}`} onClick={() => setSelectedTestId(test.id)}>
                       <td className="whitespace-nowrap px-2 py-2 font-mono text-xs">{test.id}</td>
                       <td className="px-2 py-2">{test.title}</td>
                       <td className="whitespace-nowrap px-2 py-2 font-mono text-xs">{test.requirementId || "-"}</td>

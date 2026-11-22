@@ -148,7 +148,7 @@ export default function SafetyCaseDiagram({ safetyCase, selectedNodeId, onSelect
       >
         <MiniMap pannable zoomable />
         <Controls />
-        <Background gap={18} color="#e5e7eb" />
+        <Background gap={18} color="var(--canvas-grid)" />
       </ReactFlow>
     </div>
   );

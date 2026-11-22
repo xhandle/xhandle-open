@@ -138,7 +138,7 @@ export default function HazardOperationalContextManager({
                 type="button"
                 onClick={generate}
                 disabled={generating || !String(description || "").trim() || !onGenerate}
-                className="inline-flex items-center gap-2 rounded-md bg-[#2D7DFE] px-3 py-2 text-sm font-medium text-white hover:bg-[#1E61D6] disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {generating ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
                 {generating ? "Generating…" : "Generate suggestions"}
@@ -184,14 +184,14 @@ export default function HazardOperationalContextManager({
               </label>
             </article>
           ))}
-          <button type="button" onClick={() => setDrafts((current) => [...current, newContext()])} className="inline-flex items-center gap-2 rounded-md border border-[#2D7DFE] bg-white px-3 py-2 text-sm font-medium text-[#1c5fde] hover:bg-blue-50">
+          <button type="button" onClick={() => setDrafts((current) => [...current, newContext()])} className="inline-flex items-center gap-2 rounded-md border border-blue-500 bg-white px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50">
             <Plus size={16} /> Add context
           </button>
         </div>
 
         <footer className="flex justify-end gap-2 border-t border-gray-200 px-6 py-4">
           <button type="button" onClick={onClose} disabled={generating || saving} className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60">Cancel</button>
-          <button type="button" onClick={save} disabled={generating || saving} className="rounded-md bg-[#2D7DFE] px-4 py-2 text-sm font-medium text-white hover:bg-[#1E61D6] disabled:opacity-60">{saving ? "Saving…" : "Save contexts"}</button>
+          <button type="button" onClick={save} disabled={generating || saving} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60">{saving ? "Saving…" : "Save contexts"}</button>
         </footer>
       </section>
     </div>,

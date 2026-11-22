@@ -714,7 +714,7 @@ export default function ReviewCenter({
     <button
       type="button"
       onClick={() => setFilter(value)}
-      className={`rounded-md border px-3 py-2 text-left ${filter === value ? "border-[#2D7DFE] bg-blue-50 text-blue-900" : "border-gray-200 bg-white hover:bg-gray-50"}`}
+      className={`rounded-md border px-3 py-2 text-left ${filter === value ? "border-blue-500 bg-blue-50 text-blue-900" : "border-gray-200 bg-white hover:bg-gray-50"}`}
     >
       <div className="text-xl font-semibold">{count}</div>
       <div className="text-xs text-gray-600">{label}</div>
@@ -729,7 +729,7 @@ export default function ReviewCenter({
           {onExportCodeArchitectureReviewPackage && (
             <button
               type="button"
-              className="inline-flex items-center gap-2 rounded-md bg-[#2D7DFE] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1f66d1] disabled:cursor-wait disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-wait disabled:opacity-50"
               disabled={isExportingCodeArchitectureReviewPackage}
               onClick={onExportCodeArchitectureReviewPackage}
             >
@@ -738,7 +738,7 @@ export default function ReviewCenter({
           )}
           <button
             type="button"
-            className="inline-flex items-center gap-2 rounded-md bg-[#2D7DFE] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1f66d1] disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
             disabled={!filteredItems.length}
             onClick={generateSummaryArtifact}
           >
@@ -761,7 +761,7 @@ export default function ReviewCenter({
         </div>
       )}
 
-      <div className="mb-4 rounded-md border border-gray-200 bg-[#F8FAFC] px-4 py-3 text-sm text-gray-700">
+      <div className="mb-4 rounded-md border border-gray-200 bg-slate-50 px-4 py-3 text-sm text-gray-700">
         All projects: {filteredStats.total} review items across {filteredGroups.length} review material group{filteredGroups.length === 1 ? "" : "s"} · {filteredStats.open} open · {filteredStats.inProgress} in progress · {filteredStats.closed} closed · {filteredStats.archived} archived
       </div>
 
@@ -842,12 +842,12 @@ export default function ReviewCenter({
             </div>
           )}
         </aside>
-        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain rounded-md border border-gray-200 bg-[#F8FAFC] p-2">
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain rounded-md border border-gray-200 bg-slate-50 p-2">
         <div className="space-y-2">
           {projectPanels.map((panel) => {
           const expanded = expandedProjectIds.has(panel.projectId);
           return (
-            <section key={panel.projectId} className="rounded-md border border-gray-200 bg-[#F8FAFC]">
+            <section key={panel.projectId} className="rounded-md border border-gray-200 bg-slate-50">
               <div className={`flex items-start gap-2 bg-white px-4 py-4 ${expanded ? "border-b border-gray-200" : ""}`}>
                 <button
                   type="button"
@@ -1000,7 +1000,7 @@ export default function ReviewCenter({
                               <Trash2 size={13} />
                             </button>
                           </div>
-                          <div className="absolute inset-x-0 bottom-0 h-0.5 bg-gray-100"><div className="h-full bg-[#2D7DFE]" style={{ width: `${pct}%` }} /></div>
+                          <div className="absolute inset-x-0 bottom-0 h-0.5 bg-gray-100"><div className="h-full bg-blue-600" style={{ width: `${pct}%` }} /></div>
                         </div>
                       );
                             })}

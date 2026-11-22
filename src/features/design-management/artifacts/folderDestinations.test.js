@@ -6,5 +6,5 @@ test('destination choices include nested folders with unambiguous paths', () => 
 });
 
 test('project folders show their displayed parent path', () => {
-  expect(folderDestinations([{ id: 'f', name: 'Atoms' }, { id: 'sub', name: 'Specifications', parentId: 'f' }], [{ id: 'p', title: 'Pronto', folderId: 'f', libraryFolderIds: ['sub'] }])[1].path).toBe('Atoms / Pronto / Specifications');
+  expect(folderDestinations([{ id: 'f', name: 'Atoms' }, { id: 'sub', name: 'Specifications', parentId: 'f' }], [{ id: 'p', title: 'Example', folderId: 'f', libraryFolderIds: ['sub'] }])[1].path).toBe('Atoms / Example / Specifications');
 });

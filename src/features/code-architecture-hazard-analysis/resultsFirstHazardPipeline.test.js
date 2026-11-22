@@ -35,9 +35,9 @@ test('native checkpoint aborts do not cancel generation and report unsaved work'
  expect(result).toHaveLength(12);expect(onStorageState).toHaveBeenCalledWith(expect.objectContaining({unsaved:true}));
  expect(checkpoint.write.mock.calls.length).toBeLessThanOrEqual(2);
 });
-test('transport failure preserves successful independent batches alongside explicit assumption-based rows',async()=>{
+test('STPA transport failure retains independent batches for retry without completing failed rows',async()=>{
  const request=jest.fn(async p=>{if(rows(p)[0].id==='HA-9')throw new Error('Provider unavailable');return rows(p).map(({id})=>compact('STPA',id));});
- await expect(generateFastHazards({method:'STPA',sources:sources(16),context:{},request})).resolves.toEqual(expect.arrayContaining([expect.objectContaining({id:'HA-1',uca:compact('STPA','HA-1').uca}),expect.objectContaining({id:'HA-9',assessmentBasis:expect.stringContaining('Assumption-based')})]));
+ await expect(generateFastHazards({method:'STPA',sources:sources(16),context:{},request})).rejects.toMatchObject({code:'COMPACT_HAZARD_INCOMPLETE',partialResults:expect.arrayContaining([expect.objectContaining({id:'HA-1',uca:compact('STPA','HA-1').uca})]),failedAssessments:expect.arrayContaining([expect.objectContaining({id:'HA-9'})])});
  expect(request.mock.calls.filter(([p])=>rows(p).some(r=>r.id==='HA-9'))).toHaveLength(3);
  expect(request.mock.calls.filter(([p])=>rows(p).some(r=>r.id==='HA-1'))).toHaveLength(1);
 });

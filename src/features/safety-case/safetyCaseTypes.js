@@ -29,7 +29,7 @@ export const NODE_TYPE_LABELS = {
 };
 
 export const NODE_TYPE_STYLES = {
-  claim: "border-[#2D7DFE] bg-[#F4F8FF] text-[#164EA6]",
+  claim: "border-blue-500 bg-blue-50 text-blue-800",
   strategy: "border-indigo-400 bg-indigo-50 text-indigo-800",
   context: "border-gray-300 bg-gray-50 text-gray-700",
   assumption: "border-amber-400 bg-amber-50 text-amber-800",

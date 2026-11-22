@@ -83,7 +83,7 @@ function StructuredRowReviewEditor({ originalContent, currentContent, values, se
                   <div className="whitespace-pre-wrap">{String(originalValue ?? "") || "Empty"}</div>
                 </div>
                 <textarea
-                  className="min-h-[76px] w-full resize-y rounded-md border border-gray-200 p-2 text-sm leading-5 text-gray-900 focus:border-[#2D7DFE] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  className="min-h-[76px] w-full resize-y rounded-md border border-gray-200 p-2 text-sm leading-5 text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                   value={values[index] ?? ""}
                   onChange={(event) => {
                     if (readOnly) return;
@@ -189,7 +189,7 @@ export default function ResultsReviewItemView({
             <div>
               <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">Reviewed / Current Content</div>
               <textarea
-                className="h-48 w-full resize-y rounded-md border border-gray-200 p-3 font-mono text-xs leading-5 text-gray-800 focus:border-[#2D7DFE] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                className="h-48 w-full resize-y rounded-md border border-gray-200 p-3 font-mono text-xs leading-5 text-gray-800 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                 value={editedText}
                 onChange={(event) => {
                   if (!readOnly) setEditedText(event.target.value);
@@ -202,7 +202,7 @@ export default function ResultsReviewItemView({
         <div>
           <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">Reviewer Feedback</div>
           <textarea
-            className="h-24 w-full resize-y rounded-md border border-gray-200 p-3 text-sm text-gray-800 focus:border-[#2D7DFE] focus:outline-none focus:ring-2 focus:ring-blue-100"
+            className="h-24 w-full resize-y rounded-md border border-gray-200 p-3 text-sm text-gray-800 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
             placeholder="Add rationale, concerns, missing context, or regeneration notes..."
             value={feedback}
             onChange={(event) => {
@@ -218,7 +218,7 @@ export default function ResultsReviewItemView({
       <div className="border-t border-gray-200 p-4">
         <div className="grid grid-cols-2 gap-2">
           <button className="rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700" onClick={onApproveAsIs}>Approve as-is</button>
-          <button className="rounded-md bg-[#2D7DFE] px-3 py-2 text-xs font-semibold text-white hover:bg-[#1f66d1]" onClick={() => onApproveWithEdits(parsedCurrent())}>Approve with edits</button>
+          <button className="rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700" onClick={() => onApproveWithEdits(parsedCurrent())}>Approve with edits</button>
           {onUpdateCurrentContent && (
             <button
               className="col-span-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100"

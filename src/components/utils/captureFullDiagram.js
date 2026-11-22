@@ -1,4 +1,5 @@
 import { toPng } from 'html-to-image';
+import { diagramBackgroundColor } from './diagramBackgroundColor';
 
 // Bound the backing canvas even on Retina displays and enormous diagrams.
 export const REPORT_CAPTURE_MAX_SIDE = 4096;
@@ -45,7 +46,7 @@ export async function captureFullDiagram(flowCanvas, zoom) {
   // html-to-image applies these overrides to its clone. Never fit, pan, zoom,
   // resize, or temporarily restyle the user's live diagram for a report.
   return toPng(viewport, {
-    backgroundColor: '#ffffff',
+    backgroundColor: diagramBackgroundColor(flowCanvas),
     width: geometry.width, height: geometry.height,
     pixelRatio: 1,
     filter: (node) => !node.classList?.contains('react-flow__nodesselection') &&

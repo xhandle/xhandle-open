@@ -12,7 +12,7 @@ beforeEach(() => {
 afterEach(() => jest.restoreAllMocks());
 async function seed(summary = undefined) {
   const db = await openArtifactDatabase();
-  await db.put('metadata', { id: 'p', recordType: 'systems-engineering-project', title: 'Pronto', ownerProjects: [], state: 'accepted', members: [{ id: 'a' }] });
+  await db.put('metadata', { id: 'p', recordType: 'systems-engineering-project', title: 'Example', ownerProjects: [], state: 'accepted', members: [{ id: 'a' }] });
   await db.put('metadata', { id: 'a', programId: 'p', revision: 1, title: 'Architecture', config: {}, draftSummary: summary });
   await db.put('jobs', { id: 'a', artifactId: 'a', state: 'paused', sections: { scope: [{ text: 'Saved' }] }, sectionParts: { scope: { completed: { one: [] } }, interfaces: { completed: { one: [], two: [] } } }, sources: { evidence: 'x'.repeat(1000000) } });
   await db.put('revisions', { id: 'a:1', objects: [{ id: 'a:n', title: 'Controller', kind: 'requirement', sourceEvidence: [{ id: 'source', title: 'Diagram', sourceType: 'architecture-diagram', diagramId: 'diagram', diagramHash: 'saved', snapshot: { evidence: 'y'.repeat(1000000) } }] }] });

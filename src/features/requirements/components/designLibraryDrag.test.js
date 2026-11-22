@@ -22,9 +22,9 @@ test('relative insertion is stable, never duplicates an item and supports append
 });
 test('standalone artifacts can join projects by dropping on the project or between its artifacts', () => {
   const item = { id: 'architecture', kind: 'artifact', folderId: 'a' };
-  expect(libraryDrop(item, { kind: 'project', id: 'pronto', folderId: 'b' }, 'inside', folders)).toMatchObject({ container: 'project:pronto', programId: 'pronto' });
-  expect(libraryDrop(item, { kind: 'artifact', id: 'doc', programId: 'pronto' }, 'before', folders)).toMatchObject({ programId: 'pronto', anchor: 'artifact:doc' });
-  expect(libraryDrop({ ...item, kind: 'folder' }, { kind: 'project', id: 'pronto' }, 'inside', folders)).toMatchObject({ programId: 'pronto' });
+  expect(libraryDrop(item, { kind: 'project', id: 'example', folderId: 'b' }, 'inside', folders)).toMatchObject({ container: 'project:example', programId: 'example' });
+  expect(libraryDrop(item, { kind: 'artifact', id: 'doc', programId: 'example' }, 'before', folders)).toMatchObject({ programId: 'example', anchor: 'artifact:doc' });
+  expect(libraryDrop({ ...item, kind: 'folder' }, { kind: 'project', id: 'example' }, 'inside', folders)).toMatchObject({ programId: 'example' });
 });
 
 test('mixed folder/project nesting rejects cycles and foreign members', () => {

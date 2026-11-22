@@ -1,7 +1,9 @@
 import {hasUnresolvedHazardText,hasLockedApplicabilityRationale} from './hazardFieldContract';
 import { calculateProjectHaraAsil } from '../project-hazard-analysis/projectHara';
 import { CODE_HARA_COLUMNS, HARA_ADDITIONAL_FIELDS, HARA_OPTIONAL_FIELDS } from './codeArchitectureHara';
-export const FAST_HAZARD_VERSION = 'compact-hazard-v8-frozen-settings-results-first';
+import { validateStpaArtifacts } from './stpaAssessmentContract';
+import { requirementTextIssues } from './requirementTextPolicy';
+export const FAST_HAZARD_VERSION = 'compact-hazard-v18-source-quality-scope';
 export const FAST_HAZARD_COLUMNS = {
   STPA: ['Function','Operational Scenario','Operational Mode','Operating Conditions','Guide Phrase','Guide Phrase Applicable','Unsafe Control Action','Loss','Hazard','Causal Scenario','Safety Constraint','Verification','Safety Classification'],
   HARA: CODE_HARA_COLUMNS,
@@ -41,6 +43,8 @@ export function validateFastAssessment(method,row,source,{structuralOnly=false}=
     return unresolved(prose);
   };
   if(!row || row.id!==source.id)return ['Incorrect row identity'];
+  if(row.applicable==='Yes')errors.push(...requirementTextIssues(row,source));
+  if(method==='STPA')errors.push(...validateStpaArtifacts(row,source));
   if(!['Yes','No'].includes(row.applicable))errors.push('applicable must be Yes or No');
   if(source.screenedApplicability && row.applicable!==source.screenedApplicability)errors.push('Screened applicability is read-only');
   if(source.reviewedApplicability && row.applicable!==source.reviewedApplicability)errors.push('Reviewed applicability is read-only');
@@ -49,14 +53,18 @@ export function validateFastAssessment(method,row,source,{structuralOnly=false}=
     if(row.classification!=='Not applicable')errors.push('Excluded rows require Not applicable classification');
     return errors;
   }
-  if(!structuralOnly){
+  // Compact responses need not include these metadata fields, but supplied
+  // premises still require grounding during generation and checkpoint reuse.
+  if(!structuralOnly || (method==='STPA' && row.executionDependency!=null && row.executionDependency!=='')){
   if(!['None','Overlap'].includes(row.executionDependency))errors.push('executionDependency must be None or Overlap');
-  if(!['None','Interactive operator'].includes(row.operatorDependency))errors.push('operatorDependency must be None or Interactive operator');
   if(row.executionDependency==='Overlap'){
     const quote=normalizedQuote(row.executionEvidenceQuote);
     const concurrency=/\b(?:asynchronous|async|concurrent|parallel|background|thread|spawn|fork|popen|nonblocking|non-blocking)\b|Promise\.all\s*\(|(?:^|[^&])&\s*(?:$|\n)/i;
     if(quote.length<16 || !evidenceStrings(source.evidence).some(value=>normalizedQuote(value).includes(quote)) || !concurrency.test(quote) || /\b(?:no|not|without)\s+(?:asynchronous|async|concurrent|parallel|background)\b/i.test(quote))errors.push('Overlap requires a supplied source quote demonstrating asynchronous/concurrent execution; missing exit-status checks do not establish overlap. Reassess sequential delay or failure propagation instead.');
   }
+  }
+  if(!structuralOnly || (method==='STPA' && row.operatorDependency!=null && row.operatorDependency!=='')){
+  if(!['None','Interactive operator'].includes(row.operatorDependency))errors.push('operatorDependency must be None or Interactive operator');
   if(row.operatorDependency==='Interactive operator'){
     const context=evidenceStrings(source.context).join(' ');
     const excludesInteraction=/\bunattended\b|\b(?:no|without|absence of)\s+(?:(?:an?|any)\s+)?(?:engineer|human|operator|user)\s+interaction\b/i;
@@ -64,6 +72,8 @@ export function validateFastAssessment(method,row,source,{structuralOnly=false}=
     if(excludesInteraction.test(context))errors.push('Interactive operator dependency conflicts with the unattended/no-interaction operational context. Assess automated outputs or artifacts instead; do not invent an engineer awaiting a display.');
     else if(quote.length<16 || !evidenceStrings(source.context).some(value=>normalizedQuote(value).includes(quote)))errors.push('Interactive operator dependency requires operatorContextQuote copied from the operational context establishing the interaction.');
   }
+  }
+  if(!structuralOnly){
   if(source.action && row.assessedAction!==source.action)errors.push('assessedAction must exactly match the source control action; assess this action, not another workflow step');
   if(!['Source-supported','Hypothesis'].includes(row.causalBasis))errors.push('Specify causalBasis as Source-supported or Hypothesis');
   if(unresolved(row.causalEvidence))errors.push('Provide causalEvidence: a specific supporting source excerpt or an explicit causal assumption and its verification');

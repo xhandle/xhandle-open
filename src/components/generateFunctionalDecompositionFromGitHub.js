@@ -1,3 +1,5 @@
+import { enrichCodeEvidenceRows } from '../features/code-architecture-context/codeEvidenceEnrichment';
+import { mapFinalizationBatches } from '../features/code-architecture-context/finalizationBatches';
 import { APPEND_INTEGRATION_VERSION, integrationFileDescriptor, discoverAppendIntegration } from '../features/code-architecture-context/appendIntegration';
 import { planArchitectureAppend, verifyArchitectureAppendSource, appendArchitectureRows, mergeArchitectureManifests, analyzedArchitecturePaths } from '../features/code-architecture-context/appendCodeArchitecture';
 import { beginArchitectureStorageWork, recordArchitectureInterruption, readPublishedArchitectureState, readArchitectureCheckpoint } from '../features/code-architecture-assurance/codeArchitectureStorage';
@@ -579,7 +581,7 @@ export function FileTypeSelectorModal({ open, files, onCancel, onConfirm }) {
           </button>
           <button
             onClick={() => onConfirm(Array.from(selected))}
-            className="px-3 py-2 rounded bg-[#2D7DFE] text-white hover:bg-[#1E61D6]"
+            className="px-3 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
           >
             Include {selected.size} type{selected.size === 1 ? "" : "s"}
           </button>
@@ -2019,7 +2021,8 @@ async function requestOpenAIProxyJsonWithMetrics({ metricsRun = null, ...params 
 
 async function processResumableFunctionalModel(rows, { scope, bearer, metricsRun, ...options }) {
   const guard = analysisRunGuards.get(metricsRun) || createRunGuard(() => settingsFromAuth(buildAIAuthOpts()));
-  const revision = await digestText(JSON.stringify([FUNCTIONAL_MODEL_VERSION, rows.map(row => [functionalInputKey(row), row.traceId, row.lineage?.status])]));
+  const inputKeys = await mapFinalizationBatches(rows, row => [functionalInputKey(row), row.traceId, row.lineage?.status], {signal:options.signal});
+  const revision = await digestText(JSON.stringify([FUNCTIONAL_MODEL_VERSION, inputKeys]));
   const onEvent = event => {
     if (!metricsRun) return;
     const summary = metricsRun.functionalWork ||= { cacheHits: 0, checkpoints: 0, checkpointFailures: 0, requests: 0 };
@@ -2802,83 +2805,19 @@ function sourceSnippetForFunction(content = "", fn = {}) {
   return lines.slice(start, end).join("\n").slice(0, 12000);
 }
 
-async function buildCodeEvidenceForRows({ owner, repo, rows, signal, ...source }) {
-  const cache = new Map(), lineCache = new WeakMap(), evidenceCache = new WeakMap();
-  async function getFileRecord(path) {
-    if (!path) return null;
-    if (cache.has(path)) return cache.get(path);
-    let record = null;
-    try {
-      record = await idbGet(IDB_STORES.codeIndex, codeSourceIndexKey({ owner, repo, ...source }, path), { signal });
-    } catch (error) { if (signal?.aborted) throw error; }
-    throwIfAborted(signal);
-    if (!record) {
-      try {
-        const raw = localStorage.getItem(codeSourceIndexKey({ owner, repo, ...source }, path));
-        record = raw ? JSON.parse(raw) : null;
-      } catch {}
-    }
-    cache.set(path, record);
-    if (cache.size > 16) cache.delete(cache.keys().next().value);
-    return record;
-  }
-
-  const enriched = [];
-  for (let index = 0; index < rows.length; index++) {
-    throwIfAborted(signal);
-    if (index > 0 && index % 25 === 0) await sleep(0, signal);
-    const row = rows[index];
-    const files = Array.from(new Set([...splitRelatedFiles(row.fromFile), ...splitRelatedFiles(row.toFile)]));
-    const fileRecords = [];
-    const allSourceFunctions = [];
-    const recordsByPath = new Map();
-    for (const path of files) {
-      const record = await getFileRecord(path);
-      const sourceFunctions = record?.sourceFunctions || [];
-      if (record) recordsByPath.set(path, record);
-      for (const fn of sourceFunctions) allSourceFunctions.push(fn);
-      const fileEvidence = (record && evidenceCache.get(record)) || {
-        ...codeSourceProvenance(source),
-        filePath: path,
-        fileName: path.split("/").pop() || path,
-        repo: record?.repo || repo,
-        owner: record?.owner || owner,
-        branch: record?.branch || "",
-        commitSha: record?.commitSha || "",
-        imports: record?.imports || [],
-        exports: record?.exports || [],
-        functions: record?.functions || [],
-        sourceFunctions,
-        sourceAudit: record?.sourceAudit || {},
-      };
-      if (record) evidenceCache.set(record, fileEvidence);
-      fileRecords.push(fileEvidence);
-    }
-    const sourceFunctions = selectSourceFunctionsForRow(allSourceFunctions, row).map(fn => {
-      const record=recordsByPath.get(fn.filePath);
-      if (record && !lineCache.has(record)) lineCache.set(record,String(record.content || '').split('\n'));
-      return {...fn,content:sourceSnippetForFunction(record ? lineCache.get(record) : '', fn)};
-    });
-
-    enriched.push({
-      ...row,
-      ...codeSourceProvenance(source),
-      rowRef: index + 1,
-      codeEvidence: {
-        rowRefs: [index + 1],
-        files: fileRecords,
-        functions: Array.from(new Set([row.from, row.to].filter(Boolean))),
-        sourceFunctions,
-        grounding: row.grounding || null,
-      },
-      sourceEvidence: {
-        rowRefs: [index + 1],
-        functions: sourceFunctions,
-        confidence: row.grounding?.evidenceConfidence || (sourceFunctions.length ? "medium" : "path-only"),
-      },
-    });
-  }
-  return enriched;
+export async function buildCodeEvidenceForRows({ owner, repo, rows, signal, onBatch, ...source }) {
+  return enrichCodeEvidenceRows({rows, owner, repo, signal, onBatch,
+    provenance:codeSourceProvenance(source), splitFiles:splitRelatedFiles,
+    selectFunctions:selectSourceFunctionsForRow, snippet:sourceSnippetForFunction,
+    readFile:async path => {
+      let record;
+      try { record = await idbGet(IDB_STORES.codeIndex, codeSourceIndexKey({owner,repo,...source}, path), {signal}); }
+      catch (error) { if (signal?.aborted) throw error; }
+      throwIfAborted(signal);
+      if (!record) { try { record = JSON.parse(localStorage.getItem(codeSourceIndexKey({owner,repo,...source},path)) || 'null'); } catch {} }
+      return record;
+    },
+  });
 }
 
 async function ensureCodeArchitectureTraceIdsCooperative(rows = [], signal) {
@@ -2928,9 +2867,11 @@ async function ensureCodeArchitectureTraceIdsCooperative(rows = [], signal) {
   return output;
 }
 
-async function classifyArchitectureRows({ rows, owner, repo, repoContext = {}, bearer = "", metricsRun = null, relationshipLedger, signal, ...source }) {
+async function classifyArchitectureRows({ rows, owner, repo, repoContext = {}, bearer = "", metricsRun = null, relationshipLedger, signal, onProgress, ...source }) {
   throwIfAborted(signal);
-  const enriched = await buildCodeEvidenceForRows({ owner, repo, rows, signal, ...source });
+  const enriched = await buildCodeEvidenceForRows({ owner, repo, rows, signal, ...source,
+    onBatch:({completed,total}) => onProgress?.({phase:'evidence', message:`Preparing source evidence: ${completed} of ${total} relationships…`}),
+  });
   // Source-audit enrichment may propose rows; it must not bypass publication scope.
   const rowsWithEvidence = relationshipLedger ? enriched.filter(row => decompositionRowsAllowed(row, relationshipLedger)) : enriched;
   if (!rowsWithEvidence.length) return rowsWithEvidence;
@@ -2957,13 +2898,12 @@ async function classifyArchitectureRows({ rows, owner, repo, repoContext = {}, b
   }
   const descriptions = await generateArchitectureComponentDescriptions(architectureRows, bearer, metricsRun, signal);
 
-  const describedRows = [];
   for (let index = 0; index < architectureRows.length; index++) {
     throwIfAborted(signal);
     if (index > 0 && index % 50 === 0) await sleep(0, signal);
     const row = architectureRows[index];
     const arch = row.architecture || {};
-    describedRows.push({
+    architectureRows[index] = {
       ...row,
       architecture: {
         ...arch,
@@ -2974,9 +2914,9 @@ async function classifyArchitectureRows({ rows, owner, repo, repoContext = {}, b
           csu: descriptions.get(architectureDescriptionKey("csu", [arch.subsystem, arch.csci, arch.csc, arch.csu])) || "",
         },
       },
-    });
+    };
   }
-  return describedRows;
+  return architectureRows;
 }
 
 /* =======================================================================
@@ -3033,7 +2973,7 @@ export const generateFunctionalDecompositionFromGitHub = async (
     const append = analysisMode === 'append';
     await flushArchitectureWrites(outputStorageKey);
     const base = append || opts.expectedBaseIdentity || resume?.baseIdentity
-      ? await readPublishedArchitectureState(outputStorageKey, { signal: opts.signal }) : null;
+      ? await readPublishedArchitectureState(outputStorageKey, { signal: opts.signal, immutableEvidence:true }) : null;
     const expectedBaseIdentity = resume?.baseIdentity || opts.expectedBaseIdentity;
     if (expectedBaseIdentity && base.identity !== expectedBaseIdentity) throw Object.assign(new Error('The saved analysis changed. Reopen repository configuration and choose Replace or Append again.'), { code: 'SOURCE_PUBLICATION_CONFLICT' });
     const baseIdentity = base?.identity;
@@ -3174,8 +3114,8 @@ export const generateFunctionalDecompositionFromGitHub = async (
     let checkpointKey = `${FUNCTIONAL_DECOMPOSITION_CHECKPOINT_PREFIX}${outputStorageKey}:${fingerprint}`;
     if (resume && resume.fingerprint !== fingerprint) throw Object.assign(new Error('Analysis inputs or provider settings changed since this checkpoint. Start a new analysis from repository configuration.'), { code: 'SOURCE_RUN_CHANGED' });
     if (resume) checkpointKey = opts.resumeCheckpointKey;
-    const savedCheckpoint = opts?.resumeFromCheckpoint === false ? null : await idbGet(IDB_STORES.cba, checkpointKey);
-    const checkpoint = savedCheckpoint?.fingerprint === fingerprint && savedCheckpoint?.version === ANALYSIS_VERSION && savedCheckpoint?.actualSettings && runGuard.settings.provider && runGuard.settings.model ? savedCheckpoint : null;
+    let savedCheckpoint = opts?.resumeFromCheckpoint === false ? null : await idbGet(IDB_STORES.cba, checkpointKey);
+    let checkpoint = savedCheckpoint?.fingerprint === fingerprint && savedCheckpoint?.version === ANALYSIS_VERSION && savedCheckpoint?.actualSettings && runGuard.settings.provider && runGuard.settings.model ? savedCheckpoint : null;
     if (savedCheckpoint && !checkpoint) checkpointKey = `${checkpointKey}:incompatible-${Date.now()}`;
     activeCheckpoint = { scope:outputStorageKey, key:checkpointKey };
     await recordArchitectureInterruption(outputStorageKey, checkpointKey, null);
@@ -3236,7 +3176,7 @@ Rules:
     if (savedCheckpoint && !checkpoint) {
       console.info("Ignoring functional decomposition checkpoint because the selected file plan changed.");
     }
-    const checkpointRows = Array.isArray(checkpoint?.rows) ? checkpoint.rows : [];
+    let checkpointRows = Array.isArray(checkpoint?.rows) ? checkpoint.rows : [];
     const validPathSet = new Set(validFiles.map((file) => file.path));
     const completedPathSet = new Set(
       Array.isArray(checkpoint?.completedPaths)
@@ -3253,7 +3193,7 @@ Rules:
     const integrationState = checkpoint?.integration || {};
     let integrationResult = null;
     const rowsByPath = { ...(checkpoint?.rowsByPath || {}) };
-    const legacyCheckpointRows = checkpoint?.rowsByPath ? (checkpoint.legacyCheckpointRows || []) : checkpointRows;
+    let legacyCheckpointRows = checkpoint?.rowsByPath ? (checkpoint.legacyCheckpointRows || []) : checkpointRows;
     let allTableData = checkpointRows;
     let completedFiles = Math.min(completedPathSet.size, validFiles.length);
 
@@ -3534,6 +3474,11 @@ Rules:
     await persistCheckpoint("classification");
     allTableData = dedupeEvidenceRows(reconcileSourceProposals(allTableData, pythonModuleIndex));
     const decompositionRows = scopeFunctionalDecomposition([...allTableData, ...(integrationResult?.rows || [])], relationshipLedger);
+    // The extraction checkpoint is durable. Finalization now owns scoped rows;
+    // obsolete checkpoint roots must not keep every extraction representation alive.
+    allTableData = [];
+    for (const path of Object.keys(rowsByPath)) delete rowsByPath[path];
+    legacyCheckpointRows = []; checkpointRows = []; checkpoint = null; savedCheckpoint = null; resume = null;
 
     console.log("🏛️ Classifying functional decomposition into Subsystem/CSCI/CSC/CSU architecture...");
     opts?.onProgress?.({
@@ -3553,6 +3498,7 @@ Rules:
       repoContext,
       metricsRun,
       signal:opts.signal,
+      onProgress:opts.onProgress,
     }), opts.signal);
 
     throwIfAborted(opts.signal);
@@ -3561,7 +3507,7 @@ Rules:
     const comparisonFingerprint = await runFingerprint({ files: inputManifest.map(({path,contentDigest,textDigest,decoding})=>({path,contentDigest,textDigest,decoding})), ...(append ? { parentFingerprint: base.run?.fingerprint || baseIdentity } : {}), context: userAnalysisContext, readme: repoContext.readmeText || "", generationSettings: runGuard.settings, effectiveSettings: runGuard.actual });
     updatePublishedProposalCounts(relationshipLedger, architectureRows);
     await flushArchitectureWrites(outputStorageKey);
-    const previousRows = base ? base.rows : await idbGet(IDB_STORES.cba, outputStorageKey) || [];
+    const previousRows = base ? base.rows : await idbGet(IDB_STORES.cba, outputStorageKey, {signal:opts.signal, immutableEvidence:true}) || [];
     let classifiedArchitectureRows = ensureCodeArchitectureTraceIds(append
       ? appendArchitectureRows(previousRows, architectureRows, outputStorageKey)
       : reconcileArchitectureRows(architectureRows, previousRows, outputStorageKey));
@@ -3598,8 +3544,8 @@ Rules:
       parentFingerprint: append ? base.run?.fingerprint || null : null,
       batches: [...(append ? base.run?.batches || (base.run ? [{ fingerprint: base.run.fingerprint, source: base.run.source, paths: (base.run.inputManifest || []).map(file => file.path), effectiveSettings: base.run.effectiveSettings }] : []) : []), { fingerprint: publicationFingerprint, source: codeSourceProvenance(source), paths: inputManifest.map(file => file.path), effectiveSettings: runGuard.actual }], effectiveSettings: runGuard.actual, source: codeSourceProvenance(source), scope: outputStorageKey, status: skippedForScale ? "partial-selection" : combined.legacyCoverageUnknown ? "selected-files-analyzed-with-legacy-coverage" : "selected-files-analyzed" };
     // Every published row carries the compact run reference for portable lineage.
-    classifiedArchitectureRows = classifiedArchitectureRows.map((row, index) => row.lineage?.status === 'current' && (!append || index >= previousRows.length)
-      ? { ...row, lineage: { ...row.lineage, runFingerprint: publicationFingerprint } } : row);
+    classifiedArchitectureRows = await mapFinalizationBatches(classifiedArchitectureRows, (row, index) => row.lineage?.status === 'current' && (!append || index >= previousRows.length)
+      ? { ...row, lineage: { ...row.lineage, runFingerprint: publicationFingerprint } } : row, {signal:opts.signal});
     const finalMetrics = finishFunctionalDecompositionMetricsRun(metricsRun, {
       rowCount: architectureRows.length,
       selectedFiles: validFiles.length,
@@ -3657,8 +3603,9 @@ Rules:
     };
     for (let attempt=0; ; attempt++) {
       try {
+        opts.onProgress?.({phase:'publication', message:'Saving and validating the completed architecture…'});
         await prepareArchitecturePublication(outputStorageKey, classifiedArchitectureRows, runRecord, metadata, checkpointKey, previousRows, opts.signal);
-        await recoverArchitecturePublication(outputStorageKey, checkpointKey, opts.signal);
+        await recoverArchitecturePublication(outputStorageKey, checkpointKey, opts.signal, {summaryOnly:true});
         metadata.storageSaved = true;
         break;
       } catch (cause) {
@@ -3732,7 +3679,7 @@ export function GitHubDecomposeLauncher({ setTableData, setLoading, buttonClassN
     <>
       <button
         onClick={run}
-        className={buttonClassName || "px-3 py-2 rounded bg-[#2D7DFE] text-white hover:bg-[#1E61D6] text-sm"}
+        className={buttonClassName || "px-3 py-2 rounded bg-blue-600 text-white hover:bg-blue-700 text-sm"}
       >
         Scan GitHub & Choose Types
       </button>
@@ -4080,6 +4027,7 @@ const repoName = useMemo(() => {
 
     let previousView = view;
     let diagramImage = null;
+    let diagramImages = null;
     let generatedSuccessfully = false;
     try {
       if (view !== "architecture") {
@@ -4090,7 +4038,10 @@ const repoName = useMemo(() => {
       }
 
       try {
-        if (diagramRef.current?.exportAsImage) {
+        if (diagramRef.current?.exportReportImages) {
+          diagramImages = await diagramRef.current.exportReportImages();
+          diagramImage = diagramImages?.light || null;
+        } else if (diagramRef.current?.exportAsImage) {
           diagramImage = await diagramRef.current.exportAsImage();
         }
       } catch (captureError) {
@@ -4105,7 +4056,7 @@ const repoName = useMemo(() => {
         bearer,
       });
       const metadata = deriveReportMetadata(rows, repoName, branch);
-      const report = { markdown, metadata, generatedAt: metadata.generatedAt };
+      const report = { markdown, metadata, diagramImages, generatedAt: metadata.generatedAt };
       setArchitectureReport(report);
       try {
         await idbPut(IDB_STORES.cba, reportStorageKey, report);
@@ -4325,7 +4276,7 @@ React.useEffect(() => {
           disabled={mode !== "table" && !hasArchitecture}
           aria-pressed={view === mode}
           className={`block w-full px-3 py-2 text-left text-sm disabled:cursor-not-allowed disabled:opacity-50 ${
-            view === mode ? "bg-purple-50 font-semibold text-[#7A37FF]" : "text-gray-700 hover:bg-gray-50"
+            view === mode ? "bg-purple-50 font-semibold text-violet-700" : "text-gray-700 hover:bg-gray-50"
           }`}
           onClick={(event) => {
             selectView(mode);
@@ -4351,7 +4302,7 @@ React.useEffect(() => {
             onClick={() => setArchitectureAbstraction(level)}
             className={`rounded-md px-3 py-1.5 text-sm font-medium ${
               architectureAbstraction === level
-                ? "bg-[#2D7DFE] text-white"
+                ? "bg-blue-600 text-white"
                 : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-100"
             }`}
           >
@@ -4378,7 +4329,7 @@ React.useEffect(() => {
           {/* View toggle */}
           <button
             className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm disabled:opacity-60 ${
-              view === "architecture" ? "bg-[#2D7DFE] text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+              view === "architecture" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
             }`}
             onClick={() => selectView("architecture")}
             disabled={!hasArchitecture}
@@ -4387,7 +4338,7 @@ React.useEffect(() => {
           </button>
           <button
             className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm ${
-              view === "table" ? "bg-[#2D7DFE] text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+              view === "table" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
             }`}
             onClick={() => selectView("table")}
           >
@@ -4396,7 +4347,7 @@ React.useEffect(() => {
 	          <button
 	            type="button"
 	            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm ${
-	              view === "split" ? "bg-[#2D7DFE] text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+	              view === "split" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
 	            }`}
 	            onClick={() => selectView("split")}
 	            disabled={!hasArchitecture}
@@ -4653,7 +4604,7 @@ React.useEffect(() => {
                     aria-selected={selectedForCollaborator}
                     className={`cursor-pointer ${
                       highlighted
-                        ? "bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset"
+                        ? "bg-amber-50 ring-2 ring-[#F3B63F] ring-inset"
                         : rejected
                           ? "bg-rose-50/60"
                           : selectedForCollaborator

@@ -1,0 +1,35 @@
+{
+  "id": "teleoperated-haulage-v1",
+  "labelStatus": "source-derived-benchmark",
+  "description": "Code-derived expectations for a synthetic fixture; no claim of engineer-approved operational safety labels.",
+  "facts": [
+    "This is a forward-only teleoperated haul truck simulation; the remote driver has motion authority. It has no autonomous route planning or physical drive-by-wire implementation.",
+    "MAX_SPEED_MPS = 3.0; COMMAND_LEASE_S = 0.3; TELEMETRY_LEASE_S = 0.2; BRAKE_ACK_S = 0.2. Freshness boundary equality is accepted.",
+    "Every accepted command consumes a strictly increasing integer sequence. A repeated command is rejected even when its timestamp remains fresh.",
+    "Invalid commands, invalid feedback, collision-envelope intrusion, brake faults and local estop latch stop. Stop persists after the original cause clears until explicit authorized reset with no current trip and speed <= 0.1 m/s.",
+    "Reset returns zero target in that cycle even when a positive remote target accompanies it. A subsequent fresh command is required for motion.",
+    "Latched estop, collision_envelope or brake_fault selects emergency braking even at standstill; other stops select service while moving and hold at <= 0.1 m/s.",
+    "Invalid input must still produce a protective output. tick calls plan_speed and select_brake after latching the trip; skipping select_brake because feedback is invalid is not the nominal stop path.",
+    "Traction requires brake == release, brake_applied == false and target > speed. Reaching positive target speed does not itself command hold braking.",
+    "stopping_distance(v) = v*0.3 + v**2/2.0 + 1.0. At 1.5 m/s it is 2.575 m; at 2 m/s it is 3.6 m. assess_clearance requires obstacle distance strictly greater than that envelope, including when stationary.",
+    "The 50 ms cycle is a nominal scheduling assumption; tick has no real-time scheduler and no physical dynamics. A protective software output within one cycle does not mean the truck physically stops within 50 ms.",
+    "All numeric limits are synthetic. There is no steering, reverse, payload/grade/friction model, authenticated network protocol, independent watchdog or physical brake fallback. Missing external controls may be compatible hypotheses, not proven absent deployed safeguards."
+  ],
+  "coverage": [
+    {"id":"command-authority", "critical":true,"expectation":"Expired/unauthorized/deadman-released commands must not authorize motion."},
+    {"id":"replay", "critical":true,"expectation":"A replayed or non-increasing command must not authorize motion."},
+    {"id":"vehicle-feedback", "critical":true,"expectation":"Stale/invalid telemetry, localization or operating-zone status can produce unsafe motion if incorrectly accepted."},
+    {"id":"collision-envelope", "critical":true,"expectation":"Unsafe clearance acceptance or delayed protective response can allow collision."},
+    {"id":"brake-response", "critical":true,"expectation":"Brake unavailability or acknowledgement failure can invalidate stopping capability."},
+    {"id":"stop-reset", "critical":true,"expectation":"Stop retention and explicit stationary reset must prevent premature motion resumption."},
+    {"id":"traction-interlock", "critical":true,"expectation":"Simultaneous traction and commanded/reported braking must be prevented."},
+    {"id":"scope-limits", "critical":false,"expectation":"Physical stopping and external safeguards must not be inferred from the software fixture."}
+  ],
+  "contexts": [{
+    "id":"yard",
+    "scenario":"Forward travel and stopping in a shared loading-yard lane",
+    "mode":"Teleoperated operation",
+    "conditions":"Personnel, loaders and stationary trucks may enter the lane; maximum simulated target speed 3 m/s; nominal logical cycle 50 ms.",
+    "assumptions":"Synthetic common clock, upstream authenticated status and sensor/brake feedback are injected inputs. No physical actuation or real-time scheduling is implemented."
+  }]
+}

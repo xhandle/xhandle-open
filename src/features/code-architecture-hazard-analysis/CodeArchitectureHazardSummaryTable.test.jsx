@@ -157,17 +157,55 @@ it('defaults STPA to the requested columns and retains picker customization', ()
     expect(headingText).not.toContain('Context Assumptions');
     act(() => Array.from(host.querySelectorAll('button')).find(button => button.title === 'Show or hide table columns').click());
     act(() => Array.from(host.querySelectorAll('button')).find(button => button.textContent === 'Show all').click());
-    expect(host.querySelectorAll('thead th')).toHaveLength(headers.length);
+    expect(host.querySelectorAll('thead th')).toHaveLength(STPA_DEFAULT_COLUMNS.length + 2);
+    expect(host.querySelector('thead').textContent).not.toContain('Confidence');
+    expect(host.querySelector('thead').textContent).not.toContain('Protection Status');
     act(() => root.unmount());
     root = createRoot(host); act(render);
-    expect(host.querySelectorAll('thead th')).toHaveLength(headers.length);
+    expect(host.querySelectorAll('thead th')).toHaveLength(STPA_DEFAULT_COLUMNS.length + 2);
   } finally {
     act(() => root.unmount()); host.remove();
     localStorage.removeItem(`${storageKey}:hidden-columns`);
     localStorage.removeItem(`${storageKey}:hidden-columns:stpa-focused-v2`);
-    localStorage.removeItem(`${storageKey}:hidden-columns:stpa-focused-v5`);
+    localStorage.removeItem(`${storageKey}:hidden-columns:stpa-focused-v6`);
     localStorage.removeItem(`${storageKey}:column-widths`);
   }
+});
+
+it('copies compact STPA findings with derived legacy context, correct source cells and no processing or review columns', async () => {
+  const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
+  const writeText=jest.fn().mockResolvedValue();
+  Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText}});
+  const summarySheet=[
+    ['Function (From)','Control Action','Function (To)','Operational Scenario','Operational Mode','Operating Conditions','Unsafe Control Action','Hazard','Safety Constraint','Verification','Confidence','Empty custom'],
+    ['Brake controller','Apply braking','Brake actuator','Queue ahead','Automated','Wet surface','Brake omitted','Stopping space occupied','Controller shall brake','Inject omission and verify braking','High',''],
+  ];
+  const original=JSON.stringify(summarySheet);
+  try {
+    act(()=>root.render(<CodeArchitectureHazardSummaryTable summarySheet={summarySheet} hazardMethod="STPA_TEXTBOOK_APPROACH" storageKey="test:stpa-copy" />));
+    await act(async()=>host.querySelector('[aria-label="Copy code architecture hazard analysis table"]').click());
+    expect(writeText.mock.calls[0][0]).toContain('Queue ahead · Automated · Wet surface');
+    expect(writeText.mock.calls[0][0]).toContain('Brake omitted');
+    expect(writeText.mock.calls[0][0]).toContain('| Brake controller | Apply braking | Brake actuator |');
+    expect(writeText.mock.calls[0][0]).not.toContain('Confidence');
+    expect(writeText.mock.calls[0][0]).not.toContain('Empty custom');
+    expect(JSON.stringify(summarySheet)).toBe(original);
+  } finally {act(()=>root.unmount());host.remove();localStorage.clear();}
+});
+
+it('includes the grouped interface identity when copying paged STPA findings',()=>{
+  const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
+  const headers=['Raw Analysis Row ID','Function','Control Action','Function (To)','Hazard','Function (From)','Operational Context'];
+  const remotePage={filters:{},total:1,copy:jest.fn()};
+  try {
+    act(()=>root.render(<CodeArchitectureHazardSummaryTable hazardMethod="STPA" storageKey="test:stpa-remote-copy"
+      summarySheet={[headers,['RAW-1','Controller','Apply braking','Actuator','Stopping space occupied','Controller','Roadway']]}
+      remotePage={remotePage} />));
+    act(()=>Array.from(host.querySelectorAll('button')).find(button=>button.textContent==='Copy matching rows').click());
+    const indices=remotePage.copy.mock.calls[0][0];
+    expect(indices.map(index=>headers[index])).toEqual(['Function (From)','Control Action','Function (To)','Operational Context','Hazard']);
+    expect(new Set(indices).size).toBe(indices.length);
+  } finally {act(()=>root.unmount());host.remove();localStorage.clear();}
 });
 
 it('defaults HARA to the requested columns with legacy field labels and persistent customization', () => {

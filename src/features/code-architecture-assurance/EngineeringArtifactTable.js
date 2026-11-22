@@ -69,7 +69,7 @@ function AutoResizeTextarea({
       value={value}
       onChange={onChange}
       onBlur={onBlur}
-      className={`w-full resize-none overflow-hidden whitespace-pre-wrap break-words rounded-md border border-transparent bg-transparent px-2 py-1 outline-none hover:border-slate-200 focus:border-[#2D7DFE] focus:bg-white ${className}`}
+      className={`w-full resize-none overflow-hidden whitespace-pre-wrap break-words rounded-md border border-transparent bg-transparent px-2 py-1 outline-none hover:border-slate-200 focus:border-blue-500 focus:bg-white ${className}`}
       disabled={disabled}
     />
   );
@@ -281,7 +281,7 @@ export default function EngineeringArtifactTable({
     onUpdateRow?.(row.id, { [key]: value });
   }, [onUpdateRow, readOnly]);
 
-  const editableCellButtonClass = "block min-h-[34px] w-full whitespace-pre-wrap break-words rounded-md border border-transparent px-2 py-1 text-left text-xs text-slate-700 hover:border-slate-200 hover:bg-slate-50 focus:border-[#2D7DFE] focus:outline-none focus:ring-2 focus:ring-blue-100";
+  const editableCellButtonClass = "block min-h-[34px] w-full whitespace-pre-wrap break-words rounded-md border border-transparent px-2 py-1 text-left text-xs text-slate-700 hover:border-slate-200 hover:bg-slate-50 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100";
 
   // One owner for both storage loading and row preparation. Keep a prepared
   // table visible while a background read is in progress.
@@ -295,7 +295,7 @@ export default function EngineeringArtifactTable({
       {loadingIndicator}
       <div className="flex shrink-0 items-center justify-end gap-2 border-b border-slate-100 bg-white px-3 py-2">
         <span role="status" className="mr-auto text-sm text-slate-600">{visibleRows.length} of {displayRows.length} rows match filters</span>
-        {filterState.activeFilterCount > 0 && <button type="button" className="text-sm font-medium text-[#2D7DFE]" onClick={filterState.clearAllFilters}>Clear filters</button>}
+        {filterState.activeFilterCount > 0 && <button type="button" className="text-sm font-medium text-blue-700" onClick={filterState.clearAllFilters}>Clear filters</button>}
         <ColumnVisibilityMenu
           columns={columnOptions.map((column) => ({
             key: column.visibilityKey,
@@ -379,7 +379,7 @@ export default function EngineeringArtifactTable({
                 key={rowId}
                 onClick={() => selectForCollaborator()}
                 className={`cursor-pointer align-top transition-colors ${
-                  highlighted ? "bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset" : selectedCellKey === rowId || selectedCellKey.startsWith(`${rowId}:`) ? "bg-blue-50 ring-1 ring-inset ring-blue-300" : rejected ? "bg-rose-50/60" : ""
+                  highlighted ? "bg-amber-50 ring-2 ring-[#F3B63F] ring-inset" : selectedCellKey === rowId || selectedCellKey.startsWith(`${rowId}:`) ? "bg-blue-50 ring-1 ring-inset ring-blue-300" : rejected ? "bg-rose-50/60" : ""
                 }`}
               >
                 {showActions && (

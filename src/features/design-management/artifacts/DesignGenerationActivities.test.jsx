@@ -20,11 +20,11 @@ test('Activities follows live location, saved work, retries and completion from 
   let progress, finish, promise;
   await act(async () => { promise = startGenerationRun('activity-progress', async ({ onProgress }) => {
     progress = onProgress; return new Promise(resolve => { finish = resolve; });
-  }, { title: 'Generate project: Pronto' }); });
+  }, { title: 'Generate project: Example' }); });
   await act(async () => progress('Reviewing evidence…', { stage: 'reviewing', reviewGroup: 2, reviewGroups: 4, requestsMade: 3 }));
   expect(dropdown()).toContain('Reviewing shared evidence'); expect(dropdown()).toContain('Evidence group 2 of 4'); expect(dropdown()).toContain('3 AI requests this run');
   await act(async () => progress('Generating Functional requirements…', { stage: 'generating', documentTitle: 'System Specification', sectionTitle: 'Functional requirements', completedDocuments: 1, totalDocuments: 6, completedSections: 8, totalSections: 31 }));
-  expect(dropdown()).toContain('Generate project: Pronto'); expect(dropdown()).toContain('System Specification · Functional requirements');
+  expect(dropdown()).toContain('Generate project: Example'); expect(dropdown()).toContain('System Specification · Functional requirements');
   expect(dropdown()).toContain('1 of 6 documents ready'); expect(dropdown()).toContain('8 of 31 sections saved');
   await act(async () => progress('Checking supporting references…', { stage: 'retrying', partTitle: 'Core content' }));
   expect(dropdown()).toContain('Retrying request'); expect(dropdown()).toContain('Core content');

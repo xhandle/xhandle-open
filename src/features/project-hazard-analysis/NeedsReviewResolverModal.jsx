@@ -121,7 +121,7 @@ export default function NeedsReviewResolverModal({
                           type="button"
                           onClick={() => onResolveGroup(group.id)}
                           disabled={busy || !String(answer).trim()}
-                          className="inline-flex items-center gap-2 rounded-lg bg-[#2D7DFE] px-4 py-2 text-sm font-medium text-white hover:bg-[#1C5FDE] disabled:cursor-not-allowed disabled:opacity-50"
+                          className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           {groupBusy && <Loader2 size={16} className="animate-spin" />}
                           {groupBusy ? "Re-evaluating…" : `Resolve ${group.affectedRowIndexes.length} rows`}
@@ -144,7 +144,7 @@ export default function NeedsReviewResolverModal({
                 type="button"
                 onClick={onResolveAnswered}
                 disabled={busy || !answeredGroups.length}
-                className="inline-flex items-center gap-2 rounded-lg bg-[#7A37FF] px-4 py-2 text-sm font-medium text-white hover:bg-[#5E2AD1] disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {busyGroupId === "all" && <Loader2 size={16} className="animate-spin" />}
                 Resolve answered questions

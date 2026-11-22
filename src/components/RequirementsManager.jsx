@@ -3451,7 +3451,7 @@ function updateLinkModule(i, moduleName) {
     return (
       <Modal title={form.id ? `Edit Requirement` : `New Requirement`} onClose={onCancel} footer={<div className="flex justify-end gap-2 pt-2">
             <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={onCancel}>Cancel</button>
-            <button className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]" onClick={submit}>Save</button>
+            <button className="rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700" onClick={submit}>Save</button>
           </div>}>
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
@@ -3793,7 +3793,7 @@ function ModuleManager({ project, onSave, onClose }) {
   return (
     <Modal title={`Manage Modules — ${project.name}`} onClose={onClose} footer={<div className="flex justify-end gap-2">
           <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={onClose}>Cancel</button>
-          <button className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]" onClick={()=>onSave(draft)}>Save</button>
+          <button className="rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700" onClick={()=>onSave(draft)}>Save</button>
         </div>}>
       <div className="space-y-4">
         <div className="flex justify-between"><div className="text-sm text-gray-600">Define modules, attribute templates & default views for this folder.</div><button className="rounded border px-2 py-1 text-xs hover:bg-gray-50" onClick={addModule}>+ Add Module</button></div>
@@ -3943,7 +3943,7 @@ function ReuseModal({ projects, activeProjectId, onCancel, onApply }) {
   return (
     <Modal title="Duplicate Module" onClose={onCancel} footer={<div className="flex justify-end gap-2">
           <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={onCancel}>Cancel</button>
-          <button className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]"
+          <button className="rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
             onClick={()=> onApply({ sourceProjectId, sourceModuleId })}
             disabled={!sourceProjectId || !sourceModuleId}
           >Copy</button>
@@ -3980,7 +3980,7 @@ function NewFolderModal({ parents, initialParentId = null, renameFolder, onCance
   return (
     <Modal title={renameFolder ? "Rename folder" : initialParentId ? "New subfolder" : "New folder"} onClose={onCancel} footer={<div className="flex justify-end gap-2">
           <button type="button" className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={onCancel}>Cancel</button>
-          <button type="submit" form={formId} disabled={!name.trim()} className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6] disabled:opacity-40">{renameFolder ? "Save name" : "Create"}</button>
+          <button type="submit" form={formId} disabled={!name.trim()} className="rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-40">{renameFolder ? "Save name" : "Create"}</button>
         </div>}>
       <div>
       <form id={formId} className="space-y-3" onSubmit={submit}>
@@ -4026,7 +4026,7 @@ setHeaderName(prev => (opts.includes(prev) ? prev : (opts[0] || "")));
       <Modal title="Import from Hazard Analysis" onClose={onCancel} footer={<div className="flex justify-end gap-2">
             <button className="rounded border px-3 py-2 text-sm hover:bg-gray-50" onClick={onCancel}>Cancel</button>
             <button
-              className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]"
+              className="rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
               disabled={!projectId || !headerName}
               onClick={() => onImport({ projectId, headerName })}
             >

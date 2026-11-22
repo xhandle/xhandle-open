@@ -1,6 +1,6 @@
 import { notifyBackupDataChanged } from '../../lib/localBackupEvents';
 import { withDiagnosticOperation } from '../../lib/diagnosticOperations';
-import { readRecord, rawRecord, stageRecord, hydrateRecord, isChunkedRecord, isRecordPart, putRawRecord, transactionDone, writeRecord } from '../code-architecture-storage/chunkedRecord';
+import { readRecord, rawRecord, stageRecord, hydrateRecord, isChunkedRecord, isRecordPart, putRawRecord, transactionDone, writeRecord, inspectRecord, readRecordProperty, iterateRecordArray, countRecordArray } from '../code-architecture-storage/chunkedRecord';
 export const XHANDLE_IDB_NAME = 'xhandle';
 export const XHANDLE_IDB_VERSION = 4;
 export const XHANDLE_IDB_CBA_STORE = 'copilot_baseline';
@@ -73,7 +73,7 @@ export async function readCbaRowsFromIndexedDB(key, options) {
     finally { db.close(); }
   });
 }
-export async function readFirstCbaRowsFromIndexedDB(keys = [], { onProgress, signal } = {}) {
+export async function readFirstCbaRowsFromIndexedDB(keys = [], { onProgress, signal, immutableEvidence = false } = {}) {
   const unique = [...new Set((Array.isArray(keys) ? keys : [keys]).filter(Boolean))];
   let reported = 0;
   const report = value => { if (signal?.aborted) return; reported = Math.max(reported, value); onProgress?.(reported); };
@@ -87,7 +87,7 @@ export async function readFirstCbaRowsFromIndexedDB(keys = [], { onProgress, sig
       if (!isChunkedRecord(value) && !Array.isArray(value)) continue;
       // These keys are alternative locations, not three equal parts of a load.
       // Give the actual record the full progress range, regardless of aliases.
-      const rows = await hydrateRecord(db, XHANDLE_IDB_CBA_STORE, value, { signal, onProgress: percent => report(Math.min(99, percent)) });
+      const rows = await hydrateRecord(db, XHANDLE_IDB_CBA_STORE, value, { signal, immutableEvidence, onProgress: percent => report(Math.min(99, percent)) });
       if (Array.isArray(rows)) { report(100); return {key, rows, found:true}; }
     }
   } finally {
@@ -163,7 +163,7 @@ const publicationIdentity = (rows, run, deleted) => JSON.stringify([revision(row
 
 // Capture both publication pointers in one transaction. Hydrating immutable
 // chunks afterwards cannot accidentally mix rows from one run with another.
-export async function readPublishedArchitectureState(scope, { summaryOnly = false, signal } = {}) {
+export async function readPublishedArchitectureState(scope, { summaryOnly = false, signal, immutableEvidence = false } = {}) {
   const db = await openCbaIndexedDB({ signal });
   try {
     const tx = db.transaction(XHANDLE_IDB_CBA_STORE, 'readonly'), done = transactionDone(tx);
@@ -174,12 +174,15 @@ export async function readPublishedArchitectureState(scope, { summaryOnly = fals
     if (signal?.aborted) throw signal.reason || new DOMException('Analysis cancelled.', 'AbortError');
     const [rowRecord, runRecord, metadata, deleted] = requests.map(request => request.result?.value);
     const identity = publicationIdentity(rowRecord, runRecord, deleted);
+    if (summaryOnly) {
+      const hasAnalysis = !deleted && Boolean(runRecord || await countRecordArray(db, XHANDLE_IDB_CBA_STORE, rowRecord, {signal}));
+      return {identity, hasAnalysis, metadata:metadata || {}};
+    }
     // An initialized empty row record is not a completed analysis. A run pointer
     // still counts when a legitimately analyzed selection produced zero rows.
-    const legacyRows = !deleted && !runRecord ? await hydrateRecord(db, XHANDLE_IDB_CBA_STORE, rowRecord, { signal }) : null;
+    const legacyRows = !deleted && !runRecord ? await hydrateRecord(db, XHANDLE_IDB_CBA_STORE, rowRecord, { signal, immutableEvidence }) : null;
     const hasAnalysis = !deleted && Boolean(runRecord || (Array.isArray(legacyRows) && legacyRows.length));
-    if (summaryOnly) return { identity, hasAnalysis, metadata: metadata || {} };
-    const rows = deleted ? [] : legacyRows || await hydrateRecord(db, XHANDLE_IDB_CBA_STORE, rowRecord, { signal });
+    const rows = deleted ? [] : legacyRows || await hydrateRecord(db, XHANDLE_IDB_CBA_STORE, rowRecord, { signal, immutableEvidence });
     const run = deleted ? null : await hydrateRecord(db, XHANDLE_IDB_CBA_STORE, runRecord, { signal });
     return { identity, hasAnalysis, rows: Array.isArray(rows) ? rows : [], run: run || null, metadata: metadata || {} };
   } finally { db.close(); }
@@ -210,7 +213,7 @@ async function prepareArchitecturePublicationNow(key, rows, run, metadata, check
     const rowRecord = await stageRecord(db, XHANDLE_IDB_CBA_STORE, key, rows, {signal});
     const runRecord = await stageRecord(db, XHANDLE_IDB_CBA_STORE, `${key}:run:${run.fingerprint}`, run, {signal});
     // The ready record references immutable chunks instead of copying the completed rows.
-    const ready = {phase:'ready-to-publish', scope:key, checkpointKey, expected:payload.expected, baseIdentity:run.baseIdentity, rowRecord, runRecord, metadata,
+    const ready = {phase:'ready-to-publish', scope:key, checkpointKey, expected:payload.expected, baseIdentity:run.baseIdentity, rowRecord, runRecord, metadata, validationVersion:1, rowCount:rows.length, fingerprint:run.fingerprint,
       updatedAt:new Date().toISOString(), totalFiles:metadata.selectedFiles || 0};
     await putRawRecord(db, XHANDLE_IDB_CBA_STORE, checkpointKey, ready);
     durable = true;
@@ -223,7 +226,7 @@ async function prepareArchitecturePublicationNow(key, rows, run, metadata, check
   } finally { db.close(); }
 }
 
-async function recoverArchitecturePublicationNow(scope, checkpointKey, signal) {
+async function recoverArchitecturePublicationNow(scope, checkpointKey, signal, { summaryOnly = false, onMetrics } = {}) {
   if (!checkpointKey.startsWith(`functional-decomposition-checkpoint:${scope}:`)) throw new Error('Checkpoint does not belong to this project.');
   if (pendingInMemory.has(checkpointKey)) {
     const payload = pendingInMemory.get(checkpointKey);
@@ -233,8 +236,19 @@ async function recoverArchitecturePublicationNow(scope, checkpointKey, signal) {
   try {
     const ready = await rawRecord(db, XHANDLE_IDB_CBA_STORE, checkpointKey);
     if (ready?.phase !== 'ready-to-publish' || ready.scope !== scope) throw new Error('No completed publication is available for this checkpoint.');
-    const rows = await hydrateRecord(db, XHANDLE_IDB_CBA_STORE, ready.rowRecord);
-    const run = await hydrateRecord(db, XHANDLE_IDB_CBA_STORE, ready.runRecord);
+    // A normal generation already owns the completed rows. Validate references
+    // and checksums without reconstructing another full result or run ledger.
+    const fingerprint = await readRecordProperty(db, XHANDLE_IDB_CBA_STORE, ready.runRecord, 'fingerprint', {signal});
+    const runScope = await readRecordProperty(db, XHANDLE_IDB_CBA_STORE, ready.runRecord, 'scope', {signal});
+    if (typeof fingerprint !== 'string' || !fingerprint || (ready.fingerprint && fingerprint !== ready.fingerprint) || (runScope && runScope !== scope)) throw new Error('Completed analysis run identity does not match its publication.');
+    const checks = {signal, onMetrics, verifyHashes:ready.validationVersion === 1};
+    const inspected = await inspectRecord(db, XHANDLE_IDB_CBA_STORE, ready.rowRecord, {...checks, prefix:ready.validationVersion === 1 ? scope : undefined});
+    await inspectRecord(db, XHANDLE_IDB_CBA_STORE, ready.runRecord, {...checks, prefix:ready.validationVersion === 1 ? `${scope}:run:${fingerprint}` : undefined});
+    if (inspected.kind !== 'array' || (ready.rowCount !== undefined && ready.rowCount !== inspected.count)) throw new Error('Completed analysis row count does not match its publication.');
+    const rowCount = inspected.count;
+    // Compatibility callers explicitly requesting rows still hydrate once,
+    // before commit, so read failure cannot be reported after a successful save.
+    const rows = summaryOnly ? undefined : await hydrateRecord(db, XHANDLE_IDB_CBA_STORE, ready.rowRecord, {signal});
     // Validate all chunks before changing the active pointer. Retry only transient aborts.
     for (let attempt = 0; ; attempt++) {
       if (signal?.aborted) throw new DOMException('Analysis cancelled.', 'AbortError');
@@ -259,8 +273,8 @@ async function recoverArchitecturePublicationNow(scope, checkpointKey, signal) {
                 store.put({key:scope,value:ready.rowRecord});
                 store.delete(`${scope}:storage-deleted`);
                 store.delete(`${scope}:storage-cleanup-pending`);
-                store.put({key:`${scope}:metadata`,value:{...ready.metadata,rowCount:rows.length,updatedAt:new Date().toISOString(),storageSaved:true,storageError:''}});
-                store.put({key:`${scope}:run:${run.fingerprint}`,value:ready.runRecord});
+                store.put({key:`${scope}:metadata`,value:{...ready.metadata,rowCount,updatedAt:new Date().toISOString(),storageSaved:true,storageError:''}});
+                store.put({key:`${scope}:run:${fingerprint}`,value:ready.runRecord});
                 store.put({key:`${scope}:run`,value:ready.runRecord});
                 store.delete(checkpointKey);
                 store.delete(`${checkpointKey}:interruption`);
@@ -277,19 +291,36 @@ async function recoverArchitecturePublicationNow(scope, checkpointKey, signal) {
       } finally { signal?.removeEventListener('abort', stop); }
     }
     pendingInMemory.delete(checkpointKey); runInterruptions.delete(checkpointKey); changed();
-    return {rows, metadata:{...ready.metadata, storageSaved:true, storageError:''}};
+    return { ...(summaryOnly ? {rowCount} : {rows}), metadata:{...ready.metadata, rowCount, storageSaved:true, storageError:''}};
   } finally { db.close(); }
 }
 
-export async function readArchitectureCheckpoint(key) {
+export async function readArchitectureCheckpoint(key, { previewOnly = false, signal } = {}) {
   if (!String(key).startsWith('functional-decomposition-checkpoint:')) throw new Error('Invalid checkpoint.');
-  if (pendingInMemory.has(key)) return {...pendingInMemory.get(key), phase:'ready-to-publish', durable:false, ...(runInterruptions.has(key) ? {interruption:runInterruptions.get(key)} : {})};
-  const db = await openCbaIndexedDB();
+  if (pendingInMemory.has(key)) {
+    const payload = pendingInMemory.get(key);
+    return {...payload, ...(previewOnly ? {rows:payload.rows.slice(0,50), rowCount:payload.rows.length} : {}), phase:'ready-to-publish', durable:false, ...(runInterruptions.has(key) ? {interruption:runInterruptions.get(key)} : {})};
+  }
+  const db = await openCbaIndexedDB({signal});
   try {
-    const value = await readRecord(db, XHANDLE_IDB_CBA_STORE, key);
-    if (!value) return value;
-    const interruption = runInterruptions.get(key) || await readRecord(db, XHANDLE_IDB_CBA_STORE, `${key}:interruption`) || null;
-    if (value.phase === 'ready-to-publish') return {...value, rows:await hydrateRecord(db,XHANDLE_IDB_CBA_STORE,value.rowRecord), run:await hydrateRecord(db,XHANDLE_IDB_CBA_STORE,value.runRecord), ...(interruption ? {interruption} : {})};
+    const record = await rawRecord(db, XHANDLE_IDB_CBA_STORE, key, {signal});
+    if (!record) return record;
+    let value;
+    if (previewOnly && isChunkedRecord(record)) {
+      value = {};
+      for (const field of ['phase','completedPaths','totalFiles','failedFiles','updatedAt','rowRecord','runRecord','metadata','interruption']) {
+        value[field] = await readRecordProperty(db, XHANDLE_IDB_CBA_STORE, record, field, {signal});
+      }
+    } else value = await hydrateRecord(db, XHANDLE_IDB_CBA_STORE, record, {signal});
+    const interruption = runInterruptions.get(key) || await readRecord(db, XHANDLE_IDB_CBA_STORE, `${key}:interruption`, {signal}) || value.interruption || null;
+    if (previewOnly) {
+      const rowsRecord = value.phase === 'ready-to-publish' ? value.rowRecord
+        : await readRecordProperty(db, XHANDLE_IDB_CBA_STORE, record, 'rows', {signal, descriptorOnly:true}) || [];
+      const rows = [], rowCount = await countRecordArray(db, XHANDLE_IDB_CBA_STORE, rowsRecord, {signal});
+      for await (const batch of iterateRecordArray(db, XHANDLE_IDB_CBA_STORE, rowsRecord, {signal, limit:50})) rows.push(...batch);
+      return {...value, rows, rowCount, ...(interruption ? {interruption} : {})};
+    }
+    if (value.phase === 'ready-to-publish') return {...value, rows:await hydrateRecord(db,XHANDLE_IDB_CBA_STORE,value.rowRecord,{signal}), run:await hydrateRecord(db,XHANDLE_IDB_CBA_STORE,value.runRecord,{signal}), ...(interruption ? {interruption} : {})};
     return interruption ? {...value, interruption} : value;
   } finally { db.close(); }
 }
@@ -320,16 +351,16 @@ export async function readLatestArchitectureCheckpoint(scope) {
     });
     for (const [key,value] of pendingInMemory) if(value.scope===scope && !keys.includes(key))keys.push(key);
     let latest=null;
-    const published=await readRecord(db,XHANDLE_IDB_CBA_STORE,`${scope}:run`);
+    const publishedAt=await readRecordProperty(db,XHANDLE_IDB_CBA_STORE,await rawRecord(db,XHANDLE_IDB_CBA_STORE,`${scope}:run`),'publishedAt');
     for (const key of keys) {
       if (String(key).endsWith(':interruption')) continue;
-      const value=await readArchitectureCheckpoint(key);
+      const value=await readArchitectureCheckpoint(key,{previewOnly:true});
       if (!value)continue;
       const completed=value.completedPaths?.length || (value.phase==='ready-to-publish' ? value.totalFiles || value.metadata?.selectedFiles || 0 : 0);
       const updatedAt=value.interruption?.at || value.updatedAt || value.run?.publishedAt || '';
       if (value.phase!=='ready-to-publish' && (!completed && !value.failedFiles?.length && !value.interruption))continue;
-      if (published?.publishedAt && updatedAt<=published.publishedAt)continue;
-      if (!latest || updatedAt>latest.updatedAt)latest={key,updatedAt,interruption:value.interruption,publicationReady:value.phase==='ready-to-publish',durable:value.durable!==false,completed,total:value.totalFiles || value.metadata?.selectedFiles || 0,failedFiles:value.failedFiles || [],rowCount:value.rows?.length || 0,rows:(value.rows || []).slice(0,50)};
+      if (publishedAt && updatedAt<=publishedAt)continue;
+      if (!latest || updatedAt>latest.updatedAt)latest={key,updatedAt,interruption:value.interruption,publicationReady:value.phase==='ready-to-publish',durable:value.durable!==false,completed,total:value.totalFiles || value.metadata?.selectedFiles || 0,failedFiles:value.failedFiles || [],rowCount:value.rowCount ?? value.rows?.length ?? 0,rows:(value.rows || []).slice(0,50)};
     }
     return latest;
   } finally {db.close();}

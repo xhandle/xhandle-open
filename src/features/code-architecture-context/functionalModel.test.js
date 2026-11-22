@@ -31,6 +31,32 @@ test('processes every row without changing detailed results, with source traceab
   expect(model.filter(row => row.functionalModel.internal)).toHaveLength(1);
 });
 
+test('functional hazard input preserves full files, snapshots, source ranges and declared metadata', async () => {
+  const file = {filePath:'planner.py', snapshotId:'snapshot-a', sourceId:'local-controller',
+    content:'LIMIT = 0.2\n\ndef plan(command):\n    return command\n',
+    sourceFunctions:[{functionName:'plan',filePath:'planner.py',startLine:3,endLine:4}]};
+  const rows = input.map(row=>({...row,interfaceType:'Function Call',codeEvidence:{files:[file]},
+    sourceEvidence:{functions:file.sourceFunctions}}));
+  const processed = await processFunctionalModel(rows,{request});
+  const model = buildFunctionalModelRows(processed);
+  const visible = model.find(row=>!row.functionalModel.internal);
+  expect(visible.codeEvidence.files).toContainEqual(file);
+  expect(visible.sourceEvidence.functions).toEqual(expect.arrayContaining(file.sourceFunctions));
+  const hazards = buildCodeArchitectureHazardInput({cbaRows:processed});
+  expect(hazards.sourceTableRows[0]).toMatchObject({lifecyclePhase:'Runtime',interfaceType:'Function Call'});
+  expect(hazards.sourceTableRows[0].codeEvidence.files).toContainEqual(file);
+  expect(rows[0].codeEvidence.files[0]).toEqual(file);
+});
+
+test('functional evidence does not merge conflicting snapshots of the same source path', async () => {
+  const files = [{filePath:'planner.py',snapshotId:'old',content:'OLD = 1'},
+    {filePath:'planner.py',snapshotId:'new',content:'NEW = 2'}];
+  const rows = input.map(row=>({...row,codeEvidence:{files}}));
+  const processed = await processFunctionalModel(rows,{request});
+  const model = buildFunctionalModelRows(processed);
+  expect(model.find(row=>!row.functionalModel.internal).codeEvidence.files).toEqual(expect.arrayContaining(files));
+});
+
 test('same processing for GitHub and local, independent of extension and repository names', async () => {
   const github = await processFunctionalModel(input.map(row => ({ ...row, sourceType: 'github' })), { request });
   const local = await processFunctionalModel(input.map(row => ({ ...row, sourceType: 'local' })), { request });

@@ -88,7 +88,7 @@ export function openRegionSelector({ onDone } = {}) {
                 left: rect.x,
                 top: rect.y - 28,
                 padding: "2px 8px",
-                background: "#111827",
+                background: "var(--toolbar-bg)",
                 color: "white",
                 fontSize: 12,
                 borderRadius: 4,

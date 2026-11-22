@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import DesignLibraryTree, { libraryContents } from './DesignLibraryTree';
 
 jest.mock('lucide-react', () => new Proxy({}, { get: (_target, key) => key === '__esModule' ? true : () => null }));
-const project = { id: 'p', name: 'Pronto', externalArtifact: true, recordType: 'systems-engineering-project', members: [{ id: 'a' }, { id: 'b' }] };
+const project = { id: 'p', name: 'Example', externalArtifact: true, recordType: 'systems-engineering-project', members: [{ id: 'a' }, { id: 'b' }] };
 const artifacts = [{ id: 'b', name: 'System Specification', programId: 'p', externalArtifact: true }, { id: 'a', name: 'Concept of Operations', programId: 'p', externalArtifact: true }];
 const roots = [{ id: 'root', name: 'Root', modules: [], children: [{ id: 'f', name: 'Designs', modules: [artifacts[0], { id: 'standalone', name: 'System Specification', externalArtifact: true }, project, artifacts[1], { id: 'legacy', name: 'Source requirements' }], children: [] }] }];
 let root, host, callbacks;
@@ -29,7 +29,7 @@ test('project artifacts filed in a subfolder appear there once and retain the ow
   await render({ roots: nested, activeId: 'sub', selectedModule: 'a' });
   expect(node('a').closest('[data-library-kind="folder"]').dataset.libraryId).toBe('sub');
   expect(node('a').closest('[data-library-kind="project"]')).toBeNull();
-  expect(node('a').textContent).toContain('Artifact · Pronto');
+  expect(node('a').textContent).toContain('Artifact · Example');
   expect(node('p').textContent).toContain('Project · 2 artifacts');
   expect(host.querySelectorAll('[data-library-id="a"]')).toHaveLength(1);
   const data = {}, dataTransfer = { setData: (type, value) => { data[type] = value; }, getData: type => data[type] || '' };
@@ -51,11 +51,11 @@ test('renders distinct folder, project, artifact and module labels, nesting memb
   await click('Concept of Operations'); expect(callbacks.onSelect).toHaveBeenCalledWith('f'); expect(callbacks.onSelectModule).toHaveBeenCalledWith('Concept of Operations', expect.objectContaining(artifacts[1]));
 });
 test('collapsing projects and folders never navigates or reopens when generation refreshes metadata', async () => {
-  await render(); await click('Collapse project Pronto'); expect(node('a')).toBeNull(); expect(node('standalone')).not.toBeNull();
+  await render(); await click('Collapse project Example'); expect(node('a')).toBeNull(); expect(node('standalone')).not.toBeNull();
   await render({ roots: JSON.parse(JSON.stringify(roots)) }); expect(node('a')).toBeNull();
   await click('Collapse folder Designs'); expect(node('p')).toBeNull();
   expect(callbacks.onSelect).not.toHaveBeenCalled(); expect(callbacks.onSelectModule).not.toHaveBeenCalled();
-  await render({ selectedModule: 'b' }); expect(node('b')).not.toBeNull(); expect(button('Collapse project Pronto').getAttribute('aria-expanded')).toBe('true');
+  await render({ selectedModule: 'b' }); expect(node('b')).not.toBeNull(); expect(button('Collapse project Example').getAttribute('aria-expanded')).toBe('true');
 });
 test('expand/collapse all handles nested folders and projects and preserves collapse state on remount', async () => {
   await render(); await click('Collapse all'); expect(node('f')).toBeNull(); expect(JSON.parse(localStorage.getItem('xhandle:folder-open'))).toEqual([]);
@@ -125,7 +125,7 @@ test('dragging an artifact above another saves its project order without changin
 });
 
 test('dropping a standalone artifact onto a collapsed project requests membership and reveals it', async () => {
-  const onMoveItem = jest.fn(); await render({ onMoveItem }); await click('Collapse project Pronto');
+  const onMoveItem = jest.fn(); await render({ onMoveItem }); await click('Collapse project Example');
   const data = {}, dataTransfer = { setData: (type, value) => { data[type] = value; }, getData: type => data[type] || '' };
   const event = name => { const e = new MouseEvent(name, { bubbles: true, cancelable: true, clientY: 50 }); Object.defineProperty(e, 'dataTransfer', { value: dataTransfer }); return e; };
   const destination = node('p').querySelector('[draggable=true]'); destination.getBoundingClientRect = () => ({ top: 0, height: 100 });
@@ -133,7 +133,7 @@ test('dropping a standalone artifact onto a collapsed project requests membershi
   await act(async () => destination.dispatchEvent(event('dragover'))); expect(dataTransfer.dropEffect).toBe('move');
   await act(async () => destination.dispatchEvent(event('drop')));
   expect(onMoveItem).toHaveBeenCalledWith(expect.objectContaining({ id: 'standalone' }), expect.objectContaining({ programId: 'p', position: 'inside' }));
-  expect(button('Collapse project Pronto')).toBeDefined();
+  expect(button('Collapse project Example')).toBeDefined();
 });
 
 test('project folders nest once, reveal selected descendants and support collapse and dragging out', async () => {
@@ -144,8 +144,8 @@ test('project folders nest once, reveal selected descendants and support collaps
   expect(node('a').closest('[data-library-kind="folder"]')).toBe(node('deep'));
   expect(node('a').closest('[data-library-kind="project"]')).toBe(node('p'));
   expect(host.querySelectorAll('[data-library-id="sub"]')).toHaveLength(1);
-  await click('Collapse project Pronto'); expect(node('sub')).toBeNull();
-  await click('Expand project Pronto'); expect(node('a')).not.toBeNull();
+  await click('Collapse project Example'); expect(node('sub')).toBeNull();
+  await click('Expand project Example'); expect(node('a')).not.toBeNull();
   const data = {}, dataTransfer = { setData: (type, value) => { data[type] = value; }, getData: type => data[type] || '' };
   const event = name => { const e = new Event(name, { bubbles: true, cancelable: true }); Object.defineProperty(e, 'dataTransfer', { value: dataTransfer }); return e; };
   await act(async () => node('sub').querySelector('[draggable=true]').dispatchEvent(event('dragstart')));

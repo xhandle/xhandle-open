@@ -18,8 +18,12 @@ const quiet={onMetrics:()=>{},onDiagnostic:()=>{}};
 const checkpoint=()=>({readMany:async bases=>bases.map(()=>undefined),writeMany:async()=>{}});
 const source=(id,reviewed='Yes')=>({id,action:'Apply torque',phrase:'Too late',reviewedApplicability:reviewed,reviewedRationale:'Reviewed'});
 
-test.each(['STPA','HARA','FHA'].flatMap(method=>[401,402,403,404,429].map(status=>({method,status}))))('$method ordinary provider $status still completes explicitly marked assumptions',async({method,status})=>{
+test.each(['STPA','HARA','FHA'].flatMap(method=>[401,402,403,404,429].map(status=>({method,status}))))('$method provider $status preserves accepted work with method-specific completion',async({method,status})=>{
  const request=jest.fn(async()=>{throw Object.assign(new Error('Provider unavailable'),{response:{status}});});
+ if(method==='STPA'){
+  await expect(generateFastHazards({method,sources:[source('accepted','No'),source('pending')],context:{},checkpoint:checkpoint(),request,...quiet})).rejects.toMatchObject({partialResults:[expect.objectContaining({id:'accepted',applicable:'No'})]});
+  expect(request).toHaveBeenCalledTimes(1);return;
+ }
  const rows=await generateFastHazards({method,sources:[source('accepted','No'),source('pending')],context:{},checkpoint:checkpoint(),request,...quiet});
  expect(rows).toHaveLength(2);
  expect(rows[0]).toMatchObject({id:'accepted',applicable:'No'});

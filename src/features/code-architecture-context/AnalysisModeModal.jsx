@@ -29,7 +29,7 @@ export default function AnalysisModeModal({ selection, onChoose }) {
       <div className="mt-5 flex flex-wrap justify-end gap-2">
         <button type="button" className="rounded border px-3 py-2 text-sm" onClick={() => onChoose(null)}>Cancel</button>
         <button type="button" className="rounded border px-3 py-2 text-sm" onClick={() => onChoose('replace')}>Replace analysis</button>
-        <button type="button" className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white" onClick={() => onChoose('append')}>Append to analysis</button>
+        <button type="button" className="rounded bg-blue-600 px-3 py-2 text-sm text-white" onClick={() => onChoose('append')}>Append to analysis</button>
       </div>
     </div>
   </div>;

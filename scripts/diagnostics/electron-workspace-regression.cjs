@@ -2,17 +2,35 @@
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os'), assert = require('node:assert/strict');
 const { _electron } = require(process.env.XHANDLE_PLAYWRIGHT_MODULE || 'playwright-core');
 const { electronFixtureMain, cleanEnvironment } = require('./electron-regression-support.cjs');
+const {auditTheme}=require('./theme-contrast-audit.cjs');
+const themeAudit=process.argv.includes('--theme-audit'),baseline=process.argv.includes('--baseline');
 const arg = name => process.argv[process.argv.indexOf(name)+1];
 const stage = fs.realpathSync(arg('--stage')), fixtures = fs.realpathSync(arg('--fixtures'));
 const root = fs.mkdtempSync(path.join(os.tmpdir(),'xhandle-workspace-regression-'));
-const result = { root, checks: [], failures: [], errors: [], consoleErrors: [], unexpectedAI: [], samples: [] };
+const result = { root, checks: [], failures: [], errors: [], consoleErrors: [], unexpectedAI: [], samples: [], themeAudits:[] };
 let app, page;
 const save = () => fs.writeFileSync(path.join(root,'result.json'),JSON.stringify(result,null,2));
 async function step(name, action) {
   const started = Date.now();
-  try { await action(); await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));result.checks.push(name);console.log('PASS '+name); }
+  try { await action(); await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));if(themeAudit)await themeSnapshot(name);result.checks.push(name);console.log('PASS '+name); }
   catch(error) { result.failures.push({name,error:error.stack});console.error('FAIL '+name+': '+error.message);await page.screenshot({path:path.join(root,`failure-${result.failures.length}.png`)}).catch(()=>{});fs.writeFileSync(path.join(root,`failure-${result.failures.length}.txt`),(await page.locator('body').innerText()).slice(0,40000));await page.keyboard.press('Escape').catch(()=>{}); }
   finally { result.samples.push({name,elapsedMs:Date.now()-started,dom:await page.locator('*').count(),tableRows:await page.locator('tbody tr').count()});save(); }
+}
+async function themeSnapshot(name) {
+ await page.waitForTimeout(240);
+ // Method changes can finish hydration after the first frame, enabling controls
+ // mid-fade. Sample their final appearance rather than an intermediate opacity.
+ await page.evaluate(async()=>{
+   const transitions=()=>document.getAnimations().filter(animation=>animation.constructor.name==='CSSTransition'&&animation.playState==='running');
+   for(let attempt=0;attempt<5;attempt++){
+     await Promise.all(transitions().map(animation=>animation.finished.catch(()=>{})));
+     await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+     if(!transitions().length)return;
+   }
+ });
+ const audit=await page.evaluate(auditTheme);result.themeAudits.push({name,...audit});
+ await page.screenshot({path:path.join(root,`theme-${result.themeAudits.length}.png`)});save();
+ if(!baseline){assert.equal(audit.brightAccents.length,0,`${name}: bright action fills: ${JSON.stringify(audit.brightAccents.slice(0,4))}`);assert.equal(audit.failures.length,0,`${name}: low contrast text: ${JSON.stringify(audit.failures.slice(0,6))}`);assert.equal(audit.brightSurfaces.length,0,`${name}: light surfaces: ${JSON.stringify(audit.brightSurfaces.slice(0,4))}`);}
 }
 const nav = async name => { await page.locator('#xhandle-primary-sidebar').hover();await page.getByRole('button',{name,exact:true}).first().click(); };
 async function project(name, area = 'Projects') {
@@ -32,6 +50,7 @@ async function closeDialog() {const dialog=page.getByRole('dialog');await dialog
   await page.route('**/api/chat',async route=>{result.unexpectedAI.push(route.request().url());await route.fulfill({status:503,contentType:'application/json',body:'{"error":"Unexpected AI request in offline interaction test"}'});});
   result.runtime=await app.evaluate(({app})=>({profile:app.getPath('userData'),versions:process.versions,packaged:app.isPackaged}));assert.equal(result.runtime.profile,path.join(root,'profile'));
   await page.getByRole('button',{name:'Design Management',exact:true}).waitFor();
+  if(themeAudit){await page.emulateMedia({colorScheme:'light'});await page.getByRole('button',{name:'Switch to dark mode',exact:true}).click();await page.waitForFunction(()=>document.documentElement.classList.contains('dark'));}
   await page.addScriptTag({path:path.join(fixtures,'cba/seed.js')});await page.evaluate(()=>window.seedCbaPerformance(8000,160,2000));
   await page.evaluate(()=>{localStorage.setItem('xhandle.sidebarLocked','true');localStorage.setItem('xhandle.projects',JSON.stringify([{id:'perf',name:'Functional performance fixture'}]));localStorage.setItem('xhandle.projectData',JSON.stringify({perf:{responseRows:Array.from({length:120},(_,i)=>({id:'functional-'+i,fromFunction:'Controller '+i%30,toFunction:'Actuator '+i%40,controlAction:'Command '+i})),riskMethod:'STPA',riskRegister:[],requirements:[]}}));});
   await page.addScriptTag({path:path.join(fixtures,'extra.seed.js')});await page.evaluate(()=>window.seedAuditExtras({assessmentRows:8000,requirementRows:2000}));await page.reload();
@@ -56,17 +75,18 @@ async function closeDialog() {const dialog=page.getByRole('dialog');await dialog
       await page.getByRole('button',{name:'Hazard & Remediation',exact:true}).click();const subtab=page.getByRole('button',{name:'Code Architecture Hazard Analysis',exact:true});if(await subtab.isVisible())await subtab.click();
       await page.locator('tbody td').first().waitFor();assert(await page.locator('tbody tr').count()<500,'The 8,000-row source must not mount all rows');
       const body=page.locator('tbody').first();await body.evaluate(node=>{for(let e=node.parentElement;e;e=e.parentElement)if(/auto|scroll/.test(getComputedStyle(e).overflowY)&&e.scrollHeight>e.clientHeight){e.scrollTop=e.scrollHeight/2;return;}});
+      if(themeAudit&&cycle===0)await themeSnapshot('Saved code hazard analysis table');
       await page.getByRole('button',{name:'Software Requirements',exact:true}).click();await page.getByText('SWR-0',{exact:true}).first().waitFor();
     }
   });
   await step('New folder creation opens a bounded dialog and persists the new folder across reload',async()=>{
-    await nav('Design Management');await page.locator('.design-library-pane').getByRole('button',{name:'New folder',exact:true}).click();const dialog=page.getByRole('dialog',{name:'New folder',exact:true});await dialog.getByRole('textbox').fill('Regression folder');
+    await nav('Design Management');await page.locator('.design-library-pane').getByRole('button',{name:'New folder',exact:true}).click();const dialog=page.getByRole('dialog',{name:'New folder',exact:true});await dialog.getByRole('textbox').fill('Regression folder');if(themeAudit)await themeSnapshot('New folder dialog');
     const bounds=await dialog.getByRole('button',{name:'Create',exact:true}).boundingBox();assert(bounds&&bounds.y+bounds.height<1050);await dialog.getByRole('button',{name:'Create',exact:true}).click();await dialog.waitFor({state:'hidden'});await page.reload();await nav('Design Management');await page.getByRole('button',{name:'Regression folder',exact:true}).first().waitFor();
   });
   await step('Every requirements table column opens a searchable multiselect; filtering includes the last record',async()=>{
     await designObject('audit-req');await page.getByTitle('Table view',{exact:true}).click();await page.locator('.requirements-table-panel').waitFor();
     const filters=page.locator('thead button[aria-haspopup="dialog"]');assert(await filters.count()>=3);
-    for(let i=0;i<await filters.count();i++){await filters.nth(i).click();const dialog=page.getByRole('dialog');await dialog.getByRole('searchbox').fill('');assert(await dialog.getByRole('checkbox').count()>0);await dialog.getByRole('button',{name:'Done',exact:true}).click();}
+    for(let i=0;i<await filters.count();i++){await filters.nth(i).click();const dialog=page.getByRole('dialog');await dialog.getByRole('searchbox').fill('');assert(await dialog.getByRole('checkbox').count()>0);if(themeAudit&&i===0)await themeSnapshot('Column filter dialog');await dialog.getByRole('button',{name:'Done',exact:true}).click();}
     await page.getByRole('button',{name:'Filter Description',exact:true}).click();const dialog=page.getByRole('dialog');await dialog.getByRole('searchbox').fill('command 1999');await dialog.getByRole('button',{name:'Select matching',exact:true}).click();await dialog.getByRole('button',{name:'Done',exact:true}).click();
     await page.getByText('The controller shall reject command 1999 when the command validity interval has expired.',{exact:true}).waitFor();assert(!await page.getByText('The controller shall reject command 1998 when the command validity interval has expired.',{exact:true}).count());await page.getByRole('button',{name:'Clear filters',exact:true}).click();
   });
@@ -83,7 +103,7 @@ async function closeDialog() {const dialog=page.getByRole('dialog');await dialog
     await page.keyboard.press(process.platform==='darwin'?'Meta+f':'Control+f');const search=page.getByRole('combobox',{name:'Search Design Management',exact:true});await search.fill('command 1999');await page.getByRole('option').filter({hasText:'Audit Safety Requirements'}).first().waitFor();await page.keyboard.press('Escape');
   });
   await step('Saved report library searches and opens complete report content',async()=>{
-    await project('Functional performance fixture');await nav('Reports');await page.getByLabel('Search saved reports',{exact:true}).fill('Audit report 0');await page.getByRole('button',{name:'Audit report 0',exact:true}).click();await page.getByText('Recorded safety concern 149',{exact:true}).first().waitFor();
+    await project('Functional performance fixture');await nav('Reports');await page.getByLabel('Search saved reports',{exact:true}).fill('Audit report 0');await page.getByRole('combobox',{name:'Saved report',exact:true}).selectOption({label:'Audit report 0'});await page.getByText('Recorded safety concern 149',{exact:true}).first().waitFor();
   });
   await step('Safety Case diagram selects a persisted claim and supports fit/zoom',async()=>{
     await nav('Safety Case');await page.locator('.react-flow__node').first().waitFor();await page.locator('.react-flow__controls-fitview').click();await page.waitForTimeout(400);
@@ -97,7 +117,7 @@ async function closeDialog() {const dialog=page.getByRole('dialog');await dialog
   });
   await step('Help, provider settings and activities open without obscured action controls',async()=>{
     await page.getByRole('button',{name:'README',exact:true}).click();await page.getByRole('button',{name:'Close guide',exact:true}).click();
-    await page.getByRole('button',{name:'Settings',exact:true}).click();await page.getByRole('button',{name:'AI Provider',exact:true}).waitFor();await page.getByText('Effort',{exact:true}).waitFor();await page.getByRole('button',{name:'Close',exact:true}).last().click();
+    await page.getByRole('button',{name:'Settings',exact:true}).click();await page.getByRole('button',{name:'AI Provider',exact:true}).waitFor();await page.getByText('Effort',{exact:true}).waitFor();if(themeAudit)await themeSnapshot('AI provider settings');await page.getByRole('button',{name:'Close',exact:true}).last().click();
     await page.getByRole('button',{name:/^Activities/}).click();await page.getByText('No active activities.',{exact:true}).waitFor();await page.keyboard.press('Escape');
   });
   await step('SysML starter model supports diagram, table, text, validation and persisted reload',async()=>{
@@ -107,6 +127,44 @@ async function closeDialog() {const dialog=page.getByRole('dialog');await dialog
     await page.getByRole('button',{name:'Text',exact:true}).click();const textual=page.getByText('SysML v2-style textual export subset',{exact:true});await textual.waitFor();assert.match(await textual.locator('xpath=ancestor::div[./textarea][1]').locator('textarea').inputValue(),/FlightController/);
     await page.reload();await nav('Design Management');await page.getByRole('button',{name:'SysML v2 Modeler',exact:true}).click();await page.getByText('FlightController',{exact:true}).first().waitFor();
   });
+  if(themeAudit) {
+    await step('Projects hazard analysis and operational-context controls use dark appearance',async()=>{
+      await project('Functional performance fixture');await page.getByText('Hazard Analysis',{exact:true}).click();await page.getByLabel('Hazard analysis method',{exact:true}).waitFor();
+      await themeSnapshot('Projects STPA hazard setup');await page.getByLabel('Hazard analysis method',{exact:true}).selectOption('HARA');await themeSnapshot('Projects HARA hazard setup');
+      await page.getByLabel('Hazard analysis method',{exact:true}).selectOption('STPA-Textbook');
+    });
+    await step('Collaborator dock, saved messages and composer use the workspace theme',async()=>{
+      await page.evaluate(()=>{localStorage.setItem('xhc.threads',JSON.stringify([{id:'theme-thread',title:'Theme review',messages:[{id:'u1',role:'user',content:'Explain the selected architecture.'},{id:'a1',role:'assistant',content:'The controller sends validated commands to the actuator. **Review the source evidence** before approving this design.'}],createdAt:Date.now(),updatedAt:Date.now()}]));localStorage.setItem('xhc.activeId','theme-thread');});
+      await page.reload();await nav('Collaborator');await page.locator('.xhandle-collaborator-dock').waitFor();await page.getByPlaceholder('Ask Collaborator',{exact:true}).fill('Draft only — no provider request');
+    });
+    await step('Appearance choices synchronize, follow the OS, persist on reload and show keyboard focus',async()=>{
+      await page.getByRole('button',{name:'Settings',exact:true}).click();await page.getByRole('button',{name:'Appearance',exact:true}).click();
+      await page.getByRole('radio',{name:/^Dark/}).check();await themeSnapshot('Dark appearance settings');
+      await page.getByRole('radio',{name:/^Use device setting/}).check();await page.emulateMedia({colorScheme:'light'});await page.waitForFunction(()=>!document.documentElement.classList.contains('dark'));
+      await themeSnapshot('Device appearance switches to light');await page.emulateMedia({colorScheme:'dark'});await page.waitForFunction(()=>document.documentElement.classList.contains('dark'));
+      await page.getByRole('radio',{name:/^Light/}).check();await page.emulateMedia({colorScheme:'dark'});assert.equal(await page.evaluate(()=>document.documentElement.classList.contains('dark')),false);
+      await page.getByRole('radio',{name:/^Dark/}).check();assert.equal(await app.evaluate(({nativeTheme})=>nativeTheme.themeSource),'dark');await page.getByRole('button',{name:'Close',exact:true}).last().click();
+      await page.reload();await page.getByRole('button',{name:'Settings',exact:true}).waitFor();assert.equal(await page.evaluate(()=>document.documentElement.classList.contains('dark')),true);
+      // A real storage event from another window is handled by the shared controller.
+      await page.evaluate(()=>{localStorage.setItem('xhandle.darkMode','light');dispatchEvent(new StorageEvent('storage',{key:'xhandle.darkMode',newValue:'light'}));});await page.waitForFunction(()=>!document.documentElement.classList.contains('dark'));
+      await page.evaluate(()=>{localStorage.setItem('xhandle.darkMode','dark');dispatchEvent(new StorageEvent('storage',{key:'xhandle.darkMode',newValue:'dark'}));});await page.waitForFunction(()=>document.documentElement.classList.contains('dark'));
+      await page.keyboard.press('Tab');const focus=await page.evaluate(()=>({tag:document.activeElement.tagName,outline:getComputedStyle(document.activeElement).outlineStyle}));assert.notEqual(focus.tag,'BODY');assert.notEqual(focus.outline,'none');
+    });
+    await step('Authored diagram node and edge paint survives appearance changes',async()=>{
+      await project('CBA performance fixture','Code-Based Architecture');await page.getByRole('button',{name:'Architecture Diagram',exact:true}).click();await page.locator('.react-flow__edge-path').first().waitFor();
+      await page.locator('.react-flow__edge-path').first().evaluate(el=>{el.style.stroke='#d946ef';el.style.strokeWidth='5px';});
+      const node=page.locator('.react-flow__node').first();await node.evaluate(el=>{el.style.backgroundColor='#573528';el.style.color='#fff7ed';});const nodePaint=await node.evaluate(el=>({background:getComputedStyle(el).backgroundColor,color:getComputedStyle(el).color}));
+      const edge=page.locator('.react-flow__edge-path').first();const before=await edge.evaluate(el=>({stroke:getComputedStyle(el).stroke,width:getComputedStyle(el).strokeWidth}));
+      await page.getByRole('button',{name:'Switch to light mode',exact:true}).click();assert.deepEqual(await edge.evaluate(el=>({stroke:getComputedStyle(el).stroke,width:getComputedStyle(el).strokeWidth})),before);
+      assert.deepEqual(await node.evaluate(el=>({background:getComputedStyle(el).backgroundColor,color:getComputedStyle(el).color})),nodePaint);await page.getByRole('button',{name:'Switch to dark mode',exact:true}).click();assert.deepEqual(await edge.evaluate(el=>({stroke:getComputedStyle(el).stroke,width:getComputedStyle(el).strokeWidth})),before);assert.deepEqual(await node.evaluate(el=>({background:getComputedStyle(el).backgroundColor,color:getComputedStyle(el).color})),nodePaint);
+    });
+    await step('Contrast audit catches deliberately unreadable text and a bright white panel',async()=>{
+      await page.evaluate(()=>{const el=document.createElement('div');el.className='theme-regression-probe';el.textContent='Theme audit low contrast probe';Object.assign(el.style,{position:'fixed',top:'100px',left:'500px',width:'300px',height:'120px',color:'#fff',backgroundColor:'#fff',zIndex:'999999'});document.body.append(el);});
+      const probe=await page.evaluate(auditTheme);assert(probe.failures.some(item=>item.text==='Theme audit low contrast probe'));assert(probe.brightSurfaces.some(item=>item.classes==='theme-regression-probe'));await page.locator('.theme-regression-probe').evaluate(el=>el.remove());
+      await page.evaluate(()=>{const button=document.createElement('button');button.className='rounded-md bg-indigo-600 accent-regression-probe';button.textContent='Accent regression probe';Object.assign(button.style,{position:'fixed',top:'100px',left:'500px',width:'240px',height:'80px',color:'#fff',backgroundColor:'#4f46e5',zIndex:'999999'});document.body.append(button);});
+      assert((await page.evaluate(auditTheme)).brightAccents.some(item=>item.text==='Accent regression probe'));await page.locator('.accent-regression-probe').evaluate(el=>el.remove());
+    });
+  }
   assert.deepEqual(await page.evaluate(()=>JSON.parse(localStorage.getItem('xhandle.projectData')).perf.responseRows),sourceBefore,'Reading/navigating must not mutate source functional decomposition');assert.deepEqual(result.unexpectedAI,[]);
   assert.deepEqual(result.errors,[]);assert.deepEqual(result.consoleErrors,[]);assert.deepEqual(result.failures,[]);result.ok=true;await page.screenshot({path:path.join(root,'complete.png')});
 }catch(error){result.failure=error.stack;console.error(error);process.exitCode=1;}

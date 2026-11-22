@@ -20,7 +20,7 @@ export default function ReviewBanner({ items = [], openOptions = {}, className =
       </div>
       <button
         type="button"
-        className="rounded-md bg-[#2D7DFE] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#1f66d1]"
+        className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
         onClick={() =>
           review.openResultsReviewDrawer({
             ...openOptions,

@@ -94,7 +94,7 @@ export default function FunctionalDiagramWorkspace({
                 aria-checked={selected}
                 onClick={() => onViewModeChange(mode)}
                 className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7A37FF] focus-visible:ring-offset-2 ${
-                  selected ? 'bg-[#7A37FF] text-white shadow-sm' : 'text-gray-700 hover:bg-white'
+                  selected ? 'bg-violet-600 text-white shadow-sm' : 'text-gray-700 hover:bg-white'
                 }`}
               >
                 {label}{mode === FUNCTIONAL_VIEW_MODES.SPLIT ? ' view' : ''}
@@ -131,7 +131,7 @@ export default function FunctionalDiagramWorkspace({
             }}
             className="group hidden w-3 shrink-0 cursor-col-resize items-stretch justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7A37FF] md:flex"
           >
-            <span className="w-px bg-gray-200 transition-colors group-hover:bg-[#7A37FF]" />
+            <span className="w-px bg-gray-200 transition-colors group-hover:bg-violet-600" />
           </div>
         )}
 

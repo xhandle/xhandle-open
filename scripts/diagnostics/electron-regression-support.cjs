@@ -12,9 +12,9 @@ function files(directory, accept = () => true) {
     return entry.isDirectory() ? files(file, accept) : entry.isFile() && accept(file) ? [file] : [];
   });
 }
-function fingerprint(root, directories = ['src', 'public', 'server']) {
+function fingerprint(root, directories = ['src', 'public', 'server', 'scripts/diagnostics']) {
   const hash = crypto.createHash('sha256');
-  const inputs = [...directories.flatMap(directory => files(path.join(root, directory))), ...['package.json', 'package-lock.json', 'config-overrides.js', 'server.js'].map(file => path.join(root, file)).filter(file => fs.existsSync(file))].sort();
+  const inputs = [...directories.flatMap(directory => files(path.join(root, directory))), ...['package.json', 'package-lock.json', 'config-overrides.js', 'tailwind.config.js', 'server.js'].map(file => path.join(root, file)).filter(file => fs.existsSync(file))].sort();
   for (const file of inputs) hash.update(path.relative(root, file)).update('\0').update(fs.readFileSync(file)).update('\0');
   return { sha256: hash.digest('hex'), files: inputs.length };
 }

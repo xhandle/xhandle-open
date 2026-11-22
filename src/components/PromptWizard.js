@@ -874,7 +874,7 @@ Rules:
                       key={option.value}
                       className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition ${
                         selected
-                          ? 'border-[#2D7DFE] bg-[#EEF4FF] ring-1 ring-[#2D7DFE]/20'
+                          ? 'border-blue-500 bg-blue-50 ring-1 ring-[#2D7DFE]/20'
                           : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'
                       }`}
                     >
@@ -893,7 +893,7 @@ Rules:
                         <span className="flex flex-wrap items-center gap-2 text-sm font-medium text-gray-900">
                           {option.label}
                           {option.recommended && (
-                            <span className="rounded-full bg-[#2D7DFE] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+                            <span className="rounded-full bg-blue-600 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
                               Recommended
                             </span>
                           )}
@@ -912,7 +912,7 @@ Rules:
                 type="button"
                 onClick={handleAIComplete}
                 disabled={Boolean(completionState.loadingKey)}
-                className="inline-flex items-center gap-2 rounded border border-[#2D7DFE] bg-white px-3 py-2 text-sm font-medium text-[#1c5fde] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex items-center gap-2 rounded border border-blue-500 bg-white px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
                 title="Complete this field using the prior wizard inputs"
               >
                 <Sparkles size={16} aria-hidden="true" />
@@ -953,7 +953,7 @@ Rules:
             <div className="max-h-[calc(100dvh-560px)] min-h-[180px] overflow-auto">
               <table className="min-w-full border-separate border-spacing-0 table-fixed text-sm text-left">
               <thead>
-                <tr className="text-[#4B5563] text-sm font-medium">
+                <tr className="text-gray-600 text-sm font-medium">
                   {currentSchema.columns.map((column) => (
                     <th key={column.key} className={`${column.width || ''} sticky top-0 z-30 border-b border-gray-200 bg-white px-6 py-3 text-left whitespace-nowrap`}>
                       {column.label}
@@ -962,7 +962,7 @@ Rules:
                   <th className="sticky top-0 z-30 w-24 border-b border-gray-200 bg-white px-6 py-3 text-center whitespace-nowrap">Remove</th>
                 </tr>
               </thead>
-              <tbody className="text-[#374151] text-sm">
+              <tbody className="text-gray-700 text-sm">
                 {currentRows.length === 0 ? (
                   <tr>
                     <td className="px-6 py-8 text-center text-sm text-gray-500" colSpan={currentSchema.columns.length + 1}>
@@ -970,7 +970,7 @@ Rules:
                     </td>
                   </tr>
                 ) : currentRows.map((row, rowIndex) => (
-                  <tr key={row.id} className={`${rowIndex % 2 === 0 ? 'bg-white' : 'bg-[#F9FAFB]'} align-top transition-colors`}>
+                  <tr key={row.id} className={`${rowIndex % 2 === 0 ? 'bg-white' : 'bg-gray-50'} align-top transition-colors`}>
                     {currentSchema.columns.map((column) => (
                       <td key={column.key} className="border-b border-gray-100 px-6 py-4 align-top whitespace-pre-wrap">
                         <textarea
@@ -1089,14 +1089,14 @@ Rules:
           {step < steps.length - 1 ? (
             <button
               onClick={handleNext}
-              className="px-4 py-2 text-sm rounded text-white bg-[#2D7DFE] hover:bg-[#1c5fde]"
+              className="px-4 py-2 text-sm rounded text-white bg-blue-600 hover:bg-blue-700"
             >
               Next
             </button>
           ) : (
             <button
               onClick={handleFinalSubmit}
-              className="px-4 py-2 text-sm rounded text-white bg-[#7A37FF] hover:bg-[#5c2bd4]"
+              className="px-4 py-2 text-sm rounded text-white bg-violet-600 hover:bg-violet-700"
             >
               Submit
             </button>

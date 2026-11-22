@@ -243,6 +243,8 @@ async function waitForSavedHead(predicate, timeoutMs = 90000) {
     await page.addScriptTag({path:path.join(fixtureDir,'extra.seed.js')});
     const generated=await page.evaluate(()=>window.seedCodeHaraAudit());
     async function openCodeHara(){
+      // Keep the seeded navigation available while reload changes pointer/layout state.
+      await page.evaluate(()=>localStorage.setItem('xhandle.sidebarLocked','true'));
       await page.reload();
       if(await page.getByRole('button',{name:'Restore navigation sidebar',exact:true}).count())await page.getByRole('button',{name:'Restore navigation sidebar',exact:true}).click();
       await page.locator('#xhandle-primary-sidebar').hover();

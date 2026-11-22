@@ -122,6 +122,8 @@ import { generateAgenticRiskReport } from './components/generateAgenticReport';
 import ReportLibrary, { useReportLibrary } from './components/ReportLibrary';
 import { saveGeneratedReport } from './features/project-hazard-analysis/generatedReportStorage';
 import SafetyReportViewer from './components/SafetyReportViewer';
+import ReportDocumentLayout from './components/ReportDocumentLayout';
+import ReportActionsMenu from './components/ReportActionsMenu';
 import ProjectTabSideToolbar, {
   ProjectTabToolbarButton,
   ProjectTabToolbarField,
@@ -4220,7 +4222,7 @@ async function readCodeArchitectureRowsForRepo(project, repo, primaryKey, option
     });
 
   const uniqueKeys = Array.from(new Set(candidateKeys.filter(Boolean)));
-  const result = await readFirstCbaRowsFromIndexedDB(uniqueKeys, options);
+  const result = await readFirstCbaRowsFromIndexedDB(uniqueKeys, {...options, immutableEvidence:true});
   const foreignRow = result.rows.find(row => row?.lineage?.scope &&
     row.lineage.scope !== primaryKey && row.lineage.scope !== result.key);
   if (foreignRow) throw new Error("Saved architecture contains rows owned by another project or repository. Existing data and checkpoints were preserved.");
@@ -5528,7 +5530,9 @@ async function handleBaselineRepo({
     setAnalysisLoading(true);
     await flushArchitectureWrites(storageKey);
     const result = publicationCheckpointKey
-      ? await recoverArchitecturePublication(storageKey, publicationCheckpointKey, analysisController.signal)
+      ? await recoverArchitecturePublication(storageKey, publicationCheckpointKey, analysisController.signal, {summaryOnly:true}).then(async saved => ({
+          ...saved, rows:await readCbaRowsFromIndexedDB(storageKey, {signal:analysisController.signal, immutableEvidence:true}),
+        }))
       : await generateFunctionalDecompositionFromGitHub(
       rows => { if (codeArchitectureScopeRef.current === storageKey) { setCbaLoading(false); publishCbaTableData(storageKey, rows); } },
       setAnalysisLoading,
@@ -6927,6 +6931,7 @@ function completeSafetyIssueEvidenceRows(issue = {}, keyEvidenceRows = []) {
         branch: activeCodeArchitectureRepo.branch || "main",
       } : null,
       functionalCanvasSelection: viewingFunctionalProject && activeTab === 'Functional Diagramming' && functionalViewMode !== 'table' && functionalCanvasSelection?.hasSelection ? functionalCanvasSelection : null,
+      hazardMethod: viewingCodeArchitecture ? codeArchitectureHazardMethod : viewingFunctionalProject ? riskMethod : null,
       activeSelections,
     };
   }
@@ -7489,7 +7494,7 @@ const NavItem = ({ icon: Icon, iconProps, label, active, onClick, disabled }) =>
       ${disabled
         ? 'text-gray-400 cursor-not-allowed'
         : active
-          ? 'bg-[#ECEEFF] text-[#0F0F12]'
+          ? 'bg-indigo-50 text-gray-900'
           : 'text-gray-600 hover:bg-gray-100'}`}
     title={
       !isSidebarOpen
@@ -7804,6 +7809,8 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [reportSourceFocus, setReportSourceFocus] = useState(null);
   const [isGeneratingAgentReport, setIsGeneratingAgentReport] = useState(false);
   const [functionalDiagramImage, setFunctionalDiagramImage] = useState(null);
+  const [functionalDiagramImages, setFunctionalDiagramImages] = useState(null);
+  const functionalDiagramCaptureRef = useRef(null);
   const [showPromptWizard, setShowPromptWizard] = useState(true);
   const [cleanOnceKey, setCleanOnceKey] = useState(null);
   const [promptMode, setPromptMode] = useState('structured');
@@ -8095,6 +8102,8 @@ useEffect(() => {
     setHaraItemDefinition(data?.haraItemDefinition || "");
     setAgentReportResult(data?.agentReportResult || null); // NEW: restore report
     setFunctionalDiagramImage(null);
+    setFunctionalDiagramImages(null);
+    functionalDiagramCaptureRef.current = null;
     const legacySafetyIssueReport = String(data?.riskAssessmentReportMarkdown || "");
     setRiskAssessmentReportMarkdown(legacySafetyIssueReport);
     loadSafetyIssueReportRecord(projectIdForLoad)
@@ -8442,7 +8451,8 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   if (isGeneratingAgentReport) return;
   const projectIdAtStart = activeProjectId;
   const reportTypeAtStart = reportType;
-  const diagramAtStart = functionalDiagramImage;
+  let diagramAtStart = functionalDiagramImage;
+  let diagramImagesAtStart = functionalDiagramImages;
   setReportNotice('');
 
   // --- start activity
@@ -8476,12 +8486,17 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   }
 
   try {
+    const capture = functionalDiagramCaptureRef.current;
+    if (capture?.projectId === projectIdAtStart) {
+      const images = await capture.promise.catch(() => null);
+      if (images) { diagramImagesAtStart = images; diagramAtStart = images.light; }
+    }
     const result = await generateAgenticRiskReport({
       summarySheet: analysisResult.Summary,
       method: riskMethod,
       mode: "autonomous",                // ⬅ hard-coded
       onClarifyChunk: null,              // ⬅ no interactive callbacks
-      functionalDiagramImage,
+      functionalDiagramImage: diagramAtStart,
       functionalDecomposition: decompositionRows,
       // Wrap setProgress so Activities stay in sync
       setProgress: (p) => {
@@ -8498,7 +8513,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
 
     const entry = {
       report: result.report, reportType: reportTypeAtStart, projectId: projectIdAtStart,
-      generatedAt: new Date().toISOString(), functionalDiagramImage: diagramAtStart,
+      generatedAt: new Date().toISOString(), functionalDiagramImage: diagramAtStart, functionalDiagramImages: diagramImagesAtStart,
       title: reportTypeAtStart, status: 'complete',
     };
     try {
@@ -8516,7 +8531,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     if (err.stage === 'Report writing' && err.partialReport) {
       const draft = { report: err.partialReport, reportType: reportTypeAtStart,
         projectId: projectIdAtStart, generatedAt: new Date().toISOString(),
-        title: reportTypeAtStart, status: 'draft', functionalDiagramImage: diagramAtStart };
+        title: reportTypeAtStart, status: 'draft', functionalDiagramImage: diagramAtStart, functionalDiagramImages: diagramImagesAtStart };
       let saved = draft;
       try { saved = await saveGeneratedReport(projectIdAtStart, draft); } catch {}
       if (reportProjectRef.current === projectIdAtStart) {
@@ -8542,13 +8557,15 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       report: markdown, reportType: agentReportResult?.reportType || reportType,
       title: `${agentReportResult?.reportType || reportType} — graphical diagrams`,
       status: agentReportResult?.status || 'complete',
-      functionalDiagramImage: agentReportResult?.libraryId ? agentReportResult.functionalDiagramImage : functionalDiagramImage,
+      functionalDiagramImage: agentReportResult?.functionalDiagramImage || (!agentReportResult?.libraryId ? functionalDiagramImage : null),
+      functionalDiagramImages: agentReportResult?.functionalDiagramImages || (!agentReportResult?.libraryId ? functionalDiagramImages : null),
     });
     if (reportSelectionRef.current?.projectId === projectId && reportSelectionRef.current.libraryId === originalId && reportSelectionRef.current.report === originalText) setAgentReportResult(saved);
   };
 
-  // Capture diagram image after analysis completes
+  // Capture both appearances of the same completed, hydrated project snapshot.
   useEffect(() => {
+    if (loadingProjectId || !projectLoaded || loadedProjectId !== activeProjectId) return;
     if (!analysisResult) return;
     if (functionalViewMode === 'table') return;
     if (!responseRows?.length) return;
@@ -8566,14 +8583,20 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const exportDiagram = async () => {
       const isReady = await waitForDiagram();
       if (!isReady) return;
-      const image = await diagramRef.current.exportAsImage();
-      if (!cancelled && image) setFunctionalDiagramImage(image);
+      const images = await diagramRef.current.exportReportImages();
+      if (!cancelled && images) {
+        setFunctionalDiagramImages(images);
+        setFunctionalDiagramImage(images.light);
+      }
+      return images;
     };
-    exportDiagram().catch(() => {
+    const promise = exportDiagram();
+    functionalDiagramCaptureRef.current = { projectId: activeProjectId, promise };
+    promise.catch(() => {
       if (!cancelled) console.warn('Report diagram capture could not be completed.');
     });
     return () => { cancelled = true; };
-  }, [activeProjectId, activeTab, section, hazardViewMode, analysisResult, functionalViewMode, responseRows?.length]);
+  }, [activeProjectId, activeTab, section, hazardViewMode, analysisResult, functionalViewMode, responseRows?.length, committedFunctionalDiagramRows, loadingProjectId, projectLoaded, loadedProjectId]);
 
   const draftHazardHeaders = useMemo(() => getProjectDraftHazardHeaders(riskMethod), [riskMethod]);
   useEffect(() => {
@@ -9007,9 +9030,8 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       "Known Controls and Evidence",
     ]);
     return generateHazardOperationalContexts({
-      description: organizationCalibration.context
-        ? `${description}\n\n${organizationCalibration.context}`
-        : description,
+      description,
+      organizationContext: organizationCalibration.context,
       projectName,
       functionalRows: responseRows,
       existingContexts,
@@ -14374,15 +14396,20 @@ Rules:
     const projectId = activeCodeArchitectureProject?.id || activeCodeArchitectureProjectId || "";
     const organizationCalibration = getProjectOrganizationCalibration(projectId);
     return generateHazardOperationalContexts({
-      description: organizationCalibration.context
-        ? `${description}\n\n${organizationCalibration.context}`
-        : description,
+      description,
+      organizationContext: organizationCalibration.context,
+      projectContext: [activeCodeArchitectureRepo?.analysisContext?.text,
+        activeCodeArchitectureRepo?.operationalContext].filter(Boolean).join('\n\n'),
       projectName: activeCodeArchitectureProject?.name || "Active Code-Based Architecture project",
       functionalRows: (functionalModelIsReady(cbaTableData) ? buildFunctionalModelRows(cbaTableData).filter(row => !row.functionalModel.internal) : cbaTableData).map((row) => ({
         subsystem: row?.architecture?.subsystem || row?.subsystem || "",
         fromFunction: row?.from || row?.fromFunction || "",
         controlAction: row?.action || row?.controlAction || "",
         toFunction: row?.to || row?.toFunction || "",
+        systemDetails: row?.systemDetails || "",
+        fromDetails: row?.fromDetails || "",
+        controlDetails: row?.controlActionDetails || row?.controlDetails || "",
+        toDetails: row?.toDetails || "",
       })),
       existingContexts,
     });
@@ -15859,7 +15886,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
             <button
               onClick={saveUserAIProvider}
               disabled={savingKey}
-              className="w-full px-3 py-2 rounded bg-[#2D7DFE] text-white text-sm disabled:opacity-60"
+              className="w-full px-3 py-2 rounded bg-blue-600 text-white text-sm disabled:opacity-60"
             >
               {savingKey ? 'Saving…' : `Save ${providerLabel} key`}
             </button>
@@ -16102,6 +16129,8 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
         type="button"
         onClick={toggle}
         title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+        aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+        aria-pressed={isDark}
         className="inline-flex items-center justify-center h-8 w-8 rounded-md border
                    text-xs transition shrink-0
                    hover:bg-gray-100 dark:hover:bg-zinc-800
@@ -16473,7 +16502,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                     }}
                     placeholder="Project name"
                   />
-                  <button onClick={(e) => { e.stopPropagation(); commitCodeArchitectureRename(); }} className="text-sm text-[#2D7DFE] hover:underline">Save</button>
+                  <button onClick={(e) => { e.stopPropagation(); commitCodeArchitectureRename(); }} className="text-sm text-blue-700 hover:underline">Save</button>
                   <button onClick={(e) => { e.stopPropagation(); cancelCodeArchitectureRename(); }} className="text-sm text-gray-600 hover:underline">Cancel</button>
                 </div>
               ) : (
@@ -16484,7 +16513,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                     setActiveCodeArchitectureFolderId(null);
                   }}
                   className={`flex-1 text-left px-2 py-1.5 rounded-lg truncate transition-colors ${
-                    activeCodeArchitectureProjectId === project.id ? 'bg-[#ECEEFF] text-[#0F0F12]' : 'text-gray-700 hover:bg-gray-100'
+                    activeCodeArchitectureProjectId === project.id ? 'bg-indigo-50 text-gray-900' : 'text-gray-700 hover:bg-gray-100'
                   }`}
                   title={project.name}
                 >
@@ -16565,7 +16594,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                       }}
                       placeholder="Folder name"
                     />
-                    <button onClick={(e) => { e.stopPropagation(); commitCodeArchitectureFolderRename(); }} className="text-sm text-[#2D7DFE] hover:underline">Save</button>
+                    <button onClick={(e) => { e.stopPropagation(); commitCodeArchitectureFolderRename(); }} className="text-sm text-blue-700 hover:underline">Save</button>
                     <button onClick={(e) => { e.stopPropagation(); cancelCodeArchitectureRename(); }} className="text-sm text-gray-600 hover:underline">Cancel</button>
                   </div>
                 ) : (
@@ -16578,7 +16607,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                       setCodeArchitectureFolderView("projects");
                     }}
                     className={`flex-1 min-w-0 text-left px-2 py-1.5 rounded-lg inline-flex items-center gap-1.5 ${
-                      activeCodeArchitectureFolderId === folder.id ? 'bg-[#ECEEFF] text-[#0F0F12]' : 'text-gray-700 hover:bg-gray-100'
+                      activeCodeArchitectureFolderId === folder.id ? 'bg-indigo-50 text-gray-900' : 'text-gray-700 hover:bg-gray-100'
                     }`}
                     title={folder.name}
                   >
@@ -16894,7 +16923,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
           />
           <button
             onClick={(e) => { e.stopPropagation(); commitRename(); }}
-            className="text-sm text-[#2D7DFE] hover:underline"
+            className="text-sm text-blue-700 hover:underline"
             title="Save name"
           >
             Save
@@ -16911,7 +16940,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
         <button
           onClick={() => { setSection('projects'); setActiveProjectId(p.id); setActiveProjectFolderId(null); }}
           className={`flex-1 text-left px-2 py-1.5 rounded-lg truncate transition-colors ${
-            activeProjectId === p.id ? 'bg-[#ECEEFF] text-[#0F0F12]' : 'text-gray-700 hover:bg-gray-100'
+            activeProjectId === p.id ? 'bg-indigo-50 text-gray-900' : 'text-gray-700 hover:bg-gray-100'
           }`}
           title={p.name}
         >
@@ -17006,7 +17035,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                 }}
                 placeholder="Folder name"
               />
-              <button onClick={(e) => { e.stopPropagation(); commitFolderRename(); }} className="text-sm text-[#2D7DFE] hover:underline" title="Save folder name">
+              <button onClick={(e) => { e.stopPropagation(); commitFolderRename(); }} className="text-sm text-blue-700 hover:underline" title="Save folder name">
                 Save
               </button>
               <button onClick={(e) => { e.stopPropagation(); cancelRename(); }} className="text-sm text-gray-600 hover:underline" title="Cancel rename">
@@ -17022,7 +17051,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                 setActiveProjectFolderId(folder.id);
               }}
               className={`flex-1 min-w-0 text-left px-2 py-1.5 rounded-lg inline-flex items-center gap-1.5 ${
-                activeProjectFolderId === folder.id ? 'bg-[#ECEEFF] text-[#0F0F12]' : 'text-gray-700 hover:bg-gray-100'
+                activeProjectFolderId === folder.id ? 'bg-indigo-50 text-gray-900' : 'text-gray-700 hover:bg-gray-100'
               }`}
               title={folder.name}
             >
@@ -17170,7 +17199,24 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
 {section === 'reports' && (
   <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-white px-3 pt-1 pb-3 md:px-5 lg:px-7">
     <h1 className="sr-only">Reports</h1>
-    {activeProjectId && <ReportLibrary library={reportLibrary} fitViewport />}
+    <div className="mb-1 flex shrink-0 items-start justify-between gap-2" aria-label="Report toolbar">
+      {activeProjectId ? <ReportLibrary library={reportLibrary} compact selectedTitle={agentReportResult?.title || agentReportResult?.reportType} /> : <span />}
+      <ReportActionsMenu
+        reportType={reportType}
+        reportTypes={REPORT_TYPE_OPTIONS}
+        onReportTypeChange={setReportType}
+        generating={isGeneratingAgentReport}
+        canGenerate={!!activeProjectId && !loadingProjectId && projectLoaded && loadedProjectId === activeProjectId && !!analysisResult?.Summary}
+        canExport={!!activeProjectId && !loadingProjectId && projectLoaded && loadedProjectId === activeProjectId && !!displayedReport}
+        onGenerate={() => { if (reportType === 'Custom Report') setShowCustomPromptModal(true); else handleGenerateAgentReport(); }}
+        onExport={format => exportReport(displayedReport, format)}
+        selectedReport={!loadingProjectId && loadedProjectId === activeProjectId ? reportLibrary.items.find(item => item.id === reportLibrary.selectedId) : null}
+        onDelete={reportLibrary.remove}
+        onRename={reportLibrary.rename}
+        projectId={activeProjectId}
+        selectedReportId={reportLibrary.selectedId}
+      />
+    </div>
     {reportNotice && <p role="status" className="mb-3 text-sm text-amber-800">{reportNotice}</p>}
     {agentReportResult?.status === 'draft' && <p role="status" className="mb-3 text-sm text-amber-800">Incomplete draft — report generation did not finish.</p>}
     {!activeProjectId ? (
@@ -17187,110 +17233,22 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
       </div>
     ) : (
       <>
-        <div className="mb-4 flex shrink-0 flex-wrap items-center gap-3">
-          <div className="flex items-center gap-3">
-            <select
-              value={reportType}
-              onChange={(e) => setReportType(e.target.value)}
-              className="rounded-md border px-2 py-2 text-sm"
-              title="Select report type"
-            >
-              {REPORT_TYPE_OPTIONS.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt}
-                </option>
-              ))}
-            </select>
-
-            <Gate
-              feature="agentic_reports"
-              fallback={
-                <button
-                  disabled
-                  className="px-3 py-2 rounded bg-gray-200 text-gray-500"
-                  title="AI report generation is unavailable"
-                >
-                  Generate AI Report
-                </button>
-              }
-            >
-              <button
-                onClick={() => {
-                  if (reportType === "Custom Report") {
-                    setShowCustomPromptModal(true);
-                  } else {
-                    handleGenerateAgentReport();
-                  }
-                }}
-                disabled={isGeneratingAgentReport || !analysisResult?.Summary}
-                className="px-3 py-2 text-white rounded bg-[#2D7DFE] hover:bg-[#1E61D6]"
-                title="Generate a full AI report from the completed risk profile"
-              >
-                {isGeneratingAgentReport ? "Generating Report..." : "Generate AI Report"}
-              </button>
-            </Gate>
-          </div>
-        </div>
-
-        <div className="mb-4 shrink-0 rounded-2xl border bg-white p-4">
-          <div className="text-sm font-semibold mb-2">Exports</div>
-          <div className="flex flex-wrap gap-3">
-            <button
-              onClick={() => exportReport(displayedReport, 'pdf')}
-              className="px-3 py-2 text-white rounded bg-[#2D7DFE] hover:bg-[#1E61D6] text-sm"
-              disabled={!displayedReport}
-            >
-              Export Report as PDF
-            </button>
-
-            <button
-              onClick={() => exportReport(displayedReport, 'word')}
-              className="px-3 py-2 text-white rounded bg-[#7A37FF] hover:bg-[#5E2AD1] text-sm"
-              disabled={!displayedReport}
-            >
-              Export Report as Word (.docx)
-            </button>
-
-            <button
-              onClick={() => exportReport(displayedReport, 'gdocs')}
-              className="px-3 py-2 text-white rounded bg-[#F59E0B] hover:bg-[#D97706] text-sm"
-              disabled={!displayedReport}
-            >
-              Export Report to Google Docs
-            </button>
-          </div>
-
-          <div className="text-xs text-gray-500 mt-2">
-            Tip: Risk Profile CSV honors any filters you set on the Hazard Analysis tab.
-          </div>
-        </div>
-
         {agentReportResult ? (
-          <section className="mt-2 flex min-h-0 w-full flex-1 flex-col">
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-              <div role="region" aria-label="Report document" tabIndex={0}
-                   style={{ scrollbarGutter: 'stable' }}
-                   className="min-h-0 w-full min-w-0 flex-1 overflow-y-auto overscroll-contain pb-4
-                                [&_.prose]:max-w-none
-                                [&_.prose]:w-full
-                                [&_.prose]:px-0
-                                [&_.prose]:pb-4
-                                [&_.prose_img]:max-w-none
-                                [&_.prose_img]:w-full
-                                [&_.prose_table]:min-w-full">
+          <section className="flex min-h-0 w-full flex-1 flex-col">
+            <ReportDocumentLayout documentKey={agentReportResult.libraryId || `${activeProjectId}:${agentReportResult.generatedAt || displayedReport}`} fitViewport>
                 <SafetyReportViewer
                   embedded
                   reportText={displayedReport}
-                  functionalDiagramImage={agentReportResult.libraryId ? agentReportResult.functionalDiagramImage : functionalDiagramImage}
+                  functionalDiagramImage={agentReportResult.functionalDiagramImage || (!agentReportResult.libraryId ? functionalDiagramImage : null)}
+                  functionalDiagramImages={agentReportResult.functionalDiagramImages || (!agentReportResult.libraryId ? functionalDiagramImages : null)}
                   onReportChange={handleReportDiagramChange}
                 />
-              </div>
-            </div>
+            </ReportDocumentLayout>
           </section>
         ) : (
           <div className="rounded-xl border bg-white p-6 text-gray-600 text-sm">
             <p className="mb-2">No AI report yet.</p>
-            <p>Use the controls above to generate your report.</p>
+            <p>Open the … menu to generate your report.</p>
           </div>
         )}
       </>
@@ -17331,7 +17289,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                 setNewCodeArchitectureError('');
                 setShowNewCodeArchitectureProject(true);
               }}
-              className="inline-flex items-center gap-2 rounded-md bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]"
+              className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
             >
 	              <Plus size={15} />
 	              Project
@@ -17424,7 +17382,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                           <button
                             type="button"
                             onClick={() => { setActiveCodeArchitectureProjectId(project.id); setActiveCodeArchitectureFolderId(null); }}
-                            className="font-medium text-[#2D7DFE] hover:underline"
+                            className="font-medium text-blue-700 hover:underline"
                           >
                             {project.name}
                           </button>
@@ -17538,7 +17496,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                 setNewCodeArchitectureError('');
                 setShowNewCodeArchitectureProject(true);
               }}
-              className="inline-flex items-center gap-2 rounded-md bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]"
+              className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
             >
               <Plus size={15} />
               Project
@@ -17592,7 +17550,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                           <button
                             type="button"
                             onClick={() => { setActiveCodeArchitectureProjectId(project.id); setActiveCodeArchitectureFolderId(null); }}
-                            className="font-medium text-[#2D7DFE] hover:underline"
+                            className="font-medium text-blue-700 hover:underline"
                           >
                             {project.name}
                           </button>
@@ -17782,7 +17740,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                   <button
                     type="button"
                     onClick={() => openCodeArchitectureRepoConfig(activeCodeArchitectureProject.id)}
-                    className="mt-4 rounded-md bg-[#2D7DFE] px-4 py-2 text-sm font-medium text-white hover:bg-[#1E61D6]"
+                    className="mt-4 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
                   >
                     Set up analysis
                   </button>
@@ -18090,7 +18048,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
               <button
                 type="button"
                 onClick={() => openCodeArchitectureRepoConfig(activeCodeArchitectureProject.id, activeCodeArchitectureRepo.id)}
-                className="rounded-md bg-[#2D7DFE] px-4 py-2 text-sm font-medium text-white hover:bg-[#1E61D6]"
+                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
               >
                 Set up analysis
               </button>
@@ -18258,7 +18216,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
             setNewProjectError('');
             setShowNewProject(true);
           }}
-          className="inline-flex items-center gap-2 rounded-md bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]"
+          className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
         >
           <Plus size={15} />
           Project
@@ -18326,7 +18284,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                       <button
                         type="button"
                         onClick={() => { setActiveProjectId(project.id); setActiveProjectFolderId(null); }}
-                        className="font-medium text-[#2D7DFE] hover:underline"
+                        className="font-medium text-blue-700 hover:underline"
                       >
                         {project.name}
                       </button>
@@ -18367,7 +18325,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
             setNewProjectError('');
             setShowNewProject(true);
           }}
-          className="inline-flex items-center gap-2 rounded-md bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6]"
+          className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
         >
           <Plus size={15} />
           Project
@@ -18387,7 +18345,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
       </div>
     </div>
 
-    <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-[#F8FAFC] p-3">
+    <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-slate-50 p-3">
       <span className="text-xs font-medium text-gray-600">Add panel</span>
       <select
         className="rounded-md border border-gray-200 bg-white px-2 py-1 text-sm"
@@ -18444,7 +18402,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
     aria-selected={activeTab === t}
     className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px ${
       activeTab === t
-        ? 'border-[#2D7DFE] text-[#0F0F12]'
+        ? 'border-blue-500 text-gray-900'
         : 'border-transparent text-gray-600 hover:text-gray-800'
     }`}
   >
@@ -18476,7 +18434,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                 setFunctionalViewMode(mode);
                 event.currentTarget.closest('details')?.removeAttribute('open');
               }}
-              className={`block w-full px-3 py-2 text-left text-sm ${functionalViewMode === mode ? 'bg-purple-50 font-semibold text-[#7A37FF]' : 'text-gray-700 hover:bg-gray-50'}`}
+              className={`block w-full px-3 py-2 text-left text-sm ${functionalViewMode === mode ? 'bg-purple-50 font-semibold text-violet-700' : 'text-gray-700 hover:bg-gray-50'}`}
             >
               {label}
             </button>
@@ -18625,7 +18583,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                         }}
                         onDiagramResize={handleFunctionalDiagramResize}
                         tableActions={(
-                          <button onClick={exportDecompositionCSV} className="px-3 py-2 text-white rounded bg-[#10B981] hover:bg-[#059669]" title="Export the functional decomposition table as CSV">
+                          <button onClick={exportDecompositionCSV} className="px-3 py-2 text-white rounded bg-emerald-600 hover:bg-emerald-700" title="Export the functional decomposition table as CSV">
                             Export CSV
                           </button>
                         )}
@@ -18688,12 +18646,12 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                             </div>
                           ) : <span />}
                           <div className="ml-auto flex items-center gap-2">
-                            <button onClick={handleAddRow} className="px-4 py-2 text-sm border rounded bg-[#ECEEFF] hover:bg-[#D7DAFF] text-[#0F0F12]">+ Add Row</button>
+                            <button onClick={handleAddRow} className="px-4 py-2 text-sm border rounded bg-indigo-50 hover:bg-indigo-100 text-gray-900">+ Add Row</button>
                             <CopyTableButton columns={functionalTableColumns} rows={filteredFunctionalRows.map(({ row }) => row)} />
                           </div>
                         </div>
                         <div className="min-h-0 flex-1 overflow-auto">
-                        <div className="sticky left-0 my-3 flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 bg-[#F8FAFC] px-3 py-2 text-sm text-gray-700">
+                        <div className="sticky left-0 my-3 flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 bg-slate-50 px-3 py-2 text-sm text-gray-700">
                           <span role="status" aria-live="polite" aria-atomic="true">
                             <strong className="tabular-nums">{filteredFunctionalRows.length.toLocaleString()}</strong>
                             {" of "}{responseRows.length.toLocaleString()}{" rows"}
@@ -18704,15 +18662,15 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                             <button
                               type="button"
                               onClick={clearAllFunctionalFilters}
-                              className="shrink-0 rounded border border-gray-200 bg-white px-2 py-1 text-xs font-semibold text-[#2D7DFE] hover:bg-blue-50"
+                              className="shrink-0 rounded border border-gray-200 bg-white px-2 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-50"
                             >
                               Clear filters
                             </button>
                           )}
                         </div>
-                        <table className="min-w-full border-separate border-spacing-0 text-sm text-left text-[#374151]">
+                        <table className="min-w-full border-separate border-spacing-0 text-sm text-left text-gray-700">
                           <thead>
-                            <tr className="text-[#4B5563] text-sm font-medium">
+                            <tr className="text-gray-600 text-sm font-medium">
                               {SHOW_TABLE_REVIEW_COLUMNS && functionalReviewItems.length > 0 && (
                                 <th className="sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap">
                                   Review
@@ -18726,15 +18684,15 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                                       onClick={() => setFunctionalFilterColumn((prev) => (prev === column.key ? null : column.key))}
                                       className={`w-full min-w-44 rounded-md border px-3 py-2 text-left transition flex items-center justify-between gap-3 ${
                                         functionalFilterColumn === column.key || (functionalColumnFilters[column.key] || []).length
-                                          ? 'border-[#2D7DFE] bg-[#EEF4FF] text-[#0B3EA8]'
-                                          : 'border-gray-200 bg-white text-[#4B5563] hover:border-gray-300'
+                                          ? 'border-blue-500 bg-blue-50 text-blue-800'
+                                          : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
                                       }`}
                                       title={`Filter ${column.label}`}
                                     >
                                       <span className="min-w-0 flex-1 truncate">{column.label}</span>
                                       <span className="shrink-0 inline-flex items-center gap-2">
                                         {(functionalColumnFilters[column.key] || []).length > 0 && (
-                                          <span className="rounded-full bg-[#2D7DFE] px-2 py-0.5 text-[11px] font-semibold text-white">
+                                          <span className="rounded-full bg-blue-600 px-2 py-0.5 text-[11px] font-semibold text-white">
                                             {(functionalColumnFilters[column.key] || []).length}
                                           </span>
                                         )}
@@ -18759,7 +18717,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                                               <button
                                                 type="button"
                                                 onClick={() => setFunctionalFilterValues(column.key, [])}
-                                                className="text-[11px] text-[#2D7DFE] hover:underline"
+                                                className="text-[11px] text-blue-700 hover:underline"
                                               >
                                                 Clear
                                               </button>
@@ -18778,14 +18736,14 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                                             <button
                                               type="button"
                                               onClick={() => setFunctionalFilterValues(column.key, getUniqueFunctionalColumnValues(column.key, functionalColumnSearches[column.key] || ''))}
-                                              className="px-2 py-1 text-[11px] border rounded-md bg-[#F8FAFC] hover:bg-[#EEF2F7]"
+                                              className="px-2 py-1 text-[11px] border rounded-md bg-slate-50 hover:bg-slate-100"
                                             >
                                               Select Visible
                                             </button>
                                             <button
                                               type="button"
                                               onClick={() => setFunctionalFilterValues(column.key, [])}
-                                              className="px-2 py-1 text-[11px] border rounded-md bg-[#F8FAFC] hover:bg-[#EEF2F7]"
+                                              className="px-2 py-1 text-[11px] border rounded-md bg-slate-50 hover:bg-slate-100"
                                             >
                                               Clear All
                                             </button>
@@ -18797,7 +18755,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                                           ) : getUniqueFunctionalColumnValues(column.key, functionalColumnSearches[column.key] || '').map((val) => (
                                             <label
                                               key={val}
-                                              className="flex items-start gap-2 px-2 py-2 rounded-md text-xs text-gray-700 hover:bg-[#F8FAFC]"
+                                              className="flex items-start gap-2 px-2 py-2 rounded-md text-xs text-gray-700 hover:bg-slate-50"
                                             >
                                               <input
                                                 type="checkbox"
@@ -18842,12 +18800,12 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                                   aria-selected={selectedForCollaborator}
                                   className={`transition-colors ${
                                     highlighted
-                                      ? 'bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset'
+                                      ? 'bg-amber-50 ring-2 ring-[#F3B63F] ring-inset'
                                       : selectedForCollaborator
                                         ? 'bg-indigo-50 ring-2 ring-indigo-400 ring-inset'
                                       : rejected
                                         ? 'bg-rose-50/60'
-                                        : idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]"
+                                        : idx % 2 === 0 ? "bg-white" : "bg-gray-50"
                                   }`}
                                 >
                                   {SHOW_TABLE_REVIEW_COLUMNS && functionalReviewItems.length > 0 && (
@@ -18893,7 +18851,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                                         {diagramTarget ? (
                                           <button
                                             type="button"
-                                            className="shrink-0 rounded p-1 text-[#2D7DFE] hover:bg-blue-100 hover:text-[#1E61D6]"
+                                            className="shrink-0 rounded p-1 text-blue-700 hover:bg-blue-100 hover:text-blue-700"
                                             onClick={(event) => {
                                               event.stopPropagation();
                                               handleOpenHazardDiagramTarget(diagramTarget);
@@ -18915,7 +18873,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                               );
                             }}
                           </VirtualTableBody>
-                          ) : <tbody className="text-[#374151] text-sm">
+                          ) : <tbody className="text-gray-700 text-sm">
                             {filteredFunctionalRows.length === 0 && (
                               <tr>
                                 <td colSpan={functionalTableColumns.length + 1 + (SHOW_TABLE_REVIEW_COLUMNS && functionalReviewItems.length > 0 ? 1 : 0)} className="px-6 py-8 text-center text-sm text-gray-500">
@@ -19093,7 +19051,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
         )}
       </div>
     )}
-    <div className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 bg-[#F8FAFC] px-3 py-2 text-sm text-gray-700">
+    <div className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 bg-slate-50 px-3 py-2 text-sm text-gray-700">
       <span role="status" aria-live="polite" aria-atomic="true">
         <strong className="tabular-nums">{hazardMatchingRowCount.toLocaleString()}</strong>
         {" of "}{hazardContextRowCount.toLocaleString()}{" rows"}
@@ -19106,7 +19064,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
         <button
           type="button"
           onClick={showingSavedHazardSummary ? clearAllHazardFilters : clearAllDraftHazardFilters}
-          className="shrink-0 rounded border border-gray-200 bg-white px-2 py-1 text-xs font-semibold text-[#2D7DFE] hover:bg-blue-50"
+          className="shrink-0 rounded border border-gray-200 bg-white px-2 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-50"
         >
           Clear filters
         </button>
@@ -19137,7 +19095,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
         <div className="relative min-h-0 w-full flex-1 overflow-auto rounded-md shadow-sm">
           <table ref={hazardSearchTableRef} className="min-w-full border-separate border-spacing-0 text-sm text-left">
             <thead>
-              <tr className="text-[#4B5563] text-sm font-medium">
+              <tr className="text-gray-600 text-sm font-medium">
                 <th className="sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap">
                   Generate
                 </th>
@@ -19153,15 +19111,15 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                         onClick={() => setDraftHazardFilterColumnIndex((prev) => (prev === idx ? null : idx))}
                         className={`w-full rounded-md border px-2.5 py-1.5 text-left transition flex items-center justify-between gap-2 ${
                           draftHazardFilterColumnIndex === idx || (draftHazardColumnFilters[idx] || []).length
-                            ? 'border-[#2D7DFE] bg-[#EEF4FF] text-[#0B3EA8]'
-                            : 'border-gray-200 bg-white text-[#4B5563] hover:border-gray-300'
+                            ? 'border-blue-500 bg-blue-50 text-blue-800'
+                            : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
                         }`}
                         title={`Filter ${header}`}
                       >
                         <span className="min-w-0 flex-1 truncate">{header}</span>
                         <span className="shrink-0 inline-flex items-center gap-2">
                           {(draftHazardColumnFilters[idx] || []).length > 0 && (
-                            <span className="rounded-full bg-[#2D7DFE] px-2 py-0.5 text-[11px] font-semibold text-white">
+                            <span className="rounded-full bg-blue-600 px-2 py-0.5 text-[11px] font-semibold text-white">
                               {(draftHazardColumnFilters[idx] || []).length}
                             </span>
                           )}
@@ -19186,7 +19144,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                                 <button
                                   type="button"
                                   onClick={() => setDraftHazardColumnFilterValues(idx, [])}
-                                  className="text-[11px] text-[#2D7DFE] hover:underline"
+                                  className="text-[11px] text-blue-700 hover:underline"
                                 >
                                   Clear
                                 </button>
@@ -19205,14 +19163,14 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                               <button
                                 type="button"
                                 onClick={() => setDraftHazardColumnFilterValues(idx, getUniqueDraftHazardColumnValues(idx, draftHazardColumnSearches[idx] || ''))}
-                                className="px-2 py-1 text-[11px] border rounded-md bg-[#F8FAFC] hover:bg-[#EEF2F7]"
+                                className="px-2 py-1 text-[11px] border rounded-md bg-slate-50 hover:bg-slate-100"
                               >
                                 Select Visible
                               </button>
                               <button
                                 type="button"
                                 onClick={() => setDraftHazardColumnFilterValues(idx, [])}
-                                className="px-2 py-1 text-[11px] border rounded-md bg-[#F8FAFC] hover:bg-[#EEF2F7]"
+                                className="px-2 py-1 text-[11px] border rounded-md bg-slate-50 hover:bg-slate-100"
                               >
                                 Clear All
                               </button>
@@ -19224,7 +19182,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                             ) : getUniqueDraftHazardColumnValues(idx, draftHazardColumnSearches[idx] || '').map((val) => (
                               <label
                                 key={val}
-                                className="flex items-start gap-2 px-2 py-2 rounded-md text-xs text-gray-700 hover:bg-[#F8FAFC]"
+                                className="flex items-start gap-2 px-2 py-2 rounded-md text-xs text-gray-700 hover:bg-slate-50"
                               >
                                 <input
                                   type="checkbox"
@@ -19252,7 +19210,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                 ))}
               </tr>
             </thead>
-            <tbody className="text-[#374151] text-sm">
+            <tbody className="text-gray-700 text-sm">
               {groupedFilteredDraftHazardSummaryRows.map((item, idx) => <DraftHazardTableRow
                   key={item.rowKey || item.originalIndex}
                   item={item}
@@ -19319,7 +19277,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
           <div className="relative min-h-0 w-full flex-1 overflow-auto rounded-md shadow-sm">
             <table ref={hazardSearchTableRef} className="min-w-full border-separate border-spacing-0 text-sm text-left">
               <thead>
-                <tr className="text-[#4B5563] text-sm font-medium">
+                <tr className="text-gray-600 text-sm font-medium">
                   <th className="sticky top-0 z-30 px-4 py-3 border-b border-gray-200 bg-white whitespace-nowrap">
                     {SHOW_TABLE_REVIEW_COLUMNS ? "Review" : "Actions"}
                   </th>
@@ -19337,15 +19295,15 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                           onClick={() => setFilterColumnIndex((prev) => (prev === idx ? null : idx))}
                           className={`w-full rounded-md border px-2.5 py-1.5 text-left transition flex items-center justify-between gap-2 ${
                             filterColumnIndex === idx || (columnFilters[idx] || []).length
-                              ? 'border-[#2D7DFE] bg-[#EEF4FF] text-[#0B3EA8]'
-                              : 'border-gray-200 bg-white text-[#4B5563] hover:border-gray-300'
+                              ? 'border-blue-500 bg-blue-50 text-blue-800'
+                              : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
                           }`}
                           title={`Filter ${safetyColumnDisplayLabel(header)}`}
                         >
                           <span className="min-w-0 flex-1 truncate">{safetyColumnDisplayLabel(header)}</span>
                           <span className="shrink-0 inline-flex items-center gap-2">
                             {(columnFilters[idx] || []).length > 0 && (
-                              <span className="rounded-full bg-[#2D7DFE] px-2 py-0.5 text-[11px] font-semibold text-white">
+                              <span className="rounded-full bg-blue-600 px-2 py-0.5 text-[11px] font-semibold text-white">
                                 {(columnFilters[idx] || []).length}
                               </span>
                             )}
@@ -19370,7 +19328,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                                   <button
                                     type="button"
                                     onClick={() => setColumnFilterValues(idx, [])}
-                                    className="text-[11px] text-[#2D7DFE] hover:underline"
+                                    className="text-[11px] text-blue-700 hover:underline"
                                   >
                                     Clear
                                   </button>
@@ -19389,14 +19347,14 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                                 <button
                                   type="button"
                                   onClick={() => setColumnFilterValues(idx, getUniqueColumnValues(idx, columnSearches[idx] || ''))}
-                                  className="px-2 py-1 text-[11px] border rounded-md bg-[#F8FAFC] hover:bg-[#EEF2F7]"
+                                  className="px-2 py-1 text-[11px] border rounded-md bg-slate-50 hover:bg-slate-100"
                                 >
                                   Select Visible
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => setColumnFilterValues(idx, [])}
-                                  className="px-2 py-1 text-[11px] border rounded-md bg-[#F8FAFC] hover:bg-[#EEF2F7]"
+                                  className="px-2 py-1 text-[11px] border rounded-md bg-slate-50 hover:bg-slate-100"
                                 >
                                   Clear All
                                 </button>
@@ -19408,7 +19366,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                               ) : getUniqueColumnValues(idx, columnSearches[idx] || '').map((val) => (
                                 <label
                                   key={val}
-                                  className="flex items-start gap-2 px-2 py-2 rounded-md text-xs text-gray-700 hover:bg-[#F8FAFC]"
+                                  className="flex items-start gap-2 px-2 py-2 rounded-md text-xs text-gray-700 hover:bg-slate-50"
                                 >
                                   <input
                                     type="checkbox"
@@ -19437,7 +19395,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                   })}
                 </tr>
               </thead>
-              <tbody className="text-[#374151] text-sm">
+              <tbody className="text-gray-700 text-sm">
                 {groupedFilteredHazardSummaryRows
                   .map((item, idx) => <CompletedHazardTableRow
                   key={item.rowKey || item.originalIndex}
@@ -19596,7 +19554,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                       onClick={() => setSelectedRiskPriority(priority)}
                       className={`rounded-md border px-2 py-1.5 text-xs font-semibold ${
                         selectedRiskPriority === priority
-                          ? 'border-[#2D7DFE] bg-[#EEF4FF] text-[#0B3EA8]'
+                          ? 'border-blue-500 bg-blue-50 text-blue-800'
                           : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
                       }`}
                     >
@@ -19614,7 +19572,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                     onClick={() => setActiveRiskId(risk.id)}
                     className={`mb-2 w-full rounded-md border p-3 text-left transition ${
                       activeRisk?.id === risk.id
-                        ? 'border-[#2D7DFE] bg-[#F5F8FF] shadow-sm'
+                        ? 'border-blue-500 bg-blue-50 shadow-sm'
                         : 'border-gray-200 bg-white hover:bg-gray-50'
                     }`}
                   >
@@ -19627,7 +19585,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                         {risk.reportGenerating && (
                           <Loader2
                             size={16}
-                            className="animate-spin text-[#2D7DFE]"
+                            className="animate-spin text-blue-700"
                             aria-label="Generating Safety Issue Report"
                           />
                         )}
@@ -19686,7 +19644,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                     <label className="md:col-span-2 block text-xs font-semibold text-gray-600">
                       Title
                       <input
-                        className="mt-1 w-full rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-900 focus:border-[#2D7DFE] focus:outline-none"
+                        className="mt-1 w-full rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none"
                         value={activeRisk.title}
                         onChange={(e) => {
                           const v = e.target.value;
@@ -19697,7 +19655,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                     <label className="md:col-span-2 block text-xs font-semibold text-gray-600">
                       Description
                       <textarea
-                        className="mt-1 min-h-28 w-full rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-900 focus:border-[#2D7DFE] focus:outline-none"
+                        className="mt-1 min-h-28 w-full rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none"
                         value={activeRisk.description}
                         onChange={(e) => {
                           const v = e.target.value;
@@ -19834,7 +19792,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                           <div
                             id={`hazard-source-row-${item.sourceIndex}`}
                             key={item.sourceIndex}
-                            className="scroll-mt-24 rounded-md border border-gray-200 bg-[#F8FAFC] p-3"
+                            className="scroll-mt-24 rounded-md border border-gray-200 bg-slate-50 p-3"
                           >
                             <div className="mb-2 text-xs font-semibold text-gray-700">Source Row {item.sourceIndex}</div>
                             <dl className="grid gap-2 text-xs md:grid-cols-2">
@@ -19882,7 +19840,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                     type="button"
                     onClick={handleRegenerateActiveSafetyIssueReport}
 	                    disabled={!activeRisk || activeRisk.reportGenerating || isGeneratingRiskAssessmentReport}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-[#2D7DFE]/30 bg-white px-2 py-1.5 text-xs font-medium text-[#1c5fde] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-blue-500/30 bg-white px-2 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
                     title={activeRisk ? 'Regenerate this Safety Issue Report' : 'Select a safety issue first'}
                     aria-label="Regenerate selected Safety Issue Report"
                   >
@@ -19935,7 +19893,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                   activeRisk.reportGenerated ? (
                     riskReportMode === 'edit' ? (
                     <textarea
-                      className="min-h-[610px] w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-sm leading-6 text-gray-900 focus:border-[#2D7DFE] focus:outline-none"
+                      className="min-h-[610px] w-full rounded-md border border-gray-200 bg-white px-3 py-2 font-mono text-sm leading-6 text-gray-900 focus:border-blue-500 focus:outline-none"
                       value={activeSafetyIssueReportMarkdown}
                       onChange={(e) => {
                         const nextMarkdown = replaceSafetyIssueReportMarkdown(
@@ -19965,7 +19923,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                     <div className="flex min-h-[280px] items-center justify-center rounded-md border border-dashed border-gray-300 p-6 text-sm text-gray-500">
                       {activeRisk.reportGenerating ? (
                         <div className="flex items-center gap-2">
-                          <Loader2 size={18} className="animate-spin text-[#2D7DFE]" aria-hidden="true" />
+                          <Loader2 size={18} className="animate-spin text-blue-700" aria-hidden="true" />
                           <span>Generating this Safety Issue Report...</span>
                         </div>
                       ) : (
@@ -20042,7 +20000,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
       }
     }}
     disabled={isGeneratingAgentReport || !analysisResult?.Summary}
-    className="px-3 py-2 text-white rounded bg-[#2D7DFE] hover:bg-[#1E61D6]"
+    className="px-3 py-2 text-white rounded bg-blue-600 hover:bg-blue-700"
     title="Generate a full AI report from the completed risk profile"
   >
     {isGeneratingAgentReport ? "Generating Report..." : "Generate AI Report"}
@@ -20060,7 +20018,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
           <div className="flex flex-wrap gap-3">
             <button
               onClick={() => exportReport(displayedReport, 'pdf')}
-              className="px-3 py-2 text-white rounded bg-[#2D7DFE] hover:bg-[#1E61D6] text-sm"
+              className="px-3 py-2 text-white rounded bg-blue-600 hover:bg-blue-700 text-sm"
               disabled={!displayedReport}
             >
               Export Report as PDF
@@ -20068,7 +20026,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
 
             <button
               onClick={() => exportReport(displayedReport, 'word')}
-              className="px-3 py-2 text-white rounded bg-[#7A37FF] hover:bg-[#5E2AD1] text-sm"
+              className="px-3 py-2 text-white rounded bg-violet-600 hover:bg-violet-700 text-sm"
               disabled={!displayedReport}
             >
               Export Report as Word (.docx)
@@ -20076,7 +20034,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
 
             <button
               onClick={() => exportReport(displayedReport, 'gdocs')}
-              className="px-3 py-2 text-white rounded bg-[#F59E0B] hover:bg-[#D97706] text-sm"
+              className="px-3 py-2 text-white rounded bg-amber-800 hover:bg-amber-900 text-sm"
               disabled={!displayedReport}
             >
               Export Report to Google Docs
@@ -20091,23 +20049,15 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
         {/* Report viewer */}
         {agentReportResult ? (
           <section className="mt-6 w-full">
-            <div className="rounded-2xl border border-gray-200 bg-white shadow-sm p-4 space-y-6">
-            <div className="w-full min-w-0
-                              [&_.prose]:max-w-none
-                              [&_.prose]:w-full
-                              [&_.prose]:px-0
-                              [&_.prose_img]:max-w-none
-                              [&_.prose_img]:w-full
-                              [&_.prose_table]:min-w-full">
-
+            <ReportDocumentLayout documentKey={agentReportResult.libraryId || `${activeProjectId}:${agentReportResult.generatedAt || displayedReport}`}>
                 <SafetyReportViewer
                   embedded
                   reportText={displayedReport}
-                  functionalDiagramImage={agentReportResult.libraryId ? agentReportResult.functionalDiagramImage : functionalDiagramImage}
+                  functionalDiagramImage={agentReportResult.functionalDiagramImage || (!agentReportResult.libraryId ? functionalDiagramImage : null)}
+                  functionalDiagramImages={agentReportResult.functionalDiagramImages || (!agentReportResult.libraryId ? functionalDiagramImages : null)}
                   onReportChange={handleReportDiagramChange}
                 />
-              </div>
-            </div>
+            </ReportDocumentLayout>
           </section>
         ) : (
           <div className="rounded-xl border bg-white p-6 text-gray-600 text-sm">
@@ -20511,7 +20461,7 @@ const updateRiskInProject = async (projectId, predicate) => {
 
                 <div className="ml-auto flex items-center gap-2">
   <button
-    className="px-3 py-1.5 rounded text-white bg-[#2D7DFE] hover:bg-[#1E61D6] text-sm disabled:opacity-50"
+    className="px-3 py-1.5 rounded text-white bg-blue-600 hover:bg-blue-700 text-sm disabled:opacity-50"
     onClick={applyInboxBulk}
     disabled={selectedVisibleCount === 0}
   >
@@ -20758,7 +20708,7 @@ const updateRiskInProject = async (projectId, predicate) => {
               </button>
               <button
                 onClick={exportAllRisksCSV}
-                className="px-3 py-2 text-white rounded bg-[#10B981] hover:bg-[#059669] text-sm"
+                className="px-3 py-2 text-white rounded bg-emerald-600 hover:bg-emerald-700 text-sm"
                 title="Export currently filtered risks"
               >
                 Export CSV
@@ -21403,14 +21353,14 @@ const updateRiskInProject = async (projectId, predicate) => {
             </button>
             {wizardStep < 5 ? (
               <button
-                className="px-3 py-2 text-white rounded bg-[#2D7DFE] hover:bg-[#1E61D6]"
+                className="px-3 py-2 text-white rounded bg-blue-600 hover:bg-blue-700"
                 onClick={() => setWizardStep(s => Math.min(5, s + 1))}
               >
                 Next
               </button>
             ) : (
 <button
-  className="px-3 py-2 text-white rounded bg-[#2D7DFE] hover:bg-[#1E61D6]"
+  className="px-3 py-2 text-white rounded bg-blue-600 hover:bg-blue-700"
   onClick={() => {
     const prompt = composeCustomPromptFromWizard(wizard);
     if (!prompt.trim()) return;
@@ -21547,7 +21497,7 @@ const updateRiskInProject = async (projectId, predicate) => {
                             </div>
                           ) : (
                             <textarea
-                              className="w-full resize-y rounded border border-gray-200 px-2 py-1 text-xs leading-5 focus:border-[#2D7DFE] focus:outline-none focus:ring-1 focus:ring-[#2D7DFE]"
+                              className="w-full resize-y rounded border border-gray-200 px-2 py-1 text-xs leading-5 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-[#2D7DFE]"
                               rows={rows}
                               value={row[field] || ""}
                               onChange={(event) => updateFunctionalAllocationProposalRow(index, field, event.target.value)}
@@ -21640,13 +21590,13 @@ const updateRiskInProject = async (projectId, predicate) => {
                             {isDetails ? (
                               <textarea
                                 rows={2}
-                                className="w-full resize-y rounded border border-gray-200 px-2 py-1.5 text-xs leading-5 focus:border-[#2D7DFE] focus:outline-none focus:ring-1 focus:ring-[#2D7DFE]"
+                                className="w-full resize-y rounded border border-gray-200 px-2 py-1.5 text-xs leading-5 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-[#2D7DFE]"
                                 value={revision.proposedRow[column.key] || ""}
                                 onChange={(event) => updateFunctionalRevisionProposalRow(index, column.key, event.target.value)}
                               />
                             ) : (
                               <input
-                                className="w-full rounded border border-gray-200 px-2 py-1.5 text-xs focus:border-[#2D7DFE] focus:outline-none focus:ring-1 focus:ring-[#2D7DFE]"
+                                className="w-full rounded border border-gray-200 px-2 py-1.5 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-[#2D7DFE]"
                                 value={revision.proposedRow[column.key] || ""}
                                 onChange={(event) => updateFunctionalRevisionProposalRow(index, column.key, event.target.value)}
                               />
@@ -21728,7 +21678,7 @@ const updateRiskInProject = async (projectId, predicate) => {
                       ].map(([field, rows]) => (
                         <td key={field} className="px-3 py-3">
                           <textarea
-                            className="w-full resize-y rounded border border-gray-200 px-2 py-1 text-xs leading-5 focus:border-[#2D7DFE] focus:outline-none focus:ring-1 focus:ring-[#2D7DFE]"
+                            className="w-full resize-y rounded border border-gray-200 px-2 py-1 text-xs leading-5 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-[#2D7DFE]"
                             rows={rows}
                             value={row[field] || ""}
                             onChange={(event) => updateFunctionalAuditProposalRow(index, field, event.target.value)}
@@ -21765,7 +21715,7 @@ const updateRiskInProject = async (projectId, predicate) => {
           </label>
           <textarea
             id="functional-audit-feedback"
-            className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#2D7DFE] focus:outline-none focus:ring-1 focus:ring-[#2D7DFE]"
+            className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-[#2D7DFE]"
             rows={3}
             placeholder="Example: focus on missing feedback/status paths, avoid adding new subsystems, or propose monitor functions for each controller."
             value={functionalAuditFeedback}
@@ -21792,7 +21742,7 @@ const updateRiskInProject = async (projectId, predicate) => {
           </button>
           <button
             type="button"
-            className="rounded border border-[#2D7DFE] px-3 py-2 text-sm text-[#1E61D6] hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+            className="rounded border border-blue-500 px-3 py-2 text-sm text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
             disabled={isFunctionalAuditRunning}
             onClick={() => (
               functionalAuditProposal.kind === "allocation"
@@ -21817,7 +21767,7 @@ const updateRiskInProject = async (projectId, predicate) => {
           </button>
           <button
             type="button"
-            className="rounded bg-[#2D7DFE] px-3 py-2 text-sm text-white hover:bg-[#1E61D6] disabled:cursor-not-allowed disabled:opacity-60"
+            className="rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
             disabled={functionalAuditProposal.kind === "allocation"
               ? !functionalAuditProposal.allocationRows?.some((_, index) => functionalAuditSelectedRows[index])
               : functionalAuditProposal.kind === "revision"
@@ -21881,7 +21831,7 @@ const updateRiskInProject = async (projectId, predicate) => {
             <div className="absolute inset-0 bg-black/40" onClick={() => {
               if (!isExportingCodeArchitectureProject) setShowCodeArchitectureProjectExport(false);
             }} />
-            <div className="cba-project-export-panel relative z-[101] flex min-h-0 w-full max-w-lg flex-col overflow-hidden rounded-2xl border-2 border-[#2D7DFE] bg-white shadow-xl">
+            <div className="cba-project-export-panel relative z-[101] flex min-h-0 w-full max-w-lg flex-col overflow-hidden rounded-2xl border-2 border-blue-500 bg-white shadow-xl">
               <div className="cba-project-export-header shrink-0 px-5 py-4 border-b">
                 <h2 className="text-base font-semibold text-slate-800">Export Code-Based Architecture project</h2>
                 <p className="text-xs text-slate-500 mt-0.5">Export architecture decomposition plus any saved hazard analysis, software requirements, system requirements, subsystem requirements, and design. Includes partial results and analysis checkpoints. Source files, source indexes, revision history, and per-call diagnostic logs are excluded. Reconnect the original repository or folder if needed to continue source analysis. Use the latest xHandle version on both installations. Stop analyses, save edits and close other xHandle tabs first. Credentials and local folder permissions are not transferred.</p>
@@ -21909,7 +21859,7 @@ const updateRiskInProject = async (projectId, predicate) => {
                         key={project.id}
                         className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2 text-sm ${
                           codeArchitectureProjectExportSelection === project.id
-                            ? "border-[#2D7DFE] bg-blue-50"
+                            ? "border-blue-500 bg-blue-50"
                             : "border-gray-200 hover:bg-gray-50"
                         }`}
                       >
@@ -21952,7 +21902,7 @@ const updateRiskInProject = async (projectId, predicate) => {
                 <button
                   onClick={exportSelectedCodeArchitectureProject}
                   disabled={isExportingCodeArchitectureProject || !codeArchitectureProjectExportSelection}
-                  className="px-3 py-2 rounded text-sm bg-[#2D7DFE] text-white hover:bg-[#1E61D6] disabled:opacity-50"
+                  className="px-3 py-2 rounded text-sm bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
                 >
                   {isExportingCodeArchitectureProject ? "Exporting..." : "Export"}
                 </button>
@@ -21969,7 +21919,7 @@ const updateRiskInProject = async (projectId, predicate) => {
               setNewCodeArchitectureTargetFolderId(null);
               setNewCodeArchitectureError('');
             }} />
-            <div className="relative z-[101] w-full max-w-md rounded-2xl border-2 border-[#2D7DFE] bg-white shadow-xl">
+            <div className="relative z-[101] w-full max-w-md rounded-2xl border-2 border-blue-500 bg-white shadow-xl">
               <div className="px-5 py-4 border-b">
                 <h2 className="text-base font-semibold text-slate-800">Create Code-Based Architecture project</h2>
                 <p className="text-xs text-slate-500 mt-0.5">
@@ -22016,7 +21966,7 @@ const updateRiskInProject = async (projectId, predicate) => {
                 }} className="px-3 py-2 rounded border text-sm hover:bg-gray-50">
                   Cancel
                 </button>
-                <button onClick={createCodeArchitectureProject} className="px-3 py-2 rounded text-sm bg-[#2D7DFE] text-white hover:bg-[#1E61D6]">
+                <button onClick={createCodeArchitectureProject} className="px-3 py-2 rounded text-sm bg-blue-600 text-white hover:bg-blue-700">
                   Create
                 </button>
               </div>
@@ -22032,7 +21982,7 @@ const updateRiskInProject = async (projectId, predicate) => {
               setNewCodeArchitectureFolderParentId(null);
               setNewCodeArchitectureFolderError('');
             }} />
-            <div className="relative z-[101] w-full max-w-md rounded-2xl border-2 border-[#2D7DFE] bg-white shadow-xl">
+            <div className="relative z-[101] w-full max-w-md rounded-2xl border-2 border-blue-500 bg-white shadow-xl">
               <div className="px-5 py-4 border-b">
                 <h2 className="text-base font-semibold text-slate-800">Create Code-Based Architecture folder</h2>
                 <p className="text-xs text-slate-500 mt-0.5">
@@ -22073,7 +22023,7 @@ const updateRiskInProject = async (projectId, predicate) => {
                 }} className="px-3 py-2 rounded border text-sm hover:bg-gray-50">
                   Cancel
                 </button>
-                <button onClick={createCodeArchitectureFolder} className="px-3 py-2 rounded text-sm bg-[#2D7DFE] text-white hover:bg-[#1E61D6]">
+                <button onClick={createCodeArchitectureFolder} className="px-3 py-2 rounded text-sm bg-blue-600 text-white hover:bg-blue-700">
                   Create
                 </button>
               </div>
@@ -22218,7 +22168,7 @@ const updateRiskInProject = async (projectId, predicate) => {
                 <button onClick={() => saveCodeArchitectureRepoConfig({ analyze: false })} disabled={isCodeArchitectureContextGenerating || isCodeArchitectureRepoVerifying || isCodeArchitectureRepoAnalyzing} className="px-3 py-2 rounded border text-sm hover:bg-gray-50 disabled:opacity-60">
                   {isCodeArchitectureRepoVerifying ? "Verifying..." : "Verify & save"}
                 </button>
-                <button onClick={() => saveCodeArchitectureRepoConfig({ analyze: true })} disabled={isCodeArchitectureContextGenerating || isCodeArchitectureRepoVerifying || isCodeArchitectureRepoAnalyzing} className="px-3 py-2 rounded text-sm bg-[#2D7DFE] text-white hover:bg-[#1E61D6] disabled:opacity-60">
+                <button onClick={() => saveCodeArchitectureRepoConfig({ analyze: true })} disabled={isCodeArchitectureContextGenerating || isCodeArchitectureRepoVerifying || isCodeArchitectureRepoAnalyzing} className="px-3 py-2 rounded text-sm bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60">
                   {isCodeArchitectureRepoAnalyzing ? "Starting..." : "Analyze"}
                 </button>
               </div>
@@ -22279,7 +22229,7 @@ const updateRiskInProject = async (projectId, predicate) => {
               }}
             />
             {/* Dialog */}
-            <div className="relative z-[101] w-full max-w-md rounded-2xl border-2 border-[#2D7DFE] bg-white shadow-xl">
+            <div className="relative z-[101] w-full max-w-md rounded-2xl border-2 border-blue-500 bg-white shadow-xl">
               <div className="px-5 py-4 border-b">
                 <h2 className="text-base font-semibold text-slate-800">Create new project</h2>
                 <p className="text-xs text-slate-500 mt-0.5">
@@ -22340,7 +22290,7 @@ const updateRiskInProject = async (projectId, predicate) => {
                 </button>
                 <button
   onClick={createProject}
-  className="px-3 py-2 rounded text-sm bg-[#2D7DFE] text-white hover:bg-[#1E61D6]"
+  className="px-3 py-2 rounded text-sm bg-blue-600 text-white hover:bg-blue-700"
 >
   Create
 </button>
@@ -22361,7 +22311,7 @@ const updateRiskInProject = async (projectId, predicate) => {
                 setNewProjectFolderError('');
               }}
             />
-            <div className="relative z-[101] w-full max-w-md rounded-2xl border-2 border-[#2D7DFE] bg-white shadow-xl">
+            <div className="relative z-[101] w-full max-w-md rounded-2xl border-2 border-blue-500 bg-white shadow-xl">
               <div className="px-5 py-4 border-b">
                 <h2 className="text-base font-semibold text-slate-800">Create project folder</h2>
                 <p className="text-xs text-slate-500 mt-0.5">
@@ -22411,7 +22361,7 @@ const updateRiskInProject = async (projectId, predicate) => {
                 </button>
                 <button
                   onClick={createProjectFolder}
-                  className="px-3 py-2 rounded text-sm bg-[#2D7DFE] text-white hover:bg-[#1E61D6]"
+                  className="px-3 py-2 rounded text-sm bg-blue-600 text-white hover:bg-blue-700"
                 >
                   Create
                 </button>
@@ -22613,16 +22563,16 @@ const DraftHazardTableRow = React.memo(function DraftHazardTableRow({
                 return (
                   <React.Fragment key={rowKey || originalIndex}>
                     {isFirstInGroup && (
-                      <tr className="bg-[#EEF4FF]">
+                      <tr className="bg-blue-50">
                         <td colSpan={visibleDraftHazardColumnCount + 1} className="px-4 py-2 border-b border-blue-100">
                           <button
                             type="button"
                             onClick={() => toggleHazardInterfaceCollapsed(groupMeta.key)}
-                            className="inline-flex items-center gap-2 text-left text-sm font-semibold text-[#0B3EA8]"
+                            className="inline-flex items-center gap-2 text-left text-sm font-semibold text-blue-800"
                           >
                             <span aria-hidden="true">{groupCollapsed ? '▸' : '▾'}</span>
                             <span>{groupMeta.label}</span>
-                            <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-[#2D7DFE]">
+                            <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-blue-700">
                               {groupCount} analysis variant{groupCount === 1 ? '' : 's'}
                             </span>
                           </button>
@@ -22649,7 +22599,7 @@ const DraftHazardTableRow = React.memo(function DraftHazardTableRow({
                           else delete hazardRowRefs.current[originalIndex];
                         }}
                         aria-selected={selectedForCollaborator}
-                        className={`${highlighted ? "bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset" : selectedForCollaborator ? "bg-indigo-50 ring-2 ring-indigo-400 ring-inset" : (idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]")} transition-colors`}
+                        className={`${highlighted ? "bg-amber-50 ring-2 ring-[#F3B63F] ring-inset" : selectedForCollaborator ? "bg-indigo-50 ring-2 ring-indigo-400 ring-inset" : (idx % 2 === 0 ? "bg-white" : "bg-gray-50")} transition-colors`}
                       >
                         <td className="relative px-3 py-2 align-top border-b border-gray-100">
                           <div className="flex max-w-52 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] leading-4 text-slate-600">
@@ -22701,7 +22651,7 @@ const DraftHazardTableRow = React.memo(function DraftHazardTableRow({
                                 {diagramTarget ? (
                                   <button
                                     type="button"
-                                    className="shrink-0 rounded p-1 text-[#2D7DFE] hover:bg-blue-100 hover:text-[#1E61D6]"
+                                    className="shrink-0 rounded p-1 text-blue-700 hover:bg-blue-100 hover:text-blue-700"
                                     onClick={(event) => {
                                       event.stopPropagation();
                                       handleOpenHazardDiagramTarget(diagramTarget);
@@ -22776,16 +22726,16 @@ const CompletedHazardTableRow = React.memo(function CompletedHazardTableRow({
                 return (
                       <React.Fragment key={`${originalIndex}-${groupMeta.key}`}>
                         {isFirstInGroup && (
-                          <tr className="bg-[#EEF4FF]">
+                          <tr className="bg-blue-50">
                             <td colSpan={visibleHazardSummaryColumnCount + 1} className="px-4 py-2 border-b border-blue-100">
                               <button
                                 type="button"
                                 onClick={() => toggleHazardInterfaceCollapsed(groupMeta.key)}
-                                className="inline-flex items-center gap-2 text-left text-sm font-semibold text-[#0B3EA8]"
+                                className="inline-flex items-center gap-2 text-left text-sm font-semibold text-blue-800"
                               >
                                 <span aria-hidden="true">{groupCollapsed ? '▸' : '▾'}</span>
                                 <span>{groupMeta.label}</span>
-                                <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-[#2D7DFE]">
+                                <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-blue-700">
                                   {groupCount} analysis variant{groupCount === 1 ? '' : 's'}
                                 </span>
                               </button>
@@ -22814,12 +22764,12 @@ const CompletedHazardTableRow = React.memo(function CompletedHazardTableRow({
                             aria-selected={selectedForCollaborator}
                             className={`transition-colors ${
                               highlighted
-                                ? 'bg-[#FFF7D6] ring-2 ring-[#F3B63F] ring-inset'
+                                ? 'bg-amber-50 ring-2 ring-[#F3B63F] ring-inset'
                                 : selectedForCollaborator
                                   ? 'bg-indigo-50 ring-2 ring-indigo-400 ring-inset'
                                 : rejected
                                   ? 'bg-rose-50/60'
-                                  : idx % 2 === 0 ? "bg-white" : "bg-[#F9FAFB]"
+                                  : idx % 2 === 0 ? "bg-white" : "bg-gray-50"
                             }`}
                           >
                             <td className="relative px-3 py-2 align-top border-b border-gray-100">
@@ -22916,7 +22866,7 @@ const CompletedHazardTableRow = React.memo(function CompletedHazardTableRow({
                                       <div {...editableCellProps} className="min-w-0 flex-1 whitespace-pre-wrap outline-none">{cell}</div>
                                       <button
                                         type="button"
-                                        className="shrink-0 rounded p-1 text-[#2D7DFE] hover:bg-blue-100 hover:text-[#1E61D6]"
+                                        className="shrink-0 rounded p-1 text-blue-700 hover:bg-blue-100 hover:text-blue-700"
                                         onClick={(event) => {
                                           event.stopPropagation();
                                           handleOpenHazardDiagramTarget(diagramTarget);
