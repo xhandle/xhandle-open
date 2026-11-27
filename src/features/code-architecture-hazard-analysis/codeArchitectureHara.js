@@ -11,7 +11,7 @@ export const codeHaraColumnLabel = header => DISPLAY_ALIASES[String(header || ''
 export const CODE_HARA_COLUMNS = [...new Set([
   'Function', 'Operational Scenario', 'Operational Mode', 'Operating Conditions',
   'Guide Phrase', 'Guide Phrase Applicable',
-  ...PROJECT_HARA_HEADERS.map(codeHaraColumnLabel), 'Safety Classification',
+  ...PROJECT_HARA_HEADERS.filter(header=>!['Item ID','Item'].includes(header)).map(codeHaraColumnLabel), 'Safety Classification',
 ])];
 
 export const HARA_ADDITIONAL_FIELDS = {
@@ -47,6 +47,7 @@ export function finalizeCodeHaraSheets(sheets) {
   const canonical = Object.fromEntries(Object.entries(DISPLAY_NAMES).map(([key, value]) => [value, key]));
   const canonicalHeaders = headers.map(header => canonical[header] && !headers.includes(canonical[header]) ? canonical[header] : header);
   const calculated = refreshProjectHaraSheets({ ...sheets, Summary: [canonicalHeaders, ...summary.slice(1)] });
-  const result = [headers, ...calculated.Summary.slice(1)];
+  const calculatedHeaders=calculated.Summary[0].map(codeHaraColumnLabel);
+  const result = [headers, ...calculated.Summary.slice(1).map(row=>headers.map(header=>row[calculatedHeaders.indexOf(codeHaraColumnLabel(header))]??''))];
   return { ...calculated, Summary: result, HARA: result };
 }

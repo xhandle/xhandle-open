@@ -77,7 +77,7 @@ export default function ResultsReviewDrawer({
 
   return (
     <div
-      className={`fixed bottom-0 left-0 right-[var(--xhandle-collaborator-reserved-width)] top-14 z-[80] flex min-w-0 justify-end pointer-events-none transition-[right,transform] duration-200 ease-out ${isOpen ? "" : "translate-x-full"}`}
+      className={`fixed bottom-0 left-0 right-[var(--xhandle-workspace-reserved-width)] top-14 z-[80] flex min-w-0 justify-end pointer-events-none transition-[right,transform] duration-200 ease-out ${isOpen ? "" : "translate-x-full"}`}
       aria-hidden={!isOpen}
     >
       <div

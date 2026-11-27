@@ -3,12 +3,12 @@ import {createValueAssembler} from '../code-architecture-transfer/archiveValueSt
 export const PAGED_HAZARD = '__xhandlePagedHazard';
 const containers=new Set(['object','array','string','map','set','binary']);
 const fields=new Set(['id','projectId','repoId','repoName','hazardMethod','runState','totalAssessments','validatedAssessments','failureMessage','pipelineVersion','architectureSnapshotHash','functionalModelSnapshotHash','analysisAbstraction','createdAt','updatedAt','reviewStatus','finalSavePending','finalSaveStatus','organizationProfileProvenance','operationalContexts','selectedOperationalContextId']);
-const detailFields=new Set(['csvImportPreviousSummary','csvImportPreviousPreprocessing','userPreprocessing','narrativeReview']);
+const detailFields=new Set(['csvImportPreviousSummary','csvImportPreviousPreprocessing','userPreprocessing','narrativeReview','failedAssessments']);
 const digest=value=>sha256().update(JSON.stringify(value)).digest('hex');
 // Retain coordinates, never result cells. Only the header and small scalar
 // metadata fields are assembled while traversing the authoritative stream.
 export function createHazardRowIndex(){
- const stack=[],spans=[],recordSummarySpans=[],metadata={};let capture=null,headers=[],pending=false,summarySource='none',hasLegacySummaryRows=false;const partial={headers:null,spans:[],metadata:{}};let narrative=false;const details={},omittedMetadata=[];
+ const stack=[],spans=[],recordSummarySpans=[],metadata={};let capture=null,headers=[],pending=false,summarySource='none',hasLegacySummaryRows=false;const partial={headers:null,spans:[],metadata:{},details:{}};let narrative=false;const details={},omittedMetadata=[];
  const done=()=>{const p=stack.at(-1);if(p){if(p.type==='object'){p.key=null;p.expectKey=true;}else p.count++;}};
  return {
   add(token,sequence,offset){
@@ -39,6 +39,7 @@ export function createHazardRowIndex(){
     if(frame.isKey){const object=stack.at(-1);object.key=frame.text;object.expectKey=false;}
     else{
      if(frame.path.length===1 && detailFields.has(frame.path[0]))details[frame.path[0]]=[...frame.start,sequence,offset+1];
+     if(frame.path.length===2 && frame.path[0]==='pendingAttempt' && frame.path[1]==='failedAssessments')partial.details.failedAssessments=[...frame.start,sequence,offset+1];
      if(frame.path.length===4 && frame.path[0]==='pendingAttempt' && frame.path[1]==='generatedSheets' && frame.path[2]==='Summary' && typeof frame.path[3]==='number' && frame.path[3]>0 && frame.type==='array')partial.spans.push([...frame.start,sequence,offset+1]);
      if(frame.path.length===3 && frame.path[0]===summarySource && frame.path[1]==='Summary' && typeof frame.path[2]==='number' && frame.path[2]>0 && frame.type==='array')spans.push([...frame.start,sequence,offset+1]);
      if(frame.path.length===2 && frame.path[0]==='summaryRows' && typeof frame.path[1]==='number' && frame.type==='object')recordSummarySpans.push([...frame.start,sequence,offset+1]);
@@ -46,7 +47,7 @@ export function createHazardRowIndex(){
     }
    }else if(!['text','bytes'].includes(type))done();
   },
-  finish(sourceDigest){const data={version:2,csvEditVersion:1,sourceDigest,metadata,headers,spans,pending,partial,narrative,details,omittedMetadata,summarySource,hasLegacySummaryRows,recordSummarySpans};return {...data,digest:digest(data)};},
+  finish(sourceDigest){const data={version:2,csvEditVersion:1,failureDetailsVersion:1,sourceDigest,metadata,headers,spans,pending,partial,narrative,details,omittedMetadata,summarySource,hasLegacySummaryRows,recordSummarySpans};return {...data,digest:digest(data)};},
  };
 }
 export function validateHazardRowIndex(payload){
@@ -66,6 +67,7 @@ export function validateHazardRowIndex(payload){
  if(index.recordSummarySpans)validateSpans(index.recordSummarySpans);
  validateSpans(index.partial?.spans);
  for(const span of Object.values(index.details || {}))validateSpans([span]);
+ for(const span of Object.values(index.partial?.details || {}))validateSpans([span]);
  if(index.partial?.spans?.length && !Array.isArray(index.partial.headers))throw Error('Invalid partial table header.');
  return index;
 }

@@ -23,3 +23,13 @@ export function revokeHazardSaveAttempts(filters = {}) {
     if(matches)revoked.add(JSON.stringify([recordKey,owner.attemptId]));
   }
 }
+
+// Explicit restoration runs only with the scope idle and storage cleanup held.
+// Allow fresh continuation of the restored records after Clear revoked them.
+export function restoreHazardSaveAttempts(runs) {
+  for (const run of runs) {
+    const recordKey = key(run);
+    for (const entry of revoked) if (JSON.parse(entry)[0] === recordKey) revoked.delete(entry);
+    owners.delete(recordKey);
+  }
+}

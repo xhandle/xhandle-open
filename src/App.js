@@ -61,6 +61,8 @@ import { loadSidebarPreferences, SIDEBAR_PREFERENCES_KEY } from "./lib/sidebarPr
 import { createProjectRunGuard } from "./lib/projectRunGuard";
 import { chooseDecompositionRecovery, nextDecompositionVersion } from "./lib/decompositionRecovery";
 import { recoveryRecord, saveRecoveryRecord, flushRecoveryRecord } from "./lib/durableRecovery";
+import { registerDesktopUpdateSave } from './lib/desktopUpdateSave';
+import useDesktopUpdateSave from './lib/useDesktopUpdateSave';
 import { createProjectHazardCheckpoint } from './features/project-hazard-analysis/projectHazardGenerationCheckpoint';
 import { functionalColumnFilterOptions } from './features/functional-decomposition/columnFilterOptions';
 import { editFunctionalSystem } from './components/functionalSystemGroups';
@@ -226,7 +228,6 @@ import {
 import {
   CODE_ARCHITECTURE_HAZARD_ARTIFACT_TYPE,
   CodeArchitectureHazardPanel,
-  deleteCodeArchitectureHazardRuns,
   ensureCodeArchitectureTraceIds,
   ensureCodeArchitectureTraceIdsAsync,
   getCodeArchitectureHazardRunById,
@@ -297,6 +298,8 @@ import {
 } from "./features/project-hazard-analysis/projectHazardDiagramSummary";
 import HazardOperationalContextManager from "./features/project-hazard-analysis/HazardOperationalContextManager";
 import HazardAnalysisResetModal from "./features/project-hazard-analysis/HazardAnalysisResetModal";
+import { clearCodeHazardAnalysis, restoreCodeHazardAnalysis, readCodeHazardReset, codeHazardResetCounts } from './features/code-architecture-hazard-analysis/codeHazardReset';
+import { WORKING_SET } from './features/code-architecture-hazard-analysis/hazardWorkingSet';
 import HazardCsvIssuesModal from "./features/project-hazard-analysis/HazardCsvIssuesModal";
 import HazardAnalysisRecoveryModal from "./features/project-hazard-analysis/HazardAnalysisRecoveryModal";
 import NeedsReviewResolverModal from "./features/project-hazard-analysis/NeedsReviewResolverModal";
@@ -309,13 +312,15 @@ import {
   resolveNeedsReviewGroupWithAI,
 } from "./features/project-hazard-analysis/needsReviewResolver";
 import {
-  CLASSIFICATION_RESOLUTION_STATUS,
   CLASSIFICATION_RESOLUTION_STATUS_HEADER,
   ensureClassificationResolutionStatus,
   ensureHazardAnalysisRowIds,
   inspectClassificationResolution,
   normalizeHazardAnalysisResolutionStatus,
+  isObsoleteClassificationStatusHeader,
 } from "./features/project-hazard-analysis/classificationResolutionStatus";
+import { mergeProjectStpaFoundations, projectHaraStpaDisplayRows } from './features/project-hazard-analysis/projectStpaFoundation';
+import { needsPracticalStpaCompletion } from './features/project-hazard-analysis/stpaAcceptance';
 import {
   getSafetyDetailEntries,
   isSafetyDetailHeader,
@@ -330,8 +335,13 @@ import {
   restoreHazardAnalysisRevision,
   saveHazardAnalysis,
   switchProjectHazardMethod,
+  loadProjectHazardReuseState, saveProjectStpaFoundation, clearProjectHazardMethodResults, restoreProjectHazardMethodState,
 } from "./features/project-hazard-analysis/projectHazardAnalysisStorage";
 import { PROJECT_HARA_HEADERS, PROJECT_HARA_DERIVED_HEADERS, recalculateProjectHaraRow, refreshProjectHaraSheets, alignGeneratedHaraCell } from "./features/project-hazard-analysis/projectHara";
+import HaraItemEditor from './features/project-hazard-analysis/HaraItemEditor';
+import { projectHaraItemDefinitionSheet } from './features/project-hazard-analysis/projectHaraItem';
+import { reviewProjectHaraFinal } from './components/aiAnalysisHaraFinalReview';
+import { haraReviewProtectedCells, synchronizeHaraReviewDrafts, lastHaraReviewChange, undoHaraFinalReview, haraReviewHistorySheet } from './features/project-hazard-analysis/haraFinalReview';
 import {
   findRowIndexById,
   rowChanged,
@@ -613,7 +623,6 @@ const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
     "Classification Confidence",
     "Safety Significant",
     "Safety Significance Rationale",
-    CLASSIFICATION_RESOLUTION_STATUS_HEADER,
   ],
   "STPA-Textbook": [
     "Raw Analysis Row ID",
@@ -648,7 +657,6 @@ const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
     "Classification Confidence",
     "Safety Significant",
     "Safety Significance Rationale",
-    CLASSIFICATION_RESOLUTION_STATUS_HEADER,
   ],
   "FMEA-Textbook": [
     "Loss",
@@ -658,7 +666,7 @@ const PROJECT_DRAFT_HAZARD_METHOD_HEADERS = {
     "Mitigation Strategy",
     "System Requirement",
   ],
-  HARA: PROJECT_HARA_HEADERS,
+  HARA: [...PROJECT_HARA_HEADERS, 'STPA Source Row ID', 'Functional Safety Requirements'],
   FHA: [
     "Function",
     "Functional Degradation / Loss",
@@ -772,7 +780,7 @@ function alignSummaryRowToHeaders(sourceHeaders = [], row = [], targetHeaders = 
   if (targetHeaders.includes('Hazardous Event ID')) return aligned;
   const remainingGeneratedValues = row
     .map((cell, index) => ({ cell, index }))
-    .filter(({ cell, index }) => !usedSourceIndexes.has(index) && String(cell || "").trim())
+    .filter(({ cell, index }) => !usedSourceIndexes.has(index) && !isObsoleteClassificationStatusHeader(sourceHeaders[index]) && String(cell || "").trim())
     .map(({ cell }) => cell);
   let remainingIndex = 0;
   return aligned.map((cell, index) => {
@@ -809,6 +817,7 @@ function findBestGeneratedHazardSummary(sheets = {}) {
 }
 
 function isMeaningfullyGeneratedDraftRow(row = [], fallbackRow = [], headers = []) {
+  if (needsPracticalStpaCompletion(headers, row)) return false;
   return row.some((cell, index) => (
     index >= PROJECT_DRAFT_HAZARD_BASE_HEADERS.length &&
     headers[index] !== "Raw Analysis Row ID" &&
@@ -4122,6 +4131,10 @@ const [isRunningCodeArchitectureHazard, setIsRunningCodeArchitectureHazard] = us
 const [codeArchitectureHazardContexts, setCodeArchitectureHazardContexts] = useState([]);
 const [selectedCodeArchitectureHazardContextId, setSelectedCodeArchitectureHazardContextId] = useState("all");
 const [showCodeArchitectureHazardContextManager, setShowCodeArchitectureHazardContextManager] = useState(false);
+const [codeHazardResetDialog, setCodeHazardResetDialog] = useState(null);
+const [codeHazardResetBusy, setCodeHazardResetBusy] = useState(false);
+const codeHazardResetBusyRef = useRef(false);
+const [codeHazardResetStatus, setCodeHazardResetStatus] = useState(null);
 const [codeArchitectureHazardToolbarCollapsed, setCodeArchitectureHazardToolbarCollapsed] = useState(
   () => localStorage.getItem("xhandle.codeArchitectureHazardToolbarCollapsed") === "true",
 );
@@ -5514,8 +5527,14 @@ async function handleBaselineRepo({
   beginCbaLoad(); // Invalidate hydration started before this analysis.
   codeArchitectureAnalysisScopeRef.current = storageKey;
   const setAnalysisLoading = value => { if (codeArchitectureScopeRef.current === storageKey) setCbaLoading(value); };
-  codeArchitectureAnalysisInFlightRef.current = true;
   const analysisController = new AbortController();
+  let finishUpdateSave;
+  const updateSaveSettled = new Promise(resolve => { finishUpdateSave = resolve; });
+  const unregisterUpdateSave = registerDesktopUpdateSave({
+    stop: () => analysisController.abort(),
+    save: () => updateSaveSettled,
+  });
+  codeArchitectureAnalysisInFlightRef.current = true;
   setCodeArchitectureRunFailure(null);
   codeArchitectureAnalysisAbortRef.current = analysisController;
   startActivity(id, {
@@ -5696,6 +5715,8 @@ async function handleBaselineRepo({
     codeArchitectureAnalysisScopeRef.current = null;
     setAnalysisLoading(false);
     if (!published && codeArchitectureScopeRef.current === storageKey) requestCbaReload(storageKey);
+    unregisterUpdateSave();
+    finishUpdateSave();
   }
 }
 
@@ -7622,6 +7643,7 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [hazardRevisionPreview, setHazardRevisionPreview] = useState(null);
   const [hazardRestoringRevision, setHazardRestoringRevision] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isReviewingHara, setIsReviewingHara] = useState(false);
   const [isRegeneratingRiskProfile, setIsRegeneratingRiskProfile] = useState(false);
   const [showDiagram, setShowDiagram] = useState(false);
   const [selectedLabel, setSelectedLabel] = useState(null);
@@ -7737,6 +7759,7 @@ function handleCreateProjectFromSelection({ name, selectedNodes, filteredRows })
   const [, setActionProviderRevision] = useState(0);
   const [riskMethod, setRiskMethod] = useState("STPA-Textbook");
   const [haraItemDefinition, setHaraItemDefinition] = useState("");
+  const [haraItem, setHaraItem] = useState(null);
   const [hazardMethodSwitching, setHazardMethodSwitching] = useState(false);
   const hazardMethodSwitchingRef = useRef(false);
 	  const [riskAssessmentReportMarkdown, setRiskAssessmentReportMarkdown] = useState("");
@@ -7854,6 +7877,11 @@ const [inboxBulk, setInboxBulk] = useState({
   }, [conversationalProjectModeAvailable, promptMode]);
 
   const { activities: workspaceActivities, startActivity, updateActivity, finishActivity } = useActivityCenter();
+  useDesktopUpdateSave(workspaceActivities, {
+    isBusy: () => codeHazardRunsRef.current.hasPendingWork()
+      || Boolean(hazardAnalysisAbortControllerRef.current || codeArchitectureImportRef.current || codeHazardResetBusyRef.current),
+    flush: async () => { await hazardContextSavePending.current; },
+  });
 const [analysisActivityId, setAnalysisActivityId] = useState(null);
 useEffect(() => {
   if (!analysisActivityId || !isAnalyzing) return;
@@ -8100,6 +8128,7 @@ useEffect(() => {
     setExpandedHazardVariantKeys(new Set());
     setRiskMethod(normalizeProjectHazardMethod(data?.riskMethod));
     setHaraItemDefinition(data?.haraItemDefinition || "");
+    setHaraItem(data?.haraItem || null);
     setAgentReportResult(data?.agentReportResult || null); // NEW: restore report
     setFunctionalDiagramImage(null);
     setFunctionalDiagramImages(null);
@@ -8333,6 +8362,7 @@ useEffect(() => {
     diagramCategories,
     riskMethod,
     haraItemDefinition,
+    haraItem,
 	    agentReportResult: agentReportResult ? {
       report: agentReportResult.report ?? agentReportResult.markdown ?? '',
       libraryId: agentReportResult.libraryId, projectId: activeProjectId,
@@ -8359,6 +8389,7 @@ useEffect(() => {
   diagramCategories,
   riskMethod,
   haraItemDefinition,
+  haraItem,
   agentReportResult,
 	  requirements,
 	  hazardOperationalContexts,
@@ -8622,6 +8653,29 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     () => buildProjectDraftHazardTargets(hazardAnalysisRows, riskMethod, effectiveHazardOperationalContexts),
     [effectiveHazardOperationalContexts, hazardAnalysisRows, riskMethod]
   );
+  const [haraStpaDisplayBasis, setHaraStpaDisplayBasis] = useState(null);
+  useEffect(() => {
+    if (riskMethod !== 'HARA' || !activeProjectId || isHazardAnalysisArtifactLoading || hazardMethodSwitching || isAnalyzing) return;
+    let canceled = false;
+    loadProjectHazardReuseState(activeProjectId).then(state => {
+      if (!canceled) setHaraStpaDisplayBasis({ projectId: activeProjectId, record: state.stpa });
+    }).catch(error => {
+      if (!canceled) setHaraStpaDisplayBasis(null);
+      console.error('[hazard-analysis] Saved STPA display could not be loaded', error);
+    });
+    return () => { canceled = true; };
+  }, [activeProjectId, riskMethod, isHazardAnalysisArtifactLoading, hazardMethodSwitching, isAnalyzing, analysisResult]);
+  const haraStpaDisplayRows = useMemo(() => {
+    if (riskMethod !== 'HARA' || haraStpaDisplayBasis?.projectId !== activeProjectId) return [];
+    const calibration = getProjectOrganizationCalibration(activeProjectId);
+    return projectHaraStpaDisplayRows(haraStpaDisplayBasis.record,
+      draftHazardTargets.map(target => target.analysisRow), draftHazardHeaders,
+      draftHazardTargets.map(target => buildProjectDraftHazardRow(target.analysisRow, draftHazardHeaders)), {
+        organizationContext: calibration.context,
+        stpaProfileProvenance: hazardOrganizationProfileProvenance(calibration),
+        operationalContext: buildHazardOperationalContextPrompt(effectiveHazardOperationalContexts),
+      });
+  }, [activeProjectId, riskMethod, haraStpaDisplayBasis, draftHazardTargets, draftHazardHeaders, effectiveHazardOperationalContexts, organizationProfileRevision]);
   useEffect(() => () => {
     safetyIssueConsolidationCoordinatorRef.current?.cancel(
       "Safety issue consolidation canceled because the active project changed or closed."
@@ -8629,6 +8683,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
   }, [activeProjectId]);
   useEffect(() => {
     if (!activeProjectId || loadingProjectId || !projectLoaded || loadedProjectId !== activeProjectId) return;
+    if (isAnalyzing || draftHazardGeneratingIndex !== null || hazardMethodSwitching) return;
     if (hasAnalysisSummary(analysisResult)) return;
     if (!Object.keys(draftHazardRowsByIndex || {}).length || !draftHazardTargets.length) return;
 
@@ -8646,7 +8701,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       .filter(Boolean);
     if (!recoveredRows.length) return;
 
-    const recoveredAnalysis = refreshProjectHaraSheets({ Summary: [targetHeaders, ...recoveredRows] });
+    const recoveredAnalysis = refreshProjectHaraSheets({ ...analysisResult, Summary: [targetHeaders, ...recoveredRows] }, { practical: riskMethod === 'HARA' });
     setAnalysisResult(recoveredAnalysis);
     saveProjectPatch(activeProjectId, {
       hazardAnalysisStorage: "artifact-store",
@@ -8662,6 +8717,9 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     loadingProjectId,
     projectLoaded,
     riskMethod,
+    isAnalyzing,
+    draftHazardGeneratingIndex,
+    hazardMethodSwitching,
   ]);
   useEffect(() => {
     if (!activeProjectId || loadingProjectId || !projectLoaded || loadedProjectId !== activeProjectId) return;
@@ -8827,6 +8885,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const displayRows = draftHazardTargets.map((target, targetIndex) => {
       const { analysisRow, originalIndex, rowKey } = target;
       const fallbackRow = buildProjectDraftHazardRow(analysisRow, hazardSummaryHeaders);
+      const sharedStpaRow = haraStpaDisplayRows[targetIndex];
       const savedDraft = draftHazardRowsByIndex[rowKey]
         || (target.legacyRowKey ? draftHazardRowsByIndex[target.legacyRowKey] : null)
         || (target.legacyRowKey && target.guidePhraseIndex === 0 ? draftHazardRowsByIndex[originalIndex] : null);
@@ -8846,18 +8905,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         alignedCompleted && isMeaningfullyGeneratedDraftRow(alignedCompleted, fallbackRow, hazardSummaryHeaders)
       );
       const generated = generatedDraft || generatedCompleted;
-      let displayRow = selectHazardDisplayRow({ generatedDraft, generatedCompleted, alignedDraft, alignedCompleted, fallbackRow });
-      const resolutionStatusIndex = hazardSummaryHeaders.indexOf(CLASSIFICATION_RESOLUTION_STATUS_HEADER);
-      if (
-        generatedDraft
-        && alignedCompleted
-        && resolutionStatusIndex >= 0
-        && !String(displayRow?.[resolutionStatusIndex] || "").trim()
-        && String(alignedCompleted?.[resolutionStatusIndex] || "").trim()
-      ) {
-        displayRow = [...displayRow];
-        displayRow[resolutionStatusIndex] = alignedCompleted[resolutionStatusIndex];
-      }
+      const displayRow = selectHazardDisplayRow({ generatedDraft, generatedCompleted, alignedDraft, alignedCompleted, fallbackRow: sharedStpaRow || fallbackRow });
 
       return {
         row: fillNotApplicableHazardCells(hazardSummaryHeaders, reconcileDerivedSafetyColumns(hazardSummaryHeaders, displayRow)),
@@ -8873,10 +8921,10 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     });
     if (!hazardSummaryHeaders.includes('Hazardous Event ID')) return displayRows;
     const generated = displayRows.filter(entry => entry.generated);
-    const recalculated = refreshProjectHaraSheets({Summary:[hazardSummaryHeaders, ...generated.map(entry => entry.row)]});
+    const recalculated = refreshProjectHaraSheets({ ...analysisResult, Summary:[hazardSummaryHeaders, ...generated.map(entry => entry.row)] }, { practical: riskMethod === 'HARA' });
     const byKey = new Map(generated.map((entry,index) => [entry.rowKey,recalculated.Summary[index+1]]));
     return displayRows.map(entry => byKey.has(entry.rowKey) ? {...entry,row:byKey.get(entry.rowKey)} : entry);
-  }, [analysisResult, draftHazardHeaders, draftHazardRowsByIndex, draftHazardTargets, hazardSummaryHeaders]);
+  }, [analysisResult, draftHazardHeaders, draftHazardRowsByIndex, draftHazardTargets, hazardSummaryHeaders, haraStpaDisplayRows, riskMethod]);
   const hazardSummaryColumnWidths = useMemo(() => hazardSummaryHeaders.map((header, columnIndex) => (
     hazardColumnWidthOverrides[header] || getAdaptiveHazardColumnWidth(header, hazardSummaryDisplayRows, columnIndex)
   )), [hazardColumnWidthOverrides, hazardSummaryDisplayRows, hazardSummaryHeaders]);
@@ -8910,13 +8958,6 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     document.addEventListener("pointermove", onMove);
     document.addEventListener("pointerup", onUp, { once: true });
   }, []);
-  const classificationResolutionStatusIndex = hazardSummaryHeaders.indexOf(CLASSIFICATION_RESOLUTION_STATUS_HEADER);
-  const classificationResolutionGapCount = useMemo(() => (
-    classificationResolutionStatusIndex < 0 ? 0 : hazardSummaryDisplayRows.filter(({ row }) => (
-      row[classificationResolutionStatusIndex] === CLASSIFICATION_RESOLUTION_STATUS.HUMAN_EVIDENCE_GAP
-      || row[classificationResolutionStatusIndex] === CLASSIFICATION_RESOLUTION_STATUS.POLICY_GAP
-    )).length
-  ), [classificationResolutionStatusIndex, hazardSummaryDisplayRows]);
   const diagramHazardData = useMemo(
     () => buildProjectHazardDiagramSummary(hazardSummaryHeaders, hazardSummaryDisplayRows),
     [hazardSummaryDisplayRows, hazardSummaryHeaders]
@@ -8986,7 +9027,10 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         || (target.legacyRowKey ? draftHazardRowsByIndex[target.legacyRowKey] : null)
         || (target.legacyRowKey && target.guidePhraseIndex === 0 ? draftHazardRowsByIndex[target.originalIndex] : null);
       return {
-        row: fillNotApplicableHazardCells(draftHazardHeaders, identifyProjectHazardDraftRow(draftHazardHeaders, savedDraft?.row || buildProjectDraftHazardRow(target.analysisRow, draftHazardHeaders), buildProjectDraftHazardRow(target.analysisRow, draftHazardHeaders))),
+        row: fillNotApplicableHazardCells(draftHazardHeaders, identifyProjectHazardDraftRow(draftHazardHeaders,
+          selectHazardDisplayRow({ generatedDraft: Boolean(savedDraft?.generated), alignedDraft: savedDraft?.row,
+            fallbackRow: haraStpaDisplayRows[index] || buildProjectDraftHazardRow(target.analysisRow, draftHazardHeaders) }),
+          buildProjectDraftHazardRow(target.analysisRow, draftHazardHeaders))),
         originalIndex: index,
         interfaceIndex: target.originalIndex,
         guidePhraseIndex: target.guidePhraseIndex,
@@ -8996,7 +9040,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         generated: Boolean(savedDraft?.generated),
       };
     });
-  }, [draftHazardHeaders, draftHazardRowsByIndex, draftHazardTargets]);
+  }, [draftHazardHeaders, draftHazardRowsByIndex, draftHazardTargets, haraStpaDisplayRows]);
   const draftHazardColumnWidths = useMemo(() => draftHazardHeaders.map((header, columnIndex) => (
     hazardColumnWidthOverrides[header] || getAdaptiveHazardColumnWidth(header, draftHazardSummaryRows, columnIndex)
   )), [draftHazardHeaders, draftHazardSummaryRows, hazardColumnWidthOverrides]);
@@ -12330,7 +12374,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       generationInput.functionalRow = constrainPreprocessedInput(generationInput.functionalRow,
         userPreprocessing, targetHeaders, fallbackRow);
       const savedDraftIsMeaningful = savedDraftRow
-        ? (savedDraft?.generated || isMeaningfullyGeneratedDraftRow(savedDraftRow, fallbackRow, targetHeaders))
+        ? !needsPracticalStpaCompletion(targetHeaders, savedDraftRow) && (savedDraft?.generated || isMeaningfullyGeneratedDraftRow(savedDraftRow, fallbackRow, targetHeaders))
         : false;
       if (!shouldRegenerate && !savedDraft?.userPreprocessing?.pending
         && hazardRowMatchesOrganizationProfile(savedDraft, hazardProfileProvenance)) {
@@ -12472,7 +12516,9 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
 
     try {
       await saveRecoveryRecord(`decomposition:${projectIdAtRun}`, { responseRows, decompositionVersion: loadProjectData(projectIdAtRun)?.decompositionVersion || nextDecompositionVersion(), updatedAt: new Date().toISOString() });
+      const reuseState = await loadProjectHazardReuseState(projectIdAtRun);
       const generationCheckpoint = await createProjectHazardCheckpoint(projectIdAtRun, selectedMethod, {
+        generationEpoch: reuseState.generationEpochs[selectedMethod] || 0,
         signal: abortController.signal,
         regenerate: shouldRegenerate,
       });
@@ -12489,14 +12535,25 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         if (stage.stage !== 'hara-assessment') await dummySetFolders(checkpointFolders);
       },
       tableRows: rowsToGenerate.map(({ functionalRow }) => functionalRow),
+      stpaSourceRows: rowsToGenerate.map(({ analysisRow }) => analysisRow),
+      stpaProfileProvenance: hazardProfileProvenance,
+      stpaFoundationRecord: reuseState.stpa,
+      onStpaFoundation: foundation => saveProjectStpaFoundation(projectIdAtRun, foundation, { expectedRevision: revisionAtRun }),
       sheets,
       setFolders: dummySetFolders,
       currentFolder,
       setChatPrompt: () => {},
       setChatResponse: () => {},
-      setProgress,              // keeps your UI updated
+      setProgress: selectedMethod === 'HARA'
+        ? patch => setProgress({...patch,step:97*(patch.step || 0)/Math.max(1,patch.total || 100),total:100})
+        : setProgress,
       hazardMethod: selectedMethod,
       haraItemDefinition,
+      haraItem, itemFunctionalRows: responseRows,
+      onHaraItem: async item => {
+        if (!saveProjectPatch(projectIdAtRun, {haraItem:item})) throw new Error('The HARA Item could not be saved.');
+        if (activeProjectIdRef.current === projectIdAtRun) setHaraItem(item);
+      },
       omitConsolidatedRequirement: true,
       operationalContext: buildHazardOperationalContextPrompt(contextsToRun),
       organizationContext: hazardOrganizationCalibration.context,
@@ -12562,7 +12619,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       }
     });
 
-    const mergedDraftRows = {
+    let mergedDraftRows = {
       ...startingDraftRows,
       ...preservedDraftRows,
       ...generatedDraftRows,
@@ -12576,8 +12633,8 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         return isMeaningfullyGeneratedDraftRow(row, fallbackRow, targetHeaders) ? row : null;
       })
       .filter(Boolean);
-    const finalSheets = await refreshHazardWorkbookInBackground({
-      ...generatedSheets,
+    let finalSheets = await refreshHazardWorkbookInBackground({
+      ...(['HARA','STPA-Textbook'].includes(selectedMethod) ? mergeProjectStpaFoundations(analysisResult, generatedSheets) : generatedSheets),
       Summary: [targetHeaders, ...mergedSummaryRows],
     });
     // Hazard results must survive even if consolidation or the browser fails.
@@ -12588,9 +12645,40 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       throw new Error(describeHazardWriteFailure(checkpointResult));
     }
     if (runIsVisible()) commitAnalysisResult(finalSheets, mergedDraftRows, checkpointResult.revision);
+    let savedRevision = checkpointResult.revision;
+    let reviewOperationError = null;
+    if (selectedMethod === 'HARA') {
+      const beforeReview = finalSheets;
+      const beforeReviewDrafts = mergedDraftRows;
+      try {
+        finalSheets = await reviewProjectHaraFinal(beforeReview, {
+          protectedCells: haraReviewProtectedCells(targetHeaders, mergedDraftRows),
+          organizationContext: hazardOrganizationCalibration.context, generationCheckpoint,
+          signal: abortController.signal, runId: sourceRunId,
+          onProgress: ({step,total,message}) => setProgress({step:98+step/Math.max(1,total),total:100,message}),
+        });
+        mergedDraftRows = synchronizeHaraReviewDrafts(beforeReview, finalSheets, mergedDraftRows, targetHeaders);
+        const reviewedSave = await saveHazardAnalysis(projectIdAtRun, {
+          method: selectedMethod, analysisResult: finalSheets, draftHazardRowsByIndex: mergedDraftRows, riskRegister,
+        }, {reason:'hara-final-review',expectedRevision:savedRevision});
+        if (![HAZARD_WRITE_OUTCOME.OK,HAZARD_WRITE_OUTCOME.UNCHANGED].includes(reviewedSave.outcome)) {
+          throw new Error(describeHazardWriteFailure(reviewedSave));
+        }
+        savedRevision = reviewedSave.revision;
+        if (runIsVisible()) commitAnalysisResult(finalSheets, mergedDraftRows, savedRevision);
+      } catch (error) {
+        if (abortController.signal.aborted || error?.name === 'AbortError') throw error;
+        // The primary acceptance bar has already been met and saved. An
+        // optional improvement cannot turn these final assessments into failures.
+        reviewOperationError = error;
+        finalSheets = beforeReview; mergedDraftRows = beforeReviewDrafts;
+        console.warn('[hara-final-review] Additional review was not applied; saved final results retained',error);
+        if (runIsVisible()) window.alert(`The analysis results are final and saved. Additional HARA review was not applied: ${error.message}`);
+      }
+    }
     let nextRiskRegister = riskRegister;
     try {
-      if (runIsVisible()) nextRiskRegister = await requestConsolidatedSafetyIssuesFromSummary(finalSheets.Summary, {
+      if (runIsVisible() && !reviewOperationError) nextRiskRegister = await requestConsolidatedSafetyIssuesFromSummary(finalSheets.Summary, {
         mergeExisting: Boolean(existingSummary) && !shouldRegenerate,
         signal: abortController.signal,
       });
@@ -12609,12 +12697,12 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     }
 
     let analysisPersisted = true;
-    if (activeProjectId) {
+    if (activeProjectId && !reviewOperationError) {
       const finalSave = await saveHazardAnalysis(projectIdAtRun, {
         analysisResult: finalSheets,
         draftHazardRowsByIndex: mergedDraftRows,
         riskRegister: nextRiskRegister,
-      }, { reason: 'generation-complete', expectedRevision: checkpointResult.revision });
+      }, { reason: 'generation-complete', expectedRevision: savedRevision });
       analysisPersisted = [HAZARD_WRITE_OUTCOME.OK, HAZARD_WRITE_OUTCOME.UNCHANGED].includes(finalSave.outcome);
       if (analysisPersisted && runIsVisible()) {
         commitAnalysisResult(finalSheets, mergedDraftRows, finalSave.revision);
@@ -12665,7 +12753,9 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       folders: checkpointFolders, responseRows, contexts: contextsToRun,
       preprocessing: startingDraftRows, latestStage, status: analysisPersisted ? 'complete' : 'save-failed', updatedAt: new Date().toISOString(),
     });
-    finishActivity(actId, analysisPersisted ? "success" : "error", analysisPersisted ? "Analysis complete" : "Analysis generated but could not be fully saved");
+    finishActivity(actId, analysisPersisted ? "success" : "error", analysisPersisted
+      ? (reviewOperationError ? 'Analysis complete; final results saved. Additional review was not applied.' : 'Analysis complete')
+      : "Analysis generated but could not be fully saved");
     } catch (error) {
       const wasCanceled = abortController.signal.aborted || error?.name === "AbortError";
       const message = wasCanceled
@@ -12688,6 +12778,76 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     hazardAnalysisAbortControllerRef.current?.abort();
   };
 
+  // Review the saved HARA directly. This action never regenerates STPA or Item
+  // scope, and the durable baseline remains recoverable if review is canceled.
+  const handleReviewFinalHara = async () => {
+    if (riskMethod !== 'HARA' || !activeProjectId || hazardAnalysisAbortControllerRef.current || isAnalyzing
+      || draftHazardGeneratingIndex !== null || isResettingHazardAnalysis || hazardMethodSwitching || isHazardAnalysisArtifactLoading) return;
+    const before = analysisResultRef.current;
+    if (!hasAnalysisSummary(before)) return;
+    const projectId = activeProjectId, drafts = draftHazardRowsByIndexRef.current;
+    const visible = createProjectRunGuard(projectId, activeProjectIdRef, navigationEpochRef);
+    const controller = new AbortController(), activityId = `hara-final-review-${projectId}`;
+    hazardAnalysisAbortControllerRef.current = controller;
+    setIsAnalyzing(true); setIsReviewingHara(true); setAnalysisActivityId(activityId);
+    const message = 'Reviewing completed HARA results…';
+    setProgress({step:0,total:1,message});
+    startActivity(activityId,{title:'Reviewing final HARA results',step:0,total:1,message});
+    try {
+      const baseline = await saveHazardAnalysis(projectId, {
+        method:'HARA',analysisResult:before,draftHazardRowsByIndex:drafts,
+      }, {reason:'hara-before-final-review',expectedRevision:analysisRevisionRef.current});
+      if (![HAZARD_WRITE_OUTCOME.OK,HAZARD_WRITE_OUTCOME.UNCHANGED].includes(baseline.outcome)) throw new Error(describeHazardWriteFailure(baseline));
+      const reuse = await loadProjectHazardReuseState(projectId);
+      const generationCheckpoint = await createProjectHazardCheckpoint(projectId,'HARA',{
+        generationEpoch:reuse.generationEpochs.HARA || 0,signal:controller.signal,
+      });
+      const after = await reviewProjectHaraFinal(before,{
+        protectedCells: haraReviewProtectedCells(draftHazardHeaders,drafts),
+        organizationContext:getProjectOrganizationCalibration(projectId).context,generationCheckpoint,
+        signal:controller.signal,runId:`hara-review-${Date.now()}`,force:true,
+        onProgress:progress => { if (visible()) setProgress(progress); },
+      });
+      const nextDrafts = synchronizeHaraReviewDrafts(before,after,drafts,draftHazardHeaders);
+      const saved = await saveHazardAnalysis(projectId,{
+        method:'HARA',analysisResult:after,draftHazardRowsByIndex:nextDrafts,
+      },{reason:'hara-final-review',expectedRevision:baseline.revision});
+      if (![HAZARD_WRITE_OUTCOME.OK,HAZARD_WRITE_OUTCOME.UNCHANGED].includes(saved.outcome)) throw new Error(describeHazardWriteFailure(saved));
+      if (visible()) {
+        commitAnalysisResult(after,nextDrafts,saved.revision);
+        if (after.haraPostReview?.changedCells) setSafetyIssueRefreshStatus({kind:'info',message:'HARA results changed. Refresh consolidated safety issues when ready.'});
+      }
+      finishActivity(activityId,'success',`Final HARA review saved ${after.haraPostReview?.changedRows || 0} corrected assessments.`);
+    } catch (error) {
+      const canceled = controller.signal.aborted || error?.name === 'AbortError';
+      finishActivity(activityId,canceled?'canceled':'error',canceled?'Final HARA review canceled; saved results retained.':error.message);
+      if (!canceled) window.alert(`Final HARA review could not be saved. Existing final results were retained. ${error.message}`);
+    } finally {
+      if (hazardAnalysisAbortControllerRef.current === controller) hazardAnalysisAbortControllerRef.current = null;
+      setIsAnalyzing(false); setIsReviewingHara(false); setAnalysisActivityId(null);
+    }
+  };
+
+  const handleUndoFinalHaraReview = async () => {
+    if (riskMethod !== 'HARA' || !activeProjectId || isAnalyzing || isResettingHazardAnalysis || hazardMethodSwitching
+      || isHazardAnalysisArtifactLoading || draftHazardGeneratingIndex !== null || hazardAnalysisAbortControllerRef.current) return;
+    const projectId = activeProjectId, before = analysisResultRef.current, drafts = draftHazardRowsByIndexRef.current;
+    const visible = createProjectRunGuard(projectId,activeProjectIdRef,navigationEpochRef);
+    setIsResettingHazardAnalysis(true);
+    try {
+      const undone = undoHaraFinalReview(before,{protectedCells:haraReviewProtectedCells(draftHazardHeaders,drafts)});
+      const nextDrafts = synchronizeHaraReviewDrafts(before,undone.sheets,drafts,draftHazardHeaders);
+      const saved = await saveHazardAnalysis(projectId,{method:'HARA',analysisResult:undone.sheets,draftHazardRowsByIndex:nextDrafts},
+        {reason:'hara-final-review-undo',expectedRevision:analysisRevisionRef.current});
+      if (![HAZARD_WRITE_OUTCOME.OK,HAZARD_WRITE_OUTCOME.UNCHANGED].includes(saved.outcome)) throw new Error(describeHazardWriteFailure(saved));
+      if (visible()) {
+        commitAnalysisResult(undone.sheets,nextDrafts,saved.revision);
+        setSafetyIssueRefreshStatus({kind:'info',message:`Undid ${undone.reversed} final-review cell changes; preserved ${undone.skipped} later edits or unavailable cells. Refresh consolidated safety issues when ready.`});
+      }
+    } catch (error) { window.alert(`The final review could not be undone. ${error.message}`); }
+    finally { setIsResettingHazardAnalysis(false); }
+  };
+
   const handleProjectRiskMethodChange = async (nextMethod) => {
     const normalizedMethod = normalizeProjectHazardMethod(nextMethod);
     if (normalizedMethod === riskMethod || hazardMethodSwitchingRef.current || isHazardAnalysisArtifactLoading || hazardDecisionLoadPendingRef.current) return;
@@ -12696,7 +12856,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     setHazardMethodSwitching(true);
     try {
       const result = await switchProjectHazardMethod(projectId, riskMethod, normalizedMethod, {
-        analysisResult, draftHazardRowsByIndex, riskRegister,
+        analysisResult, draftHazardRowsByIndex, riskRegister, riskAssessmentReportMarkdown, agentReportResult,
       }, analysisRevisionRef.current);
       if (result.status !== HAZARD_WRITE_OUTCOME.OK) throw new Error(describeHazardWriteFailure({ outcome: result.status }));
       if (activeProjectIdRef.current !== projectId) return;
@@ -12705,6 +12865,8 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       setAnalysisResult(result.record.analysisResult);
       setDraftHazardRowsByIndex(result.record.draftHazardRowsByIndex);
       setRiskRegister(result.record.riskRegister);
+      setRiskAssessmentReportMarkdown(result.record.riskAssessmentReportMarkdown || '');
+      setAgentReportResult(result.record.agentReportResult || null);
       setRiskMethod(normalizedMethod);
       setDraftHazardColumnFilters({});
       setDraftHazardColumnSearches({});
@@ -12712,6 +12874,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       setExpandedHazardVariantKeys(new Set());
       saveProjectPatch(projectId, { riskMethod: normalizedMethod, draftHazardHeaders: getProjectDraftHazardHeaders(normalizedMethod),
         hazardAnalysisStorage: 'artifact-store', analysisResult: undefined, draftHazardRowsByIndex: undefined, riskRegister: undefined });
+      await saveProjectSafetyIssueReport(projectId, result.record.riskAssessmentReportMarkdown || '');
     } catch (error) {
       window.alert(`The hazard method could not be changed. ${error.message}`);
     } finally {
@@ -12842,7 +13005,12 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       const selectedDownstreamReviewContext = Array.isArray(options.selectedDownstreamReviewLabels) && options.selectedDownstreamReviewLabels.length
         ? `Reviewer-selected downstream review scope:\n${options.selectedDownstreamReviewLabels.map((label) => `- ${label}`).join("\n")}\nEvaluate the selected scopes in dependency order. Do not interpret this selection as reviewer acceptance of any consequential engineering judgment.`
         : "";
+      const reuseState = await loadProjectHazardReuseState(activeProjectId);
       const rawSheets = await runLiteAIAnalysis({
+        stpaSourceRows: [functionalRow],
+        stpaProfileProvenance: hazardOrganizationProfileProvenance(organizationCalibration),
+        stpaFoundationRecord: reuseState.stpa,
+        onStpaFoundation: foundation => saveProjectStpaFoundation(activeProjectId, foundation, { expectedRevision: reuseState.headRevision }),
         tableRows: [generationFunctionalRow],
         sheets,
         setFolders: dummySetFolders,
@@ -12852,6 +13020,11 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
         setProgress: () => {},
         hazardMethod: selectedMethod,
       haraItemDefinition,
+        haraItem, itemFunctionalRows: responseRows,
+        onHaraItem: async item => {
+          if (!saveProjectPatch(activeProjectId, {haraItem:item})) throw new Error('The HARA Item could not be saved.');
+          if (activeProjectIdRef.current === activeProjectId) setHaraItem(item);
+        },
         omitConsolidatedRequirement: true,
         operationalContext: [baseOperationalContext, reviewedRowRegenerationContext, selectedDownstreamReviewContext].filter(Boolean).join("\n\n"),
         organizationContext: organizationCalibration.context,
@@ -12941,7 +13114,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       const hasCompletedSummary = Array.isArray(analysisResult?.Summary?.[0]);
       let nextAnalysisResult = null;
       let nextRiskRegister = null;
-      if (hasCompletedSummary || selectedMethod === "HARA") {
+      if (hasCompletedSummary || ["HARA", "STPA-Textbook"].includes(selectedMethod)) {
         const mergedSummaryRows = draftHazardTargets
           .map((summaryTarget) => {
             const rowFallback = buildProjectDraftHazardRow(summaryTarget.analysisRow, targetHeaders);
@@ -12950,7 +13123,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
           })
           .filter(Boolean);
         nextAnalysisResult = await refreshHazardWorkbookInBackground({
-          ...(analysisResult || {}),
+          ...mergeProjectStpaFoundations(analysisResult, generatedSheets),
           Summary: [targetHeaders, ...mergedSummaryRows],
         });
         setAnalysisResult(nextAnalysisResult);
@@ -13107,9 +13280,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     const existing = previousDrafts[target.rowKey];
     let nextRow = [...(existing?.row || displayedRow)];
     nextRow[columnIndex] = value;
-    if (riskMethod === 'HARA') nextRow = recalculateProjectHaraRow(draftHazardHeaders, nextRow);
-    const statusIndex = draftHazardHeaders.indexOf(CLASSIFICATION_RESOLUTION_STATUS_HEADER);
-    if (statusIndex >= 0) nextRow[statusIndex] = inspectClassificationResolution(draftHazardHeaders, nextRow).status;
+    if (riskMethod === 'HARA') nextRow = recalculateProjectHaraRow(draftHazardHeaders, nextRow, undefined, { practical: true });
     const nextDrafts = { ...previousDrafts, [target.rowKey]: { ...existing, row: nextRow, generated: true, userPreprocessing: recordUserPreprocessing(existing?.userPreprocessing, draftHazardHeaders, nextRow, [header], buildProjectDraftHazardRow(target.analysisRow, draftHazardHeaders)) } };
     const summary = previousAnalysis?.Summary;
     const rawId = displayedRow[draftHazardHeaders.indexOf("Raw Analysis Row ID")];
@@ -13122,7 +13293,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
       Summary: summary.map((row, index) => index > 0 && row === matchedRow
         ? alignSummaryRowToHeaders(draftHazardHeaders, nextRow, summary[0], row)
         : row),
-    }) : previousAnalysis;
+    }, { practical: riskMethod === 'HARA' }) : previousAnalysis;
     const result = await saveHazardAnalysis(projectId, {
       method: riskMethod, analysisResult: nextAnalysis, draftHazardRowsByIndex: nextDrafts,
     }, { reason: "manual-cell-edit", expectedRevision: analysisRevisionRef.current });
@@ -13144,9 +13315,11 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
     let nextRowForReview = null;
     setDraftHazardRowsByIndex((prev) => {
       const existing = prev[rowKey] || (target.guidePhraseIndex === 0 ? prev[target.originalIndex] : null);
-      const baseRow = identifyProjectHazardDraftRow(draftHazardHeaders, existing?.row || buildProjectDraftHazardRow(functionalRow, draftHazardHeaders), buildProjectDraftHazardRow(functionalRow, draftHazardHeaders));
+      const inheritedStpa = haraStpaDisplayRows[hazardTargetIndex];
+      const isHaraDraft = Boolean(inheritedStpa && !existing?.generated);
+      const baseRow = identifyProjectHazardDraftRow(draftHazardHeaders, existing?.row || inheritedStpa || buildProjectDraftHazardRow(functionalRow, draftHazardHeaders), buildProjectDraftHazardRow(functionalRow, draftHazardHeaders));
       const editedRow = baseRow.map((cell, index) => (index === columnIndex ? value : cell));
-      const nextRow = riskMethod === "HARA" ? recalculateProjectHaraRow(draftHazardHeaders, editedRow) : editedRow;
+      const nextRow = riskMethod === "HARA" && !isHaraDraft ? recalculateProjectHaraRow(draftHazardHeaders, editedRow) : editedRow;
       nextRowForReview = nextRow;
       return {
         ...prev,
@@ -13154,7 +13327,7 @@ const handleGenerateAgentReport = async (customPromptOverride = null) => {
           ...existing,
           row: nextRow,
           userPreprocessing: recordUserPreprocessing(existing?.userPreprocessing, draftHazardHeaders, nextRow, [draftHazardHeaders[columnIndex]], buildProjectDraftHazardRow(functionalRow, draftHazardHeaders)),
-          generated: existing?.generated || isMeaningfullyGeneratedDraftRow(nextRow, buildProjectDraftHazardRow(functionalRow, draftHazardHeaders), draftHazardHeaders),
+          generated: !isHaraDraft && (existing?.generated || isMeaningfullyGeneratedDraftRow(nextRow, buildProjectDraftHazardRow(functionalRow, draftHazardHeaders), draftHazardHeaders)),
         },
       };
     });
@@ -14436,6 +14609,8 @@ Rules:
     selectedMethod = codeArchitectureHazardMethod,
     options = {}
   ) => {
+    if (codeHazardResetBusyRef.current) return;
+    setCodeHazardResetStatus(null);
     const reportStart=safeHazardObserver(startActivity),reportUpdate=safeHazardObserver(updateActivity),reportFinish=safeHazardObserver(finishActivity);
     const repoMeta = activeCodeArchitectureRepoMeta;
     const repoId = repoMeta.repoId || repoMeta.repoName || "repo";
@@ -14567,22 +14742,73 @@ Rules:
   };
 
   const handleClearCodeArchitectureHazardContents = async () => {
-    const repoMeta = activeCodeArchitectureRepoMeta || {};
-    const repoId = repoMeta.repoId || repoMeta.repoName || "repo";
-    const projectId = activeCodeArchitectureProjectId || activeProjectId || "";
-    const summaryCount = Math.max(0, (codeArchitectureHazardRun?.generatedSheets?.Summary?.length || 1) - 1);
-    const confirmed = window.confirm(
-      `Permanently clear code architecture hazard analysis contents${summaryCount ? ` (${summaryCount} summary row${summaryCount === 1 ? "" : "s"})` : ""} for this repository? This cannot be undone.`,
-    );
-    if (!confirmed) return;
-    await deleteCodeArchitectureHazardRuns({ projectId, repoId });
-    codeHazardRunsRef.current.discard(codeHazardScopeRef.current);
-    setCodeArchitectureHazardRun(null);
-    setCodeArchitectureHazardProgress({
-      step: 0,
-      total: stepDescriptionsMap[codeArchitectureHazardMethod]?.total || 9,
-      message: "",
-    });
+    if (isRunningCodeArchitectureHazard || codeHazardResetBusyRef.current || !codeArchitectureHazardRunRef.current) return;
+    const dialog = { projectId: activeCodeArchitectureProjectId, repoId: hazardLoadRepoId,
+      contextRepoId: activeCodeArchitectureRepo?.id || hazardLoadRepoId,
+      run: codeArchitectureHazardRunRef.current, runScope: codeHazardScopeRef.current, reviewCount: 'Loading…' };
+    setCodeHazardResetDialog(dialog);
+    try {
+      const items = await resultsReview.readStoredReviewItems(isCodeHazardResetReviewItem);
+      setCodeHazardResetDialog(current => current?.run === dialog.run ? { ...current, reviewCount: items.length } : current);
+    } catch { setCodeHazardResetDialog(current => current?.run === dialog.run ? { ...current, reviewCount: 'Unavailable' } : current); }
+  };
+
+  const handleConfirmCodeHazardReset = async (resetScope) => {
+    const dialog = codeHazardResetDialog;
+    if (!dialog || codeHazardResetBusyRef.current) return;
+    codeHazardResetBusyRef.current = true;
+    setCodeHazardResetBusy(true);
+    let snapshot;
+    try {
+      if (isRunningCodeArchitectureHazard || hazardContextSavePending.current
+        || codeHazardRunsRef.current.get(dialog.runScope)?.workPending
+        || codeArchitectureHazardRunRef.current !== dialog.run
+        || hazardContextScope.current !== `${dialog.projectId}:${dialog.contextRepoId}`) {
+        throw new Error('The active analysis changed. Reopen the clear-analysis dialog.');
+      }
+      const reviewItems = await resultsReview.readStoredReviewItems(isCodeHazardResetReviewItem);
+      if (hazardContextScope.current !== `${dialog.projectId}:${dialog.contextRepoId}`) throw new Error('The active repository changed. Reopen the dialog.');
+      snapshot = await clearCodeHazardAnalysis({ ...dialog, expectedRunId: dialog.run.id,
+        expectedRevision: dialog.run[PAGED_HAZARD]?.revision || dialog.run[WORKING_SET]?.revision,
+        contexts: codeArchitectureHazardContexts, reviewItems, resetScope });
+      codeHazardRunsRef.current.discard(dialog.runScope);
+      if (resetScope === 'results-and-contexts') {
+        await persistHazardContexts({ run: null, projectId: dialog.projectId, repoId: dialog.contextRepoId, contexts: [] });
+      }
+      await resultsReview.deleteReviewItemsByIds(reviewItems.map(item => item.id));
+      if (hazardContextScope.current !== `${dialog.projectId}:${dialog.contextRepoId}`) return;
+      commitCodeArchitectureHazardRun(null);
+      if (resetScope === 'results-and-contexts') { setCodeArchitectureHazardContexts([]); setSelectedCodeArchitectureHazardContextId('all'); }
+      setCodeArchitectureHazardProgress({ step: 0, total: 100, message: '' });
+      setCodeHazardResetDialog(null);
+      setCodeHazardResetStatus({ kind: 'cleared', canUndo: true });
+    } catch (error) {
+      if (hazardContextScope.current !== `${dialog.projectId}:${dialog.contextRepoId}`) return;
+      setCodeHazardResetDialog(null);
+      setCodeHazardResetStatus({ kind: 'error', canUndo: Boolean(snapshot), message: snapshot
+        ? `Results were saved in a recovery snapshot, but cleanup could not finish: ${error.message}. Use Restore cleared analysis to recover them.`
+        : `${error.message} No hazard results were cleared.` });
+    } finally { codeHazardResetBusyRef.current = false; setCodeHazardResetBusy(false); }
+  };
+
+  const handleRestoreClearedCodeHazards = async () => {
+    if (codeHazardResetBusyRef.current || isRunningCodeArchitectureHazard) return;
+    codeHazardResetBusyRef.current = true; setCodeHazardResetBusy(true);
+    const scope = { projectId: activeCodeArchitectureProjectId, repoId: hazardLoadRepoId };
+    const contextScopeAtStart = hazardContextScope.current;
+    try {
+      const snapshot = await restoreCodeHazardAnalysis(scope);
+      await persistHazardContexts({ run: null, projectId: scope.projectId, repoId: snapshot.contextRepoId, contexts: snapshot.contexts });
+      await resultsReview.createReviewItems(snapshot.reviewItems);
+      const restored = await getLatestCodeArchitectureHazardRun(scope, { paged: true, workingSet: true });
+      if (hazardContextScope.current !== `${scope.projectId}:${snapshot.contextRepoId}`) return;
+      commitCodeArchitectureHazardRun(restored);
+      if (restored?.hazardMethod) setCodeArchitectureHazardMethod(restored.hazardMethod);
+      setCodeArchitectureHazardContexts(snapshot.contexts);
+      setSelectedCodeArchitectureHazardContextId('all');
+      setCodeHazardResetStatus({ kind: 'restored', canUndo: false, message: 'The cleared hazard analysis was restored.' });
+    } catch (error) { if (hazardContextScope.current === contextScopeAtStart) setCodeHazardResetStatus({ kind: 'error', canUndo: true, message: error.message }); }
+    finally { codeHazardResetBusyRef.current = false; setCodeHazardResetBusy(false); }
   };
 
   const codeArchitectureCsvSnapshotHash = useMemo(() => computeArchitectureSnapshotHash(ensureCodeArchitectureTraceIds(cbaTableData)), [cbaTableData]);
@@ -14855,8 +15081,9 @@ Rules:
       const XLSX = await loadWorkbookXlsx();
       const hara = refreshProjectHaraSheets(analysisResult);
       const workbook = XLSX.utils.book_new();
-      for (const [name, data] of [['HARA', hara?.Summary], ['Safety Goals', hara?.['Safety Goals']], ['Item Definition', [['Item Definition'], [haraItemDefinition]]],
-        ...['HARA Coverage','HARA Quality Review','Candidate Safety Requirements'].map(name=>[name,hara?.[name]])]) {
+      for (const [name, data] of [['HARA', hara?.Summary], ['Safety Goals', hara?.['Safety Goals']], ['Item Definition', projectHaraItemDefinitionSheet(hara,haraItemDefinition)],
+        ...(hara?.haraPostReviewHistory?.length ? [['HARA Review Changes',haraReviewHistorySheet(hara)]] : []),
+        ...['Functional Safety Requirements','HARA Coverage','HARA Quality Review','Candidate Safety Requirements'].map(name=>[name,hara?.[name]])]) {
         if (data?.length) XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(data), name);
       }
       const blob = new Blob([XLSX.write(workbook, {type:'array',bookType:'xlsx'})], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
@@ -14984,6 +15211,24 @@ const hazardPreparedViewRef = useHazardPreparationCache({
   organizationContext: currentCbaOrganizationContext,
 }, activeCodeArchitectureRowsKey);
 
+const isCodeHazardResetReviewItem = useCallback(item => (
+  item.artifactType === CODE_ARCHITECTURE_HAZARD_ARTIFACT_TYPE
+  && activeCodeArchitectureRepoReviewIds.some(repoId => String(item.artifactId || '').startsWith(
+    `code-architecture-hazard-summary:${activeCodeArchitectureProjectId}:${repoId}:row:`,
+  ))
+), [activeCodeArchitectureProjectId, activeCodeArchitectureRepoReviewIds]);
+
+useEffect(() => {
+  setCodeHazardResetDialog(null);
+  setCodeHazardResetStatus(null);
+  if (!activeCodeArchitectureProjectId || !hazardLoadRepoId) return undefined;
+  let cancelled = false;
+  readCodeHazardReset({ projectId: activeCodeArchitectureProjectId, repoId: hazardLoadRepoId }).then(snapshot => {
+    if (!cancelled && snapshot && !snapshot.restoredRevisions) setCodeHazardResetStatus({ kind: 'cleared', canUndo: true });
+  }).catch(() => {});
+  return () => { cancelled = true; };
+}, [activeCodeArchitectureProjectId, hazardLoadRepoId]);
+
 const isProjectHazardReviewItem = useCallback((item) => {
   const artifactId = String(item?.artifactId || "");
   const belongsToProject = item?.projectId === activeProjectId ||
@@ -15031,13 +15276,16 @@ useEffect(() => {
   return () => { cancelled = true; };
 }, [activeProjectId]);
 
-const handleClearHazardAnalysis = async (scope = "results") => {
+const handleClearHazardAnalysis = async (scope = "results", { clearContexts = false } = {}) => {
+  const removeContexts = scope === "results-and-contexts" || clearContexts;
   if (!activeProjectId || isResettingHazardAnalysis) return;
   setIsResettingHazardAnalysis(true);
   try {
     const projectHazardReviewItems = await resultsReview.readStoredReviewItems(isProjectHazardReviewItem);
     if (activeProjectIdRef.current !== activeProjectId) throw new Error('The active project changed. Reopen the reset dialog.');
+    const methodState = await loadProjectHazardReuseState(activeProjectId);
     const snapshot = {
+      method: riskMethod, methodState,
       analysisResult,
       draftHazardRowsByIndex,
       riskRegister,
@@ -15056,17 +15304,18 @@ const handleClearHazardAnalysis = async (scope = "results") => {
       draftHazardRowsByIndex: undefined,
       riskRegister: undefined,
       agentReportResult: null,
-      ...(scope === "results-and-contexts" ? { hazardOperationalContexts: [] } : {}),
+      ...(removeContexts ? { hazardOperationalContexts: [] } : {}),
     };
-    const artifactCleared = await saveProjectHazardAnalysisRecord(activeProjectId, {
-      analysisResult: null,
-      draftHazardRowsByIndex: {},
-      riskRegister: [],
-    }, { allowAnalysisClear: true, reason: "explicit-user-clear" });
+    if (activeProjectIdRef.current !== activeProjectId) throw new Error('The active project changed. No results were cleared.');
+    const clearedRecord = await clearProjectHazardMethodResults(activeProjectId, {
+      clearStpa: riskMethod === 'HARA' && scope === 'stpa-and-hara', expectedRevision: methodState.headRevision, expectedMethod:riskMethod,
+    });
+    analysisRevisionRef.current = clearedRecord.revision;
+    const artifactCleared = Boolean(clearedRecord);
     if (!artifactCleared || !saveProjectPatch(activeProjectId, clearedPatch)) {
       throw new Error("The cleared project state could not be persisted, so no data was cleared.");
     }
-    await resultsReview.deleteReviewItemsByIds(projectHazardReviewItems.map((item) => item.id));
+    if (!(riskMethod === 'HARA' && scope !== 'stpa-and-hara')) await resultsReview.deleteReviewItemsByIds(projectHazardReviewItems.map((item) => item.id));
     setAnalysisResult(null);
     setDraftHazardRowsByIndex({});
     setRiskRegister([]);
@@ -15078,7 +15327,7 @@ const handleClearHazardAnalysis = async (scope = "results") => {
     setColumnFilters({});
     setDraftHazardColumnFilters({});
     setHighlightedHazardRowIndex(null);
-    if (scope === "results-and-contexts") {
+    if (removeContexts) {
       setHazardOperationalContexts([]);
       setSelectedHazardContextId("all");
     }
@@ -15100,6 +15349,8 @@ const handleUndoHazardAnalysisReset = async () => {
     const record = await loadHazardAnalysisResetSnapshot(activeProjectId);
     const snapshot = record?.snapshot;
     if (!snapshot) throw new Error("The reset snapshot is no longer available.");
+    if (snapshot.method && snapshot.method !== riskMethod) throw new Error(`Return to ${snapshot.method} before restoring this cleared analysis.`);
+    if (snapshot.methodState) await restoreProjectHazardMethodState(activeProjectId, snapshot.methodState, {expectedRevision:analysisRevisionRef.current});
     setAnalysisResult(normalizeHazardAnalysisResolutionStatus(snapshot.analysisResult || null));
     setDraftHazardRowsByIndex(snapshot.draftHazardRowsByIndex || {});
     setRiskRegister(snapshot.riskRegister || []);
@@ -15926,9 +16177,20 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
           disabled={isAnalyzing || draftHazardGeneratingIndex !== null || hazardMethodSwitching || isHazardAnalysisArtifactLoading}
         >
           <option value="STPA-Textbook">STPA</option>
-          <option value="HARA">HARA (ISO 26262)</option>
+          <option value="HARA">HARA</option>
         </select>
         </ProjectTabToolbarField>
+        {riskMethod === 'HARA' && !hazardTabToolbarCollapsed && <ProjectTabToolbarField label="Item" collapsed={false}>
+          <HaraItemEditor item={haraItem} legacyDefinition={haraItemDefinition}
+            disabled={isAnalyzing || draftHazardGeneratingIndex !== null || hazardMethodSwitching || isHazardAnalysisArtifactLoading}
+            onSave={item=>{
+              if(!saveProjectPatch(activeProjectId,{haraItem:item,haraItemDefinition:''}))throw new Error('The HARA Item could not be saved.');
+              setHaraItem(item);setHaraItemDefinition('');
+            }} onReset={()=>{
+              if(!saveProjectPatch(activeProjectId,{haraItem:null,haraItemDefinition:''}))throw new Error('The HARA Item settings could not be saved.');
+              setHaraItem(null);setHaraItemDefinition('');
+            }}/>
+        </ProjectTabToolbarField>}
         <ProjectTabToolbarField label="Operational context" collapsed={hazardTabToolbarCollapsed}>
         <select
           id="hazard-operational-context"
@@ -15958,12 +16220,12 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
       <ProjectTabToolbarButton
         icon={isAnalyzing ? <Loader2 size={17} className="animate-spin" /> : <Sparkles size={17} />}
         label={isAnalyzing
-          ? (isRegeneratingRiskProfile ? 'Regenerating risk profile…' : 'Developing risk profile…')
+          ? (isReviewingHara ? 'Reviewing final results…' : isRegeneratingRiskProfile ? 'Regenerating risk profile…' : 'Developing risk profile…')
           : (shouldRegenerateRiskProfileFromToolbar ? 'Regenerate risk profile' : 'Develop risk profile')}
         collapsed={hazardTabToolbarCollapsed}
         tone="primary"
         onClick={() => handleRunAnalysis(riskMethod, { regenerate: shouldRegenerateRiskProfileFromToolbar })}
-        disabled={isAnalyzing || draftHazardGeneratingIndex !== null || hazardAnalysisRows.length === 0 || hazardMethodSwitching || isHazardAnalysisArtifactLoading}
+        disabled={isAnalyzing || isResettingHazardAnalysis || draftHazardGeneratingIndex !== null || hazardAnalysisRows.length === 0 || hazardMethodSwitching || isHazardAnalysisArtifactLoading}
         title={
           hazardAnalysisRows.length === 0
             ? "Add Function (From), Function (To), and Control Action before running hazard analysis"
@@ -16020,6 +16282,14 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
       {riskMethod === 'HARA' && <ProjectTabToolbarButton icon={<Download size={17} />} label="Export HARA workbook"
         collapsed={hazardTabToolbarCollapsed} onClick={exportProjectHaraWorkbook} disabled={!hasAnalysisSummary(analysisResult)}
         title="Export all HARA events, linked safety goals and the item definition" />}
+      {riskMethod === 'HARA' && <ProjectTabToolbarButton icon={<Sparkles size={17} />} label="Review final results"
+        collapsed={hazardTabToolbarCollapsed} onClick={handleReviewFinalHara}
+        disabled={!hasAnalysisSummary(analysisResult) || isAnalyzing || isResettingHazardAnalysis || hazardMethodSwitching || isHazardAnalysisArtifactLoading || draftHazardGeneratingIndex !== null}
+        title="Review completed HARA results and correct specific cells without regenerating STPA" />}
+      {riskMethod === 'HARA' && lastHaraReviewChange(analysisResult) && <ProjectTabToolbarButton icon={<History size={17} />} label="Undo final review"
+        collapsed={hazardTabToolbarCollapsed} onClick={handleUndoFinalHaraReview}
+        disabled={isAnalyzing || isResettingHazardAnalysis || hazardMethodSwitching || isHazardAnalysisArtifactLoading || draftHazardGeneratingIndex !== null}
+        title="Restore cells changed by the last final review, preserving later analyst edits" />}
       <ProjectTabToolbarButton
         icon={<Upload size={17} />}
         label="Import CSV…"
@@ -16261,7 +16531,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
       {/* Push page content below the header */}
       <div
         className="xhandle-app-viewport fixed bottom-0 left-0 top-14 transition-[right] duration-200 ease-out"
-        style={{ right: 'var(--xhandle-collaborator-reserved-width)' }}
+        style={{ right: 'var(--xhandle-workspace-reserved-width)' }}
       >
   <div className="relative flex h-full bg-white overflow-hidden">
     {/* Sidebar */}
@@ -17981,6 +18251,9 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                       }}
                       onCancelAnalysis={handleCancelCodeArchitectureHazardAnalysis}
                       onClearContents={handleClearCodeArchitectureHazardContents}
+                      clearStatus={codeHazardResetStatus?.kind === 'cleared' && codeArchitectureHazardRun ? null : codeHazardResetStatus}
+                      isResetting={codeHazardResetBusy}
+                      onRestoreCleared={handleRestoreClearedCodeHazards}
                       isRunning={isRunningCodeArchitectureHazard}
                       progress={codeArchitectureHazardProgress}
                       operationalContexts={codeArchitectureHazardContexts}
@@ -18068,6 +18341,16 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
     onClose={() => setShowCodeArchitectureHazardContextManager(false)}
     onSave={handleSaveCodeArchitectureHazardContexts}
     onGenerate={handleGenerateCodeArchitectureHazardContexts}
+  />
+)}
+
+{section === 'code-architecture' && codeHazardResetDialog && (
+  <HazardAnalysisResetModal
+    key={`${codeHazardResetDialog.projectId}:${codeHazardResetDialog.repoId}:${codeHazardResetDialog.run.id}`}
+    counts={codeHazardResetCounts(codeHazardResetDialog.run, codeArchitectureHazardContexts, codeHazardResetDialog.reviewCount)}
+    busy={codeHazardResetBusy}
+    onCancel={() => { if (!codeHazardResetBusy) setCodeHazardResetDialog(null); }}
+    onConfirm={handleConfirmCodeHazardReset}
   />
 )}
 
@@ -18916,6 +19199,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
 )}
 {activeProjectId && showHazardResetModal && (
   <HazardAnalysisResetModal
+    method={riskMethod}
     counts={hazardResetCounts}
     busy={isResettingHazardAnalysis}
     onCancel={() => {
@@ -19031,26 +19315,6 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
         {incompleteHazardAnalysisRowCount} functional relationship row{incompleteHazardAnalysisRowCount === 1 ? '' : 's'} will appear in the diagram but cannot be analyzed for hazards until Control Action is populated.
       </div>
     )}
-    {classificationResolutionGapCount > 0 && (
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-        <span>
-          <strong>{classificationResolutionGapCount} classified row{classificationResolutionGapCount === 1 ? " has" : "s have"} unresolved policy or evidence gaps.</strong>{" "}
-          Human Yes/No dispositions are retained, but they are not presented as policy-validated engineering evidence.
-        </span>
-        {classificationResolutionStatusIndex >= 0 && (
-          <button
-            type="button"
-            onClick={() => setColumnFilterValues(classificationResolutionStatusIndex, [
-              CLASSIFICATION_RESOLUTION_STATUS.HUMAN_EVIDENCE_GAP,
-              CLASSIFICATION_RESOLUTION_STATUS.POLICY_GAP,
-            ])}
-            className="shrink-0 font-semibold text-amber-900 underline decoration-amber-400 underline-offset-2 hover:text-amber-700"
-          >
-            Show affected rows
-          </button>
-        )}
-      </div>
-    )}
     <div className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 bg-slate-50 px-3 py-2 text-sm text-gray-700">
       <span role="status" aria-live="polite" aria-atomic="true">
         <strong className="tabular-nums">{hazardMatchingRowCount.toLocaleString()}</strong>
@@ -19076,7 +19340,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
       />
       </div>
     </div>
-    {!analysisResult?.Summary && hazardResetStatus?.kind === "cleared" && Object.keys(draftHazardRowsByIndex || {}).length === 0 ? (
+    {!analysisResult?.Summary && hazardResetStatus?.kind === "cleared" && Object.keys(draftHazardRowsByIndex || {}).length === 0 && !haraStpaDisplayRows.some(Boolean) ? (
       <div className="flex min-h-[280px] flex-1 items-center justify-center rounded-xl border border-dashed border-gray-300 bg-white p-8 text-center">
         <div className="max-w-md">
           <div className="text-base font-semibold text-gray-900">No hazard analysis results</div>
@@ -19088,8 +19352,10 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
       <div className="flex min-h-0 flex-1 flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-white px-4 py-3 text-sm text-gray-600">
           <div>
-            <p className="font-medium text-gray-900">Incomplete hazard analysis draft</p>
-            <p>Known functional decomposition fields are populated. Use the row magic button to generate a hazard row with the selected method.</p>
+            <p className="font-medium text-gray-900">{haraStpaDisplayRows.some(Boolean) ? 'STPA results ready for HARA' : 'Incomplete hazard analysis draft'}</p>
+            <p>{haraStpaDisplayRows.some(Boolean)
+              ? 'Common fields show the saved STPA assessments. Develop the risk profile to generate the HARA-specific outputs.'
+              : 'Known functional decomposition fields are populated. Use the row magic button to generate a hazard row with the selected method.'}</p>
           </div>
         </div>
         <div className="relative min-h-0 w-full flex-1 overflow-auto rounded-md shadow-sm">
@@ -19540,9 +19806,10 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
         </ProjectTabToolbarSection>
       )}
     </ProjectTabSideToolbar>
-    <div className="ml-4 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <div className={`relative flex min-h-0 flex-1 overflow-hidden transition-[padding] duration-300 ${showSafetyIssueReportDrawer && !isSafetyIssueReportFullscreen ? '2xl:pr-[700px]' : ''}`}>
-          <div className="grid min-h-0 w-full flex-1 grid-cols-1 grid-rows-2 gap-4 overflow-hidden xl:grid-cols-[360px_minmax(0,1fr)] xl:grid-rows-1">
+    <div className="safety-risk-workspace ml-4 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="safety-risk-layout relative flex min-h-0 min-w-0 flex-1 gap-4 overflow-hidden">
+          <div className="safety-risk-content-container flex min-h-0 min-w-0 flex-1">
+          <div className="safety-risk-content-grid grid min-h-0 min-w-0 flex-1 gap-4 overflow-hidden">
             <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white">
               <div className="border-b border-gray-200 px-4 py-3">
                 <div className="text-sm font-semibold text-gray-900">Consolidated Safety Issues</div>
@@ -19818,24 +20085,27 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
               )}
             </div>
 
+          </div>
+          </div>
             <div
-              className={`fixed z-30 rounded-lg border border-gray-200 bg-white shadow-2xl transition-all duration-300 ease-out ${
+              role="region"
+              aria-label="Safety Issue Report"
+              hidden={!showSafetyIssueReportDrawer}
+              className={`min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white ${showSafetyIssueReportDrawer ? 'flex' : 'hidden'} ${
               isSafetyIssueReportFullscreen
-                ? 'left-4 bottom-4 top-24 w-auto'
-                : 'bottom-4 top-24 w-[min(92vw,680px)]'
-            } ${
-              showSafetyIssueReportDrawer ? 'translate-x-0 opacity-100' : 'translate-x-[calc(100%+2rem)] opacity-0 pointer-events-none'
+                ? 'fixed z-30 left-4 bottom-4 top-24 w-auto shadow-2xl'
+                : 'safety-issue-report-panel'
             }`}
-              style={{ right: 'calc(1rem + var(--xhandle-collaborator-reserved-width))' }}
+              style={isSafetyIssueReportFullscreen ? { right: 'calc(1rem + var(--xhandle-collaborator-reserved-width))' } : undefined}
             >
-              <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-4 py-3">
-                <div>
+              <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-4 py-3">
+                <div className="min-w-0">
                   <div className="text-sm font-semibold text-gray-900">Safety Issue Report</div>
                   <div className="text-xs text-gray-500">
                     {activeRisk ? `Showing ${shortId(activeRisk.id, "selected")} · export downloads all reports.` : 'Select a safety issue to view its report.'}
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={handleRegenerateActiveSafetyIssueReport}
@@ -19888,7 +20158,7 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                   </button>
                 </div>
               </div>
-              <div className="h-[calc(100%-65px)] overflow-y-auto p-4">
+              <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4">
                 {activeRisk ? (
                   activeRisk.reportGenerated ? (
                     riskReportMode === 'edit' ? (
@@ -19938,7 +20208,6 @@ const projectHint = useMemo(() => isLocalCodeSource(activeCodeArchitectureRepo) 
                 )}
               </div>
             </div>
-          </div>
           </div>
     </div>
   </section>
@@ -22849,16 +23118,6 @@ const CompletedHazardTableRow = React.memo(function CompletedHazardTableRow({
                                   }
                                 },
                               };
-                              const isResolutionStatus = columnHeader === CLASSIFICATION_RESOLUTION_STATUS_HEADER;
-                              const resolutionStatusClass = cell === CLASSIFICATION_RESOLUTION_STATUS.HUMAN_EVIDENCE_GAP
-                                || cell === CLASSIFICATION_RESOLUTION_STATUS.POLICY_GAP
-                                ? "border-amber-200 bg-amber-50 text-amber-800"
-                                : cell === CLASSIFICATION_RESOLUTION_STATUS.NEEDS_REVIEW
-                                  || cell === CLASSIFICATION_RESOLUTION_STATUS.NOT_EVALUATED
-                                  ? "border-slate-200 bg-slate-100 text-slate-700"
-                                  : cell === CLASSIFICATION_RESOLUTION_STATUS.HUMAN_POLICY_VALIDATED
-                                    ? "border-blue-200 bg-blue-50 text-blue-800"
-                                    : "border-emerald-200 bg-emerald-50 text-emerald-800";
                               return (
                                 <td key={colIdx} data-column-index={colIdx} onClick={selectCell} style={{ width: hazardSummaryColumnWidths[colIdx], minWidth: hazardSummaryColumnWidths[colIdx], maxWidth: hazardSummaryColumnWidths[colIdx] }} className={`${PROJECT_HAZARD_HIDDEN_CONTEXT_HEADERS.has(columnHeader) ? 'hidden ' : ''}relative break-words px-3 py-2 align-top whitespace-pre-wrap text-xs leading-4 [overflow-wrap:anywhere] border-b border-gray-100 ${selectedCell ? 'bg-indigo-100 ring-2 ring-indigo-500 ring-inset' : ''} ${rejected ? 'text-rose-900 line-through decoration-rose-400' : ''}`}>
                                   {diagramTarget ? (
@@ -22877,13 +23136,6 @@ const CompletedHazardTableRow = React.memo(function CompletedHazardTableRow({
                                         ↗
                                       </button>
                                     </div>
-                                  ) : isResolutionStatus && cell ? (
-                                    <span
-                                      className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${resolutionStatusClass}`}
-                                      title="Policy validation checks record structure and internal classification consistency; it does not independently verify the engineering evidence."
-                                    >
-                                      {cell}
-                                    </span>
                                   ) : <div {...editableCellProps} className="min-h-[16px] whitespace-pre-wrap outline-none">{cell}</div>}
                                   {isVibeReviewCellImpacted(selectionRowId, columnHeader) && (
                                     <span className="absolute bottom-1 right-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[11px] font-bold leading-none text-white shadow" title="Changed during the active Vibe Review" aria-label="Changed during the active Vibe Review">!</span>

@@ -1,5 +1,6 @@
 import React, {useState} from 'react';
 import CodeArchitectureHazardSummaryTable from './CodeArchitectureHazardSummaryTable';
+import HazardFailureDetails from './HazardFailureDetails';
 
 export default function HazardRunRecoveryNotice({run,onExport,onRetrySave,isRunning=false}) {
   const [saving,setSaving]=useState(false);
@@ -11,10 +12,7 @@ export default function HazardRunRecoveryNotice({run,onExport,onRetrySave,isRunn
     {attempt && <>
       <p>{isRunning ? 'Previous attempt:' : 'Analysis incomplete:'} {attempt.validatedAssessments || 0} of {attempt.totalAssessments || 0} assessments validated. {isRunning ? 'Continuation is running; current progress is shown below.' : 'Use Continue hazard analysis to retry unresolved work.'}</p>
       {run.pendingAttempt && <p>The previous completed analysis remains in the main table. The incomplete attempt is separate.</p>}
-      <details><summary>Failure details</summary>
-        <p>{attempt.failureMessage}</p>
-        <ul>{(attempt.failedAssessments || []).map(item=><li key={item.id}>{item.id} — {item.action} — {item.phrase}: {(item.reasons || []).join('; ')}</li>)}</ul>
-      </details>
+      <HazardFailureDetails run={run} attempt={attempt} partial={Boolean(run.pendingAttempt)} />
       <button type="button" onClick={()=>onExport(attempt.generatedSheets?.Summary,`${run.repoName || 'analysis'}-incomplete`)}>Export validated partial results</button>
       {run.pendingAttempt && <details><summary>Inspect validated partial results</summary>
         <div className="h-96 overflow-auto"><CodeArchitectureHazardSummaryTable summarySheet={attempt.generatedSheets?.Summary} hazardMethod={attempt.hazardMethod} storageKey={`hazard-recovery:${attempt.id}`} readOnly /></div>

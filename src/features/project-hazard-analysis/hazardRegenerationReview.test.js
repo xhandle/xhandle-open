@@ -69,7 +69,7 @@ test("final persistence replaces stale governed-No rationale with the regenerate
   expect(fields["Safety Significance Rationale"]).toMatch(/stale fleet and operational awareness/i);
   expect(fields["Safety Significance Rationale"]).toMatch(/no documented propagation into vehicle control or physical harm/i);
   expect(fields["Safety Significance Rationale"]).not.toMatch(/needs? review|could not be validated|contradict/i);
-  expect(fields["Classification Resolution Status"]).toBe("Human Disposition — Evidence Gap");
+  expect(fields["Classification Resolution Status"]).toBe("");
   expect(fields).toMatchObject({
     "Raw Analysis Row ID": "RAW-AWARENESS", "Source ID": "SRC-A", "Review Session ID": "SESSION-A",
     "Reviewer Name": "Nick", "Reviewed At": "2026-09-18T13:00:00Z", "Safety Significant": "No",

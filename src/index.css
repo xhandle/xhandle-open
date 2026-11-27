@@ -12,6 +12,23 @@ body {
 }
 html, body, #root { width: 100vw; height: 100vh; overflow: auto; background: var(--bg); color: var(--text); }
 
+/* Reports share the space left by the navigation, tools and Collaborator. */
+.safety-risk-workspace { container: safety-risk-workspace / inline-size; }
+.safety-risk-content-container { container: safety-risk-content / inline-size; }
+.safety-risk-content-grid { grid-template-rows: repeat(2, minmax(0, 1fr)); }
+.safety-issue-report-panel { flex: 0 0 auto; width: min(42.5rem, 50%); }
+@container safety-risk-content (min-width: 48rem) {
+  .safety-risk-content-grid {
+    grid-template-columns: 360px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+}
+@container safety-risk-workspace (max-width: 30rem) {
+  .safety-risk-layout { flex-direction: column; overflow-y: auto; }
+  .safety-risk-content-container { flex: 0 0 28rem; }
+  .safety-issue-report-panel { width: 100%; height: min(36rem, 70vh); }
+}
+
 /* Results Review drawer: desktop reserves visual space by shrinking the workspace. */
 :root {
   --results-review-drawer-width: min(520px, 100vw);
@@ -31,14 +48,48 @@ html, body, #root { width: 100vw; height: 100vh; overflow: auto; background: var
   }
 }
 
+/* The context editor is a dock, not a modal. Derive the reservation from its
+   mounted portal so closing or leaving either hazard view restores the page. */
+:root {
+  --hazard-context-tray-width: min(36rem, calc((100vw - var(--xhandle-collaborator-reserved-width)) * 0.45));
+  --hazard-context-tray-height: min(60vh, calc(100vh - 3.5rem));
+  --xhandle-context-reserved-width: 0px;
+  --xhandle-workspace-reserved-width: calc(var(--xhandle-collaborator-reserved-width) + var(--xhandle-context-reserved-width));
+}
+:root:has(body > .xhandle-hazard-context-tray) {
+  --xhandle-context-reserved-width: var(--hazard-context-tray-width);
+}
+.xhandle-hazard-context-tray {
+  top: 3.5rem;
+  right: var(--xhandle-collaborator-reserved-width);
+  bottom: 0;
+  width: var(--hazard-context-tray-width);
+}
+/* Stack the editor below the workspace when a side-by-side layout is too narrow. */
+@media (max-width: 767px) {
+  :root:has(body > .xhandle-hazard-context-tray) {
+    --xhandle-context-reserved-width: 0px;
+  }
+  .xhandle-hazard-context-tray {
+    top: auto;
+    left: 0;
+    width: auto;
+    height: var(--hazard-context-tray-height);
+    border-top: 1px solid var(--border);
+  }
+  body:has(> .xhandle-hazard-context-tray) .xhandle-app-viewport {
+    bottom: var(--hazard-context-tray-height);
+  }
+}
+
 /* Keep viewport-level dialogs inside the workspace that remains when the
    Collaborator is docked. Modal panels can continue to use their existing
    percentage/max-width rules; their containing viewport now represents the
    actual available application area instead of the obscured full screen. */
 .xhandle-modal-viewport {
-  right: var(--xhandle-collaborator-reserved-width) !important;
+  right: var(--xhandle-workspace-reserved-width) !important;
   width: auto !important;
-  max-width: calc(100vw - var(--xhandle-collaborator-reserved-width));
+  max-width: calc(100vw - var(--xhandle-workspace-reserved-width));
   min-width: 0;
   transition-property: right, width, max-width;
   transition-duration: 200ms;
@@ -55,17 +106,17 @@ html, body, #root { width: 100vw; height: 100vh; overflow: auto; background: var
 }
 @media (min-width: 1024px) {
   .results-review-app-frame--drawer-open {
-    width: max(0px, calc(100vw - var(--results-review-drawer-width) - var(--xhandle-collaborator-reserved-width)));
+    width: max(0px, calc(100vw - var(--results-review-drawer-width) - var(--xhandle-workspace-reserved-width)));
     overflow: hidden;
   }
   .results-review-app-frame--drawer-open.results-review-app-frame--drawer-expanded {
-    width: max(0px, calc(100vw - var(--results-review-drawer-expanded-width) - var(--xhandle-collaborator-reserved-width)));
+    width: max(0px, calc(100vw - var(--results-review-drawer-expanded-width) - var(--xhandle-workspace-reserved-width)));
   }
   .results-review-app-frame--drawer-open .xhandle-app-viewport {
-    right: calc(var(--results-review-drawer-width) + var(--xhandle-collaborator-reserved-width)) !important;
+    right: calc(var(--results-review-drawer-width) + var(--xhandle-workspace-reserved-width)) !important;
   }
   .results-review-app-frame--drawer-open.results-review-app-frame--drawer-expanded .xhandle-app-viewport {
-    right: calc(var(--results-review-drawer-expanded-width) + var(--xhandle-collaborator-reserved-width)) !important;
+    right: calc(var(--results-review-drawer-expanded-width) + var(--xhandle-workspace-reserved-width)) !important;
   }
   .safety-remediation-workspace--drawer-open {
     right: var(--safety-remediation-drawer-width) !important;

@@ -89,3 +89,17 @@ describe("stable row identity across a review decision", () => {
     expect(idOf(identified, 1)).not.toBe(idOf(identified, 2));
   });
 });
+
+it('drops legacy status columns without changing existing IDs, trailing cells or historical records', () => {
+  const original = [
+    ['Raw Analysis Row ID','Classification Resolution Status','Hazard','Resolution Status','Safety Significant'],
+    ['RAW-SYNTHETIC','Needs Review','Receiver consumes obsolete state.','Not Evaluated','Yes'],
+  ];
+  const normalized = ensureHazardAnalysisRowIds(original);
+  expect(normalized).toEqual([
+    ['Raw Analysis Row ID','Hazard','Safety Significant'],
+    ['RAW-SYNTHETIC','Receiver consumes obsolete state.','Yes'],
+  ]);
+  expect(original[1][1]).toBe('Needs Review');
+  expect(ensureHazardAnalysisRowIds(normalized)).toEqual(normalized);
+});

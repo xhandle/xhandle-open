@@ -350,5 +350,5 @@ it('ignores exported resolution text as a decision and does not propose a status
  const sheet=[['Raw Analysis Row ID','Hazard','Classification Resolution Status'],['one','Retained hazard','Not Evaluated']];
  const plan=planHazardAnalysisCsvImport(sheet,'Raw Analysis Row ID,Hazard,Classification Resolution Status\none,Retained hazard,Needs Review');
  expect(plan.errors).toEqual([]);expect(plan.changedRowCount).toBe(0);expect(plan.changedColumns).toEqual([]);
- expect(applyHazardAnalysisCsvImport(sheet,plan.updates)).toEqual(sheet);
+ expect(applyHazardAnalysisCsvImport(sheet,plan.updates)).toEqual([['Raw Analysis Row ID','Hazard'],['one','Retained hazard']]);
 });

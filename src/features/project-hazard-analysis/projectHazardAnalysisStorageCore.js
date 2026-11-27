@@ -4,6 +4,7 @@ import { openRecoveryDatabase } from "../../lib/recoveryDatabase";
 import { normalizeHazardAnalysisResolutionStatus } from "./classificationResolutionStatus";
 import { normalizeProjectHazardMethod } from './hazardReconciliation';
 import { refreshProjectHaraSheets } from './projectHara';
+import { mergeProjectStpaFoundations, reconcileStpaFoundationDrafts } from './projectStpaFoundation';
 
 const DB_NAME = "xhandle-project-hazard-analysis";
 const DB_VERSION = 2;
@@ -171,6 +172,7 @@ function failureOutcome(error) {
  */
 async function runHazardTransaction(db, work) {
   const tx = db.transaction([STORE_NAME, REVISION_STORE_NAME], "readwrite");
+  tx.done.catch(() => {});
   const heads = tx.objectStore ? tx.objectStore(STORE_NAME) : tx.store;
   const revisions = tx.objectStore ? tx.objectStore(REVISION_STORE_NAME) : tx.store;
   let timer;
@@ -184,6 +186,12 @@ async function runHazardTransaction(db, work) {
         }, 15000);
       }),
     ]);
+  } catch (error) {
+    // Synchronous failures after earlier requests must roll back those requests,
+    // including deletion of a retained method snapshot during a clear.
+    try { tx.abort(); } catch {}
+    await tx.done.catch(() => {});
+    throw error;
   } finally { clearTimeout(timer); db.close?.(); }
 }
 
@@ -486,6 +494,8 @@ export async function saveHazardAnalysis(projectId, data = {}, {
         const record = {
           projectId: id,
           method: normalizeProjectHazardMethod(data.method || existing?.method),
+          ...(existing?.generationEpochs ? {generationEpochs:existing.generationEpochs} : {}),
+          ...(existing && 'riskAssessmentReportMarkdown' in existing ? {riskAssessmentReportMarkdown:existing.riskAssessmentReportMarkdown,agentReportResult:existing.agentReportResult||null} : {}),
           analysisResult: nextAnalysisResult,
           draftHazardRowsByIndex: nextDraftRows,
           riskRegister: nextRiskRegister,
@@ -550,10 +560,15 @@ export async function switchProjectHazardMethod(projectId, fromMethod, toMethod,
         // captured UI snapshot. Otherwise include not-yet-autosaved draft edits.
         const headAdvanced = expectedRevision !== null && Number(head?.revision || 0) !== Number(expectedRevision);
         const outgoing = { ...head, ...(headAdvanced ? {} : currentData), projectId: id, method: from };
+        // A table-only UI snapshot must not discard the saved source workbook
+        // and reuse provenance while carrying the latest cell edits forward.
+        if (head?.analysisResult && outgoing.analysisResult) {
+          outgoing.analysisResult = { ...head.analysisResult, ...outgoing.analysisResult };
+        }
         await revisions.put({ ...outgoing, key: `${id}::method:${from}`, recordType: 'method-snapshot', pinned: true });
         const target = from === to ? outgoing : await revisions.get(`${id}::method:${to}`);
         const content = { analysisResult: target?.analysisResult || null, draftHazardRowsByIndex: target?.draftHazardRowsByIndex || {}, riskRegister: target?.riskRegister || [] };
-        const record = { ...content, projectId: id, method: to, revision: Number(head?.revision || 0) + 1, contentSignature: byteSignature(content), updatedAt: new Date().toISOString(), lastWriteReason: 'method-switch' };
+        const record = { ...content, riskAssessmentReportMarkdown:target?.riskAssessmentReportMarkdown||'',agentReportResult:target?.agentReportResult||null, ...(head?.generationEpochs ? {generationEpochs:head.generationEpochs} : {}), projectId: id, method: to, revision: Number(head?.revision || 0) + 1, contentSignature: byteSignature(content), updatedAt: new Date().toISOString(), lastWriteReason: 'method-switch' };
         if (hasAnalysisSummary(content.analysisResult)) await revisions.put({ ...record, key: revisionKey(id, record.revision) });
         await heads.put(record);
         rememberLocalRevision(id, record.revision);
@@ -629,3 +644,74 @@ export async function deleteProjectHazardAnalysisRecord(projectId) {
 }
 
 export const PROJECT_HAZARD_ANALYSIS_DB_CONFIG = { name: DB_NAME, version: DB_VERSION, storeName: STORE_NAME, revisionStoreName: REVISION_STORE_NAME };
+
+/** Read both saved methods so HARA can reuse STPA without changing the active tab. */
+export async function loadProjectHazardReuseState(projectId) {
+  const id=String(projectId||'').trim(),db=await openHazardDatabase();
+  if(!db)throw new Error('Saved STPA assessments could not be loaded.');
+  return runHazardTransaction(db,async({heads,revisions})=>{
+    const head=await heads.get(id);
+    const stpa=head?.method==='STPA-Textbook'?head:await revisions.get(`${id}::method:STPA-Textbook`);
+    const hara=head?.method==='HARA'?head:await revisions.get(`${id}::method:HARA`);
+    return {headRevision:head?.revision||0,method:head?.method,stpa:stpa||null,hara:hara||null,generationEpochs:head?.generationEpochs||{}};
+  });
+}
+
+/** Publish the shared STPA base separately from the derived HARA results. */
+export async function saveProjectStpaFoundation(projectId, analysisResult, { expectedRevision = null } = {}) {
+  const id=String(projectId||'').trim();
+  return enqueueProjectWrite(id,async()=>{
+    const db=await openHazardDatabase();if(!db)throw new Error('The STPA foundation could not be saved.');
+    return runHazardTransaction(db,async({heads,revisions})=>{
+      const head=await heads.get(id);
+      if(head?.method!=='HARA' || expectedRevision!==null && Number(head?.revision||0)!==Number(expectedRevision) && !wasWrittenLocally(id,head?.revision))throw new Error('The active analysis changed before STPA could be saved.');
+      const key=`${id}::method:STPA-Textbook`,previous=await revisions.get(key);
+      const merged=mergeProjectStpaFoundations(previous?.analysisResult,analysisResult);
+      await revisions.put({...previous,projectId:id,key,method:'STPA-Textbook',recordType:'method-snapshot',pinned:true,
+        analysisResult:merged,draftHazardRowsByIndex:reconcileStpaFoundationDrafts(previous,analysisResult),riskRegister:previous?.riskRegister||[],updatedAt:new Date().toISOString()});
+      return merged;
+    });
+  });
+}
+
+/** Clear dependent results atomically; pinned history and external recovery remain. */
+export async function clearProjectHazardMethodResults(projectId, { clearStpa = false, expectedRevision = null, expectedMethod = null } = {}) {
+  const id=String(projectId||'').trim();
+  return enqueueProjectWrite(id,async()=>{
+    const db=await openHazardDatabase();if(!db)throw new Error('Hazard storage is unavailable. No results were cleared.');
+    return runHazardTransaction(db,async({heads,revisions})=>{
+      const head=await heads.get(id);const actual=Number(head?.revision||0);
+      if(expectedRevision!==null && actual!==Number(expectedRevision) && !wasWrittenLocally(id,actual))throw new Error('The active analysis changed. Reopen the clear dialog.');
+      const method=normalizeProjectHazardMethod(head?.method);
+      if(expectedMethod && method!==normalizeProjectHazardMethod(expectedMethod))throw new Error('The active hazard method changed. Reopen the clear dialog.');
+      if(method!=='HARA' && clearStpa)throw new Error('Select HARA before clearing both analyses.');
+      const epochs={...head?.generationEpochs,[method]:Number(head?.generationEpochs?.[method]||0)+1};
+      if(clearStpa)epochs['STPA-Textbook']=Number(epochs['STPA-Textbook']||0)+1;
+      const content={analysisResult:null,draftHazardRowsByIndex:{},riskRegister:[]};
+      const record={...head,...content,riskAssessmentReportMarkdown:'',agentReportResult:null,projectId:id,method,revision:actual+1,generationEpochs:epochs,contentSignature:byteSignature(content),updatedAt:new Date().toISOString(),lastWriteReason:'explicit-user-clear'};
+      await revisions.delete(`${id}::method:${method}`);
+      if(clearStpa)await revisions.delete(`${id}::method:STPA-Textbook`);
+      await heads.put(record);rememberLocalRevision(id,record.revision);
+      return record;
+    });
+  });
+}
+
+export async function restoreProjectHazardMethodState(projectId, state, { expectedRevision = null } = {}) {
+  const id=String(projectId||'').trim();
+  return enqueueProjectWrite(id,async()=>{
+    const db=await openHazardDatabase();if(!db)throw new Error('Hazard storage is unavailable.');
+    return runHazardTransaction(db,async({heads,revisions})=>{
+      const head=await heads.get(id);
+      if(expectedRevision!==null && Number(head?.revision||0)!==Number(expectedRevision) && !wasWrittenLocally(id,head?.revision))throw new Error('The active analysis changed. Reload before restoring.');
+      if(state.method && head?.method!==state.method)throw new Error('Return to the cleared hazard method before restoring its results.');
+      for(const [method,record] of [['STPA-Textbook',state.stpa],['HARA',state.hara]]){
+        const key=`${id}::method:${method}`;
+        if(record)await revisions.put({...record,projectId:id,key,recordType:'method-snapshot',pinned:true});else await revisions.delete(key);
+      }
+      // Retain the new generation epoch: restored outputs may be reused directly,
+      // while stale provider checkpoints from before the clear stay invalidated.
+      return head;
+    });
+  });
+}

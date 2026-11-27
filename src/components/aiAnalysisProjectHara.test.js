@@ -14,7 +14,7 @@ beforeEach(() => {
   generateStandardCodeHazardAnalysisSheets.mockResolvedValue({Summary:[sourceHeaders,source]});
   fetchLLMResponse.mockResolvedValue(JSON.stringify({assessments:[assessment()]}));
 });
-const options = () => ({ sheets:{'Functional Decomposition':[['Function (From)','Function (From) Details','Control Action','Control Action Details','Function (To)'],['Controller','Interleaved details','Brake','Torque','Actuator']]},tableRows:[{hazardDraftIdentity:'draft-context-phrase'}],itemDefinition:'Automated vehicle brake control; no human driver.',currentFolder:'Project',setFolders:async updater=>publications.push(updater({})),operationalContext:'Urban crossing, wet pavement. Occupied crossings are encountered frequently.',organizationContext:'Customer evidence governs ratings.' });
+const options = () => ({ completionPolicy:'strict', sheets:{'Functional Decomposition':[['Function (From)','Function (From) Details','Control Action','Control Action Details','Function (To)'],['Controller','Interleaved details','Brake','Torque','Actuator']]},tableRows:[{hazardDraftIdentity:'draft-context-phrase'}],itemDefinition:'Automated vehicle brake control; no human driver.',currentFolder:'Project',setFolders:async updater=>publications.push(updater({})),operationalContext:'Urban crossing, wet pavement. Occupied crossings are encountered frequently.',organizationContext:'Customer evidence governs ratings.' });
 test('reuses Projects STPA mechanics then assesses HARA with context and calculates ASIL rather than trusting AI', async () => {
   fetchLLMResponse.mockResolvedValue(JSON.stringify({assessments:[{...assessment(),asil:'QM'}]}));
   const result = await generateProjectHaraAnalysisSheets(options());

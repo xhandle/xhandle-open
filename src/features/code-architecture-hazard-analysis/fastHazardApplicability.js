@@ -48,7 +48,7 @@ Rows: ${JSON.stringify(rows)}`;
 }
 
 // Small decision records allow substantially larger batches than full assessments.
-export async function screenFastApplicability({method,sources,context,checkpoint,signal,request,evidenceChunker,onDeferred,retryPendingInformation=false,maxBatchRows=48,onDecision=()=>{},onProgress=()=>{}}) {
+export async function screenFastApplicability({method,sources,context,checkpoint,signal,request,evidenceChunker,onDeferred,retryPendingInformation=false,retryUnfinishedDecisions=false,maxBatchRows=48,onDecision=()=>{},onProgress=()=>{}}) {
   const cooperate=createHazardTaskYield(signal);
   const decisions=new Map(),held=new Set(),evidenceQueue=[];
   const basis=source=>({stage:'applicability-v7-coverage-independent',method,context,source});
@@ -69,7 +69,17 @@ export async function screenFastApplicability({method,sources,context,checkpoint
         else if(onDeferred)onDeferred(source,pendingError(saved[i]));
         else throw pendingError(saved[i]);
       }
-      else if(valid(saved[i]) && saved[i].id===source.id)await publish(source,saved[i]);
+      else if(valid(saved[i]) && saved[i].id===source.id){
+        if(method==='STPA' && retryUnfinishedDecisions && saved[i].applicable==='Yes'){
+          // The caller has already restored validated assessments. Only an
+          // unfinished automatic decision reaches this branch on continuation.
+          // Reconsider it from evidence instead of locking generation into the
+          // same potentially unsupported Yes on every retry. User decisions
+          // above remain governed; failed generation alone never implies No.
+          held.add(source.id);
+          evidenceQueue.push({source,question:`Reconsider the previous automatic applicability decision from the supplied source and operating context because no validated assessment was completed for this row. Previous rationale: ${saved[i].rationale}. Determine whether this exact guide phrase describes a meaningful deviation of this action's modeled responsibility. Applicability is independent of safety significance and does not require generating a full hazard causal chain. Failure to generate an assessment is not evidence of non-applicability: retain Yes when supported, justify No from the source, or identify the missing evidence. Do not invent a consumer, prerequisite or fault merely to preserve the previous decision.`});
+        }else await publish(source,saved[i]);
+      }
     }
   }
   const scheduler=createHazardRequestScheduler({limit:3,signal});

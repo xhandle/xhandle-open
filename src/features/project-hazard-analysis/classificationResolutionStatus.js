@@ -10,6 +10,13 @@ import {
 
 const clean = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
 const normalized = (value) => clean(value).toLowerCase();
+export const isObsoleteClassificationStatusHeader = value => ['classification resolution status', 'resolution status', 'policy validation status'].includes(normalized(value));
+
+export function removeClassificationStatusColumns(sheet = []) {
+  if (!Array.isArray(sheet?.[0])) return sheet;
+  const keep = sheet[0].map((header, index) => isObsoleteClassificationStatusHeader(header) ? -1 : index).filter(index => index >= 0);
+  return keep.length === sheet[0].length ? sheet : sheet.map(row => keep.map(index => row?.[index] ?? ''));
+}
 
 export const CLASSIFICATION_RESOLUTION_STATUS_HEADER = "Classification Resolution Status";
 export const RAW_ANALYSIS_ROW_ID_HEADER = "Raw Analysis Row ID";
@@ -51,7 +58,9 @@ function stableRowId(value = "") {
 }
 
 export function createHazardRowNormalizer(source = []) {
-  const sourceHeaders = source.map(clean);
+  const originalHeaders = source.map(clean);
+  const keep = originalHeaders.map((header, index) => isObsoleteClassificationStatusHeader(header) ? -1 : index).filter(index => index >= 0);
+  const sourceHeaders = keep.map(index => originalHeaders[index]);
   const existingIndex = indexOfHeader(sourceHeaders, [
     RAW_ANALYSIS_ROW_ID_HEADER,
     "Raw Row ID",
@@ -64,14 +73,15 @@ export function createHazardRowNormalizer(source = []) {
   const idIndex = existingIndex >= 0 ? existingIndex : headers.length - 1;
   const used = new Set();
   const normalizeRow = (sourceRow, rowOffset) => {
-    const row = Array.isArray(sourceRow) ? [...sourceRow] : [];
+    const original = Array.isArray(sourceRow) ? sourceRow : [];
+    const row = keep.map(index => original[index] ?? '');
     while (row.length < headers.length) row.push("");
     let id = clean(row[idIndex]);
     if (!id) {
-      const identityCells = sourceHeaders.map((header, index) => (
-        index === existingIndex || normalized(header) === normalized(CLASSIFICATION_RESOLUTION_STATUS_HEADER)
+      const identityCells = originalHeaders.map((header, index) => (
+        index === (existingIndex < 0 ? -1 : keep[existingIndex]) || isObsoleteClassificationStatusHeader(header)
           ? ""
-          : clean(row[index])
+          : clean(original[index])
       ));
       let salt = rowOffset + 1;
       do {
@@ -207,21 +217,12 @@ export function deriveClassificationResolutionStatus(headers = [], row = []) {
 
 export function ensureClassificationResolutionStatus(summary = []) {
   if (!Array.isArray(summary?.[0])) return summary;
+  if (indexOfHeader(summary[0], ["Safety Classification", "Safety Significant"]) < 0) return removeClassificationStatusColumns(summary);
   const identifiedSummary = ensureHazardAnalysisRowIds(summary);
-  const sourceHeaders = identifiedSummary[0].map(clean);
-  if (indexOfHeader(sourceHeaders, ["Safety Classification", "Safety Significant"]) < 0) return summary;
-  const existingIndex = indexOfHeader(sourceHeaders, [CLASSIFICATION_RESOLUTION_STATUS_HEADER]);
-  const headers = existingIndex >= 0
-    ? [...sourceHeaders]
-    : [...sourceHeaders, CLASSIFICATION_RESOLUTION_STATUS_HEADER];
-  const statusIndex = existingIndex >= 0 ? existingIndex : headers.length - 1;
-  const rows = identifiedSummary.slice(1).map((sourceRow) => {
-    const row = reconcileDerivedSafetyColumns(sourceHeaders, Array.isArray(sourceRow) ? sourceRow : []);
-    while (row.length < headers.length) row.push("");
-    row[statusIndex] = deriveClassificationResolutionStatus(sourceHeaders, row);
-    return row;
-  });
-  return [headers, ...rows];
+  const headers = identifiedSummary[0].map(clean);
+  // Retain the legacy entry point for callers and old review history, while
+  // removing automated certification/gap labels from persisted/displayed rows.
+  return [headers, ...identifiedSummary.slice(1).map(row => reconcileDerivedSafetyColumns(headers, row))];
 }
 
 export function normalizeHazardAnalysisResolutionStatus(analysisResult = null) {
@@ -239,6 +240,7 @@ export function normalizeHazardAnalysisResolutionStatus(analysisResult = null) {
     : analysisResult.Summary.map((row) => keepIndexes.map((index) => row?.[index] ?? ""));
   return {
     ...analysisResult,
+    ...Object.fromEntries(Object.entries(analysisResult).filter(([, sheet]) => Array.isArray(sheet?.[0])).map(([name, sheet]) => [name, removeClassificationStatusColumns(sheet)])),
     Summary: ensureClassificationResolutionStatus(summary),
   };
 }

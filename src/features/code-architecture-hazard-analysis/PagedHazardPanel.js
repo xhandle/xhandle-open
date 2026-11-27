@@ -5,6 +5,7 @@ import {fillNotApplicableHazardCells} from '../project-hazard-analysis/hazardNot
 import React,{useState,useEffect,useCallback,useRef,useMemo} from 'react';
 import {PreparedCodeArchitectureHazardPanel} from './CodeArchitectureHazardPanel';
 import {PAGED_HAZARD} from './hazardRowIndex';
+import HazardFailureDetails from './HazardFailureDetails';
 import requestHazardRows from './requestHazardRows';
 import useContinuousHazardRows from './useContinuousHazardRows';
 import {createDiskArchiveSink} from '../code-architecture-transfer/diskArchiveSink';
@@ -143,7 +144,7 @@ export default function PagedHazardPanel(props){
   {activeLayout && filterPending && busy && <div role="status">Updating filters…</div>}
   {message && <div role="status">{message}</div>}
   {(error || rowCache.error) && <div role="alert">{error || rowCache.error?.message || String(rowCache.error)} <button onClick={()=>{if(props.preparationCache)props.preparationCache.current=null;props.restoration?.retry();if(error)setAttempt(n=>n+1);else rowCache.retry();}}>Retry rows</button></div>}
-  {descriptor.pending && <div><p>An incomplete attempt is saved ({descriptor.partialCount} rows). Continue analysis retries unresolved work.</p>{descriptor.partialMetadata?.failureMessage && <details><summary>Failure details</summary><p>{descriptor.partialMetadata.failureMessage}</p></details>}<button onClick={()=>{setPartial(value=>!value);setFilters({});setSearch('');}}>{partial?'View published results':'Inspect validated partial results'}</button></div>}
+  {descriptor.pending && <div><p>An incomplete attempt is saved ({descriptor.partialCount} rows). Continue analysis retries unresolved work.</p><HazardFailureDetails run={run} attempt={descriptor.partialMetadata} partial /><button onClick={()=>{setPartial(value=>!value);setFilters({});setSearch('');}}>{partial?'View published results':'Inspect validated partial results'}</button></div>}
   {partial && <p>Viewing the incomplete attempt. Export CSV includes its matching rows. Published results remain unchanged.</p>}
  </div>;
  const loadState={status:activeLayout?'ready':error?'failed':'preparing',progress:layoutProgress};
@@ -160,9 +161,13 @@ export default function PagedHazardPanel(props){
   if(partial || !props.reviewItems?.length)return null;
   const normalizer=createHazardRowNormalizer(descriptor.headers),entries=[];
   props.reviewItems.forEach((item,position)=>{
-   const row=item.currentContent?.row || item.originalContent?.row;
+   const content=Array.isArray(item.currentContent?.row)?item.currentContent:item.originalContent;
+   const row=content?.row;
    if(!Array.isArray(row))return;
-   entries.push({item,position,time:Date.parse(item.updatedAt||item.createdAt)||0,row:fillNotApplicableHazardCells(normalizer.headers,normalizer.normalizeRow(row,item.currentContent?.rowIndex ?? item.originalContent?.rowIndex ?? 0))});
+   const sourceNormalizer=Array.isArray(content.columns) && content.columns.length ? createHazardRowNormalizer(content.columns) : normalizer;
+   const normalized=sourceNormalizer.normalizeRow(row,content.rowIndex ?? 0);
+   const aligned=normalizer.headers.map(header=>normalized[sourceNormalizer.headers.indexOf(header)] ?? '');
+   entries.push({item,position,time:Date.parse(item.updatedAt||item.createdAt)||0,row:fillNotApplicableHazardCells(normalizer.headers,aligned)});
   });
   entries.sort((a,b)=>b.time-a.time || b.position-a.position);
   return {entries,index:createHazardReviewRowIndex(entries.map(entry=>entry.row),normalizer.headers)};

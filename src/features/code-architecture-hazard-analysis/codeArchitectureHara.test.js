@@ -12,8 +12,9 @@ const input = {
     operationalMode:'Automatic', operatingConditions:'Wet road', traceability:{traceId:'function-1'}}],
 };
 
-test('Code HARA includes every Projects HARA field without duplicate aliases', () => {
-  for(const header of PROJECT_HARA_HEADERS) expect(CODE_HARA_COLUMNS).toContain(codeHaraColumnLabel(header));
+test('Code HARA includes shared risk fields without adopting the Projects Item configuration or duplicate aliases', () => {
+  for(const header of PROJECT_HARA_HEADERS.filter(header=>!['Item ID','Item'].includes(header))) expect(CODE_HARA_COLUMNS).toContain(codeHaraColumnLabel(header));
+  expect(CODE_HARA_COLUMNS).not.toContain('Item');expect(CODE_HARA_COLUMNS).not.toContain('Item ID');
   expect(new Set(CODE_HARA_COLUMNS).size).toBe(CODE_HARA_COLUMNS.length);
 });
 

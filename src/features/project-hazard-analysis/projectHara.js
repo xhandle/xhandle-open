@@ -2,8 +2,9 @@
 // response may propose S/E/C with rationale, but never supplies the ASIL.
 // Public cross-check: NHTSA DOT HS 812 574, section 5.1.2, Table 21.
 import { HARA_QUALITY_FIELDS, haraKey, haraRowFindings, outcomeKinds } from './haraAssessmentQuality';
+import { projectHaraItemDefinitionSheet } from './projectHaraItem';
 export const PROJECT_HARA_HEADERS = [
-  'Hazardous Event ID', 'Item / Function', 'Unsafe Control Action', 'Malfunction',
+  'Hazardous Event ID', 'Item ID', 'Item', 'Function', 'Unsafe Control Action', 'Malfunction',
   'Loss', 'Hazard', 'Hazardous Event', 'Potential Harm', 'Persons at Risk',
   'Raw Loss Candidate', 'Raw Hazard Candidate', 'Canonical Loss ID', 'Canonical Hazard ID',
   'Severity', 'Severity Rationale', 'Exposure', 'Exposure Rationale',
@@ -24,14 +25,16 @@ const ASILS = [
   [['QM','QM','A'], ['QM','A','B'], ['A','B','C'], ['B','C','D']],
 ];
 export const haraText = value => String(value && typeof value === 'object' && 'value' in value ? value.value ?? '' : value ?? '').trim();
-const HARA_GENERATED_COLUMNS=new Set(PROJECT_HARA_HEADERS);
+export const PROJECT_HARA_STPA_SOURCE_HEADER = 'STPA Source Row ID';
+export const PROJECT_HARA_FUNCTIONAL_REQUIREMENTS_HEADER = 'Functional Safety Requirements';
+const HARA_GENERATED_COLUMNS=new Set([...PROJECT_HARA_HEADERS,PROJECT_HARA_STPA_SOURCE_HEADER,PROJECT_HARA_FUNCTIONAL_REQUIREMENTS_HEADER]);
 // An intentionally empty generated cell must not be restored from a previous
 // analysis during the App's column alignment. Ownership reconciliation
 // still protects explicit user edits after generated values are aligned.
 export function alignGeneratedHaraCell(header,value,fallback,{hara=false,sourceExists=false}={}) {
   return hara && sourceExists && HARA_GENERATED_COLUMNS.has(header) ? value ?? '' : value || fallback || '';
 }
-export const PROJECT_HARA_DERIVED_HEADERS = new Set(['Hazardous Event ID','ASIL','ASIL Rationale','Safety Goal ID','Safety Goal ASIL','Assessment Status','HARA Review Findings']);
+export const PROJECT_HARA_DERIVED_HEADERS = new Set(['Hazardous Event ID','Item ID','Item','Item Definition','ASIL','ASIL Rationale','Safety Goal ID','Safety Goal ASIL','Assessment Status','HARA Review Findings']);
 export function normalizeHaraRating(value, prefix, maximum) {
   const match = haraText(value).toUpperCase().match(new RegExp(`^${prefix}([0-${maximum}])(?:\\s*[-–—:()]\\s*.*)?$`));
   return match ? `${prefix}${match[1]}` : '';
@@ -55,27 +58,28 @@ function haraColumnIndex(headers) {
   headers.forEach((name, index) => { if (!columns.has(name)) columns.set(name, index); });
   return columns;
 }
-export function recalculateProjectHaraRow(headers, input, columns = haraColumnIndex(headers)) {
+export function recalculateProjectHaraRow(headers, input, columns = haraColumnIndex(headers), { practical = false } = {}) {
   const row = headers.map((_,index)=>input[index]??'');
   const get = name => haraText(row[columns.get(name)]);
   const put = (name, value) => { const i = columns.get(name); if (i !== undefined) row[i] = value; };
   const applicable = get('Guide Phrase Applicable');
   if (/^no$/i.test(applicable)) {
     for (const name of ['Severity','Exposure','Controllability','ASIL','ASIL Rationale','Safety Goal ID','Safety Goal','Safety Goal ASIL','Safe State','Fault Tolerant Time Interval']) put(name, 'Not applicable');
-    const findings=haraRowFindings(get);
+    const findings=practical ? [] : haraRowFindings(get);
     put('HARA Review Findings',findings.join('\n'));
     put('Assessment Status','Not applicable');
     return row;
   }
-  const asil = calculateProjectHaraAsil(get('Severity'), get('Exposure'), get('Controllability'));
+  let asil = calculateProjectHaraAsil(get('Severity'), get('Exposure'), get('Controllability'));
   put('ASIL', asil);
   put('ASIL Rationale', asil === 'Not assessed' ? 'Analysis is incomplete: an S/E/C decision has not been generated.'
     : asil === 'Not assigned' ? 'S0, E0 or C0 applies: no ASIL assignment is required.'
       : `${get('Severity')} / ${get('Exposure')} / ${get('Controllability')}: ISO 26262-3 assessment lookup.`);
   if(/^SOTIF concern$/i.test(get('Evidence Basis'))){
+    if (practical) asil = 'Not assigned';
     put('ASIL','Not assigned');put('ASIL Rationale','Nominal functional insufficiency is a SOTIF concern outside the E/E malfunction scope of this HARA.');
   }
-  if(/^Mismatch:/i.test(get('Canonical Mapping Review')) && get('Vehicle-Level Hazard')){
+  if(!practical && /^Mismatch:/i.test(get('Canonical Mapping Review')) && get('Vehicle-Level Hazard')){
     put('Source Canonical Hazard ID',get('Source Canonical Hazard ID')||get('Canonical Hazard ID'));
     put('Source Canonical Hazard',get('Source Canonical Hazard')||get('Mapped Canonical Hazard')||get('Hazard'));
     put('Hazard',get('Vehicle-Level Hazard'));put('Mapped Canonical Hazard',get('Vehicle-Level Hazard'));
@@ -98,19 +102,22 @@ export function recalculateProjectHaraRow(headers, input, columns = haraColumnIn
   if (!get('Safe State') || /^(unknown|not provided|needs review)/i.test(get('Safe State'))) gaps.push('Define and validate a safe state or emergency operation.');
   if (!get('Fault Tolerant Time Interval') || !get('FTTI Rationale')) gaps.push('Define whether an FTTI is applicable and justify any timing bound.');
   const prior = get('Assessment Gaps').split('\n').filter(Boolean).filter(line => !/^Provide |^Define |^(none|no gaps|no known gaps|not applicable)\.?$/i.test(line));
-  const findings=haraRowFindings(get);
+  const findings=practical ? [] : haraRowFindings(get);
   put('HARA Review Findings',findings.join('\n'));
-  put('Assessment Gaps', [...new Set([...prior, ...gaps])].join('\n'));
+  put('Assessment Gaps', practical ? '' : [...new Set([...prior, ...gaps])].join('\n'));
   put('Assessment Status',asil==='Not assessed'?'In progress':'Complete');
   return row;
 }
 const ASIL_ORDER = ['Not assigned', 'QM', 'ASIL A', 'ASIL B', 'ASIL C', 'ASIL D'];
-export function refreshProjectHaraSheets(sheets) {
+export function refreshProjectHaraSheets(sheets, { practical = sheets?.haraCompletionPolicy === 'projects-hara-practical-v1', haraItem = sheets?.haraItem } = {}) {
+  if(haraItem)sheets={...sheets,haraItem};
   const summary = sheets?.Summary;
   if (!summary?.[0]?.includes('Hazardous Event ID')) return sheets;
-  const headers = [...summary[0], ...PROJECT_HARA_HEADERS.filter(name=>!summary[0].includes(name))];
+  const names=summary[0].map(name=>name==='Item / Function'?'Function':name);
+  const headers = [...new Set([...names,...PROJECT_HARA_HEADERS])];
+  const indices=headers.map(name=>names.map((header,index)=>header===name?index:-1).filter(index=>index>=0));
   const columns = haraColumnIndex(headers);
-  const rows = summary.slice(1).map(row => recalculateProjectHaraRow(headers, row, columns));
+  const rows = summary.slice(1).map(row => recalculateProjectHaraRow(headers, indices.map(matches=>matches.map(index=>row[index]).find(value=>haraText(value))??''), columns, { practical }));
   const goals = new Map();
   const get = (row, name) => haraText(row[columns.get(name)]);
   const exposures=new Map();
@@ -123,7 +130,7 @@ export function refreshProjectHaraSheets(sheets) {
     const group=exposures.get(key);group.rows.push(row);
     if(normalizeHaraRating(get(row,'Exposure'),'E',4))group.ratings.add(normalizeHaraRating(get(row,'Exposure'),'E',4));
   }
-  for(const group of exposures.values())if(group.ratings.size>1){
+  for(const group of exposures.values())if(!practical && group.ratings.size>1){
     for(const row of group.rows){
       if(columns.has('HARA Review Findings'))row[columns.get('HARA Review Findings')]=[get(row,'HARA Review Findings'),`EXPOSURE_CONFLICT: Equivalent operational situations have ${[...group.ratings].sort().join('/')} proposals; reconcile using one supported frequency basis, or document the distinct sub-situation.`].filter(Boolean).join('\n');
       row[columns.get('Assessment Status')]='Inconsistent exposure';
@@ -149,7 +156,14 @@ export function refreshProjectHaraSheets(sheets) {
   const review=[['Hazardous Event ID','Raw Analysis Row ID','Findings','Status'],...rows.filter(row=>get(row,'HARA Review Findings')).map(row=>[get(row,'Hazardous Event ID'),get(row,'Raw Analysis Row ID'),get(row,'HARA Review Findings'),get(row,'Assessment Status')])];
   const candidates=[['Hazardous Event ID','Raw Analysis Row ID','Safety Goal ID','Candidate Requirements','Candidate Timing','Proposed Mitigations','Excluded Candidate Verification'],...rows.filter(row=>['Candidate Safety Requirements','Candidate Timing Requirements','Proposed Mitigations','Excluded Candidate Verification'].some(name=>get(row,name))).map(row=>[get(row,'Hazardous Event ID'),get(row,'Raw Analysis Row ID'),get(row,'Safety Goal ID'),get(row,'Candidate Safety Requirements'),get(row,'Candidate Timing Requirements'),get(row,'Proposed Mitigations'),get(row,'Excluded Candidate Verification')])];
   const assessed = [headers, ...rows];
-  return { ...sheets, Summary: assessed, HARA: assessed, 'HARA Coverage':coverage, 'HARA Quality Review':review, 'Candidate Safety Requirements':candidates,
+  return { ...sheets, ...(practical ? {haraCompletionPolicy:'projects-hara-practical-v1'} : {}), Summary: assessed, HARA: assessed,
+    'HARA Item Definition':projectHaraItemDefinitionSheet({...sheets,Summary:assessed}),
+    'HARA Coverage':coverage, 'HARA Quality Review':review, 'Candidate Safety Requirements':candidates,
+    ...(columns.has(PROJECT_HARA_FUNCTIONAL_REQUIREMENTS_HEADER) ? {
+      [PROJECT_HARA_FUNCTIONAL_REQUIREMENTS_HEADER]: [['Hazardous Event ID','Safety Goal ID','STPA Source Row ID','Functional Safety Requirement','ASIL'],
+        ...rows.filter(row=>!/^no$/i.test(get(row,'Guide Phrase Applicable')) && get(row,PROJECT_HARA_FUNCTIONAL_REQUIREMENTS_HEADER))
+          .map(row=>[get(row,'Hazardous Event ID'),get(row,'Safety Goal ID'),get(row,PROJECT_HARA_STPA_SOURCE_HEADER),get(row,PROJECT_HARA_FUNCTIONAL_REQUIREMENTS_HEADER),get(row,'ASIL')])],
+    } : {}),
     'Safety Goals': [['Safety Goal ID','Safety Goal','ASIL','Hazardous Event IDs','Safe State','Fault Tolerant Time Interval','Status'],
       ...[...goals.values()].map(goal => [goal.id, goal.text, goal.incomplete ? 'Not assessed' : goal.asil, goal.events.join('; '), [...goal.safeStates].join('\n'), [...goal.fttis].join('\n'), goal.incomplete?'In progress':'Complete'])],
   };

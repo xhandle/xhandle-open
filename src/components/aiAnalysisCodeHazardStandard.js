@@ -36,6 +36,10 @@ import {
   validateSafetyClassificationRecord,
 } from "../features/project-hazard-analysis/safetySignificancePolicy";
 import { getStoredActiveAIProvider } from "../lib/aiProviderConfig";
+import { STPA_COMPLETION_POLICY, STPA_COMPLETION_GUIDANCE, usableProjectStpaAssessment, completeProjectStpaAssessment, mergeProjectStpaCandidate } from '../features/project-hazard-analysis/stpaAcceptance';
+import { canDeferHazardFailure } from '../features/code-architecture-hazard-analysis/hazardDeferredFailures';
+
+const practicalStpa = config => config.rowIdSuffix === 'STPA' && config.completionPolicy === STPA_COMPLETION_POLICY;
 
 function getCellText(cell) {
   if (cell == null) return "";
@@ -599,7 +603,8 @@ function buildGuidePhraseUnsafeControlAction(item = {}, generatedValue = "", gui
   return `${requiredPrefix}: ${generated}`;
 }
 
-function preserveReviewedApplicability(row, item) {
+function preserveReviewedApplicability(row, item, config) {
+  if (practicalStpa(config || {}) && !['Yes', 'No'].includes(item?.guidePhraseApplicable)) return row;
   if (!applicabilityIsReadOnly(item)) return row;
   return { ...row,
     guidePhraseApplicable: item.guidePhraseApplicable,
@@ -608,7 +613,7 @@ function preserveReviewedApplicability(row, item) {
 }
 
 function normalizeRow(config, row, item, index) {
-  row = preserveReviewedApplicability(row, item);
+  row = preserveReviewedApplicability(row, item, config);
   const base = fallbackRow(config, item, index);
   const guidePhraseApplicable = normalizeGuidePhraseApplicability(
     row.guidePhraseApplicable || row["Guide Phrase Applicable"] || item?.guidePhraseApplicable,
@@ -685,7 +690,7 @@ function normalizeRow(config, row, item, index) {
         [row.causalFactors, row.causalFactor, row.causalScenario].map(sanitizeText).filter(Boolean).join(" "),
       );
     } else if (fieldName === "systemRequirement" || fieldName === "safetyRequirementsConstraints") {
-      const parameterized = parameterizeUnsupportedRequirement(
+      const parameterized = practicalStpa(config) ? sanitizeText(row[fieldName]) || base[fieldName] || '' : parameterizeUnsupportedRequirement(
         sanitizeText(row[fieldName]) || base[fieldName] || "",
         row.requirementParameterSource,
       );
@@ -709,7 +714,7 @@ function normalizeRow(config, row, item, index) {
   }
   return preserveReviewedApplicability(normalized.guidePhraseApplicable === "No"
     ? normalizeNonApplicableHazardRecord(normalized, normalized.guidePhraseApplicabilityRationale)
-    : normalized, item);
+    : normalized, item, config);
 }
 
 export function materializeGeneratedHazardRows(config, generatedRows = [], items = []) {
@@ -1606,7 +1611,20 @@ async function requestStandardRows(config, items, contextOptions = {}) {
   ];
   const operationalContextBlock = formatHazardOperationalContext(contextOptions);
   const retryInstruction = sanitizeText(contextOptions.retryReason);
-  const prompt = `
+  const prompt = practicalStpa(config) ? `
+You are performing ${config.analysisName} using the supplied project functional decomposition. Keep the existing STPA fields and exact row identities.
+${STPA_COMPLETION_GUIDANCE}
+${items.some(applicabilityIsReadOnly) ? 'Preserve supplied Yes/No applicability decisions and their rationales. Unresolved screening values are not analyst decisions; conclude those rows using the modeled interaction.' : ''}
+${generationGuidance(config, items).split('\n').filter(line => !/needs? review|TBD|TBC/i.test(line)).join('\n')}
+Return only a JSON array with these fields: ${fieldNames.join(', ')}.
+Use Yes or a justified No for guidePhraseApplicable. For applicable rows choose Safety — Direct, Safety — Related, or Mission/Reliability as your best engineering assessment; safetySignificant is Yes for either safety classification and No for Mission/Reliability. Excluded rows use Not Applicable.
+Keep loss, hazardous system state, unsafe control action, causal scenario, constraint, implementable system requirement, mitigation and verification distinct and causally connected to the exact modeled action and operating context. Supply an observable acceptance criterion. Requirements and constraints use shall and allocate to an exact modeled function or subsystem. Use qualitative operating preconditions where quantitative thresholds are not supplied. Proposed safeguards and tests are proposals, not established facts or executed verification.
+Optional audit-evidence fields may be empty when evidence is not supplied. Do not invent evidence, protection effectiveness, numerical thresholds, or user review. Do not return unresolved placeholders or special evidence-gap conclusions. Retain usable work rather than rewriting it to satisfy an evidence-proof audit.
+Project / operational context: ${operationalContextBlock || 'Use the supplied functional interaction.'}
+${retryInstruction || ''}
+Rows:
+${JSON.stringify(compactPromptRows(items))}
+`.trim() : `
 ${items.some(item => item.guidePhraseApplicabilityOrigin === SCREENING_ORIGIN) ? APPLICABILITY_OWNERSHIP_PROMPT : ""}
 You are performing ${config.analysisName} ${config.analysisScope || 'for software safety using a code-based functional decomposition'}.
 
@@ -1672,10 +1690,17 @@ export function hasGeneratedHazardAssessment(row = {}) {
 
 export async function requestStandardRowsWithRetries(config, chunk, contextOptions = {}) {
   const rowsById = new Map();
+  const candidates = new Map();
   const missingFor = (items) => items.filter((item) => !rowsById.has(String(item.id || "").toUpperCase()));
   const mergeRows = (rows) => {
     generatedRowsById(rows).forEach((row, key) => {
-      if (hasGeneratedHazardAssessment(row)) rowsById.set(key, row);
+      const item = chunk.find(item => String(item.id).toUpperCase() === key);
+      if (practicalStpa(config)) {
+        if (!item) return;
+        const candidate = mergeProjectStpaCandidate(candidates.get(key), row);
+        candidates.set(key, candidate);
+        if (usableProjectStpaAssessment(candidate, item)) rowsById.set(key, candidate);
+      } else if (hasGeneratedHazardAssessment(row)) rowsById.set(key, row);
     });
   };
 
@@ -1683,11 +1708,12 @@ export async function requestStandardRowsWithRetries(config, chunk, contextOptio
     mergeRows(await requestStandardRows(config, chunk, contextOptions));
   } catch (err) {
     rethrowInterruptedRequest(err, contextOptions.signal);
-      contextOptions.onRecoverableError?.(err);
+    if (practicalStpa(config) && !canDeferHazardFailure(err, contextOptions.signal)) throw err;
+    contextOptions.onRecoverableError?.(err);
     console.warn(`⚠️ ${config.sheetName} generation failed for ${chunk.length} rows; retrying smaller subchunks.`, err);
   }
 
-  for (let attempt = 0; attempt < STANDARD_MISSING_ROW_RETRIES; attempt += 1) {
+  for (let attempt = 0; attempt < (practicalStpa(config) ? 1 : STANDARD_MISSING_ROW_RETRIES); attempt += 1) {
     const missing = missingFor(chunk);
     if (!missing.length) break;
     const retrySize = attempt === 0
@@ -1701,17 +1727,20 @@ export async function requestStandardRowsWithRetries(config, chunk, contextOptio
       try {
         mergeRows(await requestStandardRows(config, retryChunk, {
           ...contextOptions,
-          retryReason: `Retry ${attempt + 1}: return exactly these missing row ids: ${retryChunk.map((item) => item.id).join(", ")}`,
+          retryReason: `Retry ${attempt + 1}: return exactly these missing row ids: ${retryChunk.map((item) => item.id).join(", ")}`
+            + (practicalStpa(config) ? `\nRetain useful content and complete missing fields in these prior candidates: ${JSON.stringify(retryChunk.map(item => candidates.get(String(item.id).toUpperCase()) || {id: item.id}))}` : ''),
         }));
       } catch (err) {
         rethrowInterruptedRequest(err, contextOptions.signal);
-      contextOptions.onRecoverableError?.(err);
+        if (practicalStpa(config) && !canDeferHazardFailure(err, contextOptions.signal)) throw err;
+        contextOptions.onRecoverableError?.(err);
         console.warn(`⚠️ ${config.sheetName} retry ${attempt + 1} failed for ${retryChunk.map((item) => item.id).join(", ")}.`, err);
       }
     }
   }
 
   const missing = missingFor(chunk);
+  if (practicalStpa(config)) return chunk.map(item => completeProjectStpaAssessment(rowsById.get(String(item.id).toUpperCase()) || candidates.get(String(item.id).toUpperCase()), item));
   if (missing.length) throw new Error(`Hazard analysis incomplete: ${missing.length} assessment(s) were not generated after automatic retries (${missing.map(item => item.id).join(', ')}). Previous saved results were preserved.`);
   return chunk.map((item, index) => generatedRowForItem(rowsById, [], index, item));
 }
@@ -2700,17 +2729,18 @@ export async function runStandardHazardAnalysisStages({
 }) {
   // An explicit No excludes this guide phrase from STPA regardless of review
   // status. Preserve the row and its rationale without sending it to the LLM.
-  const unresolvedScreening = item => item.guidePhraseApplicabilityOrigin === SCREENING_ORIGIN && item.guidePhraseApplicable === 'Needs Review';
+  const unresolvedScreening = item => !practicalStpa(config) && item.guidePhraseApplicabilityOrigin === SCREENING_ORIGIN && item.guidePhraseApplicable === 'Needs Review';
   if (config.rowIdSuffix === "STPA" && items.some(item => isExplicitlyNonApplicable(item) || unresolvedScreening(item))) {
     const activeItems = items.filter(item => !isExplicitlyNonApplicable(item) && !unresolvedScreening(item));
     const mergeRows = (activeRows) => {
       let activeIndex = 0;
       return items.map((item, index) => {
         if (isExplicitlyNonApplicable(item)) {
-          return normalizeRow(config, {
+          const row = normalizeRow(config, {
             guidePhraseApplicable: "No",
             guidePhraseApplicabilityRationale: item.guidePhraseApplicabilityRationale,
           }, item, index);
+          return practicalStpa(config) ? completeProjectStpaAssessment(row, item) : row;
         }
         if (unresolvedScreening(item)) {
           const row = normalizeRow(config, {guidePhraseApplicable: 'Needs Review',
@@ -2757,7 +2787,8 @@ export async function runStandardHazardAnalysisStages({
   };
 
   let completedGenerationChunks = 0;
-  const totalProgressSteps = promptChunks.length + HAZARD_ANALYSIS_REPAIR_STAGES.length;
+  const repairStages = practicalStpa(config) ? [] : HAZARD_ANALYSIS_REPAIR_STAGES;
+  const totalProgressSteps = promptChunks.length + repairStages.length;
   const generatedChunks = await mapWithConcurrency(promptChunks, HAZARD_LLM_CONCURRENCY, async (chunk, chunkIndex) => {
     onProgress({
       step: chunkIndex + 1,
@@ -2767,7 +2798,7 @@ export async function runStandardHazardAnalysisStages({
     const basis = {stage: 'generation', config, chunk, operationalContext, organizationContext, analysisContext, contextSources, provider};
     const started = Date.now();
     const saved = await generationCheckpoint?.read(basis);
-    const reusable = Array.isArray(saved) && saved.length === chunk.length && saved.every(hasGeneratedHazardAssessment);
+    const reusable = Array.isArray(saved) && saved.length === chunk.length && saved.every((row, index) => practicalStpa(config) ? usableProjectStpaAssessment(row, chunk[index]) : hasGeneratedHazardAssessment(row));
     const chunkRows = reusable ? saved : await requestStandardRowsWithRetries(config, chunk, { ...contextOptions, onProgress });
     if (!reusable) await generationCheckpoint?.write(basis, chunkRows);
     completedGenerationChunks += 1;
@@ -2779,10 +2810,11 @@ export async function runStandardHazardAnalysisStages({
   });
 
   let normalizedRows = materializeGeneratedHazardRows(config, generatedChunks.flat(), items);
+  if (practicalStpa(config)) normalizedRows = normalizedRows.map((row, index) => completeProjectStpaAssessment(row, items[index]));
   await onStageComplete({ stage: "generation", rows: normalizedRows });
 
-  for (let index = 0; index < HAZARD_ANALYSIS_REPAIR_STAGES.length; index += 1) {
-    const [stage, runStage] = HAZARD_ANALYSIS_REPAIR_STAGES[index];
+  for (let index = 0; index < repairStages.length; index += 1) {
+    const [stage, runStage] = repairStages[index];
     const stageBasis = {stage, ...(stage === 'canonicalization' ? { canonicalContextPolicy: 'governed-profile-v1' } : {}), ...(items.some(applicabilityIsReadOnly) ? { applicabilityAuditPolicy: "read-only-applicability-v1" } : {}), config, rows: normalizedRows, items, operationalContext, organizationContext, analysisContext, contextSources, provider};
     const savedStage = await generationCheckpoint?.read(stageBasis);
     let stageFailed = false;
@@ -2796,7 +2828,8 @@ export async function runStandardHazardAnalysisStages({
         ...patch,
       }),
     });
-    normalizedRows = normalizedRows.map((row, index) => preserveReviewedApplicability(row, items[index]));
+    normalizedRows = normalizedRows.map((row, index) => preserveReviewedApplicability(row, items[index], config));
+    if (practicalStpa(config)) normalizedRows = normalizedRows.map((row, index) => completeProjectStpaAssessment(row, items[index]));
     if (!reusableStage && !stageFailed) await generationCheckpoint?.write(stageBasis, normalizedRows);
     await onStageComplete({ stage, rows: normalizedRows });
   }
@@ -2805,6 +2838,7 @@ export async function runStandardHazardAnalysisStages({
   // every LLM repair/canonicalization stage has had an opportunity to modify a
   // row. This is intentionally last so inconsistent dependent fields cannot be
   // persisted merely because a later stage reintroduced them.
+  if (practicalStpa(config)) return normalizedRows;
   normalizedRows = normalizedRows.map((row, index) => {
     const audited = auditSafetyClassificationRecord(row, items[index]);
     const { validationFindings, ...auditResult } = audited;
@@ -2837,6 +2871,7 @@ export async function generateStandardCodeHazardAnalysisSheets({
   provider = getStoredActiveAIProvider(),
   generationCheckpoint = null,
   analysisScope = '',
+  completionPolicy = 'strict',
 }) {
   const items = flattenDecomposition(sheets);
   if (!items.length) return sheets;
@@ -2844,7 +2879,7 @@ export async function generateStandardCodeHazardAnalysisSheets({
   const standardConfig = omitConsolidatedRequirement
     ? omitConsolidatedRequirementFromConfig(getStandardConfig(method))
     : getStandardConfig(method);
-  const config = analysisScope ? { ...standardConfig, analysisScope } : standardConfig;
+  const config = { ...standardConfig, ...(analysisScope ? { analysisScope } : {}), ...(completionPolicy === 'practical' && method === 'STPA' ? { completionPolicy: STPA_COMPLETION_POLICY } : {}) };
 
   const normalizedRows = await runStandardHazardAnalysisStages({
     config,

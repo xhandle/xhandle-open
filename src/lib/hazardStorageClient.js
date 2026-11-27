@@ -21,6 +21,15 @@ function failWorker(error) {
 // Keep one worker for this browsing context: its revision tracking and per-project
 // write queues must survive successive saves. No write is retried after a crash.
 export function requestHazardStorage(operation, args) {
+  const request = requestHazardStorageNow(operation, args);
+  storageRequests.add(request);
+  return request.finally(() => storageRequests.delete(request));
+}
+const storageRequests = new Set();
+export async function flushHazardStorageRequests() {
+  while (storageRequests.size) await Promise.all([...storageRequests]);
+}
+function requestHazardStorageNow(operation, args) {
   if (pending.size >= 64) return Promise.reject(new Error('Hazard storage is busy; wait for pending saves.'));
   try {
     if (!worker) {
@@ -65,13 +74,13 @@ export function requestHazardStorage(operation, args) {
   } catch (error) { return Promise.reject(error); }
 }
 
-export async function refreshProjectHaraInBackground(summary) {
+export async function refreshProjectHaraInBackground(summary, options = {}) {
   // Send only the assessed sheet, not every copy of the source workbook.
   return canUseHazardStorageWorker()
-    ? requestHazardStorage('refreshProjectHara', [summary])
-    : refreshProjectHaraSheets({ Summary: summary });
+    ? requestHazardStorage('refreshProjectHara', [summary, options])
+    : refreshProjectHaraSheets({ Summary: summary }, options);
 }
 
 export async function refreshHazardWorkbookInBackground(sheets) {
-  return { ...sheets, ...await refreshProjectHaraInBackground(sheets?.Summary) };
+  return { ...sheets, ...await refreshProjectHaraInBackground(sheets?.Summary, { practical: sheets?.haraCompletionPolicy === 'projects-hara-practical-v1',haraItem:sheets?.haraItem }) };
 }

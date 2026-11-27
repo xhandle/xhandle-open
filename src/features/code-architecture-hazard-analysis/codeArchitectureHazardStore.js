@@ -12,7 +12,7 @@ import { prepareHazardTableIndex } from './prepareHazardTableIndex';
 import {isHazardCsvImportBusy} from './hazardCsvActivity';
 import { HAZARD_CHUNKS, stageHazardRun, hydrateHazardRun, isChunkedHazardRun, removeHazardGeneration, publishHazardRun } from './hazardRunChunks';
 import {isCurrentHazardSaveAttempt,revokeHazardSaveAttempts} from './hazardSaveAttempt';
-import { openHazardSchema, hazardMetadata, newHazardStorageRevision, HAZARD_STAGING } from './hazardSchema';
+import { openHazardSchema, hazardMetadata, newHazardStorageRevision, HAZARD_STAGING, HAZARD_RESET_SNAPSHOTS, HAZARD_RESET_ENTRIES } from './hazardSchema';
 
 const DB_NAME = "xhandle-code-architecture-hazard-analysis";
 const META_STORE = "runMetadata";
@@ -401,7 +401,7 @@ export async function deleteCodeArchitectureHazardRuns(filters = {}) {
     emitChanged({...filters, storeName: STORE_NAME});
     return rows.length - next.length;
   }
-  const tx = db.transaction([STORE_NAME, META_STORE, CHECKPOINT_STORE, HAZARD_CHUNKS, HAZARD_STAGING], 'readwrite');
+  const tx = db.transaction([STORE_NAME, META_STORE, CHECKPOINT_STORE, HAZARD_CHUNKS, HAZARD_STAGING, HAZARD_RESET_SNAPSHOTS, HAZARD_RESET_ENTRIES], 'readwrite');
   let count = 0;
   const deletedRunIds = new Set();
   let cursor = await tx.objectStore(META_STORE).openCursor();
@@ -429,6 +429,15 @@ export async function deleteCodeArchitectureHazardRuns(filters = {}) {
     }
     lease=await lease.continue();
   }
+  let snapshot = await tx.objectStore(HAZARD_RESET_SNAPSHOTS).openCursor();
+  while (snapshot) {
+    if (matchesFilters(snapshot.value, filters)) {
+      let entry = await tx.objectStore(HAZARD_RESET_ENTRIES).index('snapshotId').openCursor(snapshot.primaryKey);
+      while (entry) { await entry.delete(); entry = await entry.continue(); }
+      await snapshot.delete();
+    }
+    snapshot = await snapshot.continue();
+  }
   await tx.done;
   await deleteWorkingSets(deletedRunIds).catch(()=>{});
   emitChanged({...filters, storeName: STORE_NAME});
@@ -447,6 +456,15 @@ export { DB_NAME as CODE_ARCHITECTURE_HAZARD_DB_NAME, STORE_NAME as CODE_ARCHITE
 
 export function assertProjectHazardsSaved(projectId) {
   if (memoryMatches({projectId}).length) throw new Error('Some hazard results have not been saved. Retry saving before exporting this project.');
+}
+
+export async function saveHazardsBeforeUpdate() {
+  while (saveQueues.size) await Promise.allSettled([...saveQueues.values()]);
+  for (const run of [...unsavedRuns.values()]) {
+    const complete = await resolveCodeArchitectureHazardRun(run);
+    await saveCodeArchitectureHazardRun({ ...complete, finalSavePending: false, saveFailureMessage: '' });
+  }
+  if (unsavedRuns.size) throw new Error('Some hazard results still need to be saved manually.');
 }
 
 // A row deletion rewrites the token stream, not a fully hydrated analysis.

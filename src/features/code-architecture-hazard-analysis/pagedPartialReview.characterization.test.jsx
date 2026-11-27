@@ -71,3 +71,13 @@ test('latest matching review wins with stable tie-breaking after a source-positi
  await act(async()=>root.render(<PagedHazardPanel latestRun={{...run,[PAGED_HAZARD]:{...run[PAGED_HAZARD],headers}}} reviewItems={reviewItems}/>));await flush();
  expect(mockPanel.reviewByRow.get(0)).toBe(reviewItems[3]);
 });
+
+test.each([false,true])('reviews keep their engineering columns when an obsolete status is removed (legacy content=%s)',async legacy=>{
+ const headers=['Raw Analysis Row ID','Classification Resolution Status','Hazard','Safety Significant'];
+ const visible=['Raw Analysis Row ID','Hazard','Safety Significant'];
+ const row=['RAW-SYNTHETIC','Receiver consumes an obsolete state.','Yes'];
+ requestHazardRows.mockImplementation(async(_run,options)=>result(options,visible,row));
+ const item={id:'review',status:'accepted',currentContent:{columns:legacy?headers:visible,row:legacy?[row[0],'Needs Review',...row.slice(1)]:row,rowIndex:0}};
+ await act(async()=>root.render(<PagedHazardPanel latestRun={{...run,[PAGED_HAZARD]:{...run[PAGED_HAZARD],headers}}} reviewItems={[item]}/>));await flush();
+ expect(mockPanel.reviewByRow.get(0)).toBe(item);
+});

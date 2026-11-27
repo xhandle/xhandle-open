@@ -67,3 +67,22 @@ test('later passes preserve different emergency outcomes even if the first candi
   const catalog=[{id:'a',statement:'Report a service interruption',outcome:'Service interruption',hazard:'Unavailable reporting',outcomeKinds:['missed-emergency']},candidates[1]];
   expect(()=>parseHaraGoalGroups(JSON.stringify({goals:[goal(['a','b'])]}),catalog)).toThrow(/cannot be consolidated/);
 });
+
+test('practical consolidation shares goals across initial batch boundaries while retaining all requirements and event memberships',async()=>{
+ const rows=Array.from({length:50},(_,i)=>source(`The input ${i} shall check ${i} packets before reporting.`));
+ fetchLLMResponse.mockImplementation(async prompt=>{
+  const batch=JSON.parse(prompt.split('Candidates:\n')[1]);
+  return JSON.stringify({goals:[goal(batch.map(candidate=>candidate.id))]});
+ });
+ await consolidateProjectHaraGoals({headers,rows,maxPasses:2,practical:true});
+ expect(fetchLLMResponse).toHaveBeenCalledTimes(3);
+ expect(new Set(rows.map(row=>row[1])).size).toBe(1);
+ expect(rows.every((row,i)=>row[4].includes(`input ${i} shall`))).toBe(true);
+ expect(rows.every(row=>row[6]==='')).toBe(true);
+});
+test('invalid practical goal catalogs retain completed decisions without review labels or extra passes',async()=>{
+ fetchLLMResponse.mockResolvedValue('{"goals":[]}');
+ const rows=[source('The item shall prevent missed emergency reports.'),source('The item shall preserve timely emergency assistance.')];
+ await consolidateProjectHaraGoals({headers,rows,maxPasses:2,practical:true});
+ expect(fetchLLMResponse).toHaveBeenCalledTimes(2);expect(rows.every(row=>row[6]==='')).toBe(true);
+});

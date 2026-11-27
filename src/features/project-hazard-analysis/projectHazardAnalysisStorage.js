@@ -6,6 +6,7 @@ async function call(operation, args) {
   if (!canUseHazardStorageWorker()) return local[operation](...args);
   try { return await requestHazardStorage(operation, args); }
   catch (error) {
+    if (['loadProjectHazardReuseState','saveProjectStpaFoundation','clearProjectHazardMethodResults','restoreProjectHazardMethodState'].includes(operation)) throw error;
     // Keep the public discriminated outcomes and boolean compatibility contracts.
     // Never replay a failed worker write: it may already have committed.
     if (operation === 'loadProjectHazardAnalysisRecord') return null;
@@ -29,3 +30,8 @@ export const restoreHazardAnalysisRevision = (...args) => call('restoreHazardAna
 export const saveHazardAnalysis = (...args) => call('saveHazardAnalysis', args);
 export const saveProjectHazardAnalysisRecord = (...args) => call('saveProjectHazardAnalysisRecord', args);
 export const switchProjectHazardMethod = (...args) => call('switchProjectHazardMethod', args);
+
+export const loadProjectHazardReuseState = (...args) => call('loadProjectHazardReuseState', args);
+export const saveProjectStpaFoundation = (...args) => call('saveProjectStpaFoundation', args);
+export const clearProjectHazardMethodResults = (...args) => call('clearProjectHazardMethodResults', args);
+export const restoreProjectHazardMethodState = (...args) => call('restoreProjectHazardMethodState', args);

@@ -1,4 +1,4 @@
-import { inspectClassificationResolution } from './classificationResolutionStatus';
+import { isObsoleteClassificationStatusHeader } from './classificationResolutionStatus';
 import { reconcileRegeneratedGuidePhraseReview } from './hazardRegenerationReview';
 
 const text = value => String(value ?? '').trim();
@@ -71,7 +71,6 @@ export function reconcileUserPreprocessing(headers, generatedRow, preprocessing,
     }
     row[index] = value;
   }
-  const write = (header, value) => { const index = headers.indexOf(header); if (index >= 0) row[index] = value; };
   if (/^no$/i.test(preprocessing.values['Guide Phrase Applicable'] || '')) {
     const result = reconcileRegeneratedGuidePhraseReview({ headers, previousRow: row, currentBasisRow: row, regeneratedRow: row,
       reviewItem: { currentContent: { columns: headers, row } } });
@@ -86,11 +85,7 @@ export function reconcileUserPreprocessing(headers, generatedRow, preprocessing,
       }
     }
   }
-  if (headers.includes('Safety Classification')) {
-    const resolution = inspectClassificationResolution(headers, row);
-    write('Classification Resolution Status', resolution.status);
-  }
-  if (conflicts.length) write('Classification Resolution Status', 'Needs Review');
+  headers.forEach((header, index) => { if (isObsoleteClassificationStatusHeader(header)) row[index] = ''; });
   return { row, conflicts };
 }
 

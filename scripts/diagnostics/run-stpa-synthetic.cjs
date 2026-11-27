@@ -13,7 +13,7 @@ if (index >= 0) { if (fs.existsSync(output)) throw Error('Choose a fresh --out d
 const json = path.join(output, 'jest-results.json'), log = path.join(output, 'tests.log');
 const feature = 'src/features/code-architecture-hazard-analysis/';
 const suites = [
-  'stpaSyntheticHarness.test.js', 'stpaReviewRegression.test.js', 'stpaTableColumns.test.js', 'CodeArchitectureHazardSummaryTable.test.jsx',
+  'stpaSyntheticHarness.test.js', 'stpaReviewRegression.test.js', 'stpaCompletionPolicy.test.js', 'stpaTableColumns.test.js', 'CodeArchitectureHazardSummaryTable.test.jsx',
   'haulageSourceConsistency.test.js',
   'requirementTextPolicy.test.js',
   'sourceBehaviorEvidence.test.js',

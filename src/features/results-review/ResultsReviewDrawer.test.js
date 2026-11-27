@@ -36,7 +36,7 @@ describe("ResultsReviewDrawer dock-aware layout", () => {
 
       expect(viewport.className).toContain("left-0");
       expect(viewport.className).toContain("justify-end");
-      expect(viewport.className).toContain("right-[var(--xhandle-collaborator-reserved-width)]");
+      expect(viewport.className).toContain("right-[var(--xhandle-workspace-reserved-width)]");
       expect(drawer.className).toContain("w-[var(--results-review-drawer-width)]");
       expect(drawer.className).toContain("max-w-full");
 

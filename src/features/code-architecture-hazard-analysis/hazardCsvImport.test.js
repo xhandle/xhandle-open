@@ -13,6 +13,7 @@ import {HAZARD_CHUNKS,hazardChunkKey,hazardChunkDigest} from './hazardRunChunks'
 import {toCsvText} from '../../lib/csv';
 import {queryHazardRows} from './pagedHazardRows';
 import {assignImportedHazardContext} from './codeHazardImportContext';
+import {removeClassificationStatusColumns} from '../project-hazard-analysis/classificationResolutionStatus';
 beforeEach(()=>{global.indexedDB=new IDBFactory();global.IDBKeyRange=IDBKeyRange;global.TextDecoder=TextDecoder;global.structuredClone=value=>deserialize(serialize(value));Object.defineProperty(global,'crypto',{value:webcrypto,configurable:true});localStorage.clear();});
 const headers=['Raw Analysis Row ID','Function (From)','Control Action','Function (To)','Guide Phrase','Hazard','Safety Classification','Safety Significant','Classification Resolution Status'];
 const fixture=()=>({id:'csv-run',projectId:'project',repoId:'repo',hazardMethod:'STPA-Textbook',updatedAt:'2026-01-01',architectureRowsSnapshot:['evidence'],generatedSheets:{Summary:[headers,['one','Sensor','Send','Monitor','Not providing','','','', ''],['two','Sensor','Send','Monitor','Providing too late','retain me','','','']] ,Other:[['important'],['retained']]},userPreprocessing:{other:{values:{Hazard:'retain unknown assessment'}}},narrativeReviewInput:{text:'retained narrative'}});
@@ -25,7 +26,7 @@ test.each([false,true])('stages changes without publication, then saves/reopens/
  else expect((await getCodeArchitectureHazardRunById(run.id)).generatedSheets.Summary[1][5]).toBe('');
  const result=await applyHazardCsvImport(preview.sessionId,{currentRun:source});expect(result.run[PAGED_HAZARD]).toBeTruthy();
  const imported=await getCodeArchitectureHazardRunById(run.id);
- expect(imported.generatedSheets.Summary[1][5]).toBe('Completed external hazard');expect(imported.generatedSheets.Summary[2]).toEqual(run.generatedSheets.Summary[2]);
+ expect(imported.generatedSheets.Summary[1][5]).toBe('Completed external hazard');expect(imported.generatedSheets.Summary[2]).toEqual(removeClassificationStatusColumns(run.generatedSheets.Summary)[2]);
  expect(imported.generatedSheets.Other).toEqual(run.generatedSheets.Other);expect(imported.architectureRowsSnapshot).toEqual(run.architectureRowsSnapshot);expect(imported.narrativeReviewInput).toEqual(run.narrativeReviewInput);
  expect(imported.userPreprocessing.one.values.Hazard).toBe('Completed external hazard');expect(imported.userPreprocessing.other).toEqual(run.userPreprocessing.other);
  const edits=await openDB('xhandle-hazard-csv-imports-v1');for(const table of ['sessions','baseline','updates','seen','preprocessing'])expect(await edits.count(table)).toBe(0);edits.close();
@@ -138,7 +139,8 @@ test.each([false,true])('streaming context assignment matches the previous polic
  run.generatedSheets.Summary.slice(1).forEach(row=>row.push('context-unspecified','Unspecified scenario','Unspecified mode'));
  const plan=await prepareHazardCsvImport({run,file:csv(),operationalContexts:contexts});await applyHazardCsvImport(plan.sessionId,{currentRun:run,operationalContexts:contexts});
  const saved=await getCodeArchitectureHazardRunById(run.id);
- const expected=assignImportedHazardContext({...saved,generatedSheets:{Summary:[run.generatedSheets.Summary[0],...saved.generatedSheets.Summary.slice(1).map((row,i)=>{const copy=row.slice(0,run.generatedSheets.Summary[0].length);for(const field of ['Operational Context ID','Operational Scenario','Operational Mode']){const column=run.generatedSheets.Summary[0].indexOf(field);copy[column]=run.generatedSheets.Summary[i+1][column];}return copy;})]}},contexts);
+ const original=removeClassificationStatusColumns(run.generatedSheets.Summary);
+ const expected=assignImportedHazardContext({...saved,generatedSheets:{Summary:[original[0],...saved.generatedSheets.Summary.slice(1).map((row,i)=>{const copy=original[0].map(header=>row[saved.generatedSheets.Summary[0].indexOf(header)]);for(const field of ['Operational Context ID','Operational Scenario','Operational Mode']){const column=original[0].indexOf(field);copy[column]=original[i+1][column];}return copy;})]}},contexts);
  expect(saved.generatedSheets.Summary).toEqual(expected.generatedSheets.Summary);
  if(ambiguous)expect(saved.userPreprocessingConflicts).toEqual([]);
  else{
@@ -184,4 +186,24 @@ test('importing the same completed CSV again proposes no changes and preserves i
  const stillSaved=await getCodeArchitectureHazardRunById(run.id);
  expect(stillSaved.generatedSheets.Summary).toEqual(first.generatedSheets.Summary);
  expect(stillSaved.csvImportPreviousSummary).toEqual(run.generatedSheets.Summary);
+});
+
+test('imports an old export with a status column in the middle without shifting engineering values',async()=>{
+ const run=fixture();run.generatedSheets.Summary=[
+  ['Raw Analysis Row ID','Classification Resolution Status','Hazard','Safety Significant'],
+  ['RAW-SYNTHETIC','Policy Validation Gap','Original hazard','Yes'],
+ ];
+ const file=new Blob([toCsvText([
+  ['Raw Analysis Row ID','Classification Resolution Status','Hazard','Safety Significant'],
+  ['RAW-SYNTHETIC','Policy Validated','Updated hazard','Yes'],
+ ])]);
+ const plan=await prepareHazardCsvImport({run,file});
+ expect(plan.changedColumns).toEqual(['Hazard']);
+ const applied=await applyHazardCsvImport(plan.sessionId,{currentRun:run});
+ const page=await queryHazardRows(applied.run);
+ expect(page.headers).toEqual(['Raw Analysis Row ID','Hazard','Safety Significant']);
+ expect(page.rows).toEqual([['RAW-SYNTHETIC','Updated hazard','Yes']]);
+ const saved=await getCodeArchitectureHazardRunById(run.id);
+ expect(saved.generatedSheets.Summary).toEqual([page.headers,...page.rows]);
+ expect(saved.csvImportPreviousSummary).toEqual(run.generatedSheets.Summary);
 });

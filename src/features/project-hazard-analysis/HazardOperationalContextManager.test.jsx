@@ -29,10 +29,11 @@ describe("HazardOperationalContextManager", () => {
         />,
       ));
 
-      const modal = document.body.querySelector('[role="presentation"].xhandle-modal-viewport');
+      const modal = document.body.querySelector('[role="dialog"].xhandle-hazard-context-tray');
       expect(modal).not.toBeNull();
       expect(modal.parentElement).toBe(document.body);
       expect(modal.className).toContain("z-[1200]");
+      expect(modal.hasAttribute("aria-modal")).toBe(false);
       expect(modal.textContent).toContain("Saved to the current code-based architecture project and repository.");
       expect(modal.textContent).toContain("Uses the configured AI provider and the current code-based architecture project and repository architecture.");
 

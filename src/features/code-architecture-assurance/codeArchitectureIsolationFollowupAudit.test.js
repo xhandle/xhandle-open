@@ -1,4 +1,5 @@
 import { readProjectWithRecovery } from './projectReadRecovery';
+import { registerDesktopUpdateSave } from '../../lib/desktopUpdateSave';
 // Regression coverage for the lifecycle gaps found in the follow-up audit.
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -60,6 +61,7 @@ test.each(['Publication failed', 'SOURCE_PUBLICATION_CONFLICT', 'AbortError'])('
  const scopeRef={current:A},analysisScope={current:null},inFlight={current:false};
  let rejectRun,loading=false;
  const env={
+  registerDesktopUpdateSave,
   codeArchitectureAnalysisAbortRef:{current:null},
   codeArchitectureAnalysisInFlightRef:inFlight,codeArchitectureAnalysisScopeRef:analysisScope,codeArchitectureScopeRef:scopeRef,
   activeCodeArchitectureProjectId:'A',codeArchitectureProjects:[{id:'A'}],activeCodeArchitectureProject:{id:'A'},

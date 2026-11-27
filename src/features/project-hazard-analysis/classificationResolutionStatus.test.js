@@ -124,23 +124,25 @@ describe("classification resolution status", () => {
       .toBe(CLASSIFICATION_RESOLUTION_STATUS.NOT_EVALUATED);
   });
 
-  test("adds and deterministically refreshes the exported status column", () => {
+  test("removes the obsolete status column without changing decisions or row identity", () => {
     const first = ensureClassificationResolutionStatus([headers, row()]);
-    expect(first[0].at(-1)).toBe(CLASSIFICATION_RESOLUTION_STATUS_HEADER);
-    expect(first[1].at(-1)).toBe(CLASSIFICATION_RESOLUTION_STATUS.POLICY_VALIDATED);
+    expect(first[0]).not.toContain(CLASSIFICATION_RESOLUTION_STATUS_HEADER);
 
     const staleHeaders = [...headers, CLASSIFICATION_RESOLUTION_STATUS_HEADER];
-    const refreshed = ensureClassificationResolutionStatus([staleHeaders, [...row(), "Stale value"]]);
-    expect(refreshed[0].filter((header) => header === CLASSIFICATION_RESOLUTION_STATUS_HEADER)).toHaveLength(1);
-    expect(refreshed[1].at(-1)).toBe(CLASSIFICATION_RESOLUTION_STATUS.POLICY_VALIDATED);
+    const original = [staleHeaders, [...row(), "Stale value"]];
+    const refreshed = ensureClassificationResolutionStatus(original);
+    expect(refreshed).toEqual(first);
+    expect(original[1].at(-1)).toBe('Stale value');
   });
 
-  test("normalizes only the Summary sheet on an analysis result", () => {
+  test("removes retired status columns from every analysis sheet", () => {
     const normalized = normalizeHazardAnalysisResolutionStatus({
-      Summary: [headers, row()],
+      Summary: [[...headers, CLASSIFICATION_RESOLUTION_STATUS_HEADER], [...row(), 'Needs Review']],
+      STPA: [['Hazard', 'Policy Validation Status', 'Loss'], ['Draft hazard', 'Policy Validated', 'Draft loss']],
       Metadata: [["Name"], ["Example"]],
     });
-    expect(normalized.Summary[0]).toContain(CLASSIFICATION_RESOLUTION_STATUS_HEADER);
+    expect(normalized.Summary[0]).not.toContain(CLASSIFICATION_RESOLUTION_STATUS_HEADER);
+    expect(normalized.STPA).toEqual([['Hazard', 'Loss'], ['Draft hazard', 'Draft loss']]);
     expect(normalized.Metadata).toEqual([["Name"], ["Example"]]);
   });
 

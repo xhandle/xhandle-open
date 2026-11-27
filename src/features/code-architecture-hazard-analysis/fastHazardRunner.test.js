@@ -181,31 +181,33 @@ test.each(['HARA','FHA'])('%s assumption-based completion survives storage, CSV 
  localStorage.removeItem('xhandle:code-architecture-hazard-analysis:v1');
 });
 
-test('an incomplete STPA replacement retains the prior completed run',async()=>{
+test('an STPA replacement completes every row without mutating the prior completed run',async()=>{
  fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>answer('STPA',id))));
  const previous=await runCodeArchitectureHazardAnalysis(base),snapshot=JSON.stringify(previous.generatedSheets);
  fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>id==='HA-1'?{id}:answer('STPA',id))));
- const failure=await runCodeArchitectureHazardAnalysis({...base,previousRun:previous,regenerate:true}).catch(error=>error);
- expect(failure).toMatchObject({code:'COMPACT_HAZARD_INCOMPLETE',recoveryRun:{runState:'complete',pendingAttempt:{runState:'incomplete',validatedAssessments:6}}});
+ const completed=await runCodeArchitectureHazardAnalysis({...base,previousRun:previous,regenerate:true});
+ expect(completed.runState).toBe('complete');expect(completed.pendingAttempt).toBeUndefined();
  expect(JSON.stringify(previous.generatedSheets)).toBe(snapshot);
- expect(failure.recoveryRun.generatedSheets).toEqual(previous.generatedSheets);
- expect(failure.recoveryRun.pendingAttempt.generatedSheets.Summary).toHaveLength(7);
+ expect(completed.generatedSheets.Summary).toHaveLength(8);
+ const [headers,first]=completed.generatedSheets.Summary;
+ expect(first[headers.indexOf('Unsafe Control Action')]).toContain('Apply torque');
+ expect(first[headers.indexOf('Software Safety Requirement')]).toContain('shall');
+ expect(parseCsv(toCsvText(completed.generatedSheets.Summary))).toEqual(completed.generatedSheets.Summary.map(row=>row.map(String)));
 });
 
-test('incomplete STPA attempts checkpoint accepted rows and retry only unfinished work',async()=>{
+test('completed STPA drafts checkpoint every row and continuation does not regenerate accepted work',async()=>{
  const {createCodeHazardCheckpoint}=jest.requireMock('./codeHazardGenerationCheckpoint');
  const cached=new Map();
  createCodeHazardCheckpoint.mockResolvedValue({read:async key=>cached.get(JSON.stringify(key)),write:async(key,value)=>cached.set(JSON.stringify(key),value)});
  try {
   fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>id==='HA-1'?{id}:answer('STPA',id))));
-  const failure=await runCodeArchitectureHazardAnalysis(base).catch(error=>error);
-  expect(failure.recoveryRun).toMatchObject({runState:'incomplete',validatedAssessments:6});
+  const completed=await runCodeArchitectureHazardAnalysis(base);
+  expect(completed).toMatchObject({runState:'complete'});
   fetchLLMResponse.mockImplementation(async prompt=>JSON.stringify(JSON.parse(prompt.split('\nRows: ')[1]).map(({id})=>answer('STPA',id))));
   fetchLLMResponse.mockClear();
-  const next=await runCodeArchitectureHazardAnalysis({...base,previousRun:normalizeCodeArchitectureHazardRun(JSON.parse(JSON.stringify(failure.recoveryRun)))});
+  const next=await runCodeArchitectureHazardAnalysis({...base,previousRun:normalizeCodeArchitectureHazardRun(JSON.parse(JSON.stringify(completed)))});
   expect(next.runState).toBe('complete');
-  expect(fetchLLMResponse).toHaveBeenCalledTimes(1);
-  expect(JSON.parse(fetchLLMResponse.mock.calls[0][0].split('\nRows: ')[1]).map(row=>row.id)).toEqual(['HA-1']);
+  expect(fetchLLMResponse).not.toHaveBeenCalled();
  } finally {createCodeHazardCheckpoint.mockReset();}
 });
 

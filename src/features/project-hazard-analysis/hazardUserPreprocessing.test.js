@@ -27,7 +27,7 @@ test('Yes and rationale constrain generation and remain intact when AI disagrees
   const generated = assess('No'); generated[7] = 'Newly completed hazard';
   const result = reconcileUserPreprocessing(headers, generated, user, basis);
   expect(result.row[5]).toBe('Yes'); expect(result.row[7]).toBe('Newly completed hazard');
-  expect(result.conflicts.length).toBeGreaterThan(0); expect(result.row[9]).toBe('Needs Review');
+  expect(result.conflicts.length).toBeGreaterThan(0); expect(result.row[9]).toBe('');
 });
 test('No applies existing Not Applicable policy and preserves rationale and ID', () => {
   const generated = assess('Yes'); generated[7] = 'AI hazard';
@@ -38,7 +38,7 @@ test('No applies existing Not Applicable policy and preserves rationale and ID',
 test('changed architecture flags downstream review while preserving the accepted applicability', () => {
   const changed = [...basis]; changed[2] = 'New command';
   const result = reconcileUserPreprocessing(headers, assess(), own(assess()), changed);
-  expect(result.row[5]).toBe('Yes'); expect(result.row[9]).toBe('Needs Review'); expect(result.conflicts[0]).toContain('changed');
+  expect(result.row[5]).toBe('Yes'); expect(result.row[9]).toBe(''); expect(result.conflicts[0]).toContain('changed');
   expect(constrainPreprocessedInput({}, own(assess()), headers, changed).guidePhraseApplicabilityReviewStatus).toBe('Reviewed');
 });
 test('clearing the last substantive field removes ownership', () => {

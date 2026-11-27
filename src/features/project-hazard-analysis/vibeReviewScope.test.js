@@ -85,12 +85,10 @@ test("routes Safety Classification Needs Review to its distinct review target", 
   expect(result.reviewTarget).toBe("safetyClassification");
 });
 
-test("routes Classification Resolution Status independently from Safety Classification", () => {
+test("does not queue reviews against the retired status column", () => {
   const result = resolveHazardVibeReviewScope("lets vibe review Classification Resolution Status = Policy Validation Gap", summary);
-  expect(result.status).toBe("matched");
-  expect(result.queue).toEqual(["row-1"]);
-  expect(result.filters).toEqual([expect.objectContaining({ field: "classificationResolutionStatus", value: "Policy Validation Gap" })]);
-  expect(result.reviewTarget).toBe("classificationResolution");
+  expect(result.status).toBe("needs_scope");
+  expect(result.queue || []).toEqual([]);
 });
 
 test("does not confuse functional decomposition creation with hazard review", () => {

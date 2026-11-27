@@ -8,6 +8,8 @@ const stage = fs.realpathSync(arg('--stage'));
 const root = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'xhandle-hara-live-'));
 const result = { root, checks: [], requests: [], errors: [], outputRecovery: { singleton: false, batch: false, requests: [] } };
 let page, browser, app, server;
+let finalReviewFixture = false;
+let finalReviewServiceFailure = false;
 const check = name => { result.checks.push(name); console.log('PASS', name); };
 async function checkOperationalColumns(name) {
   for (const column of ['Operational Mode', 'Operating Conditions']) {
@@ -105,11 +107,25 @@ async function waitForSavedHead(predicate, timeoutMs = 90000) {
       if(app && localFileService && url.pathname.startsWith('/api/project-transfer-files'))return route.continue();
       if (!route.request().url().endsWith('/api/chat')) return route.fulfill({ contentType: 'application/json', body: '{"ok":true,"projects":[],"rows":[]}' });
       const body = route.request().postDataJSON(), prompt = body.messages?.find(message => message.role === 'user')?.content || '';
-      result.requests.push({ workflow: body.xhandleWorkflow, prompt: prompt.slice(0, 180), length: prompt.length });
+      const reviewPhase=prompt.startsWith('Inspect the completed HARA table')?'find':prompt.startsWith('Correct only the listed HARA review findings')?'correct':prompt.startsWith('Independently verify proposed HARA corrections')?'verify':null;
+      result.requests.push({ kind:reviewPhase?'final-review':prompt.startsWith('Identify the HARA Item')?'item':prompt.includes('Perform the ISO 26262-3 HARA risk-assessment step') || prompt.startsWith('Derive ONLY the missing HARA outputs')?'hara':prompt.startsWith('You are performing STPA textbook hazard analysis')?'stpa':'other', phase:reviewPhase, workflow: body.xhandleWorkflow, prompt: prompt.slice(0, 180), length: prompt.length });
       fs.writeFileSync(root + '/prompt-' + result.requests.length + '.txt', prompt);
-      assert(result.requests.length < 60, 'Requests remain bounded');
+      assert(result.requests.length < 120, 'Requests remain bounded');
       let content, finishReason = 'stop';
       if (prompt.includes('Return ONLY one JSON object with arrays losses and hazards')) content = { losses: [{ id: 'L1', statement: 'Fatal injury to pedestrians.' }], hazards: [{ id: 'H1', statement: 'Vehicle enters an occupied crossing without stopping.' }] };
+      else if(prompt.startsWith('Identify the HARA Item')){
+        assert(prompt.includes('Brake command') && prompt.includes('Brake actuator'),'Item inference uses the functional decomposition');
+        content={name:'Automated vehicle braking system',definition:'Automated vehicle braking item: vehicle controller and brake actuator; pedestrian crossings in the operating domain; no driver. External operator requests and roadway conditions are interface dependencies.',rationale:'The controller and actuator jointly implement the modeled vehicle braking function.'};
+      }
+      else if(reviewPhase){
+        if(finalReviewServiceFailure)return route.fulfill({status:401,contentType:'application/json',body:JSON.stringify({error:'Synthetic final-review account failure'})});
+        const entries=lastArray(prompt), input=entries.find(entry=>!entry.locked.includes('Functional Safety Requirements'));
+        if(reviewPhase==='find')content={findings:finalReviewFixture&&input?[{id:input.id,code:'REQUIREMENT',fields:['Functional Safety Requirements'],
+          reason:'Make the required emergency braking response explicit.',evidence:[{field:'Functional Safety Requirements',quote:input.assessment['Functional Safety Requirements'].slice(0,500)}]}]:[]};
+        else if(reviewPhase==='correct')content={patches:finalReviewFixture&&input?[{id:input.id,issueIds:input.findings.map(issue=>issue.findingId),reason:'Preserve the still-required emergency braking response.',
+          changes:{'Functional Safety Requirements':'The vehicle shall preserve emergency braking while the crossing remains hazardous.'}}]:[]};
+        else content={checks:entries.flatMap(entry=>entry.proposal.groups.map(group=>({changeId:group.changeId,accept:true,reason:'The explicit response preserves braking at the occupied crossing without changing source evidence.'})))};
+      }
       else if(prompt.startsWith('You are consolidating hazard-analysis rows into a concise set of Consolidated Safety Issues.')){
         const evidence=prompt.split('Safety hazard evidence, grouped only to reduce transport size (the grouping does not decide issue boundaries):\n')[1];
         const families=JSON.parse(evidence.split('\n')[0]);
@@ -120,7 +136,7 @@ async function waitForSavedHead(predicate, timeoutMs = 90000) {
         const inputs = lastArray(prompt);
         const entries = inputs.map(input => answer(input.id || input.row?.id || input.item?.id));
         assert(entries.every(entry => entry.id), 'Provider response is tied to input ids');
-        const hara = prompt.includes('Perform the ISO 26262-3 HARA risk-assessment step');
+        const hara = prompt.includes('Perform the ISO 26262-3 HARA risk-assessment step') || prompt.startsWith('Derive ONLY the missing HARA outputs');
         content = hara ? { assessments: entries } : entries;
         if (hara) {
           assert(body.max_tokens >= 12000, 'HARA reserves output instead of using the generic 1,200-token default');
@@ -140,7 +156,7 @@ async function waitForSavedHead(predicate, timeoutMs = 90000) {
     await page.evaluate(async () => {
       localStorage.setItem('xhandle.projects', JSON.stringify([{ id: 'hara-fixture', name: 'HARA brake fixture' }]));
       localStorage.setItem('xhandle.activeProjectId', 'hara-fixture');
-      localStorage.setItem('xhandle.projectData', JSON.stringify({ 'hara-fixture': { riskMethod: 'STPA-Textbook', haraItemDefinition: 'Automated vehicle braking item; vehicle controller and brake actuator; pedestrian crossings in the operating domain; no driver; response bound 100 ms per timing analysis.', responseRows: [{ id: 'brake-interface', fromFunction: 'Vehicle controller', fromDetails: 'Automated urban driving controller. The braking item has an independent stop function that holds standstill with propulsion inhibited.', controlAction: 'Brake command', controlDetails: 'The brake actuator depends on the Brake command to stop the vehicle at occupied pedestrian crossings.', toFunction: 'Brake actuator', toDetails: 'Actuator applies braking from the brake command.' }], hazardOperationalContexts: [{ id: 'crossing', scenario: 'Occupied pedestrian crossing', mode: 'Automated urban driving', conditions: 'Wet pavement; frequent crossings; no human driver.', assumptions: 'Recorded timing bound 100 ms.' }] } }));
+      localStorage.setItem('xhandle.projectData', JSON.stringify({ 'hara-fixture': { riskMethod: 'STPA-Textbook', haraItemDefinition: '', responseRows: [{ id: 'brake-interface', fromFunction: 'Vehicle controller', fromDetails: 'Automated urban driving controller. The braking item has an independent stop function that holds standstill with propulsion inhibited.', controlAction: 'Brake command', controlDetails: 'The brake actuator depends on the Brake command to stop the vehicle at occupied pedestrian crossings.', toFunction: 'Brake actuator', toDetails: 'Actuator applies braking from the brake command.' }], hazardOperationalContexts: [{ id: 'crossing', scenario: 'Occupied pedestrian crossing', mode: 'Automated urban driving', conditions: 'Wet pavement; frequent crossings; no human driver.', assumptions: 'Recorded timing bound 100 ms.' }] } }));
       localStorage.setItem('xhandle.codeArchitectureProjects', JSON.stringify([{ id: 'hara-code', name: 'HARA code fixture', activeRepoId: 'brakes', repos: [{ id: 'brakes', repoId: 'brakes', repoName: 'brakes' }] }]));
       const db = await new Promise((resolve,reject) => { const request=indexedDB.open('xhandle',4); request.onupgradeneeded=()=>{for(const name of ['code_index','copilot_baseline','diagram_positions'])if(!request.result.objectStoreNames.contains(name))request.result.createObjectStore(name,{keyPath:'key'});};request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});
       const transaction=db.transaction('copilot_baseline','readwrite');
@@ -153,9 +169,32 @@ async function waitForSavedHead(predicate, timeoutMs = 90000) {
     await page.getByText('Hazard Analysis', { exact: true }).click();
     const method = page.getByLabel('Hazard analysis method', { exact: true });
     await method.waitFor(); await page.waitForFunction(() => !document.querySelector('[aria-label="Hazard analysis method"]').disabled);
-    assert.deepEqual(await method.locator('option').allTextContents(), ['STPA','HARA (ISO 26262)']);
+    assert.deepEqual(await method.locator('option').allTextContents(), ['STPA','HARA']);
     await checkOperationalColumns('STPA draft exposes Operational Mode and Operating Conditions as separate table columns');
+    await page.getByRole('button', { name: 'Generate', exact: true }).first().click();
+    await page.waitForFunction(() => ![...document.querySelectorAll('button')].some(button=>/Generating(?:…|\.\.\.)/.test(button.textContent)), null, { timeout: 90000 });
+    const savedStpaBeforeHara=await waitForSavedHead(head=>head?.method==='STPA-Textbook' && head.analysisResult?.Summary?.length>1);
+    fs.writeFileSync(root+'/stpa-before-hara.json',JSON.stringify(savedStpaBeforeHara,null,2));
+    const commonNames=['Loss','Hazard','Unsafe Control Action','Safety Constraint','Causal Scenario'];
+    const savedCommon=Object.fromEntries(commonNames.map(name=>[name,savedStpaBeforeHara.analysisResult.Summary[1][savedStpaBeforeHara.analysisResult.Summary[0].indexOf(name)]]));
+    await page.evaluate(()=>{
+      localStorage.setItem('xhandle.organizationProfile',JSON.stringify({id:'synthetic-profile',enabled:true,updatedAt:new Date().toISOString(),
+        markdown:'---\norganization: Synthetic fixture\nprofile_version: 2.0\nstatus: approved\n---\n# Safety Philosophy\nUPDATED-POLICY: use final engineering assessments and preserve completed STPA when deriving HARA.\n'}));
+      window.dispatchEvent(new CustomEvent('xhandle:organization-profile-changed'));
+    });
+    const requestsBeforeSwitch=result.requests.length;
     await method.selectOption('HARA');
+    await page.getByText('STPA results ready for HARA',{exact:true}).waitFor();
+    for(const name of commonNames)assert.equal(await page.getByRole('textbox',{name:`${name}, row 1`,exact:true}).textContent(),savedCommon[name]);
+    for(const name of ['Severity','Exposure','Controllability','ASIL','Safety Goal'])assert.equal(await page.getByRole('textbox',{name:`${name}, row 1`,exact:true}).textContent(),'');
+    assert.equal(result.requests.length,requestsBeforeSwitch,'Switching methods does not call AI');
+    assert.equal(await page.getByRole('button',{name:'Generate',exact:true}).count(),7,'Common STPA fields do not complete HARA assessments');
+    check('Switching from completed STPA immediately displays common fields without generating HARA outputs');
+    await page.reload();await page.getByRole('button',{name:'HARA brake fixture',exact:true}).click();await page.getByText('Hazard Analysis',{exact:true}).click();
+    await page.getByText('STPA results ready for HARA',{exact:true}).waitFor();
+    assert.equal(await page.getByRole('textbox',{name:'Hazard, row 1',exact:true}).textContent(),savedCommon.Hazard);
+    assert.equal((await readHead()).analysisResult,null,'Displaying STPA never persists a completed HARA Summary');
+    check('Common STPA fields survive HARA reload while its own assessment remains ready to generate');
     assert.equal(await page.getByRole('textbox', { name: 'HARA item definition', exact: true }).count(), 0);
     check('Projects offers HARA with existing operational contexts and no Item definition text box');
     await page.getByRole('button', { name: 'Generate', exact: true }).first().click();
@@ -171,18 +210,30 @@ async function waitForSavedHead(predicate, timeoutMs = 90000) {
     await checkOperationalColumns('Completed HARA exposes Operational Mode and Operating Conditions as separate table columns');
     assert.equal(cell('Operational Mode'), 'Automated urban driving');
     assert.equal(cell('Operating Conditions'), 'Wet pavement; frequent crossings; no human driver.');
-    check('Generate row runs shared STPA mechanics followed by HARA and persists linked safety goals');
+    assert.equal(result.requests.filter(request=>request.kind==='stpa').length,1,'HARA generation reuses the displayed STPA without another STPA request');
+    const preservedFoundation=await readStpaFoundation();
+    assert.deepEqual(preservedFoundation.analysisResult.stpaFoundationBasis.entries,savedStpaBeforeHara.analysisResult.stpaFoundationBasis.entries);
+    assert.deepEqual(preservedFoundation.analysisResult.stpaFoundationBasis.profileIdentities,savedStpaBeforeHara.analysisResult.stpaFoundationBasis.profileIdentities);
+    const firstHaraRequest=result.requests.findIndex(request=>request.kind==='hara');
+    assert(fs.readFileSync(root+'/prompt-'+(firstHaraRequest+1)+'.txt','utf8').includes('UPDATED-POLICY'),'New policy applies to HARA derivation');
+    check('A profile edit preserves completed STPA and its original provenance while HARA uses the updated policy');
+    check('Generate row reuses displayed STPA and generates HARA with persisted linked safety goals');
+    assert.equal(cell('Item'),'Automated vehicle braking system');assert(cell('Item ID').startsWith('ITEM-'));
+    assert.equal(cell('Item Definition'),head.analysisResult.haraItem.definition);
+    assert.equal(result.requests.filter(request=>request.kind==='item').length,1);
+    assert.equal(await page.getByText('Automated vehicle braking system',{exact:true}).count()>0,true);
+    check('AI identifies and persists one shared Item from the decomposition before deriving HARA');
     assert.deepEqual(result.outputRecovery.requests.slice(0,2).map(request=>request.maxTokens),[12000,16000]);
     check('A provider output-limit response retries automatically with more output and never publishes its incomplete ratings');
     await page.screenshot({ path: root + '/hara-generated.png' });
     await method.selectOption('STPA-Textbook');
     await page.waitForFunction(() => document.querySelector('[aria-label="Hazard analysis method"]').value === 'STPA-Textbook');
-    assert.equal((await readHead()).analysisResult, null);
+    assert((await readHead()).analysisResult?.Summary?.length > 1, 'HARA retains its completed STPA foundation as the saved STPA method');
     await method.selectOption('HARA');
     await page.getByRole('textbox', { name: 'Severity, row 1', exact: true }).waitFor();
     head = await readHead();
     assert.equal(cell('ASIL'), 'ASIL D');
-    check('Switching methods preserves HARA and does not reinterpret it as STPA');
+    check('Switching methods preserves HARA and exposes its completed STPA foundation independently');
     const severity = page.getByRole('textbox', { name: 'Severity, row 1', exact: true });
     await severity.fill('S1'); await severity.press('Tab');
     await page.waitForTimeout(700); head = await readHead();
@@ -201,12 +252,19 @@ async function waitForSavedHead(predicate, timeoutMs = 90000) {
     }
     const XLSX = require(path.resolve('node_modules/xlsx'));
     const workbook = XLSX.readFile(root + '/HARA.xlsx');
-    assert.deepEqual(workbook.SheetNames, ['HARA','Safety Goals','Item Definition','HARA Coverage','HARA Quality Review','Candidate Safety Requirements']);
+    const itemSheet=require(path.resolve('node_modules/xlsx')).utils.sheet_to_json(workbook.Sheets['Item Definition'],{header:1});
+    assert.equal(itemSheet[1][1],cell('Item'));assert.equal(itemSheet[1][2],cell('Item Definition'));
+    assert.deepEqual(workbook.SheetNames, ['HARA','Safety Goals','Item Definition','Functional Safety Requirements','HARA Coverage','HARA Quality Review','Candidate Safety Requirements']);
+    assert(head.analysisResult['Functional Safety Requirements'].length>1);
+    const sourceStpa=(await readStpaFoundation()).analysisResult.Summary;
+    assert.equal(cell('Functional Safety Requirements'),sourceStpa[1][sourceStpa[0].indexOf('System Requirement')]);
     check('Workbook exports events, goals, item definition, selected-scenario coverage, quality findings and candidate requirements');
     await page.reload(); await page.getByRole('button', {name:'HARA brake fixture',exact:true}).click(); await page.getByText('Hazard Analysis', { exact: true }).click();
     await method.waitFor(); await page.waitForFunction(() => document.querySelector('[aria-label="Hazard analysis method"]').value === 'HARA');
     head = await readHead(); assert.equal(cell('ASIL'), 'ASIL B');
     assert(cell('Item Definition').includes('Automated vehicle braking'));
+    assert.equal(cell('Item'),'Automated vehicle braking system');
+    assert.equal(result.requests.filter(request=>request.kind==='item').length,1,'Reload does not repeat Item inference');
     check('HARA method, item definition, edited ratings and safety goals survive reload');
     await page.getByRole('button',{name:'Develop risk profile',exact:true}).click();
     // Generation first awaits saved review evidence; the enabled selector can
@@ -214,13 +272,30 @@ async function waitForSavedHead(predicate, timeoutMs = 90000) {
     await waitForSavedHead(head => head?.analysisResult?.Summary?.length === 8);
     await page.waitForFunction(()=>!document.querySelector('[aria-label="Hazard analysis method"]').disabled,null,{timeout:90000});
     head=await readHead();assert.equal(head.analysisResult.Summary.length,8);assert.equal(cell('Severity'),'S1');
+    const itemIdIndex=head.analysisResult.Summary[0].indexOf('Item ID'),itemDefinitionIndex=head.analysisResult.Summary[0].indexOf('Item Definition');
+    assert(head.analysisResult.Summary.slice(1).every(row=>row[itemIdIndex]===head.analysisResult.haraItem.id && row[itemDefinitionIndex]===head.analysisResult.haraItem.definition),'All HARA rows share the same Item and boundary, including excluded guide phrases');
     const severityIndex=head.analysisResult.Summary[0].indexOf('Severity'), applicabilityIndex=head.analysisResult.Summary[0].indexOf('Guide Phrase Applicable');
     assert(head.analysisResult.Summary.slice(2).every(row=>row[severityIndex]===(/^no$/i.test(row[applicabilityIndex])?'Not applicable':'S3')),'Applicable events are assessed; non-applicable deviations never receive invented ratings');
     assert(result.outputRecovery.batch,'The real Generate all path exercised batch truncation');
     const batchIndex=result.outputRecovery.requests.findIndex(request=>request.ids.length>1);assert(batchIndex>=0);
-    assert(result.outputRecovery.requests.slice(batchIndex+1).every(request=>request.ids.length===1),'Later requests stay within the recovered batch size');
+    const recovery=result.outputRecovery.requests.slice(batchIndex+1,batchIndex+3);
+    assert(recovery.length===2 && recovery.every(request=>request.ids.length>1 && request.ids.length<result.outputRecovery.requests[batchIndex].ids.length),'Transport truncation uses smaller compact batches, without individual assessment repair requests');
+    assert.equal(result.requests.filter(request=>request.kind==='item').length,1,'Generate all reuses the Item inferred for one row');
     assert.equal(result.checks.filter(check=>check.startsWith('Dialog:')).length,0,'Automatic recovery never interrupts the user with a failure alert');
     check('Develop risk profile shrinks a truncated HARA batch, completes every remaining event and preserves the edited assessment');
+    // A human may assign different exposure classes within a selected context.
+    // Reconstructing the visible sheet must preserve the practical policy,
+    // rather than marking every row as an exposure-conflict failure.
+    const exposureCell=page.getByRole('textbox',{name:'Exposure, row 1',exact:true});
+    await exposureCell.fill('E3');await exposureCell.press('Tab');
+    await waitForSavedHead(record=>record?.analysisResult?.Summary?.[1]?.[record.analysisResult.Summary[0].indexOf('Exposure')]==='E3');
+    head=await readHead();
+    const statusIndex=head.analysisResult.Summary[0].indexOf('Assessment Status');
+    assert.equal(head.analysisResult.haraCompletionPolicy,'projects-hara-practical-v1');
+    assert.equal(cell('Assessment Status'),'Complete');assert.equal(cell('HARA Review Findings'),'');
+    assert((await page.locator(`td[data-column-index="${statusIndex}"]`).allTextContents()).includes('Complete'));
+    assert.equal(await page.getByText('Inconsistent exposure',{exact:false}).count(),0);
+    check('Manual exposure edits and reconstructed display retain practical completion without blanket warning labels');
     await page.reload();
     await page.getByRole('button', {name:'HARA brake fixture',exact:true}).click();
     await page.getByText('Hazard Analysis', { exact: true }).click();
@@ -229,8 +304,98 @@ async function waitForSavedHead(predicate, timeoutMs = 90000) {
     head = await readHead();
     assert.equal(head.analysisResult.Summary.length, 8);
     assert.equal(cell('Severity'), 'S1');
+    assert.equal(cell('Exposure'),'E3');assert.equal(cell('Assessment Status'),'Complete');
+    assert.equal(await page.getByText('Inconsistent exposure',{exact:false}).count(),0);
     assert(head.analysisResult.Summary.slice(2).every(row=>row[severityIndex]===(/^no$/i.test(row[applicabilityIndex])?'Not applicable':'S3')));
     check('Completed batch recovery and the earlier manual assessment survive a desktop reload');
+    async function readStpaFoundation() {
+      return page.evaluate(async()=>{
+        const db=await new Promise((resolve,reject)=>{const r=indexedDB.open('xhandle-project-hazard-analysis',2);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
+        const record=await new Promise((resolve,reject)=>{const r=db.transaction('analysisRevisions').objectStore('analysisRevisions').get('hara-fixture::method:STPA-Textbook');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});db.close();return record;
+      });
+    }
+    async function clearScope(scope) {
+      await page.getByRole('button',{name:'Clear analysis…',exact:true}).click();
+      const dialog=page.getByRole('dialog',{name:'Clear hazard analysis?',exact:true});
+      assert.equal(await dialog.locator('input[value="hara-only"]').count(),1);
+      assert.equal(await dialog.locator('input[value="stpa-and-hara"]').count(),1);
+      await dialog.locator(`input[value="${scope}"]`).check();
+      await dialog.getByRole('checkbox',{name:/I understand/}).check();
+      await dialog.getByRole('button',{name:'Clear analysis',exact:true}).click();
+      await waitForSavedHead(record=>record?.method==='HARA' && !record.analysisResult);
+      await dialog.waitFor({state:'hidden'});
+    }
+    const savedStpa=await readStpaFoundation();
+    assert.equal(savedStpa.analysisResult.Summary.length,8);
+    await clearScope('hara-only');
+    assert.deepEqual(await readStpaFoundation(),savedStpa);
+    const stpaBeforeReuse=result.requests.filter(request=>request.kind==='stpa').length;
+    const haraBeforeReuse=result.requests.filter(request=>request.kind==='hara').length;
+    await page.reload();await page.getByRole('button',{name:'HARA brake fixture',exact:true}).click();await page.getByText('Hazard Analysis',{exact:true}).click();
+    await page.getByRole('button',{name:'Develop risk profile',exact:true}).click();
+    await waitForSavedHead(record=>record?.analysisResult?.Summary?.length===8);
+    await page.waitForFunction(()=>!document.querySelector('[aria-label="Hazard analysis method"]').disabled,null,{timeout:90000});
+    assert.equal(result.requests.filter(request=>request.kind==='stpa').length,stpaBeforeReuse,'HARA-only clear/reload uses no new STPA requests');
+    assert(result.requests.filter(request=>request.kind==='hara').length>haraBeforeReuse,'Clearing HARA invalidates its provider checkpoints');
+    check('HARA-only clear and reload preserve STPA exactly; the next run calls AI for HARA only');
+    await clearScope('stpa-and-hara');
+    assert.equal(await readStpaFoundation(),undefined);
+    const beforeFullRun=result.requests.filter(request=>request.kind==='stpa').length;
+    await page.getByRole('button',{name:'Develop risk profile',exact:true}).click();
+    await waitForSavedHead(record=>record?.analysisResult?.Summary?.length===8);
+    await page.waitForFunction(()=>!document.querySelector('[aria-label="Hazard analysis method"]').disabled,null,{timeout:90000});
+    assert(result.requests.filter(request=>request.kind==='stpa').length>beforeFullRun,'Clearing both forces a fresh STPA base');
+    check('Clearing STPA and HARA removes the shared base and the next HARA run regenerates both');
+    assert((await readHead()).analysisResult.haraPostReview?.version,'A complete run automatically saves the final review outcome');
+    check('A complete HARA run automatically reviews its saved merged table before consolidation');
+    const beforeReview=await readHead(),stpaBeforeReview=await readStpaFoundation();
+    const generationRequests=result.requests.filter(request=>['stpa','hara','item'].includes(request.kind)).length;
+    finalReviewFixture=true;
+    await page.getByRole('button',{name:'Review final results',exact:true}).click();
+    await waitForSavedHead(record=>record?.analysisResult?.haraPostReview?.changedCells>0);
+    await page.waitForFunction(()=>!document.querySelector('[aria-label="Hazard analysis method"]').disabled);
+    head=await readHead();
+    assert.equal(result.requests.filter(request=>['stpa','hara','item'].includes(request.kind)).length,generationRequests);
+    assert.deepEqual(await readStpaFoundation(),stpaBeforeReview);
+    const changed=head.analysisResult.haraPostReviewHistory.at(-1).changes;
+    assert(changed.length>0 && changed.every(change=>change.field==='Functional Safety Requirements'));
+    const reviewedId=changed[0].id,reviewedRow=head.analysisResult.Summary.slice(1).find(row=>row[head.analysisResult.Summary[0].indexOf('Raw Analysis Row ID')]===reviewedId);
+    assert(Object.values(head.draftHazardRowsByIndex).some(draft=>draft.row[head.analysisResult.Summary[0].indexOf('Raw Analysis Row ID')]===reviewedId && draft.row[head.analysisResult.Summary[0].indexOf('Functional Safety Requirements')]===changed[0].after));
+    assert.equal(reviewedRow[head.analysisResult.Summary[0].indexOf('Functional Safety Requirements')],changed[0].after);
+    check('Manual final review saves surgical changes and synchronized drafts without regenerating STPA, Item or HARA');
+    assert.deepEqual(head.analysisResult.haraPostReview.workflow.phases,['find','correct','verify']);
+    assert(head.analysisResult.haraPostReview.workflow.verifiedGroups>0);
+    check('Issue finding, surgical correction and independent semantic verification are separate bounded phases');
+    if(app){
+      for(const file of fs.readdirSync(root+'/downloads').filter(name=>name.endsWith('.xlsx')))fs.unlinkSync(root+'/downloads/'+file);
+      await page.getByRole('button',{name:'Export HARA workbook',exact:true}).click();
+      const deadline=Date.now()+15000;
+      while(!fs.readdirSync(root+'/downloads').some(name=>name.endsWith('.xlsx')) && Date.now()<deadline)await page.waitForTimeout(100);
+      const file=fs.readdirSync(root+'/downloads').find(name=>name.endsWith('.xlsx'));assert(file);
+      const reviewedWorkbook=XLSX.readFile(root+'/downloads/'+file);
+      assert(reviewedWorkbook.SheetNames.includes('HARA Review Changes'));
+      assert(XLSX.utils.sheet_to_json(reviewedWorkbook.Sheets.HARA,{header:1}).some(row=>row.includes(changed[0].after)));
+      check('Native workbook export includes corrected results and original/replacement cell history');
+    }
+    await page.reload();await page.getByRole('button',{name:'HARA brake fixture',exact:true}).click();await page.getByText('Hazard Analysis',{exact:true}).click();
+    await page.getByRole('button',{name:'Undo final review',exact:true}).click();
+    await waitForSavedHead(record=>record?.analysisResult?.haraPostReviewHistory?.at(-1)?.undone);
+    head=await readHead();assert.deepEqual(head.analysisResult.Summary,beforeReview.analysisResult.Summary);
+    assert.deepEqual(await readStpaFoundation(),stpaBeforeReview);
+    check('Final review history survives reload; undo restores original results and derived artifacts without changing STPA');
+    await clearScope('hara-only');finalReviewServiceFailure=true;
+    await page.getByRole('button',{name:'Develop risk profile',exact:true}).click();
+    await waitForSavedHead(record=>record?.analysisResult?.Summary?.length===8);
+    await page.waitForFunction(()=>!document.querySelector('[aria-label="Hazard analysis method"]').disabled,null,{timeout:90000});
+    head=await readHead();
+    assert(head.analysisResult.Summary.slice(1).every(row=>row[head.analysisResult.Summary[0].indexOf('Assessment Status')]===(/^no$/i.test(row[head.analysisResult.Summary[0].indexOf('Guide Phrase Applicable')])?'Not applicable':'Complete')));
+    assert.equal(head.analysisResult.haraCompletionPolicy,'projects-hara-practical-v1');
+    assert.deepEqual((await readStpaFoundation()).analysisResult,stpaBeforeReview.analysisResult);
+    assert(result.checks.some(message=>message.startsWith('Dialog: The analysis results are final and saved. Additional HARA review was not applied:')));
+    check('A review-service error preserves saved final primary results under the same acceptance bar without incomplete assessments');
+    finalReviewServiceFailure=false;
+    assert.deepEqual(result.errors,[]);
+    if(process.argv.includes('--projects-only'))return;
     if(await page.getByRole('button',{name:'Restore navigation sidebar',exact:true}).count()) await page.getByRole('button',{name:'Restore navigation sidebar',exact:true}).click();
     await page.locator('#xhandle-primary-sidebar').hover();
     await page.getByRole('button', { name: 'HARA code fixture', exact: true }).click();

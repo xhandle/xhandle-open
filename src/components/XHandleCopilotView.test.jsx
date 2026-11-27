@@ -235,6 +235,8 @@ describe("paused vibe review cards", () => {
     expect(button("Mark Safety — Related").disabled).toBe(true);
     expect(button("Mark Safety — Direct").disabled).toBe(false);
     expect(button("Skip for later").disabled).toBe(false);
+    expect(host.textContent).not.toContain('Classification Resolution Status');
+    expect(host.textContent).not.toContain('Policy Validation Gap');
     act(() => root.unmount()); host.remove();
   });
 

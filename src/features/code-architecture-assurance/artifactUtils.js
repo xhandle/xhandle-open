@@ -739,6 +739,11 @@ export async function flushProjectArtifactWrites(projectId) {
   if ([...unsavedArtifactRows.keys()].some(belongs)) throw new Error('Some requirements have not been saved. Retry saving before exporting this project.');
 }
 
+export async function flushArtifactsBeforeUpdate() {
+  while (artifactWrites.size) await Promise.allSettled([...artifactWrites.values()]);
+  if (generatingArtifactKeys.size || unsavedArtifactRows.size) throw new Error('Some requirements or design work still needs to be saved manually.');
+}
+
 // Drop only this removed project's cached rows after persisted deletion.
 export function clearProjectArtifactCache(projectId) {
   const belongs = key => key.startsWith('xhandle:cba-') && key.split(':')[2] === String(projectId);

@@ -1,4 +1,5 @@
 import HazardRestorationNotice from './HazardRestorationNotice';
+import HazardClearRecoveryNotice from './HazardClearRecoveryNotice';
 import useHazardCsvImport from './useHazardCsvImport';
 import XHandleWorkingMark from '../../components/XHandleWorkingMark';
 import { HAZARD_SOURCE_INCOMPLETE } from './hazardSourceIntegrity';
@@ -92,6 +93,9 @@ export function PreparedCodeArchitectureHazardPanel({
   onRowFocusResolved,
   onOpenArchitectureTarget,
   onClearContents,
+  clearStatus,
+  isResetting = false,
+  onRestoreCleared,
   onDeleteSummaryRow,
   onCollaboratorSelectionChange,
   collaboratorSelection,
@@ -427,7 +431,7 @@ export function PreparedCodeArchitectureHazardPanel({
               collapsed={toolbarCollapsed}
               tone="danger"
               onClick={onClearContents}
-              disabled={isRunning || importing || !latestRun}
+              disabled={isRunning || isResetting || importing || !latestRun}
             />
           )}
           {!isRunning && (
@@ -439,6 +443,7 @@ export function PreparedCodeArchitectureHazardPanel({
       </ProjectTabSideToolbar>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <HazardClearRecoveryNotice status={clearStatus} busy={isResetting} onRestore={onRestoreCleared} />
         {tablePage?.controls}
         {showDraftPreparation && <TablePreparationProgress label="Preparing hazard analysis" progress={draftProgress} />}
         {draftError && <div role="alert" className="p-3">Unable to prepare hazard table: {draftError} <button onClick={onRetryDraft}>Retry preparation</button></div>}

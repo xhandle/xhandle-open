@@ -9,9 +9,10 @@ const operations = Object.fromEntries([
   'loadProjectHazardAnalysisRecord', 'loadProjectHazardAnalysisRecordState', 'readHazardAnalysisRevision',
   'releaseHazardCheckpoint', 'restoreHazardAnalysisRevision', 'saveHazardAnalysis',
   'saveProjectHazardAnalysisRecord', 'switchProjectHazardMethod', 'resetLocalRevisionTracking',
+  'loadProjectHazardReuseState', 'saveProjectStpaFoundation', 'clearProjectHazardMethodResults', 'restoreProjectHazardMethodState',
 ].map(name => [name, storage[name]]));
 operations.recoveryRecord = recoveryRecord;
-operations.refreshProjectHara = summary => refreshProjectHaraSheets({ Summary: summary });
+operations.refreshProjectHara = (summary, options) => refreshProjectHaraSheets({ Summary: summary }, options);
 const waiting = [], ready = new Map();
 const drain = () => {
   while (waiting.length && ready.has(waiting[0])) {

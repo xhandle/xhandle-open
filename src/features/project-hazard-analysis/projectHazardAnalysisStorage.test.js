@@ -14,6 +14,7 @@ import {
   saveHazardAnalysis,
   saveProjectHazardAnalysisRecord,
   switchProjectHazardMethod,
+  loadProjectHazardReuseState, saveProjectStpaFoundation, clearProjectHazardMethodResults, restoreProjectHazardMethodState,
 } from "./projectHazardAnalysisStorage";
 
 import { planHazardAnalysisCsvImport, applyHazardAnalysisCsvImport, applyHazardCsvImportToDrafts } from "./hazardAnalysisCsv";
@@ -442,4 +443,60 @@ test('user preprocessing survives durable save, reload, and revision restoration
   await restoreHazardAnalysisRevision('preprocessing-project', first.revision);
   const restored = await loadProjectHazardAnalysisRecord('preprocessing-project');
   expect(restored.draftHazardRowsByIndex.row1.userPreprocessing).toEqual(userPreprocessing);
+});
+
+describe('shared STPA foundation and HARA clear scopes',()=>{
+ const openHara=async()=>{
+  await saveHazardAnalysis('project-1',{method:'STPA-Textbook',analysisResult:analysis('STPA'),draftHazardRowsByIndex:{one:{row:['analyst edit']}},riskRegister:[{id:'stpa-risk'}]});
+  await switchProjectHazardMethod('project-1','STPA-Textbook','HARA',{riskAssessmentReportMarkdown:'STPA report',agentReportResult:{report:'STPA narrative'}});
+  await saveHazardAnalysis('project-1',{method:'HARA',analysisResult:analysis('HARA'),riskRegister:[{id:'hara-risk'}]});
+  return loadProjectHazardReuseState('project-1');
+ };
+ test('HARA-only clear preserves the saved STPA, user edits, issues and reports',async()=>{
+  const before=await openHara();
+  const cleared=await clearProjectHazardMethodResults('project-1',{expectedRevision:before.headRevision});
+  expect(cleared.analysisResult).toBeNull();expect(cleared.generationEpochs.HARA).toBe(1);
+  expect((await loadProjectHazardReuseState('project-1')).stpa).toEqual(before.stpa);
+  const switched=await switchProjectHazardMethod('project-1','HARA','STPA-Textbook');
+  expect(switched.record.analysisResult).toEqual(analysis('STPA'));
+  expect(switched.record.draftHazardRowsByIndex.one.row).toEqual(['analyst edit']);
+  expect(switched.record.riskRegister).toEqual([{id:'stpa-risk'}]);
+  expect(switched.record.riskAssessmentReportMarkdown).toBe('STPA report');
+  expect(switched.record.agentReportResult).toEqual({report:'STPA narrative'});
+  expect(switched.record.generationEpochs.HARA).toBe(1);
+ });
+ test('clear both removes both current method results and invalidates their provider checkpoints',async()=>{
+  const before=await openHara();
+  const cleared=await clearProjectHazardMethodResults('project-1',{clearStpa:true,expectedRevision:before.headRevision});
+  expect(cleared.generationEpochs).toEqual({'HARA':1,'STPA-Textbook':1});
+  expect((await loadProjectHazardReuseState('project-1')).stpa).toBeNull();
+  const switched=await switchProjectHazardMethod('project-1','HARA','STPA-Textbook');
+  expect(switched.record.analysisResult).toBeNull();
+  expect(switched.record.generationEpochs['STPA-Textbook']).toBe(1);
+ });
+ test('undo restores both method snapshots while keeping pre-clear provider checkpoints invalid',async()=>{
+  const before=await openHara();
+  await clearProjectHazardMethodResults('project-1',{clearStpa:true});
+  await restoreProjectHazardMethodState('project-1',before);
+  await saveHazardAnalysis('project-1',{analysisResult:before.hara.analysisResult,draftHazardRowsByIndex:before.hara.draftHazardRowsByIndex,riskRegister:before.hara.riskRegister});
+  const after=await loadProjectHazardReuseState('project-1');
+  expect(after.stpa.analysisResult).toEqual(before.stpa.analysisResult);
+  expect(after.hara.analysisResult).toEqual(before.hara.analysisResult);
+  expect(after.generationEpochs.HARA).toBe(1);
+ });
+ test('foundation publication keeps existing reviewed rows and does not change the active method',async()=>{
+  await openHara();
+  await saveProjectStpaFoundation('project-1',{Summary:[['Hazard'],['New STPA result']]});
+  const state=await loadProjectHazardReuseState('project-1');
+  expect(state.method).toBe('HARA');expect(state.hara.analysisResult).toEqual(analysis('HARA'));
+  expect(state.stpa.draftHazardRowsByIndex.one.row).toEqual(['analyst edit']);
+  expect(state.stpa.riskAssessmentReportMarkdown).toBe('STPA report');
+ });
+ test('a stale clear request cannot delete another tab’s saved work',async()=>{
+  const before=await openHara();
+  await getDb().put('analyses',{...headOf(),revision:99});resetLocalRevisionTracking();
+  await expect(clearProjectHazardMethodResults('project-1',{clearStpa:true,expectedRevision:before.headRevision})).rejects.toThrow('active analysis changed');
+  expect(headOf().analysisResult).toEqual(analysis('HARA'));
+  expect((await loadProjectHazardReuseState('project-1')).stpa.analysisResult).toEqual(analysis('STPA'));
+ });
 });

@@ -11,6 +11,7 @@ export function recoveryRecord(key, value, remove = false) {
 
 const queues = new Map();
 const deletedKeys = new Set();
+const failedSnapshots = new Map();
 export function saveRecoveryRecord(key, value) {
   if (deletedKeys.has(key)) return Promise.reject(new Error('Project was deleted; checkpoint discarded.'));
   let state = queues.get(key);
@@ -39,8 +40,8 @@ export function saveRecoveryRecord(key, value) {
         const current = state.pending;
         state.active = current;
         state.pending = null;
-        try { await recoveryRecord(key, current.snapshot); current.resolve(); }
-        catch (error) { current.reject(error); }
+        try { await recoveryRecord(key, current.snapshot); failedSnapshots.delete(key); current.resolve(); }
+        catch (error) { failedSnapshots.set(key, current.snapshot); current.reject(error); }
       }
       queues.delete(key);
     })();
@@ -53,15 +54,23 @@ export function flushRecoveryRecord(key) {
   return state?.pending?.promise || state?.active?.promise || Promise.resolve();
 }
 
+export async function flushRecoveryRecordsBeforeUpdate() {
+  while (queues.size) await Promise.allSettled([...queues.keys()].map(flushRecoveryRecord));
+  for (const [key, snapshot] of [...failedSnapshots]) await saveRecoveryRecord(key, snapshot);
+  if (failedSnapshots.size) throw new Error('Some recovery progress has not been saved.');
+}
+
 // Block late producers immediately, then drain any in-flight transaction before
 // deleting. IDs are unique; a newly created project has a different identity.
 export async function quiesceProjectRecovery(projectId) {
   const keys = ['decomposition', 'decomposition-candidate', 'hazard-run'].map(prefix => `${prefix}:${projectId}`);
   const newlyBlocked = keys.filter(key => !deletedKeys.has(key));
   keys.forEach(key => deletedKeys.add(key));
+  keys.forEach(key => failedSnapshots.delete(key));
   await Promise.all(keys.map(async key => {
     try { await flushRecoveryRecord(key); } catch {}
   }));
+  keys.forEach(key => failedSnapshots.delete(key));
   return () => newlyBlocked.forEach(key => deletedKeys.delete(key));
 }
 

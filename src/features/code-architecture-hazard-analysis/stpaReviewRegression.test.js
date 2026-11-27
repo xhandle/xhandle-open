@@ -10,6 +10,64 @@ const memory=()=>{
   return {data,read:async key=>data.get(JSON.stringify(key)),write:async(key,value)=>data.set(JSON.stringify(key),value)};
 };
 
+test('Continue rechecks an automatic Yes for an unfinished row, while reusing validated work',async()=>{
+ const cases=syntheticStpaCases().slice(0,2),checkpoint=memory(),sources=cases.map(item=>item.source);
+ let continuing=false;
+ const applicabilityRequest=jest.fn(async prompt=>rows(prompt).map(({id})=>({id,
+  applicable:continuing && id===sources[0].id?'No':'Yes',
+  rationale:continuing?'This interface has no responsibility for the stated deviation in the supplied context.':'The action was initially considered applicable.'})));
+ const request=jest.fn(async prompt=>rows(prompt).map(({id})=>id===sources[0].id
+  ? {id,applicable:'No',applicabilityRationale:'No loss-producing deviation is established.',classification:'Not applicable',classificationRationale:'Excluded.',assumptions:'None.'}
+  :cases[1].assessment));
+ const options={method:'STPA',sources,context:{},checkpoint,applicabilityRequest,request,...quiet};
+ await expect(generateFastHazards(options)).rejects.toMatchObject({code:'COMPACT_HAZARD_INCOMPLETE',partialResults:[expect.objectContaining({id:sources[1].id})]});
+ continuing=true;request.mockClear();applicabilityRequest.mockClear();
+ const result=await generateFastHazards(options);
+ expect(result).toEqual([expect.objectContaining({id:sources[0].id,applicable:'No'}),expect.objectContaining({id:sources[1].id,uca:cases[1].assessment.uca})]);
+ expect(applicabilityRequest).toHaveBeenCalledTimes(1);
+ expect(rows(applicabilityRequest.mock.calls[0][0]).map(row=>row.id)).toEqual([sources[0].id]);
+ expect(applicabilityRequest.mock.calls[0][1].screeningMode).toBe('evidence');
+ expect(request).not.toHaveBeenCalled();
+});
+
+test('Continue cannot change a user-reviewed Yes to bypass failed assessment validation',async()=>{
+ const cases=syntheticStpaCases().slice(0,2),checkpoint=memory();
+ const sources=cases.map(item=>({...item.source,reviewedApplicability:'Yes',reviewedRationale:'User-retained decision.'}));
+ const applicabilityRequest=jest.fn(async()=>{throw Error('Reviewed decisions must not be re-screened');});
+ let fixed=false;
+ const request=jest.fn(async prompt=>rows(prompt).map(({id})=>id===sources[0].id && !fixed?{...cases[0].assessment,verification:''}:cases.find(item=>item.source.id===id).assessment));
+ const options={method:'STPA',sources,context:{},checkpoint,applicabilityRequest,request,...quiet};
+ for(let i=0;i<2;i++)await expect(generateFastHazards(options)).rejects.toMatchObject({code:'COMPACT_HAZARD_INCOMPLETE',partialResults:[expect.objectContaining({id:sources[1].id})]});
+ expect(applicabilityRequest).not.toHaveBeenCalled();
+ fixed=true;request.mockClear();expect(await generateFastHazards(options)).toHaveLength(2);
+ expect(request.mock.calls.every(([prompt])=>rows(prompt).every(row=>row.id===sources[0].id))).toBe(true);
+});
+
+test.each(['supported','information-needed','cancelled'])('unfinished automatic decisions remain evidence-governed on Continue: %s',async outcome=>{
+ const cases=syntheticStpaCases().slice(0,2),checkpoint=memory(),sources=cases.map(item=>item.source);
+ let continuing=false;const controller=new AbortController();
+ const applicabilityRequest=jest.fn(async prompt=>rows(prompt).map(({id})=>{
+  if(continuing && outcome==='cancelled')controller.abort();
+  return continuing && outcome==='information-needed'
+   ? {id,needsEvidence:true,rationale:'The consumer contract is required to resolve this guide phrase.'}
+   : {id,applicable:'Yes',rationale:'The supplied control contract establishes the deviation.'};
+ }));
+ const request=jest.fn(async prompt=>rows(prompt).map(({id})=>id===sources[0].id && !continuing
+  ? {...cases[0].assessment,verification:''}:cases.find(item=>item.source.id===id).assessment));
+ const options={method:'STPA',sources,context:{},checkpoint,applicabilityRequest,request,...quiet};
+ await expect(generateFastHazards(options)).rejects.toMatchObject({code:'COMPACT_HAZARD_INCOMPLETE'});
+ continuing=true;request.mockClear();applicabilityRequest.mockClear();
+ const retry=generateFastHazards({...options,signal:controller.signal});
+ if(outcome==='supported'){
+  expect(await retry).toEqual([expect.objectContaining({id:sources[0].id,applicable:'Yes'}),expect.objectContaining({id:sources[1].id})]);
+  expect(request).toHaveBeenCalledTimes(1);expect(rows(request.mock.calls[0][0]).map(row=>row.id)).toEqual([sources[0].id]);
+ }else{
+  await expect(retry).rejects.toMatchObject({...(outcome==='cancelled'?{name:'AbortError'}:{code:'COMPACT_HAZARD_INCOMPLETE',failedAssessments:[expect.objectContaining({id:sources[0].id,reasons:[expect.stringContaining('consumer contract')]})]}),partialResults:[expect.objectContaining({id:sources[1].id})]});
+  expect(request).not.toHaveBeenCalled();
+ }
+ expect(applicabilityRequest).toHaveBeenCalledTimes(1);
+});
+
 test('Retry reconsiders cached pending evidence once, without repeating completed assessments',async()=>{
   const cases=syntheticStpaCases().slice(0,2),checkpoint=memory();
   const sources=cases.map(item=>item.source);

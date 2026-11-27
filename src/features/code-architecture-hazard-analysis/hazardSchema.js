@@ -1,8 +1,10 @@
 import { openDB } from 'idb';
 export const HAZARD_DB = 'xhandle-code-architecture-hazard-analysis';
-export const HAZARD_DB_VERSION = 5;
+export const HAZARD_DB_VERSION = 6;
 export const HAZARD_CHUNKS = 'hazardRunChunks';
 export const HAZARD_STAGING = 'hazardRunStaging';
+export const HAZARD_RESET_SNAPSHOTS = 'hazardResetSnapshots';
+export const HAZARD_RESET_ENTRIES = 'hazardResetEntries';
 const spec = indexes => ({keyPath:'id',autoIncrement:false,indexes:indexes.map(name=>({name,keyPath:name,unique:false,multiEntry:false}))});
 export const HAZARD_SCHEMA = {
   hazardAnalysisRuns:spec(['projectId','repoId','architectureSnapshotHash','hazardMethod']),
@@ -10,6 +12,8 @@ export const HAZARD_SCHEMA = {
   generationCheckpoints:{keyPath:'id',autoIncrement:false,indexes:[{name:'scope',keyPath:'scope',unique:false,multiEntry:false}]},
   [HAZARD_CHUNKS]:spec(['runId','projectId']),
   [HAZARD_STAGING]:spec(['runId']),
+  [HAZARD_RESET_SNAPSHOTS]:spec(['projectId','repoId']),
+  [HAZARD_RESET_ENTRIES]:spec(['snapshotId']),
 };
 export function newHazardStorageRevision() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)), value => value.toString(16).padStart(2, '0')).join('');

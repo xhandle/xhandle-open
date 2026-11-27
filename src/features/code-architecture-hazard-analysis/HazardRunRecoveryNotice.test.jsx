@@ -1,12 +1,12 @@
 import React from 'react';
 import {createRoot} from 'react-dom/client';
 import {act} from 'react';
+import HazardRunRecoveryNotice from './HazardRunRecoveryNotice';
 let container,root;
 beforeEach(()=>{global.IS_REACT_ACT_ENVIRONMENT=true;container=document.createElement('div');document.body.appendChild(container);root=createRoot(container);});
 afterEach(()=>{act(()=>root.unmount());container.remove();});
 const render=node=>act(()=>root.render(node));
 const button=text=>[...container.querySelectorAll('button')].find(node=>node.textContent===text);
-import HazardRunRecoveryNotice from './HazardRunRecoveryNotice';
 jest.mock('./CodeArchitectureHazardSummaryTable',()=>()=> <div>Validated partial table</div>);
 const partial={id:'partial',runState:'incomplete',validatedAssessments:6,totalAssessments:7,
   generatedSheets:{Summary:[['Function'],['Control']]},failureMessage:'Validation failed',
@@ -14,6 +14,7 @@ const partial={id:'partial',runState:'incomplete',validatedAssessments:6,totalAs
 test('failure remains visible with previous completed results and partial export',()=>{
   const onExport=jest.fn();
   render(<HazardRunRecoveryNotice run={{id:'complete',repoName:'test',pendingAttempt:partial}} onExport={onExport} />);
+  act(()=>{const details=container.querySelector('details');details.open=true;details.dispatchEvent(new Event('toggle'));});
   expect(container.querySelector('[role=alert]').textContent).toContain('6 of 7');
   expect(container.textContent).toContain('previous completed analysis');
   expect(container.textContent).toContain('HA-1 — Analyze source — Too late: Missing verification');

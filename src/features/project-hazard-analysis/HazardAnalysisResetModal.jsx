@@ -1,8 +1,9 @@
 import React, { useState } from "react";
 import { AlertTriangle } from "lucide-react";
 
-export default function HazardAnalysisResetModal({ counts, busy = false, onCancel, onConfirm }) {
-  const [scope, setScope] = useState("results");
+export default function HazardAnalysisResetModal({ counts, busy = false, onCancel, onConfirm, method = '' }) {
+  const [scope, setScope] = useState(method === 'HARA' ? 'hara-only' : 'results');
+  const [clearContexts, setClearContexts] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   return (
     <div className="xhandle-modal-viewport fixed inset-0 z-[120] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="hazard-reset-title">
@@ -23,6 +24,16 @@ export default function HazardAnalysisResetModal({ counts, busy = false, onCance
           </div>
           <fieldset className="space-y-2">
             <legend className="mb-2 text-sm font-semibold text-gray-800">Reset scope</legend>
+            {method === 'HARA' ? <>
+              {[['hara-only','Clear HARA results only','Preserves the completed STPA assessments for reuse. Only HARA outputs and their downstream issues and reports are cleared.'],
+                ['stpa-and-hara','Clear STPA and HARA results','Removes both sets of results. The next HARA run starts with STPA.']].map(([value,label,detail]) => (
+                <label key={value} className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 ${scope === value ? 'border-blue-400 bg-blue-50' : 'border-gray-200'}`}>
+                  <input type="radio" name="hazard-reset-scope" value={value} checked={scope === value} onChange={()=>setScope(value)} className="mt-1" />
+                  <span><strong className="block text-sm text-gray-900">{label}</strong><span className="text-xs text-gray-600">{detail}</span></span>
+                </label>
+              ))}
+              <label className="flex items-start gap-2 text-sm text-gray-700"><input type="checkbox" checked={clearContexts} onChange={event=>setClearContexts(event.target.checked)} className="mt-1" /><span>Also clear operational contexts</span></label>
+            </> : <>
             <label className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 ${scope === "results" ? "border-blue-400 bg-blue-50" : "border-gray-200"}`}>
               <input type="radio" name="hazard-reset-scope" value="results" checked={scope === "results"} onChange={() => setScope("results")} className="mt-1" />
               <span><strong className="block text-sm text-gray-900">Clear results only</strong><span className="text-xs text-gray-600">Preserves functional decomposition, operational contexts, method, and generation settings.</span></span>
@@ -31,6 +42,7 @@ export default function HazardAnalysisResetModal({ counts, busy = false, onCance
               <input type="radio" name="hazard-reset-scope" value="results-and-contexts" checked={scope === "results-and-contexts"} onChange={() => setScope("results-and-contexts")} className="mt-1" />
               <span><strong className="block text-sm text-gray-900">Clear results and operational contexts</strong><span className="text-xs text-gray-600">Also removes all scenarios, modes, conditions, and context assumptions.</span></span>
             </label>
+            </>}
           </fieldset>
           <label className="flex items-start gap-2 rounded-lg border border-red-100 bg-red-50/60 p-3 text-sm text-red-900">
             <input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} className="mt-1" />
@@ -39,7 +51,7 @@ export default function HazardAnalysisResetModal({ counts, busy = false, onCance
         </div>
         <div className="flex justify-end gap-2 border-t border-gray-200 px-5 py-4">
           <button type="button" onClick={onCancel} disabled={busy} className="rounded-md border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">Cancel</button>
-          <button type="button" onClick={() => onConfirm(scope)} disabled={!confirmed || busy} className="rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50">{busy ? "Saving snapshot…" : "Clear analysis"}</button>
+          <button type="button" onClick={() => method === 'HARA' ? onConfirm(scope, { clearContexts }) : onConfirm(scope)} disabled={!confirmed || busy} className="rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50">{busy ? "Saving snapshot…" : "Clear analysis"}</button>
         </div>
       </div>
     </div>

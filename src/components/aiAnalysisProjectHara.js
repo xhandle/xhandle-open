@@ -1,3 +1,8 @@
+import { resolveProjectStpaFoundation } from '../features/project-hazard-analysis/projectStpaFoundation';
+import { HARA_COMPLETION_POLICY } from '../features/project-hazard-analysis/haraCompletionPolicy';
+import { generateProjectHaraDeltaWorkbook } from './aiAnalysisProjectHaraDelta';
+import { projectStpaSources, reusableProjectStpaRows } from '../features/project-hazard-analysis/projectStpaFoundation';
+import { canDeferHazardFailure } from '../features/code-architecture-hazard-analysis/hazardDeferredFailures';
 import { refreshProjectHaraInBackground } from '../lib/hazardStorageClient';
 import { fetchLLMResponse } from './aiAnalysisSTPA';
 import { generateStandardCodeHazardAnalysisSheets } from './aiAnalysisCodeHazardStandard';
@@ -6,9 +11,11 @@ import { PROJECT_HARA_HEADERS, haraText } from '../features/project-hazard-analy
 import { HARA_QUALITY_FIELDS, HARA_QUALITY_GUIDANCE, guardGeneratedHaraAssessment, generatedHaraDecisionErrors, missingEvidenceExclusion, substantiveHaraVerification, haraSuppliedEvidence } from '../features/project-hazard-analysis/haraAssessmentQuality';
 import { consolidateProjectHaraGoals } from './aiAnalysisHaraGoals';
 import { reconcileProjectHaraExposure } from './aiAnalysisHaraConsistency';
+import { resolveProjectHaraItem } from './aiAnalysisHaraItem';
+import { projectHaraItemDefinitionSheet } from '../features/project-hazard-analysis/projectHaraItem';
 
 const FIELDS = {
-  itemFunction: 'Item / Function', malfunction: 'Malfunction', hazardousEvent: 'Hazardous Event',
+  itemFunction: 'Function', malfunction: 'Malfunction', hazardousEvent: 'Hazardous Event',
   potentialHarm: 'Potential Harm', personsAtRisk: 'Persons at Risk',
   severity: 'Severity', severityRationale: 'Severity Rationale', exposure: 'Exposure', exposureRationale: 'Exposure Rationale',
   controllability: 'Controllability', controllabilityRationale: 'Controllability Rationale',
@@ -74,21 +81,30 @@ export async function generateProjectHaraAnalysisSheets({
   sheets, tableRows = [], setFolders, currentFolder, itemDefinition = '',
   operationalContext = '', organizationContext = '', analysisContext = null, contextSources = null,
   signal, generationCheckpoint, onProgress = () => {}, onStageComplete = () => {},
+  completionPolicy = 'practical', stpaFoundationRecord = null, stpaSourceRows = [], stpaProfileProvenance = null, onStpaFoundation = async () => {},
+  itemFunctionalRows = [], haraItem = null, onHaraItem = async () => {},
 }) {
   const checkAbort = () => { if (signal?.aborted) { const error = new Error('HARA generation cancelled.'); error.name = 'AbortError'; throw error; } };
   checkAbort();
-  // Use the SAME generator as Projects STPA, including applicability screening,
-  // reviewed decisions, loss/hazard identification and causal-path assessment.
-  const upstream = await generateStandardCodeHazardAnalysisSheets({
-    sheets, method: 'STPA', setFolders: async () => {}, currentFolder,
-    operationalContext: [operationalContext, itemDefinition ? `HARA item definition: ${itemDefinition}` : 'Infer the HARA item boundary from the supplied functional evidence and record the boundary assumptions in the assessment rationale.'].join('\n\n'),
-    organizationContext, analysisContext, contextSources,
-    analysisScope: 'for a road-vehicle item using its Projects functional decomposition, identifying vehicle-level hazards and harm to people in the specified operational situations',
-    signal, generationCheckpoint, omitConsolidatedRequirement: true,
-    onProgress, onStageComplete,
+  const practical = completionPolicy === 'practical';
+  const sources=practical ? projectStpaSources(sheets,stpaSourceRows) : [];
+  const stpaWeight=practical && sources.length && reusableProjectStpaRows(stpaFoundationRecord,sources,{stpaProfileProvenance,organizationContext,operationalContext}).every(Boolean) ? 0 : 40;
+  const generateStpa = inputSheets => generateStandardCodeHazardAnalysisSheets({
+    sheets: inputSheets, method: 'STPA', completionPolicy: practical ? 'practical' : 'strict', setFolders: async () => {}, currentFolder,
+    operationalContext, organizationContext, analysisContext, contextSources,
+    signal, generationCheckpoint, omitConsolidatedRequirement: true, onProgress: practical ? patch => onProgress({ ...patch, ...(typeof patch.step === 'number' && patch.total ? {step:Math.max(0,Math.min(stpaWeight,stpaWeight*patch.step/patch.total)),total:100} : {}) }) : onProgress, onStageComplete,
   });
+  const upstream = practical
+    ? await resolveProjectStpaFoundation({ sheets, stpaSourceRows, stpaFoundationRecord, stpaProfileProvenance,
+      operationalContext, organizationContext, onProgress, generate: generateStpa })
+    : await generateStpa(sheets);
+  checkAbort();
+  if (practical) { await onStpaFoundation(upstream); onProgress({step:stpaWeight,total:100,message:'STPA assessments reused; deriving missing HARA outputs.'}); }
+  const sharedItem=await resolveProjectHaraItem({sheets,itemDefinition,functionalRows:itemFunctionalRows,organizationContext,
+    savedItem:haraItem,generationCheckpoint,signal,onProgress,onResolved:onHaraItem});
+  itemDefinition=sharedItem.definition;
   const upstreamHeaders = upstream.Summary?.[0] || [];
-  const headers = [...new Set([...upstreamHeaders, ...PROJECT_HARA_HEADERS, 'Raw Analysis Row ID'])];
+  const headers = [...new Set([...upstreamHeaders, ...PROJECT_HARA_HEADERS, ...(practical ? ['STPA Source Row ID'] : []), 'Raw Analysis Row ID'])];
   const rows = (upstream.Summary || []).slice(1).map((sourceRow, index) => {
     const row = headers.map(name => sourceRow[upstreamHeaders.indexOf(name)] ?? '');
     for (const [column, aliases] of [
@@ -99,15 +115,17 @@ export async function generateProjectHaraAnalysisSheets({
       row[headers.indexOf(column)] = aliases.map(name => sourceRow[upstreamHeaders.indexOf(name)]).find(value => haraText(value)) || '';
     }
     row[headers.indexOf('Item Definition')] = itemDefinition;
+    row[headers.indexOf('Item ID')]=sharedItem.id;
+    row[headers.indexOf('Item')]=sharedItem.name;
     const put=(name,value)=>{if(headers.includes(name))row[headers.indexOf(name)]=value;};
     put('Mapped Canonical Hazard',row[headers.indexOf('Hazard')]);
     const applicable=row[headers.indexOf('Guide Phrase Applicable')];
     const rationale=row[headers.indexOf('Guide Phrase Applicability Rationale')];
-    if(/^no$/i.test(applicable) && missingEvidenceExclusion(rationale)){
+    if(!practical && /^no$/i.test(applicable) && missingEvidenceExclusion(rationale)){
       put('Guide Phrase Applicable','Needs Review');
       put('Guide Phrase Applicability Rationale',`Review required: missing interface evidence does not establish non-applicability. Previous exclusion rationale: ${rationale}`);
     }
-    if(/^no$/i.test(row[headers.indexOf('Guide Phrase Applicable')])){
+    if(!practical && /^no$/i.test(row[headers.indexOf('Guide Phrase Applicable')])){
       const verification=row[headers.indexOf('Verification Method')];
       if(substantiveHaraVerification(verification)){
         put('Excluded Candidate Verification',verification);
@@ -116,15 +134,24 @@ export async function generateProjectHaraAnalysisSheets({
     }
     // Bind the existing Projects draft identity before the risk assessment so
     // Generate row / Generate all / retry all resolve to the same event.
+    if (practical) put('STPA Source Row ID', sourceRow[upstreamHeaders.indexOf('Raw Analysis Row ID')] || '');
     const suppliedId = tableRows[index]?.rawAnalysisRowId || tableRows[index]?.hazardDraftIdentity;
     if (suppliedId) row[headers.indexOf('Raw Analysis Row ID')] = suppliedId;
     return row;
   });
-  let updated = { ...upstream, Summary: [headers, ...rows], 'HARA Item Definition': [['Item Definition'], [itemDefinition]] };
+  if(practical){
+    const context=formatGovernedHazardPromptContext({operationalContext,organizationContext,analysisContext,contextSources});
+    return generateProjectHaraDeltaWorkbook({upstream:{...upstream,haraItem:sharedItem,'HARA Item Definition':projectHaraItemDefinitionSheet({haraItem:sharedItem})},headers,rows,context,organizationContext,itemDefinition,
+      generationCheckpoint,signal,setFolders,currentFolder,onProgress,onStageComplete,start:stpaWeight,
+      legacyBasis:entries=>({stage:HARA_COMPLETION_POLICY,prompt:projectHaraAssessmentPrompt(entries.map(({row,index})=>({id:`event-${index+1}`,
+        evidence:Object.fromEntries(headers.filter(name=>name!=='Functional Safety Requirements' && (!PROJECT_HARA_HEADERS.includes(name) || ['Unsafe Control Action','Loss','Hazard','Safety Constraint','Causal Scenario'].includes(name))).map(name=>[name,haraText(row[headers.indexOf(name)])]))})),context,itemDefinition)}),
+    });
+  }
+  let updated = { ...upstream, haraItem:sharedItem, ...(practical ? { haraCompletionPolicy: HARA_COMPLETION_POLICY } : {}), Summary: [headers, ...rows], 'HARA Item Definition':projectHaraItemDefinitionSheet({haraItem:sharedItem}) };
   let pendingEvents = [], lastPublication = Date.now();
   const publicationRows = Math.max(512, Math.ceil(rows.length / 16));
   const publish = async () => {
-    updated = { ...updated, ...await refreshProjectHaraInBackground([headers, ...rows]) };
+    updated = { ...updated, ...await refreshProjectHaraInBackground([headers, ...rows], { practical,haraItem:sharedItem }) };
     await setFolders?.(previous => ({ ...previous, [currentFolder]: { ...previous?.[currentFolder], ...updated } }));
   };
   await publish();
@@ -146,7 +173,7 @@ export async function generateProjectHaraAnalysisSheets({
     checkAbort();
     const inputs = entries.map(({ row, index }) => ({ id: `event-${index + 1}`, evidence: Object.fromEntries(headers.filter(name => !PROJECT_HARA_HEADERS.includes(name) || ['Unsafe Control Action','Loss','Hazard','Safety Constraint','Causal Scenario'].includes(name)).map(name => [name, get(row, name)])) }));
     const prompt = projectHaraAssessmentPrompt(inputs, context, itemDefinition);
-    const basis = { stage: 'project-hara-assessment-v2-evidence-quality', prompt };
+    const basis = { stage: practical ? HARA_COMPLETION_POLICY : 'project-hara-assessment-v2-evidence-quality', prompt };
     const cached = await generationCheckpoint?.read(basis);
     let assessed;
     if (cached) { try { assessed = parseAssessments(JSON.stringify(cached), inputs); } catch {} }
@@ -202,8 +229,11 @@ export async function generateProjectHaraAnalysisSheets({
       await generationCheckpoint?.write(basis, { assessments: [...assessed.values()] });
     }
     entries.forEach(({ row, index }) => {
-      const assessment = guardGeneratedHaraAssessment(assessed.get(`event-${index + 1}`),sourceEvidence(index));
-      for (const [key, column] of Object.entries(FIELDS)) row[headers.indexOf(column)] = haraText(assessment[key]);
+      const assessment = practical ? assessed.get(`event-${index + 1}`) : guardGeneratedHaraAssessment(assessed.get(`event-${index + 1}`),sourceEvidence(index));
+      for (const [key, column] of Object.entries(FIELDS)) {
+        if (practical && ['applicabilityDecision','safetySignificant','safetySignificanceRationale'].includes(key)) continue;
+        row[headers.indexOf(column)] = haraText(assessment[key]);
+      }
       if(itemDefinition)row[headers.indexOf('Item Definition')]=itemDefinition;
     });
     pendingEvents.push(...entries.map(({ row }) => row));
@@ -215,18 +245,19 @@ export async function generateProjectHaraAnalysisSheets({
   try {
     for (let offset = 0; offset < active.length;) {
       const entries = active.slice(offset, offset + batchSize);
-      onProgress({ step: 8, total: 9, message: `Assessing HARA events ${offset + 1}–${offset + entries.length} of ${active.length}` });
+      onProgress({ step: practical ? 55+40*offset/active.length : 8, total: practical ? 100 : 9, message: `Assessing HARA events ${offset + 1}–${offset + entries.length} of ${active.length}` });
       await assess(entries);
       offset += entries.length;
+      if (practical) onProgress({step:55+40*offset/active.length,total:100,message:`Completed ${offset} of ${active.length} HARA assessments.`});
     }
     checkAbort();
-    const definitions=[...new Set(rows.map(row=>get(row,'Item Definition')).filter(Boolean))];
-    updated={...updated,'HARA Item Definition':[['Item Definition'],...definitions.map(value=>[value])]};
-    const exposureChanges=await reconcileProjectHaraExposure({headers,rows,organizationContext,signal,generationCheckpoint,onProgress});
-    const goalChanges=await consolidateProjectHaraGoals({headers,rows,organizationContext,signal,generationCheckpoint,onProgress});
+    updated={...updated,'HARA Item Definition':projectHaraItemDefinitionSheet({haraItem:sharedItem})};
+    const refine = async operation => { try { return await operation(); } catch(error) { if(!practical || !canDeferHazardFailure(error,signal))throw error; return false; } };
+    await refine(()=>reconcileProjectHaraExposure({headers,rows,organizationContext,signal,generationCheckpoint,onProgress:practical?patch=>onProgress({...patch,step:96,total:100}):onProgress}));
+    await refine(()=>consolidateProjectHaraGoals({headers,rows,organizationContext,signal,generationCheckpoint,onProgress:practical?patch=>onProgress({...patch,step:98,total:100}):onProgress}));
     // The final goal catalog is a full-sheet change, even when the preceding
     // event batches were already flushed. Publish its linked goals atomically.
-    await flush(Boolean(goalChanges || exposureChanges || definitions.length));
+    await flush(true);
     checkAbort();
   } catch (error) {
     // Keep completed ratings visible even when the next request fails/stops.
@@ -234,6 +265,6 @@ export async function generateProjectHaraAnalysisSheets({
     await flush();
     throw error;
   }
-  onProgress({ step: 9, total: 9, message: 'HARA and linked safety goals saved for review.' });
+  onProgress({ step: practical ? 100 : 9, total: practical ? 100 : 9, message: 'HARA and linked safety goals saved.' });
   return updated;
 }

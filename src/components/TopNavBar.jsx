@@ -19,8 +19,17 @@ export default function TopNavBar({
       <div className="mx-auto max-w-full px-3 py-2 flex items-center justify-between gap-3">
         {/* LEFT: logo */}
         <div className="flex items-center gap-2 shrink-0">
-          <img src="xHandle_Logo.PNG" className="h-5 w-auto" alt="xHandle" />
-          <span className="text-sm font-semibold hidden sm:inline text-gray-800 dark:text-zinc-100"></span>
+          <span className="relative inline-flex h-5">
+            <img src="xHandle_Logo.PNG" className="h-5 w-auto" alt="xHandle" />
+            {/* Tint only the wordmark, preserving the colored x in both themes. */}
+            <img
+              src="xHandle_Logo.PNG"
+              className="pointer-events-none absolute inset-0 hidden h-full w-full brightness-0 invert dark:block"
+              style={{ clipPath: "inset(0 0 0 20%)" }}
+              alt=""
+              aria-hidden="true"
+            />
+          </span>
         </div>
 
         {/* CENTER: spacer */}

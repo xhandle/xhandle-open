@@ -3,7 +3,7 @@ import {validateHazardTableIndex} from './hazardTableIndex';
 import {createHazardAssociationMatcher} from './hazardAssociationMatcher';
 import {openHazardSchema} from './hazardSchema';
 import {hazardChunkKey,hazardChunkDigest,HAZARD_CHUNKS} from './hazardRunChunks';
-import {validateHazardRowIndex,PAGED_HAZARD} from './hazardRowIndex';
+import {createHazardRowIndex,validateHazardRowIndex,PAGED_HAZARD} from './hazardRowIndex';
 import {createValueAssembler} from '../code-architecture-transfer/archiveValueStream';
 import {createHazardRowNormalizer} from '../project-hazard-analysis/classificationResolutionStatus';
 import {fillNotApplicableHazardCells} from '../project-hazard-analysis/hazardNotApplicableCells';
@@ -22,7 +22,8 @@ export async function queryHazardRows(run,{operation='page',raw=false,field,targ
   const index=descriptor.records?{headers:[],spans:rootIndex.recordSummarySpans}:partial?rootIndex.partial:rootIndex;
   if(!index?.headers && operation!=='detail')throw Error('This run has no saved partial table.');
   const normalizer=createHazardRowNormalizer(index?.headers || []),headers=raw && operation==='page'?index.headers:normalizer.headers;
-  const pageDigests=new Map(validateHazardTableIndex(root.payload).pages.map(p=>[p.sequence,p.digest]));
+  const tableIndex=validateHazardTableIndex(root.payload);
+  const pageDigests=new Map(tableIndex.pages.map(p=>[p.sequence,p.digest]));
   const cache=new Map();const get=async seq=>{
    if(cache.has(seq))return cache.get(seq);
    check(signal);const page=await tx.objectStore(HAZARD_CHUNKS).get(hazardChunkKey(descriptor.generation,seq));
@@ -42,8 +43,24 @@ export async function queryHazardRows(run,{operation='page',raw=false,field,targ
    return assembler.finish();
   };
   if(operation==='detail'){
-   if(!['csvImportPreviousSummary','narrativeReview'].includes(field))throw Error('Unsupported saved detail.');
-   const value=rootIndex.details?.[field]?await readSpan(rootIndex.details[field],32*1024*1024):null;
+   if(!['csvImportPreviousSummary','narrativeReview','failedAssessments'].includes(field) || (partial && field!=='failedAssessments'))throw Error('Unsupported saved detail.');
+   let detailIndex=partial?rootIndex.partial:rootIndex;
+   if(field==='failedAssessments' && !rootIndex.failureDetailsVersion){
+    // Older indexes omitted failure coordinates, but authoritative records still
+    // contain the reasons. Locate them on demand without hydrating results or
+    // source evidence, or rewriting the saved analysis.
+    const builder=createHazardRowIndex();
+    for(const entry of tableIndex.pages){
+     const page=await get(entry.sequence);
+     for(const [from,to] of entry.ranges){
+      if(to>page.tokens.length)throw Error('Invalid saved table range.');
+      for(let i=from;i<to;i++)builder.add(page.tokens[i],entry.sequence,i);
+     }
+    }
+    const recovered=builder.finish(root.payload.digest);
+    detailIndex=partial?recovered.partial:recovered;
+   }
+   const value=detailIndex?.details?.[field]?await readSpan(detailIndex.details[field],field==='failedAssessments'?8*1024*1024:32*1024*1024):null;
    await tx.done;check(signal);return {value};
   }
   const row=async n=>{const value=await readSpan(index.spans[n],8*1024*1024);return raw && operation==='page'?value:fillNotApplicableHazardCells(headers,normalizer.normalizeRow(value,n));};

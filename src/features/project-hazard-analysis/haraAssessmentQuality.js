@@ -32,7 +32,7 @@ export function haraSuppliedEvidence(value) {
   return typeof value==='string'?value.split('\n').filter(line=>!/^\s*(?:context )?assumptions?\s*:/i.test(line)).join('\n'):value;
 }
 export const missingEvidenceExclusion = rationale => /(?:no|missing|lack(?:s|ing)?|not (?:provided|documented|specified|available)|insufficient|absen\w*)[^.]{0,80}(?:evidence|specification|document|interface|information)|(?:evidence|interface)[^.]{0,65}(?:missing|not provided|not documented|unavailable)/i.test(text(rationale));
-export const implementationGoal = value => /\b(?:checksums?|crc|watchdogs?|retries|retry|frames?|buffers?|packets?|sampling rate|\d+\s*(?:hz|ms|milliseconds))\b/i.test(text(value));
+export const implementationGoal = value => /\b(?:checksums?|crc|watchdogs?|retries|retry|frames?|buffers?|packets?|sampling rate|schema validation|validate (?:the |each )?(?:timestamp|schema)|countdown|\d+\s*(?:hz|ms|milliseconds))\b|(?:inhibit|reject|discard)[^.]{0,80}(?:commands?|messages?|data)[^.]{0,100}(?:stale|schema|timestamp|validation)|(?:validate|check)[^.]{0,50}(?:command|message|data)[^.]{0,50}(?:freshness|timestamp|schema)/i.test(text(value));
 export const outcomeKinds = value => {
   const v = text(value), kinds=[];
   if (/\b(?:missed|undetected|unreported)\b[^.]{0,70}\bemergenc|\b(?:loss|absence|delay|failure|fail\w*|cannot|unable)\b[^.]{0,90}\b(?:detect\w*|report\w*|respond\w*|notif\w*)\b[^.]{0,70}\bemergenc|\bemergenc[^.]{0,100}\b(?:not detected|not reported|without response|reporting fails)\b/i.test(v)) kinds.push('missed-emergency');
@@ -42,14 +42,22 @@ export const outcomeKinds = value => {
 const failureTerm = '(?:(?:communication|network|recovery|diagnostic|dispatch|transmission)[ /-]+)*(?:failures?|malfunctions?|outages?|packet[ -]loss|acknowledg\\w*\\s+timeouts?)';
 const failureSubject = `(?:${failureTerm})(?:\\s*/\\s*(?:${failureTerm}))*`;
 const failureStatistic = '(?:probability|likelihood|rates?|frequency)';
-const excludedFailureBasis = new RegExp(`\\b(?:never|not|rather than|excluding|excludes?|independent of)\\s+(?:(?:based on|determined by|using|including)\\s+)?(?:the\\s+)?(?:${failureSubject}\\s+${failureStatistic}|${failureStatistic}\\s+(?:of|for)\\s+(?:the\\s+)?${failureSubject})\\b`, 'gi');
-const positiveFailureBasis = value => {
+const excludedFailureBasis = new RegExp(`\\b(?:never|not|rather than|excluding|excludes?|independent(?:ly)? of)\\s+(?:(?:based on|determined by|using|including)\\s+)?(?:the\\s+)?(?:${failureSubject}\\s+${failureStatistic}|${failureStatistic}\\s+(?:of|for)\\s+(?:the\\s+)?${failureSubject})\\b`, 'gi');
+export const positiveFailureBasis = value => {
   // Remove only the explicitly excluded factor first, in either word order.
   // This preserves a separate affirmative failure argument in the same sentence.
   const v=text(value).replace(excludedFailureBasis, '').replace(/(?:never|not|rather than|excluding)[^.;&]{0,100}(?:failure|malfunction|outage)[^.;&]{0,50}(?:probability|rate|frequency)|(?:never|not|excluding)\s+(?:the\s+)?(?:failure|malfunction)\s+(?:probability|rate)/gi,'');
-  return /(?:probability|frequency|rate|exposure)[^.]{0,90}(?:fail(?:ure|s)|malfunction|packet loss|outage|acknowledg\w*\s+timeout)|(?:fail(?:ure|s)|malfunction|packet loss|outage|acknowledg\w*\s+timeout)[^.]{0,90}(?:probability|frequency|rate)|because[^.]{0,50}(?:transmissions? (?:will )?fail|network reliability)/i.test(v);
+  return /(?:probability|frequency|rate|exposure)[^.]{0,90}(?:fail(?:ure|s)|malfunction|packet loss|outage|acknowledg\w*\s+timeout)|(?:fail(?:ure|s)|malfunction|packet loss|outage|acknowledg\w*\s+timeout)[^.]{0,90}(?:probability|frequency|rate)|because[^.]{0,50}(?:transmissions? (?:will )?fail|network reliability)|(?:failures?|malfunctions?|outages?)[^.]{0,35}(?:occur\w*|are|is)\s+(?:only\s+)?(?:rare|infrequent|frequent|intermittent|occasional|low|high)/i.test(v);
 };
-export const diagnosticOnlyTiming = value => /(?:ftti (?:is|equals|must be)|derived from|based on|covers?)\s+(?:the\s+)?(?:minimum duration|\d+\s+(?:(?:consecutive|nominal)\s+)?(?:\d+\s*ms\s*)?frames?|frame (?:period|interval)|(?:diagnostic |acknowledg\w* |processing )?timeout|processing deadline|retry interval)|minimum duration for which[^.]*updates|typical emergency response time/i.test(text(value));
+export const diagnosticOnlyTiming = value => /(?:ftti (?:is|equals|must be)|derived from|based on|covers?)\s+(?:the\s+)?(?:minimum duration|\d+\s+(?:(?:consecutive|nominal)\s+)?(?:\d+\s*ms\s*)?frames?|frame (?:period|interval)|(?:diagnostic |acknowledg\w* |processing )?timeout|processing deadline|retry interval|(?:\d+(?:\.\d+)?[- ]?(?:ms|second|millisecond)s? )?(?:data )?freshness (?:threshold|window|limit))|minimum duration for which[^.]*updates|typical emergency response time|freshness window[^.]{0,160}(?:specified in|per) (?:the )?mitigation strategy/i.test(text(value));
+
+// Only catch affirmative, blanket braking gates. Ordinary planned-stop gates
+// and explicit emergency overrides are valid and must not be removed.
+export function unsafeBrakingGate(value) {
+  return text(value).split(/(?<=[.!?])\s+|\n/).some(sentence =>
+    /(?:shall (?:not|never) (?:issue|apply|command|permit|authorize|allow)[^.]{0,60}brak|(?:inhibit|prohibit|prevent|disable|block)[^.]{0,35}brak|does not brake)[^.]{0,400}(?:until|unless|only when|only if)/i.test(sentence)
+    && !/non[- ]emergency|routine (?:brak|planned)|planned[- ]stop|emergency brak[^.]{0,80}(?:override|exempt|always|precedence|remain available)/i.test(sentence));
+}
 export function supportedQuote(quote, source) {
   const q=haraKey(quote);
   return q.length>=16 && !/\btbd\b|\[.*\]|not provided|unknown/.test(q) && haraKey(source).includes(q);

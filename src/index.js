@@ -5,9 +5,11 @@ import ReactDOM from "react-dom/client";
 import "./index.css";
 import { installDeferredResizeObserver } from "./lib/deferredResizeObserver";
 import { installAIRequestAuthShim } from "./lib/installAIRequestAuthShim";
+import { installDesktopUpdateSave } from './lib/desktopUpdateSave';
 
 installDiagnosticErrorCapture();
 installAIRequestAuthShim();
+installDesktopUpdateSave();
 
 if (typeof window !== "undefined" && typeof window.ResizeObserver === "function") {
   installDeferredResizeObserver(window);

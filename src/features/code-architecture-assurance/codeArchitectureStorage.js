@@ -30,6 +30,7 @@ const changed = () => notifyBackupDataChanged({db:XHANDLE_IDB_NAME, stores:[XHAN
 // A delayed open must not let an older payload choose a newer publication as its
 // baseline. Different project/repository scopes remain independent.
 const architectureWrites = new Map();
+const unsavedRowWrites = new Map();
 const deletingProjects = new Set();
 const cleaningScopes = new Set();
 const runningScopes = new Set();
@@ -39,7 +40,7 @@ export function beginArchitectureStorageWork(scope) {
   runningScopes.add(scope);
   return () => runningScopes.delete(scope);
 }
-export const architectureStorageBusy = scope => runningScopes.has(scope) || architectureWrites.has(scope) || [...pendingInMemory.values()].some(value => value.scope === scope);
+export const architectureStorageBusy = scope => runningScopes.has(scope) || architectureWrites.has(scope) || unsavedRowWrites.has(scope) || [...pendingInMemory.values()].some(value => value.scope === scope);
 export async function withArchitectureStorageCleanup(scope, operation) {
   if (cleaningScopes.has(scope) || architectureStorageBusy(scope)) throw new Error('Analysis or saving is in progress. Wait for it to finish.');
   cleaningScopes.add(scope);
@@ -51,6 +52,8 @@ export function blockDeletedProjectArchitectureWrites(projectId, blocked = true)
   if (blocked) deletingProjects.add(String(projectId)); else deletingProjects.delete(String(projectId));
   return newlyBlocked;
 }
+export const deletedArchitectureSourceKey = key => [...deletingProjects].some(id =>
+  String(key).startsWith(`cba:${id}:`) || String(key).startsWith(`functional-decomposition-checkpoint:cba:${id}:`));
 function queueArchitectureWrite(scope, operation) {
   if (cleaningScopes.has(scope)) return Promise.reject(new Error('Saved analysis cleanup is in progress; write discarded.'));
   if ([...deletingProjects].some(id => scope.startsWith(`cba:${id}:`))) return Promise.reject(new Error('Project deletion is in progress or completed; architecture write discarded.'));
@@ -403,7 +406,12 @@ export async function hasArchitectureConnectionWork(scopes) {
 }
 
 export function writeCbaRowsToIndexedDB(...args) {
-  return queueArchitectureWrite(args[0], () => writeCbaRowsToIndexedDBNow(...args));
+  return queueArchitectureWrite(args[0], async () => {
+    const saved = await writeCbaRowsToIndexedDBNow(...args);
+    if (saved) unsavedRowWrites.delete(args[0]);
+    else if (!args[2]?.signal?.aborted) unsavedRowWrites.set(args[0], args);
+    return saved;
+  });
 }
 
 export function writeImportedArchitectureRunRecords(...args) {
@@ -421,5 +429,25 @@ export function recoverArchitecturePublication(...args) {
 export async function flushProjectArchitectureWrites(projectId) {
   const prefix = `cba:${projectId}:`;
   while ([...architectureWrites.keys()].some(key=>key.startsWith(prefix))) await Promise.all([...architectureWrites].filter(([key])=>key.startsWith(prefix)).map(([,promise])=>promise));
+  if ([...unsavedRowWrites.keys()].some(key => key.startsWith(prefix))) throw new Error('Some architecture edits have not been saved. Retry saving before exporting.');
   if ([...pendingInMemory.values()].some(value=>value.scope.startsWith(prefix))) throw new Error('Completed architecture results are not saved yet. Retry publication before exporting.');
+}
+
+export async function saveArchitectureBeforeUpdate() {
+  while (architectureWrites.size) await Promise.all([...architectureWrites.values()]);
+  if (runningScopes.size) throw new Error('An architecture analysis has not finished pausing.');
+  for (const [key, args] of [...unsavedRowWrites]) {
+    if (deletedArchitectureSourceKey(key)) { unsavedRowWrites.delete(key); continue; }
+    if (!await writeCbaRowsToIndexedDB(...args)) throw new Error('Some architecture edits could not be saved.');
+  }
+  for (const [checkpointKey, payload] of [...pendingInMemory]) {
+    try {
+      await prepareArchitecturePublication(payload.scope, payload.rows, payload.run, payload.metadata, checkpointKey, payload.previousRows);
+    } catch (error) {
+      // A publication conflict can still save a complete recovery checkpoint.
+      // Preserve current analyst edits and let the normal recovery UI resolve it.
+      if (error.code !== 'SOURCE_PUBLICATION_CONFLICT' || pendingInMemory.has(checkpointKey)) throw error;
+    }
+  }
+  if (pendingInMemory.size) throw new Error('Completed architecture results are not saved yet.');
 }

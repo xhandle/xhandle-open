@@ -94,7 +94,7 @@ import {
 import { describeActiveSelection } from "../features/collaborator-selection/activeSelectionContext";
 import { clipboardHtmlToMarkdown, handleMarkdownPaste } from "../lib/markdownClipboard";
 import { describeScopeResolution, indexVibeReviewHeaders, isHazardVibeReviewIntent, resolveHazardVibeReviewScope } from "../features/project-hazard-analysis/vibeReviewScope";
-import { inspectClassificationResolution } from "../features/project-hazard-analysis/classificationResolutionStatus";
+import { isObsoleteClassificationStatusHeader } from "../features/project-hazard-analysis/classificationResolutionStatus";
 import { checkpointHazardAnalysis, releaseHazardCheckpoint } from "../features/project-hazard-analysis/projectHazardAnalysisStorage";
 import { isSubstantiveClassificationEvidence } from "../features/project-hazard-analysis/safetySignificancePolicy";
 import { isBatchNeedsReviewResolverIntent } from "../features/project-hazard-analysis/needsReviewCollaboratorIntent";
@@ -2733,8 +2733,9 @@ export function HazardVibeReviewCard({ message, disabled = false, onAction, onOp
   const card = message?.vibeReview;
   if (!card) return null;
   const active = !card.completed && !card.unresolved;
-  const existingLabel = card.existingLabel || "Safety Significant";
-  const existingValue = card.existingValue ?? card.existingSafetySignificant;
+  const retiredStatus = isObsoleteClassificationStatusHeader(card.existingLabel);
+  const existingLabel = retiredStatus ? "Safety Classification" : card.existingLabel || "Safety Significant";
+  const existingValue = retiredStatus ? card.existingSafetyClassification : card.existingValue ?? card.existingSafetySignificant;
   const proposedValue = card.proposedValue ?? card.proposedSafetySignificant;
   const actions = card.paused ? [['resume', 'Resume review', false]] : card.prerequisiteRequired
     ? [['reviewSafetySignificance', 'Review Safety Significance first', false]]
@@ -2755,7 +2756,7 @@ export function HazardVibeReviewCard({ message, disabled = false, onAction, onOp
       <div className="mt-2 font-medium text-neutral-900">{card.from || "—"} → {card.controlAction || "—"} → {card.to || "—"}</div>
       <div className="mt-1 text-neutral-600">{[card.subsystem, card.guidePhrase, card.context].filter(Boolean).join(" · ")}</div>
       <p className="mt-2 leading-relaxed text-neutral-700">{card.explanation}</p>
-      <div className="mt-2"><span className="font-medium">Existing {existingLabel}:</span> {existingValue || "Not set"}{card.existingRationale ? ` — ${card.existingRationale}` : ""}</div>
+      <div className="mt-2"><span className="font-medium">Existing {existingLabel}:</span> {existingValue || "Not set"}{!retiredStatus && card.existingRationale ? ` — ${card.existingRationale}` : ""}</div>
       {proposedValue ? <div className="mt-1"><span className="font-medium">Proposed:</span> {proposedValue}{card.proposalDescriptor ? ` · ${card.proposalDescriptor}` : card.classification ? ` · ${card.classification}${card.rule ? ` (${card.rule})` : ""}` : ""} · {card.confidence || "Medium"} confidence</div> : null}
       <p className="mt-1 text-neutral-700">{card.rationale || card.evidenceGap}</p>
       {card.manualDispositionWarning ? <p className="mt-2 rounded-md border border-amber-300 bg-white p-2 text-amber-900">{card.manualDispositionWarning}</p> : null}
@@ -5079,7 +5080,6 @@ useEffect(() => {
     const applicabilityReview = session.reviewTarget === "guidePhraseApplicable";
     const resolutionReview = session.reviewTarget === "classificationResolution";
     const classificationReview = session.reviewTarget === "safetyClassification" || resolutionReview;
-    const resolutionInspection = resolutionReview ? inspectClassificationResolution(headers, state.summary[rowIndex]) : null;
     const safetySignificance = String(fields["Safety Significant"] || "").trim();
     const prerequisiteRequired = classificationReview
       && !/^no$|^not applicable$/i.test(String(fields["Guide Phrase Applicable"] || "").trim())
@@ -5095,10 +5095,11 @@ useEffect(() => {
       from: fields["Function (From)"], controlAction: fields["Control Action"], to: fields["Function (To)"],
       subsystem: fields["Subsystem Allocation"], guidePhrase: fields["Guide Phrase"],
       context: [fields["Operational Scenario"], fields["Operational Mode"]].filter(Boolean).join(" / "),
-      existingLabel: applicabilityReview ? "Guide Phrase Applicable" : resolutionReview ? "Classification Resolution Status" : classificationReview ? "Safety Classification" : "Safety Significant",
-      existingValue: applicabilityReview ? fields["Guide Phrase Applicable"] : resolutionReview ? fields["Classification Resolution Status"] : classificationReview ? fields["Safety Classification"] : fields["Safety Significant"],
+      existingLabel: applicabilityReview ? "Guide Phrase Applicable" : classificationReview ? "Safety Classification" : "Safety Significant",
+      existingValue: applicabilityReview ? fields["Guide Phrase Applicable"] : classificationReview ? fields["Safety Classification"] : fields["Safety Significant"],
       existingSafetySignificant: fields["Safety Significant"],
-      existingRationale: applicabilityReview ? fields["Guide Phrase Applicability Rationale"] : resolutionReview ? (resolutionInspection?.findings || []).join(" ") : classificationReview ? fields["Classification Evidence"] : fields["Safety Significance Rationale"],
+      existingSafetyClassification: fields["Safety Classification"],
+      existingRationale: applicabilityReview ? fields["Guide Phrase Applicability Rationale"] : classificationReview ? fields["Classification Evidence"] : fields["Safety Significance Rationale"],
       explanation: prerequisiteRequired
         ? "Safety Significance is not yet governed for this row, so Safety Classification cannot be finalized."
         : normalized?.valid
@@ -5207,7 +5208,7 @@ useEffect(() => {
       : session.reviewTarget === "guidePhraseApplicable"
         ? "\n\nRegenerate Safety Issues to propagate the governed guide-phrase applicability changes. The reviewed hazard-row decisions remain valid unless their interface, operational context, or guide phrase changes."
         : "\n\nRegenerate Safety Issues because governed hazard classifications changed.";
-    const reviewedField = session.reviewTarget === "guidePhraseApplicable" ? "Guide Phrase Applicable" : session.reviewTarget === "classificationResolution" ? "Classification Resolution Status" : session.reviewTarget === "safetyClassification" ? "Safety Classification" : "Safety Significant";
+    const reviewedField = session.reviewTarget === "guidePhraseApplicable" ? "Guide Phrase Applicable" : ["classificationResolution", "safetyClassification"].includes(session.reviewTarget) ? "Safety Classification" : "Safety Significant";
     if (["safetyClassification", "classificationResolution"].includes(session.reviewTarget)) {
       const classificationCounts = Object.entries(counts.classificationChanges || {}).filter(([, count]) => count).map(([value, count]) => `${value}: ${count}`).join("; ") || "none";
       return `Hazard vibe review ${session.state === VIBE_REVIEW_STATES.CANCELLED ? "stopped" : "complete"}. Scope: ${session.scopeLabel}; reviewed field: Safety Classification; ${counts.total} total. Reviewed ${counts.reviewed}; accepted ${counts.accepted}; skipped ${counts.skipped}; failed ${counts.failed}; remaining ${counts.remaining}. Classification changes: ${classificationCounts}.${changed ? `\n\nChanged rows:\n${changed}` : ""}${unresolved ? `\n\nSkipped or unresolved:\n${unresolved}` : ""}${session.decisions.length ? "\n\nRegenerate Safety Issues as a separate step; the reviewed applicability, safety significance, and safety classification decisions remain governed." : ""}`;
@@ -5478,7 +5479,7 @@ useEffect(() => {
           };
           appendMessage(activeId, {
             role: "assistant",
-            content: `Same review item remains unresolved for ${card.sourceRowId}; it has not advanced to the next item. Classification Resolution Status is ${result.classificationResolutionStatus || "unresolved"}.${remainingFindings.length ? ` Remaining findings:\n- ${remainingFindings.join("\n- ")}` : ""} Choose a supported classification, skip this row, pause, or stop the review.`,
+            content: `Same review item remains unresolved for ${card.sourceRowId}; it has not advanced to the next item.${remainingFindings.length ? ` Remaining findings:\n- ${remainingFindings.join("\n- ")}` : ""} Choose a supported classification, skip this row, pause, or stop the review.`,
             vibeReview: buildVibeReviewCard(retrySession, retryState, card.sourceRowId, unresolved),
           });
           setThreads(loadThreads());
@@ -5486,7 +5487,7 @@ useEffect(() => {
         }
         appendMessage(activeId, {
           role: "assistant",
-          content: `Policy gap resolved for ${card.sourceRowId}. Classification Resolution Status is now ${result.classificationResolutionStatus}.`,
+          content: `Saved the classification decision for ${card.sourceRowId}.`,
         });
       }
       const cascade = planHazardDecisionCascade({

@@ -1,7 +1,11 @@
-import { openCbaIndexedDB, XHANDLE_IDB_NAME } from '../code-architecture-assurance/codeArchitectureStorage';
+import { openCbaIndexedDB, XHANDLE_IDB_NAME, deletedArchitectureSourceKey } from '../code-architecture-assurance/codeArchitectureStorage';
 import { rawRecord, readRecord, writeRecord, isChunkedRecord } from '../code-architecture-storage/chunkedRecord';
 import { notifyBackupDataChanged } from '../../lib/localBackupEvents';
 import { throwIfAnalysisAborted, waitForAnalysisRetry } from './functionalAnalysisResponse';
+
+const sourceWrites = new Set();
+const latestSourceWrites = new Map();
+const failedSourceWrites = new Map();
 
 // Safari and other browsers can abort an IndexedDB transaction independently
 // of user cancellation. Retry a fresh transaction, with a finite allowance.
@@ -17,14 +21,36 @@ export async function retryAnalysisStorage(operation, { signal, onRetry, wait = 
     }
   }
 }
-export async function writeAnalysisSourceRecord(store, key, value, options = {}) {
-  let baseline, captured = false;
+export function writeAnalysisSourceRecord(store, key, value, options = {}) {
+  const identity = JSON.stringify([store, key]);
+  const entry = { store, key, value, hasBaseline: Object.prototype.hasOwnProperty.call(options, 'expectedBaseline'), baseline: options.expectedBaseline };
+  const operation = writeAnalysisSourceRecordNow(store, key, value, { ...options,
+    captureBaseline: baseline => { entry.baseline = baseline; entry.hasBaseline = true; },
+  });
+  sourceWrites.add(operation);
+  latestSourceWrites.set(identity, entry);
+  return operation.then(result => {
+    sourceWrites.delete(operation);
+    if (latestSourceWrites.get(identity) === entry) { latestSourceWrites.delete(identity); failedSourceWrites.delete(identity); }
+    return result;
+  }, error => {
+    sourceWrites.delete(operation);
+    if (latestSourceWrites.get(identity) === entry) {
+      latestSourceWrites.delete(identity);
+      if (!options.signal?.aborted) failedSourceWrites.set(identity, entry);
+    }
+    throw error;
+  });
+}
+async function writeAnalysisSourceRecordNow(store, key, value, options = {}) {
+  let baseline = options.expectedBaseline, captured = Object.prototype.hasOwnProperty.call(options, 'expectedBaseline');
   return retryAnalysisStorage(async () => {
     const db = await openCbaIndexedDB({ signal: options.signal });
     try {
       if (!captured) {
         const before = await rawRecord(db, store, key, options);
         baseline = isChunkedRecord(before) ? before.root : JSON.stringify(before); captured = true;
+        options.captureBaseline?.(baseline);
       }
       // Retain the original baseline over retries. A competing edit must not
       // be silently overwritten merely because our first transaction aborted.
@@ -32,6 +58,15 @@ export async function writeAnalysisSourceRecord(store, key, value, options = {})
       notifyBackupDataChanged({ db:XHANDLE_IDB_NAME, stores:[store] });
     } finally { db.close(); }
   }, options);
+}
+
+export async function flushAnalysisSourceWrites() {
+  while (sourceWrites.size) await Promise.allSettled([...sourceWrites]);
+  for (const entry of [...failedSourceWrites.values()]) {
+    if (deletedArchitectureSourceKey(entry.key)) { failedSourceWrites.delete(JSON.stringify([entry.store, entry.key])); continue; }
+    await writeAnalysisSourceRecord(entry.store, entry.key, entry.value, entry.hasBaseline ? { expectedBaseline: entry.baseline } : {});
+  }
+  if (failedSourceWrites.size) throw new Error('Some analysis progress has not been saved.');
 }
 export async function readAnalysisSourceRecord(store, key, options = {}) {
   return retryAnalysisStorage(async () => {

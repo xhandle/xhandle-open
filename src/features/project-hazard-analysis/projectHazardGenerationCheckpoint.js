@@ -5,7 +5,7 @@ import { getStoredActiveAIProvider, getStoredAIProviderModelPreference, getStore
 // durable database, with a separate scope from Code-Based Architecture runs.
 export function createProjectHazardCheckpoint(projectId, method, options = {}) {
   const provider = getStoredActiveAIProvider();
-  return createCodeHazardCheckpoint({ pipeline: 'projects-hazard-v1', projectId, method, provider,
+  return createCodeHazardCheckpoint({ pipeline: 'projects-hazard-v1', projectId, method, provider, ...(options.generationEpoch ? { generationEpoch: options.generationEpoch } : {}),
     model: getStoredAIProviderModelPreference(provider, { includeDefault: true }),
     effort: getStoredAIProviderEffortPreference(provider),
   }, options);

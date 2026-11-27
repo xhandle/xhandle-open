@@ -5,6 +5,7 @@ export function createHazardRunRegistry() {
  const bump=scope=>versions.set(scope,(versions.get(scope) || 0)+1);
  return {
   get:scope=>runs.get(scope),
+  hasPendingWork:()=>[...runs.values()].some(record=>record.running || record.workPending),
   revision:scope=>versions.get(scope) || 0,
   start(scope){
    const existing=runs.get(scope);

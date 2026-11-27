@@ -13,6 +13,7 @@ import {saveCodeArchitectureHazardRun} from './codeArchitectureHazardStore';
 import {generateFastHazards,compactHazardSources,sharedHazardCodeEvidence} from './fastHazardPipeline';
 import {fastMethod,FAST_HAZARD_VERSION,FAST_HAZARD_COLUMNS,deriveFastAsil,deriveFastSwci,validateFastAssessment} from './fastHazardSchema';
 import { HARA_ADDITIONAL_FIELDS, finalizeCodeHaraSheets } from './codeArchitectureHara';
+import {stpaMinimumAssessmentIssues,STPA_COMPLETION_POLICY} from './stpaCompletionPolicy';
 
 const SUMMARY_ASSESSMENT_FIELDS=method=>({assessmentBasis:'Assessment Basis',executionDependency:'Execution Dependency',executionEvidenceQuote:'Execution Evidence Quote',operatorDependency:'Operator Dependency',operatorContextQuote:'Operator Context Quote',uca:'Unsafe Control Action',loss:'Loss',causalScenario:'Causal Scenario',safetyConstraint:'Safety Constraint',evidenceQuote:'Causal Evidence Quote',assessedAction:'Assessed Control Action',causalBasis:'Causal Assessment Basis',causalEvidence:'Causal Evidence / Assumption',applicable:'Guide Phrase Applicable',applicabilityRationale:'Guide Phrase Applicability Rationale',classification:'Safety Classification',classificationRationale:'Safety Significance Rationale',assumptions:'Assumptions',malfunction:'Malfunctioning Behavior',causalFactor:'Causal Factor',hazard:'Hazard',hazardousEvent:'Hazardous Event',mishap:'Mishap',severity:method==='FHA'?'Severity Category':'Severity',exposure:'Exposure',controllability:'Controllability',ratingRationale:'Rating Rationale',safetyGoal:'Safety Goal',severityRationale:'Severity Rationale',scc:'Software Control Category',sccRationale:'Software Control Category Rationale',softwareRequirement:'Software Safety Requirement',verification:'Verification'});
 
@@ -35,7 +36,7 @@ function validateMergedSheet(method,sheet,sources,onInvalid) {
     }
     const assessment={id:source.id,...Object.fromEntries(Object.entries(fields).map(([key,header])=>[key,row[headers.indexOf(header)]]))};
     if(assessment.applicable==='No')assessment.classification='Not applicable';
-    const errors=validateFastAssessment(method,assessment,source,{structuralOnly:true});
+    const errors=method==='STPA' && source.completionPolicy===STPA_COMPLETION_POLICY?stpaMinimumAssessmentIssues(assessment,source):validateFastAssessment(method,assessment,source,{structuralOnly:true});
     if(errors.length){
       if(!onInvalid)throw new Error(`Imported assessment ${index} conflicts with the completed ${method} result: ${errors.join('; ')}`);
       onInvalid(index,errors);
@@ -218,7 +219,7 @@ export async function runFastCodeArchitectureHazardAnalysis({previousRun=null,re
     const part=reconcileCodeHazardPreprocessing(generated,tableRows,matcher);
     for(const row of tableRows)if(row.userPreprocessing && !part.ownership[row.userPreprocessingId])
       retainedUserInputs[row.userPreprocessingId]={...row.userPreprocessing.values};
-    validateMergedSheet(normalizedMethod,part.sheets.Summary,batch.map(assessment=>({...sourceById.get(assessment.id),screenedApplicability:assessment.applicable,screenedRationale:assessment.applicabilityRationale})),index=>{
+    validateMergedSheet(normalizedMethod,part.sheets.Summary,batch.map(assessment=>({...sourceById.get(assessment.id),completionPolicy:assessment.completionPolicy,screenedApplicability:assessment.applicable,screenedRationale:assessment.applicabilityRationale})),index=>{
       const source=tableRows[index-1],id=source.userPreprocessingId || batch[index-1].id;
       retainedUserInputs[id]={...retainedUserInputs[id],...source.userPreprocessing?.values};
       part.sheets.Summary[index]=[...generated.Summary[index]];
@@ -262,7 +263,7 @@ hazardMethod:method,hazardGenerationMode:'compact',
   };
   let assessments;
   try {
-    assessments=await generateFastHazards({method:normalizedMethod,sources,context,checkpoint,signal,checkSettings,checkpointSignal:checkpointController.signal,onProgress:patch=>{lastAssessmentProgress=patch;reportAssessmentProgress();},onStorageState:state=>{
+    assessments=await generateFastHazards({method:normalizedMethod,completionPolicy:'practical',sources,context,checkpoint,signal,checkSettings,checkpointSignal:checkpointController.signal,onProgress:patch=>{lastAssessmentProgress=patch;reportAssessmentProgress();},onStorageState:state=>{
       checkpointWarning=state.unsaved?(state.status==='pending'?state.message:'Progress could not be saved. Keep this browser tab open.'):'';
       reportAssessmentProgress();
     }});

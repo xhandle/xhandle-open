@@ -30,6 +30,7 @@ import {
 import {
   generateStandardCodeHazardAnalysisSheets,
 } from "./aiAnalysisCodeHazardStandard";
+import { annotateProjectStpaFoundation, projectStpaSources } from '../features/project-hazard-analysis/projectStpaFoundation';
 import { generateProjectHaraAnalysisSheets } from './aiAnalysisProjectHara';
 
 /* ------------------- NEW: STPA-SEC imports ------------------- */
@@ -70,16 +71,20 @@ export async function runLiteAIAnalysis({
   generationCheckpoint = null,
   codeArchitectureWorkflow = false,
   haraItemDefinition = '',
+  haraItem = null, itemFunctionalRows = [], onHaraItem,
+  stpaFoundationRecord = null, stpaSourceRows = [], stpaProfileProvenance = null, onStpaFoundation,
 }) {
   const totalSteps = 9;
   let step = 0;
   const updateProgress = (patch = {}) => setProgress?.({ step, total: totalSteps, ...patch });
-  const updateGeneratorProgress = (patch = {}) => setProgress?.({
-    step: patch.step ?? step,
-    total: patch.total ?? totalSteps,
-    message: patch.message,
-    completed: patch.completed,
-  });
+  let generatorProgress;
+  const updateGeneratorProgress = (patch = {}) => {
+    generatorProgress = {
+      ...(generatorProgress || { step, total: totalSteps }),
+      ...Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)),
+    };
+    setProgress?.(generatorProgress);
+  };
   const existingDecomposition = sheets?.["Functional Decomposition"];
   const decompositionSheet = Array.isArray(existingDecomposition) && existingDecomposition.length > 1
     ? existingDecomposition
@@ -250,6 +255,7 @@ export async function runLiteAIAnalysis({
       setFolders,
       currentFolder,
       method: "STPA",
+      completionPolicy: codeArchitectureWorkflow ? 'strict' : 'practical',
       operationalContext,
       organizationContext,
       analysisContext,
@@ -260,6 +266,7 @@ export async function runLiteAIAnalysis({
       generationCheckpoint,
       omitConsolidatedRequirement,
     })) || updatedSheets;
+    if (!codeArchitectureWorkflow) updatedSheets = annotateProjectStpaFoundation(updatedSheets, projectStpaSources(sheets, stpaSourceRows), { operationalContext, organizationContext, stpaProfileProvenance });
     step = 9;
     updateProgress();
     return updatedSheets;
@@ -272,8 +279,9 @@ export async function runLiteAIAnalysis({
     updateProgress();
     updatedSheets = (await (codeArchitectureWorkflow ? generateHaraAnalysisSheets : generateProjectHaraAnalysisSheets)({
       sheets: updatedSheets,
-      tableRows,
+      tableRows, stpaFoundationRecord, stpaSourceRows, stpaProfileProvenance, onStpaFoundation,
       itemDefinition: haraItemDefinition,
+      haraItem, itemFunctionalRows, onHaraItem,
       setFolders,
       currentFolder,
       haraGenerationMode: "standard",

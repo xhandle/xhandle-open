@@ -1,7 +1,6 @@
 import { fillNotApplicableHazardCells } from './hazardNotApplicableCells';
 import {
   CLASSIFICATION_RESOLUTION_STATUS_HEADER,
-  deriveClassificationResolutionStatus,
 } from "./classificationResolutionStatus";
 
 const clean = (value) => String(value ?? "").trim().replace(/\s+/g, " ");
@@ -145,7 +144,7 @@ export function buildReviewedRowRegenerationContext({ headers = [], row = [], re
     "Full-row reviewed regeneration evidence:",
     `The human-reviewed ${clean(reviewTarget) || "decision"} is ${clean(decision) || "recorded in the row"} and is authoritative.`,
     "Regenerate the entire derived hazard-analysis row as one coherent assessment using the interface, operational context, and all substantive information in the existing row below.",
-    "Recompute every downstream analytical field, including loss, hazard, unsafe control action, causal scenario/factor, classification, causal path, protections, mitigations, constraints, requirements, verification, confidence, and resolution status.",
+    "Recompute every downstream analytical field, including loss, hazard, unsafe control action, causal scenario/factor, classification, causal path, protections, mitigations, constraints, requirements, verification and confidence.",
     "Do not preserve blank, Unknown, Undetermined, Needs Review, Uncertain, TBD, or placeholder values merely because they appeared in the previous generated row. Resolve them when the supplied row evidence and reviewed decision support a conclusion.",
     "Do not invent architecture or numerical thresholds. If a value genuinely cannot be resolved from the supplied evidence, retain one precise evidence gap instead of propagating generic uncertainty across dependent fields.",
     "Preserve row identity, interface endpoints, guide phrase, and operational-context identity.",
@@ -644,7 +643,7 @@ export function normalizeReviewedHazardRowForPersistence({
 
   const resolutionStatusIndex = findColumnIndex(headers, CLASSIFICATION_RESOLUTION_STATUS_HEADER);
   if (resolutionStatusIndex >= 0) {
-    row[resolutionStatusIndex] = deriveClassificationResolutionStatus(headers, row);
+    row[resolutionStatusIndex] = '';
   }
   return { row: fillNotApplicableHazardCells(headers, row), guidePhraseReview, safetySignificanceReview };
 }

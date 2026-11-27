@@ -89,19 +89,18 @@ export default function HazardOperationalContextManager({
   };
 
   return createPortal(
-    <div
-      className="xhandle-modal-viewport fixed inset-0 z-[1200] flex justify-end bg-slate-950/30"
-      role="presentation"
-      onMouseDown={onClose}
-    >
       <section
         role="dialog"
-        aria-modal="true"
         aria-labelledby="hazard-context-title"
-        className="flex h-full w-full max-w-xl flex-col bg-white shadow-2xl"
-        onMouseDown={(event) => event.stopPropagation()}
+        className="xhandle-hazard-context-tray fixed z-[1200] flex min-h-0 min-w-0 flex-col border-l border-gray-200 bg-white shadow-xl"
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && !generating && !saving) {
+            event.stopPropagation();
+            onClose();
+          }
+        }}
       >
-        <header className="flex items-start justify-between gap-4 border-b border-gray-200 px-6 py-5">
+        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-gray-200 px-6 py-5">
           <div>
             <h2 id="hazard-context-title" className="text-lg font-semibold text-gray-950">Operational contexts</h2>
             <p className="mt-1 text-sm text-gray-600">
@@ -116,7 +115,7 @@ export default function HazardOperationalContextManager({
           </button>
         </header>
 
-        <div className="flex-1 space-y-4 overflow-y-auto p-6">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-6">
           <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
             <div className="flex items-center gap-2 text-sm font-semibold text-blue-950">
               <Sparkles size={16} /> Generate with AI
@@ -189,12 +188,11 @@ export default function HazardOperationalContextManager({
           </button>
         </div>
 
-        <footer className="flex justify-end gap-2 border-t border-gray-200 px-6 py-4">
+        <footer className="flex shrink-0 justify-end gap-2 border-t border-gray-200 px-6 py-4">
           <button type="button" onClick={onClose} disabled={generating || saving} className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60">Cancel</button>
           <button type="button" onClick={save} disabled={generating || saving} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60">{saving ? "Saving…" : "Save contexts"}</button>
         </footer>
-      </section>
-    </div>,
+      </section>,
     document.body,
   );
 }

@@ -12,6 +12,30 @@ import {buildCodeArchitectureHazardGroups} from './codeArchitectureHazardGroupin
 beforeEach(()=>{global.indexedDB=new IDBFactory();global.IDBKeyRange=IDBKeyRange;global.structuredClone=v=>deserialize(serialize(v));Object.defineProperty(global,'crypto',{value:webcrypto,configurable:true});localStorage.clear();});
 const fixture=()=>({id:'paged',projectId:'page',repoId:'r',runState:'complete',architectureRowsSnapshot:['evidence '.repeat(20000)],generatedSheets:{Summary:[['Raw Analysis Row ID','Hazard','Operational Context ID'],...Array.from({length:1000},(_,i)=>['HA-'+i,`row ${i} `+'value '.repeat(100),i%2?'a':'b'])]},pendingAttempt:{runState:'incomplete',generatedSheets:{Summary:[['Raw Analysis Row ID','Hazard'],['partial','saved partial']]}}});
 const read=()=>getLatestCodeArchitectureHazardRun({projectId:'page'},{workingSet:true,paged:true});
+test.each([false,true])('saved failure details load separately from table rows (pending attempt: %s)',async partial=>{
+ const run=fixture(),attempt=partial?run.pendingAttempt:run;
+ Object.assign(attempt,{runState:'incomplete',validatedAssessments:3,totalAssessments:5,
+  failureMessage:'Some assessments remain unfinished.',failedAssessments:[
+   {id:'SYN-4',action:'Apply command',phrase:'Too late',reasons:['Missing verification']},
+   {id:'SYN-5',action:'Check state',phrase:'Not provided',reasons:['Additional evidence required']},
+  ]});
+ await saveCodeArchitectureHazardRun(run);const descriptor=await read();
+ expect(descriptor.failedAssessments).toBeUndefined();
+ expect(await queryHazardRows(descriptor,{operation:'detail',field:'failedAssessments',partial})).toEqual({value:attempt.failedAssessments});
+ expect(await getCodeArchitectureHazardRunById(run.id)).toMatchObject(run);
+});
+test('existing row indexes recover failure details without rewriting the saved analysis',async()=>{
+ const run=fixture();run.pendingAttempt.failedAssessments=[{id:'SYN-2',reasons:['Missing safety constraint']}];
+ await saveCodeArchitectureHazardRun(run);
+ const db=await openCodeArchitectureHazardDB(),stored=await db.get('hazardAnalysisRuns',run.id);
+ const index=stored.payload.rowIndex;
+ delete index.failureDetailsVersion;delete index.details.failedAssessments;delete index.partial.details;
+ const {digest,...data}=index;index.digest=sha256().update(JSON.stringify(data)).digest('hex');
+ await db.put('hazardAnalysisRuns',stored);db.close();
+ const descriptor=await read();
+ expect(await queryHazardRows(descriptor,{operation:'detail',field:'failedAssessments',partial:true})).toEqual({value:run.pendingAttempt.failedAssessments});
+ const after=await openCodeArchitectureHazardDB();expect(await after.get('hazardAnalysisRuns',run.id)).toEqual(stored);after.close();
+});
 test('cold descriptor and first page read bounded data without assembling all rows',async()=>{
  const run=fixture();await saveCodeArchitectureHazardRun(run);const get=jest.spyOn(IDBObjectStore.prototype,'get');
  try{
@@ -117,4 +141,17 @@ test('outline validation reads no chunk bodies and rejects replaced/deleted save
  await expect(queryHazardRows(descriptor,{operation:'validate'})).rejects.toThrow('changed');
  const next=await read(),db=await openCodeArchitectureHazardDB();await db.delete('hazardAnalysisRuns',next.id);db.close();
  await expect(queryHazardRows(next,{operation:'validate'})).rejects.toThrow('changed');
+});
+
+test('retired status columns are omitted from paged display, filters and exports while raw storage stays intact',async()=>{
+ const run=fixture();
+ run.generatedSheets.Summary=[['Raw Analysis Row ID','Classification Resolution Status','Hazard','Safety Significant'],['RAW-SYNTHETIC','Policy Validation Gap','A receiver consumes an obsolete state.','Yes']];
+ await saveCodeArchitectureHazardRun(run);const descriptor=await read();
+ const displayed=await queryHazardRows(descriptor);
+ expect(displayed.headers).toEqual(['Raw Analysis Row ID','Hazard','Safety Significant']);
+ expect(displayed.rows).toEqual([['RAW-SYNTHETIC','A receiver consumes an obsolete state.','Yes']]);
+ expect((await queryHazardRows(descriptor,{operation:'options',column:2})).options).toEqual(['Yes']);
+ expect((await queryHazardRows(descriptor,{operation:'query',filters:{2:['Yes']}})).indices).toEqual([0]);
+ expect((await queryHazardRows(descriptor,{raw:true})).rows).toEqual(run.generatedSheets.Summary.slice(1));
+ expect((await getCodeArchitectureHazardRunById(run.id)).generatedSheets.Summary).toEqual(run.generatedSheets.Summary);
 });

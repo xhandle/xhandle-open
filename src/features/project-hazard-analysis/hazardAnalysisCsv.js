@@ -18,7 +18,7 @@
  */
 
 import { csvCellText, csvHeaderKey, parseCsv } from "../../lib/csv";
-import { ensureHazardAnalysisRowIds, inspectClassificationResolution } from "./classificationResolutionStatus";
+import { ensureHazardAnalysisRowIds, removeClassificationStatusColumns, isObsoleteClassificationStatusHeader } from "./classificationResolutionStatus";
 import { derivedSignificanceConflict, describeSignificanceConflict } from "./safetyColumnSchema";
 
 /** Build an import baseline without saving or treating unfinished rows as generated. */
@@ -47,7 +47,6 @@ export const HAZARD_GOVERNED_HEADERS = Object.freeze([
   "Safety Classification Rule",
   "Classification Evidence",
   "Classification Confidence",
-  "Classification Resolution Status",
 ]);
 
 const findRowIdColumn = (headerCells = []) => {
@@ -211,10 +210,8 @@ export function planHazardAnalysisCsvRows(summary = [], grid = [], { draftHeader
 
     const current = summary[rowIndex] || [];
     const changes = mapped
-      // Resolution is calculated from the engineering evidence, never adopted
-      // from a CSV cell. Counting its old exported value as an edit made an
-      // identical repeat import appear to change every previously imported row.
-      .filter(({header}) => csvHeaderKey(header) !== csvHeaderKey('Classification Resolution Status'))
+      // Retired status columns in older exports are ignored on import.
+      .filter(({header}) => !isObsoleteClassificationStatusHeader(header))
       .map(({ csvIndex, summaryIndex, header }) => ({
         summaryIndex,
         header,
@@ -281,25 +278,16 @@ function describeMergedConflicts(summary, updates) {
     .filter(Boolean);
 }
 
-// Resolution is derived evidence, not a decision supplied by the CSV. Keep
-// schema and all governed decisions intact; replace only an existing status.
-function refreshImportedResolution(headers, row) {
-  const index = headers.findIndex(header => csvHeaderKey(header) === csvHeaderKey("Classification Resolution Status"));
-  if (index >= 0) row[index] = inspectClassificationResolution(headers, row).status;
-  return row;
-}
-
 /** Apply a plan's updates, returning a new Summary. The input is not mutated. */
 export function applyHazardAnalysisCsvImport(summary = [], updates = []) {
-  if (!updates.length) return summary;
+  if (!updates.length) return removeClassificationStatusColumns(summary);
   const next = summary.map((row) => (Array.isArray(row) ? [...row] : row));
   updates.forEach(({ rowIndex, changes }) => {
     const row = next[rowIndex];
     if (!Array.isArray(row)) return;
     changes.forEach(({ summaryIndex, value }) => { row[summaryIndex] = value; });
-    refreshImportedResolution(next[0], row);
   });
-  return next;
+  return removeClassificationStatusColumns(next);
 }
 
 /** Mirror imported cells into the generated rows used by the table. */
@@ -317,7 +305,7 @@ export function applyHazardCsvImportToDrafts(draftRows = {}, draftHeaders = [], 
       const index = indexes.get(csvHeaderKey(header));
       if (index !== undefined) row[index] = value;
     });
-    return [key, { ...entry, row: refreshImportedResolution(draftHeaders, row) }];
+    return [key, { ...entry, row: row.map((value, index) => isObsoleteClassificationStatusHeader(draftHeaders[index]) ? '' : value) }];
   }));
 }
 

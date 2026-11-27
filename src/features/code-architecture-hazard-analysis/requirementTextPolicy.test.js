@@ -10,6 +10,20 @@ test.each(['softwareRequirement','safetyConstraint','safetyGoal'])('rejects metr
   }
   expect(requirementTextIssues({[field]:'The software shall enforce LIMIT_2 before accepting the target.',verification:'Test 2.9, 3.0 and 3.1; expect reject above 3.0.'},source)).toEqual([]);
 });
+test.each(['softwareRequirement','safetyConstraint','safetyGoal'])('accepts mathematical zero terminology without permitting numeric targets in %s',field=>{
+ const statements=[
+  'The software shall initialize the workspace with a zero-filled tensor before calculating the result.',
+  'The software shall evaluate the source-defined near-zero predicate before selecting the division branch.',
+  'The software shall preserve the zero-initialized buffer until the first update.',
+  'The software shall reject a zero denominator before calculating the ratio.',
+ ];
+ for(const statement of statements)expect(requirementTextIssues({[field]:statement},source)).toEqual([]);
+ for(const statement of [
+  'The software shall command a zero speed target.',
+  'The software shall enforce a zero latency budget.',
+  'The software shall respond within zero seconds.',
+ ])expect(requirementTextIssues({[field]:statement},source).length).toBeGreaterThan(0);
+});
 test.each(['STPA','HARA','FHA'])('%s enforces output policy while leaving evidence and verification intact',method=>{
   const original=JSON.stringify(source),row={...answer(method,'HA-1'),softwareRequirement:'The software shall reject values above 3.0 m/s.'};
   expect(validateFastAssessment(method,row,source,{structuralOnly:true}).join(' ')).toContain('numeric values');

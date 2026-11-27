@@ -107,7 +107,7 @@ describe("Needs Review resolver", () => {
     expect(result.summary[1][11]).toBe("Yes");
     expect(result.summary[1][12]).toBe("Safety");
     expect(result.summary[2].slice(0, summary[2].length)).toEqual(summary[2]);
-    expect(result.summary[0].at(-1)).toBe("Classification Resolution Status");
+    expect(result.summary[0]).not.toContain("Classification Resolution Status");
   });
 
   test("ignores updates outside the selected question scope", () => {
@@ -207,8 +207,7 @@ describe("Needs Review resolver", () => {
     expect(fields["Classification Confidence"]).toBe("Low");
     expect(fields["Classification Evidence"]).toMatch(/Human adjudication validation note/i);
     expect(fields["Classification Evidence"]).toMatch(/intermediate safety function/i);
-    expect(result.summary[1][result.summary[0].indexOf("Classification Resolution Status")])
-      .toBe("Human Disposition — Evidence Gap");
+    expect(result.summary[0]).not.toContain("Classification Resolution Status");
   });
 
   test("continues to reject an incomplete provider decision without human adjudication", () => {
